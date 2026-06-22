@@ -1,85 +1,585 @@
-import { FormEvent, useEffect, useState } from "react";
+import { open } from "@tauri-apps/plugin-dialog";
+import { openUrl } from "@tauri-apps/plugin-opener";
+import { listen } from "@tauri-apps/api/event";
+import {
+  FolderPlus,
+  LogIn,
+  Plug,
+  Power,
+  RefreshCw,
+  Settings,
+} from "lucide-react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import "./App.css";
-import { addNote, listNotes, type Note } from "./db";
+import {
+  appendRunEvent,
+  createRun,
+  createTask,
+  getAnalyticsSummary,
+  listWorkspaceRuns,
+  listWorkspaces,
+  recordTokenUsage,
+  savePreflightReport,
+  updateRun,
+  updateTaskStatus,
+  upsertWorkspace,
+} from "./db";
+import {
+  codexRpc,
+  connectCodex,
+  getAuthStatus,
+  resolveCodexServerRequest,
+  runPreflight,
+  startLogin,
+  stopCodex,
+} from "./codexClient";
+import { AnalyticsSummary } from "./components/AnalyticsSummary";
+import { PreflightPanel } from "./components/PreflightPanel";
+import { RunConsole } from "./components/RunConsole";
+import { TaskComposer } from "./components/TaskComposer";
+import {
+  addServerRequest,
+  applyCodexMessage,
+  emptyRunView,
+  resolveServerRequest,
+  type RunViewState,
+} from "./lib/codexEventReducer";
+import {
+  buildPlanPrompt,
+  buildRunPrompt,
+  estimateTokens,
+  improvePrompt,
+  recommendRoute,
+} from "./lib/taskAnalysis";
+import type {
+  AnalyticsSummary as AnalyticsSummaryType,
+  CodexMessage,
+  OssProvider,
+  PreflightReport,
+  RecommendationDraft,
+  RunListItem,
+  Workspace,
+} from "./types";
+
+const DEFAULT_ANALYTICS: AnalyticsSummaryType = {
+  run_count: 0,
+  completed_count: 0,
+  failed_count: 0,
+  total_tokens: 0,
+  cached_tokens: 0,
+  avg_duration_ms: null,
+};
 
 function App() {
-  const [body, setBody] = useState("");
-  const [notes, setNotes] = useState<Note[]>([]);
-  const [status, setStatus] = useState("Connecting to SQLite...");
-  const [error, setError] = useState("");
+  const [workspaces, setWorkspaces] = useState<Workspace[]>([]);
+  const [selectedWorkspace, setSelectedWorkspace] = useState<Workspace | null>(null);
+  const [runs, setRuns] = useState<RunListItem[]>([]);
+  const [analytics, setAnalytics] = useState<AnalyticsSummaryType>(DEFAULT_ANALYTICS);
+  const [prompt, setPrompt] = useState("");
+  const [preflight, setPreflight] = useState<PreflightReport | null>(null);
+  const [runView, setRunView] = useState<RunViewState>(emptyRunView);
+  const [statusMessage, setStatusMessage] = useState("Choose a workspace to begin.");
+  const [codexConnected, setCodexConnected] = useState(false);
+  const [authMessage, setAuthMessage] = useState("Auth not checked");
+  const [useOss, setUseOss] = useState(false);
+  const [ossProvider, setOssProvider] = useState<OssProvider>("ollama");
+
+  const currentRunId = useRef<number | null>(null);
+  const currentTaskId = useRef<number | null>(null);
+  const eventSequence = useRef(0);
+
+  const improvedPrompt = useMemo(() => improvePrompt(prompt), [prompt]);
+  const routeRecommendation = useMemo(() => recommendRoute(prompt), [prompt]);
+  const tokenEstimate = useMemo(() => estimateTokens(prompt), [prompt]);
 
   useEffect(() => {
-    listNotes()
-      .then((rows) => {
-        setNotes(rows);
-        setStatus("SQLite is connected");
-      })
-      .catch((err: unknown) => {
-        setStatus("SQLite connection failed");
-        setError(err instanceof Error ? err.message : String(err));
-      });
+    void refreshWorkspaces();
   }, []);
 
-  async function handleSubmit(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    const nextBody = body.trim();
-
-    if (!nextBody) {
+  useEffect(() => {
+    if (!selectedWorkspace) {
       return;
     }
 
-    try {
-      setNotes(await addNote(nextBody));
-      setBody("");
-      setStatus("Saved to SQLite");
-      setError("");
-    } catch (err) {
-      setStatus("SQLite write failed");
-      setError(err instanceof Error ? err.message : String(err));
+    void refreshWorkspaceData(selectedWorkspace.id);
+  }, [selectedWorkspace]);
+
+  useEffect(() => {
+    let notificationUnlisten: (() => void) | null = null;
+    let requestUnlisten: (() => void) | null = null;
+    let processUnlisten: (() => void) | null = null;
+    let disposed = false;
+
+    void listen<CodexMessage>("codex:notification", (event) => {
+      void handleCodexNotification(event.payload);
+    }).then((unlisten) => {
+      if (disposed) unlisten();
+      else notificationUnlisten = unlisten;
+    });
+
+    void listen<CodexMessage>("codex:server-request", (event) => {
+      void handleCodexServerRequest(event.payload);
+    }).then((unlisten) => {
+      if (disposed) unlisten();
+      else requestUnlisten = unlisten;
+    });
+
+    void listen<{ status: string; message: string }>("codex:process", (event) => {
+      setStatusMessage(event.payload.message);
+      void persistRunEvent("process", event.payload.status, event.payload);
+      if (event.payload.status === "exited" || event.payload.status === "stopped") {
+        setCodexConnected(false);
+      }
+    }).then((unlisten) => {
+      if (disposed) unlisten();
+      else processUnlisten = unlisten;
+    });
+
+    return () => {
+      disposed = true;
+      notificationUnlisten?.();
+      requestUnlisten?.();
+      processUnlisten?.();
+    };
+  }, []);
+
+  async function refreshWorkspaces() {
+    const rows = await listWorkspaces();
+    setWorkspaces(rows);
+    setSelectedWorkspace((current) => current ?? rows[0] ?? null);
+  }
+
+  async function refreshWorkspaceData(workspaceId: number) {
+    const [runRows, summary] = await Promise.all([
+      listWorkspaceRuns(workspaceId),
+      getAnalyticsSummary(workspaceId),
+    ]);
+    setRuns(runRows);
+    setAnalytics(summary);
+  }
+
+  async function chooseWorkspace() {
+    const selected = await open({
+      directory: true,
+      multiple: false,
+      title: "Choose a repository workspace",
+    });
+
+    if (typeof selected !== "string") {
+      return;
     }
+
+    const workspace = await upsertWorkspace(selected);
+    setWorkspaces(await listWorkspaces());
+    setSelectedWorkspace(workspace);
+    setStatusMessage(`Selected ${workspace.label}`);
+  }
+
+  async function ensureCodexConnected() {
+    if (codexConnected) {
+      return;
+    }
+
+    setRunView((current) => ({ ...current, status: "connecting" }));
+    const connection = await connectCodex();
+    setCodexConnected(true);
+    setStatusMessage(
+      connection.alreadyConnected
+        ? "Codex app-server already connected."
+        : `Codex app-server connected${connection.pid ? ` as ${connection.pid}` : ""}.`,
+    );
+
+    try {
+      const auth = await getAuthStatus();
+      setAuthMessage(
+        auth.authMethod
+          ? `Signed in with ${auth.authMethod}`
+          : "Codex requires authentication",
+      );
+    } catch (error) {
+      setAuthMessage(error instanceof Error ? error.message : String(error));
+    }
+  }
+
+  async function handleLogin() {
+    await ensureCodexConnected();
+    const response = await startLogin();
+
+    if (response.type === "chatgpt") {
+      await openUrl(response.authUrl);
+      setAuthMessage("Opened Codex login in your browser.");
+    } else if (response.type === "chatgptDeviceCode") {
+      await openUrl(response.verificationUrl);
+      setAuthMessage(`Enter code ${response.userCode} in the browser.`);
+    } else {
+      setAuthMessage(`Login flow started: ${response.type}`);
+    }
+  }
+
+  async function handleStopCodex() {
+    await stopCodex();
+    setCodexConnected(false);
+    setRunView((current) => ({ ...current, status: "interrupted" }));
+  }
+
+  async function handlePreflight() {
+    if (!selectedWorkspace || !prompt.trim()) {
+      setStatusMessage("Select a workspace and write a prompt first.");
+      return null;
+    }
+
+    const report = await runPreflight({
+      workspace: selectedWorkspace,
+      prompt,
+      useOss,
+      ossProvider,
+    });
+    setPreflight(report);
+    setStatusMessage("Preflight completed.");
+    return report;
+  }
+
+  async function launchRun(mode: "plan" | "run") {
+    if (!selectedWorkspace || !prompt.trim()) {
+      setStatusMessage("Select a workspace and write a prompt first.");
+      return;
+    }
+
+    const report = preflight ?? (await handlePreflight());
+    if (!report) {
+      return;
+    }
+
+    await ensureCodexConnected();
+
+    const task = await createTask({
+      workspaceId: selectedWorkspace.id,
+      originalPrompt: prompt,
+      improvedPrompt: report.improvedPrompt || improvedPrompt,
+      routeRecommendation: report.routeRecommendation,
+      budgetTokens: report.tokenEstimate,
+    });
+    currentTaskId.current = task.id;
+
+    await savePreflightReport(selectedWorkspace.id, task.id, report);
+
+    const run = await createRun({
+      taskId: task.id,
+      workspaceId: selectedWorkspace.id,
+      status: "starting",
+      sandbox: "workspace-write",
+      approvalPolicy: "on-request",
+      modelProvider: useOss ? "oss" : null,
+    });
+    currentRunId.current = run.id;
+    eventSequence.current = 0;
+    setRunView({ ...emptyRunView, status: "running" });
+
+    const thread = await codexRpc<{
+      thread: { id: string };
+      model?: string;
+      modelProvider?: string;
+      serviceTier?: string | null;
+    }>("thread/start", {
+      cwd: selectedWorkspace.path,
+      approvalPolicy: "on-request",
+      approvalsReviewer: "user",
+      sandbox: "workspace-write",
+      serviceName: "orchestrator",
+      threadSource: "orchestrator",
+      config: useOss
+        ? {
+            model_provider: "oss",
+            oss_provider: ossProvider,
+          }
+        : null,
+    });
+
+    await updateRun(run.id, {
+      codexThreadId: thread.thread.id,
+      model: thread.model ?? null,
+      modelProvider: thread.modelProvider ?? (useOss ? "oss" : null),
+      status: "running",
+    });
+
+    const text =
+      mode === "plan"
+        ? buildPlanPrompt(report.improvedPrompt || improvedPrompt)
+        : buildRunPrompt(report.improvedPrompt || improvedPrompt, report.recommendations);
+
+    const turn = await codexRpc<{ turn: { id: string } }>("turn/start", {
+      threadId: thread.thread.id,
+      input: [{ type: "text", text, text_elements: [] }],
+      cwd: selectedWorkspace.path,
+      approvalPolicy: "on-request",
+      approvalsReviewer: "user",
+    });
+
+    await updateRun(run.id, {
+      codexTurnId: turn.turn.id,
+      status: "running",
+    });
+    await updateTaskStatus(task.id, "running");
+    await refreshWorkspaceData(selectedWorkspace.id);
+    setStatusMessage(mode === "plan" ? "Plan-first turn started." : "Codex run started.");
+  }
+
+  async function handleCodexNotification(message: CodexMessage) {
+    setRunView((current) => applyCodexMessage(current, message));
+    await persistRunEvent("notification", message.method ?? null, message);
+
+    const runId = currentRunId.current;
+    if (!runId) {
+      return;
+    }
+
+    const params = (message.params ?? {}) as Record<string, unknown>;
+
+    if (message.method === "thread/tokenUsage/updated") {
+      const tokenUsage = readTokenUsage(params);
+      if (tokenUsage) {
+        await recordTokenUsage({
+          runId,
+          threadId: readString(params.threadId),
+          turnId: readString(params.turnId),
+          ...tokenUsage,
+        });
+      }
+    }
+
+    if (message.method === "turn/completed") {
+      const turn = readObject(params.turn);
+      const status = readString(turn.status) === "failed" ? "failed" : "completed";
+      await updateRun(runId, {
+        status,
+        completedAt: new Date().toISOString(),
+        durationMs: readNumber(turn.durationMs),
+        error: status === "failed" ? JSON.stringify(turn.error ?? "Turn failed") : null,
+      });
+      if (currentTaskId.current) {
+        await updateTaskStatus(currentTaskId.current, status);
+      }
+      if (selectedWorkspace) {
+        await refreshWorkspaceData(selectedWorkspace.id);
+      }
+    }
+  }
+
+  async function handleCodexServerRequest(request: CodexMessage) {
+    setRunView((current) => addServerRequest(current, request));
+    await persistRunEvent("server-request", request.method ?? null, request);
+  }
+
+  async function persistRunEvent(
+    eventType: "notification" | "server-request" | "process",
+    method: string | null,
+    payload: unknown,
+  ) {
+    const runId = currentRunId.current;
+    if (!runId) {
+      return;
+    }
+
+    eventSequence.current += 1;
+    await appendRunEvent({
+      runId,
+      sequence: eventSequence.current,
+      eventType,
+      method,
+      payload,
+    });
+  }
+
+  async function handleResolveRequest(request: CodexMessage, approved: boolean) {
+    if (request.id === undefined) {
+      return;
+    }
+
+    await resolveCodexServerRequest(request.id, approvalResult(request, approved));
+    setRunView((current) => resolveServerRequest(current, request.id!));
+  }
+
+  function applyRecommendation(recommendation: RecommendationDraft) {
+    setPrompt((current) =>
+      current.includes(recommendation.body)
+        ? current
+        : `${current.trim()}\n\n${recommendation.body}`.trim(),
+    );
   }
 
   return (
     <main className="app-shell">
-      <section className="panel">
-        <div className="panel-header">
+      <aside className="sidebar">
+        <div className="brand">
+          <span>OR</span>
           <div>
-            <p className="eyebrow">Desktop starter</p>
-            <h1>Tauri + React + TypeScript + SQLite</h1>
+            <h1>Orchestrator</h1>
+            <p>Token-aware Codex workspace</p>
           </div>
-          <span className="status">{status}</span>
         </div>
 
-        <form className="note-form" onSubmit={handleSubmit}>
-          <label htmlFor="note-input">SQLite test note</label>
-          <div className="input-row">
-            <input
-              id="note-input"
-              value={body}
-              onChange={(event) => setBody(event.currentTarget.value)}
-              placeholder="Write a note to store locally"
-            />
-            <button type="submit">Save</button>
-          </div>
-        </form>
+        <button className="wide secondary" type="button" onClick={chooseWorkspace}>
+          <FolderPlus size={16} />
+          Add workspace
+        </button>
 
-        {error ? <p className="error">{error}</p> : null}
-
-        <div className="notes">
-          {notes.length === 0 ? (
-            <p className="empty">No notes saved yet.</p>
+        <nav className="workspace-list" aria-label="Workspaces">
+          {workspaces.length === 0 ? (
+            <p className="muted">No workspaces yet.</p>
           ) : (
-            notes.map((note) => (
-              <article className="note" key={note.id}>
-                <p>{note.body}</p>
-                <time>{note.created_at}</time>
-              </article>
+            workspaces.map((workspace) => (
+              <button
+                className={workspace.id === selectedWorkspace?.id ? "active" : ""}
+                key={workspace.id}
+                type="button"
+                onClick={() => setSelectedWorkspace(workspace)}
+              >
+                <strong>{workspace.label}</strong>
+                <span>{workspace.path}</span>
+              </button>
             ))
           )}
+        </nav>
+
+        <div className="sidebar-footer">
+          <div>
+            <strong>Codex</strong>
+            <span>{codexConnected ? "Connected" : "Disconnected"}</span>
+          </div>
+          <button className="icon-button" type="button" onClick={ensureCodexConnected} title="Connect Codex">
+            <Plug size={17} />
+          </button>
+          <button className="icon-button" type="button" onClick={handleLogin} title="Log in">
+            <LogIn size={17} />
+          </button>
+          <button className="icon-button" type="button" onClick={handleStopCodex} title="Stop Codex">
+            <Power size={17} />
+          </button>
+        </div>
+      </aside>
+
+      <section className="main">
+        <header className="topbar">
+          <div>
+            <p className="eyebrow">{selectedWorkspace?.path ?? "No workspace selected"}</p>
+            <h2>{selectedWorkspace?.label ?? "Choose a repository"}</h2>
+          </div>
+          <div className="topbar-actions">
+            <span>{authMessage}</span>
+            <button className="icon-button" type="button" onClick={() => selectedWorkspace && refreshWorkspaceData(selectedWorkspace.id)} title="Refresh">
+              <RefreshCw size={17} />
+            </button>
+            <button className="icon-button" type="button" title="Settings">
+              <Settings size={17} />
+            </button>
+          </div>
+        </header>
+
+        <div className="status-strip">{statusMessage}</div>
+
+        <div className="workspace-grid">
+          <div className="left-column">
+            <TaskComposer
+              disabled={!selectedWorkspace || !prompt.trim()}
+              prompt={prompt}
+              improvedPrompt={preflight?.improvedPrompt ?? improvedPrompt}
+              routeRecommendation={preflight?.routeRecommendation ?? routeRecommendation}
+              tokenEstimate={preflight?.tokenEstimate ?? tokenEstimate}
+              useOss={useOss}
+              ossProvider={ossProvider}
+              onPromptChange={(nextPrompt) => {
+                setPrompt(nextPrompt);
+                setPreflight(null);
+              }}
+              onUseOssChange={setUseOss}
+              onOssProviderChange={setOssProvider}
+              onPreflight={() => void handlePreflight()}
+              onPlanFirst={() => void launchRun("plan")}
+              onRun={() => void launchRun("run")}
+            />
+            <PreflightPanel report={preflight} onApplyRecommendation={applyRecommendation} />
+          </div>
+
+          <div className="right-column">
+            <AnalyticsSummary summary={analytics} />
+            <RunConsole runView={runView} onResolveRequest={handleResolveRequest} />
+            <section className="surface history" aria-label="Run history">
+              <div className="surface-header">
+                <div>
+                  <p className="eyebrow">History</p>
+                  <h2>Recent runs</h2>
+                </div>
+              </div>
+              {runs.length === 0 ? (
+                <p className="muted">Runs will appear after Codex starts a task.</p>
+              ) : (
+                <div className="run-list">
+                  {runs.map((run) => (
+                    <article className="run-row" key={run.id}>
+                      <div>
+                        <strong>{run.original_prompt}</strong>
+                        <span>
+                          {run.status} · {run.route_recommendation} · {run.started_at}
+                        </span>
+                      </div>
+                      <span>{run.model_provider ?? "openai"}</span>
+                    </article>
+                  ))}
+                </div>
+              )}
+            </section>
+          </div>
         </div>
       </section>
     </main>
   );
+}
+
+function approvalResult(request: CodexMessage, approved: boolean) {
+  if (request.method === "execCommandApproval" || request.method === "applyPatchApproval") {
+    return { decision: approved ? "approved" : "denied" };
+  }
+
+  if (request.method === "item/permissions/requestApproval") {
+    const params = (request.params ?? {}) as Record<string, unknown>;
+    return approved
+      ? { permissions: params.permissions ?? {}, scope: "turn" }
+      : { permissions: {}, scope: "turn" };
+  }
+
+  return { decision: approved ? "accept" : "decline" };
+}
+
+function readTokenUsage(params: Record<string, unknown>) {
+  const usage = readObject(params.tokenUsage);
+  const total = readObject(usage.total);
+
+  if (!Object.keys(total).length) {
+    return null;
+  }
+
+  return {
+    totalTokens: readNumber(total.totalTokens) ?? 0,
+    inputTokens: readNumber(total.inputTokens) ?? 0,
+    cachedInputTokens: readNumber(total.cachedInputTokens) ?? 0,
+    outputTokens: readNumber(total.outputTokens) ?? 0,
+    reasoningOutputTokens: readNumber(total.reasoningOutputTokens) ?? 0,
+    modelContextWindow: readNumber(usage.modelContextWindow),
+  };
+}
+
+function readObject(value: unknown): Record<string, unknown> {
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : {};
+}
+
+function readString(value: unknown) {
+  return typeof value === "string" ? value : null;
+}
+
+function readNumber(value: unknown) {
+  return typeof value === "number" ? value : null;
 }
 
 export default App;

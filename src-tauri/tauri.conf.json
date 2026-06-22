@@ -1,6 +1,6 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "Tauri SQLite Starter",
+  "productName": "Orchestrator",
   "version": "0.1.0",
   "identifier": "com.zachealy.orchestrator",
   "build": {
@@ -17,7 +17,7 @@
   "app": {
     "windows": [
       {
-        "title": "Tauri SQLite Starter",
+        "title": "Orchestrator",
         "width": 1180,
         "height": 780,
         "minWidth": 960,
