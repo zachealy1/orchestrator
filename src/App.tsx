@@ -33,7 +33,9 @@ import {
 import {
   codexRpc,
   connectCodex,
+  checkoutGitBranch,
   getAuthStatus,
+  listGitBranches,
   listCodexModels,
   readCodexFile,
   resolveCodexServerRequest,
@@ -170,6 +172,8 @@ function App() {
   const [planMode, setPlanMode] = useState(false);
   const [accessLevel, setAccessLevel] = useState<AccessLevel>("ask");
   const [contextFiles, setContextFiles] = useState<ComposerContextFile[]>([]);
+  const [branches, setBranches] = useState<string[]>([]);
+  const [selectedBranch, setSelectedBranch] = useState<string | null>(null);
 
   const currentRunId = useRef<number | null>(null);
   const currentTaskId = useRef<number | null>(null);
@@ -196,6 +200,7 @@ function App() {
     }
 
     void refreshWorkspaceData(selectedWorkspace.id);
+    void refreshBranches(selectedWorkspace);
   }, [selectedWorkspace]);
 
   useEffect(() => {
@@ -296,6 +301,22 @@ function App() {
     setAnalytics(summary);
   }
 
+  async function refreshBranches(workspace: Workspace) {
+    try {
+      const result = await listGitBranches(workspace.path);
+      setBranches(result.branches);
+      setSelectedBranch(result.currentBranch ?? result.branches[0] ?? null);
+    } catch (error) {
+      setBranches([]);
+      setSelectedBranch(null);
+      setStatusMessage(
+        `Branches unavailable for ${workspace.label}: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+      );
+    }
+  }
+
   async function refreshCodexModels() {
     try {
       const visibleModels = await listCodexModels();
@@ -335,6 +356,55 @@ function App() {
     setWorkspaces(await listWorkspaces());
     setSelectedWorkspace(workspace);
     setStatusMessage(`Selected ${workspace.label}`);
+  }
+
+  function selectWorkspace(workspaceId: number) {
+    const workspace = workspaces.find((candidate) => candidate.id === workspaceId);
+    if (!workspace) {
+      return;
+    }
+
+    setSelectedWorkspace(workspace);
+    setPreflight(null);
+    setStatusMessage(`Selected ${workspace.label}`);
+  }
+
+  async function selectBranch(branch: string) {
+    if (!selectedWorkspace || !branch) {
+      return;
+    }
+
+    setSelectedBranch(branch);
+    setPreflight(null);
+    try {
+      await checkoutGitBranch(selectedWorkspace.path, branch);
+      await refreshBranches(selectedWorkspace);
+      setStatusMessage(`Working on ${selectedWorkspace.label} at ${branch}.`);
+    } catch (error) {
+      await refreshBranches(selectedWorkspace);
+      setStatusMessage(
+        `Could not switch to ${branch}: ${error instanceof Error ? error.message : String(error)}`,
+      );
+    }
+  }
+
+  async function ensureSelectedBranch() {
+    if (!selectedWorkspace || !selectedBranch) {
+      return true;
+    }
+
+    try {
+      await checkoutGitBranch(selectedWorkspace.path, selectedBranch);
+      return true;
+    } catch (error) {
+      await refreshBranches(selectedWorkspace);
+      setStatusMessage(
+        `Could not switch to ${selectedBranch}: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+      );
+      return false;
+    }
   }
 
   async function chooseContextFiles() {
@@ -410,6 +480,10 @@ function App() {
       return null;
     }
 
+    if (!(await ensureSelectedBranch())) {
+      return null;
+    }
+
     const report = await runPreflight({
       workspace: selectedWorkspace,
       prompt,
@@ -433,6 +507,10 @@ function App() {
     }
 
     await ensureCodexConnected();
+    if (!(await ensureSelectedBranch())) {
+      return;
+    }
+
     const mode = planMode ? "plan" : "run";
     const access = accessSettings(accessLevel);
     const selectedModel =
@@ -710,7 +788,7 @@ function App() {
                   className={workspace.id === selectedWorkspace?.id ? "active" : ""}
                   key={workspace.id}
                   type="button"
-                  onClick={() => setSelectedWorkspace(workspace)}
+                  onClick={() => selectWorkspace(workspace.id)}
                 >
                   <strong>{workspace.label}</strong>
                   <span>{workspace.path}</span>
@@ -777,6 +855,10 @@ function App() {
                 prompt={prompt}
                 routeRecommendation={preflight?.routeRecommendation ?? routeRecommendation}
                 tokenEstimate={preflight?.tokenEstimate ?? tokenEstimate}
+                workspaces={workspaces}
+                selectedWorkspaceId={selectedWorkspace?.id ?? null}
+                branches={branches}
+                selectedBranch={selectedBranch}
                 models={models}
                 modelLoadError={modelLoadError}
                 selectedModelId={selectedModelId}
@@ -785,6 +867,8 @@ function App() {
                 planMode={planMode}
                 accessLevel={accessLevel}
                 contextFiles={contextFiles}
+                onWorkspaceChange={selectWorkspace}
+                onBranchChange={(branch) => void selectBranch(branch)}
                 onPromptChange={(nextPrompt) => {
                   setPrompt(nextPrompt);
                   setPreflight(null);

@@ -3,6 +3,7 @@ import type {
   CodexConnectResult,
   CodexModel,
   ComposerContextFile,
+  GitBranchList,
   ModelListResponse,
   OssProvider,
   PreflightReport,
@@ -23,6 +24,14 @@ export function codexRpc<T>(method: string, params: Record<string, unknown> = {}
 
 export function resolveCodexServerRequest(id: string | number, result: unknown) {
   return invoke<void>("codex_resolve_server_request", { id, result });
+}
+
+export function listGitBranches(path: string) {
+  return invoke<GitBranchList>("list_git_branches", { path });
+}
+
+export function checkoutGitBranch(path: string, branch: string) {
+  return invoke<{ branch: string }>("checkout_git_branch", { path, branch });
 }
 
 export function runPreflight(input: {

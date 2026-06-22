@@ -34,12 +34,33 @@ const models: TaskComposerProps["models"] = [
   },
 ];
 
+const workspaces: TaskComposerProps["workspaces"] = [
+  {
+    id: 1,
+    path: "/repo/orchestrator",
+    label: "orchestrator",
+    last_opened_at: "2026-06-22T00:00:00Z",
+    created_at: "2026-06-22T00:00:00Z",
+  },
+  {
+    id: 2,
+    path: "/repo/mobile",
+    label: "mobile",
+    last_opened_at: "2026-06-22T00:00:00Z",
+    created_at: "2026-06-22T00:00:00Z",
+  },
+];
+
 function renderComposer(overrides: Partial<TaskComposerProps> = {}) {
   const props: TaskComposerProps = {
     disabled: false,
     prompt: "",
     routeRecommendation: "direct-run",
     tokenEstimate: 0,
+    workspaces,
+    selectedWorkspaceId: 1,
+    branches: ["main", "feature/chat-controls"],
+    selectedBranch: "main",
     models,
     modelLoadError: null,
     selectedModelId: "gpt-5.1-codex",
@@ -48,6 +69,8 @@ function renderComposer(overrides: Partial<TaskComposerProps> = {}) {
     planMode: false,
     accessLevel: "ask",
     contextFiles: [],
+    onWorkspaceChange: vi.fn(),
+    onBranchChange: vi.fn(),
     onPromptChange: vi.fn(),
     onModelChange: vi.fn(),
     onReasoningEffortChange: vi.fn(),
@@ -132,6 +155,18 @@ describe("TaskComposer", () => {
 
     expect(onAccessLevelChange).toHaveBeenCalledWith("full");
     expect(onAccessLevelChange).toHaveBeenCalledWith("ask");
+  });
+
+  it("renders folder and branch selectors", async () => {
+    const onWorkspaceChange = vi.fn();
+    const onBranchChange = vi.fn();
+    const { user } = renderComposer({ onWorkspaceChange, onBranchChange });
+
+    await user.selectOptions(screen.getByLabelText("Folder"), "2");
+    await user.selectOptions(screen.getByLabelText("Branch"), "feature/chat-controls");
+
+    expect(onWorkspaceChange).toHaveBeenCalledWith(2);
+    expect(onBranchChange).toHaveBeenCalledWith("feature/chat-controls");
   });
 
   it("renders selected file chips and removes files", async () => {

@@ -1,9 +1,15 @@
 import {
   BrainCircuit,
+  ChevronDown,
   ClipboardCheck,
   Flag,
+  Folder,
+  GitBranch,
+  Bot,
+  Gauge,
   Paperclip,
   Play,
+  ShieldCheck,
   X,
 } from "lucide-react";
 import type {
@@ -11,6 +17,7 @@ import type {
   CodexModel,
   ComposerContextFile,
   RouteRecommendation,
+  Workspace,
 } from "../types";
 
 type Props = {
@@ -18,6 +25,10 @@ type Props = {
   prompt: string;
   routeRecommendation: RouteRecommendation;
   tokenEstimate: number;
+  workspaces: Workspace[];
+  selectedWorkspaceId: number | null;
+  branches: string[];
+  selectedBranch: string | null;
   models: CodexModel[];
   modelLoadError: string | null;
   selectedModelId: string | null;
@@ -26,6 +37,8 @@ type Props = {
   planMode: boolean;
   accessLevel: AccessLevel;
   contextFiles: ComposerContextFile[];
+  onWorkspaceChange: (workspaceId: number) => void;
+  onBranchChange: (branch: string) => void;
   onPromptChange: (prompt: string) => void;
   onModelChange: (modelId: string) => void;
   onReasoningEffortChange: (effort: string) => void;
@@ -43,6 +56,10 @@ export function TaskComposer({
   prompt,
   routeRecommendation,
   tokenEstimate,
+  workspaces,
+  selectedWorkspaceId,
+  branches,
+  selectedBranch,
   models,
   modelLoadError,
   selectedModelId,
@@ -51,6 +68,8 @@ export function TaskComposer({
   planMode,
   accessLevel,
   contextFiles,
+  onWorkspaceChange,
+  onBranchChange,
   onPromptChange,
   onModelChange,
   onReasoningEffortChange,
@@ -129,8 +148,56 @@ export function TaskComposer({
       </div>
 
       <div className="composer-options-row">
+        <label className="composer-select folder-select">
+          <span className="composer-select-icon" aria-hidden="true">
+            <Folder size={16} />
+          </span>
+          <select
+            value={selectedWorkspaceId ?? ""}
+            onChange={(event) => onWorkspaceChange(Number(event.currentTarget.value))}
+            disabled={workspaces.length === 0}
+            aria-label="Folder"
+          >
+            {workspaces.length === 0 ? (
+              <option value="">No folders</option>
+            ) : (
+              workspaces.map((workspace) => (
+                <option key={workspace.id} value={workspace.id}>
+                  {workspace.label}
+                </option>
+              ))
+            )}
+          </select>
+          <ChevronDown className="select-chevron" size={16} aria-hidden="true" />
+        </label>
+
+        <label className="composer-select branch-select">
+          <span className="composer-select-icon" aria-hidden="true">
+            <GitBranch size={16} />
+          </span>
+          <select
+            value={selectedBranch ?? ""}
+            onChange={(event) => onBranchChange(event.currentTarget.value)}
+            disabled={branches.length === 0}
+            aria-label="Branch"
+          >
+            {branches.length === 0 ? (
+              <option value="">No branches</option>
+            ) : (
+              branches.map((branch) => (
+                <option key={branch} value={branch}>
+                  {branch}
+                </option>
+              ))
+            )}
+          </select>
+          <ChevronDown className="select-chevron" size={16} aria-hidden="true" />
+        </label>
+
         <label className="composer-select access-select">
-          <span>Access</span>
+          <span className="composer-select-icon" aria-hidden="true">
+            <ShieldCheck size={16} />
+          </span>
           <select
             value={accessLevel}
             onChange={(event) => onAccessLevelChange(event.currentTarget.value as AccessLevel)}
@@ -139,10 +206,13 @@ export function TaskComposer({
             <option value="ask">Ask for approval</option>
             <option value="full">Full access</option>
           </select>
+          <ChevronDown className="select-chevron" size={16} aria-hidden="true" />
         </label>
 
         <label className="composer-select agent-select">
-          <span>Agent</span>
+          <span className="composer-select-icon" aria-hidden="true">
+            <Bot size={16} />
+          </span>
           <select
             value={selectedModel?.id ?? ""}
             onChange={(event) => onModelChange(event.currentTarget.value)}
@@ -159,10 +229,13 @@ export function TaskComposer({
               ))
             )}
           </select>
+          <ChevronDown className="select-chevron" size={16} aria-hidden="true" />
         </label>
 
         <label className="composer-select reasoning-select">
-          <span>Reasoning</span>
+          <span className="composer-select-icon" aria-hidden="true">
+            <Gauge size={16} />
+          </span>
           <select
             value={selectedReasoningEffort ?? ""}
             onChange={(event) => onReasoningEffortChange(event.currentTarget.value)}
@@ -179,6 +252,7 @@ export function TaskComposer({
               ))
             )}
           </select>
+          <ChevronDown className="select-chevron" size={16} aria-hidden="true" />
         </label>
       </div>
 

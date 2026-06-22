@@ -8,6 +8,11 @@ export type Workspace = {
   created_at: string;
 };
 
+export type GitBranchList = {
+  branches: string[];
+  currentBranch: string | null;
+};
+
 export type PreflightCheck = {
   id: string;
   label: string;

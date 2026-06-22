@@ -83,6 +83,19 @@ struct CommandProbe {
     stderr: String,
 }
 
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct GitBranchList {
+    branches: Vec<String>,
+    current_branch: Option<String>,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct GitCheckoutResult {
+    branch: String,
+}
+
 fn migrations() -> Vec<Migration> {
     vec![
         Migration {
@@ -473,6 +486,78 @@ fn codex_stop(app: AppHandle, state: State<'_, CodexState>) -> Result<(), String
 }
 
 #[tauri::command]
+fn list_git_branches(path: String) -> Result<GitBranchList, String> {
+    let git_probe = run_command("git", &["-C", &path, "rev-parse", "--is-inside-work-tree"]);
+    if !git_probe.ok {
+        return Err(output_detail(&git_probe).unwrap_or_else(|| {
+            "Selected folder is not inside a Git repository".to_string()
+        }));
+    }
+
+    let current_probe = run_command("git", &["-C", &path, "branch", "--show-current"]);
+    let current_branch = current_probe
+        .stdout
+        .lines()
+        .next()
+        .map(str::trim)
+        .filter(|branch| !branch.is_empty())
+        .map(str::to_string);
+
+    let branches_probe = run_command(
+        "git",
+        &["-C", &path, "for-each-ref", "--format=%(refname:short)", "refs/heads"],
+    );
+    if !branches_probe.ok {
+        return Err(output_detail(&branches_probe)
+            .unwrap_or_else(|| "Unable to list Git branches".to_string()));
+    }
+
+    let mut branches: Vec<String> = branches_probe
+        .stdout
+        .lines()
+        .map(str::trim)
+        .filter(|branch| !branch.is_empty())
+        .map(str::to_string)
+        .collect();
+    branches.sort();
+
+    if let Some(current) = &current_branch {
+        if !branches.iter().any(|branch| branch == current) {
+            branches.insert(0, current.clone());
+        }
+    }
+
+    Ok(GitBranchList {
+        branches,
+        current_branch,
+    })
+}
+
+#[tauri::command]
+fn checkout_git_branch(path: String, branch: String) -> Result<GitCheckoutResult, String> {
+    if branch.trim().is_empty() {
+        return Err("Choose a branch before switching".to_string());
+    }
+
+    let branches = list_git_branches(path.clone())?;
+    if !branches.branches.iter().any(|candidate| candidate == &branch) {
+        return Err(format!("Branch `{branch}` was not found in the selected folder"));
+    }
+
+    if branches.current_branch.as_deref() == Some(branch.as_str()) {
+        return Ok(GitCheckoutResult { branch });
+    }
+
+    let checkout_probe = run_command("git", &["-C", &path, "checkout", &branch]);
+    if !checkout_probe.ok {
+        return Err(output_detail(&checkout_probe)
+            .unwrap_or_else(|| format!("Unable to switch to `{branch}`")));
+    }
+
+    Ok(GitCheckoutResult { branch })
+}
+
+#[tauri::command]
 fn run_preflight(
     path: String,
     prompt: String,
@@ -797,6 +882,8 @@ pub fn run() {
             codex_rpc,
             codex_resolve_server_request,
             codex_stop,
+            list_git_branches,
+            checkout_git_branch,
             run_preflight
         ])
         .run(tauri::generate_context!())
