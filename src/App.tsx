@@ -76,6 +76,71 @@ const DEFAULT_ANALYTICS: AnalyticsSummaryType = {
 
 type AppView = "task" | "runs" | "analytics" | "settings";
 
+const TASK_QUOTES = [
+  "You prompting me?",
+  "You scoping this, or am I?",
+  "Are you talking to the agent?",
+  "You had me at clear requirements.",
+  "To production and beyond.",
+  "To plan mode and beyond.",
+  "To clean context and beyond.",
+  "To the repo and beyond.",
+  "I am your planner.",
+  "I am your context.",
+  "No, I am your workflow.",
+  "Search your feelings. You know it needs tests.",
+  "The prompt is strong with this one.",
+  "May the context be with you.",
+  "Use the plan, Luke.",
+  "This is the prompt you're looking for.",
+  "The agents are standing by.",
+  "Houston, we have a scope problem.",
+  "We're gonna need a better prompt.",
+  "I'll be back... with a clearer plan.",
+  "Say hello to my little task.",
+  "Here's looking at you, codebase.",
+  "Keep your prompts close and your acceptance criteria closer.",
+  "One does not simply run an agent without scope.",
+  "There's no place like prod... but let's test first.",
+  "The first rule of Orchestrator: clarify the task.",
+  "With great automation comes great approval gates.",
+  "Life finds a way. Agents find edge cases.",
+  "The code must flow.",
+  "Open the pod bay doors? Not without approval.",
+  "I feel the need... the need for clean context.",
+  "You can't handle the full repo scan.",
+  "Show me the failing test.",
+  "Nobody puts context in the corner.",
+  "Roads? Where we're going, we need tests.",
+  "The plan will go on.",
+  "A prompt. A plan. A clean execution.",
+  "Assemble the workflow.",
+  "Cue the agents.",
+  "Roll initiative: prompt analysis.",
+  "Let's make this run count.",
+  "Give me the chaos. I'll make it structured.",
+  "What's the mission?",
+  "Ready to conduct some code?",
+  "Let's orchestrate something useful.",
+  "Before we run, we plan.",
+  "Your move, developer.",
+  "The agents have entered the chat.",
+  "This task needs a bigger plan.",
+  "Less waffle. More workflow.",
+  "Great prompt, kid. Don't get cocky.",
+  "I find your lack of scope disturbing.",
+  "That's not a prompt. That's a plot twist.",
+  "This is where the plan begins.",
+  "Every great build starts with a better brief.",
+  "Clarify first. Execute second.",
+  "Tell me the goal. I'll tune the agents.",
+  "The repo awakens.",
+  "A new prompt rises.",
+  "Return of the context.",
+  "Attack of the vague requirements.",
+  "The last prompt was only the beginning.",
+];
+
 function App() {
   const [workspaces, setWorkspaces] = useState<Workspace[]>([]);
   const [selectedWorkspace, setSelectedWorkspace] = useState<Workspace | null>(null);
@@ -98,6 +163,10 @@ function App() {
   const improvedPrompt = useMemo(() => improvePrompt(prompt), [prompt]);
   const routeRecommendation = useMemo(() => recommendRoute(prompt), [prompt]);
   const tokenEstimate = useMemo(() => estimateTokens(prompt), [prompt]);
+  const taskQuote = useMemo(
+    () => TASK_QUOTES[Math.floor(Math.random() * TASK_QUOTES.length)],
+    [],
+  );
   const selectedWorkspaceName = selectedWorkspace?.label ?? "Choose a repository";
   const selectedWorkspacePath = selectedWorkspace?.path ?? "No workspace selected";
   const canRun = Boolean(selectedWorkspace && prompt.trim());
@@ -532,7 +601,7 @@ function App() {
         {activeView === "task" ? (
           <div className="codex-workspace">
             <section className="task-hero" aria-label="Task launch">
-              <h1>What should we build in {selectedWorkspace?.label ?? "orchestrator"}?</h1>
+              <h1>{taskQuote}</h1>
               <TaskComposer
                 disabled={!canRun}
                 prompt={prompt}
