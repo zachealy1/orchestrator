@@ -12,6 +12,7 @@ import {
   ShieldCheck,
   X,
 } from "lucide-react";
+import { useLayoutEffect, useRef } from "react";
 import type {
   AccessLevel,
   CodexModel,
@@ -81,23 +82,42 @@ export function TaskComposer({
   onPreflight,
   onRun,
 }: Props) {
+  const promptTextareaRef = useRef<HTMLTextAreaElement>(null);
   const selectedModel =
     models.find((model) => model.id === selectedModelId) ?? models[0] ?? null;
   const reasoningOptions = selectedModel?.supportedReasoningEfforts ?? [];
   const controlsDisabled = models.length === 0 || Boolean(modelLoadError);
   const planRecommended = routeRecommendation === "plan-first";
 
+  useLayoutEffect(() => {
+    const textarea = promptTextareaRef.current;
+
+    if (!textarea) {
+      return;
+    }
+
+    const maxHeight = 220;
+    textarea.style.height = "auto";
+    textarea.style.height = `${Math.min(textarea.scrollHeight, maxHeight)}px`;
+    textarea.style.overflowY = textarea.scrollHeight > maxHeight ? "auto" : "hidden";
+  }, [prompt]);
+
   return (
     <section className="composer-panel" aria-label="Task composer">
       <label className="prompt-field">
         <span className="sr-only">Prompt</span>
         <textarea
+          ref={promptTextareaRef}
           value={prompt}
           onChange={(event) => onPromptChange(event.currentTarget.value)}
           placeholder="Do anything"
-          rows={5}
+          rows={1}
         />
       </label>
+
+      <div className="composer-meta-row" aria-label="Prompt metadata">
+        <span className="token-pill">{tokenEstimate.toLocaleString()} tokens</span>
+      </div>
 
       <div className="composer-toolbar" role="toolbar" aria-label="Prompt actions">
         <div className="composer-action-group">
@@ -133,7 +153,6 @@ export function TaskComposer({
         </div>
 
         <div className="composer-run-group">
-          <span className="token-pill">{tokenEstimate.toLocaleString()} tokens</span>
           <button
             className="send-button"
             type="button"

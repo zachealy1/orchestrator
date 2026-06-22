@@ -539,20 +539,30 @@ button:focus-visible {
 }
 
 .prompt-field textarea {
-  min-height: 122px;
-  max-height: 320px;
+  min-height: 50px;
+  max-height: 220px;
   border: 0;
   border-radius: 0;
   background: var(--composer);
   color: var(--text);
   font-size: 1rem;
   line-height: 1.5;
-  padding: 20px 20px 10px;
+  padding: 14px 20px 8px;
+  resize: none;
 }
 
 .prompt-field textarea:focus {
   border-color: transparent;
   box-shadow: none;
+}
+
+.composer-meta-row {
+  display: flex;
+  min-height: 24px;
+  align-items: center;
+  justify-content: flex-end;
+  background: var(--composer);
+  padding: 0 18px 8px;
 }
 
 .composer-toolbar {
@@ -634,7 +644,7 @@ button:focus-visible {
   align-items: center;
   border-top: 1px solid rgba(51, 65, 85, 0.56);
   background: rgba(10, 15, 20, 0.34);
-  padding: 7px 14px 9px;
+  padding: 8px 14px;
 }
 
 .composer-select {
