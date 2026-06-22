@@ -39,30 +39,38 @@ export function TaskComposer({
   onRun,
 }: Props) {
   return (
-    <section className="surface composer" aria-label="Task composer">
-      <div className="surface-header">
-        <div>
-          <p className="eyebrow">Task</p>
-          <h2>Compose a Codex run</h2>
-        </div>
+    <section className="composer-panel" aria-label="Task composer">
+      <label className="prompt-field">
+        <span className="sr-only">Prompt</span>
+        <textarea
+          value={prompt}
+          onChange={(event) => onPromptChange(event.currentTarget.value)}
+          placeholder="Do anything"
+          rows={5}
+        />
+      </label>
+
+      <div className="composer-toolbar">
+        <button className="secondary" type="button" onClick={onPreflight} disabled={disabled}>
+          <ClipboardCheck size={16} />
+          Preflight
+        </button>
+        <button className="secondary" type="button" onClick={onPlanFirst} disabled={disabled}>
+          <BrainCircuit size={16} />
+          Plan first
+        </button>
         <div className={`route-pill ${routeRecommendation}`}>
           <Route size={16} />
           {routeRecommendation === "plan-first" ? "Plan-first" : "Direct run"}
         </div>
+        <span className="token-pill">{tokenEstimate.toLocaleString()} tokens</span>
+        <button className="send-button" type="button" onClick={onRun} disabled={disabled} aria-label="Run Codex">
+          <Play size={16} />
+          <span className="sr-only">Run Codex</span>
+        </button>
       </div>
 
-      <label className="field">
-        <span>Prompt</span>
-        <textarea
-          value={prompt}
-          onChange={(event) => onPromptChange(event.currentTarget.value)}
-          placeholder="Describe the coding task you want Codex to run in this workspace"
-          rows={8}
-        />
-      </label>
-
-      <div className="composer-meta">
-        <span>{tokenEstimate.toLocaleString()} estimated tokens</span>
+      <div className="composer-context-row">
         <label className="toggle">
           <input
             type="checkbox"
@@ -80,30 +88,17 @@ export function TaskComposer({
           <option value="ollama">Ollama</option>
           <option value="lmstudio">LM Studio</option>
         </select>
+        <span>workspace-write</span>
+        <span>on-request approvals</span>
       </div>
 
-      <div className="improved-prompt">
-        <div>
+      <details className="improved-prompt">
+        <summary>
           <Sparkles size={16} />
           <strong>Deterministic prompt structure</strong>
-        </div>
+        </summary>
         <pre>{improvedPrompt || "Prompt structure appears here after you type."}</pre>
-      </div>
-
-      <div className="button-row">
-        <button className="secondary" type="button" onClick={onPreflight} disabled={disabled}>
-          <ClipboardCheck size={16} />
-          Preflight
-        </button>
-        <button className="secondary" type="button" onClick={onPlanFirst} disabled={disabled}>
-          <BrainCircuit size={16} />
-          Plan first
-        </button>
-        <button type="button" onClick={onRun} disabled={disabled}>
-          <Play size={16} />
-          Run Codex
-        </button>
-      </div>
+      </details>
     </section>
   );
 }

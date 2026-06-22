@@ -2,15 +2,21 @@ import { open } from "@tauri-apps/plugin-dialog";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { listen } from "@tauri-apps/api/event";
 import {
+  BarChart3,
+  Bot,
   FolderPlus,
+  History,
   LogIn,
   Plug,
   Power,
   RefreshCw,
   Settings,
+  TerminalSquare,
 } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import "./App.css";
+import orchestratorMark from "./assets/brand/orchestrator-mark.png";
+import orchestratorWordmark from "./assets/brand/orchestrator-wordmark.png";
 import {
   appendRunEvent,
   createRun,
@@ -70,11 +76,14 @@ const DEFAULT_ANALYTICS: AnalyticsSummaryType = {
   avg_duration_ms: null,
 };
 
+type AppView = "task" | "runs" | "analytics" | "settings";
+
 function App() {
   const [workspaces, setWorkspaces] = useState<Workspace[]>([]);
   const [selectedWorkspace, setSelectedWorkspace] = useState<Workspace | null>(null);
   const [runs, setRuns] = useState<RunListItem[]>([]);
   const [analytics, setAnalytics] = useState<AnalyticsSummaryType>(DEFAULT_ANALYTICS);
+  const [activeView, setActiveView] = useState<AppView>("task");
   const [prompt, setPrompt] = useState("");
   const [preflight, setPreflight] = useState<PreflightReport | null>(null);
   const [runView, setRunView] = useState<RunViewState>(emptyRunView);
@@ -91,6 +100,9 @@ function App() {
   const improvedPrompt = useMemo(() => improvePrompt(prompt), [prompt]);
   const routeRecommendation = useMemo(() => recommendRoute(prompt), [prompt]);
   const tokenEstimate = useMemo(() => estimateTokens(prompt), [prompt]);
+  const selectedWorkspaceName = selectedWorkspace?.label ?? "Choose a repository";
+  const selectedWorkspacePath = selectedWorkspace?.path ?? "No workspace selected";
+  const canRun = Boolean(selectedWorkspace && prompt.trim());
 
   useEffect(() => {
     void refreshWorkspaces();
@@ -409,106 +421,161 @@ function App() {
 
   return (
     <main className="app-shell">
-      <aside className="sidebar">
-        <div className="brand">
-          <span>OR</span>
+      <aside className="app-rail">
+        <div className="brand-lockup">
+          <img src={orchestratorMark} alt="" />
           <div>
-            <h1>Orchestrator</h1>
-            <p>Token-aware Codex workspace</p>
+            <strong>Orchestrator</strong>
+            <span>Codex workspace</span>
           </div>
         </div>
 
-        <button className="wide secondary" type="button" onClick={chooseWorkspace}>
-          <FolderPlus size={16} />
-          Add workspace
-        </button>
-
-        <nav className="workspace-list" aria-label="Workspaces">
-          {workspaces.length === 0 ? (
-            <p className="muted">No workspaces yet.</p>
-          ) : (
-            workspaces.map((workspace) => (
-              <button
-                className={workspace.id === selectedWorkspace?.id ? "active" : ""}
-                key={workspace.id}
-                type="button"
-                onClick={() => setSelectedWorkspace(workspace)}
-              >
-                <strong>{workspace.label}</strong>
-                <span>{workspace.path}</span>
-              </button>
-            ))
-          )}
+        <nav className="primary-nav" aria-label="Primary">
+          <button
+            className={activeView === "task" ? "active" : ""}
+            type="button"
+            onClick={() => setActiveView("task")}
+          >
+            <TerminalSquare size={17} />
+            <span>Task</span>
+          </button>
+          <button
+            className={activeView === "runs" ? "active" : ""}
+            type="button"
+            onClick={() => setActiveView("runs")}
+          >
+            <History size={17} />
+            <span>Runs</span>
+          </button>
+          <button
+            className={activeView === "analytics" ? "active" : ""}
+            type="button"
+            onClick={() => setActiveView("analytics")}
+          >
+            <BarChart3 size={17} />
+            <span>Analytics</span>
+          </button>
+          <button
+            className={activeView === "settings" ? "active" : ""}
+            type="button"
+            onClick={() => setActiveView("settings")}
+          >
+            <Settings size={17} />
+            <span>Settings</span>
+          </button>
         </nav>
 
-        <div className="sidebar-footer">
-          <div>
-            <strong>Codex</strong>
-            <span>{codexConnected ? "Connected" : "Disconnected"}</span>
+        <div className="rail-section">
+          <div className="rail-section-header">
+            <span>Workspaces</span>
+            <button className="icon-button" type="button" onClick={chooseWorkspace} title="Add workspace">
+              <FolderPlus size={16} />
+            </button>
           </div>
-          <button className="icon-button" type="button" onClick={ensureCodexConnected} title="Connect Codex">
-            <Plug size={17} />
-          </button>
-          <button className="icon-button" type="button" onClick={handleLogin} title="Log in">
-            <LogIn size={17} />
-          </button>
-          <button className="icon-button" type="button" onClick={handleStopCodex} title="Stop Codex">
-            <Power size={17} />
-          </button>
+
+          <nav className="workspace-list" aria-label="Workspaces">
+            {workspaces.length === 0 ? (
+              <p className="muted">No workspaces yet.</p>
+            ) : (
+              workspaces.map((workspace) => (
+                <button
+                  className={workspace.id === selectedWorkspace?.id ? "active" : ""}
+                  key={workspace.id}
+                  type="button"
+                  onClick={() => setSelectedWorkspace(workspace)}
+                >
+                  <strong>{workspace.label}</strong>
+                  <span>{workspace.path}</span>
+                </button>
+              ))
+            )}
+          </nav>
+        </div>
+
+        <div className="codex-card">
+          <div>
+            <Bot size={17} />
+            <div>
+              <strong>Codex</strong>
+              <span>{codexConnected ? "Connected" : "Disconnected"}</span>
+            </div>
+          </div>
+          <div className="codex-actions">
+            <button className="icon-button" type="button" onClick={ensureCodexConnected} title="Connect Codex">
+              <Plug size={17} />
+            </button>
+            <button className="icon-button" type="button" onClick={handleLogin} title="Log in">
+              <LogIn size={17} />
+            </button>
+            <button className="icon-button danger" type="button" onClick={handleStopCodex} title="Stop Codex">
+              <Power size={17} />
+            </button>
+          </div>
         </div>
       </aside>
 
       <section className="main">
         <header className="topbar">
           <div>
-            <p className="eyebrow">{selectedWorkspace?.path ?? "No workspace selected"}</p>
-            <h2>{selectedWorkspace?.label ?? "Choose a repository"}</h2>
+            <p className="eyebrow">{selectedWorkspacePath}</p>
+            <h2>{selectedWorkspaceName}</h2>
           </div>
           <div className="topbar-actions">
             <span>{authMessage}</span>
             <button className="icon-button" type="button" onClick={() => selectedWorkspace && refreshWorkspaceData(selectedWorkspace.id)} title="Refresh">
               <RefreshCw size={17} />
             </button>
-            <button className="icon-button" type="button" title="Settings">
+            <button className="icon-button" type="button" onClick={() => setActiveView("settings")} title="Settings">
               <Settings size={17} />
             </button>
           </div>
         </header>
 
-        <div className="status-strip">{statusMessage}</div>
+        <div className="status-strip">
+          <span>Status</span>
+          <p>{statusMessage}</p>
+        </div>
 
-        <div className="workspace-grid">
-          <div className="left-column">
-            <TaskComposer
-              disabled={!selectedWorkspace || !prompt.trim()}
-              prompt={prompt}
-              improvedPrompt={preflight?.improvedPrompt ?? improvedPrompt}
-              routeRecommendation={preflight?.routeRecommendation ?? routeRecommendation}
-              tokenEstimate={preflight?.tokenEstimate ?? tokenEstimate}
-              useOss={useOss}
-              ossProvider={ossProvider}
-              onPromptChange={(nextPrompt) => {
-                setPrompt(nextPrompt);
-                setPreflight(null);
-              }}
-              onUseOssChange={setUseOss}
-              onOssProviderChange={setOssProvider}
-              onPreflight={() => void handlePreflight()}
-              onPlanFirst={() => void launchRun("plan")}
-              onRun={() => void launchRun("run")}
-            />
-            <PreflightPanel report={preflight} onApplyRecommendation={applyRecommendation} />
+        {activeView === "task" ? (
+          <div className="codex-workspace">
+            <section className="task-hero" aria-label="Task launch">
+              <h1>What should we build in {selectedWorkspace?.label ?? "orchestrator"}?</h1>
+              <TaskComposer
+                disabled={!canRun}
+                prompt={prompt}
+                improvedPrompt={preflight?.improvedPrompt ?? improvedPrompt}
+                routeRecommendation={preflight?.routeRecommendation ?? routeRecommendation}
+                tokenEstimate={preflight?.tokenEstimate ?? tokenEstimate}
+                useOss={useOss}
+                ossProvider={ossProvider}
+                onPromptChange={(nextPrompt) => {
+                  setPrompt(nextPrompt);
+                  setPreflight(null);
+                }}
+                onUseOssChange={setUseOss}
+                onOssProviderChange={setOssProvider}
+                onPreflight={() => void handlePreflight()}
+                onPlanFirst={() => void launchRun("plan")}
+                onRun={() => void launchRun("run")}
+              />
+            </section>
+
+            <div className="task-secondary-grid">
+              <PreflightPanel report={preflight} onApplyRecommendation={applyRecommendation} />
+              <RunConsole runView={runView} onResolveRequest={handleResolveRequest} />
+            </div>
           </div>
+        ) : null}
 
-          <div className="right-column">
-            <AnalyticsSummary summary={analytics} />
-            <RunConsole runView={runView} onResolveRequest={handleResolveRequest} />
-            <section className="surface history" aria-label="Run history">
+        {activeView === "runs" ? (
+          <div className="view-stack">
+            <section className="surface history run-history-view" aria-label="Run history">
               <div className="surface-header">
                 <div>
                   <p className="eyebrow">History</p>
-                  <h2>Recent runs</h2>
+                  <h2>Run history</h2>
                 </div>
+                <span className="budget">{runs.length.toLocaleString()} runs</span>
               </div>
               {runs.length === 0 ? (
                 <p className="muted">Runs will appear after Codex starts a task.</p>
@@ -528,8 +595,120 @@ function App() {
                 </div>
               )}
             </section>
+
+            <RunConsole runView={runView} onResolveRequest={handleResolveRequest} />
           </div>
-        </div>
+        ) : null}
+
+        {activeView === "analytics" ? (
+          <div className="view-stack">
+            <AnalyticsSummary summary={analytics} />
+            <section className="surface analytics-detail" aria-label="Analytics detail">
+              <div className="surface-header">
+                <div>
+                  <p className="eyebrow">Local metrics</p>
+                  <h2>Workspace usage</h2>
+                </div>
+              </div>
+              <div className="analytics-breakdown">
+                <div>
+                  <span>Completed runs</span>
+                  <strong>{analytics.completed_count.toLocaleString()}</strong>
+                </div>
+                <div>
+                  <span>Cached tokens</span>
+                  <strong>{analytics.cached_tokens.toLocaleString()}</strong>
+                </div>
+                <div>
+                  <span>Failure rate</span>
+                  <strong>
+                    {analytics.run_count
+                      ? `${Math.round((analytics.failed_count / analytics.run_count) * 100)}%`
+                      : "0%"}
+                  </strong>
+                </div>
+              </div>
+            </section>
+          </div>
+        ) : null}
+
+        {activeView === "settings" ? (
+          <div className="settings-grid">
+            <section className="surface settings-panel" aria-label="Codex settings">
+              <div className="surface-header">
+                <div>
+                  <p className="eyebrow">Settings</p>
+                  <h2>Codex connection</h2>
+                </div>
+                <span className={`run-status ${codexConnected ? "completed" : "interrupted"}`}>
+                  {codexConnected ? "connected" : "disconnected"}
+                </span>
+              </div>
+              <div className="setting-list">
+                <div className="setting-row">
+                  <div>
+                    <strong>Authentication</strong>
+                    <span>{authMessage}</span>
+                  </div>
+                  <button className="secondary" type="button" onClick={handleLogin}>
+                    <LogIn size={16} />
+                    Log in
+                  </button>
+                </div>
+                <div className="setting-row">
+                  <div>
+                    <strong>App server</strong>
+                    <span>Spawn and manage `codex app-server --listen stdio://`.</span>
+                  </div>
+                  <div className="button-row compact">
+                    <button className="secondary" type="button" onClick={ensureCodexConnected}>
+                      <Plug size={16} />
+                      Connect
+                    </button>
+                    <button className="danger" type="button" onClick={handleStopCodex}>
+                      <Power size={16} />
+                      Stop
+                    </button>
+                  </div>
+                </div>
+                <label className="setting-row checkbox-setting">
+                  <div>
+                    <strong>Use local OSS provider</strong>
+                    <span>Pass Codex config overrides for OSS mode when launching runs.</span>
+                  </div>
+                  <input
+                    type="checkbox"
+                    checked={useOss}
+                    onChange={(event) => setUseOss(event.currentTarget.checked)}
+                  />
+                </label>
+                <div className="setting-row">
+                  <div>
+                    <strong>OSS provider</strong>
+                    <span>Used only when local OSS mode is enabled.</span>
+                  </div>
+                  <select
+                    value={ossProvider}
+                    onChange={(event) => setOssProvider(event.currentTarget.value as OssProvider)}
+                    disabled={!useOss}
+                    aria-label="Settings OSS provider"
+                  >
+                    <option value="ollama">Ollama</option>
+                    <option value="lmstudio">LM Studio</option>
+                  </select>
+                </div>
+              </div>
+            </section>
+
+            <section className="surface brand-panel" aria-label="About Orchestrator">
+              <img src={orchestratorWordmark} alt="Orchestrator" />
+              <p>
+                A token-aware desktop workspace for Codex runs, advisory preflight,
+                context budgeting, and local analytics.
+              </p>
+            </section>
+          </div>
+        ) : null}
       </section>
     </main>
   );
