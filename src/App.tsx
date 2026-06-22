@@ -34,8 +34,11 @@ import {
   codexRpc,
   connectCodex,
   getAuthStatus,
+  listCodexModels,
+  readCodexFile,
   resolveCodexServerRequest,
   runPreflight,
+  setThreadGoal,
   startLogin,
   stopCodex,
 } from "./codexClient";
@@ -57,8 +60,12 @@ import {
   recommendRoute,
 } from "./lib/taskAnalysis";
 import type {
+  AccessLevel,
+  AdditionalContextEntry,
   AnalyticsSummary as AnalyticsSummaryType,
   CodexMessage,
+  CodexModel,
+  ComposerContextFile,
   OssProvider,
   PreflightReport,
   RunListItem,
@@ -155,6 +162,14 @@ function App() {
   const [authMessage, setAuthMessage] = useState("Auth not checked");
   const [useOss, setUseOss] = useState(false);
   const [ossProvider, setOssProvider] = useState<OssProvider>("ollama");
+  const [models, setModels] = useState<CodexModel[]>([]);
+  const [modelLoadError, setModelLoadError] = useState<string | null>(null);
+  const [selectedModelId, setSelectedModelId] = useState<string | null>(null);
+  const [selectedReasoningEffort, setSelectedReasoningEffort] = useState<string | null>(null);
+  const [goalMode, setGoalMode] = useState(false);
+  const [planMode, setPlanMode] = useState(false);
+  const [accessLevel, setAccessLevel] = useState<AccessLevel>("ask");
+  const [contextFiles, setContextFiles] = useState<ComposerContextFile[]>([]);
 
   const currentRunId = useRef<number | null>(null);
   const currentTaskId = useRef<number | null>(null);
@@ -182,6 +197,31 @@ function App() {
 
     void refreshWorkspaceData(selectedWorkspace.id);
   }, [selectedWorkspace]);
+
+  useEffect(() => {
+    const selectedModel =
+      models.find((model) => model.id === selectedModelId) ?? models[0] ?? null;
+
+    if (!selectedModel) {
+      setSelectedReasoningEffort(null);
+      return;
+    }
+
+    const efforts = selectedModel.supportedReasoningEfforts.map(
+      (option) => option.reasoningEffort,
+    );
+    setSelectedReasoningEffort((current) => {
+      if (current && efforts.includes(current)) {
+        return current;
+      }
+
+      if (efforts.includes(selectedModel.defaultReasoningEffort)) {
+        return selectedModel.defaultReasoningEffort;
+      }
+
+      return efforts[0] ?? null;
+    });
+  }, [models, selectedModelId]);
 
   useEffect(() => {
     let notificationUnlisten: (() => void) | null = null;
@@ -222,6 +262,25 @@ function App() {
     };
   }, []);
 
+  useEffect(() => {
+    let disposed = false;
+
+    void ensureCodexConnected().catch((error) => {
+      if (disposed) {
+        return;
+      }
+
+      const message = error instanceof Error ? error.message : String(error);
+      setModelLoadError(message);
+      setAuthMessage("Codex unavailable");
+      setStatusMessage(`Codex connection failed: ${message}`);
+    });
+
+    return () => {
+      disposed = true;
+    };
+  }, []);
+
   async function refreshWorkspaces() {
     const rows = await listWorkspaces();
     setWorkspaces(rows);
@@ -235,6 +294,30 @@ function App() {
     ]);
     setRuns(runRows);
     setAnalytics(summary);
+  }
+
+  async function refreshCodexModels() {
+    try {
+      const visibleModels = await listCodexModels();
+      setModels(visibleModels);
+      setModelLoadError(null);
+      setSelectedModelId((current) => {
+        if (current && visibleModels.some((model) => model.id === current)) {
+          return current;
+        }
+
+        return (
+          visibleModels.find((model) => model.isDefault)?.id ??
+          visibleModels[0]?.id ??
+          null
+        );
+      });
+    } catch (error) {
+      setModels([]);
+      setSelectedModelId(null);
+      setSelectedReasoningEffort(null);
+      setModelLoadError(error instanceof Error ? error.message : String(error));
+    }
   }
 
   async function chooseWorkspace() {
@@ -254,8 +337,26 @@ function App() {
     setStatusMessage(`Selected ${workspace.label}`);
   }
 
+  async function chooseContextFiles() {
+    const selected = await open({
+      directory: false,
+      multiple: true,
+      title: "Add files to context",
+    });
+    const paths = normalizeDialogSelection(selected);
+
+    if (paths.length === 0) {
+      return;
+    }
+
+    setContextFiles((current) => mergeContextFiles(current, paths.map(contextFileFromPath)));
+  }
+
   async function ensureCodexConnected() {
     if (codexConnected) {
+      if (models.length === 0 || modelLoadError) {
+        await refreshCodexModels();
+      }
       return;
     }
 
@@ -278,6 +379,8 @@ function App() {
     } catch (error) {
       setAuthMessage(error instanceof Error ? error.message : String(error));
     }
+
+    await refreshCodexModels();
   }
 
   async function handleLogin() {
@@ -318,7 +421,7 @@ function App() {
     return report;
   }
 
-  async function launchRun(mode: "plan" | "run") {
+  async function launchRun() {
     if (!selectedWorkspace || !prompt.trim()) {
       setStatusMessage("Select a workspace and write a prompt first.");
       return;
@@ -330,6 +433,12 @@ function App() {
     }
 
     await ensureCodexConnected();
+    const mode = planMode ? "plan" : "run";
+    const access = accessSettings(accessLevel);
+    const selectedModel =
+      models.find((model) => model.id === selectedModelId) ?? models[0] ?? null;
+    const model = useOss || modelLoadError ? null : (selectedModel?.model ?? null);
+    const effort = model ? selectedReasoningEffort : null;
 
     const task = await createTask({
       workspaceId: selectedWorkspace.id,
@@ -346,8 +455,9 @@ function App() {
       taskId: task.id,
       workspaceId: selectedWorkspace.id,
       status: "starting",
-      sandbox: "workspace-write",
-      approvalPolicy: "on-request",
+      sandbox: access.sandbox,
+      approvalPolicy: access.approvalPolicy,
+      model,
       modelProvider: useOss ? "oss" : null,
     });
     currentRunId.current = run.id;
@@ -361,9 +471,10 @@ function App() {
       serviceTier?: string | null;
     }>("thread/start", {
       cwd: selectedWorkspace.path,
-      approvalPolicy: "on-request",
+      model,
+      approvalPolicy: access.approvalPolicy,
       approvalsReviewer: "user",
-      sandbox: "workspace-write",
+      sandbox: access.sandbox,
       serviceName: "orchestrator",
       threadSource: "orchestrator",
       config: useOss
@@ -376,22 +487,44 @@ function App() {
 
     await updateRun(run.id, {
       codexThreadId: thread.thread.id,
-      model: thread.model ?? null,
+      model: thread.model ?? model,
       modelProvider: thread.modelProvider ?? (useOss ? "oss" : null),
       status: "running",
     });
+
+    const warnings: string[] = [];
+    if (goalMode) {
+      try {
+        await setThreadGoal(thread.thread.id, prompt.trim());
+      } catch (error) {
+        warnings.push(
+          `Goal mode could not set a thread goal: ${
+            error instanceof Error ? error.message : String(error)
+          }`,
+        );
+      }
+    }
 
     const text =
       mode === "plan"
         ? buildPlanPrompt(report.improvedPrompt || improvedPrompt)
         : buildRunPrompt(report.improvedPrompt || improvedPrompt, report.recommendations);
+    const { additionalContext, skippedFiles } = await buildAdditionalContext(contextFiles);
+    if (skippedFiles.length > 0) {
+      warnings.push(
+        `Skipped context file${skippedFiles.length === 1 ? "" : "s"}: ${skippedFiles.join(", ")}`,
+      );
+    }
 
     const turn = await codexRpc<{ turn: { id: string } }>("turn/start", {
       threadId: thread.thread.id,
       input: [{ type: "text", text, text_elements: [] }],
+      additionalContext,
       cwd: selectedWorkspace.path,
-      approvalPolicy: "on-request",
+      approvalPolicy: access.approvalPolicy,
       approvalsReviewer: "user",
+      model,
+      effort,
     });
 
     await updateRun(run.id, {
@@ -400,7 +533,44 @@ function App() {
     });
     await updateTaskStatus(task.id, "running");
     await refreshWorkspaceData(selectedWorkspace.id);
-    setStatusMessage(mode === "plan" ? "Plan-first turn started." : "Codex run started.");
+    const runStartedMessage = mode === "plan" ? "Plan mode turn started." : "Codex run started.";
+    setStatusMessage(
+      warnings.length > 0 ? `${runStartedMessage} ${warnings.join(" ")}` : runStartedMessage,
+    );
+  }
+
+  async function buildAdditionalContext(files: ComposerContextFile[]) {
+    const additionalContext: Record<string, AdditionalContextEntry> = {};
+    const errors = new Map<string, string>();
+    const skippedFiles: string[] = [];
+
+    for (const file of files) {
+      try {
+        const content = await readCodexFile(file.path);
+        additionalContext[`file:${file.path}`] = {
+          kind: "untrusted",
+          value: `File: ${file.path}\n\n${content}`,
+        };
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        errors.set(file.path, message);
+        skippedFiles.push(file.name);
+      }
+    }
+
+    setContextFiles((current) =>
+      current.map((file) =>
+        errors.has(file.path)
+          ? { ...file, status: "error", error: errors.get(file.path) }
+          : { ...file, status: "ready", error: null },
+      ),
+    );
+
+    return {
+      additionalContext:
+        Object.keys(additionalContext).length > 0 ? additionalContext : null,
+      skippedFiles,
+    };
   }
 
   async function handleCodexNotification(message: CodexMessage) {
@@ -607,17 +777,29 @@ function App() {
                 prompt={prompt}
                 routeRecommendation={preflight?.routeRecommendation ?? routeRecommendation}
                 tokenEstimate={preflight?.tokenEstimate ?? tokenEstimate}
-                useOss={useOss}
-                ossProvider={ossProvider}
+                models={models}
+                modelLoadError={modelLoadError}
+                selectedModelId={selectedModelId}
+                selectedReasoningEffort={selectedReasoningEffort}
+                goalMode={goalMode}
+                planMode={planMode}
+                accessLevel={accessLevel}
+                contextFiles={contextFiles}
                 onPromptChange={(nextPrompt) => {
                   setPrompt(nextPrompt);
                   setPreflight(null);
                 }}
-                onUseOssChange={setUseOss}
-                onOssProviderChange={setOssProvider}
+                onModelChange={setSelectedModelId}
+                onReasoningEffortChange={setSelectedReasoningEffort}
+                onGoalModeChange={setGoalMode}
+                onPlanModeChange={setPlanMode}
+                onAccessLevelChange={setAccessLevel}
+                onAddFiles={() => void chooseContextFiles()}
+                onRemoveFile={(path) =>
+                  setContextFiles((current) => current.filter((file) => file.path !== path))
+                }
                 onPreflight={() => void handlePreflight()}
-                onPlanFirst={() => void launchRun("plan")}
-                onRun={() => void launchRun("run")}
+                onRun={() => void launchRun()}
               />
             </section>
           </div>
@@ -783,6 +965,51 @@ function approvalResult(request: CodexMessage, approved: boolean) {
   }
 
   return { decision: approved ? "accept" : "decline" };
+}
+
+function accessSettings(accessLevel: AccessLevel) {
+  return accessLevel === "full"
+    ? { sandbox: "danger-full-access", approvalPolicy: "never" }
+    : { sandbox: "workspace-write", approvalPolicy: "on-request" };
+}
+
+function normalizeDialogSelection(selection: unknown) {
+  if (Array.isArray(selection)) {
+    return selection.filter((item): item is string => typeof item === "string");
+  }
+
+  return typeof selection === "string" ? [selection] : [];
+}
+
+function contextFileFromPath(path: string): ComposerContextFile {
+  return {
+    path,
+    name: basename(path),
+    source: "picker",
+    status: "ready",
+  };
+}
+
+function mergeContextFiles(
+  current: ComposerContextFile[],
+  additions: ComposerContextFile[],
+) {
+  const existing = new Set(current.map((file) => file.path));
+  const merged = [...current];
+
+  for (const file of additions) {
+    if (!existing.has(file.path)) {
+      existing.add(file.path);
+      merged.push({ ...file, status: file.status ?? "ready" });
+    }
+  }
+
+  return merged;
+}
+
+function basename(path: string) {
+  const parts = path.split(/[\\/]/).filter(Boolean);
+  return parts[parts.length - 1] ?? path;
 }
 
 function readTokenUsage(params: Record<string, unknown>) {

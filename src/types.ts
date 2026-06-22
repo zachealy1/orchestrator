@@ -108,3 +108,44 @@ export type CodexMessage = {
 };
 
 export type OssProvider = "ollama" | "lmstudio";
+
+export type AccessLevel = "ask" | "full";
+
+export type ReasoningEffortOption = {
+  reasoningEffort: string;
+  description: string;
+};
+
+export type CodexModel = {
+  id: string;
+  model: string;
+  displayName: string;
+  description: string;
+  hidden: boolean;
+  supportedReasoningEfforts: ReasoningEffortOption[];
+  defaultReasoningEffort: string;
+  isDefault: boolean;
+};
+
+export type ModelListResponse = {
+  data: CodexModel[];
+  nextCursor: string | null;
+};
+
+export type ComposerContextFile = {
+  path: string;
+  name: string;
+  source: "picker" | "search";
+  status?: "ready" | "error";
+  error?: string | null;
+};
+
+export type ComposerModeState = {
+  goalMode: boolean;
+  planMode: boolean;
+};
+
+export type AdditionalContextEntry = {
+  value: string;
+  kind: "untrusted" | "application";
+};
