@@ -39,7 +39,7 @@ struct CodexConnectResult {
     initialize: Value,
 }
 
-#[derive(Serialize)]
+#[derive(Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 struct ProcessEvent {
     status: String,
