@@ -3,14 +3,12 @@ import {
   ClipboardCheck,
   Play,
   Route,
-  Sparkles,
 } from "lucide-react";
 import type { OssProvider, RouteRecommendation } from "../types";
 
 type Props = {
   disabled: boolean;
   prompt: string;
-  improvedPrompt: string;
   routeRecommendation: RouteRecommendation;
   tokenEstimate: number;
   useOss: boolean;
@@ -26,7 +24,6 @@ type Props = {
 export function TaskComposer({
   disabled,
   prompt,
-  improvedPrompt,
   routeRecommendation,
   tokenEstimate,
   useOss,
@@ -91,14 +88,6 @@ export function TaskComposer({
         <span>workspace-write</span>
         <span>on-request approvals</span>
       </div>
-
-      <details className="improved-prompt">
-        <summary>
-          <Sparkles size={16} />
-          <strong>Deterministic prompt structure</strong>
-        </summary>
-        <pre>{improvedPrompt || "Prompt structure appears here after you type."}</pre>
-      </details>
     </section>
   );
 }

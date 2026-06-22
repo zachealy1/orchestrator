@@ -40,7 +40,6 @@ import {
   stopCodex,
 } from "./codexClient";
 import { AnalyticsSummary } from "./components/AnalyticsSummary";
-import { PreflightPanel } from "./components/PreflightPanel";
 import { RunConsole } from "./components/RunConsole";
 import { TaskComposer } from "./components/TaskComposer";
 import {
@@ -62,7 +61,6 @@ import type {
   CodexMessage,
   OssProvider,
   PreflightReport,
-  RecommendationDraft,
   RunListItem,
   Workspace,
 } from "./types";
@@ -411,14 +409,6 @@ function App() {
     setRunView((current) => resolveServerRequest(current, request.id!));
   }
 
-  function applyRecommendation(recommendation: RecommendationDraft) {
-    setPrompt((current) =>
-      current.includes(recommendation.body)
-        ? current
-        : `${current.trim()}\n\n${recommendation.body}`.trim(),
-    );
-  }
-
   return (
     <main className="app-shell">
       <aside className="app-rail">
@@ -513,27 +503,31 @@ function App() {
         </div>
       </aside>
 
-      <section className="main">
-        <header className="topbar">
-          <div>
-            <p className="eyebrow">{selectedWorkspacePath}</p>
-            <h2>{selectedWorkspaceName}</h2>
-          </div>
-          <div className="topbar-actions">
-            <span>{authMessage}</span>
-            <button className="icon-button" type="button" onClick={() => selectedWorkspace && refreshWorkspaceData(selectedWorkspace.id)} title="Refresh">
-              <RefreshCw size={17} />
-            </button>
-            <button className="icon-button" type="button" onClick={() => setActiveView("settings")} title="Settings">
-              <Settings size={17} />
-            </button>
-          </div>
-        </header>
+      <section className={`main ${activeView === "task" ? "task-main" : ""}`}>
+        {activeView !== "task" ? (
+          <>
+            <header className="topbar">
+              <div>
+                <p className="eyebrow">{selectedWorkspacePath}</p>
+                <h2>{selectedWorkspaceName}</h2>
+              </div>
+              <div className="topbar-actions">
+                <span>{authMessage}</span>
+                <button className="icon-button" type="button" onClick={() => selectedWorkspace && refreshWorkspaceData(selectedWorkspace.id)} title="Refresh">
+                  <RefreshCw size={17} />
+                </button>
+                <button className="icon-button" type="button" onClick={() => setActiveView("settings")} title="Settings">
+                  <Settings size={17} />
+                </button>
+              </div>
+            </header>
 
-        <div className="status-strip">
-          <span>Status</span>
-          <p>{statusMessage}</p>
-        </div>
+            <div className="status-strip">
+              <span>Status</span>
+              <p>{statusMessage}</p>
+            </div>
+          </>
+        ) : null}
 
         {activeView === "task" ? (
           <div className="codex-workspace">
@@ -542,7 +536,6 @@ function App() {
               <TaskComposer
                 disabled={!canRun}
                 prompt={prompt}
-                improvedPrompt={preflight?.improvedPrompt ?? improvedPrompt}
                 routeRecommendation={preflight?.routeRecommendation ?? routeRecommendation}
                 tokenEstimate={preflight?.tokenEstimate ?? tokenEstimate}
                 useOss={useOss}
@@ -558,11 +551,6 @@ function App() {
                 onRun={() => void launchRun("run")}
               />
             </section>
-
-            <div className="task-secondary-grid">
-              <PreflightPanel report={preflight} onApplyRecommendation={applyRecommendation} />
-              <RunConsole runView={runView} onResolveRequest={handleResolveRequest} />
-            </div>
           </div>
         ) : null}
 

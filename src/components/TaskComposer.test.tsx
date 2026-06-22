@@ -13,7 +13,6 @@ describe("TaskComposer", () => {
       <TaskComposer
         disabled={false}
         prompt=""
-        improvedPrompt=""
         routeRecommendation="direct-run"
         tokenEstimate={0}
         useOss={false}
@@ -39,7 +38,6 @@ describe("TaskComposer", () => {
       <TaskComposer
         disabled
         prompt=""
-        improvedPrompt=""
         routeRecommendation="plan-first"
         tokenEstimate={0}
         useOss={false}
