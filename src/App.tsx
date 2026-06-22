@@ -426,7 +426,6 @@ function App() {
           <img src={orchestratorMark} alt="" />
           <div>
             <strong>Orchestrator</strong>
-            <span>Codex workspace</span>
           </div>
         </div>
 

@@ -147,22 +147,28 @@ button.small {
 
 .brand-lockup {
   display: flex;
-  gap: 12px;
+  gap: 14px;
   align-items: center;
   min-width: 0;
-  padding: 4px 2px 8px;
+  min-height: 52px;
+  padding: 4px 0 10px;
 }
 
 .brand-lockup img {
-  width: 34px;
-  height: 34px;
+  width: 48px;
+  height: 48px;
   flex: 0 0 auto;
-  border: 1px solid rgba(0, 184, 255, 0.22);
-  border-radius: 8px;
-  object-fit: cover;
+  border: 0;
+  border-radius: 0;
+  object-fit: contain;
 }
 
-.brand-lockup div,
+.brand-lockup div {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+}
+
 .codex-card > div:first-child > div {
   display: grid;
   min-width: 0;
@@ -172,8 +178,8 @@ button.small {
 .brand-lockup strong {
   overflow: hidden;
   color: var(--text);
-  font-size: 1.02rem;
-  line-height: 1.15;
+  font-size: 1.24rem;
+  line-height: 1;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
