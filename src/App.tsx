@@ -23,11 +23,13 @@ import orchestratorMark from "./assets/brand/orchestrator-mark.png";
 import orchestratorWordmark from "./assets/brand/orchestrator-wordmark.png";
 import {
   appendRunEvent,
+  completeDuplicateProfileCleanup,
   createCodexAccount,
   createRun,
   createTask,
   getAnalyticsSummary,
   listCodexAccounts,
+  listDuplicateProfilesPendingCleanup,
   listWorkspaceRuns,
   listWorkspaces,
   recordTokenUsage,
@@ -119,6 +121,17 @@ type AuthRowState = {
   avatarLabel: string;
   tone: "default" | "waiting" | "failed" | "signed-in";
 };
+
+class DuplicateCodexAccountError extends Error {
+  constructor(
+    readonly duplicateAccountId: number,
+    readonly existingAccountId: number,
+    email: string,
+  ) {
+    super(`${email} is already added to Orchestrator.`);
+    this.name = "DuplicateCodexAccountError";
+  }
+}
 
 const TASK_QUOTES = [
   "You prompting me?",
@@ -501,7 +514,10 @@ function App() {
           setStatusMessage("Codex sign-in completed.");
           return;
         }
-      } catch {
+      } catch (error) {
+        if (error instanceof DuplicateCodexAccountError) {
+          return;
+        }
         // Keep waiting; transient refresh failures are common while the browser flow is active.
       }
 
@@ -535,6 +551,14 @@ function App() {
   ]);
 
   async function bootstrap() {
+    const duplicateProfileIds = await listDuplicateProfilesPendingCleanup();
+    await Promise.allSettled(
+      duplicateProfileIds.map(async (accountId) => {
+        await deleteCodexProfile(accountId);
+        await completeDuplicateProfileCleanup(accountId);
+      }),
+    );
+
     const [workspaceRows, accountRows] = await Promise.all([
       listWorkspaces(),
       listCodexAccounts(),
@@ -605,6 +629,47 @@ function App() {
     pendingLoginAccountIdRef.current = null;
   }
 
+  async function discardDuplicateAccount(
+    duplicateAccountId: number,
+    existingAccount: CodexAccountProfile,
+    email: string,
+  ) {
+    await deleteCodexProfile(duplicateAccountId).catch(() => undefined);
+    await softDeleteCodexAccount(duplicateAccountId);
+
+    setConnectedAccountIds((current) => {
+      const next = new Set(current);
+      next.delete(duplicateAccountId);
+      connectedAccountIdsRef.current = next;
+      return next;
+    });
+    setCodexAccounts((current) => {
+      const next = current.filter(
+        (account) => account.id !== duplicateAccountId,
+      );
+      codexAccountsRef.current = next;
+      return next;
+    });
+
+    setSelectedAccountId(existingAccount.id);
+    selectedAccountIdRef.current = existingAccount.id;
+    setCodexAccount({
+      type: "chatgpt",
+      email: existingAccount.email,
+      planType: existingAccount.plan_type ?? "unknown",
+    });
+    setRequiresOpenaiAuth(true);
+    setLoginError(null);
+    setAccountMenuOpen(false);
+    resetLoginFlow();
+    setStatusMessage(
+      `${email} is already added. Switched back to ${existingAccount.label}.`,
+    );
+
+    await ensureCodexConnected(existingAccount.id).catch(() => undefined);
+    await refreshCodexModels(existingAccount.id).catch(() => undefined);
+  }
+
   async function refreshAccountState(accountId: number, refreshToken = true) {
     try {
       const response = await readCodexAccount(accountId, { refreshToken });
@@ -613,6 +678,30 @@ function App() {
       const existing = codexAccountsRef.current.find(
         (account) => account.id === accountId,
       );
+      const normalizedEmail = chatgptAccount?.email?.trim().toLowerCase();
+      const duplicateAccount = normalizedEmail
+        ? codexAccountsRef.current.find(
+            (account) =>
+              account.id !== accountId &&
+              account.deleted_at === null &&
+              account.email?.trim().toLowerCase() === normalizedEmail,
+          )
+        : null;
+
+      if (duplicateAccount && chatgptAccount?.email) {
+        const duplicateError = new DuplicateCodexAccountError(
+          accountId,
+          duplicateAccount.id,
+          chatgptAccount.email,
+        );
+        await discardDuplicateAccount(
+          accountId,
+          duplicateAccount,
+          chatgptAccount.email,
+        );
+        throw duplicateError;
+      }
+
       const nextLabel =
         existing?.label && existing.label !== "New Codex account"
           ? existing.label
@@ -665,6 +754,10 @@ function App() {
 
       return response;
     } catch (error) {
+      if (error instanceof DuplicateCodexAccountError) {
+        throw error;
+      }
+
       const message = error instanceof Error ? error.message : String(error);
       await updateCodexAccount(accountId, {
         status: "error",
@@ -1410,11 +1503,21 @@ function App() {
     if (params.success) {
       resetLoginFlow();
       setLoginError(null);
-      await refreshAccountState(accountId, true);
-      if (selectedAccountIdRef.current === accountId) {
-        await refreshCodexModels(accountId);
+      try {
+        await refreshAccountState(accountId, true);
+        if (selectedAccountIdRef.current === accountId) {
+          await refreshCodexModels(accountId);
+        }
+        setStatusMessage("Codex sign-in completed.");
+      } catch (error) {
+        if (error instanceof DuplicateCodexAccountError) {
+          return;
+        }
+        const message = error instanceof Error ? error.message : String(error);
+        setLoginState("failed");
+        setLoginError(message);
+        setStatusMessage(`Sign-in failed: ${message}`);
       }
-      setStatusMessage("Codex sign-in completed.");
       return;
     }
 

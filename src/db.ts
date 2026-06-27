@@ -73,6 +73,29 @@ export async function listCodexAccounts() {
   );
 }
 
+export async function listDuplicateProfilesPendingCleanup() {
+  const db = await getDatabase();
+  const rows = await db.select<Array<{ id: number }>>(
+    `SELECT id
+     FROM codex_accounts
+     WHERE deleted_at IS NOT NULL
+       AND last_error = 'Duplicate account consolidated'`,
+  );
+  return rows.map((row) => row.id);
+}
+
+export async function completeDuplicateProfileCleanup(accountId: number) {
+  const db = await getDatabase();
+  await db.execute(
+    `UPDATE codex_accounts
+     SET last_error = NULL, updated_at = CURRENT_TIMESTAMP
+     WHERE id = $1
+       AND deleted_at IS NOT NULL
+       AND last_error = 'Duplicate account consolidated'`,
+    [accountId],
+  );
+}
+
 export async function createCodexAccount(label = "New Codex account") {
   const db = await getDatabase();
   const result = await db.execute(

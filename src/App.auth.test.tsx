@@ -22,6 +22,8 @@ const mocks = vi.hoisted(() => ({
   codexRpcMock: vi.fn(),
   listWorkspacesMock: vi.fn(),
   listCodexAccountsMock: vi.fn(),
+  listDuplicateProfilesPendingCleanupMock: vi.fn(),
+  completeDuplicateProfileCleanupMock: vi.fn(),
   createCodexAccountMock: vi.fn(),
   updateCodexAccountMock: vi.fn(),
   renameCodexAccountMock: vi.fn(),
@@ -83,11 +85,14 @@ vi.mock("./codexClient", () => ({
 
 vi.mock("./db", () => ({
   appendRunEvent: mocks.appendRunEventMock,
+  completeDuplicateProfileCleanup: mocks.completeDuplicateProfileCleanupMock,
   createCodexAccount: mocks.createCodexAccountMock,
   createRun: mocks.createRunMock,
   createTask: mocks.createTaskMock,
   getAnalyticsSummary: mocks.getAnalyticsSummaryMock,
   listCodexAccounts: mocks.listCodexAccountsMock,
+  listDuplicateProfilesPendingCleanup:
+    mocks.listDuplicateProfilesPendingCleanupMock,
   listWorkspaceRuns: mocks.listWorkspaceRunsMock,
   listWorkspaces: mocks.listWorkspacesMock,
   recordTokenUsage: mocks.recordTokenUsageMock,
@@ -189,6 +194,8 @@ function prepareDefaults() {
   mocks.codexRpcMock.mockResolvedValue(undefined);
   mocks.listWorkspacesMock.mockResolvedValue([workspace]);
   mocks.listCodexAccountsMock.mockResolvedValue([]);
+  mocks.listDuplicateProfilesPendingCleanupMock.mockResolvedValue([]);
+  mocks.completeDuplicateProfileCleanupMock.mockResolvedValue(undefined);
   mocks.createCodexAccountMock.mockResolvedValue(pendingAccount);
   mocks.updateCodexAccountMock.mockResolvedValue(undefined);
   mocks.renameCodexAccountMock.mockResolvedValue(undefined);
@@ -236,6 +243,17 @@ describe("App Codex auth", () => {
 
     await user.click(signIn);
     await waitFor(() => expect(mocks.connectCodexMock).toHaveBeenCalledWith(7));
+  });
+
+  it("removes consolidated duplicate profile directories during startup", async () => {
+    mocks.listDuplicateProfilesPendingCleanupMock.mockResolvedValue([11]);
+
+    await renderApp();
+
+    await waitFor(() =>
+      expect(mocks.deleteCodexProfileMock).toHaveBeenCalledWith(11),
+    );
+    expect(mocks.completeDuplicateProfileCleanupMock).toHaveBeenCalledWith(11);
   });
 
   it("maps account/read into signed-in auth UI", async () => {
@@ -493,15 +511,12 @@ describe("App Codex auth", () => {
     expect(mocks.setWorkspaceDefaultAccountMock).toHaveBeenCalledWith(1, 8);
   });
 
-  it("distinguishes duplicate account identities without repeating the selected row", async () => {
-    const duplicateAccount = {
-      ...signedInAccount,
+  it("rejects and removes a second profile with the same email address", async () => {
+    mocks.listCodexAccountsMock.mockResolvedValue([signedInAccount]);
+    mocks.createCodexAccountMock.mockResolvedValue({
+      ...pendingAccount,
       id: 8,
-    };
-    mocks.listCodexAccountsMock.mockResolvedValue([
-      signedInAccount,
-      duplicateAccount,
-    ]);
+    });
     mocks.readCodexAccountMock.mockResolvedValue({
       account: {
         type: "chatgpt",
@@ -513,10 +528,41 @@ describe("App Codex auth", () => {
 
     const { user } = await renderApp();
     await user.click(await screen.findByLabelText("Codex account"));
+    await user.click(screen.getByRole("button", { name: "Add account" }));
 
-    const accountList = screen.getByLabelText("Codex accounts");
-    expect(within(accountList).getAllByRole("button")).toHaveLength(1);
-    expect(accountList).toHaveTextContent("Local profile 8");
+    const notificationHandler = mocks.listeners.get("codex:notification");
+    await act(async () => {
+      notificationHandler?.({
+        payload: {
+          accountId: 8,
+          message: {
+            method: "account/login/completed",
+            params: {
+              success: true,
+              loginId: "login-1",
+            },
+          },
+        },
+      });
+    });
+
+    await waitFor(() =>
+      expect(mocks.deleteCodexProfileMock).toHaveBeenCalledWith(8),
+    );
+    expect(mocks.softDeleteCodexAccountMock).toHaveBeenCalledWith(8);
+    expect(
+      mocks.updateCodexAccountMock,
+    ).not.toHaveBeenCalledWith(
+      8,
+      expect.objectContaining({ email: signedInAccount.email }),
+    );
+
+    const accountButton = await screen.findByLabelText("Codex account");
+    expect(
+      within(accountButton).getByText(signedInAccount.email),
+    ).toBeInTheDocument();
+    await user.click(accountButton);
+    expect(screen.queryByLabelText("Codex accounts")).not.toBeInTheDocument();
   });
 
   it("keeps account notifications isolated by account id", async () => {
