@@ -140,18 +140,21 @@ button.small {
 .app-shell {
   display: grid;
   grid-template-columns: 312px minmax(0, 1fr);
+  height: 100vh;
   min-height: 100vh;
   background: var(--bg);
 }
 
 .app-rail {
   display: flex;
-  min-height: 100vh;
+  height: 100vh;
+  min-height: 0;
   flex-direction: column;
   gap: 18px;
+  overflow: hidden;
   border-right: 1px solid rgba(248, 250, 252, 0.08);
   background: var(--rail);
-  padding: 18px 18px 16px;
+  padding: 18px 18px 0;
 }
 
 .brand-lockup {
@@ -178,12 +181,6 @@ button.small {
   align-items: center;
 }
 
-.codex-card > div:first-child > div {
-  display: grid;
-  min-width: 0;
-  gap: 2px;
-}
-
 .brand-lockup strong {
   overflow: hidden;
   color: var(--text);
@@ -194,7 +191,6 @@ button.small {
 }
 
 .brand-lockup span,
-.codex-card span,
 .run-row span,
 .muted {
   color: var(--muted);
@@ -228,8 +224,10 @@ button.small {
 
 .rail-section {
   display: grid;
+  flex: 1 1 auto;
   min-height: 0;
   gap: 10px;
+  overflow: hidden;
 }
 
 .rail-section-header {
@@ -250,6 +248,7 @@ button.small {
 
 .workspace-list {
   display: grid;
+  min-height: 0;
   gap: 8px;
   overflow: auto;
   padding-right: 2px;
@@ -285,29 +284,180 @@ button.small {
 
 .codex-card {
   display: grid;
-  gap: 12px;
-  margin-top: auto;
-  border: 1px solid var(--line);
-  border-radius: var(--radius);
-  background: rgba(10, 15, 20, 0.28);
-  padding: 12px;
-}
-
-.codex-card > div:first-child {
-  display: flex;
-  gap: 10px;
-  align-items: center;
-  min-width: 0;
-}
-
-.codex-card svg {
-  color: var(--accent-2);
-}
-
-.codex-actions {
-  display: grid;
-  grid-template-columns: repeat(3, 1fr);
   gap: 8px;
+  margin-top: auto;
+}
+
+.codex-card.account-card {
+  align-self: stretch;
+  flex: 0 0 auto;
+  width: calc(100% + 36px);
+  margin: auto -18px 0;
+  border: 0;
+  border-radius: 0;
+  background: var(--rail);
+  padding: 0;
+}
+
+button.account-trigger,
+button.account-sign-in {
+  justify-content: flex-start;
+  width: 100%;
+  min-height: 64px;
+  border: 0;
+  border-top: 1px solid rgba(248, 250, 252, 0.08);
+  border-radius: 0;
+  background: var(--rail);
+  color: var(--text);
+  padding: 8px 18px;
+}
+
+button.account-trigger:hover:not(:disabled),
+button.account-sign-in:hover:not(:disabled) {
+  border-color: rgba(56, 189, 248, 0.18);
+  background: rgba(51, 65, 85, 0.42);
+}
+
+button.account-trigger.open {
+  background: var(--rail);
+}
+
+button.account-sign-in {
+  margin: 0;
+}
+
+.account-avatar {
+  display: inline-flex;
+  width: 48px;
+  height: 48px;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+  border-radius: 999px;
+  background: rgba(139, 92, 246, 0.2);
+  color: var(--accent-purple);
+  font-size: 1.28rem;
+  font-weight: 700;
+}
+
+.auth-waiting .account-avatar {
+  background: rgba(14, 165, 233, 0.18);
+  color: var(--accent-sky);
+}
+
+.auth-failed .account-avatar {
+  background: rgba(250, 204, 21, 0.14);
+  color: var(--warning);
+}
+
+.auth-signed-in .account-avatar {
+  background: rgba(139, 92, 246, 0.2);
+  color: var(--accent-purple);
+}
+
+.account-copy {
+  display: grid;
+  flex: 1 1 auto;
+  min-width: 0;
+  gap: 3px;
+  text-align: left;
+}
+
+.account-copy strong,
+.account-copy span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.account-copy strong {
+  color: var(--text);
+  font-size: 1rem;
+  font-weight: 600;
+}
+
+.account-copy span {
+  color: var(--muted);
+  font-size: 0.86rem;
+  font-weight: 500;
+}
+
+.account-chevron {
+  margin-left: auto;
+  color: var(--muted);
+  transition: transform 140ms ease;
+}
+
+.account-action-icon {
+  flex: 0 0 auto;
+  margin-left: auto;
+  color: var(--accent);
+}
+
+.account-trigger[aria-expanded="true"] .account-chevron {
+  transform: rotate(180deg);
+}
+
+.account-menu {
+  display: grid;
+  gap: 8px;
+  background: var(--rail);
+  padding: 10px 18px 8px;
+}
+
+.account-menu button {
+  justify-content: flex-start;
+}
+
+.account-switcher-list {
+  display: grid;
+  gap: 4px;
+  padding-bottom: 4px;
+  border-bottom: 1px solid rgba(100, 116, 139, 0.24);
+}
+
+button.account-switcher-item {
+  display: grid;
+  grid-template-columns: 28px minmax(0, 1fr) 18px;
+  min-height: 42px;
+  border-color: transparent;
+  background: transparent;
+  padding: 6px 8px;
+  color: var(--text-soft);
+}
+
+button.account-switcher-item:hover:not(:disabled) {
+  background: rgba(51, 65, 85, 0.42);
+}
+
+.account-switcher-item > span:nth-child(2) {
+  display: grid;
+  min-width: 0;
+  text-align: left;
+}
+
+.account-switcher-item strong,
+.account-switcher-item small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.account-switcher-item small {
+  color: var(--muted);
+  font-weight: 500;
+}
+
+.account-mini-avatar {
+  display: inline-flex;
+  width: 26px;
+  height: 26px;
+  align-items: center;
+  justify-content: center;
+  border-radius: 999px;
+  background: rgba(139, 92, 246, 0.18);
+  color: var(--accent-purple);
+  font-size: 0.78rem;
 }
 
 .main {
@@ -635,16 +785,50 @@ button:focus-visible {
 .composer-options-row {
   display: grid;
   grid-template-columns:
-    minmax(145px, 1fr)
-    minmax(160px, 1fr)
-    minmax(205px, 1.15fr)
-    minmax(210px, 1.3fr)
-    minmax(132px, 0.95fr);
+    minmax(175px, 1.1fr)
+    minmax(135px, 0.9fr)
+    minmax(145px, 0.9fr)
+    minmax(175px, 1fr)
+    minmax(185px, 1.15fr)
+    minmax(120px, 0.8fr);
   gap: 8px;
   align-items: center;
   border-top: 1px solid rgba(51, 65, 85, 0.56);
   background: rgba(10, 15, 20, 0.34);
   padding: 8px 14px;
+}
+
+.account-select-group {
+  position: relative;
+  min-width: 0;
+}
+
+.account-select {
+  padding-right: 42px;
+}
+
+.account-select select {
+  padding-right: 48px;
+}
+
+.account-chevron-select {
+  right: 34px;
+}
+
+.account-default-button {
+  position: absolute;
+  top: 5px;
+  right: 5px;
+  z-index: 4;
+  width: 30px;
+  min-width: 30px;
+  min-height: 30px;
+  border: 0;
+  padding: 0;
+}
+
+.account-default-button.active {
+  color: var(--accent-2);
 }
 
 .composer-select {
@@ -1186,6 +1370,50 @@ pre {
   gap: 3px;
 }
 
+.account-management {
+  display: grid;
+  gap: 8px;
+}
+
+.managed-account-row {
+  display: grid;
+  grid-template-columns: 32px minmax(0, 1fr) auto;
+  gap: 10px;
+  align-items: center;
+  border-bottom: 1px solid rgba(100, 116, 139, 0.2);
+  padding: 10px 0;
+}
+
+.managed-account-row > div:nth-child(2) {
+  display: grid;
+  min-width: 0;
+  gap: 4px;
+}
+
+.managed-account-row input {
+  min-width: 0;
+  border: 1px solid transparent;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--text);
+  font-weight: 650;
+  padding: 4px 6px;
+}
+
+.managed-account-row input:focus {
+  border-color: var(--line);
+  background: var(--panel);
+  outline: none;
+}
+
+.managed-account-row span {
+  overflow: hidden;
+  color: var(--muted);
+  font-size: 0.8rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .checkbox-setting input {
   width: 20px;
   height: 20px;
@@ -1222,5 +1450,11 @@ pre {
   .metric-grid,
   .analytics-breakdown {
     grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (min-width: 1181px) and (max-width: 1440px) {
+  .composer-options-row {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
   }
 }

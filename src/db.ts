@@ -1,6 +1,8 @@
 import Database from "@tauri-apps/plugin-sql";
 import type {
   AnalyticsSummary,
+  CodexAccountProfile,
+  CodexAccountStatus,
   PreflightReport,
   RunListItem,
   RunRecord,
@@ -31,7 +33,7 @@ function workspaceLabel(path: string) {
 export async function listWorkspaces() {
   const db = await getDatabase();
   return db.select<Workspace[]>(
-    "SELECT id, path, label, last_opened_at, created_at FROM workspaces ORDER BY last_opened_at DESC",
+    "SELECT id, path, label, default_account_id, last_opened_at, created_at FROM workspaces ORDER BY last_opened_at DESC",
   );
 }
 
@@ -49,7 +51,7 @@ export async function upsertWorkspace(path: string) {
   );
 
   const workspace = await selectOne<Workspace>(
-    "SELECT id, path, label, last_opened_at, created_at FROM workspaces WHERE path = $1",
+    "SELECT id, path, label, default_account_id, last_opened_at, created_at FROM workspaces WHERE path = $1",
     [path],
   );
 
@@ -58,6 +60,100 @@ export async function upsertWorkspace(path: string) {
   }
 
   return workspace;
+}
+
+export async function listCodexAccounts() {
+  const db = await getDatabase();
+  return db.select<CodexAccountProfile[]>(
+    `SELECT id, label, email, plan_type, status, last_error, last_used_at,
+      created_at, updated_at, deleted_at
+     FROM codex_accounts
+     WHERE deleted_at IS NULL
+     ORDER BY COALESCE(last_used_at, created_at) DESC, id DESC`,
+  );
+}
+
+export async function createCodexAccount(label = "New Codex account") {
+  const db = await getDatabase();
+  const result = await db.execute(
+    `INSERT INTO codex_accounts (label, status)
+     VALUES ($1, 'pending')`,
+    [label],
+  );
+  const account = await selectOne<CodexAccountProfile>(
+    `SELECT id, label, email, plan_type, status, last_error, last_used_at,
+      created_at, updated_at, deleted_at
+     FROM codex_accounts WHERE id = $1`,
+    [result.lastInsertId],
+  );
+  if (!account) {
+    throw new Error("Codex account profile was not created");
+  }
+  return account;
+}
+
+export async function updateCodexAccount(
+  accountId: number,
+  fields: Partial<{
+    label: string;
+    email: string | null;
+    planType: string | null;
+    status: CodexAccountStatus;
+    lastError: string | null;
+    touchLastUsed: boolean;
+  }>,
+) {
+  const db = await getDatabase();
+  const assignments: string[] = [];
+  const values: unknown[] = [];
+  const add = (column: string, value: unknown) => {
+    assignments.push(`${column} = $${assignments.length + 1}`);
+    values.push(value);
+  };
+
+  if ("label" in fields) add("label", fields.label);
+  if ("email" in fields) add("email", fields.email);
+  if ("planType" in fields) add("plan_type", fields.planType);
+  if ("status" in fields) add("status", fields.status);
+  if ("lastError" in fields) add("last_error", fields.lastError);
+  if (fields.touchLastUsed) assignments.push("last_used_at = CURRENT_TIMESTAMP");
+  assignments.push("updated_at = CURRENT_TIMESTAMP");
+  values.push(accountId);
+
+  await db.execute(
+    `UPDATE codex_accounts SET ${assignments.join(", ")}
+     WHERE id = $${values.length} AND deleted_at IS NULL`,
+    values,
+  );
+}
+
+export async function renameCodexAccount(accountId: number, label: string) {
+  await updateCodexAccount(accountId, { label: label.trim() });
+}
+
+export async function setWorkspaceDefaultAccount(
+  workspaceId: number,
+  accountId: number | null,
+) {
+  const db = await getDatabase();
+  await db.execute(
+    "UPDATE workspaces SET default_account_id = $1 WHERE id = $2",
+    [accountId, workspaceId],
+  );
+}
+
+export async function softDeleteCodexAccount(accountId: number) {
+  const db = await getDatabase();
+  await db.execute(
+    "UPDATE workspaces SET default_account_id = NULL WHERE default_account_id = $1",
+    [accountId],
+  );
+  await db.execute(
+    `UPDATE codex_accounts
+     SET status = 'signed_out', deleted_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP
+     WHERE id = $1`,
+    [accountId],
+  );
 }
 
 export async function createTask(input: {
@@ -147,6 +243,9 @@ export async function savePreflightReport(
 export async function createRun(input: {
   taskId: number;
   workspaceId: number;
+  accountId: number;
+  accountLabel: string;
+  accountEmail?: string | null;
   status: string;
   sandbox: string;
   approvalPolicy: string;
@@ -156,11 +255,15 @@ export async function createRun(input: {
   const db = await getDatabase();
   const result = await db.execute(
     `INSERT INTO runs (
-      task_id, workspace_id, status, sandbox, approval_policy, model, model_provider
-    ) VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+      task_id, workspace_id, account_id, account_label, account_email,
+      status, sandbox, approval_policy, model, model_provider
+    ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
     [
       input.taskId,
       input.workspaceId,
+      input.accountId,
+      input.accountLabel,
+      input.accountEmail ?? null,
       input.status,
       input.sandbox,
       input.approvalPolicy,
@@ -170,7 +273,8 @@ export async function createRun(input: {
   );
 
   const run = await selectOne<RunRecord>(
-    `SELECT id, task_id, workspace_id, codex_thread_id, codex_turn_id, model, model_provider,
+    `SELECT id, task_id, workspace_id, account_id, account_label, account_email,
+      codex_thread_id, codex_turn_id, model, model_provider,
       sandbox, approval_policy, status, started_at, completed_at, duration_ms, final_message, error
      FROM runs WHERE id = $1`,
     [result.lastInsertId],
@@ -283,7 +387,8 @@ export async function listWorkspaceRuns(workspaceId: number) {
   const db = await getDatabase();
   return db.select<RunListItem[]>(
     `SELECT runs.id, runs.task_id, runs.workspace_id, runs.codex_thread_id, runs.codex_turn_id,
-      runs.model, runs.model_provider, runs.sandbox, runs.approval_policy, runs.status,
+      runs.account_id, runs.account_label, runs.account_email, runs.model, runs.model_provider,
+      runs.sandbox, runs.approval_policy, runs.status,
       runs.started_at, runs.completed_at, runs.duration_ms, runs.final_message, runs.error,
       tasks.original_prompt, tasks.improved_prompt, tasks.route_recommendation, tasks.budget_tokens
      FROM runs

@@ -2,12 +2,14 @@ import {
   BrainCircuit,
   ChevronDown,
   ClipboardCheck,
+  CircleUserRound,
   Flag,
   Folder,
   GitBranch,
   Bot,
   Gauge,
   Paperclip,
+  Pin,
   Play,
   ShieldCheck,
   X,
@@ -15,6 +17,7 @@ import {
 import { useLayoutEffect, useRef } from "react";
 import type {
   AccessLevel,
+  CodexAccountProfile,
   CodexModel,
   ComposerContextFile,
   RouteRecommendation,
@@ -28,6 +31,10 @@ type Props = {
   tokenEstimate: number;
   workspaces: Workspace[];
   selectedWorkspaceId: number | null;
+  accounts: CodexAccountProfile[];
+  selectedAccountId: number | null;
+  defaultAccountId: number | null;
+  accountSelectionDisabled: boolean;
   branches: string[];
   selectedBranch: string | null;
   models: CodexModel[];
@@ -39,6 +46,8 @@ type Props = {
   accessLevel: AccessLevel;
   contextFiles: ComposerContextFile[];
   onWorkspaceChange: (workspaceId: number) => void;
+  onAccountChange: (accountId: number) => void;
+  onSetDefaultAccount: () => void;
   onBranchChange: (branch: string) => void;
   onPromptChange: (prompt: string) => void;
   onModelChange: (modelId: string) => void;
@@ -59,6 +68,10 @@ export function TaskComposer({
   tokenEstimate,
   workspaces,
   selectedWorkspaceId,
+  accounts,
+  selectedAccountId,
+  defaultAccountId,
+  accountSelectionDisabled,
   branches,
   selectedBranch,
   models,
@@ -70,6 +83,8 @@ export function TaskComposer({
   accessLevel,
   contextFiles,
   onWorkspaceChange,
+  onAccountChange,
+  onSetDefaultAccount,
   onBranchChange,
   onPromptChange,
   onModelChange,
@@ -167,6 +182,53 @@ export function TaskComposer({
       </div>
 
       <div className="composer-options-row">
+        <div className="account-select-group">
+          <label className="composer-select account-select">
+            <span className="composer-select-icon" aria-hidden="true">
+              <CircleUserRound size={16} />
+            </span>
+            <select
+              value={selectedAccountId ?? ""}
+              onChange={(event) => onAccountChange(Number(event.currentTarget.value))}
+              disabled={accounts.length === 0 || accountSelectionDisabled}
+              aria-label="Run account"
+            >
+              {accounts.length === 0 ? (
+                <option value="">Sign in required</option>
+              ) : (
+                accounts.map((account) => (
+                  <option key={account.id} value={account.id}>
+                    {account.label}
+                  </option>
+                ))
+              )}
+            </select>
+            <ChevronDown className="select-chevron account-chevron-select" size={16} aria-hidden="true" />
+          </label>
+          <button
+            className={`account-default-button secondary ${
+              selectedAccountId !== null && selectedAccountId === defaultAccountId
+                ? "active"
+                : ""
+            }`}
+            type="button"
+            onClick={onSetDefaultAccount}
+            disabled={
+              !selectedAccountId ||
+              accountSelectionDisabled ||
+              selectedAccountId === defaultAccountId
+            }
+            title={
+              selectedAccountId === defaultAccountId
+                ? "Workspace default account"
+                : "Use as workspace default"
+            }
+            aria-label="Use selected account as workspace default"
+          >
+            <Pin size={14} />
+          </button>
+        </div>
+
         <label className="composer-select folder-select">
           <span className="composer-select-icon" aria-hidden="true">
             <Folder size={16} />

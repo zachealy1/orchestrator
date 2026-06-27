@@ -1,6 +1,8 @@
 import { invoke } from "@tauri-apps/api/core";
 import type {
+  CodexAccountResponse,
   CodexConnectResult,
+  CodexLoginResponse,
   CodexModel,
   ComposerContextFile,
   GitBranchList,
@@ -10,20 +12,28 @@ import type {
   Workspace,
 } from "./types";
 
-export function connectCodex() {
-  return invoke<CodexConnectResult>("codex_connect");
+export function connectCodex(accountId: number) {
+  return invoke<CodexConnectResult>("codex_connect", { accountId });
 }
 
-export function stopCodex() {
-  return invoke<void>("codex_stop");
+export function stopCodex(accountId: number) {
+  return invoke<void>("codex_stop", { accountId });
 }
 
-export function codexRpc<T>(method: string, params: Record<string, unknown> = {}) {
-  return invoke<T>("codex_rpc", { method, params });
+export function deleteCodexProfile(accountId: number) {
+  return invoke<void>("codex_delete_profile", { accountId });
 }
 
-export function resolveCodexServerRequest(id: string | number, result: unknown) {
-  return invoke<void>("codex_resolve_server_request", { id, result });
+export function codexRpc<T>(accountId: number, method: string, params: unknown = {}) {
+  return invoke<T>("codex_rpc", { accountId, method, params });
+}
+
+export function resolveCodexServerRequest(
+  accountId: number,
+  id: string | number,
+  result: unknown,
+) {
+  return invoke<void>("codex_resolve_server_request", { accountId, id, result });
 }
 
 export function listGitBranches(path: string) {
@@ -48,38 +58,43 @@ export function runPreflight(input: {
   });
 }
 
-export async function getAuthStatus() {
-  return codexRpc<{
-    authMethod: string | null;
-    authToken: string | null;
-    requiresOpenaiAuth: boolean | null;
-  }>("getAuthStatus", { includeToken: false, refreshToken: true });
+export async function readCodexAccount(
+  accountId: number,
+  input: { refreshToken?: boolean } = {},
+) {
+  return codexRpc<CodexAccountResponse>(accountId, "account/read", {
+    refreshToken: input.refreshToken ?? true,
+  });
 }
 
-export async function startLogin() {
-  return codexRpc<
-    | { type: "apiKey" }
-    | { type: "chatgpt"; loginId: string; authUrl: string }
-    | {
-        type: "chatgptDeviceCode";
-        loginId: string;
-        verificationUrl: string;
-        userCode: string;
-      }
-    | { type: "chatgptAuthTokens" }
-  >("account/login/start", { type: "chatgpt" });
+export async function startCodexLogin(accountId: number) {
+  return codexRpc<CodexLoginResponse>(accountId, "account/login/start", {
+    type: "chatgpt",
+  });
 }
 
-export async function listCodexModels() {
+export async function cancelCodexLogin(accountId: number, loginId: string) {
+  return codexRpc<void>(accountId, "account/login/cancel", { loginId });
+}
+
+export async function logoutCodexAccount(accountId: number) {
+  return codexRpc<void>(accountId, "account/logout", null);
+}
+
+export async function listCodexModels(accountId: number) {
   const models: CodexModel[] = [];
   let cursor: string | null = null;
 
   do {
-    const response: ModelListResponse = await codexRpc<ModelListResponse>("model/list", {
-      includeHidden: false,
-      limit: 100,
-      cursor,
-    });
+    const response: ModelListResponse = await codexRpc<ModelListResponse>(
+      accountId,
+      "model/list",
+      {
+        includeHidden: false,
+        limit: 100,
+        cursor,
+      },
+    );
     models.push(...response.data.filter((model: CodexModel) => !model.hidden));
     cursor = response.nextCursor;
   } while (cursor);
@@ -87,13 +102,19 @@ export async function listCodexModels() {
   return models;
 }
 
-export async function readCodexFile(path: string) {
-  const response = await codexRpc<{ dataBase64: string }>("fs/readFile", { path });
+export async function readCodexFile(accountId: number, path: string) {
+  const response = await codexRpc<{ dataBase64: string }>(accountId, "fs/readFile", {
+    path,
+  });
   return decodeBase64Utf8(response.dataBase64);
 }
 
-export async function setThreadGoal(threadId: string, objective: string) {
-  return codexRpc("thread/goal/set", {
+export async function setThreadGoal(
+  accountId: number,
+  threadId: string,
+  objective: string,
+) {
+  return codexRpc(accountId, "thread/goal/set", {
     threadId,
     objective,
     status: "active",
@@ -101,13 +122,17 @@ export async function setThreadGoal(threadId: string, objective: string) {
   });
 }
 
-export async function searchCodexFiles(query: string, workspacePath: string | null) {
+export async function searchCodexFiles(
+  accountId: number,
+  query: string,
+  workspacePath: string | null,
+) {
   if (!workspacePath || !query.trim()) {
     return [];
   }
 
   try {
-    const response = await codexRpc<unknown>("fuzzyFileSearch", {
+    const response = await codexRpc<unknown>(accountId, "fuzzyFileSearch", {
       query,
       roots: [workspacePath],
       cancellationToken: null,

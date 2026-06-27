@@ -3,15 +3,20 @@ import { openUrl } from "@tauri-apps/plugin-opener";
 import { listen } from "@tauri-apps/api/event";
 import {
   BarChart3,
-  Bot,
+  Check,
+  ChevronDown,
   FolderPlus,
   History,
   LogIn,
+  LogOut,
   Plug,
   Power,
   RefreshCw,
   Settings,
   TerminalSquare,
+  Trash2,
+  UserPlus,
+  X,
 } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import "./App.css";
@@ -19,29 +24,38 @@ import orchestratorMark from "./assets/brand/orchestrator-mark.png";
 import orchestratorWordmark from "./assets/brand/orchestrator-wordmark.png";
 import {
   appendRunEvent,
+  createCodexAccount,
   createRun,
   createTask,
   getAnalyticsSummary,
+  listCodexAccounts,
   listWorkspaceRuns,
   listWorkspaces,
   recordTokenUsage,
+  renameCodexAccount,
   savePreflightReport,
+  setWorkspaceDefaultAccount,
+  softDeleteCodexAccount,
+  updateCodexAccount,
   updateRun,
   updateTaskStatus,
   upsertWorkspace,
 } from "./db";
 import {
+  cancelCodexLogin,
   codexRpc,
   connectCodex,
   checkoutGitBranch,
-  getAuthStatus,
+  deleteCodexProfile,
   listGitBranches,
   listCodexModels,
+  logoutCodexAccount,
   readCodexFile,
+  readCodexAccount,
   resolveCodexServerRequest,
   runPreflight,
   setThreadGoal,
-  startLogin,
+  startCodexLogin,
   stopCodex,
 } from "./codexClient";
 import { AnalyticsSummary } from "./components/AnalyticsSummary";
@@ -55,6 +69,13 @@ import {
   type RunViewState,
 } from "./lib/codexEventReducer";
 import {
+  formatCodexAuthMessage,
+  getCodexAccountSummary,
+  formatLoginStartStatus,
+  isCodexSignedIn,
+  shouldBlockRunForAuth,
+} from "./lib/codexAuth";
+import {
   buildPlanPrompt,
   buildRunPrompt,
   estimateTokens,
@@ -63,10 +84,18 @@ import {
 } from "./lib/taskAnalysis";
 import type {
   AccessLevel,
+  AccountLoginCompletedNotification,
+  AccountUpdatedNotification,
   AdditionalContextEntry,
   AnalyticsSummary as AnalyticsSummaryType,
+  CodexAccount,
+  CodexAccountProfile,
+  CodexAccountStatus,
   CodexMessage,
+  CodexMessageEvent,
+  CodexLoginState,
   CodexModel,
+  CodexProcessEvent,
   ComposerContextFile,
   OssProvider,
   PreflightReport,
@@ -84,6 +113,13 @@ const DEFAULT_ANALYTICS: AnalyticsSummaryType = {
 };
 
 type AppView = "task" | "runs" | "analytics" | "settings";
+
+type AuthRowState = {
+  title: string;
+  subtitle: string;
+  avatarLabel: string;
+  tone: "default" | "waiting" | "failed" | "signed-in";
+};
 
 const TASK_QUOTES = [
   "You prompting me?",
@@ -153,6 +189,11 @@ const TASK_QUOTES = [
 function App() {
   const [workspaces, setWorkspaces] = useState<Workspace[]>([]);
   const [selectedWorkspace, setSelectedWorkspace] = useState<Workspace | null>(null);
+  const [codexAccounts, setCodexAccounts] = useState<CodexAccountProfile[]>([]);
+  const [selectedAccountId, setSelectedAccountId] = useState<number | null>(null);
+  const [connectedAccountIds, setConnectedAccountIds] = useState<Set<number>>(
+    () => new Set(),
+  );
   const [runs, setRuns] = useState<RunListItem[]>([]);
   const [analytics, setAnalytics] = useState<AnalyticsSummaryType>(DEFAULT_ANALYTICS);
   const [activeView, setActiveView] = useState<AppView>("task");
@@ -160,8 +201,14 @@ function App() {
   const [preflight, setPreflight] = useState<PreflightReport | null>(null);
   const [runView, setRunView] = useState<RunViewState>(emptyRunView);
   const [statusMessage, setStatusMessage] = useState("Choose a workspace to begin.");
-  const [codexConnected, setCodexConnected] = useState(false);
-  const [authMessage, setAuthMessage] = useState("Auth not checked");
+  const [codexAccount, setCodexAccount] = useState<CodexAccount | null>(null);
+  const [requiresOpenaiAuth, setRequiresOpenaiAuth] = useState(true);
+  const [loginState, setLoginState] = useState<CodexLoginState>("idle");
+  const [pendingLoginId, setPendingLoginId] = useState<string | null>(null);
+  const [pendingLoginAccountId, setPendingLoginAccountId] = useState<number | null>(null);
+  const [loginUserCode, setLoginUserCode] = useState<string | null>(null);
+  const [loginError, setLoginError] = useState<string | null>(null);
+  const [accountMenuOpen, setAccountMenuOpen] = useState(false);
   const [useOss, setUseOss] = useState(false);
   const [ossProvider, setOssProvider] = useState<OssProvider>("ollama");
   const [models, setModels] = useState<CodexModel[]>([]);
@@ -177,7 +224,16 @@ function App() {
 
   const currentRunId = useRef<number | null>(null);
   const currentTaskId = useRef<number | null>(null);
+  const currentRunAccountId = useRef<number | null>(null);
   const eventSequence = useRef(0);
+  const selectedWorkspaceRef = useRef<Workspace | null>(null);
+  const codexAccountsRef = useRef<CodexAccountProfile[]>([]);
+  const selectedAccountIdRef = useRef<number | null>(null);
+  const connectedAccountIdsRef = useRef<Set<number>>(new Set());
+  const pendingLoginIdRef = useRef<string | null>(null);
+  const pendingLoginAccountIdRef = useRef<number | null>(null);
+  const modelsRef = useRef<CodexModel[]>([]);
+  const modelLoadErrorRef = useRef<string | null>(null);
 
   const improvedPrompt = useMemo(() => improvePrompt(prompt), [prompt]);
   const routeRecommendation = useMemo(() => recommendRoute(prompt), [prompt]);
@@ -188,10 +244,101 @@ function App() {
   );
   const selectedWorkspaceName = selectedWorkspace?.label ?? "Choose a repository";
   const selectedWorkspacePath = selectedWorkspace?.path ?? "No workspace selected";
+  const selectedAccount =
+    codexAccounts.find((account) => account.id === selectedAccountId) ?? null;
+  const signedInAccounts = codexAccounts.filter(
+    (account) => account.status === "signed_in",
+  );
+  const codexConnected =
+    selectedAccountId !== null && connectedAccountIds.has(selectedAccountId);
+  const runIsActive =
+    runView.status === "connecting" || runView.status === "running";
   const canRun = Boolean(selectedWorkspace && prompt.trim());
+  const codexSignedIn = isCodexSignedIn(codexAccount);
+  const authMessage = formatCodexAuthMessage({
+    connected: codexConnected,
+    account: codexAccount,
+    requiresOpenaiAuth,
+    loginState,
+    loginUserCode,
+    errorMessage: loginError,
+  });
+  const showCancelLogin = loginState === "waiting" && pendingLoginId !== null;
+  const showLogout = codexSignedIn;
+  const accountSummary = getCodexAccountSummary(codexAccount);
+  const authRow = useMemo<AuthRowState>(() => {
+    if (codexSignedIn && accountSummary) {
+      return {
+        title: accountSummary.title,
+        subtitle: accountSummary.subtitle,
+        avatarLabel: accountSummary.avatarLabel,
+        tone: "signed-in",
+      };
+    }
+
+    if (loginState === "waiting") {
+      return {
+        title: loginUserCode ? `Enter code ${loginUserCode}` : "Waiting for browser sign-in",
+        subtitle: "Complete Codex sign-in in your browser",
+        avatarLabel: "C",
+        tone: "waiting",
+      };
+    }
+
+    if (loginState === "starting") {
+      return {
+        title: "Starting Codex sign-in",
+        subtitle: "Opening your browser",
+        avatarLabel: "C",
+        tone: "waiting",
+      };
+    }
+
+    if (loginState === "failed") {
+      return {
+        title: "Sign-in failed",
+        subtitle: loginError ?? "Try again",
+        avatarLabel: "!",
+        tone: "failed",
+      };
+    }
+
+    if (!codexConnected) {
+      return {
+        title: "Sign in to Codex",
+        subtitle: loginError ?? "Connect and authenticate",
+        avatarLabel: "C",
+        tone: "default",
+      };
+    }
+
+    if (!requiresOpenaiAuth) {
+      return {
+        title: "Sign in to Codex",
+        subtitle: "Optional for local runs",
+        avatarLabel: "C",
+        tone: "default",
+      };
+    }
+
+    return {
+      title: "Sign in to Codex",
+      subtitle: "Authentication required",
+      avatarLabel: "C",
+      tone: "default",
+    };
+  }, [
+    accountSummary,
+    codexConnected,
+    codexSignedIn,
+    loginError,
+    loginState,
+    loginUserCode,
+    requiresOpenaiAuth,
+  ]);
 
   useEffect(() => {
-    void refreshWorkspaces();
+    void bootstrap();
   }, []);
 
   useEffect(() => {
@@ -202,6 +349,44 @@ function App() {
     void refreshWorkspaceData(selectedWorkspace.id);
     void refreshBranches(selectedWorkspace);
   }, [selectedWorkspace]);
+
+  useEffect(() => {
+    selectedWorkspaceRef.current = selectedWorkspace;
+  }, [selectedWorkspace]);
+
+  useEffect(() => {
+    codexAccountsRef.current = codexAccounts;
+  }, [codexAccounts]);
+
+  useEffect(() => {
+    selectedAccountIdRef.current = selectedAccountId;
+  }, [selectedAccountId]);
+
+  useEffect(() => {
+    connectedAccountIdsRef.current = connectedAccountIds;
+  }, [connectedAccountIds]);
+
+  useEffect(() => {
+    pendingLoginIdRef.current = pendingLoginId;
+  }, [pendingLoginId]);
+
+  useEffect(() => {
+    pendingLoginAccountIdRef.current = pendingLoginAccountId;
+  }, [pendingLoginAccountId]);
+
+  useEffect(() => {
+    modelsRef.current = models;
+  }, [models]);
+
+  useEffect(() => {
+    modelLoadErrorRef.current = modelLoadError;
+  }, [modelLoadError]);
+
+  useEffect(() => {
+    if (!codexSignedIn) {
+      setAccountMenuOpen(false);
+    }
+  }, [codexSignedIn]);
 
   useEffect(() => {
     const selectedModel =
@@ -234,25 +419,48 @@ function App() {
     let processUnlisten: (() => void) | null = null;
     let disposed = false;
 
-    void listen<CodexMessage>("codex:notification", (event) => {
-      void handleCodexNotification(event.payload);
+    void listen<CodexMessageEvent>("codex:notification", (event) => {
+      void handleCodexNotification(event.payload.accountId, event.payload.message);
     }).then((unlisten) => {
       if (disposed) unlisten();
       else notificationUnlisten = unlisten;
     });
 
-    void listen<CodexMessage>("codex:server-request", (event) => {
-      void handleCodexServerRequest(event.payload);
+    void listen<CodexMessageEvent>("codex:server-request", (event) => {
+      void handleCodexServerRequest(event.payload.accountId, event.payload.message);
     }).then((unlisten) => {
       if (disposed) unlisten();
       else requestUnlisten = unlisten;
     });
 
-    void listen<{ status: string; message: string }>("codex:process", (event) => {
-      setStatusMessage(event.payload.message);
-      void persistRunEvent("process", event.payload.status, event.payload);
+    void listen<CodexProcessEvent>("codex:process", (event) => {
+      if (
+        selectedAccountIdRef.current === event.payload.accountId ||
+        currentRunAccountId.current === event.payload.accountId
+      ) {
+        setStatusMessage(event.payload.message);
+      }
+      if (currentRunAccountId.current === event.payload.accountId) {
+        void persistRunEvent("process", event.payload.status, event.payload);
+      }
+      setConnectedAccountIds((current) => {
+        const next = new Set(current);
+        if (event.payload.status === "connected") {
+          next.add(event.payload.accountId);
+        }
+        if (event.payload.status === "exited" || event.payload.status === "stopped") {
+          next.delete(event.payload.accountId);
+        }
+        return next;
+      });
       if (event.payload.status === "exited" || event.payload.status === "stopped") {
-        setCodexConnected(false);
+        if (selectedAccountIdRef.current === event.payload.accountId) {
+          setCodexAccount(null);
+          setRequiresOpenaiAuth(true);
+        }
+        if (pendingLoginAccountIdRef.current === event.payload.accountId) {
+          resetLoginFlow();
+        }
       }
     }).then((unlisten) => {
       if (disposed) unlisten();
@@ -268,28 +476,100 @@ function App() {
   }, []);
 
   useEffect(() => {
-    let disposed = false;
+    if (
+      loginState !== "waiting" ||
+      !pendingLoginId ||
+      !pendingLoginAccountId ||
+      !connectedAccountIds.has(pendingLoginAccountId)
+    ) {
+      return;
+    }
 
-    void ensureCodexConnected().catch((error) => {
+    let disposed = false;
+    let timeoutId: number | null = null;
+    let attempts = 0;
+    const maxAttempts = 60;
+
+    const pollAccount = async () => {
+      attempts += 1;
+
+      try {
+        const response = await refreshAccountState(pendingLoginAccountId, true);
+        if (response.account) {
+          if (selectedAccountIdRef.current === pendingLoginAccountId) {
+            await refreshCodexModels(pendingLoginAccountId);
+          }
+          setStatusMessage("Codex sign-in completed.");
+          return;
+        }
+      } catch {
+        // Keep waiting; transient refresh failures are common while the browser flow is active.
+      }
+
       if (disposed) {
         return;
       }
 
-      const message = error instanceof Error ? error.message : String(error);
-      setModelLoadError(message);
-      setAuthMessage("Codex unavailable");
-      setStatusMessage(`Codex connection failed: ${message}`);
-    });
+      if (attempts >= maxAttempts) {
+        resetLoginFlow("failed");
+        setLoginError("Codex sign-in timed out. Try again.");
+        setStatusMessage("Sign-in timed out. Try again.");
+        return;
+      }
+
+      timeoutId = window.setTimeout(pollAccount, 2000);
+    };
+
+    timeoutId = window.setTimeout(pollAccount, 2000);
 
     return () => {
       disposed = true;
+      if (timeoutId !== null) {
+        window.clearTimeout(timeoutId);
+      }
     };
-  }, []);
+  }, [
+    connectedAccountIds,
+    loginState,
+    pendingLoginAccountId,
+    pendingLoginId,
+  ]);
 
-  async function refreshWorkspaces() {
-    const rows = await listWorkspaces();
-    setWorkspaces(rows);
-    setSelectedWorkspace((current) => current ?? rows[0] ?? null);
+  async function bootstrap() {
+    const [workspaceRows, accountRows] = await Promise.all([
+      listWorkspaces(),
+      listCodexAccounts(),
+    ]);
+    const workspace = workspaceRows[0] ?? null;
+    const preferredAccount =
+      accountRows.find(
+        (account) =>
+          account.id === workspace?.default_account_id &&
+          account.status === "signed_in",
+      ) ??
+      accountRows.find((account) => account.status === "signed_in") ??
+      accountRows[0] ??
+      null;
+
+    setWorkspaces(workspaceRows);
+    setSelectedWorkspace(workspace);
+    setCodexAccounts(accountRows);
+    codexAccountsRef.current = accountRows;
+    setSelectedAccountId(preferredAccount?.id ?? null);
+    selectedAccountIdRef.current = preferredAccount?.id ?? null;
+
+    await Promise.allSettled(
+      accountRows
+        .filter((account) => account.status === "signed_in")
+        .map(async (account) => {
+          await ensureCodexConnected(account.id);
+          await refreshAccountState(account.id, true);
+        }),
+    );
+
+    if (preferredAccount) {
+      await refreshCodexModels(preferredAccount.id);
+    }
   }
 
   async function refreshWorkspaceData(workspaceId: number) {
@@ -317,9 +597,101 @@ function App() {
     }
   }
 
-  async function refreshCodexModels() {
+  function resetLoginFlow(nextState: CodexLoginState = "idle") {
+    setLoginState(nextState);
+    setPendingLoginId(null);
+    setPendingLoginAccountId(null);
+    setLoginUserCode(null);
+    pendingLoginIdRef.current = null;
+    pendingLoginAccountIdRef.current = null;
+  }
+
+  async function refreshAccountState(accountId: number, refreshToken = true) {
     try {
-      const visibleModels = await listCodexModels();
+      const response = await readCodexAccount(accountId, { refreshToken });
+      const chatgptAccount =
+        response.account?.type === "chatgpt" ? response.account : null;
+      const existing = codexAccountsRef.current.find(
+        (account) => account.id === accountId,
+      );
+      const nextLabel =
+        existing?.label && existing.label !== "New Codex account"
+          ? existing.label
+          : (chatgptAccount?.email ?? existing?.label ?? "Codex account");
+      const profileStatus: CodexAccountStatus = chatgptAccount
+        ? "signed_in"
+        : "signed_out";
+
+      await updateCodexAccount(accountId, {
+        label: nextLabel,
+        email: chatgptAccount?.email ?? null,
+        planType: chatgptAccount?.planType ?? null,
+        status: profileStatus,
+        lastError: null,
+        touchLastUsed: Boolean(chatgptAccount),
+      });
+      setCodexAccounts((current) => {
+        const next = current.map((account) =>
+          account.id === accountId
+            ? {
+                ...account,
+                label: nextLabel,
+                email: chatgptAccount?.email ?? null,
+                plan_type: chatgptAccount?.planType ?? null,
+                status: profileStatus,
+                last_error: null,
+                last_used_at: chatgptAccount
+                  ? new Date().toISOString()
+                  : account.last_used_at,
+              }
+            : account,
+        );
+        codexAccountsRef.current = next;
+        return next;
+      });
+
+      if (selectedAccountIdRef.current === accountId) {
+        setCodexAccount(response.account);
+        setRequiresOpenaiAuth(response.requiresOpenaiAuth);
+      }
+      setLoginError(null);
+
+      if (
+        response.account &&
+        pendingLoginAccountIdRef.current === accountId
+      ) {
+        resetLoginFlow();
+        setAccountMenuOpen(false);
+      }
+
+      return response;
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      await updateCodexAccount(accountId, {
+        status: "error",
+        lastError: message,
+      });
+      setCodexAccounts((current) => {
+        const next = current.map((account) =>
+          account.id === accountId
+            ? { ...account, status: "error" as const, last_error: message }
+            : account,
+        );
+        codexAccountsRef.current = next;
+        return next;
+      });
+      if (selectedAccountIdRef.current === accountId) {
+        setCodexAccount(null);
+        setRequiresOpenaiAuth(true);
+        setLoginError(message);
+      }
+      throw error;
+    }
+  }
+
+  async function refreshCodexModels(accountId: number) {
+    try {
+      const visibleModels = await listCodexModels(accountId);
       setModels(visibleModels);
       setModelLoadError(null);
       setSelectedModelId((current) => {
@@ -367,6 +739,12 @@ function App() {
     setSelectedWorkspace(workspace);
     setPreflight(null);
     setStatusMessage(`Selected ${workspace.label}`);
+    if (
+      workspace.default_account_id &&
+      workspace.default_account_id !== selectedAccountIdRef.current
+    ) {
+      void selectCodexAccount(workspace.default_account_id);
+    }
   }
 
   async function selectBranch(branch: string) {
@@ -422,56 +800,392 @@ function App() {
     setContextFiles((current) => mergeContextFiles(current, paths.map(contextFileFromPath)));
   }
 
-  async function ensureCodexConnected() {
-    if (codexConnected) {
-      if (models.length === 0 || modelLoadError) {
-        await refreshCodexModels();
-      }
+  async function ensureCodexConnected(accountId: number) {
+    if (connectedAccountIdsRef.current.has(accountId)) {
       return;
     }
 
-    setRunView((current) => ({ ...current, status: "connecting" }));
-    const connection = await connectCodex();
-    setCodexConnected(true);
+    const connection = await connectCodex(accountId);
+    setConnectedAccountIds((current) => {
+      const next = new Set(current).add(accountId);
+      connectedAccountIdsRef.current = next;
+      return next;
+    });
     setStatusMessage(
       connection.alreadyConnected
         ? "Codex app-server already connected."
         : `Codex app-server connected${connection.pid ? ` as ${connection.pid}` : ""}.`,
     );
+  }
 
-    try {
-      const auth = await getAuthStatus();
-      setAuthMessage(
-        auth.authMethod
-          ? `Signed in with ${auth.authMethod}`
-          : "Codex requires authentication",
-      );
-    } catch (error) {
-      setAuthMessage(error instanceof Error ? error.message : String(error));
+  async function selectCodexAccount(accountId: number) {
+    if (runIsActive || selectedAccountIdRef.current === accountId) {
+      return;
     }
 
-    await refreshCodexModels();
+    const profile = codexAccountsRef.current.find(
+      (account) => account.id === accountId,
+    );
+    if (!profile) {
+      return;
+    }
+
+    setSelectedAccountId(accountId);
+    selectedAccountIdRef.current = accountId;
+    setAccountMenuOpen(false);
+    setCodexAccount(
+      profile.status === "signed_in" && profile.plan_type
+        ? {
+            type: "chatgpt",
+            email: profile.email,
+            planType: profile.plan_type,
+          }
+        : null,
+    );
+    setRequiresOpenaiAuth(true);
+    setLoginError(profile.last_error);
+
+    try {
+      await ensureCodexConnected(accountId);
+      await refreshAccountState(accountId, true);
+      await refreshCodexModels(accountId);
+      await updateCodexAccount(accountId, { touchLastUsed: true });
+    } catch (error) {
+      setStatusMessage(
+        `Could not select ${profile.label}: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+      );
+    }
   }
 
   async function handleLogin() {
-    await ensureCodexConnected();
-    const response = await startLogin();
+    if (loginState === "starting" || loginState === "waiting") {
+      setStatusMessage("A Codex sign-in is already in progress.");
+      return;
+    }
 
-    if (response.type === "chatgpt") {
-      await openUrl(response.authUrl);
-      setAuthMessage("Opened Codex login in your browser.");
-    } else if (response.type === "chatgptDeviceCode") {
-      await openUrl(response.verificationUrl);
-      setAuthMessage(`Enter code ${response.userCode} in the browser.`);
-    } else {
-      setAuthMessage(`Login flow started: ${response.type}`);
+    const accountId = selectedAccountIdRef.current;
+    let profile = codexAccountsRef.current.find(
+      (account) => account.id === accountId,
+    );
+
+    if (!profile || profile.status === "signed_in") {
+      profile = await createCodexAccount();
+      setCodexAccounts((current) => {
+        const next = [profile!, ...current];
+        codexAccountsRef.current = next;
+        return next;
+      });
+    }
+    const loginAccountId = profile.id;
+
+    setSelectedAccountId(loginAccountId);
+    selectedAccountIdRef.current = loginAccountId;
+    setPendingLoginAccountId(loginAccountId);
+    pendingLoginAccountIdRef.current = loginAccountId;
+    setLoginState("starting");
+    setLoginError(null);
+
+    try {
+      await ensureCodexConnected(loginAccountId);
+      const response = await startCodexLogin(loginAccountId);
+
+      if (response.type === "chatgpt") {
+        setPendingLoginId(response.loginId);
+        pendingLoginIdRef.current = response.loginId;
+        setLoginState("waiting");
+        await openUrl(response.authUrl);
+      } else if (response.type === "chatgptDeviceCode") {
+        setPendingLoginId(response.loginId);
+        pendingLoginIdRef.current = response.loginId;
+        setLoginUserCode(response.userCode);
+        setLoginState("waiting");
+        await openUrl(response.verificationUrl);
+      } else {
+        resetLoginFlow("failed");
+        setLoginError(formatLoginStartStatus(response));
+      }
+
+      setStatusMessage(formatLoginStartStatus(response));
+    } catch (error) {
+      resetLoginFlow("failed");
+      const message = error instanceof Error ? error.message : String(error);
+      await updateCodexAccount(loginAccountId, {
+        status: "error",
+        lastError: message,
+      });
+      setLoginError(message);
+      setStatusMessage(`Sign-in failed: ${message}`);
+    }
+  }
+
+  async function handleAddAccount() {
+    if (runIsActive || loginState === "starting" || loginState === "waiting") {
+      return;
+    }
+    const account = await createCodexAccount();
+    setCodexAccounts((current) => {
+      const next = [account, ...current];
+      codexAccountsRef.current = next;
+      return next;
+    });
+    setSelectedAccountId(account.id);
+    selectedAccountIdRef.current = account.id;
+    setCodexAccount(null);
+    setAccountMenuOpen(false);
+    await handleLoginForAccount(account);
+  }
+
+  async function handleLoginForAccount(account: CodexAccountProfile) {
+    setPendingLoginAccountId(account.id);
+    pendingLoginAccountIdRef.current = account.id;
+    setLoginState("starting");
+    setLoginError(null);
+
+    try {
+      await ensureCodexConnected(account.id);
+      const response = await startCodexLogin(account.id);
+      if (response.type === "chatgpt") {
+        setPendingLoginId(response.loginId);
+        pendingLoginIdRef.current = response.loginId;
+        setLoginState("waiting");
+        await openUrl(response.authUrl);
+      } else if (response.type === "chatgptDeviceCode") {
+        setPendingLoginId(response.loginId);
+        pendingLoginIdRef.current = response.loginId;
+        setLoginUserCode(response.userCode);
+        setLoginState("waiting");
+        await openUrl(response.verificationUrl);
+      } else {
+        resetLoginFlow("failed");
+        setLoginError(formatLoginStartStatus(response));
+      }
+      setStatusMessage(formatLoginStartStatus(response));
+    } catch (error) {
+      resetLoginFlow("failed");
+      const message = error instanceof Error ? error.message : String(error);
+      await updateCodexAccount(account.id, {
+        status: "error",
+        lastError: message,
+      });
+      setLoginError(message);
+      setStatusMessage(`Sign-in failed: ${message}`);
+    }
+  }
+
+  async function handleCancelLogin() {
+    if (!pendingLoginId || !pendingLoginAccountId) {
+      return;
+    }
+
+    try {
+      await cancelCodexLogin(pendingLoginAccountId, pendingLoginId);
+      const profile = codexAccountsRef.current.find(
+        (account) => account.id === pendingLoginAccountId,
+      );
+      if (profile?.status === "pending") {
+        await deleteCodexProfile(pendingLoginAccountId);
+        await softDeleteCodexAccount(pendingLoginAccountId);
+        setCodexAccounts((current) => {
+          const next = current.filter(
+            (account) => account.id !== pendingLoginAccountId,
+          );
+          codexAccountsRef.current = next;
+          return next;
+        });
+        const fallback = codexAccountsRef.current.find(
+          (account) => account.status === "signed_in",
+        );
+        setSelectedAccountId(fallback?.id ?? null);
+        selectedAccountIdRef.current = fallback?.id ?? null;
+        setCodexAccount(
+          fallback?.plan_type
+            ? {
+                type: "chatgpt",
+                email: fallback.email,
+                planType: fallback.plan_type,
+              }
+            : null,
+        );
+        if (fallback) {
+          await refreshCodexModels(fallback.id);
+        }
+      }
+      resetLoginFlow();
+      setLoginError(null);
+      setAccountMenuOpen(false);
+      setStatusMessage("Codex sign-in cancelled.");
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      setLoginState("failed");
+      setLoginError(message);
+      setStatusMessage(`Could not cancel Codex sign-in: ${message}`);
+    }
+  }
+
+  async function handleRefreshAccount() {
+    const accountId = selectedAccountIdRef.current;
+    if (!accountId) {
+      return;
+    }
+    try {
+      await ensureCodexConnected(accountId);
+      await refreshAccountState(accountId, true);
+      await refreshCodexModels(accountId);
+      setStatusMessage("Codex account refreshed.");
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      setLoginError(message);
+      setStatusMessage(`Could not refresh Codex account: ${message}`);
+    }
+  }
+
+  async function handleLogout() {
+    const accountId = selectedAccountIdRef.current;
+    if (!accountId || runIsActive) {
+      return;
+    }
+    try {
+      await ensureCodexConnected(accountId);
+      await logoutCodexAccount(accountId);
+      await updateCodexAccount(accountId, {
+        status: "signed_out",
+        email: null,
+        planType: null,
+        lastError: null,
+      });
+      setCodexAccounts((current) => {
+        const next = current.map((account) =>
+          account.id === accountId
+            ? {
+                ...account,
+                status: "signed_out" as const,
+                email: null,
+                plan_type: null,
+                last_error: null,
+              }
+            : account,
+        );
+        codexAccountsRef.current = next;
+        return next;
+      });
+      const fallback = codexAccountsRef.current.find(
+        (account) => account.id !== accountId && account.status === "signed_in",
+      );
+      resetLoginFlow();
+      setAccountMenuOpen(false);
+      setSelectedAccountId(fallback?.id ?? accountId);
+      selectedAccountIdRef.current = fallback?.id ?? accountId;
+      if (fallback?.plan_type) {
+        setCodexAccount({
+          type: "chatgpt",
+          email: fallback.email,
+          planType: fallback.plan_type,
+        });
+        await refreshCodexModels(fallback.id);
+      } else {
+        setCodexAccount(null);
+        setModels([]);
+      }
+      setStatusMessage("Signed out of Codex.");
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      setLoginState("failed");
+      setLoginError(message);
+      setStatusMessage(`Could not sign out of Codex: ${message}`);
     }
   }
 
   async function handleStopCodex() {
-    await stopCodex();
-    setCodexConnected(false);
+    const accountId = selectedAccountIdRef.current;
+    if (!accountId || runIsActive) {
+      return;
+    }
+    await stopCodex(accountId);
+    setConnectedAccountIds((current) => {
+      const next = new Set(current);
+      next.delete(accountId);
+      connectedAccountIdsRef.current = next;
+      return next;
+    });
+    setCodexAccount(null);
+    setRequiresOpenaiAuth(true);
+    setLoginError(null);
+    setAccountMenuOpen(false);
+    resetLoginFlow();
     setRunView((current) => ({ ...current, status: "interrupted" }));
+  }
+
+  async function handleRemoveAccount(accountId: number) {
+    if (runIsActive) {
+      return;
+    }
+    await deleteCodexProfile(accountId);
+    await softDeleteCodexAccount(accountId);
+    setCodexAccounts((current) => {
+      const next = current.filter((account) => account.id !== accountId);
+      codexAccountsRef.current = next;
+      return next;
+    });
+    setWorkspaces((current) =>
+      current.map((workspace) =>
+        workspace.default_account_id === accountId
+          ? { ...workspace, default_account_id: null }
+          : workspace,
+      ),
+    );
+    if (selectedAccountIdRef.current === accountId) {
+      const fallback = codexAccountsRef.current.find(
+        (account) => account.status === "signed_in",
+      );
+      setSelectedAccountId(fallback?.id ?? null);
+      selectedAccountIdRef.current = fallback?.id ?? null;
+      setCodexAccount(
+        fallback?.plan_type
+          ? {
+              type: "chatgpt",
+              email: fallback.email,
+              planType: fallback.plan_type,
+            }
+          : null,
+      );
+    }
+    setAccountMenuOpen(false);
+    setStatusMessage("Codex account removed from Orchestrator.");
+  }
+
+  async function handleRenameAccount(accountId: number, label: string) {
+    const trimmed = label.trim();
+    if (!trimmed) {
+      return;
+    }
+    await renameCodexAccount(accountId, trimmed);
+    setCodexAccounts((current) => {
+      const next = current.map((account) =>
+        account.id === accountId ? { ...account, label: trimmed } : account,
+      );
+      codexAccountsRef.current = next;
+      return next;
+    });
+  }
+
+  async function handleSetWorkspaceDefault() {
+    if (!selectedWorkspace || !selectedAccountId) {
+      return;
+    }
+    await setWorkspaceDefaultAccount(selectedWorkspace.id, selectedAccountId);
+    const updated = {
+      ...selectedWorkspace,
+      default_account_id: selectedAccountId,
+    };
+    setSelectedWorkspace(updated);
+    setWorkspaces((current) =>
+      current.map((workspace) =>
+        workspace.id === updated.id ? updated : workspace,
+      ),
+    );
+    setStatusMessage(`${selectedAccount?.label ?? "Account"} is now the workspace default.`);
   }
 
   async function handlePreflight() {
@@ -500,14 +1214,32 @@ function App() {
       setStatusMessage("Select a workspace and write a prompt first.");
       return;
     }
+    if (!selectedAccountId || !selectedAccount) {
+      setStatusMessage("Sign in to a Codex account before starting a run.");
+      return;
+    }
+    if (runIsActive) {
+      setStatusMessage("Wait for the active run to finish before starting another.");
+      return;
+    }
 
     const report = preflight ?? (await handlePreflight());
     if (!report) {
       return;
     }
 
-    await ensureCodexConnected();
+    await ensureCodexConnected(selectedAccountId);
+    await refreshAccountState(selectedAccountId, true);
     if (!(await ensureSelectedBranch())) {
+      return;
+    }
+
+    if (shouldBlockRunForAuth(requiresOpenaiAuth, codexAccount)) {
+      setStatusMessage(
+        loginState === "waiting"
+          ? "Finish Codex sign-in before starting a run."
+          : "Sign in to Codex before starting a run.",
+      );
       return;
     }
 
@@ -532,6 +1264,9 @@ function App() {
     const run = await createRun({
       taskId: task.id,
       workspaceId: selectedWorkspace.id,
+      accountId: selectedAccountId,
+      accountLabel: selectedAccount.label,
+      accountEmail: selectedAccount.email,
       status: "starting",
       sandbox: access.sandbox,
       approvalPolicy: access.approvalPolicy,
@@ -539,6 +1274,7 @@ function App() {
       modelProvider: useOss ? "oss" : null,
     });
     currentRunId.current = run.id;
+    currentRunAccountId.current = selectedAccountId;
     eventSequence.current = 0;
     setRunView({ ...emptyRunView, status: "running" });
 
@@ -547,7 +1283,7 @@ function App() {
       model?: string;
       modelProvider?: string;
       serviceTier?: string | null;
-    }>("thread/start", {
+    }>(selectedAccountId, "thread/start", {
       cwd: selectedWorkspace.path,
       model,
       approvalPolicy: access.approvalPolicy,
@@ -573,7 +1309,7 @@ function App() {
     const warnings: string[] = [];
     if (goalMode) {
       try {
-        await setThreadGoal(thread.thread.id, prompt.trim());
+        await setThreadGoal(selectedAccountId, thread.thread.id, prompt.trim());
       } catch (error) {
         warnings.push(
           `Goal mode could not set a thread goal: ${
@@ -587,14 +1323,20 @@ function App() {
       mode === "plan"
         ? buildPlanPrompt(report.improvedPrompt || improvedPrompt)
         : buildRunPrompt(report.improvedPrompt || improvedPrompt, report.recommendations);
-    const { additionalContext, skippedFiles } = await buildAdditionalContext(contextFiles);
+    const { additionalContext, skippedFiles } = await buildAdditionalContext(
+      selectedAccountId,
+      contextFiles,
+    );
     if (skippedFiles.length > 0) {
       warnings.push(
         `Skipped context file${skippedFiles.length === 1 ? "" : "s"}: ${skippedFiles.join(", ")}`,
       );
     }
 
-    const turn = await codexRpc<{ turn: { id: string } }>("turn/start", {
+    const turn = await codexRpc<{ turn: { id: string } }>(
+      selectedAccountId,
+      "turn/start",
+      {
       threadId: thread.thread.id,
       input: [{ type: "text", text, text_elements: [] }],
       additionalContext,
@@ -603,7 +1345,8 @@ function App() {
       approvalsReviewer: "user",
       model,
       effort,
-    });
+      },
+    );
 
     await updateRun(run.id, {
       codexTurnId: turn.turn.id,
@@ -617,14 +1360,17 @@ function App() {
     );
   }
 
-  async function buildAdditionalContext(files: ComposerContextFile[]) {
+  async function buildAdditionalContext(
+    accountId: number,
+    files: ComposerContextFile[],
+  ) {
     const additionalContext: Record<string, AdditionalContextEntry> = {};
     const errors = new Map<string, string>();
     const skippedFiles: string[] = [];
 
     for (const file of files) {
       try {
-        const content = await readCodexFile(file.path);
+        const content = await readCodexFile(accountId, file.path);
         additionalContext[`file:${file.path}`] = {
           kind: "untrusted",
           value: `File: ${file.path}\n\n${content}`,
@@ -651,18 +1397,91 @@ function App() {
     };
   }
 
-  async function handleCodexNotification(message: CodexMessage) {
+  async function handleAccountLoginCompleted(
+    accountId: number,
+    params: AccountLoginCompletedNotification,
+  ) {
+    const activeLoginId = pendingLoginIdRef.current;
+    const loginIdMatches =
+      pendingLoginAccountIdRef.current === accountId &&
+      activeLoginId !== null &&
+      (params.loginId === null || params.loginId === activeLoginId);
+
+    if (!loginIdMatches) {
+      return;
+    }
+
+    if (params.success) {
+      resetLoginFlow();
+      setLoginError(null);
+      await refreshAccountState(accountId, true);
+      if (selectedAccountIdRef.current === accountId) {
+        await refreshCodexModels(accountId);
+      }
+      setStatusMessage("Codex sign-in completed.");
+      return;
+    }
+
+    const message = params.error ?? "Codex sign-in failed.";
+    resetLoginFlow("failed");
+    setLoginError(message);
+    await updateCodexAccount(accountId, {
+      status: "error",
+      lastError: message,
+    });
+    setStatusMessage(`Sign-in failed: ${message}`);
+  }
+
+  async function handleAccountUpdated(
+    accountId: number,
+    _params: AccountUpdatedNotification,
+  ) {
+    try {
+      await refreshAccountState(accountId, false);
+      if (
+        selectedAccountIdRef.current === accountId &&
+        (modelsRef.current.length === 0 || modelLoadErrorRef.current)
+      ) {
+        await refreshCodexModels(accountId);
+      }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      if (
+        selectedAccountIdRef.current === accountId ||
+        pendingLoginAccountIdRef.current === accountId
+      ) {
+        setLoginState("failed");
+        setLoginError(message);
+      }
+    }
+  }
+
+  async function handleCodexNotification(accountId: number, message: CodexMessage) {
+    const method = message.method ?? null;
+
+    const params = readObject(message.params);
+
+    if (method === "account/login/completed") {
+      await handleAccountLoginCompleted(accountId, readAccountLoginCompleted(params));
+    }
+
+    if (method === "account/updated") {
+      await handleAccountUpdated(accountId, readAccountUpdated(params));
+    }
+
+    if (currentRunAccountId.current !== accountId) {
+      return;
+    }
+
     setRunView((current) => applyCodexMessage(current, message));
-    await persistRunEvent("notification", message.method ?? null, message);
+    await persistRunEvent("notification", method, message);
 
     const runId = currentRunId.current;
     if (!runId) {
       return;
     }
 
-    const params = (message.params ?? {}) as Record<string, unknown>;
-
-    if (message.method === "thread/tokenUsage/updated") {
+    if (method === "thread/tokenUsage/updated") {
       const tokenUsage = readTokenUsage(params);
       if (tokenUsage) {
         await recordTokenUsage({
@@ -674,7 +1493,7 @@ function App() {
       }
     }
 
-    if (message.method === "turn/completed") {
+    if (method === "turn/completed") {
       const turn = readObject(params.turn);
       const status = readString(turn.status) === "failed" ? "failed" : "completed";
       await updateRun(runId, {
@@ -686,13 +1505,22 @@ function App() {
       if (currentTaskId.current) {
         await updateTaskStatus(currentTaskId.current, status);
       }
-      if (selectedWorkspace) {
-        await refreshWorkspaceData(selectedWorkspace.id);
+      if (selectedWorkspaceRef.current) {
+        await refreshWorkspaceData(selectedWorkspaceRef.current.id);
       }
+      currentRunId.current = null;
+      currentTaskId.current = null;
+      currentRunAccountId.current = null;
     }
   }
 
-  async function handleCodexServerRequest(request: CodexMessage) {
+  async function handleCodexServerRequest(
+    accountId: number,
+    request: CodexMessage,
+  ) {
+    if (currentRunAccountId.current !== accountId) {
+      return;
+    }
     setRunView((current) => addServerRequest(current, request));
     await persistRunEvent("server-request", request.method ?? null, request);
   }
@@ -722,7 +1550,15 @@ function App() {
       return;
     }
 
-    await resolveCodexServerRequest(request.id, approvalResult(request, approved));
+    const accountId = currentRunAccountId.current;
+    if (!accountId) {
+      return;
+    }
+    await resolveCodexServerRequest(
+      accountId,
+      request.id,
+      approvalResult(request, approved),
+    );
     setRunView((current) => resolveServerRequest(current, request.id!));
   }
 
@@ -798,25 +1634,126 @@ function App() {
           </nav>
         </div>
 
-        <div className="codex-card">
-          <div>
-            <Bot size={17} />
-            <div>
-              <strong>Codex</strong>
-              <span>{codexConnected ? "Connected" : "Disconnected"}</span>
-            </div>
-          </div>
-          <div className="codex-actions">
-            <button className="icon-button" type="button" onClick={ensureCodexConnected} title="Connect Codex">
-              <Plug size={17} />
+        <div className={`codex-card account-card auth-${authRow.tone}`}>
+          {codexSignedIn ? (
+            <>
+              <button
+                className={`account-trigger secondary ${accountMenuOpen ? "open" : ""}`}
+                type="button"
+                onClick={() => setAccountMenuOpen((current) => !current)}
+                aria-expanded={accountMenuOpen}
+                aria-controls="codex-account-menu"
+                aria-label="Codex account"
+              >
+                <span className="account-avatar" aria-hidden="true">
+                  {authRow.avatarLabel}
+                </span>
+                <span className="account-copy">
+                  <strong>{authRow.title}</strong>
+                  <span>{authRow.subtitle}</span>
+                </span>
+                <ChevronDown className="account-chevron" size={18} />
+              </button>
+              {accountMenuOpen ? (
+                <div className="account-menu" id="codex-account-menu">
+                  <div className="account-switcher-list" aria-label="Codex accounts">
+                    {codexAccounts.map((account) => (
+                      <button
+                        className="account-switcher-item"
+                        type="button"
+                        key={account.id}
+                        onClick={() => void selectCodexAccount(account.id)}
+                        disabled={runIsActive}
+                      >
+                        <span className="account-mini-avatar" aria-hidden="true">
+                          {(account.email ?? account.label).charAt(0).toUpperCase()}
+                        </span>
+                        <span>
+                          <strong>{account.label}</strong>
+                          <small>
+                            {account.status === "signed_in"
+                              ? account.plan_type ?? "Signed in"
+                              : "Signed out"}
+                          </small>
+                        </span>
+                        {account.id === selectedAccountId ? <Check size={15} /> : null}
+                      </button>
+                    ))}
+                  </div>
+                  <button
+                    className="secondary wide"
+                    type="button"
+                    onClick={() => void handleAddAccount()}
+                    disabled={runIsActive}
+                  >
+                    <UserPlus size={16} />
+                    Add account
+                  </button>
+                  <button
+                    className="secondary wide"
+                    type="button"
+                    onClick={() => {
+                      setActiveView("settings");
+                      setAccountMenuOpen(false);
+                    }}
+                  >
+                    <Settings size={16} />
+                    Manage accounts
+                  </button>
+                  <button
+                    className="secondary wide"
+                    type="button"
+                    onClick={handleLogout}
+                    aria-label="Log out of Codex"
+                    disabled={runIsActive}
+                  >
+                    <LogOut size={16} />
+                    Log out
+                  </button>
+                  <button
+                    className="secondary wide"
+                    type="button"
+                    onClick={handleRefreshAccount}
+                    disabled={runIsActive}
+                  >
+                    <RefreshCw size={16} />
+                    Refresh account
+                  </button>
+                  <button
+                    className="danger wide"
+                    type="button"
+                    onClick={handleStopCodex}
+                    aria-label="Stop Codex"
+                    disabled={runIsActive}
+                  >
+                    <Power size={16} />
+                    Stop
+                  </button>
+                </div>
+              ) : null}
+            </>
+          ) : (
+            <button
+              className="account-sign-in secondary"
+              type="button"
+              onClick={showCancelLogin ? handleCancelLogin : handleLogin}
+              disabled={loginState === "starting"}
+              aria-label={showCancelLogin ? "Cancel Codex sign-in" : "Sign in to Codex"}
+            >
+              <span className="account-avatar" aria-hidden="true">
+                {authRow.avatarLabel}
+              </span>
+              <span className="account-copy">
+                <strong>{showCancelLogin ? authRow.title : "Sign in to Codex"}</strong>
+                <span>{showCancelLogin ? "Click to cancel" : "Authentication required"}</span>
+              </span>
+              {showCancelLogin ? (
+                <X className="account-action-icon" size={18} />
+              ) : (
+                <LogIn className="account-action-icon" size={18} />
+              )}
             </button>
-            <button className="icon-button" type="button" onClick={handleLogin} title="Log in">
-              <LogIn size={17} />
-            </button>
-            <button className="icon-button danger" type="button" onClick={handleStopCodex} title="Stop Codex">
-              <Power size={17} />
-            </button>
-          </div>
+          )}
         </div>
       </aside>
 
@@ -857,6 +1794,10 @@ function App() {
                 tokenEstimate={preflight?.tokenEstimate ?? tokenEstimate}
                 workspaces={workspaces}
                 selectedWorkspaceId={selectedWorkspace?.id ?? null}
+                accounts={signedInAccounts}
+                selectedAccountId={selectedAccountId}
+                defaultAccountId={selectedWorkspace?.default_account_id ?? null}
+                accountSelectionDisabled={runIsActive}
                 branches={branches}
                 selectedBranch={selectedBranch}
                 models={models}
@@ -868,6 +1809,8 @@ function App() {
                 accessLevel={accessLevel}
                 contextFiles={contextFiles}
                 onWorkspaceChange={selectWorkspace}
+                onAccountChange={(accountId) => void selectCodexAccount(accountId)}
+                onSetDefaultAccount={() => void handleSetWorkspaceDefault()}
                 onBranchChange={(branch) => void selectBranch(branch)}
                 onPromptChange={(nextPrompt) => {
                   setPrompt(nextPrompt);
@@ -911,7 +1854,10 @@ function App() {
                           {run.status} · {run.route_recommendation} · {run.started_at}
                         </span>
                       </div>
-                      <span>{run.model_provider ?? "openai"}</span>
+                      <span>
+                        {run.account_label ?? "Legacy account"} ·{" "}
+                        {run.model_provider ?? "openai"}
+                      </span>
                     </article>
                   ))}
                 </div>
@@ -967,27 +1913,116 @@ function App() {
                 </span>
               </div>
               <div className="setting-list">
-                <div className="setting-row">
-                  <div>
-                    <strong>Authentication</strong>
-                    <span>{authMessage}</span>
-                  </div>
-                  <button className="secondary" type="button" onClick={handleLogin}>
-                    <LogIn size={16} />
-                    Log in
+                <div className="account-management">
+                  {codexAccounts.length === 0 ? (
+                    <p className="muted">No Codex accounts added.</p>
+                  ) : (
+                    codexAccounts.map((account) => (
+                      <article className="managed-account-row" key={account.id}>
+                        <span className="account-mini-avatar" aria-hidden="true">
+                          {(account.email ?? account.label).charAt(0).toUpperCase()}
+                        </span>
+                        <div>
+                          <input
+                            defaultValue={account.label}
+                            onBlur={(event) =>
+                              void handleRenameAccount(
+                                account.id,
+                                event.currentTarget.value,
+                              )
+                            }
+                            aria-label={`Account label for ${account.label}`}
+                            disabled={runIsActive}
+                          />
+                          <span>
+                            {account.email ?? "Not signed in"} · {account.plan_type ?? account.status}
+                          </span>
+                        </div>
+                        <div className="button-row compact">
+                          {account.id !== selectedAccountId ? (
+                            <button
+                              className="secondary small"
+                              type="button"
+                              onClick={() => void selectCodexAccount(account.id)}
+                              disabled={runIsActive}
+                            >
+                              Select
+                            </button>
+                          ) : null}
+                          {account.status !== "signed_in" ? (
+                            <button
+                              className="secondary small"
+                              type="button"
+                              onClick={() => {
+                                setSelectedAccountId(account.id);
+                                selectedAccountIdRef.current = account.id;
+                                void handleLoginForAccount(account);
+                              }}
+                              disabled={runIsActive || loginState === "waiting"}
+                            >
+                              <LogIn size={14} />
+                              Sign in
+                            </button>
+                          ) : null}
+                          <button
+                            className="danger icon-button"
+                            type="button"
+                            onClick={() => void handleRemoveAccount(account.id)}
+                            disabled={runIsActive}
+                            title={`Remove ${account.label}`}
+                            aria-label={`Remove ${account.label}`}
+                          >
+                            <Trash2 size={15} />
+                          </button>
+                        </div>
+                      </article>
+                    ))
+                  )}
+                  <button
+                    className="secondary"
+                    type="button"
+                    onClick={() => void handleAddAccount()}
+                    disabled={runIsActive || loginState === "waiting"}
+                  >
+                    <UserPlus size={16} />
+                    Add Codex account
                   </button>
                 </div>
                 <div className="setting-row">
                   <div>
-                    <strong>App server</strong>
-                    <span>Spawn and manage `codex app-server --listen stdio://`.</span>
+                    <strong>Selected account</strong>
+                    <span>{authMessage}</span>
                   </div>
                   <div className="button-row compact">
-                    <button className="secondary" type="button" onClick={ensureCodexConnected}>
+                    <button
+                      className="secondary"
+                      type="button"
+                      onClick={() =>
+                        selectedAccountId &&
+                        void ensureCodexConnected(selectedAccountId)
+                      }
+                      disabled={!selectedAccountId || runIsActive}
+                    >
                       <Plug size={16} />
                       Connect
                     </button>
-                    <button className="danger" type="button" onClick={handleStopCodex}>
+                    {showLogout ? (
+                      <button
+                        className="secondary"
+                        type="button"
+                        onClick={handleLogout}
+                        disabled={runIsActive}
+                      >
+                        <LogOut size={16} />
+                        Log out
+                      </button>
+                    ) : null}
+                    <button
+                      className="danger"
+                      type="button"
+                      onClick={handleStopCodex}
+                      disabled={!selectedAccountId || runIsActive}
+                    >
                       <Power size={16} />
                       Stop
                     </button>
@@ -1089,6 +2124,25 @@ function mergeContextFiles(
   }
 
   return merged;
+}
+
+function readAccountLoginCompleted(
+  params: Record<string, unknown>,
+): AccountLoginCompletedNotification {
+  return {
+    success: params.success === true,
+    error: readString(params.error),
+    loginId: readString(params.loginId),
+  };
+}
+
+function readAccountUpdated(
+  params: Record<string, unknown>,
+): AccountUpdatedNotification {
+  return {
+    authMode: readString(params.authMode) as AccountUpdatedNotification["authMode"],
+    planType: readString(params.planType) as AccountUpdatedNotification["planType"],
+  };
 }
 
 function basename(path: string) {

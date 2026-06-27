@@ -39,6 +39,7 @@ const workspaces: TaskComposerProps["workspaces"] = [
     id: 1,
     path: "/repo/orchestrator",
     label: "orchestrator",
+    default_account_id: 7,
     last_opened_at: "2026-06-22T00:00:00Z",
     created_at: "2026-06-22T00:00:00Z",
   },
@@ -46,8 +47,24 @@ const workspaces: TaskComposerProps["workspaces"] = [
     id: 2,
     path: "/repo/mobile",
     label: "mobile",
+    default_account_id: null,
     last_opened_at: "2026-06-22T00:00:00Z",
     created_at: "2026-06-22T00:00:00Z",
+  },
+];
+
+const accounts: TaskComposerProps["accounts"] = [
+  {
+    id: 7,
+    label: "Work account",
+    email: "dev@example.com",
+    plan_type: "plus",
+    status: "signed_in",
+    last_error: null,
+    last_used_at: "2026-06-22T00:00:00Z",
+    created_at: "2026-06-22T00:00:00Z",
+    updated_at: "2026-06-22T00:00:00Z",
+    deleted_at: null,
   },
 ];
 
@@ -59,6 +76,10 @@ function renderComposer(overrides: Partial<TaskComposerProps> = {}) {
     tokenEstimate: 0,
     workspaces,
     selectedWorkspaceId: 1,
+    accounts,
+    selectedAccountId: 7,
+    defaultAccountId: 7,
+    accountSelectionDisabled: false,
     branches: ["main", "feature/chat-controls"],
     selectedBranch: "main",
     models,
@@ -70,6 +91,8 @@ function renderComposer(overrides: Partial<TaskComposerProps> = {}) {
     accessLevel: "ask",
     contextFiles: [],
     onWorkspaceChange: vi.fn(),
+    onAccountChange: vi.fn(),
+    onSetDefaultAccount: vi.fn(),
     onBranchChange: vi.fn(),
     onPromptChange: vi.fn(),
     onModelChange: vi.fn(),
@@ -167,6 +190,34 @@ describe("TaskComposer", () => {
 
     expect(onWorkspaceChange).toHaveBeenCalledWith(2);
     expect(onBranchChange).toHaveBeenCalledWith("feature/chat-controls");
+  });
+
+  it("selects a run account and can persist it as the workspace default", async () => {
+    const onAccountChange = vi.fn();
+    const onSetDefaultAccount = vi.fn();
+    const secondAccount = {
+      ...accounts[0],
+      id: 8,
+      label: "Personal account",
+      email: "personal@example.com",
+    };
+    const { user } = renderComposer({
+      accounts: [...accounts, secondAccount],
+      selectedAccountId: 8,
+      defaultAccountId: 7,
+      onAccountChange,
+      onSetDefaultAccount,
+    });
+
+    await user.selectOptions(screen.getByLabelText("Run account"), "7");
+    expect(onAccountChange).toHaveBeenCalledWith(7);
+
+    await user.click(
+      screen.getByRole("button", {
+        name: "Use selected account as workspace default",
+      }),
+    );
+    expect(onSetDefaultAccount).toHaveBeenCalledOnce();
   });
 
   it("renders selected file chips and removes files", async () => {

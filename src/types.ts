@@ -4,8 +4,24 @@ export type Workspace = {
   id: number;
   path: string;
   label: string;
+  default_account_id: number | null;
   last_opened_at: string;
   created_at: string;
+};
+
+export type CodexAccountStatus = "pending" | "signed_in" | "signed_out" | "error";
+
+export type CodexAccountProfile = {
+  id: number;
+  label: string;
+  email: string | null;
+  plan_type: CodexPlanType | null;
+  status: CodexAccountStatus;
+  last_error: string | null;
+  last_used_at: string | null;
+  created_at: string;
+  updated_at: string;
+  deleted_at: string | null;
 };
 
 export type GitBranchList = {
@@ -54,6 +70,9 @@ export type RunRecord = {
   id: number;
   task_id: number;
   workspace_id: number;
+  account_id: number | null;
+  account_label: string | null;
+  account_email: string | null;
   codex_thread_id: string | null;
   codex_turn_id: string | null;
   model: string | null;
@@ -104,12 +123,82 @@ export type CodexConnectResult = {
   initialize: unknown;
 };
 
+export type CodexPlanType =
+  | "free"
+  | "go"
+  | "plus"
+  | "pro"
+  | "prolite"
+  | "team"
+  | "self_serve_business_usage_based"
+  | "business"
+  | "enterprise_cbp_usage_based"
+  | "enterprise"
+  | "edu"
+  | "unknown";
+
+export type CodexAuthMode =
+  | "apikey"
+  | "chatgpt"
+  | "chatgptAuthTokens"
+  | "agentIdentity"
+  | "personalAccessToken"
+  | "bedrockApiKey";
+
+export type CodexAccount =
+  | { type: "apiKey" }
+  | { type: "chatgpt"; email: string | null; planType: CodexPlanType }
+  | {
+      type: "amazonBedrock";
+      credentialSource: "codexManaged" | "awsManaged";
+    };
+
+export type CodexAccountResponse = {
+  account: CodexAccount | null;
+  requiresOpenaiAuth: boolean;
+};
+
+export type CodexLoginResponse =
+  | { type: "apiKey" }
+  | { type: "chatgpt"; loginId: string; authUrl: string }
+  | {
+      type: "chatgptDeviceCode";
+      loginId: string;
+      verificationUrl: string;
+      userCode: string;
+    }
+  | { type: "chatgptAuthTokens" };
+
+export type CodexLoginState = "idle" | "starting" | "waiting" | "failed";
+
+export type AccountLoginCompletedNotification = {
+  success: boolean;
+  error: string | null;
+  loginId: string | null;
+};
+
+export type AccountUpdatedNotification = {
+  authMode?: CodexAuthMode | null;
+  planType?: CodexPlanType | null;
+};
+
 export type CodexMessage = {
   method?: string;
   id?: string | number;
   params?: Record<string, unknown>;
   result?: unknown;
   error?: unknown;
+};
+
+export type CodexMessageEvent = {
+  accountId: number;
+  message: CodexMessage;
+};
+
+export type CodexProcessEvent = {
+  accountId: number;
+  status: string;
+  message: string;
 };
 
 export type OssProvider = "ollama" | "lmstudio";
