@@ -292,6 +292,7 @@ button.small {
   align-self: stretch;
   flex: 0 0 auto;
   width: calc(100% + 36px);
+  gap: 0;
   margin: auto -18px 0;
   border: 0;
   border-radius: 0;
@@ -303,13 +304,13 @@ button.account-trigger,
 button.account-sign-in {
   justify-content: flex-start;
   width: 100%;
-  min-height: 64px;
+  min-height: 62px;
   border: 0;
   border-top: 1px solid rgba(248, 250, 252, 0.08);
   border-radius: 0;
   background: var(--rail);
   color: var(--text);
-  padding: 8px 18px;
+  padding: 10px 18px;
 }
 
 button.account-trigger:hover:not(:disabled),
@@ -328,15 +329,15 @@ button.account-sign-in {
 
 .account-avatar {
   display: inline-flex;
-  width: 48px;
-  height: 48px;
+  width: 40px;
+  height: 40px;
   flex: 0 0 auto;
   align-items: center;
   justify-content: center;
   border-radius: 999px;
   background: rgba(139, 92, 246, 0.2);
   color: var(--accent-purple);
-  font-size: 1.28rem;
+  font-size: 1rem;
   font-weight: 700;
 }
 
@@ -372,13 +373,13 @@ button.account-sign-in {
 
 .account-copy strong {
   color: var(--text);
-  font-size: 1rem;
+  font-size: 0.92rem;
   font-weight: 600;
 }
 
 .account-copy span {
   color: var(--muted);
-  font-size: 0.86rem;
+  font-size: 0.78rem;
   font-weight: 500;
 }
 
@@ -400,27 +401,82 @@ button.account-sign-in {
 
 .account-menu {
   display: grid;
-  gap: 8px;
-  background: var(--rail);
-  padding: 10px 18px 8px;
+  gap: 5px;
+  border-top: 1px solid rgba(100, 116, 139, 0.2);
+  background: rgba(5, 8, 12, 0.32);
+  padding: 8px 10px 10px;
 }
 
 .account-menu button {
   justify-content: flex-start;
 }
 
+.account-menu-section,
+.account-menu-group {
+  display: grid;
+  gap: 2px;
+}
+
+.account-menu-label {
+  padding: 4px 8px 3px;
+  color: var(--subtle);
+  font-size: 0.68rem;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+
+.account-menu-separator {
+  height: 1px;
+  margin: 3px 8px;
+  background: rgba(100, 116, 139, 0.22);
+}
+
+button.account-menu-action {
+  width: 100%;
+  min-height: 36px;
+  border-color: transparent;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text-soft);
+  font-size: 0.86rem;
+  font-weight: 600;
+  padding: 8px 10px;
+}
+
+button.account-menu-action:hover:not(:disabled) {
+  border-color: transparent;
+  background: rgba(51, 65, 85, 0.42);
+  color: var(--text);
+}
+
+button.account-menu-action svg {
+  color: var(--muted);
+}
+
+button.account-menu-action-danger {
+  color: var(--muted);
+}
+
+button.account-menu-action-danger:hover:not(:disabled) {
+  background: rgba(139, 92, 246, 0.12);
+  color: var(--accent-purple);
+}
+
+button.account-menu-action-danger:hover:not(:disabled) svg {
+  color: var(--accent-purple);
+}
+
 .account-switcher-list {
   display: grid;
-  gap: 4px;
-  padding-bottom: 4px;
-  border-bottom: 1px solid rgba(100, 116, 139, 0.24);
+  gap: 2px;
 }
 
 button.account-switcher-item {
   display: grid;
   grid-template-columns: 28px minmax(0, 1fr) 18px;
-  min-height: 42px;
+  min-height: 40px;
   border-color: transparent;
+  border-radius: 6px;
   background: transparent;
   padding: 6px 8px;
   color: var(--text-soft);

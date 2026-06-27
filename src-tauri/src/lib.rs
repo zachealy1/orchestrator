@@ -1290,6 +1290,17 @@ mod tests {
     }
 
     #[test]
+    fn main_window_can_write_to_sqlite() {
+        let capability: Value =
+            serde_json::from_str(include_str!("../capabilities/default.json")).unwrap();
+        let permissions = capability["permissions"].as_array().unwrap();
+
+        assert!(permissions
+            .iter()
+            .any(|permission| permission == "sql:allow-execute"));
+    }
+
+    #[test]
     fn pending_key_handles_string_and_number_ids() {
         assert_eq!(pending_key(&json!(7)), "7");
         assert_eq!(pending_key(&json!("abc")), "abc");

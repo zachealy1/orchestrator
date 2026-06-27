@@ -865,29 +865,33 @@ function App() {
       return;
     }
 
-    const accountId = selectedAccountIdRef.current;
-    let profile = codexAccountsRef.current.find(
-      (account) => account.id === accountId,
-    );
-
-    if (!profile || profile.status === "signed_in") {
-      profile = await createCodexAccount();
-      setCodexAccounts((current) => {
-        const next = [profile!, ...current];
-        codexAccountsRef.current = next;
-        return next;
-      });
-    }
-    const loginAccountId = profile.id;
-
-    setSelectedAccountId(loginAccountId);
-    selectedAccountIdRef.current = loginAccountId;
-    setPendingLoginAccountId(loginAccountId);
-    pendingLoginAccountIdRef.current = loginAccountId;
     setLoginState("starting");
     setLoginError(null);
+    setStatusMessage("Starting Codex sign-in...");
+
+    let loginAccountId: number | null = null;
 
     try {
+      const accountId = selectedAccountIdRef.current;
+      let profile = codexAccountsRef.current.find(
+        (account) => account.id === accountId,
+      );
+
+      if (!profile || profile.status === "signed_in") {
+        profile = await createCodexAccount();
+        setCodexAccounts((current) => {
+          const next = [profile!, ...current];
+          codexAccountsRef.current = next;
+          return next;
+        });
+      }
+      loginAccountId = profile.id;
+
+      setSelectedAccountId(loginAccountId);
+      selectedAccountIdRef.current = loginAccountId;
+      setPendingLoginAccountId(loginAccountId);
+      pendingLoginAccountIdRef.current = loginAccountId;
+
       await ensureCodexConnected(loginAccountId);
       const response = await startCodexLogin(loginAccountId);
 
@@ -911,10 +915,12 @@ function App() {
     } catch (error) {
       resetLoginFlow("failed");
       const message = error instanceof Error ? error.message : String(error);
-      await updateCodexAccount(loginAccountId, {
-        status: "error",
-        lastError: message,
-      });
+      if (loginAccountId !== null) {
+        await updateCodexAccount(loginAccountId, {
+          status: "error",
+          lastError: message,
+        }).catch(() => undefined);
+      }
       setLoginError(message);
       setStatusMessage(`Sign-in failed: ${message}`);
     }
@@ -924,17 +930,28 @@ function App() {
     if (runIsActive || loginState === "starting" || loginState === "waiting") {
       return;
     }
-    const account = await createCodexAccount();
-    setCodexAccounts((current) => {
-      const next = [account, ...current];
-      codexAccountsRef.current = next;
-      return next;
-    });
-    setSelectedAccountId(account.id);
-    selectedAccountIdRef.current = account.id;
-    setCodexAccount(null);
-    setAccountMenuOpen(false);
-    await handleLoginForAccount(account);
+    setLoginState("starting");
+    setLoginError(null);
+    setStatusMessage("Creating Codex account...");
+
+    try {
+      const account = await createCodexAccount();
+      setCodexAccounts((current) => {
+        const next = [account, ...current];
+        codexAccountsRef.current = next;
+        return next;
+      });
+      setSelectedAccountId(account.id);
+      selectedAccountIdRef.current = account.id;
+      setCodexAccount(null);
+      setAccountMenuOpen(false);
+      await handleLoginForAccount(account);
+    } catch (error) {
+      resetLoginFlow("failed");
+      const message = error instanceof Error ? error.message : String(error);
+      setLoginError(message);
+      setStatusMessage(`Could not add Codex account: ${message}`);
+    }
   }
 
   async function handleLoginForAccount(account: CodexAccountProfile) {
@@ -1656,79 +1673,89 @@ function App() {
               </button>
               {accountMenuOpen ? (
                 <div className="account-menu" id="codex-account-menu">
-                  <div className="account-switcher-list" aria-label="Codex accounts">
-                    {codexAccounts.map((account) => (
-                      <button
-                        className="account-switcher-item"
-                        type="button"
-                        key={account.id}
-                        onClick={() => void selectCodexAccount(account.id)}
-                        disabled={runIsActive}
-                      >
-                        <span className="account-mini-avatar" aria-hidden="true">
-                          {(account.email ?? account.label).charAt(0).toUpperCase()}
-                        </span>
-                        <span>
-                          <strong>{account.label}</strong>
-                          <small>
-                            {account.status === "signed_in"
-                              ? account.plan_type ?? "Signed in"
-                              : "Signed out"}
-                          </small>
-                        </span>
-                        {account.id === selectedAccountId ? <Check size={15} /> : null}
-                      </button>
-                    ))}
+                  {codexAccounts.length > 1 ? (
+                    <div className="account-menu-section">
+                      <span className="account-menu-label">Switch account</span>
+                      <div className="account-switcher-list" aria-label="Codex accounts">
+                        {codexAccounts.map((account) => (
+                          <button
+                            className="account-switcher-item"
+                            type="button"
+                            key={account.id}
+                            onClick={() => void selectCodexAccount(account.id)}
+                            disabled={runIsActive}
+                          >
+                            <span className="account-mini-avatar" aria-hidden="true">
+                              {(account.email ?? account.label).charAt(0).toUpperCase()}
+                            </span>
+                            <span>
+                              <strong>{account.label}</strong>
+                              <small>
+                                {account.status === "signed_in"
+                                  ? account.plan_type ?? "Signed in"
+                                  : "Signed out"}
+                              </small>
+                            </span>
+                            {account.id === selectedAccountId ? <Check size={15} /> : null}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  ) : null}
+                  <div className="account-menu-group">
+                    <button
+                      className="account-menu-action"
+                      type="button"
+                      onClick={() => void handleAddAccount()}
+                      disabled={runIsActive}
+                    >
+                      <UserPlus size={16} />
+                      Add account
+                    </button>
+                    <button
+                      className="account-menu-action"
+                      type="button"
+                      onClick={() => {
+                        setActiveView("settings");
+                        setAccountMenuOpen(false);
+                      }}
+                    >
+                      <Settings size={16} />
+                      Manage accounts
+                    </button>
                   </div>
-                  <button
-                    className="secondary wide"
-                    type="button"
-                    onClick={() => void handleAddAccount()}
-                    disabled={runIsActive}
-                  >
-                    <UserPlus size={16} />
-                    Add account
-                  </button>
-                  <button
-                    className="secondary wide"
-                    type="button"
-                    onClick={() => {
-                      setActiveView("settings");
-                      setAccountMenuOpen(false);
-                    }}
-                  >
-                    <Settings size={16} />
-                    Manage accounts
-                  </button>
-                  <button
-                    className="secondary wide"
-                    type="button"
-                    onClick={handleLogout}
-                    aria-label="Log out of Codex"
-                    disabled={runIsActive}
-                  >
-                    <LogOut size={16} />
-                    Log out
-                  </button>
-                  <button
-                    className="secondary wide"
-                    type="button"
-                    onClick={handleRefreshAccount}
-                    disabled={runIsActive}
-                  >
-                    <RefreshCw size={16} />
-                    Refresh account
-                  </button>
-                  <button
-                    className="danger wide"
-                    type="button"
-                    onClick={handleStopCodex}
-                    aria-label="Stop Codex"
-                    disabled={runIsActive}
-                  >
-                    <Power size={16} />
-                    Stop
-                  </button>
+                  <div className="account-menu-separator" />
+                  <div className="account-menu-group">
+                    <button
+                      className="account-menu-action"
+                      type="button"
+                      onClick={handleRefreshAccount}
+                      disabled={runIsActive}
+                    >
+                      <RefreshCw size={16} />
+                      Refresh account
+                    </button>
+                    <button
+                      className="account-menu-action"
+                      type="button"
+                      onClick={handleLogout}
+                      aria-label="Log out of Codex"
+                      disabled={runIsActive}
+                    >
+                      <LogOut size={16} />
+                      Log out
+                    </button>
+                    <button
+                      className="account-menu-action account-menu-action-danger"
+                      type="button"
+                      onClick={handleStopCodex}
+                      aria-label="Stop Codex"
+                      disabled={runIsActive}
+                    >
+                      <Power size={16} />
+                      Stop Codex
+                    </button>
+                  </div>
                 </div>
               ) : null}
             </>
@@ -1740,12 +1767,9 @@ function App() {
               disabled={loginState === "starting"}
               aria-label={showCancelLogin ? "Cancel Codex sign-in" : "Sign in to Codex"}
             >
-              <span className="account-avatar" aria-hidden="true">
-                {authRow.avatarLabel}
-              </span>
               <span className="account-copy">
-                <strong>{showCancelLogin ? authRow.title : "Sign in to Codex"}</strong>
-                <span>{showCancelLogin ? "Click to cancel" : "Authentication required"}</span>
+                <strong>{authRow.title}</strong>
+                <span>{showCancelLogin ? "Click to cancel" : authRow.subtitle}</span>
               </span>
               {showCancelLogin ? (
                 <X className="account-action-icon" size={18} />

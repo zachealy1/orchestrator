@@ -231,6 +231,7 @@ describe("App Codex auth", () => {
 
     const signIn = await screen.findByLabelText("Sign in to Codex");
     expect(signIn).toHaveTextContent("Sign in to Codex");
+    expect(signIn.querySelector(".account-avatar")).not.toBeInTheDocument();
     expect(signIn).not.toHaveAttribute("aria-expanded");
     expect(screen.queryByLabelText("Codex account")).not.toBeInTheDocument();
     expect(screen.queryByLabelText("Connect Codex")).not.toBeInTheDocument();
@@ -274,6 +275,21 @@ describe("App Codex auth", () => {
     expect(screen.getByText("Click to cancel")).toBeInTheDocument();
     expect(screen.getByLabelText("Cancel Codex sign-in")).toBeInTheDocument();
     expect(screen.queryByLabelText("Codex account")).not.toBeInTheDocument();
+  });
+
+  it("surfaces account profile creation failures instead of leaving sign-in inert", async () => {
+    mocks.createCodexAccountMock.mockRejectedValue(
+      new Error("SQL execute permission denied"),
+    );
+
+    const { user } = await renderApp();
+    await user.click(screen.getByLabelText("Sign in to Codex"));
+
+    expect(await screen.findByText("Sign-in failed")).toBeInTheDocument();
+    expect(
+      screen.getByText("SQL execute permission denied"),
+    ).toBeInTheDocument();
+    expect(mocks.connectCodexMock).not.toHaveBeenCalled();
   });
 
   it("shows device code login and cancels the pending flow", async () => {
@@ -342,6 +358,7 @@ describe("App Codex auth", () => {
     expect(await screen.findByLabelText("Log out of Codex")).toBeInTheDocument();
     expect(screen.getByText("Refresh account")).toBeInTheDocument();
     expect(screen.getByLabelText("Stop Codex")).toBeInTheDocument();
+    expect(screen.queryByLabelText("Codex accounts")).not.toBeInTheDocument();
 
     await user.click(screen.getByLabelText("Log out of Codex"));
     await waitFor(() => expect(mocks.logoutCodexAccountMock).toHaveBeenCalledWith(7));
