@@ -417,12 +417,8 @@ button.account-sign-in {
   gap: 2px;
 }
 
-.account-menu-label {
-  padding: 4px 8px 3px;
-  color: var(--subtle);
-  font-size: 0.68rem;
-  font-weight: 800;
-  text-transform: uppercase;
+.account-menu-section {
+  padding-bottom: 3px;
 }
 
 .account-menu-separator {
@@ -460,8 +456,8 @@ button.account-menu-action svg {
 
 button.account-switcher-item {
   display: grid;
-  grid-template-columns: 28px minmax(0, 1fr) 18px;
-  min-height: 40px;
+  grid-template-columns: 30px minmax(0, 1fr) 16px;
+  min-height: 44px;
   border-color: transparent;
   border-radius: 6px;
   background: transparent;
@@ -488,19 +484,29 @@ button.account-switcher-item:hover:not(:disabled) {
 
 .account-switcher-item small {
   color: var(--muted);
+  font-size: 0.72rem;
   font-weight: 500;
+}
+
+.account-switcher-item > svg {
+  color: var(--subtle);
+}
+
+.account-switcher-item:hover:not(:disabled) > svg {
+  color: var(--accent-sky);
 }
 
 .account-mini-avatar {
   display: inline-flex;
-  width: 26px;
-  height: 26px;
+  width: 28px;
+  height: 28px;
   align-items: center;
   justify-content: center;
   border-radius: 999px;
   background: rgba(139, 92, 246, 0.18);
   color: var(--accent-purple);
-  font-size: 0.78rem;
+  font-size: 0.74rem;
+  font-weight: 700;
 }
 
 .main {

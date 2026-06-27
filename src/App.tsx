@@ -3,8 +3,8 @@ import { openUrl } from "@tauri-apps/plugin-opener";
 import { listen } from "@tauri-apps/api/event";
 import {
   BarChart3,
-  Check,
   ChevronDown,
+  ChevronRight,
   FolderPlus,
   History,
   LogIn,
@@ -68,6 +68,7 @@ import {
 } from "./lib/codexEventReducer";
 import {
   formatCodexAuthMessage,
+  formatCodexPlanType,
   getCodexAccountSummary,
   formatLoginStartStatus,
   isCodexSignedIn,
@@ -1653,32 +1654,52 @@ function App() {
                 <div className="account-menu" id="codex-account-menu">
                   {codexAccounts.length > 1 ? (
                     <div className="account-menu-section">
-                      <span className="account-menu-label">Switch account</span>
                       <div className="account-switcher-list" aria-label="Codex accounts">
-                        {codexAccounts.map((account) => (
-                          <button
-                            className="account-switcher-item"
-                            type="button"
-                            key={account.id}
-                            onClick={() => void selectCodexAccount(account.id)}
-                            disabled={runIsActive}
-                          >
-                            <span className="account-mini-avatar" aria-hidden="true">
-                              {(account.email ?? account.label).charAt(0).toUpperCase()}
-                            </span>
-                            <span>
-                              <strong>{account.label}</strong>
-                              <small>
-                                {account.status === "signed_in"
-                                  ? account.plan_type ?? "Signed in"
-                                  : "Signed out"}
-                              </small>
-                            </span>
-                            {account.id === selectedAccountId ? <Check size={15} /> : null}
-                          </button>
-                        ))}
+                        {codexAccounts
+                          .filter((account) => account.id !== selectedAccountId)
+                          .map((account) => {
+                            const duplicateIdentity =
+                              codexAccounts.filter(
+                                (candidate) =>
+                                  (candidate.email ?? candidate.label).toLowerCase() ===
+                                  (account.email ?? account.label).toLowerCase(),
+                              ).length > 1;
+                            const details = [
+                              account.email && account.email !== account.label
+                                ? account.email
+                                : null,
+                              account.status === "signed_in"
+                                ? account.plan_type
+                                  ? formatCodexPlanType(account.plan_type)
+                                  : "Signed in"
+                                : "Signed out",
+                              duplicateIdentity ? `Local profile ${account.id}` : null,
+                            ].filter(Boolean);
+
+                            return (
+                              <button
+                                className="account-switcher-item"
+                                type="button"
+                                key={account.id}
+                                onClick={() => void selectCodexAccount(account.id)}
+                                disabled={runIsActive}
+                              >
+                                <span className="account-mini-avatar" aria-hidden="true">
+                                  {(account.email ?? account.label).charAt(0).toUpperCase()}
+                                </span>
+                                <span>
+                                  <strong>{account.label}</strong>
+                                  <small>{details.join(" · ")}</small>
+                                </span>
+                                <ChevronRight size={15} aria-hidden="true" />
+                              </button>
+                            );
+                          })}
                       </div>
                     </div>
+                  ) : null}
+                  {codexAccounts.length > 1 ? (
+                    <div className="account-menu-separator" />
                   ) : null}
                   <div className="account-menu-group">
                     <button

@@ -475,6 +475,9 @@ describe("App Codex auth", () => {
     const { user } = await renderApp();
     await user.click(await screen.findByLabelText("Codex account"));
     const accountList = screen.getByLabelText("Codex accounts");
+    expect(
+      within(accountList).queryByRole("button", { name: /dev@example.com/i }),
+    ).not.toBeInTheDocument();
     await user.click(
       within(accountList).getByRole("button", { name: /personal@example.com/i }),
     );
@@ -488,6 +491,32 @@ describe("App Codex auth", () => {
       }),
     );
     expect(mocks.setWorkspaceDefaultAccountMock).toHaveBeenCalledWith(1, 8);
+  });
+
+  it("distinguishes duplicate account identities without repeating the selected row", async () => {
+    const duplicateAccount = {
+      ...signedInAccount,
+      id: 8,
+    };
+    mocks.listCodexAccountsMock.mockResolvedValue([
+      signedInAccount,
+      duplicateAccount,
+    ]);
+    mocks.readCodexAccountMock.mockResolvedValue({
+      account: {
+        type: "chatgpt",
+        email: signedInAccount.email,
+        planType: "pro",
+      },
+      requiresOpenaiAuth: true,
+    });
+
+    const { user } = await renderApp();
+    await user.click(await screen.findByLabelText("Codex account"));
+
+    const accountList = screen.getByLabelText("Codex accounts");
+    expect(within(accountList).getAllByRole("button")).toHaveLength(1);
+    expect(accountList).toHaveTextContent("Local profile 8");
   });
 
   it("keeps account notifications isolated by account id", async () => {
