@@ -7,7 +7,6 @@ const mocks = vi.hoisted(() => ({
   listeners: new Map<string, (event: { payload: unknown }) => void>(),
   openUrlMock: vi.fn(),
   connectCodexMock: vi.fn(),
-  stopCodexMock: vi.fn(),
   deleteCodexProfileMock: vi.fn(),
   readCodexAccountMock: vi.fn(),
   startCodexLoginMock: vi.fn(),
@@ -80,7 +79,6 @@ vi.mock("./codexClient", () => ({
   runPreflight: mocks.runPreflightMock,
   setThreadGoal: mocks.setThreadGoalMock,
   startCodexLogin: mocks.startCodexLoginMock,
-  stopCodex: mocks.stopCodexMock,
 }));
 
 vi.mock("./db", () => ({
@@ -166,7 +164,6 @@ function prepareDefaults() {
     pid: 1234,
     initialize: {},
   });
-  mocks.stopCodexMock.mockResolvedValue(undefined);
   mocks.deleteCodexProfileMock.mockResolvedValue(undefined);
   mocks.readCodexAccountMock.mockResolvedValue({
     account: null,
@@ -235,7 +232,6 @@ describe("App Codex auth", () => {
     expect(signIn).not.toHaveAttribute("aria-expanded");
     expect(screen.queryByLabelText("Codex account")).not.toBeInTheDocument();
     expect(screen.queryByLabelText("Connect Codex")).not.toBeInTheDocument();
-    expect(screen.queryByLabelText("Stop Codex")).not.toBeInTheDocument();
     expect(screen.queryByText("Refresh")).not.toBeInTheDocument();
 
     await user.click(signIn);
@@ -357,7 +353,7 @@ describe("App Codex auth", () => {
     await user.click(accountButton);
     expect(await screen.findByLabelText("Log out of Codex")).toBeInTheDocument();
     expect(screen.getByText("Refresh account")).toBeInTheDocument();
-    expect(screen.getByLabelText("Stop Codex")).toBeInTheDocument();
+    expect(screen.queryByLabelText("Stop Codex")).not.toBeInTheDocument();
     expect(screen.queryByLabelText("Codex accounts")).not.toBeInTheDocument();
 
     await user.click(screen.getByLabelText("Log out of Codex"));

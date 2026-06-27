@@ -10,7 +10,6 @@ import {
   LogIn,
   LogOut,
   Plug,
-  Power,
   RefreshCw,
   Settings,
   TerminalSquare,
@@ -56,7 +55,6 @@ import {
   runPreflight,
   setThreadGoal,
   startCodexLogin,
-  stopCodex,
 } from "./codexClient";
 import { AnalyticsSummary } from "./components/AnalyticsSummary";
 import { RunConsole } from "./components/RunConsole";
@@ -1114,26 +1112,6 @@ function App() {
     }
   }
 
-  async function handleStopCodex() {
-    const accountId = selectedAccountIdRef.current;
-    if (!accountId || runIsActive) {
-      return;
-    }
-    await stopCodex(accountId);
-    setConnectedAccountIds((current) => {
-      const next = new Set(current);
-      next.delete(accountId);
-      connectedAccountIdsRef.current = next;
-      return next;
-    });
-    setCodexAccount(null);
-    setRequiresOpenaiAuth(true);
-    setLoginError(null);
-    setAccountMenuOpen(false);
-    resetLoginFlow();
-    setRunView((current) => ({ ...current, status: "interrupted" }));
-  }
-
   async function handleRemoveAccount(accountId: number) {
     if (runIsActive) {
       return;
@@ -1745,16 +1723,6 @@ function App() {
                       <LogOut size={16} />
                       Log out
                     </button>
-                    <button
-                      className="account-menu-action account-menu-action-danger"
-                      type="button"
-                      onClick={handleStopCodex}
-                      aria-label="Stop Codex"
-                      disabled={runIsActive}
-                    >
-                      <Power size={16} />
-                      Stop Codex
-                    </button>
                   </div>
                 </div>
               ) : null}
@@ -2041,15 +2009,6 @@ function App() {
                         Log out
                       </button>
                     ) : null}
-                    <button
-                      className="danger"
-                      type="button"
-                      onClick={handleStopCodex}
-                      disabled={!selectedAccountId || runIsActive}
-                    >
-                      <Power size={16} />
-                      Stop
-                    </button>
                   </div>
                 </div>
                 <label className="setting-row checkbox-setting">

@@ -453,19 +453,6 @@ button.account-menu-action svg {
   color: var(--muted);
 }
 
-button.account-menu-action-danger {
-  color: var(--muted);
-}
-
-button.account-menu-action-danger:hover:not(:disabled) {
-  background: rgba(139, 92, 246, 0.12);
-  color: var(--accent-purple);
-}
-
-button.account-menu-action-danger:hover:not(:disabled) svg {
-  color: var(--accent-purple);
-}
-
 .account-switcher-list {
   display: grid;
   gap: 2px;
