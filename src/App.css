@@ -1067,7 +1067,7 @@ select:disabled {
 button.composer-select-trigger {
   width: 100%;
   min-width: 0;
-  min-height: 40px;
+  min-height: 42px;
   justify-content: flex-start;
   border: 0;
   border-radius: inherit;
