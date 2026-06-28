@@ -5,6 +5,8 @@ import {
   BarChart3,
   ChevronDown,
   ChevronRight,
+  Folder,
+  FolderPlus,
   History,
   LogIn,
   LogOut,
@@ -34,7 +36,6 @@ import {
   recordTokenUsage,
   renameCodexAccount,
   savePreflightReport,
-  setWorkspaceDefaultAccount,
   softDeleteCodexAccount,
   updateCodexAccount,
   updateRun,
@@ -1258,24 +1259,6 @@ function App() {
     });
   }
 
-  async function handleSetWorkspaceDefault() {
-    if (!selectedWorkspace || !selectedAccountId) {
-      return;
-    }
-    await setWorkspaceDefaultAccount(selectedWorkspace.id, selectedAccountId);
-    const updated = {
-      ...selectedWorkspace,
-      default_account_id: selectedAccountId,
-    };
-    setSelectedWorkspace(updated);
-    setWorkspaces((current) =>
-      current.map((workspace) =>
-        workspace.id === updated.id ? updated : workspace,
-      ),
-    );
-    setStatusMessage(`${selectedAccount?.label ?? "Account"} is now the workspace default.`);
-  }
-
   async function handlePreflight() {
     if (!selectedWorkspace || !prompt.trim()) {
       setStatusMessage("Select a workspace and write a prompt first.");
@@ -1716,17 +1699,32 @@ function App() {
             ) : (
               workspaces.map((workspace) => (
                 <button
-                  className={workspace.id === selectedWorkspace?.id ? "active" : ""}
+                  className={
+                    workspace.id === selectedWorkspace?.id ? "active" : ""
+                  }
                   key={workspace.id}
                   type="button"
                   onClick={() => selectWorkspace(workspace.id)}
+                  aria-current={
+                    workspace.id === selectedWorkspace?.id ? "page" : undefined
+                  }
+                  title={workspace.label}
                 >
-                  <strong>{workspace.label}</strong>
-                  <span>{workspace.path}</span>
+                  <Folder size={16} aria-hidden="true" />
+                  <span>{workspace.label}</span>
                 </button>
               ))
             )}
           </nav>
+
+          <button
+            className="workspace-add secondary"
+            type="button"
+            onClick={() => void chooseWorkspace()}
+          >
+            <FolderPlus size={16} aria-hidden="true" />
+            <span>Add workspace</span>
+          </button>
         </div>
 
         <div className={`codex-card account-card auth-${authRow.tone}`}>
@@ -1904,11 +1902,8 @@ function App() {
                 prompt={prompt}
                 routeRecommendation={preflight?.routeRecommendation ?? routeRecommendation}
                 tokenEstimate={preflight?.tokenEstimate ?? tokenEstimate}
-                workspaces={workspaces}
-                selectedWorkspaceId={selectedWorkspace?.id ?? null}
                 accounts={signedInAccounts}
                 selectedAccountId={selectedAccountId}
-                defaultAccountId={selectedWorkspace?.default_account_id ?? null}
                 accountSelectionDisabled={runIsActive}
                 branches={branches}
                 selectedBranch={selectedBranch}
@@ -1920,10 +1915,7 @@ function App() {
                 planMode={planMode}
                 accessLevel={accessLevel}
                 contextFiles={contextFiles}
-                onWorkspaceChange={selectWorkspace}
-                onAddWorkspace={() => void chooseWorkspace()}
                 onAccountChange={(accountId) => void selectCodexAccount(accountId)}
-                onSetDefaultAccount={() => void handleSetWorkspaceDefault()}
                 onBranchChange={(branch) => void selectBranch(branch)}
                 onPromptChange={(nextPrompt) => {
                   setPrompt(nextPrompt);

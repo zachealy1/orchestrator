@@ -34,25 +34,6 @@ const models: TaskComposerProps["models"] = [
   },
 ];
 
-const workspaces: TaskComposerProps["workspaces"] = [
-  {
-    id: 1,
-    path: "/repo/orchestrator",
-    label: "orchestrator",
-    default_account_id: 7,
-    last_opened_at: "2026-06-22T00:00:00Z",
-    created_at: "2026-06-22T00:00:00Z",
-  },
-  {
-    id: 2,
-    path: "/repo/mobile",
-    label: "mobile",
-    default_account_id: null,
-    last_opened_at: "2026-06-22T00:00:00Z",
-    created_at: "2026-06-22T00:00:00Z",
-  },
-];
-
 const accounts: TaskComposerProps["accounts"] = [
   {
     id: 7,
@@ -74,11 +55,8 @@ function renderComposer(overrides: Partial<TaskComposerProps> = {}) {
     prompt: "",
     routeRecommendation: "direct-run",
     tokenEstimate: 0,
-    workspaces,
-    selectedWorkspaceId: 1,
     accounts,
     selectedAccountId: 7,
-    defaultAccountId: 7,
     accountSelectionDisabled: false,
     branches: ["main", "feature/chat-controls"],
     selectedBranch: "main",
@@ -90,10 +68,7 @@ function renderComposer(overrides: Partial<TaskComposerProps> = {}) {
     planMode: false,
     accessLevel: "ask",
     contextFiles: [],
-    onWorkspaceChange: vi.fn(),
-    onAddWorkspace: vi.fn(),
     onAccountChange: vi.fn(),
-    onSetDefaultAccount: vi.fn(),
     onBranchChange: vi.fn(),
     onPromptChange: vi.fn(),
     onModelChange: vi.fn(),
@@ -141,8 +116,12 @@ describe("TaskComposer", () => {
     const onReasoningEffortChange = vi.fn();
     const { user } = renderComposer({ onModelChange, onReasoningEffortChange });
 
-    await user.selectOptions(screen.getByLabelText("Agent"), "gpt-5.1-codex-max");
-    await user.selectOptions(screen.getByLabelText("Reasoning"), "high");
+    await user.click(screen.getByRole("combobox", { name: "Agent" }));
+    await user.click(
+      screen.getByRole("option", { name: "GPT-5.1 Codex Max" }),
+    );
+    await user.click(screen.getByRole("combobox", { name: "Reasoning" }));
+    await user.click(screen.getByRole("option", { name: "High" }));
 
     expect(onModelChange).toHaveBeenCalledWith("gpt-5.1-codex-max");
     expect(onReasoningEffortChange).toHaveBeenCalledWith("high");
@@ -174,46 +153,32 @@ describe("TaskComposer", () => {
     const onAccessLevelChange = vi.fn();
     const { user } = renderComposer({ onAccessLevelChange });
 
-    await user.selectOptions(screen.getByLabelText("Access"), "full");
-    await user.selectOptions(screen.getByLabelText("Access"), "ask");
+    await user.click(screen.getByRole("combobox", { name: "Access" }));
+    await user.click(screen.getByRole("option", { name: "Full access" }));
+    await user.click(screen.getByRole("combobox", { name: "Access" }));
+    await user.click(screen.getByRole("option", { name: "Ask for approval" }));
 
     expect(onAccessLevelChange).toHaveBeenCalledWith("full");
     expect(onAccessLevelChange).toHaveBeenCalledWith("ask");
   });
 
-  it("renders folder and branch selectors", async () => {
-    const onWorkspaceChange = vi.fn();
+  it("keeps workspace selection out of the composer and renders branches", async () => {
     const onBranchChange = vi.fn();
-    const { user } = renderComposer({ onWorkspaceChange, onBranchChange });
+    const { user } = renderComposer({ onBranchChange });
 
-    await user.selectOptions(screen.getByLabelText("Folder"), "2");
-    await user.selectOptions(screen.getByLabelText("Branch"), "feature/chat-controls");
+    expect(
+      screen.queryByRole("combobox", { name: "Folder" }),
+    ).not.toBeInTheDocument();
+    await user.click(screen.getByRole("combobox", { name: "Branch" }));
+    await user.click(
+      screen.getByRole("option", { name: "feature/chat-controls" }),
+    );
 
-    expect(onWorkspaceChange).toHaveBeenCalledWith(2);
     expect(onBranchChange).toHaveBeenCalledWith("feature/chat-controls");
   });
 
-  it("adds a workspace from the folder selector even when none exist", async () => {
-    const onAddWorkspace = vi.fn();
-    const { user } = renderComposer({
-      workspaces: [],
-      selectedWorkspaceId: null,
-      onAddWorkspace,
-    });
-
-    const folderSelect = screen.getByLabelText("Folder");
-    expect(folderSelect).toBeEnabled();
-    expect(
-      within(folderSelect).getByRole("option", { name: "Add folder..." }),
-    ).toBeInTheDocument();
-
-    await user.selectOptions(folderSelect, "__add_workspace__");
-    expect(onAddWorkspace).toHaveBeenCalledOnce();
-  });
-
-  it("selects a run account and can persist it as the workspace default", async () => {
+  it("selects a run account", async () => {
     const onAccountChange = vi.fn();
-    const onSetDefaultAccount = vi.fn();
     const secondAccount = {
       ...accounts[0],
       id: 8,
@@ -223,20 +188,12 @@ describe("TaskComposer", () => {
     const { user } = renderComposer({
       accounts: [...accounts, secondAccount],
       selectedAccountId: 8,
-      defaultAccountId: 7,
       onAccountChange,
-      onSetDefaultAccount,
     });
 
-    await user.selectOptions(screen.getByLabelText("Run account"), "7");
+    await user.click(screen.getByRole("combobox", { name: "Run account" }));
+    await user.click(screen.getByRole("option", { name: "Work account" }));
     expect(onAccountChange).toHaveBeenCalledWith(7);
-
-    await user.click(
-      screen.getByRole("button", {
-        name: "Use selected account as workspace default",
-      }),
-    );
-    expect(onSetDefaultAccount).toHaveBeenCalledOnce();
   });
 
   it("renders selected file chips and removes files", async () => {

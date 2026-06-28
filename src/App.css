@@ -224,6 +224,7 @@ button.small {
 
 .rail-section {
   display: grid;
+  grid-template-rows: auto minmax(0, 1fr) auto;
   flex: 1 1 auto;
   min-height: 0;
   gap: 10px;
@@ -248,6 +249,7 @@ button.small {
 
 .workspace-list {
   display: grid;
+  align-content: start;
   min-height: 0;
   gap: 8px;
   overflow: auto;
@@ -255,13 +257,16 @@ button.small {
 }
 
 .workspace-list button {
-  display: grid;
-  justify-content: stretch;
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  justify-content: flex-start;
   min-width: 0;
+  min-height: 38px;
   border-color: transparent;
   background: transparent;
   color: var(--text);
-  padding: 11px;
+  padding: 9px 10px;
   text-align: left;
 }
 
@@ -271,15 +276,44 @@ button.small {
   background: rgba(10, 15, 20, 0.22);
 }
 
-.workspace-list strong,
 .workspace-list span {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.workspace-list span {
-  font-size: 0.78rem;
+.workspace-list button svg {
+  flex: 0 0 auto;
+  color: var(--muted);
+}
+
+.workspace-list button.active svg {
+  color: var(--accent);
+}
+
+.workspace-list .muted {
+  margin: 6px 10px;
+  font-size: 0.84rem;
+}
+
+.workspace-add {
+  justify-content: flex-start;
+  width: 100%;
+  min-height: 38px;
+  border-color: rgba(100, 116, 139, 0.28);
+  background: rgba(17, 24, 39, 0.42);
+  color: var(--text-soft);
+  padding: 9px 10px;
+}
+
+.workspace-add:hover:not(:disabled) {
+  border-color: rgba(0, 184, 255, 0.34);
+  background: rgba(14, 165, 233, 0.1);
+  color: var(--text);
+}
+
+.workspace-add svg {
+  color: var(--accent);
 }
 
 .codex-card {
@@ -835,7 +869,6 @@ button:focus-visible {
   display: grid;
   grid-template-columns:
     minmax(175px, 1.1fr)
-    minmax(135px, 0.9fr)
     minmax(145px, 0.9fr)
     minmax(175px, 1fr)
     minmax(185px, 1.15fr)
@@ -852,34 +885,6 @@ button:focus-visible {
   min-width: 0;
 }
 
-.account-select {
-  padding-right: 42px;
-}
-
-.account-select select {
-  padding-right: 48px;
-}
-
-.account-chevron-select {
-  right: 34px;
-}
-
-.account-default-button {
-  position: absolute;
-  top: 5px;
-  right: 5px;
-  z-index: 4;
-  width: 30px;
-  min-width: 30px;
-  min-height: 30px;
-  border: 0;
-  padding: 0;
-}
-
-.account-default-button.active {
-  color: var(--accent-2);
-}
-
 .composer-select {
   position: relative;
   display: block;
@@ -889,11 +894,10 @@ button:focus-visible {
   border-radius: 6px;
   background: rgba(17, 24, 39, 0.54);
   color: var(--muted);
-  padding: 0 10px;
   transition:
     border-color 140ms ease,
     background 140ms ease,
-  box-shadow 140ms ease;
+    box-shadow 140ms ease;
 }
 
 .access-select {
@@ -932,38 +936,42 @@ button:focus-visible {
   color: var(--text-soft);
   opacity: 0.78;
   pointer-events: none;
+  transition: transform 140ms ease;
   transform: translateY(-50%);
 }
 
-.composer-select select {
-  appearance: none;
-  -moz-appearance: none;
-  -webkit-appearance: none;
-  position: absolute;
-  inset: 0;
-  z-index: 1;
+button.composer-select-trigger {
   width: 100%;
-  max-width: none;
-  height: 100%;
-  min-height: 0;
+  min-width: 0;
+  min-height: 38px;
+  justify-content: flex-start;
   border: 0;
   border-radius: inherit;
   background: transparent;
   color: var(--text);
   cursor: pointer;
-  font: inherit;
   font-size: 0.92rem;
   font-weight: 500;
-  outline: none;
-  overflow: hidden;
   padding: 0 34px 0 38px;
+}
+
+button.composer-select-trigger:hover:not(:disabled),
+button.composer-select-trigger:active:not(:disabled) {
+  background: rgba(51, 65, 85, 0.22);
+  transform: none;
+}
+
+.composer-select-trigger > span {
+  min-width: 0;
+  overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.composer-select select option {
-  background: var(--panel);
-  color: var(--text);
+.composer-select:hover:not(.disabled),
+.composer-select.open {
+  border-color: rgba(0, 184, 255, 0.52);
+  background: rgba(17, 24, 39, 0.76);
 }
 
 .composer-select:focus-within {
@@ -971,12 +979,81 @@ button:focus-visible {
   box-shadow: 0 0 0 3px rgba(0, 184, 255, 0.18);
 }
 
-.composer-select:has(select:disabled) {
+.composer-select.open .select-chevron {
+  transform: translateY(-50%) rotate(180deg);
+}
+
+.composer-select.disabled {
   opacity: 0.58;
 }
 
-.composer-select:has(select:disabled) select {
+.composer-select.disabled .composer-select-trigger {
   cursor: not-allowed;
+}
+
+.composer-select-menu {
+  position: fixed;
+  z-index: 1000;
+  display: grid;
+  gap: 2px;
+  overflow-y: auto;
+  border: 1px solid rgba(100, 116, 139, 0.44);
+  border-radius: 8px;
+  background: var(--panel);
+  box-shadow:
+    0 18px 42px rgba(5, 8, 12, 0.58),
+    0 0 0 1px rgba(248, 250, 252, 0.03);
+  padding: 4px;
+}
+
+button.composer-select-option {
+  width: 100%;
+  min-width: 0;
+  min-height: 34px;
+  justify-content: flex-start;
+  border-color: transparent;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--text-soft);
+  font-size: 0.84rem;
+  font-weight: 500;
+  padding: 7px 9px;
+  text-align: left;
+}
+
+button.composer-select-option:hover:not(:disabled),
+button.composer-select-option:focus-visible {
+  border-color: transparent;
+  background: rgba(0, 184, 255, 0.1);
+  color: var(--text);
+  box-shadow: none;
+}
+
+button.composer-select-option[aria-selected="true"] {
+  color: var(--accent-sky);
+}
+
+.composer-select-option > span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.composer-select-option > svg {
+  flex: 0 0 auto;
+  margin-left: auto;
+  color: var(--accent-2);
+}
+
+button.composer-select-option.action {
+  color: var(--accent-sky);
+}
+
+button.composer-select-option.action:not(:first-child) {
+  margin-top: 3px;
+  border-top: 1px solid rgba(100, 116, 139, 0.28);
+  border-radius: 0 0 5px 5px;
 }
 
 .token-pill {

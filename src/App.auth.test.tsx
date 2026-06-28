@@ -28,7 +28,6 @@ const mocks = vi.hoisted(() => ({
   createCodexAccountMock: vi.fn(),
   updateCodexAccountMock: vi.fn(),
   renameCodexAccountMock: vi.fn(),
-  setWorkspaceDefaultAccountMock: vi.fn(),
   softDeleteCodexAccountMock: vi.fn(),
   listWorkspaceRunsMock: vi.fn(),
   getAnalyticsSummaryMock: vi.fn(),
@@ -99,7 +98,6 @@ vi.mock("./db", () => ({
   recordTokenUsage: mocks.recordTokenUsageMock,
   renameCodexAccount: mocks.renameCodexAccountMock,
   savePreflightReport: mocks.savePreflightReportMock,
-  setWorkspaceDefaultAccount: mocks.setWorkspaceDefaultAccountMock,
   softDeleteCodexAccount: mocks.softDeleteCodexAccountMock,
   updateCodexAccount: mocks.updateCodexAccountMock,
   updateRun: mocks.updateRunMock,
@@ -200,7 +198,6 @@ function prepareDefaults() {
   mocks.createCodexAccountMock.mockResolvedValue(pendingAccount);
   mocks.updateCodexAccountMock.mockResolvedValue(undefined);
   mocks.renameCodexAccountMock.mockResolvedValue(undefined);
-  mocks.setWorkspaceDefaultAccountMock.mockResolvedValue(undefined);
   mocks.softDeleteCodexAccountMock.mockResolvedValue(undefined);
   mocks.listWorkspaceRunsMock.mockResolvedValue([]);
   mocks.getAnalyticsSummaryMock.mockResolvedValue(analytics);
@@ -247,16 +244,40 @@ describe("App Codex auth", () => {
     await waitFor(() => expect(mocks.connectCodexMock).toHaveBeenCalledWith(7));
   });
 
-  it("opens the workspace picker from the Task folder selector", async () => {
+  it("lists workspaces without paths and opens the picker from the sidebar", async () => {
+    const secondWorkspace = {
+      ...workspace,
+      id: 2,
+      path: "/repo/mobile-client",
+      label: "mobile-client",
+      default_account_id: null,
+    };
+    mocks.listWorkspacesMock.mockResolvedValue([workspace, secondWorkspace]);
     mocks.openDialogMock.mockResolvedValue("/repo/new-workspace");
 
     const { user } = await renderApp();
-    expect(screen.queryByTitle("Add workspace")).not.toBeInTheDocument();
+    const workspaceNav = screen.getByRole("navigation", {
+      name: "Workspaces",
+    });
+    expect(
+      within(workspaceNav).getByRole("button", { name: "orchestrator" }),
+    ).toBeInTheDocument();
+    const secondWorkspaceButton = within(workspaceNav).getByRole("button", {
+      name: "mobile-client",
+    });
+    expect(secondWorkspaceButton).toBeInTheDocument();
+    expect(within(workspaceNav).queryByText(workspace.path)).not.toBeInTheDocument();
+    expect(
+      within(workspaceNav).queryByText(secondWorkspace.path),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("combobox", { name: "Folder" }),
+    ).not.toBeInTheDocument();
 
-    await user.selectOptions(
-      screen.getByLabelText("Folder"),
-      "__add_workspace__",
-    );
+    await user.click(secondWorkspaceButton);
+    expect(secondWorkspaceButton).toHaveAttribute("aria-current", "page");
+
+    await user.click(screen.getByRole("button", { name: "Add workspace" }));
 
     await waitFor(() =>
       expect(mocks.openDialogMock).toHaveBeenCalledWith({
@@ -495,7 +516,7 @@ describe("App Codex auth", () => {
     expect(mocks.openUrlMock).toHaveBeenCalledWith("https://example.com/auth");
   });
 
-  it("switches accounts and saves the workspace default", async () => {
+  it("switches accounts from the account menu", async () => {
     mocks.listCodexAccountsMock.mockResolvedValue([
       signedInAccount,
       signedInAccount2,
@@ -526,14 +547,10 @@ describe("App Codex auth", () => {
     );
 
     await waitFor(() =>
-      expect(screen.getByLabelText("Run account")).toHaveValue("8"),
+      expect(
+        screen.getByRole("combobox", { name: "Run account" }),
+      ).toHaveTextContent("personal@example.com"),
     );
-    await user.click(
-      screen.getByRole("button", {
-        name: "Use selected account as workspace default",
-      }),
-    );
-    expect(mocks.setWorkspaceDefaultAccountMock).toHaveBeenCalledWith(1, 8);
   });
 
   it("rejects and removes a second profile with the same email address", async () => {
