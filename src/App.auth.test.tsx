@@ -297,6 +297,28 @@ describe("App Codex auth", () => {
     );
   });
 
+  it("uses the shared dropdown for OSS provider selection", async () => {
+    const { user } = await renderApp();
+
+    await user.click(screen.getByRole("button", { name: "Settings" }));
+
+    const providerSelect = screen.getByRole("combobox", {
+      name: "Settings OSS provider",
+    });
+    expect(providerSelect).toBeDisabled();
+    expect(providerSelect.closest(".composer-select")).toHaveClass(
+      "settings-provider-select",
+    );
+    expect(document.querySelector("select")).not.toBeInTheDocument();
+
+    await user.click(screen.getByRole("checkbox"));
+    expect(providerSelect).toBeEnabled();
+    await user.click(providerSelect);
+    await user.click(screen.getByRole("option", { name: "LM Studio" }));
+
+    expect(providerSelect).toHaveTextContent("LM Studio");
+  });
+
   it("removes consolidated duplicate profile directories during startup", async () => {
     mocks.listDuplicateProfilesPendingCleanupMock.mockResolvedValue([11]);
 

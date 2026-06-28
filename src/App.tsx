@@ -59,6 +59,7 @@ import {
   startCodexLogin,
 } from "./codexClient";
 import { AnalyticsSummary } from "./components/AnalyticsSummary";
+import { ComposerSelect } from "./components/ComposerSelect";
 import { RunConsole } from "./components/RunConsole";
 import { TaskComposer } from "./components/TaskComposer";
 import {
@@ -2142,15 +2143,19 @@ function App() {
                     <strong>OSS provider</strong>
                     <span>Used only when local OSS mode is enabled.</span>
                   </div>
-                  <select
+                  <ComposerSelect
+                    ariaLabel="Settings OSS provider"
                     value={ossProvider}
-                    onChange={(event) => setOssProvider(event.currentTarget.value as OssProvider)}
+                    options={[
+                      { value: "ollama", label: "Ollama" },
+                      { value: "lmstudio", label: "LM Studio" },
+                    ]}
+                    placeholder="Select provider"
+                    icon={<Plug size={16} />}
+                    className="settings-provider-select"
                     disabled={!useOss}
-                    aria-label="Settings OSS provider"
-                  >
-                    <option value="ollama">Ollama</option>
-                    <option value="lmstudio">LM Studio</option>
-                  </select>
+                    onChange={(value) => setOssProvider(value as OssProvider)}
+                  />
                 </div>
               </div>
             </section>

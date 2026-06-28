@@ -36,6 +36,14 @@
   --accent-purple-dark: #8b5cf6;
   --warning: #facc15;
   --danger: #a78bfa;
+  --dropdown-bg: #111827;
+  --dropdown-bg-hover: #1e293b;
+  --dropdown-menu-bg: #111827;
+  --dropdown-text: #e2e8f0;
+  --dropdown-muted: #94a3b8;
+  --dropdown-accent: #00b8ff;
+  --dropdown-selected: #38bdf8;
+  --dropdown-focus-ring: rgba(0, 184, 255, 0.22);
   --radius: 8px;
   --shadow: 0 18px 60px rgba(5, 8, 12, 0.26);
 }
@@ -361,21 +369,19 @@ button.account-sign-in {
   width: 100%;
   min-height: 62px;
   border: 0;
-  border-top: 1px solid rgba(248, 250, 252, 0.08);
   border-radius: 0;
-  background: var(--rail);
+  background: var(--dropdown-bg);
   color: var(--text);
   padding: 10px 18px;
 }
 
 button.account-trigger:hover:not(:disabled),
 button.account-sign-in:hover:not(:disabled) {
-  border-color: rgba(56, 189, 248, 0.18);
-  background: rgba(51, 65, 85, 0.42);
+  background: var(--dropdown-bg-hover);
 }
 
 button.account-trigger.open {
-  background: var(--rail);
+  background: var(--dropdown-bg-hover);
 }
 
 button.account-sign-in {
@@ -457,8 +463,8 @@ button.account-sign-in {
 .account-menu {
   display: grid;
   gap: 5px;
-  border-top: 1px solid rgba(100, 116, 139, 0.2);
-  background: rgba(5, 8, 12, 0.32);
+  border: 0;
+  background: var(--dropdown-menu-bg);
   padding: 8px 10px 10px;
 }
 
@@ -485,7 +491,7 @@ button.account-sign-in {
 button.account-menu-action {
   width: 100%;
   min-height: 36px;
-  border-color: transparent;
+  border: 0;
   border-radius: 6px;
   background: transparent;
   color: var(--text-soft);
@@ -495,8 +501,7 @@ button.account-menu-action {
 }
 
 button.account-menu-action:hover:not(:disabled) {
-  border-color: transparent;
-  background: rgba(51, 65, 85, 0.42);
+  background: var(--dropdown-bg-hover);
   color: var(--text);
 }
 
@@ -513,7 +518,7 @@ button.account-switcher-item {
   display: grid;
   grid-template-columns: 30px minmax(0, 1fr) 16px;
   min-height: 44px;
-  border-color: transparent;
+  border: 0;
   border-radius: 6px;
   background: transparent;
   padding: 6px 8px;
@@ -521,7 +526,7 @@ button.account-switcher-item {
 }
 
 button.account-switcher-item:hover:not(:disabled) {
-  background: rgba(51, 65, 85, 0.42);
+  background: var(--dropdown-bg-hover);
 }
 
 .account-switcher-item > span:nth-child(2) {
@@ -743,8 +748,7 @@ button.account-switcher-item:hover:not(:disabled) {
   font-weight: 700;
 }
 
-textarea,
-select {
+textarea {
   width: 100%;
   border: 1px solid var(--line-strong);
   border-radius: 6px;
@@ -764,18 +768,35 @@ textarea::placeholder {
 }
 
 select {
+  width: 100%;
   max-width: 150px;
   min-height: 34px;
+  border: 0;
+  border-radius: 6px;
+  background: var(--dropdown-bg);
+  color: var(--dropdown-text);
+  outline: none;
   padding: 6px 8px;
 }
 
 textarea:focus,
-select:focus,
 input:focus-visible,
 button:focus-visible {
   border-color: rgba(0, 184, 255, 0.7);
   box-shadow: 0 0 0 3px rgba(0, 184, 255, 0.18);
   outline: none;
+}
+
+select:focus {
+  border: 0;
+  box-shadow: 0 0 0 3px var(--dropdown-focus-ring);
+  outline: none;
+}
+
+select:disabled {
+  color: var(--dropdown-muted);
+  cursor: not-allowed;
+  opacity: 0.58;
 }
 
 .composer-panel {
@@ -911,12 +932,11 @@ button:focus-visible {
   display: block;
   min-width: 0;
   min-height: 40px;
-  border: 1px solid rgba(100, 116, 139, 0.32);
+  border: 0;
   border-radius: 6px;
-  background: rgba(17, 24, 39, 0.54);
-  color: var(--muted);
+  background: var(--dropdown-bg);
+  color: var(--dropdown-muted);
   transition:
-    border-color 140ms ease,
     background 140ms ease,
     box-shadow 140ms ease;
 }
@@ -943,7 +963,7 @@ button:focus-visible {
   height: 18px;
   align-items: center;
   justify-content: center;
-  color: var(--text-soft);
+  color: var(--dropdown-muted);
   opacity: 0.86;
   pointer-events: none;
   transform: translateY(-50%);
@@ -954,7 +974,7 @@ button:focus-visible {
   top: 50%;
   right: 10px;
   z-index: 2;
-  color: var(--text-soft);
+  color: var(--dropdown-muted);
   opacity: 0.78;
   pointer-events: none;
   transition: transform 140ms ease;
@@ -969,7 +989,7 @@ button.composer-select-trigger {
   border: 0;
   border-radius: inherit;
   background: transparent;
-  color: var(--text);
+  color: var(--dropdown-text);
   cursor: pointer;
   font-size: 0.92rem;
   font-weight: 500;
@@ -978,7 +998,7 @@ button.composer-select-trigger {
 
 button.composer-select-trigger:hover:not(:disabled),
 button.composer-select-trigger:active:not(:disabled) {
-  background: rgba(51, 65, 85, 0.22);
+  background: var(--dropdown-bg-hover);
   transform: none;
 }
 
@@ -991,13 +1011,11 @@ button.composer-select-trigger:active:not(:disabled) {
 
 .composer-select:hover:not(.disabled),
 .composer-select.open {
-  border-color: rgba(0, 184, 255, 0.52);
-  background: rgba(17, 24, 39, 0.76);
+  background: var(--dropdown-bg-hover);
 }
 
 .composer-select:focus-within {
-  border-color: rgba(0, 184, 255, 0.7);
-  box-shadow: 0 0 0 3px rgba(0, 184, 255, 0.18);
+  box-shadow: 0 0 0 3px var(--dropdown-focus-ring);
 }
 
 .composer-select.open .select-chevron {
@@ -1018,12 +1036,10 @@ button.composer-select-trigger:active:not(:disabled) {
   display: grid;
   gap: 2px;
   overflow-y: auto;
-  border: 1px solid rgba(100, 116, 139, 0.44);
+  border: 0;
   border-radius: 8px;
-  background: var(--panel);
-  box-shadow:
-    0 18px 42px rgba(5, 8, 12, 0.58),
-    0 0 0 1px rgba(248, 250, 252, 0.03);
+  background: var(--dropdown-menu-bg);
+  box-shadow: 0 18px 42px rgba(5, 8, 12, 0.58);
   padding: 4px;
 }
 
@@ -1032,10 +1048,10 @@ button.composer-select-option {
   min-width: 0;
   min-height: 34px;
   justify-content: flex-start;
-  border-color: transparent;
+  border: 0;
   border-radius: 5px;
   background: transparent;
-  color: var(--text-soft);
+  color: var(--dropdown-text);
   font-size: 0.84rem;
   font-weight: 500;
   padding: 7px 9px;
@@ -1044,14 +1060,13 @@ button.composer-select-option {
 
 button.composer-select-option:hover:not(:disabled),
 button.composer-select-option:focus-visible {
-  border-color: transparent;
-  background: rgba(0, 184, 255, 0.1);
+  background: var(--dropdown-bg-hover);
   color: var(--text);
   box-shadow: none;
 }
 
 button.composer-select-option[aria-selected="true"] {
-  color: var(--accent-sky);
+  color: var(--dropdown-selected);
 }
 
 .composer-select-option > span {
@@ -1068,13 +1083,16 @@ button.composer-select-option[aria-selected="true"] {
 }
 
 button.composer-select-option.action {
-  color: var(--accent-sky);
+  color: var(--dropdown-selected);
 }
 
 button.composer-select-option.action:not(:first-child) {
   margin-top: 3px;
-  border-top: 1px solid rgba(100, 116, 139, 0.28);
-  border-radius: 0 0 5px 5px;
+}
+
+.settings-provider-select {
+  width: 150px;
+  flex: 0 0 150px;
 }
 
 .token-pill {
