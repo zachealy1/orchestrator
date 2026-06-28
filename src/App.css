@@ -18,7 +18,7 @@
   --panel-muted: #334155;
   --main: #05080c;
   --rail: #111827;
-  --composer: #334155;
+  --composer: #1e293b;
   --text: #f8fafc;
   --text-soft: #e2e8f0;
   --muted: #94a3b8;
@@ -36,9 +36,9 @@
   --accent-purple-dark: #8b5cf6;
   --warning: #facc15;
   --danger: #a78bfa;
-  --dropdown-bg: #111827;
-  --dropdown-bg-hover: #1e293b;
-  --dropdown-menu-bg: #111827;
+  --dropdown-bg: #0a0f14;
+  --dropdown-bg-hover: #111827;
+  --dropdown-menu-bg: #0a0f14;
   --dropdown-text: #e2e8f0;
   --dropdown-muted: #94a3b8;
   --dropdown-accent: #00b8ff;
@@ -183,7 +183,7 @@ button.small {
 
 .primary-nav button:hover:not(:disabled),
 .primary-nav button.active {
-  background: var(--dropdown-bg-hover);
+  background: var(--panel-strong);
   color: var(--text);
 }
 
@@ -232,7 +232,7 @@ button.small {
 }
 
 .rail-section-header .workspace-add:hover:not(:disabled) {
-  background: var(--dropdown-bg-hover);
+  background: var(--panel-strong);
   color: var(--dropdown-selected);
 }
 
@@ -262,12 +262,12 @@ button.small {
 }
 
 .workspace-list button:hover:not(:disabled) {
-  background: var(--dropdown-bg-hover);
+  background: rgba(30, 41, 59, 0.68);
   color: var(--text);
 }
 
 .workspace-list button.active {
-  background: var(--dropdown-bg-hover);
+  background: var(--panel-strong);
   color: var(--text);
 }
 
@@ -307,6 +307,7 @@ button.small {
 }
 
 .codex-card.account-card {
+  position: relative;
   align-self: stretch;
   flex: 0 0 auto;
   width: calc(100% + 36px);
@@ -324,19 +325,20 @@ button.account-sign-in {
   width: 100%;
   min-height: 62px;
   border: 0;
+  border-top: 1px solid rgba(100, 116, 139, 0.22);
   border-radius: 0;
-  background: var(--dropdown-bg);
+  background: var(--rail);
   color: var(--text);
   padding: 10px 18px;
 }
 
 button.account-trigger:hover:not(:disabled),
 button.account-sign-in:hover:not(:disabled) {
-  background: var(--dropdown-bg-hover);
+  background: var(--panel-strong);
 }
 
 button.account-trigger.open {
-  background: var(--dropdown-bg-hover);
+  background: var(--panel-strong);
 }
 
 button.account-sign-in {
@@ -416,10 +418,19 @@ button.account-sign-in {
 }
 
 .account-menu {
+  position: absolute;
+  right: 8px;
+  bottom: calc(100% + 8px);
+  left: 8px;
+  z-index: 50;
   display: grid;
   gap: 5px;
+  max-height: min(540px, calc(100vh - 96px));
+  overflow-y: auto;
   border: 0;
+  border-radius: 8px;
   background: var(--dropdown-menu-bg);
+  box-shadow: 0 18px 48px rgba(5, 8, 12, 0.58);
   padding: 8px 10px 10px;
 }
 
@@ -642,10 +653,10 @@ button.account-switcher-item:hover:not(:disabled) {
 
 .task-hero h1 {
   max-width: 920px;
-  margin: 0 0 28px;
+  margin: 0 0 22px;
   color: var(--text);
-  font-size: 2rem;
-  font-weight: 650;
+  font-size: 1.8rem;
+  font-weight: 620;
   line-height: 1.2;
   text-align: center;
 }
@@ -765,7 +776,7 @@ select:disabled {
   border: 1px solid rgba(248, 250, 252, 0.1);
   border-radius: var(--radius);
   background: var(--composer);
-  box-shadow: 0 22px 70px rgba(5, 8, 12, 0.28);
+  box-shadow: 0 18px 56px rgba(5, 8, 12, 0.38);
 }
 
 .prompt-field {
@@ -804,7 +815,8 @@ select:disabled {
   gap: 12px;
   align-items: center;
   justify-content: space-between;
-  border-top: 1px solid rgba(51, 65, 85, 0.56);
+  border-top: 0;
+  background: rgba(17, 24, 39, 0.58);
   padding: 10px 14px;
 }
 
@@ -875,9 +887,9 @@ select:disabled {
     minmax(120px, 0.8fr);
   gap: 8px;
   align-items: center;
-  border-top: 1px solid rgba(51, 65, 85, 0.56);
-  background: rgba(10, 15, 20, 0.34);
-  padding: 8px 14px;
+  border-top: 0;
+  background: var(--panel);
+  padding: 8px 14px 10px;
 }
 
 .account-select-group {
