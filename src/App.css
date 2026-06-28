@@ -224,10 +224,10 @@ button.small {
 
 .rail-section {
   display: grid;
-  grid-template-rows: auto minmax(0, 1fr) auto;
+  grid-template-rows: auto minmax(0, 1fr);
   flex: 1 1 auto;
   min-height: 0;
-  gap: 10px;
+  gap: 6px;
   overflow: hidden;
 }
 
@@ -247,73 +247,90 @@ button.small {
   text-transform: uppercase;
 }
 
+.rail-section-header .workspace-add {
+  display: inline-flex;
+  width: 28px;
+  min-width: 28px;
+  min-height: 28px;
+  align-items: center;
+  justify-content: center;
+  border-color: transparent;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--muted);
+  padding: 0;
+}
+
+.rail-section-header .workspace-add:hover:not(:disabled) {
+  border-color: transparent;
+  background: rgba(51, 65, 85, 0.42);
+  color: var(--accent);
+}
+
 .workspace-list {
   display: grid;
   align-content: start;
   min-height: 0;
-  gap: 8px;
+  gap: 2px;
   overflow: auto;
-  padding-right: 2px;
+  padding: 2px 0;
 }
 
 .workspace-list button {
-  display: flex;
-  gap: 10px;
+  display: grid;
+  grid-template-columns: 30px minmax(0, 1fr);
+  gap: 8px;
   align-items: center;
   justify-content: flex-start;
   min-width: 0;
-  min-height: 38px;
+  min-height: 44px;
   border-color: transparent;
+  border-radius: 6px;
   background: transparent;
-  color: var(--text);
-  padding: 9px 10px;
+  color: var(--text-soft);
+  padding: 6px 8px;
   text-align: left;
 }
 
-.workspace-list button:hover,
-.workspace-list button.active {
-  border-color: rgba(45, 212, 191, 0.32);
-  background: rgba(10, 15, 20, 0.22);
+.workspace-list button:hover:not(:disabled) {
+  border-color: transparent;
+  background: rgba(51, 65, 85, 0.42);
+  color: var(--text);
 }
 
-.workspace-list span {
+.workspace-list button.active {
+  border-color: transparent;
+  background: rgba(51, 65, 85, 0.52);
+  color: var(--text);
+}
+
+.workspace-name {
   overflow: hidden;
+  font-size: 0.88rem;
+  font-weight: 600;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.workspace-list button svg {
-  flex: 0 0 auto;
+.workspace-icon {
+  display: inline-flex;
+  width: 30px;
+  height: 30px;
+  align-items: center;
+  justify-content: center;
+  border-radius: 999px;
+  background: rgba(14, 165, 233, 0.1);
   color: var(--muted);
 }
 
-.workspace-list button.active svg {
+.workspace-list button.active .workspace-icon {
+  background: rgba(14, 165, 233, 0.16);
   color: var(--accent);
 }
 
 .workspace-list .muted {
   margin: 6px 10px;
   font-size: 0.84rem;
-}
-
-.workspace-add {
-  justify-content: flex-start;
-  width: 100%;
-  min-height: 38px;
-  border-color: rgba(100, 116, 139, 0.28);
-  background: rgba(17, 24, 39, 0.42);
-  color: var(--text-soft);
-  padding: 9px 10px;
-}
-
-.workspace-add:hover:not(:disabled) {
-  border-color: rgba(0, 184, 255, 0.34);
-  background: rgba(14, 165, 233, 0.1);
-  color: var(--text);
-}
-
-.workspace-add svg {
-  color: var(--accent);
 }
 
 .codex-card {

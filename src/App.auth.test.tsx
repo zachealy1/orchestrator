@@ -273,11 +273,17 @@ describe("App Codex auth", () => {
     expect(
       screen.queryByRole("combobox", { name: "Folder" }),
     ).not.toBeInTheDocument();
+    const workspacesHeading = screen.getByText("Workspaces");
+    const addWorkspaceButton = screen.getByRole("button", {
+      name: "Add workspace",
+    });
+    expect(workspacesHeading.parentElement).toContainElement(addWorkspaceButton);
+    expect(addWorkspaceButton).not.toHaveTextContent("Add workspace");
 
     await user.click(secondWorkspaceButton);
     expect(secondWorkspaceButton).toHaveAttribute("aria-current", "page");
 
-    await user.click(screen.getByRole("button", { name: "Add workspace" }));
+    await user.click(addWorkspaceButton);
 
     await waitFor(() =>
       expect(mocks.openDialogMock).toHaveBeenCalledWith({

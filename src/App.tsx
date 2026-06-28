@@ -6,11 +6,11 @@ import {
   ChevronDown,
   ChevronRight,
   Folder,
-  FolderPlus,
   History,
   LogIn,
   LogOut,
   Plug,
+  Plus,
   RefreshCw,
   Settings,
   TerminalSquare,
@@ -1690,10 +1690,19 @@ function App() {
 
         <div className="rail-section">
           <div className="rail-section-header">
-            <span>Workspaces</span>
+            <span id="workspaces-heading">Workspaces</span>
+            <button
+              className="workspace-add"
+              type="button"
+              onClick={() => void chooseWorkspace()}
+              aria-label="Add workspace"
+              title="Add workspace"
+            >
+              <Plus size={16} aria-hidden="true" />
+            </button>
           </div>
 
-          <nav className="workspace-list" aria-label="Workspaces">
+          <nav className="workspace-list" aria-labelledby="workspaces-heading">
             {workspaces.length === 0 ? (
               <p className="muted">No workspaces yet.</p>
             ) : (
@@ -1710,21 +1719,14 @@ function App() {
                   }
                   title={workspace.label}
                 >
-                  <Folder size={16} aria-hidden="true" />
-                  <span>{workspace.label}</span>
+                  <span className="workspace-icon" aria-hidden="true">
+                    <Folder size={16} />
+                  </span>
+                  <span className="workspace-name">{workspace.label}</span>
                 </button>
               ))
             )}
           </nav>
-
-          <button
-            className="workspace-add secondary"
-            type="button"
-            onClick={() => void chooseWorkspace()}
-          >
-            <FolderPlus size={16} aria-hidden="true" />
-            <span>Add workspace</span>
-          </button>
         </div>
 
         <div className={`codex-card account-card auth-${authRow.tone}`}>
