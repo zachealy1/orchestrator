@@ -2,11 +2,15 @@ import { open } from "@tauri-apps/plugin-dialog";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { listen } from "@tauri-apps/api/event";
 import {
+  AlertCircle,
   BarChart3,
   ChevronDown,
   ChevronRight,
+  FileText,
   Folder,
+  FolderOpen,
   History,
+  Loader2,
   LogIn,
   LogOut,
   Monitor,
@@ -22,6 +26,7 @@ import {
   X,
 } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
+import type { CSSProperties, DragEvent } from "react";
 import "./App.css";
 import orchestratorMark from "./assets/brand/orchestrator-mark.png";
 import {
@@ -52,9 +57,11 @@ import {
   deleteCodexProfile,
   listGitBranches,
   listCodexModels,
+  listWorkspaceDirectory,
   logoutCodexAccount,
   readCodexFile,
   readCodexAccount,
+  readWorkspaceFilePreview,
   resolveCodexServerRequest,
   runPreflight,
   setThreadGoal,
@@ -93,6 +100,7 @@ import {
   readThemePreference,
   watchSystemTheme,
 } from "./lib/theme";
+import { ORCHESTRATOR_CONTEXT_FILE_MIME } from "./types";
 import type {
   AccessLevel,
   AccountLoginCompletedNotification,
@@ -113,6 +121,8 @@ import type {
   RunListItem,
   ThemePreference,
   Workspace,
+  WorkspaceFilePreview,
+  WorkspaceTreeEntry,
 } from "./types";
 
 const DEFAULT_ANALYTICS: AnalyticsSummaryType = {
@@ -141,6 +151,19 @@ type AuthRowState = {
   subtitle: string;
   avatarLabel: string;
   tone: "default" | "waiting" | "failed" | "signed-in";
+};
+
+type WorkspaceDirectoryState = {
+  status: "loading" | "loaded" | "error";
+  entries: WorkspaceTreeEntry[];
+  error: string | null;
+};
+
+type WorkspacePreviewState = {
+  status: "idle" | "loading" | "loaded" | "error";
+  file: WorkspaceTreeEntry | null;
+  preview: WorkspaceFilePreview | null;
+  error: string | null;
 };
 
 class DuplicateCodexAccountError extends Error {
@@ -222,6 +245,21 @@ const TASK_QUOTES = [
 function App() {
   const [workspaces, setWorkspaces] = useState<Workspace[]>([]);
   const [selectedWorkspace, setSelectedWorkspace] = useState<Workspace | null>(null);
+  const [expandedWorkspaceIds, setExpandedWorkspaceIds] = useState<Set<number>>(
+    () => new Set(),
+  );
+  const [expandedDirectoryPaths, setExpandedDirectoryPaths] = useState<Set<string>>(
+    () => new Set(),
+  );
+  const [directoryStates, setDirectoryStates] = useState<
+    Record<string, WorkspaceDirectoryState>
+  >({});
+  const [previewState, setPreviewState] = useState<WorkspacePreviewState>({
+    status: "idle",
+    file: null,
+    preview: null,
+    error: null,
+  });
   const [codexAccounts, setCodexAccounts] = useState<CodexAccountProfile[]>([]);
   const [selectedAccountId, setSelectedAccountId] = useState<number | null>(null);
   const [connectedAccountIds, setConnectedAccountIds] = useState<Set<number>>(
@@ -270,6 +308,7 @@ function App() {
   const pendingLoginAccountIdRef = useRef<number | null>(null);
   const modelsRef = useRef<CodexModel[]>([]);
   const modelLoadErrorRef = useRef<string | null>(null);
+  const previewRequestId = useRef(0);
 
   const improvedPrompt = useMemo(() => improvePrompt(prompt), [prompt]);
   const routeRecommendation = useMemo(() => recommendRoute(prompt), [prompt]);
@@ -1678,6 +1717,271 @@ function App() {
     setRunView((current) => resolveServerRequest(current, request.id!));
   }
 
+  async function loadWorkspaceDirectory(
+    workspace: Workspace,
+    directoryPath: string,
+    force = false,
+  ) {
+    const existing = directoryStates[directoryPath];
+    if (
+      !force &&
+      (existing?.status === "loaded" || existing?.status === "loading")
+    ) {
+      return;
+    }
+
+    setDirectoryStates((current) => ({
+      ...current,
+      [directoryPath]: {
+        status: "loading",
+        entries: current[directoryPath]?.entries ?? [],
+        error: null,
+      },
+    }));
+
+    try {
+      const entries = await listWorkspaceDirectory(workspace.path, directoryPath);
+      setDirectoryStates((current) => ({
+        ...current,
+        [directoryPath]: { status: "loaded", entries, error: null },
+      }));
+    } catch (error) {
+      setDirectoryStates((current) => ({
+        ...current,
+        [directoryPath]: {
+          status: "error",
+          entries: [],
+          error: error instanceof Error ? error.message : String(error),
+        },
+      }));
+    }
+  }
+
+  function toggleWorkspaceExpanded(workspace: Workspace) {
+    const opening = !expandedWorkspaceIds.has(workspace.id);
+    setExpandedWorkspaceIds((current) => {
+      const next = new Set(current);
+      if (next.has(workspace.id)) {
+        next.delete(workspace.id);
+      } else {
+        next.add(workspace.id);
+      }
+      return next;
+    });
+
+    if (opening) {
+      void loadWorkspaceDirectory(workspace, workspace.path);
+    }
+  }
+
+  function toggleDirectoryExpanded(workspace: Workspace, directoryPath: string) {
+    const opening = !expandedDirectoryPaths.has(directoryPath);
+    setExpandedDirectoryPaths((current) => {
+      const next = new Set(current);
+      if (next.has(directoryPath)) {
+        next.delete(directoryPath);
+      } else {
+        next.add(directoryPath);
+      }
+      return next;
+    });
+
+    if (opening) {
+      void loadWorkspaceDirectory(workspace, directoryPath);
+    }
+  }
+
+  async function openWorkspaceFilePreview(
+    workspace: Workspace,
+    file: WorkspaceTreeEntry,
+  ) {
+    const requestId = previewRequestId.current + 1;
+    previewRequestId.current = requestId;
+    setPreviewState({
+      status: "loading",
+      file,
+      preview: null,
+      error: null,
+    });
+
+    try {
+      const preview = await readWorkspaceFilePreview(workspace.path, file.path);
+      if (previewRequestId.current !== requestId) {
+        return;
+      }
+      setPreviewState({
+        status: "loaded",
+        file,
+        preview,
+        error: null,
+      });
+    } catch (error) {
+      if (previewRequestId.current !== requestId) {
+        return;
+      }
+      setPreviewState({
+        status: "error",
+        file,
+        preview: null,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+  }
+
+  function closeWorkspaceFilePreview() {
+    previewRequestId.current += 1;
+    setPreviewState({
+      status: "idle",
+      file: null,
+      preview: null,
+      error: null,
+    });
+  }
+
+  function startWorkspaceFileDrag(
+    event: DragEvent<HTMLButtonElement>,
+    file: WorkspaceTreeEntry,
+  ) {
+    const payload: ComposerContextFile[] = [
+      {
+        path: file.path,
+        name: file.name,
+        source: "explorer",
+        status: "ready",
+      },
+    ];
+    event.dataTransfer.effectAllowed = "copy";
+    event.dataTransfer.setData(
+      ORCHESTRATOR_CONTEXT_FILE_MIME,
+      JSON.stringify(payload),
+    );
+    event.dataTransfer.setData("text/plain", file.path);
+  }
+
+  function addDroppedContextFiles(files: ComposerContextFile[]) {
+    if (files.length === 0) {
+      return;
+    }
+
+    setContextFiles((current) => mergeContextFiles(current, files));
+    setStatusMessage(
+      `Added ${files.length === 1 ? files[0].name : `${files.length} files`} to context.`,
+    );
+  }
+
+  function renderWorkspaceDirectory(
+    workspace: Workspace,
+    directoryPath: string,
+    depth: number,
+  ) {
+    const state = directoryStates[directoryPath];
+
+    if (!state || (state.status === "loading" && state.entries.length === 0)) {
+      return (
+        <div
+          className="workspace-tree-status"
+          style={treeIndentStyle(depth)}
+          key={`${directoryPath}-loading`}
+        >
+          <Loader2 size={14} aria-hidden="true" />
+          <span>Loading</span>
+        </div>
+      );
+    }
+
+    if (state.status === "error") {
+      return (
+        <div
+          className="workspace-tree-status error"
+          style={treeIndentStyle(depth)}
+          key={`${directoryPath}-error`}
+        >
+          <AlertCircle size={14} aria-hidden="true" />
+          <span>{state.error ?? "Unable to load folder"}</span>
+        </div>
+      );
+    }
+
+    if (state.entries.length === 0) {
+      return (
+        <div
+          className="workspace-tree-status"
+          style={treeIndentStyle(depth)}
+          key={`${directoryPath}-empty`}
+        >
+          <span>Empty folder</span>
+        </div>
+      );
+    }
+
+    return state.entries.map((entry) =>
+      renderWorkspaceTreeEntry(workspace, entry, depth),
+    );
+  }
+
+  function renderWorkspaceTreeEntry(
+    workspace: Workspace,
+    entry: WorkspaceTreeEntry,
+    depth: number,
+  ) {
+    const directory = entry.kind === "directory";
+    const expanded = expandedDirectoryPaths.has(entry.path);
+
+    return (
+      <div className="workspace-tree-branch" key={entry.path}>
+        <div
+          className={`workspace-tree-row ${directory ? "directory" : "file"}`}
+          style={treeIndentStyle(depth)}
+        >
+          {directory ? (
+            <button
+              className="workspace-tree-chevron"
+              type="button"
+              aria-label={`${expanded ? "Collapse" : "Expand"} ${entry.name}`}
+              aria-expanded={expanded}
+              onClick={() => toggleDirectoryExpanded(workspace, entry.path)}
+            >
+              {expanded ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
+            </button>
+          ) : (
+            <span className="workspace-tree-chevron-placeholder" aria-hidden="true" />
+          )}
+
+          <button
+            className="workspace-tree-label"
+            type="button"
+            title={entry.relativePath}
+            draggable={!directory}
+            onClick={() =>
+              directory
+                ? toggleDirectoryExpanded(workspace, entry.path)
+                : void openWorkspaceFilePreview(workspace, entry)
+            }
+            onDragStart={
+              directory
+                ? undefined
+                : (event) => startWorkspaceFileDrag(event, entry)
+            }
+          >
+            {directory ? (
+              expanded ? (
+                <FolderOpen size={15} aria-hidden="true" />
+              ) : (
+                <Folder size={15} aria-hidden="true" />
+              )
+            ) : (
+              <FileText size={15} aria-hidden="true" />
+            )}
+            <span>{entry.name}</span>
+          </button>
+        </div>
+        {directory && expanded
+          ? renderWorkspaceDirectory(workspace, entry.path, depth + 1)
+          : null}
+      </div>
+    );
+  }
+
   return (
     <main className="app-shell">
       <aside className="app-rail">
@@ -1734,25 +2038,47 @@ function App() {
             {workspaces.length === 0 ? (
               <p className="muted">No workspaces yet.</p>
             ) : (
-              workspaces.map((workspace) => (
-                <button
-                  className={
-                    workspace.id === selectedWorkspace?.id ? "active" : ""
-                  }
-                  key={workspace.id}
-                  type="button"
-                  onClick={() => selectWorkspace(workspace.id)}
-                  aria-current={
-                    workspace.id === selectedWorkspace?.id ? "page" : undefined
-                  }
-                  title={workspace.label}
-                >
-                  <span className="workspace-icon" aria-hidden="true">
-                    <Folder size={16} />
-                  </span>
-                  <span className="workspace-name">{workspace.label}</span>
-                </button>
-              ))
+              workspaces.map((workspace) => {
+                const expanded = expandedWorkspaceIds.has(workspace.id);
+                const selected = workspace.id === selectedWorkspace?.id;
+
+                return (
+                  <div className="workspace-tree-branch" key={workspace.id}>
+                    <div
+                      className={`workspace-root-row ${selected ? "active" : ""}`}
+                    >
+                      <button
+                        className="workspace-tree-chevron"
+                        type="button"
+                        aria-label={`${expanded ? "Collapse" : "Expand"} ${workspace.label}`}
+                        aria-expanded={expanded}
+                        onClick={() => toggleWorkspaceExpanded(workspace)}
+                      >
+                        {expanded ? (
+                          <ChevronDown size={14} />
+                        ) : (
+                          <ChevronRight size={14} />
+                        )}
+                      </button>
+                      <button
+                        className="workspace-root-label"
+                        type="button"
+                        onClick={() => selectWorkspace(workspace.id)}
+                        aria-current={selected ? "page" : undefined}
+                        title={workspace.label}
+                      >
+                        <span className="workspace-icon" aria-hidden="true">
+                          {expanded ? <FolderOpen size={16} /> : <Folder size={16} />}
+                        </span>
+                        <span className="workspace-name">{workspace.label}</span>
+                      </button>
+                    </div>
+                    {expanded
+                      ? renderWorkspaceDirectory(workspace, workspace.path, 1)
+                      : null}
+                  </div>
+                );
+              })
             )}
           </nav>
         </div>
@@ -1957,6 +2283,7 @@ function App() {
                 onPlanModeChange={setPlanMode}
                 onAccessLevelChange={setAccessLevel}
                 onAddFiles={() => void chooseContextFiles()}
+                onContextFilesDrop={addDroppedContextFiles}
                 onRemoveFile={(path) =>
                   setContextFiles((current) => current.filter((file) => file.path !== path))
                 }
@@ -1964,6 +2291,61 @@ function App() {
                 onRun={() => void launchRun()}
               />
             </section>
+            {previewState.file ? (
+              <aside
+                className="file-preview-drawer"
+                aria-label="File preview"
+                aria-live="polite"
+              >
+                <header>
+                  <div>
+                    <p className="eyebrow">Preview</p>
+                    <h2>{previewState.file.name}</h2>
+                    <span>{previewState.file.relativePath}</span>
+                  </div>
+                  <button
+                    className="icon-button"
+                    type="button"
+                    aria-label="Close file preview"
+                    onClick={closeWorkspaceFilePreview}
+                  >
+                    <X size={16} />
+                  </button>
+                </header>
+
+                {previewState.status === "loading" ? (
+                  <div className="file-preview-state">
+                    <Loader2 size={16} aria-hidden="true" />
+                    <span>Loading preview</span>
+                  </div>
+                ) : null}
+
+                {previewState.status === "error" ? (
+                  <div className="file-preview-state error">
+                    <AlertCircle size={16} aria-hidden="true" />
+                    <span>{previewState.error ?? "Unable to preview file"}</span>
+                  </div>
+                ) : null}
+
+                {previewState.status === "loaded" && previewState.preview ? (
+                  <>
+                    {previewState.preview.truncated ? (
+                      <div className="file-preview-notice">
+                        Preview truncated to 512 KB.
+                      </div>
+                    ) : null}
+                    {previewState.preview.isBinary ? (
+                      <div className="file-preview-state">
+                        <FileText size={16} aria-hidden="true" />
+                        <span>Binary or unsupported file preview.</span>
+                      </div>
+                    ) : (
+                      <pre>{previewState.preview.content}</pre>
+                    )}
+                  </>
+                ) : null}
+              </aside>
+            ) : null}
           </div>
         ) : null}
 
@@ -2282,6 +2664,10 @@ function contextFileFromPath(path: string): ComposerContextFile {
     source: "picker",
     status: "ready",
   };
+}
+
+function treeIndentStyle(depth: number) {
+  return { "--depth": depth } as CSSProperties;
 }
 
 function mergeContextFiles(

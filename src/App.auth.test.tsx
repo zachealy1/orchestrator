@@ -1,7 +1,8 @@
-import { act, render, screen, waitFor, within } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import App from "./App";
+import { ORCHESTRATOR_CONTEXT_FILE_MIME } from "./types";
 
 const mocks = vi.hoisted(() => ({
   listeners: new Map<string, (event: { payload: unknown }) => void>(),
@@ -15,6 +16,8 @@ const mocks = vi.hoisted(() => ({
   logoutCodexAccountMock: vi.fn(),
   listCodexModelsMock: vi.fn(),
   listGitBranchesMock: vi.fn(),
+  listWorkspaceDirectoryMock: vi.fn(),
+  readWorkspaceFilePreviewMock: vi.fn(),
   checkoutGitBranchMock: vi.fn(),
   runPreflightMock: vi.fn(),
   readCodexFileMock: vi.fn(),
@@ -74,9 +77,11 @@ vi.mock("./codexClient", () => ({
   deleteCodexProfile: mocks.deleteCodexProfileMock,
   listGitBranches: mocks.listGitBranchesMock,
   listCodexModels: mocks.listCodexModelsMock,
+  listWorkspaceDirectory: mocks.listWorkspaceDirectoryMock,
   logoutCodexAccount: mocks.logoutCodexAccountMock,
   readCodexAccount: mocks.readCodexAccountMock,
   readCodexFile: mocks.readCodexFileMock,
+  readWorkspaceFilePreview: mocks.readWorkspaceFilePreviewMock,
   resolveCodexServerRequest: mocks.resolveCodexServerRequestMock,
   runPreflight: mocks.runPreflightMock,
   setThreadGoal: mocks.setThreadGoalMock,
@@ -185,6 +190,14 @@ function prepareDefaults() {
     branches: ["main"],
     currentBranch: "main",
   });
+  mocks.listWorkspaceDirectoryMock.mockResolvedValue([]);
+  mocks.readWorkspaceFilePreviewMock.mockResolvedValue({
+    path: "/repo/orchestrator/README.md",
+    relativePath: "README.md",
+    content: "preview",
+    truncated: false,
+    isBinary: false,
+  });
   mocks.checkoutGitBranchMock.mockResolvedValue({ branch: "main" });
   mocks.runPreflightMock.mockResolvedValue(preflight);
   mocks.readCodexFileMock.mockResolvedValue("file contents");
@@ -217,6 +230,24 @@ async function renderApp() {
   render(<App />);
   await waitFor(() => expect(mocks.listCodexAccountsMock).toHaveBeenCalled());
   return { user };
+}
+
+function createContextFileDataTransfer(files: unknown[]) {
+  let dropEffect = "none";
+
+  return {
+    types: [ORCHESTRATOR_CONTEXT_FILE_MIME],
+    effectAllowed: "copy",
+    get dropEffect() {
+      return dropEffect;
+    },
+    set dropEffect(value: string) {
+      dropEffect = value;
+    },
+    getData: (type: string) =>
+      type === ORCHESTRATOR_CONTEXT_FILE_MIME ? JSON.stringify(files) : "",
+    setData: vi.fn(),
+  };
 }
 
 describe("App Codex auth", () => {
@@ -297,6 +328,142 @@ describe("App Codex auth", () => {
     expect(mocks.upsertWorkspaceMock).toHaveBeenCalledWith(
       "/repo/new-workspace",
     );
+  });
+
+  it("expands a workspace independently from selection and previews files", async () => {
+    const secondWorkspace = {
+      ...workspace,
+      id: 2,
+      path: "/repo/mobile-client",
+      label: "mobile-client",
+      default_account_id: null,
+    };
+    const readmeEntry = {
+      name: "README.md",
+      path: "/repo/mobile-client/README.md",
+      relativePath: "README.md",
+      kind: "file" as const,
+    };
+    mocks.listWorkspacesMock.mockResolvedValue([workspace, secondWorkspace]);
+    mocks.listWorkspaceDirectoryMock.mockResolvedValue([
+      {
+        name: "src",
+        path: "/repo/mobile-client/src",
+        relativePath: "src",
+        kind: "directory",
+      },
+      readmeEntry,
+    ]);
+    mocks.readWorkspaceFilePreviewMock.mockResolvedValue({
+      path: readmeEntry.path,
+      relativePath: readmeEntry.relativePath,
+      content: "# Mobile client",
+      truncated: false,
+      isBinary: false,
+    });
+
+    const { user } = await renderApp();
+    const workspaceNav = screen.getByRole("navigation", {
+      name: "Workspaces",
+    });
+    const selectedWorkspaceButton = within(workspaceNav).getByRole("button", {
+      name: "orchestrator",
+    });
+    const secondWorkspaceButton = within(workspaceNav).getByRole("button", {
+      name: "mobile-client",
+    });
+
+    await user.click(
+      within(workspaceNav).getByRole("button", { name: "Expand mobile-client" }),
+    );
+
+    await waitFor(() =>
+      expect(mocks.listWorkspaceDirectoryMock).toHaveBeenCalledWith(
+        secondWorkspace.path,
+        secondWorkspace.path,
+      ),
+    );
+    expect(selectedWorkspaceButton).toHaveAttribute("aria-current", "page");
+    expect(secondWorkspaceButton).not.toHaveAttribute("aria-current");
+    expect(await within(workspaceNav).findByRole("button", { name: "README.md" })).toBeInTheDocument();
+
+    await user.click(within(workspaceNav).getByRole("button", { name: "README.md" }));
+
+    await waitFor(() =>
+      expect(mocks.readWorkspaceFilePreviewMock).toHaveBeenCalledWith(
+        secondWorkspace.path,
+        readmeEntry.path,
+      ),
+    );
+    expect(screen.getByRole("complementary", { name: "File preview" })).toHaveTextContent(
+      "# Mobile client",
+    );
+    expect(screen.queryByLabelText("Selected context files")).not.toBeInTheDocument();
+  });
+
+  it("shows nested loading state while expanding directories", async () => {
+    let resolveNestedDirectory: (entries: unknown[]) => void = () => undefined;
+    const nestedDirectory = new Promise<unknown[]>((resolve) => {
+      resolveNestedDirectory = resolve;
+    });
+    mocks.listWorkspaceDirectoryMock.mockImplementation(
+      async (_workspacePath: string, directoryPath: string) => {
+        if (directoryPath === "/repo/orchestrator/src") {
+          return nestedDirectory;
+        }
+
+        return [
+          {
+            name: "src",
+            path: "/repo/orchestrator/src",
+            relativePath: "src",
+            kind: "directory",
+          },
+        ];
+      },
+    );
+
+    const { user } = await renderApp();
+    const workspaceNav = screen.getByRole("navigation", {
+      name: "Workspaces",
+    });
+
+    await user.click(
+      within(workspaceNav).getByRole("button", { name: "Expand orchestrator" }),
+    );
+    await user.click(await within(workspaceNav).findByRole("button", { name: "Expand src" }));
+
+    expect(within(workspaceNav).getByText("Loading")).toBeInTheDocument();
+
+    resolveNestedDirectory([
+      {
+        name: "App.tsx",
+        path: "/repo/orchestrator/src/App.tsx",
+        relativePath: "src/App.tsx",
+        kind: "file",
+      },
+    ]);
+    expect(await within(workspaceNav).findByRole("button", { name: "App.tsx" })).toBeInTheDocument();
+  });
+
+  it("adds explorer files to context through composer drop and dedupes repeats", async () => {
+    await renderApp();
+    const composer = screen.getByLabelText("Task composer");
+    const dataTransfer = createContextFileDataTransfer([
+      {
+        path: "/repo/orchestrator/README.md",
+        name: "README.md",
+        source: "explorer",
+        status: "ready",
+      },
+    ]);
+
+    fireEvent.dragOver(composer, { dataTransfer });
+    fireEvent.drop(composer, { dataTransfer });
+    fireEvent.drop(composer, { dataTransfer });
+
+    const contextList = await screen.findByLabelText("Selected context files");
+    expect(within(contextList).getAllByText("README.md")).toHaveLength(1);
   });
 
   it("uses the shared dropdown for OSS provider selection", async () => {

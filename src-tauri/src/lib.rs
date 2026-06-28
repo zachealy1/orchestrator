@@ -5,7 +5,7 @@ use std::{
     env,
     ffi::OsStr,
     fs,
-    io::{BufRead, BufReader, Write},
+    io::{BufRead, BufReader, Read, Write},
     path::{Path, PathBuf},
     process::{Child, ChildStdin, Command, Stdio},
     sync::{
@@ -19,6 +19,9 @@ use tauri::{AppHandle, Emitter, Manager, State};
 use tauri_plugin_sql::{Migration, MigrationKind};
 
 const DATABASE_URL: &str = "sqlite:app.db";
+const MAX_FILE_PREVIEW_BYTES: usize = 512 * 1024;
+const IGNORED_EXPLORER_DIRECTORIES: &[&str] =
+    &[".git", "node_modules", "target", "dist", "build", ".next"];
 
 struct PendingResponse {
     account_id: i64,
@@ -122,6 +125,25 @@ struct GitBranchList {
 #[serde(rename_all = "camelCase")]
 struct GitCheckoutResult {
     branch: String,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct WorkspaceTreeEntry {
+    name: String,
+    path: String,
+    relative_path: String,
+    kind: String,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct WorkspaceFilePreview {
+    path: String,
+    relative_path: String,
+    content: String,
+    truncated: bool,
+    is_binary: bool,
 }
 
 fn migrations() -> Vec<Migration> {
@@ -836,6 +858,93 @@ fn checkout_git_branch(path: String, branch: String) -> Result<GitCheckoutResult
 }
 
 #[tauri::command]
+fn list_workspace_directory(
+    workspace_path: String,
+    directory_path: String,
+) -> Result<Vec<WorkspaceTreeEntry>, String> {
+    let (workspace, directory) = canonical_workspace_child(&workspace_path, &directory_path)?;
+    if !directory.is_dir() {
+        return Err("Selected path is not a directory".to_string());
+    }
+
+    let mut entries = Vec::new();
+    for entry in fs::read_dir(&directory)
+        .map_err(|error| format!("Unable to read directory {}: {error}", directory.display()))?
+    {
+        let entry = entry.map_err(|error| format!("Unable to read directory entry: {error}"))?;
+        let file_type = entry
+            .file_type()
+            .map_err(|error| format!("Unable to inspect directory entry: {error}"))?;
+        if !file_type.is_dir() && !file_type.is_file() {
+            continue;
+        }
+
+        let name = entry.file_name().to_string_lossy().to_string();
+        if file_type.is_dir()
+            && IGNORED_EXPLORER_DIRECTORIES
+                .iter()
+                .any(|ignored| ignored == &name.as_str())
+        {
+            continue;
+        }
+
+        let entry_path = entry.path();
+        entries.push(WorkspaceTreeEntry {
+            relative_path: relative_workspace_path(&workspace, &entry_path)?,
+            path: entry_path.to_string_lossy().to_string(),
+            name,
+            kind: if file_type.is_dir() {
+                "directory".to_string()
+            } else {
+                "file".to_string()
+            },
+        });
+    }
+
+    entries.sort_by(|left, right| {
+        let left_is_file = left.kind == "file";
+        let right_is_file = right.kind == "file";
+        left_is_file
+            .cmp(&right_is_file)
+            .then_with(|| left.name.to_lowercase().cmp(&right.name.to_lowercase()))
+    });
+
+    Ok(entries)
+}
+
+#[tauri::command]
+fn read_workspace_file_preview(
+    workspace_path: String,
+    file_path: String,
+) -> Result<WorkspaceFilePreview, String> {
+    let (workspace, file_path) = canonical_workspace_child(&workspace_path, &file_path)?;
+    if !file_path.is_file() {
+        return Err("Selected path is not a file".to_string());
+    }
+
+    let mut file = fs::File::open(&file_path)
+        .map_err(|error| format!("Unable to open {}: {error}", file_path.display()))?;
+    let mut bytes = Vec::with_capacity(MAX_FILE_PREVIEW_BYTES + 1);
+    Read::by_ref(&mut file)
+        .take((MAX_FILE_PREVIEW_BYTES + 1) as u64)
+        .read_to_end(&mut bytes)
+        .map_err(|error| format!("Unable to read {}: {error}", file_path.display()))?;
+
+    let truncated = bytes.len() > MAX_FILE_PREVIEW_BYTES;
+    let preview_len = bytes.len().min(MAX_FILE_PREVIEW_BYTES);
+    let preview_bytes = &bytes[..preview_len];
+    let (content, is_binary) = decode_preview_text(preview_bytes);
+
+    Ok(WorkspaceFilePreview {
+        relative_path: relative_workspace_path(&workspace, &file_path)?,
+        path: file_path.to_string_lossy().to_string(),
+        content,
+        truncated,
+        is_binary,
+    })
+}
+
+#[tauri::command]
 fn run_preflight(
     path: String,
     prompt: String,
@@ -1256,6 +1365,58 @@ fn improve_prompt(prompt: &str) -> String {
     )
 }
 
+fn canonical_workspace_child(
+    workspace_path: &str,
+    child_path: &str,
+) -> Result<(PathBuf, PathBuf), String> {
+    let workspace = fs::canonicalize(workspace_path)
+        .map_err(|error| format!("Unable to open workspace {workspace_path}: {error}"))?;
+    if !workspace.is_dir() {
+        return Err("Selected workspace is not a directory".to_string());
+    }
+
+    let child = if child_path.trim().is_empty() {
+        workspace.clone()
+    } else {
+        fs::canonicalize(child_path)
+            .map_err(|error| format!("Unable to open path {child_path}: {error}"))?
+    };
+
+    if !child.starts_with(&workspace) {
+        return Err("Selected path is outside the workspace".to_string());
+    }
+
+    Ok((workspace, child))
+}
+
+fn relative_workspace_path(workspace: &Path, path: &Path) -> Result<String, String> {
+    let relative = path
+        .strip_prefix(workspace)
+        .map_err(|_| "Selected path is outside the workspace".to_string())?;
+
+    Ok(relative.to_string_lossy().replace('\\', "/"))
+}
+
+fn decode_preview_text(bytes: &[u8]) -> (String, bool) {
+    if bytes.contains(&0) {
+        return (String::new(), true);
+    }
+
+    match std::str::from_utf8(bytes) {
+        Ok(content) => (content.to_string(), false),
+        Err(error) if error.error_len().is_none() => {
+            let valid_bytes = &bytes[..error.valid_up_to()];
+            (
+                std::str::from_utf8(valid_bytes)
+                    .unwrap_or_default()
+                    .to_string(),
+                false,
+            )
+        }
+        Err(_) => (String::new(), true),
+    }
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -1275,6 +1436,8 @@ pub fn run() {
             codex_delete_profile,
             list_git_branches,
             checkout_git_branch,
+            list_workspace_directory,
+            read_workspace_file_preview,
             run_preflight
         ])
         .run(tauri::generate_context!())
@@ -1396,5 +1559,120 @@ mod tests {
             "plan-first"
         );
         assert_eq!(route_recommendation("Rename this label", 4), "direct-run");
+    }
+
+    #[test]
+    fn workspace_directory_listing_rejects_outside_paths() {
+        let workspace = test_directory("workspace-list-rejects-workspace");
+        let outside = test_directory("workspace-list-rejects-outside");
+
+        let result = list_workspace_directory(
+            workspace.to_string_lossy().to_string(),
+            outside.to_string_lossy().to_string(),
+        );
+
+        assert!(result.unwrap_err().contains("outside the workspace"));
+        remove_test_directory(workspace);
+        remove_test_directory(outside);
+    }
+
+    #[test]
+    fn workspace_directory_listing_sorts_and_omits_heavy_folders() {
+        let workspace = test_directory("workspace-list-sorts");
+        fs::create_dir_all(workspace.join("src")).unwrap();
+        fs::create_dir_all(workspace.join(".git")).unwrap();
+        fs::create_dir_all(workspace.join("node_modules")).unwrap();
+        fs::write(workspace.join("Cargo.toml"), b"[package]").unwrap();
+        fs::write(workspace.join("README.md"), b"readme").unwrap();
+
+        let entries = list_workspace_directory(
+            workspace.to_string_lossy().to_string(),
+            workspace.to_string_lossy().to_string(),
+        )
+        .unwrap();
+        let names: Vec<_> = entries.iter().map(|entry| entry.name.as_str()).collect();
+
+        assert_eq!(names, vec!["src", "Cargo.toml", "README.md"]);
+        assert_eq!(entries[0].kind, "directory");
+        assert_eq!(entries[1].kind, "file");
+        assert_eq!(entries[0].relative_path, "src");
+        remove_test_directory(workspace);
+    }
+
+    #[test]
+    fn workspace_file_preview_rejects_outside_and_missing_files() {
+        let workspace = test_directory("workspace-preview-rejects-workspace");
+        let outside = test_directory("workspace-preview-rejects-outside");
+        let outside_file = outside.join("secret.txt");
+        fs::write(&outside_file, b"secret").unwrap();
+
+        let outside_result = read_workspace_file_preview(
+            workspace.to_string_lossy().to_string(),
+            outside_file.to_string_lossy().to_string(),
+        );
+        let missing_result = read_workspace_file_preview(
+            workspace.to_string_lossy().to_string(),
+            workspace.join("missing.txt").to_string_lossy().to_string(),
+        );
+
+        assert!(outside_result.unwrap_err().contains("outside the workspace"));
+        assert!(missing_result.unwrap_err().contains("Unable to open path"));
+        remove_test_directory(workspace);
+        remove_test_directory(outside);
+    }
+
+    #[test]
+    fn workspace_file_preview_truncates_large_text_files() {
+        let workspace = test_directory("workspace-preview-truncates");
+        let file = workspace.join("large.txt");
+        fs::write(&file, "a".repeat(MAX_FILE_PREVIEW_BYTES + 16)).unwrap();
+
+        let preview = read_workspace_file_preview(
+            workspace.to_string_lossy().to_string(),
+            file.to_string_lossy().to_string(),
+        )
+        .unwrap();
+
+        assert!(preview.truncated);
+        assert!(!preview.is_binary);
+        assert_eq!(preview.content.len(), MAX_FILE_PREVIEW_BYTES);
+        assert_eq!(preview.relative_path, "large.txt");
+        remove_test_directory(workspace);
+    }
+
+    #[test]
+    fn workspace_file_preview_marks_binary_content_without_text() {
+        let workspace = test_directory("workspace-preview-binary");
+        let file = workspace.join("data.bin");
+        fs::write(&file, b"hello\0world").unwrap();
+
+        let preview = read_workspace_file_preview(
+            workspace.to_string_lossy().to_string(),
+            file.to_string_lossy().to_string(),
+        )
+        .unwrap();
+
+        assert!(preview.is_binary);
+        assert_eq!(preview.content, "");
+        remove_test_directory(workspace);
+    }
+
+    fn test_directory(name: &str) -> PathBuf {
+        let directory = env::temp_dir().join(format!(
+            "orchestrator-{name}-{}-{}",
+            std::process::id(),
+            next_test_id()
+        ));
+        fs::create_dir_all(&directory).expect("create test directory");
+        directory
+    }
+
+    fn remove_test_directory(directory: PathBuf) {
+        fs::remove_dir_all(directory).expect("remove test directory");
+    }
+
+    fn next_test_id() -> u64 {
+        static NEXT_TEST_ID: AtomicU64 = AtomicU64::new(1);
+        NEXT_TEST_ID.fetch_add(1, Ordering::Relaxed)
     }
 }

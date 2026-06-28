@@ -319,61 +319,136 @@ button.small {
   display: grid;
   align-content: start;
   min-height: 0;
-  gap: 2px;
+  gap: 1px;
   overflow: auto;
-  padding: 2px 0;
+  padding: 2px 0 10px;
 }
 
-.workspace-list button {
+.workspace-tree-branch {
   display: grid;
-  grid-template-columns: 30px minmax(0, 1fr);
-  gap: 8px;
-  align-items: center;
-  justify-content: flex-start;
   min-width: 0;
-  min-height: 44px;
-  border: 0;
-  border-radius: 6px;
-  background: transparent;
-  color: var(--text-soft);
-  padding: 6px 8px;
-  text-align: left;
 }
 
-.workspace-list button:hover:not(:disabled) {
+.workspace-root-row,
+.workspace-tree-row {
+  display: grid;
+  grid-template-columns: 20px minmax(0, 1fr);
+  align-items: center;
+  min-width: 0;
+  border-radius: 4px;
+}
+
+.workspace-root-row {
+  min-height: 32px;
+}
+
+.workspace-root-row:hover,
+.workspace-tree-row:hover {
   background: var(--color-surface-soft);
 }
 
-.workspace-list button.active {
+.workspace-root-row.active {
   background: var(--color-button-active);
+}
+
+.workspace-tree-row {
+  min-height: 25px;
+  padding-left: calc(var(--depth, 0) * 12px);
+}
+
+.workspace-tree-chevron,
+.workspace-tree-label,
+.workspace-root-label {
+  border: 0;
+  background: transparent;
+}
+
+.workspace-tree-chevron {
+  width: 20px;
+  min-width: 20px;
+  min-height: 24px;
+  border-radius: 4px;
+  color: var(--muted);
+  padding: 0;
+}
+
+.workspace-tree-chevron-placeholder {
+  width: 20px;
+  height: 24px;
+}
+
+.workspace-root-label,
+.workspace-tree-label {
+  justify-content: flex-start;
+  width: 100%;
+  min-width: 0;
+  min-height: 25px;
+  gap: 7px;
+  color: var(--text-soft);
+  padding: 3px 6px 3px 3px;
+  text-align: left;
+}
+
+.workspace-root-label {
+  min-height: 32px;
+  font-weight: 650;
 }
 
 .workspace-name {
   overflow: hidden;
-  font-size: 0.88rem;
-  font-weight: 600;
+  font-size: 0.84rem;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
 .workspace-icon {
   display: inline-flex;
-  width: 30px;
-  height: 30px;
+  width: 22px;
+  height: 22px;
   align-items: center;
   justify-content: center;
-  border-radius: 999px;
-  background: var(--color-selected-background);
+  border-radius: 5px;
+  background: transparent;
   color: var(--muted);
 }
 
-.workspace-list button.active .workspace-icon {
-  background: var(--color-component-background);
+.workspace-tree-label svg {
+  flex: 0 0 auto;
+  color: var(--muted);
+}
+
+.workspace-tree-label span {
+  overflow: hidden;
+  font-size: 0.82rem;
+  font-weight: 520;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .workspace-list .muted {
   margin: 6px 10px;
   font-size: 0.84rem;
+}
+
+.workspace-tree-status {
+  display: flex;
+  min-width: 0;
+  min-height: 25px;
+  gap: 7px;
+  align-items: center;
+  padding-left: calc(20px + (var(--depth, 0) * 12px));
+  color: var(--muted);
+  font-size: 0.78rem;
+}
+
+.workspace-tree-status span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.workspace-tree-status.error {
+  color: var(--color-error);
 }
 
 .codex-card {
@@ -733,6 +808,93 @@ button.account-switcher-item:hover:not(:disabled) {
   text-align: center;
 }
 
+.file-preview-drawer {
+  position: fixed;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 40;
+  display: grid;
+  width: min(520px, calc(100vw - 360px));
+  min-width: 360px;
+  grid-template-rows: auto minmax(0, 1fr);
+  border-left: 1px solid var(--color-divider);
+  background: var(--color-component-background);
+  box-shadow: -18px 0 48px rgb(var(--shadow-rgb) / 0.18);
+}
+
+.file-preview-drawer header {
+  display: flex;
+  gap: 14px;
+  align-items: flex-start;
+  justify-content: space-between;
+  border-bottom: 1px solid var(--color-divider);
+  padding: 16px;
+}
+
+.file-preview-drawer header > div {
+  display: grid;
+  min-width: 0;
+  gap: 4px;
+}
+
+.file-preview-drawer h2,
+.file-preview-drawer p {
+  margin: 0;
+}
+
+.file-preview-drawer h2,
+.file-preview-drawer header span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.file-preview-drawer h2 {
+  color: var(--text);
+  font-size: 0.98rem;
+}
+
+.file-preview-drawer header span {
+  color: var(--muted);
+  font-size: 0.78rem;
+}
+
+.file-preview-drawer pre {
+  min-height: 0;
+  overflow: auto;
+  margin: 0;
+  background: var(--color-background);
+  color: var(--text);
+  font-family: "SFMono-Regular", Consolas, monospace;
+  font-size: 0.78rem;
+  line-height: 1.55;
+  padding: 16px;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.file-preview-state,
+.file-preview-notice {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  margin: 16px;
+  border-radius: 6px;
+  background: var(--color-surface-soft);
+  color: var(--text);
+  padding: 10px 12px;
+  font-size: 0.84rem;
+}
+
+.file-preview-state.error {
+  color: var(--color-error);
+}
+
+.file-preview-notice {
+  margin-bottom: 0;
+}
+
 .task-stack,
 .console-stack,
 .view-stack,
@@ -850,6 +1012,13 @@ select:disabled {
   border-radius: var(--radius);
   background: var(--composer);
   box-shadow: 0 18px 56px rgb(var(--shadow-rgb) / 0.16);
+}
+
+.composer-panel.drag-over {
+  background: var(--color-surface-soft);
+  box-shadow:
+    0 0 0 3px rgb(var(--primary-rgb) / 0.22),
+    0 18px 56px rgb(var(--shadow-rgb) / 0.16);
 }
 
 .prompt-field {

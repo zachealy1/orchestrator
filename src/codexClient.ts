@@ -10,6 +10,8 @@ import type {
   OssProvider,
   PreflightReport,
   Workspace,
+  WorkspaceFilePreview,
+  WorkspaceTreeEntry,
 } from "./types";
 
 export function connectCodex(accountId: number) {
@@ -38,6 +40,23 @@ export function listGitBranches(path: string) {
 
 export function checkoutGitBranch(path: string, branch: string) {
   return invoke<{ branch: string }>("checkout_git_branch", { path, branch });
+}
+
+export function listWorkspaceDirectory(
+  workspacePath: string,
+  directoryPath: string,
+) {
+  return invoke<WorkspaceTreeEntry[]>("list_workspace_directory", {
+    workspacePath,
+    directoryPath,
+  });
+}
+
+export function readWorkspaceFilePreview(workspacePath: string, filePath: string) {
+  return invoke<WorkspaceFilePreview>("read_workspace_file_preview", {
+    workspacePath,
+    filePath,
+  });
 }
 
 export function runPreflight(input: {

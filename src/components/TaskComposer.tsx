@@ -11,7 +11,8 @@ import {
   ShieldCheck,
   X,
 } from "lucide-react";
-import { useLayoutEffect, useRef } from "react";
+import { useLayoutEffect, useRef, useState } from "react";
+import type { DragEvent } from "react";
 import { ComposerSelect } from "./ComposerSelect";
 import type {
   AccessLevel,
@@ -20,6 +21,7 @@ import type {
   ComposerContextFile,
   RouteRecommendation,
 } from "../types";
+import { ORCHESTRATOR_CONTEXT_FILE_MIME as CONTEXT_FILE_MIME } from "../types";
 
 type Props = {
   disabled: boolean;
@@ -48,6 +50,7 @@ type Props = {
   onPlanModeChange: (value: boolean) => void;
   onAccessLevelChange: (accessLevel: AccessLevel) => void;
   onAddFiles: () => void;
+  onContextFilesDrop: (files: ComposerContextFile[]) => void;
   onRemoveFile: (path: string) => void;
   onPreflight: () => void;
   onRun: () => void;
@@ -80,11 +83,13 @@ export function TaskComposer({
   onPlanModeChange,
   onAccessLevelChange,
   onAddFiles,
+  onContextFilesDrop,
   onRemoveFile,
   onPreflight,
   onRun,
 }: Props) {
   const promptTextareaRef = useRef<HTMLTextAreaElement>(null);
+  const [dragActive, setDragActive] = useState(false);
   const selectedModel =
     models.find((model) => model.id === selectedModelId) ?? models[0] ?? null;
   const reasoningOptions = selectedModel?.supportedReasoningEfforts ?? [];
@@ -104,8 +109,47 @@ export function TaskComposer({
     textarea.style.overflowY = textarea.scrollHeight > maxHeight ? "auto" : "hidden";
   }, [prompt]);
 
+  function handleDragOver(event: DragEvent<HTMLElement>) {
+    if (!hasContextFilePayload(event)) {
+      return;
+    }
+
+    event.preventDefault();
+    event.dataTransfer.dropEffect = "copy";
+    setDragActive(true);
+  }
+
+  function handleDragLeave(event: DragEvent<HTMLElement>) {
+    const relatedTarget = event.relatedTarget;
+    if (
+      !(relatedTarget instanceof Node) ||
+      !event.currentTarget.contains(relatedTarget)
+    ) {
+      setDragActive(false);
+    }
+  }
+
+  function handleDrop(event: DragEvent<HTMLElement>) {
+    if (!hasContextFilePayload(event)) {
+      return;
+    }
+
+    event.preventDefault();
+    setDragActive(false);
+    const files = readDroppedContextFiles(event);
+    if (files.length > 0) {
+      onContextFilesDrop(files);
+    }
+  }
+
   return (
-    <section className="composer-panel" aria-label="Task composer">
+    <section
+      className={`composer-panel ${dragActive ? "drag-over" : ""}`}
+      aria-label="Task composer"
+      onDragOver={handleDragOver}
+      onDragLeave={handleDragLeave}
+      onDrop={handleDrop}
+    >
       <label className="prompt-field">
         <span className="sr-only">Prompt</span>
         <textarea
@@ -271,4 +315,43 @@ function labelReasoningEffort(effort: string) {
     .filter(Boolean)
     .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
     .join(" ");
+}
+
+function hasContextFilePayload(event: DragEvent<HTMLElement>) {
+  return Array.from(event.dataTransfer.types).includes(CONTEXT_FILE_MIME);
+}
+
+function readDroppedContextFiles(event: DragEvent<HTMLElement>) {
+  const raw = event.dataTransfer.getData(CONTEXT_FILE_MIME);
+  if (!raw) {
+    return [];
+  }
+
+  try {
+    const payload = JSON.parse(raw);
+    const files = Array.isArray(payload) ? payload : [payload];
+    return files
+      .map(readContextFile)
+      .filter((file): file is ComposerContextFile => file !== null);
+  } catch {
+    return [];
+  }
+}
+
+function readContextFile(value: unknown): ComposerContextFile | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return null;
+  }
+
+  const file = value as Record<string, unknown>;
+  if (typeof file.path !== "string" || typeof file.name !== "string") {
+    return null;
+  }
+
+  return {
+    path: file.path,
+    name: file.name,
+    source: "explorer",
+    status: "ready",
+  };
 }

@@ -77,6 +77,7 @@ function renderComposer(overrides: Partial<TaskComposerProps> = {}) {
     onPlanModeChange: vi.fn(),
     onAccessLevelChange: vi.fn(),
     onAddFiles: vi.fn(),
+    onContextFilesDrop: vi.fn(),
     onRemoveFile: vi.fn(),
     onPreflight: vi.fn(),
     onRun: vi.fn(),

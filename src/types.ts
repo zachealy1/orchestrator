@@ -33,6 +33,24 @@ export type GitBranchList = {
   currentBranch: string | null;
 };
 
+export const ORCHESTRATOR_CONTEXT_FILE_MIME =
+  "application/x-orchestrator-context-file";
+
+export type WorkspaceTreeEntry = {
+  name: string;
+  path: string;
+  relativePath: string;
+  kind: "directory" | "file";
+};
+
+export type WorkspaceFilePreview = {
+  path: string;
+  relativePath: string;
+  content: string;
+  truncated: boolean;
+  isBinary: boolean;
+};
+
 export type PreflightCheck = {
   id: string;
   label: string;
@@ -233,7 +251,7 @@ export type ModelListResponse = {
 export type ComposerContextFile = {
   path: string;
   name: string;
-  source: "picker" | "search";
+  source: "picker" | "search" | "explorer";
   status?: "ready" | "error";
   error?: string | null;
 };
