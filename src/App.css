@@ -169,7 +169,6 @@ button {
   padding: 9px 14px;
   transition:
     background 140ms ease,
-    color 140ms ease,
     transform 140ms ease;
 }
 
@@ -193,7 +192,6 @@ button.secondary {
 
 button.secondary:hover:not(:disabled) {
   background: var(--dropdown-bg-hover);
-  color: var(--text);
 }
 
 button.danger {
@@ -203,7 +201,6 @@ button.danger {
 
 button.danger:hover:not(:disabled) {
   background: rgb(var(--error-rgb) / 0.2);
-  color: var(--color-error);
 }
 
 button.small {
@@ -268,16 +265,10 @@ button.small {
 .primary-nav button:hover:not(:disabled),
 .primary-nav button.active {
   background: var(--panel-strong);
-  color: var(--text);
 }
 
 .primary-nav button.active {
   background: var(--color-button-active);
-  color: var(--color-button-active-text);
-}
-
-.primary-nav button.active svg {
-  color: var(--accent);
 }
 
 .rail-section {
@@ -322,7 +313,6 @@ button.small {
 
 .rail-section-header .workspace-add:hover:not(:disabled) {
   background: var(--panel-strong);
-  color: var(--dropdown-selected);
 }
 
 .workspace-list {
@@ -352,12 +342,10 @@ button.small {
 
 .workspace-list button:hover:not(:disabled) {
   background: var(--color-surface-soft);
-  color: var(--text);
 }
 
 .workspace-list button.active {
   background: var(--color-button-active);
-  color: var(--color-button-active-text);
 }
 
 .workspace-name {
@@ -381,7 +369,6 @@ button.small {
 
 .workspace-list button.active .workspace-icon {
   background: var(--color-component-background);
-  color: var(--color-selected-text);
 }
 
 .workspace-list .muted {
@@ -460,13 +447,8 @@ button.account-sign-in {
 }
 
 .auth-signed-in .account-avatar {
-  background: var(--color-button-active);
+  background: var(--color-background);
   color: var(--color-selected-text);
-}
-
-.auth-signed-in button.account-trigger:hover:not(:disabled) .account-avatar,
-.auth-signed-in button.account-trigger.open .account-avatar {
-  background: var(--color-component-background);
 }
 
 .account-copy {
@@ -563,7 +545,6 @@ button.account-menu-action {
 
 button.account-menu-action:hover:not(:disabled) {
   background: var(--dropdown-bg-hover);
-  color: var(--text);
 }
 
 button.account-menu-action svg {
@@ -611,10 +592,6 @@ button.account-switcher-item:hover:not(:disabled) {
 
 .account-switcher-item > svg {
   color: var(--subtle);
-}
-
-.account-switcher-item:hover:not(:disabled) > svg {
-  color: var(--accent-sky);
 }
 
 .account-mini-avatar {
@@ -967,7 +944,6 @@ select:disabled {
 .composer-toolbar .secondary:hover:not(:disabled),
 .composer-options-row .secondary:hover:not(:disabled) {
   background: var(--color-button-active);
-  color: var(--text);
 }
 
 .mode-toggle {
@@ -978,16 +954,10 @@ select:disabled {
 
 .mode-toggle:hover:not(:disabled) {
   background: var(--color-button-active);
-  color: var(--color-button-active-text);
 }
 
 .mode-toggle.active {
   background: var(--color-button-active);
-  color: var(--color-button-active-text);
-}
-
-.mode-toggle.recommended:not(.active) {
-  color: var(--color-selected-text);
 }
 
 .composer-options-row {
@@ -1019,9 +989,7 @@ select:disabled {
   border-radius: 8px;
   background: var(--color-component-background);
   color: var(--dropdown-muted);
-  transition:
-    background 140ms ease,
-    color 140ms ease;
+  transition: background 140ms ease;
 }
 
 .access-select {
@@ -1148,12 +1116,7 @@ button.composer-select-option {
 button.composer-select-option:hover:not(:disabled),
 button.composer-select-option:focus-visible {
   background: var(--dropdown-bg-hover);
-  color: var(--text);
   box-shadow: none;
-}
-
-button.composer-select-option[aria-selected="true"] {
-  color: var(--dropdown-selected);
 }
 
 .composer-select-option > span {
@@ -1167,10 +1130,6 @@ button.composer-select-option[aria-selected="true"] {
   flex: 0 0 auto;
   margin-left: auto;
   color: var(--accent-2);
-}
-
-button.composer-select-option.action {
-  color: var(--dropdown-selected);
 }
 
 button.composer-select-option.action:not(:first-child) {
@@ -1262,7 +1221,6 @@ button.composer-select-option.action:not(:first-child) {
 
 .context-chip button:hover:not(:disabled) {
   background: var(--color-button-active);
-  color: var(--text);
 }
 
 .composer-meta {
@@ -1649,12 +1607,10 @@ pre {
 
 .theme-selector button:hover:not(:disabled) {
   background: var(--color-button-active);
-  color: var(--color-button-active-text);
 }
 
 .theme-selector button.active {
   background: var(--color-button-active);
-  color: var(--color-button-active-text);
   box-shadow: none;
 }
 
