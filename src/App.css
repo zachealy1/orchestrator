@@ -150,7 +150,7 @@ button.small {
   height: 100vh;
   min-height: 0;
   flex-direction: column;
-  gap: 18px;
+  gap: 0;
   overflow: hidden;
   border-right: 1px solid rgba(248, 250, 252, 0.08);
   background: var(--rail);
@@ -163,7 +163,8 @@ button.small {
   align-items: center;
   min-width: 0;
   min-height: 52px;
-  padding: 4px 0 10px;
+  border-bottom: 1px solid rgba(100, 116, 139, 0.22);
+  padding: 4px 0 16px;
 }
 
 .brand-lockup img {
@@ -199,6 +200,8 @@ button.small {
 .primary-nav {
   display: grid;
   gap: 6px;
+  border-bottom: 1px solid rgba(100, 116, 139, 0.22);
+  padding: 12px 0;
 }
 
 .primary-nav button {
@@ -229,6 +232,7 @@ button.small {
   min-height: 0;
   gap: 6px;
   overflow: hidden;
+  padding-top: 14px;
 }
 
 .rail-section-header {
