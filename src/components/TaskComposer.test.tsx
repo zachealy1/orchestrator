@@ -78,7 +78,6 @@ function renderComposer(overrides: Partial<TaskComposerProps> = {}) {
     selectedWorkspaceId: 1,
     accounts,
     selectedAccountId: 7,
-    defaultAccountId: 7,
     accountSelectionDisabled: false,
     branches: ["main", "feature/chat-controls"],
     selectedBranch: "main",
@@ -93,7 +92,6 @@ function renderComposer(overrides: Partial<TaskComposerProps> = {}) {
     onWorkspaceChange: vi.fn(),
     onAddWorkspace: vi.fn(),
     onAccountChange: vi.fn(),
-    onSetDefaultAccount: vi.fn(),
     onBranchChange: vi.fn(),
     onPromptChange: vi.fn(),
     onModelChange: vi.fn(),
@@ -141,8 +139,12 @@ describe("TaskComposer", () => {
     const onReasoningEffortChange = vi.fn();
     const { user } = renderComposer({ onModelChange, onReasoningEffortChange });
 
-    await user.selectOptions(screen.getByLabelText("Agent"), "gpt-5.1-codex-max");
-    await user.selectOptions(screen.getByLabelText("Reasoning"), "high");
+    await user.click(screen.getByRole("combobox", { name: "Agent" }));
+    await user.click(
+      screen.getByRole("option", { name: "GPT-5.1 Codex Max" }),
+    );
+    await user.click(screen.getByRole("combobox", { name: "Reasoning" }));
+    await user.click(screen.getByRole("option", { name: "High" }));
 
     expect(onModelChange).toHaveBeenCalledWith("gpt-5.1-codex-max");
     expect(onReasoningEffortChange).toHaveBeenCalledWith("high");
@@ -174,8 +176,10 @@ describe("TaskComposer", () => {
     const onAccessLevelChange = vi.fn();
     const { user } = renderComposer({ onAccessLevelChange });
 
-    await user.selectOptions(screen.getByLabelText("Access"), "full");
-    await user.selectOptions(screen.getByLabelText("Access"), "ask");
+    await user.click(screen.getByRole("combobox", { name: "Access" }));
+    await user.click(screen.getByRole("option", { name: "Full access" }));
+    await user.click(screen.getByRole("combobox", { name: "Access" }));
+    await user.click(screen.getByRole("option", { name: "Ask for approval" }));
 
     expect(onAccessLevelChange).toHaveBeenCalledWith("full");
     expect(onAccessLevelChange).toHaveBeenCalledWith("ask");
@@ -186,8 +190,12 @@ describe("TaskComposer", () => {
     const onBranchChange = vi.fn();
     const { user } = renderComposer({ onWorkspaceChange, onBranchChange });
 
-    await user.selectOptions(screen.getByLabelText("Folder"), "2");
-    await user.selectOptions(screen.getByLabelText("Branch"), "feature/chat-controls");
+    await user.click(screen.getByRole("combobox", { name: "Folder" }));
+    await user.click(screen.getByRole("option", { name: "mobile" }));
+    await user.click(screen.getByRole("combobox", { name: "Branch" }));
+    await user.click(
+      screen.getByRole("option", { name: "feature/chat-controls" }),
+    );
 
     expect(onWorkspaceChange).toHaveBeenCalledWith(2);
     expect(onBranchChange).toHaveBeenCalledWith("feature/chat-controls");
@@ -201,19 +209,15 @@ describe("TaskComposer", () => {
       onAddWorkspace,
     });
 
-    const folderSelect = screen.getByLabelText("Folder");
+    const folderSelect = screen.getByRole("combobox", { name: "Folder" });
     expect(folderSelect).toBeEnabled();
-    expect(
-      within(folderSelect).getByRole("option", { name: "Add folder..." }),
-    ).toBeInTheDocument();
-
-    await user.selectOptions(folderSelect, "__add_workspace__");
+    await user.click(folderSelect);
+    await user.click(screen.getByRole("option", { name: "Add folder..." }));
     expect(onAddWorkspace).toHaveBeenCalledOnce();
   });
 
-  it("selects a run account and can persist it as the workspace default", async () => {
+  it("selects a run account", async () => {
     const onAccountChange = vi.fn();
-    const onSetDefaultAccount = vi.fn();
     const secondAccount = {
       ...accounts[0],
       id: 8,
@@ -223,20 +227,12 @@ describe("TaskComposer", () => {
     const { user } = renderComposer({
       accounts: [...accounts, secondAccount],
       selectedAccountId: 8,
-      defaultAccountId: 7,
       onAccountChange,
-      onSetDefaultAccount,
     });
 
-    await user.selectOptions(screen.getByLabelText("Run account"), "7");
+    await user.click(screen.getByRole("combobox", { name: "Run account" }));
+    await user.click(screen.getByRole("option", { name: "Work account" }));
     expect(onAccountChange).toHaveBeenCalledWith(7);
-
-    await user.click(
-      screen.getByRole("button", {
-        name: "Use selected account as workspace default",
-      }),
-    );
-    expect(onSetDefaultAccount).toHaveBeenCalledOnce();
   });
 
   it("renders selected file chips and removes files", async () => {

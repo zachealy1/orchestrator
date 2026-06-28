@@ -28,7 +28,6 @@ const mocks = vi.hoisted(() => ({
   createCodexAccountMock: vi.fn(),
   updateCodexAccountMock: vi.fn(),
   renameCodexAccountMock: vi.fn(),
-  setWorkspaceDefaultAccountMock: vi.fn(),
   softDeleteCodexAccountMock: vi.fn(),
   listWorkspaceRunsMock: vi.fn(),
   getAnalyticsSummaryMock: vi.fn(),
@@ -99,7 +98,6 @@ vi.mock("./db", () => ({
   recordTokenUsage: mocks.recordTokenUsageMock,
   renameCodexAccount: mocks.renameCodexAccountMock,
   savePreflightReport: mocks.savePreflightReportMock,
-  setWorkspaceDefaultAccount: mocks.setWorkspaceDefaultAccountMock,
   softDeleteCodexAccount: mocks.softDeleteCodexAccountMock,
   updateCodexAccount: mocks.updateCodexAccountMock,
   updateRun: mocks.updateRunMock,
@@ -200,7 +198,6 @@ function prepareDefaults() {
   mocks.createCodexAccountMock.mockResolvedValue(pendingAccount);
   mocks.updateCodexAccountMock.mockResolvedValue(undefined);
   mocks.renameCodexAccountMock.mockResolvedValue(undefined);
-  mocks.setWorkspaceDefaultAccountMock.mockResolvedValue(undefined);
   mocks.softDeleteCodexAccountMock.mockResolvedValue(undefined);
   mocks.listWorkspaceRunsMock.mockResolvedValue([]);
   mocks.getAnalyticsSummaryMock.mockResolvedValue(analytics);
@@ -253,9 +250,9 @@ describe("App Codex auth", () => {
     const { user } = await renderApp();
     expect(screen.queryByTitle("Add workspace")).not.toBeInTheDocument();
 
-    await user.selectOptions(
-      screen.getByLabelText("Folder"),
-      "__add_workspace__",
+    await user.click(screen.getByRole("combobox", { name: "Folder" }));
+    await user.click(
+      screen.getByRole("option", { name: "Add another folder..." }),
     );
 
     await waitFor(() =>
@@ -495,7 +492,7 @@ describe("App Codex auth", () => {
     expect(mocks.openUrlMock).toHaveBeenCalledWith("https://example.com/auth");
   });
 
-  it("switches accounts and saves the workspace default", async () => {
+  it("switches accounts from the account menu", async () => {
     mocks.listCodexAccountsMock.mockResolvedValue([
       signedInAccount,
       signedInAccount2,
@@ -526,14 +523,10 @@ describe("App Codex auth", () => {
     );
 
     await waitFor(() =>
-      expect(screen.getByLabelText("Run account")).toHaveValue("8"),
+      expect(
+        screen.getByRole("combobox", { name: "Run account" }),
+      ).toHaveTextContent("personal@example.com"),
     );
-    await user.click(
-      screen.getByRole("button", {
-        name: "Use selected account as workspace default",
-      }),
-    );
-    expect(mocks.setWorkspaceDefaultAccountMock).toHaveBeenCalledWith(1, 8);
   });
 
   it("rejects and removes a second profile with the same email address", async () => {

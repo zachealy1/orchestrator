@@ -34,7 +34,6 @@ import {
   recordTokenUsage,
   renameCodexAccount,
   savePreflightReport,
-  setWorkspaceDefaultAccount,
   softDeleteCodexAccount,
   updateCodexAccount,
   updateRun,
@@ -1258,24 +1257,6 @@ function App() {
     });
   }
 
-  async function handleSetWorkspaceDefault() {
-    if (!selectedWorkspace || !selectedAccountId) {
-      return;
-    }
-    await setWorkspaceDefaultAccount(selectedWorkspace.id, selectedAccountId);
-    const updated = {
-      ...selectedWorkspace,
-      default_account_id: selectedAccountId,
-    };
-    setSelectedWorkspace(updated);
-    setWorkspaces((current) =>
-      current.map((workspace) =>
-        workspace.id === updated.id ? updated : workspace,
-      ),
-    );
-    setStatusMessage(`${selectedAccount?.label ?? "Account"} is now the workspace default.`);
-  }
-
   async function handlePreflight() {
     if (!selectedWorkspace || !prompt.trim()) {
       setStatusMessage("Select a workspace and write a prompt first.");
@@ -1908,7 +1889,6 @@ function App() {
                 selectedWorkspaceId={selectedWorkspace?.id ?? null}
                 accounts={signedInAccounts}
                 selectedAccountId={selectedAccountId}
-                defaultAccountId={selectedWorkspace?.default_account_id ?? null}
                 accountSelectionDisabled={runIsActive}
                 branches={branches}
                 selectedBranch={selectedBranch}
@@ -1923,7 +1903,6 @@ function App() {
                 onWorkspaceChange={selectWorkspace}
                 onAddWorkspace={() => void chooseWorkspace()}
                 onAccountChange={(accountId) => void selectCodexAccount(accountId)}
-                onSetDefaultAccount={() => void handleSetWorkspaceDefault()}
                 onBranchChange={(branch) => void selectBranch(branch)}
                 onPromptChange={(nextPrompt) => {
                   setPrompt(nextPrompt);

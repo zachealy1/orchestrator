@@ -150,7 +150,7 @@ button.small {
   height: 100vh;
   min-height: 0;
   flex-direction: column;
-  gap: 18px;
+  gap: 0;
   overflow: hidden;
   border-right: 1px solid rgba(248, 250, 252, 0.08);
   background: var(--rail);
@@ -163,7 +163,8 @@ button.small {
   align-items: center;
   min-width: 0;
   min-height: 52px;
-  padding: 4px 0 10px;
+  border-bottom: 1px solid rgba(100, 116, 139, 0.22);
+  padding: 4px 0 16px;
 }
 
 .brand-lockup img {
@@ -199,6 +200,8 @@ button.small {
 .primary-nav {
   display: grid;
   gap: 6px;
+  border-bottom: 1px solid rgba(100, 116, 139, 0.22);
+  padding: 12px 0;
 }
 
 .primary-nav button {
@@ -223,11 +226,13 @@ button.small {
 }
 
 .rail-section {
-  display: grid;
+  display: flex;
   flex: 1 1 auto;
   min-height: 0;
+  flex-direction: column;
   gap: 10px;
   overflow: hidden;
+  padding-top: 14px;
 }
 
 .rail-section-header {
@@ -852,34 +857,6 @@ button:focus-visible {
   min-width: 0;
 }
 
-.account-select {
-  padding-right: 42px;
-}
-
-.account-select select {
-  padding-right: 48px;
-}
-
-.account-chevron-select {
-  right: 34px;
-}
-
-.account-default-button {
-  position: absolute;
-  top: 5px;
-  right: 5px;
-  z-index: 4;
-  width: 30px;
-  min-width: 30px;
-  min-height: 30px;
-  border: 0;
-  padding: 0;
-}
-
-.account-default-button.active {
-  color: var(--accent-2);
-}
-
 .composer-select {
   position: relative;
   display: block;
@@ -889,11 +866,10 @@ button:focus-visible {
   border-radius: 6px;
   background: rgba(17, 24, 39, 0.54);
   color: var(--muted);
-  padding: 0 10px;
   transition:
     border-color 140ms ease,
     background 140ms ease,
-  box-shadow 140ms ease;
+    box-shadow 140ms ease;
 }
 
 .access-select {
@@ -932,38 +908,42 @@ button:focus-visible {
   color: var(--text-soft);
   opacity: 0.78;
   pointer-events: none;
+  transition: transform 140ms ease;
   transform: translateY(-50%);
 }
 
-.composer-select select {
-  appearance: none;
-  -moz-appearance: none;
-  -webkit-appearance: none;
-  position: absolute;
-  inset: 0;
-  z-index: 1;
+button.composer-select-trigger {
   width: 100%;
-  max-width: none;
-  height: 100%;
-  min-height: 0;
+  min-width: 0;
+  min-height: 38px;
+  justify-content: flex-start;
   border: 0;
   border-radius: inherit;
   background: transparent;
   color: var(--text);
   cursor: pointer;
-  font: inherit;
   font-size: 0.92rem;
   font-weight: 500;
-  outline: none;
-  overflow: hidden;
   padding: 0 34px 0 38px;
+}
+
+button.composer-select-trigger:hover:not(:disabled),
+button.composer-select-trigger:active:not(:disabled) {
+  background: rgba(51, 65, 85, 0.22);
+  transform: none;
+}
+
+.composer-select-trigger > span {
+  min-width: 0;
+  overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.composer-select select option {
-  background: var(--panel);
-  color: var(--text);
+.composer-select:hover:not(.disabled),
+.composer-select.open {
+  border-color: rgba(0, 184, 255, 0.52);
+  background: rgba(17, 24, 39, 0.76);
 }
 
 .composer-select:focus-within {
@@ -971,12 +951,81 @@ button:focus-visible {
   box-shadow: 0 0 0 3px rgba(0, 184, 255, 0.18);
 }
 
-.composer-select:has(select:disabled) {
+.composer-select.open .select-chevron {
+  transform: translateY(-50%) rotate(180deg);
+}
+
+.composer-select.disabled {
   opacity: 0.58;
 }
 
-.composer-select:has(select:disabled) select {
+.composer-select.disabled .composer-select-trigger {
   cursor: not-allowed;
+}
+
+.composer-select-menu {
+  position: fixed;
+  z-index: 1000;
+  display: grid;
+  gap: 2px;
+  overflow-y: auto;
+  border: 1px solid rgba(100, 116, 139, 0.44);
+  border-radius: 8px;
+  background: var(--panel);
+  box-shadow:
+    0 18px 42px rgba(5, 8, 12, 0.58),
+    0 0 0 1px rgba(248, 250, 252, 0.03);
+  padding: 4px;
+}
+
+button.composer-select-option {
+  width: 100%;
+  min-width: 0;
+  min-height: 34px;
+  justify-content: flex-start;
+  border-color: transparent;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--text-soft);
+  font-size: 0.84rem;
+  font-weight: 500;
+  padding: 7px 9px;
+  text-align: left;
+}
+
+button.composer-select-option:hover:not(:disabled),
+button.composer-select-option:focus-visible {
+  border-color: transparent;
+  background: rgba(0, 184, 255, 0.1);
+  color: var(--text);
+  box-shadow: none;
+}
+
+button.composer-select-option[aria-selected="true"] {
+  color: var(--accent-sky);
+}
+
+.composer-select-option > span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.composer-select-option > svg {
+  flex: 0 0 auto;
+  margin-left: auto;
+  color: var(--accent-2);
+}
+
+button.composer-select-option.action {
+  color: var(--accent-sky);
+}
+
+button.composer-select-option.action:not(:first-child) {
+  margin-top: 3px;
+  border-top: 1px solid rgba(100, 116, 139, 0.28);
+  border-radius: 0 0 5px 5px;
 }
 
 .token-pill {
