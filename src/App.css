@@ -18,7 +18,7 @@
   --panel-muted: #334155;
   --main: #05080c;
   --rail: #111827;
-  --composer: #1e293b;
+  --composer: #334155;
   --text: #f8fafc;
   --text-soft: #e2e8f0;
   --muted: #94a3b8;
@@ -76,7 +76,7 @@ button {
   justify-content: center;
   gap: 8px;
   min-height: 38px;
-  border: 1px solid rgba(0, 184, 255, 0.26);
+  border: 0;
   border-radius: 6px;
   background: var(--accent);
   color: var(--canvas);
@@ -84,7 +84,6 @@ button {
   font-weight: 700;
   padding: 9px 14px;
   transition:
-    border-color 140ms ease,
     background 140ms ease,
     color 140ms ease,
     transform 140ms ease;
@@ -92,7 +91,6 @@ button {
 
 button:hover:not(:disabled) {
   background: var(--accent-2);
-  border-color: rgba(45, 212, 191, 0.48);
 }
 
 button:active:not(:disabled) {
@@ -105,25 +103,21 @@ button:disabled {
 }
 
 button.secondary {
-  border-color: var(--line-strong);
-  background: rgba(248, 250, 252, 0.04);
-  color: var(--text);
+  background: var(--dropdown-bg);
+  color: var(--dropdown-text);
 }
 
 button.secondary:hover:not(:disabled) {
-  border-color: rgba(0, 184, 255, 0.44);
-  background: rgba(0, 184, 255, 0.1);
+  background: var(--dropdown-bg-hover);
   color: var(--text);
 }
 
 button.danger {
-  border-color: rgba(167, 139, 250, 0.36);
   background: rgba(139, 92, 246, 0.16);
   color: var(--text-soft);
 }
 
 button.danger:hover:not(:disabled) {
-  border-color: rgba(167, 139, 250, 0.58);
   background: rgba(139, 92, 246, 0.28);
   color: var(--text);
 }
@@ -165,41 +159,6 @@ button.small {
   padding: 18px 18px 0;
 }
 
-.brand-lockup {
-  display: flex;
-  gap: 14px;
-  align-items: center;
-  min-width: 0;
-  min-height: 52px;
-  border-bottom: 1px solid rgba(100, 116, 139, 0.22);
-  padding: 4px 0 16px;
-}
-
-.brand-lockup img {
-  width: 48px;
-  height: 48px;
-  flex: 0 0 auto;
-  border: 0;
-  border-radius: 0;
-  object-fit: contain;
-}
-
-.brand-lockup div {
-  display: flex;
-  min-width: 0;
-  align-items: center;
-}
-
-.brand-lockup strong {
-  overflow: hidden;
-  color: var(--text);
-  font-size: 1.24rem;
-  line-height: 1;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.brand-lockup span,
 .run-row span,
 .muted {
   color: var(--muted);
@@ -216,7 +175,7 @@ button.small {
   justify-content: flex-start;
   width: 100%;
   min-height: 38px;
-  border-color: transparent;
+  border: 0;
   background: transparent;
   color: rgba(248, 250, 252, 0.72);
   padding: 9px 10px;
@@ -224,8 +183,7 @@ button.small {
 
 .primary-nav button:hover:not(:disabled),
 .primary-nav button.active {
-  border-color: rgba(0, 184, 255, 0.2);
-  background: rgba(0, 184, 255, 0.12);
+  background: var(--dropdown-bg-hover);
   color: var(--text);
 }
 
@@ -266,7 +224,7 @@ button.small {
   min-height: 28px;
   align-items: center;
   justify-content: center;
-  border-color: transparent;
+  border: 0;
   border-radius: 6px;
   background: transparent;
   color: var(--muted);
@@ -274,9 +232,8 @@ button.small {
 }
 
 .rail-section-header .workspace-add:hover:not(:disabled) {
-  border-color: transparent;
-  background: rgba(51, 65, 85, 0.42);
-  color: var(--accent);
+  background: var(--dropdown-bg-hover);
+  color: var(--dropdown-selected);
 }
 
 .workspace-list {
@@ -296,7 +253,7 @@ button.small {
   justify-content: flex-start;
   min-width: 0;
   min-height: 44px;
-  border-color: transparent;
+  border: 0;
   border-radius: 6px;
   background: transparent;
   color: var(--text-soft);
@@ -305,14 +262,12 @@ button.small {
 }
 
 .workspace-list button:hover:not(:disabled) {
-  border-color: transparent;
-  background: rgba(51, 65, 85, 0.42);
+  background: var(--dropdown-bg-hover);
   color: var(--text);
 }
 
 .workspace-list button.active {
-  border-color: transparent;
-  background: rgba(51, 65, 85, 0.52);
+  background: var(--dropdown-bg-hover);
   color: var(--text);
 }
 
@@ -780,10 +735,14 @@ select {
 }
 
 textarea:focus,
-input:focus-visible,
-button:focus-visible {
+input:focus-visible {
   border-color: rgba(0, 184, 255, 0.7);
   box-shadow: 0 0 0 3px rgba(0, 184, 255, 0.18);
+  outline: none;
+}
+
+button:focus-visible {
+  box-shadow: 0 0 0 3px var(--dropdown-focus-ring);
   outline: none;
 }
 
@@ -874,37 +833,36 @@ select:disabled {
 
 .composer-toolbar .secondary,
 .composer-options-row .secondary {
-  border-color: rgba(100, 116, 139, 0.32);
-  background: rgba(17, 24, 39, 0.54);
-  color: var(--text-soft);
+  border: 0;
+  background: var(--dropdown-bg);
+  color: var(--dropdown-text);
 }
 
 .composer-toolbar .secondary:hover:not(:disabled),
 .composer-options-row .secondary:hover:not(:disabled) {
+  background: var(--dropdown-bg-hover);
   color: var(--text);
 }
 
 .mode-toggle {
-  border-color: rgba(100, 116, 139, 0.32);
-  background: rgba(17, 24, 39, 0.54);
-  color: var(--text-soft);
+  border: 0;
+  background: var(--dropdown-bg);
+  color: var(--dropdown-text);
   padding-inline: 12px;
 }
 
 .mode-toggle:hover:not(:disabled) {
-  border-color: rgba(0, 184, 255, 0.38);
-  background: rgba(14, 165, 233, 0.14);
+  background: var(--dropdown-bg-hover);
   color: var(--text);
 }
 
 .mode-toggle.active {
-  border-color: rgba(45, 212, 191, 0.58);
-  background: rgba(20, 184, 166, 0.18);
-  color: var(--accent-teal-soft);
+  background: var(--dropdown-bg-hover);
+  color: var(--dropdown-selected);
 }
 
 .mode-toggle.recommended:not(.active) {
-  border-color: rgba(250, 204, 21, 0.34);
+  color: var(--dropdown-selected);
 }
 
 .composer-options-row {

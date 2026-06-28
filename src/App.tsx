@@ -20,7 +20,6 @@ import {
 } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import "./App.css";
-import orchestratorMark from "./assets/brand/orchestrator-mark.png";
 import orchestratorWordmark from "./assets/brand/orchestrator-wordmark.png";
 import {
   appendRunEvent,
@@ -1647,13 +1646,6 @@ function App() {
   return (
     <main className="app-shell">
       <aside className="app-rail">
-        <div className="brand-lockup">
-          <img src={orchestratorMark} alt="" />
-          <div>
-            <strong>Orchestrator</strong>
-          </div>
-        </div>
-
         <nav className="primary-nav" aria-label="Primary">
           <button
             className={activeView === "task" ? "active" : ""}
