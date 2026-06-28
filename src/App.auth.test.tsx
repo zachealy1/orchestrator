@@ -5,6 +5,7 @@ import App from "./App";
 
 const mocks = vi.hoisted(() => ({
   listeners: new Map<string, (event: { payload: unknown }) => void>(),
+  openDialogMock: vi.fn(),
   openUrlMock: vi.fn(),
   connectCodexMock: vi.fn(),
   deleteCodexProfileMock: vi.fn(),
@@ -51,7 +52,7 @@ vi.mock("@tauri-apps/api/event", () => ({
 }));
 
 vi.mock("@tauri-apps/plugin-dialog", () => ({
-  open: vi.fn(),
+  open: mocks.openDialogMock,
 }));
 
 vi.mock("@tauri-apps/plugin-opener", () => ({
@@ -211,6 +212,7 @@ function prepareDefaults() {
   mocks.appendRunEventMock.mockResolvedValue(undefined);
   mocks.recordTokenUsageMock.mockResolvedValue(undefined);
   mocks.upsertWorkspaceMock.mockResolvedValue(workspace);
+  mocks.openDialogMock.mockResolvedValue(null);
 }
 
 async function renderApp() {
@@ -243,6 +245,29 @@ describe("App Codex auth", () => {
 
     await user.click(signIn);
     await waitFor(() => expect(mocks.connectCodexMock).toHaveBeenCalledWith(7));
+  });
+
+  it("opens the workspace picker from the Task folder selector", async () => {
+    mocks.openDialogMock.mockResolvedValue("/repo/new-workspace");
+
+    const { user } = await renderApp();
+    expect(screen.queryByTitle("Add workspace")).not.toBeInTheDocument();
+
+    await user.selectOptions(
+      screen.getByLabelText("Folder"),
+      "__add_workspace__",
+    );
+
+    await waitFor(() =>
+      expect(mocks.openDialogMock).toHaveBeenCalledWith({
+        directory: true,
+        multiple: false,
+        title: "Choose a repository workspace",
+      }),
+    );
+    expect(mocks.upsertWorkspaceMock).toHaveBeenCalledWith(
+      "/repo/new-workspace",
+    );
   });
 
   it("removes consolidated duplicate profile directories during startup", async () => {

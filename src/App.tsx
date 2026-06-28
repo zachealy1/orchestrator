@@ -5,7 +5,6 @@ import {
   BarChart3,
   ChevronDown,
   ChevronRight,
-  FolderPlus,
   History,
   LogIn,
   LogOut,
@@ -1709,9 +1708,6 @@ function App() {
         <div className="rail-section">
           <div className="rail-section-header">
             <span>Workspaces</span>
-            <button className="icon-button" type="button" onClick={chooseWorkspace} title="Add workspace">
-              <FolderPlus size={16} />
-            </button>
           </div>
 
           <nav className="workspace-list" aria-label="Workspaces">
@@ -1925,6 +1921,7 @@ function App() {
                 accessLevel={accessLevel}
                 contextFiles={contextFiles}
                 onWorkspaceChange={selectWorkspace}
+                onAddWorkspace={() => void chooseWorkspace()}
                 onAccountChange={(accountId) => void selectCodexAccount(accountId)}
                 onSetDefaultAccount={() => void handleSetWorkspaceDefault()}
                 onBranchChange={(branch) => void selectBranch(branch)}

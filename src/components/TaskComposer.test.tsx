@@ -91,6 +91,7 @@ function renderComposer(overrides: Partial<TaskComposerProps> = {}) {
     accessLevel: "ask",
     contextFiles: [],
     onWorkspaceChange: vi.fn(),
+    onAddWorkspace: vi.fn(),
     onAccountChange: vi.fn(),
     onSetDefaultAccount: vi.fn(),
     onBranchChange: vi.fn(),
@@ -190,6 +191,24 @@ describe("TaskComposer", () => {
 
     expect(onWorkspaceChange).toHaveBeenCalledWith(2);
     expect(onBranchChange).toHaveBeenCalledWith("feature/chat-controls");
+  });
+
+  it("adds a workspace from the folder selector even when none exist", async () => {
+    const onAddWorkspace = vi.fn();
+    const { user } = renderComposer({
+      workspaces: [],
+      selectedWorkspaceId: null,
+      onAddWorkspace,
+    });
+
+    const folderSelect = screen.getByLabelText("Folder");
+    expect(folderSelect).toBeEnabled();
+    expect(
+      within(folderSelect).getByRole("option", { name: "Add folder..." }),
+    ).toBeInTheDocument();
+
+    await user.selectOptions(folderSelect, "__add_workspace__");
+    expect(onAddWorkspace).toHaveBeenCalledOnce();
   });
 
   it("selects a run account and can persist it as the workspace default", async () => {

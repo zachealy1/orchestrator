@@ -46,6 +46,7 @@ type Props = {
   accessLevel: AccessLevel;
   contextFiles: ComposerContextFile[];
   onWorkspaceChange: (workspaceId: number) => void;
+  onAddWorkspace: () => void;
   onAccountChange: (accountId: number) => void;
   onSetDefaultAccount: () => void;
   onBranchChange: (branch: string) => void;
@@ -83,6 +84,7 @@ export function TaskComposer({
   accessLevel,
   contextFiles,
   onWorkspaceChange,
+  onAddWorkspace,
   onAccountChange,
   onSetDefaultAccount,
   onBranchChange,
@@ -103,6 +105,7 @@ export function TaskComposer({
   const reasoningOptions = selectedModel?.supportedReasoningEfforts ?? [];
   const controlsDisabled = models.length === 0 || Boolean(modelLoadError);
   const planRecommended = routeRecommendation === "plan-first";
+  const addWorkspaceValue = "__add_workspace__";
 
   useLayoutEffect(() => {
     const textarea = promptTextareaRef.current;
@@ -235,19 +238,29 @@ export function TaskComposer({
           </span>
           <select
             value={selectedWorkspaceId ?? ""}
-            onChange={(event) => onWorkspaceChange(Number(event.currentTarget.value))}
-            disabled={workspaces.length === 0}
+            onChange={(event) => {
+              const value = event.currentTarget.value;
+              if (value === addWorkspaceValue) {
+                onAddWorkspace();
+                return;
+              }
+              onWorkspaceChange(Number(value));
+            }}
             aria-label="Folder"
           >
-            {workspaces.length === 0 ? (
-              <option value="">No folders</option>
-            ) : (
-              workspaces.map((workspace) => (
-                <option key={workspace.id} value={workspace.id}>
-                  {workspace.label}
-                </option>
-              ))
-            )}
+            {selectedWorkspaceId === null ? (
+              <option value="" disabled>
+                Select folder
+              </option>
+            ) : null}
+            {workspaces.map((workspace) => (
+              <option key={workspace.id} value={workspace.id}>
+                {workspace.label}
+              </option>
+            ))}
+            <option value={addWorkspaceValue}>
+              {workspaces.length === 0 ? "Add folder..." : "Add another folder..."}
+            </option>
           </select>
           <ChevronDown className="select-chevron" size={16} aria-hidden="true" />
         </label>
