@@ -121,140 +121,142 @@ export function TaskComposer({
         <span className="token-pill">{tokenEstimate.toLocaleString()} tokens</span>
       </div>
 
-      <div className="composer-toolbar" role="toolbar" aria-label="Prompt actions">
-        <div className="composer-action-group">
-          <button className="secondary" type="button" onClick={onPreflight} disabled={disabled}>
-            <ClipboardCheck size={16} />
-            Preflight
-          </button>
+      <div className="composer-controls">
+        <div className="composer-toolbar" role="toolbar" aria-label="Prompt actions">
+          <div className="composer-action-group">
+            <button className="secondary" type="button" onClick={onPreflight} disabled={disabled}>
+              <ClipboardCheck size={16} />
+              Preflight
+            </button>
 
-          <button
-            className={`mode-toggle ${goalMode ? "active" : ""}`}
-            type="button"
-            aria-pressed={goalMode}
-            onClick={() => onGoalModeChange(!goalMode)}
-          >
-            <Flag size={16} />
-            Goal mode
-          </button>
+            <button
+              className={`mode-toggle ${goalMode ? "active" : ""}`}
+              type="button"
+              aria-pressed={goalMode}
+              onClick={() => onGoalModeChange(!goalMode)}
+            >
+              <Flag size={16} />
+              Goal mode
+            </button>
 
-          <button
-            className={`mode-toggle ${planMode ? "active" : ""} ${planRecommended ? "recommended" : ""}`}
-            type="button"
-            aria-pressed={planMode}
-            onClick={() => onPlanModeChange(!planMode)}
-          >
-            <BrainCircuit size={16} />
-            Plan mode
-          </button>
+            <button
+              className={`mode-toggle ${planMode ? "active" : ""} ${planRecommended ? "recommended" : ""}`}
+              type="button"
+              aria-pressed={planMode}
+              onClick={() => onPlanModeChange(!planMode)}
+            >
+              <BrainCircuit size={16} />
+              Plan mode
+            </button>
 
-          <button className="secondary compact-action" type="button" onClick={onAddFiles}>
-            <Paperclip size={16} />
-            Add files
-          </button>
+            <button className="secondary compact-action" type="button" onClick={onAddFiles}>
+              <Paperclip size={16} />
+              Add files
+            </button>
+          </div>
+
+          <div className="composer-run-group">
+            <button
+              className="send-button"
+              type="button"
+              onClick={onRun}
+              disabled={disabled}
+              aria-label="Run Codex"
+            >
+              <Play size={16} />
+              <span className="sr-only">Run Codex</span>
+            </button>
+          </div>
         </div>
 
-        <div className="composer-run-group">
-          <button
-            className="send-button"
-            type="button"
-            onClick={onRun}
-            disabled={disabled}
-            aria-label="Run Codex"
-          >
-            <Play size={16} />
-            <span className="sr-only">Run Codex</span>
-          </button>
-        </div>
-      </div>
+        <div className="composer-options-row">
+          <div className="account-select-group">
+            <ComposerSelect
+              ariaLabel="Run account"
+              value={selectedAccountId?.toString() ?? ""}
+              options={accounts.map((account) => ({
+                value: account.id.toString(),
+                label: account.label,
+              }))}
+              placeholder="Sign in required"
+              icon={<CircleUserRound size={16} />}
+              className="account-select"
+              disabled={accounts.length === 0 || accountSelectionDisabled}
+              onChange={(value) => onAccountChange(Number(value))}
+            />
+          </div>
 
-      <div className="composer-options-row">
-        <div className="account-select-group">
           <ComposerSelect
-            ariaLabel="Run account"
-            value={selectedAccountId?.toString() ?? ""}
-            options={accounts.map((account) => ({
-              value: account.id.toString(),
-              label: account.label,
+            ariaLabel="Branch"
+            value={selectedBranch ?? ""}
+            options={branches.map((branch) => ({ value: branch, label: branch }))}
+            placeholder="No branches"
+            icon={<GitBranch size={16} />}
+            className="branch-select"
+            disabled={branches.length === 0}
+            onChange={onBranchChange}
+          />
+
+          <ComposerSelect
+            ariaLabel="Access"
+            value={accessLevel}
+            options={[
+              { value: "ask", label: "Ask for approval" },
+              { value: "full", label: "Full access" },
+            ]}
+            placeholder="Ask for approval"
+            icon={<ShieldCheck size={16} />}
+            className="access-select"
+            onChange={(value) => onAccessLevelChange(value as AccessLevel)}
+          />
+
+          <ComposerSelect
+            ariaLabel="Agent"
+            value={selectedModel?.id ?? ""}
+            options={models.map((model) => ({
+              value: model.id,
+              label: model.displayName || model.model,
             }))}
-            placeholder="Sign in required"
-            icon={<CircleUserRound size={16} />}
-            className="account-select"
-            disabled={accounts.length === 0 || accountSelectionDisabled}
-            onChange={(value) => onAccountChange(Number(value))}
+            placeholder={modelLoadError ? "Models unavailable" : "Connect Codex"}
+            icon={<Bot size={16} />}
+            className="agent-select"
+            disabled={controlsDisabled}
+            onChange={onModelChange}
+          />
+
+          <ComposerSelect
+            ariaLabel="Reasoning"
+            value={selectedReasoningEffort ?? ""}
+            options={reasoningOptions.map((option) => ({
+              value: option.reasoningEffort,
+              label: labelReasoningEffort(option.reasoningEffort),
+            }))}
+            placeholder="Default"
+            icon={<Gauge size={16} />}
+            className="reasoning-select"
+            disabled={controlsDisabled || reasoningOptions.length === 0}
+            onChange={onReasoningEffortChange}
           />
         </div>
 
-        <ComposerSelect
-          ariaLabel="Branch"
-          value={selectedBranch ?? ""}
-          options={branches.map((branch) => ({ value: branch, label: branch }))}
-          placeholder="No branches"
-          icon={<GitBranch size={16} />}
-          className="branch-select"
-          disabled={branches.length === 0}
-          onChange={onBranchChange}
-        />
-
-        <ComposerSelect
-          ariaLabel="Access"
-          value={accessLevel}
-          options={[
-            { value: "ask", label: "Ask for approval" },
-            { value: "full", label: "Full access" },
-          ]}
-          placeholder="Ask for approval"
-          icon={<ShieldCheck size={16} />}
-          className="access-select"
-          onChange={(value) => onAccessLevelChange(value as AccessLevel)}
-        />
-
-        <ComposerSelect
-          ariaLabel="Agent"
-          value={selectedModel?.id ?? ""}
-          options={models.map((model) => ({
-            value: model.id,
-            label: model.displayName || model.model,
-          }))}
-          placeholder={modelLoadError ? "Models unavailable" : "Connect Codex"}
-          icon={<Bot size={16} />}
-          className="agent-select"
-          disabled={controlsDisabled}
-          onChange={onModelChange}
-        />
-
-        <ComposerSelect
-          ariaLabel="Reasoning"
-          value={selectedReasoningEffort ?? ""}
-          options={reasoningOptions.map((option) => ({
-            value: option.reasoningEffort,
-            label: labelReasoningEffort(option.reasoningEffort),
-          }))}
-          placeholder="Default"
-          icon={<Gauge size={16} />}
-          className="reasoning-select"
-          disabled={controlsDisabled || reasoningOptions.length === 0}
-          onChange={onReasoningEffortChange}
-        />
+        {contextFiles.length > 0 ? (
+          <div className="context-file-list" aria-label="Selected context files">
+            {contextFiles.map((file) => (
+              <span className={`context-chip ${file.status ?? "ready"}`} key={file.path}>
+                <Paperclip size={13} />
+                <span title={file.path}>{file.name}</span>
+                <button
+                  type="button"
+                  onClick={() => onRemoveFile(file.path)}
+                  aria-label={`Remove ${file.name}`}
+                >
+                  <X size={13} />
+                </button>
+              </span>
+            ))}
+          </div>
+        ) : null}
       </div>
-
-      {contextFiles.length > 0 ? (
-        <div className="context-file-list" aria-label="Selected context files">
-          {contextFiles.map((file) => (
-            <span className={`context-chip ${file.status ?? "ready"}`} key={file.path}>
-              <Paperclip size={13} />
-              <span title={file.path}>{file.name}</span>
-              <button
-                type="button"
-                onClick={() => onRemoveFile(file.path)}
-                aria-label={`Remove ${file.name}`}
-              >
-                <X size={13} />
-              </button>
-            </span>
-          ))}
-        </div>
-      ) : null}
     </section>
   );
 }

@@ -272,8 +272,8 @@ button.small {
 }
 
 .primary-nav button.active {
-  background: var(--color-selected-background);
-  color: var(--color-selected-text);
+  background: var(--color-button-active);
+  color: var(--color-button-active-text);
 }
 
 .primary-nav button.active svg {
@@ -356,8 +356,8 @@ button.small {
 }
 
 .workspace-list button.active {
-  background: var(--color-selected-background);
-  color: var(--color-selected-text);
+  background: var(--color-button-active);
+  color: var(--color-button-active-text);
 }
 
 .workspace-name {
@@ -380,7 +380,7 @@ button.small {
 }
 
 .workspace-list button.active .workspace-icon {
-  background: var(--color-button-active);
+  background: var(--color-component-background);
   color: var(--color-selected-text);
 }
 
@@ -427,7 +427,7 @@ button.account-sign-in:hover:not(:disabled) {
 }
 
 button.account-trigger.open {
-  background: var(--color-selected-background);
+  background: var(--color-button-active);
 }
 
 button.account-sign-in {
@@ -444,6 +444,7 @@ button.account-sign-in {
   border-radius: 999px;
   background: var(--color-selected-background);
   color: var(--color-selected-text);
+  box-shadow: inset 0 0 0 1px var(--color-divider);
   font-size: 1rem;
   font-weight: 700;
 }
@@ -459,8 +460,13 @@ button.account-sign-in {
 }
 
 .auth-signed-in .account-avatar {
-  background: var(--color-selected-background);
+  background: var(--color-button-active);
   color: var(--color-selected-text);
+}
+
+.auth-signed-in button.account-trigger:hover:not(:disabled) .account-avatar,
+.auth-signed-in button.account-trigger.open .account-avatar {
+  background: var(--color-component-background);
 }
 
 .account-copy {
@@ -518,7 +524,7 @@ button.account-sign-in {
   overflow-y: auto;
   border: 0;
   border-radius: 8px;
-  background: var(--dropdown-menu-bg);
+  background: var(--color-background);
   box-shadow: 0 18px 48px rgb(var(--shadow-rgb) / 0.28);
   padding: 8px 10px 10px;
 }
@@ -900,71 +906,88 @@ select:disabled {
   padding: 0 18px 8px;
 }
 
+.composer-controls {
+  display: grid;
+  gap: 10px;
+  border-top: 1px solid var(--color-divider);
+  background: var(--color-surface-soft);
+  padding: 12px 14px 14px;
+}
+
 .composer-toolbar {
   display: flex;
   gap: 12px;
   align-items: center;
   justify-content: space-between;
   border-top: 0;
-  background: var(--color-surface-soft);
-  padding: 10px 14px;
+  background: transparent;
+  padding: 0;
 }
 
 .composer-action-group,
 .composer-run-group {
-  display: flex;
   min-width: 0;
   gap: 8px;
   align-items: center;
 }
 
 .composer-action-group {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
   flex: 1 1 auto;
-  flex-wrap: wrap;
 }
 
 .composer-action-group > button {
-  flex: 1 1 0;
+  min-height: 42px;
   min-width: 0;
+  border: 0;
+  border-radius: 8px;
+  box-shadow: none;
+  font-size: 0.9rem;
+  letter-spacing: 0;
   white-space: nowrap;
 }
 
+.composer-action-group > button:focus-visible,
+.send-button:focus-visible {
+  box-shadow: none;
+}
+
 .composer-run-group {
+  display: flex;
   flex: 0 0 auto;
 }
 
 .composer-toolbar .secondary,
 .composer-options-row .secondary {
-  border: 0;
-  background: var(--dropdown-bg);
-  color: var(--dropdown-text);
+  background: var(--color-component-background);
+  color: var(--color-text);
 }
 
 .composer-toolbar .secondary:hover:not(:disabled),
 .composer-options-row .secondary:hover:not(:disabled) {
-  background: var(--dropdown-bg-hover);
+  background: var(--color-button-active);
   color: var(--text);
 }
 
 .mode-toggle {
-  border: 0;
-  background: var(--dropdown-bg);
-  color: var(--dropdown-text);
+  background: var(--color-component-background);
+  color: var(--color-text);
   padding-inline: 12px;
 }
 
 .mode-toggle:hover:not(:disabled) {
-  background: var(--dropdown-bg-hover);
-  color: var(--text);
+  background: var(--color-button-active);
+  color: var(--color-button-active-text);
 }
 
 .mode-toggle.active {
-  background: var(--color-selected-background);
-  color: var(--color-selected-text);
+  background: var(--color-button-active);
+  color: var(--color-button-active-text);
 }
 
 .mode-toggle.recommended:not(.active) {
-  color: var(--dropdown-selected);
+  color: var(--color-selected-text);
 }
 
 .composer-options-row {
@@ -978,8 +1001,8 @@ select:disabled {
   gap: 8px;
   align-items: center;
   border-top: 0;
-  background: var(--panel);
-  padding: 8px 14px 10px;
+  background: transparent;
+  padding: 0;
 }
 
 .account-select-group {
@@ -991,14 +1014,14 @@ select:disabled {
   position: relative;
   display: block;
   min-width: 0;
-  min-height: 40px;
+  min-height: 42px;
   border: 0;
-  border-radius: 6px;
-  background: var(--dropdown-bg);
+  border-radius: 8px;
+  background: var(--color-component-background);
   color: var(--dropdown-muted);
   transition:
     background 140ms ease,
-    box-shadow 140ms ease;
+    color 140ms ease;
 }
 
 .access-select {
@@ -1023,7 +1046,7 @@ select:disabled {
   height: 18px;
   align-items: center;
   justify-content: center;
-  color: var(--dropdown-muted);
+  color: var(--color-icon-muted);
   opacity: 0.86;
   pointer-events: none;
   transform: translateY(-50%);
@@ -1034,7 +1057,7 @@ select:disabled {
   top: 50%;
   right: 10px;
   z-index: 2;
-  color: var(--dropdown-muted);
+  color: var(--color-icon-muted);
   opacity: 0.78;
   pointer-events: none;
   transition: transform 140ms ease;
@@ -1044,21 +1067,21 @@ select:disabled {
 button.composer-select-trigger {
   width: 100%;
   min-width: 0;
-  min-height: 38px;
+  min-height: 40px;
   justify-content: flex-start;
   border: 0;
   border-radius: inherit;
   background: transparent;
-  color: var(--dropdown-text);
+  color: var(--color-text);
   cursor: pointer;
-  font-size: 0.92rem;
-  font-weight: 500;
+  font-size: 0.9rem;
+  font-weight: 560;
   padding: 0 34px 0 38px;
 }
 
 button.composer-select-trigger:hover:not(:disabled),
 button.composer-select-trigger:active:not(:disabled) {
-  background: var(--dropdown-bg-hover);
+  background: var(--color-button-active);
   transform: none;
 }
 
@@ -1071,11 +1094,15 @@ button.composer-select-trigger:active:not(:disabled) {
 
 .composer-select:hover:not(.disabled),
 .composer-select.open {
-  background: var(--dropdown-bg-hover);
+  background: var(--color-component-background);
 }
 
 .composer-select:focus-within {
-  box-shadow: 0 0 0 3px var(--dropdown-focus-ring);
+  box-shadow: none;
+}
+
+.composer-select-trigger:focus-visible {
+  box-shadow: none;
 }
 
 .composer-select.open .select-chevron {
@@ -1083,7 +1110,7 @@ button.composer-select-trigger:active:not(:disabled) {
 }
 
 .composer-select.disabled {
-  opacity: 0.58;
+  opacity: 0.54;
 }
 
 .composer-select.disabled .composer-select-trigger {
@@ -1163,15 +1190,26 @@ button.composer-select-option.action:not(:first-child) {
 }
 
 .send-button {
-  width: 38px;
-  min-width: 38px;
-  min-height: 38px;
+  width: 42px;
+  min-width: 42px;
+  min-height: 42px;
   border-radius: 50%;
+  background: var(--color-button-primary);
+  color: var(--color-button-primary-text);
+  box-shadow: 0 6px 16px rgb(var(--primary-rgb) / 0.24);
   padding: 0;
 }
 
+.send-button:hover:not(:disabled) {
+  background: var(--color-primary);
+}
+
+.send-button:disabled {
+  opacity: 0.42;
+}
+
 .compact-action {
-  min-height: 38px;
+  min-height: 42px;
   padding-block: 7px;
 }
 
@@ -1181,8 +1219,8 @@ button.composer-select-option.action:not(:first-child) {
   gap: 7px;
   min-width: 0;
   border-top: 1px solid var(--color-divider);
-  background: var(--color-surface-soft);
-  padding: 10px 14px 12px;
+  background: transparent;
+  padding: 2px 0 0;
 }
 
 .context-chip {
@@ -1615,11 +1653,9 @@ pre {
 }
 
 .theme-selector button.active {
-  background: var(--color-selected-background);
-  color: var(--color-selected-text);
-  box-shadow:
-    inset 0 0 0 1px var(--color-divider),
-    0 1px 4px rgb(var(--shadow-rgb) / 0.12);
+  background: var(--color-button-active);
+  color: var(--color-button-active-text);
+  box-shadow: none;
 }
 
 .theme-selector button svg {
@@ -1730,7 +1766,7 @@ pre {
   }
 
   .composer-options-row {
-    grid-template-columns: 1fr;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
   .console {
