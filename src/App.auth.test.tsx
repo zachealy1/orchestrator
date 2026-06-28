@@ -224,6 +224,8 @@ describe("App Codex auth", () => {
     mocks.listeners.clear();
     vi.clearAllMocks();
     vi.useRealTimers();
+    localStorage.clear();
+    document.documentElement.removeAttribute("data-theme");
     prepareDefaults();
   });
 
@@ -317,6 +319,29 @@ describe("App Codex auth", () => {
     await user.click(screen.getByRole("option", { name: "LM Studio" }));
 
     expect(providerSelect).toHaveTextContent("LM Studio");
+  });
+
+  it("changes and persists the interface theme from settings", async () => {
+    const { user } = await renderApp();
+
+    await user.click(screen.getByRole("button", { name: "Settings" }));
+
+    const systemTheme = screen.getByRole("radio", { name: "System" });
+    const darkTheme = screen.getByRole("radio", { name: "Dark" });
+    const lightTheme = screen.getByRole("radio", { name: "Light" });
+
+    expect(systemTheme).toHaveAttribute("aria-checked", "true");
+
+    darkTheme.focus();
+    await user.keyboard(" ");
+    expect(darkTheme).toHaveAttribute("aria-checked", "true");
+    expect(document.documentElement).toHaveAttribute("data-theme", "dark");
+    expect(localStorage.getItem("orchestrator.theme")).toBe("dark");
+
+    await user.click(lightTheme);
+    expect(lightTheme).toHaveAttribute("aria-checked", "true");
+    expect(document.documentElement).toHaveAttribute("data-theme", "light");
+    expect(localStorage.getItem("orchestrator.theme")).toBe("light");
   });
 
   it("removes consolidated duplicate profile directories during startup", async () => {

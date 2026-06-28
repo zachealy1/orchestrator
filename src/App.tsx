@@ -9,10 +9,13 @@ import {
   History,
   LogIn,
   LogOut,
+  Monitor,
+  Moon,
   Plug,
   Plus,
   RefreshCw,
   Settings,
+  Sun,
   TerminalSquare,
   Trash2,
   UserPlus,
@@ -20,7 +23,7 @@ import {
 } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import "./App.css";
-import orchestratorWordmark from "./assets/brand/orchestrator-wordmark.png";
+import orchestratorMark from "./assets/brand/orchestrator-mark.png";
 import {
   appendRunEvent,
   completeDuplicateProfileCleanup,
@@ -83,6 +86,13 @@ import {
   improvePrompt,
   recommendRoute,
 } from "./lib/taskAnalysis";
+import {
+  applyDocumentTheme,
+  applyThemePreference,
+  persistThemePreference,
+  readThemePreference,
+  watchSystemTheme,
+} from "./lib/theme";
 import type {
   AccessLevel,
   AccountLoginCompletedNotification,
@@ -101,6 +111,7 @@ import type {
   OssProvider,
   PreflightReport,
   RunListItem,
+  ThemePreference,
   Workspace,
 } from "./types";
 
@@ -114,6 +125,16 @@ const DEFAULT_ANALYTICS: AnalyticsSummaryType = {
 };
 
 type AppView = "task" | "runs" | "analytics" | "settings";
+
+const THEME_OPTIONS: Array<{
+  value: ThemePreference;
+  label: string;
+  icon: typeof Sun;
+}> = [
+  { value: "light", label: "Light", icon: Sun },
+  { value: "dark", label: "Dark", icon: Moon },
+  { value: "system", label: "System", icon: Monitor },
+];
 
 type AuthRowState = {
   title: string;
@@ -209,6 +230,9 @@ function App() {
   const [runs, setRuns] = useState<RunListItem[]>([]);
   const [analytics, setAnalytics] = useState<AnalyticsSummaryType>(DEFAULT_ANALYTICS);
   const [activeView, setActiveView] = useState<AppView>("task");
+  const [themePreference, setThemePreference] = useState<ThemePreference>(
+    readThemePreference,
+  );
   const [prompt, setPrompt] = useState("");
   const [preflight, setPreflight] = useState<PreflightReport | null>(null);
   const [runView, setRunView] = useState<RunViewState>(emptyRunView);
@@ -352,6 +376,17 @@ function App() {
   useEffect(() => {
     void bootstrap();
   }, []);
+
+  useEffect(() => {
+    persistThemePreference(themePreference);
+    applyThemePreference(themePreference);
+
+    if (themePreference !== "system") {
+      return;
+    }
+
+    return watchSystemTheme(applyDocumentTheme);
+  }, [themePreference]);
 
   useEffect(() => {
     if (!selectedWorkspace) {
@@ -2002,6 +2037,45 @@ function App() {
 
         {activeView === "settings" ? (
           <div className="settings-grid">
+            <section className="surface settings-panel appearance-panel" aria-label="Appearance settings">
+              <div className="surface-header">
+                <div>
+                  <p className="eyebrow">Appearance</p>
+                  <h2>Theme</h2>
+                </div>
+              </div>
+              <div className="setting-row appearance-setting">
+                <div>
+                  <strong>Interface theme</strong>
+                  <span>Choose a theme or follow your system appearance.</span>
+                </div>
+                <div
+                  className="theme-selector"
+                  role="radiogroup"
+                  aria-label="Interface theme"
+                >
+                  {THEME_OPTIONS.map((option) => {
+                    const ThemeIcon = option.icon;
+                    const selected = themePreference === option.value;
+
+                    return (
+                      <button
+                        className={selected ? "active" : ""}
+                        type="button"
+                        role="radio"
+                        aria-checked={selected}
+                        key={option.value}
+                        onClick={() => setThemePreference(option.value)}
+                      >
+                        <ThemeIcon size={16} aria-hidden="true" />
+                        {option.label}
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+            </section>
+
             <section className="surface settings-panel" aria-label="Codex settings">
               <div className="surface-header">
                 <div>
@@ -2153,7 +2227,13 @@ function App() {
             </section>
 
             <section className="surface brand-panel" aria-label="About Orchestrator">
-              <img src={orchestratorWordmark} alt="Orchestrator" />
+              <div className="brand-lockup">
+                <img src={orchestratorMark} alt="" />
+                <div>
+                  <h2>Orchestrator</h2>
+                  <span>Token-aware Codex workspace</span>
+                </div>
+              </div>
               <p>
                 A token-aware desktop workspace for Codex runs, advisory preflight,
                 context budgeting, and local analytics.
