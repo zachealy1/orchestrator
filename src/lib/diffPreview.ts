@@ -31,6 +31,20 @@ export type HighlightedDiffSide = {
   lines: DiffToken[][];
 };
 
+export type DiffOverviewMarker = {
+  id: string;
+  kind: Exclude<DiffRowKind, "unchanged">;
+  rowIndex: number;
+  topPercent: number;
+  heightPercent: number;
+};
+
+export type DiffOverviewViewport = {
+  topPercent: number;
+  heightPercent: number;
+  scrollable: boolean;
+};
+
 export function buildDiffRows(baseContent: string, headContent: string) {
   const changes = diffLines(baseContent ?? "", headContent ?? "");
   const rows: DiffRow[] = [];
@@ -127,6 +141,59 @@ export function buildDiffRows(baseContent: string, headContent: string) {
       ];
 }
 
+export function buildDiffOverviewMarkers(rows: DiffRow[]): DiffOverviewMarker[] {
+  const rowCount = Math.max(rows.length, 1);
+  const markerHeight = 100 / rowCount;
+
+  return rows.flatMap((row, index) =>
+    row.kind === "unchanged"
+      ? []
+      : [
+          {
+            id: `${row.id}-overview`,
+            kind: row.kind,
+            rowIndex: index,
+            topPercent: (index / rowCount) * 100,
+            heightPercent: markerHeight,
+          },
+        ],
+  );
+}
+
+export function calculateOverviewViewport(
+  scrollTop: number,
+  scrollHeight: number,
+  clientHeight: number,
+): DiffOverviewViewport {
+  if (clientHeight <= 0 || scrollHeight <= clientHeight) {
+    return {
+      topPercent: 0,
+      heightPercent: 100,
+      scrollable: false,
+    };
+  }
+
+  const heightPercent = clamp((clientHeight / scrollHeight) * 100, 4, 100);
+  const maxScrollTop = Math.max(scrollHeight - clientHeight, 1);
+  const maxTopPercent = 100 - heightPercent;
+
+  return {
+    topPercent: clamp((scrollTop / maxScrollTop) * maxTopPercent, 0, maxTopPercent),
+    heightPercent,
+    scrollable: true,
+  };
+}
+
+export function scrollToOverviewPosition(
+  container: Pick<HTMLElement, "clientHeight" | "scrollHeight" | "scrollTop">,
+  ratio: number,
+) {
+  const maxScrollTop = Math.max(container.scrollHeight - container.clientHeight, 0);
+  const nextScrollTop = clamp(ratio, 0, 1) * maxScrollTop;
+  container.scrollTop = nextScrollTop;
+  return nextScrollTop;
+}
+
 export function pairChangedLineBlocks(baseLines: string[], headLines: string[]) {
   const count = Math.max(baseLines.length, headLines.length);
   return Array.from({ length: count }, (_, index) => ({
@@ -179,4 +246,8 @@ export function splitDiffLines(content: string) {
 
 function textToTokenLine(content: string) {
   return [{ content }];
+}
+
+function clamp(value: number, min: number, max: number) {
+  return Math.min(Math.max(value, min), max);
 }

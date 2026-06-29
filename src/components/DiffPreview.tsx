@@ -1,9 +1,22 @@
-import { useEffect, useMemo, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type KeyboardEvent,
+  type PointerEvent,
+} from "react";
 import type { ResolvedTheme, WorkspaceGitDiffSection } from "../types";
 import {
+  buildDiffOverviewMarkers,
   buildDiffRows,
+  calculateOverviewViewport,
   highlightDiffSide,
+  scrollToOverviewPosition,
   splitDiffLines,
+  type DiffOverviewMarker,
+  type DiffOverviewViewport,
   type DiffRow,
   type DiffToken,
   type HighlightedDiffSide,
@@ -17,6 +30,14 @@ type SectionHighlight = {
   fallback: boolean;
 };
 
+type ScrollMetrics = {
+  scrollTop: number;
+  scrollHeight: number;
+  clientHeight: number;
+};
+
+type OverviewKeyboardAction = "line-up" | "line-down" | "page-up" | "page-down" | "start" | "end";
+
 type Props = {
   path: string;
   sections: WorkspaceGitDiffSection[];
@@ -24,7 +45,14 @@ type Props = {
   layout: DiffLayout;
 };
 
+const INITIAL_SCROLL_METRICS: ScrollMetrics = {
+  scrollTop: 0,
+  scrollHeight: 0,
+  clientHeight: 0,
+};
+
 export function DiffPreview({ path, sections, resolvedTheme, layout }: Props) {
+  const scrollRef = useRef<HTMLDivElement | null>(null);
   const renderSections = useMemo(
     () =>
       sections.map((section, index) => ({
@@ -37,6 +65,45 @@ export function DiffPreview({ path, sections, resolvedTheme, layout }: Props) {
   const [highlights, setHighlights] = useState<Record<string, SectionHighlight>>(
     {},
   );
+  const [scrollMetrics, setScrollMetrics] = useState(INITIAL_SCROLL_METRICS);
+  const overviewRows = useMemo(
+    () => renderSections.flatMap(({ rows }) => rows),
+    [renderSections],
+  );
+  const overviewMarkers = useMemo(
+    () => buildDiffOverviewMarkers(overviewRows),
+    [overviewRows],
+  );
+  const overviewViewport = useMemo(
+    () =>
+      calculateOverviewViewport(
+        scrollMetrics.scrollTop,
+        scrollMetrics.scrollHeight,
+        scrollMetrics.clientHeight,
+      ),
+    [scrollMetrics],
+  );
+
+  const updateScrollMetrics = useCallback(() => {
+    const scrollElement = scrollRef.current;
+    if (!scrollElement) {
+      return;
+    }
+
+    const nextMetrics = {
+      scrollTop: scrollElement.scrollTop,
+      scrollHeight: scrollElement.scrollHeight,
+      clientHeight: scrollElement.clientHeight,
+    };
+
+    setScrollMetrics((current) =>
+      current.scrollTop === nextMetrics.scrollTop &&
+      current.scrollHeight === nextMetrics.scrollHeight &&
+      current.clientHeight === nextMetrics.clientHeight
+        ? current
+        : nextMetrics,
+    );
+  }, []);
 
   useEffect(() => {
     let disposed = false;
@@ -78,18 +145,99 @@ export function DiffPreview({ path, sections, resolvedTheme, layout }: Props) {
     };
   }, [path, renderSections, resolvedTheme]);
 
+  useEffect(() => {
+    const scrollElement = scrollRef.current;
+    if (!scrollElement) {
+      return;
+    }
+
+    updateScrollMetrics();
+    scrollElement.addEventListener("scroll", updateScrollMetrics, {
+      passive: true,
+    });
+
+    const resizeObserver =
+      typeof ResizeObserver === "undefined"
+        ? null
+        : new ResizeObserver(updateScrollMetrics);
+    resizeObserver?.observe(scrollElement);
+    window.addEventListener("resize", updateScrollMetrics);
+
+    return () => {
+      scrollElement.removeEventListener("scroll", updateScrollMetrics);
+      resizeObserver?.disconnect();
+      window.removeEventListener("resize", updateScrollMetrics);
+    };
+  }, [updateScrollMetrics]);
+
+  useEffect(() => {
+    const frameId = window.requestAnimationFrame(updateScrollMetrics);
+    return () => window.cancelAnimationFrame(frameId);
+  }, [highlights, layout, renderSections, updateScrollMetrics]);
+
+  const jumpToOverviewRatio = useCallback(
+    (ratio: number) => {
+      const scrollElement = scrollRef.current;
+      if (!scrollElement) {
+        return;
+      }
+
+      scrollToOverviewPosition(scrollElement, ratio);
+      updateScrollMetrics();
+    },
+    [updateScrollMetrics],
+  );
+
+  const navigateOverview = useCallback(
+    (action: OverviewKeyboardAction) => {
+      const scrollElement = scrollRef.current;
+      if (!scrollElement) {
+        return;
+      }
+
+      const lineStep = 42;
+      const pageStep = Math.max(scrollElement.clientHeight * 0.85, lineStep);
+      const maxScrollTop = Math.max(
+        scrollElement.scrollHeight - scrollElement.clientHeight,
+        0,
+      );
+
+      if (action === "start") {
+        scrollElement.scrollTop = 0;
+      } else if (action === "end") {
+        scrollElement.scrollTop = maxScrollTop;
+      } else {
+        const delta =
+          action === "line-up"
+            ? -lineStep
+            : action === "line-down"
+              ? lineStep
+              : action === "page-up"
+                ? -pageStep
+                : pageStep;
+        scrollElement.scrollTop = Math.min(
+          Math.max(scrollElement.scrollTop + delta, 0),
+          maxScrollTop,
+        );
+      }
+
+      updateScrollMetrics();
+    },
+    [updateScrollMetrics],
+  );
+
   return (
     <div className={`diff-preview ${layout}`} aria-label="Full file diff preview">
-      {renderSections.map(({ id, section, rows }) => {
-        const highlight = highlights[id] ?? {
-          base: fallbackHighlight(section.baseContent),
-          head: fallbackHighlight(section.headContent),
-          fallback: false,
-        };
+      <div className="diff-preview-summary">
+        {renderSections.map(({ id, section }) => {
+          const highlight = highlights[id] ?? {
+            base: fallbackHighlight(section.baseContent),
+            head: fallbackHighlight(section.headContent),
+            fallback: false,
+          };
 
-        return (
-          <section className="diff-preview-section" key={id}>
-            <header className="diff-preview-section-header">
+          return (
+            <header className="diff-preview-section-header" key={id}>
               <div>
                 <strong>{section.title}</strong>
                 <span>
@@ -104,22 +252,197 @@ export function DiffPreview({ path, sections, resolvedTheme, layout }: Props) {
                 {highlight.fallback ? <span>Plain text fallback</span> : null}
               </div>
             </header>
-            {layout === "side-by-side" ? (
-              <SideBySideRows
-                rows={rows}
-                baseLines={highlight.base.lines}
-                headLines={highlight.head.lines}
-              />
-            ) : (
-              <InlineRows
-                rows={rows}
-                baseLines={highlight.base.lines}
-                headLines={highlight.head.lines}
-              />
-            )}
-          </section>
-        );
-      })}
+          );
+        })}
+      </div>
+      {layout === "side-by-side" ? <DiffPinnedColumnHeader /> : null}
+      <div className="diff-preview-body">
+        <div className="diff-preview-scroll" ref={scrollRef}>
+          {renderSections.map(({ id, section, rows }) => {
+            const highlight = highlights[id] ?? {
+              base: fallbackHighlight(section.baseContent),
+              head: fallbackHighlight(section.headContent),
+              fallback: false,
+            };
+
+            return (
+              <section className="diff-preview-section" key={id}>
+                {layout === "side-by-side" ? (
+                  <SideBySideRows
+                    rows={rows}
+                    baseLines={highlight.base.lines}
+                    headLines={highlight.head.lines}
+                  />
+                ) : (
+                  <InlineRows
+                    rows={rows}
+                    baseLines={highlight.base.lines}
+                    headLines={highlight.head.lines}
+                  />
+                )}
+              </section>
+            );
+          })}
+        </div>
+        <DiffOverviewRuler
+          markers={overviewMarkers}
+          viewport={overviewViewport}
+          scrollTop={scrollMetrics.scrollTop}
+          maxScrollTop={Math.max(
+            scrollMetrics.scrollHeight - scrollMetrics.clientHeight,
+            0,
+          )}
+          onJumpToRatio={jumpToOverviewRatio}
+          onNavigate={navigateOverview}
+        />
+      </div>
+    </div>
+  );
+}
+
+function DiffPinnedColumnHeader() {
+  return (
+    <div
+      className="diff-preview-pinned-column-header"
+      aria-label="Diff columns"
+    >
+      <div className="diff-preview-pinned-column-title old">Original</div>
+      <div className="diff-preview-pinned-column-title new">Modified</div>
+    </div>
+  );
+}
+
+function DiffOverviewRuler({
+  markers,
+  viewport,
+  scrollTop,
+  maxScrollTop,
+  onJumpToRatio,
+  onNavigate,
+}: {
+  markers: DiffOverviewMarker[];
+  viewport: DiffOverviewViewport;
+  scrollTop: number;
+  maxScrollTop: number;
+  onJumpToRatio: (ratio: number) => void;
+  onNavigate: (action: OverviewKeyboardAction) => void;
+}) {
+  const trackRef = useRef<HTMLDivElement | null>(null);
+  const activePointerIdRef = useRef<number | null>(null);
+
+  const jumpFromClientY = useCallback(
+    (clientY: number) => {
+      const track = trackRef.current;
+      if (!track) {
+        return;
+      }
+
+      const rect = track.getBoundingClientRect();
+      if (rect.height <= 0) {
+        return;
+      }
+
+      onJumpToRatio((clientY - rect.top) / rect.height);
+    },
+    [onJumpToRatio],
+  );
+
+  const handlePointerDown = useCallback(
+    (event: PointerEvent<HTMLDivElement>) => {
+      activePointerIdRef.current = event.pointerId;
+      event.currentTarget.setPointerCapture?.(event.pointerId);
+      event.preventDefault();
+      jumpFromClientY(event.clientY);
+    },
+    [jumpFromClientY],
+  );
+
+  const handlePointerMove = useCallback(
+    (event: PointerEvent<HTMLDivElement>) => {
+      if (activePointerIdRef.current !== event.pointerId) {
+        return;
+      }
+
+      event.preventDefault();
+      jumpFromClientY(event.clientY);
+    },
+    [jumpFromClientY],
+  );
+
+  const handlePointerEnd = useCallback((event: PointerEvent<HTMLDivElement>) => {
+    if (activePointerIdRef.current !== event.pointerId) {
+      return;
+    }
+
+    event.currentTarget.releasePointerCapture?.(event.pointerId);
+    activePointerIdRef.current = null;
+  }, []);
+
+  const handleKeyDown = useCallback(
+    (event: KeyboardEvent<HTMLDivElement>) => {
+      const actionByKey: Partial<Record<string, OverviewKeyboardAction>> = {
+        ArrowUp: "line-up",
+        ArrowDown: "line-down",
+        PageUp: "page-up",
+        PageDown: "page-down",
+        Home: "start",
+        End: "end",
+      };
+      const action = actionByKey[event.key];
+      if (!action) {
+        return;
+      }
+
+      event.preventDefault();
+      onNavigate(action);
+    },
+    [onNavigate],
+  );
+
+  if (!viewport.scrollable) {
+    return null;
+  }
+
+  return (
+    <div
+      className="diff-overview-ruler"
+      role="scrollbar"
+      tabIndex={0}
+      aria-label="Diff overview scroller"
+      aria-orientation="vertical"
+      aria-valuemin={0}
+      aria-valuemax={Math.round(maxScrollTop)}
+      aria-valuenow={Math.round(scrollTop)}
+      onKeyDown={handleKeyDown}
+    >
+      <div
+        className="diff-overview-track"
+        ref={trackRef}
+        onPointerDown={handlePointerDown}
+        onPointerMove={handlePointerMove}
+        onPointerUp={handlePointerEnd}
+        onPointerCancel={handlePointerEnd}
+      >
+        {markers.map((marker) => (
+          <span
+            aria-hidden="true"
+            className={`diff-overview-marker ${marker.kind}`}
+            key={marker.id}
+            style={{
+              top: `${marker.topPercent}%`,
+              height: `${marker.heightPercent}%`,
+            }}
+          />
+        ))}
+        <span
+          aria-hidden="true"
+          className="diff-overview-thumb"
+          style={{
+            top: `${viewport.topPercent}%`,
+            height: `${viewport.heightPercent}%`,
+          }}
+        />
+      </div>
     </div>
   );
 }
@@ -135,12 +458,6 @@ function SideBySideRows({
 }) {
   return (
     <div className="diff-preview-grid" role="table" aria-label="Side-by-side diff">
-      <div className="diff-preview-column-title old" role="columnheader">
-        Original
-      </div>
-      <div className="diff-preview-column-title new" role="columnheader">
-        Modified
-      </div>
       {rows.map((row) => (
         <div className={`diff-preview-row ${row.kind}`} role="row" key={row.id}>
           <DiffCell

@@ -1161,14 +1161,40 @@ button.account-switcher-item:hover:not(:disabled) {
 }
 
 .diff-preview {
+  position: relative;
   display: grid;
   min-height: 0;
-  overflow: auto;
+  --diff-overview-width: 24px;
+  grid-template-rows: auto minmax(0, 1fr);
+  overflow: hidden;
   background: var(--color-background);
   color: var(--text);
   font-family: "SFMono-Regular", Consolas, monospace;
   font-size: 0.76rem;
   line-height: 1.52;
+}
+
+.diff-preview.side-by-side {
+  grid-template-rows: auto auto minmax(0, 1fr);
+}
+
+.diff-preview-body {
+  position: relative;
+  overflow: hidden;
+  min-height: 0;
+}
+
+.diff-preview-scroll {
+  overflow: auto;
+  height: 100%;
+  min-height: 0;
+  padding-right: var(--diff-overview-width);
+  scrollbar-width: none;
+}
+
+.diff-preview-scroll::-webkit-scrollbar {
+  width: 0;
+  height: 0;
 }
 
 .diff-preview-section {
@@ -1177,9 +1203,6 @@ button.account-switcher-item:hover:not(:disabled) {
 }
 
 .diff-preview-section-header {
-  position: sticky;
-  top: 0;
-  z-index: 3;
   display: flex;
   gap: 12px;
   align-items: center;
@@ -1231,27 +1254,36 @@ button.account-switcher-item:hover:not(:disabled) {
   padding: 5px 7px;
 }
 
-.diff-preview-grid {
+.diff-preview-pinned-column-header {
   display: grid;
-  min-width: 720px;
-  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
-}
-
-.diff-preview-column-title {
-  position: sticky;
-  top: 43px;
-  z-index: 2;
+  min-width: 0;
+  grid-template-columns:
+    minmax(0, 1fr)
+    minmax(0, 1fr)
+    var(--diff-overview-width);
   border-bottom: 1px solid var(--color-divider);
   background: var(--color-background);
+}
+
+.diff-preview-pinned-column-title {
+  overflow: hidden;
   color: var(--muted);
   font-family: Inter, ui-sans-serif, system-ui, sans-serif;
   font-size: 0.72rem;
   font-weight: 700;
   padding: 7px 12px 7px 56px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
-.diff-preview-column-title.old {
+.diff-preview-pinned-column-title.old {
   border-right: 1px solid var(--color-divider);
+}
+
+.diff-preview-grid {
+  display: grid;
+  min-width: 720px;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
 }
 
 .diff-preview-row {
@@ -1327,6 +1359,92 @@ button.account-switcher-item:hover:not(:disabled) {
 
 .diff-preview-inline .diff-preview-cell {
   grid-template-columns: 52px minmax(0, 1fr);
+}
+
+.diff-overview-ruler {
+  position: absolute;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 6;
+  width: var(--diff-overview-width);
+  padding: 0;
+  outline: none;
+}
+
+.diff-overview-track {
+  position: relative;
+  overflow: hidden;
+  width: 100%;
+  height: 100%;
+  border: 0;
+  border-radius: 0;
+  background:
+    linear-gradient(
+      to right,
+      transparent 0 1px,
+      rgb(var(--surface-muted-rgb) / 0.24) 1px calc(100% - 1px),
+      transparent calc(100% - 1px)
+    ),
+    rgb(var(--component-rgb) / 0.48);
+  box-shadow: none;
+  cursor: pointer;
+}
+
+.diff-overview-ruler:focus-visible .diff-overview-track {
+  background: rgb(var(--surface-muted-rgb) / 0.34);
+}
+
+.diff-overview-marker {
+  position: absolute;
+  right: 0;
+  left: 0;
+  min-height: 4px;
+  border-radius: 0;
+  opacity: 0.92;
+  box-shadow: none;
+}
+
+.diff-overview-marker.added {
+  background: rgb(var(--primary-rgb) / 0.82);
+}
+
+.diff-overview-marker.removed {
+  background: rgb(var(--error-rgb) / 0.82);
+}
+
+.diff-overview-marker.changed {
+  background: linear-gradient(
+    to bottom,
+    rgb(var(--error-rgb) / 0.82) 0 47%,
+    rgb(var(--component-rgb) / 0.4) 47% 53%,
+    rgb(var(--primary-rgb) / 0.82) 53% 100%
+  );
+}
+
+.diff-overview-thumb {
+  position: absolute;
+  right: 0;
+  left: 0;
+  min-height: 24px;
+  border: 0;
+  border-radius: 0;
+  background:
+    linear-gradient(
+      to bottom,
+      rgb(var(--surface-muted-rgb) / 0.86),
+      rgb(var(--surface-muted-rgb) / 0.68)
+    );
+  box-shadow: none;
+}
+
+.diff-overview-track:hover .diff-overview-thumb {
+  background:
+    linear-gradient(
+      to bottom,
+      rgb(var(--surface-muted-rgb) / 0.95),
+      rgb(var(--surface-muted-rgb) / 0.76)
+    );
 }
 
 .task-stack,
