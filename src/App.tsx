@@ -2063,7 +2063,10 @@ function App() {
                       <button
                         className="workspace-root-label"
                         type="button"
-                        onClick={() => selectWorkspace(workspace.id)}
+                        onClick={() => {
+                          selectWorkspace(workspace.id);
+                          toggleWorkspaceExpanded(workspace);
+                        }}
                         aria-current={selected ? "page" : undefined}
                         title={workspace.label}
                       >

@@ -363,6 +363,16 @@ button.small {
   background: transparent;
 }
 
+.workspace-tree-chevron:hover:not(:disabled),
+.workspace-tree-chevron:active:not(:disabled),
+.workspace-tree-label:hover:not(:disabled),
+.workspace-tree-label:active:not(:disabled),
+.workspace-root-label:hover:not(:disabled),
+.workspace-root-label:active:not(:disabled) {
+  background: transparent;
+  transform: none;
+}
+
 .workspace-tree-chevron {
   width: 20px;
   min-width: 20px;

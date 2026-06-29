@@ -401,6 +401,40 @@ describe("App Codex auth", () => {
     expect(screen.queryByLabelText("Selected context files")).not.toBeInTheDocument();
   });
 
+  it("toggles workspace expansion from the workspace label", async () => {
+    mocks.listWorkspaceDirectoryMock.mockResolvedValue([
+      {
+        name: "src",
+        path: "/repo/orchestrator/src",
+        relativePath: "src",
+        kind: "directory",
+      },
+    ]);
+
+    const { user } = await renderApp();
+    const workspaceNav = screen.getByRole("navigation", {
+      name: "Workspaces",
+    });
+    const workspaceButton = within(workspaceNav).getByRole("button", {
+      name: "orchestrator",
+    });
+
+    await user.click(workspaceButton);
+
+    await waitFor(() =>
+      expect(mocks.listWorkspaceDirectoryMock).toHaveBeenCalledWith(
+        workspace.path,
+        workspace.path,
+      ),
+    );
+    expect(workspaceButton).toHaveAttribute("aria-current", "page");
+    expect(await within(workspaceNav).findByRole("button", { name: "src" })).toBeInTheDocument();
+
+    await user.click(workspaceButton);
+
+    expect(within(workspaceNav).queryByRole("button", { name: "src" })).not.toBeInTheDocument();
+  });
+
   it("shows nested loading state while expanding directories", async () => {
     let resolveNestedDirectory: (entries: unknown[]) => void = () => undefined;
     const nestedDirectory = new Promise<unknown[]>((resolve) => {
