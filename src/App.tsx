@@ -153,6 +153,7 @@ const PREVIEW_DRAWER_RESIZE_STEP = 40;
 const PREVIEW_DRAWER_RESIZE_LARGE_STEP = 80;
 const DIFF_DRAWER_PREFERRED_WIDTH = 860;
 const DIFF_SIDE_BY_SIDE_MIN_WIDTH = 760;
+const GIT_STATUS_AUTO_REFRESH_INTERVAL_MS = 3000;
 
 type AppView = "task" | "runs" | "analytics" | "settings";
 
@@ -185,8 +186,34 @@ type WorkspaceGitStatusState = {
   error: string | null;
 };
 
+type RefreshWorkspaceGitStatusOptions = {
+  showLoading?: boolean;
+};
+
 function workspaceCacheKey(workspacePath: string, childPath: string) {
   return `${workspacePath}\u0000${childPath}`;
+}
+
+function gitStatusSnapshotKey(snapshot: WorkspaceGitStatusSnapshot | null) {
+  if (!snapshot) {
+    return "";
+  }
+
+  const files = snapshot.files
+    .map((file) =>
+      [
+        file.relativePath,
+        file.oldRelativePath ?? "",
+        file.indexStatus,
+        file.worktreeStatus,
+        file.statusKind,
+        file.badge,
+      ].join("\u0000"),
+    )
+    .sort()
+    .join("\u0001");
+
+  return [snapshot.workspacePath, snapshot.gitRoot, files].join("\u0002");
 }
 
 class DuplicateCodexAccountError extends Error {
@@ -358,6 +385,7 @@ function App() {
   const modelsRef = useRef<CodexModel[]>([]);
   const modelLoadErrorRef = useRef<string | null>(null);
   const previewRequestId = useRef(0);
+  const gitStatusRefreshCache = useRef(new Map<number, Promise<void>>());
 
   const improvedPrompt = useMemo(() => improvePrompt(prompt), [prompt]);
   const routeRecommendation = useMemo(() => recommendRoute(prompt), [prompt]);
@@ -538,6 +566,36 @@ function App() {
     void refreshWorkspaceData(selectedWorkspace.id);
     void refreshBranches(selectedWorkspace);
     void refreshWorkspaceGitStatus(selectedWorkspace);
+  }, [selectedWorkspace]);
+
+  useEffect(() => {
+    if (!selectedWorkspace) {
+      return;
+    }
+
+    let cancelled = false;
+    let timeoutId: number | null = null;
+
+    const scheduleRefresh = () => {
+      if (cancelled) {
+        return;
+      }
+
+      timeoutId = window.setTimeout(() => {
+        void refreshWorkspaceGitStatus(selectedWorkspace, { showLoading: false })
+          .catch(() => undefined)
+          .finally(scheduleRefresh);
+      }, GIT_STATUS_AUTO_REFRESH_INTERVAL_MS);
+    };
+
+    scheduleRefresh();
+
+    return () => {
+      cancelled = true;
+      if (timeoutId !== null) {
+        window.clearTimeout(timeoutId);
+      }
+    };
   }, [selectedWorkspace]);
 
   useEffect(() => {
@@ -814,32 +872,69 @@ function App() {
     setAnalytics(summary);
   }
 
-  async function refreshWorkspaceGitStatus(workspace: Workspace) {
-    setGitStatusStates((current) => ({
-      ...current,
-      [workspace.id]: {
-        status: "loading",
-        snapshot: current[workspace.id]?.snapshot ?? null,
-        error: null,
-      },
-    }));
+  async function refreshWorkspaceGitStatus(
+    workspace: Workspace,
+    options: RefreshWorkspaceGitStatusOptions = {},
+  ) {
+    const existingRefresh = gitStatusRefreshCache.current.get(workspace.id);
+    if (existingRefresh) {
+      return existingRefresh;
+    }
 
-    try {
-      const snapshot = await listWorkspaceGitStatus(workspace.path);
-      setGitStatusStates((current) => ({
-        ...current,
-        [workspace.id]: { status: "loaded", snapshot, error: null },
-      }));
-    } catch (error) {
+    const showLoading = options.showLoading ?? true;
+    if (showLoading) {
       setGitStatusStates((current) => ({
         ...current,
         [workspace.id]: {
-          status: "error",
-          snapshot: null,
-          error: error instanceof Error ? error.message : String(error),
+          status: "loading",
+          snapshot: current[workspace.id]?.snapshot ?? null,
+          error: null,
         },
       }));
     }
+
+    const refresh = listWorkspaceGitStatus(workspace.path)
+      .then((snapshot) => {
+        setGitStatusStates((current) => {
+          const previous = current[workspace.id];
+          if (
+            previous?.status === "loaded" &&
+            previous.error === null &&
+            gitStatusSnapshotKey(previous.snapshot) === gitStatusSnapshotKey(snapshot)
+          ) {
+            return current;
+          }
+
+          return {
+            ...current,
+            [workspace.id]: { status: "loaded", snapshot, error: null },
+          };
+        });
+      })
+      .catch((error) => {
+        const errorMessage = error instanceof Error ? error.message : String(error);
+        setGitStatusStates((current) => {
+          const previous = current[workspace.id];
+          if (previous?.status === "error" && previous.error === errorMessage) {
+            return current;
+          }
+
+          return {
+            ...current,
+            [workspace.id]: {
+              status: "error",
+              snapshot: previous?.snapshot ?? null,
+              error: errorMessage,
+            },
+          };
+        });
+      })
+      .finally(() => {
+        gitStatusRefreshCache.current.delete(workspace.id);
+      });
+
+    gitStatusRefreshCache.current.set(workspace.id, refresh);
+    return refresh;
   }
 
   async function refreshBranches(workspace: Workspace) {
@@ -2316,19 +2411,17 @@ function App() {
     const merged = [...entries];
     const directoryRelativePath = relativeDirectoryPath(workspace, directoryPath);
 
-    selectedGitStatusState?.snapshot?.files
-      .filter((file) => file.statusKind === "deleted")
-      .forEach((file) => {
-        const ghost = deletedGhostChildEntry(
-          workspace,
-          directoryRelativePath,
-          file.relativePath,
-        );
-        if (ghost && !byRelativePath.has(ghost.relativePath)) {
-          byRelativePath.set(ghost.relativePath, ghost);
-          merged.push(ghost);
-        }
-      });
+    selectedGitStatusState?.snapshot?.files.forEach((file) => {
+      const gitEntry = gitStatusChildEntry(
+        workspace,
+        directoryRelativePath,
+        file,
+      );
+      if (gitEntry && !byRelativePath.has(gitEntry.relativePath)) {
+        byRelativePath.set(gitEntry.relativePath, gitEntry);
+        merged.push(gitEntry);
+      }
+    });
 
     return merged.sort((left, right) => {
       const leftIsFile = left.kind === "file";
@@ -3176,32 +3269,34 @@ function relativeDirectoryPath(workspace: Workspace, directoryPath: string) {
     : "";
 }
 
-function deletedGhostChildEntry(
+function gitStatusChildEntry(
   workspace: Workspace,
   directoryRelativePath: string,
-  deletedRelativePath: string,
+  gitStatus: WorkspaceGitFileStatus,
 ): WorkspaceTreeEntry | null {
+  const changedRelativePath = gitStatus.relativePath;
   const directoryPrefix = directoryRelativePath
     ? `${directoryRelativePath.replace(/\/+$/, "")}/`
     : "";
-  if (!deletedRelativePath.startsWith(directoryPrefix)) {
+  if (!changedRelativePath.startsWith(directoryPrefix)) {
     return null;
   }
 
-  const remainder = deletedRelativePath.slice(directoryPrefix.length);
+  const remainder = changedRelativePath.slice(directoryPrefix.length);
   const [name] = remainder.split("/");
   if (!name) {
     return null;
   }
 
   const relativePath = directoryPrefix ? `${directoryPrefix}${name}` : name;
-  const finalPath = relativePath === deletedRelativePath;
+  const finalPath = relativePath === changedRelativePath;
+  const deleted = gitStatus.statusKind === "deleted";
   return {
     name,
-    path: joinWorkspacePath(workspace.path, relativePath),
+    path: finalPath ? gitStatus.path : joinWorkspacePath(workspace.path, relativePath),
     relativePath,
     kind: finalPath ? "file" : "directory",
-    gitGhost: true,
+    gitGhost: deleted,
   };
 }
 

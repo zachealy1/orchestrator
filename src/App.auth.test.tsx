@@ -488,6 +488,75 @@ describe("App Codex auth", () => {
     );
   });
 
+  it("auto-refreshes git status when files change outside Orchestrator", async () => {
+    const readmeEntry = {
+      name: "README.md",
+      path: "/repo/orchestrator/README.md",
+      relativePath: "README.md",
+      kind: "file" as const,
+    };
+    const externalFilePath = "/repo/orchestrator/external.md";
+    const cleanStatus = {
+      workspacePath: workspace.path,
+      gitRoot: workspace.path,
+      files: [],
+    };
+    const modifiedStatus = {
+      workspacePath: workspace.path,
+      gitRoot: workspace.path,
+      files: [
+        {
+          path: readmeEntry.path,
+          relativePath: readmeEntry.relativePath,
+          oldRelativePath: null,
+          indexStatus: " ",
+          worktreeStatus: "M",
+          statusKind: "modified",
+          badge: "M",
+        },
+        {
+          path: externalFilePath,
+          relativePath: "external.md",
+          oldRelativePath: null,
+          indexStatus: "?",
+          worktreeStatus: "?",
+          statusKind: "untracked",
+          badge: "?",
+        },
+      ],
+    };
+
+    mocks.listWorkspaceDirectoryMock.mockResolvedValue([readmeEntry]);
+    mocks.listWorkspaceGitStatusMock
+      .mockResolvedValueOnce(cleanStatus)
+      .mockResolvedValueOnce(modifiedStatus)
+      .mockResolvedValue(modifiedStatus);
+
+    const { user } = await renderApp();
+    const workspaceNav = screen.getByRole("navigation", {
+      name: "Workspaces",
+    });
+
+    await user.click(
+      within(workspaceNav).getByRole("button", { name: "Expand orchestrator" }),
+    );
+
+    expect(await within(workspaceNav).findByTitle("README.md")).toBeInTheDocument();
+    expect(within(workspaceNav).queryByLabelText("modified file")).not.toBeInTheDocument();
+    expect(within(workspaceNav).queryByTitle("external.md")).not.toBeInTheDocument();
+
+    await waitFor(
+      () =>
+        expect(mocks.listWorkspaceGitStatusMock.mock.calls.length).toBeGreaterThanOrEqual(
+          2,
+        ),
+      { timeout: 4500 },
+    );
+    expect(within(workspaceNav).getByLabelText("modified file")).toHaveTextContent("M");
+    expect(within(workspaceNav).getByTitle("external.md")).toBeInTheDocument();
+    expect(within(workspaceNav).getByLabelText("untracked file")).toHaveTextContent("?");
+  });
+
   it("marks changed files and parent folders in the workspace explorer", async () => {
     mocks.listWorkspaceDirectoryMock.mockResolvedValue([
       {
