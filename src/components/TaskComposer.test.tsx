@@ -140,6 +140,37 @@ describe("TaskComposer", () => {
     expect(onPlanModeChange).toHaveBeenCalledWith(true);
   });
 
+  it("requests the other mode to turn off when enabling goal or plan mode", async () => {
+    const onGoalModeChange = vi.fn();
+    const onPlanModeChange = vi.fn();
+    const { user, unmount } = renderComposer({
+      goalMode: false,
+      planMode: true,
+      onGoalModeChange,
+      onPlanModeChange,
+    });
+
+    await user.click(screen.getByRole("button", { name: /goal mode/i }));
+
+    expect(onGoalModeChange).toHaveBeenCalledWith(true);
+    expect(onPlanModeChange).toHaveBeenCalledWith(false);
+
+    unmount();
+    onGoalModeChange.mockClear();
+    onPlanModeChange.mockClear();
+    renderComposer({
+      goalMode: true,
+      planMode: false,
+      onGoalModeChange,
+      onPlanModeChange,
+    });
+
+    await user.click(screen.getByRole("button", { name: /plan mode/i }));
+
+    expect(onPlanModeChange).toHaveBeenCalledWith(true);
+    expect(onGoalModeChange).toHaveBeenCalledWith(false);
+  });
+
   it("keeps Add files beside the mode controls and removes file search", () => {
     renderComposer();
 

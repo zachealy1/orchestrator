@@ -2282,6 +2282,20 @@ function App() {
     setPreviewDrawerWidth((current) => clampPreviewDrawerWidth(current + delta));
   }, []);
 
+  const handleGoalModeChange = useCallback((nextGoalMode: boolean) => {
+    setGoalMode(nextGoalMode);
+    if (nextGoalMode) {
+      setPlanMode(false);
+    }
+  }, []);
+
+  const handlePlanModeChange = useCallback((nextPlanMode: boolean) => {
+    setPlanMode(nextPlanMode);
+    if (nextPlanMode) {
+      setGoalMode(false);
+    }
+  }, []);
+
   const growPreviewDrawerForDiff = useCallback(() => {
     setPreviewDrawerWidth((current) =>
       clampPreviewDrawerWidth(Math.max(current, DIFF_DRAWER_PREFERRED_WIDTH)),
@@ -2903,8 +2917,8 @@ function App() {
                 }}
                 onModelChange={setSelectedModelId}
                 onReasoningEffortChange={setSelectedReasoningEffort}
-                onGoalModeChange={setGoalMode}
-                onPlanModeChange={setPlanMode}
+                onGoalModeChange={handleGoalModeChange}
+                onPlanModeChange={handlePlanModeChange}
                 onAccessLevelChange={setAccessLevel}
                 onAddFiles={() => void chooseContextFiles()}
                 onContextFilesDrop={addDroppedContextFiles}

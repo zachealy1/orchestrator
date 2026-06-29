@@ -488,6 +488,21 @@ describe("App Codex auth", () => {
     );
   });
 
+  it("keeps goal mode and plan mode mutually exclusive", async () => {
+    const { user } = await renderApp();
+
+    const goalModeButton = screen.getByRole("button", { name: /goal mode/i });
+    const planModeButton = screen.getByRole("button", { name: /plan mode/i });
+
+    await user.click(goalModeButton);
+    expect(goalModeButton).toHaveAttribute("aria-pressed", "true");
+    expect(planModeButton).toHaveAttribute("aria-pressed", "false");
+
+    await user.click(planModeButton);
+    expect(planModeButton).toHaveAttribute("aria-pressed", "true");
+    expect(goalModeButton).toHaveAttribute("aria-pressed", "false");
+  });
+
   it("auto-refreshes git status when files change outside Orchestrator", async () => {
     const readmeEntry = {
       name: "README.md",

@@ -96,6 +96,22 @@ export function TaskComposer({
   const controlsDisabled = models.length === 0 || Boolean(modelLoadError);
   const planRecommended = routeRecommendation === "plan-first";
 
+  function handleGoalModeClick() {
+    const nextGoalMode = !goalMode;
+    onGoalModeChange(nextGoalMode);
+    if (nextGoalMode && planMode) {
+      onPlanModeChange(false);
+    }
+  }
+
+  function handlePlanModeClick() {
+    const nextPlanMode = !planMode;
+    onPlanModeChange(nextPlanMode);
+    if (nextPlanMode && goalMode) {
+      onGoalModeChange(false);
+    }
+  }
+
   useLayoutEffect(() => {
     const textarea = promptTextareaRef.current;
 
@@ -177,7 +193,7 @@ export function TaskComposer({
               className={`mode-toggle ${goalMode ? "active" : ""}`}
               type="button"
               aria-pressed={goalMode}
-              onClick={() => onGoalModeChange(!goalMode)}
+              onClick={handleGoalModeClick}
             >
               <Flag size={16} />
               Goal mode
@@ -187,7 +203,7 @@ export function TaskComposer({
               className={`mode-toggle ${planMode ? "active" : ""} ${planRecommended ? "recommended" : ""}`}
               type="button"
               aria-pressed={planMode}
-              onClick={() => onPlanModeChange(!planMode)}
+              onClick={handlePlanModeClick}
             >
               <BrainCircuit size={16} />
               Plan mode
