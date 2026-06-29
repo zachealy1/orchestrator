@@ -51,6 +51,9 @@
   --accent-rgb: 118 197 245;
   --error-rgb: 217 83 79;
   --shadow-rgb: 0 0 0;
+
+  --code-json-key: #005cc5;
+  --code-json-value: var(--color-text);
 }
 
 :root[data-theme="dark"] {
@@ -93,6 +96,9 @@
   --accent-rgb: 118 197 245;
   --error-rgb: 217 83 79;
   --shadow-rgb: 0 0 0;
+
+  --code-json-key: #79b8ff;
+  --code-json-value: #facc15;
 }
 
 :root {
@@ -902,20 +908,6 @@ button.account-switcher-item:hover:not(:disabled) {
   font-size: 0.78rem;
 }
 
-.file-preview-drawer pre {
-  min-height: 0;
-  overflow: auto;
-  margin: 0;
-  background: var(--color-background);
-  color: var(--text);
-  font-family: "SFMono-Regular", Consolas, monospace;
-  font-size: 0.78rem;
-  line-height: 1.55;
-  padding: 16px;
-  white-space: pre-wrap;
-  word-break: break-word;
-}
-
 .file-preview-state,
 .file-preview-notice {
   display: flex;
@@ -935,6 +927,87 @@ button.account-switcher-item:hover:not(:disabled) {
 
 .file-preview-notice {
   margin-bottom: 0;
+}
+
+.code-preview {
+  display: grid;
+  min-height: 0;
+  grid-template-rows: auto minmax(0, 1fr);
+  overflow: hidden;
+  background: var(--color-background);
+}
+
+.code-preview-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+  border-bottom: 1px solid var(--color-divider);
+  background: var(--color-component-background);
+  padding: 8px 14px;
+}
+
+.code-preview-meta span {
+  border-radius: 4px;
+  background: var(--color-surface-soft);
+  color: var(--muted);
+  font-size: 0.72rem;
+  font-weight: 700;
+  line-height: 1;
+  padding: 5px 7px;
+}
+
+.code-preview-code {
+  min-height: 0;
+  overflow: auto;
+  margin: 0;
+  background: var(--color-background);
+  color: var(--text);
+  font-family: "SFMono-Regular", Consolas, monospace;
+  font-size: 0.78rem;
+  line-height: 1.55;
+  tab-size: 2;
+}
+
+.code-preview-code code {
+  display: block;
+  padding: 12px 0;
+}
+
+.code-preview-line {
+  display: grid;
+  grid-template-columns: 52px minmax(0, 1fr);
+  min-height: 1.55em;
+}
+
+.code-preview-gutter {
+  position: sticky;
+  left: 0;
+  z-index: 1;
+  border-right: 1px solid var(--color-divider);
+  background: var(--color-background);
+  color: var(--muted);
+  padding: 0 12px;
+  text-align: right;
+  user-select: none;
+}
+
+.code-preview-source {
+  min-width: 0;
+  padding: 0 16px;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.code-preview-token.json-key {
+  color: var(--code-json-key);
+  font-weight: 650;
+}
+
+.code-preview-token.json-value {
+  color: var(--code-json-value);
+  font-weight: 540;
 }
 
 .task-stack,

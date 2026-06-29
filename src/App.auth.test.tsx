@@ -425,6 +425,66 @@ describe("App Codex auth", () => {
     expect(screen.queryByLabelText("Selected context files")).not.toBeInTheDocument();
   });
 
+  it("shows binary and truncated file preview states", async () => {
+    const binaryEntry = {
+      name: "image.png",
+      path: "/repo/orchestrator/image.png",
+      relativePath: "image.png",
+      kind: "file" as const,
+    };
+    const largeEntry = {
+      name: "large.ts",
+      path: "/repo/orchestrator/large.ts",
+      relativePath: "large.ts",
+      kind: "file" as const,
+    };
+    mocks.listWorkspaceDirectoryMock.mockResolvedValue([binaryEntry, largeEntry]);
+    mocks.readWorkspaceFilePreviewMock.mockImplementation(
+      async (_workspacePath: string, filePath: string) => {
+        if (filePath === binaryEntry.path) {
+          return {
+            path: binaryEntry.path,
+            relativePath: binaryEntry.relativePath,
+            content: "",
+            truncated: false,
+            isBinary: true,
+          };
+        }
+
+        return {
+          path: largeEntry.path,
+          relativePath: largeEntry.relativePath,
+          content: "const value = 1;",
+          truncated: true,
+          isBinary: false,
+        };
+      },
+    );
+
+    const { user } = await renderApp();
+    const workspaceNav = screen.getByRole("navigation", {
+      name: "Workspaces",
+    });
+
+    await user.click(
+      within(workspaceNav).getByRole("button", { name: "Expand orchestrator" }),
+    );
+    await user.click(await within(workspaceNav).findByRole("button", { name: "image.png" }));
+
+    expect(await screen.findByText("Binary or unsupported file preview.")).toBeInTheDocument();
+    expect(
+      screen.queryByLabelText("Highlighted file preview"),
+    ).not.toBeInTheDocument();
+
+    await user.click(within(workspaceNav).getByRole("button", { name: "large.ts" }));
+
+    expect(await screen.findByText("Preview truncated to 512 KB.")).toBeInTheDocument();
+    expect(await screen.findByText("Truncated")).toBeInTheDocument();
+    expect(screen.getByLabelText("Highlighted file preview")).toHaveTextContent(
+      "const value = 1;",
+    );
+  });
+
   it("resizes the file preview drawer horizontally", async () => {
     setWindowWidth(1200);
     const readmeEntry = {

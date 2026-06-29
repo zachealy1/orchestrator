@@ -72,6 +72,7 @@ import {
   startCodexLogin,
 } from "./codexClient";
 import { AnalyticsSummary } from "./components/AnalyticsSummary";
+import { CodePreview } from "./components/CodePreview";
 import { ComposerSelect } from "./components/ComposerSelect";
 import { RunConsole } from "./components/RunConsole";
 import { TaskComposer } from "./components/TaskComposer";
@@ -102,6 +103,7 @@ import {
   applyThemePreference,
   persistThemePreference,
   readThemePreference,
+  resolveTheme,
   watchSystemTheme,
 } from "./lib/theme";
 import { ORCHESTRATOR_CONTEXT_FILE_MIME } from "./types";
@@ -285,6 +287,9 @@ function App() {
   const [themePreference, setThemePreference] = useState<ThemePreference>(
     readThemePreference,
   );
+  const [resolvedTheme, setResolvedTheme] = useState(() =>
+    resolveTheme(readThemePreference()),
+  );
   const [prompt, setPrompt] = useState("");
   const [preflight, setPreflight] = useState<PreflightReport | null>(null);
   const [runView, setRunView] = useState<RunViewState>(emptyRunView);
@@ -432,13 +437,16 @@ function App() {
 
   useEffect(() => {
     persistThemePreference(themePreference);
-    applyThemePreference(themePreference);
+    setResolvedTheme(applyThemePreference(themePreference));
 
     if (themePreference !== "system") {
       return;
     }
 
-    return watchSystemTheme(applyDocumentTheme);
+    return watchSystemTheme((theme) => {
+      applyDocumentTheme(theme);
+      setResolvedTheme(theme);
+    });
   }, [themePreference]);
 
   useEffect(() => {
@@ -2439,7 +2447,12 @@ function App() {
                         <span>Binary or unsupported file preview.</span>
                       </div>
                     ) : (
-                      <pre>{previewState.preview.content}</pre>
+                      <CodePreview
+                        path={previewState.preview.path}
+                        content={previewState.preview.content}
+                        resolvedTheme={resolvedTheme}
+                        truncated={previewState.preview.truncated}
+                      />
                     )}
                   </>
                 ) : null}
