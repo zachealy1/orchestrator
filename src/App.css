@@ -38,6 +38,7 @@
   --color-divider: #e1e8ed;
   --color-pastel-blue: #c0deed;
   --color-error: #d9534f;
+  --color-diff-addition: #2e7d32;
   --color-shadow: #000000;
   --color-modal-backdrop: #00000073;
 
@@ -50,6 +51,7 @@
   --secondary-rgb: 29 161 242;
   --accent-rgb: 118 197 245;
   --error-rgb: 217 83 79;
+  --diff-addition-rgb: 46 125 50;
   --shadow-rgb: 0 0 0;
 
   --code-json-key: #005cc5;
@@ -83,6 +85,7 @@
   --color-divider: #445c6d;
   --color-pastel-blue: #c0deed;
   --color-error: #d9534f;
+  --color-diff-addition: #3fb950;
   --color-shadow: #000000;
   --color-modal-backdrop: #000000b3;
 
@@ -95,6 +98,7 @@
   --secondary-rgb: 85 172 238;
   --accent-rgb: 118 197 245;
   --error-rgb: 217 83 79;
+  --diff-addition-rgb: 63 185 80;
   --shadow-rgb: 0 0 0;
 
   --code-json-key: #79b8ff;
@@ -1340,7 +1344,7 @@ button.account-switcher-item:hover:not(:disabled) {
 }
 
 .diff-preview-cell.new {
-  background: rgb(var(--primary-rgb) / 0.1);
+  background: rgb(var(--diff-addition-rgb) / 0.1);
 }
 
 .diff-preview-row.unchanged .diff-preview-cell,
@@ -1353,7 +1357,7 @@ button.account-switcher-item:hover:not(:disabled) {
 }
 
 .diff-preview-row.changed .diff-preview-cell.new {
-  background: rgb(var(--primary-rgb) / 0.12);
+  background: rgb(var(--diff-addition-rgb) / 0.12);
 }
 
 .diff-preview-gutter {
@@ -1450,7 +1454,7 @@ button.account-switcher-item:hover:not(:disabled) {
 }
 
 .diff-overview-marker.added {
-  background: rgb(var(--primary-rgb) / 0.82);
+  background: rgb(var(--diff-addition-rgb) / 0.82);
 }
 
 .diff-overview-marker.removed {
@@ -1462,7 +1466,7 @@ button.account-switcher-item:hover:not(:disabled) {
     to bottom,
     rgb(var(--error-rgb) / 0.82) 0 47%,
     rgb(var(--component-rgb) / 0.4) 47% 53%,
-    rgb(var(--primary-rgb) / 0.82) 53% 100%
+    rgb(var(--diff-addition-rgb) / 0.82) 53% 100%
   );
 }
 
