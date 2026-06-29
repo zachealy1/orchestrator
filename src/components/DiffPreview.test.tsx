@@ -112,9 +112,10 @@ describe("DiffPreview", () => {
     ).toHaveTextContent("OriginalModified");
 
     const previewText = container.querySelector(".diff-preview")?.textContent ?? "";
-    expect(previewText.indexOf("Working tree changes")).toBeLessThan(
-      previewText.indexOf("Original"),
-    );
+    expect(previewText).not.toContain("Working tree changes");
+    expect(previewText).not.toContain("Index:README.txt");
+    expect(previewText).not.toContain("Working tree:README.txt");
+    expect(screen.queryByLabelText("Diff metadata")).not.toBeInTheDocument();
   });
 
   it("renders the inline fallback layout with full-file content", async () => {

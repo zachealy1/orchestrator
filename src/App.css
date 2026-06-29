@@ -1213,63 +1213,6 @@ button.account-switcher-item:hover:not(:disabled) {
   height: 0;
 }
 
-.diff-preview-section {
-  display: grid;
-  min-width: 0;
-}
-
-.diff-preview-section-header {
-  display: flex;
-  gap: 12px;
-  align-items: center;
-  justify-content: space-between;
-  border-bottom: 1px solid var(--color-divider);
-  background: var(--color-component-background);
-  padding: 8px 12px;
-}
-
-.diff-preview-section-header > div:first-child {
-  display: grid;
-  min-width: 0;
-  gap: 2px;
-}
-
-.diff-preview-section-header strong {
-  overflow: hidden;
-  color: var(--text);
-  font-family: Inter, ui-sans-serif, system-ui, sans-serif;
-  font-size: 0.76rem;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.diff-preview-section-header span {
-  overflow: hidden;
-  color: var(--muted);
-  font-family: Inter, ui-sans-serif, system-ui, sans-serif;
-  font-size: 0.7rem;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.diff-preview-badges {
-  display: inline-flex;
-  flex: 0 0 auto;
-  flex-wrap: wrap;
-  gap: 6px;
-  justify-content: flex-end;
-}
-
-.diff-preview-badges span {
-  border-radius: 4px;
-  background: var(--color-surface-soft);
-  color: var(--muted);
-  font-size: 0.68rem;
-  font-weight: 700;
-  line-height: 1;
-  padding: 5px 7px;
-}
-
 .diff-preview-pinned-column-header {
   display: grid;
   min-width: 0;

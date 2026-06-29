@@ -305,33 +305,6 @@ export const DiffPreview = memo(function DiffPreview({
 
   return (
     <div className={`diff-preview ${layout}`} aria-label="Full file diff preview">
-      <div className="diff-preview-summary">
-        {renderSections.map(({ id, section }) => {
-          const highlight = highlights[id] ?? {
-            base: fallbackHighlight(section.baseContent),
-            head: fallbackHighlight(section.headContent),
-            fallback: false,
-          };
-
-          return (
-            <header className="diff-preview-section-header" key={id}>
-              <div>
-                <strong>{section.title}</strong>
-                <span>
-                  {section.baseLabel} → {section.headLabel}
-                </span>
-              </div>
-              <div className="diff-preview-badges" aria-label="Diff metadata">
-                <span>{labelLanguage(highlight.head.language)}</span>
-                {section.baseTruncated || section.headTruncated ? (
-                  <span>Truncated</span>
-                ) : null}
-                {highlight.fallback ? <span>Plain text fallback</span> : null}
-              </div>
-            </header>
-          );
-        })}
-      </div>
       {layout === "side-by-side" ? <DiffPinnedColumnHeader /> : null}
       <div className="diff-preview-body">
         <div className="diff-preview-scroll" ref={scrollRef}>
@@ -742,8 +715,4 @@ function buildFallbackVirtualRows(
     index,
     start: index * rowEstimate,
   }));
-}
-
-function labelLanguage(language: string) {
-  return language === "plaintext" ? "Plain text" : language.toUpperCase();
 }

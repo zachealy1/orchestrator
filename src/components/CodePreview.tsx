@@ -132,6 +132,7 @@ export const CodePreview = memo(function CodePreview({
     rowVirtualizer.getTotalSize(),
     lines.length * CODE_ROW_ESTIMATE_PX + CODE_VERTICAL_PADDING_PX * 2,
   );
+  const hasMeta = truncated || Boolean(highlightError);
 
   return (
     <div
@@ -139,11 +140,12 @@ export const CodePreview = memo(function CodePreview({
       data-language={language}
       data-shiki-theme={theme}
     >
-      <div className="code-preview-meta" aria-label="Preview metadata">
-        <span>{labelLanguage(language)}</span>
-        {truncated ? <span>Truncated</span> : null}
-        {highlightError ? <span>Plain text fallback</span> : null}
-      </div>
+      {hasMeta ? (
+        <div className="code-preview-meta" aria-label="Preview metadata">
+          {truncated ? <span>Truncated</span> : null}
+          {highlightError ? <span>Plain text fallback</span> : null}
+        </div>
+      ) : null}
       <pre
         className="code-preview-code"
         aria-label="Highlighted file preview"
@@ -231,8 +233,4 @@ function buildFallbackVirtualRows(
 
 function lineNumber(index: number) {
   return index + 1;
-}
-
-function labelLanguage(language: string) {
-  return language === "plaintext" ? "Plain text" : language.toUpperCase();
 }

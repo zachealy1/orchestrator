@@ -144,7 +144,8 @@ describe("CodePreview", () => {
       "data-language",
       "plaintext",
     );
-    expect(screen.getByText("Plain text")).toBeInTheDocument();
+    expect(screen.queryByText("Plain text")).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("Preview metadata")).not.toBeInTheDocument();
     expect(within(preview).getByText("1")).toBeInTheDocument();
     expect(within(preview).getByText("first line")).toBeInTheDocument();
     expect(mocks.highlightPreviewContent).not.toHaveBeenCalled();
@@ -212,6 +213,8 @@ describe("CodePreview", () => {
         { lang: "json", theme: "github-light" },
       ),
     );
+
+    await waitFor(() => expect(screen.getByText("\"name\"")).toBeInTheDocument());
 
     expect(screen.getByText("\"name\"")).toHaveClass("json-key");
     expect(screen.getByText("\"orchestrator\"")).toHaveClass("json-value");
