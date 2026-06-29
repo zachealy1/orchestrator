@@ -1,4 +1,10 @@
 import {
+  useVirtualizer,
+  type VirtualItem,
+} from "@tanstack/react-virtual";
+import {
+  memo,
+  startTransition,
   useCallback,
   useEffect,
   useMemo,
@@ -45,14 +51,36 @@ type Props = {
   layout: DiffLayout;
 };
 
+type VirtualDiffRow = {
+  sectionId: string;
+  row: DiffRow;
+};
+
+type RenderedVirtualRow = Pick<VirtualItem, "key" | "index" | "start">;
+
 const INITIAL_SCROLL_METRICS: ScrollMetrics = {
   scrollTop: 0,
   scrollHeight: 0,
   clientHeight: 0,
 };
 
-export function DiffPreview({ path, sections, resolvedTheme, layout }: Props) {
+const VIRTUAL_OVERSCAN = 30;
+const SIDE_BY_SIDE_ROW_ESTIMATE_PX = 24;
+const INLINE_ROW_ESTIMATE_PX = 44;
+const PENDING_SECTION_HIGHLIGHT: SectionHighlight = {
+  base: { language: "plaintext", lines: [] },
+  head: { language: "plaintext", lines: [] },
+  fallback: false,
+};
+
+export const DiffPreview = memo(function DiffPreview({
+  path,
+  sections,
+  resolvedTheme,
+  layout,
+}: Props) {
   const scrollRef = useRef<HTMLDivElement | null>(null);
+  const scrollMetricsFrameRef = useRef<number | null>(null);
   const renderSections = useMemo(
     () =>
       sections.map((section, index) => ({
@@ -62,13 +90,47 @@ export function DiffPreview({ path, sections, resolvedTheme, layout }: Props) {
       })),
     [sections],
   );
+  const flattenedRows = useMemo(
+    () =>
+      renderSections.flatMap(({ id, rows }) =>
+        rows.map((row) => ({
+          sectionId: id,
+          row,
+        })),
+      ),
+    [renderSections],
+  );
   const [highlights, setHighlights] = useState<Record<string, SectionHighlight>>(
     {},
   );
   const [scrollMetrics, setScrollMetrics] = useState(INITIAL_SCROLL_METRICS);
+  const rowEstimate =
+    layout === "side-by-side"
+      ? SIDE_BY_SIDE_ROW_ESTIMATE_PX
+      : INLINE_ROW_ESTIMATE_PX;
+  const rowVirtualizer = useVirtualizer({
+    count: flattenedRows.length,
+    getScrollElement: () => scrollRef.current,
+    estimateSize: () => rowEstimate,
+    overscan: VIRTUAL_OVERSCAN,
+    initialRect: { width: 900, height: 720 },
+    getItemKey: (index) => {
+      const item = flattenedRows[index];
+      return item ? `${item.sectionId}-${item.row.id}` : index;
+    },
+  });
+  const virtualRows: RenderedVirtualRow[] = rowVirtualizer.getVirtualItems();
+  const renderedRows =
+    virtualRows.length > 0
+      ? virtualRows
+      : buildFallbackVirtualRows(flattenedRows.length, rowEstimate, "diff");
+  const totalSize = Math.max(
+    rowVirtualizer.getTotalSize(),
+    flattenedRows.length * rowEstimate,
+  );
   const overviewRows = useMemo(
-    () => renderSections.flatMap(({ rows }) => rows),
-    [renderSections],
+    () => flattenedRows.map(({ row }) => row),
+    [flattenedRows],
   );
   const overviewMarkers = useMemo(
     () => buildDiffOverviewMarkers(overviewRows),
@@ -84,7 +146,7 @@ export function DiffPreview({ path, sections, resolvedTheme, layout }: Props) {
     [scrollMetrics],
   );
 
-  const updateScrollMetrics = useCallback(() => {
+  const readScrollMetrics = useCallback(() => {
     const scrollElement = scrollRef.current;
     if (!scrollElement) {
       return;
@@ -104,6 +166,17 @@ export function DiffPreview({ path, sections, resolvedTheme, layout }: Props) {
         : nextMetrics,
     );
   }, []);
+
+  const updateScrollMetrics = useCallback(() => {
+    if (scrollMetricsFrameRef.current !== null) {
+      return;
+    }
+
+    scrollMetricsFrameRef.current = window.requestAnimationFrame(() => {
+      scrollMetricsFrameRef.current = null;
+      readScrollMetrics();
+    });
+  }, [readScrollMetrics]);
 
   useEffect(() => {
     let disposed = false;
@@ -133,11 +206,13 @@ export function DiffPreview({ path, sections, resolvedTheme, layout }: Props) {
         return;
       }
 
-      setHighlights(
-        Object.fromEntries(
-          results.map((result) => [result.id, result.highlight]),
-        ),
-      );
+      startTransition(() => {
+        setHighlights(
+          Object.fromEntries(
+            results.map((result) => [result.id, result.highlight]),
+          ),
+        );
+      });
     });
 
     return () => {
@@ -151,7 +226,7 @@ export function DiffPreview({ path, sections, resolvedTheme, layout }: Props) {
       return;
     }
 
-    updateScrollMetrics();
+    readScrollMetrics();
     scrollElement.addEventListener("scroll", updateScrollMetrics, {
       passive: true,
     });
@@ -167,13 +242,17 @@ export function DiffPreview({ path, sections, resolvedTheme, layout }: Props) {
       scrollElement.removeEventListener("scroll", updateScrollMetrics);
       resizeObserver?.disconnect();
       window.removeEventListener("resize", updateScrollMetrics);
+      if (scrollMetricsFrameRef.current !== null) {
+        window.cancelAnimationFrame(scrollMetricsFrameRef.current);
+        scrollMetricsFrameRef.current = null;
+      }
     };
-  }, [updateScrollMetrics]);
+  }, [readScrollMetrics, updateScrollMetrics]);
 
   useEffect(() => {
-    const frameId = window.requestAnimationFrame(updateScrollMetrics);
+    const frameId = window.requestAnimationFrame(readScrollMetrics);
     return () => window.cancelAnimationFrame(frameId);
-  }, [highlights, layout, renderSections, updateScrollMetrics]);
+  }, [flattenedRows.length, highlights, layout, readScrollMetrics]);
 
   const jumpToOverviewRatio = useCallback(
     (ratio: number) => {
@@ -183,9 +262,9 @@ export function DiffPreview({ path, sections, resolvedTheme, layout }: Props) {
       }
 
       scrollToOverviewPosition(scrollElement, ratio);
-      updateScrollMetrics();
+      readScrollMetrics();
     },
-    [updateScrollMetrics],
+    [readScrollMetrics],
   );
 
   const navigateOverview = useCallback(
@@ -221,9 +300,9 @@ export function DiffPreview({ path, sections, resolvedTheme, layout }: Props) {
         );
       }
 
-      updateScrollMetrics();
+      readScrollMetrics();
     },
-    [updateScrollMetrics],
+    [readScrollMetrics],
   );
 
   return (
@@ -258,31 +337,23 @@ export function DiffPreview({ path, sections, resolvedTheme, layout }: Props) {
       {layout === "side-by-side" ? <DiffPinnedColumnHeader /> : null}
       <div className="diff-preview-body">
         <div className="diff-preview-scroll" ref={scrollRef}>
-          {renderSections.map(({ id, section, rows }) => {
-            const highlight = highlights[id] ?? {
-              base: fallbackHighlight(section.baseContent),
-              head: fallbackHighlight(section.headContent),
-              fallback: false,
-            };
-
-            return (
-              <section className="diff-preview-section" key={id}>
-                {layout === "side-by-side" ? (
-                  <SideBySideRows
-                    rows={rows}
-                    baseLines={highlight.base.lines}
-                    headLines={highlight.head.lines}
-                  />
-                ) : (
-                  <InlineRows
-                    rows={rows}
-                    baseLines={highlight.base.lines}
-                    headLines={highlight.head.lines}
-                  />
-                )}
-              </section>
-            );
-          })}
+          {layout === "side-by-side" ? (
+            <SideBySideRows
+              rows={flattenedRows}
+              virtualRows={renderedRows}
+              totalSize={totalSize}
+              highlights={highlights}
+              measureElement={rowVirtualizer.measureElement}
+            />
+          ) : (
+            <InlineRows
+              rows={flattenedRows}
+              virtualRows={renderedRows}
+              totalSize={totalSize}
+              highlights={highlights}
+              measureElement={rowVirtualizer.measureElement}
+            />
+          )}
         </div>
         <DiffOverviewRuler
           markers={overviewMarkers}
@@ -298,7 +369,7 @@ export function DiffPreview({ path, sections, resolvedTheme, layout }: Props) {
       </div>
     </div>
   );
-}
+});
 
 function DiffPinnedColumnHeader() {
   return (
@@ -447,69 +518,135 @@ function DiffOverviewRuler({
   );
 }
 
-function SideBySideRows({
+const SideBySideRows = memo(function SideBySideRows({
   rows,
-  baseLines,
-  headLines,
+  virtualRows,
+  totalSize,
+  highlights,
+  measureElement,
 }: {
-  rows: DiffRow[];
-  baseLines: DiffToken[][];
-  headLines: DiffToken[][];
+  rows: VirtualDiffRow[];
+  virtualRows: RenderedVirtualRow[];
+  totalSize: number;
+  highlights: Record<string, SectionHighlight>;
+  measureElement: (node: HTMLDivElement | null) => void;
 }) {
   return (
-    <div className="diff-preview-grid" role="table" aria-label="Side-by-side diff">
-      {rows.map((row) => (
-        <div className={`diff-preview-row ${row.kind}`} role="row" key={row.id}>
-          <DiffCell
-            side="old"
-            lineNumber={row.baseLineNumber}
-            tokens={tokensForLine(baseLines, row.baseLineNumber, row.baseText)}
-          />
-          <DiffCell
-            side="new"
-            lineNumber={row.headLineNumber}
-            tokens={tokensForLine(headLines, row.headLineNumber, row.headText)}
-          />
-        </div>
-      ))}
-    </div>
-  );
-}
+    <div
+      className="diff-preview-grid virtualized"
+      role="table"
+      aria-label="Side-by-side diff"
+      style={{ height: `${totalSize}px` }}
+    >
+      {virtualRows.map((virtualRow) => {
+        const item = rows[virtualRow.index];
+        if (!item) {
+          return null;
+        }
+        const row = item.row;
+        const highlight = highlights[item.sectionId] ?? PENDING_SECTION_HIGHLIGHT;
 
-function InlineRows({
-  rows,
-  baseLines,
-  headLines,
-}: {
-  rows: DiffRow[];
-  baseLines: DiffToken[][];
-  headLines: DiffToken[][];
-}) {
-  return (
-    <div className="diff-preview-inline" role="table" aria-label="Inline diff">
-      {rows.map((row) => (
-        <div className="diff-preview-inline-group" role="rowgroup" key={row.id}>
-          {row.kind !== "added" ? (
+        return (
+          <div
+            className={`diff-preview-row ${row.kind}`}
+            role="row"
+            key={virtualRow.key}
+            data-index={virtualRow.index}
+            ref={measureElement}
+            style={{ transform: `translateY(${virtualRow.start}px)` }}
+          >
             <DiffCell
-              side={row.kind === "unchanged" ? "context" : "old"}
+              side="old"
               lineNumber={row.baseLineNumber}
-              tokens={tokensForLine(baseLines, row.baseLineNumber, row.baseText)}
+              tokens={tokensForLine(
+                highlight.base.lines,
+                row.baseLineNumber,
+                row.baseText,
+              )}
             />
-          ) : null}
-          {row.kind !== "removed" && row.kind !== "unchanged" ? (
             <DiffCell
               side="new"
               lineNumber={row.headLineNumber}
-              tokens={tokensForLine(headLines, row.headLineNumber, row.headText)}
+              tokens={tokensForLine(
+                highlight.head.lines,
+                row.headLineNumber,
+                row.headText,
+              )}
             />
-          ) : null}
-        </div>
-      ))}
+          </div>
+        );
+      })}
     </div>
   );
-}
+});
 
-function DiffCell({
+const InlineRows = memo(function InlineRows({
+  rows,
+  virtualRows,
+  totalSize,
+  highlights,
+  measureElement,
+}: {
+  rows: VirtualDiffRow[];
+  virtualRows: RenderedVirtualRow[];
+  totalSize: number;
+  highlights: Record<string, SectionHighlight>;
+  measureElement: (node: HTMLDivElement | null) => void;
+}) {
+  return (
+    <div
+      className="diff-preview-inline virtualized"
+      role="table"
+      aria-label="Inline diff"
+      style={{ height: `${totalSize}px` }}
+    >
+      {virtualRows.map((virtualRow) => {
+        const item = rows[virtualRow.index];
+        if (!item) {
+          return null;
+        }
+        const row = item.row;
+        const highlight = highlights[item.sectionId] ?? PENDING_SECTION_HIGHLIGHT;
+
+        return (
+          <div
+            className="diff-preview-inline-group"
+            role="rowgroup"
+            key={virtualRow.key}
+            data-index={virtualRow.index}
+            ref={measureElement}
+            style={{ transform: `translateY(${virtualRow.start}px)` }}
+          >
+            {row.kind !== "added" ? (
+              <DiffCell
+                side={row.kind === "unchanged" ? "context" : "old"}
+                lineNumber={row.baseLineNumber}
+                tokens={tokensForLine(
+                  highlight.base.lines,
+                  row.baseLineNumber,
+                  row.baseText,
+                )}
+              />
+            ) : null}
+            {row.kind !== "removed" && row.kind !== "unchanged" ? (
+              <DiffCell
+                side="new"
+                lineNumber={row.headLineNumber}
+                tokens={tokensForLine(
+                  highlight.head.lines,
+                  row.headLineNumber,
+                  row.headText,
+                )}
+              />
+            ) : null}
+          </div>
+        );
+      })}
+    </div>
+  );
+});
+
+const DiffCell = memo(function DiffCell({
   side,
   lineNumber,
   tokens,
@@ -540,7 +677,7 @@ function DiffCell({
       </code>
     </div>
   );
-}
+});
 
 function tokensForLine(
   lines: DiffToken[][],
@@ -558,6 +695,19 @@ function fallbackHighlight(content: string): HighlightedDiffSide {
     language: "plaintext",
     lines: splitDiffLines(content).map((line) => [{ content: line }]),
   };
+}
+
+function buildFallbackVirtualRows(
+  count: number,
+  rowEstimate: number,
+  keyPrefix: string,
+): RenderedVirtualRow[] {
+  const visibleCount = Math.min(count, VIRTUAL_OVERSCAN * 2 + 1);
+  return Array.from({ length: visibleCount }, (_, index) => ({
+    key: `${keyPrefix}-fallback-${index}`,
+    index,
+    start: index * rowEstimate,
+  }));
 }
 
 function labelLanguage(language: string) {

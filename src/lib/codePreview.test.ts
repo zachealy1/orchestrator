@@ -1,8 +1,10 @@
 import { describe, expect, it } from "vitest";
 import {
   applyPreviewSemanticTokenColors,
+  clearPreviewHighlightCache,
   codePreviewTheme,
   detectPreviewLanguage,
+  highlightPreviewContent,
 } from "./codePreview";
 
 describe("codePreview", () => {
@@ -46,5 +48,21 @@ describe("codePreview", () => {
     expect(lines[0][2].semantic).toBe("json-value");
     expect(lines[1][0].semantic).toBe("json-key");
     expect(lines[1][2].semantic).toBe("json-value");
+  });
+
+  it("reuses cached highlighted token lines for identical requests", async () => {
+    clearPreviewHighlightCache();
+
+    const input = {
+      path: "/repo/src/App.ts",
+      content: "export const value = 1;",
+      language: "typescript",
+      resolvedTheme: "dark" as const,
+    };
+
+    const first = await highlightPreviewContent(input);
+    const second = await highlightPreviewContent(input);
+
+    expect(second).toBe(first);
   });
 });

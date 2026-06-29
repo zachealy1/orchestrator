@@ -96,6 +96,17 @@ export type WorkspaceGitDiff = {
   sections: WorkspaceGitDiffSection[];
 };
 
+export type WorkspacePreviewState = {
+  status: "idle" | "loading" | "loaded" | "error";
+  mode: "preview" | "diff";
+  file: WorkspaceTreeEntry | null;
+  preview: WorkspaceFilePreview | null;
+  error: string | null;
+  diffStatus: "idle" | "loading" | "loaded" | "error";
+  diff: WorkspaceGitDiff | null;
+  diffError: string | null;
+};
+
 export type PreflightCheck = {
   id: string;
   label: string;

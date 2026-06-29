@@ -439,6 +439,47 @@ describe("App Codex auth", () => {
     expect(screen.queryByLabelText("Selected context files")).not.toBeInTheDocument();
   });
 
+  it("dedupes repeated file preview requests while a preview is loading", async () => {
+    const readmeEntry = {
+      name: "README.md",
+      path: "/repo/orchestrator/README.md",
+      relativePath: "README.md",
+      kind: "file" as const,
+    };
+    let resolvePreview: (preview: unknown) => void = () => undefined;
+    const pendingPreview = new Promise((resolve) => {
+      resolvePreview = resolve;
+    });
+    mocks.listWorkspaceDirectoryMock.mockResolvedValue([readmeEntry]);
+    mocks.readWorkspaceFilePreviewMock.mockReturnValue(pendingPreview);
+
+    const { user } = await renderApp();
+    const workspaceNav = screen.getByRole("navigation", {
+      name: "Workspaces",
+    });
+
+    await user.click(
+      within(workspaceNav).getByRole("button", { name: "Expand orchestrator" }),
+    );
+    const readmeButton = await within(workspaceNav).findByRole("button", {
+      name: "README.md",
+    });
+
+    await user.click(readmeButton);
+    await user.click(readmeButton);
+
+    expect(mocks.readWorkspaceFilePreviewMock).toHaveBeenCalledTimes(1);
+
+    resolvePreview({
+      path: readmeEntry.path,
+      relativePath: readmeEntry.relativePath,
+      content: "# Cached preview",
+      truncated: false,
+      isBinary: false,
+    });
+    expect(await screen.findByText("# Cached preview")).toBeInTheDocument();
+  });
+
   it("loads git status for the selected workspace", async () => {
     await renderApp();
 
@@ -645,6 +686,10 @@ describe("App Codex auth", () => {
     expect(previewDrawer).toHaveTextContent("Old");
     expect(previewDrawer).toHaveTextContent("New");
     expect(previewDrawer).toHaveTextContent("Z");
+
+    await user.click(screen.getByRole("button", { name: "Preview" }));
+    await user.click(screen.getByRole("button", { name: "Diff" }));
+    expect(mocks.readWorkspaceGitDiffMock).toHaveBeenCalledTimes(1);
   });
 
   it("shows binary and truncated file preview states", async () => {
@@ -792,6 +837,10 @@ describe("App Codex auth", () => {
     await user.click(workspaceButton);
 
     expect(within(workspaceNav).queryByRole("button", { name: "src" })).not.toBeInTheDocument();
+
+    await user.click(workspaceButton);
+    expect(await within(workspaceNav).findByRole("button", { name: "src" })).toBeInTheDocument();
+    expect(mocks.listWorkspaceDirectoryMock).toHaveBeenCalledTimes(1);
   });
 
   it("shows nested loading state while expanding directories", async () => {

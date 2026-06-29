@@ -24,7 +24,7 @@ import {
   UserPlus,
   X,
 } from "lucide-react";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type {
   CSSProperties,
   DragEvent,
@@ -74,9 +74,8 @@ import {
   startCodexLogin,
 } from "./codexClient";
 import { AnalyticsSummary } from "./components/AnalyticsSummary";
-import { CodePreview } from "./components/CodePreview";
 import { ComposerSelect } from "./components/ComposerSelect";
-import { DiffPreview } from "./components/DiffPreview";
+import { FilePreviewDrawer } from "./components/FilePreviewDrawer";
 import { RunConsole } from "./components/RunConsole";
 import { TaskComposer } from "./components/TaskComposer";
 import {
@@ -134,6 +133,7 @@ import type {
   WorkspaceGitDiff,
   WorkspaceGitFileStatus,
   WorkspaceGitStatusSnapshot,
+  WorkspacePreviewState,
   WorkspaceTreeEntry,
 } from "./types";
 
@@ -179,22 +179,15 @@ type WorkspaceDirectoryState = {
   error: string | null;
 };
 
-type WorkspacePreviewState = {
-  status: "idle" | "loading" | "loaded" | "error";
-  mode: "preview" | "diff";
-  file: WorkspaceTreeEntry | null;
-  preview: WorkspaceFilePreview | null;
-  error: string | null;
-  diffStatus: "idle" | "loading" | "loaded" | "error";
-  diff: WorkspaceGitDiff | null;
-  diffError: string | null;
-};
-
 type WorkspaceGitStatusState = {
   status: "idle" | "loading" | "loaded" | "error";
   snapshot: WorkspaceGitStatusSnapshot | null;
   error: string | null;
 };
+
+function workspaceCacheKey(workspacePath: string, childPath: string) {
+  return `${workspacePath}\u0000${childPath}`;
+}
 
 class DuplicateCodexAccountError extends Error {
   constructor(
@@ -284,6 +277,10 @@ function App() {
   const [directoryStates, setDirectoryStates] = useState<
     Record<string, WorkspaceDirectoryState>
   >({});
+  const directoryEntriesCache = useRef(new Map<string, WorkspaceTreeEntry[]>());
+  const directoryRequestCache = useRef(
+    new Map<string, Promise<WorkspaceTreeEntry[]>>(),
+  );
   const [previewState, setPreviewState] = useState<WorkspacePreviewState>({
     status: "idle",
     mode: "preview",
@@ -294,6 +291,14 @@ function App() {
     diff: null,
     diffError: null,
   });
+  const filePreviewCache = useRef(new Map<string, WorkspaceFilePreview>());
+  const filePreviewRequestCache = useRef(
+    new Map<string, Promise<WorkspaceFilePreview>>(),
+  );
+  const fileDiffCache = useRef(new Map<string, WorkspaceGitDiff>());
+  const fileDiffRequestCache = useRef(
+    new Map<string, Promise<WorkspaceGitDiff>>(),
+  );
   const [gitStatusStates, setGitStatusStates] = useState<
     Record<number, WorkspaceGitStatusState>
   >({});
@@ -480,22 +485,32 @@ function App() {
     loginUserCode,
     requiresOpenaiAuth,
   ]);
-  const previewGitStatus = previewState.file
-    ? gitStatusByRelativePath.get(previewState.file.relativePath) ?? null
-    : null;
-  const previewDiffSections = previewState.diff?.sections ?? [];
-  const previewRenderableDiffSections = previewDiffSections.filter(
-    (section) => !section.isBinary,
+  const previewGitStatus = useMemo(
+    () =>
+      previewState.file
+        ? gitStatusByRelativePath.get(previewState.file.relativePath) ?? null
+        : null,
+    [gitStatusByRelativePath, previewState.file],
   );
-  const previewDiffHasBinary =
-    previewDiffSections.some((section) => section.isBinary);
+  const previewDiffSections = useMemo(
+    () => previewState.diff?.sections ?? [],
+    [previewState.diff],
+  );
+  const previewRenderableDiffSections = useMemo(
+    () => previewDiffSections.filter((section) => !section.isBinary),
+    [previewDiffSections],
+  );
+  const previewDiffHasBinary = useMemo(
+    () => previewDiffSections.some((section) => section.isBinary),
+    [previewDiffSections],
+  );
   const previewDiffEmpty =
-    previewState.diffStatus === "loaded" &&
-    previewDiffSections.length === 0;
+    previewState.diffStatus === "loaded" && previewDiffSections.length === 0;
   const previewDiffLayout =
     previewDrawerWidth >= DIFF_SIDE_BY_SIDE_MIN_WIDTH
       ? "side-by-side"
       : "inline";
+  const previewDrawerMaxWidth = getMaxPreviewDrawerWidth();
 
   useEffect(() => {
     void bootstrap();
@@ -1876,12 +1891,43 @@ function App() {
     directoryPath: string,
     force = false,
   ) {
+    const cacheKey = workspaceCacheKey(workspace.path, directoryPath);
     const existing = directoryStates[directoryPath];
+    const cachedEntries = directoryEntriesCache.current.get(cacheKey);
+
+    if (!force && cachedEntries) {
+      setDirectoryStates((current) => ({
+        ...current,
+        [directoryPath]: {
+          status: "loaded",
+          entries: cachedEntries,
+          error: null,
+        },
+      }));
+      return;
+    }
+
     if (
       !force &&
       (existing?.status === "loaded" || existing?.status === "loading")
     ) {
+      if (existing.status === "loaded") {
+        directoryEntriesCache.current.set(cacheKey, existing.entries);
+      }
       return;
+    }
+
+    const existingRequest = !force
+      ? directoryRequestCache.current.get(cacheKey)
+      : null;
+    const request =
+      existingRequest ??
+      listWorkspaceDirectory(workspace.path, directoryPath).finally(() => {
+        directoryRequestCache.current.delete(cacheKey);
+      });
+
+    if (!existingRequest) {
+      directoryRequestCache.current.set(cacheKey, request);
     }
 
     setDirectoryStates((current) => ({
@@ -1894,7 +1940,8 @@ function App() {
     }));
 
     try {
-      const entries = await listWorkspaceDirectory(workspace.path, directoryPath);
+      const entries = await request;
+      directoryEntriesCache.current.set(cacheKey, entries);
       setDirectoryStates((current) => ({
         ...current,
         [directoryPath]: { status: "loaded", entries, error: null },
@@ -1957,24 +2004,45 @@ function App() {
     previewRequestId.current = requestId;
     const gitStatus = gitStatusByRelativePath.get(file.relativePath) ?? null;
     const mode = gitStatus?.statusKind === "deleted" || file.gitGhost ? "diff" : "preview";
+    const cacheKey = workspaceCacheKey(workspace.path, file.path);
+    const cachedPreview = filePreviewCache.current.get(cacheKey) ?? null;
+    const cachedDiff = fileDiffCache.current.get(cacheKey) ?? null;
     setPreviewState({
-      status: mode === "preview" ? "loading" : "idle",
+      status:
+        mode === "preview"
+          ? cachedPreview
+            ? "loaded"
+            : "loading"
+          : cachedPreview
+            ? "loaded"
+            : "idle",
       mode,
       file,
-      preview: null,
+      preview: cachedPreview,
       error: null,
-      diffStatus: mode === "diff" ? "loading" : "idle",
-      diff: null,
+      diffStatus:
+        mode === "diff"
+          ? cachedDiff
+            ? "loaded"
+            : "loading"
+          : cachedDiff
+            ? "loaded"
+            : "idle",
+      diff: cachedDiff,
       diffError: null,
     });
 
     if (mode === "diff") {
       growPreviewDrawerForDiff();
-      await loadWorkspaceFileDiff(workspace, file, requestId);
+      if (!cachedDiff) {
+        await loadWorkspaceFileDiff(workspace, file, requestId);
+      }
       return;
     }
 
-    await loadWorkspaceFilePreview(workspace, file, requestId);
+    if (!cachedPreview) {
+      await loadWorkspaceFilePreview(workspace, file, requestId);
+    }
   }
 
   async function loadWorkspaceFilePreview(
@@ -1982,6 +2050,19 @@ function App() {
     file: WorkspaceTreeEntry,
     requestId = previewRequestId.current,
   ) {
+    const cacheKey = workspaceCacheKey(workspace.path, file.path);
+    const cachedPreview = filePreviewCache.current.get(cacheKey);
+    if (cachedPreview) {
+      setPreviewState((current) => ({
+        ...current,
+        status: "loaded",
+        file,
+        preview: cachedPreview,
+        error: null,
+      }));
+      return;
+    }
+
     setPreviewState((current) => ({
       ...current,
       status: "loading",
@@ -1989,7 +2070,18 @@ function App() {
     }));
 
     try {
-      const preview = await readWorkspaceFilePreview(workspace.path, file.path);
+      const existingRequest = filePreviewRequestCache.current.get(cacheKey);
+      const request =
+        existingRequest ??
+        readWorkspaceFilePreview(workspace.path, file.path).finally(() => {
+          filePreviewRequestCache.current.delete(cacheKey);
+        });
+      if (!existingRequest) {
+        filePreviewRequestCache.current.set(cacheKey, request);
+      }
+
+      const preview = await request;
+      filePreviewCache.current.set(cacheKey, preview);
       if (previewRequestId.current !== requestId) {
         return;
       }
@@ -2019,6 +2111,18 @@ function App() {
     file: WorkspaceTreeEntry,
     requestId = previewRequestId.current,
   ) {
+    const cacheKey = workspaceCacheKey(workspace.path, file.path);
+    const cachedDiff = fileDiffCache.current.get(cacheKey);
+    if (cachedDiff) {
+      setPreviewState((current) => ({
+        ...current,
+        diffStatus: "loaded",
+        diff: cachedDiff,
+        diffError: null,
+      }));
+      return;
+    }
+
     setPreviewState((current) => ({
       ...current,
       diffStatus: "loading",
@@ -2026,7 +2130,18 @@ function App() {
     }));
 
     try {
-      const diff = await readWorkspaceGitDiff(workspace.path, file.path);
+      const existingRequest = fileDiffRequestCache.current.get(cacheKey);
+      const request =
+        existingRequest ??
+        readWorkspaceGitDiff(workspace.path, file.path).finally(() => {
+          fileDiffRequestCache.current.delete(cacheKey);
+        });
+      if (!existingRequest) {
+        fileDiffRequestCache.current.set(cacheKey, request);
+      }
+
+      const diff = await request;
+      fileDiffCache.current.set(cacheKey, diff);
       if (previewRequestId.current !== requestId) {
         return;
       }
@@ -2049,26 +2164,7 @@ function App() {
     }
   }
 
-  function setWorkspacePreviewMode(mode: "preview" | "diff") {
-    const file = previewState.file;
-    const workspace = selectedWorkspace;
-    if (!file || !workspace || previewState.mode === mode) {
-      return;
-    }
-
-    setPreviewState((current) => ({ ...current, mode }));
-    if (mode === "preview" && previewState.status === "idle") {
-      void loadWorkspaceFilePreview(workspace, file);
-    }
-    if (mode === "diff" && previewState.diffStatus === "idle") {
-      growPreviewDrawerForDiff();
-      void loadWorkspaceFileDiff(workspace, file);
-    } else if (mode === "diff") {
-      growPreviewDrawerForDiff();
-    }
-  }
-
-  function closeWorkspaceFilePreview() {
+  const closeWorkspaceFilePreview = useCallback(() => {
     previewRequestId.current += 1;
     setPreviewState({
       status: "idle",
@@ -2080,26 +2176,77 @@ function App() {
       diff: null,
       diffError: null,
     });
-  }
+  }, []);
 
-  function startPreviewDrawerResize(event: ReactPointerEvent<HTMLDivElement>) {
+  const startPreviewDrawerResize = useCallback((event: ReactPointerEvent<HTMLDivElement>) => {
     event.preventDefault();
     setPreviewResizing(true);
-  }
+  }, []);
 
-  function resizePreviewDrawer(delta: number) {
+  const resizePreviewDrawer = useCallback((delta: number) => {
     setPreviewDrawerWidth((current) => clampPreviewDrawerWidth(current + delta));
-  }
+  }, []);
 
-  function growPreviewDrawerForDiff() {
+  const growPreviewDrawerForDiff = useCallback(() => {
     setPreviewDrawerWidth((current) =>
       clampPreviewDrawerWidth(Math.max(current, DIFF_DRAWER_PREFERRED_WIDTH)),
     );
-  }
+  }, []);
 
-  function handlePreviewResizeKeyDown(
+  const setWorkspacePreviewMode = useCallback((mode: "preview" | "diff") => {
+    const file = previewState.file;
+    const workspace = selectedWorkspace;
+    if (!file || !workspace || previewState.mode === mode) {
+      return;
+    }
+
+    setPreviewState((current) => ({ ...current, mode }));
+    const cacheKey = workspaceCacheKey(workspace.path, file.path);
+    const cachedPreview = filePreviewCache.current.get(cacheKey);
+    const cachedDiff = fileDiffCache.current.get(cacheKey);
+    if (mode === "preview" && cachedPreview) {
+      setPreviewState((current) => ({
+        ...current,
+        mode,
+        status: "loaded",
+        preview: cachedPreview,
+        error: null,
+      }));
+      return;
+    }
+    if (mode === "diff" && cachedDiff) {
+      growPreviewDrawerForDiff();
+      setPreviewState((current) => ({
+        ...current,
+        mode,
+        diffStatus: "loaded",
+        diff: cachedDiff,
+        diffError: null,
+      }));
+      return;
+    }
+
+    if (mode === "preview" && previewState.status === "idle") {
+      void loadWorkspaceFilePreview(workspace, file);
+    }
+    if (mode === "diff" && previewState.diffStatus === "idle") {
+      growPreviewDrawerForDiff();
+      void loadWorkspaceFileDiff(workspace, file);
+    } else if (mode === "diff") {
+      growPreviewDrawerForDiff();
+    }
+  }, [
+    growPreviewDrawerForDiff,
+    previewState.diffStatus,
+    previewState.file,
+    previewState.mode,
+    previewState.status,
+    selectedWorkspace,
+  ]);
+
+  const handlePreviewResizeKeyDown = useCallback((
     event: ReactKeyboardEvent<HTMLDivElement>,
-  ) {
+  ) => {
     const step = event.shiftKey
       ? PREVIEW_DRAWER_RESIZE_LARGE_STEP
       : PREVIEW_DRAWER_RESIZE_STEP;
@@ -2123,7 +2270,7 @@ function App() {
       event.preventDefault();
       setPreviewDrawerWidth(getMaxPreviewDrawerWidth());
     }
-  }
+  }, [resizePreviewDrawer]);
 
   function startWorkspaceFileDrag(
     event: DragEvent<HTMLButtonElement>,
@@ -2675,152 +2822,23 @@ function App() {
                 onRun={() => void launchRun()}
               />
             </section>
-            {previewState.file ? (
-              <aside
-                className={`file-preview-drawer ${
-                  previewResizing ? "resizing" : ""
-                }`}
-                aria-label="File preview"
-                aria-live="polite"
-                style={{ width: `${previewDrawerWidth}px` }}
-              >
-                <div
-                  className="file-preview-resize-handle"
-                  role="separator"
-                  tabIndex={0}
-                  aria-label="Resize file preview"
-                  aria-orientation="vertical"
-                  aria-valuemin={PREVIEW_DRAWER_MIN_WIDTH}
-                  aria-valuemax={getMaxPreviewDrawerWidth()}
-                  aria-valuenow={previewDrawerWidth}
-                  onPointerDown={startPreviewDrawerResize}
-                  onKeyDown={handlePreviewResizeKeyDown}
-                />
-                <header>
-                  <div className="file-preview-title">
-                    <p className="eyebrow">
-                      {previewState.mode === "diff" ? "Git diff" : "Preview"}
-                    </p>
-                    <h2>{previewState.file.name}</h2>
-                    <span>{previewState.file.relativePath}</span>
-                  </div>
-                  <div className="file-preview-actions">
-                    {previewGitStatus ? (
-                      <div
-                        className={`file-preview-mode-toggle mode-${previewState.mode}`}
-                        role="group"
-                        aria-label="File preview mode"
-                      >
-                        <button
-                          type="button"
-                          className={previewState.mode === "preview" ? "active" : ""}
-                          aria-pressed={previewState.mode === "preview"}
-                          onClick={() => setWorkspacePreviewMode("preview")}
-                          disabled={
-                            previewGitStatus.statusKind === "deleted" ||
-                            previewState.file.gitGhost
-                          }
-                        >
-                          Preview
-                        </button>
-                        <button
-                          type="button"
-                          className={previewState.mode === "diff" ? "active" : ""}
-                          aria-pressed={previewState.mode === "diff"}
-                          onClick={() => setWorkspacePreviewMode("diff")}
-                        >
-                          Diff
-                        </button>
-                      </div>
-                    ) : null}
-                    <button
-                      className="file-preview-close"
-                      type="button"
-                      aria-label="Close file preview"
-                      onClick={closeWorkspaceFilePreview}
-                    >
-                      <X size={15} />
-                    </button>
-                  </div>
-                </header>
-
-                {previewState.mode === "preview" && previewState.status === "loading" ? (
-                  <div className="file-preview-state">
-                    <Loader2 size={16} aria-hidden="true" />
-                    <span>Loading preview</span>
-                  </div>
-                ) : null}
-
-                {previewState.mode === "preview" && previewState.status === "error" ? (
-                  <div className="file-preview-state error">
-                    <AlertCircle size={16} aria-hidden="true" />
-                    <span>{previewState.error ?? "Unable to preview file"}</span>
-                  </div>
-                ) : null}
-
-                {previewState.mode === "preview" && previewState.status === "loaded" && previewState.preview ? (
-                  <>
-                    {previewState.preview.truncated ? (
-                      <div className="file-preview-notice">
-                        Preview truncated to 512 KB.
-                      </div>
-                    ) : null}
-                    {previewState.preview.isBinary ? (
-                      <div className="file-preview-state">
-                        <FileText size={16} aria-hidden="true" />
-                        <span>Binary or unsupported file preview.</span>
-                      </div>
-                    ) : (
-                      <CodePreview
-                        path={previewState.preview.path}
-                        content={previewState.preview.content}
-                        resolvedTheme={resolvedTheme}
-                        truncated={previewState.preview.truncated}
-                      />
-                    )}
-                  </>
-                ) : null}
-
-                {previewState.mode === "diff" && previewState.diffStatus === "loading" ? (
-                  <div className="file-preview-state">
-                    <Loader2 size={16} aria-hidden="true" />
-                    <span>Loading diff</span>
-                  </div>
-                ) : null}
-
-                {previewState.mode === "diff" && previewState.diffStatus === "error" ? (
-                  <div className="file-preview-state error">
-                    <AlertCircle size={16} aria-hidden="true" />
-                    <span>{previewState.diffError ?? "Unable to load diff"}</span>
-                  </div>
-                ) : null}
-
-                {previewState.mode === "diff" && previewState.diffStatus === "loaded" ? (
-                  <>
-                    {previewDiffHasBinary ? (
-                      <div className="file-preview-state">
-                        <FileText size={16} aria-hidden="true" />
-                        <span>Binary diff is not available.</span>
-                      </div>
-                    ) : null}
-                    {previewDiffEmpty ? (
-                      <div className="file-preview-state">
-                        <FileText size={16} aria-hidden="true" />
-                        <span>No diff available for this file.</span>
-                      </div>
-                    ) : null}
-                    {previewRenderableDiffSections.length > 0 ? (
-                      <DiffPreview
-                        path={previewState.file.relativePath}
-                        sections={previewRenderableDiffSections}
-                        resolvedTheme={resolvedTheme}
-                        layout={previewDiffLayout}
-                      />
-                    ) : null}
-                  </>
-                ) : null}
-              </aside>
-            ) : null}
+            <FilePreviewDrawer
+              previewState={previewState}
+              previewGitStatus={previewGitStatus}
+              previewRenderableDiffSections={previewRenderableDiffSections}
+              previewDiffHasBinary={previewDiffHasBinary}
+              previewDiffEmpty={previewDiffEmpty}
+              previewDiffLayout={previewDiffLayout}
+              resolvedTheme={resolvedTheme}
+              previewDrawerWidth={previewDrawerWidth}
+              previewResizing={previewResizing}
+              minWidth={PREVIEW_DRAWER_MIN_WIDTH}
+              maxWidth={previewDrawerMaxWidth}
+              onModeChange={setWorkspacePreviewMode}
+              onClose={closeWorkspaceFilePreview}
+              onResizeStart={startPreviewDrawerResize}
+              onResizeKeyDown={handlePreviewResizeKeyDown}
+            />
           </div>
         ) : null}
 

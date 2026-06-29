@@ -112,6 +112,32 @@ describe("DiffPreview", () => {
     expect(inline).toHaveTextContent("Z");
   });
 
+  it("only renders a bounded initial row slice for large diffs", async () => {
+    const baseContent = Array.from(
+      { length: 500 },
+      (_, index) => `base line ${index + 1}`,
+    ).join("\n");
+    const headContent = Array.from(
+      { length: 500 },
+      (_, index) => `head line ${index + 1}`,
+    ).join("\n");
+    const { container } = render(
+      <DiffPreview
+        path="README.txt"
+        sections={[{ ...section, baseContent, headContent }]}
+        resolvedTheme="dark"
+        layout="side-by-side"
+      />,
+    );
+
+    await screen.findByRole("table", { name: "Side-by-side diff" });
+    const renderedRows = container.querySelectorAll(".diff-preview-row");
+    expect(renderedRows.length).toBeGreaterThan(0);
+    expect(renderedRows.length).toBeLessThan(100);
+    expect(screen.getByText("base line 1")).toBeInTheDocument();
+    expect(screen.queryByText("base line 500")).not.toBeInTheDocument();
+  });
+
   it("uses the same semantic token classes as CodePreview", async () => {
     render(
       <DiffPreview

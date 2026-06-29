@@ -44,6 +44,7 @@ const mocks = vi.hoisted(() => ({
   detectPreviewLanguage: vi.fn((path: string) =>
     path.endsWith(".tsx") ? "tsx" : path.endsWith(".json") ? "json" : "plaintext",
   ),
+  highlightPreviewContent: vi.fn(),
   loadCodeHighlighter: vi.fn(),
 }));
 
@@ -51,6 +52,7 @@ vi.mock("../lib/codePreview", () => ({
   applyPreviewSemanticTokenColors: mocks.applyPreviewSemanticTokenColors,
   codePreviewTheme: mocks.codePreviewTheme,
   detectPreviewLanguage: mocks.detectPreviewLanguage,
+  highlightPreviewContent: mocks.highlightPreviewContent,
   loadCodeHighlighter: mocks.loadCodeHighlighter,
 }));
 
@@ -75,6 +77,24 @@ describe("CodePreview", () => {
     mocks.loadCodeHighlighter.mockResolvedValue({
       codeToTokens: mocks.codeToTokens,
     });
+    mocks.highlightPreviewContent.mockImplementation(
+      async ({
+        content,
+        language,
+        resolvedTheme,
+      }: {
+        content: string;
+        language: string;
+        resolvedTheme: "light" | "dark";
+      }) => {
+        const theme = mocks.codePreviewTheme(resolvedTheme);
+        const result = mocks.codeToTokens(content, {
+          lang: language,
+          theme,
+        });
+        return mocks.applyPreviewSemanticTokenColors(language, result.tokens);
+      },
+    );
   });
 
   it("renders line numbers and highlighted tokens for known extensions", async () => {
@@ -102,9 +122,11 @@ describe("CodePreview", () => {
         { lang: "tsx", theme: "github-light" },
       ),
     );
-    expect(within(preview).getByText("export")).toHaveStyle({
-      color: "#d73a49",
-    });
+    await waitFor(() =>
+      expect(within(preview).getByText("export")).toHaveStyle({
+        color: "#d73a49",
+      }),
+    );
   });
 
   it("renders unknown extensions as plaintext with the same code layout", () => {
@@ -125,7 +147,7 @@ describe("CodePreview", () => {
     expect(screen.getByText("Plain text")).toBeInTheDocument();
     expect(within(preview).getByText("1")).toBeInTheDocument();
     expect(within(preview).getByText("first line")).toBeInTheDocument();
-    expect(mocks.loadCodeHighlighter).not.toHaveBeenCalled();
+    expect(mocks.highlightPreviewContent).not.toHaveBeenCalled();
   });
 
   it("uses the dark Shiki theme when the app is in dark mode", async () => {
@@ -214,8 +236,28 @@ describe("CodePreview", () => {
     expect(screen.getByText("Truncated")).toBeInTheDocument();
   });
 
+  it("only renders a bounded initial slice for large files", () => {
+    const content = Array.from({ length: 500 }, (_, index) => `line ${index + 1}`).join(
+      "\n",
+    );
+    const { container } = render(
+      <CodePreview
+        path="/repo/large.txt"
+        content={content}
+        resolvedTheme="light"
+        truncated={false}
+      />,
+    );
+
+    const renderedRows = container.querySelectorAll(".code-preview-line");
+    expect(renderedRows.length).toBeGreaterThan(0);
+    expect(renderedRows.length).toBeLessThan(100);
+    expect(screen.getByText("line 1")).toBeInTheDocument();
+    expect(screen.queryByText("line 500")).not.toBeInTheDocument();
+  });
+
   it("keeps the code view usable when highlighting fails", async () => {
-    mocks.loadCodeHighlighter.mockRejectedValue(new Error("grammar failed"));
+    mocks.highlightPreviewContent.mockRejectedValue(new Error("grammar failed"));
 
     render(
       <CodePreview

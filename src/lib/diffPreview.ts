@@ -1,11 +1,8 @@
 import { diffLines } from "diff";
-import type { ThemedToken, TokensResult } from "shiki/types";
 import type { ResolvedTheme } from "../types";
 import {
-  applyPreviewSemanticTokenColors,
-  codePreviewTheme,
   detectPreviewLanguage,
-  loadCodeHighlighter,
+  highlightPreviewContent,
   type PreviewSemanticToken,
 } from "./codePreview";
 
@@ -212,17 +209,18 @@ export async function highlightDiffSide(
     return { language, lines: splitDiffLines(content).map(textToTokenLine) };
   }
 
-  const highlighter = await loadCodeHighlighter();
-  const result: TokensResult = await highlighter.codeToTokens(content, {
-    lang: language as never,
-    theme: codePreviewTheme(resolvedTheme),
+  const lines = await highlightPreviewContent({
+    path,
+    content,
+    language,
+    resolvedTheme,
   });
 
   return {
     language,
-    lines: applyPreviewSemanticTokenColors(language, result.tokens).map((line) =>
+    lines: lines.map((line) =>
       line.length > 0
-        ? line.map((token: ThemedToken & { semantic?: DiffToken["semantic"] }) => ({
+        ? line.map((token) => ({
             content: token.content,
             color: token.color,
             semantic: token.semantic,
