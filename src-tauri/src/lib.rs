@@ -114,6 +114,18 @@ struct CommandProbe {
     stderr: String,
 }
 
+struct CommandBytesProbe {
+    ok: bool,
+    stdout: Vec<u8>,
+}
+
+#[derive(Debug, Clone)]
+struct PreviewText {
+    content: String,
+    truncated: bool,
+    is_binary: bool,
+}
+
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 struct GitBranchList {
@@ -125,6 +137,49 @@ struct GitBranchList {
 #[serde(rename_all = "camelCase")]
 struct GitCheckoutResult {
     branch: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct WorkspaceGitStatusSnapshot {
+    workspace_path: String,
+    git_root: String,
+    files: Vec<WorkspaceGitFileStatus>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct WorkspaceGitFileStatus {
+    path: String,
+    relative_path: String,
+    old_relative_path: Option<String>,
+    index_status: String,
+    worktree_status: String,
+    status_kind: String,
+    badge: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct WorkspaceGitDiff {
+    path: String,
+    relative_path: String,
+    sections: Vec<WorkspaceGitDiffSection>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct WorkspaceGitDiffSection {
+    kind: String,
+    title: String,
+    base_label: String,
+    head_label: String,
+    base_content: String,
+    head_content: String,
+    base_truncated: bool,
+    head_truncated: bool,
+    content: String,
+    is_binary: bool,
 }
 
 #[derive(Debug, Serialize)]
@@ -858,6 +913,140 @@ fn checkout_git_branch(path: String, branch: String) -> Result<GitCheckoutResult
 }
 
 #[tauri::command]
+fn list_workspace_git_status(
+    workspace_path: String,
+) -> Result<WorkspaceGitStatusSnapshot, String> {
+    let workspace = canonical_workspace(&workspace_path)?;
+    let git_root = resolve_git_root(&workspace)?;
+    let workspace_prefix = git_relative_path(&git_root, &workspace)?;
+    let pathspec = if workspace_prefix.is_empty() {
+        ".".to_string()
+    } else {
+        workspace_prefix.clone()
+    };
+    let git_root_arg = git_root.to_string_lossy();
+    let status_probe = run_command_raw(
+        "git",
+        &[
+            "-C",
+            git_root_arg.as_ref(),
+            "status",
+            "--porcelain=v1",
+            "-z",
+            "--untracked-files=normal",
+            "--",
+            &pathspec,
+        ],
+    );
+    if !status_probe.ok {
+        return Err(output_detail(&status_probe)
+            .unwrap_or_else(|| "Unable to read Git status".to_string()));
+    }
+
+    let mut files = Vec::new();
+    for parsed in parse_git_status_porcelain(&status_probe.stdout)? {
+        let absolute_path = git_path_to_workspace_child(&git_root, &workspace, &parsed.path)?;
+        let relative_path = relative_workspace_path(&workspace, &absolute_path)?;
+        let old_relative_path = parsed
+            .old_path
+            .as_ref()
+            .and_then(|old_path| {
+                git_path_to_workspace_child(&git_root, &workspace, old_path).ok()
+            })
+            .and_then(|old_absolute| relative_workspace_path(&workspace, &old_absolute).ok());
+
+        files.push(WorkspaceGitFileStatus {
+            path: absolute_path.to_string_lossy().to_string(),
+            relative_path,
+            old_relative_path,
+            index_status: parsed.index_status.to_string(),
+            worktree_status: parsed.worktree_status.to_string(),
+            status_kind: git_status_kind(parsed.index_status, parsed.worktree_status).to_string(),
+            badge: git_status_badge(parsed.index_status, parsed.worktree_status).to_string(),
+        });
+    }
+
+    files.sort_by(|left, right| left.relative_path.cmp(&right.relative_path));
+
+    Ok(WorkspaceGitStatusSnapshot {
+        workspace_path: workspace.to_string_lossy().to_string(),
+        git_root: git_root.to_string_lossy().to_string(),
+        files,
+    })
+}
+
+#[tauri::command]
+fn read_workspace_git_diff(
+    workspace_path: String,
+    file_path: String,
+) -> Result<WorkspaceGitDiff, String> {
+    let workspace = canonical_workspace(&workspace_path)?;
+    let git_root = resolve_git_root(&workspace)?;
+    let file_path = workspace_child_path_allow_missing(&workspace, &file_path)?;
+    let relative_path = relative_workspace_path(&workspace, &file_path)?;
+    let git_path = git_relative_path(&git_root, &file_path)?;
+    let status = list_workspace_git_status(workspace.to_string_lossy().to_string())?
+        .files
+        .into_iter()
+        .find(|file| file.relative_path == relative_path);
+    let old_git_path = status
+        .as_ref()
+        .and_then(|file| file.old_relative_path.as_deref())
+        .and_then(|old_relative_path| {
+            workspace_relative_to_git_path(&git_root, &workspace, old_relative_path).ok()
+        });
+
+    let mut sections = Vec::new();
+    let staged_diff = run_git_diff(&git_root, true, &git_path)?;
+    if !staged_diff.trim().is_empty() {
+        sections.push(git_diff_section(
+            &git_root,
+            &workspace,
+            &file_path,
+            &git_path,
+            old_git_path.as_deref(),
+            "staged",
+            "Staged changes",
+            staged_diff,
+            true,
+        )?);
+    }
+
+    let unstaged_diff = run_git_diff(&git_root, false, &git_path)?;
+    if !unstaged_diff.trim().is_empty() {
+        sections.push(git_diff_section(
+            &git_root,
+            &workspace,
+            &file_path,
+            &git_path,
+            None,
+            "unstaged",
+            "Working tree changes",
+            unstaged_diff,
+            false,
+        )?);
+    }
+
+    if sections.is_empty()
+        && status
+            .as_ref()
+            .is_some_and(|file| file.status_kind == "untracked")
+    {
+        sections.push(synthetic_untracked_diff(
+            &workspace,
+            &file_path,
+            &relative_path,
+        )?);
+    }
+
+    Ok(WorkspaceGitDiff {
+        path: file_path.to_string_lossy().to_string(),
+        relative_path,
+        sections,
+    })
+}
+
+#[tauri::command]
 fn list_workspace_directory(
     workspace_path: String,
     directory_path: String,
@@ -1296,6 +1485,34 @@ fn run_command(program: impl AsRef<OsStr>, args: &[&str]) -> CommandProbe {
     }
 }
 
+fn run_command_raw(program: impl AsRef<OsStr>, args: &[&str]) -> CommandProbe {
+    match Command::new(program).args(args).output() {
+        Ok(output) => CommandProbe {
+            ok: output.status.success(),
+            stdout: String::from_utf8_lossy(&output.stdout).to_string(),
+            stderr: String::from_utf8_lossy(&output.stderr).to_string(),
+        },
+        Err(err) => CommandProbe {
+            ok: false,
+            stdout: String::new(),
+            stderr: err.to_string(),
+        },
+    }
+}
+
+fn run_command_bytes(program: impl AsRef<OsStr>, args: &[&str]) -> CommandBytesProbe {
+    match Command::new(program).args(args).output() {
+        Ok(output) => CommandBytesProbe {
+            ok: output.status.success(),
+            stdout: output.stdout,
+        },
+        Err(_) => CommandBytesProbe {
+            ok: false,
+            stdout: Vec::new(),
+        },
+    }
+}
+
 fn output_detail(probe: &CommandProbe) -> Option<String> {
     let mut detail = Vec::new();
     if !probe.stdout.trim().is_empty() {
@@ -1369,11 +1586,7 @@ fn canonical_workspace_child(
     workspace_path: &str,
     child_path: &str,
 ) -> Result<(PathBuf, PathBuf), String> {
-    let workspace = fs::canonicalize(workspace_path)
-        .map_err(|error| format!("Unable to open workspace {workspace_path}: {error}"))?;
-    if !workspace.is_dir() {
-        return Err("Selected workspace is not a directory".to_string());
-    }
+    let workspace = canonical_workspace(workspace_path)?;
 
     let child = if child_path.trim().is_empty() {
         workspace.clone()
@@ -1389,12 +1602,429 @@ fn canonical_workspace_child(
     Ok((workspace, child))
 }
 
+fn canonical_workspace(workspace_path: &str) -> Result<PathBuf, String> {
+    let workspace = fs::canonicalize(workspace_path)
+        .map_err(|error| format!("Unable to open workspace {workspace_path}: {error}"))?;
+    if !workspace.is_dir() {
+        return Err("Selected workspace is not a directory".to_string());
+    }
+    Ok(workspace)
+}
+
+fn workspace_child_path_allow_missing(
+    workspace: &Path,
+    child_path: &str,
+) -> Result<PathBuf, String> {
+    if child_path.trim().is_empty() {
+        return Err("Selected path is empty".to_string());
+    }
+
+    let raw_child = PathBuf::from(child_path);
+    if raw_child
+        .components()
+        .any(|component| matches!(component, std::path::Component::ParentDir))
+    {
+        return Err("Selected path is outside the workspace".to_string());
+    }
+
+    let candidate = if raw_child.is_absolute() {
+        raw_child
+    } else {
+        workspace.join(raw_child)
+    };
+
+    let child = if candidate.exists() {
+        fs::canonicalize(&candidate)
+            .map_err(|error| format!("Unable to open path {}: {error}", candidate.display()))?
+    } else {
+        reconstruct_missing_absolute_path(&candidate)?
+    };
+    if !child.starts_with(workspace) {
+        return Err("Selected path is outside the workspace".to_string());
+    }
+
+    Ok(child)
+}
+
 fn relative_workspace_path(workspace: &Path, path: &Path) -> Result<String, String> {
     let relative = path
         .strip_prefix(workspace)
         .map_err(|_| "Selected path is outside the workspace".to_string())?;
 
     Ok(relative.to_string_lossy().replace('\\', "/"))
+}
+
+fn resolve_git_root(workspace: &Path) -> Result<PathBuf, String> {
+    let workspace_arg = workspace.to_string_lossy();
+    let root_probe = run_command(
+        "git",
+        &["-C", workspace_arg.as_ref(), "rev-parse", "--show-toplevel"],
+    );
+    if !root_probe.ok {
+        return Err(output_detail(&root_probe).unwrap_or_else(|| {
+            "Selected folder is not inside a Git repository".to_string()
+        }));
+    }
+
+    let root = PathBuf::from(root_probe.stdout.trim());
+    let root = fs::canonicalize(&root)
+        .map_err(|error| format!("Unable to open Git root {}: {error}", root.display()))?;
+    if !workspace.starts_with(&root) {
+        return Err("Selected workspace is outside the Git repository".to_string());
+    }
+    Ok(root)
+}
+
+fn git_relative_path(git_root: &Path, path: &Path) -> Result<String, String> {
+    let relative = path
+        .strip_prefix(git_root)
+        .map_err(|_| "Selected path is outside the Git repository".to_string())?;
+    let relative = relative.to_string_lossy().replace('\\', "/");
+    Ok(relative)
+}
+
+fn git_path_to_workspace_child(
+    git_root: &Path,
+    workspace: &Path,
+    git_path: &str,
+) -> Result<PathBuf, String> {
+    if git_path.trim().is_empty()
+        || Path::new(git_path).is_absolute()
+        || git_path
+            .split('/')
+            .any(|component| component.is_empty() || component == "." || component == "..")
+    {
+        return Err("Git returned an unsafe path".to_string());
+    }
+
+    let absolute = git_root.join(git_path);
+    if !absolute.starts_with(workspace) {
+        return Err("Git path is outside the selected workspace".to_string());
+    }
+    Ok(absolute)
+}
+
+fn workspace_relative_to_git_path(
+    git_root: &Path,
+    workspace: &Path,
+    workspace_relative_path: &str,
+) -> Result<String, String> {
+    if workspace_relative_path.trim().is_empty()
+        || Path::new(workspace_relative_path).is_absolute()
+        || workspace_relative_path
+            .split('/')
+            .any(|component| component.is_empty() || component == "." || component == "..")
+    {
+        return Err("Selected path is outside the workspace".to_string());
+    }
+
+    let workspace_prefix = git_relative_path(git_root, workspace)?;
+    let git_path = if workspace_prefix.is_empty() {
+        workspace_relative_path.to_string()
+    } else {
+        format!("{workspace_prefix}/{workspace_relative_path}")
+    };
+    git_path_to_workspace_child(git_root, workspace, &git_path)?;
+    Ok(git_path)
+}
+
+#[derive(Debug, PartialEq)]
+struct ParsedGitStatus {
+    index_status: char,
+    worktree_status: char,
+    path: String,
+    old_path: Option<String>,
+}
+
+fn parse_git_status_porcelain(output: &str) -> Result<Vec<ParsedGitStatus>, String> {
+    let entries: Vec<&str> = output.split('\0').filter(|entry| !entry.is_empty()).collect();
+    let mut parsed = Vec::new();
+    let mut index = 0;
+
+    while index < entries.len() {
+        let entry = entries[index];
+        let mut chars = entry.chars();
+        let index_status = chars
+            .next()
+            .ok_or_else(|| "Git status entry is missing index status".to_string())?;
+        let worktree_status = chars
+            .next()
+            .ok_or_else(|| "Git status entry is missing worktree status".to_string())?;
+        let separator = chars
+            .next()
+            .ok_or_else(|| "Git status entry is missing path separator".to_string())?;
+        if separator != ' ' {
+            return Err("Git status entry has an unexpected format".to_string());
+        }
+        let path = chars.collect::<String>();
+        if path.trim().is_empty() {
+            return Err("Git status entry is missing a path".to_string());
+        }
+
+        let old_path = if matches!(index_status, 'R' | 'C')
+            || matches!(worktree_status, 'R' | 'C')
+        {
+            index += 1;
+            entries.get(index).map(|value| (*value).to_string())
+        } else {
+            None
+        };
+
+        parsed.push(ParsedGitStatus {
+            index_status,
+            worktree_status,
+            path,
+            old_path,
+        });
+        index += 1;
+    }
+
+    Ok(parsed)
+}
+
+fn git_status_kind(index_status: char, worktree_status: char) -> &'static str {
+    if git_status_is_conflicted(index_status, worktree_status) {
+        "conflicted"
+    } else if index_status == '?' && worktree_status == '?' {
+        "untracked"
+    } else if matches!(index_status, 'R') || matches!(worktree_status, 'R') {
+        "renamed"
+    } else if matches!(index_status, 'C') || matches!(worktree_status, 'C') {
+        "copied"
+    } else if matches!(index_status, 'D') || matches!(worktree_status, 'D') {
+        "deleted"
+    } else if matches!(index_status, 'A') || matches!(worktree_status, 'A') {
+        "added"
+    } else {
+        "modified"
+    }
+}
+
+fn git_status_badge(index_status: char, worktree_status: char) -> &'static str {
+    match git_status_kind(index_status, worktree_status) {
+        "conflicted" => "U",
+        "untracked" => "?",
+        "renamed" => "R",
+        "copied" => "C",
+        "deleted" => "D",
+        "added" => "A",
+        _ => "M",
+    }
+}
+
+fn git_status_is_conflicted(index_status: char, worktree_status: char) -> bool {
+    matches!(index_status, 'U')
+        || matches!(worktree_status, 'U')
+        || matches!(
+            (index_status, worktree_status),
+            ('A', 'A') | ('D', 'D') | ('A', 'D') | ('D', 'A')
+        )
+}
+
+fn run_git_diff(git_root: &Path, staged: bool, git_path: &str) -> Result<String, String> {
+    let git_root_arg = git_root.to_string_lossy();
+    let probe = if staged {
+        run_command_raw(
+            "git",
+            &[
+                "-C",
+                git_root_arg.as_ref(),
+                "diff",
+                "--cached",
+                "--no-ext-diff",
+                "--find-renames",
+                "--find-copies",
+                "--",
+                git_path,
+            ],
+        )
+    } else {
+        run_command_raw(
+            "git",
+            &[
+                "-C",
+                git_root_arg.as_ref(),
+                "diff",
+                "--no-ext-diff",
+                "--find-renames",
+                "--find-copies",
+                "--",
+                git_path,
+            ],
+        )
+    };
+
+    if probe.ok {
+        Ok(probe.stdout)
+    } else {
+        Err(output_detail(&probe).unwrap_or_else(|| "Unable to read Git diff".to_string()))
+    }
+}
+
+fn git_diff_is_binary(diff: &str) -> bool {
+    diff.lines()
+        .any(|line| line.starts_with("Binary files ") || line == "GIT binary patch")
+}
+
+fn git_diff_section(
+    git_root: &Path,
+    workspace: &Path,
+    file_path: &Path,
+    git_path: &str,
+    old_git_path: Option<&str>,
+    kind: &str,
+    title: &str,
+    diff: String,
+    staged: bool,
+) -> Result<WorkspaceGitDiffSection, String> {
+    let base_git_path = old_git_path.unwrap_or(git_path);
+    let (base_label, base) = if staged {
+        read_git_object_preview(git_root, &format!("HEAD:{base_git_path}"))?
+            .map(|preview| (format!("HEAD:{base_git_path}"), preview))
+            .unwrap_or_else(|| ("/dev/null".to_string(), empty_preview_text()))
+    } else {
+        read_git_object_preview(git_root, &format!(":{git_path}"))?
+            .map(|preview| (format!("Index:{git_path}"), preview))
+            .unwrap_or_else(|| ("/dev/null".to_string(), empty_preview_text()))
+    };
+    let (head_label, head) = if staged {
+        read_git_object_preview(git_root, &format!(":{git_path}"))?
+            .map(|preview| (format!("Index:{git_path}"), preview))
+            .unwrap_or_else(|| ("/dev/null".to_string(), empty_preview_text()))
+    } else if file_path.exists() {
+        (
+            format!("Working tree:{git_path}"),
+            read_workspace_file_preview_text(workspace, file_path)?,
+        )
+    } else {
+        ("/dev/null".to_string(), empty_preview_text())
+    };
+
+    let is_binary = git_diff_is_binary(&diff) || base.is_binary || head.is_binary;
+
+    Ok(WorkspaceGitDiffSection {
+        kind: kind.to_string(),
+        title: title.to_string(),
+        base_label,
+        head_label,
+        base_content: base.content,
+        head_content: head.content,
+        base_truncated: base.truncated,
+        head_truncated: head.truncated,
+        content: diff,
+        is_binary,
+    })
+}
+
+fn read_git_object_preview(git_root: &Path, object: &str) -> Result<Option<PreviewText>, String> {
+    let git_root_arg = git_root.to_string_lossy();
+    let probe = run_command_bytes(
+        "git",
+        &["-C", git_root_arg.as_ref(), "show", "--no-ext-diff", object],
+    );
+    if !probe.ok {
+        return Ok(None);
+    }
+
+    Ok(Some(preview_text_from_bytes(&probe.stdout)))
+}
+
+fn read_workspace_file_preview_text(workspace: &Path, file_path: &Path) -> Result<PreviewText, String> {
+    let canonical_file = fs::canonicalize(file_path)
+        .map_err(|error| format!("Unable to open {}: {error}", file_path.display()))?;
+    if !canonical_file.starts_with(workspace) {
+        return Err("Selected path is outside the workspace".to_string());
+    }
+
+    let mut file = fs::File::open(&canonical_file)
+        .map_err(|error| format!("Unable to open {}: {error}", canonical_file.display()))?;
+    let mut bytes = Vec::with_capacity(MAX_FILE_PREVIEW_BYTES + 1);
+    Read::by_ref(&mut file)
+        .take((MAX_FILE_PREVIEW_BYTES + 1) as u64)
+        .read_to_end(&mut bytes)
+        .map_err(|error| format!("Unable to read {}: {error}", canonical_file.display()))?;
+
+    Ok(preview_text_from_bytes(&bytes))
+}
+
+fn preview_text_from_bytes(bytes: &[u8]) -> PreviewText {
+    let preview_len = bytes.len().min(MAX_FILE_PREVIEW_BYTES);
+    let preview_bytes = &bytes[..preview_len];
+    let (content, is_binary) = decode_preview_text(preview_bytes);
+    PreviewText {
+        content,
+        truncated: bytes.len() > MAX_FILE_PREVIEW_BYTES,
+        is_binary,
+    }
+}
+
+fn empty_preview_text() -> PreviewText {
+    PreviewText {
+        content: String::new(),
+        truncated: false,
+        is_binary: false,
+    }
+}
+
+fn reconstruct_missing_absolute_path(path: &Path) -> Result<PathBuf, String> {
+    let mut existing = path;
+    let mut missing = Vec::new();
+
+    while !existing.exists() {
+        let file_name = existing
+            .file_name()
+            .ok_or_else(|| format!("Unable to open path {}", path.display()))?;
+        missing.push(file_name.to_os_string());
+        existing = existing
+            .parent()
+            .ok_or_else(|| format!("Unable to open path {}", path.display()))?;
+    }
+
+    let mut reconstructed = fs::canonicalize(existing)
+        .map_err(|error| format!("Unable to open path {}: {error}", existing.display()))?;
+    for component in missing.iter().rev() {
+        reconstructed.push(component);
+    }
+
+    Ok(reconstructed)
+}
+
+fn synthetic_untracked_diff(
+    workspace: &Path,
+    file_path: &Path,
+    relative_path: &str,
+) -> Result<WorkspaceGitDiffSection, String> {
+    let head = read_workspace_file_preview_text(workspace, file_path)?;
+    let diff = if head.is_binary {
+        String::new()
+    } else {
+        let mut lines = head
+            .content
+            .lines()
+            .map(|line| format!("+{line}"))
+            .collect::<Vec<_>>();
+        if head.content.ends_with('\n') {
+            lines.push(String::new());
+        }
+        format!(
+            "diff --git a/{relative_path} b/{relative_path}\nnew file mode 100644\n--- /dev/null\n+++ b/{relative_path}\n@@ -0,0 +{} @@\n{}",
+            head.content.lines().count(),
+            lines.join("\n")
+        )
+    };
+
+    Ok(WorkspaceGitDiffSection {
+        kind: "untracked".to_string(),
+        title: "Untracked file".to_string(),
+        base_label: "/dev/null".to_string(),
+        head_label: format!("Working tree:{relative_path}"),
+        base_content: String::new(),
+        head_content: head.content,
+        base_truncated: false,
+        head_truncated: head.truncated,
+        content: diff,
+        is_binary: head.is_binary,
+    })
 }
 
 fn decode_preview_text(bytes: &[u8]) -> (String, bool) {
@@ -1436,6 +2066,8 @@ pub fn run() {
             codex_delete_profile,
             list_git_branches,
             checkout_git_branch,
+            list_workspace_git_status,
+            read_workspace_git_diff,
             list_workspace_directory,
             read_workspace_file_preview,
             run_preflight
@@ -1655,6 +2287,271 @@ mod tests {
         assert!(preview.is_binary);
         assert_eq!(preview.content, "");
         remove_test_directory(workspace);
+    }
+
+    #[test]
+    fn git_status_parser_covers_all_status_kinds() {
+        let output = concat!(
+            " M src/modified.ts\0",
+            "M  src/staged.ts\0",
+            "?? src/new.ts\0",
+            "D  src/deleted.ts\0",
+            "R  src/renamed.ts\0src/old.ts\0",
+            "C  src/copied.ts\0src/source.ts\0",
+            "UU src/conflict.ts\0"
+        );
+
+        let parsed = parse_git_status_porcelain(output).unwrap();
+        let kinds: Vec<_> = parsed
+            .iter()
+            .map(|status| {
+                (
+                    status.path.as_str(),
+                    git_status_kind(status.index_status, status.worktree_status),
+                    git_status_badge(status.index_status, status.worktree_status),
+                    status.old_path.as_deref(),
+                )
+            })
+            .collect();
+
+        assert_eq!(
+            kinds,
+            vec![
+                ("src/modified.ts", "modified", "M", None),
+                ("src/staged.ts", "modified", "M", None),
+                ("src/new.ts", "untracked", "?", None),
+                ("src/deleted.ts", "deleted", "D", None),
+                ("src/renamed.ts", "renamed", "R", Some("src/old.ts")),
+                ("src/copied.ts", "copied", "C", Some("src/source.ts")),
+                ("src/conflict.ts", "conflicted", "U", None),
+            ]
+        );
+    }
+
+    #[test]
+    fn git_diff_rejects_paths_outside_workspace() {
+        let workspace = git_test_directory("git-diff-rejects");
+        let outside = test_directory("git-diff-rejects-outside");
+        let outside_file = outside.join("secret.txt");
+        fs::write(&outside_file, b"secret").unwrap();
+
+        let result = read_workspace_git_diff(
+            workspace.to_string_lossy().to_string(),
+            outside_file.to_string_lossy().to_string(),
+        );
+
+        assert!(result.unwrap_err().contains("outside the workspace"));
+        remove_test_directory(workspace);
+        remove_test_directory(outside);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn git_diff_rejects_missing_paths_through_symlinks() {
+        use std::os::unix::fs::symlink;
+
+        let workspace = git_test_directory("git-diff-symlink-rejects");
+        let outside = test_directory("git-diff-symlink-outside");
+        symlink(&outside, workspace.join("linked")).unwrap();
+
+        let result = read_workspace_git_diff(
+            workspace.to_string_lossy().to_string(),
+            workspace
+                .join("linked/missing.txt")
+                .to_string_lossy()
+                .to_string(),
+        );
+
+        assert!(result.unwrap_err().contains("outside the workspace"));
+        remove_test_directory(workspace);
+        remove_test_directory(outside);
+    }
+
+    #[test]
+    fn git_diff_returns_staged_and_unstaged_sections() {
+        let workspace = git_test_directory("git-diff-staged-unstaged");
+        let file = workspace.join("app.ts");
+        fs::write(&file, "const value = 1;\n").unwrap();
+        git(&workspace, &["add", "app.ts"]);
+        git(&workspace, &["commit", "-m", "initial"]);
+
+        fs::write(&file, "const value = 2;\n").unwrap();
+        git(&workspace, &["add", "app.ts"]);
+        fs::write(&file, "const value = 3;\n").unwrap();
+
+        let diff = read_workspace_git_diff(
+            workspace.to_string_lossy().to_string(),
+            file.to_string_lossy().to_string(),
+        )
+        .unwrap();
+        let kinds: Vec<_> = diff.sections.iter().map(|section| section.kind.as_str()).collect();
+
+        assert_eq!(kinds, vec!["staged", "unstaged"]);
+        assert!(diff.sections[0].base_content.contains("const value = 1;"));
+        assert!(diff.sections[0].head_content.contains("const value = 2;"));
+        assert!(diff.sections[0].content.contains("const value = 2;"));
+        assert!(diff.sections[1].base_content.contains("const value = 2;"));
+        assert!(diff.sections[1].head_content.contains("const value = 3;"));
+        assert!(diff.sections[1].content.contains("const value = 3;"));
+        remove_test_directory(workspace);
+    }
+
+    #[test]
+    fn git_diff_synthesizes_untracked_file_diff() {
+        let workspace = git_test_directory("git-diff-untracked");
+        let file = workspace.join("new.ts");
+        fs::write(&file, "export const value = 1;\n").unwrap();
+
+        let diff = read_workspace_git_diff(
+            workspace.to_string_lossy().to_string(),
+            file.to_string_lossy().to_string(),
+        )
+        .unwrap();
+
+        assert_eq!(diff.sections[0].kind, "untracked");
+        assert!(diff.sections[0].base_content.is_empty());
+        assert!(diff.sections[0].head_content.contains("export const value = 1;"));
+        assert!(diff.sections[0].content.contains("new file mode"));
+        assert!(diff.sections[0].content.contains("+export const value = 1;"));
+        remove_test_directory(workspace);
+    }
+
+    #[test]
+    fn git_diff_returns_deleted_file_diff() {
+        let workspace = git_test_directory("git-diff-deleted");
+        let file = workspace.join("deleted.ts");
+        fs::write(&file, "export const value = 1;\n").unwrap();
+        git(&workspace, &["add", "deleted.ts"]);
+        git(&workspace, &["commit", "-m", "initial"]);
+        fs::remove_file(&file).unwrap();
+
+        let diff = read_workspace_git_diff(
+            workspace.to_string_lossy().to_string(),
+            file.to_string_lossy().to_string(),
+        )
+        .unwrap();
+
+        assert_eq!(diff.sections[0].kind, "unstaged");
+        assert!(diff.sections[0].base_content.contains("export const value = 1;"));
+        assert!(diff.sections[0].head_content.is_empty());
+        assert!(diff.sections[0].content.contains("deleted file mode"));
+        remove_test_directory(workspace);
+    }
+
+    #[test]
+    fn git_diff_returns_deleted_file_diff_when_parent_directory_is_missing() {
+        let workspace = git_test_directory("git-diff-deleted-directory");
+        let directory = workspace.join("src");
+        let file = directory.join("deleted.ts");
+        fs::create_dir_all(&directory).unwrap();
+        fs::write(&file, "export const value = 1;\n").unwrap();
+        git(&workspace, &["add", "src/deleted.ts"]);
+        git(&workspace, &["commit", "-m", "initial"]);
+        fs::remove_dir_all(&directory).unwrap();
+
+        let diff = read_workspace_git_diff(
+            workspace.to_string_lossy().to_string(),
+            file.to_string_lossy().to_string(),
+        )
+        .unwrap();
+
+        assert_eq!(diff.sections[0].kind, "unstaged");
+        assert!(diff.sections[0].base_content.contains("export const value = 1;"));
+        assert!(diff.sections[0].head_content.is_empty());
+        assert!(diff.sections[0].content.contains("deleted file mode"));
+        remove_test_directory(workspace);
+    }
+
+    #[test]
+    fn git_diff_returns_full_contents_for_staged_renamed_files() {
+        let workspace = git_test_directory("git-diff-renamed");
+        let old_file = workspace.join("old.ts");
+        let new_file = workspace.join("new.ts");
+        fs::write(&old_file, "export const keep = true;\nexport const value = 1;\n").unwrap();
+        git(&workspace, &["add", "old.ts"]);
+        git(&workspace, &["commit", "-m", "initial"]);
+        git(&workspace, &["mv", "old.ts", "new.ts"]);
+        fs::write(&new_file, "export const keep = true;\nexport const value = 2;\n").unwrap();
+        git(&workspace, &["add", "new.ts"]);
+
+        let diff = read_workspace_git_diff(
+            workspace.to_string_lossy().to_string(),
+            new_file.to_string_lossy().to_string(),
+        )
+        .unwrap();
+
+        assert_eq!(diff.sections[0].kind, "staged");
+        assert!(diff.sections[0].base_label.contains("old.ts"));
+        assert!(diff.sections[0].base_content.contains("export const value = 1;"));
+        assert!(diff.sections[0].head_content.contains("export const value = 2;"));
+        remove_test_directory(workspace);
+    }
+
+    #[test]
+    fn git_diff_returns_full_contents_for_staged_copied_files() {
+        let workspace = git_test_directory("git-diff-copied");
+        let source_file = workspace.join("source.ts");
+        let copy_file = workspace.join("copy.ts");
+        fs::write(&source_file, "export const value = 1;\n").unwrap();
+        git(&workspace, &["add", "source.ts"]);
+        git(&workspace, &["commit", "-m", "initial"]);
+        fs::copy(&source_file, &copy_file).unwrap();
+        git(&workspace, &["add", "copy.ts"]);
+
+        let diff = read_workspace_git_diff(
+            workspace.to_string_lossy().to_string(),
+            copy_file.to_string_lossy().to_string(),
+        )
+        .unwrap();
+
+        assert_eq!(diff.sections[0].kind, "staged");
+        assert!(diff.sections[0].base_content.is_empty());
+        assert!(diff.sections[0].head_content.contains("export const value = 1;"));
+        remove_test_directory(workspace);
+    }
+
+    #[test]
+    fn git_diff_marks_tracked_binary_files() {
+        let workspace = git_test_directory("git-diff-binary");
+        let file = workspace.join("asset.bin");
+        fs::write(&file, b"before\0content").unwrap();
+        git(&workspace, &["add", "asset.bin"]);
+        git(&workspace, &["commit", "-m", "initial"]);
+        fs::write(&file, b"after\0content").unwrap();
+
+        let diff = read_workspace_git_diff(
+            workspace.to_string_lossy().to_string(),
+            file.to_string_lossy().to_string(),
+        )
+        .unwrap();
+
+        assert_eq!(diff.sections[0].kind, "unstaged");
+        assert!(diff.sections[0].is_binary);
+        remove_test_directory(workspace);
+    }
+
+    fn git_test_directory(name: &str) -> PathBuf {
+        let workspace = test_directory(name);
+        git(&workspace, &["init"]);
+        git(&workspace, &["config", "user.email", "test@example.com"]);
+        git(&workspace, &["config", "user.name", "Orchestrator Test"]);
+        workspace
+    }
+
+    fn git(workspace: &Path, args: &[&str]) {
+        let output = Command::new("git")
+            .arg("-C")
+            .arg(workspace)
+            .args(args)
+            .output()
+            .expect("run git");
+        assert!(
+            output.status.success(),
+            "git {:?} failed: {}{}",
+            args,
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
     }
 
     fn test_directory(name: &str) -> PathBuf {

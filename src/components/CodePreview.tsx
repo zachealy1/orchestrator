@@ -1,16 +1,18 @@
 import { useEffect, useMemo, useState } from "react";
-import type { ThemedToken, TokensResult } from "shiki/types";
+import type { TokensResult } from "shiki/types";
 import type { ResolvedTheme } from "../types";
 import {
+  applyPreviewSemanticTokenColors,
   codePreviewTheme,
   detectPreviewLanguage,
   loadCodeHighlighter,
+  type PreviewSemanticToken,
 } from "../lib/codePreview";
 
 type Token = {
   content: string;
   color?: string;
-  semantic?: "json-key" | "json-value";
+  semantic?: PreviewSemanticToken["semantic"];
 };
 
 type Props = {
@@ -18,10 +20,20 @@ type Props = {
   content: string;
   resolvedTheme: ResolvedTheme;
   truncated: boolean;
+  languageOverride?: string;
 };
 
-export function CodePreview({ path, content, resolvedTheme, truncated }: Props) {
-  const language = useMemo(() => detectPreviewLanguage(path), [path]);
+export function CodePreview({
+  path,
+  content,
+  resolvedTheme,
+  truncated,
+  languageOverride,
+}: Props) {
+  const language = useMemo(
+    () => languageOverride ?? detectPreviewLanguage(path),
+    [languageOverride, path],
+  );
   const [tokenLines, setTokenLines] = useState<Token[][] | null>(null);
   const [highlightError, setHighlightError] = useState<string | null>(null);
   const fallbackLines = useMemo(() => splitPreviewLines(content), [content]);
@@ -51,7 +63,7 @@ export function CodePreview({ path, content, resolvedTheme, truncated }: Props) 
         }
 
         setTokenLines(
-          applySemanticTokenColors(language, result.tokens).map((line) =>
+          applyPreviewSemanticTokenColors(language, result.tokens).map((line) =>
             line.length > 0
               ? line.map((token) => ({
                   content: token.content,
@@ -134,58 +146,4 @@ function lineNumber(index: number) {
 
 function labelLanguage(language: string) {
   return language === "plaintext" ? "Plain text" : language.toUpperCase();
-}
-
-function applySemanticTokenColors(
-  language: string,
-  tokenLines: ThemedToken[][],
-): Array<Array<ThemedToken & { semantic?: Token["semantic"] }>> {
-  if (language !== "json") {
-    return tokenLines.map((line) =>
-      line.map((token) => ({ ...token, semantic: undefined })),
-    );
-  }
-
-  const flatTokens = tokenLines.flatMap((line, lineIndex) =>
-    line.map((token, tokenIndex) => ({ lineIndex, tokenIndex, token })),
-  );
-
-  const nextSignificantToken = (index: number) => {
-    for (let nextIndex = index + 1; nextIndex < flatTokens.length; nextIndex += 1) {
-      const candidate = flatTokens[nextIndex].token.content.trim();
-      if (candidate) {
-        return candidate;
-      }
-    }
-    return null;
-  };
-
-  return tokenLines.map((line, lineIndex) =>
-    line.map((token, tokenIndex) => {
-      const flatIndex = flatTokens.findIndex(
-        (entry) => entry.lineIndex === lineIndex && entry.tokenIndex === tokenIndex,
-      );
-      const content = token.content.trim();
-      const nextToken = flatIndex >= 0 ? nextSignificantToken(flatIndex) : null;
-      const isKey = isJsonStringToken(content) && nextToken?.startsWith(":");
-      const isValue = !isKey && isJsonValueToken(content);
-
-      return {
-        ...token,
-        semantic: isKey ? "json-key" : isValue ? "json-value" : undefined,
-      };
-    }),
-  );
-}
-
-function isJsonStringToken(content: string) {
-  return /^"(?:\\.|[^"\\])*"$/.test(content);
-}
-
-function isJsonValueToken(content: string) {
-  return (
-    isJsonStringToken(content) ||
-    /^-?(?:0|[1-9]\d*)(?:\.\d+)?(?:[eE][+-]?\d+)?$/.test(content) ||
-    /^(?:true|false|null)$/.test(content)
-  );
 }

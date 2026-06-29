@@ -41,6 +41,7 @@ export type WorkspaceTreeEntry = {
   path: string;
   relativePath: string;
   kind: "directory" | "file";
+  gitGhost?: boolean;
 };
 
 export type WorkspaceFilePreview = {
@@ -49,6 +50,50 @@ export type WorkspaceFilePreview = {
   content: string;
   truncated: boolean;
   isBinary: boolean;
+};
+
+export type WorkspaceGitStatusKind =
+  | "modified"
+  | "added"
+  | "deleted"
+  | "renamed"
+  | "copied"
+  | "untracked"
+  | "conflicted";
+
+export type WorkspaceGitFileStatus = {
+  path: string;
+  relativePath: string;
+  oldRelativePath: string | null;
+  indexStatus: string;
+  worktreeStatus: string;
+  statusKind: WorkspaceGitStatusKind;
+  badge: string;
+};
+
+export type WorkspaceGitStatusSnapshot = {
+  workspacePath: string;
+  gitRoot: string;
+  files: WorkspaceGitFileStatus[];
+};
+
+export type WorkspaceGitDiffSection = {
+  kind: "staged" | "unstaged" | "untracked";
+  title: string;
+  baseLabel: string;
+  headLabel: string;
+  baseContent: string;
+  headContent: string;
+  baseTruncated: boolean;
+  headTruncated: boolean;
+  content: string;
+  isBinary: boolean;
+};
+
+export type WorkspaceGitDiff = {
+  path: string;
+  relativePath: string;
+  sections: WorkspaceGitDiffSection[];
 };
 
 export type PreflightCheck = {

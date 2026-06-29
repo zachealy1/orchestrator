@@ -1,5 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { codePreviewTheme, detectPreviewLanguage } from "./codePreview";
+import {
+  applyPreviewSemanticTokenColors,
+  codePreviewTheme,
+  detectPreviewLanguage,
+} from "./codePreview";
 
 describe("codePreview", () => {
   it("detects preview languages from common file extensions", () => {
@@ -7,6 +11,7 @@ describe("codePreview", () => {
     expect(detectPreviewLanguage("/repo/src/main.rs")).toBe("rust");
     expect(detectPreviewLanguage("/repo/package.json")).toBe("json");
     expect(detectPreviewLanguage("/repo/README.md")).toBe("markdown");
+    expect(detectPreviewLanguage("/repo/changes.diff")).toBe("diff");
     expect(detectPreviewLanguage("/repo/Dockerfile")).toBe("dockerfile");
     expect(detectPreviewLanguage("/repo/Makefile")).toBe("makefile");
   });
@@ -21,5 +26,25 @@ describe("codePreview", () => {
   it("maps app themes to Shiki themes", () => {
     expect(codePreviewTheme("light")).toBe("github-light");
     expect(codePreviewTheme("dark")).toBe("github-dark");
+  });
+
+  it("applies shared semantic token colors for JSON previews and diffs", () => {
+    const lines = applyPreviewSemanticTokenColors("json", [
+      [
+        { content: "\"name\"", color: "#005cc5", offset: 0 },
+        { content: ": ", color: "#24292e", offset: 6 },
+        { content: "\"orchestrator\"", color: "#032f62", offset: 8 },
+      ],
+      [
+        { content: "\"enabled\"", color: "#005cc5", offset: 0 },
+        { content: ": ", color: "#24292e", offset: 9 },
+        { content: "true", color: "#005cc5", offset: 11 },
+      ],
+    ]);
+
+    expect(lines[0][0].semantic).toBe("json-key");
+    expect(lines[0][2].semantic).toBe("json-value");
+    expect(lines[1][0].semantic).toBe("json-key");
+    expect(lines[1][2].semantic).toBe("json-value");
   });
 });

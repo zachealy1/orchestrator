@@ -16,6 +16,8 @@ const mocks = vi.hoisted(() => ({
   logoutCodexAccountMock: vi.fn(),
   listCodexModelsMock: vi.fn(),
   listGitBranchesMock: vi.fn(),
+  listWorkspaceGitStatusMock: vi.fn(),
+  readWorkspaceGitDiffMock: vi.fn(),
   listWorkspaceDirectoryMock: vi.fn(),
   readWorkspaceFilePreviewMock: vi.fn(),
   checkoutGitBranchMock: vi.fn(),
@@ -76,6 +78,8 @@ vi.mock("./codexClient", () => ({
   checkoutGitBranch: mocks.checkoutGitBranchMock,
   deleteCodexProfile: mocks.deleteCodexProfileMock,
   listGitBranches: mocks.listGitBranchesMock,
+  listWorkspaceGitStatus: mocks.listWorkspaceGitStatusMock,
+  readWorkspaceGitDiff: mocks.readWorkspaceGitDiffMock,
   listCodexModels: mocks.listCodexModelsMock,
   listWorkspaceDirectory: mocks.listWorkspaceDirectoryMock,
   logoutCodexAccount: mocks.logoutCodexAccountMock,
@@ -189,6 +193,16 @@ function prepareDefaults() {
   mocks.listGitBranchesMock.mockResolvedValue({
     branches: ["main"],
     currentBranch: "main",
+  });
+  mocks.listWorkspaceGitStatusMock.mockResolvedValue({
+    workspacePath: workspace.path,
+    gitRoot: workspace.path,
+    files: [],
+  });
+  mocks.readWorkspaceGitDiffMock.mockResolvedValue({
+    path: "/repo/orchestrator/README.md",
+    relativePath: "README.md",
+    sections: [],
   });
   mocks.listWorkspaceDirectoryMock.mockResolvedValue([]);
   mocks.readWorkspaceFilePreviewMock.mockResolvedValue({
@@ -409,7 +423,7 @@ describe("App Codex auth", () => {
     );
     expect(selectedWorkspaceButton).toHaveAttribute("aria-current", "page");
     expect(secondWorkspaceButton).not.toHaveAttribute("aria-current");
-    expect(await within(workspaceNav).findByRole("button", { name: "README.md" })).toBeInTheDocument();
+    expect(await within(workspaceNav).findByTitle("README.md")).toBeInTheDocument();
 
     await user.click(within(workspaceNav).getByRole("button", { name: "README.md" }));
 
@@ -423,6 +437,214 @@ describe("App Codex auth", () => {
       "# Mobile client",
     );
     expect(screen.queryByLabelText("Selected context files")).not.toBeInTheDocument();
+  });
+
+  it("loads git status for the selected workspace", async () => {
+    await renderApp();
+
+    await waitFor(() =>
+      expect(mocks.listWorkspaceGitStatusMock).toHaveBeenCalledWith(workspace.path),
+    );
+  });
+
+  it("marks changed files and parent folders in the workspace explorer", async () => {
+    mocks.listWorkspaceDirectoryMock.mockResolvedValue([
+      {
+        name: "src",
+        path: "/repo/orchestrator/src",
+        relativePath: "src",
+        kind: "directory",
+      },
+      {
+        name: "README.md",
+        path: "/repo/orchestrator/README.md",
+        relativePath: "README.md",
+        kind: "file",
+      },
+    ]);
+    mocks.listWorkspaceGitStatusMock.mockResolvedValue({
+      workspacePath: workspace.path,
+      gitRoot: workspace.path,
+      files: [
+        {
+          path: "/repo/orchestrator/README.md",
+          relativePath: "README.md",
+          oldRelativePath: null,
+          indexStatus: " ",
+          worktreeStatus: "M",
+          statusKind: "modified",
+          badge: "M",
+        },
+        {
+          path: "/repo/orchestrator/src/App.tsx",
+          relativePath: "src/App.tsx",
+          oldRelativePath: null,
+          indexStatus: " ",
+          worktreeStatus: "M",
+          statusKind: "modified",
+          badge: "M",
+        },
+      ],
+    });
+
+    const { user } = await renderApp();
+    const workspaceNav = screen.getByRole("navigation", {
+      name: "Workspaces",
+    });
+
+    await user.click(
+      within(workspaceNav).getByRole("button", { name: "Expand orchestrator" }),
+    );
+
+    expect(await within(workspaceNav).findByTitle("README.md")).toBeInTheDocument();
+    expect(within(workspaceNav).getAllByLabelText("modified file")).toHaveLength(1);
+    expect(within(workspaceNav).getAllByLabelText("Contains changes")).toHaveLength(2);
+  });
+
+  it("renders deleted ghost files and opens their git diff by default", async () => {
+    mocks.listWorkspaceDirectoryMock.mockResolvedValue([]);
+    mocks.listWorkspaceGitStatusMock.mockResolvedValue({
+      workspacePath: workspace.path,
+      gitRoot: workspace.path,
+      files: [
+        {
+          path: "/repo/orchestrator/src/old.ts",
+          relativePath: "src/old.ts",
+          oldRelativePath: null,
+          indexStatus: " ",
+          worktreeStatus: "D",
+          statusKind: "deleted",
+          badge: "D",
+        },
+      ],
+    });
+    mocks.readWorkspaceGitDiffMock.mockResolvedValue({
+      path: "/repo/orchestrator/src/old.ts",
+      relativePath: "src/old.ts",
+      sections: [
+        {
+          kind: "unstaged",
+          title: "Working tree changes",
+          baseLabel: "Index:src/old.ts",
+          headLabel: "/dev/null",
+          baseContent: "export const old = true;\n",
+          headContent: "",
+          baseTruncated: false,
+          headTruncated: false,
+          content:
+            "diff --git a/src/old.ts b/src/old.ts\n--- a/src/old.ts\n+++ /dev/null\n@@ -1 +0,0 @@\n-export const old = true;\n",
+          isBinary: false,
+        },
+      ],
+    });
+
+    const { user } = await renderApp();
+    const workspaceNav = screen.getByRole("navigation", {
+      name: "Workspaces",
+    });
+
+    await user.click(
+      within(workspaceNav).getByRole("button", { name: "Expand orchestrator" }),
+    );
+    await user.click(await within(workspaceNav).findByRole("button", { name: "Expand src" }));
+    const deletedFile = await within(workspaceNav).findByTitle("src/old.ts");
+    expect(deletedFile).toHaveAttribute("draggable", "false");
+
+    await user.click(deletedFile);
+
+    await waitFor(() =>
+      expect(mocks.readWorkspaceGitDiffMock).toHaveBeenCalledWith(
+        workspace.path,
+        "/repo/orchestrator/src/old.ts",
+      ),
+    );
+    expect(mocks.readWorkspaceFilePreviewMock).not.toHaveBeenCalledWith(
+      workspace.path,
+      "/repo/orchestrator/src/old.ts",
+    );
+    expect(screen.getByRole("button", { name: "Diff" })).toHaveClass("active");
+    expect(screen.getByRole("complementary", { name: "File preview" })).toHaveTextContent(
+      "export const old = true;",
+    );
+  });
+
+  it("opens changed files in preview mode and loads diff from the drawer toggle", async () => {
+    const readmeEntry = {
+      name: "README.md",
+      path: "/repo/orchestrator/README.md",
+      relativePath: "README.md",
+      kind: "file" as const,
+    };
+    mocks.listWorkspaceDirectoryMock.mockResolvedValue([readmeEntry]);
+    mocks.listWorkspaceGitStatusMock.mockResolvedValue({
+      workspacePath: workspace.path,
+      gitRoot: workspace.path,
+      files: [
+        {
+          path: readmeEntry.path,
+          relativePath: readmeEntry.relativePath,
+          oldRelativePath: null,
+          indexStatus: " ",
+          worktreeStatus: "M",
+          statusKind: "modified",
+          badge: "M",
+        },
+      ],
+    });
+    mocks.readWorkspaceFilePreviewMock.mockResolvedValue({
+      path: readmeEntry.path,
+      relativePath: readmeEntry.relativePath,
+      content: "# Orchestrator",
+      truncated: false,
+      isBinary: false,
+    });
+    mocks.readWorkspaceGitDiffMock.mockResolvedValue({
+      path: readmeEntry.path,
+      relativePath: readmeEntry.relativePath,
+      sections: [
+        {
+          kind: "unstaged",
+          title: "Working tree changes",
+          baseLabel: "Index:README.md",
+          headLabel: "Working tree:README.md",
+          baseContent: "A\nOld\nZ\n",
+          headContent: "A\nNew\nZ\n",
+          baseTruncated: false,
+          headTruncated: false,
+          content:
+            "diff --git a/README.md b/README.md\n@@ -1,3 +1,3 @@\n A\n-Old\n+New\n Z\n",
+          isBinary: false,
+        },
+      ],
+    });
+
+    const { user } = await renderApp();
+    const workspaceNav = screen.getByRole("navigation", {
+      name: "Workspaces",
+    });
+
+    await user.click(
+      within(workspaceNav).getByRole("button", { name: "Expand orchestrator" }),
+    );
+    await user.click(await within(workspaceNav).findByTitle("README.md"));
+
+    expect(await screen.findByText("# Orchestrator")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Preview" })).toHaveClass("active");
+
+    await user.click(screen.getByRole("button", { name: "Diff" }));
+
+    await waitFor(() =>
+      expect(mocks.readWorkspaceGitDiffMock).toHaveBeenCalledWith(
+        workspace.path,
+        readmeEntry.path,
+      ),
+    );
+    expect(screen.getByRole("button", { name: "Diff" })).toHaveClass("active");
+    const previewDrawer = screen.getByRole("complementary", { name: "File preview" });
+    expect(previewDrawer).toHaveTextContent("A");
+    expect(previewDrawer).toHaveTextContent("Old");
+    expect(previewDrawer).toHaveTextContent("New");
+    expect(previewDrawer).toHaveTextContent("Z");
   });
 
   it("shows binary and truncated file preview states", async () => {

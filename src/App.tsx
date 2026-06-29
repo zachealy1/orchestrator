@@ -61,10 +61,12 @@ import {
   deleteCodexProfile,
   listGitBranches,
   listCodexModels,
+  listWorkspaceGitStatus,
   listWorkspaceDirectory,
   logoutCodexAccount,
   readCodexFile,
   readCodexAccount,
+  readWorkspaceGitDiff,
   readWorkspaceFilePreview,
   resolveCodexServerRequest,
   runPreflight,
@@ -74,6 +76,7 @@ import {
 import { AnalyticsSummary } from "./components/AnalyticsSummary";
 import { CodePreview } from "./components/CodePreview";
 import { ComposerSelect } from "./components/ComposerSelect";
+import { DiffPreview } from "./components/DiffPreview";
 import { RunConsole } from "./components/RunConsole";
 import { TaskComposer } from "./components/TaskComposer";
 import {
@@ -128,6 +131,9 @@ import type {
   ThemePreference,
   Workspace,
   WorkspaceFilePreview,
+  WorkspaceGitDiff,
+  WorkspaceGitFileStatus,
+  WorkspaceGitStatusSnapshot,
   WorkspaceTreeEntry,
 } from "./types";
 
@@ -145,6 +151,8 @@ const PREVIEW_DRAWER_MIN_WIDTH = 360;
 const PREVIEW_DRAWER_VIEWPORT_GUTTER = 360;
 const PREVIEW_DRAWER_RESIZE_STEP = 40;
 const PREVIEW_DRAWER_RESIZE_LARGE_STEP = 80;
+const DIFF_DRAWER_PREFERRED_WIDTH = 860;
+const DIFF_SIDE_BY_SIDE_MIN_WIDTH = 760;
 
 type AppView = "task" | "runs" | "analytics" | "settings";
 
@@ -173,8 +181,18 @@ type WorkspaceDirectoryState = {
 
 type WorkspacePreviewState = {
   status: "idle" | "loading" | "loaded" | "error";
+  mode: "preview" | "diff";
   file: WorkspaceTreeEntry | null;
   preview: WorkspaceFilePreview | null;
+  error: string | null;
+  diffStatus: "idle" | "loading" | "loaded" | "error";
+  diff: WorkspaceGitDiff | null;
+  diffError: string | null;
+};
+
+type WorkspaceGitStatusState = {
+  status: "idle" | "loading" | "loaded" | "error";
+  snapshot: WorkspaceGitStatusSnapshot | null;
   error: string | null;
 };
 
@@ -268,10 +286,17 @@ function App() {
   >({});
   const [previewState, setPreviewState] = useState<WorkspacePreviewState>({
     status: "idle",
+    mode: "preview",
     file: null,
     preview: null,
     error: null,
+    diffStatus: "idle",
+    diff: null,
+    diffError: null,
   });
+  const [gitStatusStates, setGitStatusStates] = useState<
+    Record<number, WorkspaceGitStatusState>
+  >({});
   const [previewDrawerWidth, setPreviewDrawerWidth] = useState(
     PREVIEW_DRAWER_DEFAULT_WIDTH,
   );
@@ -348,6 +373,31 @@ function App() {
   const runIsActive =
     runView.status === "connecting" || runView.status === "running";
   const canRun = Boolean(selectedWorkspace && prompt.trim());
+  const selectedGitStatusState = selectedWorkspace
+    ? gitStatusStates[selectedWorkspace.id] ?? {
+        status: "idle" as const,
+        snapshot: null,
+        error: null,
+      }
+    : null;
+  const gitStatusByRelativePath = useMemo(() => {
+    const map = new Map<string, WorkspaceGitFileStatus>();
+    selectedGitStatusState?.snapshot?.files.forEach((file) => {
+      map.set(file.relativePath, file);
+    });
+    return map;
+  }, [selectedGitStatusState?.snapshot]);
+  const dirtyDirectoryPaths = useMemo(() => {
+    const paths = new Set<string>();
+    selectedGitStatusState?.snapshot?.files.forEach((file) => {
+      paths.add("");
+      const parts = file.relativePath.split("/");
+      for (let index = 1; index < parts.length; index += 1) {
+        paths.add(parts.slice(0, index).join("/"));
+      }
+    });
+    return paths;
+  }, [selectedGitStatusState?.snapshot]);
   const codexSignedIn = isCodexSignedIn(codexAccount);
   const authMessage = formatCodexAuthMessage({
     connected: codexConnected,
@@ -430,6 +480,22 @@ function App() {
     loginUserCode,
     requiresOpenaiAuth,
   ]);
+  const previewGitStatus = previewState.file
+    ? gitStatusByRelativePath.get(previewState.file.relativePath) ?? null
+    : null;
+  const previewDiffSections = previewState.diff?.sections ?? [];
+  const previewRenderableDiffSections = previewDiffSections.filter(
+    (section) => !section.isBinary,
+  );
+  const previewDiffHasBinary =
+    previewDiffSections.some((section) => section.isBinary);
+  const previewDiffEmpty =
+    previewState.diffStatus === "loaded" &&
+    previewDiffSections.length === 0;
+  const previewDiffLayout =
+    previewDrawerWidth >= DIFF_SIDE_BY_SIDE_MIN_WIDTH
+      ? "side-by-side"
+      : "inline";
 
   useEffect(() => {
     void bootstrap();
@@ -456,6 +522,7 @@ function App() {
 
     void refreshWorkspaceData(selectedWorkspace.id);
     void refreshBranches(selectedWorkspace);
+    void refreshWorkspaceGitStatus(selectedWorkspace);
   }, [selectedWorkspace]);
 
   useEffect(() => {
@@ -732,6 +799,34 @@ function App() {
     setAnalytics(summary);
   }
 
+  async function refreshWorkspaceGitStatus(workspace: Workspace) {
+    setGitStatusStates((current) => ({
+      ...current,
+      [workspace.id]: {
+        status: "loading",
+        snapshot: current[workspace.id]?.snapshot ?? null,
+        error: null,
+      },
+    }));
+
+    try {
+      const snapshot = await listWorkspaceGitStatus(workspace.path);
+      setGitStatusStates((current) => ({
+        ...current,
+        [workspace.id]: { status: "loaded", snapshot, error: null },
+      }));
+    } catch (error) {
+      setGitStatusStates((current) => ({
+        ...current,
+        [workspace.id]: {
+          status: "error",
+          snapshot: null,
+          error: error instanceof Error ? error.message : String(error),
+        },
+      }));
+    }
+  }
+
   async function refreshBranches(workspace: Workspace) {
     try {
       const result = await listGitBranches(workspace.path);
@@ -979,9 +1074,11 @@ function App() {
     try {
       await checkoutGitBranch(selectedWorkspace.path, branch);
       await refreshBranches(selectedWorkspace);
+      await refreshWorkspaceGitStatus(selectedWorkspace);
       setStatusMessage(`Working on ${selectedWorkspace.label} at ${branch}.`);
     } catch (error) {
       await refreshBranches(selectedWorkspace);
+      await refreshWorkspaceGitStatus(selectedWorkspace);
       setStatusMessage(
         `Could not switch to ${branch}: ${error instanceof Error ? error.message : String(error)}`,
       );
@@ -1718,6 +1815,7 @@ function App() {
       }
       if (selectedWorkspaceRef.current) {
         await refreshWorkspaceData(selectedWorkspaceRef.current.id);
+        await refreshWorkspaceGitStatus(selectedWorkspaceRef.current);
       }
       currentRunId.current = null;
       currentTaskId.current = null;
@@ -1830,7 +1928,11 @@ function App() {
     }
   }
 
-  function toggleDirectoryExpanded(workspace: Workspace, directoryPath: string) {
+  function toggleDirectoryExpanded(
+    workspace: Workspace,
+    directoryPath: string,
+    loadDirectory = true,
+  ) {
     const opening = !expandedDirectoryPaths.has(directoryPath);
     setExpandedDirectoryPaths((current) => {
       const next = new Set(current);
@@ -1842,7 +1944,7 @@ function App() {
       return next;
     });
 
-    if (opening) {
+    if (opening && loadDirectory) {
       void loadWorkspaceDirectory(workspace, directoryPath);
     }
   }
@@ -1853,34 +1955,116 @@ function App() {
   ) {
     const requestId = previewRequestId.current + 1;
     previewRequestId.current = requestId;
+    const gitStatus = gitStatusByRelativePath.get(file.relativePath) ?? null;
+    const mode = gitStatus?.statusKind === "deleted" || file.gitGhost ? "diff" : "preview";
     setPreviewState({
-      status: "loading",
+      status: mode === "preview" ? "loading" : "idle",
+      mode,
       file,
       preview: null,
       error: null,
+      diffStatus: mode === "diff" ? "loading" : "idle",
+      diff: null,
+      diffError: null,
     });
+
+    if (mode === "diff") {
+      growPreviewDrawerForDiff();
+      await loadWorkspaceFileDiff(workspace, file, requestId);
+      return;
+    }
+
+    await loadWorkspaceFilePreview(workspace, file, requestId);
+  }
+
+  async function loadWorkspaceFilePreview(
+    workspace: Workspace,
+    file: WorkspaceTreeEntry,
+    requestId = previewRequestId.current,
+  ) {
+    setPreviewState((current) => ({
+      ...current,
+      status: "loading",
+      error: null,
+    }));
 
     try {
       const preview = await readWorkspaceFilePreview(workspace.path, file.path);
       if (previewRequestId.current !== requestId) {
         return;
       }
-      setPreviewState({
+      setPreviewState((current) => ({
+        ...current,
         status: "loaded",
         file,
         preview,
         error: null,
-      });
+      }));
     } catch (error) {
       if (previewRequestId.current !== requestId) {
         return;
       }
-      setPreviewState({
+      setPreviewState((current) => ({
+        ...current,
         status: "error",
         file,
-        preview: null,
+        preview: current.preview,
         error: error instanceof Error ? error.message : String(error),
-      });
+      }));
+    }
+  }
+
+  async function loadWorkspaceFileDiff(
+    workspace: Workspace,
+    file: WorkspaceTreeEntry,
+    requestId = previewRequestId.current,
+  ) {
+    setPreviewState((current) => ({
+      ...current,
+      diffStatus: "loading",
+      diffError: null,
+    }));
+
+    try {
+      const diff = await readWorkspaceGitDiff(workspace.path, file.path);
+      if (previewRequestId.current !== requestId) {
+        return;
+      }
+      setPreviewState((current) => ({
+        ...current,
+        diffStatus: "loaded",
+        diff,
+        diffError: null,
+      }));
+    } catch (error) {
+      if (previewRequestId.current !== requestId) {
+        return;
+      }
+      setPreviewState((current) => ({
+        ...current,
+        diffStatus: "error",
+        diff: null,
+        diffError: error instanceof Error ? error.message : String(error),
+      }));
+    }
+  }
+
+  function setWorkspacePreviewMode(mode: "preview" | "diff") {
+    const file = previewState.file;
+    const workspace = selectedWorkspace;
+    if (!file || !workspace || previewState.mode === mode) {
+      return;
+    }
+
+    setPreviewState((current) => ({ ...current, mode }));
+    if (mode === "preview" && previewState.status === "idle") {
+      void loadWorkspaceFilePreview(workspace, file);
+    }
+    if (mode === "diff" && previewState.diffStatus === "idle") {
+      growPreviewDrawerForDiff();
+      void loadWorkspaceFileDiff(workspace, file);
+    } else if (mode === "diff") {
+      growPreviewDrawerForDiff();
     }
   }
 
@@ -1888,9 +2072,13 @@ function App() {
     previewRequestId.current += 1;
     setPreviewState({
       status: "idle",
+      mode: "preview",
       file: null,
       preview: null,
       error: null,
+      diffStatus: "idle",
+      diff: null,
+      diffError: null,
     });
   }
 
@@ -1901,6 +2089,12 @@ function App() {
 
   function resizePreviewDrawer(delta: number) {
     setPreviewDrawerWidth((current) => clampPreviewDrawerWidth(current + delta));
+  }
+
+  function growPreviewDrawerForDiff() {
+    setPreviewDrawerWidth((current) =>
+      clampPreviewDrawerWidth(Math.max(current, DIFF_DRAWER_PREFERRED_WIDTH)),
+    );
   }
 
   function handlePreviewResizeKeyDown(
@@ -1962,14 +2156,72 @@ function App() {
     );
   }
 
+  function workspaceDirectoryEntries(
+    workspace: Workspace,
+    directoryPath: string,
+    entries: WorkspaceTreeEntry[],
+  ) {
+    if (selectedWorkspace?.id !== workspace.id) {
+      return entries;
+    }
+
+    const byRelativePath = new Map(entries.map((entry) => [entry.relativePath, entry]));
+    const merged = [...entries];
+    const directoryRelativePath = relativeDirectoryPath(workspace, directoryPath);
+
+    selectedGitStatusState?.snapshot?.files
+      .filter((file) => file.statusKind === "deleted")
+      .forEach((file) => {
+        const ghost = deletedGhostChildEntry(
+          workspace,
+          directoryRelativePath,
+          file.relativePath,
+        );
+        if (ghost && !byRelativePath.has(ghost.relativePath)) {
+          byRelativePath.set(ghost.relativePath, ghost);
+          merged.push(ghost);
+        }
+      });
+
+    return merged.sort((left, right) => {
+      const leftIsFile = left.kind === "file";
+      const rightIsFile = right.kind === "file";
+      return (
+        Number(leftIsFile) - Number(rightIsFile) ||
+        left.name.toLowerCase().localeCompare(right.name.toLowerCase())
+      );
+    });
+  }
+
+  function workspaceEntryGitStatus(workspace: Workspace, entry: WorkspaceTreeEntry) {
+    if (selectedWorkspace?.id !== workspace.id) {
+      return null;
+    }
+
+    return gitStatusByRelativePath.get(entry.relativePath) ?? null;
+  }
+
+  function workspaceDirectoryHasChanges(workspace: Workspace, entry: WorkspaceTreeEntry) {
+    if (selectedWorkspace?.id !== workspace.id) {
+      return false;
+    }
+
+    return entry.kind === "directory" && dirtyDirectoryPaths.has(entry.relativePath);
+  }
+
   function renderWorkspaceDirectory(
     workspace: Workspace,
     directoryPath: string,
     depth: number,
   ) {
     const state = directoryStates[directoryPath];
+    const entries = workspaceDirectoryEntries(
+      workspace,
+      directoryPath,
+      state?.entries ?? [],
+    );
 
-    if (!state || (state.status === "loading" && state.entries.length === 0)) {
+    if ((!state || state.status === "loading") && entries.length === 0) {
       return (
         <div
           className="workspace-tree-status"
@@ -1982,7 +2234,7 @@ function App() {
       );
     }
 
-    if (state.status === "error") {
+    if (state?.status === "error" && entries.length === 0) {
       return (
         <div
           className="workspace-tree-status error"
@@ -1995,7 +2247,7 @@ function App() {
       );
     }
 
-    if (state.entries.length === 0) {
+    if (entries.length === 0) {
       return (
         <div
           className="workspace-tree-status"
@@ -2007,7 +2259,7 @@ function App() {
       );
     }
 
-    return state.entries.map((entry) =>
+    return entries.map((entry) =>
       renderWorkspaceTreeEntry(workspace, entry, depth),
     );
   }
@@ -2019,11 +2271,20 @@ function App() {
   ) {
     const directory = entry.kind === "directory";
     const expanded = expandedDirectoryPaths.has(entry.path);
+    const gitStatus = workspaceEntryGitStatus(workspace, entry);
+    const dirtyDirectory = workspaceDirectoryHasChanges(workspace, entry);
+    const gitStateClass = gitStatus
+      ? ` git-${gitStatus.statusKind}`
+      : dirtyDirectory
+        ? " git-dirty"
+        : "";
+    const draggable =
+      !directory && !entry.gitGhost && gitStatus?.statusKind !== "deleted";
 
     return (
       <div className="workspace-tree-branch" key={entry.path}>
         <div
-          className={`workspace-tree-row ${directory ? "directory" : "file"}`}
+          className={`workspace-tree-row ${directory ? "directory" : "file"}${gitStateClass}`}
           style={treeIndentStyle(depth)}
         >
           {directory ? (
@@ -2032,7 +2293,9 @@ function App() {
               type="button"
               aria-label={`${expanded ? "Collapse" : "Expand"} ${entry.name}`}
               aria-expanded={expanded}
-              onClick={() => toggleDirectoryExpanded(workspace, entry.path)}
+              onClick={() =>
+                toggleDirectoryExpanded(workspace, entry.path, !entry.gitGhost)
+              }
             >
               {expanded ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
             </button>
@@ -2044,14 +2307,14 @@ function App() {
             className="workspace-tree-label"
             type="button"
             title={entry.relativePath}
-            draggable={!directory}
+            draggable={draggable}
             onClick={() =>
               directory
-                ? toggleDirectoryExpanded(workspace, entry.path)
+                ? toggleDirectoryExpanded(workspace, entry.path, !entry.gitGhost)
                 : void openWorkspaceFilePreview(workspace, entry)
             }
             onDragStart={
-              directory
+              !draggable
                 ? undefined
                 : (event) => startWorkspaceFileDrag(event, entry)
             }
@@ -2065,7 +2328,18 @@ function App() {
             ) : (
               <FileText size={15} aria-hidden="true" />
             )}
-            <span>{entry.name}</span>
+            <span className="workspace-entry-name">{entry.name}</span>
+            {dirtyDirectory ? (
+              <span className="workspace-git-dot" aria-label="Contains changes" />
+            ) : null}
+            {gitStatus ? (
+              <span
+                className={`workspace-git-badge ${gitStatus.statusKind}`}
+                aria-label={`${gitStatus.statusKind} file`}
+              >
+                {gitStatus.badge}
+              </span>
+            ) : null}
           </button>
         </div>
         {directory && expanded
@@ -2127,11 +2401,15 @@ function App() {
                 const expanded = expandedWorkspaceIds.has(workspace.id);
                 const selected = workspace.id === selectedWorkspace?.id;
                 const active = selected && activeView === "task";
+                const workspaceDirty =
+                  selected && dirtyDirectoryPaths.has("");
 
                 return (
                   <div className="workspace-tree-branch" key={workspace.id}>
                     <div
-                      className={`workspace-root-row ${active ? "active" : ""}`}
+                      className={`workspace-root-row ${active ? "active" : ""}${
+                        workspaceDirty ? " git-dirty" : ""
+                      }`}
                     >
                       <button
                         className="workspace-tree-chevron"
@@ -2163,6 +2441,9 @@ function App() {
                           {expanded ? <FolderOpen size={16} /> : <Folder size={16} />}
                         </span>
                         <span className="workspace-name">{workspace.label}</span>
+                        {workspaceDirty ? (
+                          <span className="workspace-git-dot" aria-label="Contains changes" />
+                        ) : null}
                       </button>
                     </div>
                     {expanded
@@ -2325,7 +2606,18 @@ function App() {
               </div>
               <div className="topbar-actions">
                 <span>{authMessage}</span>
-                <button className="icon-button" type="button" onClick={() => selectedWorkspace && refreshWorkspaceData(selectedWorkspace.id)} title="Refresh">
+                <button
+                  className="icon-button"
+                  type="button"
+                  onClick={() => {
+                    if (selectedWorkspace) {
+                      void refreshWorkspaceData(selectedWorkspace.id);
+                      void refreshWorkspaceGitStatus(selectedWorkspace);
+                      void refreshBranches(selectedWorkspace);
+                    }
+                  }}
+                  title="Refresh"
+                >
                   <RefreshCw size={17} />
                 </button>
                 <button className="icon-button" type="button" onClick={() => setActiveView("settings")} title="Settings">
@@ -2405,36 +2697,68 @@ function App() {
                   onKeyDown={handlePreviewResizeKeyDown}
                 />
                 <header>
-                  <div>
-                    <p className="eyebrow">Preview</p>
+                  <div className="file-preview-title">
+                    <p className="eyebrow">
+                      {previewState.mode === "diff" ? "Git diff" : "Preview"}
+                    </p>
                     <h2>{previewState.file.name}</h2>
                     <span>{previewState.file.relativePath}</span>
                   </div>
-                  <button
-                    className="icon-button"
-                    type="button"
-                    aria-label="Close file preview"
-                    onClick={closeWorkspaceFilePreview}
-                  >
-                    <X size={16} />
-                  </button>
+                  <div className="file-preview-actions">
+                    {previewGitStatus ? (
+                      <div
+                        className={`file-preview-mode-toggle mode-${previewState.mode}`}
+                        role="group"
+                        aria-label="File preview mode"
+                      >
+                        <button
+                          type="button"
+                          className={previewState.mode === "preview" ? "active" : ""}
+                          aria-pressed={previewState.mode === "preview"}
+                          onClick={() => setWorkspacePreviewMode("preview")}
+                          disabled={
+                            previewGitStatus.statusKind === "deleted" ||
+                            previewState.file.gitGhost
+                          }
+                        >
+                          Preview
+                        </button>
+                        <button
+                          type="button"
+                          className={previewState.mode === "diff" ? "active" : ""}
+                          aria-pressed={previewState.mode === "diff"}
+                          onClick={() => setWorkspacePreviewMode("diff")}
+                        >
+                          Diff
+                        </button>
+                      </div>
+                    ) : null}
+                    <button
+                      className="file-preview-close"
+                      type="button"
+                      aria-label="Close file preview"
+                      onClick={closeWorkspaceFilePreview}
+                    >
+                      <X size={15} />
+                    </button>
+                  </div>
                 </header>
 
-                {previewState.status === "loading" ? (
+                {previewState.mode === "preview" && previewState.status === "loading" ? (
                   <div className="file-preview-state">
                     <Loader2 size={16} aria-hidden="true" />
                     <span>Loading preview</span>
                   </div>
                 ) : null}
 
-                {previewState.status === "error" ? (
+                {previewState.mode === "preview" && previewState.status === "error" ? (
                   <div className="file-preview-state error">
                     <AlertCircle size={16} aria-hidden="true" />
                     <span>{previewState.error ?? "Unable to preview file"}</span>
                   </div>
                 ) : null}
 
-                {previewState.status === "loaded" && previewState.preview ? (
+                {previewState.mode === "preview" && previewState.status === "loaded" && previewState.preview ? (
                   <>
                     {previewState.preview.truncated ? (
                       <div className="file-preview-notice">
@@ -2454,6 +2778,45 @@ function App() {
                         truncated={previewState.preview.truncated}
                       />
                     )}
+                  </>
+                ) : null}
+
+                {previewState.mode === "diff" && previewState.diffStatus === "loading" ? (
+                  <div className="file-preview-state">
+                    <Loader2 size={16} aria-hidden="true" />
+                    <span>Loading diff</span>
+                  </div>
+                ) : null}
+
+                {previewState.mode === "diff" && previewState.diffStatus === "error" ? (
+                  <div className="file-preview-state error">
+                    <AlertCircle size={16} aria-hidden="true" />
+                    <span>{previewState.diffError ?? "Unable to load diff"}</span>
+                  </div>
+                ) : null}
+
+                {previewState.mode === "diff" && previewState.diffStatus === "loaded" ? (
+                  <>
+                    {previewDiffHasBinary ? (
+                      <div className="file-preview-state">
+                        <FileText size={16} aria-hidden="true" />
+                        <span>Binary diff is not available.</span>
+                      </div>
+                    ) : null}
+                    {previewDiffEmpty ? (
+                      <div className="file-preview-state">
+                        <FileText size={16} aria-hidden="true" />
+                        <span>No diff available for this file.</span>
+                      </div>
+                    ) : null}
+                    {previewRenderableDiffSections.length > 0 ? (
+                      <DiffPreview
+                        path={previewState.file.relativePath}
+                        sections={previewRenderableDiffSections}
+                        resolvedTheme={resolvedTheme}
+                        layout={previewDiffLayout}
+                      />
+                    ) : null}
                   </>
                 ) : null}
               </aside>
@@ -2780,6 +3143,56 @@ function contextFileFromPath(path: string): ComposerContextFile {
 
 function treeIndentStyle(depth: number) {
   return { "--depth": depth } as CSSProperties;
+}
+
+function relativeDirectoryPath(workspace: Workspace, directoryPath: string) {
+  const workspacePath = normalizeWorkspacePath(workspace.path);
+  const normalizedDirectory = normalizeWorkspacePath(directoryPath);
+  if (normalizedDirectory === workspacePath) {
+    return "";
+  }
+
+  const prefix = `${workspacePath}/`;
+  return normalizedDirectory.startsWith(prefix)
+    ? normalizedDirectory.slice(prefix.length)
+    : "";
+}
+
+function deletedGhostChildEntry(
+  workspace: Workspace,
+  directoryRelativePath: string,
+  deletedRelativePath: string,
+): WorkspaceTreeEntry | null {
+  const directoryPrefix = directoryRelativePath
+    ? `${directoryRelativePath.replace(/\/+$/, "")}/`
+    : "";
+  if (!deletedRelativePath.startsWith(directoryPrefix)) {
+    return null;
+  }
+
+  const remainder = deletedRelativePath.slice(directoryPrefix.length);
+  const [name] = remainder.split("/");
+  if (!name) {
+    return null;
+  }
+
+  const relativePath = directoryPrefix ? `${directoryPrefix}${name}` : name;
+  const finalPath = relativePath === deletedRelativePath;
+  return {
+    name,
+    path: joinWorkspacePath(workspace.path, relativePath),
+    relativePath,
+    kind: finalPath ? "file" : "directory",
+    gitGhost: true,
+  };
+}
+
+function normalizeWorkspacePath(path: string) {
+  return path.replace(/\\/g, "/").replace(/\/+$/, "");
+}
+
+function joinWorkspacePath(workspacePath: string, relativePath: string) {
+  return `${normalizeWorkspacePath(workspacePath)}/${relativePath.replace(/^\/+/, "")}`;
 }
 
 function getMaxPreviewDrawerWidth() {

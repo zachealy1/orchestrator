@@ -1,4 +1,4 @@
-import type { HighlighterCore } from "shiki/types";
+import type { HighlighterCore, ThemedToken } from "shiki/types";
 import type { ResolvedTheme } from "../types";
 
 export const CODE_PREVIEW_THEMES = {
@@ -12,6 +12,7 @@ const EXTENSION_LANGUAGE_MAP: Record<string, string> = {
   cs: "csharp",
   css: "css",
   cts: "typescript",
+  diff: "diff",
   go: "go",
   h: "c",
   html: "html",
@@ -46,6 +47,10 @@ const FILENAME_LANGUAGE_MAP: Record<string, string> = {
 
 type CodePreviewHighlighter = HighlighterCore;
 
+export type PreviewSemanticToken = ThemedToken & {
+  semantic?: "json-key" | "json-value";
+};
+
 let highlighterPromise: Promise<CodePreviewHighlighter> | null = null;
 
 export function detectPreviewLanguage(path: string) {
@@ -72,6 +77,60 @@ export function loadCodeHighlighter() {
   return highlighterPromise;
 }
 
+export function applyPreviewSemanticTokenColors(
+  language: string,
+  tokenLines: ThemedToken[][],
+): PreviewSemanticToken[][] {
+  if (language !== "json") {
+    return tokenLines.map((line) =>
+      line.map((token) => ({ ...token, semantic: undefined })),
+    );
+  }
+
+  const flatTokens = tokenLines.flatMap((line, lineIndex) =>
+    line.map((token, tokenIndex) => ({ lineIndex, tokenIndex, token })),
+  );
+
+  const nextSignificantToken = (index: number) => {
+    for (let nextIndex = index + 1; nextIndex < flatTokens.length; nextIndex += 1) {
+      const candidate = flatTokens[nextIndex].token.content.trim();
+      if (candidate) {
+        return candidate;
+      }
+    }
+    return null;
+  };
+
+  return tokenLines.map((line, lineIndex) =>
+    line.map((token, tokenIndex) => {
+      const flatIndex = flatTokens.findIndex(
+        (entry) => entry.lineIndex === lineIndex && entry.tokenIndex === tokenIndex,
+      );
+      const content = token.content.trim();
+      const nextToken = flatIndex >= 0 ? nextSignificantToken(flatIndex) : null;
+      const isKey = isJsonStringToken(content) && nextToken?.startsWith(":");
+      const isValue = !isKey && isJsonValueToken(content);
+
+      return {
+        ...token,
+        semantic: isKey ? "json-key" : isValue ? "json-value" : undefined,
+      };
+    }),
+  );
+}
+
+function isJsonStringToken(content: string) {
+  return /^"(?:\\.|[^"\\])*"$/.test(content);
+}
+
+function isJsonValueToken(content: string) {
+  return (
+    isJsonStringToken(content) ||
+    /^-?(?:0|[1-9]\d*)(?:\.\d+)?(?:[eE][+-]?\d+)?$/.test(content) ||
+    /^(?:true|false|null)$/.test(content)
+  );
+}
+
 async function createCodeHighlighter(): Promise<CodePreviewHighlighter> {
   const [
     { createHighlighterCore },
@@ -82,6 +141,7 @@ async function createCodeHighlighter(): Promise<CodePreviewHighlighter> {
     c,
     csharp,
     css,
+    diff,
     dockerfile,
     go,
     html,
@@ -110,6 +170,7 @@ async function createCodeHighlighter(): Promise<CodePreviewHighlighter> {
     import("shiki/langs/c.mjs"),
     import("shiki/langs/csharp.mjs"),
     import("shiki/langs/css.mjs"),
+    import("shiki/langs/diff.mjs"),
     import("shiki/langs/dockerfile.mjs"),
     import("shiki/langs/go.mjs"),
     import("shiki/langs/html.mjs"),
@@ -138,6 +199,7 @@ async function createCodeHighlighter(): Promise<CodePreviewHighlighter> {
       c.default,
       csharp.default,
       css.default,
+      diff.default,
       dockerfile.default,
       go.default,
       html.default,

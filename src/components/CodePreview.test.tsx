@@ -7,6 +7,40 @@ const mocks = vi.hoisted(() => ({
   codePreviewTheme: vi.fn((theme: "light" | "dark") =>
     theme === "light" ? "github-light" : "github-dark",
   ),
+  applyPreviewSemanticTokenColors: vi.fn((language: string, tokenLines: any[][]) => {
+    if (language !== "json") {
+      return tokenLines.map((line) =>
+        line.map((token) => ({ ...token, semantic: undefined })),
+      );
+    }
+
+    const flatTokens = tokenLines.flatMap((line, lineIndex) =>
+      line.map((token, tokenIndex) => ({ lineIndex, tokenIndex, token })),
+    );
+
+    return tokenLines.map((line, lineIndex) =>
+      line.map((token, tokenIndex) => {
+        const flatIndex = flatTokens.findIndex(
+          (entry) => entry.lineIndex === lineIndex && entry.tokenIndex === tokenIndex,
+        );
+        const nextToken = flatTokens
+          .slice(flatIndex + 1)
+          .find((entry) => entry.token.content.trim())?.token.content.trim();
+        const content = token.content.trim();
+        const isJsonString = /^"(?:\\.|[^"\\])*"$/.test(content);
+        const isKey = isJsonString && nextToken?.startsWith(":");
+        const isValue =
+          !isKey &&
+          (isJsonString ||
+            /^-?(?:0|[1-9]\d*)(?:\.\d+)?(?:[eE][+-]?\d+)?$/.test(content) ||
+            /^(?:true|false|null)$/.test(content));
+        return {
+          ...token,
+          semantic: isKey ? "json-key" : isValue ? "json-value" : undefined,
+        };
+      }),
+    );
+  }),
   detectPreviewLanguage: vi.fn((path: string) =>
     path.endsWith(".tsx") ? "tsx" : path.endsWith(".json") ? "json" : "plaintext",
   ),
@@ -14,6 +48,7 @@ const mocks = vi.hoisted(() => ({
 }));
 
 vi.mock("../lib/codePreview", () => ({
+  applyPreviewSemanticTokenColors: mocks.applyPreviewSemanticTokenColors,
   codePreviewTheme: mocks.codePreviewTheme,
   detectPreviewLanguage: mocks.detectPreviewLanguage,
   loadCodeHighlighter: mocks.loadCodeHighlighter,

@@ -11,6 +11,8 @@ import type {
   PreflightReport,
   Workspace,
   WorkspaceFilePreview,
+  WorkspaceGitDiff,
+  WorkspaceGitStatusSnapshot,
   WorkspaceTreeEntry,
 } from "./types";
 
@@ -40,6 +42,19 @@ export function listGitBranches(path: string) {
 
 export function checkoutGitBranch(path: string, branch: string) {
   return invoke<{ branch: string }>("checkout_git_branch", { path, branch });
+}
+
+export function listWorkspaceGitStatus(workspacePath: string) {
+  return invoke<WorkspaceGitStatusSnapshot>("list_workspace_git_status", {
+    workspacePath,
+  });
+}
+
+export function readWorkspaceGitDiff(workspacePath: string, filePath: string) {
+  return invoke<WorkspaceGitDiff>("read_workspace_git_diff", {
+    workspacePath,
+    filePath,
+  });
 }
 
 export function listWorkspaceDirectory(
