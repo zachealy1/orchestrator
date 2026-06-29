@@ -25,7 +25,12 @@ import {
   X,
 } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
-import type { CSSProperties, DragEvent } from "react";
+import type {
+  CSSProperties,
+  DragEvent,
+  KeyboardEvent as ReactKeyboardEvent,
+  PointerEvent as ReactPointerEvent,
+} from "react";
 import "./App.css";
 import orchestratorMark from "./assets/brand/orchestrator-mark.png";
 import {
@@ -132,6 +137,12 @@ const DEFAULT_ANALYTICS: AnalyticsSummaryType = {
   cached_tokens: 0,
   avg_duration_ms: null,
 };
+
+const PREVIEW_DRAWER_DEFAULT_WIDTH = 520;
+const PREVIEW_DRAWER_MIN_WIDTH = 360;
+const PREVIEW_DRAWER_VIEWPORT_GUTTER = 360;
+const PREVIEW_DRAWER_RESIZE_STEP = 40;
+const PREVIEW_DRAWER_RESIZE_LARGE_STEP = 80;
 
 type AppView = "task" | "runs" | "analytics" | "settings";
 
@@ -259,6 +270,10 @@ function App() {
     preview: null,
     error: null,
   });
+  const [previewDrawerWidth, setPreviewDrawerWidth] = useState(
+    PREVIEW_DRAWER_DEFAULT_WIDTH,
+  );
+  const [previewResizing, setPreviewResizing] = useState(false);
   const [codexAccounts, setCodexAccounts] = useState<CodexAccountProfile[]>([]);
   const [selectedAccountId, setSelectedAccountId] = useState<number | null>(null);
   const [connectedAccountIds, setConnectedAccountIds] = useState<Set<number>>(
@@ -438,6 +453,38 @@ function App() {
   useEffect(() => {
     selectedWorkspaceRef.current = selectedWorkspace;
   }, [selectedWorkspace]);
+
+  useEffect(() => {
+    function handleResize() {
+      setPreviewDrawerWidth((current) => clampPreviewDrawerWidth(current));
+    }
+
+    window.addEventListener("resize", handleResize);
+    return () => window.removeEventListener("resize", handleResize);
+  }, []);
+
+  useEffect(() => {
+    if (!previewResizing) {
+      return;
+    }
+
+    function handlePointerMove(event: PointerEvent) {
+      setPreviewDrawerWidth(
+        clampPreviewDrawerWidth(window.innerWidth - event.clientX),
+      );
+    }
+
+    function handlePointerUp() {
+      setPreviewResizing(false);
+    }
+
+    window.addEventListener("pointermove", handlePointerMove);
+    window.addEventListener("pointerup", handlePointerUp);
+    return () => {
+      window.removeEventListener("pointermove", handlePointerMove);
+      window.removeEventListener("pointerup", handlePointerUp);
+    };
+  }, [previewResizing]);
 
   useEffect(() => {
     codexAccountsRef.current = codexAccounts;
@@ -1839,6 +1886,43 @@ function App() {
     });
   }
 
+  function startPreviewDrawerResize(event: ReactPointerEvent<HTMLDivElement>) {
+    event.preventDefault();
+    setPreviewResizing(true);
+  }
+
+  function resizePreviewDrawer(delta: number) {
+    setPreviewDrawerWidth((current) => clampPreviewDrawerWidth(current + delta));
+  }
+
+  function handlePreviewResizeKeyDown(
+    event: ReactKeyboardEvent<HTMLDivElement>,
+  ) {
+    const step = event.shiftKey
+      ? PREVIEW_DRAWER_RESIZE_LARGE_STEP
+      : PREVIEW_DRAWER_RESIZE_STEP;
+
+    if (event.key === "ArrowLeft") {
+      event.preventDefault();
+      resizePreviewDrawer(step);
+    }
+
+    if (event.key === "ArrowRight") {
+      event.preventDefault();
+      resizePreviewDrawer(-step);
+    }
+
+    if (event.key === "Home") {
+      event.preventDefault();
+      setPreviewDrawerWidth(PREVIEW_DRAWER_MIN_WIDTH);
+    }
+
+    if (event.key === "End") {
+      event.preventDefault();
+      setPreviewDrawerWidth(getMaxPreviewDrawerWidth());
+    }
+  }
+
   function startWorkspaceFileDrag(
     event: DragEvent<HTMLButtonElement>,
     file: WorkspaceTreeEntry,
@@ -2293,10 +2377,25 @@ function App() {
             </section>
             {previewState.file ? (
               <aside
-                className="file-preview-drawer"
+                className={`file-preview-drawer ${
+                  previewResizing ? "resizing" : ""
+                }`}
                 aria-label="File preview"
                 aria-live="polite"
+                style={{ width: `${previewDrawerWidth}px` }}
               >
+                <div
+                  className="file-preview-resize-handle"
+                  role="separator"
+                  tabIndex={0}
+                  aria-label="Resize file preview"
+                  aria-orientation="vertical"
+                  aria-valuemin={PREVIEW_DRAWER_MIN_WIDTH}
+                  aria-valuemax={getMaxPreviewDrawerWidth()}
+                  aria-valuenow={previewDrawerWidth}
+                  onPointerDown={startPreviewDrawerResize}
+                  onKeyDown={handlePreviewResizeKeyDown}
+                />
                 <header>
                   <div>
                     <p className="eyebrow">Preview</p>
@@ -2668,6 +2767,24 @@ function contextFileFromPath(path: string): ComposerContextFile {
 
 function treeIndentStyle(depth: number) {
   return { "--depth": depth } as CSSProperties;
+}
+
+function getMaxPreviewDrawerWidth() {
+  if (typeof window === "undefined") {
+    return PREVIEW_DRAWER_DEFAULT_WIDTH;
+  }
+
+  return Math.max(
+    PREVIEW_DRAWER_MIN_WIDTH,
+    window.innerWidth - PREVIEW_DRAWER_VIEWPORT_GUTTER,
+  );
+}
+
+function clampPreviewDrawerWidth(width: number) {
+  return Math.min(
+    Math.max(width, PREVIEW_DRAWER_MIN_WIDTH),
+    getMaxPreviewDrawerWidth(),
+  );
 }
 
 function mergeContextFiles(

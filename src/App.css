@@ -825,12 +825,44 @@ button.account-switcher-item:hover:not(:disabled) {
   bottom: 0;
   z-index: 40;
   display: grid;
-  width: min(520px, calc(100vw - 360px));
+  width: 520px;
   min-width: 360px;
+  max-width: calc(100vw - 360px);
   grid-template-rows: auto minmax(0, 1fr);
   border-left: 1px solid var(--color-divider);
   background: var(--color-component-background);
   box-shadow: -18px 0 48px rgb(var(--shadow-rgb) / 0.18);
+}
+
+.file-preview-drawer.resizing {
+  user-select: none;
+}
+
+.file-preview-resize-handle {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: -5px;
+  z-index: 2;
+  width: 10px;
+  cursor: ew-resize;
+  outline: none;
+}
+
+.file-preview-resize-handle::after {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 4px;
+  width: 1px;
+  background: transparent;
+  content: "";
+}
+
+.file-preview-resize-handle:hover::after,
+.file-preview-resize-handle:focus-visible::after,
+.file-preview-drawer.resizing .file-preview-resize-handle::after {
+  background: var(--color-primary);
 }
 
 .file-preview-drawer header {

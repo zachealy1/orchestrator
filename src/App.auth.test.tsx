@@ -250,12 +250,22 @@ function createContextFileDataTransfer(files: unknown[]) {
   };
 }
 
+function setWindowWidth(width: number) {
+  Object.defineProperty(window, "innerWidth", {
+    configurable: true,
+    writable: true,
+    value: width,
+  });
+  window.dispatchEvent(new Event("resize"));
+}
+
 describe("App Codex auth", () => {
   beforeEach(() => {
     mocks.listeners.clear();
     vi.clearAllMocks();
     vi.useRealTimers();
     localStorage.clear();
+    setWindowWidth(1024);
     document.documentElement.removeAttribute("data-theme");
     prepareDefaults();
   });
@@ -413,6 +423,47 @@ describe("App Codex auth", () => {
       "# Mobile client",
     );
     expect(screen.queryByLabelText("Selected context files")).not.toBeInTheDocument();
+  });
+
+  it("resizes the file preview drawer horizontally", async () => {
+    setWindowWidth(1200);
+    const readmeEntry = {
+      name: "README.md",
+      path: "/repo/orchestrator/README.md",
+      relativePath: "README.md",
+      kind: "file" as const,
+    };
+    mocks.listWorkspaceDirectoryMock.mockResolvedValue([readmeEntry]);
+    mocks.readWorkspaceFilePreviewMock.mockResolvedValue({
+      path: readmeEntry.path,
+      relativePath: readmeEntry.relativePath,
+      content: "# Orchestrator",
+      truncated: false,
+      isBinary: false,
+    });
+
+    const { user } = await renderApp();
+    const workspaceNav = screen.getByRole("navigation", {
+      name: "Workspaces",
+    });
+
+    await user.click(
+      within(workspaceNav).getByRole("button", { name: "Expand orchestrator" }),
+    );
+    await user.click(await within(workspaceNav).findByRole("button", { name: "README.md" }));
+
+    const drawer = screen.getByRole("complementary", { name: "File preview" });
+    const handle = screen.getByRole("separator", { name: "Resize file preview" });
+    expect(drawer).toHaveStyle({ width: "520px" });
+
+    fireEvent.pointerDown(handle, { clientX: 680 });
+    await waitFor(() => expect(drawer).toHaveClass("resizing"));
+    fireEvent.pointerMove(window, { clientX: 480 });
+    await waitFor(() => expect(drawer).toHaveStyle({ width: "720px" }));
+
+    fireEvent.pointerUp(window);
+    fireEvent.keyDown(handle, { key: "ArrowRight" });
+    expect(drawer).toHaveStyle({ width: "680px" });
   });
 
   it("toggles workspace expansion from the workspace label", async () => {
