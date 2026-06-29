@@ -289,6 +289,12 @@ describe("App Codex auth", () => {
     mocks.openDialogMock.mockResolvedValue("/repo/new-workspace");
 
     const { user } = await renderApp();
+    const primaryNav = screen.getByRole("navigation", {
+      name: "Primary",
+    });
+    expect(
+      within(primaryNav).queryByRole("button", { name: "Task" }),
+    ).not.toBeInTheDocument();
     const workspaceNav = screen.getByRole("navigation", {
       name: "Workspaces",
     });
@@ -313,8 +319,16 @@ describe("App Codex auth", () => {
     expect(workspacesHeading.parentElement).toContainElement(addWorkspaceButton);
     expect(addWorkspaceButton).not.toHaveTextContent("Add workspace");
 
+    await user.click(within(primaryNav).getByRole("button", { name: "Runs" }));
+    expect(screen.queryByLabelText("Task composer")).not.toBeInTheDocument();
+    expect(
+      within(workspaceNav).getByRole("button", { name: "orchestrator" }),
+    ).not.toHaveAttribute("aria-current");
+
     await user.click(secondWorkspaceButton);
     expect(secondWorkspaceButton).toHaveAttribute("aria-current", "page");
+    expect(screen.getByLabelText("Task composer")).toBeInTheDocument();
+    expect(mocks.listWorkspaceDirectoryMock).not.toHaveBeenCalled();
 
     await user.click(addWorkspaceButton);
 
@@ -412,6 +426,9 @@ describe("App Codex auth", () => {
     ]);
 
     const { user } = await renderApp();
+    const primaryNav = screen.getByRole("navigation", {
+      name: "Primary",
+    });
     const workspaceNav = screen.getByRole("navigation", {
       name: "Workspaces",
     });
@@ -429,6 +446,15 @@ describe("App Codex auth", () => {
     );
     expect(workspaceButton).toHaveAttribute("aria-current", "page");
     expect(await within(workspaceNav).findByRole("button", { name: "src" })).toBeInTheDocument();
+
+    await user.click(within(primaryNav).getByRole("button", { name: "Settings" }));
+    expect(workspaceButton).not.toHaveAttribute("aria-current");
+    expect(within(workspaceNav).getByRole("button", { name: "src" })).toBeInTheDocument();
+
+    await user.click(workspaceButton);
+    expect(screen.getByLabelText("Task composer")).toBeInTheDocument();
+    expect(workspaceButton).toHaveAttribute("aria-current", "page");
+    expect(within(workspaceNav).getByRole("button", { name: "src" })).toBeInTheDocument();
 
     await user.click(workspaceButton);
 

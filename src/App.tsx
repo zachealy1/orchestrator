@@ -20,7 +20,6 @@ import {
   RefreshCw,
   Settings,
   Sun,
-  TerminalSquare,
   Trash2,
   UserPlus,
   X,
@@ -893,6 +892,7 @@ function App() {
     const workspace = await upsertWorkspace(selected);
     setWorkspaces(await listWorkspaces());
     setSelectedWorkspace(workspace);
+    setActiveView("task");
     setStatusMessage(`Selected ${workspace.label}`);
   }
 
@@ -903,6 +903,7 @@ function App() {
     }
 
     setSelectedWorkspace(workspace);
+    setActiveView("task");
     setPreflight(null);
     setStatusMessage(`Selected ${workspace.label}`);
     if (
@@ -1987,14 +1988,6 @@ function App() {
       <aside className="app-rail">
         <nav className="primary-nav" aria-label="Primary">
           <button
-            className={activeView === "task" ? "active" : ""}
-            type="button"
-            onClick={() => setActiveView("task")}
-          >
-            <TerminalSquare size={17} />
-            <span>Task</span>
-          </button>
-          <button
             className={activeView === "runs" ? "active" : ""}
             type="button"
             onClick={() => setActiveView("runs")}
@@ -2041,11 +2034,12 @@ function App() {
               workspaces.map((workspace) => {
                 const expanded = expandedWorkspaceIds.has(workspace.id);
                 const selected = workspace.id === selectedWorkspace?.id;
+                const active = selected && activeView === "task";
 
                 return (
                   <div className="workspace-tree-branch" key={workspace.id}>
                     <div
-                      className={`workspace-root-row ${selected ? "active" : ""}`}
+                      className={`workspace-root-row ${active ? "active" : ""}`}
                     >
                       <button
                         className="workspace-tree-chevron"
@@ -2064,10 +2058,13 @@ function App() {
                         className="workspace-root-label"
                         type="button"
                         onClick={() => {
-                          selectWorkspace(workspace.id);
-                          toggleWorkspaceExpanded(workspace);
+                          if (active) {
+                            toggleWorkspaceExpanded(workspace);
+                          } else {
+                            selectWorkspace(workspace.id);
+                          }
                         }}
-                        aria-current={selected ? "page" : undefined}
+                        aria-current={active ? "page" : undefined}
                         title={workspace.label}
                       >
                         <span className="workspace-icon" aria-hidden="true">
