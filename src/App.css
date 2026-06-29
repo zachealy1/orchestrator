@@ -1002,12 +1002,10 @@ button.account-switcher-item:hover:not(:disabled) {
 
 .code-preview-token.json-key {
   color: var(--code-json-key);
-  font-weight: 650;
 }
 
 .code-preview-token.json-value {
   color: var(--code-json-value);
-  font-weight: 540;
 }
 
 .task-stack,
