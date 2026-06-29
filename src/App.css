@@ -1058,9 +1058,24 @@ button.account-switcher-item:hover:not(:disabled) {
   color: var(--text);
 }
 
+@keyframes file-preview-spinner-rotate {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.file-preview-spinner {
+  flex: 0 0 auto;
+  animation: file-preview-spinner-rotate 0.9s linear infinite;
+}
+
 @media (prefers-reduced-motion: reduce) {
   .file-preview-mode-toggle::before {
     transition: none;
+  }
+
+  .file-preview-spinner {
+    animation: none;
   }
 }
 

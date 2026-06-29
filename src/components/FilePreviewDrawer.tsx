@@ -119,7 +119,7 @@ export const FilePreviewDrawer = memo(function FilePreviewDrawer({
 
       {previewState.mode === "preview" && previewState.status === "loading" ? (
         <div className="file-preview-state">
-          <Loader2 size={16} aria-hidden="true" />
+          <Loader2 className="file-preview-spinner" size={16} aria-hidden="true" />
           <span>Loading preview</span>
         </div>
       ) : null}
@@ -156,7 +156,7 @@ export const FilePreviewDrawer = memo(function FilePreviewDrawer({
 
       {previewState.mode === "diff" && previewState.diffStatus === "loading" ? (
         <div className="file-preview-state">
-          <Loader2 size={16} aria-hidden="true" />
+          <Loader2 className="file-preview-spinner" size={16} aria-hidden="true" />
           <span>Loading diff</span>
         </div>
       ) : null}
