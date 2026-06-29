@@ -308,9 +308,17 @@ export type ComposerContextFile = {
   path: string;
   name: string;
   source: "picker" | "search" | "explorer";
+  relativePath?: string;
   status?: "ready" | "error";
   error?: string | null;
 };
+
+export type ComposerMentionSearchStatus =
+  | "idle"
+  | "loading"
+  | "loaded"
+  | "error"
+  | "disabled";
 
 export type ComposerModeState = {
   goalMode: boolean;

@@ -2,6 +2,7 @@ import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 import { TaskComposer } from "./TaskComposer";
+import { useState } from "react";
 import type { ComponentProps } from "react";
 
 type TaskComposerProps = ComponentProps<typeof TaskComposer>;
@@ -68,6 +69,9 @@ function renderComposer(overrides: Partial<TaskComposerProps> = {}) {
     planMode: false,
     accessLevel: "ask",
     contextFiles: [],
+    mentionResults: [],
+    mentionSearchStatus: "idle",
+    mentionSearchError: null,
     onAccountChange: vi.fn(),
     onBranchChange: vi.fn(),
     onPromptChange: vi.fn(),
@@ -77,6 +81,9 @@ function renderComposer(overrides: Partial<TaskComposerProps> = {}) {
     onPlanModeChange: vi.fn(),
     onAccessLevelChange: vi.fn(),
     onAddFiles: vi.fn(),
+    onMentionSearch: vi.fn(),
+    onMentionFileSelect: vi.fn(),
+    onMentionClose: vi.fn(),
     onContextFilesDrop: vi.fn(),
     onRemoveFile: vi.fn(),
     onPreflight: vi.fn(),
@@ -88,6 +95,66 @@ function renderComposer(overrides: Partial<TaskComposerProps> = {}) {
     props,
     user: userEvent.setup(),
     ...render(<TaskComposer {...props} />),
+  };
+}
+
+function renderControlledComposer(overrides: Partial<TaskComposerProps> = {}) {
+  const user = userEvent.setup();
+  const onPromptChange = overrides.onPromptChange ?? vi.fn();
+  const initialPrompt = overrides.prompt ?? "";
+
+  function ControlledComposer() {
+    const [prompt, setPrompt] = useState(initialPrompt);
+    const props: TaskComposerProps = {
+      disabled: false,
+      routeRecommendation: "direct-run",
+      tokenEstimate: 0,
+      accounts,
+      selectedAccountId: 7,
+      accountSelectionDisabled: false,
+      branches: ["main", "feature/chat-controls"],
+      selectedBranch: "main",
+      models,
+      modelLoadError: null,
+      selectedModelId: "gpt-5.1-codex",
+      selectedReasoningEffort: "medium",
+      goalMode: false,
+      planMode: false,
+      accessLevel: "ask",
+      contextFiles: [],
+      mentionResults: [],
+      mentionSearchStatus: "idle",
+      mentionSearchError: null,
+      onAccountChange: vi.fn(),
+      onBranchChange: vi.fn(),
+      onModelChange: vi.fn(),
+      onReasoningEffortChange: vi.fn(),
+      onGoalModeChange: vi.fn(),
+      onPlanModeChange: vi.fn(),
+      onAccessLevelChange: vi.fn(),
+      onAddFiles: vi.fn(),
+      onMentionSearch: vi.fn(),
+      onMentionFileSelect: vi.fn(),
+      onMentionClose: vi.fn(),
+      onContextFilesDrop: vi.fn(),
+      onRemoveFile: vi.fn(),
+      onPreflight: vi.fn(),
+      onRun: vi.fn(),
+      ...overrides,
+      prompt,
+      onPromptChange: (nextPrompt: string) => {
+        setPrompt(nextPrompt);
+        onPromptChange(nextPrompt);
+      },
+    };
+
+    return <TaskComposer {...props} />;
+  }
+
+  return {
+    user,
+    onPromptChange,
+    ...render(<ControlledComposer />),
   };
 }
 
@@ -252,5 +319,144 @@ describe("TaskComposer", () => {
 
     expect(screen.getByRole("button", { name: /run codex/i })).toBeDisabled();
     expect(screen.getByRole("button", { name: /preflight/i })).toBeDisabled();
+  });
+
+  it("opens workspace file mentions while typing an @ token", async () => {
+    const onMentionSearch = vi.fn();
+    const { user } = renderControlledComposer({
+      onMentionSearch,
+      mentionSearchStatus: "loaded",
+      mentionResults: [
+        {
+          path: "/repo/src/App.tsx",
+          name: "App.tsx",
+          source: "search",
+          status: "ready",
+        },
+      ],
+    });
+
+    await user.type(screen.getByLabelText("Prompt"), "@app");
+
+    expect(onMentionSearch).toHaveBeenLastCalledWith("app");
+    const listbox = screen.getByRole("listbox", {
+      name: "Workspace file suggestions",
+    });
+    expect(listbox).toBeInTheDocument();
+    expect(listbox).toHaveClass("mention-search-popover");
+    const promptShell = listbox.closest(".prompt-shell");
+    expect(promptShell).toContainElement(screen.getByLabelText("Prompt"));
+    expect(promptShell?.nextElementSibling).toHaveClass("composer-meta-row");
+    expect(screen.getByRole("option", { name: /app\.tsx/i })).toBeInTheDocument();
+  });
+
+  it("selects a mention with the keyboard and removes the typed @query", async () => {
+    const onMentionFileSelect = vi.fn();
+    const onMentionClose = vi.fn();
+    const selectedFile = {
+      path: "/repo/src/App.tsx",
+      name: "App.tsx",
+      source: "search" as const,
+      status: "ready" as const,
+    };
+    const { user, onPromptChange } = renderControlledComposer({
+      mentionSearchStatus: "loaded",
+      mentionResults: [selectedFile],
+      onMentionFileSelect,
+      onMentionClose,
+    });
+
+    const promptInput = screen.getByLabelText("Prompt");
+    await user.type(promptInput, "Fix @app");
+    await user.keyboard("{Enter}");
+
+    expect(onMentionFileSelect).toHaveBeenCalledWith(selectedFile);
+    expect(onMentionClose).toHaveBeenCalled();
+    expect(onPromptChange).toHaveBeenLastCalledWith("Fix");
+    expect(promptInput).toHaveValue("Fix");
+  });
+
+  it("selects a mention with the mouse", async () => {
+    const onMentionFileSelect = vi.fn();
+    const selectedFile = {
+      path: "/repo/src/App.tsx",
+      name: "App.tsx",
+      source: "search" as const,
+      status: "ready" as const,
+    };
+    const { user } = renderControlledComposer({
+      mentionSearchStatus: "loaded",
+      mentionResults: [selectedFile],
+      onMentionFileSelect,
+    });
+
+    await user.type(screen.getByLabelText("Prompt"), "@app");
+    await user.click(screen.getByRole("option", { name: /app\.tsx/i }));
+
+    expect(onMentionFileSelect).toHaveBeenCalledWith(selectedFile);
+    expect(screen.getByLabelText("Prompt")).toHaveValue("");
+  });
+
+  it("closes mention search with Escape", async () => {
+    const onMentionClose = vi.fn();
+    const { user } = renderControlledComposer({
+      onMentionClose,
+      mentionSearchStatus: "loaded",
+      mentionResults: [
+        {
+          path: "/repo/src/App.tsx",
+          name: "App.tsx",
+          source: "search",
+          status: "ready",
+        },
+      ],
+    });
+
+    await user.type(screen.getByLabelText("Prompt"), "@app");
+    await user.keyboard("{Escape}");
+
+    expect(onMentionClose).toHaveBeenCalled();
+    expect(
+      screen.queryByRole("listbox", { name: "Workspace file suggestions" }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("renders mention search empty, disabled, loading, error, and no-result states", async () => {
+    const disabled = renderControlledComposer({
+      mentionSearchStatus: "disabled",
+    });
+
+    await disabled.user.type(screen.getByLabelText("Prompt"), "@app");
+    expect(screen.getByText("Choose a folder first.")).toBeInTheDocument();
+    disabled.unmount();
+
+    const empty = renderControlledComposer({
+      mentionSearchStatus: "loaded",
+    });
+    await empty.user.type(screen.getByLabelText("Prompt"), "@");
+    expect(screen.getByText("Type a file name.")).toBeInTheDocument();
+    empty.unmount();
+
+    const loading = renderControlledComposer({
+      mentionSearchStatus: "loading",
+    });
+    await loading.user.type(screen.getByLabelText("Prompt"), "@app");
+    expect(screen.getByText("Searching files...")).toBeInTheDocument();
+    loading.unmount();
+
+    const errored = renderControlledComposer({
+      mentionSearchStatus: "error",
+      mentionSearchError: "Index failed",
+    });
+    await errored.user.type(screen.getByLabelText("Prompt"), "@app");
+    expect(screen.getByText("Index failed")).toBeInTheDocument();
+    errored.unmount();
+
+    const noResults = renderControlledComposer({
+      mentionSearchStatus: "loaded",
+      mentionResults: [],
+    });
+    await noResults.user.type(screen.getByLabelText("Prompt"), "@app");
+    expect(screen.getByText("No files found.")).toBeInTheDocument();
   });
 });

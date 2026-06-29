@@ -1667,9 +1667,10 @@ select:disabled {
 }
 
 .composer-panel {
+  position: relative;
   display: grid;
   width: min(1040px, 100%);
-  overflow: hidden;
+  overflow: visible;
   border: 1px solid var(--color-divider);
   border-radius: var(--radius);
   background: var(--composer);
@@ -1683,11 +1684,19 @@ select:disabled {
     0 18px 56px rgb(var(--shadow-rgb) / 0.16);
 }
 
+.prompt-shell {
+  position: relative;
+  min-width: 0;
+}
+
 .prompt-field {
   display: block;
+  overflow: hidden;
+  border-radius: calc(var(--radius) - 1px) calc(var(--radius) - 1px) 0 0;
 }
 
 .prompt-field textarea {
+  display: block;
   min-height: 50px;
   max-height: 220px;
   border: 0;
@@ -1705,6 +1714,81 @@ select:disabled {
   box-shadow: none;
 }
 
+.mention-search-popover {
+  position: absolute;
+  right: 18px;
+  bottom: calc(100% + 8px);
+  left: 18px;
+  z-index: 60;
+  display: grid;
+  gap: 2px;
+  max-height: min(280px, calc(100vh - 140px));
+  overflow-y: auto;
+  border: 0;
+  border-radius: 8px;
+  background: var(--color-component-background);
+  box-shadow: 0 18px 48px rgb(var(--shadow-rgb) / 0.28);
+  padding: 8px;
+}
+
+.mention-search-empty {
+  color: var(--muted);
+  font-size: 0.84rem;
+  padding: 9px 12px;
+}
+
+.mention-search-empty.error {
+  color: var(--color-error);
+}
+
+.mention-search-option {
+  display: grid;
+  min-width: 0;
+  grid-template-columns: 18px minmax(0, 1fr);
+  gap: 8px;
+  align-items: center;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text);
+  padding: 8px 10px;
+  text-align: left;
+}
+
+button.mention-search-option:hover:not(:disabled),
+button.mention-search-option:focus-visible,
+button.mention-search-option.active {
+  background: rgb(var(--text-secondary-rgb) / 0.16);
+  color: var(--text);
+}
+
+.mention-search-option svg {
+  color: var(--color-icon-muted);
+}
+
+.mention-search-option > span {
+  display: grid;
+  min-width: 0;
+  gap: 2px;
+}
+
+.mention-search-option strong,
+.mention-search-option small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mention-search-option strong {
+  font-size: 0.86rem;
+  font-weight: 700;
+}
+
+.mention-search-option small {
+  color: var(--muted);
+  font-size: 0.72rem;
+}
+
 .composer-meta-row {
   display: flex;
   min-height: 24px;
@@ -1718,6 +1802,7 @@ select:disabled {
   display: grid;
   gap: 10px;
   border-top: 1px solid var(--color-divider);
+  border-radius: 0 0 calc(var(--radius) - 1px) calc(var(--radius) - 1px);
   background: var(--color-surface-soft);
   padding: 12px 14px 14px;
 }

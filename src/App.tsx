@@ -123,6 +123,7 @@ import type {
   CodexMessageEvent,
   CodexLoginState,
   CodexModel,
+  ComposerMentionSearchStatus,
   CodexProcessEvent,
   ComposerContextFile,
   OssProvider,
@@ -412,6 +413,10 @@ function App() {
   const [planMode, setPlanMode] = useState(false);
   const [accessLevel, setAccessLevel] = useState<AccessLevel>("ask");
   const [contextFiles, setContextFiles] = useState<ComposerContextFile[]>([]);
+  const [mentionResults, setMentionResults] = useState<ComposerContextFile[]>([]);
+  const [mentionSearchStatus, setMentionSearchStatus] =
+    useState<ComposerMentionSearchStatus>("idle");
+  const [mentionSearchError, setMentionSearchError] = useState<string | null>(null);
   const [branches, setBranches] = useState<string[]>([]);
   const [selectedBranch, setSelectedBranch] = useState<string | null>(null);
 
@@ -429,6 +434,11 @@ function App() {
   const modelLoadErrorRef = useRef<string | null>(null);
   const previewRequestId = useRef(0);
   const gitStatusRefreshCache = useRef(new Map<number, Promise<void>>());
+  const workspaceFileIndexCache = useRef(new Map<number, WorkspaceTreeEntry[]>());
+  const workspaceFileIndexRequestCache = useRef(
+    new Map<number, Promise<WorkspaceTreeEntry[]>>(),
+  );
+  const mentionSearchRequestId = useRef(0);
 
   const improvedPrompt = useMemo(() => improvePrompt(prompt), [prompt]);
   const routeRecommendation = useMemo(() => recommendRoute(prompt), [prompt]);
@@ -648,6 +658,23 @@ function App() {
   useEffect(() => {
     selectedWorkspaceRef.current = selectedWorkspace;
   }, [selectedWorkspace]);
+
+  useEffect(() => {
+    mentionSearchRequestId.current += 1;
+    setMentionResults([]);
+    setMentionSearchStatus("idle");
+    setMentionSearchError(null);
+
+    if (selectedWorkspace) {
+      workspaceFileIndexCache.current.delete(selectedWorkspace.id);
+    }
+  }, [selectedWorkspace?.id]);
+
+  useEffect(() => {
+    if (selectedWorkspace) {
+      workspaceFileIndexCache.current.delete(selectedWorkspace.id);
+    }
+  }, [selectedWorkspace?.id, selectedGitStatusState?.snapshot]);
 
   useEffect(() => {
     function handleResize() {
@@ -1274,6 +1301,80 @@ function App() {
     }
 
     setContextFiles((current) => mergeContextFiles(current, paths.map(contextFileFromPath)));
+  }
+
+  async function getWorkspaceFileIndex(workspace: Workspace) {
+    const cached = workspaceFileIndexCache.current.get(workspace.id);
+    if (cached) {
+      return cached;
+    }
+
+    const existingRequest = workspaceFileIndexRequestCache.current.get(workspace.id);
+    if (existingRequest) {
+      return existingRequest;
+    }
+
+    const request = collectWorkspaceFiles(workspace, workspace.path)
+      .then((files) => {
+        workspaceFileIndexCache.current.set(workspace.id, files);
+        return files;
+      })
+      .finally(() => {
+        workspaceFileIndexRequestCache.current.delete(workspace.id);
+      });
+
+    workspaceFileIndexRequestCache.current.set(workspace.id, request);
+    return request;
+  }
+
+  async function searchMentionFiles(query: string) {
+    const requestId = mentionSearchRequestId.current + 1;
+    mentionSearchRequestId.current = requestId;
+    setMentionSearchError(null);
+
+    if (!selectedWorkspace) {
+      setMentionResults([]);
+      setMentionSearchStatus("disabled");
+      return;
+    }
+
+    if (!query.trim()) {
+      setMentionResults([]);
+      setMentionSearchStatus("loaded");
+      return;
+    }
+
+    setMentionSearchStatus("loading");
+
+    try {
+      const files = await getWorkspaceFileIndex(selectedWorkspace);
+      if (mentionSearchRequestId.current !== requestId) {
+        return;
+      }
+
+      setMentionResults(searchWorkspaceFiles(files, query));
+      setMentionSearchStatus("loaded");
+    } catch (error) {
+      if (mentionSearchRequestId.current !== requestId) {
+        return;
+      }
+
+      setMentionResults([]);
+      setMentionSearchStatus("error");
+      setMentionSearchError(error instanceof Error ? error.message : String(error));
+    }
+  }
+
+  function closeMentionSearch() {
+    mentionSearchRequestId.current += 1;
+    setMentionResults([]);
+    setMentionSearchStatus("idle");
+    setMentionSearchError(null);
+  }
+
+  function addMentionFileToContext(file: ComposerContextFile) {
+    setContextFiles((current) => mergeContextFiles(current, [file]));
+    setStatusMessage(`Added ${file.name} to context.`);
   }
 
   async function ensureCodexConnected(accountId: number) {
@@ -2962,6 +3063,9 @@ function App() {
                 planMode={planMode}
                 accessLevel={accessLevel}
                 contextFiles={contextFiles}
+                mentionResults={mentionResults}
+                mentionSearchStatus={mentionSearchStatus}
+                mentionSearchError={mentionSearchError}
                 onAccountChange={(accountId) => void selectCodexAccount(accountId)}
                 onBranchChange={(branch) => void selectBranch(branch)}
                 onPromptChange={(nextPrompt) => {
@@ -2974,6 +3078,9 @@ function App() {
                 onPlanModeChange={handlePlanModeChange}
                 onAccessLevelChange={setAccessLevel}
                 onAddFiles={() => void chooseContextFiles()}
+                onMentionSearch={(query) => void searchMentionFiles(query)}
+                onMentionFileSelect={addMentionFileToContext}
+                onMentionClose={closeMentionSearch}
                 onContextFilesDrop={addDroppedContextFiles}
                 onRemoveFile={(path) =>
                   setContextFiles((current) => current.filter((file) => file.path !== path))
@@ -3432,6 +3539,88 @@ function contextFileFromPath(path: string): ComposerContextFile {
     source: "picker",
     status: "ready",
   };
+}
+
+async function collectWorkspaceFiles(
+  workspace: Workspace,
+  directoryPath: string,
+): Promise<WorkspaceTreeEntry[]> {
+  const entries = await listWorkspaceDirectory(workspace.path, directoryPath);
+  const files = entries.filter((entry) => entry.kind === "file");
+  const childFiles = await Promise.all(
+    entries
+      .filter((entry) => entry.kind === "directory")
+      .map((entry) => collectWorkspaceFiles(workspace, entry.path)),
+  );
+
+  return [...files, ...childFiles.flat()].sort((left, right) =>
+    left.relativePath.localeCompare(right.relativePath),
+  );
+}
+
+function searchWorkspaceFiles(
+  files: WorkspaceTreeEntry[],
+  query: string,
+): ComposerContextFile[] {
+  const normalizedQuery = query.trim().toLowerCase();
+  if (!normalizedQuery) {
+    return [];
+  }
+
+  return files
+    .map((file) => ({
+      file,
+      score: workspaceFileSearchScore(file, normalizedQuery),
+    }))
+    .filter((entry) => entry.score !== null)
+    .sort((left, right) => {
+      const scoreDifference = (left.score ?? 0) - (right.score ?? 0);
+      if (scoreDifference !== 0) {
+        return scoreDifference;
+      }
+
+      const lengthDifference =
+        left.file.relativePath.length - right.file.relativePath.length;
+      if (lengthDifference !== 0) {
+        return lengthDifference;
+      }
+
+      return left.file.relativePath.localeCompare(right.file.relativePath);
+    })
+    .slice(0, 8)
+    .map(({ file }) => ({
+      path: file.path,
+      name: file.name,
+      source: "search" as const,
+      relativePath: file.relativePath,
+      status: "ready" as const,
+    }));
+}
+
+function workspaceFileSearchScore(
+  file: WorkspaceTreeEntry,
+  normalizedQuery: string,
+) {
+  const name = file.name.toLowerCase();
+  const relativePath = file.relativePath.toLowerCase();
+
+  if (name.startsWith(normalizedQuery)) {
+    return 0;
+  }
+
+  if (relativePath.startsWith(normalizedQuery)) {
+    return 1;
+  }
+
+  if (name.includes(normalizedQuery)) {
+    return 2;
+  }
+
+  if (relativePath.includes(normalizedQuery)) {
+    return 3;
+  }
+
+  return null;
 }
 
 function treeIndentStyle(depth: number) {

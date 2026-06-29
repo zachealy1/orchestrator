@@ -11,12 +11,13 @@ import {
   ShieldCheck,
   X,
 } from "lucide-react";
-import { useLayoutEffect, useRef, useState } from "react";
-import type { DragEvent } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import type { ChangeEvent, DragEvent, KeyboardEvent } from "react";
 import { ComposerSelect } from "./ComposerSelect";
 import type {
   AccessLevel,
   CodexAccountProfile,
+  ComposerMentionSearchStatus,
   CodexModel,
   ComposerContextFile,
   RouteRecommendation,
@@ -41,6 +42,9 @@ type Props = {
   planMode: boolean;
   accessLevel: AccessLevel;
   contextFiles: ComposerContextFile[];
+  mentionResults: ComposerContextFile[];
+  mentionSearchStatus: ComposerMentionSearchStatus;
+  mentionSearchError?: string | null;
   onAccountChange: (accountId: number) => void;
   onBranchChange: (branch: string) => void;
   onPromptChange: (prompt: string) => void;
@@ -50,10 +54,19 @@ type Props = {
   onPlanModeChange: (value: boolean) => void;
   onAccessLevelChange: (accessLevel: AccessLevel) => void;
   onAddFiles: () => void;
+  onMentionSearch: (query: string) => void;
+  onMentionFileSelect: (file: ComposerContextFile) => void;
+  onMentionClose: () => void;
   onContextFilesDrop: (files: ComposerContextFile[]) => void;
   onRemoveFile: (path: string) => void;
   onPreflight: () => void;
   onRun: () => void;
+};
+
+type MentionToken = {
+  start: number;
+  end: number;
+  query: string;
 };
 
 export function TaskComposer({
@@ -74,6 +87,9 @@ export function TaskComposer({
   planMode,
   accessLevel,
   contextFiles,
+  mentionResults,
+  mentionSearchStatus,
+  mentionSearchError,
   onAccountChange,
   onBranchChange,
   onPromptChange,
@@ -83,6 +99,9 @@ export function TaskComposer({
   onPlanModeChange,
   onAccessLevelChange,
   onAddFiles,
+  onMentionSearch,
+  onMentionFileSelect,
+  onMentionClose,
   onContextFilesDrop,
   onRemoveFile,
   onPreflight,
@@ -90,11 +109,18 @@ export function TaskComposer({
 }: Props) {
   const promptTextareaRef = useRef<HTMLTextAreaElement>(null);
   const [dragActive, setDragActive] = useState(false);
+  const [mentionToken, setMentionToken] = useState<MentionToken | null>(null);
+  const [activeMentionIndex, setActiveMentionIndex] = useState(0);
   const selectedModel =
     models.find((model) => model.id === selectedModelId) ?? models[0] ?? null;
   const reasoningOptions = selectedModel?.supportedReasoningEfforts ?? [];
   const controlsDisabled = models.length === 0 || Boolean(modelLoadError);
   const planRecommended = routeRecommendation === "plan-first";
+  const mentionOpen = mentionToken !== null;
+
+  useEffect(() => {
+    setActiveMentionIndex(0);
+  }, [mentionToken?.query, mentionResults.length]);
 
   function handleGoalModeClick() {
     const nextGoalMode = !goalMode;
@@ -110,6 +136,86 @@ export function TaskComposer({
     if (nextPlanMode && goalMode) {
       onGoalModeChange(false);
     }
+  }
+
+  function closeMentionSearch() {
+    if (!mentionToken) {
+      return;
+    }
+
+    setMentionToken(null);
+    setActiveMentionIndex(0);
+    onMentionClose();
+  }
+
+  function updateMentionFromPrompt(nextPrompt: string, caret: number) {
+    const token = readMentionToken(nextPrompt, caret);
+    setMentionToken(token);
+    setActiveMentionIndex(0);
+
+    if (token) {
+      onMentionSearch(token.query);
+    } else if (mentionToken) {
+      onMentionClose();
+    }
+  }
+
+  function handlePromptChange(event: ChangeEvent<HTMLTextAreaElement>) {
+    const nextPrompt = event.currentTarget.value;
+    onPromptChange(nextPrompt);
+    updateMentionFromPrompt(nextPrompt, event.currentTarget.selectionStart);
+  }
+
+  function handlePromptKeyDown(event: KeyboardEvent<HTMLTextAreaElement>) {
+    if (!mentionOpen) {
+      return;
+    }
+
+    if (event.key === "Escape") {
+      event.preventDefault();
+      closeMentionSearch();
+      return;
+    }
+
+    if (event.key === "ArrowDown" && mentionResults.length > 0) {
+      event.preventDefault();
+      setActiveMentionIndex((current) => (current + 1) % mentionResults.length);
+      return;
+    }
+
+    if (event.key === "ArrowUp" && mentionResults.length > 0) {
+      event.preventDefault();
+      setActiveMentionIndex(
+        (current) => (current - 1 + mentionResults.length) % mentionResults.length,
+      );
+      return;
+    }
+
+    if (
+      (event.key === "Enter" || event.key === "Tab") &&
+      mentionResults.length > 0
+    ) {
+      event.preventDefault();
+      selectMentionFile(mentionResults[activeMentionIndex] ?? mentionResults[0]);
+    }
+  }
+
+  function selectMentionFile(file: ComposerContextFile) {
+    if (!mentionToken) {
+      return;
+    }
+
+    const nextPrompt = removeMentionToken(prompt, mentionToken);
+    onPromptChange(nextPrompt.value);
+    onMentionFileSelect(file);
+    setMentionToken(null);
+    setActiveMentionIndex(0);
+    onMentionClose();
+
+    window.requestAnimationFrame(() => {
+      promptTextareaRef.current?.focus();
+      promptTextareaRef.current?.setSelectionRange(nextPrompt.caret, nextPrompt.caret);
+    });
   }
 
   useLayoutEffect(() => {
@@ -166,16 +272,38 @@ export function TaskComposer({
       onDragLeave={handleDragLeave}
       onDrop={handleDrop}
     >
-      <label className="prompt-field">
-        <span className="sr-only">Prompt</span>
-        <textarea
-          ref={promptTextareaRef}
-          value={prompt}
-          onChange={(event) => onPromptChange(event.currentTarget.value)}
-          placeholder="Do anything"
-          rows={1}
-        />
-      </label>
+      <div className="prompt-shell">
+        <label className="prompt-field">
+          <span className="sr-only">Prompt</span>
+          <textarea
+            ref={promptTextareaRef}
+            value={prompt}
+            onChange={handlePromptChange}
+            onKeyDown={handlePromptKeyDown}
+            onBlur={closeMentionSearch}
+            placeholder="Do anything"
+            rows={1}
+          />
+        </label>
+
+        {mentionOpen ? (
+          <div
+            className="mention-search-popover"
+            role="listbox"
+            aria-label="Workspace file suggestions"
+          >
+            <MentionSearchContent
+              query={mentionToken.query}
+              results={mentionResults}
+              status={mentionSearchStatus}
+              error={mentionSearchError}
+              activeIndex={activeMentionIndex}
+              onSelect={selectMentionFile}
+              onActiveIndexChange={setActiveMentionIndex}
+            />
+          </div>
+        ) : null}
+      </div>
 
       <div className="composer-meta-row" aria-label="Prompt metadata">
         <span className="token-pill">{tokenEstimate.toLocaleString()} tokens</span>
@@ -321,6 +449,73 @@ export function TaskComposer({
   );
 }
 
+function MentionSearchContent({
+  query,
+  results,
+  status,
+  error,
+  activeIndex,
+  onSelect,
+  onActiveIndexChange,
+}: {
+  query: string;
+  results: ComposerContextFile[];
+  status: ComposerMentionSearchStatus;
+  error?: string | null;
+  activeIndex: number;
+  onSelect: (file: ComposerContextFile) => void;
+  onActiveIndexChange: (index: number) => void;
+}) {
+  if (status === "disabled") {
+    return <div className="mention-search-empty">Choose a folder first.</div>;
+  }
+
+  if (!query.trim()) {
+    return <div className="mention-search-empty">Type a file name.</div>;
+  }
+
+  if (status === "loading") {
+    return <div className="mention-search-empty">Searching files...</div>;
+  }
+
+  if (status === "error") {
+    return (
+      <div className="mention-search-empty error">
+        {error ?? "Unable to search files."}
+      </div>
+    );
+  }
+
+  if (results.length === 0) {
+    return <div className="mention-search-empty">No files found.</div>;
+  }
+
+  return (
+    <>
+      {results.map((file, index) => (
+        <button
+          type="button"
+          role="option"
+          aria-selected={index === activeIndex}
+          className={`mention-search-option ${index === activeIndex ? "active" : ""}`}
+          key={file.path}
+          onMouseEnter={() => onActiveIndexChange(index)}
+          onMouseDown={(event) => {
+            event.preventDefault();
+            onSelect(file);
+          }}
+        >
+          <Paperclip size={13} aria-hidden="true" />
+          <span>
+            <strong>{file.name}</strong>
+            <small>{relativeFileLabel(file)}</small>
+          </span>
+        </button>
+      ))}
+    </>
+  );
+}
+
 function labelReasoningEffort(effort: string) {
   if (!effort) {
     return "Default";
@@ -370,4 +565,59 @@ function readContextFile(value: unknown): ComposerContextFile | null {
     source: "explorer",
     status: "ready",
   };
+}
+
+function readMentionToken(value: string, caret: number): MentionToken | null {
+  if (caret < 0 || caret > value.length) {
+    return null;
+  }
+
+  let start = caret;
+  while (start > 0 && !/\s/.test(value[start - 1])) {
+    start -= 1;
+  }
+
+  let end = caret;
+  while (end < value.length && !/\s/.test(value[end])) {
+    end += 1;
+  }
+
+  const token = value.slice(start, end);
+  if (!token.startsWith("@")) {
+    return null;
+  }
+
+  return {
+    start,
+    end,
+    query: token.slice(1),
+  };
+}
+
+function removeMentionToken(value: string, token: MentionToken) {
+  let before = value.slice(0, token.start);
+  let after = value.slice(token.end);
+
+  if (before.endsWith(" ") && /^\s+/.test(after)) {
+    after = after.replace(/^\s+/, "");
+  } else if (!before && /^\s+/.test(after)) {
+    after = after.replace(/^\s+/, "");
+  } else if (!after && /\s+$/.test(before)) {
+    before = before.replace(/\s+$/, "");
+  }
+
+  return {
+    value: `${before}${after}`,
+    caret: before.length,
+  };
+}
+
+function relativeFileLabel(file: ComposerContextFile) {
+  if (file.relativePath) {
+    return file.relativePath;
+  }
+
+  const normalizedName = file.name.replace(/\\/g, "/");
+  const normalizedPath = file.path.replace(/\\/g, "/");
+  return normalizedPath.endsWith(`/${normalizedName}`) ? normalizedPath : file.path;
 }

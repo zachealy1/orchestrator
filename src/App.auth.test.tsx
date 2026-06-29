@@ -1094,6 +1094,194 @@ describe("App Codex auth", () => {
     expect(within(contextList).getAllByText("README.md")).toHaveLength(1);
   });
 
+  it("indexes workspace files for @ mentions and adds the selected file to context", async () => {
+    mocks.listWorkspaceDirectoryMock.mockImplementation(
+      async (_workspacePath: string, directoryPath: string) => {
+        if (directoryPath === workspace.path) {
+          return [
+            {
+              name: "src",
+              path: `${workspace.path}/src`,
+              relativePath: "src",
+              kind: "directory",
+            },
+            {
+              name: "README.md",
+              path: `${workspace.path}/README.md`,
+              relativePath: "README.md",
+              kind: "file",
+            },
+          ];
+        }
+
+        if (directoryPath === `${workspace.path}/src`) {
+          return [
+            {
+              name: "App.tsx",
+              path: `${workspace.path}/src/App.tsx`,
+              relativePath: "src/App.tsx",
+              kind: "file",
+            },
+          ];
+        }
+
+        return [];
+      },
+    );
+
+    const { user } = await renderApp();
+    const promptInput = screen.getByLabelText("Prompt");
+
+    await user.type(promptInput, "@app");
+    const option = await screen.findByRole("option", { name: /app\.tsx/i });
+    await user.click(option);
+
+    await waitFor(() =>
+      expect(mocks.listWorkspaceDirectoryMock).toHaveBeenCalledWith(
+        workspace.path,
+        workspace.path,
+      ),
+    );
+    expect(mocks.listWorkspaceDirectoryMock).toHaveBeenCalledWith(
+      workspace.path,
+      `${workspace.path}/src`,
+    );
+    expect(promptInput).toHaveValue("");
+    const contextList = screen.getByLabelText("Selected context files");
+    expect(within(contextList).getByText("App.tsx")).toBeInTheDocument();
+
+    const secondPromptInput = screen.getByLabelText("Prompt");
+    await user.type(secondPromptInput, "@app");
+    await user.click(await screen.findByRole("option", { name: /app\.tsx/i }));
+    expect(within(contextList).getAllByText("App.tsx")).toHaveLength(1);
+  });
+
+  it("sorts @ mention search results and limits visible files", async () => {
+    mocks.listWorkspaceDirectoryMock.mockResolvedValue([
+      {
+        name: "happy-app.ts",
+        path: `${workspace.path}/happy-app.ts`,
+        relativePath: "happy-app.ts",
+        kind: "file",
+      },
+      {
+        name: "application.md",
+        path: `${workspace.path}/application.md`,
+        relativePath: "application.md",
+        kind: "file",
+      },
+      {
+        name: "App.tsx",
+        path: `${workspace.path}/App.tsx`,
+        relativePath: "App.tsx",
+        kind: "file",
+      },
+      {
+        name: "app.config.ts",
+        path: `${workspace.path}/app.config.ts`,
+        relativePath: "app.config.ts",
+        kind: "file",
+      },
+      {
+        name: "mapped.ts",
+        path: `${workspace.path}/mapped.ts`,
+        relativePath: "mapped.ts",
+        kind: "file",
+      },
+      {
+        name: "wrapped.ts",
+        path: `${workspace.path}/wrapped.ts`,
+        relativePath: "wrapped.ts",
+        kind: "file",
+      },
+      {
+        name: "app-state.ts",
+        path: `${workspace.path}/app-state.ts`,
+        relativePath: "app-state.ts",
+        kind: "file",
+      },
+      {
+        name: "mapper-app.ts",
+        path: `${workspace.path}/mapper-app.ts`,
+        relativePath: "mapper-app.ts",
+        kind: "file",
+      },
+      {
+        name: "app-router.ts",
+        path: `${workspace.path}/app-router.ts`,
+        relativePath: "app-router.ts",
+        kind: "file",
+      },
+    ]);
+
+    const { user } = await renderApp();
+    await user.type(screen.getByLabelText("Prompt"), "@app");
+
+    const listbox = await screen.findByRole("listbox", {
+      name: "Workspace file suggestions",
+    });
+    const options = within(listbox).getAllByRole("option");
+    expect(options).toHaveLength(8);
+    expect(options[0]).toHaveTextContent("App.tsx");
+    expect(options[1]).toHaveTextContent("app-state.ts");
+  });
+
+  it("rebuilds @ mention search after switching workspaces", async () => {
+    const mobileWorkspace = {
+      ...workspace,
+      id: 2,
+      path: "/repo/mobile-client",
+      label: "mobile-client",
+      default_account_id: null,
+    };
+    mocks.listWorkspacesMock.mockResolvedValue([workspace, mobileWorkspace]);
+    mocks.listWorkspaceDirectoryMock.mockImplementation(
+      async (workspacePath: string) => {
+        if (workspacePath === workspace.path) {
+          return [
+            {
+              name: "App.tsx",
+              path: `${workspace.path}/src/App.tsx`,
+              relativePath: "src/App.tsx",
+              kind: "file",
+            },
+          ];
+        }
+
+        return [
+          {
+            name: "MobileApp.tsx",
+            path: `${mobileWorkspace.path}/src/MobileApp.tsx`,
+            relativePath: "src/MobileApp.tsx",
+            kind: "file",
+          },
+        ];
+      },
+    );
+
+    const { user } = await renderApp();
+    const promptInput = screen.getByLabelText("Prompt");
+
+    await user.type(promptInput, "@app");
+    await user.click(await screen.findByRole("option", { name: /app\.tsx/i }));
+
+    const workspaceNav = screen.getByRole("navigation", {
+      name: "Workspaces",
+    });
+    await user.click(
+      within(workspaceNav).getByRole("button", { name: "mobile-client" }),
+    );
+
+    await user.type(screen.getByLabelText("Prompt"), "@mobile");
+    expect(
+      await screen.findByRole("option", { name: /mobileapp\.tsx/i }),
+    ).toBeInTheDocument();
+    expect(mocks.listWorkspaceDirectoryMock).toHaveBeenCalledWith(
+      mobileWorkspace.path,
+      mobileWorkspace.path,
+    );
+  });
+
   it("uses the shared dropdown for OSS provider selection", async () => {
     const { user } = await renderApp();
 
