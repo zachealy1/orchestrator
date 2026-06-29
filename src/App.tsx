@@ -9,6 +9,7 @@ import {
   FileText,
   Folder,
   FolderOpen,
+  GitBranch,
   History,
   Loader2,
   LogIn,
@@ -186,6 +187,15 @@ type WorkspaceGitStatusState = {
   error: string | null;
 };
 
+type WorkspaceGitSummary = {
+  total: number;
+  modified: number;
+  added: number;
+  deleted: number;
+  untracked: number;
+  conflicted: number;
+};
+
 type RefreshWorkspaceGitStatusOptions = {
   showLoading?: boolean;
 };
@@ -214,6 +224,39 @@ function gitStatusSnapshotKey(snapshot: WorkspaceGitStatusSnapshot | null) {
     .join("\u0001");
 
   return [snapshot.workspacePath, snapshot.gitRoot, files].join("\u0002");
+}
+
+function summarizeWorkspaceGitStatus(
+  snapshot: WorkspaceGitStatusSnapshot | null,
+): WorkspaceGitSummary {
+  const summary: WorkspaceGitSummary = {
+    total: snapshot?.files.length ?? 0,
+    modified: 0,
+    added: 0,
+    deleted: 0,
+    untracked: 0,
+    conflicted: 0,
+  };
+
+  snapshot?.files.forEach((file) => {
+    if (file.statusKind === "modified") {
+      summary.modified += 1;
+    } else if (
+      file.statusKind === "added" ||
+      file.statusKind === "copied" ||
+      file.statusKind === "renamed"
+    ) {
+      summary.added += 1;
+    } else if (file.statusKind === "deleted") {
+      summary.deleted += 1;
+    } else if (file.statusKind === "untracked") {
+      summary.untracked += 1;
+    } else if (file.statusKind === "conflicted") {
+      summary.conflicted += 1;
+    }
+  });
+
+  return summary;
 }
 
 class DuplicateCodexAccountError extends Error {
@@ -431,6 +474,10 @@ function App() {
     });
     return paths;
   }, [selectedGitStatusState?.snapshot]);
+  const selectedGitSummary = useMemo(
+    () => summarizeWorkspaceGitStatus(selectedGitStatusState?.snapshot ?? null),
+    [selectedGitStatusState?.snapshot],
+  );
   const codexSignedIn = isCodexSignedIn(codexAccount);
   const authMessage = formatCodexAuthMessage({
     connected: codexConnected,
@@ -2889,6 +2936,12 @@ function App() {
 
         {activeView === "task" ? (
           <div className="codex-workspace">
+            <WorkspaceContextBanner
+              workspace={selectedWorkspace}
+              branch={selectedBranch}
+              gitState={selectedGitStatusState}
+              gitSummary={selectedGitSummary}
+            />
             <section className="task-hero" aria-label="Task launch">
               <h1>{taskQuote}</h1>
               <TaskComposer
@@ -3225,6 +3278,121 @@ function App() {
         ) : null}
       </section>
     </main>
+  );
+}
+
+function WorkspaceContextBanner({
+  workspace,
+  branch,
+  gitState,
+  gitSummary,
+}: {
+  workspace: Workspace | null;
+  branch: string | null;
+  gitState: WorkspaceGitStatusState | null;
+  gitSummary: WorkspaceGitSummary;
+}) {
+  if (!workspace) {
+    return (
+      <section className="workspace-context-banner empty" aria-label="Selected folder">
+        <div className="workspace-context-main">
+          <span className="workspace-context-icon" aria-hidden="true">
+            <Folder size={17} />
+          </span>
+          <div>
+            <strong>No folder selected</strong>
+            <span>Add or choose a workspace to start a task.</span>
+          </div>
+        </div>
+      </section>
+    );
+  }
+
+  const gitLoading = gitState?.status === "loading" || gitState?.status === "idle";
+  const gitError = gitState?.status === "error";
+  const gitClean = !gitLoading && !gitError && gitSummary.total === 0;
+
+  return (
+    <section className="workspace-context-banner" aria-label="Selected folder">
+      <div className="workspace-context-main">
+        <span className="workspace-context-icon" aria-hidden="true">
+          <Folder size={17} />
+        </span>
+        <div>
+          <strong>{workspace.label}</strong>
+          <span title={workspace.path}>{workspace.path}</span>
+        </div>
+      </div>
+
+      <div className="workspace-context-chips" aria-label="Selected folder status">
+        <span className="workspace-context-chip branch">
+          <GitBranch size={14} aria-hidden="true" />
+          {branch ?? "No branch"}
+        </span>
+        {gitLoading ? (
+          <span className="workspace-context-chip">Checking git</span>
+        ) : null}
+        {gitError ? (
+          <span className="workspace-context-chip warning">Git unavailable</span>
+        ) : null}
+        {gitClean ? (
+          <span className="workspace-context-chip clean">Clean</span>
+        ) : null}
+        {!gitLoading && !gitError && gitSummary.total > 0 ? (
+          <>
+            <span className="workspace-context-chip changed">
+              {gitSummary.total} changed
+            </span>
+            <WorkspaceContextGitBadge
+              label="M"
+              count={gitSummary.modified}
+              title="Modified files"
+            />
+            <WorkspaceContextGitBadge
+              label="A/R/C"
+              count={gitSummary.added}
+              title="Added, renamed, or copied files"
+            />
+            <WorkspaceContextGitBadge
+              label="D"
+              count={gitSummary.deleted}
+              title="Deleted files"
+            />
+            <WorkspaceContextGitBadge
+              label="?"
+              count={gitSummary.untracked}
+              title="Untracked files"
+            />
+            <WorkspaceContextGitBadge
+              label="U"
+              count={gitSummary.conflicted}
+              title="Conflicted files"
+            />
+          </>
+        ) : null}
+      </div>
+    </section>
+  );
+}
+
+function WorkspaceContextGitBadge({
+  label,
+  count,
+  title,
+}: {
+  label: string;
+  count: number;
+  title: string;
+}) {
+  if (count === 0) {
+    return null;
+  }
+
+  return (
+    <span className="workspace-context-chip git-count" title={title}>
+      <span>{label}</span>
+      {count}
+    </span>
   );
 }
 

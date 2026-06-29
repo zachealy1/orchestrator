@@ -488,6 +488,103 @@ describe("App Codex auth", () => {
     );
   });
 
+  it("renders a selected folder banner with workspace, branch, and clean git state", async () => {
+    await renderApp();
+
+    const banner = screen.getByRole("region", { name: "Selected folder" });
+    expect(within(banner).getByText("orchestrator")).toBeInTheDocument();
+    expect(within(banner).getByText(workspace.path)).toBeInTheDocument();
+    expect(await within(banner).findByText("main")).toBeInTheDocument();
+    expect(await within(banner).findByText("Clean")).toBeInTheDocument();
+  });
+
+  it("summarizes changed files in the selected folder banner", async () => {
+    mocks.listWorkspaceGitStatusMock.mockResolvedValue({
+      workspacePath: workspace.path,
+      gitRoot: workspace.path,
+      files: [
+        {
+          path: "/repo/orchestrator/src/App.tsx",
+          relativePath: "src/App.tsx",
+          oldRelativePath: null,
+          indexStatus: " ",
+          worktreeStatus: "M",
+          statusKind: "modified",
+          badge: "M",
+        },
+        {
+          path: "/repo/orchestrator/src/New.tsx",
+          relativePath: "src/New.tsx",
+          oldRelativePath: null,
+          indexStatus: "A",
+          worktreeStatus: " ",
+          statusKind: "added",
+          badge: "A",
+        },
+        {
+          path: "/repo/orchestrator/src/Renamed.tsx",
+          relativePath: "src/Renamed.tsx",
+          oldRelativePath: "src/Old.tsx",
+          indexStatus: "R",
+          worktreeStatus: " ",
+          statusKind: "renamed",
+          badge: "R",
+        },
+        {
+          path: "/repo/orchestrator/src/Deleted.tsx",
+          relativePath: "src/Deleted.tsx",
+          oldRelativePath: null,
+          indexStatus: " ",
+          worktreeStatus: "D",
+          statusKind: "deleted",
+          badge: "D",
+        },
+        {
+          path: "/repo/orchestrator/notes.md",
+          relativePath: "notes.md",
+          oldRelativePath: null,
+          indexStatus: "?",
+          worktreeStatus: "?",
+          statusKind: "untracked",
+          badge: "?",
+        },
+        {
+          path: "/repo/orchestrator/src/conflict.ts",
+          relativePath: "src/conflict.ts",
+          oldRelativePath: null,
+          indexStatus: "U",
+          worktreeStatus: "U",
+          statusKind: "conflicted",
+          badge: "U",
+        },
+      ],
+    });
+
+    await renderApp();
+
+    const banner = screen.getByRole("region", { name: "Selected folder" });
+    expect(await within(banner).findByText("6 changed")).toBeInTheDocument();
+    expect(within(banner).getByTitle("Modified files")).toHaveTextContent("M1");
+    expect(within(banner).getByTitle("Added, renamed, or copied files")).toHaveTextContent(
+      "A/R/C2",
+    );
+    expect(within(banner).getByTitle("Deleted files")).toHaveTextContent("D1");
+    expect(within(banner).getByTitle("Untracked files")).toHaveTextContent("?1");
+    expect(within(banner).getByTitle("Conflicted files")).toHaveTextContent("U1");
+  });
+
+  it("renders an empty selected folder banner when no workspace is selected", async () => {
+    mocks.listWorkspacesMock.mockResolvedValue([]);
+
+    await renderApp();
+
+    const banner = screen.getByRole("region", { name: "Selected folder" });
+    expect(within(banner).getByText("No folder selected")).toBeInTheDocument();
+    expect(
+      within(banner).getByText("Add or choose a workspace to start a task."),
+    ).toBeInTheDocument();
+  });
+
   it("keeps goal mode and plan mode mutually exclusive", async () => {
     const { user } = await renderApp();
 
@@ -559,6 +656,8 @@ describe("App Codex auth", () => {
     expect(await within(workspaceNav).findByTitle("README.md")).toBeInTheDocument();
     expect(within(workspaceNav).queryByLabelText("modified file")).not.toBeInTheDocument();
     expect(within(workspaceNav).queryByTitle("external.md")).not.toBeInTheDocument();
+    const banner = screen.getByRole("region", { name: "Selected folder" });
+    expect(await within(banner).findByText("Clean")).toBeInTheDocument();
 
     await waitFor(
       () =>
@@ -570,6 +669,9 @@ describe("App Codex auth", () => {
     expect(within(workspaceNav).getByLabelText("modified file")).toHaveTextContent("M");
     expect(within(workspaceNav).getByTitle("external.md")).toBeInTheDocument();
     expect(within(workspaceNav).getByLabelText("untracked file")).toHaveTextContent("?");
+    expect(within(banner).getByText("2 changed")).toBeInTheDocument();
+    expect(within(banner).getByTitle("Modified files")).toHaveTextContent("M1");
+    expect(within(banner).getByTitle("Untracked files")).toHaveTextContent("?1");
   });
 
   it("marks changed files and parent folders in the workspace explorer", async () => {

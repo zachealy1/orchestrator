@@ -753,7 +753,7 @@ button.account-switcher-item:hover:not(:disabled) {
 
 .main.task-main {
   display: grid;
-  padding: 0 22px;
+  padding: 0;
 }
 
 .topbar {
@@ -846,13 +846,117 @@ button.account-switcher-item:hover:not(:disabled) {
 
 .codex-workspace {
   display: grid;
-  gap: 28px;
+  grid-template-rows: auto minmax(0, 1fr);
   min-height: 100vh;
+}
+
+.workspace-context-banner {
+  position: sticky;
+  top: 0;
+  z-index: 12;
+  display: grid;
+  min-width: 0;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 16px;
+  align-items: center;
+  border-bottom: 1px solid var(--color-divider);
+  background: rgb(var(--component-rgb) / 0.96);
+  padding: 10px 18px;
+}
+
+.workspace-context-banner.empty {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.workspace-context-main {
+  display: flex;
+  min-width: 0;
+  gap: 10px;
+  align-items: center;
+}
+
+.workspace-context-main > div {
+  display: grid;
+  min-width: 0;
+  gap: 1px;
+}
+
+.workspace-context-main strong,
+.workspace-context-main span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.workspace-context-main strong {
+  color: var(--text);
+  font-size: 0.9rem;
+  font-weight: 720;
+}
+
+.workspace-context-main span {
+  color: var(--muted);
+  font-size: 0.76rem;
+}
+
+.workspace-context-icon {
+  display: inline-grid;
+  width: 30px;
+  height: 30px;
+  flex: 0 0 auto;
+  place-items: center;
+  border-radius: 7px;
+  background: var(--color-surface-soft);
+  color: var(--color-icon);
+}
+
+.workspace-context-chips {
+  display: flex;
+  min-width: 0;
+  flex-wrap: wrap;
+  gap: 6px;
+  justify-content: flex-end;
+}
+
+.workspace-context-chip {
+  display: inline-flex;
+  max-width: 220px;
+  min-height: 28px;
+  align-items: center;
+  gap: 6px;
+  border: 1px solid var(--color-divider);
+  border-radius: 7px;
+  background: var(--color-surface-soft);
+  color: var(--text);
+  font-size: 0.76rem;
+  font-weight: 680;
+  line-height: 1;
+  padding: 6px 8px;
+  white-space: nowrap;
+}
+
+.workspace-context-chip.branch {
+  color: var(--color-selected-text);
+}
+
+.workspace-context-chip.clean {
+  color: var(--color-icon);
+}
+
+.workspace-context-chip.changed,
+.workspace-context-chip.warning {
+  color: var(--color-error);
+}
+
+.workspace-context-chip.git-count span {
+  color: var(--muted);
+  font-size: 0.68rem;
+  font-weight: 800;
 }
 
 .task-hero {
   display: flex;
-  min-height: 100vh;
+  min-height: calc(100vh - 52px);
   flex-direction: column;
   align-items: center;
   justify-content: center;
