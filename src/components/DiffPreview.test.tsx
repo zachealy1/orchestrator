@@ -59,6 +59,28 @@ function mockOverviewTrack(container: HTMLElement, height = 100) {
   return track;
 }
 
+function virtualMaxScrollTop(container: HTMLElement, clientHeight = 100) {
+  const virtualSurface = container.querySelector(
+    ".diff-preview-grid.virtualized, .diff-preview-inline.virtualized",
+  ) as HTMLElement;
+  const virtualHeight = Number.parseFloat(virtualSurface.style.height);
+  return Math.max(virtualHeight - clientHeight, 0);
+}
+
+function largeDiffSection(lineCount = 500): WorkspaceGitDiffSection {
+  return {
+    ...section,
+    baseContent: Array.from(
+      { length: lineCount },
+      (_, index) => `base line ${index + 1}`,
+    ).join("\n"),
+    headContent: Array.from(
+      { length: lineCount },
+      (_, index) => `head line ${index + 1}`,
+    ).join("\n"),
+  };
+}
+
 describe("DiffPreview", () => {
   it("renders side-by-side full-file rows with old and new line numbers", async () => {
     const { container } = render(
@@ -113,18 +135,10 @@ describe("DiffPreview", () => {
   });
 
   it("only renders a bounded initial row slice for large diffs", async () => {
-    const baseContent = Array.from(
-      { length: 500 },
-      (_, index) => `base line ${index + 1}`,
-    ).join("\n");
-    const headContent = Array.from(
-      { length: 500 },
-      (_, index) => `head line ${index + 1}`,
-    ).join("\n");
     const { container } = render(
       <DiffPreview
         path="README.txt"
-        sections={[{ ...section, baseContent, headContent }]}
+        sections={[largeDiffSection()]}
         resolvedTheme="dark"
         layout="side-by-side"
       />,
@@ -136,6 +150,93 @@ describe("DiffPreview", () => {
     expect(renderedRows.length).toBeLessThan(100);
     expect(screen.getByText("base line 1")).toBeInTheDocument();
     expect(screen.queryByText("base line 500")).not.toBeInTheDocument();
+  });
+
+  it("keeps the overview ruler synced to virtualized total height for large diffs", async () => {
+    const { container } = render(
+      <DiffPreview
+        path="README.txt"
+        sections={[largeDiffSection()]}
+        resolvedTheme="dark"
+        layout="side-by-side"
+      />,
+    );
+
+    const scrollElement = mockScrollableDiff(container, {
+      scrollHeight: 1000,
+      clientHeight: 100,
+    });
+    const ruler = await screen.findByRole("scrollbar", {
+      name: "Diff overview scroller",
+    });
+    const maxScrollTop = virtualMaxScrollTop(container);
+    expect(ruler).toHaveAttribute("aria-valuemax", String(Math.round(maxScrollTop)));
+
+    const track = mockOverviewTrack(container);
+    fireEvent.pointerDown(track, { clientY: 50, pointerId: 1 });
+    expect(scrollElement.scrollTop).toBeCloseTo(maxScrollTop * 0.5);
+  });
+
+  it("does not move diff markers when the virtualized diff scrolls", async () => {
+    const { container } = render(
+      <DiffPreview
+        path="README.txt"
+        sections={[largeDiffSection()]}
+        resolvedTheme="dark"
+        layout="side-by-side"
+      />,
+    );
+
+    const scrollElement = mockScrollableDiff(container, {
+      scrollHeight: 1000,
+      clientHeight: 100,
+    });
+    await screen.findByRole("scrollbar", { name: "Diff overview scroller" });
+    const marker = container.querySelector(
+      ".diff-overview-marker",
+    ) as HTMLElement;
+    expect(marker).not.toBeNull();
+    const initialTop = marker.style.top;
+    const initialHeight = marker.style.height;
+
+    scrollElement.scrollTop = 7000;
+    fireEvent.scroll(scrollElement);
+
+    await waitFor(() =>
+      expect(
+        screen.getByRole("scrollbar", { name: "Diff overview scroller" }),
+      ).toHaveAttribute("aria-valuenow", "7000"),
+    );
+    expect(marker.style.top).toBe(initialTop);
+    expect(marker.style.height).toBe(initialHeight);
+  });
+
+  it("clamps scroll position to the virtualized file bottom", async () => {
+    const { container } = render(
+      <DiffPreview
+        path="README.txt"
+        sections={[largeDiffSection()]}
+        resolvedTheme="dark"
+        layout="side-by-side"
+      />,
+    );
+
+    const scrollElement = mockScrollableDiff(container, {
+      scrollHeight: 50000,
+      clientHeight: 100,
+    });
+    await screen.findByRole("scrollbar", { name: "Diff overview scroller" });
+    const maxScrollTop = virtualMaxScrollTop(container);
+
+    scrollElement.scrollTop = 20000;
+    fireEvent.scroll(scrollElement);
+
+    await waitFor(() =>
+      expect(
+        screen.getByRole("scrollbar", { name: "Diff overview scroller" }),
+      ).toHaveAttribute("aria-valuenow", String(Math.round(maxScrollTop))),
+    );
+    expect(scrollElement.scrollTop).toBeCloseTo(maxScrollTop);
   });
 
   it("uses the same semantic token classes as CodePreview", async () => {
@@ -165,13 +266,7 @@ describe("DiffPreview", () => {
     const { container } = render(
       <DiffPreview
         path="README.txt"
-        sections={[
-          {
-            ...section,
-            baseContent: "A\nOld\nRemoved\nZ\n",
-            headContent: "A\nNew\nZ\nAdded\n",
-          },
-        ]}
+        sections={[largeDiffSection()]}
         resolvedTheme="dark"
         layout="side-by-side"
       />,
@@ -208,13 +303,7 @@ describe("DiffPreview", () => {
     const { container } = render(
       <DiffPreview
         path="README.txt"
-        sections={[
-          {
-            ...section,
-            baseContent: "A\nOld\nRemoved\nZ\n",
-            headContent: "A\nNew\nZ\nAdded\n",
-          },
-        ]}
+        sections={[largeDiffSection()]}
         resolvedTheme="dark"
         layout="side-by-side"
       />,
@@ -222,26 +311,21 @@ describe("DiffPreview", () => {
 
     const scrollElement = mockScrollableDiff(container);
     await screen.findByRole("scrollbar", { name: "Diff overview scroller" });
+    const maxScrollTop = virtualMaxScrollTop(container);
     const track = mockOverviewTrack(container);
 
     fireEvent.pointerDown(track, { clientY: 50, pointerId: 1 });
-    expect(scrollElement.scrollTop).toBe(450);
+    expect(scrollElement.scrollTop).toBeCloseTo(maxScrollTop * 0.5);
 
     fireEvent.pointerMove(track, { clientY: 80, pointerId: 1 });
-    expect(scrollElement.scrollTop).toBe(720);
+    expect(scrollElement.scrollTop).toBeCloseTo(maxScrollTop * 0.8);
   });
 
   it("supports keyboard navigation on the overview ruler", async () => {
     const { container } = render(
       <DiffPreview
         path="README.txt"
-        sections={[
-          {
-            ...section,
-            baseContent: "A\nOld\nRemoved\nZ\n",
-            headContent: "A\nNew\nZ\nAdded\n",
-          },
-        ]}
+        sections={[largeDiffSection()]}
         resolvedTheme="dark"
         layout="side-by-side"
       />,
@@ -251,9 +335,10 @@ describe("DiffPreview", () => {
     const ruler = await screen.findByRole("scrollbar", {
       name: "Diff overview scroller",
     });
+    const maxScrollTop = virtualMaxScrollTop(container);
 
     fireEvent.keyDown(ruler, { key: "End" });
-    expect(scrollElement.scrollTop).toBe(900);
+    expect(scrollElement.scrollTop).toBeCloseTo(maxScrollTop);
 
     fireEvent.keyDown(ruler, { key: "Home" });
     expect(scrollElement.scrollTop).toBe(0);

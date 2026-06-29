@@ -124,10 +124,7 @@ export const DiffPreview = memo(function DiffPreview({
     virtualRows.length > 0
       ? virtualRows
       : buildFallbackVirtualRows(flattenedRows.length, rowEstimate, "diff");
-  const totalSize = Math.max(
-    rowVirtualizer.getTotalSize(),
-    flattenedRows.length * rowEstimate,
-  );
+  const totalSize = rowVirtualizer.getTotalSize();
   const overviewRows = useMemo(
     () => flattenedRows.map(({ row }) => row),
     [flattenedRows],
@@ -152,11 +149,7 @@ export const DiffPreview = memo(function DiffPreview({
       return;
     }
 
-    const nextMetrics = {
-      scrollTop: scrollElement.scrollTop,
-      scrollHeight: scrollElement.scrollHeight,
-      clientHeight: scrollElement.clientHeight,
-    };
+    const nextMetrics = readVirtualScrollMetrics(scrollElement, totalSize);
 
     setScrollMetrics((current) =>
       current.scrollTop === nextMetrics.scrollTop &&
@@ -165,7 +158,7 @@ export const DiffPreview = memo(function DiffPreview({
         ? current
         : nextMetrics,
     );
-  }, []);
+  }, [totalSize]);
 
   const updateScrollMetrics = useCallback(() => {
     if (scrollMetricsFrameRef.current !== null) {
@@ -252,7 +245,7 @@ export const DiffPreview = memo(function DiffPreview({
   useEffect(() => {
     const frameId = window.requestAnimationFrame(readScrollMetrics);
     return () => window.cancelAnimationFrame(frameId);
-  }, [flattenedRows.length, highlights, layout, readScrollMetrics]);
+  }, [flattenedRows.length, highlights, layout, readScrollMetrics, totalSize]);
 
   const jumpToOverviewRatio = useCallback(
     (ratio: number) => {
@@ -261,10 +254,14 @@ export const DiffPreview = memo(function DiffPreview({
         return;
       }
 
-      scrollToOverviewPosition(scrollElement, ratio);
+      scrollToOverviewPosition(
+        scrollElement,
+        ratio,
+        getVirtualScrollHeight(totalSize, scrollElement.clientHeight),
+      );
       readScrollMetrics();
     },
-    [readScrollMetrics],
+    [readScrollMetrics, totalSize],
   );
 
   const navigateOverview = useCallback(
@@ -277,7 +274,8 @@ export const DiffPreview = memo(function DiffPreview({
       const lineStep = 42;
       const pageStep = Math.max(scrollElement.clientHeight * 0.85, lineStep);
       const maxScrollTop = Math.max(
-        scrollElement.scrollHeight - scrollElement.clientHeight,
+        getVirtualScrollHeight(totalSize, scrollElement.clientHeight) -
+          scrollElement.clientHeight,
         0,
       );
 
@@ -302,7 +300,7 @@ export const DiffPreview = memo(function DiffPreview({
 
       readScrollMetrics();
     },
-    [readScrollMetrics],
+    [readScrollMetrics, totalSize],
   );
 
   return (
@@ -695,6 +693,42 @@ function fallbackHighlight(content: string): HighlightedDiffSide {
     language: "plaintext",
     lines: splitDiffLines(content).map((line) => [{ content: line }]),
   };
+}
+
+function readVirtualScrollMetrics(
+  scrollElement: HTMLElement,
+  totalSize: number,
+): ScrollMetrics {
+  const clientHeight = scrollElement.clientHeight;
+  const scrollHeight = getVirtualScrollHeight(totalSize, clientHeight);
+  const scrollTop = clampScrollTop(
+    scrollElement.scrollTop,
+    scrollHeight,
+    clientHeight,
+  );
+
+  if (scrollElement.scrollTop !== scrollTop) {
+    scrollElement.scrollTop = scrollTop;
+  }
+
+  return {
+    scrollTop,
+    scrollHeight,
+    clientHeight,
+  };
+}
+
+function getVirtualScrollHeight(totalSize: number, clientHeight: number) {
+  return Math.max(totalSize, clientHeight);
+}
+
+function clampScrollTop(
+  scrollTop: number,
+  scrollHeight: number,
+  clientHeight: number,
+) {
+  const maxScrollTop = Math.max(scrollHeight - clientHeight, 0);
+  return Math.min(Math.max(scrollTop, 0), maxScrollTop);
 }
 
 function buildFallbackVirtualRows(

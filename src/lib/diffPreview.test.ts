@@ -131,4 +131,15 @@ describe("diffPreview", () => {
     expect(scrollToOverviewPosition(container, 2)).toBe(400);
     expect(container.scrollTop).toBe(400);
   });
+
+  it("can scroll an overview ratio using an explicit virtualized scroll height", () => {
+    const container = {
+      clientHeight: 100,
+      scrollHeight: 500,
+      scrollTop: 0,
+    } as HTMLElement;
+
+    expect(scrollToOverviewPosition(container, 0.5, 1100)).toBe(500);
+    expect(container.scrollTop).toBe(500);
+  });
 });

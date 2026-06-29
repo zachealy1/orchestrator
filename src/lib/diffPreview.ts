@@ -184,8 +184,9 @@ export function calculateOverviewViewport(
 export function scrollToOverviewPosition(
   container: Pick<HTMLElement, "clientHeight" | "scrollHeight" | "scrollTop">,
   ratio: number,
+  scrollHeight = container.scrollHeight,
 ) {
-  const maxScrollTop = Math.max(container.scrollHeight - container.clientHeight, 0);
+  const maxScrollTop = Math.max(scrollHeight - container.clientHeight, 0);
   const nextScrollTop = clamp(ratio, 0, 1) * maxScrollTop;
   container.scrollTop = nextScrollTop;
   return nextScrollTop;
