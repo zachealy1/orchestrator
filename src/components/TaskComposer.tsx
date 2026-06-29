@@ -3,6 +3,7 @@ import {
   ClipboardCheck,
   CircleUserRound,
   Flag,
+  FileText,
   GitBranch,
   Bot,
   Gauge,
@@ -21,6 +22,9 @@ import type {
   CodexModel,
   ComposerContextFile,
   RouteRecommendation,
+  SelectedComposerSkill,
+  SlashCommandItem,
+  SlashCommandSearchStatus,
 } from "../types";
 import { ORCHESTRATOR_CONTEXT_FILE_MIME as CONTEXT_FILE_MIME } from "../types";
 
@@ -42,9 +46,13 @@ type Props = {
   planMode: boolean;
   accessLevel: AccessLevel;
   contextFiles: ComposerContextFile[];
+  selectedSkills: SelectedComposerSkill[];
   mentionResults: ComposerContextFile[];
   mentionSearchStatus: ComposerMentionSearchStatus;
   mentionSearchError?: string | null;
+  slashCommandResults: SlashCommandItem[];
+  slashCommandSearchStatus: SlashCommandSearchStatus;
+  slashCommandSearchError?: string | null;
   onAccountChange: (accountId: number) => void;
   onBranchChange: (branch: string) => void;
   onPromptChange: (prompt: string) => void;
@@ -57,17 +65,24 @@ type Props = {
   onMentionSearch: (query: string) => void;
   onMentionFileSelect: (file: ComposerContextFile) => void;
   onMentionClose: () => void;
+  onSlashCommandSearch: (query: string) => void;
+  onSlashCommandSelect: (item: SlashCommandItem) => void;
+  onSlashCommandClose: () => void;
   onContextFilesDrop: (files: ComposerContextFile[]) => void;
   onRemoveFile: (path: string) => void;
+  onRemoveSkill: (skillId: string) => void;
   onPreflight: () => void;
   onRun: () => void;
 };
 
-type MentionToken = {
+type ComposerToken = {
+  trigger: "@" | "/";
   start: number;
   end: number;
   query: string;
 };
+
+type SlashPanel = "commands" | "reasoning";
 
 export function TaskComposer({
   disabled,
@@ -87,9 +102,13 @@ export function TaskComposer({
   planMode,
   accessLevel,
   contextFiles,
+  selectedSkills,
   mentionResults,
   mentionSearchStatus,
   mentionSearchError,
+  slashCommandResults,
+  slashCommandSearchStatus,
+  slashCommandSearchError,
   onAccountChange,
   onBranchChange,
   onPromptChange,
@@ -102,25 +121,38 @@ export function TaskComposer({
   onMentionSearch,
   onMentionFileSelect,
   onMentionClose,
+  onSlashCommandSearch,
+  onSlashCommandSelect,
+  onSlashCommandClose,
   onContextFilesDrop,
   onRemoveFile,
+  onRemoveSkill,
   onPreflight,
   onRun,
 }: Props) {
   const promptTextareaRef = useRef<HTMLTextAreaElement>(null);
   const [dragActive, setDragActive] = useState(false);
-  const [mentionToken, setMentionToken] = useState<MentionToken | null>(null);
-  const [activeMentionIndex, setActiveMentionIndex] = useState(0);
+  const [activeToken, setActiveToken] = useState<ComposerToken | null>(null);
+  const [activePopoverIndex, setActivePopoverIndex] = useState(0);
+  const [slashPanel, setSlashPanel] = useState<SlashPanel>("commands");
   const selectedModel =
     models.find((model) => model.id === selectedModelId) ?? models[0] ?? null;
   const reasoningOptions = selectedModel?.supportedReasoningEfforts ?? [];
   const controlsDisabled = models.length === 0 || Boolean(modelLoadError);
   const planRecommended = routeRecommendation === "plan-first";
-  const mentionOpen = mentionToken !== null;
+  const mentionOpen = activeToken?.trigger === "@";
+  const slashOpen = activeToken?.trigger === "/";
 
   useEffect(() => {
-    setActiveMentionIndex(0);
-  }, [mentionToken?.query, mentionResults.length]);
+    setActivePopoverIndex(0);
+  }, [
+    activeToken?.query,
+    activeToken?.trigger,
+    mentionResults.length,
+    slashCommandResults.length,
+    reasoningOptions.length,
+    slashPanel,
+  ]);
 
   function handleGoalModeClick() {
     const nextGoalMode = !goalMode;
@@ -138,79 +170,173 @@ export function TaskComposer({
     }
   }
 
-  function closeMentionSearch() {
-    if (!mentionToken) {
+  function closeActiveSearch() {
+    if (!activeToken) {
       return;
     }
 
-    setMentionToken(null);
-    setActiveMentionIndex(0);
-    onMentionClose();
+    const trigger = activeToken.trigger;
+    setActiveToken(null);
+    setActivePopoverIndex(0);
+    setSlashPanel("commands");
+
+    if (trigger === "@") {
+      onMentionClose();
+    } else {
+      onSlashCommandClose();
+    }
   }
 
-  function updateMentionFromPrompt(nextPrompt: string, caret: number) {
-    const token = readMentionToken(nextPrompt, caret);
-    setMentionToken(token);
-    setActiveMentionIndex(0);
+  function updateSearchFromPrompt(nextPrompt: string, caret: number) {
+    const previousTrigger = activeToken?.trigger ?? null;
+    const token = readComposerToken(nextPrompt, caret);
+    setActiveToken(token);
+    setActivePopoverIndex(0);
+    setSlashPanel("commands");
 
-    if (token) {
+    if (token?.trigger === "@") {
       onMentionSearch(token.query);
-    } else if (mentionToken) {
+    } else if (previousTrigger === "@") {
       onMentionClose();
+    }
+
+    if (token?.trigger === "/") {
+      onSlashCommandSearch(token.query);
+    } else if (previousTrigger === "/") {
+      onSlashCommandClose();
     }
   }
 
   function handlePromptChange(event: ChangeEvent<HTMLTextAreaElement>) {
     const nextPrompt = event.currentTarget.value;
     onPromptChange(nextPrompt);
-    updateMentionFromPrompt(nextPrompt, event.currentTarget.selectionStart);
+    updateSearchFromPrompt(nextPrompt, event.currentTarget.selectionStart);
   }
 
   function handlePromptKeyDown(event: KeyboardEvent<HTMLTextAreaElement>) {
-    if (!mentionOpen) {
+    if (!activeToken) {
       return;
     }
 
     if (event.key === "Escape") {
       event.preventDefault();
-      closeMentionSearch();
+      closeActiveSearch();
       return;
     }
 
-    if (event.key === "ArrowDown" && mentionResults.length > 0) {
+    const itemCount = getActivePopoverItemCount();
+    if (event.key === "ArrowDown" && itemCount > 0) {
       event.preventDefault();
-      setActiveMentionIndex((current) => (current + 1) % mentionResults.length);
+      setActivePopoverIndex((current) => (current + 1) % itemCount);
       return;
     }
 
-    if (event.key === "ArrowUp" && mentionResults.length > 0) {
+    if (event.key === "ArrowUp" && itemCount > 0) {
       event.preventDefault();
-      setActiveMentionIndex(
-        (current) => (current - 1 + mentionResults.length) % mentionResults.length,
+      setActivePopoverIndex(
+        (current) => (current - 1 + itemCount) % itemCount,
       );
       return;
     }
 
-    if (
-      (event.key === "Enter" || event.key === "Tab") &&
-      mentionResults.length > 0
-    ) {
+    if ((event.key === "Enter" || event.key === "Tab") && itemCount > 0) {
       event.preventDefault();
-      selectMentionFile(mentionResults[activeMentionIndex] ?? mentionResults[0]);
+      selectActivePopoverItem();
+    }
+  }
+
+  function getActivePopoverItemCount() {
+    if (mentionOpen) {
+      return mentionResults.length;
+    }
+
+    if (slashOpen && slashPanel === "reasoning") {
+      return reasoningOptions.length;
+    }
+
+    if (slashOpen) {
+      return slashCommandResults.length;
+    }
+
+    return 0;
+  }
+
+  function selectActivePopoverItem() {
+    if (mentionOpen) {
+      selectMentionFile(mentionResults[activePopoverIndex] ?? mentionResults[0]);
+      return;
+    }
+
+    if (slashOpen && slashPanel === "reasoning") {
+      const option = reasoningOptions[activePopoverIndex] ?? reasoningOptions[0];
+      if (option) {
+        selectReasoningEffort(option.reasoningEffort);
+      }
+      return;
+    }
+
+    if (slashOpen) {
+      selectSlashCommand(
+        slashCommandResults[activePopoverIndex] ?? slashCommandResults[0],
+      );
     }
   }
 
   function selectMentionFile(file: ComposerContextFile) {
-    if (!mentionToken) {
+    if (activeToken?.trigger !== "@") {
       return;
     }
 
-    const nextPrompt = removeMentionToken(prompt, mentionToken);
+    const nextPrompt = removeComposerToken(prompt, activeToken);
     onPromptChange(nextPrompt.value);
     onMentionFileSelect(file);
-    setMentionToken(null);
-    setActiveMentionIndex(0);
+    setActiveToken(null);
+    setActivePopoverIndex(0);
     onMentionClose();
+
+    window.requestAnimationFrame(() => {
+      promptTextareaRef.current?.focus();
+      promptTextareaRef.current?.setSelectionRange(nextPrompt.caret, nextPrompt.caret);
+    });
+  }
+
+  function selectSlashCommand(item: SlashCommandItem | undefined) {
+    if (!item || activeToken?.trigger !== "/") {
+      return;
+    }
+
+    if (item.kind === "builtin" && item.command === "reasoning") {
+      setSlashPanel("reasoning");
+      setActivePopoverIndex(0);
+      return;
+    }
+
+    const nextPrompt = removeComposerToken(prompt, activeToken);
+    onPromptChange(nextPrompt.value);
+    onSlashCommandSelect(item);
+    setActiveToken(null);
+    setActivePopoverIndex(0);
+    setSlashPanel("commands");
+    onSlashCommandClose();
+
+    window.requestAnimationFrame(() => {
+      promptTextareaRef.current?.focus();
+      promptTextareaRef.current?.setSelectionRange(nextPrompt.caret, nextPrompt.caret);
+    });
+  }
+
+  function selectReasoningEffort(effort: string) {
+    if (activeToken?.trigger !== "/") {
+      return;
+    }
+
+    const nextPrompt = removeComposerToken(prompt, activeToken);
+    onPromptChange(nextPrompt.value);
+    onReasoningEffortChange(effort);
+    setActiveToken(null);
+    setActivePopoverIndex(0);
+    setSlashPanel("commands");
+    onSlashCommandClose();
 
     window.requestAnimationFrame(() => {
       promptTextareaRef.current?.focus();
@@ -280,7 +406,7 @@ export function TaskComposer({
             value={prompt}
             onChange={handlePromptChange}
             onKeyDown={handlePromptKeyDown}
-            onBlur={closeMentionSearch}
+            onBlur={closeActiveSearch}
             placeholder="Do anything"
             rows={1}
           />
@@ -293,13 +419,36 @@ export function TaskComposer({
             aria-label="Workspace file suggestions"
           >
             <MentionSearchContent
-              query={mentionToken.query}
+              query={activeToken.query}
               results={mentionResults}
               status={mentionSearchStatus}
               error={mentionSearchError}
-              activeIndex={activeMentionIndex}
+              activeIndex={activePopoverIndex}
               onSelect={selectMentionFile}
-              onActiveIndexChange={setActiveMentionIndex}
+              onActiveIndexChange={setActivePopoverIndex}
+            />
+          </div>
+        ) : slashOpen ? (
+          <div
+            className="mention-search-popover slash-command-popover"
+            role="listbox"
+            aria-label={
+              slashPanel === "reasoning"
+                ? "Reasoning effort suggestions"
+                : "Slash command suggestions"
+            }
+          >
+            <SlashCommandContent
+              panel={slashPanel}
+              query={activeToken.query}
+              results={slashCommandResults}
+              status={slashCommandSearchStatus}
+              error={slashCommandSearchError}
+              reasoningOptions={reasoningOptions}
+              activeIndex={activePopoverIndex}
+              onSelect={selectSlashCommand}
+              onReasoningSelect={selectReasoningEffort}
+              onActiveIndexChange={setActivePopoverIndex}
             />
           </div>
         ) : null}
@@ -427,7 +576,7 @@ export function TaskComposer({
           />
         </div>
 
-        {contextFiles.length > 0 ? (
+        {contextFiles.length > 0 || selectedSkills.length > 0 ? (
           <div className="context-file-list" aria-label="Selected context files">
             {contextFiles.map((file) => (
               <span className={`context-chip ${file.status ?? "ready"}`} key={file.path}>
@@ -437,6 +586,19 @@ export function TaskComposer({
                   type="button"
                   onClick={() => onRemoveFile(file.path)}
                   aria-label={`Remove ${file.name}`}
+                >
+                  <X size={13} />
+                </button>
+              </span>
+            ))}
+            {selectedSkills.map((skill) => (
+              <span className="context-chip skill" key={skill.id}>
+                <BrainCircuit size={13} />
+                <span title={skill.description ?? skill.name}>{skill.name}</span>
+                <button
+                  type="button"
+                  onClick={() => onRemoveSkill(skill.id)}
+                  aria-label={`Remove ${skill.name}`}
                 >
                   <X size={13} />
                 </button>
@@ -516,6 +678,155 @@ function MentionSearchContent({
   );
 }
 
+function SlashCommandContent({
+  panel,
+  query,
+  results,
+  status,
+  error,
+  reasoningOptions,
+  activeIndex,
+  onSelect,
+  onReasoningSelect,
+  onActiveIndexChange,
+}: {
+  panel: SlashPanel;
+  query: string;
+  results: SlashCommandItem[];
+  status: SlashCommandSearchStatus;
+  error?: string | null;
+  reasoningOptions: NonNullable<CodexModel["supportedReasoningEfforts"]>;
+  activeIndex: number;
+  onSelect: (item: SlashCommandItem) => void;
+  onReasoningSelect: (effort: string) => void;
+  onActiveIndexChange: (index: number) => void;
+}) {
+  if (panel === "reasoning") {
+    if (reasoningOptions.length === 0) {
+      return (
+        <div className="mention-search-empty">
+          No reasoning options for this agent.
+        </div>
+      );
+    }
+
+    return (
+      <>
+        {reasoningOptions.map((option, index) => (
+          <button
+            type="button"
+            role="option"
+            aria-selected={index === activeIndex}
+            className={`mention-search-option slash-command-option ${
+              index === activeIndex ? "active" : ""
+            }`}
+            key={option.reasoningEffort}
+            onMouseEnter={() => onActiveIndexChange(index)}
+            onMouseDown={(event) => {
+              event.preventDefault();
+              onReasoningSelect(option.reasoningEffort);
+            }}
+          >
+            <Gauge size={13} aria-hidden="true" />
+            <span>
+              <strong>{labelReasoningEffort(option.reasoningEffort)}</strong>
+              <small>{option.description || "Set reasoning effort"}</small>
+            </span>
+          </button>
+        ))}
+      </>
+    );
+  }
+
+  if (status === "disabled" && results.length === 0) {
+    return <div className="mention-search-empty">Sign in to load skills.</div>;
+  }
+
+  if (results.length === 0 && status === "loading") {
+    return <div className="mention-search-empty">Loading commands...</div>;
+  }
+
+  if (results.length === 0 && status === "error") {
+    return (
+      <div className="mention-search-empty error">
+        {error ?? "Skills unavailable."}
+      </div>
+    );
+  }
+
+  if (results.length === 0) {
+    return (
+      <div className="mention-search-empty">
+        {query.trim() ? "No commands found." : "No commands available."}
+      </div>
+    );
+  }
+
+  return (
+    <>
+      {results.map((item, index) => (
+        <button
+          type="button"
+          role="option"
+          aria-selected={index === activeIndex}
+          className={`mention-search-option slash-command-option ${
+            index === activeIndex ? "active" : ""
+          }`}
+          key={slashCommandKey(item)}
+          onMouseEnter={() => onActiveIndexChange(index)}
+          onMouseDown={(event) => {
+            event.preventDefault();
+            onSelect(item);
+          }}
+        >
+          {slashCommandIcon(item)}
+          <span>
+            <strong>{item.title}</strong>
+            <small>{item.description}</small>
+          </span>
+        </button>
+      ))}
+      {status === "loading" ? (
+        <div className="mention-search-empty">Loading skills...</div>
+      ) : null}
+      {status === "error" ? (
+        <div className="mention-search-empty error">
+          {error ?? "Skills unavailable."}
+        </div>
+      ) : null}
+    </>
+  );
+}
+
+function slashCommandKey(item: SlashCommandItem) {
+  return item.kind === "skill" ? `skill:${item.skill.id}` : `builtin:${item.command}`;
+}
+
+function slashCommandIcon(item: SlashCommandItem) {
+  if (item.kind === "skill") {
+    return <BrainCircuit size={13} aria-hidden="true" />;
+  }
+
+  switch (item.command) {
+    case "plan":
+      return <BrainCircuit size={13} aria-hidden="true" />;
+    case "goal":
+      return <Flag size={13} aria-hidden="true" />;
+    case "reasoning":
+      return <Gauge size={13} aria-hidden="true" />;
+    case "compact":
+      return <ClipboardCheck size={13} aria-hidden="true" />;
+    case "status":
+      return <ShieldCheck size={13} aria-hidden="true" />;
+    case "review":
+      return <ClipboardCheck size={13} aria-hidden="true" />;
+    case "mcp":
+      return <Bot size={13} aria-hidden="true" />;
+    case "init":
+      return <FileText size={13} aria-hidden="true" />;
+  }
+}
+
 function labelReasoningEffort(effort: string) {
   if (!effort) {
     return "Default";
@@ -567,7 +878,7 @@ function readContextFile(value: unknown): ComposerContextFile | null {
   };
 }
 
-function readMentionToken(value: string, caret: number): MentionToken | null {
+function readComposerToken(value: string, caret: number): ComposerToken | null {
   if (caret < 0 || caret > value.length) {
     return null;
   }
@@ -583,18 +894,19 @@ function readMentionToken(value: string, caret: number): MentionToken | null {
   }
 
   const token = value.slice(start, end);
-  if (!token.startsWith("@")) {
+  if (!token.startsWith("@") && !token.startsWith("/")) {
     return null;
   }
 
   return {
+    trigger: token.startsWith("@") ? "@" : "/",
     start,
     end,
     query: token.slice(1),
   };
 }
 
-function removeMentionToken(value: string, token: MentionToken) {
+function removeComposerToken(value: string, token: ComposerToken) {
   let before = value.slice(0, token.start);
   let after = value.slice(token.end);
 

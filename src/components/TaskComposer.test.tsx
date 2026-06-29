@@ -69,9 +69,13 @@ function renderComposer(overrides: Partial<TaskComposerProps> = {}) {
     planMode: false,
     accessLevel: "ask",
     contextFiles: [],
+    selectedSkills: [],
     mentionResults: [],
     mentionSearchStatus: "idle",
     mentionSearchError: null,
+    slashCommandResults: [],
+    slashCommandSearchStatus: "idle",
+    slashCommandSearchError: null,
     onAccountChange: vi.fn(),
     onBranchChange: vi.fn(),
     onPromptChange: vi.fn(),
@@ -84,8 +88,12 @@ function renderComposer(overrides: Partial<TaskComposerProps> = {}) {
     onMentionSearch: vi.fn(),
     onMentionFileSelect: vi.fn(),
     onMentionClose: vi.fn(),
+    onSlashCommandSearch: vi.fn(),
+    onSlashCommandSelect: vi.fn(),
+    onSlashCommandClose: vi.fn(),
     onContextFilesDrop: vi.fn(),
     onRemoveFile: vi.fn(),
+    onRemoveSkill: vi.fn(),
     onPreflight: vi.fn(),
     onRun: vi.fn(),
     ...overrides,
@@ -122,9 +130,13 @@ function renderControlledComposer(overrides: Partial<TaskComposerProps> = {}) {
       planMode: false,
       accessLevel: "ask",
       contextFiles: [],
+      selectedSkills: [],
       mentionResults: [],
       mentionSearchStatus: "idle",
       mentionSearchError: null,
+      slashCommandResults: [],
+      slashCommandSearchStatus: "idle",
+      slashCommandSearchError: null,
       onAccountChange: vi.fn(),
       onBranchChange: vi.fn(),
       onModelChange: vi.fn(),
@@ -136,8 +148,12 @@ function renderControlledComposer(overrides: Partial<TaskComposerProps> = {}) {
       onMentionSearch: vi.fn(),
       onMentionFileSelect: vi.fn(),
       onMentionClose: vi.fn(),
+      onSlashCommandSearch: vi.fn(),
+      onSlashCommandSelect: vi.fn(),
+      onSlashCommandClose: vi.fn(),
       onContextFilesDrop: vi.fn(),
       onRemoveFile: vi.fn(),
+      onRemoveSkill: vi.fn(),
       onPreflight: vi.fn(),
       onRun: vi.fn(),
       ...overrides,
@@ -458,5 +474,122 @@ describe("TaskComposer", () => {
     });
     await noResults.user.type(screen.getByLabelText("Prompt"), "@app");
     expect(screen.getByText("No files found.")).toBeInTheDocument();
+  });
+
+  it("opens slash command suggestions while typing a / token", async () => {
+    const onSlashCommandSearch = vi.fn();
+    const { user } = renderControlledComposer({
+      onSlashCommandSearch,
+      slashCommandSearchStatus: "loaded",
+      slashCommandResults: [
+        {
+          kind: "builtin",
+          command: "plan",
+          title: "Plan mode",
+          description: "Turn on plan-first routing",
+        },
+      ],
+    });
+
+    await user.type(screen.getByLabelText("Prompt"), "/pla");
+
+    expect(onSlashCommandSearch).toHaveBeenLastCalledWith("pla");
+    const listbox = screen.getByRole("listbox", {
+      name: "Slash command suggestions",
+    });
+    expect(listbox).toHaveClass("mention-search-popover");
+    expect(screen.getByRole("option", { name: /plan mode/i })).toBeInTheDocument();
+  });
+
+  it("selects a slash command with the keyboard and removes the typed /query", async () => {
+    const onSlashCommandSelect = vi.fn();
+    const onSlashCommandClose = vi.fn();
+    const command = {
+      kind: "builtin" as const,
+      command: "goal" as const,
+      title: "Goal",
+      description: "Set a persistent objective",
+    };
+    const { user, onPromptChange } = renderControlledComposer({
+      slashCommandSearchStatus: "loaded",
+      slashCommandResults: [command],
+      onSlashCommandSelect,
+      onSlashCommandClose,
+    });
+
+    const promptInput = screen.getByLabelText("Prompt");
+    await user.type(promptInput, "Use /goal");
+    await user.keyboard("{Enter}");
+
+    expect(onSlashCommandSelect).toHaveBeenCalledWith(command);
+    expect(onSlashCommandClose).toHaveBeenCalled();
+    expect(onPromptChange).toHaveBeenLastCalledWith("Use");
+    expect(promptInput).toHaveValue("Use");
+  });
+
+  it("opens reasoning choices from the slash reasoning command", async () => {
+    const onReasoningEffortChange = vi.fn();
+    const reasoningCommand = {
+      kind: "builtin" as const,
+      command: "reasoning" as const,
+      title: "Reasoning",
+      description: "Choose effort",
+    };
+    const { user } = renderControlledComposer({
+      slashCommandSearchStatus: "loaded",
+      slashCommandResults: [reasoningCommand],
+      onReasoningEffortChange,
+    });
+
+    await user.type(screen.getByLabelText("Prompt"), "/rea");
+    await user.keyboard("{Enter}");
+    expect(
+      screen.getByRole("listbox", { name: "Reasoning effort suggestions" }),
+    ).toBeInTheDocument();
+
+    await user.click(screen.getByRole("option", { name: /high/i }));
+    expect(onReasoningEffortChange).toHaveBeenCalledWith("high");
+    expect(screen.getByLabelText("Prompt")).toHaveValue("");
+  });
+
+  it("renders slash skill chips and removes them", async () => {
+    const onRemoveSkill = vi.fn();
+    const { user } = renderComposer({
+      selectedSkills: [
+        {
+          id: "docs",
+          name: "Docs",
+          description: "Use project documentation",
+        },
+      ],
+      onRemoveSkill,
+    });
+
+    expect(screen.getByText("Docs")).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: /remove docs/i }));
+    expect(onRemoveSkill).toHaveBeenCalledWith("docs");
+  });
+
+  it("does not open slash commands for ordinary relative file paths", async () => {
+    const onSlashCommandSearch = vi.fn();
+    const { user } = renderControlledComposer({
+      onSlashCommandSearch,
+      slashCommandSearchStatus: "loaded",
+      slashCommandResults: [
+        {
+          kind: "builtin",
+          command: "status",
+          title: "Status",
+          description: "Show status",
+        },
+      ],
+    });
+
+    await user.type(screen.getByLabelText("Prompt"), "Open src/App.tsx");
+
+    expect(onSlashCommandSearch).not.toHaveBeenCalled();
+    expect(
+      screen.queryByRole("listbox", { name: "Slash command suggestions" }),
+    ).not.toBeInTheDocument();
   });
 });

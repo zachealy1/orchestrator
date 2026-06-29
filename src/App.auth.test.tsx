@@ -15,6 +15,7 @@ const mocks = vi.hoisted(() => ({
   cancelCodexLoginMock: vi.fn(),
   logoutCodexAccountMock: vi.fn(),
   listCodexModelsMock: vi.fn(),
+  listCodexSkillsMock: vi.fn(),
   listGitBranchesMock: vi.fn(),
   listWorkspaceGitStatusMock: vi.fn(),
   readWorkspaceGitDiffMock: vi.fn(),
@@ -81,6 +82,7 @@ vi.mock("./codexClient", () => ({
   listWorkspaceGitStatus: mocks.listWorkspaceGitStatusMock,
   readWorkspaceGitDiff: mocks.readWorkspaceGitDiffMock,
   listCodexModels: mocks.listCodexModelsMock,
+  listCodexSkills: mocks.listCodexSkillsMock,
   listWorkspaceDirectory: mocks.listWorkspaceDirectoryMock,
   logoutCodexAccount: mocks.logoutCodexAccountMock,
   readCodexAccount: mocks.readCodexAccountMock,
@@ -190,6 +192,7 @@ function prepareDefaults() {
   mocks.cancelCodexLoginMock.mockResolvedValue(undefined);
   mocks.logoutCodexAccountMock.mockResolvedValue(undefined);
   mocks.listCodexModelsMock.mockResolvedValue([]);
+  mocks.listCodexSkillsMock.mockResolvedValue([]);
   mocks.listGitBranchesMock.mockResolvedValue({
     branches: ["main"],
     currentBranch: "main",
@@ -1764,6 +1767,69 @@ describe("App Codex auth", () => {
       7,
       "thread/start",
       expect.any(Object),
+    );
+  });
+
+  it("adds selected slash skills to the next run prompt", async () => {
+    mocks.listCodexAccountsMock.mockResolvedValue([signedInAccount]);
+    mocks.readCodexAccountMock.mockResolvedValue({
+      account: {
+        type: "chatgpt",
+        email: signedInAccount.email,
+        planType: signedInAccount.plan_type,
+      },
+      requiresOpenaiAuth: true,
+    });
+    mocks.listCodexSkillsMock.mockResolvedValue([
+      {
+        id: "docs",
+        name: "Docs",
+        description: "Use repository documentation",
+      },
+    ]);
+    mocks.codexRpcMock.mockImplementation(
+      async (_accountId: number, method: string) => {
+        if (method === "thread/start") {
+          return { thread: { id: "thread-1" } };
+        }
+        if (method === "turn/start") {
+          return { turn: { id: "turn-1" } };
+        }
+        return {};
+      },
+    );
+
+    const { user } = await renderApp();
+    const promptInput = screen.getByLabelText("Prompt");
+    await user.type(promptInput, "Fix the docs /docs");
+    await user.click(await screen.findByRole("option", { name: /docs/i }));
+    expect(screen.getByText("Docs")).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: /run codex/i }));
+
+    await waitFor(() =>
+      expect(mocks.codexRpcMock).toHaveBeenCalledWith(
+        7,
+        "turn/start",
+        expect.objectContaining({
+          input: [
+            expect.objectContaining({
+              text: expect.stringContaining("Use these Codex skills"),
+            }),
+          ],
+        }),
+      ),
+    );
+    expect(mocks.codexRpcMock).toHaveBeenCalledWith(
+      7,
+      "turn/start",
+      expect.objectContaining({
+        input: [
+          expect.objectContaining({
+            text: expect.stringContaining("Docs: Use repository documentation"),
+          }),
+        ],
+      }),
     );
   });
 

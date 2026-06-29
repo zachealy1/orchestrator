@@ -62,6 +62,7 @@ import {
   deleteCodexProfile,
   listGitBranches,
   listCodexModels,
+  listCodexSkills,
   listWorkspaceGitStatus,
   listWorkspaceDirectory,
   logoutCodexAccount,
@@ -123,12 +124,16 @@ import type {
   CodexMessageEvent,
   CodexLoginState,
   CodexModel,
+  CodexSkillSummary,
   ComposerMentionSearchStatus,
   CodexProcessEvent,
   ComposerContextFile,
   OssProvider,
   PreflightReport,
   RunListItem,
+  SelectedComposerSkill,
+  SlashCommandItem,
+  SlashCommandSearchStatus,
   ThemePreference,
   Workspace,
   WorkspaceFilePreview,
@@ -158,6 +163,57 @@ const DIFF_SIDE_BY_SIDE_MIN_WIDTH = 760;
 const GIT_STATUS_AUTO_REFRESH_INTERVAL_MS = 3000;
 
 type AppView = "task" | "runs" | "analytics" | "settings";
+
+const BUILTIN_SLASH_COMMANDS: SlashCommandItem[] = [
+  {
+    kind: "builtin",
+    command: "plan",
+    title: "Plan mode",
+    description: "Turn on plan-first routing for this task",
+  },
+  {
+    kind: "builtin",
+    command: "goal",
+    title: "Goal",
+    description: "Keep Codex working toward a persistent objective",
+  },
+  {
+    kind: "builtin",
+    command: "reasoning",
+    title: "Reasoning",
+    description: "Choose the reasoning effort for the selected agent",
+  },
+  {
+    kind: "builtin",
+    command: "compact",
+    title: "Compact",
+    description: "Summarize the current thread context when available",
+  },
+  {
+    kind: "builtin",
+    command: "status",
+    title: "Status",
+    description: "Show workspace, account, model, token, and run metadata",
+  },
+  {
+    kind: "builtin",
+    command: "review",
+    title: "Code review",
+    description: "Prepare a review prompt for current git changes",
+  },
+  {
+    kind: "builtin",
+    command: "mcp",
+    title: "MCP",
+    description: "Show connected tools and server status when available",
+  },
+  {
+    kind: "builtin",
+    command: "init",
+    title: "Init",
+    description: "Prepare a prompt to create or update AGENTS.md",
+  },
+];
 
 const THEME_OPTIONS: Array<{
   value: ThemePreference;
@@ -413,10 +469,17 @@ function App() {
   const [planMode, setPlanMode] = useState(false);
   const [accessLevel, setAccessLevel] = useState<AccessLevel>("ask");
   const [contextFiles, setContextFiles] = useState<ComposerContextFile[]>([]);
+  const [selectedSkills, setSelectedSkills] = useState<SelectedComposerSkill[]>([]);
   const [mentionResults, setMentionResults] = useState<ComposerContextFile[]>([]);
   const [mentionSearchStatus, setMentionSearchStatus] =
     useState<ComposerMentionSearchStatus>("idle");
   const [mentionSearchError, setMentionSearchError] = useState<string | null>(null);
+  const [slashCommandResults, setSlashCommandResults] =
+    useState<SlashCommandItem[]>(BUILTIN_SLASH_COMMANDS);
+  const [slashCommandSearchStatus, setSlashCommandSearchStatus] =
+    useState<SlashCommandSearchStatus>("idle");
+  const [slashCommandSearchError, setSlashCommandSearchError] =
+    useState<string | null>(null);
   const [branches, setBranches] = useState<string[]>([]);
   const [selectedBranch, setSelectedBranch] = useState<string | null>(null);
 
@@ -439,6 +502,11 @@ function App() {
     new Map<number, Promise<WorkspaceTreeEntry[]>>(),
   );
   const mentionSearchRequestId = useRef(0);
+  const slashCommandSearchRequestId = useRef(0);
+  const codexSkillCache = useRef(new Map<number, CodexSkillSummary[]>());
+  const codexSkillRequestCache = useRef(
+    new Map<number, Promise<CodexSkillSummary[]>>(),
+  );
 
   const improvedPrompt = useMemo(() => improvePrompt(prompt), [prompt]);
   const routeRecommendation = useMemo(() => recommendRoute(prompt), [prompt]);
@@ -669,6 +737,13 @@ function App() {
       workspaceFileIndexCache.current.delete(selectedWorkspace.id);
     }
   }, [selectedWorkspace?.id]);
+
+  useEffect(() => {
+    slashCommandSearchRequestId.current += 1;
+    setSlashCommandResults(BUILTIN_SLASH_COMMANDS);
+    setSlashCommandSearchStatus("idle");
+    setSlashCommandSearchError(null);
+  }, [selectedAccountId]);
 
   useEffect(() => {
     if (selectedWorkspace) {
@@ -1377,6 +1452,194 @@ function App() {
     setStatusMessage(`Added ${file.name} to context.`);
   }
 
+  async function getCodexSkills(accountId: number) {
+    const cached = codexSkillCache.current.get(accountId);
+    if (cached) {
+      return cached;
+    }
+
+    const existingRequest = codexSkillRequestCache.current.get(accountId);
+    if (existingRequest) {
+      return existingRequest;
+    }
+
+    const request = listCodexSkills(accountId)
+      .then((skills) => {
+        codexSkillCache.current.set(accountId, skills);
+        return skills;
+      })
+      .finally(() => {
+        codexSkillRequestCache.current.delete(accountId);
+      });
+
+    codexSkillRequestCache.current.set(accountId, request);
+    return request;
+  }
+
+  async function searchSlashCommands(query: string) {
+    const requestId = slashCommandSearchRequestId.current + 1;
+    slashCommandSearchRequestId.current = requestId;
+    setSlashCommandSearchError(null);
+
+    const accountId = selectedAccountIdRef.current;
+    const builtInResults = buildSlashCommandResults(query, []);
+
+    if (!accountId) {
+      setSlashCommandResults(builtInResults);
+      setSlashCommandSearchStatus("disabled");
+      setSlashCommandSearchError("Sign in to load skills.");
+      return;
+    }
+
+    const cachedSkills = codexSkillCache.current.get(accountId);
+    if (cachedSkills) {
+      setSlashCommandResults(buildSlashCommandResults(query, cachedSkills));
+      setSlashCommandSearchStatus("loaded");
+      return;
+    }
+
+    setSlashCommandResults(builtInResults);
+    setSlashCommandSearchStatus("loading");
+
+    try {
+      await ensureCodexConnected(accountId);
+      const skills = await getCodexSkills(accountId);
+      if (slashCommandSearchRequestId.current !== requestId) {
+        return;
+      }
+
+      setSlashCommandResults(buildSlashCommandResults(query, skills));
+      setSlashCommandSearchStatus("loaded");
+    } catch (error) {
+      if (slashCommandSearchRequestId.current !== requestId) {
+        return;
+      }
+
+      setSlashCommandResults(builtInResults);
+      setSlashCommandSearchStatus("error");
+      setSlashCommandSearchError(
+        `Skills unavailable: ${error instanceof Error ? error.message : String(error)}`,
+      );
+    }
+  }
+
+  function closeSlashCommandSearch() {
+    slashCommandSearchRequestId.current += 1;
+    setSlashCommandResults(BUILTIN_SLASH_COMMANDS);
+    setSlashCommandSearchStatus("idle");
+    setSlashCommandSearchError(null);
+  }
+
+  function addSelectedSkill(skill: CodexSkillSummary) {
+    setSelectedSkills((current) => {
+      if (current.some((selectedSkill) => selectedSkill.id === skill.id)) {
+        return current;
+      }
+
+      return [...current, skill];
+    });
+    setStatusMessage(`Added ${skill.name} skill to this task.`);
+  }
+
+  function handleSlashCommandSelect(item: SlashCommandItem) {
+    if (item.kind === "skill") {
+      addSelectedSkill(item.skill);
+      return;
+    }
+
+    switch (item.command) {
+      case "plan":
+        handlePlanModeChange(true);
+        setStatusMessage("Plan mode enabled.");
+        return;
+      case "goal":
+        handleGoalModeChange(true);
+        setStatusMessage("Goal mode enabled.");
+        return;
+      case "compact":
+        void compactActiveThread();
+        return;
+      case "status":
+        setStatusMessage(
+          buildComposerStatusMessage({
+            workspace: selectedWorkspaceRef.current,
+            branch: selectedBranch,
+            account: selectedAccount,
+            model: models.find((model) => model.id === selectedModelId) ?? null,
+            reasoningEffort: selectedReasoningEffort,
+            tokenEstimate,
+            contextFiles,
+            selectedSkills,
+            gitSummary: selectedGitSummary,
+            runView,
+          }),
+        );
+        return;
+      case "review":
+        setPrompt((current) =>
+          applyPromptDraft(
+            current,
+            buildCodeReviewDraft(
+              selectedWorkspaceRef.current,
+              selectedBranch,
+              selectedGitSummary,
+            ),
+          ),
+        );
+        setPreflight(null);
+        setStatusMessage("Prepared a code review prompt.");
+        return;
+      case "mcp":
+        void showMcpStatus();
+        return;
+      case "init":
+        setPrompt((current) =>
+          applyPromptDraft(current, buildInitInstructionsDraft(selectedWorkspaceRef.current)),
+        );
+        setPreflight(null);
+        setStatusMessage("Prepared an AGENTS.md setup prompt.");
+        return;
+      case "reasoning":
+        return;
+    }
+  }
+
+  async function compactActiveThread() {
+    const accountId = selectedAccountIdRef.current;
+    if (!accountId || !runView.threadId) {
+      setStatusMessage("Start a Codex thread before compacting context.");
+      return;
+    }
+
+    try {
+      await ensureCodexConnected(accountId);
+      await codexRpc(accountId, "thread/compact", { threadId: runView.threadId });
+      setStatusMessage("Requested context compaction for the active thread.");
+    } catch (error) {
+      setStatusMessage(
+        `Compact unavailable: ${error instanceof Error ? error.message : String(error)}`,
+      );
+    }
+  }
+
+  async function showMcpStatus() {
+    const accountId = selectedAccountIdRef.current;
+    if (!accountId) {
+      setStatusMessage("Sign in to a Codex account to inspect MCP status.");
+      return;
+    }
+
+    try {
+      await ensureCodexConnected(accountId);
+      const response = await codexRpc<unknown>(accountId, "mcp/list", {});
+      setStatusMessage(formatMcpStatus(response));
+    } catch (error) {
+      setStatusMessage(
+        `MCP status unavailable: ${error instanceof Error ? error.message : String(error)}`,
+      );
+    }
+  }
+
   async function ensureCodexConnected(accountId: number) {
     if (connectedAccountIdsRef.current.has(accountId)) {
       return;
@@ -1875,10 +2138,11 @@ function App() {
       }
     }
 
-    const text =
+    const baseTurnText =
       mode === "plan"
         ? buildPlanPrompt(report.improvedPrompt || improvedPrompt)
         : buildRunPrompt(report.improvedPrompt || improvedPrompt, report.recommendations);
+    const text = applySelectedSkillsToPrompt(baseTurnText, selectedSkills);
     const { additionalContext, skippedFiles } = await buildAdditionalContext(
       selectedAccountId,
       contextFiles,
@@ -3063,9 +3327,13 @@ function App() {
                 planMode={planMode}
                 accessLevel={accessLevel}
                 contextFiles={contextFiles}
+                selectedSkills={selectedSkills}
                 mentionResults={mentionResults}
                 mentionSearchStatus={mentionSearchStatus}
                 mentionSearchError={mentionSearchError}
+                slashCommandResults={slashCommandResults}
+                slashCommandSearchStatus={slashCommandSearchStatus}
+                slashCommandSearchError={slashCommandSearchError}
                 onAccountChange={(accountId) => void selectCodexAccount(accountId)}
                 onBranchChange={(branch) => void selectBranch(branch)}
                 onPromptChange={(nextPrompt) => {
@@ -3081,9 +3349,17 @@ function App() {
                 onMentionSearch={(query) => void searchMentionFiles(query)}
                 onMentionFileSelect={addMentionFileToContext}
                 onMentionClose={closeMentionSearch}
+                onSlashCommandSearch={(query) => void searchSlashCommands(query)}
+                onSlashCommandSelect={handleSlashCommandSelect}
+                onSlashCommandClose={closeSlashCommandSearch}
                 onContextFilesDrop={addDroppedContextFiles}
                 onRemoveFile={(path) =>
                   setContextFiles((current) => current.filter((file) => file.path !== path))
+                }
+                onRemoveSkill={(skillId) =>
+                  setSelectedSkills((current) =>
+                    current.filter((skill) => skill.id !== skillId),
+                  )
                 }
                 onPreflight={() => void handlePreflight()}
                 onRun={() => void launchRun()}
@@ -3518,6 +3794,191 @@ function approvalResult(request: CodexMessage, approved: boolean) {
   return { decision: approved ? "accept" : "decline" };
 }
 
+function buildSlashCommandResults(
+  query: string,
+  skills: CodexSkillSummary[],
+): SlashCommandItem[] {
+  const skillItems = skills.map((skill): SlashCommandItem => ({
+    kind: "skill",
+    skill,
+    title: skill.name,
+    description: skill.description ?? "Use this Codex skill for the next run",
+  }));
+
+  return [...BUILTIN_SLASH_COMMANDS, ...skillItems]
+    .filter((item) => slashCommandMatches(item, query))
+    .slice(0, 24);
+}
+
+function slashCommandMatches(item: SlashCommandItem, query: string) {
+  const normalizedQuery = query.trim().toLowerCase();
+  if (!normalizedQuery) {
+    return true;
+  }
+
+  const haystack = `${item.title} ${item.description}`.toLowerCase();
+  return haystack.includes(normalizedQuery);
+}
+
+function applyPromptDraft(current: string, draft: string) {
+  const trimmed = current.trim();
+  return trimmed ? `${trimmed}\n\n${draft}` : draft;
+}
+
+function buildCodeReviewDraft(
+  workspace: Workspace | null,
+  branch: string | null,
+  gitSummary: WorkspaceGitSummary,
+) {
+  const target = workspace?.label ?? "the selected repository";
+  const branchLine = branch ? `Current branch: ${branch}.` : "Current branch: unknown.";
+  const changeLine =
+    gitSummary.total > 0
+      ? `Review the ${gitSummary.total} current git change${
+          gitSummary.total === 1 ? "" : "s"
+        }.`
+      : "Review the current working tree and confirm whether it is clean.";
+
+  return [
+    `Review ${target}.`,
+    branchLine,
+    changeLine,
+    "",
+    "Focus on bugs, behavioral regressions, security issues, and missing tests.",
+    "Return prioritized findings first, with file and line references when available.",
+    "Do not edit files unless I explicitly ask for fixes.",
+  ].join("\n");
+}
+
+function buildInitInstructionsDraft(workspace: Workspace | null) {
+  const target = workspace?.label ?? "the selected repository";
+  return [
+    `Create or update AGENTS.md for ${target}.`,
+    "",
+    "Inspect the repository structure, scripts, tests, conventions, and existing documentation first.",
+    "Write concise instructions that future Codex runs can follow for building, testing, linting, and reviewing this repo.",
+    "Keep the file specific to this codebase and avoid generic filler.",
+  ].join("\n");
+}
+
+function buildComposerStatusMessage({
+  workspace,
+  branch,
+  account,
+  model,
+  reasoningEffort,
+  tokenEstimate,
+  contextFiles,
+  selectedSkills,
+  gitSummary,
+  runView,
+}: {
+  workspace: Workspace | null;
+  branch: string | null;
+  account: CodexAccountProfile | null;
+  model: CodexModel | null;
+  reasoningEffort: string | null;
+  tokenEstimate: number;
+  contextFiles: ComposerContextFile[];
+  selectedSkills: SelectedComposerSkill[];
+  gitSummary: WorkspaceGitSummary;
+  runView: RunViewState;
+}) {
+  const parts = [
+    workspace ? `Workspace ${workspace.label}` : "No workspace selected",
+    branch ? `branch ${branch}` : "no branch",
+    formatGitSummaryForStatus(gitSummary),
+    account ? `account ${account.label}` : "no account",
+    model ? `agent ${model.displayName || model.model}` : "no agent",
+    reasoningEffort ? `reasoning ${formatReasoningEffort(reasoningEffort)}` : "default reasoning",
+    `${tokenEstimate.toLocaleString()} tokens`,
+    `${contextFiles.length} file${contextFiles.length === 1 ? "" : "s"}`,
+    `${selectedSkills.length} skill${selectedSkills.length === 1 ? "" : "s"}`,
+  ];
+
+  if (runView.threadId) {
+    parts.push(`thread ${runView.threadId}`);
+  }
+
+  if (runView.turnId) {
+    parts.push(`turn ${runView.turnId}`);
+  }
+
+  return parts.join(" | ");
+}
+
+function formatGitSummaryForStatus(summary: WorkspaceGitSummary) {
+  if (summary.total === 0) {
+    return "git clean";
+  }
+
+  const details = [
+    summary.modified > 0 ? `${summary.modified} modified` : null,
+    summary.added > 0 ? `${summary.added} added` : null,
+    summary.deleted > 0 ? `${summary.deleted} deleted` : null,
+    summary.untracked > 0 ? `${summary.untracked} untracked` : null,
+    summary.conflicted > 0 ? `${summary.conflicted} conflicted` : null,
+  ].filter(Boolean);
+
+  return `${summary.total} changed${details.length > 0 ? ` (${details.join(", ")})` : ""}`;
+}
+
+function applySelectedSkillsToPrompt(
+  prompt: string,
+  selectedSkills: SelectedComposerSkill[],
+) {
+  if (selectedSkills.length === 0) {
+    return prompt;
+  }
+
+  return [
+    "Use these Codex skills if they are relevant to the task:",
+    ...selectedSkills.map((skill) =>
+      skill.description ? `- ${skill.name}: ${skill.description}` : `- ${skill.name}`,
+    ),
+    "",
+    prompt,
+  ].join("\n");
+}
+
+function formatMcpStatus(payload: unknown) {
+  const root = readObject(payload);
+  const servers =
+    readArray(payload).length > 0
+      ? readArray(payload)
+      : readArray(root.servers).length > 0
+        ? readArray(root.servers)
+        : readArray(root.data).length > 0
+          ? readArray(root.data)
+          : readArray(root.items);
+
+  if (servers.length === 0) {
+    return "MCP: no servers reported by Codex.";
+  }
+
+  const names = servers
+    .map((server) => {
+      const object = readObject(server);
+      return readString(object.name) ?? readString(object.id) ?? readString(object.label);
+    })
+    .filter((name): name is string => Boolean(name))
+    .slice(0, 4);
+
+  const suffix =
+    names.length > 0
+      ? ` (${names.join(", ")}${servers.length > names.length ? ", ..." : ""})`
+      : "";
+  return `MCP: ${servers.length} server${servers.length === 1 ? "" : "s"} available${suffix}.`;
+}
+
+function formatReasoningEffort(effort: string) {
+  return effort
+    .split(/[-_]/)
+    .filter(Boolean)
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+    .join(" ");
+}
+
 function accessSettings(accessLevel: AccessLevel) {
   return accessLevel === "full"
     ? { sandbox: "danger-full-access", approvalPolicy: "never" }
@@ -3760,6 +4221,10 @@ function readObject(value: unknown): Record<string, unknown> {
   return value && typeof value === "object" && !Array.isArray(value)
     ? (value as Record<string, unknown>)
     : {};
+}
+
+function readArray(value: unknown): unknown[] {
+  return Array.isArray(value) ? value : [];
 }
 
 function readString(value: unknown) {

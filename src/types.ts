@@ -320,6 +320,45 @@ export type ComposerMentionSearchStatus =
   | "error"
   | "disabled";
 
+export type SlashCommandKind =
+  | "plan"
+  | "goal"
+  | "reasoning"
+  | "compact"
+  | "status"
+  | "review"
+  | "mcp"
+  | "init";
+
+export type CodexSkillSummary = {
+  id: string;
+  name: string;
+  description: string | null;
+};
+
+export type SlashCommandItem =
+  | {
+      kind: "builtin";
+      command: SlashCommandKind;
+      title: string;
+      description: string;
+    }
+  | {
+      kind: "skill";
+      skill: CodexSkillSummary;
+      title: string;
+      description: string;
+    };
+
+export type SlashCommandSearchStatus =
+  | "idle"
+  | "loading"
+  | "loaded"
+  | "error"
+  | "disabled";
+
+export type SelectedComposerSkill = CodexSkillSummary;
+
 export type ComposerModeState = {
   goalMode: boolean;
   planMode: boolean;

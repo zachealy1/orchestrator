@@ -4,6 +4,7 @@ import type {
   CodexConnectResult,
   CodexLoginResponse,
   CodexModel,
+  CodexSkillSummary,
   ComposerContextFile,
   GitBranchList,
   ModelListResponse,
@@ -132,6 +133,26 @@ export async function listCodexModels(accountId: number) {
   return models;
 }
 
+export async function listCodexSkills(accountId: number) {
+  const methods = ["skill/list", "skills/list"];
+  let lastError: unknown = null;
+
+  for (const method of methods) {
+    try {
+      const response = await codexRpc<unknown>(accountId, method, {
+        includeHidden: false,
+      });
+      return extractCodexSkills(response);
+    } catch (error) {
+      lastError = error;
+    }
+  }
+
+  throw lastError instanceof Error
+    ? lastError
+    : new Error("Unable to load Codex skills.");
+}
+
 export async function readCodexFile(accountId: number, path: string) {
   const response = await codexRpc<{ dataBase64: string }>(accountId, "fs/readFile", {
     path,
@@ -171,6 +192,54 @@ export async function searchCodexFiles(
   } catch {
     return [];
   }
+}
+
+function extractCodexSkills(payload: unknown): CodexSkillSummary[] {
+  const root = readObject(payload);
+  const source =
+    readArray(payload).length > 0
+      ? readArray(payload)
+      : readArray(root.skills).length > 0
+        ? readArray(root.skills)
+        : readArray(root.data).length > 0
+          ? readArray(root.data)
+          : readArray(root.items);
+
+  const seen = new Set<string>();
+  return source
+    .map((item) => readObject(item))
+    .map((item): CodexSkillSummary | null => {
+      if (item.hidden === true) {
+        return null;
+      }
+
+      const id =
+        readString(item.id) ??
+        readString(item.name) ??
+        readString(item.title) ??
+        readString(item.slug);
+      const name =
+        readString(item.name) ??
+        readString(item.title) ??
+        readString(item.displayName) ??
+        id;
+
+      if (!id || !name || seen.has(id)) {
+        return null;
+      }
+
+      seen.add(id);
+      return {
+        id,
+        name,
+        description:
+          readString(item.description) ??
+          readString(item.summary) ??
+          readString(item.subtitle),
+      };
+    })
+    .filter((skill): skill is CodexSkillSummary => skill !== null)
+    .sort((left, right) => left.name.localeCompare(right.name));
 }
 
 function decodeBase64Utf8(value: string) {
