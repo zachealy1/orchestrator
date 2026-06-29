@@ -33,7 +33,10 @@ function workspaceLabel(path: string) {
 export async function listWorkspaces() {
   const db = await getDatabase();
   return db.select<Workspace[]>(
-    "SELECT id, path, label, default_account_id, last_opened_at, created_at FROM workspaces ORDER BY last_opened_at DESC",
+    `SELECT id, path, label, default_account_id, last_opened_at, created_at
+     FROM workspaces
+     WHERE deleted_at IS NULL
+     ORDER BY last_opened_at DESC`,
   );
 }
 
@@ -46,12 +49,15 @@ export async function upsertWorkspace(path: string) {
      VALUES ($1, $2, CURRENT_TIMESTAMP)
      ON CONFLICT(path) DO UPDATE SET
        label = excluded.label,
-       last_opened_at = CURRENT_TIMESTAMP`,
+       last_opened_at = CURRENT_TIMESTAMP,
+       deleted_at = NULL`,
     [path, label],
   );
 
   const workspace = await selectOne<Workspace>(
-    "SELECT id, path, label, default_account_id, last_opened_at, created_at FROM workspaces WHERE path = $1",
+    `SELECT id, path, label, default_account_id, last_opened_at, created_at
+     FROM workspaces
+     WHERE path = $1 AND deleted_at IS NULL`,
     [path],
   );
 
@@ -60,6 +66,17 @@ export async function upsertWorkspace(path: string) {
   }
 
   return workspace;
+}
+
+export async function softDeleteWorkspace(workspaceId: number) {
+  const db = await getDatabase();
+  await db.execute(
+    `UPDATE workspaces
+     SET default_account_id = NULL,
+         deleted_at = CURRENT_TIMESTAMP
+     WHERE id = $1`,
+    [workspaceId],
+  );
 }
 
 export async function listCodexAccounts() {

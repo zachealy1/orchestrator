@@ -30,6 +30,7 @@ import type {
   CSSProperties,
   DragEvent,
   KeyboardEvent as ReactKeyboardEvent,
+  MouseEvent as ReactMouseEvent,
   PointerEvent as ReactPointerEvent,
 } from "react";
 import "./App.css";
@@ -48,6 +49,7 @@ import {
   recordTokenUsage,
   renameCodexAccount,
   savePreflightReport,
+  softDeleteWorkspace,
   softDeleteCodexAccount,
   updateCodexAccount,
   updateRun,
@@ -244,6 +246,12 @@ type WorkspaceGitStatusState = {
   error: string | null;
 };
 
+type WorkspaceContextMenuState = {
+  workspace: Workspace;
+  x: number;
+  y: number;
+};
+
 type WorkspaceGitSummary = {
   total: number;
   modified: number;
@@ -395,6 +403,10 @@ const TASK_QUOTES = [
 function App() {
   const [workspaces, setWorkspaces] = useState<Workspace[]>([]);
   const [selectedWorkspace, setSelectedWorkspace] = useState<Workspace | null>(null);
+  const [workspaceContextMenu, setWorkspaceContextMenu] =
+    useState<WorkspaceContextMenuState | null>(null);
+  const [workspaceDeleteCandidate, setWorkspaceDeleteCandidate] =
+    useState<Workspace | null>(null);
   const [expandedWorkspaceIds, setExpandedWorkspaceIds] = useState<Set<number>>(
     () => new Set(),
   );
@@ -507,6 +519,7 @@ function App() {
   const codexSkillRequestCache = useRef(
     new Map<number, Promise<CodexSkillSummary[]>>(),
   );
+  const workspaceContextMenuRef = useRef<HTMLDivElement | null>(null);
 
   const improvedPrompt = useMemo(() => improvePrompt(prompt), [prompt]);
   const routeRecommendation = useMemo(() => recommendRoute(prompt), [prompt]);
@@ -744,6 +757,55 @@ function App() {
     setSlashCommandSearchStatus("idle");
     setSlashCommandSearchError(null);
   }, [selectedAccountId]);
+
+  useEffect(() => {
+    if (!workspaceContextMenu) {
+      return;
+    }
+
+    function handlePointerDown(event: PointerEvent) {
+      const menu = workspaceContextMenuRef.current;
+      if (menu && event.target instanceof Node && menu.contains(event.target)) {
+        return;
+      }
+
+      setWorkspaceContextMenu(null);
+    }
+
+    function handleKeyDown(event: KeyboardEvent) {
+      if (event.key === "Escape") {
+        setWorkspaceContextMenu(null);
+      }
+    }
+
+    function handleScroll() {
+      setWorkspaceContextMenu(null);
+    }
+
+    window.addEventListener("pointerdown", handlePointerDown);
+    window.addEventListener("keydown", handleKeyDown);
+    window.addEventListener("scroll", handleScroll, true);
+    return () => {
+      window.removeEventListener("pointerdown", handlePointerDown);
+      window.removeEventListener("keydown", handleKeyDown);
+      window.removeEventListener("scroll", handleScroll, true);
+    };
+  }, [workspaceContextMenu]);
+
+  useEffect(() => {
+    if (!workspaceDeleteCandidate) {
+      return;
+    }
+
+    function handleKeyDown(event: KeyboardEvent) {
+      if (event.key === "Escape") {
+        setWorkspaceDeleteCandidate(null);
+      }
+    }
+
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [workspaceDeleteCandidate]);
 
   useEffect(() => {
     if (selectedWorkspace) {
@@ -1311,6 +1373,7 @@ function App() {
       return;
     }
 
+    setWorkspaceContextMenu(null);
     setSelectedWorkspace(workspace);
     setActiveView("task");
     setPreflight(null);
@@ -1321,6 +1384,161 @@ function App() {
     ) {
       void selectCodexAccount(workspace.default_account_id);
     }
+  }
+
+  function openWorkspaceContextMenu(
+    workspace: Workspace,
+    event:
+      | ReactMouseEvent<HTMLElement>
+      | ReactKeyboardEvent<HTMLElement>,
+  ) {
+    event.preventDefault();
+    event.stopPropagation();
+
+    if ("clientX" in event && event.clientX !== 0) {
+      setWorkspaceContextMenu({
+        workspace,
+        x: event.clientX,
+        y: event.clientY,
+      });
+      return;
+    }
+
+    const rect = event.currentTarget.getBoundingClientRect();
+    setWorkspaceContextMenu({
+      workspace,
+      x: rect.left + 28,
+      y: rect.top + rect.height,
+    });
+  }
+
+  function handleWorkspaceLabelKeyDown(
+    workspace: Workspace,
+    event: ReactKeyboardEvent<HTMLButtonElement>,
+  ) {
+    if (event.key === "ContextMenu" || (event.key === "F10" && event.shiftKey)) {
+      openWorkspaceContextMenu(workspace, event);
+    }
+  }
+
+  function requestWorkspaceDelete(workspace: Workspace) {
+    setWorkspaceContextMenu(null);
+    if (runIsActive && workspace.id === selectedWorkspaceRef.current?.id) {
+      setStatusMessage("Wait for the active run to finish before removing this workspace.");
+      return;
+    }
+
+    setWorkspaceDeleteCandidate(workspace);
+  }
+
+  async function confirmWorkspaceDelete() {
+    const workspace = workspaceDeleteCandidate;
+    if (!workspace) {
+      return;
+    }
+
+    await softDeleteWorkspace(workspace.id);
+    setWorkspaceDeleteCandidate(null);
+    clearWorkspaceRuntimeState(workspace);
+
+    setWorkspaces((current) => {
+      const remaining = current.filter((candidate) => candidate.id !== workspace.id);
+      if (selectedWorkspaceRef.current?.id === workspace.id) {
+        const nextWorkspace = remaining[0] ?? null;
+        setSelectedWorkspace(nextWorkspace);
+        setStatusMessage(
+          nextWorkspace
+            ? `Removed ${workspace.label}. Selected ${nextWorkspace.label}.`
+            : `Removed ${workspace.label}. Add or choose a workspace to continue.`,
+        );
+      } else {
+        setStatusMessage(`Removed ${workspace.label} from Orchestrator.`);
+      }
+
+      return remaining;
+    });
+  }
+
+  function clearWorkspaceRuntimeState(workspace: Workspace) {
+    const workspaceRoot = normalizeWorkspacePath(workspace.path);
+    const workspacePrefix = `${workspaceRoot}/`;
+    const belongsToWorkspace = (path: string) => {
+      const normalized = normalizeWorkspacePath(path);
+      return normalized === workspaceRoot || normalized.startsWith(workspacePrefix);
+    };
+
+    setExpandedWorkspaceIds((current) => {
+      const next = new Set(current);
+      next.delete(workspace.id);
+      return next;
+    });
+    setExpandedDirectoryPaths(
+      (current) =>
+        new Set(
+          [...current].filter((directoryPath) => !belongsToWorkspace(directoryPath)),
+        ),
+    );
+    setDirectoryStates((current) =>
+      Object.fromEntries(
+        Object.entries(current).filter(([key]) => !key.startsWith(`${workspace.path}\u0000`)),
+      ),
+    );
+    setGitStatusStates((current) => {
+      const next = { ...current };
+      delete next[workspace.id];
+      return next;
+    });
+    setContextFiles((current) =>
+      current.filter((file) => !belongsToWorkspace(file.path)),
+    );
+    setPreflight(null);
+
+    if (previewState.file && belongsToWorkspace(previewState.file.path)) {
+      setPreviewState({
+        status: "idle",
+        mode: "preview",
+        file: null,
+        preview: null,
+        error: null,
+        diffStatus: "idle",
+        diff: null,
+        diffError: null,
+      });
+    }
+
+    for (const key of directoryEntriesCache.current.keys()) {
+      if (key.startsWith(`${workspace.path}\u0000`)) {
+        directoryEntriesCache.current.delete(key);
+      }
+    }
+    for (const key of directoryRequestCache.current.keys()) {
+      if (key.startsWith(`${workspace.path}\u0000`)) {
+        directoryRequestCache.current.delete(key);
+      }
+    }
+    for (const key of filePreviewCache.current.keys()) {
+      if (key.startsWith(`${workspace.path}\u0000`)) {
+        filePreviewCache.current.delete(key);
+      }
+    }
+    for (const key of filePreviewRequestCache.current.keys()) {
+      if (key.startsWith(`${workspace.path}\u0000`)) {
+        filePreviewRequestCache.current.delete(key);
+      }
+    }
+    for (const key of fileDiffCache.current.keys()) {
+      if (key.startsWith(`${workspace.path}\u0000`)) {
+        fileDiffCache.current.delete(key);
+      }
+    }
+    for (const key of fileDiffRequestCache.current.keys()) {
+      if (key.startsWith(`${workspace.path}\u0000`)) {
+        fileDiffRequestCache.current.delete(key);
+      }
+    }
+    gitStatusRefreshCache.current.delete(workspace.id);
+    workspaceFileIndexCache.current.delete(workspace.id);
+    workspaceFileIndexRequestCache.current.delete(workspace.id);
   }
 
   async function selectBranch(branch: string) {
@@ -3076,6 +3294,9 @@ function App() {
                       className={`workspace-root-row ${active ? "active" : ""}${
                         workspaceDirty ? " git-dirty" : ""
                       }`}
+                      onContextMenu={(event) =>
+                        openWorkspaceContextMenu(workspace, event)
+                      }
                     >
                       <button
                         className="workspace-tree-chevron"
@@ -3100,6 +3321,12 @@ function App() {
                             selectWorkspace(workspace.id);
                           }
                         }}
+                        onKeyDown={(event) =>
+                          handleWorkspaceLabelKeyDown(workspace, event)
+                        }
+                        onContextMenu={(event) =>
+                          openWorkspaceContextMenu(workspace, event)
+                        }
                         aria-current={active ? "page" : undefined}
                         title={workspace.label}
                       >
@@ -3120,6 +3347,32 @@ function App() {
               })
             )}
           </nav>
+          {workspaceContextMenu ? (
+            <div
+              className="workspace-context-menu"
+              ref={workspaceContextMenuRef}
+              role="menu"
+              aria-label={`${workspaceContextMenu.workspace.label} workspace actions`}
+              style={{
+                left: workspaceContextMenu.x,
+                top: workspaceContextMenu.y,
+              }}
+            >
+              <button
+                className="workspace-context-menu-item danger"
+                type="button"
+                role="menuitem"
+                onClick={() => requestWorkspaceDelete(workspaceContextMenu.workspace)}
+                disabled={
+                  runIsActive &&
+                  workspaceContextMenu.workspace.id === selectedWorkspace?.id
+                }
+              >
+                <Trash2 size={15} aria-hidden="true" />
+                <span>Remove from Orchestrator</span>
+              </button>
+            </div>
+          ) : null}
         </div>
 
         <div className={`codex-card account-card auth-${authRow.tone}`}>
@@ -3261,6 +3514,51 @@ function App() {
           )}
         </div>
       </aside>
+
+      {workspaceDeleteCandidate ? (
+        <div
+          className="modal-backdrop"
+          role="presentation"
+          onMouseDown={(event) => {
+            if (event.target === event.currentTarget) {
+              setWorkspaceDeleteCandidate(null);
+            }
+          }}
+        >
+          <section
+            className="confirmation-dialog"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="workspace-delete-title"
+            aria-describedby="workspace-delete-description"
+          >
+            <div>
+              <p className="eyebrow">Workspace</p>
+              <h2 id="workspace-delete-title">Remove workspace?</h2>
+              <p id="workspace-delete-description">
+                This removes {workspaceDeleteCandidate.label} from Orchestrator.
+                The folder on disk will not be deleted.
+              </p>
+            </div>
+            <div className="confirmation-actions">
+              <button
+                className="secondary"
+                type="button"
+                onClick={() => setWorkspaceDeleteCandidate(null)}
+              >
+                Cancel
+              </button>
+              <button
+                className="danger"
+                type="button"
+                onClick={() => void confirmWorkspaceDelete()}
+              >
+                Remove
+              </button>
+            </div>
+          </section>
+        </div>
+      ) : null}
 
       <section className={`main ${activeView === "task" ? "task-main" : ""}`}>
         {activeView !== "task" ? (

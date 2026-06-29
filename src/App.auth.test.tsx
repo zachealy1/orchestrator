@@ -34,6 +34,7 @@ const mocks = vi.hoisted(() => ({
   createCodexAccountMock: vi.fn(),
   updateCodexAccountMock: vi.fn(),
   renameCodexAccountMock: vi.fn(),
+  softDeleteWorkspaceMock: vi.fn(),
   softDeleteCodexAccountMock: vi.fn(),
   listWorkspaceRunsMock: vi.fn(),
   getAnalyticsSummaryMock: vi.fn(),
@@ -108,6 +109,7 @@ vi.mock("./db", () => ({
   listWorkspaces: mocks.listWorkspacesMock,
   recordTokenUsage: mocks.recordTokenUsageMock,
   renameCodexAccount: mocks.renameCodexAccountMock,
+  softDeleteWorkspace: mocks.softDeleteWorkspaceMock,
   savePreflightReport: mocks.savePreflightReportMock,
   softDeleteCodexAccount: mocks.softDeleteCodexAccountMock,
   updateCodexAccount: mocks.updateCodexAccountMock,
@@ -228,6 +230,7 @@ function prepareDefaults() {
   mocks.createCodexAccountMock.mockResolvedValue(pendingAccount);
   mocks.updateCodexAccountMock.mockResolvedValue(undefined);
   mocks.renameCodexAccountMock.mockResolvedValue(undefined);
+  mocks.softDeleteWorkspaceMock.mockResolvedValue(undefined);
   mocks.softDeleteCodexAccountMock.mockResolvedValue(undefined);
   mocks.listWorkspaceRunsMock.mockResolvedValue([]);
   mocks.getAnalyticsSummaryMock.mockResolvedValue(analytics);
@@ -369,6 +372,100 @@ describe("App Codex auth", () => {
     expect(mocks.upsertWorkspaceMock).toHaveBeenCalledWith(
       "/repo/new-workspace",
     );
+  });
+
+  it("opens a workspace context menu and cancels workspace removal", async () => {
+    const { user } = await renderApp();
+    const workspaceNav = screen.getByRole("navigation", {
+      name: "Workspaces",
+    });
+    const workspaceButton = within(workspaceNav).getByRole("button", {
+      name: "orchestrator",
+    });
+
+    fireEvent.contextMenu(workspaceButton, { clientX: 60, clientY: 140 });
+
+    const menu = screen.getByRole("menu", {
+      name: "orchestrator workspace actions",
+    });
+    expect(menu).toBeInTheDocument();
+    await user.click(
+      within(menu).getByRole("menuitem", {
+        name: "Remove from Orchestrator",
+      }),
+    );
+
+    const dialog = screen.getByRole("dialog", { name: "Remove workspace?" });
+    expect(
+      within(dialog).getByText(/The folder on disk will not be deleted/i),
+    ).toBeInTheDocument();
+    await user.click(within(dialog).getByRole("button", { name: "Cancel" }));
+
+    expect(mocks.softDeleteWorkspaceMock).not.toHaveBeenCalled();
+    expect(
+      within(workspaceNav).getByRole("button", { name: "orchestrator" }),
+    ).toBeInTheDocument();
+  });
+
+  it("soft-deletes the selected workspace and falls back to the next workspace", async () => {
+    const secondWorkspace = {
+      ...workspace,
+      id: 2,
+      path: "/repo/mobile-client",
+      label: "mobile-client",
+      default_account_id: null,
+    };
+    mocks.listWorkspacesMock.mockResolvedValue([workspace, secondWorkspace]);
+
+    const { user } = await renderApp();
+    const workspaceNav = screen.getByRole("navigation", {
+      name: "Workspaces",
+    });
+
+    fireEvent.contextMenu(
+      within(workspaceNav).getByRole("button", { name: "orchestrator" }),
+      { clientX: 60, clientY: 140 },
+    );
+    await user.click(
+      screen.getByRole("menuitem", { name: "Remove from Orchestrator" }),
+    );
+    await user.click(
+      within(screen.getByRole("dialog", { name: "Remove workspace?" })).getByRole(
+        "button",
+        { name: "Remove" },
+      ),
+    );
+
+    await waitFor(() => expect(mocks.softDeleteWorkspaceMock).toHaveBeenCalledWith(1));
+    expect(
+      within(workspaceNav).queryByRole("button", { name: "orchestrator" }),
+    ).not.toBeInTheDocument();
+    const fallbackWorkspace = within(workspaceNav).getByRole("button", {
+      name: "mobile-client",
+    });
+    expect(fallbackWorkspace).toHaveAttribute("aria-current", "page");
+    expect(screen.getByLabelText("Selected folder")).toHaveTextContent("mobile-client");
+  });
+
+  it("opens and closes the workspace context menu from the keyboard", async () => {
+    const { user } = await renderApp();
+    const workspaceNav = screen.getByRole("navigation", {
+      name: "Workspaces",
+    });
+    const workspaceButton = within(workspaceNav).getByRole("button", {
+      name: "orchestrator",
+    });
+
+    workspaceButton.focus();
+    fireEvent.keyDown(workspaceButton, { key: "F10", shiftKey: true });
+    expect(
+      screen.getByRole("menu", { name: "orchestrator workspace actions" }),
+    ).toBeInTheDocument();
+
+    await user.keyboard("{Escape}");
+    expect(
+      screen.queryByRole("menu", { name: "orchestrator workspace actions" }),
+    ).not.toBeInTheDocument();
   });
 
   it("expands a workspace independently from selection and previews files", async () => {
