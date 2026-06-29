@@ -268,7 +268,7 @@ button.small {
   min-height: 38px;
   border: 0;
   background: transparent;
-  color: var(--color-text-secondary);
+  color: var(--text-soft);
   padding: 9px 10px;
 }
 
