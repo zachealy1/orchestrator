@@ -10,7 +10,6 @@ import {
   Folder,
   FolderOpen,
   GitBranch,
-  History,
   Loader2,
   LogIn,
   LogOut,
@@ -44,7 +43,6 @@ import {
   getAnalyticsSummary,
   listCodexAccounts,
   listDuplicateProfilesPendingCleanup,
-  listWorkspaceRuns,
   listWorkspaces,
   recordTokenUsage,
   renameCodexAccount,
@@ -80,7 +78,10 @@ import {
 import { AnalyticsSummary } from "./components/AnalyticsSummary";
 import { ComposerSelect } from "./components/ComposerSelect";
 import { FilePreviewDrawer } from "./components/FilePreviewDrawer";
-import { RunConsole } from "./components/RunConsole";
+import {
+  TaskChatTranscript,
+  type TaskChatEntry,
+} from "./components/TaskChatTranscript";
 import { TaskComposer } from "./components/TaskComposer";
 import {
   addServerRequest,
@@ -132,7 +133,6 @@ import type {
   ComposerContextFile,
   OssProvider,
   PreflightReport,
-  RunListItem,
   SelectedComposerSkill,
   SlashCommandItem,
   SlashCommandSearchStatus,
@@ -164,7 +164,7 @@ const DIFF_DRAWER_PREFERRED_WIDTH = 860;
 const DIFF_SIDE_BY_SIDE_MIN_WIDTH = 760;
 const GIT_STATUS_AUTO_REFRESH_INTERVAL_MS = 3000;
 
-type AppView = "task" | "runs" | "analytics" | "settings";
+type AppView = "task" | "analytics" | "settings";
 
 const BUILTIN_SLASH_COMMANDS: SlashCommandItem[] = [
   {
@@ -450,7 +450,6 @@ function App() {
   const [connectedAccountIds, setConnectedAccountIds] = useState<Set<number>>(
     () => new Set(),
   );
-  const [runs, setRuns] = useState<RunListItem[]>([]);
   const [analytics, setAnalytics] = useState<AnalyticsSummaryType>(DEFAULT_ANALYTICS);
   const [activeView, setActiveView] = useState<AppView>("task");
   const [themePreference, setThemePreference] = useState<ThemePreference>(
@@ -462,6 +461,8 @@ function App() {
   const [prompt, setPrompt] = useState("");
   const [preflight, setPreflight] = useState<PreflightReport | null>(null);
   const [runView, setRunView] = useState<RunViewState>(emptyRunView);
+  const [taskChatEntries, setTaskChatEntries] = useState<TaskChatEntry[]>([]);
+  const [activeChatRunId, setActiveChatRunId] = useState<number | null>(null);
   const [statusMessage, setStatusMessage] = useState("Choose a workspace to begin.");
   const [codexAccount, setCodexAccount] = useState<CodexAccount | null>(null);
   const [requiresOpenaiAuth, setRequiresOpenaiAuth] = useState(true);
@@ -498,6 +499,8 @@ function App() {
   const currentRunId = useRef<number | null>(null);
   const currentTaskId = useRef<number | null>(null);
   const currentRunAccountId = useRef<number | null>(null);
+  const runViewRef = useRef<RunViewState>(emptyRunView);
+  const activeChatRunIdRef = useRef<number | null>(null);
   const eventSequence = useRef(0);
   const selectedWorkspaceRef = useRef<Workspace | null>(null);
   const codexAccountsRef = useRef<CodexAccountProfile[]>([]);
@@ -569,6 +572,14 @@ function App() {
     () => summarizeWorkspaceGitStatus(selectedGitStatusState?.snapshot ?? null),
     [selectedGitStatusState?.snapshot],
   );
+  const selectedWorkspaceChatEntries = useMemo(
+    () =>
+      selectedWorkspace
+        ? taskChatEntries.filter((entry) => entry.workspaceId === selectedWorkspace.id)
+        : [],
+    [selectedWorkspace, taskChatEntries],
+  );
+  const hasTaskChat = selectedWorkspaceChatEntries.length > 0;
   const codexSignedIn = isCodexSignedIn(codexAccount);
   const authMessage = formatCodexAuthMessage({
     connected: codexConnected,
@@ -1075,11 +1086,7 @@ function App() {
   }
 
   async function refreshWorkspaceData(workspaceId: number) {
-    const [runRows, summary] = await Promise.all([
-      listWorkspaceRuns(workspaceId),
-      getAnalyticsSummary(workspaceId),
-    ]);
-    setRuns(runRows);
+    const summary = await getAnalyticsSummary(workspaceId);
     setAnalytics(summary);
   }
 
@@ -1386,6 +1393,40 @@ function App() {
     }
   }
 
+  function startTaskChatEntry(entry: TaskChatEntry) {
+    activeChatRunIdRef.current = entry.runId;
+    runViewRef.current = entry.runView;
+    setActiveChatRunId(entry.runId);
+    setRunView(entry.runView);
+    setTaskChatEntries((current) => [...current, entry]);
+  }
+
+  function updateActiveRunView(
+    updater: (current: RunViewState) => RunViewState,
+  ) {
+    const nextRunView = updater(runViewRef.current);
+    runViewRef.current = nextRunView;
+    setRunView(nextRunView);
+
+    const activeRunId = activeChatRunIdRef.current;
+    if (activeRunId !== null) {
+      setTaskChatEntries((current) =>
+        current.map((entry) =>
+          entry.runId === activeRunId
+            ? { ...entry, status: nextRunView.status, runView: nextRunView }
+            : entry,
+        ),
+      );
+    }
+
+    return nextRunView;
+  }
+
+  function clearActiveChatRun() {
+    activeChatRunIdRef.current = null;
+    setActiveChatRunId(null);
+  }
+
   function openWorkspaceContextMenu(
     workspace: Workspace,
     event:
@@ -1491,6 +1532,17 @@ function App() {
     setContextFiles((current) =>
       current.filter((file) => !belongsToWorkspace(file.path)),
     );
+    setTaskChatEntries((current) =>
+      current.filter((entry) => entry.workspaceId !== workspace.id),
+    );
+    if (activeChatRunId !== null) {
+      const activeEntry = taskChatEntries.find(
+        (entry) => entry.runId === activeChatRunId,
+      );
+      if (activeEntry?.workspaceId === workspace.id) {
+        clearActiveChatRun();
+      }
+    }
     setPreflight(null);
 
     if (previewState.file && belongsToWorkspace(previewState.file.path)) {
@@ -2313,7 +2365,16 @@ function App() {
     currentRunId.current = run.id;
     currentRunAccountId.current = selectedAccountId;
     eventSequence.current = 0;
-    setRunView({ ...emptyRunView, status: "running" });
+    const initialRunView = { ...emptyRunView, status: "running" as const };
+    startTaskChatEntry({
+      workspaceId: selectedWorkspace.id,
+      runId: run.id,
+      taskId: task.id,
+      prompt: prompt.trim(),
+      submittedAt: new Date().toISOString(),
+      status: initialRunView.status,
+      runView: initialRunView,
+    });
 
     const thread = await codexRpc<{
       thread: { id: string };
@@ -2521,7 +2582,9 @@ function App() {
       return;
     }
 
-    setRunView((current) => applyCodexMessage(current, message));
+    const nextRunView = updateActiveRunView((current) =>
+      applyCodexMessage(current, message),
+    );
     await persistRunEvent("notification", method, message);
 
     const runId = currentRunId.current;
@@ -2548,6 +2611,7 @@ function App() {
         status,
         completedAt: new Date().toISOString(),
         durationMs: readNumber(turn.durationMs),
+        finalMessage: nextRunView.finalMessage,
         error: status === "failed" ? JSON.stringify(turn.error ?? "Turn failed") : null,
       });
       if (currentTaskId.current) {
@@ -2560,6 +2624,7 @@ function App() {
       currentRunId.current = null;
       currentTaskId.current = null;
       currentRunAccountId.current = null;
+      clearActiveChatRun();
     }
   }
 
@@ -2570,7 +2635,7 @@ function App() {
     if (currentRunAccountId.current !== accountId) {
       return;
     }
-    setRunView((current) => addServerRequest(current, request));
+    updateActiveRunView((current) => addServerRequest(current, request));
     await persistRunEvent("server-request", request.method ?? null, request);
   }
 
@@ -2608,7 +2673,7 @@ function App() {
       request.id,
       approvalResult(request, approved),
     );
-    setRunView((current) => resolveServerRequest(current, request.id!));
+    updateActiveRunView((current) => resolveServerRequest(current, request.id!));
   }
 
   async function loadWorkspaceDirectory(
@@ -3238,14 +3303,6 @@ function App() {
       <aside className="app-rail">
         <nav className="primary-nav" aria-label="Primary">
           <button
-            className={activeView === "runs" ? "active" : ""}
-            type="button"
-            onClick={() => setActiveView("runs")}
-          >
-            <History size={17} />
-            <span>Runs</span>
-          </button>
-          <button
             className={activeView === "analytics" ? "active" : ""}
             type="button"
             onClick={() => setActiveView("analytics")}
@@ -3605,8 +3662,18 @@ function App() {
               gitState={selectedGitStatusState}
               gitSummary={selectedGitSummary}
             />
-            <section className="task-hero" aria-label="Task launch">
-              <h1>{taskQuote}</h1>
+            <section
+              className={`task-hero ${hasTaskChat ? "has-chat" : ""}`}
+              aria-label="Task launch"
+            >
+              {hasTaskChat ? (
+                <TaskChatTranscript
+                  entries={selectedWorkspaceChatEntries}
+                  onResolveRequest={handleResolveRequest}
+                />
+              ) : (
+                <h1>{taskQuote}</h1>
+              )}
               <TaskComposer
                 disabled={!canRun}
                 prompt={prompt}
@@ -3680,42 +3747,6 @@ function App() {
               onResizeStart={startPreviewDrawerResize}
               onResizeKeyDown={handlePreviewResizeKeyDown}
             />
-          </div>
-        ) : null}
-
-        {activeView === "runs" ? (
-          <div className="view-stack">
-            <section className="surface history run-history-view" aria-label="Run history">
-              <div className="surface-header">
-                <div>
-                  <p className="eyebrow">History</p>
-                  <h2>Run history</h2>
-                </div>
-                <span className="budget">{runs.length.toLocaleString()} runs</span>
-              </div>
-              {runs.length === 0 ? (
-                <p className="muted">Runs will appear after Codex starts a task.</p>
-              ) : (
-                <div className="run-list">
-                  {runs.map((run) => (
-                    <article className="run-row" key={run.id}>
-                      <div>
-                        <strong>{run.original_prompt}</strong>
-                        <span>
-                          {run.status} · {run.route_recommendation} · {run.started_at}
-                        </span>
-                      </div>
-                      <span>
-                        {run.account_label ?? "Legacy account"} ·{" "}
-                        {run.model_provider ?? "openai"}
-                      </span>
-                    </article>
-                  ))}
-                </div>
-              )}
-            </section>
-
-            <RunConsole runView={runView} onResolveRequest={handleResolveRequest} />
           </div>
         ) : null}
 

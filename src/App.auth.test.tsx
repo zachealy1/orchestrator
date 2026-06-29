@@ -36,7 +36,6 @@ const mocks = vi.hoisted(() => ({
   renameCodexAccountMock: vi.fn(),
   softDeleteWorkspaceMock: vi.fn(),
   softDeleteCodexAccountMock: vi.fn(),
-  listWorkspaceRunsMock: vi.fn(),
   getAnalyticsSummaryMock: vi.fn(),
   createTaskMock: vi.fn(),
   createRunMock: vi.fn(),
@@ -105,7 +104,6 @@ vi.mock("./db", () => ({
   listCodexAccounts: mocks.listCodexAccountsMock,
   listDuplicateProfilesPendingCleanup:
     mocks.listDuplicateProfilesPendingCleanupMock,
-  listWorkspaceRuns: mocks.listWorkspaceRunsMock,
   listWorkspaces: mocks.listWorkspacesMock,
   recordTokenUsage: mocks.recordTokenUsageMock,
   renameCodexAccount: mocks.renameCodexAccountMock,
@@ -232,7 +230,6 @@ function prepareDefaults() {
   mocks.renameCodexAccountMock.mockResolvedValue(undefined);
   mocks.softDeleteWorkspaceMock.mockResolvedValue(undefined);
   mocks.softDeleteCodexAccountMock.mockResolvedValue(undefined);
-  mocks.listWorkspaceRunsMock.mockResolvedValue([]);
   mocks.getAnalyticsSummaryMock.mockResolvedValue(analytics);
   mocks.createTaskMock.mockResolvedValue({ id: 101 });
   mocks.createRunMock.mockResolvedValue({ id: 202 });
@@ -268,6 +265,59 @@ function createContextFileDataTransfer(files: unknown[]) {
       type === ORCHESTRATOR_CONTEXT_FILE_MIME ? JSON.stringify(files) : "",
     setData: vi.fn(),
   };
+}
+
+function prepareSignedInRun() {
+  mocks.listCodexAccountsMock.mockResolvedValue([signedInAccount]);
+  mocks.readCodexAccountMock.mockResolvedValue({
+    account: {
+      type: "chatgpt",
+      email: signedInAccount.email,
+      planType: signedInAccount.plan_type,
+    },
+    requiresOpenaiAuth: true,
+  });
+  mocks.codexRpcMock.mockImplementation(
+    async (_accountId: number, method: string) => {
+      if (method === "thread/start") {
+        return { thread: { id: "thread-1" } };
+      }
+      if (method === "turn/start") {
+        return { turn: { id: "turn-1" } };
+      }
+      return {};
+    },
+  );
+}
+
+async function startMockRun(user: ReturnType<typeof userEvent.setup>, prompt: string) {
+  await user.type(screen.getByLabelText("Prompt"), prompt);
+  await user.click(screen.getByRole("button", { name: /run codex/i }));
+  await waitFor(() =>
+    expect(mocks.codexRpcMock).toHaveBeenCalledWith(
+      7,
+      "turn/start",
+      expect.any(Object),
+    ),
+  );
+}
+
+async function emitCodexNotification(message: unknown) {
+  await act(async () => {
+    mocks.listeners.get("codex:notification")?.({
+      payload: { accountId: 7, message },
+    });
+    await Promise.resolve();
+  });
+}
+
+async function emitCodexServerRequest(message: unknown) {
+  await act(async () => {
+    mocks.listeners.get("codex:server-request")?.({
+      payload: { accountId: 7, message },
+    });
+    await Promise.resolve();
+  });
 }
 
 function setWindowWidth(width: number) {
@@ -325,6 +375,9 @@ describe("App Codex auth", () => {
     expect(
       within(primaryNav).queryByRole("button", { name: "Task" }),
     ).not.toBeInTheDocument();
+    expect(
+      within(primaryNav).queryByRole("button", { name: "Runs" }),
+    ).not.toBeInTheDocument();
     const workspaceNav = screen.getByRole("navigation", {
       name: "Workspaces",
     });
@@ -349,11 +402,13 @@ describe("App Codex auth", () => {
     expect(workspacesHeading.parentElement).toContainElement(addWorkspaceButton);
     expect(addWorkspaceButton).not.toHaveTextContent("Add workspace");
 
-    await user.click(within(primaryNav).getByRole("button", { name: "Runs" }));
+    await user.click(within(primaryNav).getByRole("button", { name: "Analytics" }));
     expect(screen.queryByLabelText("Task composer")).not.toBeInTheDocument();
     expect(
       within(workspaceNav).getByRole("button", { name: "orchestrator" }),
     ).not.toHaveAttribute("aria-current");
+    expect(screen.queryByLabelText("Run history")).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("Codex run console")).not.toBeInTheDocument();
 
     await user.click(secondWorkspaceButton);
     expect(secondWorkspaceButton).toHaveAttribute("aria-current", "page");
@@ -1251,6 +1306,7 @@ describe("App Codex auth", () => {
     expect(within(contextList).getByText("App.tsx")).toBeInTheDocument();
 
     const secondPromptInput = screen.getByLabelText("Prompt");
+    await user.click(secondPromptInput);
     await user.type(secondPromptInput, "@app");
     await user.click(await screen.findByRole("option", { name: /app\.tsx/i }));
     expect(within(contextList).getAllByText("App.tsx")).toHaveLength(1);
@@ -1826,26 +1882,7 @@ describe("App Codex auth", () => {
   });
 
   it("records the selected account when creating a run", async () => {
-    mocks.listCodexAccountsMock.mockResolvedValue([signedInAccount]);
-    mocks.readCodexAccountMock.mockResolvedValue({
-      account: {
-        type: "chatgpt",
-        email: signedInAccount.email,
-        planType: signedInAccount.plan_type,
-      },
-      requiresOpenaiAuth: true,
-    });
-    mocks.codexRpcMock.mockImplementation(
-      async (_accountId: number, method: string) => {
-        if (method === "thread/start") {
-          return { thread: { id: "thread-1" } };
-        }
-        if (method === "turn/start") {
-          return { turn: { id: "turn-1" } };
-        }
-        return {};
-      },
-    );
+    prepareSignedInRun();
 
     const { user } = await renderApp();
     await user.type(screen.getByLabelText("Prompt"), "Fix the auth flow");
@@ -1865,6 +1902,82 @@ describe("App Codex auth", () => {
       "thread/start",
       expect.any(Object),
     );
+    const transcript = screen.getByLabelText("Task chat transcript");
+    expect(transcript).toBeInTheDocument();
+    expect(within(transcript).getByText("Fix the auth flow")).toBeInTheDocument();
+    expect(screen.queryByLabelText("Run history")).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("Codex run console")).not.toBeInTheDocument();
+  });
+
+  it("streams Codex output into the task chat transcript", async () => {
+    prepareSignedInRun();
+
+    const { user } = await renderApp();
+    await startMockRun(user, "Fix the streaming output");
+
+    await emitCodexNotification({
+      method: "item/agentMessage/delta",
+      params: { delta: "Updated the auth flow." },
+    });
+
+    const transcript = screen.getByLabelText("Task chat transcript");
+    expect(transcript).toBeInTheDocument();
+    expect(within(transcript).getByText("Fix the streaming output")).toBeInTheDocument();
+    expect(within(transcript).getByText("Updated the auth flow.")).toBeInTheDocument();
+  });
+
+  it("renders approval requests inline and resolves them from the chat", async () => {
+    prepareSignedInRun();
+
+    const { user } = await renderApp();
+    await startMockRun(user, "Run the tests");
+
+    await emitCodexServerRequest({
+      id: 9,
+      method: "item/commandExecution/requestApproval",
+      params: { command: "npm test" },
+    });
+
+    expect(screen.getByText("item/commandExecution/requestApproval")).toBeInTheDocument();
+    expect(screen.getByText(/npm test/)).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: /approve/i }));
+    await waitFor(() =>
+      expect(mocks.resolveCodexServerRequestMock).toHaveBeenCalledWith(
+        7,
+        9,
+        expect.any(Object),
+      ),
+    );
+  });
+
+  it("marks completed chat runs and persists the final assistant message", async () => {
+    prepareSignedInRun();
+
+    const { user } = await renderApp();
+    await startMockRun(user, "Finish the task");
+
+    await emitCodexNotification({
+      method: "item/agentMessage/delta",
+      params: { delta: "Done." },
+    });
+    await emitCodexNotification({
+      method: "turn/completed",
+      params: { turn: { status: "completed", durationMs: 1234 } },
+    });
+
+    await waitFor(() =>
+      expect(mocks.updateRunMock).toHaveBeenCalledWith(
+        202,
+        expect.objectContaining({
+          status: "completed",
+          durationMs: 1234,
+          finalMessage: "Done.",
+        }),
+      ),
+    );
+    expect(screen.getByText("Done.")).toBeInTheDocument();
+    expect(screen.getByText("completed")).toBeInTheDocument();
   });
 
   it("adds selected slash skills to the next run prompt", async () => {
