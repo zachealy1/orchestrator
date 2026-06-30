@@ -2011,7 +2011,7 @@ describe("App Codex auth", () => {
       ),
     );
     expect(screen.getByText("Done.")).toBeInTheDocument();
-    expect(screen.getByText("completed")).toBeInTheDocument();
+    expect(screen.queryByText("completed")).not.toBeInTheDocument();
   });
 
   it("adds selected slash skills to the next run prompt", async () => {

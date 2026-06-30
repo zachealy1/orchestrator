@@ -1115,7 +1115,9 @@ button.account-switcher-item:hover:not(:disabled) {
 }
 
 .user-message .chat-bubble {
+  gap: 6px;
   background: var(--color-surface-soft);
+  padding: 16px 18px;
 }
 
 .assistant-message .chat-bubble {
@@ -1147,7 +1149,7 @@ button.account-switcher-item:hover:not(:disabled) {
   white-space: nowrap;
 }
 
-.chat-bubble-header > span:not(.run-status) {
+.chat-bubble-header > span {
   color: var(--muted);
   font-size: 0.74rem;
   white-space: nowrap;
@@ -1175,8 +1177,10 @@ button.account-switcher-item:hover:not(:disabled) {
 }
 
 .user-message .chat-message-body {
-  border-color: rgb(var(--primary-rgb) / 0.26);
-  background: var(--color-component-background);
+  border: 0;
+  background: transparent;
+  font-size: 0.98rem;
+  padding: 0;
 }
 
 .assistant-message .chat-message-body {
@@ -1201,49 +1205,6 @@ button.account-switcher-item:hover:not(:disabled) {
 
 .assistant-output.error {
   color: var(--color-error);
-}
-
-.chat-run-details {
-  display: grid;
-  gap: 10px;
-}
-
-.chat-run-disclosure {
-  border-radius: 8px;
-  background: var(--color-surface-soft);
-}
-
-.chat-run-disclosure summary {
-  display: flex;
-  gap: 8px;
-  align-items: center;
-  color: var(--text);
-  cursor: pointer;
-  font-size: 0.82rem;
-  font-weight: 700;
-  list-style: none;
-  padding: 10px 11px;
-}
-
-.chat-run-disclosure summary::-webkit-details-marker {
-  display: none;
-}
-
-.chat-run-disclosure pre {
-  border-top: 1px solid var(--color-divider);
-  color: var(--color-text);
-  font-family: "SFMono-Regular", Consolas, monospace;
-  font-size: 0.78rem;
-  line-height: 1.45;
-  padding: 0 11px 11px;
-}
-
-.chat-console {
-  min-height: 0;
-  max-height: 260px;
-  border: 0;
-  border-top: 1px solid var(--color-divider);
-  border-radius: 0;
 }
 
 .chat-approval-stack {
