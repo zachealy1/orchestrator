@@ -1,10 +1,8 @@
 import {
-  Bot,
   Check,
   CircleStop,
   Clock,
   Terminal,
-  UserRound,
   X,
 } from "lucide-react";
 import { useEffect, useRef } from "react";
@@ -47,9 +45,6 @@ export function TaskChatTranscript({ entries, onResolveRequest }: Props) {
       {entries.map((entry) => (
         <div className="task-chat-run" key={entry.runId}>
           <article className="chat-message user-message">
-            <span className="chat-avatar user" aria-hidden="true">
-              <UserRound size={16} />
-            </span>
             <div className="chat-bubble">
               <div className="chat-bubble-header">
                 <strong>You</strong>
@@ -60,9 +55,6 @@ export function TaskChatTranscript({ entries, onResolveRequest }: Props) {
           </article>
 
           <article className={`chat-message assistant-message status-${entry.status}`}>
-            <span className="chat-avatar assistant" aria-hidden="true">
-              <Bot size={16} />
-            </span>
             <div className="chat-bubble">
               <div className="chat-bubble-header">
                 <strong>Codex</strong>

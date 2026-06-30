@@ -1095,40 +1095,13 @@ button.account-switcher-item:hover:not(:disabled) {
 .chat-message {
   display: grid;
   min-width: 0;
-  grid-template-columns: 34px minmax(0, 1fr);
-  gap: 10px;
+  grid-template-columns: minmax(0, 1fr);
   align-items: start;
 }
 
 .chat-message.user-message {
   max-width: min(820px, 88%);
   justify-self: end;
-  grid-template-columns: minmax(0, 1fr) 34px;
-}
-
-.chat-message.user-message .chat-avatar {
-  grid-column: 2;
-  grid-row: 1;
-}
-
-.chat-message.user-message .chat-bubble {
-  grid-column: 1;
-  grid-row: 1;
-}
-
-.chat-avatar {
-  display: inline-grid;
-  width: 34px;
-  height: 34px;
-  place-items: center;
-  border-radius: 50%;
-  background: var(--color-surface-soft);
-  color: var(--color-icon);
-}
-
-.chat-avatar.user {
-  background: var(--color-selected-background);
-  color: var(--color-selected-text);
 }
 
 .chat-bubble {

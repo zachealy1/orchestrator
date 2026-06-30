@@ -337,6 +337,30 @@ describe("TaskComposer", () => {
     expect(screen.getByRole("button", { name: /preflight/i })).toBeDisabled();
   });
 
+  it("submits the prompt when pressing Enter", async () => {
+    const onRun = vi.fn();
+    const { user } = renderControlledComposer({ onRun });
+    const promptInput = screen.getByLabelText("Prompt");
+
+    await user.type(promptInput, "Fix the failing test{Enter}");
+
+    expect(onRun).toHaveBeenCalledOnce();
+    expect(promptInput).toHaveValue("Fix the failing test");
+  });
+
+  it("adds a newline when pressing Shift Enter", async () => {
+    const onRun = vi.fn();
+    const { user } = renderControlledComposer({ onRun });
+    const promptInput = screen.getByLabelText("Prompt");
+
+    await user.type(promptInput, "First line");
+    await user.keyboard("{Shift>}{Enter}{/Shift}");
+    await user.type(promptInput, "Second line");
+
+    expect(onRun).not.toHaveBeenCalled();
+    expect(promptInput).toHaveValue("First line\nSecond line");
+  });
+
   it("opens workspace file mentions while typing an @ token", async () => {
     const onMentionSearch = vi.fn();
     const { user } = renderControlledComposer({

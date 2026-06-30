@@ -214,24 +214,20 @@ export function TaskComposer({
   }
 
   function handlePromptKeyDown(event: KeyboardEvent<HTMLTextAreaElement>) {
-    if (!activeToken) {
-      return;
-    }
-
-    if (event.key === "Escape") {
+    if (activeToken && event.key === "Escape") {
       event.preventDefault();
       closeActiveSearch();
       return;
     }
 
     const itemCount = getActivePopoverItemCount();
-    if (event.key === "ArrowDown" && itemCount > 0) {
+    if (activeToken && event.key === "ArrowDown" && itemCount > 0) {
       event.preventDefault();
       setActivePopoverIndex((current) => (current + 1) % itemCount);
       return;
     }
 
-    if (event.key === "ArrowUp" && itemCount > 0) {
+    if (activeToken && event.key === "ArrowUp" && itemCount > 0) {
       event.preventDefault();
       setActivePopoverIndex(
         (current) => (current - 1 + itemCount) % itemCount,
@@ -239,9 +235,26 @@ export function TaskComposer({
       return;
     }
 
-    if ((event.key === "Enter" || event.key === "Tab") && itemCount > 0) {
+    if (
+      activeToken &&
+      (event.key === "Enter" || event.key === "Tab") &&
+      itemCount > 0
+    ) {
       event.preventDefault();
       selectActivePopoverItem();
+      return;
+    }
+
+    if (
+      event.key === "Enter" &&
+      !event.shiftKey &&
+      !event.nativeEvent.isComposing
+    ) {
+      event.preventDefault();
+      closeActiveSearch();
+      if (!disabled) {
+        onRun();
+      }
     }
   }
 
