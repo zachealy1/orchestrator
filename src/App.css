@@ -1048,6 +1048,14 @@ button.account-switcher-item:hover:not(:disabled) {
   justify-content: center;
   gap: 22px;
   padding: 24px clamp(18px, 3vw, 38px) max(32px, 5vh);
+  transition:
+    background 0.16s ease,
+    box-shadow 0.16s ease;
+}
+
+.task-hero.context-drop-active {
+  background: rgb(var(--primary-rgb) / 0.05);
+  box-shadow: inset 0 0 0 2px rgb(var(--primary-rgb) / 0.24);
 }
 
 .task-hero h1 {
@@ -2460,11 +2468,12 @@ button.composer-select-option.action:not(:first-child) {
 
 .prompt-context-list {
   align-items: flex-start;
-  gap: 10px;
+  gap: 8px;
   overflow-x: auto;
   border-top: 0;
+  border-radius: calc(var(--radius) - 1px) calc(var(--radius) - 1px) 0 0;
   background: var(--composer);
-  padding: 14px 18px 4px;
+  padding: 10px 16px 3px;
 }
 
 .prompt-context-list + .prompt-field textarea {
@@ -2508,16 +2517,16 @@ button.composer-select-option.action:not(:first-child) {
 .context-attachment {
   position: relative;
   display: grid;
-  width: 176px;
-  min-height: 82px;
-  grid-template-columns: 44px minmax(0, 1fr);
-  gap: 10px;
+  width: 148px;
+  min-height: 64px;
+  grid-template-columns: 34px minmax(0, 1fr);
+  gap: 8px;
   align-items: center;
   border: 1px solid var(--color-divider);
   border-radius: 8px;
   background: var(--color-component-background);
   color: var(--color-text);
-  padding: 10px 30px 10px 10px;
+  padding: 8px 26px 8px 8px;
 }
 
 .context-attachment.error {
@@ -2526,13 +2535,18 @@ button.composer-select-option.action:not(:first-child) {
 
 .context-attachment-icon {
   display: inline-flex;
-  width: 44px;
-  height: 44px;
+  width: 34px;
+  height: 34px;
   align-items: center;
   justify-content: center;
-  border-radius: 8px;
+  border-radius: 7px;
   background: var(--color-background);
   color: var(--color-icon-muted);
+}
+
+.context-attachment-icon svg {
+  width: 19px;
+  height: 19px;
 }
 
 .context-attachment-copy {
@@ -2550,28 +2564,33 @@ button.composer-select-option.action:not(:first-child) {
 
 .context-attachment-copy strong {
   color: var(--color-text);
-  font-size: 0.9rem;
+  font-size: 0.8rem;
   font-weight: 650;
 }
 
 .context-attachment-copy small {
   color: var(--color-text-secondary);
-  font-size: 0.78rem;
+  font-size: 0.68rem;
   letter-spacing: 0;
 }
 
 .context-attachment > button {
   position: absolute;
-  top: 7px;
-  right: 7px;
-  width: 24px;
-  min-width: 24px;
-  min-height: 24px;
+  top: 5px;
+  right: 5px;
+  width: 20px;
+  min-width: 20px;
+  min-height: 20px;
   border: 0;
   border-radius: 50%;
   background: var(--color-button-secondary);
   color: var(--color-button-secondary-text);
   padding: 0;
+}
+
+.context-attachment > button svg {
+  width: 12px;
+  height: 12px;
 }
 
 .context-attachment > button:hover:not(:disabled) {

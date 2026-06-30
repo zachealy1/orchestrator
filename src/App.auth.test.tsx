@@ -267,6 +267,30 @@ function createContextFileDataTransfer(files: unknown[]) {
   };
 }
 
+function createMutableDataTransfer() {
+  let dropEffect = "none";
+  const types: string[] = [];
+  const data = new Map<string, string>();
+
+  return {
+    types,
+    effectAllowed: "none",
+    get dropEffect() {
+      return dropEffect;
+    },
+    set dropEffect(value: string) {
+      dropEffect = value;
+    },
+    getData: (type: string) => data.get(type) ?? "",
+    setData: vi.fn((type: string, value: string) => {
+      data.set(type, value);
+      if (!types.includes(type)) {
+        types.push(type);
+      }
+    }),
+  };
+}
+
 function prepareSignedInRun() {
   mocks.listCodexAccountsMock.mockResolvedValue([signedInAccount]);
   mocks.readCodexAccountMock.mockResolvedValue({
@@ -1342,6 +1366,43 @@ describe("App Codex auth", () => {
 
     const contextList = await screen.findByLabelText("Selected context files");
     expect(within(contextList).getAllByText("README.md")).toHaveLength(1);
+  });
+
+  it("adds files dragged from the workspace explorer into the task chat surface", async () => {
+    mocks.listWorkspaceDirectoryMock.mockResolvedValue([
+      {
+        name: "README.md",
+        path: "/repo/orchestrator/README.md",
+        relativePath: "README.md",
+        kind: "file",
+      },
+    ]);
+
+    const { user } = await renderApp();
+    const workspaceNav = screen.getByRole("navigation", {
+      name: "Workspaces",
+    });
+    await user.click(
+      within(workspaceNav).getByRole("button", { name: "Expand orchestrator" }),
+    );
+
+    const readmeButton = await within(workspaceNav).findByRole("button", {
+      name: "README.md",
+    });
+    const dataTransfer = createMutableDataTransfer();
+
+    fireEvent.dragStart(readmeButton, { dataTransfer });
+    expect(dataTransfer.setData).toHaveBeenCalledWith(
+      ORCHESTRATOR_CONTEXT_FILE_MIME,
+      expect.any(String),
+    );
+
+    const taskChat = screen.getByLabelText("Task chat");
+    fireEvent.dragOver(taskChat, { dataTransfer });
+    fireEvent.drop(taskChat, { dataTransfer });
+
+    const contextList = await screen.findByLabelText("Selected context files");
+    expect(within(contextList).getByText("README.md")).toBeInTheDocument();
   });
 
   it("indexes workspace files for @ mentions and adds the selected file to context", async () => {

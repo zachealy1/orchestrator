@@ -114,6 +114,10 @@ import {
   resolveTheme,
   watchSystemTheme,
 } from "./lib/theme";
+import {
+  hasContextFilePayload,
+  readDroppedContextFiles,
+} from "./lib/contextFiles";
 import { ORCHESTRATOR_CONTEXT_FILE_MIME } from "./types";
 import type {
   AccessLevel,
@@ -485,6 +489,7 @@ function App() {
   const [planMode, setPlanMode] = useState(false);
   const [accessLevel, setAccessLevel] = useState<AccessLevel>("ask");
   const [contextFiles, setContextFiles] = useState<ComposerContextFile[]>([]);
+  const [taskContextDropActive, setTaskContextDropActive] = useState(false);
   const [selectedSkills, setSelectedSkills] = useState<SelectedComposerSkill[]>([]);
   const [mentionResults, setMentionResults] = useState<ComposerContextFile[]>([]);
   const [mentionSearchStatus, setMentionSearchStatus] =
@@ -3205,6 +3210,45 @@ function App() {
     );
   }
 
+  function handleTaskContextDragOver(event: DragEvent<HTMLElement>) {
+    if (!hasContextFilePayload(event.dataTransfer)) {
+      return;
+    }
+
+    event.preventDefault();
+    event.dataTransfer.dropEffect = "copy";
+    setTaskContextDropActive(true);
+  }
+
+  function handleTaskContextDragLeave(event: DragEvent<HTMLElement>) {
+    const relatedTarget = event.relatedTarget;
+    if (
+      !(relatedTarget instanceof Node) ||
+      !event.currentTarget.contains(relatedTarget)
+    ) {
+      setTaskContextDropActive(false);
+    }
+  }
+
+  function handleTaskContextDrop(event: DragEvent<HTMLElement>) {
+    if (!hasContextFilePayload(event.dataTransfer)) {
+      return;
+    }
+
+    event.preventDefault();
+    setTaskContextDropActive(false);
+
+    const { files, skipped } = readDroppedContextFiles(event.dataTransfer);
+    if (files.length > 0) {
+      addDroppedContextFiles(files);
+    }
+    if (skipped > 0) {
+      setStatusMessage(
+        `Skipped ${skipped} dropped file${skipped === 1 ? "" : "s"} because the file path was unavailable.`,
+      );
+    }
+  }
+
   function workspaceDirectoryEntries(
     workspace: Workspace,
     directoryPath: string,
@@ -3775,8 +3819,13 @@ function App() {
               gitSummary={selectedGitSummary}
             />
             <section
-              className={`task-hero ${hasTaskChat ? "has-chat" : ""}`}
-              aria-label="Task launch"
+              className={`task-hero ${hasTaskChat ? "has-chat" : ""} ${
+                taskContextDropActive ? "context-drop-active" : ""
+              }`}
+              aria-label="Task chat"
+              onDragOver={handleTaskContextDragOver}
+              onDragLeave={handleTaskContextDragLeave}
+              onDrop={handleTaskContextDrop}
             >
               {hasTaskChat ? (
                 <TaskChatTranscript
