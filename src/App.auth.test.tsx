@@ -267,46 +267,73 @@ function createContextFileDataTransfer(files: unknown[]) {
   };
 }
 
-function createMutableDataTransfer() {
-  let dropEffect = "none";
-  const types: string[] = [];
-  const data = new Map<string, string>();
-
-  return {
-    types,
-    effectAllowed: "none",
-    get dropEffect() {
-      return dropEffect;
-    },
-    set dropEffect(value: string) {
-      dropEffect = value;
-    },
-    getData: (type: string) => data.get(type) ?? "",
-    setData: vi.fn((type: string, value: string) => {
-      data.set(type, value);
-      if (!types.includes(type)) {
-        types.push(type);
-      }
-    }),
-  };
+function mockElementRect(element: Element, rect: Partial<DOMRect> = {}) {
+  vi.spyOn(element, "getBoundingClientRect").mockReturnValue({
+    bottom: 900,
+    height: 900,
+    left: 0,
+    right: 1600,
+    top: 0,
+    width: 1600,
+    x: 0,
+    y: 0,
+    toJSON: () => ({}),
+    ...rect,
+  } as DOMRect);
 }
 
-function createEmptyDataTransfer() {
-  let dropEffect = "none";
+function startPointerDragFileIntoTaskSurface(
+  fileButton: HTMLElement,
+  pointerId = 1,
+) {
+  fireEvent.pointerDown(fileButton, {
+    button: 0,
+    buttons: 1,
+    clientX: 40,
+    clientY: 40,
+    pointerId,
+  });
+  fireEvent.pointerMove(fileButton, {
+    buttons: 1,
+    clientX: 520,
+    clientY: 360,
+    pointerId,
+  });
+}
 
-  return {
-    types: [],
-    files: [],
-    effectAllowed: "copy",
-    get dropEffect() {
-      return dropEffect;
-    },
-    set dropEffect(value: string) {
-      dropEffect = value;
-    },
-    getData: () => "",
-    setData: vi.fn(),
-  };
+function finishPointerDragFileIntoTaskSurface(
+  fileButton: HTMLElement,
+  pointerId = 1,
+) {
+  fireEvent.pointerUp(fileButton, {
+    button: 0,
+    buttons: 0,
+    clientX: 520,
+    clientY: 360,
+    pointerId,
+  });
+}
+
+function pointerDragFileIntoTaskSurface(fileButton: HTMLElement) {
+  startPointerDragFileIntoTaskSurface(fileButton);
+  finishPointerDragFileIntoTaskSurface(fileButton);
+}
+
+function pointerTapFile(fileButton: HTMLElement) {
+  fireEvent.pointerDown(fileButton, {
+    button: 0,
+    buttons: 1,
+    clientX: 40,
+    clientY: 40,
+    pointerId: 2,
+  });
+  fireEvent.pointerUp(fileButton, {
+    button: 0,
+    buttons: 0,
+    clientX: 41,
+    clientY: 41,
+    pointerId: 2,
+  });
 }
 
 function prepareSignedInRun() {
@@ -622,7 +649,7 @@ describe("App Codex auth", () => {
     expect(secondWorkspaceButton).not.toHaveAttribute("aria-current");
     expect(await within(workspaceNav).findByTitle("README.md")).toBeInTheDocument();
 
-    await user.click(within(workspaceNav).getByRole("button", { name: "README.md" }));
+    pointerTapFile(within(workspaceNav).getByRole("button", { name: "README.md" }));
 
     await waitFor(() =>
       expect(mocks.readWorkspaceFilePreviewMock).toHaveBeenCalledWith(
@@ -1407,23 +1434,25 @@ describe("App Codex auth", () => {
     const readmeButton = await within(workspaceNav).findByRole("button", {
       name: "README.md",
     });
-    const dataTransfer = createMutableDataTransfer();
-
-    fireEvent.dragStart(readmeButton, { dataTransfer });
-    expect(dataTransfer.setData).toHaveBeenCalledWith(
-      ORCHESTRATOR_CONTEXT_FILE_MIME,
-      expect.any(String),
-    );
-
     const taskChat = screen.getByLabelText("Task chat");
-    fireEvent.dragOver(taskChat, { dataTransfer });
-    fireEvent.drop(taskChat, { dataTransfer });
+    const composer = screen.getByLabelText("Task composer");
+    mockElementRect(taskChat);
+    startPointerDragFileIntoTaskSurface(readmeButton);
+
+    const dragPreview = screen.getByLabelText("Dragging README.md");
+    expect(dragPreview).toHaveTextContent("README.md");
+    expect(dragPreview).toHaveTextContent("Drop to add");
+    expect(composer).toHaveClass("drop-target-active");
+
+    finishPointerDragFileIntoTaskSurface(readmeButton);
 
     const contextList = await screen.findByLabelText("Selected context files");
     expect(within(contextList).getByText("README.md")).toBeInTheDocument();
+    expect(screen.queryByLabelText("Dragging README.md")).not.toBeInTheDocument();
+    expect(composer).not.toHaveClass("drop-target-active");
   });
 
-  it("uses the explorer drag fallback when the drop payload omits the custom MIME", async () => {
+  it("dedupes repeated pointer drags from the workspace explorer", async () => {
     mocks.listWorkspaceDirectoryMock.mockResolvedValue([
       {
         name: "hello.txt",
@@ -1444,46 +1473,11 @@ describe("App Codex auth", () => {
     const fileButton = await within(workspaceNav).findByRole("button", {
       name: "hello.txt",
     });
-    const dragDataTransfer = createMutableDataTransfer();
-    fireEvent.dragStart(fileButton, { dataTransfer: dragDataTransfer });
-
-    const dropDataTransfer = createEmptyDataTransfer();
     const taskChat = screen.getByLabelText("Task chat");
-    fireEvent.dragOver(taskChat, { dataTransfer: dropDataTransfer });
-    fireEvent.drop(taskChat, { dataTransfer: dropDataTransfer });
+    mockElementRect(taskChat);
 
-    const contextList = await screen.findByLabelText("Selected context files");
-    expect(within(contextList).getByText("hello.txt")).toBeInTheDocument();
-  });
-
-  it("uses the explorer drag fallback when dropping into the composer", async () => {
-    mocks.listWorkspaceDirectoryMock.mockResolvedValue([
-      {
-        name: "hello.txt",
-        path: "/repo/orchestrator/hello.txt",
-        relativePath: "hello.txt",
-        kind: "file",
-      },
-    ]);
-
-    const { user } = await renderApp();
-    const workspaceNav = screen.getByRole("navigation", {
-      name: "Workspaces",
-    });
-    await user.click(
-      within(workspaceNav).getByRole("button", { name: "Expand orchestrator" }),
-    );
-
-    const fileButton = await within(workspaceNav).findByRole("button", {
-      name: "hello.txt",
-    });
-    fireEvent.dragStart(fileButton, { dataTransfer: createMutableDataTransfer() });
-
-    const composer = screen.getByLabelText("Task composer");
-    const dropDataTransfer = createEmptyDataTransfer();
-    fireEvent.dragOver(composer, { dataTransfer: dropDataTransfer });
-    fireEvent.drop(composer, { dataTransfer: dropDataTransfer });
-    fireEvent.drop(composer, { dataTransfer: dropDataTransfer });
+    pointerDragFileIntoTaskSurface(fileButton);
+    pointerDragFileIntoTaskSurface(fileButton);
 
     const contextList = await screen.findByLabelText("Selected context files");
     expect(within(contextList).getAllByText("hello.txt")).toHaveLength(1);
@@ -1541,15 +1535,15 @@ describe("App Codex auth", () => {
       workspace.path,
       `${workspace.path}/src`,
     );
-    expect(promptInput).toHaveValue("");
-    const contextList = screen.getByLabelText("Selected context files");
-    expect(within(contextList).getByText("App.tsx")).toBeInTheDocument();
+    expect(promptInput).toHaveValue("TSX App.tsx ");
+    expect(screen.queryByLabelText("Selected context files")).not.toBeInTheDocument();
 
     const secondPromptInput = screen.getByLabelText("Prompt");
     await user.click(secondPromptInput);
     await user.type(secondPromptInput, "@app");
     await user.click(await screen.findByRole("option", { name: /app\.tsx/i }));
-    expect(within(contextList).getAllByText("App.tsx")).toHaveLength(1);
+    expect(secondPromptInput).toHaveValue("TSX App.tsx TSX App.tsx ");
+    expect(screen.queryByLabelText("Selected context files")).not.toBeInTheDocument();
   });
 
   it("sorts @ mention search results and limits visible files", async () => {

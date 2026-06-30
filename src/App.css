@@ -447,6 +447,69 @@ button.workspace-context-menu-item svg {
   padding-left: calc(var(--depth, 0) * 12px);
 }
 
+.workspace-tree-row.draggable {
+  cursor: grab;
+  user-select: none;
+}
+
+.workspace-tree-row.draggable:active {
+  cursor: grabbing;
+}
+
+.workspace-tree-row.draggable .workspace-tree-label {
+  cursor: inherit;
+}
+
+.explorer-drag-preview {
+  position: fixed;
+  z-index: 3000;
+  display: inline-grid;
+  max-width: 260px;
+  grid-template-columns: auto minmax(0, max-content);
+  column-gap: 8px;
+  row-gap: 1px;
+  align-items: center;
+  border: 1px solid var(--color-divider);
+  border-radius: 8px;
+  background: var(--color-component-background);
+  box-shadow: 0 10px 30px rgb(var(--shadow-rgb) / 0.24);
+  color: var(--color-text);
+  padding: 7px 10px;
+  pointer-events: none;
+  transform: translate(12px, 12px);
+}
+
+.explorer-drag-preview.over-drop-surface {
+  border-color: var(--color-primary);
+  box-shadow:
+    0 0 0 3px rgb(var(--primary-rgb) / 0.16),
+    0 10px 30px rgb(var(--shadow-rgb) / 0.24);
+}
+
+.explorer-drag-preview svg {
+  grid-row: 1 / span 2;
+  color: var(--color-icon);
+}
+
+.explorer-drag-preview span {
+  overflow: hidden;
+  max-width: 180px;
+  color: var(--color-text);
+  font-size: 0.82rem;
+  font-weight: 650;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.explorer-drag-preview small {
+  overflow: hidden;
+  color: var(--color-text-secondary);
+  font-size: 0.66rem;
+  line-height: 1.1;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .workspace-tree-row.git-deleted {
   opacity: 0.76;
 }
@@ -1051,11 +1114,6 @@ button.account-switcher-item:hover:not(:disabled) {
   transition:
     background 0.16s ease,
     box-shadow 0.16s ease;
-}
-
-.task-hero.context-drop-active {
-  background: rgb(var(--primary-rgb) / 0.05);
-  box-shadow: inset 0 0 0 2px rgb(var(--primary-rgb) / 0.24);
 }
 
 .task-hero h1 {
@@ -2041,40 +2099,101 @@ select:disabled {
   box-shadow: 0 18px 56px rgb(var(--shadow-rgb) / 0.16);
 }
 
-.composer-panel.drag-over {
-  background: var(--color-surface-soft);
-  box-shadow:
-    0 0 0 3px rgb(var(--primary-rgb) / 0.22),
-    0 18px 56px rgb(var(--shadow-rgb) / 0.16);
-}
-
 .prompt-shell {
   position: relative;
   min-width: 0;
+  border-radius: calc(var(--radius) - 1px) calc(var(--radius) - 1px) 0 0;
+  background: var(--composer);
+  outline: 1px solid transparent;
+  outline-offset: -1px;
+  transition:
+    background 0.16s ease,
+    outline-color 0.16s ease;
 }
 
 .prompt-shell.has-context-files {
   display: grid;
 }
 
+.composer-panel.drop-target-active .prompt-shell,
+.composer-panel.drop-target-active .composer-meta-row {
+  background: var(--color-surface-soft);
+}
+
+.composer-panel.drop-target-active .prompt-shell {
+  outline-color: rgb(var(--primary-rgb) / 0.48);
+}
+
 .prompt-field {
+  position: relative;
   display: block;
   overflow: hidden;
   border-radius: calc(var(--radius) - 1px) calc(var(--radius) - 1px) 0 0;
+  background: inherit;
 }
 
 .prompt-field textarea {
+  position: relative;
+  z-index: 1;
   display: block;
   min-height: 50px;
   max-height: 220px;
   border: 0;
   border-radius: 0;
-  background: var(--composer);
+  background: transparent;
   color: var(--text);
   font-size: 1rem;
   line-height: 1.5;
   padding: 14px 20px 8px;
   resize: none;
+}
+
+.prompt-field.has-inline-context textarea {
+  color: transparent;
+  caret-color: var(--color-text);
+}
+
+.prompt-field.has-inline-context textarea::placeholder {
+  color: var(--text-soft);
+}
+
+.prompt-inline-highlight {
+  position: absolute;
+  z-index: 0;
+  inset: 0;
+  overflow: hidden;
+  color: var(--text);
+  font-size: 1rem;
+  line-height: 1.5;
+  padding: 14px 20px 8px;
+  pointer-events: none;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.inline-context-mention {
+  display: inline-flex;
+  gap: 5px;
+  align-items: center;
+  color: var(--color-primary);
+  font-weight: 500;
+  vertical-align: baseline;
+}
+
+.inline-context-type {
+  display: inline-flex;
+  min-width: 1.8em;
+  height: 1.1em;
+  align-items: center;
+  justify-content: center;
+  border-radius: 4px;
+  background: var(--color-button-active);
+  color: var(--color-button-active-text);
+  font-size: 0.6em;
+  font-weight: 800;
+  line-height: 1;
+  text-transform: uppercase;
+  transform: translateY(0.02em);
 }
 
 .prompt-field textarea:focus {

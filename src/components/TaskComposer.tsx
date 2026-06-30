@@ -74,6 +74,7 @@ type Props = {
   onSlashCommandClose: () => void;
   onContextFilesDrop: (files: ComposerContextFile[]) => void;
   onContextFilesDropError?: (message: string) => void;
+  contextDropActive?: boolean;
   hasContextFileDropFallback?: () => boolean;
   getContextFileDropFallback?: () => ComposerContextFile[];
   onContextFileDropHandled?: () => void;
@@ -134,6 +135,7 @@ export function TaskComposer({
   onSlashCommandClose,
   onContextFilesDrop,
   onContextFilesDropError,
+  contextDropActive = false,
   hasContextFileDropFallback,
   getContextFileDropFallback,
   onContextFileDropHandled,
@@ -154,6 +156,9 @@ export function TaskComposer({
   const planRecommended = routeRecommendation === "plan-first";
   const mentionOpen = activeToken?.trigger === "@";
   const slashOpen = activeToken?.trigger === "/";
+  const inlineContextFiles = contextFiles.filter((file) => file.source === "search");
+  const attachmentContextFiles = contextFiles.filter((file) => file.source !== "search");
+  const dropTargetActive = dragActive || contextDropActive;
 
   useEffect(() => {
     setActivePopoverIndex(0);
@@ -312,7 +317,11 @@ export function TaskComposer({
       return;
     }
 
-    const nextPrompt = removeComposerToken(prompt, activeToken);
+    const nextPrompt = replaceComposerToken(
+      prompt,
+      activeToken,
+      inlineFilePromptToken(file),
+    );
     onPromptChange(nextPrompt.value);
     onMentionFileSelect(file);
     setActiveToken(null);
@@ -444,26 +453,37 @@ export function TaskComposer({
 
   return (
     <section
-      className={`composer-panel ${dragActive ? "drag-over" : ""}`}
+      className={`composer-panel ${dropTargetActive ? "drop-target-active" : ""}`}
       aria-label="Task composer"
       onDragOver={handleDragOver}
       onDragLeave={handleDragLeave}
       onDrop={handleDrop}
     >
-      <div className={`prompt-shell ${contextFiles.length > 0 ? "has-context-files" : ""}`}>
-        {contextFiles.length > 0 ? (
-          <ContextFileList files={contextFiles} onRemoveFile={onRemoveFile} />
+      <div className={`prompt-shell ${attachmentContextFiles.length > 0 ? "has-context-files" : ""}`}>
+        {attachmentContextFiles.length > 0 ? (
+          <ContextFileList files={attachmentContextFiles} onRemoveFile={onRemoveFile} />
         ) : null}
 
-        <label className="prompt-field">
+        <label
+          className={`prompt-field ${
+            inlineContextFiles.length > 0 ? "has-inline-context" : ""
+          }`}
+        >
           <span className="sr-only">Prompt</span>
+          {inlineContextFiles.length > 0 ? (
+            <PromptInlineHighlight
+              prompt={prompt}
+              files={inlineContextFiles}
+            />
+          ) : null}
           <textarea
             ref={promptTextareaRef}
+            aria-label="Prompt"
             value={prompt}
             onChange={handlePromptChange}
             onKeyDown={handlePromptKeyDown}
             onBlur={closeActiveSearch}
-            placeholder="Do anything"
+            placeholder="Do nothing"
             rows={1}
           />
         </label>
@@ -701,6 +721,31 @@ function ContextFileList({
               <X size={15} />
             </button>
           </article>
+        ),
+      )}
+    </div>
+  );
+}
+
+function PromptInlineHighlight({
+  prompt,
+  files,
+}: {
+  prompt: string;
+  files: ComposerContextFile[];
+}) {
+  return (
+    <div className="prompt-inline-highlight" aria-hidden="true">
+      {buildPromptInlineSegments(prompt, files).map((segment, index) =>
+        segment.kind === "file" ? (
+          <span className="inline-context-mention" key={`${segment.file.path}-${index}`}>
+            <span className="inline-context-type">
+              {contextFileExtensionLabel(segment.file.name)}
+            </span>
+            <span>{segment.text}</span>
+          </span>
+        ) : (
+          <span key={`text-${index}`}>{segment.text}</span>
         ),
       )}
     </div>
@@ -979,6 +1024,100 @@ function removeComposerToken(value: string, token: ComposerToken) {
     value: `${before}${after}`,
     caret: before.length,
   };
+}
+
+function replaceComposerToken(
+  value: string,
+  token: ComposerToken,
+  replacement: string,
+) {
+  const before = value.slice(0, token.start);
+  let after = value.slice(token.end);
+  after = /^\s/.test(after) ? after.replace(/^\s+/, " ") : ` ${after}`;
+  const nextValue = `${before}${replacement}${after}`;
+  const caret = before.length + replacement.length + 1;
+
+  return {
+    value: nextValue,
+    caret,
+  };
+}
+
+function buildPromptInlineSegments(
+  prompt: string,
+  files: ComposerContextFile[],
+) {
+  const candidates = files
+    .filter((file) => file.name.trim().length > 0)
+    .flatMap((file) => [
+      { file, token: inlineFilePromptToken(file) },
+      { file, token: file.name },
+    ])
+    .sort((a, b) => b.token.length - a.token.length);
+  const segments: Array<
+    | { kind: "text"; text: string }
+    | { kind: "file"; text: string; file: ComposerContextFile }
+  > = [];
+  let cursor = 0;
+
+  while (cursor < prompt.length) {
+    const match = candidates.find((candidate) =>
+      matchesInlineFileToken(prompt, cursor, candidate.token),
+    );
+
+    if (!match) {
+      const nextMatchIndex = findNextInlineFileIndex(prompt, cursor + 1, candidates);
+      const end = nextMatchIndex === -1 ? prompt.length : nextMatchIndex;
+      segments.push({ kind: "text", text: prompt.slice(cursor, end) });
+      cursor = end;
+      continue;
+    }
+
+    segments.push({
+      kind: "file",
+      text: match.file.name,
+      file: match.file,
+    });
+    cursor += match.token.length;
+  }
+
+  return segments;
+}
+
+function findNextInlineFileIndex(
+  prompt: string,
+  start: number,
+  candidates: Array<{ file: ComposerContextFile; token: string }>,
+) {
+  for (let index = start; index < prompt.length; index += 1) {
+    if (
+      candidates.some((candidate) =>
+        matchesInlineFileToken(prompt, index, candidate.token),
+      )
+    ) {
+      return index;
+    }
+  }
+
+  return -1;
+}
+
+function matchesInlineFileToken(prompt: string, index: number, token: string) {
+  if (!prompt.startsWith(token, index)) {
+    return false;
+  }
+
+  const before = index === 0 ? "" : prompt[index - 1];
+  const after = prompt[index + token.length] ?? "";
+  return !isFileNameBoundaryCharacter(before) && !isFileNameBoundaryCharacter(after);
+}
+
+function isFileNameBoundaryCharacter(value: string) {
+  return /[A-Za-z0-9_.-]/.test(value);
+}
+
+function inlineFilePromptToken(file: ComposerContextFile) {
+  return `${contextFileExtensionLabel(file.name)} ${file.name}`;
 }
 
 function relativeFileLabel(file: ComposerContextFile) {

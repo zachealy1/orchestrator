@@ -118,7 +118,6 @@ import {
   hasContextFilePayload,
   readDroppedContextFiles,
 } from "./lib/contextFiles";
-import { ORCHESTRATOR_CONTEXT_FILE_MIME } from "./types";
 import type {
   AccessLevel,
   AccountLoginCompletedNotification,
@@ -172,6 +171,23 @@ const EMPTY_GIT_STATUS_BY_PATH = new Map<string, WorkspaceGitFileStatus>();
 const EMPTY_DIRTY_DIRECTORY_PATHS = new Set<string>();
 
 type AppView = "task" | "analytics" | "settings";
+
+type ExplorerPointerDrag = {
+  active: boolean;
+  workspace: Workspace;
+  entry: WorkspaceTreeEntry;
+  file: ComposerContextFile;
+  pointerId: number;
+  startX: number;
+  startY: number;
+};
+
+type ExplorerDragPreview = {
+  fileName: string;
+  x: number;
+  y: number;
+  overDropSurface: boolean;
+};
 
 const BUILTIN_SLASH_COMMANDS: SlashCommandItem[] = [
   {
@@ -490,7 +506,13 @@ function App() {
   const [accessLevel, setAccessLevel] = useState<AccessLevel>("ask");
   const [contextFiles, setContextFiles] = useState<ComposerContextFile[]>([]);
   const [taskContextDropActive, setTaskContextDropActive] = useState(false);
+  const [explorerDragPreview, setExplorerDragPreview] =
+    useState<ExplorerDragPreview | null>(null);
+  const taskContextDropSurfaceRef = useRef<HTMLElement | null>(null);
   const explorerDragContextFileRef = useRef<ComposerContextFile | null>(null);
+  const explorerPointerDragRef = useRef<ExplorerPointerDrag | null>(null);
+  const explorerPointerDragCleanupRef = useRef<(() => void) | null>(null);
+  const suppressWorkspaceFileClickRef = useRef(false);
   const [selectedSkills, setSelectedSkills] = useState<SelectedComposerSkill[]>([]);
   const [mentionResults, setMentionResults] = useState<ComposerContextFile[]>([]);
   const [mentionSearchStatus, setMentionSearchStatus] =
@@ -3180,28 +3202,206 @@ function App() {
     }
   }, [resizePreviewDrawer]);
 
-  function startWorkspaceFileDrag(
-    event: DragEvent<HTMLElement>,
+  function endWorkspaceFileDrag() {
+    explorerPointerDragCleanupRef.current?.();
+    explorerPointerDragCleanupRef.current = null;
+    explorerDragContextFileRef.current = null;
+    explorerPointerDragRef.current = null;
+    setTaskContextDropActive(false);
+    setExplorerDragPreview(null);
+  }
+
+  function startWorkspaceFilePointerDrag(
+    event: ReactPointerEvent<HTMLElement>,
+    workspace: Workspace,
     file: WorkspaceTreeEntry,
   ) {
+    if (event.button !== 0) {
+      return;
+    }
+
     const contextFile = contextFileFromWorkspaceEntry(file);
     explorerDragContextFileRef.current = contextFile;
+    explorerPointerDragRef.current = {
+      active: false,
+      workspace,
+      entry: file,
+      file: contextFile,
+      pointerId: event.pointerId,
+      startX: event.clientX,
+      startY: event.clientY,
+    };
 
-    try {
-      event.dataTransfer.effectAllowed = "copy";
-      event.dataTransfer.setData(
-        ORCHESTRATOR_CONTEXT_FILE_MIME,
-        JSON.stringify([contextFile]),
-      );
-      event.dataTransfer.setData("text/plain", file.path);
-    } catch {
-      // Tauri/WebKit can drop custom drag data; the ref fallback still carries the file.
+    event.currentTarget.setPointerCapture?.(event.pointerId);
+    attachWorkspaceFilePointerDragListeners();
+  }
+
+  function attachWorkspaceFilePointerDragListeners() {
+    explorerPointerDragCleanupRef.current?.();
+
+    function handleWindowPointerMove(event: PointerEvent) {
+      if (
+        updateWorkspaceFilePointerDragAt(
+          event.pointerId,
+          event.clientX,
+          event.clientY,
+        )
+      ) {
+        event.preventDefault();
+      }
+    }
+
+    function handleWindowPointerUp(event: PointerEvent) {
+      if (
+        finishWorkspaceFilePointerDragAt(
+          event.pointerId,
+          event.clientX,
+          event.clientY,
+        )
+      ) {
+        event.preventDefault();
+      }
+    }
+
+    function handleWindowPointerCancel(event: PointerEvent) {
+      const drag = explorerPointerDragRef.current;
+      if (drag?.pointerId === event.pointerId) {
+        endWorkspaceFileDrag();
+      }
+    }
+
+    window.addEventListener("pointermove", handleWindowPointerMove);
+    window.addEventListener("pointerup", handleWindowPointerUp);
+    window.addEventListener("pointercancel", handleWindowPointerCancel);
+    explorerPointerDragCleanupRef.current = () => {
+      window.removeEventListener("pointermove", handleWindowPointerMove);
+      window.removeEventListener("pointerup", handleWindowPointerUp);
+      window.removeEventListener("pointercancel", handleWindowPointerCancel);
+    };
+  }
+
+  function updateWorkspaceFilePointerDrag(event: ReactPointerEvent<HTMLElement>) {
+    if (
+      updateWorkspaceFilePointerDragAt(
+        event.pointerId,
+        event.clientX,
+        event.clientY,
+      )
+    ) {
+      event.preventDefault();
     }
   }
 
-  function endWorkspaceFileDrag() {
-    explorerDragContextFileRef.current = null;
-    setTaskContextDropActive(false);
+  function updateWorkspaceFilePointerDragAt(
+    pointerId: number,
+    clientX: number,
+    clientY: number,
+  ) {
+    const drag = explorerPointerDragRef.current;
+    if (!drag || drag.pointerId !== pointerId) {
+      return false;
+    }
+
+    const moved =
+      Math.abs(clientX - drag.startX) > 4 ||
+      Math.abs(clientY - drag.startY) > 4;
+    if (!drag.active && moved) {
+      drag.active = true;
+    }
+
+    if (!drag.active) {
+      return false;
+    }
+
+    const overDropSurface = isPointInTaskContextDropSurface(clientX, clientY);
+    setTaskContextDropActive(overDropSurface);
+    setExplorerDragPreview({
+      fileName: drag.file.name,
+      x: clientX,
+      y: clientY,
+      overDropSurface,
+    });
+    return true;
+  }
+
+  function finishWorkspaceFilePointerDrag(event: ReactPointerEvent<HTMLElement>) {
+    const handled = finishWorkspaceFilePointerDragAt(
+      event.pointerId,
+      event.clientX,
+      event.clientY,
+    );
+    if (!handled) {
+      return;
+    }
+
+    event.currentTarget.releasePointerCapture?.(event.pointerId);
+    event.preventDefault();
+    event.stopPropagation();
+  }
+
+  function finishWorkspaceFilePointerDragAt(
+    pointerId: number,
+    clientX: number,
+    clientY: number,
+  ) {
+    const drag = explorerPointerDragRef.current;
+    if (!drag || drag.pointerId !== pointerId) {
+      return false;
+    }
+
+    suppressNextWorkspaceFileClick();
+
+    if (!drag.active) {
+      void openWorkspaceFilePreview(drag.workspace, drag.entry);
+      endWorkspaceFileDrag();
+      return true;
+    }
+
+    if (isPointInTaskContextDropSurface(clientX, clientY)) {
+      addDroppedContextFiles([drag.file]);
+    }
+
+    endWorkspaceFileDrag();
+    return true;
+  }
+
+  function cancelWorkspaceFilePointerDrag(event: ReactPointerEvent<HTMLElement>) {
+    const drag = explorerPointerDragRef.current;
+    if (drag?.pointerId === event.pointerId) {
+      event.currentTarget.releasePointerCapture?.(event.pointerId);
+      endWorkspaceFileDrag();
+    }
+  }
+
+  function suppressNextWorkspaceFileClick() {
+    suppressWorkspaceFileClickRef.current = true;
+    window.setTimeout(() => {
+      suppressWorkspaceFileClickRef.current = false;
+    }, 160);
+  }
+
+  function shouldSuppressWorkspaceFileClick() {
+    if (!suppressWorkspaceFileClickRef.current) {
+      return false;
+    }
+
+    suppressWorkspaceFileClickRef.current = false;
+    return true;
+  }
+
+  function isPointInTaskContextDropSurface(clientX: number, clientY: number) {
+    const surface = taskContextDropSurfaceRef.current;
+    if (!surface) {
+      return false;
+    }
+
+    const rect = surface.getBoundingClientRect();
+    return (
+      clientX >= rect.left &&
+      clientX <= rect.right &&
+      clientY >= rect.top &&
+      clientY <= rect.bottom
+    );
   }
 
   function hasContextFileDrop(dataTransfer: DataTransfer) {
@@ -3430,15 +3630,16 @@ function App() {
     return (
       <div className="workspace-tree-branch" key={entry.path}>
         <div
-          className={`workspace-tree-row ${directory ? "directory" : "file"}${gitStateClass}`}
+          className={`workspace-tree-row ${directory ? "directory" : "file"}${draggable ? " draggable" : ""}${gitStateClass}`}
           style={treeIndentStyle(depth)}
-          draggable={draggable}
-          onDragStart={
-            !draggable
-              ? undefined
-              : (event) => startWorkspaceFileDrag(event, entry)
+          onPointerDown={
+              !draggable
+                ? undefined
+              : (event) => startWorkspaceFilePointerDrag(event, workspace, entry)
           }
-          onDragEnd={!draggable ? undefined : endWorkspaceFileDrag}
+          onPointerMove={!draggable ? undefined : updateWorkspaceFilePointerDrag}
+          onPointerUp={!draggable ? undefined : finishWorkspaceFilePointerDrag}
+          onPointerCancel={!draggable ? undefined : cancelWorkspaceFilePointerDrag}
         >
           {directory ? (
             <button
@@ -3460,11 +3661,19 @@ function App() {
             className="workspace-tree-label"
             type="button"
             title={entry.relativePath}
-            onClick={() =>
-              directory
-                ? toggleDirectoryExpanded(workspace, entry.path, !entry.gitGhost)
-                : void openWorkspaceFilePreview(workspace, entry)
-            }
+            onClick={(event) => {
+              if (!directory && shouldSuppressWorkspaceFileClick()) {
+                event.preventDefault();
+                event.stopPropagation();
+                return;
+              }
+
+              if (directory) {
+                toggleDirectoryExpanded(workspace, entry.path, !entry.gitGhost);
+              } else {
+                void openWorkspaceFilePreview(workspace, entry);
+              }
+            }}
           >
             {directory ? (
               expanded ? (
@@ -3860,6 +4069,7 @@ function App() {
               gitSummary={selectedGitSummary}
             />
             <section
+              ref={taskContextDropSurfaceRef}
               className={`task-hero ${hasTaskChat ? "has-chat" : ""} ${
                 taskContextDropActive ? "context-drop-active" : ""
               }`}
@@ -3905,6 +4115,9 @@ function App() {
                 onBranchChange={(branch) => void selectBranch(branch)}
                 onPromptChange={(nextPrompt) => {
                   setPrompt(nextPrompt);
+                  setContextFiles((current) =>
+                    pruneMissingInlineContextFiles(current, nextPrompt),
+                  );
                   setPreflight(null);
                 }}
                 onModelChange={setSelectedModelId}
@@ -3921,6 +4134,7 @@ function App() {
                 onSlashCommandClose={closeSlashCommandSearch}
                 onContextFilesDrop={addDroppedContextFiles}
                 onContextFilesDropError={setStatusMessage}
+                contextDropActive={taskContextDropActive}
                 hasContextFileDropFallback={() =>
                   explorerDragContextFileRef.current !== null
                 }
@@ -4197,6 +4411,26 @@ function App() {
           </div>
         ) : null}
       </section>
+
+      {explorerDragPreview ? (
+        <div
+          className={`explorer-drag-preview ${
+            explorerDragPreview.overDropSurface ? "over-drop-surface" : ""
+          }`}
+          role="status"
+          aria-label={`Dragging ${explorerDragPreview.fileName}`}
+          style={{
+            left: explorerDragPreview.x,
+            top: explorerDragPreview.y,
+          }}
+        >
+          <FileText size={15} aria-hidden="true" />
+          <span>{explorerDragPreview.fileName}</span>
+          <small>
+            {explorerDragPreview.overDropSurface ? "Drop to add" : "Drag to chat"}
+          </small>
+        </div>
+      ) : null}
     </main>
   );
 }
@@ -4719,6 +4953,19 @@ function mergeContextFiles(
   }
 
   return merged;
+}
+
+function pruneMissingInlineContextFiles(
+  files: ComposerContextFile[],
+  prompt: string,
+) {
+  return files.filter((file) => {
+    if (file.source !== "search") {
+      return true;
+    }
+
+    return prompt.includes(file.name);
+  });
 }
 
 function readAccountLoginCompleted(

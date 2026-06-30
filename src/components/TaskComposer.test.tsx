@@ -372,6 +372,7 @@ describe("TaskComposer", () => {
     const onRemoveFile = vi.fn();
     const { user } = renderComposer({
       onRemoveFile,
+      prompt: "Update App.css",
       contextFiles: [
         {
           path: "/repo/src/App.css",
@@ -398,8 +399,10 @@ describe("TaskComposer", () => {
     const promptShell = contextList.closest(".prompt-shell");
     expect(promptShell).toContainElement(screen.getByLabelText("Prompt"));
     expect(contextList.nextElementSibling).toHaveClass("prompt-field");
-    expect(within(contextList).getByText("#")).toBeInTheDocument();
-    expect(within(contextList).getByText("App.css")).toBeInTheDocument();
+    expect(within(contextList).queryByText("#")).not.toBeInTheDocument();
+    expect(within(contextList).queryByText("App.css")).not.toBeInTheDocument();
+    expect(screen.getByText("CSS")).toBeInTheDocument();
+    expect(screen.getByText("App.css")).toBeInTheDocument();
     expect(within(contextList).getByText("TSX")).toBeInTheDocument();
     expect(within(contextList).getByText("MD")).toBeInTheDocument();
     expect(contextList.querySelectorAll(".context-attachment")).toHaveLength(2);
@@ -423,7 +426,7 @@ describe("TaskComposer", () => {
     ]);
 
     fireEvent.dragOver(composer, { dataTransfer });
-    expect(composer).toHaveClass("drag-over");
+    expect(composer).toHaveClass("drop-target-active");
     fireEvent.drop(composer, { dataTransfer });
 
     expect(onContextFilesDrop).toHaveBeenCalledWith([
@@ -456,7 +459,7 @@ describe("TaskComposer", () => {
     const dataTransfer = createEmptyDataTransfer();
 
     fireEvent.dragOver(composer, { dataTransfer });
-    expect(composer).toHaveClass("drag-over");
+    expect(composer).toHaveClass("drop-target-active");
     fireEvent.drop(composer, { dataTransfer });
 
     expect(onContextFilesDrop).toHaveBeenCalledWith([fallbackFile]);
@@ -586,8 +589,8 @@ describe("TaskComposer", () => {
 
     expect(onMentionFileSelect).toHaveBeenCalledWith(selectedFile);
     expect(onMentionClose).toHaveBeenCalled();
-    expect(onPromptChange).toHaveBeenLastCalledWith("Fix");
-    expect(promptInput).toHaveValue("Fix");
+    expect(onPromptChange).toHaveBeenLastCalledWith("Fix TSX App.tsx ");
+    expect(promptInput).toHaveValue("Fix TSX App.tsx ");
   });
 
   it("selects a mention with the mouse", async () => {
@@ -608,7 +611,7 @@ describe("TaskComposer", () => {
     await user.click(screen.getByRole("option", { name: /app\.tsx/i }));
 
     expect(onMentionFileSelect).toHaveBeenCalledWith(selectedFile);
-    expect(screen.getByLabelText("Prompt")).toHaveValue("");
+    expect(screen.getByLabelText("Prompt")).toHaveValue("TSX App.tsx ");
   });
 
   it("closes mention search with Escape", async () => {
