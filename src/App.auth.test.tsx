@@ -829,6 +829,47 @@ describe("App Codex auth", () => {
     expect(within(banner).getByTitle("Untracked files")).toHaveTextContent("?1");
   });
 
+  it("refreshes expanded directories when files are deleted outside Orchestrator", async () => {
+    const helloEntry = {
+      name: "hello.txt",
+      path: "/repo/orchestrator/hello.txt",
+      relativePath: "hello.txt",
+      kind: "file" as const,
+    };
+    let directoryRequestCount = 0;
+
+    mocks.listWorkspaceDirectoryMock.mockImplementation(async () => {
+      directoryRequestCount += 1;
+      return directoryRequestCount === 1 ? [helloEntry] : [];
+    });
+    mocks.listWorkspaceGitStatusMock.mockResolvedValue({
+      workspacePath: workspace.path,
+      gitRoot: workspace.path,
+      files: [],
+    });
+
+    const { user } = await renderApp();
+    const workspaceNav = screen.getByRole("navigation", {
+      name: "Workspaces",
+    });
+
+    await user.click(
+      within(workspaceNav).getByRole("button", { name: "Expand orchestrator" }),
+    );
+    expect(await within(workspaceNav).findByTitle("hello.txt")).toBeInTheDocument();
+
+    await waitFor(
+      () =>
+        expect(mocks.listWorkspaceDirectoryMock.mock.calls.length).toBeGreaterThanOrEqual(
+          2,
+        ),
+      { timeout: 4500 },
+    );
+    await waitFor(() =>
+      expect(within(workspaceNav).queryByTitle("hello.txt")).not.toBeInTheDocument(),
+    );
+  });
+
   it("marks changed files and parent folders in the workspace explorer", async () => {
     mocks.listWorkspaceDirectoryMock.mockResolvedValue([
       {
@@ -883,8 +924,34 @@ describe("App Codex auth", () => {
     expect(within(workspaceNav).getAllByLabelText("Contains changes")).toHaveLength(2);
   });
 
-  it("renders deleted ghost files and opens their git diff by default", async () => {
-    mocks.listWorkspaceDirectoryMock.mockResolvedValue([]);
+  it("hides files deleted outside Orchestrator from the workspace explorer", async () => {
+    mocks.listWorkspaceDirectoryMock.mockImplementation(
+      async (_workspacePath: string, directoryPath: string) => {
+        if (directoryPath === workspace.path) {
+          return [
+            {
+              name: "src",
+              path: "/repo/orchestrator/src",
+              relativePath: "src",
+              kind: "directory",
+            },
+          ];
+        }
+
+        if (directoryPath === "/repo/orchestrator/src") {
+          return [
+            {
+              name: "old.ts",
+              path: "/repo/orchestrator/src/old.ts",
+              relativePath: "src/old.ts",
+              kind: "file",
+            },
+          ];
+        }
+
+        return [];
+      },
+    );
     mocks.listWorkspaceGitStatusMock.mockResolvedValue({
       workspacePath: workspace.path,
       gitRoot: workspace.path,
@@ -900,26 +967,6 @@ describe("App Codex auth", () => {
         },
       ],
     });
-    mocks.readWorkspaceGitDiffMock.mockResolvedValue({
-      path: "/repo/orchestrator/src/old.ts",
-      relativePath: "src/old.ts",
-      sections: [
-        {
-          kind: "unstaged",
-          title: "Working tree changes",
-          baseLabel: "Index:src/old.ts",
-          headLabel: "/dev/null",
-          baseContent: "export const old = true;\n",
-          headContent: "",
-          baseTruncated: false,
-          headTruncated: false,
-          content:
-            "diff --git a/src/old.ts b/src/old.ts\n--- a/src/old.ts\n+++ /dev/null\n@@ -1 +0,0 @@\n-export const old = true;\n",
-          isBinary: false,
-        },
-      ],
-    });
-
     const { user } = await renderApp();
     const workspaceNav = screen.getByRole("navigation", {
       name: "Workspaces",
@@ -929,24 +976,11 @@ describe("App Codex auth", () => {
       within(workspaceNav).getByRole("button", { name: "Expand orchestrator" }),
     );
     await user.click(await within(workspaceNav).findByRole("button", { name: "Expand src" }));
-    const deletedFile = await within(workspaceNav).findByTitle("src/old.ts");
-    expect(deletedFile).toHaveAttribute("draggable", "false");
-
-    await user.click(deletedFile);
-
-    await waitFor(() =>
-      expect(mocks.readWorkspaceGitDiffMock).toHaveBeenCalledWith(
-        workspace.path,
-        "/repo/orchestrator/src/old.ts",
-      ),
-    );
+    expect(within(workspaceNav).queryByTitle("src/old.ts")).not.toBeInTheDocument();
+    expect(mocks.readWorkspaceGitDiffMock).not.toHaveBeenCalled();
     expect(mocks.readWorkspaceFilePreviewMock).not.toHaveBeenCalledWith(
       workspace.path,
       "/repo/orchestrator/src/old.ts",
-    );
-    expect(screen.getByRole("button", { name: "Diff" })).toHaveClass("active");
-    expect(screen.getByRole("complementary", { name: "File preview" })).toHaveTextContent(
-      "export const old = true;",
     );
   });
 
@@ -1181,7 +1215,7 @@ describe("App Codex auth", () => {
 
     await user.click(workspaceButton);
     expect(await within(workspaceNav).findByRole("button", { name: "src" })).toBeInTheDocument();
-    expect(mocks.listWorkspaceDirectoryMock).toHaveBeenCalledTimes(1);
+    expect(mocks.listWorkspaceDirectoryMock).toHaveBeenCalledTimes(2);
   });
 
   it("shows nested loading state while expanding directories", async () => {

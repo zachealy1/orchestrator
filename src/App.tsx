@@ -733,7 +733,10 @@ function App() {
       timeoutId = window.setTimeout(() => {
         void refreshWorkspaceGitStatus(selectedWorkspace, { showLoading: false })
           .catch(() => undefined)
-          .finally(scheduleRefresh);
+          .finally(() => {
+            refreshVisibleWorkspaceDirectories(selectedWorkspace);
+            scheduleRefresh();
+          });
       }, GIT_STATUS_AUTO_REFRESH_INTERVAL_MS);
     };
 
@@ -745,7 +748,7 @@ function App() {
         window.clearTimeout(timeoutId);
       }
     };
-  }, [selectedWorkspace]);
+  }, [expandedDirectoryPaths, expandedWorkspaceIds, selectedWorkspace]);
 
   useEffect(() => {
     selectedWorkspaceRef.current = selectedWorkspace;
@@ -2761,7 +2764,7 @@ function App() {
     });
 
     if (opening) {
-      void loadWorkspaceDirectory(workspace, workspace.path);
+      void loadWorkspaceDirectory(workspace, workspace.path, true);
     }
   }
 
@@ -2782,8 +2785,30 @@ function App() {
     });
 
     if (opening && loadDirectory) {
-      void loadWorkspaceDirectory(workspace, directoryPath);
+      void loadWorkspaceDirectory(workspace, directoryPath, true);
     }
+  }
+
+  function refreshVisibleWorkspaceDirectories(workspace: Workspace) {
+    if (!expandedWorkspaceIds.has(workspace.id)) {
+      return;
+    }
+
+    const workspaceRoot = normalizeWorkspacePath(workspace.path);
+    const visibleDirectoryPaths = new Set<string>([workspace.path]);
+    expandedDirectoryPaths.forEach((directoryPath) => {
+      const normalizedDirectoryPath = normalizeWorkspacePath(directoryPath);
+      if (
+        normalizedDirectoryPath === workspaceRoot ||
+        normalizedDirectoryPath.startsWith(`${workspaceRoot}/`)
+      ) {
+        visibleDirectoryPaths.add(directoryPath);
+      }
+    });
+
+    visibleDirectoryPaths.forEach((directoryPath) => {
+      void loadWorkspaceDirectory(workspace, directoryPath, true);
+    });
   }
 
   async function openWorkspaceFilePreview(
@@ -3116,11 +3141,21 @@ function App() {
       return entries;
     }
 
-    const byRelativePath = new Map(entries.map((entry) => [entry.relativePath, entry]));
-    const merged = [...entries];
+    const visibleEntries = entries.filter(
+      (entry) =>
+        gitStatusByRelativePath.get(entry.relativePath)?.statusKind !== "deleted",
+    );
+    const byRelativePath = new Map(
+      visibleEntries.map((entry) => [entry.relativePath, entry]),
+    );
+    const merged = [...visibleEntries];
     const directoryRelativePath = relativeDirectoryPath(workspace, directoryPath);
 
     selectedGitStatusState?.snapshot?.files.forEach((file) => {
+      if (file.statusKind === "deleted") {
+        return;
+      }
+
       const gitEntry = gitStatusChildEntry(
         workspace,
         directoryRelativePath,
