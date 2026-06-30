@@ -1,8 +1,6 @@
 import {
   Check,
-  CircleStop,
   Clock,
-  Terminal,
   X,
 } from "lucide-react";
 import { useEffect, useRef } from "react";
@@ -46,8 +44,7 @@ export function TaskChatTranscript({ entries, onResolveRequest }: Props) {
         <div className="task-chat-run" key={entry.runId}>
           <article className="chat-message user-message">
             <div className="chat-bubble">
-              <div className="chat-bubble-header">
-                <strong>You</strong>
+              <div className="chat-bubble-header meta-only">
                 <span>{formatSubmittedTime(entry.submittedAt)}</span>
               </div>
               <div className="chat-message-body user-prompt" aria-label="Submitted prompt">
@@ -58,19 +55,12 @@ export function TaskChatTranscript({ entries, onResolveRequest }: Props) {
 
           <article className={`chat-message assistant-message status-${entry.status}`}>
             <div className="chat-bubble">
-              <div className="chat-bubble-header">
-                <strong>Codex</strong>
-                <span className={`run-status ${entry.status}`}>{entry.status}</span>
-              </div>
-
               <AssistantOutput runView={entry.runView} />
 
               <RunApprovalRequests
                 runView={entry.runView}
                 onResolveRequest={onResolveRequest}
               />
-
-              <RunDetails runView={entry.runView} />
             </div>
           </article>
         </div>
@@ -82,7 +72,7 @@ export function TaskChatTranscript({ entries, onResolveRequest }: Props) {
 function AssistantOutput({ runView }: { runView: RunViewState }) {
   if (runView.finalMessage.trim()) {
     return (
-      <div className="chat-message-body assistant-output" aria-label="Codex response">
+      <div className="chat-message-body assistant-output" aria-label="Assistant response">
         {runView.finalMessage}
       </div>
     );
@@ -92,7 +82,7 @@ function AssistantOutput({ runView }: { runView: RunViewState }) {
     return (
       <div
         className="chat-message-body assistant-output error"
-        aria-label="Codex error"
+        aria-label="Assistant error"
       >
         {runView.error}
       </div>
@@ -103,17 +93,17 @@ function AssistantOutput({ runView }: { runView: RunViewState }) {
     return (
       <div
         className="chat-message-body assistant-output muted"
-        aria-label="Codex response"
+        aria-label="Assistant response"
       >
-        Codex completed without a final message.
+        Completed without a final message.
       </div>
     );
   }
 
   return (
-    <div className="chat-message-body assistant-output muted" aria-label="Codex status">
+    <div className="chat-message-body assistant-output muted" aria-label="Assistant status">
       <Clock size={15} aria-hidden="true" />
-      Codex is working...
+      Working...
     </div>
   );
 }
@@ -157,83 +147,6 @@ function RunApprovalRequests({
           </div>
         </article>
       ))}
-    </div>
-  );
-}
-
-function RunDetails({ runView }: { runView: RunViewState }) {
-  const activityLines = runView.console.filter((line) => line.kind !== "assistant");
-  const hasActivity = activityLines.length > 0;
-  const hasPlan = Boolean(runView.latestPlan);
-  const hasDiff = Boolean(runView.latestDiff);
-  const hasMetadata = Boolean(
-    runView.threadId || runView.turnId || runView.tokenUsage,
-  );
-
-  if (!hasActivity && !hasPlan && !hasDiff && !hasMetadata && runView.status !== "interrupted") {
-    return null;
-  }
-
-  return (
-    <div className="chat-run-details">
-      {hasMetadata ? (
-        <div className="run-details">
-          <div>
-            <strong>Thread</strong>
-            <span>{runView.threadId ?? "pending"}</span>
-          </div>
-          <div>
-            <strong>Turn</strong>
-            <span>{runView.turnId ?? "pending"}</span>
-          </div>
-          <div>
-            <strong>Token usage</strong>
-            <span>
-              {runView.tokenUsage
-                ? `${runView.tokenUsage.totalTokens.toLocaleString()} total`
-                : "pending"}
-            </span>
-          </div>
-        </div>
-      ) : null}
-
-      {hasActivity ? (
-        <details className="chat-run-disclosure">
-          <summary>
-            <Terminal size={15} aria-hidden="true" />
-            Activity
-          </summary>
-          <div className="console chat-console">
-            {activityLines.map((line) => (
-              <p className={line.kind} key={line.id}>
-                <span>{line.kind}</span>
-                {line.text}
-              </p>
-            ))}
-          </div>
-        </details>
-      ) : null}
-
-      {hasPlan ? (
-        <details className="chat-run-disclosure">
-          <summary>Latest plan</summary>
-          <pre>{runView.latestPlan}</pre>
-        </details>
-      ) : null}
-
-      {hasDiff ? (
-        <details className="chat-run-disclosure">
-          <summary>Latest diff</summary>
-          <pre>{runView.latestDiff}</pre>
-        </details>
-      ) : null}
-
-      {runView.status === "interrupted" ? (
-        <p className="muted chat-interrupted">
-          <CircleStop size={16} />
-          Run was interrupted.
-        </p>
-      ) : null}
     </div>
   );
 }

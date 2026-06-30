@@ -27,12 +27,14 @@ describe("TaskChatTranscript", () => {
     );
 
     const submittedPrompt = screen.getByLabelText("Submitted prompt");
-    const codexResponse = screen.getByLabelText("Codex response");
+    const assistantResponse = screen.getByLabelText("Assistant response");
 
+    expect(screen.queryByText("You")).not.toBeInTheDocument();
+    expect(screen.queryByText("Codex")).not.toBeInTheDocument();
     expect(submittedPrompt).toHaveClass("chat-message-body");
     expect(submittedPrompt).toHaveTextContent("Objective:");
     expect(submittedPrompt.textContent).toContain("\nFix the failing auth tests");
-    expect(codexResponse).toHaveClass("chat-message-body");
-    expect(codexResponse.textContent).toContain("\n- Updated the auth flow");
+    expect(assistantResponse).toHaveClass("chat-message-body");
+    expect(assistantResponse.textContent).toContain("\n- Updated the auth flow");
   });
 });

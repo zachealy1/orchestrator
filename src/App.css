@@ -1135,6 +1135,10 @@ button.account-switcher-item:hover:not(:disabled) {
   justify-content: space-between;
 }
 
+.chat-bubble-header.meta-only {
+  justify-content: flex-end;
+}
+
 .chat-bubble-header strong {
   overflow: hidden;
   color: var(--text);
