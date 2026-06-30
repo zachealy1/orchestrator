@@ -701,7 +701,7 @@ describe("App Codex auth", () => {
           indexStatus: "?",
           worktreeStatus: "?",
           statusKind: "untracked",
-          badge: "?",
+          badge: "U",
         },
         {
           path: "/repo/orchestrator/src/conflict.ts",
@@ -724,7 +724,7 @@ describe("App Codex auth", () => {
       "A/R/C2",
     );
     expect(within(banner).getByTitle("Deleted files")).toHaveTextContent("D1");
-    expect(within(banner).getByTitle("Untracked files")).toHaveTextContent("?1");
+    expect(within(banner).getByTitle("Untracked files")).toHaveTextContent("U1");
     expect(within(banner).getByTitle("Conflicted files")).toHaveTextContent("U1");
   });
 
@@ -788,7 +788,7 @@ describe("App Codex auth", () => {
           indexStatus: "?",
           worktreeStatus: "?",
           statusKind: "untracked",
-          badge: "?",
+          badge: "U",
         },
       ],
     };
@@ -823,10 +823,10 @@ describe("App Codex auth", () => {
     );
     expect(within(workspaceNav).getByLabelText("modified file")).toHaveTextContent("M");
     expect(within(workspaceNav).getByTitle("external.md")).toBeInTheDocument();
-    expect(within(workspaceNav).getByLabelText("untracked file")).toHaveTextContent("?");
+    expect(within(workspaceNav).getByLabelText("untracked file")).toHaveTextContent("U");
     expect(within(banner).getByText("2 changed")).toBeInTheDocument();
     expect(within(banner).getByTitle("Modified files")).toHaveTextContent("M1");
-    expect(within(banner).getByTitle("Untracked files")).toHaveTextContent("?1");
+    expect(within(banner).getByTitle("Untracked files")).toHaveTextContent("U1");
   });
 
   it("refreshes expanded directories when files are deleted outside Orchestrator", async () => {

@@ -1814,7 +1814,7 @@ fn git_status_kind(index_status: char, worktree_status: char) -> &'static str {
 fn git_status_badge(index_status: char, worktree_status: char) -> &'static str {
     match git_status_kind(index_status, worktree_status) {
         "conflicted" => "U",
-        "untracked" => "?",
+        "untracked" => "U",
         "renamed" => "R",
         "copied" => "C",
         "deleted" => "D",
@@ -2330,7 +2330,7 @@ mod tests {
             vec![
                 ("src/modified.ts", "modified", "M", None),
                 ("src/staged.ts", "modified", "M", None),
-                ("src/new.ts", "untracked", "?", None),
+                ("src/new.ts", "untracked", "U", None),
                 ("src/deleted.ts", "deleted", "D", None),
                 ("src/renamed.ts", "renamed", "R", Some("src/old.ts")),
                 ("src/copied.ts", "copied", "C", Some("src/source.ts")),

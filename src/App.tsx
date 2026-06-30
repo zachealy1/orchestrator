@@ -4132,7 +4132,7 @@ function WorkspaceContextBanner({
               title="Deleted files"
             />
             <WorkspaceContextGitBadge
-              label="?"
+              label="U"
               count={gitSummary.untracked}
               title="Untracked files"
             />
