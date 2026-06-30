@@ -50,7 +50,9 @@ export function TaskChatTranscript({ entries, onResolveRequest }: Props) {
                 <strong>You</strong>
                 <span>{formatSubmittedTime(entry.submittedAt)}</span>
               </div>
-              <p>{entry.prompt}</p>
+              <div className="chat-message-body user-prompt" aria-label="Submitted prompt">
+                {entry.prompt}
+              </div>
             </div>
           </article>
 
@@ -79,22 +81,40 @@ export function TaskChatTranscript({ entries, onResolveRequest }: Props) {
 
 function AssistantOutput({ runView }: { runView: RunViewState }) {
   if (runView.finalMessage.trim()) {
-    return <p className="assistant-output">{runView.finalMessage}</p>;
+    return (
+      <div className="chat-message-body assistant-output" aria-label="Codex response">
+        {runView.finalMessage}
+      </div>
+    );
   }
 
   if (runView.status === "failed" && runView.error) {
-    return <p className="assistant-output error">{runView.error}</p>;
+    return (
+      <div
+        className="chat-message-body assistant-output error"
+        aria-label="Codex error"
+      >
+        {runView.error}
+      </div>
+    );
   }
 
   if (runView.status === "completed") {
-    return <p className="assistant-output muted">Codex completed without a final message.</p>;
+    return (
+      <div
+        className="chat-message-body assistant-output muted"
+        aria-label="Codex response"
+      >
+        Codex completed without a final message.
+      </div>
+    );
   }
 
   return (
-    <p className="assistant-output muted">
+    <div className="chat-message-body assistant-output muted" aria-label="Codex status">
       <Clock size={15} aria-hidden="true" />
       Codex is working...
-    </p>
+    </div>
   );
 }
 
