@@ -113,4 +113,91 @@ describe("TaskChatTranscript", () => {
     expect(screen.queryByText("2m 3s • 69,839 tokens")).not.toBeInTheDocument();
     expect(screen.getByLabelText("App-server stream")).toBeInTheDocument();
   });
+
+  it("renders grouped edited files and commands", () => {
+    const { container } = render(
+      <TaskChatTranscript
+        entries={[
+          {
+            workspaceId: 1,
+            runId: 2,
+            taskId: 3,
+            prompt: "Update the transcript",
+            submittedAt: "2026-06-30T17:30:00Z",
+            status: "running",
+            runView: {
+              ...emptyRunView,
+              status: "running",
+              editedFiles: [
+                {
+                  path: "src/App.css",
+                  name: "App.css",
+                  additions: 11,
+                  deletions: 0,
+                  status: "modified",
+                },
+                {
+                  path: "src/components/TaskChatTranscript.tsx",
+                  name: "TaskChatTranscript.tsx",
+                  additions: 3,
+                  deletions: 2,
+                  status: "modified",
+                },
+              ],
+              commands: [
+                {
+                  id: "cmd-1",
+                  command: "npm test -- --run src/components/TaskChatTranscript.test.tsx",
+                  status: "completed",
+                  durationMs: 1000,
+                  output: "",
+                },
+                {
+                  id: "cmd-2",
+                  command: "npm test -- --run src/App.auth.test.tsx",
+                  status: "completed",
+                  durationMs: 12_000,
+                  output: "",
+                },
+              ],
+              streamEvents: [
+                {
+                  id: "message-1",
+                  kind: "message",
+                  text: "I updated the transcript view.",
+                  timestamp: "2026-06-30T17:30:01Z",
+                },
+                {
+                  id: "command-1",
+                  kind: "command",
+                  text: "npm test output",
+                  timestamp: "2026-06-30T17:30:02Z",
+                },
+              ],
+            },
+          },
+        ]}
+        onResolveRequest={vi.fn()}
+      />,
+    );
+
+    const activityGroups = screen.getByLabelText("Run activity groups");
+
+    expect(within(activityGroups).getByText("Edited 2 files")).toBeInTheDocument();
+    expect(within(activityGroups).getByText("Ran 2 commands")).toBeInTheDocument();
+    expect(within(activityGroups).getByText("App.css")).toBeInTheDocument();
+    expect(within(activityGroups).getByText("+11")).toBeInTheDocument();
+    expect(within(activityGroups).getByText("-2")).toBeInTheDocument();
+    expect(
+      within(activityGroups).getByText(
+        "npm test -- --run src/components/TaskChatTranscript.test.tsx",
+      ),
+    ).toBeInTheDocument();
+    expect(within(activityGroups).getByText("for 12s")).toBeInTheDocument();
+    expect(screen.getByText("I updated the transcript view.")).toBeInTheDocument();
+    expect(screen.queryByText("npm test output")).not.toBeInTheDocument();
+    expect(container.querySelector(".activity-file-name")).not.toBeNull();
+    expect(container.querySelector(".activity-additions")).not.toBeNull();
+    expect(container.querySelector(".activity-deletions")).not.toBeNull();
+  });
 });

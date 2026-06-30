@@ -1152,6 +1152,88 @@ summary.run-live-metrics::-webkit-details-marker {
   gap: 18px;
 }
 
+.run-activity-groups {
+  display: grid;
+  min-width: 0;
+  gap: 12px;
+}
+
+.run-activity-group {
+  max-width: 980px;
+  color: var(--color-text-secondary);
+}
+
+.run-activity-group summary {
+  display: inline-flex;
+  gap: 10px;
+  align-items: center;
+  cursor: pointer;
+  font-size: 0.95rem;
+  line-height: 1.4;
+  list-style: none;
+}
+
+.run-activity-group summary::-webkit-details-marker {
+  display: none;
+}
+
+.run-activity-group summary > svg {
+  color: var(--color-icon-muted);
+  transition: transform 140ms ease;
+}
+
+.run-activity-group[open] summary > svg:last-child {
+  transform: rotate(180deg);
+}
+
+.run-activity-title {
+  display: inline-flex;
+  gap: 9px;
+  align-items: center;
+}
+
+.run-activity-items {
+  display: grid;
+  min-width: 0;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.run-activity-item {
+  display: flex;
+  min-width: 0;
+  flex-wrap: wrap;
+  gap: 7px;
+  align-items: baseline;
+  color: var(--color-text-secondary);
+  font-size: 0.95rem;
+  line-height: 1.45;
+}
+
+.activity-file-name {
+  max-width: min(520px, 100%);
+  overflow: hidden;
+  color: var(--color-primary);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.activity-additions {
+  color: var(--color-secondary);
+}
+
+.activity-deletions {
+  color: var(--color-error);
+}
+
+.activity-command-text {
+  max-width: min(760px, 100%);
+  overflow: hidden;
+  color: var(--color-text-secondary);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .stream-message,
 .run-summary {
   max-width: 980px;

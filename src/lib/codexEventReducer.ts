@@ -22,6 +22,22 @@ export type StreamEvent = {
   timestamp: string;
 };
 
+export type RunEditedFile = {
+  path: string;
+  name: string;
+  additions: number;
+  deletions: number;
+  status: "added" | "modified" | "deleted" | "renamed" | "copied" | "unknown";
+};
+
+export type RunCommandActivity = {
+  id: string;
+  command: string;
+  status: "running" | "completed" | "failed";
+  durationMs: number | null;
+  output: string;
+};
+
 export type RunViewState = {
   status: "idle" | "connecting" | "running" | "completed" | "failed" | "interrupted";
   threadId: string | null;
@@ -31,6 +47,8 @@ export type RunViewState = {
   elapsedMs: number;
   console: ConsoleLine[];
   streamEvents: StreamEvent[];
+  editedFiles: RunEditedFile[];
+  commands: RunCommandActivity[];
   latestPlan: string;
   latestDiff: string;
   finalMessage: string;
@@ -48,6 +66,8 @@ export const emptyRunView: RunViewState = {
   elapsedMs: 0,
   console: [],
   streamEvents: [],
+  editedFiles: [],
+  commands: [],
   latestPlan: "",
   latestDiff: "",
   finalMessage: "",
@@ -119,11 +139,20 @@ export function applyCodexMessage(
         readString(params.delta) ?? "",
         true,
       );
-    case "turn/diff/updated":
+    case "turn/diff/updated": {
+      const diff = readString(params.diff) ?? "";
+      const editedFiles = extractEditedFiles(params, diff);
       return {
-        ...appendStreamEvent(state, "file", "Updated diff"),
-        latestDiff: readString(params.diff) ?? "",
+        ...appendStreamEvent(
+          mergeEditedFiles(state, editedFiles),
+          "file",
+          editedFiles.length > 0
+            ? `Edited ${editedFiles.length} ${editedFiles.length === 1 ? "file" : "files"}`
+            : "Updated diff",
+        ),
+        latestDiff: diff,
       };
+    }
     case "item/agentMessage/delta": {
       const delta = readString(params.delta) ?? "";
       return {
@@ -139,8 +168,22 @@ export function applyCodexMessage(
         readString(params.delta) ?? "",
         true,
       );
+    case "item/commandExecution/started":
+    case "command/exec/started":
+      return upsertCommandActivity(state, params, "running");
     case "item/commandExecution/outputDelta":
-    case "command/exec/outputDelta":
+    case "command/exec/outputDelta": {
+      const delta = readString(params.delta) ?? "";
+      return appendStreamEvent(
+        appendCommandOutput(appendLine(state, "command", delta), params, delta),
+        "command",
+        delta,
+        true,
+      );
+    }
+    case "item/commandExecution/completed":
+    case "command/exec/completed":
+      return upsertCommandActivity(state, params, commandStatusFromParams(params));
     case "process/outputDelta":
       return appendStreamEvent(
         appendLine(state, "command", readString(params.delta) ?? ""),
@@ -158,6 +201,9 @@ export function applyCodexMessage(
           text,
         );
       }
+      if (item.type === "commandExecution" || item.type === "command") {
+        return upsertCommandActivity(state, params, "running");
+      }
       const text = `Started ${readString(item.type) ?? "item"}`;
       return appendStreamEvent(appendLine(state, "system", text), "activity", text);
     }
@@ -170,6 +216,9 @@ export function applyCodexMessage(
           "activity",
           text,
         );
+      }
+      if (item.type === "commandExecution" || item.type === "command") {
+        return upsertCommandActivity(state, params, commandStatusFromParams(params));
       }
       return appendStreamEvent(
         state,
@@ -314,6 +363,328 @@ function appendStreamEvent(
   };
 }
 
+function mergeEditedFiles(
+  state: RunViewState,
+  editedFiles: RunEditedFile[],
+): RunViewState {
+  if (editedFiles.length === 0) {
+    return state;
+  }
+
+  const byPath = new Map(state.editedFiles.map((file) => [file.path, file]));
+  for (const file of editedFiles) {
+    const existing = byPath.get(file.path);
+    byPath.set(file.path, {
+      ...existing,
+      ...file,
+      additions: file.additions,
+      deletions: file.deletions,
+    });
+  }
+
+  return { ...state, editedFiles: Array.from(byPath.values()) };
+}
+
+function extractEditedFiles(
+  params: Record<string, unknown>,
+  diff: string,
+): RunEditedFile[] {
+  const explicitFiles = readArray(params.files)
+    .map((file) => normalizeEditedFile(readObject(file)))
+    .filter((file): file is RunEditedFile => file !== null);
+
+  if (explicitFiles.length > 0) {
+    return explicitFiles;
+  }
+
+  return parseUnifiedDiffFiles(diff);
+}
+
+function normalizeEditedFile(file: Record<string, unknown>) {
+  const path =
+    readString(file.path) ??
+    readString(file.relativePath) ??
+    readString(file.file) ??
+    readString(file.name);
+
+  if (!path) {
+    return null;
+  }
+
+  return {
+    path,
+    name: basename(path),
+    additions: readOptionalNumber(file.additions) ?? readOptionalNumber(file.added) ?? 0,
+    deletions:
+      readOptionalNumber(file.deletions) ?? readOptionalNumber(file.deleted) ?? 0,
+    status: normalizeFileStatus(readString(file.status)),
+  } satisfies RunEditedFile;
+}
+
+function parseUnifiedDiffFiles(diff: string): RunEditedFile[] {
+  if (!diff.trim()) {
+    return [];
+  }
+
+  const files: RunEditedFile[] = [];
+  let current: RunEditedFile | null = null;
+  let oldPath: string | null = null;
+  let newPath: string | null = null;
+
+  for (const line of diff.split(/\r?\n/)) {
+    const match = /^diff --git a\/(.+?) b\/(.+)$/.exec(line);
+    if (match) {
+      if (current) {
+        files.push(finalizeDiffFile(current, oldPath, newPath));
+      }
+      oldPath = match[1];
+      newPath = match[2];
+      current = {
+        path: newPath,
+        name: basename(newPath),
+        additions: 0,
+        deletions: 0,
+        status: "modified",
+      };
+      continue;
+    }
+
+    if (!current) {
+      continue;
+    }
+
+    if (line.startsWith("--- ")) {
+      oldPath = normalizeDiffPath(line.slice(4).trim());
+      continue;
+    }
+
+    if (line.startsWith("+++ ")) {
+      newPath = normalizeDiffPath(line.slice(4).trim());
+      const path = newPath ?? oldPath ?? current.path;
+      current.path = path;
+      current.name = basename(path);
+      continue;
+    }
+
+    if (line.startsWith("+") && !line.startsWith("+++")) {
+      current.additions += 1;
+    } else if (line.startsWith("-") && !line.startsWith("---")) {
+      current.deletions += 1;
+    }
+  }
+
+  if (current) {
+    files.push(finalizeDiffFile(current, oldPath, newPath));
+  }
+
+  return files;
+}
+
+function finalizeDiffFile(
+  file: RunEditedFile,
+  oldPath: string | null,
+  newPath: string | null,
+) {
+  if (oldPath === null && newPath) {
+    return { ...file, path: newPath, name: basename(newPath), status: "added" as const };
+  }
+  if (newPath === null && oldPath) {
+    return { ...file, path: oldPath, name: basename(oldPath), status: "deleted" as const };
+  }
+  return file;
+}
+
+function normalizeDiffPath(path: string) {
+  if (path === "/dev/null") {
+    return null;
+  }
+  return path.replace(/^[ab]\//, "");
+}
+
+function upsertCommandActivity(
+  state: RunViewState,
+  params: Record<string, unknown>,
+  status: RunCommandActivity["status"],
+) {
+  const command = extractCommandText(params);
+  const id = extractCommandId(params, command, state);
+  if (!id && !command) {
+    return state;
+  }
+
+  const durationMs = extractDurationMs(params);
+  return {
+    ...state,
+    commands: upsertCommand(state.commands, {
+      id: id ?? `command-${state.commands.length + 1}`,
+      command: command ?? "Command",
+      status,
+      durationMs,
+      output: "",
+    }),
+  };
+}
+
+function appendCommandOutput(
+  state: RunViewState,
+  params: Record<string, unknown>,
+  delta: string,
+) {
+  if (!delta) {
+    return state;
+  }
+
+  const command = extractCommandText(params);
+  const id =
+    extractCommandId(params, command, state) ??
+    findLastRunningCommand(state.commands)?.id ??
+    `command-${state.commands.length + 1}`;
+  const fallbackCommand = command ?? firstNonEmptyLine(delta) ?? "Command";
+
+  return {
+    ...state,
+    commands: upsertCommand(state.commands, {
+      id,
+      command: fallbackCommand,
+      status: "running",
+      durationMs: null,
+      output: delta,
+    }),
+  };
+}
+
+function upsertCommand(
+  commands: RunCommandActivity[],
+  nextCommand: RunCommandActivity,
+) {
+  const existingIndex = commands.findIndex((command) => command.id === nextCommand.id);
+  if (existingIndex === -1) {
+    return [...commands, nextCommand];
+  }
+
+  const existing = commands[existingIndex];
+  return [
+    ...commands.slice(0, existingIndex),
+    {
+      ...existing,
+      command:
+        nextCommand.command && nextCommand.command !== "Command"
+          ? nextCommand.command
+          : existing.command,
+      status: nextCommand.status,
+      durationMs: nextCommand.durationMs ?? existing.durationMs,
+      output: `${existing.output}${nextCommand.output}`,
+    },
+    ...commands.slice(existingIndex + 1),
+  ];
+}
+
+function findLastRunningCommand(commands: RunCommandActivity[]) {
+  for (let index = commands.length - 1; index >= 0; index -= 1) {
+    if (commands[index].status === "running") {
+      return commands[index];
+    }
+  }
+  return null;
+}
+
+function extractCommandId(
+  params: Record<string, unknown>,
+  command: string | null,
+  state: RunViewState,
+) {
+  const item = readObject(params.item);
+  const id =
+    readString(params.id) ??
+    readString(params.itemId) ??
+    readString(params.commandId) ??
+    readString(item.id);
+  if (id) {
+    return id;
+  }
+
+  if (command) {
+    const existing = state.commands.find((activity) => activity.command === command);
+    return existing?.id ?? command;
+  }
+
+  return null;
+}
+
+function extractCommandText(params: Record<string, unknown>) {
+  const item = readObject(params.item);
+  const commandValue = params.command ?? item.command;
+  if (typeof commandValue === "string") {
+    return commandValue;
+  }
+
+  if (Array.isArray(commandValue)) {
+    return commandValue.filter((part) => typeof part === "string").join(" ");
+  }
+
+  const commandObject = readObject(commandValue);
+  return (
+    readString(commandObject.command) ??
+    readString(commandObject.cmd) ??
+    readString(commandObject.text) ??
+    readString(commandObject.shellCommand) ??
+    readString(params.cmd) ??
+    readString(item.cmd)
+  );
+}
+
+function extractDurationMs(params: Record<string, unknown>) {
+  const item = readObject(params.item);
+  const durationMs =
+    readOptionalNumber(params.durationMs) ??
+    readOptionalNumber(item.durationMs) ??
+    readOptionalNumber(params.elapsedMs) ??
+    readOptionalNumber(item.elapsedMs);
+  if (durationMs !== null) {
+    return durationMs;
+  }
+
+  const durationSeconds =
+    readOptionalNumber(params.durationSeconds) ??
+    readOptionalNumber(item.durationSeconds) ??
+    readOptionalNumber(params.duration_secs) ??
+    readOptionalNumber(item.duration_secs);
+  return durationSeconds === null ? null : Math.round(durationSeconds * 1000);
+}
+
+function commandStatusFromParams(params: Record<string, unknown>) {
+  const item = readObject(params.item);
+  const status = readString(params.status) ?? readString(item.status);
+  if (status === "failed" || status === "error") {
+    return "failed";
+  }
+  return "completed";
+}
+
+function normalizeFileStatus(status: string | null): RunEditedFile["status"] {
+  if (
+    status === "added" ||
+    status === "modified" ||
+    status === "deleted" ||
+    status === "renamed" ||
+    status === "copied"
+  ) {
+    return status;
+  }
+  return "unknown";
+}
+
+function basename(path: string) {
+  return path.replace(/\\/g, "/").split("/").filter(Boolean).pop() ?? path;
+}
+
+function firstNonEmptyLine(text: string) {
+  return text
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .find(Boolean) ?? null;
+}
+
 function calculateElapsedMs(
   startedAt: string | null,
   until: number | string | Date,
@@ -339,12 +710,20 @@ function readObject(value: unknown): Record<string, unknown> {
     : {};
 }
 
+function readArray(value: unknown) {
+  return Array.isArray(value) ? value : [];
+}
+
 function readString(value: unknown) {
   return typeof value === "string" ? value : null;
 }
 
 function readNumber(value: unknown) {
   return typeof value === "number" ? value : 0;
+}
+
+function readOptionalNumber(value: unknown) {
+  return typeof value === "number" ? value : null;
 }
 
 function readNullableNumber(value: unknown) {

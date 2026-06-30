@@ -2,15 +2,22 @@ import {
   Activity,
   BrainCircuit,
   Check,
+  ChevronDown,
   Clock,
   FileText,
   MessageSquare,
+  Pencil,
   Terminal,
   X,
 } from "lucide-react";
 import { useEffect, useRef } from "react";
 import ReactMarkdown from "react-markdown";
-import type { RunViewState, StreamEvent } from "../lib/codexEventReducer";
+import type {
+  RunCommandActivity,
+  RunEditedFile,
+  RunViewState,
+  StreamEvent,
+} from "../lib/codexEventReducer";
 import type { CodexMessage } from "../types";
 
 export type TaskChatEntry = {
@@ -76,9 +83,14 @@ function AssistantRunOutput({
     runView.status === "interrupted";
 
   if (completed) {
+    const hasTrace =
+      runView.streamEvents.length > 0 ||
+      runView.editedFiles.length > 0 ||
+      runView.commands.length > 0;
+
     return (
       <div className="run-output-surface completed">
-        {runView.streamEvents.length > 0 ? (
+        {hasTrace ? (
           <RunTraceDropdown runView={runView} />
         ) : (
           <RunMetrics runView={runView} />
@@ -92,16 +104,23 @@ function AssistantRunOutput({
     );
   }
 
+  const visibleEvents = visibleStreamEvents(runView);
+  const hasActivityGroups =
+    runView.editedFiles.length > 0 || runView.commands.length > 0;
+
   return (
     <div className="run-output-surface running" aria-label="Live run output">
       <RunMetrics runView={runView} />
-      {runView.streamEvents.length > 0 ? (
-        <StreamEventList events={runView.streamEvents} />
-      ) : (
+      <RunActivityGroups runView={runView} />
+      {visibleEvents.length > 0 ? (
+        <StreamEventList events={visibleEvents} />
+      ) : !hasActivityGroups ? (
         <p className="stream-placeholder">
           <Clock size={15} aria-hidden="true" />
           Waiting for app-server output...
         </p>
+      ) : (
+        null
       )}
       <RunApprovalRequests runView={runView} onResolveRequest={onResolveRequest} />
     </div>
@@ -118,6 +137,7 @@ function RunTraceDropdown({ runView }: { runView: RunViewState }) {
         </span>
         <span>{formatTokenCount(runView)}</span>
       </summary>
+      <RunActivityGroups runView={runView} />
       <StreamEventList events={runView.streamEvents} />
     </details>
   );
@@ -159,7 +179,79 @@ function RunSummary({ runView }: { runView: RunViewState }) {
   );
 }
 
+function RunActivityGroups({ runView }: { runView: RunViewState }) {
+  if (runView.editedFiles.length === 0 && runView.commands.length === 0) {
+    return null;
+  }
+
+  return (
+    <div className="run-activity-groups" aria-label="Run activity groups">
+      {runView.editedFiles.length > 0 ? (
+        <EditedFilesGroup files={runView.editedFiles} />
+      ) : null}
+      {runView.commands.length > 0 ? (
+        <CommandsGroup commands={runView.commands} />
+      ) : null}
+    </div>
+  );
+}
+
+function EditedFilesGroup({ files }: { files: RunEditedFile[] }) {
+  return (
+    <details className="run-activity-group edited-files" open>
+      <summary>
+        <span className="run-activity-title">
+          <Pencil size={15} aria-hidden="true" />
+          Edited {files.length} {files.length === 1 ? "file" : "files"}
+        </span>
+        <ChevronDown size={15} aria-hidden="true" />
+      </summary>
+      <div className="run-activity-items">
+        {files.map((file) => (
+          <div className="run-activity-item edited-file-row" key={file.path}>
+            <span>{fileActionLabel(file.status)}</span>
+            <span className="activity-file-name" title={file.path}>
+              {file.name}
+            </span>
+            <span className="activity-additions">+{file.additions}</span>
+            <span className="activity-deletions">-{file.deletions}</span>
+          </div>
+        ))}
+      </div>
+    </details>
+  );
+}
+
+function CommandsGroup({ commands }: { commands: RunCommandActivity[] }) {
+  return (
+    <details className="run-activity-group command-runs" open>
+      <summary>
+        <span className="run-activity-title">
+          <Terminal size={15} aria-hidden="true" />
+          Ran {commands.length} {commands.length === 1 ? "command" : "commands"}
+        </span>
+        <ChevronDown size={15} aria-hidden="true" />
+      </summary>
+      <div className="run-activity-items">
+        {commands.map((command) => (
+          <div className="run-activity-item command-row" key={command.id}>
+            <span>{commandActionLabel(command.status)}</span>
+            <span className="activity-command-text">{command.command}</span>
+            {command.durationMs !== null ? (
+              <span>for {formatDuration(command.durationMs)}</span>
+            ) : null}
+          </div>
+        ))}
+      </div>
+    </details>
+  );
+}
+
 function StreamEventList({ events }: { events: StreamEvent[] }) {
+  if (events.length === 0) {
+    return null;
+  }
+
   return (
     <div className="stream-event-list" aria-label="App-server stream">
       {events.map((event) =>
@@ -176,6 +268,18 @@ function StreamEventList({ events }: { events: StreamEvent[] }) {
       )}
     </div>
   );
+}
+
+function visibleStreamEvents(runView: RunViewState) {
+  return runView.streamEvents.filter((event) => {
+    if (event.kind === "command" && runView.commands.length > 0) {
+      return false;
+    }
+    if (event.kind === "file" && runView.editedFiles.length > 0) {
+      return false;
+    }
+    return true;
+  });
 }
 
 function streamEventIcon(kind: StreamEvent["kind"]) {
@@ -250,4 +354,29 @@ function formatDuration(milliseconds: number) {
 
 function formatTokenCount(runView: RunViewState) {
   return `${(runView.tokenUsage?.totalTokens ?? 0).toLocaleString()} tokens`;
+}
+
+function fileActionLabel(status: RunEditedFile["status"]) {
+  switch (status) {
+    case "added":
+      return "Added";
+    case "deleted":
+      return "Deleted";
+    case "renamed":
+      return "Renamed";
+    case "copied":
+      return "Copied";
+    default:
+      return "Edited";
+  }
+}
+
+function commandActionLabel(status: RunCommandActivity["status"]) {
+  if (status === "failed") {
+    return "Failed";
+  }
+  if (status === "running") {
+    return "Running";
+  }
+  return "Ran";
 }

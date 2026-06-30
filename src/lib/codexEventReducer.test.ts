@@ -87,6 +87,98 @@ describe("codexEventReducer", () => {
     });
   });
 
+  it("groups edited files from unified diff notifications", () => {
+    let state = applyCodexMessage(emptyRunView, {
+      method: "turn/diff/updated",
+      params: {
+        diff: [
+          "diff --git a/src/App.tsx b/src/App.tsx",
+          "--- a/src/App.tsx",
+          "+++ b/src/App.tsx",
+          "@@ -1,2 +1,3 @@",
+          " const value = 1;",
+          "-const oldValue = 2;",
+          "+const newValue = 2;",
+          "+const extraValue = 3;",
+          "diff --git a/src/New.ts b/src/New.ts",
+          "--- /dev/null",
+          "+++ b/src/New.ts",
+          "@@ -0,0 +1 @@",
+          "+export const created = true;",
+        ].join("\n"),
+      },
+    });
+
+    expect(state.editedFiles).toEqual([
+      {
+        path: "src/App.tsx",
+        name: "App.tsx",
+        additions: 2,
+        deletions: 1,
+        status: "modified",
+      },
+      {
+        path: "src/New.ts",
+        name: "New.ts",
+        additions: 1,
+        deletions: 0,
+        status: "added",
+      },
+    ]);
+
+    state = applyCodexMessage(state, {
+      method: "turn/diff/updated",
+      params: {
+        diff: [
+          "diff --git a/src/App.tsx b/src/App.tsx",
+          "--- a/src/App.tsx",
+          "+++ b/src/App.tsx",
+          "@@ -1 +1,4 @@",
+          "-const value = 1;",
+          "+const value = 2;",
+          "+const anotherValue = 3;",
+          "+const finalValue = 4;",
+        ].join("\n"),
+      },
+    });
+
+    expect(state.editedFiles).toHaveLength(2);
+    expect(state.editedFiles[0]).toMatchObject({
+      path: "src/App.tsx",
+      additions: 3,
+      deletions: 1,
+    });
+  });
+
+  it("groups command starts, output, completion, and duration", () => {
+    let state = applyCodexMessage(emptyRunView, {
+      method: "item/commandExecution/started",
+      params: { id: "cmd-1", command: "npm test -- --run" },
+    });
+    state = applyCodexMessage(state, {
+      method: "item/commandExecution/outputDelta",
+      params: { id: "cmd-1", delta: "tests passed\n" },
+    });
+    state = applyCodexMessage(state, {
+      method: "item/commandExecution/completed",
+      params: { id: "cmd-1", command: "npm test -- --run", durationMs: 12_000 },
+    });
+
+    expect(state.commands).toEqual([
+      {
+        id: "cmd-1",
+        command: "npm test -- --run",
+        status: "completed",
+        durationMs: 12_000,
+        output: "tests passed\n",
+      },
+    ]);
+    expect(state.streamEvents[0]).toMatchObject({
+      kind: "command",
+      text: "tests passed\n",
+    });
+  });
+
   it("tracks and resolves server requests", () => {
     const request = {
       id: 9,
