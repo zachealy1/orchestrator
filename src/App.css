@@ -2179,20 +2179,20 @@ select:disabled {
 
 .inline-context-type {
   display: inline-flex;
-  min-width: 2.1em;
-  height: 1.22em;
+  min-width: 2.35em;
+  height: 1.35em;
   align-items: center;
   justify-content: center;
   border-radius: 5px;
   background: var(--color-button-active);
   color: var(--color-button-active-text);
-  font-size: 0.64em;
+  font-size: 0.7em;
   font-weight: 800;
   line-height: 1;
   margin-right: 0.3em;
-  padding: 0 0.24em;
+  padding: 0 0.32em;
   text-transform: uppercase;
-  vertical-align: 0.08em;
+  vertical-align: 0.12em;
 }
 
 .prompt-field textarea:focus {

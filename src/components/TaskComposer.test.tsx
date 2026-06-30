@@ -614,6 +614,52 @@ describe("TaskComposer", () => {
     expect(screen.getByLabelText("Prompt")).toHaveValue("TSX App.tsx ");
   });
 
+  it("removes the whole inline file reference when backspacing inside it", async () => {
+    const onRemoveFile = vi.fn();
+    const inlineFile = {
+      path: "/repo/src/App.tsx",
+      name: "App.tsx",
+      source: "search" as const,
+      status: "ready" as const,
+    };
+    const { user } = renderControlledComposer({
+      prompt: "Fix TSX App.tsx now",
+      contextFiles: [inlineFile],
+      onRemoveFile,
+    });
+
+    const promptInput = screen.getByLabelText("Prompt") as HTMLTextAreaElement;
+    promptInput.focus();
+    promptInput.setSelectionRange("Fix TSX App.t".length, "Fix TSX App.t".length);
+    await user.keyboard("{Backspace}");
+
+    expect(onRemoveFile).toHaveBeenCalledWith("/repo/src/App.tsx");
+    expect(promptInput).toHaveValue("Fix now");
+  });
+
+  it("removes the whole inline file reference when backspacing after it", async () => {
+    const onRemoveFile = vi.fn();
+    const inlineFile = {
+      path: "/repo/src/App.tsx",
+      name: "App.tsx",
+      source: "search" as const,
+      status: "ready" as const,
+    };
+    const { user } = renderControlledComposer({
+      prompt: "Fix TSX App.tsx ",
+      contextFiles: [inlineFile],
+      onRemoveFile,
+    });
+
+    const promptInput = screen.getByLabelText("Prompt") as HTMLTextAreaElement;
+    promptInput.focus();
+    promptInput.setSelectionRange(promptInput.value.length, promptInput.value.length);
+    await user.keyboard("{Backspace}");
+
+    expect(onRemoveFile).toHaveBeenCalledWith("/repo/src/App.tsx");
+    expect(promptInput).toHaveValue("Fix ");
+  });
+
   it("closes mention search with Escape", async () => {
     const onMentionClose = vi.fn();
     const { user } = renderControlledComposer({

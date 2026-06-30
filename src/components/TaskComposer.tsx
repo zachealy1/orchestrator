@@ -270,6 +270,31 @@ export function TaskComposer({
       return;
     }
 
+    if (event.key === "Backspace" || event.key === "Delete") {
+      const inlineDeletion = getInlineFileDeletion(
+        prompt,
+        inlineContextFiles,
+        event.currentTarget.selectionStart,
+        event.currentTarget.selectionEnd,
+        event.key,
+      );
+
+      if (inlineDeletion) {
+        event.preventDefault();
+        closeActiveSearch();
+        onPromptChange(inlineDeletion.value);
+        inlineDeletion.files.forEach((file) => onRemoveFile(file.path));
+        window.requestAnimationFrame(() => {
+          promptTextareaRef.current?.focus();
+          promptTextareaRef.current?.setSelectionRange(
+            inlineDeletion.caret,
+            inlineDeletion.caret,
+          );
+        });
+        return;
+      }
+    }
+
     if (
       event.key === "Enter" &&
       !event.shiftKey &&
@@ -1058,13 +1083,7 @@ function buildPromptInlineSegments(
   prompt: string,
   files: ComposerContextFile[],
 ) {
-  const candidates = files
-    .filter((file) => file.name.trim().length > 0)
-    .flatMap((file) => [
-      { file, token: inlineFilePromptToken(file) },
-      { file, token: file.name },
-    ])
-    .sort((a, b) => b.token.length - a.token.length);
+  const candidates = buildInlineFileTokenCandidates(files);
   const segments: Array<
     | { kind: "text"; text: string }
     | { kind: "file"; text: string; file: ComposerContextFile }
@@ -1093,6 +1112,156 @@ function buildPromptInlineSegments(
   }
 
   return segments;
+}
+
+function getInlineFileDeletion(
+  prompt: string,
+  files: ComposerContextFile[],
+  selectionStart: number,
+  selectionEnd: number,
+  key: "Backspace" | "Delete",
+) {
+  const ranges = getInlineFileTokenRanges(prompt, files);
+  if (ranges.length === 0) {
+    return null;
+  }
+
+  const collapsed = selectionStart === selectionEnd;
+  let deletionStart = selectionStart;
+  let deletionEnd = selectionEnd;
+
+  if (collapsed && key === "Backspace") {
+    if (selectionStart <= 0) {
+      return null;
+    }
+    deletionStart = selectionStart - 1;
+  } else if (collapsed && key === "Delete") {
+    if (selectionStart >= prompt.length) {
+      return null;
+    }
+    deletionEnd = selectionStart + 1;
+  }
+
+  const affectedRanges = ranges.filter((range) =>
+    deletionTouchesInlineFileRange(
+      prompt,
+      range,
+      deletionStart,
+      deletionEnd,
+      key,
+      collapsed,
+    ),
+  );
+
+  if (affectedRanges.length === 0) {
+    return null;
+  }
+
+  let removeStart = Math.min(
+    deletionStart,
+    ...affectedRanges.map((range) => range.start),
+  );
+  let removeEnd = Math.max(
+    deletionEnd,
+    ...affectedRanges.map((range) => range.end),
+  );
+
+  if (removeEnd < prompt.length && /\s/.test(prompt[removeEnd])) {
+    removeEnd += 1;
+  } else if (
+    removeStart > 0 &&
+    removeEnd < prompt.length &&
+    /\s/.test(prompt[removeStart - 1]) &&
+    /\s/.test(prompt[removeEnd])
+  ) {
+    removeStart -= 1;
+  }
+
+  const before = prompt.slice(0, removeStart);
+  const after = prompt.slice(removeEnd);
+  return {
+    value: `${before}${after}`,
+    caret: before.length,
+    files: dedupeComposerContextFiles(affectedRanges.map((range) => range.file)),
+  };
+}
+
+function getInlineFileTokenRanges(
+  prompt: string,
+  files: ComposerContextFile[],
+) {
+  const candidates = buildInlineFileTokenCandidates(files);
+  const ranges: Array<{
+    start: number;
+    end: number;
+    file: ComposerContextFile;
+    token: string;
+  }> = [];
+  let cursor = 0;
+
+  while (cursor < prompt.length) {
+    const match = candidates.find((candidate) =>
+      matchesInlineFileToken(prompt, cursor, candidate.token),
+    );
+
+    if (!match) {
+      cursor += 1;
+      continue;
+    }
+
+    ranges.push({
+      start: cursor,
+      end: cursor + match.token.length,
+      file: match.file,
+      token: match.token,
+    });
+    cursor += match.token.length;
+  }
+
+  return ranges;
+}
+
+function deletionTouchesInlineFileRange(
+  prompt: string,
+  range: { start: number; end: number },
+  deletionStart: number,
+  deletionEnd: number,
+  key: "Backspace" | "Delete",
+  collapsed: boolean,
+) {
+  if (deletionStart < range.end && deletionEnd > range.start) {
+    return true;
+  }
+
+  if (collapsed && key === "Backspace") {
+    return deletionStart === range.end && /\s/.test(prompt[deletionStart] ?? "");
+  }
+
+  return false;
+}
+
+function buildInlineFileTokenCandidates(files: ComposerContextFile[]) {
+  return files
+    .filter((file) => file.name.trim().length > 0)
+    .flatMap((file) => [
+      { file, token: inlineFilePromptToken(file) },
+      { file, token: file.name },
+    ])
+    .sort((a, b) => b.token.length - a.token.length);
+}
+
+function dedupeComposerContextFiles(files: ComposerContextFile[]) {
+  const seen = new Set<string>();
+  const deduped: ComposerContextFile[] = [];
+
+  for (const file of files) {
+    if (!seen.has(file.path)) {
+      seen.add(file.path);
+      deduped.push(file);
+    }
+  }
+
+  return deduped;
 }
 
 function findNextInlineFileIndex(
