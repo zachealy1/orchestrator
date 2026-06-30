@@ -74,6 +74,9 @@ type Props = {
   onSlashCommandClose: () => void;
   onContextFilesDrop: (files: ComposerContextFile[]) => void;
   onContextFilesDropError?: (message: string) => void;
+  hasContextFileDropFallback?: () => boolean;
+  getContextFileDropFallback?: () => ComposerContextFile[];
+  onContextFileDropHandled?: () => void;
   onRemoveFile: (path: string) => void;
   onRemoveSkill: (skillId: string) => void;
   onPreflight: () => void;
@@ -131,6 +134,9 @@ export function TaskComposer({
   onSlashCommandClose,
   onContextFilesDrop,
   onContextFilesDropError,
+  hasContextFileDropFallback,
+  getContextFileDropFallback,
+  onContextFileDropHandled,
   onRemoveFile,
   onRemoveSkill,
   onPreflight,
@@ -376,8 +382,27 @@ export function TaskComposer({
     textarea.style.overflowY = textarea.scrollHeight > maxHeight ? "auto" : "hidden";
   }, [prompt]);
 
+  function hasContextFileDrop(event: DragEvent<HTMLElement>) {
+    return (
+      hasContextFilePayload(event.dataTransfer) ||
+      (hasContextFileDropFallback?.() ?? false)
+    );
+  }
+
+  function readContextFileDrop(event: DragEvent<HTMLElement>) {
+    const result = readDroppedContextFiles(event.dataTransfer);
+    if (result.files.length > 0) {
+      return result;
+    }
+
+    const fallbackFiles = getContextFileDropFallback?.() ?? [];
+    return fallbackFiles.length > 0
+      ? { ...result, files: fallbackFiles }
+      : result;
+  }
+
   function handleDragOver(event: DragEvent<HTMLElement>) {
-    if (!hasContextFilePayload(event.dataTransfer)) {
+    if (!hasContextFileDrop(event)) {
       return;
     }
 
@@ -398,14 +423,14 @@ export function TaskComposer({
   }
 
   function handleDrop(event: DragEvent<HTMLElement>) {
-    if (!hasContextFilePayload(event.dataTransfer)) {
+    if (!hasContextFileDrop(event)) {
       return;
     }
 
     event.preventDefault();
     event.stopPropagation();
     setDragActive(false);
-    const { files, skipped } = readDroppedContextFiles(event.dataTransfer);
+    const { files, skipped } = readContextFileDrop(event);
     if (files.length > 0) {
       onContextFilesDrop(files);
     }
@@ -414,6 +439,7 @@ export function TaskComposer({
         `Skipped ${skipped} dropped file${skipped === 1 ? "" : "s"} because the file path was unavailable.`,
       );
     }
+    onContextFileDropHandled?.();
   }
 
   return (

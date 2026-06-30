@@ -213,6 +213,24 @@ function createNativeFileDataTransfer(files: File[]) {
   };
 }
 
+function createEmptyDataTransfer() {
+  let dropEffect = "none";
+
+  return {
+    types: [],
+    files: [],
+    effectAllowed: "copy",
+    get dropEffect() {
+      return dropEffect;
+    },
+    set dropEffect(value: string) {
+      dropEffect = value;
+    },
+    getData: () => "",
+    setData: vi.fn(),
+  };
+}
+
 describe("TaskComposer", () => {
   it("updates the prompt and exposes advisory actions", async () => {
     const onPromptChange = vi.fn();
@@ -416,6 +434,33 @@ describe("TaskComposer", () => {
         status: "ready",
       },
     ]);
+  });
+
+  it("uses the fallback explorer drag file when the drop payload is empty", () => {
+    const onContextFilesDrop = vi.fn();
+    const onContextFileDropHandled = vi.fn();
+    const fallbackFile = {
+      path: "/repo/README.md",
+      name: "README.md",
+      source: "explorer" as const,
+      status: "ready" as const,
+    };
+    renderComposer({
+      onContextFilesDrop,
+      hasContextFileDropFallback: () => true,
+      getContextFileDropFallback: () => [fallbackFile],
+      onContextFileDropHandled,
+    });
+
+    const composer = screen.getByLabelText("Task composer");
+    const dataTransfer = createEmptyDataTransfer();
+
+    fireEvent.dragOver(composer, { dataTransfer });
+    expect(composer).toHaveClass("drag-over");
+    fireEvent.drop(composer, { dataTransfer });
+
+    expect(onContextFilesDrop).toHaveBeenCalledWith([fallbackFile]);
+    expect(onContextFileDropHandled).toHaveBeenCalledOnce();
   });
 
   it("adds native dropped files when a file path is available", () => {

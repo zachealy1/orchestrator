@@ -291,6 +291,24 @@ function createMutableDataTransfer() {
   };
 }
 
+function createEmptyDataTransfer() {
+  let dropEffect = "none";
+
+  return {
+    types: [],
+    files: [],
+    effectAllowed: "copy",
+    get dropEffect() {
+      return dropEffect;
+    },
+    set dropEffect(value: string) {
+      dropEffect = value;
+    },
+    getData: () => "",
+    setData: vi.fn(),
+  };
+}
+
 function prepareSignedInRun() {
   mocks.listCodexAccountsMock.mockResolvedValue([signedInAccount]);
   mocks.readCodexAccountMock.mockResolvedValue({
@@ -1403,6 +1421,72 @@ describe("App Codex auth", () => {
 
     const contextList = await screen.findByLabelText("Selected context files");
     expect(within(contextList).getByText("README.md")).toBeInTheDocument();
+  });
+
+  it("uses the explorer drag fallback when the drop payload omits the custom MIME", async () => {
+    mocks.listWorkspaceDirectoryMock.mockResolvedValue([
+      {
+        name: "hello.txt",
+        path: "/repo/orchestrator/hello.txt",
+        relativePath: "hello.txt",
+        kind: "file",
+      },
+    ]);
+
+    const { user } = await renderApp();
+    const workspaceNav = screen.getByRole("navigation", {
+      name: "Workspaces",
+    });
+    await user.click(
+      within(workspaceNav).getByRole("button", { name: "Expand orchestrator" }),
+    );
+
+    const fileButton = await within(workspaceNav).findByRole("button", {
+      name: "hello.txt",
+    });
+    const dragDataTransfer = createMutableDataTransfer();
+    fireEvent.dragStart(fileButton, { dataTransfer: dragDataTransfer });
+
+    const dropDataTransfer = createEmptyDataTransfer();
+    const taskChat = screen.getByLabelText("Task chat");
+    fireEvent.dragOver(taskChat, { dataTransfer: dropDataTransfer });
+    fireEvent.drop(taskChat, { dataTransfer: dropDataTransfer });
+
+    const contextList = await screen.findByLabelText("Selected context files");
+    expect(within(contextList).getByText("hello.txt")).toBeInTheDocument();
+  });
+
+  it("uses the explorer drag fallback when dropping into the composer", async () => {
+    mocks.listWorkspaceDirectoryMock.mockResolvedValue([
+      {
+        name: "hello.txt",
+        path: "/repo/orchestrator/hello.txt",
+        relativePath: "hello.txt",
+        kind: "file",
+      },
+    ]);
+
+    const { user } = await renderApp();
+    const workspaceNav = screen.getByRole("navigation", {
+      name: "Workspaces",
+    });
+    await user.click(
+      within(workspaceNav).getByRole("button", { name: "Expand orchestrator" }),
+    );
+
+    const fileButton = await within(workspaceNav).findByRole("button", {
+      name: "hello.txt",
+    });
+    fireEvent.dragStart(fileButton, { dataTransfer: createMutableDataTransfer() });
+
+    const composer = screen.getByLabelText("Task composer");
+    const dropDataTransfer = createEmptyDataTransfer();
+    fireEvent.dragOver(composer, { dataTransfer: dropDataTransfer });
+    fireEvent.drop(composer, { dataTransfer: dropDataTransfer });
+    fireEvent.drop(composer, { dataTransfer: dropDataTransfer });
+
+    const contextList = await screen.findByLabelText("Selected context files");
+    expect(within(contextList).getAllByText("hello.txt")).toHaveLength(1);
   });
 
   it("indexes workspace files for @ mentions and adds the selected file to context", async () => {

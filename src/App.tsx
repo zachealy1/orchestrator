@@ -490,6 +490,7 @@ function App() {
   const [accessLevel, setAccessLevel] = useState<AccessLevel>("ask");
   const [contextFiles, setContextFiles] = useState<ComposerContextFile[]>([]);
   const [taskContextDropActive, setTaskContextDropActive] = useState(false);
+  const explorerDragContextFileRef = useRef<ComposerContextFile | null>(null);
   const [selectedSkills, setSelectedSkills] = useState<SelectedComposerSkill[]>([]);
   const [mentionResults, setMentionResults] = useState<ComposerContextFile[]>([]);
   const [mentionSearchStatus, setMentionSearchStatus] =
@@ -3180,23 +3181,61 @@ function App() {
   }, [resizePreviewDrawer]);
 
   function startWorkspaceFileDrag(
-    event: DragEvent<HTMLButtonElement>,
+    event: DragEvent<HTMLElement>,
     file: WorkspaceTreeEntry,
   ) {
-    const payload: ComposerContextFile[] = [
-      {
-        path: file.path,
-        name: file.name,
-        source: "explorer",
-        status: "ready",
-      },
-    ];
-    event.dataTransfer.effectAllowed = "copy";
-    event.dataTransfer.setData(
-      ORCHESTRATOR_CONTEXT_FILE_MIME,
-      JSON.stringify(payload),
+    const contextFile = contextFileFromWorkspaceEntry(file);
+    explorerDragContextFileRef.current = contextFile;
+
+    try {
+      event.dataTransfer.effectAllowed = "copy";
+      event.dataTransfer.setData(
+        ORCHESTRATOR_CONTEXT_FILE_MIME,
+        JSON.stringify([contextFile]),
+      );
+      event.dataTransfer.setData("text/plain", file.path);
+    } catch {
+      // Tauri/WebKit can drop custom drag data; the ref fallback still carries the file.
+    }
+  }
+
+  function endWorkspaceFileDrag() {
+    explorerDragContextFileRef.current = null;
+    setTaskContextDropActive(false);
+  }
+
+  function hasContextFileDrop(dataTransfer: DataTransfer) {
+    return (
+      hasContextFilePayload(dataTransfer) ||
+      explorerDragContextFileRef.current !== null
     );
-    event.dataTransfer.setData("text/plain", file.path);
+  }
+
+  function readContextFileDrop(dataTransfer: DataTransfer) {
+    const result = readDroppedContextFiles(dataTransfer);
+    if (result.files.length > 0 || explorerDragContextFileRef.current === null) {
+      return result;
+    }
+
+    return {
+      ...result,
+      files: [explorerDragContextFileRef.current],
+    };
+  }
+
+  function getExplorerDragContextFiles() {
+    return explorerDragContextFileRef.current
+      ? [explorerDragContextFileRef.current]
+      : [];
+  }
+
+  function contextFileFromWorkspaceEntry(file: WorkspaceTreeEntry): ComposerContextFile {
+    return {
+      path: file.path,
+      name: file.name,
+      source: "explorer",
+      status: "ready",
+    };
   }
 
   function addDroppedContextFiles(files: ComposerContextFile[]) {
@@ -3211,7 +3250,7 @@ function App() {
   }
 
   function handleTaskContextDragOver(event: DragEvent<HTMLElement>) {
-    if (!hasContextFilePayload(event.dataTransfer)) {
+    if (!hasContextFileDrop(event.dataTransfer)) {
       return;
     }
 
@@ -3231,14 +3270,14 @@ function App() {
   }
 
   function handleTaskContextDrop(event: DragEvent<HTMLElement>) {
-    if (!hasContextFilePayload(event.dataTransfer)) {
+    if (!hasContextFileDrop(event.dataTransfer)) {
       return;
     }
 
     event.preventDefault();
     setTaskContextDropActive(false);
 
-    const { files, skipped } = readDroppedContextFiles(event.dataTransfer);
+    const { files, skipped } = readContextFileDrop(event.dataTransfer);
     if (files.length > 0) {
       addDroppedContextFiles(files);
     }
@@ -3247,6 +3286,7 @@ function App() {
         `Skipped ${skipped} dropped file${skipped === 1 ? "" : "s"} because the file path was unavailable.`,
       );
     }
+    endWorkspaceFileDrag();
   }
 
   function workspaceDirectoryEntries(
@@ -3392,6 +3432,13 @@ function App() {
         <div
           className={`workspace-tree-row ${directory ? "directory" : "file"}${gitStateClass}`}
           style={treeIndentStyle(depth)}
+          draggable={draggable}
+          onDragStart={
+            !draggable
+              ? undefined
+              : (event) => startWorkspaceFileDrag(event, entry)
+          }
+          onDragEnd={!draggable ? undefined : endWorkspaceFileDrag}
         >
           {directory ? (
             <button
@@ -3413,16 +3460,10 @@ function App() {
             className="workspace-tree-label"
             type="button"
             title={entry.relativePath}
-            draggable={draggable}
             onClick={() =>
               directory
                 ? toggleDirectoryExpanded(workspace, entry.path, !entry.gitGhost)
                 : void openWorkspaceFilePreview(workspace, entry)
-            }
-            onDragStart={
-              !draggable
-                ? undefined
-                : (event) => startWorkspaceFileDrag(event, entry)
             }
           >
             {directory ? (
@@ -3880,6 +3921,11 @@ function App() {
                 onSlashCommandClose={closeSlashCommandSearch}
                 onContextFilesDrop={addDroppedContextFiles}
                 onContextFilesDropError={setStatusMessage}
+                hasContextFileDropFallback={() =>
+                  explorerDragContextFileRef.current !== null
+                }
+                getContextFileDropFallback={getExplorerDragContextFiles}
+                onContextFileDropHandled={endWorkspaceFileDrag}
                 onRemoveFile={(path) =>
                   setContextFiles((current) => current.filter((file) => file.path !== path))
                 }
