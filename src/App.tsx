@@ -509,10 +509,17 @@ function App() {
   const [explorerDragPreview, setExplorerDragPreview] =
     useState<ExplorerDragPreview | null>(null);
   const taskContextDropSurfaceRef = useRef<HTMLElement | null>(null);
+  const taskContextDropActiveRef = useRef(false);
   const explorerDragContextFileRef = useRef<ComposerContextFile | null>(null);
   const explorerPointerDragRef = useRef<ExplorerPointerDrag | null>(null);
   const explorerPointerDragCleanupRef = useRef<(() => void) | null>(null);
   const suppressWorkspaceFileClickRef = useRef(false);
+  const handleTaskComposerDropSurfaceElementChange = useCallback(
+    (element: HTMLElement | null) => {
+      taskContextDropSurfaceRef.current = element;
+    },
+    [],
+  );
   const [selectedSkills, setSelectedSkills] = useState<SelectedComposerSkill[]>([]);
   const [mentionResults, setMentionResults] = useState<ComposerContextFile[]>([]);
   const [mentionSearchStatus, setMentionSearchStatus] =
@@ -3207,7 +3214,7 @@ function App() {
     explorerPointerDragCleanupRef.current = null;
     explorerDragContextFileRef.current = null;
     explorerPointerDragRef.current = null;
-    setTaskContextDropActive(false);
+    setTaskContextDropActiveValue(false);
     setExplorerDragPreview(null);
   }
 
@@ -3314,7 +3321,7 @@ function App() {
     }
 
     const overDropSurface = isPointInTaskContextDropSurface(clientX, clientY);
-    setTaskContextDropActive(overDropSurface);
+    setTaskContextDropActiveValue(overDropSurface);
     setExplorerDragPreview({
       fileName: drag.file.name,
       x: clientX,
@@ -3402,6 +3409,15 @@ function App() {
       clientY >= rect.top &&
       clientY <= rect.bottom
     );
+  }
+
+  function setTaskContextDropActiveValue(value: boolean) {
+    if (taskContextDropActiveRef.current === value) {
+      return;
+    }
+
+    taskContextDropActiveRef.current = value;
+    setTaskContextDropActive(value);
   }
 
   function hasContextFileDrop(dataTransfer: DataTransfer) {
@@ -4069,10 +4085,7 @@ function App() {
               gitSummary={selectedGitSummary}
             />
             <section
-              ref={taskContextDropSurfaceRef}
-              className={`task-hero ${hasTaskChat ? "has-chat" : ""} ${
-                taskContextDropActive ? "context-drop-active" : ""
-              }`}
+              className={`task-hero ${hasTaskChat ? "has-chat" : ""}`}
               aria-label="Task chat"
               onDragOver={handleTaskContextDragOver}
               onDragLeave={handleTaskContextDragLeave}
@@ -4135,6 +4148,7 @@ function App() {
                 onContextFilesDrop={addDroppedContextFiles}
                 onContextFilesDropError={setStatusMessage}
                 contextDropActive={taskContextDropActive}
+                onDropSurfaceElementChange={handleTaskComposerDropSurfaceElementChange}
                 hasContextFileDropFallback={() =>
                   explorerDragContextFileRef.current !== null
                 }

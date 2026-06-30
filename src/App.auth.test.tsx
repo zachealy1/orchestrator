@@ -1434,9 +1434,8 @@ describe("App Codex auth", () => {
     const readmeButton = await within(workspaceNav).findByRole("button", {
       name: "README.md",
     });
-    const taskChat = screen.getByLabelText("Task chat");
     const composer = screen.getByLabelText("Task composer");
-    mockElementRect(taskChat);
+    mockElementRect(composer);
     startPointerDragFileIntoTaskSurface(readmeButton);
 
     const dragPreview = screen.getByLabelText("Dragging README.md");
@@ -1473,8 +1472,7 @@ describe("App Codex auth", () => {
     const fileButton = await within(workspaceNav).findByRole("button", {
       name: "hello.txt",
     });
-    const taskChat = screen.getByLabelText("Task chat");
-    mockElementRect(taskChat);
+    mockElementRect(screen.getByLabelText("Task composer"));
 
     pointerDragFileIntoTaskSurface(fileButton);
     pointerDragFileIntoTaskSurface(fileButton);

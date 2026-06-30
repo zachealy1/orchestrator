@@ -12,7 +12,7 @@ import {
   ShieldCheck,
   X,
 } from "lucide-react";
-import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import type { ChangeEvent, DragEvent, KeyboardEvent } from "react";
 import { ComposerSelect } from "./ComposerSelect";
 import type {
@@ -75,6 +75,7 @@ type Props = {
   onContextFilesDrop: (files: ComposerContextFile[]) => void;
   onContextFilesDropError?: (message: string) => void;
   contextDropActive?: boolean;
+  onDropSurfaceElementChange?: (element: HTMLElement | null) => void;
   hasContextFileDropFallback?: () => boolean;
   getContextFileDropFallback?: () => ComposerContextFile[];
   onContextFileDropHandled?: () => void;
@@ -136,6 +137,7 @@ export function TaskComposer({
   onContextFilesDrop,
   onContextFilesDropError,
   contextDropActive = false,
+  onDropSurfaceElementChange,
   hasContextFileDropFallback,
   getContextFileDropFallback,
   onContextFileDropHandled,
@@ -159,6 +161,12 @@ export function TaskComposer({
   const inlineContextFiles = contextFiles.filter((file) => file.source === "search");
   const attachmentContextFiles = contextFiles.filter((file) => file.source !== "search");
   const dropTargetActive = dragActive || contextDropActive;
+  const setComposerPanelRef = useCallback(
+    (element: HTMLElement | null) => {
+      onDropSurfaceElementChange?.(element);
+    },
+    [onDropSurfaceElementChange],
+  );
 
   useEffect(() => {
     setActivePopoverIndex(0);
@@ -453,85 +461,88 @@ export function TaskComposer({
 
   return (
     <section
+      ref={setComposerPanelRef}
       className={`composer-panel ${dropTargetActive ? "drop-target-active" : ""}`}
       aria-label="Task composer"
       onDragOver={handleDragOver}
       onDragLeave={handleDragLeave}
       onDrop={handleDrop}
     >
-      <div className={`prompt-shell ${attachmentContextFiles.length > 0 ? "has-context-files" : ""}`}>
-        {attachmentContextFiles.length > 0 ? (
-          <ContextFileList files={attachmentContextFiles} onRemoveFile={onRemoveFile} />
-        ) : null}
-
-        <label
-          className={`prompt-field ${
-            inlineContextFiles.length > 0 ? "has-inline-context" : ""
-          }`}
-        >
-          <span className="sr-only">Prompt</span>
-          {inlineContextFiles.length > 0 ? (
-            <PromptInlineHighlight
-              prompt={prompt}
-              files={inlineContextFiles}
-            />
+      <div className="composer-input-zone">
+        <div className={`prompt-shell ${attachmentContextFiles.length > 0 ? "has-context-files" : ""}`}>
+          {attachmentContextFiles.length > 0 ? (
+            <ContextFileList files={attachmentContextFiles} onRemoveFile={onRemoveFile} />
           ) : null}
-          <textarea
-            ref={promptTextareaRef}
-            aria-label="Prompt"
-            value={prompt}
-            onChange={handlePromptChange}
-            onKeyDown={handlePromptKeyDown}
-            onBlur={closeActiveSearch}
-            placeholder="Do nothing"
-            rows={1}
-          />
-        </label>
 
-        {mentionOpen ? (
-          <div
-            className="mention-search-popover"
-            role="listbox"
-            aria-label="Workspace file suggestions"
+          <label
+            className={`prompt-field ${
+              inlineContextFiles.length > 0 ? "has-inline-context" : ""
+            }`}
           >
-            <MentionSearchContent
-              query={activeToken.query}
-              results={mentionResults}
-              status={mentionSearchStatus}
-              error={mentionSearchError}
-              activeIndex={activePopoverIndex}
-              onSelect={selectMentionFile}
-              onActiveIndexChange={setActivePopoverIndex}
+            <span className="sr-only">Prompt</span>
+            {inlineContextFiles.length > 0 ? (
+              <PromptInlineHighlight
+                prompt={prompt}
+                files={inlineContextFiles}
+              />
+            ) : null}
+            <textarea
+              ref={promptTextareaRef}
+              aria-label="Prompt"
+              value={prompt}
+              onChange={handlePromptChange}
+              onKeyDown={handlePromptKeyDown}
+              onBlur={closeActiveSearch}
+              placeholder="Do anything"
+              rows={1}
             />
-          </div>
-        ) : slashOpen ? (
-          <div
-            className="mention-search-popover slash-command-popover"
-            role="listbox"
-            aria-label={
-              slashPanel === "reasoning"
-                ? "Reasoning effort suggestions"
-                : "Slash command suggestions"
-            }
-          >
-            <SlashCommandContent
-              panel={slashPanel}
-              query={activeToken.query}
-              results={slashCommandResults}
-              status={slashCommandSearchStatus}
-              error={slashCommandSearchError}
-              reasoningOptions={reasoningOptions}
-              activeIndex={activePopoverIndex}
-              onSelect={selectSlashCommand}
-              onReasoningSelect={selectReasoningEffort}
-              onActiveIndexChange={setActivePopoverIndex}
-            />
-          </div>
-        ) : null}
-      </div>
+          </label>
 
-      <div className="composer-meta-row" aria-label="Prompt metadata">
-        <span className="token-pill">{tokenEstimate.toLocaleString()} tokens</span>
+          {mentionOpen ? (
+            <div
+              className="mention-search-popover"
+              role="listbox"
+              aria-label="Workspace file suggestions"
+            >
+              <MentionSearchContent
+                query={activeToken.query}
+                results={mentionResults}
+                status={mentionSearchStatus}
+                error={mentionSearchError}
+                activeIndex={activePopoverIndex}
+                onSelect={selectMentionFile}
+                onActiveIndexChange={setActivePopoverIndex}
+              />
+            </div>
+          ) : slashOpen ? (
+            <div
+              className="mention-search-popover slash-command-popover"
+              role="listbox"
+              aria-label={
+                slashPanel === "reasoning"
+                  ? "Reasoning effort suggestions"
+                  : "Slash command suggestions"
+              }
+            >
+              <SlashCommandContent
+                panel={slashPanel}
+                query={activeToken.query}
+                results={slashCommandResults}
+                status={slashCommandSearchStatus}
+                error={slashCommandSearchError}
+                reasoningOptions={reasoningOptions}
+                activeIndex={activePopoverIndex}
+                onSelect={selectSlashCommand}
+                onReasoningSelect={selectReasoningEffort}
+                onActiveIndexChange={setActivePopoverIndex}
+              />
+            </div>
+          ) : null}
+        </div>
+
+        <div className="composer-meta-row" aria-label="Prompt metadata">
+          <span className="token-pill">{tokenEstimate.toLocaleString()} tokens</span>
+        </div>
       </div>
 
       <div className="composer-controls">
