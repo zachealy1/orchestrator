@@ -105,7 +105,11 @@ describe("TaskChatTranscript", () => {
     expect(screen.queryByText("Finish the task")).not.toBeInTheDocument();
     expect(within(summary).getByText("Updated:")).toBeInTheDocument();
     expect(within(summary).getByText("src/App.css")).toBeInTheDocument();
-    expect(screen.getByText("2m 3s • 69,839 tokens")).toBeInTheDocument();
+    const traceTrigger = screen.getByLabelText("Run trace");
+    expect(traceTrigger.tagName.toLowerCase()).toBe("summary");
+    expect(within(traceTrigger).getByText("2m 3s")).toBeInTheDocument();
+    expect(within(traceTrigger).getByText("69,839 tokens")).toBeInTheDocument();
+    expect(screen.queryByText("2m 3s • 69,839 tokens")).not.toBeInTheDocument();
     expect(screen.getByLabelText("App-server stream")).toBeInTheDocument();
   });
 });

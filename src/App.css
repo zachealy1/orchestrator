@@ -1125,6 +1125,16 @@ button.account-switcher-item:hover:not(:disabled) {
   align-items: center;
 }
 
+summary.run-live-metrics {
+  width: fit-content;
+  cursor: pointer;
+  list-style: none;
+}
+
+summary.run-live-metrics::-webkit-details-marker {
+  display: none;
+}
+
 .stream-event-list {
   display: grid;
   min-width: 0;
@@ -1208,25 +1218,10 @@ button.account-switcher-item:hover:not(:disabled) {
 
 .stream-trace {
   max-width: 980px;
-  border-radius: 8px;
-  background: var(--color-component-background);
-}
-
-.stream-trace summary {
-  cursor: pointer;
-  color: var(--color-text);
-  font-weight: 700;
-  list-style: none;
-  padding: 12px 14px;
-}
-
-.stream-trace summary::-webkit-details-marker {
-  display: none;
 }
 
 .stream-trace .stream-event-list {
-  border-top: 1px solid var(--color-divider);
-  padding: 14px;
+  margin-top: 18px;
 }
 
 .file-preview-drawer {
