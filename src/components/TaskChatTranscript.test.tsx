@@ -48,15 +48,12 @@ describe("TaskChatTranscript", () => {
       />,
     );
 
-    const submittedPrompt = screen.getByLabelText("Submitted prompt");
     const liveOutput = screen.getByLabelText("Live run output");
 
     expect(screen.queryByText("You")).not.toBeInTheDocument();
     expect(screen.queryByText("Codex")).not.toBeInTheDocument();
-    expect(submittedPrompt).toHaveClass("chat-message-body");
-    expect(submittedPrompt).toHaveTextContent("Objective:");
-    expect(submittedPrompt.textContent).toContain("\nFix the failing auth tests");
-    expect(liveOutput.closest(".chat-bubble")).toBeNull();
+    expect(screen.queryByText("Objective:")).not.toBeInTheDocument();
+    expect(screen.queryByText("Fix the failing auth tests")).not.toBeInTheDocument();
     expect(within(liveOutput).getByText("1m 5s")).toBeInTheDocument();
     expect(within(liveOutput).getByText("1,234 tokens")).toBeInTheDocument();
     expect(within(liveOutput).getByText("I am updating the auth flow.")).toBeInTheDocument();
@@ -105,7 +102,7 @@ describe("TaskChatTranscript", () => {
 
     const summary = screen.getByLabelText("Run summary");
 
-    expect(summary.closest(".chat-bubble")).toBeNull();
+    expect(screen.queryByText("Finish the task")).not.toBeInTheDocument();
     expect(within(summary).getByText("Updated:")).toBeInTheDocument();
     expect(within(summary).getByText("src/App.css")).toBeInTheDocument();
     expect(screen.getByText("2m 3s • 69,839 tokens")).toBeInTheDocument();

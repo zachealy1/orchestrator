@@ -1936,9 +1936,10 @@ describe("App Codex auth", () => {
       "thread/start",
       expect.any(Object),
     );
+    expect(screen.getByLabelText("Prompt")).toHaveValue("");
     const transcript = screen.getByLabelText("Task chat transcript");
     expect(transcript).toBeInTheDocument();
-    expect(within(transcript).getByText("Fix the auth flow")).toBeInTheDocument();
+    expect(within(transcript).queryByText("Fix the auth flow")).not.toBeInTheDocument();
     expect(screen.queryByLabelText("Run history")).not.toBeInTheDocument();
     expect(screen.queryByLabelText("Codex run console")).not.toBeInTheDocument();
   });
@@ -1956,7 +1957,7 @@ describe("App Codex auth", () => {
 
     const transcript = screen.getByLabelText("Task chat transcript");
     expect(transcript).toBeInTheDocument();
-    expect(within(transcript).getByText("Fix the streaming output")).toBeInTheDocument();
+    expect(within(transcript).queryByText("Fix the streaming output")).not.toBeInTheDocument();
     expect(within(transcript).getByText("Updated the auth flow.")).toBeInTheDocument();
   });
 

@@ -2320,7 +2320,8 @@ function App() {
   }
 
   async function launchRun() {
-    if (!selectedWorkspace || !prompt.trim()) {
+    const promptText = prompt.trim();
+    if (!selectedWorkspace || !promptText) {
       setStatusMessage("Select a workspace and write a prompt first.");
       return;
     }
@@ -2362,7 +2363,7 @@ function App() {
 
     const task = await createTask({
       workspaceId: selectedWorkspace.id,
-      originalPrompt: prompt,
+      originalPrompt: promptText,
       improvedPrompt: report.improvedPrompt || improvedPrompt,
       routeRecommendation: report.routeRecommendation,
       budgetTokens: report.tokenEstimate,
@@ -2396,11 +2397,13 @@ function App() {
       workspaceId: selectedWorkspace.id,
       runId: run.id,
       taskId: task.id,
-      prompt: prompt.trim(),
+      prompt: promptText,
       submittedAt: startedAt,
       status: initialRunView.status,
       runView: initialRunView,
     });
+    setPrompt("");
+    setPreflight(null);
 
     const thread = await codexRpc<{
       thread: { id: string };
@@ -2433,7 +2436,7 @@ function App() {
     const warnings: string[] = [];
     if (goalMode) {
       try {
-        await setThreadGoal(selectedAccountId, thread.thread.id, prompt.trim());
+        await setThreadGoal(selectedAccountId, thread.thread.id, promptText);
       } catch (error) {
         warnings.push(
           `Goal mode could not set a thread goal: ${

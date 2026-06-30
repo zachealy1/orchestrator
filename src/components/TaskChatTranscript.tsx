@@ -48,17 +48,6 @@ export function TaskChatTranscript({ entries, onResolveRequest }: Props) {
     >
       {entries.map((entry) => (
         <div className="task-chat-run" key={entry.runId}>
-          <article className="chat-message user-message">
-            <div className="chat-bubble">
-              <div className="chat-bubble-header meta-only">
-                <span>{formatSubmittedTime(entry.submittedAt)}</span>
-              </div>
-              <div className="chat-message-body user-prompt" aria-label="Submitted prompt">
-                {entry.prompt}
-              </div>
-            </div>
-          </article>
-
           <article className={`chat-message assistant-message status-${entry.status}`}>
             <AssistantRunOutput
               runView={entry.runView}
@@ -82,19 +71,16 @@ function AssistantRunOutput({
     runView.status === "completed" ||
     runView.status === "failed" ||
     runView.status === "interrupted";
-  const traceTitle = `${formatDuration(runView.elapsedMs)} • ${formatTokenCount(runView)}`;
 
   if (completed) {
     return (
       <div className="run-output-surface completed">
-        <RunMetrics runView={runView} />
-        <RunSummary runView={runView} />
         {runView.streamEvents.length > 0 ? (
-          <details className="stream-trace">
-            <summary>{traceTitle}</summary>
-            <StreamEventList events={runView.streamEvents} />
-          </details>
-        ) : null}
+          <RunTraceDropdown runView={runView} />
+        ) : (
+          <RunMetrics runView={runView} />
+        )}
+        <RunSummary runView={runView} />
         <RunApprovalRequests
           runView={runView}
           onResolveRequest={onResolveRequest}
@@ -116,6 +102,21 @@ function AssistantRunOutput({
       )}
       <RunApprovalRequests runView={runView} onResolveRequest={onResolveRequest} />
     </div>
+  );
+}
+
+function RunTraceDropdown({ runView }: { runView: RunViewState }) {
+  return (
+    <details className="stream-trace">
+      <summary className="run-live-metrics" aria-label="Run trace">
+        <span>
+          <Clock size={15} aria-hidden="true" />
+          {formatDuration(runView.elapsedMs)}
+        </span>
+        <span>{formatTokenCount(runView)}</span>
+      </summary>
+      <StreamEventList events={runView.streamEvents} />
+    </details>
   );
 }
 
@@ -230,18 +231,6 @@ function RunApprovalRequests({
       ))}
     </div>
   );
-}
-
-function formatSubmittedTime(value: string) {
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) {
-    return value;
-  }
-
-  return new Intl.DateTimeFormat(undefined, {
-    hour: "2-digit",
-    minute: "2-digit",
-  }).format(date);
 }
 
 function formatDuration(milliseconds: number) {
