@@ -4,7 +4,9 @@ import {
   applyCodexMessage,
   emptyRunView,
   resolveServerRequest,
+  updateRunElapsed,
 } from "./codexEventReducer";
+import type { RunViewState } from "./codexEventReducer";
 
 describe("codexEventReducer", () => {
   it("tracks thread, turn, and token usage notifications", () => {
@@ -52,6 +54,37 @@ describe("codexEventReducer", () => {
 
     expect(state.finalMessage).toBe("Done.");
     expect(state.console).toHaveLength(1);
+    expect(state.streamEvents).toHaveLength(1);
+    expect(state.streamEvents[0]).toMatchObject({
+      kind: "message",
+      text: "Done.",
+    });
+  });
+
+  it("tracks stream events and elapsed run time", () => {
+    let state: RunViewState = {
+      ...emptyRunView,
+      startedAt: "2026-06-30T17:00:00.000Z",
+      status: "running" as const,
+    };
+
+    state = updateRunElapsed(state, "2026-06-30T17:00:05.000Z");
+    state = applyCodexMessage(state, {
+      method: "item/commandExecution/outputDelta",
+      params: { delta: "npm test\n" },
+    });
+    state = applyCodexMessage(state, {
+      method: "turn/completed",
+      params: { turn: { status: "completed", durationMs: 1234 } },
+    });
+
+    expect(state.elapsedMs).toBe(1234);
+    expect(state.status).toBe("completed");
+    expect(state.completedAt).not.toBeNull();
+    expect(state.streamEvents[0]).toMatchObject({
+      kind: "command",
+      text: "npm test\n",
+    });
   });
 
   it("tracks and resolves server requests", () => {

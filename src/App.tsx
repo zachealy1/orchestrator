@@ -88,6 +88,7 @@ import {
   applyCodexMessage,
   emptyRunView,
   resolveServerRequest,
+  updateRunElapsed,
   type RunViewState,
 } from "./lib/codexEventReducer";
 import {
@@ -753,6 +754,23 @@ function App() {
   useEffect(() => {
     selectedWorkspaceRef.current = selectedWorkspace;
   }, [selectedWorkspace]);
+
+  useEffect(() => {
+    if (
+      activeChatRunId === null ||
+      (runView.status !== "connecting" && runView.status !== "running")
+    ) {
+      return;
+    }
+
+    const tick = () => {
+      updateActiveRunView((current) => updateRunElapsed(current));
+    };
+
+    tick();
+    const intervalId = window.setInterval(tick, 1000);
+    return () => window.clearInterval(intervalId);
+  }, [activeChatRunId, runView.status]);
 
   useEffect(() => {
     mentionSearchRequestId.current += 1;
@@ -2368,13 +2386,18 @@ function App() {
     currentRunId.current = run.id;
     currentRunAccountId.current = selectedAccountId;
     eventSequence.current = 0;
-    const initialRunView = { ...emptyRunView, status: "running" as const };
+    const startedAt = new Date().toISOString();
+    const initialRunView = {
+      ...emptyRunView,
+      status: "running" as const,
+      startedAt,
+    };
     startTaskChatEntry({
       workspaceId: selectedWorkspace.id,
       runId: run.id,
       taskId: task.id,
       prompt: prompt.trim(),
-      submittedAt: new Date().toISOString(),
+      submittedAt: startedAt,
       status: initialRunView.status,
       runView: initialRunView,
     });
@@ -2613,7 +2636,7 @@ function App() {
       await updateRun(runId, {
         status,
         completedAt: new Date().toISOString(),
-        durationMs: readNumber(turn.durationMs),
+        durationMs: readNumber(turn.durationMs) ?? nextRunView.elapsedMs,
         finalMessage: nextRunView.finalMessage,
         error: status === "failed" ? JSON.stringify(turn.error ?? "Turn failed") : null,
       });

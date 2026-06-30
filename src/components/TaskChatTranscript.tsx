@@ -1,10 +1,16 @@
 import {
+  Activity,
+  BrainCircuit,
   Check,
   Clock,
+  FileText,
+  MessageSquare,
+  Terminal,
   X,
 } from "lucide-react";
 import { useEffect, useRef } from "react";
-import type { RunViewState } from "../lib/codexEventReducer";
+import ReactMarkdown from "react-markdown";
+import type { RunViewState, StreamEvent } from "../lib/codexEventReducer";
 import type { CodexMessage } from "../types";
 
 export type TaskChatEntry = {
@@ -54,14 +60,10 @@ export function TaskChatTranscript({ entries, onResolveRequest }: Props) {
           </article>
 
           <article className={`chat-message assistant-message status-${entry.status}`}>
-            <div className="chat-bubble">
-              <AssistantOutput runView={entry.runView} />
-
-              <RunApprovalRequests
-                runView={entry.runView}
-                onResolveRequest={onResolveRequest}
-              />
-            </div>
+            <AssistantRunOutput
+              runView={entry.runView}
+              onResolveRequest={onResolveRequest}
+            />
           </article>
         </div>
       ))}
@@ -69,43 +71,122 @@ export function TaskChatTranscript({ entries, onResolveRequest }: Props) {
   );
 }
 
-function AssistantOutput({ runView }: { runView: RunViewState }) {
-  if (runView.finalMessage.trim()) {
+function AssistantRunOutput({
+  runView,
+  onResolveRequest,
+}: {
+  runView: RunViewState;
+  onResolveRequest: (request: CodexMessage, approved: boolean) => void;
+}) {
+  const completed =
+    runView.status === "completed" ||
+    runView.status === "failed" ||
+    runView.status === "interrupted";
+  const traceTitle = `${formatDuration(runView.elapsedMs)} • ${formatTokenCount(runView)}`;
+
+  if (completed) {
     return (
-      <div className="chat-message-body assistant-output" aria-label="Assistant response">
-        {runView.finalMessage}
+      <div className="run-output-surface completed">
+        <RunMetrics runView={runView} />
+        <RunSummary runView={runView} />
+        {runView.streamEvents.length > 0 ? (
+          <details className="stream-trace">
+            <summary>{traceTitle}</summary>
+            <StreamEventList events={runView.streamEvents} />
+          </details>
+        ) : null}
+        <RunApprovalRequests
+          runView={runView}
+          onResolveRequest={onResolveRequest}
+        />
       </div>
     );
   }
 
+  return (
+    <div className="run-output-surface running" aria-label="Live run output">
+      <RunMetrics runView={runView} />
+      {runView.streamEvents.length > 0 ? (
+        <StreamEventList events={runView.streamEvents} />
+      ) : (
+        <p className="stream-placeholder">
+          <Clock size={15} aria-hidden="true" />
+          Waiting for app-server output...
+        </p>
+      )}
+      <RunApprovalRequests runView={runView} onResolveRequest={onResolveRequest} />
+    </div>
+  );
+}
+
+function RunMetrics({ runView }: { runView: RunViewState }) {
+  return (
+    <div className="run-live-metrics" aria-label="Run metrics">
+      <span>
+        <Clock size={15} aria-hidden="true" />
+        {formatDuration(runView.elapsedMs)}
+      </span>
+      <span>{formatTokenCount(runView)}</span>
+    </div>
+  );
+}
+
+function RunSummary({ runView }: { runView: RunViewState }) {
   if (runView.status === "failed" && runView.error) {
     return (
-      <div
-        className="chat-message-body assistant-output error"
-        aria-label="Assistant error"
-      >
+      <div className="run-summary error" aria-label="Run error">
         {runView.error}
       </div>
     );
   }
 
-  if (runView.status === "completed") {
+  if (!runView.finalMessage.trim()) {
     return (
-      <div
-        className="chat-message-body assistant-output muted"
-        aria-label="Assistant response"
-      >
+      <div className="run-summary muted" aria-label="Run summary">
         Completed without a final message.
       </div>
     );
   }
 
   return (
-    <div className="chat-message-body assistant-output muted" aria-label="Assistant status">
-      <Clock size={15} aria-hidden="true" />
-      Working...
+    <div className="run-summary markdown-summary" aria-label="Run summary">
+      <ReactMarkdown>{runView.finalMessage}</ReactMarkdown>
     </div>
   );
+}
+
+function StreamEventList({ events }: { events: StreamEvent[] }) {
+  return (
+    <div className="stream-event-list" aria-label="App-server stream">
+      {events.map((event) =>
+        event.kind === "message" ? (
+          <div className="stream-message" key={event.id}>
+            {event.text}
+          </div>
+        ) : (
+          <div className={`stream-event ${event.kind}`} key={event.id}>
+            {streamEventIcon(event.kind)}
+            <span>{event.text}</span>
+          </div>
+        ),
+      )}
+    </div>
+  );
+}
+
+function streamEventIcon(kind: StreamEvent["kind"]) {
+  switch (kind) {
+    case "command":
+      return <Terminal size={15} aria-hidden="true" />;
+    case "file":
+      return <FileText size={15} aria-hidden="true" />;
+    case "reasoning":
+      return <BrainCircuit size={15} aria-hidden="true" />;
+    case "message":
+      return <MessageSquare size={15} aria-hidden="true" />;
+    default:
+      return <Activity size={15} aria-hidden="true" />;
+  }
 }
 
 function RunApprovalRequests({
@@ -161,4 +242,20 @@ function formatSubmittedTime(value: string) {
     hour: "2-digit",
     minute: "2-digit",
   }).format(date);
+}
+
+function formatDuration(milliseconds: number) {
+  const totalSeconds = Math.max(0, Math.floor(milliseconds / 1000));
+  const minutes = Math.floor(totalSeconds / 60);
+  const seconds = totalSeconds % 60;
+
+  if (minutes > 0) {
+    return `${minutes}m ${seconds}s`;
+  }
+
+  return `${seconds}s`;
+}
+
+function formatTokenCount(runView: RunViewState) {
+  return `${(runView.tokenUsage?.totalTokens ?? 0).toLocaleString()} tokens`;
 }

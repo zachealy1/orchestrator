@@ -2010,7 +2010,7 @@ describe("App Codex auth", () => {
         }),
       ),
     );
-    expect(screen.getByText("Done.")).toBeInTheDocument();
+    expect(within(screen.getByLabelText("Run summary")).getByText("Done.")).toBeInTheDocument();
     expect(screen.queryByText("completed")).not.toBeInTheDocument();
   });
 
