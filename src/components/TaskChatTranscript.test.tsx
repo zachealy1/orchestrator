@@ -52,8 +52,9 @@ describe("TaskChatTranscript", () => {
 
     expect(screen.queryByText("You")).not.toBeInTheDocument();
     expect(screen.queryByText("Codex")).not.toBeInTheDocument();
-    expect(screen.queryByText("Objective:")).not.toBeInTheDocument();
-    expect(screen.queryByText("Fix the failing auth tests")).not.toBeInTheDocument();
+    const submittedPrompt = screen.getByLabelText("Submitted prompt");
+    expect(submittedPrompt).toHaveTextContent("Objective:");
+    expect(submittedPrompt).toHaveTextContent("Fix the failing auth tests");
     expect(within(liveOutput).getByText("1m 5s")).toBeInTheDocument();
     expect(within(liveOutput).getByText("1,234 tokens")).toBeInTheDocument();
     expect(within(liveOutput).getByText("I am updating the auth flow.")).toBeInTheDocument();
@@ -102,7 +103,7 @@ describe("TaskChatTranscript", () => {
 
     const summary = screen.getByLabelText("Run summary");
 
-    expect(screen.queryByText("Finish the task")).not.toBeInTheDocument();
+    expect(screen.getByLabelText("Submitted prompt")).toHaveTextContent("Finish the task");
     expect(within(summary).getByText("Updated:")).toBeInTheDocument();
     expect(within(summary).getByText("src/App.css")).toBeInTheDocument();
     const traceTrigger = screen.getByLabelText("Run trace");

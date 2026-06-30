@@ -1092,6 +1092,17 @@ button.account-switcher-item:hover:not(:disabled) {
   gap: 14px;
 }
 
+.submitted-prompt {
+  justify-self: end;
+  max-width: min(760px, 86%);
+  overflow-wrap: anywhere;
+  color: var(--color-text);
+  font-size: 0.98rem;
+  line-height: 1.55;
+  text-align: right;
+  white-space: pre-wrap;
+}
+
 .chat-message {
   display: grid;
   min-width: 0;

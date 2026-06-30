@@ -48,6 +48,9 @@ export function TaskChatTranscript({ entries, onResolveRequest }: Props) {
     >
       {entries.map((entry) => (
         <div className="task-chat-run" key={entry.runId}>
+          <article className="submitted-prompt" aria-label="Submitted prompt">
+            {entry.prompt}
+          </article>
           <article className={`chat-message assistant-message status-${entry.status}`}>
             <AssistantRunOutput
               runView={entry.runView}
