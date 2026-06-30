@@ -69,6 +69,7 @@ type Props = {
   onSlashCommandSelect: (item: SlashCommandItem) => void;
   onSlashCommandClose: () => void;
   onContextFilesDrop: (files: ComposerContextFile[]) => void;
+  onContextFilesDropError?: (message: string) => void;
   onRemoveFile: (path: string) => void;
   onRemoveSkill: (skillId: string) => void;
   onPreflight: () => void;
@@ -125,6 +126,7 @@ export function TaskComposer({
   onSlashCommandSelect,
   onSlashCommandClose,
   onContextFilesDrop,
+  onContextFilesDropError,
   onRemoveFile,
   onRemoveSkill,
   onPreflight,
@@ -397,9 +399,14 @@ export function TaskComposer({
 
     event.preventDefault();
     setDragActive(false);
-    const files = readDroppedContextFiles(event);
+    const { files, skipped } = readDroppedContextFiles(event);
     if (files.length > 0) {
       onContextFilesDrop(files);
+    }
+    if (skipped > 0) {
+      onContextFilesDropError?.(
+        `Skipped ${skipped} dropped file${skipped === 1 ? "" : "s"} because the file path was unavailable.`,
+      );
     }
   }
 
@@ -411,7 +418,11 @@ export function TaskComposer({
       onDragLeave={handleDragLeave}
       onDrop={handleDrop}
     >
-      <div className="prompt-shell">
+      <div className={`prompt-shell ${contextFiles.length > 0 ? "has-context-files" : ""}`}>
+        {contextFiles.length > 0 ? (
+          <ContextFileList files={contextFiles} onRemoveFile={onRemoveFile} />
+        ) : null}
+
         <label className="prompt-field">
           <span className="sr-only">Prompt</span>
           <textarea
@@ -589,21 +600,8 @@ export function TaskComposer({
           />
         </div>
 
-        {contextFiles.length > 0 || selectedSkills.length > 0 ? (
-          <div className="context-file-list" aria-label="Selected context files">
-            {contextFiles.map((file) => (
-              <span className={`context-chip ${file.status ?? "ready"}`} key={file.path}>
-                <Paperclip size={13} />
-                <span title={file.path}>{file.name}</span>
-                <button
-                  type="button"
-                  onClick={() => onRemoveFile(file.path)}
-                  aria-label={`Remove ${file.name}`}
-                >
-                  <X size={13} />
-                </button>
-              </span>
-            ))}
+        {selectedSkills.length > 0 ? (
+          <div className="context-file-list" aria-label="Selected skills">
             {selectedSkills.map((skill) => (
               <span className="context-chip skill" key={skill.id}>
                 <BrainCircuit size={13} />
@@ -621,6 +619,59 @@ export function TaskComposer({
         ) : null}
       </div>
     </section>
+  );
+}
+
+function ContextFileList({
+  files,
+  onRemoveFile,
+}: {
+  files: ComposerContextFile[];
+  onRemoveFile: (path: string) => void;
+}) {
+  return (
+    <div className="context-file-list prompt-context-list" aria-label="Selected context files">
+      {files.map((file) =>
+        file.source === "search" ? (
+          <span
+            className={`context-mention ${file.status ?? "ready"}`}
+            key={file.path}
+            title={file.path}
+          >
+            <span aria-hidden="true">#</span>
+            <span>{file.name}</span>
+            <button
+              type="button"
+              onClick={() => onRemoveFile(file.path)}
+              aria-label={`Remove ${file.name}`}
+            >
+              <X size={12} />
+            </button>
+          </span>
+        ) : (
+          <article
+            className={`context-attachment ${file.status ?? "ready"}`}
+            key={file.path}
+            title={file.path}
+          >
+            <span className="context-attachment-icon" aria-hidden="true">
+              <FileText size={23} />
+            </span>
+            <span className="context-attachment-copy">
+              <strong>{file.name}</strong>
+              <small>{fileExtensionLabel(file.name)}</small>
+            </span>
+            <button
+              type="button"
+              onClick={() => onRemoveFile(file.path)}
+              aria-label={`Remove ${file.name}`}
+            >
+              <X size={15} />
+            </button>
+          </article>
+        ),
+      )}
+    </div>
   );
 }
 
@@ -853,24 +904,43 @@ function labelReasoningEffort(effort: string) {
 }
 
 function hasContextFilePayload(event: DragEvent<HTMLElement>) {
-  return Array.from(event.dataTransfer.types).includes(CONTEXT_FILE_MIME);
+  const types = Array.from(event.dataTransfer.types);
+  return (
+    types.includes(CONTEXT_FILE_MIME) ||
+    types.includes("Files") ||
+    (event.dataTransfer.files?.length ?? 0) > 0
+  );
 }
 
 function readDroppedContextFiles(event: DragEvent<HTMLElement>) {
   const raw = event.dataTransfer.getData(CONTEXT_FILE_MIME);
-  if (!raw) {
-    return [];
+  const files: ComposerContextFile[] = [];
+  let skipped = 0;
+
+  if (raw) {
+    try {
+      const payload = JSON.parse(raw);
+      const payloadFiles = Array.isArray(payload) ? payload : [payload];
+      files.push(
+        ...payloadFiles
+          .map(readContextFile)
+          .filter((file): file is ComposerContextFile => file !== null),
+      );
+    } catch {
+      skipped += 1;
+    }
   }
 
-  try {
-    const payload = JSON.parse(raw);
-    const files = Array.isArray(payload) ? payload : [payload];
-    return files
-      .map(readContextFile)
-      .filter((file): file is ComposerContextFile => file !== null);
-  } catch {
-    return [];
+  for (const file of Array.from(event.dataTransfer.files ?? [])) {
+    const dropped = readNativeDroppedFile(file);
+    if (dropped) {
+      files.push(dropped);
+    } else {
+      skipped += 1;
+    }
   }
+
+  return { files, skipped };
 }
 
 function readContextFile(value: unknown): ComposerContextFile | null {
@@ -889,6 +959,40 @@ function readContextFile(value: unknown): ComposerContextFile | null {
     source: "explorer",
     status: "ready",
   };
+}
+
+function readNativeDroppedFile(file: File): ComposerContextFile | null {
+  const path = readNativeFilePath(file);
+  if (!path) {
+    return null;
+  }
+
+  return {
+    path,
+    name: file.name || basename(path),
+    source: "explorer",
+    status: "ready",
+  };
+}
+
+function readNativeFilePath(file: File) {
+  const candidate = file as File & { path?: unknown };
+  return typeof candidate.path === "string" && candidate.path.trim()
+    ? candidate.path
+    : null;
+}
+
+function fileExtensionLabel(name: string) {
+  const normalized = name.trim();
+  const dotIndex = normalized.lastIndexOf(".");
+  if (dotIndex <= 0 || dotIndex === normalized.length - 1) {
+    return "FILE";
+  }
+  return normalized.slice(dotIndex + 1).toUpperCase();
+}
+
+function basename(path: string) {
+  return path.replace(/\\/g, "/").split("/").filter(Boolean).pop() ?? path;
 }
 
 function readComposerToken(value: string, caret: number): ComposerToken | null {

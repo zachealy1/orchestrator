@@ -1,4 +1,4 @@
-import { render, screen, within } from "@testing-library/react";
+import { fireEvent, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 import { TaskComposer } from "./TaskComposer";
@@ -174,6 +174,45 @@ function renderControlledComposer(overrides: Partial<TaskComposerProps> = {}) {
   };
 }
 
+function createContextFileDataTransfer(files: unknown[]) {
+  let dropEffect = "none";
+
+  return {
+    types: ["application/x-orchestrator-context-file"],
+    files: [],
+    effectAllowed: "copy",
+    get dropEffect() {
+      return dropEffect;
+    },
+    set dropEffect(value: string) {
+      dropEffect = value;
+    },
+    getData: (type: string) =>
+      type === "application/x-orchestrator-context-file"
+        ? JSON.stringify(files)
+        : "",
+    setData: vi.fn(),
+  };
+}
+
+function createNativeFileDataTransfer(files: File[]) {
+  let dropEffect = "none";
+
+  return {
+    types: ["Files"],
+    files,
+    effectAllowed: "copy",
+    get dropEffect() {
+      return dropEffect;
+    },
+    set dropEffect(value: string) {
+      dropEffect = value;
+    },
+    getData: () => "",
+    setData: vi.fn(),
+  };
+}
+
 describe("TaskComposer", () => {
   it("updates the prompt and exposes advisory actions", async () => {
     const onPromptChange = vi.fn();
@@ -311,23 +350,113 @@ describe("TaskComposer", () => {
     expect(onAccountChange).toHaveBeenCalledWith(7);
   });
 
-  it("renders selected file chips and removes files", async () => {
+  it("renders source-specific context files above the prompt and removes files", async () => {
     const onRemoveFile = vi.fn();
     const { user } = renderComposer({
       onRemoveFile,
       contextFiles: [
+        {
+          path: "/repo/src/App.css",
+          name: "App.css",
+          source: "search",
+          status: "ready",
+        },
         {
           path: "/repo/src/App.tsx",
           name: "App.tsx",
           source: "picker",
           status: "ready",
         },
+        {
+          path: "/repo/AGENTS.md",
+          name: "AGENTS.md",
+          source: "explorer",
+          status: "ready",
+        },
       ],
     });
 
+    const contextList = screen.getByLabelText("Selected context files");
+    const promptShell = contextList.closest(".prompt-shell");
+    expect(promptShell).toContainElement(screen.getByLabelText("Prompt"));
+    expect(contextList.nextElementSibling).toHaveClass("prompt-field");
+    expect(within(contextList).getByText("#")).toBeInTheDocument();
+    expect(within(contextList).getByText("App.css")).toBeInTheDocument();
+    expect(within(contextList).getByText("TSX")).toBeInTheDocument();
+    expect(within(contextList).getByText("MD")).toBeInTheDocument();
+    expect(contextList.querySelectorAll(".context-attachment")).toHaveLength(2);
     expect(screen.getByText("App.tsx")).toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: /remove app\.tsx/i }));
     expect(onRemoveFile).toHaveBeenCalledWith("/repo/src/App.tsx");
+  });
+
+  it("adds explorer files from the internal drag payload", () => {
+    const onContextFilesDrop = vi.fn();
+    renderComposer({ onContextFilesDrop });
+
+    const composer = screen.getByLabelText("Task composer");
+    const dataTransfer = createContextFileDataTransfer([
+      {
+        path: "/repo/README.md",
+        name: "README.md",
+        source: "explorer",
+        status: "ready",
+      },
+    ]);
+
+    fireEvent.dragOver(composer, { dataTransfer });
+    expect(composer).toHaveClass("drag-over");
+    fireEvent.drop(composer, { dataTransfer });
+
+    expect(onContextFilesDrop).toHaveBeenCalledWith([
+      {
+        path: "/repo/README.md",
+        name: "README.md",
+        source: "explorer",
+        status: "ready",
+      },
+    ]);
+  });
+
+  it("adds native dropped files when a file path is available", () => {
+    const onContextFilesDrop = vi.fn();
+    renderComposer({ onContextFilesDrop });
+
+    const droppedFile = new File(["# Agents"], "AGENTS.md", {
+      type: "text/markdown",
+    });
+    Object.defineProperty(droppedFile, "path", {
+      value: "/repo/AGENTS.md",
+    });
+    const dataTransfer = createNativeFileDataTransfer([droppedFile]);
+
+    fireEvent.drop(screen.getByLabelText("Task composer"), { dataTransfer });
+
+    expect(onContextFilesDrop).toHaveBeenCalledWith([
+      {
+        path: "/repo/AGENTS.md",
+        name: "AGENTS.md",
+        source: "explorer",
+        status: "ready",
+      },
+    ]);
+  });
+
+  it("reports native dropped files without usable paths", () => {
+    const onContextFilesDrop = vi.fn();
+    const onContextFilesDropError = vi.fn();
+    renderComposer({ onContextFilesDrop, onContextFilesDropError });
+
+    const dataTransfer = createNativeFileDataTransfer([
+      new File(["content"], "local-only.txt"),
+    ]);
+
+    fireEvent.drop(screen.getByLabelText("Task composer"), { dataTransfer });
+
+    expect(onContextFilesDrop).not.toHaveBeenCalled();
+    expect(onContextFilesDropError).toHaveBeenCalledWith(
+      "Skipped 1 dropped file because the file path was unavailable.",
+    );
   });
 
   it("keeps launch controls disabled until the advisory gate is ready", () => {

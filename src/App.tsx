@@ -3779,6 +3779,7 @@ function App() {
                 onSlashCommandSelect={handleSlashCommandSelect}
                 onSlashCommandClose={closeSlashCommandSearch}
                 onContextFilesDrop={addDroppedContextFiles}
+                onContextFilesDropError={setStatusMessage}
                 onRemoveFile={(path) =>
                   setContextFiles((current) => current.filter((file) => file.path !== path))
                 }

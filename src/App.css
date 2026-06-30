@@ -2036,6 +2036,10 @@ select:disabled {
   min-width: 0;
 }
 
+.prompt-shell.has-context-files {
+  display: grid;
+}
+
 .prompt-field {
   display: block;
   overflow: hidden;
@@ -2443,6 +2447,127 @@ button.composer-select-option.action:not(:first-child) {
   border-top: 1px solid var(--color-divider);
   background: transparent;
   padding: 2px 0 0;
+}
+
+.prompt-context-list {
+  align-items: flex-start;
+  gap: 10px;
+  overflow-x: auto;
+  border-top: 0;
+  background: var(--composer);
+  padding: 14px 18px 4px;
+}
+
+.prompt-context-list + .prompt-field textarea {
+  padding-top: 8px;
+}
+
+.context-mention {
+  display: inline-flex;
+  min-width: 0;
+  max-width: 100%;
+  gap: 5px;
+  align-items: center;
+  color: var(--color-primary);
+  font-size: 0.92rem;
+  line-height: 1.35;
+}
+
+.context-mention > span:nth-child(2) {
+  overflow: hidden;
+  max-width: 280px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.context-mention button {
+  width: 18px;
+  min-width: 18px;
+  min-height: 18px;
+  border: 0;
+  border-radius: 50%;
+  background: transparent;
+  color: var(--color-icon-muted);
+  padding: 0;
+}
+
+.context-mention button:hover:not(:disabled) {
+  background: var(--color-button-active);
+  color: var(--color-text);
+}
+
+.context-attachment {
+  position: relative;
+  display: grid;
+  width: 176px;
+  min-height: 82px;
+  grid-template-columns: 44px minmax(0, 1fr);
+  gap: 10px;
+  align-items: center;
+  border: 1px solid var(--color-divider);
+  border-radius: 8px;
+  background: var(--color-component-background);
+  color: var(--color-text);
+  padding: 10px 30px 10px 10px;
+}
+
+.context-attachment.error {
+  border-color: var(--color-error);
+}
+
+.context-attachment-icon {
+  display: inline-flex;
+  width: 44px;
+  height: 44px;
+  align-items: center;
+  justify-content: center;
+  border-radius: 8px;
+  background: var(--color-background);
+  color: var(--color-icon-muted);
+}
+
+.context-attachment-copy {
+  display: grid;
+  min-width: 0;
+  gap: 4px;
+}
+
+.context-attachment-copy strong,
+.context-attachment-copy small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.context-attachment-copy strong {
+  color: var(--color-text);
+  font-size: 0.9rem;
+  font-weight: 650;
+}
+
+.context-attachment-copy small {
+  color: var(--color-text-secondary);
+  font-size: 0.78rem;
+  letter-spacing: 0;
+}
+
+.context-attachment > button {
+  position: absolute;
+  top: 7px;
+  right: 7px;
+  width: 24px;
+  min-width: 24px;
+  min-height: 24px;
+  border: 0;
+  border-radius: 50%;
+  background: var(--color-button-secondary);
+  color: var(--color-button-secondary-text);
+  padding: 0;
+}
+
+.context-attachment > button:hover:not(:disabled) {
+  background: var(--color-button-active);
+  color: var(--color-button-active-text);
 }
 
 .context-chip {
