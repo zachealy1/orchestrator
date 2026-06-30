@@ -136,6 +136,7 @@ function RunTraceDropdown({ runView }: { runView: RunViewState }) {
           {formatDuration(runView.elapsedMs)}
         </span>
         <span>{formatTokenCount(runView)}</span>
+        <ChevronDown className="run-trace-chevron" size={15} aria-hidden="true" />
       </summary>
       <RunActivityGroups runView={runView} />
       <StreamEventList events={runView.streamEvents} />

@@ -1149,6 +1149,15 @@ summary.run-live-metrics::-webkit-details-marker {
   display: none;
 }
 
+.run-trace-chevron {
+  color: var(--color-icon-muted);
+  transition: transform 140ms ease;
+}
+
+.stream-trace[open] .run-trace-chevron {
+  transform: rotate(180deg);
+}
+
 .stream-event-list {
   display: grid;
   min-width: 0;
