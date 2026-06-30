@@ -643,6 +643,67 @@ describe("App Codex auth", () => {
     );
   });
 
+  it("shows git status markers for workspaces that are not selected", async () => {
+    const otherWorkspace = {
+      ...workspace,
+      id: 2,
+      path: "/repo/other",
+      label: "other",
+    };
+
+    mocks.listWorkspacesMock.mockResolvedValue([workspace, otherWorkspace]);
+    mocks.listWorkspaceGitStatusMock.mockImplementation(async (workspacePath: string) => {
+      if (workspacePath === otherWorkspace.path) {
+        return {
+          workspacePath: otherWorkspace.path,
+          gitRoot: otherWorkspace.path,
+          files: [
+            {
+              path: "/repo/other/Changed.ts",
+              relativePath: "Changed.ts",
+              oldRelativePath: null,
+              indexStatus: " ",
+              worktreeStatus: "M",
+              statusKind: "modified",
+              badge: "M",
+            },
+          ],
+        };
+      }
+
+      return {
+        workspacePath: workspace.path,
+        gitRoot: workspace.path,
+        files: [],
+      };
+    });
+
+    const { user } = await renderApp();
+    const workspaceNav = screen.getByRole("navigation", {
+      name: "Workspaces",
+    });
+
+    await waitFor(() =>
+      expect(mocks.listWorkspaceGitStatusMock).toHaveBeenCalledWith(
+        otherWorkspace.path,
+      ),
+    );
+    expect(
+      within(within(workspaceNav).getByTitle("other")).getByLabelText(
+        "Contains changes",
+      ),
+    ).toBeInTheDocument();
+
+    await user.click(
+      within(workspaceNav).getByRole("button", { name: "Expand other" }),
+    );
+
+    expect(await within(workspaceNav).findByTitle("Changed.ts")).toBeInTheDocument();
+    expect(within(workspaceNav).getByLabelText("modified file")).toHaveTextContent(
+      "M",
+    );
+  });
+
   it("renders a selected folder banner with workspace, branch, and clean git state", async () => {
     await renderApp();
 

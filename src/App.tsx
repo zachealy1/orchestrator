@@ -164,6 +164,8 @@ const PREVIEW_DRAWER_RESIZE_LARGE_STEP = 80;
 const DIFF_DRAWER_PREFERRED_WIDTH = 860;
 const DIFF_SIDE_BY_SIDE_MIN_WIDTH = 760;
 const GIT_STATUS_AUTO_REFRESH_INTERVAL_MS = 3000;
+const EMPTY_GIT_STATUS_BY_PATH = new Map<string, WorkspaceGitFileStatus>();
+const EMPTY_DIRTY_DIRECTORY_PATHS = new Set<string>();
 
 type AppView = "task" | "analytics" | "settings";
 
@@ -551,24 +553,39 @@ function App() {
         error: null,
       }
     : null;
+  const gitStatusByWorkspaceId = useMemo(() => {
+    const maps = new Map<number, Map<string, WorkspaceGitFileStatus>>();
+    Object.entries(gitStatusStates).forEach(([workspaceId, state]) => {
+      const statusByPath = new Map<string, WorkspaceGitFileStatus>();
+      state.snapshot?.files.forEach((file) => {
+        statusByPath.set(file.relativePath, file);
+      });
+      maps.set(Number(workspaceId), statusByPath);
+    });
+    return maps;
+  }, [gitStatusStates]);
+  const dirtyDirectoryPathsByWorkspaceId = useMemo(() => {
+    const maps = new Map<number, Set<string>>();
+    Object.entries(gitStatusStates).forEach(([workspaceId, state]) => {
+      const paths = new Set<string>();
+      state.snapshot?.files.forEach((file) => {
+        paths.add("");
+        const parts = file.relativePath.split("/");
+        for (let index = 1; index < parts.length; index += 1) {
+          paths.add(parts.slice(0, index).join("/"));
+        }
+      });
+      maps.set(Number(workspaceId), paths);
+    });
+    return maps;
+  }, [gitStatusStates]);
   const gitStatusByRelativePath = useMemo(() => {
-    const map = new Map<string, WorkspaceGitFileStatus>();
-    selectedGitStatusState?.snapshot?.files.forEach((file) => {
-      map.set(file.relativePath, file);
-    });
-    return map;
-  }, [selectedGitStatusState?.snapshot]);
-  const dirtyDirectoryPaths = useMemo(() => {
-    const paths = new Set<string>();
-    selectedGitStatusState?.snapshot?.files.forEach((file) => {
-      paths.add("");
-      const parts = file.relativePath.split("/");
-      for (let index = 1; index < parts.length; index += 1) {
-        paths.add(parts.slice(0, index).join("/"));
-      }
-    });
-    return paths;
-  }, [selectedGitStatusState?.snapshot]);
+    if (!selectedWorkspace) {
+      return EMPTY_GIT_STATUS_BY_PATH;
+    }
+
+    return gitStatusByWorkspaceId.get(selectedWorkspace.id) ?? EMPTY_GIT_STATUS_BY_PATH;
+  }, [gitStatusByWorkspaceId, selectedWorkspace]);
   const selectedGitSummary = useMemo(
     () => summarizeWorkspaceGitStatus(selectedGitStatusState?.snapshot ?? null),
     [selectedGitStatusState?.snapshot],
@@ -664,11 +681,27 @@ function App() {
     requiresOpenaiAuth,
   ]);
   const previewGitStatus = useMemo(
-    () =>
-      previewState.file
-        ? gitStatusByRelativePath.get(previewState.file.relativePath) ?? null
-        : null,
-    [gitStatusByRelativePath, previewState.file],
+    () => {
+      if (!previewState.file) {
+        return null;
+      }
+
+      const workspace =
+        workspaces.find((candidate) =>
+          pathBelongsToWorkspace(previewState.file?.path ?? "", candidate.path),
+        ) ?? selectedWorkspace;
+
+      if (!workspace) {
+        return null;
+      }
+
+      return (
+        gitStatusByWorkspaceId
+          .get(workspace.id)
+          ?.get(previewState.file.relativePath) ?? null
+      );
+    },
+    [gitStatusByWorkspaceId, previewState.file, selectedWorkspace, workspaces],
   );
   const previewDiffSections = useMemo(
     () => previewState.diff?.sections ?? [],
@@ -719,7 +752,13 @@ function App() {
   }, [selectedWorkspace]);
 
   useEffect(() => {
-    if (!selectedWorkspace) {
+    workspaces.forEach((workspace) => {
+      void refreshWorkspaceGitStatus(workspace, { showLoading: false });
+    });
+  }, [workspaces]);
+
+  useEffect(() => {
+    if (workspaces.length === 0) {
       return;
     }
 
@@ -732,10 +771,18 @@ function App() {
       }
 
       timeoutId = window.setTimeout(() => {
-        void refreshWorkspaceGitStatus(selectedWorkspace, { showLoading: false })
+        Promise.all(
+          workspaces.map((workspace) =>
+            refreshWorkspaceGitStatus(workspace, { showLoading: false }).catch(
+              () => undefined,
+            ),
+          ),
+        )
           .catch(() => undefined)
           .finally(() => {
-            refreshVisibleWorkspaceDirectories(selectedWorkspace);
+            workspaces.forEach((workspace) => {
+              refreshVisibleWorkspaceDirectories(workspace);
+            });
             scheduleRefresh();
           });
       }, GIT_STATUS_AUTO_REFRESH_INTERVAL_MS);
@@ -749,7 +796,7 @@ function App() {
         window.clearTimeout(timeoutId);
       }
     };
-  }, [expandedDirectoryPaths, expandedWorkspaceIds, selectedWorkspace]);
+  }, [expandedDirectoryPaths, expandedWorkspaceIds, workspaces]);
 
   useEffect(() => {
     selectedWorkspaceRef.current = selectedWorkspace;
@@ -3163,13 +3210,12 @@ function App() {
     directoryPath: string,
     entries: WorkspaceTreeEntry[],
   ) {
-    if (selectedWorkspace?.id !== workspace.id) {
-      return entries;
-    }
-
+    const workspaceGitStatusByRelativePath =
+      workspaceGitStatusMap(workspace);
     const visibleEntries = entries.filter(
       (entry) =>
-        gitStatusByRelativePath.get(entry.relativePath)?.statusKind !== "deleted",
+        workspaceGitStatusByRelativePath.get(entry.relativePath)?.statusKind !==
+        "deleted",
     );
     const byRelativePath = new Map(
       visibleEntries.map((entry) => [entry.relativePath, entry]),
@@ -3177,7 +3223,7 @@ function App() {
     const merged = [...visibleEntries];
     const directoryRelativePath = relativeDirectoryPath(workspace, directoryPath);
 
-    selectedGitStatusState?.snapshot?.files.forEach((file) => {
+    gitStatusStates[workspace.id]?.snapshot?.files.forEach((file) => {
       if (file.statusKind === "deleted") {
         return;
       }
@@ -3204,19 +3250,25 @@ function App() {
   }
 
   function workspaceEntryGitStatus(workspace: Workspace, entry: WorkspaceTreeEntry) {
-    if (selectedWorkspace?.id !== workspace.id) {
-      return null;
-    }
-
-    return gitStatusByRelativePath.get(entry.relativePath) ?? null;
+    return workspaceGitStatusMap(workspace).get(entry.relativePath) ?? null;
   }
 
   function workspaceDirectoryHasChanges(workspace: Workspace, entry: WorkspaceTreeEntry) {
-    if (selectedWorkspace?.id !== workspace.id) {
-      return false;
-    }
+    return (
+      entry.kind === "directory" &&
+      workspaceDirtyDirectoryPaths(workspace).has(entry.relativePath)
+    );
+  }
 
-    return entry.kind === "directory" && dirtyDirectoryPaths.has(entry.relativePath);
+  function workspaceGitStatusMap(workspace: Workspace) {
+    return gitStatusByWorkspaceId.get(workspace.id) ?? EMPTY_GIT_STATUS_BY_PATH;
+  }
+
+  function workspaceDirtyDirectoryPaths(workspace: Workspace) {
+    return (
+      dirtyDirectoryPathsByWorkspaceId.get(workspace.id) ??
+      EMPTY_DIRTY_DIRECTORY_PATHS
+    );
   }
 
   function renderWorkspaceDirectory(
@@ -3403,8 +3455,7 @@ function App() {
                 const expanded = expandedWorkspaceIds.has(workspace.id);
                 const selected = workspace.id === selectedWorkspace?.id;
                 const active = selected && activeView === "task";
-                const workspaceDirty =
-                  selected && dirtyDirectoryPaths.has("");
+                const workspaceDirty = workspaceDirtyDirectoryPaths(workspace).has("");
 
                 return (
                   <div className="workspace-tree-branch" key={workspace.id}>
@@ -4525,6 +4576,15 @@ function gitStatusChildEntry(
 
 function normalizeWorkspacePath(path: string) {
   return path.replace(/\\/g, "/").replace(/\/+$/, "");
+}
+
+function pathBelongsToWorkspace(path: string, workspacePath: string) {
+  const normalizedPath = normalizeWorkspacePath(path);
+  const normalizedWorkspacePath = normalizeWorkspacePath(workspacePath);
+  return (
+    normalizedPath === normalizedWorkspacePath ||
+    normalizedPath.startsWith(`${normalizedWorkspacePath}/`)
+  );
 }
 
 function joinWorkspacePath(workspacePath: string, relativePath: string) {
