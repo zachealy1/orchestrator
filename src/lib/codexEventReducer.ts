@@ -38,6 +38,13 @@ export type RunCommandActivity = {
   output: string;
 };
 
+type AgentMessagePhase = "commentary" | "final_answer" | null;
+
+type AgentMessageState = {
+  text: string;
+  phase: AgentMessagePhase;
+};
+
 export type RunViewState = {
   status: "idle" | "connecting" | "running" | "completed" | "failed" | "interrupted";
   threadId: string | null;
@@ -49,6 +56,8 @@ export type RunViewState = {
   streamEvents: StreamEvent[];
   editedFiles: RunEditedFile[];
   commands: RunCommandActivity[];
+  agentMessagesById: Record<string, AgentMessageState>;
+  finalMessageItemId: string | null;
   latestPlan: string;
   latestDiff: string;
   finalMessage: string;
@@ -68,6 +77,8 @@ export const emptyRunView: RunViewState = {
   streamEvents: [],
   editedFiles: [],
   commands: [],
+  agentMessagesById: {},
+  finalMessageItemId: null,
   latestPlan: "",
   latestDiff: "",
   finalMessage: "",
@@ -155,10 +166,11 @@ export function applyCodexMessage(
     }
     case "item/agentMessage/delta": {
       const delta = readString(params.delta) ?? "";
-      return {
-        ...appendStreamEvent(appendLine(state, "assistant", delta), "message", delta, true),
-        finalMessage: `${state.finalMessage}${delta}`,
-      };
+      return appendAgentMessageDelta(
+        appendStreamEvent(appendLine(state, "assistant", delta), "message", delta, true),
+        params,
+        delta,
+      );
     }
     case "item/reasoning/summaryTextDelta":
     case "item/reasoning/textDelta":
@@ -209,6 +221,9 @@ export function applyCodexMessage(
     }
     case "item/completed": {
       const item = readObject(params.item);
+      if (item.type === "agentMessage") {
+        return completeAgentMessage(state, params, item);
+      }
       if (item.type === "subAgentActivity") {
         const text = `Subagent activity completed: ${readString(item.kind) ?? "done"}`;
         return appendStreamEvent(
@@ -289,6 +304,109 @@ export function updateRunElapsed(
   }
 
   return { ...state, elapsedMs };
+}
+
+function appendAgentMessageDelta(
+  state: RunViewState,
+  params: Record<string, unknown>,
+  delta: string,
+) {
+  if (!delta) {
+    return state;
+  }
+
+  const itemId = extractAgentMessageId(params, readObject(params.item), state);
+  const current = state.agentMessagesById[itemId] ?? {
+    text: "",
+    phase: null,
+  };
+
+  return {
+    ...state,
+    agentMessagesById: {
+      ...state.agentMessagesById,
+      [itemId]: {
+        ...current,
+        text: `${current.text}${delta}`,
+      },
+    },
+  };
+}
+
+function completeAgentMessage(
+  state: RunViewState,
+  params: Record<string, unknown>,
+  item: Record<string, unknown>,
+) {
+  const itemId = extractAgentMessageId(params, item, state);
+  const current = state.agentMessagesById[itemId] ?? {
+    text: "",
+    phase: null,
+  };
+  const phase = normalizeAgentMessagePhase(readString(item.phase));
+  const text = readString(item.text) ?? current.text;
+  const nextState: RunViewState = {
+    ...state,
+    agentMessagesById: {
+      ...state.agentMessagesById,
+      [itemId]: {
+        text,
+        phase,
+      },
+    },
+  };
+
+  if (!text.trim() || phase === "commentary") {
+    return nextState;
+  }
+
+  if (phase === "final_answer") {
+    return {
+      ...nextState,
+      finalMessage: mergeFinalAnswer(nextState, itemId, text),
+      finalMessageItemId: itemId,
+    };
+  }
+
+  return {
+    ...nextState,
+    finalMessage: text,
+    finalMessageItemId: itemId,
+  };
+}
+
+function extractAgentMessageId(
+  params: Record<string, unknown>,
+  item: Record<string, unknown>,
+  state: RunViewState,
+) {
+  return (
+    readString(params.itemId) ??
+    readString(params.id) ??
+    readString(item.id) ??
+    state.finalMessageItemId ??
+    "__legacy_agent_message__"
+  );
+}
+
+function normalizeAgentMessagePhase(value: string | null): AgentMessagePhase {
+  return value === "commentary" || value === "final_answer" ? value : null;
+}
+
+function mergeFinalAnswer(state: RunViewState, itemId: string, text: string) {
+  if (!state.finalMessage || state.finalMessageItemId === itemId) {
+    return text;
+  }
+
+  const currentFinalMessage =
+    state.finalMessageItemId === null
+      ? null
+      : state.agentMessagesById[state.finalMessageItemId];
+  if (currentFinalMessage?.phase !== "final_answer") {
+    return text;
+  }
+
+  return `${state.finalMessage}\n\n${text}`;
 }
 
 function appendLine(

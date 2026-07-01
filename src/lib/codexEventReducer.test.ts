@@ -42,23 +42,132 @@ describe("codexEventReducer", () => {
     expect(state.tokenUsage?.cachedInputTokens).toBe(50);
   });
 
-  it("aggregates assistant deltas into the final message", () => {
+  it("streams commentary assistant deltas without adding them to the final message", () => {
     let state = applyCodexMessage(emptyRunView, {
       method: "item/agentMessage/delta",
-      params: { delta: "Done" },
+      params: { itemId: "commentary-1", delta: "I will inspect the repo." },
     });
     state = applyCodexMessage(state, {
-      method: "item/agentMessage/delta",
-      params: { delta: "." },
+      method: "item/completed",
+      params: {
+        item: {
+          type: "agentMessage",
+          id: "commentary-1",
+          text: "I will inspect the repo.",
+          phase: "commentary",
+        },
+      },
     });
 
-    expect(state.finalMessage).toBe("Done.");
+    expect(state.finalMessage).toBe("");
     expect(state.console).toHaveLength(1);
     expect(state.streamEvents).toHaveLength(1);
     expect(state.streamEvents[0]).toMatchObject({
       kind: "message",
+      text: "I will inspect the repo.",
+    });
+  });
+
+  it("uses final-answer assistant messages as the completed summary", () => {
+    let state = applyCodexMessage(emptyRunView, {
+      method: "item/agentMessage/delta",
+      params: { itemId: "final-1", delta: "Done" },
+    });
+    state = applyCodexMessage(state, {
+      method: "item/agentMessage/delta",
+      params: { itemId: "final-1", delta: "." },
+    });
+    state = applyCodexMessage(state, {
+      method: "item/completed",
+      params: {
+        item: {
+          type: "agentMessage",
+          id: "final-1",
+          text: "Done.",
+          phase: "final_answer",
+        },
+      },
+    });
+
+    expect(state.finalMessage).toBe("Done.");
+    expect(state.finalMessageItemId).toBe("final-1");
+    expect(state.streamEvents[0]).toMatchObject({
+      kind: "message",
       text: "Done.",
     });
+  });
+
+  it("keeps streamed narration out of the summary when a final answer arrives", () => {
+    let state = applyCodexMessage(emptyRunView, {
+      method: "item/agentMessage/delta",
+      params: { itemId: "commentary-1", delta: "I will inspect first." },
+    });
+    state = applyCodexMessage(state, {
+      method: "item/completed",
+      params: {
+        item: {
+          type: "agentMessage",
+          id: "commentary-1",
+          text: "I will inspect first.",
+          phase: "commentary",
+        },
+      },
+    });
+    state = applyCodexMessage(state, {
+      method: "item/agentMessage/delta",
+      params: { itemId: "final-1", delta: "Added `hello-world.txt`." },
+    });
+    state = applyCodexMessage(state, {
+      method: "item/completed",
+      params: {
+        item: {
+          type: "agentMessage",
+          id: "final-1",
+          text: "Added `hello-world.txt`.",
+          phase: "final_answer",
+        },
+      },
+    });
+
+    expect(state.finalMessage).toBe("Added `hello-world.txt`.");
+    expect(state.streamEvents[0]).toMatchObject({
+      kind: "message",
+      text: "I will inspect first.Added `hello-world.txt`.",
+    });
+  });
+
+  it("falls back to the latest completed assistant message when phase is missing", () => {
+    let state = applyCodexMessage(emptyRunView, {
+      method: "item/agentMessage/delta",
+      params: { itemId: "legacy-1", delta: "Interim text." },
+    });
+    state = applyCodexMessage(state, {
+      method: "item/completed",
+      params: {
+        item: {
+          type: "agentMessage",
+          id: "legacy-1",
+          text: "Interim text.",
+        },
+      },
+    });
+    state = applyCodexMessage(state, {
+      method: "item/agentMessage/delta",
+      params: { itemId: "legacy-2", delta: "Final text." },
+    });
+    state = applyCodexMessage(state, {
+      method: "item/completed",
+      params: {
+        item: {
+          type: "agentMessage",
+          id: "legacy-2",
+          text: "Final text.",
+        },
+      },
+    });
+
+    expect(state.finalMessage).toBe("Final text.");
+    expect(state.finalMessageItemId).toBe("legacy-2");
   });
 
   it("tracks stream events and elapsed run time", () => {

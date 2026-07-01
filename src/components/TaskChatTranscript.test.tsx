@@ -90,7 +90,7 @@ describe("TaskChatTranscript", () => {
                 {
                   id: "message-1",
                   kind: "message",
-                  text: "Removed the border.",
+                  text: "I will inspect the current styling first.",
                   timestamp: "2026-06-30T17:30:01Z",
                 },
               ],
@@ -104,14 +104,24 @@ describe("TaskChatTranscript", () => {
     const summary = screen.getByLabelText("Run summary");
 
     expect(screen.getByLabelText("Submitted prompt")).toHaveTextContent("Finish the task");
+    expect(
+      within(summary).queryByText("I will inspect the current styling first."),
+    ).not.toBeInTheDocument();
     expect(within(summary).getByText("Updated:")).toBeInTheDocument();
     expect(within(summary).getByText("src/App.css")).toBeInTheDocument();
     const traceTrigger = screen.getByLabelText("Run trace");
     expect(traceTrigger.tagName.toLowerCase()).toBe("summary");
+    expect(traceTrigger.querySelector(".run-trace-chevron")).toHaveClass(
+      "lucide-chevron-right",
+    );
     expect(within(traceTrigger).getByText("2m 3s")).toBeInTheDocument();
     expect(within(traceTrigger).getByText("69,839 tokens")).toBeInTheDocument();
     expect(screen.queryByText("2m 3s • 69,839 tokens")).not.toBeInTheDocument();
-    expect(screen.getByLabelText("App-server stream")).toBeInTheDocument();
+    expect(
+      within(screen.getByLabelText("App-server stream")).getByText(
+        "I will inspect the current styling first.",
+      ),
+    ).toBeInTheDocument();
   });
 
   it("renders grouped edited files and commands", () => {

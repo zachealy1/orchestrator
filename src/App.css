@@ -1221,7 +1221,7 @@ summary.run-live-metrics::-webkit-details-marker {
 }
 
 .stream-trace[open] .run-trace-chevron {
-  transform: rotate(180deg);
+  transform: rotate(90deg);
 }
 
 .stream-event-list {

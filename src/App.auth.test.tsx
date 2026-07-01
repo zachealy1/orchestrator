@@ -2196,7 +2196,33 @@ describe("App Codex auth", () => {
 
     await emitCodexNotification({
       method: "item/agentMessage/delta",
-      params: { delta: "Done." },
+      params: { itemId: "commentary-1", delta: "I will inspect the repo first." },
+    });
+    await emitCodexNotification({
+      method: "item/completed",
+      params: {
+        item: {
+          type: "agentMessage",
+          id: "commentary-1",
+          text: "I will inspect the repo first.",
+          phase: "commentary",
+        },
+      },
+    });
+    await emitCodexNotification({
+      method: "item/agentMessage/delta",
+      params: { itemId: "final-1", delta: "Done." },
+    });
+    await emitCodexNotification({
+      method: "item/completed",
+      params: {
+        item: {
+          type: "agentMessage",
+          id: "final-1",
+          text: "Done.",
+          phase: "final_answer",
+        },
+      },
     });
     await emitCodexNotification({
       method: "turn/completed",
@@ -2214,6 +2240,11 @@ describe("App Codex auth", () => {
       ),
     );
     expect(within(screen.getByLabelText("Run summary")).getByText("Done.")).toBeInTheDocument();
+    expect(
+      within(screen.getByLabelText("Run summary")).queryByText(
+        "I will inspect the repo first.",
+      ),
+    ).not.toBeInTheDocument();
     expect(screen.queryByText("completed")).not.toBeInTheDocument();
   });
 
