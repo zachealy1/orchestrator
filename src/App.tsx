@@ -288,6 +288,10 @@ type RefreshWorkspaceGitStatusOptions = {
   showLoading?: boolean;
 };
 
+type OpenWorkspaceFilePreviewOptions = {
+  forceRefresh?: boolean;
+};
+
 function workspaceCacheKey(workspacePath: string, childPath: string) {
   return `${workspacePath}\u0000${childPath}`;
 }
@@ -453,6 +457,7 @@ function App() {
     diff: null,
     diffError: null,
   });
+  const previewStateRef = useRef<WorkspacePreviewState>(previewState);
   const filePreviewCache = useRef(new Map<string, WorkspaceFilePreview>());
   const filePreviewRequestCache = useRef(
     new Map<string, Promise<WorkspaceFilePreview>>(),
@@ -836,6 +841,10 @@ function App() {
   useEffect(() => {
     selectedWorkspaceRef.current = selectedWorkspace;
   }, [selectedWorkspace]);
+
+  useEffect(() => {
+    previewStateRef.current = previewState;
+  }, [previewState]);
 
   useEffect(() => {
     if (
@@ -2729,6 +2738,9 @@ function App() {
         await updateTaskStatus(currentTaskId.current, status);
       }
       if (selectedWorkspaceRef.current) {
+        invalidateWorkspacePreviewCaches(selectedWorkspaceRef.current, undefined, {
+          reloadOpenPreview: true,
+        });
         await refreshWorkspaceData(selectedWorkspaceRef.current.id);
         await refreshWorkspaceGitStatus(selectedWorkspaceRef.current);
       }
@@ -2922,12 +2934,16 @@ function App() {
   async function openWorkspaceFilePreview(
     workspace: Workspace,
     file: WorkspaceTreeEntry,
+    options: OpenWorkspaceFilePreviewOptions = {},
   ) {
     const requestId = previewRequestId.current + 1;
     previewRequestId.current = requestId;
     const gitStatus = gitStatusByRelativePath.get(file.relativePath) ?? null;
     const mode = gitStatus?.statusKind === "deleted" || file.gitGhost ? "diff" : "preview";
     const cacheKey = workspaceCacheKey(workspace.path, file.path);
+    if (options.forceRefresh) {
+      invalidateWorkspacePreviewCaches(workspace, file.path);
+    }
     const cachedPreview = filePreviewCache.current.get(cacheKey) ?? null;
     const cachedDiff = fileDiffCache.current.get(cacheKey) ?? null;
     setPreviewState({
@@ -2979,8 +2995,60 @@ function App() {
       return false;
     }
 
-    void openWorkspaceFilePreview(workspace, file);
+    void openWorkspaceFilePreview(workspace, file, { forceRefresh: true });
     return true;
+  }
+
+  function invalidateWorkspacePreviewCaches(
+    workspace: Workspace,
+    filePath?: string,
+    options: { reloadOpenPreview?: boolean } = {},
+  ) {
+    deletePreviewCacheEntries(filePreviewCache.current, workspace, filePath);
+    deletePreviewCacheEntries(filePreviewRequestCache.current, workspace, filePath);
+    deletePreviewCacheEntries(fileDiffCache.current, workspace, filePath);
+    deletePreviewCacheEntries(fileDiffRequestCache.current, workspace, filePath);
+
+    if (!options.reloadOpenPreview) {
+      return;
+    }
+
+    const openPreview = previewStateRef.current;
+    const openFile = openPreview.file;
+    if (
+      !openFile ||
+      !pathBelongsToWorkspace(openFile.path, workspace.path) ||
+      (filePath && openFile.path !== filePath)
+    ) {
+      return;
+    }
+
+    const requestId = previewRequestId.current + 1;
+    previewRequestId.current = requestId;
+    if (openPreview.mode === "diff") {
+      void loadWorkspaceFileDiff(workspace, openFile, requestId);
+      return;
+    }
+
+    void loadWorkspaceFilePreview(workspace, openFile, requestId);
+  }
+
+  function deletePreviewCacheEntries<T>(
+    cache: Map<string, T>,
+    workspace: Workspace,
+    filePath?: string,
+  ) {
+    if (filePath) {
+      cache.delete(workspaceCacheKey(workspace.path, filePath));
+      return;
+    }
+
+    const prefix = `${workspace.path}\u0000`;
+    for (const key of cache.keys()) {
+      if (key.startsWith(prefix)) {
+        cache.delete(key);
+      }
+    }
   }
 
   async function loadWorkspaceFilePreview(
