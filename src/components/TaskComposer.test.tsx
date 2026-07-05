@@ -611,6 +611,26 @@ describe("TaskComposer", () => {
     expect(promptInput).toHaveValue("Fix TSX App.tsx ");
   });
 
+  it("inserts a real space before inline file references typed after text", async () => {
+    const selectedFile = {
+      path: "/repo/src/App.tsx",
+      name: "App.tsx",
+      source: "search" as const,
+      status: "ready" as const,
+    };
+    const { user, onPromptChange } = renderControlledComposer({
+      mentionSearchStatus: "loaded",
+      mentionResults: [selectedFile],
+    });
+
+    const promptInput = screen.getByLabelText("Prompt");
+    await user.type(promptInput, "Fix@app");
+    await user.keyboard("{Enter}");
+
+    expect(onPromptChange).toHaveBeenLastCalledWith("Fix TSX App.tsx ");
+    expect(promptInput).toHaveValue("Fix TSX App.tsx ");
+  });
+
   it("selects a mention with the mouse", async () => {
     const onMentionFileSelect = vi.fn();
     const selectedFile = {

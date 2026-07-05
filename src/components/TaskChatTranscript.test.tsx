@@ -174,7 +174,7 @@ describe("TaskChatTranscript", () => {
 
     const previewLink = screen.getByRole("link", { name: "hello-world.txt" });
     expect(previewLink).toHaveClass("markdown-preview-link");
-    expect(within(previewLink).getByText("Preview")).toBeInTheDocument();
+    expect(within(previewLink).queryByText("Preview")).not.toBeInTheDocument();
 
     fireEvent.click(previewLink);
 

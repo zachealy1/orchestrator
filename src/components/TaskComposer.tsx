@@ -1035,7 +1035,15 @@ function readComposerToken(value: string, caret: number): ComposerToken | null {
     end += 1;
   }
 
-  const token = value.slice(start, end);
+  let token = value.slice(start, end);
+  if (!token.startsWith("@") && token.includes("@")) {
+    const triggerIndex = token.lastIndexOf("@", caret - start);
+    if (triggerIndex >= 0) {
+      start += triggerIndex;
+      token = value.slice(start, end);
+    }
+  }
+
   if (!token.startsWith("@") && !token.startsWith("/")) {
     return null;
   }
@@ -1071,7 +1079,10 @@ function replaceComposerToken(
   token: ComposerToken,
   replacement: string,
 ) {
-  const before = value.slice(0, token.start);
+  const rawBefore = value.slice(0, token.start);
+  const needsLeadingSpace =
+    rawBefore.length > 0 && !/\s$/.test(rawBefore) && replacement.length > 0;
+  const before = needsLeadingSpace ? `${rawBefore} ` : rawBefore;
   let after = value.slice(token.end);
   after = /^\s/.test(after) ? after.replace(/^\s+/, " ") : ` ${after}`;
   const nextValue = `${before}${replacement}${after}`;

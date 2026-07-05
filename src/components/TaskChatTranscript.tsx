@@ -211,15 +211,7 @@ function RunSummary({
                   }
                 }}
               >
-                {previewable ? <FileText size={13} aria-hidden="true" /> : null}
-                <span className={previewable ? "markdown-preview-link-text" : undefined}>
-                  {children}
-                </span>
-                {previewable ? (
-                  <span className="markdown-preview-link-hint" aria-hidden="true">
-                    Preview
-                  </span>
-                ) : null}
+                {children}
               </a>
             );
           },

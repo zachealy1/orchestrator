@@ -1388,55 +1388,27 @@ summary.run-live-metrics::-webkit-details-marker {
 }
 
 .markdown-summary a.markdown-preview-link {
-  display: inline-flex;
-  gap: 6px;
-  align-items: center;
-  max-width: min(100%, 520px);
-  margin: 0 2px;
-  border: 1px solid color-mix(in srgb, var(--color-primary) 42%, transparent);
-  border-radius: 7px;
-  background: color-mix(
-    in srgb,
-    var(--color-selected-background) 82%,
-    var(--color-component-background)
-  );
-  color: var(--color-selected-text);
-  line-height: 1.28;
-  padding: 3px 8px;
-  vertical-align: -0.18em;
-  box-shadow: inset 0 -1px 0 color-mix(in srgb, var(--color-primary) 36%, transparent);
+  color: var(--color-primary);
   cursor: pointer;
+  text-decoration-line: none;
+  text-decoration-thickness: 1px;
+  text-underline-offset: 3px;
 }
 
 .markdown-summary a.markdown-preview-link:hover,
 .markdown-summary a.markdown-preview-link:focus-visible {
-  border-color: color-mix(in srgb, var(--color-primary) 68%, transparent);
-  background: var(--color-button-active);
-  text-decoration: none;
+  color: var(--color-secondary);
+  text-decoration-line: underline;
+  text-decoration-thickness: 2px;
 }
 
-.markdown-preview-link svg {
-  flex: 0 0 auto;
-  color: var(--color-icon);
-}
-
-.markdown-preview-link-text {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.markdown-preview-link-hint {
-  flex: 0 0 auto;
-  border-left: 1px solid color-mix(in srgb, var(--color-primary) 35%, transparent);
-  color: var(--color-text-secondary);
-  font-size: 0.68em;
-  font-weight: 700;
-  letter-spacing: 0;
-  line-height: 1;
-  padding-left: 6px;
-  text-transform: uppercase;
+.markdown-summary a.markdown-preview-link code {
+  border-radius: 0;
+  background: transparent;
+  color: inherit;
+  font-family: inherit;
+  font-size: inherit;
+  padding: 0;
 }
 
 .stream-trace {
@@ -2226,18 +2198,14 @@ select:disabled {
 
 .inline-context-mention {
   color: var(--color-primary);
-  margin-inline-start: 0.26em;
 }
 
 .inline-context-type {
-  display: inline-flex;
-  align-items: center;
+  display: inline;
   border-radius: 4px;
   background: var(--color-button-active);
   box-shadow: 0 0 0 2px var(--color-button-active);
   color: var(--color-button-active-text);
-  line-height: 1;
-  padding: 0.05em 0.16em;
   text-transform: uppercase;
 }
 
