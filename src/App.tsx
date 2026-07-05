@@ -5052,13 +5052,19 @@ function resolveResponseLinkPath(href: string, workspacePath: string) {
     try {
       const url = new URL(cleanHref);
       if (url.protocol === "file:") {
-        return safeDecodeURIComponent(url.pathname);
+        return stripResponseLinkLineReference(
+          safeDecodeURIComponent(url.pathname),
+          workspacePath,
+        );
       }
       if (
         (url.protocol === "http:" || url.protocol === "https:") &&
         isLocalhost(url.hostname)
       ) {
-        return safeDecodeURIComponent(url.pathname);
+        return stripResponseLinkLineReference(
+          safeDecodeURIComponent(url.pathname),
+          workspacePath,
+        );
       }
     } catch {
       return null;
@@ -5073,9 +5079,24 @@ function resolveResponseLinkPath(href: string, workspacePath: string) {
   }
 
   const decodedPath = safeDecodeURIComponent(pathOnly);
-  return decodedPath.startsWith("/")
+  const resolvedPath = decodedPath.startsWith("/")
     ? decodedPath
     : joinWorkspacePath(workspacePath, decodedPath);
+  return stripResponseLinkLineReference(resolvedPath, workspacePath);
+}
+
+function stripResponseLinkLineReference(path: string, workspacePath: string) {
+  const normalizedPath = normalizeWorkspacePath(path);
+  if (!pathBelongsToWorkspace(normalizedPath, workspacePath)) {
+    return normalizedPath;
+  }
+
+  const match = normalizedPath.match(/^(.*):\d+(?::\d+)?$/);
+  if (!match?.[1] || match[1].endsWith("/")) {
+    return normalizedPath;
+  }
+
+  return match[1];
 }
 
 function stripLinkSearchAndHash(href: string) {

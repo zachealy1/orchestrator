@@ -2301,6 +2301,61 @@ describe("App Codex auth", () => {
     );
   });
 
+  it("strips line references from completed summary file links before previewing", async () => {
+    prepareSignedInRun();
+    mocks.readWorkspaceFilePreviewMock.mockResolvedValue({
+      path: "/repo/orchestrator/hello-world.txt",
+      relativePath: "hello-world.txt",
+      content: "hello world\npoat",
+      truncated: false,
+      isBinary: false,
+    });
+
+    const { user } = await renderApp();
+    await startMockRun(user, "Update hello-world");
+
+    await emitCodexNotification({
+      method: "item/agentMessage/delta",
+      params: {
+        itemId: "final-1",
+        delta:
+          "Updated [hello-world.txt](http://localhost:1420/repo/orchestrator/hello-world.txt:8).",
+      },
+    });
+    await emitCodexNotification({
+      method: "item/completed",
+      params: {
+        item: {
+          type: "agentMessage",
+          id: "final-1",
+          text:
+            "Updated [hello-world.txt](http://localhost:1420/repo/orchestrator/hello-world.txt:8).",
+          phase: "final_answer",
+        },
+      },
+    });
+    await emitCodexNotification({
+      method: "turn/completed",
+      params: { turn: { status: "completed", durationMs: 1234 } },
+    });
+
+    await user.click(
+      within(screen.getByLabelText("Run summary")).getByRole("link", {
+        name: "hello-world.txt",
+      }),
+    );
+
+    await waitFor(() =>
+      expect(mocks.readWorkspaceFilePreviewMock).toHaveBeenCalledWith(
+        workspace.path,
+        "/repo/orchestrator/hello-world.txt",
+      ),
+    );
+    expect(screen.getByRole("complementary", { name: "File preview" })).toHaveTextContent(
+      "poat",
+    );
+  });
+
   it("opens fresh file contents from completed summary links after a run changes a cached file", async () => {
     prepareSignedInRun();
     const fileEntry = {
