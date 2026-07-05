@@ -327,7 +327,7 @@ function selectCommandsForEvent(
 
 function EditedFilesGroup({ files }: { files: RunEditedFile[] }) {
   return (
-    <details className="run-activity-group edited-files" open>
+    <details className="run-activity-group edited-files">
       <summary>
         <span className="run-activity-title">
           <Pencil size={15} aria-hidden="true" />
@@ -353,7 +353,7 @@ function EditedFilesGroup({ files }: { files: RunEditedFile[] }) {
 
 function CommandsGroup({ commands }: { commands: RunCommandActivity[] }) {
   return (
-    <details className="run-activity-group command-runs" open>
+    <details className="run-activity-group command-runs">
       <summary>
         <span className="run-activity-title">
           <Terminal size={15} aria-hidden="true" />

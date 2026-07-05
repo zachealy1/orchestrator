@@ -211,9 +211,15 @@ describe("TaskChatTranscript", () => {
     const activityGroups = screen.getAllByLabelText("Run activity groups");
     const editedGroup = activityGroups[0];
     const commandGroup = activityGroups[1];
+    const editedDetails = editedGroup.querySelector("details.edited-files");
+    const commandDetails = commandGroup.querySelector("details.command-runs");
 
     expect(within(editedGroup).getByText("Edited 2 files")).toBeInTheDocument();
     expect(within(commandGroup).getByText("Ran 2 commands")).toBeInTheDocument();
+    expect(editedDetails).toBeInstanceOf(HTMLDetailsElement);
+    expect(commandDetails).toBeInstanceOf(HTMLDetailsElement);
+    expect((editedDetails as HTMLDetailsElement).open).toBe(false);
+    expect((commandDetails as HTMLDetailsElement).open).toBe(false);
     expect(within(editedGroup).getByText("App.css")).toBeInTheDocument();
     expect(within(editedGroup).getByText("+11")).toBeInTheDocument();
     expect(within(editedGroup).getByText("-2")).toBeInTheDocument();
