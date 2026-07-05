@@ -187,26 +187,72 @@ function RunSummary({
     <div className="run-summary markdown-summary" aria-label="Run summary">
       <ReactMarkdown
         components={{
-          a: ({ href, children, ...props }) => (
-            <a
-              {...props}
-              href={href}
-              onClick={(event: ReactMouseEvent<HTMLAnchorElement>) => {
-                if (href && onOpenFileLink?.(href)) {
-                  event.preventDefault();
-                  event.stopPropagation();
-                }
-              }}
-            >
-              {children}
-            </a>
-          ),
+          a: ({ href, children, ...props }) => {
+            const previewable = Boolean(
+              href && onOpenFileLink && isPreviewableSummaryLink(href),
+            );
+            const className = [
+              props.className,
+              previewable ? "markdown-preview-link" : null,
+            ]
+              .filter(Boolean)
+              .join(" ");
+
+            return (
+              <a
+                {...props}
+                className={className || undefined}
+                href={href}
+                title={previewable ? "Click to preview file" : props.title}
+                onClick={(event: ReactMouseEvent<HTMLAnchorElement>) => {
+                  if (href && onOpenFileLink?.(href)) {
+                    event.preventDefault();
+                    event.stopPropagation();
+                  }
+                }}
+              >
+                {previewable ? <FileText size={13} aria-hidden="true" /> : null}
+                <span className={previewable ? "markdown-preview-link-text" : undefined}>
+                  {children}
+                </span>
+                {previewable ? (
+                  <span className="markdown-preview-link-hint" aria-hidden="true">
+                    Preview
+                  </span>
+                ) : null}
+              </a>
+            );
+          },
         }}
       >
         {runView.finalMessage}
       </ReactMarkdown>
     </div>
   );
+}
+
+function isPreviewableSummaryLink(href: string) {
+  const value = href.trim();
+  if (!value || value.startsWith("#")) {
+    return false;
+  }
+
+  if (value.startsWith("/") || value.startsWith("./") || value.startsWith("../")) {
+    return true;
+  }
+
+  try {
+    const url = new URL(value);
+    return (
+      url.protocol === "file:" ||
+      ((url.protocol === "http:" || url.protocol === "https:") &&
+        (url.hostname === "localhost" ||
+          url.hostname === "127.0.0.1" ||
+          url.hostname === "::1"))
+    );
+  } catch {
+    return !/^[a-z][a-z\d+.-]*:/i.test(value);
+  }
 }
 
 function RunTimeline({ runView }: { runView: RunViewState }) {

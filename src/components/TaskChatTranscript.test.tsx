@@ -172,7 +172,11 @@ describe("TaskChatTranscript", () => {
       />,
     );
 
-    fireEvent.click(screen.getByRole("link", { name: "hello-world.txt" }));
+    const previewLink = screen.getByRole("link", { name: "hello-world.txt" });
+    expect(previewLink).toHaveClass("markdown-preview-link");
+    expect(within(previewLink).getByText("Preview")).toBeInTheDocument();
+
+    fireEvent.click(previewLink);
 
     expect(onOpenFileLink).toHaveBeenCalledWith("/repo/hello-world.txt");
   });
