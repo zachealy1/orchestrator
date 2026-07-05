@@ -538,6 +538,24 @@ describe("TaskComposer", () => {
     expect(promptInput).toHaveValue("First line\nSecond line");
   });
 
+  it("disables text substitutions and normalizes smart quotes back to typed quotes", () => {
+    const onPromptChange = vi.fn();
+    renderControlledComposer({ onPromptChange });
+    const promptInput = screen.getByLabelText("Prompt") as HTMLTextAreaElement;
+
+    expect(promptInput).toHaveAttribute("autocapitalize", "none");
+    expect(promptInput).toHaveAttribute("autocomplete", "off");
+    expect(promptInput).toHaveAttribute("autocorrect", "off");
+    expect(promptInput).toHaveAttribute("spellcheck", "false");
+
+    fireEvent.change(promptInput, {
+      target: { value: "\u201chello\u201d and \u2018world\u2019" },
+    });
+
+    expect(onPromptChange).toHaveBeenLastCalledWith("\"hello\" and 'world'");
+    expect(promptInput).toHaveValue("\"hello\" and 'world'");
+  });
+
   it("opens workspace file mentions while typing an @ token", async () => {
     const onMentionSearch = vi.fn();
     const { user } = renderControlledComposer({

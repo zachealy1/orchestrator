@@ -233,7 +233,7 @@ export function TaskComposer({
   }
 
   function handlePromptChange(event: ChangeEvent<HTMLTextAreaElement>) {
-    const nextPrompt = event.currentTarget.value;
+    const nextPrompt = normalizePromptQuotes(event.currentTarget.value);
     onPromptChange(nextPrompt);
     updateSearchFromPrompt(nextPrompt, event.currentTarget.selectionStart);
   }
@@ -518,8 +518,12 @@ export function TaskComposer({
               onChange={handlePromptChange}
               onKeyDown={handlePromptKeyDown}
               onBlur={closeActiveSearch}
+              autoCapitalize="none"
+              autoComplete="off"
+              autoCorrect="off"
               placeholder="Do anything"
               rows={1}
+              spellCheck={false}
             />
           </label>
 
@@ -1298,6 +1302,12 @@ function isFileNameBoundaryCharacter(value: string) {
 
 function inlineFilePromptToken(file: ComposerContextFile) {
   return `${contextFileExtensionLabel(file.name)} ${file.name}`;
+}
+
+function normalizePromptQuotes(prompt: string) {
+  return prompt
+    .replace(/[\u201c\u201d]/g, "\"")
+    .replace(/[\u2018\u2019]/g, "'");
 }
 
 function relativeFileLabel(file: ComposerContextFile) {
