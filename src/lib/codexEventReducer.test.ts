@@ -317,6 +317,10 @@ describe("codexEventReducer", () => {
         status: "added",
       },
     ]);
+    expect(state.streamEvents[0]).toMatchObject({
+      kind: "file",
+      activityIds: ["src/App.tsx", "src/New.ts"],
+    });
 
     state = applyCodexMessage(state, {
       method: "turn/diff/updated",
@@ -367,7 +371,18 @@ describe("codexEventReducer", () => {
     ]);
     expect(state.streamEvents[0]).toMatchObject({
       kind: "command",
+      text: "Running npm test -- --run",
+      activityIds: ["cmd-1"],
+    });
+    expect(state.streamEvents[1]).toMatchObject({
+      kind: "command",
       text: "tests passed\n",
+      activityIds: ["cmd-1"],
+    });
+    expect(state.streamEvents[2]).toMatchObject({
+      kind: "command",
+      text: "Ran npm test -- --run",
+      activityIds: ["cmd-1"],
     });
   });
 

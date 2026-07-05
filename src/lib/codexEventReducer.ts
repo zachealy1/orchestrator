@@ -20,6 +20,7 @@ export type StreamEvent = {
   kind: "message" | "activity" | "command" | "file" | "reasoning" | "system";
   text: string;
   timestamp: string;
+  activityIds?: string[];
 };
 
 export type RunEditedFile = {
@@ -160,6 +161,8 @@ export function applyCodexMessage(
           editedFiles.length > 0
             ? `Edited ${editedFiles.length} ${editedFiles.length === 1 ? "file" : "files"}`
             : "Updated diff",
+          false,
+          editedFiles.map((file) => file.path),
         ),
         latestDiff: diff,
       };
@@ -182,7 +185,7 @@ export function applyCodexMessage(
       );
     case "item/commandExecution/started":
     case "command/exec/started":
-      return upsertCommandActivity(state, params, "running");
+      return upsertCommandActivity(state, params, "running", true);
     case "item/commandExecution/outputDelta":
     case "command/exec/outputDelta": {
       const delta = readString(params.delta) ?? "";
@@ -190,12 +193,18 @@ export function applyCodexMessage(
         appendCommandOutput(appendLine(state, "command", delta), params, delta),
         "command",
         delta,
-        true,
+        false,
+        commandOutputActivityIds(state, params, delta),
       );
     }
     case "item/commandExecution/completed":
     case "command/exec/completed":
-      return upsertCommandActivity(state, params, commandStatusFromParams(params));
+      return upsertCommandActivity(
+        state,
+        params,
+        commandStatusFromParams(params),
+        true,
+      );
     case "process/outputDelta":
       return appendStreamEvent(
         appendLine(state, "command", readString(params.delta) ?? ""),
@@ -217,7 +226,7 @@ export function applyCodexMessage(
         );
       }
       if (item.type === "commandExecution" || item.type === "command") {
-        return upsertCommandActivity(state, params, "running");
+        return upsertCommandActivity(state, params, "running", true);
       }
       const text = `Started ${readString(item.type) ?? "item"}`;
       return appendStreamEvent(appendLine(state, "system", text), "activity", text);
@@ -236,7 +245,12 @@ export function applyCodexMessage(
         );
       }
       if (item.type === "commandExecution" || item.type === "command") {
-        return upsertCommandActivity(state, params, commandStatusFromParams(params));
+        return upsertCommandActivity(
+          state,
+          params,
+          commandStatusFromParams(params),
+          true,
+        );
       }
       return appendStreamEvent(
         state,
@@ -473,13 +487,19 @@ function appendStreamEvent(
   kind: StreamEvent["kind"],
   text: string,
   mergeWithPrevious = false,
+  activityIds: string[] = [],
 ): RunViewState {
   if (!text) {
     return state;
   }
 
+  const normalizedActivityIds = uniqueStrings(activityIds);
   const last = state.streamEvents[state.streamEvents.length - 1];
-  if (mergeWithPrevious && last?.kind === kind) {
+  if (
+    mergeWithPrevious &&
+    last?.kind === kind &&
+    sameActivityIds(last.activityIds ?? [], normalizedActivityIds)
+  ) {
     return {
       ...state,
       streamEvents: [
@@ -502,6 +522,9 @@ function appendStreamEvent(
         kind,
         text,
         timestamp: new Date().toISOString(),
+        ...(normalizedActivityIds.length > 0
+          ? { activityIds: normalizedActivityIds }
+          : {}),
       },
     ],
   };
@@ -649,6 +672,7 @@ function upsertCommandActivity(
   state: RunViewState,
   params: Record<string, unknown>,
   status: RunCommandActivity["status"],
+  appendTimelineEvent = false,
 ) {
   const command = extractCommandText(params);
   const id = extractCommandId(params, command, state);
@@ -657,16 +681,27 @@ function upsertCommandActivity(
   }
 
   const durationMs = extractDurationMs(params);
-  return {
-    ...state,
-    commands: upsertCommand(state.commands, {
-      id: id ?? `command-${state.commands.length + 1}`,
-      command: command ?? "Command",
-      status,
-      durationMs,
-      output: "",
-    }),
+  const nextCommand = {
+    id: id ?? `command-${state.commands.length + 1}`,
+    command: command ?? "Command",
+    status,
+    durationMs,
+    output: "",
   };
+  const nextState = {
+    ...state,
+    commands: upsertCommand(state.commands, nextCommand),
+  };
+
+  return appendTimelineEvent
+    ? appendStreamEvent(
+        nextState,
+        "command",
+        commandTimelineLabel(nextCommand),
+        false,
+        [nextCommand.id],
+      )
+    : nextState;
 }
 
 function appendCommandOutput(
@@ -695,6 +730,29 @@ function appendCommandOutput(
       output: delta,
     }),
   };
+}
+
+function commandOutputActivityIds(
+  state: RunViewState,
+  params: Record<string, unknown>,
+  delta: string,
+) {
+  const command = extractCommandText(params);
+  const id =
+    extractCommandId(params, command, state) ??
+    findLastRunningCommand(state.commands)?.id ??
+    (delta ? `command-${state.commands.length + 1}` : null);
+  return id ? [id] : [];
+}
+
+function commandTimelineLabel(command: RunCommandActivity) {
+  const action =
+    command.status === "failed"
+      ? "Failed"
+      : command.status === "running"
+        ? "Running"
+        : "Ran";
+  return `${action} ${command.command}`;
 }
 
 function upsertCommand(
@@ -820,6 +878,18 @@ function normalizeFileStatus(status: string | null): RunEditedFile["status"] {
 
 function basename(path: string) {
   return path.replace(/\\/g, "/").split("/").filter(Boolean).pop() ?? path;
+}
+
+function uniqueStrings(values: string[]) {
+  return Array.from(new Set(values.filter((value) => value.trim().length > 0)));
+}
+
+function sameActivityIds(left: string[], right: string[]) {
+  if (left.length !== right.length) {
+    return false;
+  }
+
+  return left.every((value, index) => value === right[index]);
 }
 
 function firstNonEmptyLine(text: string) {

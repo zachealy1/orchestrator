@@ -12,6 +12,7 @@ import {
   X,
 } from "lucide-react";
 import { useEffect, useRef } from "react";
+import type { ReactNode } from "react";
 import ReactMarkdown from "react-markdown";
 import type {
   RunCommandActivity,
@@ -105,23 +106,21 @@ function AssistantRunOutput({
     );
   }
 
-  const visibleEvents = visibleStreamEvents(runView);
-  const hasActivityGroups =
-    runView.editedFiles.length > 0 || runView.commands.length > 0;
+  const hasTimeline =
+    runView.streamEvents.length > 0 ||
+    runView.editedFiles.length > 0 ||
+    runView.commands.length > 0;
 
   return (
     <div className="run-output-surface running" aria-label="Live run output">
       <RunMetrics runView={runView} />
-      <RunActivityGroups runView={runView} />
-      {visibleEvents.length > 0 ? (
-        <StreamEventList events={visibleEvents} />
-      ) : !hasActivityGroups ? (
+      {hasTimeline ? (
+        <RunTimeline runView={runView} />
+      ) : (
         <p className="stream-placeholder">
           <Clock size={15} aria-hidden="true" />
           Waiting for app-server output...
         </p>
-      ) : (
-        null
       )}
       <RunApprovalRequests runView={runView} onResolveRequest={onResolveRequest} />
     </div>
@@ -139,8 +138,7 @@ function RunTraceDropdown({ runView }: { runView: RunViewState }) {
         <span>{formatTokenCount(runView)}</span>
         <ChevronRight className="run-trace-chevron" size={15} aria-hidden="true" />
       </summary>
-      <RunActivityGroups runView={runView} />
-      <StreamEventList events={runView.streamEvents} />
+      <RunTimeline runView={runView} />
     </details>
   );
 }
@@ -181,20 +179,149 @@ function RunSummary({ runView }: { runView: RunViewState }) {
   );
 }
 
-function RunActivityGroups({ runView }: { runView: RunViewState }) {
-  if (runView.editedFiles.length === 0 && runView.commands.length === 0) {
+function RunTimeline({ runView }: { runView: RunViewState }) {
+  const items = buildTimelineItems(runView);
+
+  if (items.length === 0) {
     return null;
   }
 
   return (
-    <div className="run-activity-groups" aria-label="Run activity groups">
-      {runView.editedFiles.length > 0 ? (
-        <EditedFilesGroup files={runView.editedFiles} />
-      ) : null}
-      {runView.commands.length > 0 ? (
-        <CommandsGroup commands={runView.commands} />
-      ) : null}
+    <div className="stream-event-list" aria-label="App-server stream">
+      {items.map((item) => {
+        if (item.kind === "files") {
+          return (
+            <RunActivityGroups key={item.id}>
+              <EditedFilesGroup files={item.files} />
+            </RunActivityGroups>
+          );
+        }
+
+        if (item.kind === "commands") {
+          return (
+            <RunActivityGroups key={item.id}>
+              <CommandsGroup commands={item.commands} />
+            </RunActivityGroups>
+          );
+        }
+
+        return <StreamEventRow event={item.event} key={item.event.id} />;
+      })}
     </div>
+  );
+}
+
+function RunActivityGroups({ children }: { children: ReactNode }) {
+  return (
+    <div className="run-activity-groups" aria-label="Run activity groups">
+      {children}
+    </div>
+  );
+}
+
+type TimelineItem =
+  | { kind: "event"; event: StreamEvent }
+  | { kind: "files"; id: string; files: RunEditedFile[] }
+  | { kind: "commands"; id: string; commands: RunCommandActivity[] };
+
+function buildTimelineItems(runView: RunViewState): TimelineItem[] {
+  const items: TimelineItem[] = [];
+  const renderedFilePaths = new Set<string>();
+  const renderedCommandIds = new Set<string>();
+
+  for (const event of runView.streamEvents) {
+    if (event.kind === "file") {
+      const files = selectFilesForEvent(
+        runView.editedFiles,
+        event.activityIds,
+        renderedFilePaths,
+      );
+
+      if (files.length > 0) {
+        items.push({ kind: "files", id: `files-${event.id}`, files });
+        files.forEach((file) => renderedFilePaths.add(file.path));
+      } else if (runView.editedFiles.length === 0) {
+        items.push({ kind: "event", event });
+      }
+      continue;
+    }
+
+    if (event.kind === "command") {
+      const commands = selectCommandsForEvent(
+        runView.commands,
+        event.activityIds,
+        renderedCommandIds,
+      );
+
+      if (commands.length > 0) {
+        items.push({ kind: "commands", id: `commands-${event.id}`, commands });
+        commands.forEach((command) => renderedCommandIds.add(command.id));
+      } else if (runView.commands.length === 0) {
+        items.push({ kind: "event", event });
+      }
+      continue;
+    }
+
+    items.push({ kind: "event", event });
+  }
+
+  const remainingFiles = runView.editedFiles.filter(
+    (file) => !renderedFilePaths.has(file.path),
+  );
+  if (remainingFiles.length > 0) {
+    items.push({ kind: "files", id: "files-remaining", files: remainingFiles });
+  }
+
+  const remainingCommands = runView.commands.filter(
+    (command) => !renderedCommandIds.has(command.id),
+  );
+  if (remainingCommands.length > 0) {
+    items.push({
+      kind: "commands",
+      id: "commands-remaining",
+      commands: remainingCommands,
+    });
+  }
+
+  return items;
+}
+
+function selectFilesForEvent(
+  files: RunEditedFile[],
+  activityIds: string[] | undefined,
+  renderedFilePaths: Set<string>,
+) {
+  if (files.length === 0) {
+    return [];
+  }
+
+  if (!activityIds || activityIds.length === 0) {
+    return renderedFilePaths.size === 0 ? files : [];
+  }
+
+  const activityIdSet = new Set(activityIds);
+  return files.filter(
+    (file) => activityIdSet.has(file.path) && !renderedFilePaths.has(file.path),
+  );
+}
+
+function selectCommandsForEvent(
+  commands: RunCommandActivity[],
+  activityIds: string[] | undefined,
+  renderedCommandIds: Set<string>,
+) {
+  if (commands.length === 0) {
+    return [];
+  }
+
+  if (!activityIds || activityIds.length === 0) {
+    return renderedCommandIds.size === 0 ? commands : [];
+  }
+
+  const activityIdSet = new Set(activityIds);
+  return commands.filter(
+    (command) =>
+      activityIdSet.has(command.id) && !renderedCommandIds.has(command.id),
   );
 }
 
@@ -249,39 +376,21 @@ function CommandsGroup({ commands }: { commands: RunCommandActivity[] }) {
   );
 }
 
-function StreamEventList({ events }: { events: StreamEvent[] }) {
-  if (events.length === 0) {
-    return null;
+function StreamEventRow({ event }: { event: StreamEvent }) {
+  if (event.kind === "message") {
+    return (
+      <div className="stream-message" key={event.id}>
+        {event.text}
+      </div>
+    );
   }
 
   return (
-    <div className="stream-event-list" aria-label="App-server stream">
-      {events.map((event) =>
-        event.kind === "message" ? (
-          <div className="stream-message" key={event.id}>
-            {event.text}
-          </div>
-        ) : (
-          <div className={`stream-event ${event.kind}`} key={event.id}>
-            {streamEventIcon(event.kind)}
-            <span>{event.text}</span>
-          </div>
-        ),
-      )}
+    <div className={`stream-event ${event.kind}`} key={event.id}>
+      {streamEventIcon(event.kind)}
+      <span>{event.text}</span>
     </div>
   );
-}
-
-function visibleStreamEvents(runView: RunViewState) {
-  return runView.streamEvents.filter((event) => {
-    if (event.kind === "command" && runView.commands.length > 0) {
-      return false;
-    }
-    if (event.kind === "file" && runView.editedFiles.length > 0) {
-      return false;
-    }
-    return true;
-  });
 }
 
 function streamEventIcon(kind: StreamEvent["kind"]) {

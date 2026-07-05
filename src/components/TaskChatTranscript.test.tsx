@@ -124,7 +124,7 @@ describe("TaskChatTranscript", () => {
     ).toBeInTheDocument();
   });
 
-  it("renders grouped edited files and commands", () => {
+  it("renders grouped edited files and commands in stream order", () => {
     const { container } = render(
       <TaskChatTranscript
         entries={[
@@ -174,14 +174,31 @@ describe("TaskChatTranscript", () => {
                 {
                   id: "message-1",
                   kind: "message",
-                  text: "I updated the transcript view.",
+                  text: "I will inspect the files first.",
                   timestamp: "2026-06-30T17:30:01Z",
+                },
+                {
+                  id: "file-1",
+                  kind: "file",
+                  text: "Edited 2 files",
+                  timestamp: "2026-06-30T17:30:02Z",
+                  activityIds: [
+                    "src/App.css",
+                    "src/components/TaskChatTranscript.tsx",
+                  ],
+                },
+                {
+                  id: "message-2",
+                  kind: "message",
+                  text: "The transcript view is updated.",
+                  timestamp: "2026-06-30T17:30:03Z",
                 },
                 {
                   id: "command-1",
                   kind: "command",
                   text: "npm test output",
-                  timestamp: "2026-06-30T17:30:02Z",
+                  timestamp: "2026-06-30T17:30:04Z",
+                  activityIds: ["cmd-1", "cmd-2"],
                 },
               ],
             },
@@ -191,20 +208,35 @@ describe("TaskChatTranscript", () => {
       />,
     );
 
-    const activityGroups = screen.getByLabelText("Run activity groups");
+    const activityGroups = screen.getAllByLabelText("Run activity groups");
+    const editedGroup = activityGroups[0];
+    const commandGroup = activityGroups[1];
 
-    expect(within(activityGroups).getByText("Edited 2 files")).toBeInTheDocument();
-    expect(within(activityGroups).getByText("Ran 2 commands")).toBeInTheDocument();
-    expect(within(activityGroups).getByText("App.css")).toBeInTheDocument();
-    expect(within(activityGroups).getByText("+11")).toBeInTheDocument();
-    expect(within(activityGroups).getByText("-2")).toBeInTheDocument();
+    expect(within(editedGroup).getByText("Edited 2 files")).toBeInTheDocument();
+    expect(within(commandGroup).getByText("Ran 2 commands")).toBeInTheDocument();
+    expect(within(editedGroup).getByText("App.css")).toBeInTheDocument();
+    expect(within(editedGroup).getByText("+11")).toBeInTheDocument();
+    expect(within(editedGroup).getByText("-2")).toBeInTheDocument();
     expect(
-      within(activityGroups).getByText(
+      within(commandGroup).getByText(
         "npm test -- --run src/components/TaskChatTranscript.test.tsx",
       ),
     ).toBeInTheDocument();
-    expect(within(activityGroups).getByText("for 12s")).toBeInTheDocument();
-    expect(screen.getByText("I updated the transcript view.")).toBeInTheDocument();
+    expect(within(commandGroup).getByText("for 12s")).toBeInTheDocument();
+    const firstMessage = screen.getByText("I will inspect the files first.");
+    const secondMessage = screen.getByText("The transcript view is updated.");
+    expect(
+      firstMessage.compareDocumentPosition(editedGroup) &
+        Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
+    expect(
+      editedGroup.compareDocumentPosition(secondMessage) &
+        Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
+    expect(
+      secondMessage.compareDocumentPosition(commandGroup) &
+        Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
     expect(screen.queryByText("npm test output")).not.toBeInTheDocument();
     expect(container.querySelector(".activity-file-name")).not.toBeNull();
     expect(container.querySelector(".activity-additions")).not.toBeNull();
