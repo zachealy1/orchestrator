@@ -2226,14 +2226,18 @@ select:disabled {
 
 .inline-context-mention {
   color: var(--color-primary);
+  margin-inline-start: 0.26em;
 }
 
 .inline-context-type {
-  display: inline;
+  display: inline-flex;
+  align-items: center;
   border-radius: 4px;
   background: var(--color-button-active);
   box-shadow: 0 0 0 2px var(--color-button-active);
   color: var(--color-button-active-text);
+  line-height: 1;
+  padding: 0.05em 0.16em;
   text-transform: uppercase;
 }
 
