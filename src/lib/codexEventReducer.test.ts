@@ -279,6 +279,33 @@ describe("codexEventReducer", () => {
     });
   });
 
+  it("shows noisy item lifecycle rows as a generic thinking event", () => {
+    let state = emptyRunView;
+
+    for (const type of ["userMessage", "reasoning", "fileChange"]) {
+      state = applyCodexMessage(state, {
+        method: "item/started",
+        params: { item: { type } },
+      });
+      state = applyCodexMessage(state, {
+        method: "item/completed",
+        params: { item: { type } },
+      });
+    }
+
+    expect(state.streamEvents).toHaveLength(1);
+    expect(state.streamEvents[0]).toMatchObject({
+      kind: "activity",
+      text: "Thinking",
+    });
+    expect(
+      state.streamEvents.some((event) =>
+        /Started|Completed|userMessage|reasoning|fileChange/.test(event.text),
+      ),
+    ).toBe(false);
+    expect(state.console).toHaveLength(0);
+  });
+
   it("groups edited files from unified diff notifications", () => {
     let state = applyCodexMessage(emptyRunView, {
       method: "turn/diff/updated",

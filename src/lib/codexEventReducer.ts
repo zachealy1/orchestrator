@@ -228,6 +228,9 @@ export function applyCodexMessage(
       if (item.type === "commandExecution" || item.type === "command") {
         return upsertCommandActivity(state, params, "running", true);
       }
+      if (isHiddenLifecycleItemType(readString(item.type))) {
+        return appendThinkingEvent(state);
+      }
       const text = `Started ${readString(item.type) ?? "item"}`;
       return appendStreamEvent(appendLine(state, "system", text), "activity", text);
     }
@@ -251,6 +254,9 @@ export function applyCodexMessage(
           commandStatusFromParams(params),
           true,
         );
+      }
+      if (isHiddenLifecycleItemType(readString(item.type))) {
+        return appendThinkingEvent(state);
       }
       return appendStreamEvent(
         state,
@@ -528,6 +534,15 @@ function appendStreamEvent(
       },
     ],
   };
+}
+
+function appendThinkingEvent(state: RunViewState) {
+  const last = state.streamEvents[state.streamEvents.length - 1];
+  if (last?.kind === "activity" && last.text === "Thinking") {
+    return state;
+  }
+
+  return appendStreamEvent(state, "activity", "Thinking");
 }
 
 function mergeEditedFiles(
@@ -874,6 +889,10 @@ function normalizeFileStatus(status: string | null): RunEditedFile["status"] {
     return status;
   }
   return "unknown";
+}
+
+function isHiddenLifecycleItemType(type: string | null) {
+  return type === "userMessage" || type === "reasoning" || type === "fileChange";
 }
 
 function basename(path: string) {
