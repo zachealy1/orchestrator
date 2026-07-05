@@ -2968,6 +2968,21 @@ function App() {
     }
   }
 
+  function openTaskResponseFileLink(href: string) {
+    const workspace = selectedWorkspaceRef.current;
+    if (!workspace) {
+      return false;
+    }
+
+    const file = workspaceFileEntryFromResponseLink(href, workspace);
+    if (!file) {
+      return false;
+    }
+
+    void openWorkspaceFilePreview(workspace, file);
+    return true;
+  }
+
   async function loadWorkspaceFilePreview(
     workspace: Workspace,
     file: WorkspaceTreeEntry,
@@ -4095,6 +4110,7 @@ function App() {
                 <TaskChatTranscript
                   entries={selectedWorkspaceChatEntries}
                   onResolveRequest={handleResolveRequest}
+                  onOpenFileLink={openTaskResponseFileLink}
                 />
               ) : (
                 <h1>{taskQuote}</h1>
@@ -4932,6 +4948,84 @@ function pathBelongsToWorkspace(path: string, workspacePath: string) {
 
 function joinWorkspacePath(workspacePath: string, relativePath: string) {
   return `${normalizeWorkspacePath(workspacePath)}/${relativePath.replace(/^\/+/, "")}`;
+}
+
+function workspaceFileEntryFromResponseLink(
+  href: string,
+  workspace: Workspace,
+): WorkspaceTreeEntry | null {
+  const path = resolveResponseLinkPath(href, workspace.path);
+  if (!path || !pathBelongsToWorkspace(path, workspace.path)) {
+    return null;
+  }
+
+  const normalizedPath = normalizeWorkspacePath(path);
+  const workspaceRoot = normalizeWorkspacePath(workspace.path);
+  const relativePath = normalizedPath.slice(workspaceRoot.length).replace(/^\/+/, "");
+  if (!relativePath) {
+    return null;
+  }
+
+  return {
+    name: basename(relativePath),
+    path: normalizedPath,
+    relativePath,
+    kind: "file",
+  };
+}
+
+function resolveResponseLinkPath(href: string, workspacePath: string) {
+  const cleanHref = href.trim();
+  if (!cleanHref || cleanHref.startsWith("#")) {
+    return null;
+  }
+
+  if (/^[a-z][a-z\d+.-]*:/i.test(cleanHref)) {
+    try {
+      const url = new URL(cleanHref);
+      if (url.protocol === "file:") {
+        return safeDecodeURIComponent(url.pathname);
+      }
+      if (
+        (url.protocol === "http:" || url.protocol === "https:") &&
+        isLocalhost(url.hostname)
+      ) {
+        return safeDecodeURIComponent(url.pathname);
+      }
+    } catch {
+      return null;
+    }
+
+    return null;
+  }
+
+  const pathOnly = stripLinkSearchAndHash(cleanHref);
+  if (!pathOnly) {
+    return null;
+  }
+
+  const decodedPath = safeDecodeURIComponent(pathOnly);
+  return decodedPath.startsWith("/")
+    ? decodedPath
+    : joinWorkspacePath(workspacePath, decodedPath);
+}
+
+function stripLinkSearchAndHash(href: string) {
+  const [withoutHash] = href.split("#", 1);
+  const [withoutSearch] = withoutHash.split("?", 1);
+  return withoutSearch;
+}
+
+function safeDecodeURIComponent(value: string) {
+  try {
+    return decodeURIComponent(value);
+  } catch {
+    return value;
+  }
+}
+
+function isLocalhost(hostname: string) {
+  return hostname === "localhost" || hostname === "127.0.0.1" || hostname === "::1";
 }
 
 function getMaxPreviewDrawerWidth() {

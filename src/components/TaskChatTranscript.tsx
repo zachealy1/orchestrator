@@ -12,7 +12,7 @@ import {
   X,
 } from "lucide-react";
 import { useEffect, useRef } from "react";
-import type { ReactNode } from "react";
+import type { MouseEvent as ReactMouseEvent, ReactNode } from "react";
 import ReactMarkdown from "react-markdown";
 import type {
   RunCommandActivity,
@@ -35,9 +35,14 @@ export type TaskChatEntry = {
 type Props = {
   entries: TaskChatEntry[];
   onResolveRequest: (request: CodexMessage, approved: boolean) => void;
+  onOpenFileLink?: (href: string) => boolean;
 };
 
-export function TaskChatTranscript({ entries, onResolveRequest }: Props) {
+export function TaskChatTranscript({
+  entries,
+  onResolveRequest,
+  onOpenFileLink,
+}: Props) {
   const transcriptRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
@@ -64,6 +69,7 @@ export function TaskChatTranscript({ entries, onResolveRequest }: Props) {
             <AssistantRunOutput
               runView={entry.runView}
               onResolveRequest={onResolveRequest}
+              onOpenFileLink={onOpenFileLink}
             />
           </article>
         </div>
@@ -75,9 +81,11 @@ export function TaskChatTranscript({ entries, onResolveRequest }: Props) {
 function AssistantRunOutput({
   runView,
   onResolveRequest,
+  onOpenFileLink,
 }: {
   runView: RunViewState;
   onResolveRequest: (request: CodexMessage, approved: boolean) => void;
+  onOpenFileLink?: (href: string) => boolean;
 }) {
   const completed =
     runView.status === "completed" ||
@@ -97,7 +105,7 @@ function AssistantRunOutput({
         ) : (
           <RunMetrics runView={runView} />
         )}
-        <RunSummary runView={runView} />
+        <RunSummary runView={runView} onOpenFileLink={onOpenFileLink} />
         <RunApprovalRequests
           runView={runView}
           onResolveRequest={onResolveRequest}
@@ -155,7 +163,13 @@ function RunMetrics({ runView }: { runView: RunViewState }) {
   );
 }
 
-function RunSummary({ runView }: { runView: RunViewState }) {
+function RunSummary({
+  runView,
+  onOpenFileLink,
+}: {
+  runView: RunViewState;
+  onOpenFileLink?: (href: string) => boolean;
+}) {
   if (runView.status === "failed" && runView.error) {
     return (
       <div className="run-summary error" aria-label="Run error">
@@ -174,7 +188,26 @@ function RunSummary({ runView }: { runView: RunViewState }) {
 
   return (
     <div className="run-summary markdown-summary" aria-label="Run summary">
-      <ReactMarkdown>{runView.finalMessage}</ReactMarkdown>
+      <ReactMarkdown
+        components={{
+          a: ({ href, children, ...props }) => (
+            <a
+              {...props}
+              href={href}
+              onClick={(event: ReactMouseEvent<HTMLAnchorElement>) => {
+                if (href && onOpenFileLink?.(href)) {
+                  event.preventDefault();
+                  event.stopPropagation();
+                }
+              }}
+            >
+              {children}
+            </a>
+          ),
+        }}
+      >
+        {runView.finalMessage}
+      </ReactMarkdown>
     </div>
   );
 }

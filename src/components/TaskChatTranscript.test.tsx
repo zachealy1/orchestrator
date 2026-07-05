@@ -1,4 +1,4 @@
-import { render, screen, within } from "@testing-library/react";
+import { fireEvent, render, screen, within } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import { emptyRunView } from "../lib/codexEventReducer";
 import { TaskChatTranscript } from "./TaskChatTranscript";
@@ -122,6 +122,35 @@ describe("TaskChatTranscript", () => {
         "I will inspect the current styling first.",
       ),
     ).toBeInTheDocument();
+  });
+
+  it("routes markdown file links through the app file preview handler", () => {
+    const onOpenFileLink = vi.fn(() => true);
+    render(
+      <TaskChatTranscript
+        entries={[
+          {
+            workspaceId: 1,
+            runId: 2,
+            taskId: 3,
+            prompt: "Add a line",
+            submittedAt: "2026-06-30T17:30:00Z",
+            status: "completed",
+            runView: {
+              ...emptyRunView,
+              status: "completed",
+              finalMessage: "Updated [hello-world.txt](/repo/hello-world.txt).",
+            },
+          },
+        ]}
+        onResolveRequest={vi.fn()}
+        onOpenFileLink={onOpenFileLink}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("link", { name: "hello-world.txt" }));
+
+    expect(onOpenFileLink).toHaveBeenCalledWith("/repo/hello-world.txt");
   });
 
   it("renders grouped edited files and commands in stream order", () => {
