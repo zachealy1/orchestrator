@@ -777,7 +777,7 @@ function PromptInlineHighlight({
           <span className="inline-context-mention" key={`${segment.file.path}-${index}`}>
             <span className="inline-context-type">
               {contextFileExtensionLabel(segment.file.name)}
-            </span>
+            </span>{" "}
             <span>{segment.text}</span>
           </span>
         ) : (

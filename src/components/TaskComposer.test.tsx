@@ -614,6 +614,26 @@ describe("TaskComposer", () => {
     expect(screen.getByLabelText("Prompt")).toHaveValue("TSX App.tsx ");
   });
 
+  it("renders inline file overlay text with the same text content as the textarea token", () => {
+    renderComposer({
+      prompt: "Fix TSX App.tsx now",
+      contextFiles: [
+        {
+          path: "/repo/src/App.tsx",
+          name: "App.tsx",
+          source: "search",
+          status: "ready",
+        },
+      ],
+    });
+
+    const promptInput = screen.getByLabelText("Prompt") as HTMLTextAreaElement;
+    const highlight = document.querySelector(".prompt-inline-highlight");
+
+    expect(highlight).not.toBeNull();
+    expect(highlight?.textContent).toBe(promptInput.value);
+  });
+
   it("removes the whole inline file reference when backspacing inside it", async () => {
     const onRemoveFile = vi.fn();
     const inlineFile = {

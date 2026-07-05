@@ -2174,25 +2174,15 @@ select:disabled {
 
 .inline-context-mention {
   color: var(--color-primary);
-  font-weight: 500;
 }
 
 .inline-context-type {
-  display: inline-flex;
-  min-width: 2.35em;
-  height: 1.35em;
-  align-items: center;
-  justify-content: center;
-  border-radius: 5px;
+  display: inline;
+  border-radius: 4px;
   background: var(--color-button-active);
+  box-shadow: 0 0 0 2px var(--color-button-active);
   color: var(--color-button-active-text);
-  font-size: 0.7em;
-  font-weight: 800;
-  line-height: 1;
-  margin-right: 0.3em;
-  padding: 0 0.32em;
   text-transform: uppercase;
-  vertical-align: 0.12em;
 }
 
 .prompt-field textarea:focus {

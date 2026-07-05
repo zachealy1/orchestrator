@@ -205,6 +205,9 @@ export function applyCodexMessage(
       );
     case "item/started": {
       const item = readObject(params.item);
+      if (item.type === "agentMessage") {
+        return startAgentMessage(state, params, item);
+      }
       if (item.type === "subAgentActivity") {
         const text = `Subagent activity: ${readString(item.kind) ?? "started"}`;
         return appendStreamEvent(
@@ -333,6 +336,29 @@ function appendAgentMessageDelta(
   };
 }
 
+function startAgentMessage(
+  state: RunViewState,
+  params: Record<string, unknown>,
+  item: Record<string, unknown>,
+) {
+  const itemId = extractAgentMessageId(params, item, state);
+  const current = state.agentMessagesById[itemId] ?? {
+    text: "",
+    phase: null,
+  };
+
+  return {
+    ...state,
+    agentMessagesById: {
+      ...state.agentMessagesById,
+      [itemId]: {
+        text: readString(item.text) ?? current.text,
+        phase: normalizeAgentMessagePhase(readString(item.phase)) ?? current.phase,
+      },
+    },
+  };
+}
+
 function completeAgentMessage(
   state: RunViewState,
   params: Record<string, unknown>,
@@ -343,7 +369,7 @@ function completeAgentMessage(
     text: "",
     phase: null,
   };
-  const phase = normalizeAgentMessagePhase(readString(item.phase));
+  const phase = normalizeAgentMessagePhase(readString(item.phase)) ?? current.phase;
   const text = readString(item.text) ?? current.text;
   const nextState: RunViewState = {
     ...state,

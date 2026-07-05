@@ -136,6 +136,89 @@ describe("codexEventReducer", () => {
     });
   });
 
+  it("uses only final_answer text for real app-server commentary and final item sequences", () => {
+    let state = applyCodexMessage(emptyRunView, {
+      method: "item/started",
+      params: {
+        item: {
+          type: "agentMessage",
+          id: "msg-commentary-1",
+          text: "",
+          phase: "commentary",
+        },
+      },
+    });
+    for (const delta of [
+      "I’ll inspect the repo shape first, ",
+      "then add the smallest appropriate text file.",
+    ]) {
+      state = applyCodexMessage(state, {
+        method: "item/agentMessage/delta",
+        params: { itemId: "msg-commentary-1", delta },
+      });
+    }
+    state = applyCodexMessage(state, {
+      method: "item/completed",
+      params: {
+        item: {
+          type: "agentMessage",
+          id: "msg-commentary-1",
+          text: "I’ll inspect the repo shape first, then add the smallest appropriate text file.",
+          phase: "commentary",
+        },
+      },
+    });
+    state = applyCodexMessage(state, {
+      method: "item/started",
+      params: {
+        item: {
+          type: "agentMessage",
+          id: "msg-final-1",
+          text: "",
+          phase: "final_answer",
+        },
+      },
+    });
+    for (const delta of [
+      "Added [hello-world.txt](/repo/hello-world.txt) containing:\n\n",
+      "```text\nhello world\n```\n\n",
+      "Verification run:\n- `pwd` confirmed the selected repo.",
+    ]) {
+      state = applyCodexMessage(state, {
+        method: "item/agentMessage/delta",
+        params: { itemId: "msg-final-1", delta },
+      });
+    }
+    state = applyCodexMessage(state, {
+      method: "item/completed",
+      params: {
+        item: {
+          type: "agentMessage",
+          id: "msg-final-1",
+          text: [
+            "Added [hello-world.txt](/repo/hello-world.txt) containing:",
+            "",
+            "```text",
+            "hello world",
+            "```",
+            "",
+            "Verification run:",
+            "- `pwd` confirmed the selected repo.",
+          ].join("\n"),
+          phase: "final_answer",
+        },
+      },
+    });
+
+    expect(state.finalMessage).toContain("Added [hello-world.txt]");
+    expect(state.finalMessage).toContain("Verification run:");
+    expect(state.finalMessage).not.toContain("I’ll inspect the repo shape first");
+    expect(state.agentMessagesById["msg-commentary-1"]).toMatchObject({
+      phase: "commentary",
+    });
+    expect(state.finalMessageItemId).toBe("msg-final-1");
+  });
+
   it("falls back to the latest completed assistant message when phase is missing", () => {
     let state = applyCodexMessage(emptyRunView, {
       method: "item/agentMessage/delta",
