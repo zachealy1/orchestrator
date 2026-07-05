@@ -65,6 +65,7 @@ describe("codexEventReducer", () => {
     expect(state.streamEvents[0]).toMatchObject({
       kind: "message",
       text: "I will inspect the repo.",
+      activityIds: ["commentary-1"],
     });
   });
 
@@ -94,6 +95,7 @@ describe("codexEventReducer", () => {
     expect(state.streamEvents[0]).toMatchObject({
       kind: "message",
       text: "Done.",
+      activityIds: ["final-1"],
     });
   });
 
@@ -132,7 +134,13 @@ describe("codexEventReducer", () => {
     expect(state.finalMessage).toBe("Added `hello-world.txt`.");
     expect(state.streamEvents[0]).toMatchObject({
       kind: "message",
-      text: "I will inspect first.Added `hello-world.txt`.",
+      text: "I will inspect first.",
+      activityIds: ["commentary-1"],
+    });
+    expect(state.streamEvents[1]).toMatchObject({
+      kind: "message",
+      text: "Added `hello-world.txt`.",
+      activityIds: ["final-1"],
     });
   });
 
@@ -215,6 +223,10 @@ describe("codexEventReducer", () => {
     expect(state.finalMessage).not.toContain("I’ll inspect the repo shape first");
     expect(state.agentMessagesById["msg-commentary-1"]).toMatchObject({
       phase: "commentary",
+    });
+    expect(state.streamEvents[state.streamEvents.length - 1]).toMatchObject({
+      kind: "message",
+      activityIds: ["msg-final-1"],
     });
     expect(state.finalMessageItemId).toBe("msg-final-1");
   });

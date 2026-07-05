@@ -93,10 +93,7 @@ function AssistantRunOutput({
     runView.status === "interrupted";
 
   if (completed) {
-    const hasTrace =
-      runView.streamEvents.length > 0 ||
-      runView.editedFiles.length > 0 ||
-      runView.commands.length > 0;
+    const hasTrace = buildTimelineItems(runView).length > 0;
 
     return (
       <div className="run-output-surface completed">
@@ -263,6 +260,10 @@ function buildTimelineItems(runView: RunViewState): TimelineItem[] {
   const renderedCommandIds = new Set<string>();
 
   for (const event of runView.streamEvents) {
+    if (shouldHideCompletedFinalMessageEvent(runView, event)) {
+      continue;
+    }
+
     if (event.kind === "file") {
       const files = selectFilesForEvent(
         runView.editedFiles,
@@ -317,6 +318,38 @@ function buildTimelineItems(runView: RunViewState): TimelineItem[] {
   }
 
   return items;
+}
+
+function shouldHideCompletedFinalMessageEvent(
+  runView: RunViewState,
+  event: StreamEvent,
+) {
+  if (
+    event.kind !== "message" ||
+    !(
+      runView.status === "completed" ||
+      runView.status === "failed" ||
+      runView.status === "interrupted"
+    )
+  ) {
+    return false;
+  }
+
+  const activityIds = event.activityIds ?? [];
+  if (
+    activityIds.some((id) => {
+      const message = runView.agentMessagesById[id];
+      return message?.phase === "final_answer" || id === runView.finalMessageItemId;
+    })
+  ) {
+    return true;
+  }
+
+  return (
+    activityIds.length === 0 &&
+    runView.finalMessage.trim().length > 0 &&
+    event.text.trim() === runView.finalMessage.trim()
+  );
 }
 
 function selectFilesForEvent(

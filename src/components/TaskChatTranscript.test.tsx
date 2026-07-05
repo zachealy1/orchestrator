@@ -86,12 +86,31 @@ describe("TaskChatTranscript", () => {
               },
               finalMessage:
                 "Removed the border from the submitted chat message styling.\n\nUpdated:\n\n- `src/App.css`",
+              finalMessageItemId: "final-1",
+              agentMessagesById: {
+                "commentary-1": {
+                  text: "I will inspect the current styling first.",
+                  phase: "commentary",
+                },
+                "final-1": {
+                  text: "Removed the border from the submitted chat message styling.\n\nUpdated:\n\n- `src/App.css`",
+                  phase: "final_answer",
+                },
+              },
               streamEvents: [
                 {
                   id: "message-1",
                   kind: "message",
                   text: "I will inspect the current styling first.",
                   timestamp: "2026-06-30T17:30:01Z",
+                  activityIds: ["commentary-1"],
+                },
+                {
+                  id: "message-2",
+                  kind: "message",
+                  text: "Removed the border from the submitted chat message styling.\n\nUpdated:\n\n- `src/App.css`",
+                  timestamp: "2026-06-30T17:30:02Z",
+                  activityIds: ["final-1"],
                 },
               ],
             },
@@ -122,6 +141,11 @@ describe("TaskChatTranscript", () => {
         "I will inspect the current styling first.",
       ),
     ).toBeInTheDocument();
+    expect(
+      within(screen.getByLabelText("App-server stream")).queryByText(
+        "Removed the border from the submitted chat message styling.",
+      ),
+    ).not.toBeInTheDocument();
   });
 
   it("routes markdown file links through the app file preview handler", () => {
@@ -151,6 +175,48 @@ describe("TaskChatTranscript", () => {
     fireEvent.click(screen.getByRole("link", { name: "hello-world.txt" }));
 
     expect(onOpenFileLink).toHaveBeenCalledWith("/repo/hello-world.txt");
+  });
+
+  it("does not render an empty trace dropdown when only final-answer text was streamed", () => {
+    render(
+      <TaskChatTranscript
+        entries={[
+          {
+            workspaceId: 1,
+            runId: 2,
+            taskId: 3,
+            prompt: "Finish the task",
+            submittedAt: "2026-06-30T17:30:00Z",
+            status: "completed",
+            runView: {
+              ...emptyRunView,
+              status: "completed",
+              finalMessage: "Done.",
+              finalMessageItemId: "final-1",
+              agentMessagesById: {
+                "final-1": {
+                  text: "Done.",
+                  phase: "final_answer",
+                },
+              },
+              streamEvents: [
+                {
+                  id: "message-1",
+                  kind: "message",
+                  text: "Done.",
+                  timestamp: "2026-06-30T17:30:01Z",
+                  activityIds: ["final-1"],
+                },
+              ],
+            },
+          },
+        ]}
+        onResolveRequest={vi.fn()}
+      />,
+    );
+
+    expect(screen.queryByLabelText("Run trace")).not.toBeInTheDocument();
+    expect(within(screen.getByLabelText("Run summary")).getByText("Done.")).toBeInTheDocument();
   });
 
   it("renders grouped edited files and commands in stream order", () => {

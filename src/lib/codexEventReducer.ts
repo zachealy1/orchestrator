@@ -169,8 +169,15 @@ export function applyCodexMessage(
     }
     case "item/agentMessage/delta": {
       const delta = readString(params.delta) ?? "";
+      const itemId = extractAgentMessageId(params, readObject(params.item), state);
       return appendAgentMessageDelta(
-        appendStreamEvent(appendLine(state, "assistant", delta), "message", delta, true),
+        appendStreamEvent(
+          appendLine(state, "assistant", delta),
+          "message",
+          delta,
+          true,
+          [itemId],
+        ),
         params,
         delta,
       );
