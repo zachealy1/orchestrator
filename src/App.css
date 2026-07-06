@@ -1170,12 +1170,35 @@ button.account-switcher-item:hover:not(:disabled) {
   color: currentColor;
 }
 
+.workspace-header-button.history-panel-button {
+  background: transparent;
+  box-shadow: none;
+  color: var(--color-icon-muted);
+}
+
 .workspace-header-button.history-panel-button:hover:not(:disabled),
-.workspace-header-button.history-panel-button:focus-visible:not(:disabled),
-.workspace-header-button.history-panel-button.active,
+.workspace-header-button.history-panel-button:focus-visible:not(:disabled) {
+  background: var(--panel-strong);
+  box-shadow: none;
+  color: var(--color-icon-muted);
+}
+
+.workspace-header-button.history-panel-button.active {
+  background: transparent;
+  box-shadow: none;
+  color: var(--color-icon-muted);
+}
+
+.workspace-header-button.history-panel-button.active:hover:not(:disabled),
+.workspace-header-button.history-panel-button.active:focus-visible:not(:disabled) {
+  background: var(--panel-strong);
+  box-shadow: none;
+  color: var(--color-icon-muted);
+}
+
 .icon-button.history-panel-button:hover:not(:disabled),
 .icon-button.history-panel-button:focus-visible:not(:disabled) {
-  color: var(--color-icon);
+  color: var(--color-icon-muted);
   box-shadow: inset 0 0 0 1px var(--color-divider);
 }
 
