@@ -339,6 +339,39 @@ function pointerTapFile(fileButton: HTMLElement) {
   });
 }
 
+function holdNextAnimationFrames() {
+  const callbacks = new Map<number, FrameRequestCallback>();
+  let nextId = 1;
+  const requestAnimationFrameSpy = vi
+    .spyOn(window, "requestAnimationFrame")
+    .mockImplementation((callback) => {
+      const id = nextId;
+      nextId += 1;
+      callbacks.set(id, callback);
+      return id;
+    });
+  const cancelAnimationFrameSpy = vi
+    .spyOn(window, "cancelAnimationFrame")
+    .mockImplementation((id) => {
+      callbacks.delete(id);
+    });
+
+  return {
+    async flush() {
+      const pendingCallbacks = Array.from(callbacks.values());
+      callbacks.clear();
+      pendingCallbacks.forEach((callback) => callback(performance.now()));
+      await act(async () => {
+        await new Promise((resolve) => window.setTimeout(resolve, 0));
+      });
+    },
+    restore() {
+      requestAnimationFrameSpy.mockRestore();
+      cancelAnimationFrameSpy.mockRestore();
+    },
+  };
+}
+
 function prepareSignedInRun() {
   mocks.listCodexAccountsMock.mockResolvedValue([signedInAccount]);
   mocks.readCodexAccountMock.mockResolvedValue({
@@ -2157,61 +2190,75 @@ describe("App Codex auth", () => {
     );
 
     const { user } = await renderApp();
+    const animationFrames = holdNextAnimationFrames();
     await user.type(screen.getByLabelText("Prompt"), "Fix slow submission");
-    await user.keyboard("{Enter}");
+    try {
+      await user.keyboard("{Enter}");
 
-    expect(screen.getByLabelText("Prompt")).toHaveValue("");
-    const transcript = await screen.findByLabelText("Task chat transcript");
-    expect(within(transcript).getByLabelText("Submitted prompt")).toHaveTextContent(
-      "Fix slow submission",
-    );
-    expect(screen.getByLabelText("Preparing run")).toHaveTextContent(
-      "Preparing run...",
-    );
-    expect(screen.queryByRole("button", { name: /run codex/i })).not.toBeInTheDocument();
-    expect(screen.getByRole("button", { name: /stop codex/i })).toBeEnabled();
-    expect(mocks.createRunMock).not.toHaveBeenCalled();
+      expect(screen.getByLabelText("Prompt")).toHaveValue("");
+      const transcript = await screen.findByLabelText("Task chat transcript");
+      expect(within(transcript).getByLabelText("Submitted prompt")).toHaveTextContent(
+        "Fix slow submission",
+      );
+      expect(screen.getByLabelText("Preparing run")).toHaveTextContent(
+        "Preparing run...",
+      );
+      expect(screen.queryByRole("button", { name: /run codex/i })).not.toBeInTheDocument();
+      expect(screen.getByRole("button", { name: /stop codex/i })).toBeEnabled();
+      expect(mocks.runPreflightMock).not.toHaveBeenCalled();
+      expect(mocks.createTaskMock).not.toHaveBeenCalled();
+      expect(mocks.codexRpcMock).not.toHaveBeenCalled();
 
-    await act(async () => {
-      resolveCreateTask({ id: 101 });
-    });
-    await waitFor(() =>
-      expect(mocks.codexRpcMock).toHaveBeenCalledWith(
-        7,
-        "turn/start",
-        expect.any(Object),
-      ),
-    );
-    expect(screen.getAllByLabelText("Submitted prompt")).toHaveLength(1);
+      await animationFrames.flush();
+      await waitFor(() => expect(mocks.createTaskMock).toHaveBeenCalledTimes(1));
+
+      await act(async () => {
+        resolveCreateTask({ id: 101 });
+      });
+      await waitFor(() =>
+        expect(mocks.codexRpcMock).toHaveBeenCalledWith(
+          7,
+          "turn/start",
+          expect.any(Object),
+        ),
+      );
+      expect(screen.getAllByLabelText("Submitted prompt")).toHaveLength(1);
+    } finally {
+      animationFrames.restore();
+    }
   });
 
-  it("stops a preparing run before a persisted run is created", async () => {
+  it("stops an optimistic run before deferred setup starts", async () => {
     prepareSignedInRun();
-    let resolveCreateTask!: (value: { id: number }) => void;
-    mocks.createTaskMock.mockReturnValueOnce(
-      new Promise((resolve) => {
-        resolveCreateTask = resolve;
-      }),
-    );
 
     const { user } = await renderApp();
+    const animationFrames = holdNextAnimationFrames();
     await user.type(screen.getByLabelText("Prompt"), "Stop while preparing");
-    await user.keyboard("{Enter}");
+    try {
+      await user.keyboard("{Enter}");
 
-    await user.click(screen.getByRole("button", { name: /stop codex/i }));
+      expect(mocks.runPreflightMock).not.toHaveBeenCalled();
+      expect(mocks.createTaskMock).not.toHaveBeenCalled();
 
-    await waitFor(() => expect(mocks.stopCodexMock).toHaveBeenCalledWith(7));
-    expect(screen.getByLabelText("Prompt")).toHaveValue("Stop while preparing");
-    expect(within(screen.getByLabelText("Run summary")).getByText("Stopped by user.")).toBeInTheDocument();
+      await user.click(screen.getByRole("button", { name: /stop codex/i }));
 
-    await act(async () => {
-      resolveCreateTask({ id: 101 });
-    });
+      expect(screen.getByLabelText("Prompt")).toHaveValue("Stop while preparing");
+      expect(
+        within(screen.getByLabelText("Run summary")).getByText("Stopped by user."),
+      ).toBeInTheDocument();
+      expect(mocks.stopCodexMock).not.toHaveBeenCalled();
+      expect(mocks.runPreflightMock).not.toHaveBeenCalled();
+      expect(mocks.createTaskMock).not.toHaveBeenCalled();
+      expect(mocks.createRunMock).not.toHaveBeenCalled();
+      expect(mocks.codexRpcMock).not.toHaveBeenCalled();
 
-    await waitFor(() =>
-      expect(mocks.updateTaskStatusMock).toHaveBeenCalledWith(101, "interrupted"),
-    );
-    expect(mocks.createRunMock).not.toHaveBeenCalled();
+      await animationFrames.flush();
+      expect(mocks.runPreflightMock).not.toHaveBeenCalled();
+      expect(mocks.createTaskMock).not.toHaveBeenCalled();
+      expect(mocks.codexRpcMock).not.toHaveBeenCalled();
+    } finally {
+      animationFrames.restore();
+    }
   });
 
   it("restores the prompt and marks the optimistic entry failed when setup fails before a run is created", async () => {
@@ -2232,6 +2279,7 @@ describe("App Codex auth", () => {
     expect(screen.getByLabelText("Preparing run")).toHaveTextContent(
       "Preparing run...",
     );
+    await waitFor(() => expect(mocks.runPreflightMock).toHaveBeenCalledTimes(1));
     await act(async () => {
       rejectPreflight(new Error("Preflight failed"));
     });
@@ -2256,7 +2304,7 @@ describe("App Codex auth", () => {
     await user.keyboard("{Enter}{Enter}");
 
     await screen.findByLabelText("Task chat transcript");
-    expect(mocks.createTaskMock).toHaveBeenCalledTimes(1);
+    await waitFor(() => expect(mocks.createTaskMock).toHaveBeenCalledTimes(1));
     expect(screen.getAllByLabelText("Submitted prompt")).toHaveLength(1);
 
     await act(async () => {

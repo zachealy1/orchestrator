@@ -25,6 +25,7 @@ import {
   X,
 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { flushSync } from "react-dom";
 import type {
   CSSProperties,
   DragEvent,
@@ -193,6 +194,34 @@ type ActiveRunControl = {
   stopped: boolean;
   taskId: number | null;
   runId: number | null;
+  setupStarted: boolean;
+  cancelScheduledSetup: (() => void) | null;
+};
+
+type RunAccessSettings = {
+  sandbox: string;
+  approvalPolicy: string;
+};
+
+type RunSetupSnapshot = {
+  promptText: string;
+  promptFallback: string;
+  workspace: Workspace;
+  accountId: number;
+  account: CodexAccountProfile;
+  selectedBranch: string | null;
+  cachedPreflight: PreflightReport | null;
+  mode: "plan" | "run";
+  access: RunAccessSettings;
+  model: string | null;
+  effort: string | null;
+  useOss: boolean;
+  ossProvider: OssProvider;
+  improvedPrompt: string;
+  contextFiles: ComposerContextFile[];
+  selectedSkills: SelectedComposerSkill[];
+  goalMode: boolean;
+  loginState: CodexLoginState;
 };
 
 type ExplorerPointerDrag = {
@@ -211,6 +240,47 @@ type ExplorerDragPreview = {
   y: number;
   overDropSurface: boolean;
 };
+
+function markPerformance(name: string) {
+  if (
+    typeof performance !== "undefined" &&
+    typeof performance.mark === "function"
+  ) {
+    performance.mark(name);
+  }
+}
+
+function scheduleAfterNextPaint(callback: () => void) {
+  let cancelled = false;
+  let frameId: number | null = null;
+  let timeoutId: number | null = null;
+
+  const runCallback = () => {
+    timeoutId = null;
+    if (!cancelled) {
+      callback();
+    }
+  };
+
+  if (typeof window === "undefined") {
+    timeoutId = setTimeout(runCallback, 0) as unknown as number;
+  } else {
+    frameId = window.requestAnimationFrame(() => {
+      frameId = null;
+      timeoutId = window.setTimeout(runCallback, 0);
+    });
+  }
+
+  return () => {
+    cancelled = true;
+    if (typeof window !== "undefined" && frameId !== null) {
+      window.cancelAnimationFrame(frameId);
+    }
+    if (timeoutId !== null) {
+      clearTimeout(timeoutId);
+    }
+  };
+}
 
 const BUILTIN_SLASH_COMMANDS: SlashCommandItem[] = [
   {
@@ -1636,13 +1706,22 @@ function App() {
       return;
     }
 
+    const setupStarted = control?.setupStarted ?? false;
+    const persistedRunId = currentRunId.current ?? control?.runId ?? null;
+    const shouldStopCodex =
+      accountId !== null &&
+      (setupStarted ||
+        persistedRunId !== null ||
+        currentRunAccountId.current !== null);
+
     if (control) {
       control.stopped = true;
+      control.cancelScheduledSetup?.();
+      control.cancelScheduledSetup = null;
     }
 
     const shouldRestorePrompt =
-      (currentRunId.current ?? control?.runId ?? null) === null &&
-      Boolean(control?.promptFallback);
+      persistedRunId === null && Boolean(control?.promptFallback);
     const { completedAt, stoppedRunView } = markActiveRunInterrupted();
     if (shouldRestorePrompt && control) {
       setPrompt(control.promptFallback);
@@ -1656,7 +1735,7 @@ function App() {
     clearActiveChatRun();
     setStatusMessage("Codex run stopped.");
 
-    if (accountId !== null) {
+    if (shouldStopCodex) {
       try {
         await stopCodex(accountId);
       } catch (error) {
@@ -1868,6 +1947,26 @@ function App() {
       await refreshBranches(selectedWorkspace);
       setStatusMessage(
         `Could not switch to ${selectedBranch}: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+      );
+      return false;
+    }
+  }
+
+  async function ensureRunBranch(workspace: Workspace, branch: string | null) {
+    if (!branch) {
+      return true;
+    }
+
+    try {
+      await checkoutGitBranch(workspace.path, branch);
+      return true;
+    } catch (error) {
+      await refreshBranches(workspace);
+      await refreshWorkspaceGitStatus(workspace);
+      setStatusMessage(
+        `Could not switch to ${branch}: ${
           error instanceof Error ? error.message : String(error)
         }`,
       );
@@ -2540,33 +2639,7 @@ function App() {
     return report;
   }
 
-  async function launchRun() {
-    const promptText = prompt.trim();
-    const workspace = selectedWorkspace;
-    const accountId = selectedAccountId;
-    const account = selectedAccount;
-
-    if (!workspace || !promptText) {
-      setStatusMessage("Select a workspace and write a prompt first.");
-      return;
-    }
-    if (!accountId || !account) {
-      setStatusMessage("Sign in to a Codex account before starting a run.");
-      return;
-    }
-    if (runIsActive || activeChatEntryIdRef.current !== null) {
-      setStatusMessage("Wait for the active run to finish before starting another.");
-      return;
-    }
-    if (shouldBlockRunForAuth(requiresOpenaiAuth, codexAccount)) {
-      setStatusMessage(
-        loginState === "waiting"
-          ? "Finish Codex sign-in before starting a run."
-          : "Sign in to Codex before starting a run.",
-      );
-      return;
-    }
-
+  function beginOptimisticRun(snapshot: RunSetupSnapshot) {
     const clientId = createTaskChatClientId();
     const submittedAt = new Date().toISOString();
     const initialRunView = {
@@ -2574,78 +2647,83 @@ function App() {
       status: "connecting" as const,
       startedAt: submittedAt,
     };
-    const promptFallback = prompt;
-    const mode = planMode ? "plan" : "run";
-    const access = accessSettings(accessLevel);
-    const selectedModel =
-      models.find((model) => model.id === selectedModelId) ?? models[0] ?? null;
-    const model = useOss || modelLoadError ? null : (selectedModel?.model ?? null);
-    const effort = model ? selectedReasoningEffort : null;
-    const runContextFiles = contextFiles;
-    const runSelectedSkills = selectedSkills;
-    let taskId: number | null = null;
-    let runId: number | null = null;
     const runControl: ActiveRunControl = {
-      accountId,
+      accountId: snapshot.accountId,
       clientId,
-      promptFallback,
+      promptFallback: snapshot.promptFallback,
       stopped: false,
       taskId: null,
       runId: null,
+      setupStarted: false,
+      cancelScheduledSetup: null,
     };
-    activeRunControlRef.current = runControl;
 
-    startTaskChatEntry({
-      clientId,
-      workspaceId: workspace.id,
-      runId: null,
-      taskId: null,
-      prompt: promptText,
-      submittedAt,
-      status: initialRunView.status,
-      runView: initialRunView,
+    activeRunControlRef.current = runControl;
+    flushSync(() => {
+      startTaskChatEntry({
+        clientId,
+        workspaceId: snapshot.workspace.id,
+        runId: null,
+        taskId: null,
+        prompt: snapshot.promptText,
+        submittedAt,
+        status: initialRunView.status,
+        runView: initialRunView,
+      });
+      setPrompt("");
     });
-    setPrompt("");
-    setPreflight(null);
+    markPerformance("orchestrator:submit:optimistic-committed");
+
+    return runControl;
+  }
+
+  async function continueRunSetup(
+    runControl: ActiveRunControl,
+    snapshot: RunSetupSnapshot,
+  ) {
+    let taskId: number | null = null;
+    let runId: number | null = null;
+
     setStatusMessage("Preparing run...");
+    setPreflight(null);
 
     try {
-      if (!(await ensureSelectedBranch())) {
+      if (!(await ensureRunBranch(snapshot.workspace, snapshot.selectedBranch))) {
         throw new Error(
-          selectedBranch
-            ? `Could not switch to ${selectedBranch}.`
+          snapshot.selectedBranch
+            ? `Could not switch to ${snapshot.selectedBranch}.`
             : "Could not prepare the selected branch.",
         );
       }
       ensureRunControlActive(runControl);
 
       const report =
-        preflight ??
+        snapshot.cachedPreflight ??
         (await runPreflight({
-          workspace,
-          prompt: promptText,
-          useOss,
-          ossProvider,
+          workspace: snapshot.workspace,
+          prompt: snapshot.promptText,
+          useOss: snapshot.useOss,
+          ossProvider: snapshot.ossProvider,
         }));
       ensureRunControlActive(runControl);
       setPreflight(report);
 
-      await ensureCodexConnected(accountId);
+      await ensureCodexConnected(snapshot.accountId);
       ensureRunControlActive(runControl);
-      const authState = await refreshAccountState(accountId, true);
+      const authState = await refreshAccountState(snapshot.accountId, true);
       ensureRunControlActive(runControl);
       if (shouldBlockRunForAuth(authState.requiresOpenaiAuth, authState.account)) {
         throw new Error(
-          loginState === "waiting"
+          snapshot.loginState === "waiting"
             ? "Finish Codex sign-in before starting a run."
             : "Sign in to Codex before starting a run.",
         );
       }
 
       const task = await createTask({
-        workspaceId: workspace.id,
-        originalPrompt: promptText,
-        improvedPrompt: report.improvedPrompt || improvedPrompt,
+        workspaceId: snapshot.workspace.id,
+        originalPrompt: snapshot.promptText,
+        improvedPrompt: report.improvedPrompt || snapshot.improvedPrompt,
         routeRecommendation: report.routeRecommendation,
         budgetTokens: report.tokenEstimate,
       });
@@ -2654,46 +2732,49 @@ function App() {
       currentTaskId.current = task.id;
       ensureRunControlActive(runControl);
 
-      await savePreflightReport(workspace.id, task.id, report);
+      await savePreflightReport(snapshot.workspace.id, task.id, report);
       ensureRunControlActive(runControl);
 
       const run = await createRun({
         taskId: task.id,
-        workspaceId: workspace.id,
-        accountId,
-        accountLabel: account.label,
-        accountEmail: account.email,
+        workspaceId: snapshot.workspace.id,
+        accountId: snapshot.accountId,
+        accountLabel: snapshot.account.label,
+        accountEmail: snapshot.account.email,
         status: "starting",
-        sandbox: access.sandbox,
-        approvalPolicy: access.approvalPolicy,
-        model,
-        modelProvider: useOss ? "oss" : null,
+        sandbox: snapshot.access.sandbox,
+        approvalPolicy: snapshot.access.approvalPolicy,
+        model: snapshot.model,
+        modelProvider: snapshot.useOss ? "oss" : null,
       });
       runId = run.id;
       runControl.runId = run.id;
       currentRunId.current = run.id;
-      currentRunAccountId.current = accountId;
+      currentRunAccountId.current = snapshot.accountId;
       ensureRunControlActive(runControl);
       eventSequence.current = 0;
-      updateTaskChatEntryIds(clientId, { taskId: task.id, runId: run.id });
+      updateTaskChatEntryIds(runControl.clientId, {
+        taskId: task.id,
+        runId: run.id,
+      });
 
       const thread = await codexRpc<{
         thread: { id: string };
         model?: string;
         modelProvider?: string;
         serviceTier?: string | null;
-      }>(accountId, "thread/start", {
-        cwd: workspace.path,
-        model,
-        approvalPolicy: access.approvalPolicy,
+      }>(snapshot.accountId, "thread/start", {
+        cwd: snapshot.workspace.path,
+        model: snapshot.model,
+        approvalPolicy: snapshot.access.approvalPolicy,
         approvalsReviewer: "user",
-        sandbox: access.sandbox,
+        sandbox: snapshot.access.sandbox,
         serviceName: "orchestrator",
         threadSource: "orchestrator",
-        config: useOss
+        config: snapshot.useOss
           ? {
               model_provider: "oss",
-              oss_provider: ossProvider,
+              oss_provider: snapshot.ossProvider,
             }
           : null,
       });
@@ -2701,16 +2782,20 @@ function App() {
 
       await updateRun(run.id, {
         codexThreadId: thread.thread.id,
-        model: thread.model ?? model,
-        modelProvider: thread.modelProvider ?? (useOss ? "oss" : null),
+        model: thread.model ?? snapshot.model,
+        modelProvider: thread.modelProvider ?? (snapshot.useOss ? "oss" : null),
         status: "running",
       });
       ensureRunControlActive(runControl);
 
       const warnings: string[] = [];
-      if (goalMode) {
+      if (snapshot.goalMode) {
         try {
-          await setThreadGoal(accountId, thread.thread.id, promptText);
+          await setThreadGoal(
+            snapshot.accountId,
+            thread.thread.id,
+            snapshot.promptText,
+          );
           ensureRunControlActive(runControl);
         } catch (error) {
           if (error instanceof RunStoppedError) {
@@ -2725,13 +2810,19 @@ function App() {
       }
 
       const baseTurnText =
-        mode === "plan"
-          ? buildPlanPrompt(report.improvedPrompt || improvedPrompt)
-          : buildRunPrompt(report.improvedPrompt || improvedPrompt, report.recommendations);
-      const text = applySelectedSkillsToPrompt(baseTurnText, runSelectedSkills);
+        snapshot.mode === "plan"
+          ? buildPlanPrompt(report.improvedPrompt || snapshot.improvedPrompt)
+          : buildRunPrompt(
+              report.improvedPrompt || snapshot.improvedPrompt,
+              report.recommendations,
+            );
+      const text = applySelectedSkillsToPrompt(
+        baseTurnText,
+        snapshot.selectedSkills,
+      );
       const { additionalContext, skippedFiles } = await buildAdditionalContext(
-        accountId,
-        runContextFiles,
+        snapshot.accountId,
+        snapshot.contextFiles,
       );
       ensureRunControlActive(runControl);
       if (skippedFiles.length > 0) {
@@ -2741,17 +2832,17 @@ function App() {
       }
 
       const turn = await codexRpc<{ turn: { id: string } }>(
-        accountId,
+        snapshot.accountId,
         "turn/start",
         {
           threadId: thread.thread.id,
           input: [{ type: "text", text, text_elements: [] }],
           additionalContext,
-          cwd: workspace.path,
-          approvalPolicy: access.approvalPolicy,
+          cwd: snapshot.workspace.path,
+          approvalPolicy: snapshot.access.approvalPolicy,
           approvalsReviewer: "user",
-          model,
-          effort,
+          model: snapshot.model,
+          effort: snapshot.effort,
         },
       );
       ensureRunControlActive(runControl);
@@ -2769,10 +2860,10 @@ function App() {
       ensureRunControlActive(runControl);
       await updateTaskStatus(task.id, "running");
       ensureRunControlActive(runControl);
-      await refreshWorkspaceData(workspace.id);
+      await refreshWorkspaceData(snapshot.workspace.id);
       ensureRunControlActive(runControl);
       const runStartedMessage =
-        mode === "plan" ? "Plan mode turn started." : "Codex run started.";
+        snapshot.mode === "plan" ? "Plan mode turn started." : "Codex run started.";
       setStatusMessage(
         warnings.length > 0
           ? `${runStartedMessage} ${warnings.join(" ")}`
@@ -2781,7 +2872,11 @@ function App() {
       setPreflight(null);
     } catch (error) {
       if (error instanceof RunStoppedError || runControl.stopped) {
-        await persistInterruptedRun(runControl, new Date().toISOString(), runViewRef.current);
+        await persistInterruptedRun(
+          runControl,
+          new Date().toISOString(),
+          runViewRef.current,
+        );
         currentRunId.current = null;
         currentTaskId.current = null;
         currentRunAccountId.current = null;
@@ -2815,7 +2910,7 @@ function App() {
         };
       });
       if (runId === null) {
-        setPrompt(promptFallback);
+        setPrompt(snapshot.promptFallback);
       } else {
         await updateRun(runId, {
           status: "failed",
@@ -2836,6 +2931,71 @@ function App() {
       clearActiveChatRun();
       setStatusMessage(`Run setup failed: ${message}`);
     }
+  }
+
+  async function launchRun() {
+    markPerformance("orchestrator:submit:start");
+
+    const promptText = prompt.trim();
+    const workspace = selectedWorkspace;
+    const accountId = selectedAccountId;
+    const account = selectedAccount;
+
+    if (!workspace || !promptText) {
+      setStatusMessage("Select a workspace and write a prompt first.");
+      return;
+    }
+    if (!accountId || !account) {
+      setStatusMessage("Sign in to a Codex account before starting a run.");
+      return;
+    }
+    if (runIsActive || activeChatEntryIdRef.current !== null) {
+      setStatusMessage("Wait for the active run to finish before starting another.");
+      return;
+    }
+    if (shouldBlockRunForAuth(requiresOpenaiAuth, codexAccount)) {
+      setStatusMessage(
+        loginState === "waiting"
+          ? "Finish Codex sign-in before starting a run."
+          : "Sign in to Codex before starting a run.",
+      );
+      return;
+    }
+
+    const selectedModel =
+      models.find((model) => model.id === selectedModelId) ?? models[0] ?? null;
+    const model = useOss || modelLoadError ? null : (selectedModel?.model ?? null);
+    const snapshot: RunSetupSnapshot = {
+      promptText,
+      promptFallback: prompt,
+      workspace: { ...workspace },
+      accountId,
+      account: { ...account },
+      selectedBranch,
+      cachedPreflight: preflight,
+      mode: planMode ? "plan" : "run",
+      access: accessSettings(accessLevel),
+      model,
+      effort: model ? selectedReasoningEffort : null,
+      useOss,
+      ossProvider,
+      improvedPrompt,
+      contextFiles: [...contextFiles],
+      selectedSkills: [...selectedSkills],
+      goalMode,
+      loginState,
+    };
+
+    const runControl = beginOptimisticRun(snapshot);
+    runControl.cancelScheduledSetup = scheduleAfterNextPaint(() => {
+      runControl.cancelScheduledSetup = null;
+      if (runControl.stopped || activeRunControlRef.current !== runControl) {
+        return;
+      }
+      runControl.setupStarted = true;
+      markPerformance("orchestrator:submit:setup-start");
+      void continueRunSetup(runControl, snapshot);
+    });
   }
 
   async function buildAdditionalContext(
