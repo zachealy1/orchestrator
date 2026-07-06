@@ -1102,7 +1102,8 @@ button.account-switcher-item:hover:not(:disabled) {
 .workspace-context-chip {
   display: inline-flex;
   max-width: 220px;
-  min-height: 28px;
+  height: 30px;
+  min-height: 30px;
   align-items: center;
   gap: 6px;
   border: 0;
@@ -1112,7 +1113,7 @@ button.account-switcher-item:hover:not(:disabled) {
   font-size: 0.76rem;
   font-weight: 680;
   line-height: 1;
-  padding: 6px 8px;
+  padding: 0 9px;
   white-space: nowrap;
 }
 
@@ -1120,15 +1121,18 @@ button.account-switcher-item:hover:not(:disabled) {
   color: var(--color-selected-text);
 }
 
-.workspace-branch-select {
+.composer-select.workspace-branch-select {
   width: clamp(112px, 12vw, 180px);
-  min-height: 28px;
+  height: 30px;
+  min-height: 30px;
   flex: 0 0 auto;
+  border-radius: 7px;
   background: var(--color-surface-soft);
 }
 
-.workspace-branch-select .composer-select-trigger {
-  min-height: 28px;
+.workspace-branch-select button.composer-select-trigger {
+  height: 30px;
+  min-height: 30px;
   color: var(--color-selected-text);
   font-size: 0.76rem;
   font-weight: 700;
@@ -1163,22 +1167,24 @@ button.account-switcher-item:hover:not(:disabled) {
 }
 
 .workspace-header-button {
-  min-height: 28px;
+  height: 30px;
+  min-height: 30px;
   gap: 6px;
   border-radius: 7px;
   background: var(--color-surface-soft);
   color: var(--text);
   font-size: 0.76rem;
   font-weight: 720;
-  padding: 6px 9px;
+  padding: 0 10px;
   white-space: nowrap;
 }
 
 .workspace-header-button.icon-only {
   width: 30px;
+  height: 30px;
   min-width: 30px;
   justify-content: center;
-  padding: 6px;
+  padding: 0;
 }
 
 .workspace-header-button.primary {
@@ -1234,19 +1240,20 @@ button.account-switcher-item:hover:not(:disabled) {
 }
 
 .workspace-header-button:disabled {
-  padding: 6px 9px;
+  padding: 0 10px;
 }
 
 .workspace-context-meter {
   display: inline-flex;
-  min-height: 28px;
+  height: 30px;
+  min-height: 30px;
   align-items: center;
   border-radius: 7px;
   background: var(--color-surface-soft);
   color: var(--muted);
   font-size: 0.76rem;
   font-weight: 700;
-  padding: 6px 9px;
+  padding: 0 10px;
   white-space: nowrap;
 }
 
