@@ -619,6 +619,7 @@ function App() {
     runs: [],
     error: null,
   });
+  const [selectedHistoryRun, setSelectedHistoryRun] = useState<RunListItem | null>(null);
   const [commitPopoverOpen, setCommitPopoverOpen] = useState(false);
   const [commitMessage, setCommitMessage] = useState("");
   const [gitActionStatus, setGitActionStatus] = useState<
@@ -824,11 +825,21 @@ function App() {
         : [],
     [selectedWorkspace, taskChatEntries],
   );
+  const selectedHistoryChatEntry = useMemo(() => {
+    if (!selectedWorkspace || selectedHistoryRun?.workspace_id !== selectedWorkspace.id) {
+      return null;
+    }
+
+    return createTaskChatEntryFromHistoryRun(selectedHistoryRun);
+  }, [selectedHistoryRun, selectedWorkspace]);
+  const visibleTaskChatEntries = selectedHistoryChatEntry
+    ? [selectedHistoryChatEntry]
+    : selectedWorkspaceChatEntries;
   const selectedWorkspaceContextUsage =
     [...selectedWorkspaceChatEntries]
       .reverse()
       .find((entry) => entry.runView.tokenUsage)?.runView.tokenUsage ?? null;
-  const hasTaskChat = selectedWorkspaceChatEntries.length > 0;
+  const hasTaskChat = visibleTaskChatEntries.length > 0;
   const codexSignedIn = isCodexSignedIn(codexAccount);
   const authMessage = formatCodexAuthMessage({
     connected: codexConnected,
@@ -1800,6 +1811,7 @@ function App() {
 
     setWorkspaceContextMenu(null);
     setSelectedWorkspace(workspace);
+    setSelectedHistoryRun(null);
     setActiveView("task");
     setPreflight(null);
     setStatusMessage(`Selected ${workspace.label}`);
@@ -1812,6 +1824,7 @@ function App() {
   }
 
   function startTaskChatEntry(entry: TaskChatEntry) {
+    setSelectedHistoryRun(null);
     activeChatEntryIdRef.current = entry.clientId;
     runViewRef.current = entry.runView;
     setActiveChatEntryId(entry.clientId);
@@ -2019,6 +2032,19 @@ function App() {
     setChatHistoryDeleteCandidate(run);
   }
 
+  function selectHistoryRun(run: RunListItem) {
+    if (runIsActive) {
+      setStatusMessage("Finish or stop the active run before opening history.");
+      return;
+    }
+
+    setChatHistoryContextMenu(null);
+    setSelectedHistoryRun(run);
+    setHistoryDrawerOpen(false);
+    setActiveView("task");
+    setStatusMessage(`Opened chat from ${formatHistoryTimestamp(run.started_at)}.`);
+  }
+
   async function confirmChatHistoryDelete() {
     const run = chatHistoryDeleteCandidate;
     if (!run) {
@@ -2026,6 +2052,7 @@ function App() {
     }
 
     await softDeleteRun(run.id);
+    setSelectedHistoryRun((current) => (current?.id === run.id ? null : current));
     setChatHistoryDeleteCandidate(null);
     setStatusMessage("Removed chat from history.");
     await refreshSelectedWorkspaceHistory();
@@ -4937,7 +4964,7 @@ function App() {
               >
                 {hasTaskChat ? (
                   <TaskChatTranscript
-                    entries={selectedWorkspaceChatEntries}
+                    entries={visibleTaskChatEntries}
                     onResolveRequest={handleResolveRequest}
                     onOpenFileLink={openTaskResponseFileLink}
                   />
@@ -5013,6 +5040,9 @@ function App() {
                 open={historyDrawerOpen}
                 workspace={selectedWorkspace}
                 historyState={historyState}
+                selectedRunId={selectedHistoryRun?.id ?? null}
+                runSelectionDisabled={runIsActive}
+                onSelectRun={selectHistoryRun}
                 onOpenRunContextMenu={openChatHistoryContextMenu}
               />
               {chatHistoryContextMenu ? (
@@ -5563,11 +5593,17 @@ function WorkspaceHistoryDrawer({
   open,
   workspace,
   historyState,
+  selectedRunId,
+  runSelectionDisabled,
+  onSelectRun,
   onOpenRunContextMenu,
 }: {
   open: boolean;
   workspace: Workspace | null;
   historyState: WorkspaceHistoryState;
+  selectedRunId: number | null;
+  runSelectionDisabled: boolean;
+  onSelectRun: (run: RunListItem) => void;
   onOpenRunContextMenu: (
     run: RunListItem,
     event: ReactMouseEvent<HTMLElement> | ReactKeyboardEvent<HTMLElement>,
@@ -5603,10 +5639,20 @@ function WorkspaceHistoryDrawer({
       <div className="history-drawer-body">
         <div className="history-run-list" aria-label="Workspace chats">
           {historyState.runs.map((run) => (
-            <article
+            <button
               key={run.id}
-              className="history-run-item"
-              tabIndex={0}
+              className={`history-run-item ${selectedRunId === run.id ? "selected" : ""} ${
+                runSelectionDisabled ? "disabled" : ""
+              }`}
+              type="button"
+              aria-pressed={selectedRunId === run.id}
+              aria-disabled={runSelectionDisabled}
+              title={
+                runSelectionDisabled
+                  ? "Finish or stop the active run before opening history"
+                  : run.original_prompt
+              }
+              onClick={() => onSelectRun(run)}
               onContextMenu={(event) => onOpenRunContextMenu(run, event)}
               onKeyDown={(event) => {
                 if (event.key === "ContextMenu" || (event.key === "F10" && event.shiftKey)) {
@@ -5616,12 +5662,86 @@ function WorkspaceHistoryDrawer({
             >
               <strong>{run.original_prompt}</strong>
               <span>{formatHistoryRunMeta(run)}</span>
-            </article>
+            </button>
           ))}
         </div>
       </div>
     </aside>
   );
+}
+
+function createTaskChatEntryFromHistoryRun(run: RunListItem): TaskChatEntry {
+  const status = normalizeHistoryRunStatus(run);
+  const finalMessage = run.final_message ?? "";
+  const finalMessageItemId = finalMessage ? `history-final-${run.id}` : null;
+
+  return {
+    clientId: `history-run-${run.id}`,
+    workspaceId: run.workspace_id,
+    runId: run.id,
+    taskId: run.task_id,
+    prompt: run.original_prompt,
+    submittedAt: run.started_at,
+    status,
+    runView: {
+      ...emptyRunView,
+      status,
+      threadId: run.codex_thread_id,
+      turnId: run.codex_turn_id,
+      startedAt: run.started_at,
+      completedAt: run.completed_at,
+      elapsedMs: run.duration_ms ?? 0,
+      finalMessage,
+      finalMessageItemId,
+      agentMessagesById:
+        finalMessageItemId === null
+          ? {}
+          : {
+              [finalMessageItemId]: {
+                text: finalMessage,
+                phase: "final_answer",
+              },
+            },
+      error: run.error,
+      tokenUsage:
+        run.latest_total_tokens === null
+          ? null
+          : {
+              totalTokens: run.latest_total_tokens,
+              inputTokens: 0,
+              cachedInputTokens: 0,
+              outputTokens: 0,
+              reasoningOutputTokens: 0,
+              modelContextWindow: run.latest_model_context_window,
+            },
+    },
+  };
+}
+
+function normalizeHistoryRunStatus(run: RunListItem): RunViewState["status"] {
+  if (
+    run.status === "completed" ||
+    run.status === "failed" ||
+    run.status === "interrupted" ||
+    run.status === "connecting" ||
+    run.status === "running"
+  ) {
+    return run.status;
+  }
+
+  if (run.status === "cancelled" || run.status === "canceled" || run.status === "stopped") {
+    return "interrupted";
+  }
+
+  if (run.error) {
+    return "failed";
+  }
+
+  if (run.completed_at || run.final_message) {
+    return "completed";
+  }
+
+  return "interrupted";
 }
 
 function approvalResult(request: CodexMessage, approved: boolean) {

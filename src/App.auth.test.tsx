@@ -1121,6 +1121,73 @@ describe("App Codex auth", () => {
     expect(historyButton).toHaveAttribute("aria-pressed", "false");
   });
 
+  it("opens a clicked chat history row in the chat window and closes the drawer", async () => {
+    const historicalRun = workspaceRunFixture({
+      id: 301,
+      original_prompt: "Fix the app header",
+      final_message: "Header fixed.",
+    });
+    mocks.listWorkspaceRunsMock.mockResolvedValue([historicalRun]);
+
+    const { user } = await renderApp();
+    const banner = screen.getByRole("region", { name: "Selected folder" });
+    await user.click(
+      within(banner).getByRole("button", { name: /open chat history/i }),
+    );
+
+    const drawer = await screen.findByRole("complementary", {
+      name: "Workspace chat history",
+    });
+    const row = within(drawer).getByRole("button", {
+      name: /fix the app header/i,
+    });
+    expect(row).toHaveClass("history-run-item");
+
+    await user.hover(row);
+    row.focus();
+    expect(row).toHaveFocus();
+    await user.click(row);
+
+    await waitFor(() => expect(drawer).toHaveClass("closed"));
+    expect(drawer).toHaveAttribute("aria-hidden", "true");
+    const transcript = screen.getByLabelText("Task chat transcript");
+    expect(within(transcript).getByLabelText("Submitted prompt")).toHaveTextContent(
+      "Fix the app header",
+    );
+    expect(within(transcript).getByText("Header fixed.")).toBeInTheDocument();
+    expect(within(transcript).getByText("1m 0s")).toBeInTheDocument();
+    expect(within(transcript).getByText("1,280 tokens")).toBeInTheDocument();
+  });
+
+  it("opens a chat history row with keyboard activation", async () => {
+    const historicalRun = workspaceRunFixture({
+      id: 302,
+      original_prompt: "Keyboard open chat",
+      final_message: "Opened from keyboard.",
+    });
+    mocks.listWorkspaceRunsMock.mockResolvedValue([historicalRun]);
+
+    const { user } = await renderApp();
+    const banner = screen.getByRole("region", { name: "Selected folder" });
+    await user.click(
+      within(banner).getByRole("button", { name: /open chat history/i }),
+    );
+    const drawer = await screen.findByRole("complementary", {
+      name: "Workspace chat history",
+    });
+    const row = within(drawer).getByRole("button", {
+      name: /keyboard open chat/i,
+    });
+
+    row.focus();
+    await user.keyboard("{Enter}");
+
+    await waitFor(() => expect(drawer).toHaveClass("closed"));
+    expect(screen.getByLabelText("Task chat transcript")).toHaveTextContent(
+      "Opened from keyboard.",
+    );
+  });
+
   it("removes a chat from history through the row context menu", async () => {
     const activeRun = workspaceRunFixture({
       id: 301,
@@ -1145,6 +1212,7 @@ describe("App Codex auth", () => {
     expect(row).toBeInstanceOf(HTMLElement);
 
     fireEvent.contextMenu(row as HTMLElement, { clientX: 120, clientY: 140 });
+    expect(screen.queryByLabelText("Task chat transcript")).not.toBeInTheDocument();
     expect(
       screen.getByRole("menu", { name: /fix the app header chat actions/i }),
     ).toHaveClass("workspace-context-menu");
@@ -1189,6 +1257,82 @@ describe("App Codex auth", () => {
     await waitFor(() =>
       expect(within(drawer).queryByText("Fix the app header")).not.toBeInTheDocument(),
     );
+  });
+
+  it("does not switch to a history chat while a run is active", async () => {
+    prepareSignedInRun();
+    const historicalRun = workspaceRunFixture({
+      id: 303,
+      original_prompt: "Old chat",
+      final_message: "Old result.",
+    });
+    mocks.listWorkspaceRunsMock.mockResolvedValue([historicalRun]);
+
+    const { user } = await renderApp();
+    const animationFrames = holdNextAnimationFrames();
+    try {
+      await user.type(screen.getByLabelText("Prompt"), "Current active run");
+      await user.keyboard("{Enter}");
+
+      const transcript = await screen.findByLabelText("Task chat transcript");
+      expect(within(transcript).getByLabelText("Submitted prompt")).toHaveTextContent(
+        "Current active run",
+      );
+      const banner = screen.getByRole("region", { name: "Selected folder" });
+      await user.click(
+        within(banner).getByRole("button", { name: /open chat history/i }),
+      );
+      const drawer = await screen.findByRole("complementary", {
+        name: "Workspace chat history",
+      });
+      const row = within(drawer).getByRole("button", { name: /old chat/i });
+      expect(row).toHaveAttribute("aria-disabled", "true");
+
+      await user.click(row);
+
+      expect(drawer).toHaveClass("open");
+      expect(transcript).toHaveTextContent("Current active run");
+      expect(screen.queryByText("Old result.")).not.toBeInTheDocument();
+    } finally {
+      animationFrames.restore();
+    }
+  });
+
+  it("clears the selected history chat when submitting a new prompt", async () => {
+    prepareSignedInRun();
+    const historicalRun = workspaceRunFixture({
+      id: 304,
+      original_prompt: "Old selected chat",
+      final_message: "Old selected result.",
+    });
+    mocks.listWorkspaceRunsMock.mockResolvedValue([historicalRun]);
+
+    const { user } = await renderApp();
+    const banner = screen.getByRole("region", { name: "Selected folder" });
+    await user.click(
+      within(banner).getByRole("button", { name: /open chat history/i }),
+    );
+    const drawer = await screen.findByRole("complementary", {
+      name: "Workspace chat history",
+    });
+    await user.click(
+      within(drawer).getByRole("button", { name: /old selected chat/i }),
+    );
+    expect(screen.getByLabelText("Task chat transcript")).toHaveTextContent(
+      "Old selected result.",
+    );
+
+    const animationFrames = holdNextAnimationFrames();
+    try {
+      await user.type(screen.getByLabelText("Prompt"), "Start fresh work");
+      await user.keyboard("{Enter}");
+
+      const transcript = screen.getByLabelText("Task chat transcript");
+      expect(transcript).toHaveTextContent("Start fresh work");
+      expect(transcript).not.toHaveTextContent("Old selected result.");
+    } finally {
+      animationFrames.restore();
+    }
   });
 
   it("renders an empty selected folder banner when no workspace is selected", async () => {

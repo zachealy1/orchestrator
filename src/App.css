@@ -1784,12 +1784,35 @@ summary.run-live-metrics::-webkit-details-marker {
   min-height: 58px;
   justify-content: stretch;
   gap: 5px;
+  align-items: center;
   border-radius: 7px;
   background: transparent;
   color: var(--text);
   box-shadow: none;
   padding: 10px;
   text-align: left;
+  transform: none;
+}
+
+button.history-run-item:hover,
+button.history-run-item:focus-visible {
+  background: var(--panel-strong);
+  box-shadow: none;
+  color: var(--text);
+  transform: none;
+}
+
+button.history-run-item.selected {
+  background: var(--color-button-active);
+  box-shadow: none;
+  color: var(--text);
+  transform: none;
+}
+
+button.history-run-item.disabled {
+  color: var(--text);
+  cursor: not-allowed;
+  opacity: 0.58;
 }
 
 .history-run-list strong,
