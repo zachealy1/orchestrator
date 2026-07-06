@@ -1271,41 +1271,112 @@ button.account-switcher-item:hover:not(:disabled) {
   right: 0;
   z-index: 35;
   display: grid;
-  width: min(360px, calc(100vw - 48px));
-  gap: 10px;
+  width: min(420px, calc(100vw - 48px));
+  overflow: hidden;
   border: 1px solid var(--color-divider);
   border-radius: 8px;
   background: var(--color-component-background);
-  box-shadow: 0 18px 42px rgb(var(--shadow-rgb) / 0.24);
-  padding: 12px;
+  box-shadow: 0 18px 42px rgb(var(--shadow-rgb) / 0.3);
+  padding: 8px;
 }
 
-.commit-popover label {
-  display: grid;
-  gap: 6px;
-  color: var(--muted);
-  font-size: 0.74rem;
-  font-weight: 720;
-}
-
-.commit-popover input {
-  min-height: 38px;
-  border: 1px solid var(--color-divider);
-  border-radius: 7px;
-  background: var(--color-surface-soft);
-  color: var(--text);
+.commit-popover-status {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
   padding: 8px 10px;
 }
 
-.commit-popover-actions {
-  display: flex;
-  gap: 6px;
-  justify-content: flex-end;
+.commit-popover-branch,
+.commit-popover-state {
+  display: inline-flex;
+  min-width: 0;
+  align-items: center;
+  gap: 8px;
+  color: var(--color-text-secondary);
+  font-size: 0.86rem;
+  white-space: nowrap;
 }
 
-.commit-popover-actions button {
-  min-height: 32px;
-  padding: 6px 10px;
+.commit-popover-branch span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.commit-popover-state.changed,
+.commit-popover-state.ahead {
+  color: var(--color-selected-text);
+}
+
+.commit-popover-state.error {
+  color: var(--color-error);
+}
+
+.commit-popover textarea {
+  width: 100%;
+  min-height: 118px;
+  resize: none;
+  border: 0;
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  line-height: 1.45;
+  outline: none;
+  padding: 22px 26px;
+}
+
+.commit-popover textarea::placeholder {
+  color: var(--color-text-secondary);
+}
+
+.commit-popover-check {
+  display: inline-flex;
+  gap: 10px;
+  align-items: center;
+  border-bottom: 1px solid var(--color-divider);
+  color: var(--text);
+  font-size: 0.89rem;
+  font-weight: 650;
+  padding: 12px 26px 18px;
+}
+
+.commit-popover-check input {
+  width: 15px;
+  height: 15px;
+  accent-color: var(--color-primary);
+}
+
+.commit-popover-actions {
+  display: grid;
+  gap: 4px;
+  padding-top: 8px;
+}
+
+.commit-popover-action {
+  width: 100%;
+  justify-content: flex-start;
+  gap: 10px;
+  min-height: 34px;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--text);
+  font-size: 0.9rem;
+  font-weight: 650;
+  padding: 0 14px;
+}
+
+.commit-popover-action:hover:not(:disabled),
+.commit-popover-action:focus-visible:not(:disabled) {
+  background: var(--panel-strong);
+  box-shadow: none;
+}
+
+.commit-popover-action:disabled {
+  color: var(--color-text-secondary);
+  opacity: 0.45;
 }
 
 .spin {

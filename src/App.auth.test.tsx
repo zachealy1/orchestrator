@@ -999,11 +999,16 @@ describe("App Codex auth", () => {
 
     const { user } = await renderApp();
     const banner = screen.getByRole("region", { name: "Selected folder" });
-    await user.click(await within(banner).findByRole("button", { name: /commit all/i }));
+    await user.click(
+      await within(banner).findByRole("button", { name: /commit or push/i }),
+    );
 
     const messageInput = within(banner).getByLabelText(/commit message/i);
-    expect(messageInput).toHaveValue("Update App.tsx");
-    await user.clear(messageInput);
+    expect(messageInput).toHaveValue("");
+    expect(messageInput).toHaveAttribute(
+      "placeholder",
+      "Commit message (leave blank to generate)...",
+    );
     await user.type(messageInput, "Update app shell");
     await user.click(within(banner).getByRole("button", { name: /^commit$/i }));
 
@@ -1032,11 +1037,28 @@ describe("App Codex auth", () => {
 
     const { user } = await renderApp();
     const banner = screen.getByRole("region", { name: "Selected folder" });
-    await user.click(await within(banner).findByRole("button", { name: /push 2/i }));
+    await user.click(
+      await within(banner).findByRole("button", { name: /commit or push/i }),
+    );
+    expect(within(banner).getByText("2 ahead")).toBeInTheDocument();
+    await user.click(within(banner).getByRole("button", { name: /^push$/i }));
 
     await waitFor(() =>
       expect(mocks.pushWorkspaceBranchMock).toHaveBeenCalledWith(workspace.path),
     );
+  });
+
+  it("opens the commit or push menu even when the workspace has no git action", async () => {
+    const { user } = await renderApp();
+    const banner = screen.getByRole("region", { name: "Selected folder" });
+    await user.click(
+      await within(banner).findByRole("button", { name: /commit or push/i }),
+    );
+
+    const menu = within(banner).getByRole("dialog", { name: /commit or push/i });
+    expect(within(menu).getByText("No changes")).toBeInTheDocument();
+    expect(within(menu).getByRole("button", { name: /^commit$/i })).toBeDisabled();
+    expect(within(menu).getByRole("button", { name: /^push$/i })).toBeDisabled();
   });
 
   it("shows live context usage in the selected folder banner", async () => {

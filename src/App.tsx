@@ -239,9 +239,24 @@ type WorkspaceHistoryState = {
 };
 
 type HeaderGitAction =
-  | { kind: "commit"; label: string; disabled: false }
-  | { kind: "push"; label: string; disabled: false }
-  | { kind: "disabled"; label: string; disabled: true; reason: string };
+  | {
+      label: string;
+      disabled: false;
+      canCommit: boolean;
+      canPush: boolean;
+      statusLabel: string;
+      statusKind: "checking" | "error" | "clean" | "changed" | "ahead";
+      reason?: string;
+    }
+  | {
+      label: string;
+      disabled: true;
+      canCommit: false;
+      canPush: false;
+      statusLabel: string;
+      statusKind: "disabled";
+      reason: string;
+    };
 
 type ExplorerPointerDrag = {
   active: boolean;
@@ -769,46 +784,70 @@ function App() {
   );
   const selectedGitFiles = selectedGitStatusState?.snapshot?.files ?? [];
   const headerGitAction = useMemo<HeaderGitAction>(() => {
+    const baseLabel = "Commit or push";
     if (!selectedWorkspace) {
       return {
-        kind: "disabled",
-        label: "Git",
+        label: baseLabel,
         disabled: true,
+        canCommit: false,
+        canPush: false,
+        statusLabel: "No folder",
+        statusKind: "disabled",
         reason: "Choose a workspace",
       };
     }
     if (selectedGitStatusState?.status === "loading" || selectedGitStatusState?.status === "idle") {
       return {
-        kind: "disabled",
-        label: "Checking",
-        disabled: true,
+        label: baseLabel,
+        disabled: false,
+        canCommit: false,
+        canPush: false,
+        statusLabel: "Checking git",
+        statusKind: "checking",
         reason: "Checking git status",
       };
     }
     if (selectedGitStatusState?.status === "error") {
       return {
-        kind: "disabled",
-        label: "Git unavailable",
-        disabled: true,
+        label: baseLabel,
+        disabled: false,
+        canCommit: false,
+        canPush: false,
+        statusLabel: "Git unavailable",
+        statusKind: "error",
         reason: selectedGitStatusState.error ?? "Git unavailable",
       };
     }
-    if (selectedGitSummary.total > 0) {
-      return { kind: "commit", label: "Commit all", disabled: false };
-    }
     const snapshot = selectedGitStatusState?.snapshot;
-    if (snapshot?.canPush) {
-      const ahead = snapshot.aheadCount ?? 0;
+    const canPush = Boolean(snapshot?.canPush);
+    if (selectedGitSummary.total > 0) {
       return {
-        kind: "push",
-        label: ahead > 0 ? `Push ${ahead}` : "Push",
+        label: baseLabel,
         disabled: false,
+        canCommit: true,
+        canPush,
+        statusLabel: `${selectedGitSummary.total} changed`,
+        statusKind: "changed",
+      };
+    }
+    if (canPush) {
+      const ahead = snapshot?.aheadCount ?? 0;
+      return {
+        label: baseLabel,
+        disabled: false,
+        canCommit: false,
+        canPush: true,
+        statusLabel: ahead > 0 ? `${ahead} ahead` : "Ready to push",
+        statusKind: "ahead",
       };
     }
     return {
-      kind: "disabled",
-      label: "No action",
-      disabled: true,
+      label: baseLabel,
+      disabled: false,
+      canCommit: false,
+      canPush: false,
+      statusLabel: "No changes",
+      statusKind: "clean",
       reason: "No changes or pushes available",
     };
   }, [
@@ -2869,57 +2908,83 @@ function App() {
     if (!selectedWorkspace) {
       return;
     }
-    setCommitMessage(
-      generateCommitMessage(selectedWorkspace, selectedGitFiles, selectedGitSummary),
-    );
+    setCommitMessage("");
     setCommitPopoverOpen(true);
   }
 
-  async function handleHeaderGitAction() {
-    if (!selectedWorkspace || headerGitAction.disabled || gitActionStatus !== "idle") {
+  function handleHeaderGitAction() {
+    if (!selectedWorkspace || gitActionStatus !== "idle") {
       return;
     }
 
-    if (headerGitAction.kind === "commit") {
+    if (commitPopoverOpen) {
+      setCommitPopoverOpen(false);
+    } else {
       openCommitPopover();
-      return;
-    }
-
-    if (headerGitAction.kind === "push") {
-      setGitActionStatus("pushing");
-      setStatusMessage("Pushing current branch...");
-      try {
-        const result = await pushWorkspaceBranch(selectedWorkspace.path);
-        setStatusMessage(result.message || "Branch pushed.");
-        await refreshBranches(selectedWorkspace);
-        await refreshWorkspaceGitStatus(selectedWorkspace);
-      } catch (error) {
-        setStatusMessage(
-          `Push failed: ${error instanceof Error ? error.message : String(error)}`,
-        );
-      } finally {
-        setGitActionStatus("idle");
-      }
     }
   }
 
-  async function handleCommitAll() {
-    if (!selectedWorkspace || !commitMessage.trim()) {
-      setStatusMessage("Enter a commit message before committing.");
+  async function pushSelectedWorkspaceBranch() {
+    if (!selectedWorkspace) {
+      return false;
+    }
+
+    setGitActionStatus("pushing");
+    setStatusMessage("Pushing current branch...");
+    try {
+      const result = await pushWorkspaceBranch(selectedWorkspace.path);
+      setStatusMessage(result.message || "Branch pushed.");
+      await refreshBranches(selectedWorkspace);
+      await refreshWorkspaceGitStatus(selectedWorkspace);
+      return true;
+    } catch (error) {
+      setStatusMessage(
+        `Push failed: ${error instanceof Error ? error.message : String(error)}`,
+      );
+      return false;
+    } finally {
+      setGitActionStatus("idle");
+    }
+  }
+
+  async function handlePushOnly() {
+    if (!selectedWorkspace || !headerGitAction.canPush || gitActionStatus !== "idle") {
       return;
     }
+
+    const pushed = await pushSelectedWorkspaceBranch();
+    if (pushed) {
+      setCommitPopoverOpen(false);
+    }
+  }
+
+  async function handleCommitAll(options: { pushAfter?: boolean } = {}) {
+    if (!selectedWorkspace || !headerGitAction.canCommit || gitActionStatus !== "idle") {
+      return;
+    }
+
+    const message =
+      commitMessage.trim() ||
+      generateCommitMessage(selectedWorkspace, selectedGitFiles, selectedGitSummary);
 
     setGitActionStatus("committing");
     setStatusMessage("Committing workspace changes...");
     try {
       const result = await commitWorkspaceChanges(
         selectedWorkspace.path,
-        commitMessage,
+        message,
       );
-      setCommitPopoverOpen(false);
       setStatusMessage(result.message || "Workspace changes committed.");
       await refreshBranches(selectedWorkspace);
       await refreshWorkspaceGitStatus(selectedWorkspace);
+      if (options.pushAfter) {
+        const pushed = await pushSelectedWorkspaceBranch();
+        if (!pushed) {
+          return;
+        }
+      }
+      setCommitPopoverOpen(false);
+      setCommitMessage("");
     } catch (error) {
       setStatusMessage(
         `Commit failed: ${error instanceof Error ? error.message : String(error)}`,
@@ -4934,18 +4999,8 @@ function App() {
               onGitAction={() => void handleHeaderGitAction()}
               onCommitMessageChange={setCommitMessage}
               onCommitConfirm={() => void handleCommitAll()}
-              onCommitCancel={() => setCommitPopoverOpen(false)}
-              onCommitRegenerate={() => {
-                if (selectedWorkspace) {
-                  setCommitMessage(
-                    generateCommitMessage(
-                      selectedWorkspace,
-                      selectedGitFiles,
-                      selectedGitSummary,
-                    ),
-                  );
-                }
-              }}
+              onCommitAndPush={() => void handleCommitAll({ pushAfter: true })}
+              onPush={() => void handlePushOnly()}
               onBranchChange={(branch) => void selectBranch(branch)}
               historyOpen={historyDrawerOpen}
               onToggleHistory={() => setHistoryDrawerOpen((current) => !current)}
@@ -5368,8 +5423,8 @@ function WorkspaceContextBanner({
   onGitAction,
   onCommitMessageChange,
   onCommitConfirm,
-  onCommitCancel,
-  onCommitRegenerate,
+  onCommitAndPush,
+  onPush,
   onBranchChange,
   historyOpen,
   onToggleHistory,
@@ -5387,8 +5442,8 @@ function WorkspaceContextBanner({
   onGitAction: () => void;
   onCommitMessageChange: (message: string) => void;
   onCommitConfirm: () => void;
-  onCommitCancel: () => void;
-  onCommitRegenerate: () => void;
+  onCommitAndPush: () => void;
+  onPush: () => void;
   onBranchChange: (branch: string) => void;
   historyOpen: boolean;
   onToggleHistory: () => void;
@@ -5506,11 +5561,10 @@ function WorkspaceContextBanner({
               onClick={onGitAction}
               disabled={gitAction.disabled || gitActionStatus !== "idle"}
               title={gitAction.disabled ? gitAction.reason : gitAction.label}
+              aria-expanded={commitPopoverOpen}
             >
               {gitActionStatus === "committing" || gitActionStatus === "pushing" ? (
                 <Loader2 className="spin" size={15} />
-              ) : gitAction.kind === "push" ? (
-                <UploadCloud size={15} />
               ) : (
                 <GitCommitHorizontal size={15} />
               )}
@@ -5521,27 +5575,54 @@ function WorkspaceContextBanner({
                   : gitAction.label}
             </button>
             {commitPopoverOpen ? (
-              <div className="commit-popover" role="dialog" aria-label="Commit changes">
-                <label>
-                  <span>Commit message</span>
-                  <input
-                    value={commitMessage}
-                    onChange={(event) => onCommitMessageChange(event.target.value)}
-                  />
+              <div className="commit-popover" role="dialog" aria-label="Commit or push">
+                <div className="commit-popover-status">
+                  <span className="commit-popover-branch">
+                    <GitBranch size={15} />
+                    <span>{branch ?? "No branch"}</span>
+                    <ChevronDown size={14} />
+                  </span>
+                  <span className={`commit-popover-state ${gitAction.statusKind}`}>
+                    {gitAction.statusLabel}
+                  </span>
+                </div>
+                <textarea
+                  aria-label="Commit message"
+                  placeholder="Commit message (leave blank to generate)..."
+                  value={commitMessage}
+                  onChange={(event) => onCommitMessageChange(event.target.value)}
+                />
+                <label className="commit-popover-check">
+                  <input type="checkbox" checked readOnly />
+                  <span>Include unstaged changes</span>
                 </label>
-                <div className="commit-popover-actions">
-                  <button className="secondary" type="button" onClick={onCommitRegenerate}>
-                    Regenerate
-                  </button>
-                  <button className="secondary" type="button" onClick={onCommitCancel}>
-                    Cancel
-                  </button>
+                <div className="commit-popover-actions" role="group" aria-label="Git actions">
                   <button
+                    className="commit-popover-action"
                     type="button"
                     onClick={onCommitConfirm}
-                    disabled={!commitMessage.trim() || gitActionStatus !== "idle"}
+                    disabled={!gitAction.canCommit || gitActionStatus !== "idle"}
                   >
+                    <GitCommitHorizontal size={15} />
                     Commit
+                  </button>
+                  <button
+                    className="commit-popover-action"
+                    type="button"
+                    onClick={onCommitAndPush}
+                    disabled={!gitAction.canCommit || gitActionStatus !== "idle"}
+                  >
+                    <UploadCloud size={15} />
+                    Commit and push
+                  </button>
+                  <button
+                    className="commit-popover-action"
+                    type="button"
+                    onClick={onPush}
+                    disabled={!gitAction.canPush || gitActionStatus !== "idle"}
+                  >
+                    <UploadCloud size={15} />
+                    Push
                   </button>
                 </div>
               </div>
