@@ -1052,23 +1052,14 @@ describe("App Codex auth", () => {
     ).toBeInTheDocument();
   });
 
-  it("opens workspace chat history and archives or restores persisted chats", async () => {
+  it("opens workspace chat history without extra drawer controls", async () => {
     const activeRun = workspaceRunFixture({
       id: 301,
       original_prompt: "Fix the app header",
       final_message: "Header fixed.",
       archived_at: null,
     });
-    const archivedRun = workspaceRunFixture({
-      id: 302,
-      original_prompt: "Old archived chat",
-      final_message: "Archived result.",
-      archived_at: "2026-06-30T10:00:00Z",
-    });
-    mocks.listWorkspaceRunsMock.mockImplementation(
-      async (_workspaceId: number, options?: { archived?: boolean }) =>
-        options?.archived ? [archivedRun] : [activeRun],
-    );
+    mocks.listWorkspaceRunsMock.mockResolvedValue([activeRun]);
 
     const { user } = await renderApp();
     const banner = screen.getByRole("region", { name: "Selected folder" });
@@ -1089,41 +1080,22 @@ describe("App Codex auth", () => {
     expect(within(layout as HTMLElement).getByLabelText("Task chat")).toBeInTheDocument();
     expect(drawer).toHaveClass("workspace-history-drawer", "open");
     expect(drawer.parentElement).toHaveClass("codex-workspace-body");
-
-    const activeFilter = within(drawer).getByRole("tab", {
-      name: /active chats/i,
-    });
-    expect(activeFilter).toHaveTextContent("");
-    expect(activeFilter).toHaveAttribute("title", "Active chats");
+    expect(within(drawer).queryByRole("tab")).not.toBeInTheDocument();
+    expect(
+      within(drawer).queryByRole("button", { name: /close chat history/i }),
+    ).not.toBeInTheDocument();
 
     expect(within(drawer).getAllByText("Fix the app header").length).toBeGreaterThan(0);
-    expect(within(drawer).getByText("Header fixed.")).toBeInTheDocument();
+    expect(within(drawer).queryByText("Header fixed.")).not.toBeInTheDocument();
+    expect(
+      within(drawer).queryByRole("article", { name: /selected chat/i }),
+    ).not.toBeInTheDocument();
+    expect(within(drawer).queryByRole("button", { name: /archive chat/i }))
+      .not.toBeInTheDocument();
+    expect(within(drawer).queryByRole("button", { name: /restore chat/i }))
+      .not.toBeInTheDocument();
 
-    const archiveButton = within(drawer).getByRole("button", { name: /archive chat/i });
-    expect(archiveButton).toHaveTextContent("");
-    await user.click(archiveButton);
-    await waitFor(() => expect(mocks.archiveRunMock).toHaveBeenCalledWith(301));
-
-    const archivedFilter = within(drawer).getByRole("tab", {
-      name: /archived chats/i,
-    });
-    expect(archivedFilter).toHaveTextContent("");
-    await user.click(archivedFilter);
-    await waitFor(() =>
-      expect(within(drawer).getAllByText("Old archived chat").length).toBeGreaterThan(0),
-    );
-    const restoreButton = within(drawer).getByRole("button", { name: /restore chat/i });
-    expect(restoreButton).toHaveTextContent("");
-    await user.click(restoreButton);
-    await waitFor(() => expect(mocks.unarchiveRunMock).toHaveBeenCalledWith(302));
-
-    const closeButton = within(drawer).getByRole("button", {
-      name: /close chat history/i,
-    });
-    expect(closeButton).toHaveTextContent("");
-    expect(closeButton.querySelector(".lucide-panel-right")).not.toBeNull();
-    expect(closeButton.querySelector(".lucide-x")).toBeNull();
-    await user.click(closeButton);
+    await user.click(historyButton);
     const closedDrawer = document.querySelector(".workspace-history-drawer");
     expect(closedDrawer).toBeInTheDocument();
     expect(closedDrawer).toHaveClass("closed");

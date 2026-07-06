@@ -3,7 +3,6 @@ import { openUrl } from "@tauri-apps/plugin-opener";
 import { listen } from "@tauri-apps/api/event";
 import {
   AlertCircle,
-  Archive,
   BarChart3,
   ChevronDown,
   ChevronRight,
@@ -12,7 +11,6 @@ import {
   FolderOpen,
   GitBranch,
   GitCommitHorizontal,
-  History,
   Loader2,
   LogIn,
   LogOut,
@@ -41,7 +39,6 @@ import type {
 import "./App.css";
 import orchestratorMark from "./assets/brand/orchestrator-mark.png";
 import {
-  archiveRun,
   appendRunEvent,
   completeDuplicateProfileCleanup,
   createCodexAccount,
@@ -60,7 +57,6 @@ import {
   updateCodexAccount,
   updateRun,
   updateTaskStatus,
-  unarchiveRun,
   upsertWorkspace,
 } from "./db";
 import {
@@ -234,8 +230,6 @@ type RunSetupSnapshot = {
   goalMode: boolean;
   loginState: CodexLoginState;
 };
-
-type WorkspaceHistoryFilter = "active" | "archived";
 
 type WorkspaceHistoryState = {
   status: "idle" | "loading" | "loaded" | "error";
@@ -609,16 +603,11 @@ function App() {
   const [taskChatEntries, setTaskChatEntries] = useState<TaskChatEntry[]>([]);
   const [activeChatEntryId, setActiveChatEntryId] = useState<string | null>(null);
   const [historyDrawerOpen, setHistoryDrawerOpen] = useState(false);
-  const [historyFilter, setHistoryFilter] =
-    useState<WorkspaceHistoryFilter>("active");
   const [historyState, setHistoryState] = useState<WorkspaceHistoryState>({
     status: "idle",
     runs: [],
     error: null,
   });
-  const [selectedHistoryRunId, setSelectedHistoryRunId] = useState<number | null>(
-    null,
-  );
   const [commitPopoverOpen, setCommitPopoverOpen] = useState(false);
   const [commitMessage, setCommitMessage] = useState("");
   const [gitActionStatus, setGitActionStatus] = useState<
@@ -816,10 +805,6 @@ function App() {
     selectedGitSummary.total,
     selectedWorkspace,
   ]);
-  const selectedHistoryRun =
-    historyState.runs.find((run) => run.id === selectedHistoryRunId) ??
-    historyState.runs[0] ??
-    null;
   const selectedWorkspaceChatEntries = useMemo(
     () =>
       selectedWorkspace
@@ -986,13 +971,12 @@ function App() {
   }, [selectedWorkspace]);
 
   useEffect(() => {
-    setSelectedHistoryRunId(null);
     if (!historyDrawerOpen || !selectedWorkspace) {
       return;
     }
 
-    void loadWorkspaceRunHistory(selectedWorkspace.id, historyFilter);
-  }, [historyDrawerOpen, historyFilter, selectedWorkspace?.id]);
+    void loadWorkspaceRunHistory(selectedWorkspace.id);
+  }, [historyDrawerOpen, selectedWorkspace?.id]);
 
   useEffect(() => {
     workspaces.forEach((workspace) => {
@@ -1432,10 +1416,7 @@ function App() {
     setAnalytics(summary);
   }
 
-  async function loadWorkspaceRunHistory(
-    workspaceId: number,
-    filter: WorkspaceHistoryFilter = historyFilter,
-  ) {
+  async function loadWorkspaceRunHistory(workspaceId: number) {
     setHistoryState((current) => ({
       ...current,
       status: "loading",
@@ -1443,14 +1424,9 @@ function App() {
     }));
     try {
       const runs = await listWorkspaceRuns(workspaceId, {
-        archived: filter === "archived",
+        archived: false,
       });
       setHistoryState({ status: "loaded", runs, error: null });
-      setSelectedHistoryRunId((current) =>
-        current && runs.some((run) => run.id === current)
-          ? current
-          : (runs[0]?.id ?? null),
-      );
     } catch (error) {
       setHistoryState({
         status: "error",
@@ -1464,7 +1440,7 @@ function App() {
     if (!selectedWorkspaceRef.current || !historyDrawerOpen) {
       return;
     }
-    await loadWorkspaceRunHistory(selectedWorkspaceRef.current.id, historyFilter);
+    await loadWorkspaceRunHistory(selectedWorkspaceRef.current.id);
   }
 
   async function refreshWorkspaceGitStatus(
@@ -2873,16 +2849,6 @@ function App() {
     } finally {
       setGitActionStatus("idle");
     }
-  }
-
-  async function handleArchiveHistoryRun(runId: number) {
-    await archiveRun(runId);
-    await refreshSelectedWorkspaceHistory();
-  }
-
-  async function handleUnarchiveHistoryRun(runId: number) {
-    await unarchiveRun(runId);
-    await refreshSelectedWorkspaceHistory();
   }
 
   function beginOptimisticRun(snapshot: RunSetupSnapshot) {
@@ -4952,14 +4918,7 @@ function App() {
               <WorkspaceHistoryDrawer
                 open={historyDrawerOpen}
                 workspace={selectedWorkspace}
-                filter={historyFilter}
                 historyState={historyState}
-                selectedRun={selectedHistoryRun}
-                onFilterChange={setHistoryFilter}
-                onSelectRun={setSelectedHistoryRunId}
-                onArchiveRun={(runId) => void handleArchiveHistoryRun(runId)}
-                onUnarchiveRun={(runId) => void handleUnarchiveHistoryRun(runId)}
-                onClose={() => setHistoryDrawerOpen(false)}
               />
             </div>
             <FilePreviewDrawer
@@ -5470,25 +5429,11 @@ function WorkspaceContextGitBadge({
 function WorkspaceHistoryDrawer({
   open,
   workspace,
-  filter,
   historyState,
-  selectedRun,
-  onFilterChange,
-  onSelectRun,
-  onArchiveRun,
-  onUnarchiveRun,
-  onClose,
 }: {
   open: boolean;
   workspace: Workspace | null;
-  filter: WorkspaceHistoryFilter;
   historyState: WorkspaceHistoryState;
-  selectedRun: RunListItem | null;
-  onFilterChange: (filter: WorkspaceHistoryFilter) => void;
-  onSelectRun: (runId: number) => void;
-  onArchiveRun: (runId: number) => void;
-  onUnarchiveRun: (runId: number) => void;
-  onClose: () => void;
 }) {
   return (
     <aside
@@ -5502,41 +5447,7 @@ function WorkspaceHistoryDrawer({
           <p className="eyebrow">History</p>
           <h2>{workspace?.label ?? "Workspace chats"}</h2>
         </div>
-        <button
-          className="icon-button history-panel-button"
-          type="button"
-          onClick={onClose}
-          aria-label="Close chat history"
-          title="Close history"
-        >
-          <PanelRight size={17} />
-        </button>
       </header>
-
-      <div className="history-filter" role="tablist" aria-label="History filter">
-        <button
-          className={filter === "active" ? "active" : ""}
-          type="button"
-          role="tab"
-          aria-selected={filter === "active"}
-          aria-label="Show active chats"
-          title="Active chats"
-          onClick={() => onFilterChange("active")}
-        >
-          <History size={16} aria-hidden="true" />
-        </button>
-        <button
-          className={filter === "archived" ? "active" : ""}
-          type="button"
-          role="tab"
-          aria-selected={filter === "archived"}
-          aria-label="Show archived chats"
-          title="Archived chats"
-          onClick={() => onFilterChange("archived")}
-        >
-          <Archive size={16} aria-hidden="true" />
-        </button>
-      </div>
 
       {historyState.status === "loading" ? (
         <div className="history-empty">
@@ -5548,71 +5459,21 @@ function WorkspaceHistoryDrawer({
         <div className="history-empty error">{historyState.error}</div>
       ) : null}
       {historyState.status === "loaded" && historyState.runs.length === 0 ? (
-        <div className="history-empty">
-          {filter === "archived" ? "No archived chats." : "No chats yet."}
-        </div>
+        <div className="history-empty">No chats yet.</div>
       ) : null}
 
       <div className="history-drawer-body">
         <div className="history-run-list" aria-label="Workspace chats">
           {historyState.runs.map((run) => (
-            <button
+            <article
               key={run.id}
-              className={selectedRun?.id === run.id ? "active" : ""}
-              type="button"
-              onClick={() => onSelectRun(run.id)}
+              className="history-run-item"
             >
               <strong>{run.original_prompt}</strong>
               <span>{formatHistoryRunMeta(run)}</span>
-            </button>
+            </article>
           ))}
         </div>
-
-        {selectedRun ? (
-          <article className="history-run-detail" aria-label="Selected chat">
-            <div className="history-detail-header">
-              <div>
-                <span>{formatHistoryTimestamp(selectedRun.started_at)}</span>
-                <h3>{selectedRun.original_prompt}</h3>
-              </div>
-              {filter === "archived" ? (
-                <button
-                  className="icon-button history-detail-action"
-                  type="button"
-                  onClick={() => onUnarchiveRun(selectedRun.id)}
-                  aria-label="Restore chat"
-                  title="Restore chat"
-                >
-                  <RefreshCw size={16} aria-hidden="true" />
-                </button>
-              ) : (
-                <button
-                  className="icon-button history-detail-action"
-                  type="button"
-                  onClick={() => onArchiveRun(selectedRun.id)}
-                  aria-label="Archive chat"
-                  title="Archive chat"
-                >
-                  <Archive size={16} aria-hidden="true" />
-                </button>
-              )}
-            </div>
-            <div className="history-detail-meta">
-              <span>{selectedRun.status}</span>
-              <span>{formatHistoryDuration(selectedRun.duration_ms)}</span>
-              <span>{formatHistoryTokens(selectedRun.latest_total_tokens)}</span>
-              {selectedRun.model ? <span>{selectedRun.model}</span> : null}
-              {selectedRun.account_label ? <span>{selectedRun.account_label}</span> : null}
-            </div>
-            <div className="history-detail-summary">
-              {selectedRun.final_message?.trim()
-                ? selectedRun.final_message
-                : selectedRun.error?.trim()
-                  ? selectedRun.error
-                  : "No final message was recorded for this chat."}
-            </div>
-          </article>
-        ) : null}
       </div>
     </aside>
   );
