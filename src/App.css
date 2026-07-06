@@ -2621,13 +2621,14 @@ button.composer-select-option.action:not(:first-child) {
 }
 
 .send-button.stop {
-  background: var(--color-error);
-  color: var(--color-button-primary-text);
-  box-shadow: 0 6px 16px rgb(var(--error-rgb) / 0.22);
+  background: var(--color-button-active);
+  color: var(--color-button-active-text);
+  box-shadow: 0 6px 16px rgb(var(--primary-rgb) / 0.18);
 }
 
 .send-button.stop:hover:not(:disabled) {
-  background: var(--color-error);
+  background: var(--color-surface-muted);
+  color: var(--color-button-active-text);
 }
 
 .send-button:disabled {
