@@ -580,7 +580,7 @@ export function TaskComposer({
               onClick={handleGoalModeClick}
             >
               <Flag size={16} />
-              Goal mode
+              <span className="composer-button-label">Goal mode</span>
             </button>
 
             <button
@@ -590,12 +590,12 @@ export function TaskComposer({
               onClick={handlePlanModeClick}
             >
               <BrainCircuit size={16} />
-              Plan mode
+              <span className="composer-button-label">Plan mode</span>
             </button>
 
             <button className="secondary compact-action" type="button" onClick={onAddFiles}>
               <Paperclip size={16} />
-              Add files
+              <span className="composer-button-label">Add files</span>
             </button>
           </div>
 

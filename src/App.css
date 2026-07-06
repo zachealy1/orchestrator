@@ -1733,22 +1733,6 @@ summary.run-live-metrics::-webkit-details-marker {
     visibility 0s linear 0.18s;
 }
 
-.codex-workspace-body.history-open .composer-toolbar {
-  align-items: stretch;
-}
-
-.codex-workspace-body.history-open .composer-action-group {
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-}
-
-.codex-workspace-body.history-open .composer-options-row {
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-}
-
-.codex-workspace-body.history-open .composer-run-group {
-  align-self: end;
-}
-
 .workspace-history-drawer header {
   display: flex;
   min-width: 0;
@@ -2699,10 +2683,10 @@ button.mention-search-option.active {
 }
 
 .composer-toolbar {
-  display: flex;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 42px;
   gap: 12px;
   align-items: center;
-  justify-content: space-between;
   border-top: 0;
   background: transparent;
   padding: 0;
@@ -2724,11 +2708,24 @@ button.mention-search-option.active {
 .composer-action-group > button {
   min-height: 42px;
   min-width: 0;
+  overflow: hidden;
   border: 0;
   border-radius: 8px;
   box-shadow: none;
   font-size: 0.9rem;
   letter-spacing: 0;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.composer-action-group > button svg {
+  flex: 0 0 auto;
+}
+
+.composer-button-label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
   white-space: nowrap;
 }
 
@@ -2738,8 +2735,9 @@ button.mention-search-option.active {
 }
 
 .composer-run-group {
-  display: flex;
+  display: grid;
   flex: 0 0 auto;
+  place-items: center;
 }
 
 .composer-toolbar .secondary,
@@ -2770,10 +2768,10 @@ button.mention-search-option.active {
 .composer-options-row {
   display: grid;
   grid-template-columns:
-    minmax(175px, 1.1fr)
-    minmax(175px, 1fr)
-    minmax(185px, 1.15fr)
-    minmax(120px, 0.8fr);
+    minmax(0, 1.1fr)
+    minmax(0, 1fr)
+    minmax(0, 1.15fr)
+    minmax(0, 0.8fr);
   gap: 8px;
   align-items: center;
   border-top: 0;
@@ -3686,11 +3684,11 @@ pre {
   }
 
   .composer-options-row {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-  }
-
-  .composer-options-row .reasoning-select {
-    grid-column: 1 / -1;
+    grid-template-columns:
+      minmax(0, 1.1fr)
+      minmax(0, 1fr)
+      minmax(0, 1.15fr)
+      minmax(0, 0.8fr);
   }
 
   .console {
@@ -3708,11 +3706,5 @@ pre {
 
   .theme-selector {
     width: 100%;
-  }
-}
-
-@media (min-width: 1181px) and (max-width: 1440px) {
-  .composer-options-row {
-    grid-template-columns: repeat(3, minmax(0, 1fr));
   }
 }
