@@ -444,6 +444,16 @@ fn migrations() -> Vec<Migration> {
             ",
             kind: MigrationKind::Up,
         },
+        Migration {
+            version: 7,
+            description: "soft_delete_runs",
+            sql: "
+                ALTER TABLE runs ADD COLUMN deleted_at TEXT;
+                CREATE INDEX IF NOT EXISTS idx_runs_workspace_deleted_started
+                    ON runs(workspace_id, deleted_at, started_at DESC);
+            ",
+            kind: MigrationKind::Up,
+        },
     ]
 }
 
@@ -2401,19 +2411,21 @@ mod tests {
     }
 
     #[test]
-    fn archived_runs_migration_does_not_modify_applied_workspace_deletion_migration() {
+    fn run_delete_migration_keeps_archive_compatibility_slot() {
         let all_migrations = migrations();
-        let soft_delete = all_migrations
+        let archive_compatibility = all_migrations
             .iter()
-            .find(|migration| migration.description == "soft_delete_workspaces")
-            .expect("soft delete workspaces migration");
-        let archived_runs = all_migrations
+            .find(|migration| migration.version == 6)
+            .expect("migration 6");
+        let soft_delete_runs = all_migrations
             .iter()
-            .find(|migration| migration.description == "add_archived_runs")
-            .expect("archived runs migration");
+            .find(|migration| migration.version == 7)
+            .expect("migration 7");
 
-        assert_eq!(soft_delete.version, 5);
-        assert_eq!(archived_runs.version, 6);
+        assert_eq!(archive_compatibility.description, "add_archived_runs");
+        assert!(archive_compatibility.sql.contains("ADD COLUMN archived_at"));
+        assert_eq!(soft_delete_runs.description, "soft_delete_runs");
+        assert!(soft_delete_runs.sql.contains("ADD COLUMN deleted_at"));
     }
 
     #[test]

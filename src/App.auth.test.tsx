@@ -48,8 +48,7 @@ const mocks = vi.hoisted(() => ({
   updateTaskStatusMock: vi.fn(),
   appendRunEventMock: vi.fn(),
   recordTokenUsageMock: vi.fn(),
-  archiveRunMock: vi.fn(),
-  unarchiveRunMock: vi.fn(),
+  softDeleteRunMock: vi.fn(),
   upsertWorkspaceMock: vi.fn(),
 }));
 
@@ -104,7 +103,6 @@ vi.mock("./codexClient", () => ({
 }));
 
 vi.mock("./db", () => ({
-  archiveRun: mocks.archiveRunMock,
   appendRunEvent: mocks.appendRunEventMock,
   completeDuplicateProfileCleanup: mocks.completeDuplicateProfileCleanupMock,
   createCodexAccount: mocks.createCodexAccountMock,
@@ -121,10 +119,10 @@ vi.mock("./db", () => ({
   softDeleteWorkspace: mocks.softDeleteWorkspaceMock,
   savePreflightReport: mocks.savePreflightReportMock,
   softDeleteCodexAccount: mocks.softDeleteCodexAccountMock,
+  softDeleteRun: mocks.softDeleteRunMock,
   updateCodexAccount: mocks.updateCodexAccountMock,
   updateRun: mocks.updateRunMock,
   updateTaskStatus: mocks.updateTaskStatusMock,
-  unarchiveRun: mocks.unarchiveRunMock,
   upsertWorkspace: mocks.upsertWorkspaceMock,
 }));
 
@@ -190,7 +188,6 @@ function workspaceRunFixture(
     id: number;
     original_prompt: string;
     final_message: string | null;
-    archived_at: string | null;
   }> = {},
 ) {
   return {
@@ -212,7 +209,6 @@ function workspaceRunFixture(
     duration_ms: 60000,
     final_message: overrides.final_message ?? "Done.",
     error: null,
-    archived_at: overrides.archived_at ?? null,
     original_prompt: overrides.original_prompt ?? "Fix the app",
     improved_prompt: "Objective\nFix the app",
     route_recommendation: "direct-run" as const,
@@ -302,8 +298,7 @@ function prepareDefaults() {
   mocks.updateTaskStatusMock.mockResolvedValue(undefined);
   mocks.appendRunEventMock.mockResolvedValue(undefined);
   mocks.recordTokenUsageMock.mockResolvedValue(undefined);
-  mocks.archiveRunMock.mockResolvedValue(undefined);
-  mocks.unarchiveRunMock.mockResolvedValue(undefined);
+  mocks.softDeleteRunMock.mockResolvedValue(undefined);
   mocks.upsertWorkspaceMock.mockResolvedValue(workspace);
   mocks.openDialogMock.mockResolvedValue(null);
 }
@@ -1057,7 +1052,6 @@ describe("App Codex auth", () => {
       id: 301,
       original_prompt: "Fix the app header",
       final_message: "Header fixed.",
-      archived_at: null,
     });
     mocks.listWorkspaceRunsMock.mockResolvedValue([activeRun]);
 
@@ -1090,10 +1084,6 @@ describe("App Codex auth", () => {
     expect(
       within(drawer).queryByRole("article", { name: /selected chat/i }),
     ).not.toBeInTheDocument();
-    expect(within(drawer).queryByRole("button", { name: /archive chat/i }))
-      .not.toBeInTheDocument();
-    expect(within(drawer).queryByRole("button", { name: /restore chat/i }))
-      .not.toBeInTheDocument();
 
     await user.click(historyButton);
     const closedDrawer = document.querySelector(".workspace-history-drawer");
@@ -1103,6 +1093,76 @@ describe("App Codex auth", () => {
     expect(closedDrawer).toHaveAttribute("inert");
     expect(historyButton).toHaveAttribute("aria-label", "Open chat history");
     expect(historyButton).toHaveAttribute("aria-pressed", "false");
+  });
+
+  it("removes a chat from history through the row context menu", async () => {
+    const activeRun = workspaceRunFixture({
+      id: 301,
+      original_prompt: "Fix the app header",
+      final_message: "Header fixed.",
+    });
+    mocks.listWorkspaceRunsMock
+      .mockResolvedValueOnce([activeRun])
+      .mockResolvedValueOnce([]);
+
+    const { user } = await renderApp();
+    const banner = screen.getByRole("region", { name: "Selected folder" });
+    await user.click(
+      within(banner).getByRole("button", { name: /open chat history/i }),
+    );
+    const drawer = await screen.findByRole("complementary", {
+      name: "Workspace chat history",
+    });
+    const row = within(drawer)
+      .getByText("Fix the app header")
+      .closest(".history-run-item");
+    expect(row).toBeInstanceOf(HTMLElement);
+
+    fireEvent.contextMenu(row as HTMLElement, { clientX: 120, clientY: 140 });
+    expect(
+      screen.getByRole("menu", { name: /fix the app header chat actions/i }),
+    ).toHaveClass("workspace-context-menu");
+    fireEvent.keyDown(window, { key: "Escape" });
+    await waitFor(() =>
+      expect(
+        screen.queryByRole("menu", { name: /fix the app header chat actions/i }),
+      ).not.toBeInTheDocument(),
+    );
+
+    fireEvent.contextMenu(row as HTMLElement, { clientX: 120, clientY: 140 });
+    fireEvent.pointerDown(document.body);
+    await waitFor(() =>
+      expect(
+        screen.queryByRole("menu", { name: /fix the app header chat actions/i }),
+      ).not.toBeInTheDocument(),
+    );
+
+    fireEvent.contextMenu(row as HTMLElement, { clientX: 120, clientY: 140 });
+    const removeMenuItem = screen.getByRole("menuitem", { name: /remove chat/i });
+    expect(removeMenuItem).toHaveClass("workspace-context-menu-item", "danger");
+    await user.click(removeMenuItem);
+
+    const dialog = screen.getByRole("dialog", { name: "Remove chat?" });
+    expect(
+      within(dialog).getByText(/Workspace files will not be changed/i),
+    ).toBeInTheDocument();
+    await user.click(within(dialog).getByRole("button", { name: "Cancel" }));
+    expect(mocks.softDeleteRunMock).not.toHaveBeenCalled();
+    expect(screen.queryByRole("dialog", { name: "Remove chat?" })).not.toBeInTheDocument();
+
+    fireEvent.contextMenu(row as HTMLElement, { clientX: 120, clientY: 140 });
+    await user.click(screen.getByRole("menuitem", { name: /remove chat/i }));
+    await user.click(
+      within(screen.getByRole("dialog", { name: "Remove chat?" })).getByRole(
+        "button",
+        { name: "Remove chat" },
+      ),
+    );
+
+    await waitFor(() => expect(mocks.softDeleteRunMock).toHaveBeenCalledWith(301));
+    await waitFor(() =>
+      expect(within(drawer).queryByText("Fix the app header")).not.toBeInTheDocument(),
+    );
   });
 
   it("renders an empty selected folder banner when no workspace is selected", async () => {

@@ -54,6 +54,7 @@ import {
   savePreflightReport,
   softDeleteWorkspace,
   softDeleteCodexAccount,
+  softDeleteRun,
   updateCodexAccount,
   updateRun,
   updateTaskStatus,
@@ -386,6 +387,12 @@ type WorkspaceContextMenuState = {
   y: number;
 };
 
+type ChatHistoryContextMenuState = {
+  run: RunListItem;
+  x: number;
+  y: number;
+};
+
 type WorkspaceGitSummary = {
   total: number;
   modified: number;
@@ -545,6 +552,10 @@ function App() {
     useState<WorkspaceContextMenuState | null>(null);
   const [workspaceDeleteCandidate, setWorkspaceDeleteCandidate] =
     useState<Workspace | null>(null);
+  const [chatHistoryContextMenu, setChatHistoryContextMenu] =
+    useState<ChatHistoryContextMenuState | null>(null);
+  const [chatHistoryDeleteCandidate, setChatHistoryDeleteCandidate] =
+    useState<RunListItem | null>(null);
   const [expandedWorkspaceIds, setExpandedWorkspaceIds] = useState<Set<number>>(
     () => new Set(),
   );
@@ -689,6 +700,7 @@ function App() {
     new Map<number, Promise<CodexSkillSummary[]>>(),
   );
   const workspaceContextMenuRef = useRef<HTMLDivElement | null>(null);
+  const chatHistoryContextMenuRef = useRef<HTMLDivElement | null>(null);
   const accountMenuContainerRef = useRef<HTMLDivElement | null>(null);
 
   const improvedPrompt = useMemo(() => improvePrompt(prompt), [prompt]);
@@ -1103,6 +1115,46 @@ function App() {
   }, [workspaceContextMenu]);
 
   useEffect(() => {
+    if (!chatHistoryContextMenu) {
+      return;
+    }
+
+    function handlePointerDown(event: PointerEvent) {
+      const menu = chatHistoryContextMenuRef.current;
+      if (menu && event.target instanceof Node && menu.contains(event.target)) {
+        return;
+      }
+
+      setChatHistoryContextMenu(null);
+    }
+
+    function handleKeyDown(event: KeyboardEvent) {
+      if (event.key === "Escape") {
+        setChatHistoryContextMenu(null);
+      }
+    }
+
+    function handleScroll() {
+      setChatHistoryContextMenu(null);
+    }
+
+    window.addEventListener("pointerdown", handlePointerDown);
+    window.addEventListener("keydown", handleKeyDown);
+    window.addEventListener("scroll", handleScroll, true);
+    return () => {
+      window.removeEventListener("pointerdown", handlePointerDown);
+      window.removeEventListener("keydown", handleKeyDown);
+      window.removeEventListener("scroll", handleScroll, true);
+    };
+  }, [chatHistoryContextMenu]);
+
+  useEffect(() => {
+    if (!historyDrawerOpen) {
+      setChatHistoryContextMenu(null);
+    }
+  }, [historyDrawerOpen]);
+
+  useEffect(() => {
     if (!workspaceDeleteCandidate) {
       return;
     }
@@ -1116,6 +1168,21 @@ function App() {
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
   }, [workspaceDeleteCandidate]);
+
+  useEffect(() => {
+    if (!chatHistoryDeleteCandidate) {
+      return;
+    }
+
+    function handleKeyDown(event: KeyboardEvent) {
+      if (event.key === "Escape") {
+        setChatHistoryDeleteCandidate(null);
+      }
+    }
+
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [chatHistoryDeleteCandidate]);
 
   useEffect(() => {
     if (!accountMenuOpen) {
@@ -1423,9 +1490,7 @@ function App() {
       error: null,
     }));
     try {
-      const runs = await listWorkspaceRuns(workspaceId, {
-        archived: false,
-      });
+      const runs = await listWorkspaceRuns(workspaceId);
       setHistoryState({ status: "loaded", runs, error: null });
     } catch (error) {
       setHistoryState({
@@ -1904,21 +1969,10 @@ function App() {
   ) {
     event.preventDefault();
     event.stopPropagation();
-
-    if ("clientX" in event && event.clientX !== 0) {
-      setWorkspaceContextMenu({
-        workspace,
-        x: event.clientX,
-        y: event.clientY,
-      });
-      return;
-    }
-
-    const rect = event.currentTarget.getBoundingClientRect();
+    const position = contextMenuPosition(event);
     setWorkspaceContextMenu({
       workspace,
-      x: rect.left + 28,
-      y: rect.top + rect.height,
+      ...position,
     });
   }
 
@@ -1939,6 +1993,43 @@ function App() {
     }
 
     setWorkspaceDeleteCandidate(workspace);
+  }
+
+  function openChatHistoryContextMenu(
+    run: RunListItem,
+    event:
+      | ReactMouseEvent<HTMLElement>
+      | ReactKeyboardEvent<HTMLElement>,
+  ) {
+    event.preventDefault();
+    event.stopPropagation();
+    setChatHistoryContextMenu({
+      run,
+      ...contextMenuPosition(event),
+    });
+  }
+
+  function requestChatHistoryDelete(run: RunListItem) {
+    setChatHistoryContextMenu(null);
+    if (runIsActive && currentRunId.current === run.id) {
+      setStatusMessage("Wait for the active run to finish before removing this chat.");
+      return;
+    }
+
+    setChatHistoryDeleteCandidate(run);
+  }
+
+  async function confirmChatHistoryDelete() {
+    const run = chatHistoryDeleteCandidate;
+    if (!run) {
+      return;
+    }
+
+    await softDeleteRun(run.id);
+    setChatHistoryDeleteCandidate(null);
+    setStatusMessage("Removed chat from history.");
+    await refreshSelectedWorkspaceHistory();
+    await refreshWorkspaceData(run.workspace_id);
   }
 
   async function confirmWorkspaceDelete() {
@@ -4758,6 +4849,51 @@ function App() {
         </div>
       ) : null}
 
+      {chatHistoryDeleteCandidate ? (
+        <div
+          className="modal-backdrop"
+          role="presentation"
+          onMouseDown={(event) => {
+            if (event.target === event.currentTarget) {
+              setChatHistoryDeleteCandidate(null);
+            }
+          }}
+        >
+          <section
+            className="confirmation-dialog"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="chat-delete-title"
+            aria-describedby="chat-delete-description"
+          >
+            <div>
+              <p className="eyebrow">Chat</p>
+              <h2 id="chat-delete-title">Remove chat?</h2>
+              <p id="chat-delete-description">
+                This removes the chat from Orchestrator history. Workspace files
+                will not be changed.
+              </p>
+            </div>
+            <div className="confirmation-actions">
+              <button
+                className="secondary"
+                type="button"
+                onClick={() => setChatHistoryDeleteCandidate(null)}
+              >
+                Cancel
+              </button>
+              <button
+                className="danger"
+                type="button"
+                onClick={() => void confirmChatHistoryDelete()}
+              >
+                Remove chat
+              </button>
+            </div>
+          </section>
+        </div>
+      ) : null}
+
       <section className={`main ${activeView === "task" ? "task-main" : ""}`}>
         {activeView !== "task" ? (
           <>
@@ -4919,7 +5055,33 @@ function App() {
                 open={historyDrawerOpen}
                 workspace={selectedWorkspace}
                 historyState={historyState}
+                onOpenRunContextMenu={openChatHistoryContextMenu}
               />
+              {chatHistoryContextMenu ? (
+                <div
+                  className="workspace-context-menu"
+                  ref={chatHistoryContextMenuRef}
+                  role="menu"
+                  aria-label={`${chatHistoryContextMenu.run.original_prompt} chat actions`}
+                  style={{
+                    left: chatHistoryContextMenu.x,
+                    top: chatHistoryContextMenu.y,
+                  }}
+                >
+                  <button
+                    className="workspace-context-menu-item danger"
+                    type="button"
+                    role="menuitem"
+                    onClick={() => requestChatHistoryDelete(chatHistoryContextMenu.run)}
+                    disabled={
+                      runIsActive && currentRunId.current === chatHistoryContextMenu.run.id
+                    }
+                  >
+                    <Trash2 size={15} aria-hidden="true" />
+                    <span>Remove chat</span>
+                  </button>
+                </div>
+              ) : null}
             </div>
             <FilePreviewDrawer
               previewState={previewState}
@@ -5430,10 +5592,15 @@ function WorkspaceHistoryDrawer({
   open,
   workspace,
   historyState,
+  onOpenRunContextMenu,
 }: {
   open: boolean;
   workspace: Workspace | null;
   historyState: WorkspaceHistoryState;
+  onOpenRunContextMenu: (
+    run: RunListItem,
+    event: ReactMouseEvent<HTMLElement> | ReactKeyboardEvent<HTMLElement>,
+  ) => void;
 }) {
   return (
     <aside
@@ -5468,6 +5635,13 @@ function WorkspaceHistoryDrawer({
             <article
               key={run.id}
               className="history-run-item"
+              tabIndex={0}
+              onContextMenu={(event) => onOpenRunContextMenu(run, event)}
+              onKeyDown={(event) => {
+                if (event.key === "ContextMenu" || (event.key === "F10" && event.shiftKey)) {
+                  onOpenRunContextMenu(run, event);
+                }
+              }}
             >
               <strong>{run.original_prompt}</strong>
               <span>{formatHistoryRunMeta(run)}</span>
@@ -5789,6 +5963,27 @@ function formatHistoryDuration(milliseconds: number | null) {
 
 function formatHistoryTokens(tokens: number | null) {
   return tokens && tokens > 0 ? `${tokens.toLocaleString()} tokens` : "No tokens";
+}
+
+function contextMenuPosition(
+  event: ReactMouseEvent<HTMLElement> | ReactKeyboardEvent<HTMLElement>,
+) {
+  if ("clientX" in event && event.clientX !== 0) {
+    return clampContextMenuPosition(event.clientX, event.clientY);
+  }
+
+  const rect = event.currentTarget.getBoundingClientRect();
+  return clampContextMenuPosition(rect.left + 28, rect.top + rect.height);
+}
+
+function clampContextMenuPosition(x: number, y: number) {
+  const gutter = 8;
+  const estimatedWidth = 220;
+  const estimatedHeight = 52;
+  return {
+    x: Math.max(gutter, Math.min(x, window.innerWidth - estimatedWidth - gutter)),
+    y: Math.max(gutter, Math.min(y, window.innerHeight - estimatedHeight - gutter)),
+  };
 }
 
 async function collectWorkspaceFiles(

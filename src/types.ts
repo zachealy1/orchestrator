@@ -173,7 +173,6 @@ export type RunRecord = {
   duration_ms: number | null;
   final_message: string | null;
   error: string | null;
-  archived_at: string | null;
 };
 
 export type RunListItem = RunRecord & {
