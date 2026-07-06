@@ -2607,13 +2607,27 @@ button.composer-select-option.action:not(:first-child) {
 
 .send-button {
   width: 42px;
+  height: 42px;
   min-width: 42px;
+  max-width: 42px;
   min-height: 42px;
+  max-height: 42px;
+  flex: 0 0 42px;
   border-radius: 50%;
   background: var(--color-button-primary);
   color: var(--color-button-primary-text);
   box-shadow: 0 6px 16px rgb(var(--primary-rgb) / 0.24);
   padding: 0;
+  transform: none;
+  transition:
+    background 140ms ease,
+    color 140ms ease,
+    box-shadow 140ms ease;
+}
+
+.send-button:hover:not(:disabled),
+.send-button:active:not(:disabled) {
+  transform: none;
 }
 
 .send-button:hover:not(:disabled) {
@@ -2633,6 +2647,7 @@ button.composer-select-option.action:not(:first-child) {
 
 .send-button:disabled {
   opacity: 0.42;
+  padding: 0;
 }
 
 .compact-action {
