@@ -53,6 +53,7 @@ const accounts: TaskComposerProps["accounts"] = [
 function renderComposer(overrides: Partial<TaskComposerProps> = {}) {
   const props: TaskComposerProps = {
     disabled: false,
+    runActive: false,
     prompt: "",
     routeRecommendation: "direct-run",
     tokenEstimate: 0,
@@ -96,6 +97,7 @@ function renderComposer(overrides: Partial<TaskComposerProps> = {}) {
     onRemoveSkill: vi.fn(),
     onPreflight: vi.fn(),
     onRun: vi.fn(),
+    onStop: vi.fn(),
     ...overrides,
   };
 
@@ -115,6 +117,7 @@ function renderControlledComposer(overrides: Partial<TaskComposerProps> = {}) {
     const [prompt, setPrompt] = useState(initialPrompt);
     const props: TaskComposerProps = {
       disabled: false,
+      runActive: false,
       routeRecommendation: "direct-run",
       tokenEstimate: 0,
       accounts,
@@ -156,6 +159,7 @@ function renderControlledComposer(overrides: Partial<TaskComposerProps> = {}) {
       onRemoveSkill: vi.fn(),
       onPreflight: vi.fn(),
       onRun: vi.fn(),
+      onStop: vi.fn(),
       ...overrides,
       prompt,
       onPromptChange: (nextPrompt: string) => {
@@ -512,6 +516,24 @@ describe("TaskComposer", () => {
 
     expect(screen.getByRole("button", { name: /run codex/i })).toBeDisabled();
     expect(screen.getByRole("button", { name: /preflight/i })).toBeDisabled();
+  });
+
+  it("shows an enabled stop button while a run is active", async () => {
+    const onStop = vi.fn();
+    const { user } = renderComposer({
+      disabled: true,
+      runActive: true,
+      onStop,
+    });
+
+    expect(screen.queryByRole("button", { name: /run codex/i })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /preflight/i })).toBeDisabled();
+    const stopButton = screen.getByRole("button", { name: /stop codex/i });
+    expect(stopButton).toBeEnabled();
+
+    await user.click(stopButton);
+
+    expect(onStop).toHaveBeenCalledOnce();
   });
 
   it("submits the prompt when pressing Enter", async () => {

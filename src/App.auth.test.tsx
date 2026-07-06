@@ -12,6 +12,7 @@ const mocks = vi.hoisted(() => ({
   deleteCodexProfileMock: vi.fn(),
   readCodexAccountMock: vi.fn(),
   startCodexLoginMock: vi.fn(),
+  stopCodexMock: vi.fn(),
   cancelCodexLoginMock: vi.fn(),
   logoutCodexAccountMock: vi.fn(),
   listCodexModelsMock: vi.fn(),
@@ -92,6 +93,7 @@ vi.mock("./codexClient", () => ({
   runPreflight: mocks.runPreflightMock,
   setThreadGoal: mocks.setThreadGoalMock,
   startCodexLogin: mocks.startCodexLoginMock,
+  stopCodex: mocks.stopCodexMock,
 }));
 
 vi.mock("./db", () => ({
@@ -189,6 +191,7 @@ function prepareDefaults() {
     loginId: "login-1",
     authUrl: "https://example.com/auth",
   });
+  mocks.stopCodexMock.mockResolvedValue(undefined);
   mocks.cancelCodexLoginMock.mockResolvedValue(undefined);
   mocks.logoutCodexAccountMock.mockResolvedValue(undefined);
   mocks.listCodexModelsMock.mockResolvedValue([]);
@@ -2142,6 +2145,154 @@ describe("App Codex auth", () => {
     );
     expect(screen.queryByLabelText("Run history")).not.toBeInTheDocument();
     expect(screen.queryByLabelText("Codex run console")).not.toBeInTheDocument();
+  });
+
+  it("shows the submitted prompt immediately while run setup is pending", async () => {
+    prepareSignedInRun();
+    let resolveCreateTask!: (value: { id: number }) => void;
+    mocks.createTaskMock.mockReturnValueOnce(
+      new Promise((resolve) => {
+        resolveCreateTask = resolve;
+      }),
+    );
+
+    const { user } = await renderApp();
+    await user.type(screen.getByLabelText("Prompt"), "Fix slow submission");
+    await user.keyboard("{Enter}");
+
+    expect(screen.getByLabelText("Prompt")).toHaveValue("");
+    const transcript = await screen.findByLabelText("Task chat transcript");
+    expect(within(transcript).getByLabelText("Submitted prompt")).toHaveTextContent(
+      "Fix slow submission",
+    );
+    expect(screen.getByLabelText("Preparing run")).toHaveTextContent(
+      "Preparing run...",
+    );
+    expect(screen.queryByRole("button", { name: /run codex/i })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /stop codex/i })).toBeEnabled();
+    expect(mocks.createRunMock).not.toHaveBeenCalled();
+
+    await act(async () => {
+      resolveCreateTask({ id: 101 });
+    });
+    await waitFor(() =>
+      expect(mocks.codexRpcMock).toHaveBeenCalledWith(
+        7,
+        "turn/start",
+        expect.any(Object),
+      ),
+    );
+    expect(screen.getAllByLabelText("Submitted prompt")).toHaveLength(1);
+  });
+
+  it("stops a preparing run before a persisted run is created", async () => {
+    prepareSignedInRun();
+    let resolveCreateTask!: (value: { id: number }) => void;
+    mocks.createTaskMock.mockReturnValueOnce(
+      new Promise((resolve) => {
+        resolveCreateTask = resolve;
+      }),
+    );
+
+    const { user } = await renderApp();
+    await user.type(screen.getByLabelText("Prompt"), "Stop while preparing");
+    await user.keyboard("{Enter}");
+
+    await user.click(screen.getByRole("button", { name: /stop codex/i }));
+
+    await waitFor(() => expect(mocks.stopCodexMock).toHaveBeenCalledWith(7));
+    expect(screen.getByLabelText("Prompt")).toHaveValue("Stop while preparing");
+    expect(within(screen.getByLabelText("Run summary")).getByText("Stopped by user.")).toBeInTheDocument();
+
+    await act(async () => {
+      resolveCreateTask({ id: 101 });
+    });
+
+    await waitFor(() =>
+      expect(mocks.updateTaskStatusMock).toHaveBeenCalledWith(101, "interrupted"),
+    );
+    expect(mocks.createRunMock).not.toHaveBeenCalled();
+  });
+
+  it("restores the prompt and marks the optimistic entry failed when setup fails before a run is created", async () => {
+    prepareSignedInRun();
+    let rejectPreflight!: (error: Error) => void;
+    mocks.runPreflightMock.mockReturnValueOnce(
+      new Promise((_resolve, reject) => {
+        rejectPreflight = reject;
+      }),
+    );
+
+    const { user } = await renderApp();
+    const promptInput = screen.getByLabelText("Prompt");
+    await user.type(promptInput, "Try a failing setup");
+    await user.keyboard("{Enter}");
+
+    expect(promptInput).toHaveValue("");
+    expect(screen.getByLabelText("Preparing run")).toHaveTextContent(
+      "Preparing run...",
+    );
+    await act(async () => {
+      rejectPreflight(new Error("Preflight failed"));
+    });
+    expect(await screen.findByText("Preflight failed")).toBeInTheDocument();
+    expect(screen.getByLabelText("Prompt")).toHaveValue("Try a failing setup");
+    expect(mocks.createTaskMock).not.toHaveBeenCalled();
+    expect(mocks.createRunMock).not.toHaveBeenCalled();
+    expect(mocks.codexRpcMock).not.toHaveBeenCalled();
+  });
+
+  it("ignores duplicate Enter submissions while optimistic setup is active", async () => {
+    prepareSignedInRun();
+    let resolveCreateTask!: (value: { id: number }) => void;
+    mocks.createTaskMock.mockReturnValueOnce(
+      new Promise((resolve) => {
+        resolveCreateTask = resolve;
+      }),
+    );
+
+    const { user } = await renderApp();
+    await user.type(screen.getByLabelText("Prompt"), "Run only once");
+    await user.keyboard("{Enter}{Enter}");
+
+    await screen.findByLabelText("Task chat transcript");
+    expect(mocks.createTaskMock).toHaveBeenCalledTimes(1);
+    expect(screen.getAllByLabelText("Submitted prompt")).toHaveLength(1);
+
+    await act(async () => {
+      resolveCreateTask({ id: 101 });
+    });
+    await waitFor(() =>
+      expect(mocks.codexRpcMock).toHaveBeenCalledWith(
+        7,
+        "turn/start",
+        expect.any(Object),
+      ),
+    );
+  });
+
+  it("stops an active Codex run from the composer stop button", async () => {
+    prepareSignedInRun();
+
+    const { user } = await renderApp();
+    await startMockRun(user, "Stop the live run");
+
+    const stopButton = screen.getByRole("button", { name: /stop codex/i });
+    expect(stopButton).toBeEnabled();
+    await user.click(stopButton);
+
+    await waitFor(() => expect(mocks.stopCodexMock).toHaveBeenCalledWith(7));
+    await waitFor(() =>
+      expect(mocks.updateRunMock).toHaveBeenCalledWith(
+        202,
+        expect.objectContaining({
+          status: "interrupted",
+          error: "Stopped by user.",
+        }),
+      ),
+    );
+    expect(mocks.updateTaskStatusMock).toHaveBeenCalledWith(101, "interrupted");
+    expect(screen.queryByRole("button", { name: /stop codex/i })).not.toBeInTheDocument();
   });
 
   it("streams Codex output into the task chat transcript", async () => {

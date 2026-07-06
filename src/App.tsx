@@ -74,6 +74,7 @@ import {
   runPreflight,
   setThreadGoal,
   startCodexLogin,
+  stopCodex,
 } from "./codexClient";
 import { AnalyticsSummary } from "./components/AnalyticsSummary";
 import { ComposerSelect } from "./components/ComposerSelect";
@@ -171,6 +172,28 @@ const EMPTY_GIT_STATUS_BY_PATH = new Map<string, WorkspaceGitFileStatus>();
 const EMPTY_DIRTY_DIRECTORY_PATHS = new Set<string>();
 
 type AppView = "task" | "analytics" | "settings";
+
+function createTaskChatClientId() {
+  return `chat-${Date.now().toString(36)}-${Math.random()
+    .toString(36)
+    .slice(2, 8)}`;
+}
+
+class RunStoppedError extends Error {
+  constructor() {
+    super("Run stopped by user.");
+    this.name = "RunStoppedError";
+  }
+}
+
+type ActiveRunControl = {
+  accountId: number;
+  clientId: string;
+  promptFallback: string;
+  stopped: boolean;
+  taskId: number | null;
+  runId: number | null;
+};
 
 type ExplorerPointerDrag = {
   active: boolean;
@@ -490,7 +513,7 @@ function App() {
   const [preflight, setPreflight] = useState<PreflightReport | null>(null);
   const [runView, setRunView] = useState<RunViewState>(emptyRunView);
   const [taskChatEntries, setTaskChatEntries] = useState<TaskChatEntry[]>([]);
-  const [activeChatRunId, setActiveChatRunId] = useState<number | null>(null);
+  const [activeChatEntryId, setActiveChatEntryId] = useState<string | null>(null);
   const [statusMessage, setStatusMessage] = useState("Choose a workspace to begin.");
   const [codexAccount, setCodexAccount] = useState<CodexAccount | null>(null);
   const [requiresOpenaiAuth, setRequiresOpenaiAuth] = useState(true);
@@ -543,7 +566,8 @@ function App() {
   const currentTaskId = useRef<number | null>(null);
   const currentRunAccountId = useRef<number | null>(null);
   const runViewRef = useRef<RunViewState>(emptyRunView);
-  const activeChatRunIdRef = useRef<number | null>(null);
+  const activeChatEntryIdRef = useRef<string | null>(null);
+  const activeRunControlRef = useRef<ActiveRunControl | null>(null);
   const eventSequence = useRef(0);
   const selectedWorkspaceRef = useRef<Workspace | null>(null);
   const codexAccountsRef = useRef<CodexAccountProfile[]>([]);
@@ -848,7 +872,7 @@ function App() {
 
   useEffect(() => {
     if (
-      activeChatRunId === null ||
+      activeChatEntryId === null ||
       (runView.status !== "connecting" && runView.status !== "running")
     ) {
       return;
@@ -861,7 +885,7 @@ function App() {
     tick();
     const intervalId = window.setInterval(tick, 1000);
     return () => window.clearInterval(intervalId);
-  }, [activeChatRunId, runView.status]);
+  }, [activeChatEntryId, runView.status]);
 
   useEffect(() => {
     mentionSearchRequestId.current += 1;
@@ -1069,7 +1093,6 @@ function App() {
       });
       if (event.payload.status === "exited" || event.payload.status === "stopped") {
         if (selectedAccountIdRef.current === event.payload.accountId) {
-          setCodexAccount(null);
           setRequiresOpenaiAuth(true);
         }
         if (pendingLoginAccountIdRef.current === event.payload.accountId) {
@@ -1506,11 +1529,22 @@ function App() {
   }
 
   function startTaskChatEntry(entry: TaskChatEntry) {
-    activeChatRunIdRef.current = entry.runId;
+    activeChatEntryIdRef.current = entry.clientId;
     runViewRef.current = entry.runView;
-    setActiveChatRunId(entry.runId);
+    setActiveChatEntryId(entry.clientId);
     setRunView(entry.runView);
     setTaskChatEntries((current) => [...current, entry]);
+  }
+
+  function updateTaskChatEntryIds(
+    clientId: string,
+    ids: { taskId: number; runId: number },
+  ) {
+    setTaskChatEntries((current) =>
+      current.map((entry) =>
+        entry.clientId === clientId ? { ...entry, ...ids } : entry,
+      ),
+    );
   }
 
   function updateActiveRunView(
@@ -1520,11 +1554,11 @@ function App() {
     runViewRef.current = nextRunView;
     setRunView(nextRunView);
 
-    const activeRunId = activeChatRunIdRef.current;
-    if (activeRunId !== null) {
+    const activeEntryId = activeChatEntryIdRef.current;
+    if (activeEntryId !== null) {
       setTaskChatEntries((current) =>
         current.map((entry) =>
-          entry.runId === activeRunId
+          entry.clientId === activeEntryId
             ? { ...entry, status: nextRunView.status, runView: nextRunView }
             : entry,
         ),
@@ -1535,8 +1569,104 @@ function App() {
   }
 
   function clearActiveChatRun() {
-    activeChatRunIdRef.current = null;
-    setActiveChatRunId(null);
+    activeChatEntryIdRef.current = null;
+    setActiveChatEntryId(null);
+  }
+
+  function ensureRunControlActive(control: ActiveRunControl) {
+    if (control.stopped || activeRunControlRef.current !== control) {
+      throw new RunStoppedError();
+    }
+  }
+
+  function markActiveRunInterrupted(message = "Stopped by user.") {
+    const completedAt = new Date().toISOString();
+    const stoppedRunView = updateActiveRunView((current) => {
+      const elapsedRunView = updateRunElapsed(current);
+      return {
+        ...elapsedRunView,
+        status: "interrupted",
+        completedAt,
+        error: message,
+        streamEvents:
+          elapsedRunView.streamEvents.length > 0
+            ? elapsedRunView.streamEvents
+            : [
+                {
+                  id: `run-stopped-${completedAt}`,
+                  kind: "system",
+                  text: message,
+                  timestamp: completedAt,
+                },
+              ],
+      };
+    });
+
+    return { completedAt, stoppedRunView };
+  }
+
+  async function persistInterruptedRun(
+    control: ActiveRunControl | null,
+    completedAt: string,
+    stoppedRunView: RunViewState,
+  ) {
+    const runId = currentRunId.current ?? control?.runId ?? null;
+    const taskId = currentTaskId.current ?? control?.taskId ?? null;
+
+    if (runId !== null) {
+      await updateRun(runId, {
+        status: "interrupted",
+        completedAt,
+        durationMs: stoppedRunView.elapsedMs,
+        error: stoppedRunView.error ?? "Stopped by user.",
+      }).catch(() => undefined);
+    }
+
+    if (taskId !== null) {
+      await updateTaskStatus(taskId, "interrupted").catch(() => undefined);
+    }
+  }
+
+  async function stopActiveRun() {
+    const control = activeRunControlRef.current;
+    const accountId =
+      control?.accountId ?? currentRunAccountId.current ?? selectedAccountIdRef.current;
+
+    if (!control && !runIsActive) {
+      return;
+    }
+
+    if (control) {
+      control.stopped = true;
+    }
+
+    const shouldRestorePrompt =
+      (currentRunId.current ?? control?.runId ?? null) === null &&
+      Boolean(control?.promptFallback);
+    const { completedAt, stoppedRunView } = markActiveRunInterrupted();
+    if (shouldRestorePrompt && control) {
+      setPrompt(control.promptFallback);
+    }
+    await persistInterruptedRun(control, completedAt, stoppedRunView);
+
+    currentRunId.current = null;
+    currentTaskId.current = null;
+    currentRunAccountId.current = null;
+    activeRunControlRef.current = null;
+    clearActiveChatRun();
+    setStatusMessage("Codex run stopped.");
+
+    if (accountId !== null) {
+      try {
+        await stopCodex(accountId);
+      } catch (error) {
+        setStatusMessage(
+          `Run stopped locally, but Codex app-server did not stop cleanly: ${
+            error instanceof Error ? error.message : String(error)
+          }`,
+        );
+      }
+    }
   }
 
   function openWorkspaceContextMenu(
@@ -1647,9 +1777,9 @@ function App() {
     setTaskChatEntries((current) =>
       current.filter((entry) => entry.workspaceId !== workspace.id),
     );
-    if (activeChatRunId !== null) {
+    if (activeChatEntryId !== null) {
       const activeEntry = taskChatEntries.find(
-        (entry) => entry.runId === activeChatRunId,
+        (entry) => entry.clientId === activeChatEntryId,
       );
       if (activeEntry?.workspaceId === workspace.id) {
         clearActiveChatRun();
@@ -2412,30 +2542,22 @@ function App() {
 
   async function launchRun() {
     const promptText = prompt.trim();
-    if (!selectedWorkspace || !promptText) {
+    const workspace = selectedWorkspace;
+    const accountId = selectedAccountId;
+    const account = selectedAccount;
+
+    if (!workspace || !promptText) {
       setStatusMessage("Select a workspace and write a prompt first.");
       return;
     }
-    if (!selectedAccountId || !selectedAccount) {
+    if (!accountId || !account) {
       setStatusMessage("Sign in to a Codex account before starting a run.");
       return;
     }
-    if (runIsActive) {
+    if (runIsActive || activeChatEntryIdRef.current !== null) {
       setStatusMessage("Wait for the active run to finish before starting another.");
       return;
     }
-
-    const report = preflight ?? (await handlePreflight());
-    if (!report) {
-      return;
-    }
-
-    await ensureCodexConnected(selectedAccountId);
-    await refreshAccountState(selectedAccountId, true);
-    if (!(await ensureSelectedBranch())) {
-      return;
-    }
-
     if (shouldBlockRunForAuth(requiresOpenaiAuth, codexAccount)) {
       setStatusMessage(
         loginState === "waiting"
@@ -2445,138 +2567,275 @@ function App() {
       return;
     }
 
+    const clientId = createTaskChatClientId();
+    const submittedAt = new Date().toISOString();
+    const initialRunView = {
+      ...emptyRunView,
+      status: "connecting" as const,
+      startedAt: submittedAt,
+    };
+    const promptFallback = prompt;
     const mode = planMode ? "plan" : "run";
     const access = accessSettings(accessLevel);
     const selectedModel =
       models.find((model) => model.id === selectedModelId) ?? models[0] ?? null;
     const model = useOss || modelLoadError ? null : (selectedModel?.model ?? null);
     const effort = model ? selectedReasoningEffort : null;
-
-    const task = await createTask({
-      workspaceId: selectedWorkspace.id,
-      originalPrompt: promptText,
-      improvedPrompt: report.improvedPrompt || improvedPrompt,
-      routeRecommendation: report.routeRecommendation,
-      budgetTokens: report.tokenEstimate,
-    });
-    currentTaskId.current = task.id;
-
-    await savePreflightReport(selectedWorkspace.id, task.id, report);
-
-    const run = await createRun({
-      taskId: task.id,
-      workspaceId: selectedWorkspace.id,
-      accountId: selectedAccountId,
-      accountLabel: selectedAccount.label,
-      accountEmail: selectedAccount.email,
-      status: "starting",
-      sandbox: access.sandbox,
-      approvalPolicy: access.approvalPolicy,
-      model,
-      modelProvider: useOss ? "oss" : null,
-    });
-    currentRunId.current = run.id;
-    currentRunAccountId.current = selectedAccountId;
-    eventSequence.current = 0;
-    const startedAt = new Date().toISOString();
-    const initialRunView = {
-      ...emptyRunView,
-      status: "running" as const,
-      startedAt,
+    const runContextFiles = contextFiles;
+    const runSelectedSkills = selectedSkills;
+    let taskId: number | null = null;
+    let runId: number | null = null;
+    const runControl: ActiveRunControl = {
+      accountId,
+      clientId,
+      promptFallback,
+      stopped: false,
+      taskId: null,
+      runId: null,
     };
+    activeRunControlRef.current = runControl;
+
     startTaskChatEntry({
-      workspaceId: selectedWorkspace.id,
-      runId: run.id,
-      taskId: task.id,
+      clientId,
+      workspaceId: workspace.id,
+      runId: null,
+      taskId: null,
       prompt: promptText,
-      submittedAt: startedAt,
+      submittedAt,
       status: initialRunView.status,
       runView: initialRunView,
     });
     setPrompt("");
     setPreflight(null);
+    setStatusMessage("Preparing run...");
 
-    const thread = await codexRpc<{
-      thread: { id: string };
-      model?: string;
-      modelProvider?: string;
-      serviceTier?: string | null;
-    }>(selectedAccountId, "thread/start", {
-      cwd: selectedWorkspace.path,
-      model,
-      approvalPolicy: access.approvalPolicy,
-      approvalsReviewer: "user",
-      sandbox: access.sandbox,
-      serviceName: "orchestrator",
-      threadSource: "orchestrator",
-      config: useOss
-        ? {
-            model_provider: "oss",
-            oss_provider: ossProvider,
-          }
-        : null,
-    });
-
-    await updateRun(run.id, {
-      codexThreadId: thread.thread.id,
-      model: thread.model ?? model,
-      modelProvider: thread.modelProvider ?? (useOss ? "oss" : null),
-      status: "running",
-    });
-
-    const warnings: string[] = [];
-    if (goalMode) {
-      try {
-        await setThreadGoal(selectedAccountId, thread.thread.id, promptText);
-      } catch (error) {
-        warnings.push(
-          `Goal mode could not set a thread goal: ${
-            error instanceof Error ? error.message : String(error)
-          }`,
+    try {
+      if (!(await ensureSelectedBranch())) {
+        throw new Error(
+          selectedBranch
+            ? `Could not switch to ${selectedBranch}.`
+            : "Could not prepare the selected branch.",
         );
       }
-    }
+      ensureRunControlActive(runControl);
 
-    const baseTurnText =
-      mode === "plan"
-        ? buildPlanPrompt(report.improvedPrompt || improvedPrompt)
-        : buildRunPrompt(report.improvedPrompt || improvedPrompt, report.recommendations);
-    const text = applySelectedSkillsToPrompt(baseTurnText, selectedSkills);
-    const { additionalContext, skippedFiles } = await buildAdditionalContext(
-      selectedAccountId,
-      contextFiles,
-    );
-    if (skippedFiles.length > 0) {
-      warnings.push(
-        `Skipped context file${skippedFiles.length === 1 ? "" : "s"}: ${skippedFiles.join(", ")}`,
+      const report =
+        preflight ??
+        (await runPreflight({
+          workspace,
+          prompt: promptText,
+          useOss,
+          ossProvider,
+        }));
+      ensureRunControlActive(runControl);
+      setPreflight(report);
+
+      await ensureCodexConnected(accountId);
+      ensureRunControlActive(runControl);
+      const authState = await refreshAccountState(accountId, true);
+      ensureRunControlActive(runControl);
+      if (shouldBlockRunForAuth(authState.requiresOpenaiAuth, authState.account)) {
+        throw new Error(
+          loginState === "waiting"
+            ? "Finish Codex sign-in before starting a run."
+            : "Sign in to Codex before starting a run.",
+        );
+      }
+
+      const task = await createTask({
+        workspaceId: workspace.id,
+        originalPrompt: promptText,
+        improvedPrompt: report.improvedPrompt || improvedPrompt,
+        routeRecommendation: report.routeRecommendation,
+        budgetTokens: report.tokenEstimate,
+      });
+      taskId = task.id;
+      runControl.taskId = task.id;
+      currentTaskId.current = task.id;
+      ensureRunControlActive(runControl);
+
+      await savePreflightReport(workspace.id, task.id, report);
+      ensureRunControlActive(runControl);
+
+      const run = await createRun({
+        taskId: task.id,
+        workspaceId: workspace.id,
+        accountId,
+        accountLabel: account.label,
+        accountEmail: account.email,
+        status: "starting",
+        sandbox: access.sandbox,
+        approvalPolicy: access.approvalPolicy,
+        model,
+        modelProvider: useOss ? "oss" : null,
+      });
+      runId = run.id;
+      runControl.runId = run.id;
+      currentRunId.current = run.id;
+      currentRunAccountId.current = accountId;
+      ensureRunControlActive(runControl);
+      eventSequence.current = 0;
+      updateTaskChatEntryIds(clientId, { taskId: task.id, runId: run.id });
+
+      const thread = await codexRpc<{
+        thread: { id: string };
+        model?: string;
+        modelProvider?: string;
+        serviceTier?: string | null;
+      }>(accountId, "thread/start", {
+        cwd: workspace.path,
+        model,
+        approvalPolicy: access.approvalPolicy,
+        approvalsReviewer: "user",
+        sandbox: access.sandbox,
+        serviceName: "orchestrator",
+        threadSource: "orchestrator",
+        config: useOss
+          ? {
+              model_provider: "oss",
+              oss_provider: ossProvider,
+            }
+          : null,
+      });
+      ensureRunControlActive(runControl);
+
+      await updateRun(run.id, {
+        codexThreadId: thread.thread.id,
+        model: thread.model ?? model,
+        modelProvider: thread.modelProvider ?? (useOss ? "oss" : null),
+        status: "running",
+      });
+      ensureRunControlActive(runControl);
+
+      const warnings: string[] = [];
+      if (goalMode) {
+        try {
+          await setThreadGoal(accountId, thread.thread.id, promptText);
+          ensureRunControlActive(runControl);
+        } catch (error) {
+          if (error instanceof RunStoppedError) {
+            throw error;
+          }
+          warnings.push(
+            `Goal mode could not set a thread goal: ${
+              error instanceof Error ? error.message : String(error)
+            }`,
+          );
+        }
+      }
+
+      const baseTurnText =
+        mode === "plan"
+          ? buildPlanPrompt(report.improvedPrompt || improvedPrompt)
+          : buildRunPrompt(report.improvedPrompt || improvedPrompt, report.recommendations);
+      const text = applySelectedSkillsToPrompt(baseTurnText, runSelectedSkills);
+      const { additionalContext, skippedFiles } = await buildAdditionalContext(
+        accountId,
+        runContextFiles,
       );
+      ensureRunControlActive(runControl);
+      if (skippedFiles.length > 0) {
+        warnings.push(
+          `Skipped context file${skippedFiles.length === 1 ? "" : "s"}: ${skippedFiles.join(", ")}`,
+        );
+      }
+
+      const turn = await codexRpc<{ turn: { id: string } }>(
+        accountId,
+        "turn/start",
+        {
+          threadId: thread.thread.id,
+          input: [{ type: "text", text, text_elements: [] }],
+          additionalContext,
+          cwd: workspace.path,
+          approvalPolicy: access.approvalPolicy,
+          approvalsReviewer: "user",
+          model,
+          effort,
+        },
+      );
+      ensureRunControlActive(runControl);
+
+      updateActiveRunView((current) => ({
+        ...current,
+        status: "running",
+        threadId: thread.thread.id,
+        turnId: turn.turn.id,
+      }));
+      await updateRun(run.id, {
+        codexTurnId: turn.turn.id,
+        status: "running",
+      });
+      ensureRunControlActive(runControl);
+      await updateTaskStatus(task.id, "running");
+      ensureRunControlActive(runControl);
+      await refreshWorkspaceData(workspace.id);
+      ensureRunControlActive(runControl);
+      const runStartedMessage =
+        mode === "plan" ? "Plan mode turn started." : "Codex run started.";
+      setStatusMessage(
+        warnings.length > 0
+          ? `${runStartedMessage} ${warnings.join(" ")}`
+          : runStartedMessage,
+      );
+      setPreflight(null);
+    } catch (error) {
+      if (error instanceof RunStoppedError || runControl.stopped) {
+        await persistInterruptedRun(runControl, new Date().toISOString(), runViewRef.current);
+        currentRunId.current = null;
+        currentTaskId.current = null;
+        currentRunAccountId.current = null;
+        if (activeRunControlRef.current === runControl) {
+          activeRunControlRef.current = null;
+        }
+        clearActiveChatRun();
+        return;
+      }
+
+      const message = error instanceof Error ? error.message : String(error);
+      const completedAt = new Date().toISOString();
+      const failedRunView = updateActiveRunView((current) => {
+        const elapsedRunView = updateRunElapsed(current);
+        return {
+          ...elapsedRunView,
+          status: "failed",
+          completedAt,
+          error: message,
+          streamEvents:
+            elapsedRunView.streamEvents.length > 0
+              ? elapsedRunView.streamEvents
+              : [
+                  {
+                    id: `setup-error-${completedAt}`,
+                    kind: "system",
+                    text: `Setup failed: ${message}`,
+                    timestamp: completedAt,
+                  },
+                ],
+        };
+      });
+      if (runId === null) {
+        setPrompt(promptFallback);
+      } else {
+        await updateRun(runId, {
+          status: "failed",
+          completedAt,
+          durationMs: failedRunView.elapsedMs,
+          error: message,
+        }).catch(() => undefined);
+      }
+      if (taskId !== null) {
+        await updateTaskStatus(taskId, "failed").catch(() => undefined);
+      }
+      currentRunId.current = null;
+      currentTaskId.current = null;
+      currentRunAccountId.current = null;
+      if (activeRunControlRef.current === runControl) {
+        activeRunControlRef.current = null;
+      }
+      clearActiveChatRun();
+      setStatusMessage(`Run setup failed: ${message}`);
     }
-
-    const turn = await codexRpc<{ turn: { id: string } }>(
-      selectedAccountId,
-      "turn/start",
-      {
-      threadId: thread.thread.id,
-      input: [{ type: "text", text, text_elements: [] }],
-      additionalContext,
-      cwd: selectedWorkspace.path,
-      approvalPolicy: access.approvalPolicy,
-      approvalsReviewer: "user",
-      model,
-      effort,
-      },
-    );
-
-    await updateRun(run.id, {
-      codexTurnId: turn.turn.id,
-      status: "running",
-    });
-    await updateTaskStatus(task.id, "running");
-    await refreshWorkspaceData(selectedWorkspace.id);
-    const runStartedMessage = mode === "plan" ? "Plan mode turn started." : "Codex run started.";
-    setStatusMessage(
-      warnings.length > 0 ? `${runStartedMessage} ${warnings.join(" ")}` : runStartedMessage,
-    );
   }
 
   async function buildAdditionalContext(
@@ -2747,6 +3006,7 @@ function App() {
       currentRunId.current = null;
       currentTaskId.current = null;
       currentRunAccountId.current = null;
+      activeRunControlRef.current = null;
       clearActiveChatRun();
     }
   }
@@ -4185,6 +4445,7 @@ function App() {
               )}
               <TaskComposer
                 disabled={!canRun}
+                runActive={runIsActive}
                 prompt={prompt}
                 routeRecommendation={preflight?.routeRecommendation ?? routeRecommendation}
                 tokenEstimate={preflight?.tokenEstimate ?? tokenEstimate}
@@ -4248,6 +4509,7 @@ function App() {
                 }
                 onPreflight={() => void handlePreflight()}
                 onRun={() => void launchRun()}
+                onStop={() => void stopActiveRun()}
               />
             </section>
             <FilePreviewDrawer

@@ -9,6 +9,7 @@ describe("TaskChatTranscript", () => {
       <TaskChatTranscript
         entries={[
           {
+            clientId: "chat-1",
             workspaceId: 1,
             runId: 2,
             taskId: 3,
@@ -61,11 +62,44 @@ describe("TaskChatTranscript", () => {
     expect(within(liveOutput).getByText("Ran npm test")).toBeInTheDocument();
   });
 
+  it("renders an animated preparing state before app-server output starts", () => {
+    const { container } = render(
+      <TaskChatTranscript
+        entries={[
+          {
+            clientId: "chat-1",
+            workspaceId: 1,
+            runId: null,
+            taskId: null,
+            prompt: "Fix slow submission",
+            submittedAt: "2026-06-30T17:30:00Z",
+            status: "connecting",
+            runView: {
+              ...emptyRunView,
+              status: "connecting",
+              startedAt: "2026-06-30T17:30:00Z",
+            },
+          },
+        ]}
+        onResolveRequest={vi.fn()}
+      />,
+    );
+
+    expect(screen.getByLabelText("Submitted prompt")).toHaveTextContent(
+      "Fix slow submission",
+    );
+    expect(screen.getByLabelText("Preparing run")).toHaveTextContent(
+      "Preparing run...",
+    );
+    expect(container.querySelector(".stream-loading-dots")).not.toBeNull();
+  });
+
   it("renders completed summaries as markdown and collapses the stream trace", () => {
     render(
       <TaskChatTranscript
         entries={[
           {
+            clientId: "chat-1",
             workspaceId: 1,
             runId: 2,
             taskId: 3,
@@ -154,6 +188,7 @@ describe("TaskChatTranscript", () => {
       <TaskChatTranscript
         entries={[
           {
+            clientId: "chat-1",
             workspaceId: 1,
             runId: 2,
             taskId: 3,
@@ -186,6 +221,7 @@ describe("TaskChatTranscript", () => {
       <TaskChatTranscript
         entries={[
           {
+            clientId: "chat-1",
             workspaceId: 1,
             runId: 2,
             taskId: 3,
@@ -228,6 +264,7 @@ describe("TaskChatTranscript", () => {
       <TaskChatTranscript
         entries={[
           {
+            clientId: "chat-1",
             workspaceId: 1,
             runId: 2,
             taskId: 3,

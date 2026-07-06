@@ -23,9 +23,10 @@ import type {
 import type { CodexMessage } from "../types";
 
 export type TaskChatEntry = {
+  clientId: string;
   workspaceId: number;
-  runId: number;
-  taskId: number;
+  runId: number | null;
+  taskId: number | null;
   prompt: string;
   submittedAt: string;
   status: RunViewState["status"];
@@ -61,7 +62,7 @@ export function TaskChatTranscript({
       ref={transcriptRef}
     >
       {entries.map((entry) => (
-        <div className="task-chat-run" key={entry.runId}>
+        <div className="task-chat-run" key={entry.clientId}>
           <article className="submitted-prompt" aria-label="Submitted prompt">
             {entry.prompt}
           </article>
@@ -121,6 +122,8 @@ function AssistantRunOutput({
       <RunMetrics runView={runView} />
       {hasTimeline ? (
         <RunTimeline runView={runView} />
+      ) : runView.status === "connecting" ? (
+        <PreparingRunStatus />
       ) : (
         <p className="stream-placeholder">
           <Clock size={15} aria-hidden="true" />
@@ -129,6 +132,19 @@ function AssistantRunOutput({
       )}
       <RunApprovalRequests runView={runView} onResolveRequest={onResolveRequest} />
     </div>
+  );
+}
+
+function PreparingRunStatus() {
+  return (
+    <p className="stream-placeholder stream-preparing" aria-label="Preparing run">
+      <span className="stream-loading-dots" aria-hidden="true">
+        <span />
+        <span />
+        <span />
+      </span>
+      Preparing run...
+    </p>
   );
 }
 
@@ -171,6 +187,14 @@ function RunSummary({
     return (
       <div className="run-summary error" aria-label="Run error">
         {runView.error}
+      </div>
+    );
+  }
+
+  if (runView.status === "interrupted") {
+    return (
+      <div className="run-summary muted" aria-label="Run summary">
+        {runView.error ?? "Stopped by user."}
       </div>
     );
   }

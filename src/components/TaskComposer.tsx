@@ -10,6 +10,7 @@ import {
   Paperclip,
   Play,
   ShieldCheck,
+  Square,
   X,
 } from "lucide-react";
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
@@ -34,6 +35,7 @@ import {
 
 type Props = {
   disabled: boolean;
+  runActive: boolean;
   prompt: string;
   routeRecommendation: RouteRecommendation;
   tokenEstimate: number;
@@ -83,6 +85,7 @@ type Props = {
   onRemoveSkill: (skillId: string) => void;
   onPreflight: () => void;
   onRun: () => void;
+  onStop: () => void;
 };
 
 type ComposerToken = {
@@ -96,6 +99,7 @@ type SlashPanel = "commands" | "reasoning";
 
 export function TaskComposer({
   disabled,
+  runActive,
   prompt,
   routeRecommendation,
   tokenEstimate,
@@ -145,6 +149,7 @@ export function TaskComposer({
   onRemoveSkill,
   onPreflight,
   onRun,
+  onStop,
 }: Props) {
   const promptTextareaRef = useRef<HTMLTextAreaElement>(null);
   const [dragActive, setDragActive] = useState(false);
@@ -302,7 +307,7 @@ export function TaskComposer({
     ) {
       event.preventDefault();
       closeActiveSearch();
-      if (!disabled) {
+      if (!disabled && !runActive) {
         onRun();
       }
     }
@@ -521,7 +526,7 @@ export function TaskComposer({
               autoCapitalize="none"
               autoComplete="off"
               autoCorrect="off"
-              placeholder="Do anything"
+              placeholder="Do that thing!"
               rows={1}
               spellCheck={false}
             />
@@ -577,7 +582,12 @@ export function TaskComposer({
       <div className="composer-controls">
         <div className="composer-toolbar" role="toolbar" aria-label="Prompt actions">
           <div className="composer-action-group">
-            <button className="secondary" type="button" onClick={onPreflight} disabled={disabled}>
+            <button
+              className="secondary"
+              type="button"
+              onClick={onPreflight}
+              disabled={disabled || runActive}
+            >
               <ClipboardCheck size={16} />
               Preflight
             </button>
@@ -610,14 +620,14 @@ export function TaskComposer({
 
           <div className="composer-run-group">
             <button
-              className="send-button"
+              className={`send-button ${runActive ? "stop" : ""}`}
               type="button"
-              onClick={onRun}
-              disabled={disabled}
-              aria-label="Run Codex"
+              onClick={runActive ? onStop : onRun}
+              disabled={runActive ? false : disabled}
+              aria-label={runActive ? "Stop Codex" : "Run Codex"}
             >
-              <Play size={16} />
-              <span className="sr-only">Run Codex</span>
+              {runActive ? <Square size={15} fill="currentColor" /> : <Play size={16} />}
+              <span className="sr-only">{runActive ? "Stop Codex" : "Run Codex"}</span>
             </button>
           </div>
         </div>

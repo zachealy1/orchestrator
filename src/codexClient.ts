@@ -21,6 +21,10 @@ export function connectCodex(accountId: number) {
   return invoke<CodexConnectResult>("codex_connect", { accountId });
 }
 
+export function stopCodex(accountId: number) {
+  return invoke<void>("codex_stop", { accountId });
+}
+
 export function deleteCodexProfile(accountId: number) {
   return invoke<void>("codex_delete_profile", { accountId });
 }
