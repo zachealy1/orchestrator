@@ -1072,23 +1072,65 @@ describe("App Codex auth", () => {
 
     const { user } = await renderApp();
     const banner = screen.getByRole("region", { name: "Selected folder" });
-    await user.click(within(banner).getByRole("button", { name: /history/i }));
+    const historyButton = within(banner).getByRole("button", {
+      name: /open chat history/i,
+    });
+    expect(historyButton).toHaveTextContent("");
+    expect(historyButton).toHaveAttribute("title", "Open history");
+    await user.click(historyButton);
 
     const drawer = await screen.findByRole("complementary", {
       name: "Workspace chat history",
     });
+    expect(historyButton).toHaveAttribute("aria-label", "Close chat history");
+    expect(historyButton).toHaveAttribute("aria-pressed", "true");
+    const layout = drawer.closest(".codex-workspace-body");
+    expect(layout).toHaveClass("history-open");
+    expect(within(layout as HTMLElement).getByLabelText("Task chat")).toBeInTheDocument();
+    expect(drawer).toHaveClass("workspace-history-drawer", "open");
+    expect(drawer.parentElement).toHaveClass("codex-workspace-body");
+
+    const activeFilter = within(drawer).getByRole("tab", {
+      name: /active chats/i,
+    });
+    expect(activeFilter).toHaveTextContent("");
+    expect(activeFilter).toHaveAttribute("title", "Active chats");
+
     expect(within(drawer).getAllByText("Fix the app header").length).toBeGreaterThan(0);
     expect(within(drawer).getByText("Header fixed.")).toBeInTheDocument();
 
-    await user.click(within(drawer).getByRole("button", { name: /archive/i }));
+    const archiveButton = within(drawer).getByRole("button", { name: /archive chat/i });
+    expect(archiveButton).toHaveTextContent("");
+    await user.click(archiveButton);
     await waitFor(() => expect(mocks.archiveRunMock).toHaveBeenCalledWith(301));
 
-    await user.click(within(drawer).getByRole("tab", { name: /archived/i }));
+    const archivedFilter = within(drawer).getByRole("tab", {
+      name: /archived chats/i,
+    });
+    expect(archivedFilter).toHaveTextContent("");
+    await user.click(archivedFilter);
     await waitFor(() =>
       expect(within(drawer).getAllByText("Old archived chat").length).toBeGreaterThan(0),
     );
-    await user.click(within(drawer).getByRole("button", { name: /restore/i }));
+    const restoreButton = within(drawer).getByRole("button", { name: /restore chat/i });
+    expect(restoreButton).toHaveTextContent("");
+    await user.click(restoreButton);
     await waitFor(() => expect(mocks.unarchiveRunMock).toHaveBeenCalledWith(302));
+
+    const closeButton = within(drawer).getByRole("button", {
+      name: /close chat history/i,
+    });
+    expect(closeButton).toHaveTextContent("");
+    expect(closeButton.querySelector(".lucide-panel-right")).not.toBeNull();
+    expect(closeButton.querySelector(".lucide-x")).toBeNull();
+    await user.click(closeButton);
+    const closedDrawer = document.querySelector(".workspace-history-drawer");
+    expect(closedDrawer).toBeInTheDocument();
+    expect(closedDrawer).toHaveClass("closed");
+    expect(closedDrawer).toHaveAttribute("aria-hidden", "true");
+    expect(closedDrawer).toHaveAttribute("inert");
+    expect(historyButton).toHaveAttribute("aria-label", "Open chat history");
+    expect(historyButton).toHaveAttribute("aria-pressed", "false");
   });
 
   it("renders an empty selected folder banner when no workspace is selected", async () => {

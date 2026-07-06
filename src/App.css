@@ -998,6 +998,19 @@ button.account-switcher-item:hover:not(:disabled) {
   overflow: hidden;
 }
 
+.codex-workspace-body {
+  display: grid;
+  min-width: 0;
+  min-height: 0;
+  grid-template-columns: minmax(0, 1fr) 0;
+  overflow: hidden;
+  transition: grid-template-columns 0.22s ease;
+}
+
+.codex-workspace-body.history-open {
+  grid-template-columns: minmax(0, 1fr) clamp(340px, 30vw, 460px);
+}
+
 .workspace-context-banner {
   position: sticky;
   top: 0;
@@ -1057,22 +1070,26 @@ button.account-switcher-item:hover:not(:disabled) {
 .workspace-context-chips {
   display: flex;
   min-width: 0;
-  flex-wrap: wrap;
+  flex: 0 0 auto;
+  flex-wrap: nowrap;
   gap: 6px;
   justify-content: flex-end;
 }
 
 .workspace-context-side {
-  display: grid;
+  display: flex;
   min-width: 0;
-  gap: 7px;
-  justify-items: end;
+  align-items: center;
+  gap: 8px;
+  justify-content: flex-end;
+  overflow: hidden;
 }
 
 .workspace-context-actions {
   position: relative;
   display: flex;
   min-width: 0;
+  flex: 0 0 auto;
   gap: 6px;
   align-items: center;
   justify-content: flex-end;
@@ -1126,14 +1143,40 @@ button.account-switcher-item:hover:not(:disabled) {
   white-space: nowrap;
 }
 
+.workspace-header-button.icon-only {
+  width: 30px;
+  min-width: 30px;
+  justify-content: center;
+  padding: 6px;
+}
+
 .workspace-header-button.primary {
   color: var(--color-selected-text);
 }
 
+.workspace-header-button.active,
 .workspace-header-button:hover:not(:disabled),
 .workspace-header-button:focus-visible:not(:disabled) {
   background: var(--color-button-active);
   box-shadow: none;
+}
+
+.history-panel-button {
+  color: var(--color-icon-muted);
+  box-shadow: inset 0 0 0 1px var(--color-divider);
+}
+
+.history-panel-button svg {
+  color: currentColor;
+}
+
+.workspace-header-button.history-panel-button:hover:not(:disabled),
+.workspace-header-button.history-panel-button:focus-visible:not(:disabled),
+.workspace-header-button.history-panel-button.active,
+.icon-button.history-panel-button:hover:not(:disabled),
+.icon-button.history-panel-button:focus-visible:not(:disabled) {
+  color: var(--color-icon);
+  box-shadow: inset 0 0 0 1px var(--color-divider);
 }
 
 .workspace-header-button:disabled {
@@ -1210,6 +1253,7 @@ button.account-switcher-item:hover:not(:disabled) {
 
 .task-hero {
   display: flex;
+  min-width: 0;
   min-height: 0;
   overflow-y: auto;
   flex-direction: column;
@@ -1583,18 +1627,36 @@ summary.run-live-metrics::-webkit-details-marker {
 }
 
 .workspace-history-drawer {
-  position: fixed;
-  top: 0;
-  right: 0;
-  bottom: 0;
-  z-index: 45;
+  position: relative;
+  z-index: 3;
   display: grid;
-  width: min(520px, calc(100vw - 360px));
-  min-width: 360px;
+  width: 100%;
+  min-width: 0;
+  height: 100%;
+  min-height: 0;
   grid-template-rows: auto auto minmax(0, 1fr);
   border-left: 1px solid var(--color-divider);
   background: var(--color-component-background);
-  box-shadow: -18px 0 48px rgb(var(--shadow-rgb) / 0.18);
+  box-shadow: -12px 0 32px rgb(var(--shadow-rgb) / 0.12);
+  opacity: 1;
+  overflow: hidden;
+  transform: translateX(0);
+  transition:
+    opacity 0.18s ease,
+    transform 0.22s ease,
+    visibility 0s linear 0s;
+}
+
+.workspace-history-drawer.closed {
+  visibility: hidden;
+  border-left-color: transparent;
+  opacity: 0;
+  pointer-events: none;
+  transform: translateX(18px);
+  transition:
+    opacity 0.14s ease,
+    transform 0.18s ease,
+    visibility 0s linear 0.18s;
 }
 
 .workspace-history-drawer header {
@@ -1619,18 +1681,23 @@ summary.run-live-metrics::-webkit-details-marker {
 
 .history-filter {
   display: grid;
-  grid-template-columns: 1fr 1fr;
+  grid-template-columns: repeat(2, 36px);
   gap: 4px;
+  justify-content: start;
   border-bottom: 1px solid var(--color-divider);
   padding: 8px 12px;
 }
 
 .history-filter button {
+  display: inline-grid;
+  width: 36px;
   min-height: 34px;
+  place-items: center;
   border-radius: 7px;
   background: transparent;
   color: var(--muted);
   box-shadow: none;
+  padding: 0;
 }
 
 .history-filter button.active,
@@ -1712,6 +1779,10 @@ summary.run-live-metrics::-webkit-details-marker {
   align-items: start;
   justify-content: space-between;
   gap: 12px;
+}
+
+.history-detail-action {
+  flex: 0 0 auto;
 }
 
 .history-detail-header h3,
@@ -1938,6 +2009,8 @@ summary.run-live-metrics::-webkit-details-marker {
 }
 
 @media (prefers-reduced-motion: reduce) {
+  .codex-workspace-body,
+  .workspace-history-drawer,
   .file-preview-mode-toggle::before {
     transition: none;
   }

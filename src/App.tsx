@@ -18,6 +18,7 @@ import {
   LogOut,
   Monitor,
   Moon,
+  PanelRight,
   Plug,
   Plus,
   RefreshCw,
@@ -4855,93 +4856,112 @@ function App() {
                   );
                 }
               }}
-              onOpenHistory={() => setHistoryDrawerOpen(true)}
+              historyOpen={historyDrawerOpen}
+              onToggleHistory={() => setHistoryDrawerOpen((current) => !current)}
             />
-            <section
-              className={`task-hero ${hasTaskChat ? "has-chat" : ""}`}
-              aria-label="Task chat"
-              onDragOver={handleTaskContextDragOver}
-              onDragLeave={handleTaskContextDragLeave}
-              onDrop={handleTaskContextDrop}
+            <div
+              className={`codex-workspace-body ${
+                historyDrawerOpen ? "history-open" : ""
+              }`}
             >
-              {hasTaskChat ? (
-                <TaskChatTranscript
-                  entries={selectedWorkspaceChatEntries}
-                  onResolveRequest={handleResolveRequest}
-                  onOpenFileLink={openTaskResponseFileLink}
+              <section
+                className={`task-hero ${hasTaskChat ? "has-chat" : ""}`}
+                aria-label="Task chat"
+                onDragOver={handleTaskContextDragOver}
+                onDragLeave={handleTaskContextDragLeave}
+                onDrop={handleTaskContextDrop}
+              >
+                {hasTaskChat ? (
+                  <TaskChatTranscript
+                    entries={selectedWorkspaceChatEntries}
+                    onResolveRequest={handleResolveRequest}
+                    onOpenFileLink={openTaskResponseFileLink}
+                  />
+                ) : (
+                  <h1>{taskQuote}</h1>
+                )}
+                <TaskComposer
+                  disabled={!canRun}
+                  runActive={runIsActive}
+                  prompt={prompt}
+                  routeRecommendation={preflight?.routeRecommendation ?? routeRecommendation}
+                  tokenEstimate={preflight?.tokenEstimate ?? tokenEstimate}
+                  accounts={signedInAccounts}
+                  selectedAccountId={selectedAccountId}
+                  accountSelectionDisabled={runIsActive}
+                  branches={branches}
+                  selectedBranch={selectedBranch}
+                  models={models}
+                  modelLoadError={modelLoadError}
+                  selectedModelId={selectedModelId}
+                  selectedReasoningEffort={selectedReasoningEffort}
+                  goalMode={goalMode}
+                  planMode={planMode}
+                  accessLevel={accessLevel}
+                  contextFiles={contextFiles}
+                  selectedSkills={selectedSkills}
+                  mentionResults={mentionResults}
+                  mentionSearchStatus={mentionSearchStatus}
+                  mentionSearchError={mentionSearchError}
+                  slashCommandResults={slashCommandResults}
+                  slashCommandSearchStatus={slashCommandSearchStatus}
+                  slashCommandSearchError={slashCommandSearchError}
+                  onAccountChange={(accountId) => void selectCodexAccount(accountId)}
+                  onBranchChange={(branch) => void selectBranch(branch)}
+                  onPromptChange={(nextPrompt) => {
+                    setPrompt(nextPrompt);
+                    setContextFiles((current) =>
+                      pruneMissingInlineContextFiles(current, nextPrompt),
+                    );
+                    setPreflight(null);
+                  }}
+                  onModelChange={setSelectedModelId}
+                  onReasoningEffortChange={setSelectedReasoningEffort}
+                  onGoalModeChange={handleGoalModeChange}
+                  onPlanModeChange={handlePlanModeChange}
+                  onAccessLevelChange={setAccessLevel}
+                  onAddFiles={() => void chooseContextFiles()}
+                  onMentionSearch={(query) => void searchMentionFiles(query)}
+                  onMentionFileSelect={addMentionFileToContext}
+                  onMentionClose={closeMentionSearch}
+                  onSlashCommandSearch={(query) => void searchSlashCommands(query)}
+                  onSlashCommandSelect={handleSlashCommandSelect}
+                  onSlashCommandClose={closeSlashCommandSearch}
+                  onContextFilesDrop={addDroppedContextFiles}
+                  onContextFilesDropError={setStatusMessage}
+                  contextDropActive={taskContextDropActive}
+                  onDropSurfaceElementChange={handleTaskComposerDropSurfaceElementChange}
+                  hasContextFileDropFallback={() =>
+                    explorerDragContextFileRef.current !== null
+                  }
+                  getContextFileDropFallback={getExplorerDragContextFiles}
+                  onContextFileDropHandled={endWorkspaceFileDrag}
+                  onRemoveFile={(path) =>
+                    setContextFiles((current) => current.filter((file) => file.path !== path))
+                  }
+                  onRemoveSkill={(skillId) =>
+                    setSelectedSkills((current) =>
+                      current.filter((skill) => skill.id !== skillId),
+                    )
+                  }
+                  onPreflight={() => void handlePreflight()}
+                  onRun={() => void launchRun()}
+                  onStop={() => void stopActiveRun()}
                 />
-              ) : (
-                <h1>{taskQuote}</h1>
-              )}
-              <TaskComposer
-                disabled={!canRun}
-                runActive={runIsActive}
-                prompt={prompt}
-                routeRecommendation={preflight?.routeRecommendation ?? routeRecommendation}
-                tokenEstimate={preflight?.tokenEstimate ?? tokenEstimate}
-                accounts={signedInAccounts}
-                selectedAccountId={selectedAccountId}
-                accountSelectionDisabled={runIsActive}
-                branches={branches}
-                selectedBranch={selectedBranch}
-                models={models}
-                modelLoadError={modelLoadError}
-                selectedModelId={selectedModelId}
-                selectedReasoningEffort={selectedReasoningEffort}
-                goalMode={goalMode}
-                planMode={planMode}
-                accessLevel={accessLevel}
-                contextFiles={contextFiles}
-                selectedSkills={selectedSkills}
-                mentionResults={mentionResults}
-                mentionSearchStatus={mentionSearchStatus}
-                mentionSearchError={mentionSearchError}
-                slashCommandResults={slashCommandResults}
-                slashCommandSearchStatus={slashCommandSearchStatus}
-                slashCommandSearchError={slashCommandSearchError}
-                onAccountChange={(accountId) => void selectCodexAccount(accountId)}
-                onBranchChange={(branch) => void selectBranch(branch)}
-                onPromptChange={(nextPrompt) => {
-                  setPrompt(nextPrompt);
-                  setContextFiles((current) =>
-                    pruneMissingInlineContextFiles(current, nextPrompt),
-                  );
-                  setPreflight(null);
-                }}
-                onModelChange={setSelectedModelId}
-                onReasoningEffortChange={setSelectedReasoningEffort}
-                onGoalModeChange={handleGoalModeChange}
-                onPlanModeChange={handlePlanModeChange}
-                onAccessLevelChange={setAccessLevel}
-                onAddFiles={() => void chooseContextFiles()}
-                onMentionSearch={(query) => void searchMentionFiles(query)}
-                onMentionFileSelect={addMentionFileToContext}
-                onMentionClose={closeMentionSearch}
-                onSlashCommandSearch={(query) => void searchSlashCommands(query)}
-                onSlashCommandSelect={handleSlashCommandSelect}
-                onSlashCommandClose={closeSlashCommandSearch}
-                onContextFilesDrop={addDroppedContextFiles}
-                onContextFilesDropError={setStatusMessage}
-                contextDropActive={taskContextDropActive}
-                onDropSurfaceElementChange={handleTaskComposerDropSurfaceElementChange}
-                hasContextFileDropFallback={() =>
-                  explorerDragContextFileRef.current !== null
-                }
-                getContextFileDropFallback={getExplorerDragContextFiles}
-                onContextFileDropHandled={endWorkspaceFileDrag}
-                onRemoveFile={(path) =>
-                  setContextFiles((current) => current.filter((file) => file.path !== path))
-                }
-                onRemoveSkill={(skillId) =>
-                  setSelectedSkills((current) =>
-                    current.filter((skill) => skill.id !== skillId),
-                  )
-                }
-                onPreflight={() => void handlePreflight()}
-                onRun={() => void launchRun()}
-                onStop={() => void stopActiveRun()}
+              </section>
+              <WorkspaceHistoryDrawer
+                open={historyDrawerOpen}
+                workspace={selectedWorkspace}
+                filter={historyFilter}
+                historyState={historyState}
+                selectedRun={selectedHistoryRun}
+                onFilterChange={setHistoryFilter}
+                onSelectRun={setSelectedHistoryRunId}
+                onArchiveRun={(runId) => void handleArchiveHistoryRun(runId)}
+                onUnarchiveRun={(runId) => void handleUnarchiveHistoryRun(runId)}
+                onClose={() => setHistoryDrawerOpen(false)}
               />
-            </section>
+            </div>
             <FilePreviewDrawer
               previewState={previewState}
               previewGitStatus={previewGitStatus}
@@ -4958,18 +4978,6 @@ function App() {
               onClose={closeWorkspaceFilePreview}
               onResizeStart={startPreviewDrawerResize}
               onResizeKeyDown={handlePreviewResizeKeyDown}
-            />
-            <WorkspaceHistoryDrawer
-              open={historyDrawerOpen}
-              workspace={selectedWorkspace}
-              filter={historyFilter}
-              historyState={historyState}
-              selectedRun={selectedHistoryRun}
-              onFilterChange={setHistoryFilter}
-              onSelectRun={setSelectedHistoryRunId}
-              onArchiveRun={(runId) => void handleArchiveHistoryRun(runId)}
-              onUnarchiveRun={(runId) => void handleUnarchiveHistoryRun(runId)}
-              onClose={() => setHistoryDrawerOpen(false)}
             />
           </div>
         ) : null}
@@ -5252,7 +5260,8 @@ function WorkspaceContextBanner({
   onCommitConfirm,
   onCommitCancel,
   onCommitRegenerate,
-  onOpenHistory,
+  historyOpen,
+  onToggleHistory,
 }: {
   workspace: Workspace | null;
   branch: string | null;
@@ -5268,7 +5277,8 @@ function WorkspaceContextBanner({
   onCommitConfirm: () => void;
   onCommitCancel: () => void;
   onCommitRegenerate: () => void;
-  onOpenHistory: () => void;
+  historyOpen: boolean;
+  onToggleHistory: () => void;
 }) {
   if (!workspace) {
     return (
@@ -5288,9 +5298,14 @@ function WorkspaceContextBanner({
             Git
           </button>
           <span className="workspace-context-meter loading">Context loading</span>
-          <button className="workspace-header-button" type="button" disabled>
-            <History size={15} />
-            History
+          <button
+            className="workspace-header-button icon-only history-panel-button"
+            type="button"
+            disabled
+            aria-label="Open chat history"
+            title="History"
+          >
+            <PanelRight size={15} />
           </button>
         </div>
       </section>
@@ -5414,12 +5429,16 @@ function WorkspaceContextBanner({
             {formatLiveContextUsage(contextUsage)}
           </span>
           <button
-            className="workspace-header-button"
+            className={`workspace-header-button icon-only history-panel-button ${
+              historyOpen ? "active" : ""
+            }`}
             type="button"
-            onClick={onOpenHistory}
+            onClick={onToggleHistory}
+            aria-label={historyOpen ? "Close chat history" : "Open chat history"}
+            title={historyOpen ? "Close history" : "Open history"}
+            aria-pressed={historyOpen}
           >
-            <History size={15} />
-            History
+            <PanelRight size={15} />
           </button>
         </div>
       </div>
@@ -5471,24 +5490,26 @@ function WorkspaceHistoryDrawer({
   onUnarchiveRun: (runId: number) => void;
   onClose: () => void;
 }) {
-  if (!open) {
-    return null;
-  }
-
   return (
-    <aside className="workspace-history-drawer" aria-label="Workspace chat history">
+    <aside
+      className={`workspace-history-drawer ${open ? "open" : "closed"}`}
+      aria-label="Workspace chat history"
+      aria-hidden={!open}
+      inert={!open ? true : undefined}
+    >
       <header>
         <div>
           <p className="eyebrow">History</p>
           <h2>{workspace?.label ?? "Workspace chats"}</h2>
         </div>
         <button
-          className="icon-button"
+          className="icon-button history-panel-button"
           type="button"
           onClick={onClose}
           aria-label="Close chat history"
+          title="Close history"
         >
-          <X size={17} />
+          <PanelRight size={17} />
         </button>
       </header>
 
@@ -5498,18 +5519,22 @@ function WorkspaceHistoryDrawer({
           type="button"
           role="tab"
           aria-selected={filter === "active"}
+          aria-label="Show active chats"
+          title="Active chats"
           onClick={() => onFilterChange("active")}
         >
-          Chats
+          <History size={16} aria-hidden="true" />
         </button>
         <button
           className={filter === "archived" ? "active" : ""}
           type="button"
           role="tab"
           aria-selected={filter === "archived"}
+          aria-label="Show archived chats"
+          title="Archived chats"
           onClick={() => onFilterChange("archived")}
         >
-          Archived
+          <Archive size={16} aria-hidden="true" />
         </button>
       </div>
 
@@ -5552,20 +5577,23 @@ function WorkspaceHistoryDrawer({
               </div>
               {filter === "archived" ? (
                 <button
-                  className="secondary"
+                  className="icon-button history-detail-action"
                   type="button"
                   onClick={() => onUnarchiveRun(selectedRun.id)}
+                  aria-label="Restore chat"
+                  title="Restore chat"
                 >
-                  Restore
+                  <RefreshCw size={16} aria-hidden="true" />
                 </button>
               ) : (
                 <button
-                  className="secondary"
+                  className="icon-button history-detail-action"
                   type="button"
                   onClick={() => onArchiveRun(selectedRun.id)}
+                  aria-label="Archive chat"
+                  title="Archive chat"
                 >
-                  <Archive size={15} />
-                  Archive
+                  <Archive size={16} aria-hidden="true" />
                 </button>
               )}
             </div>
