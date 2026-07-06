@@ -699,6 +699,7 @@ function App() {
     new Map<number, Promise<CodexSkillSummary[]>>(),
   );
   const workspaceContextMenuRef = useRef<HTMLDivElement | null>(null);
+  const accountMenuContainerRef = useRef<HTMLDivElement | null>(null);
 
   const improvedPrompt = useMemo(() => improvePrompt(prompt), [prompt]);
   const routeRecommendation = useMemo(() => recommendRoute(prompt), [prompt]);
@@ -1130,6 +1131,34 @@ function App() {
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
   }, [workspaceDeleteCandidate]);
+
+  useEffect(() => {
+    if (!accountMenuOpen) {
+      return;
+    }
+
+    function handlePointerDown(event: PointerEvent) {
+      const container = accountMenuContainerRef.current;
+      if (container && event.target instanceof Node && container.contains(event.target)) {
+        return;
+      }
+
+      setAccountMenuOpen(false);
+    }
+
+    function handleKeyDown(event: KeyboardEvent) {
+      if (event.key === "Escape") {
+        setAccountMenuOpen(false);
+      }
+    }
+
+    window.addEventListener("pointerdown", handlePointerDown);
+    window.addEventListener("keydown", handleKeyDown);
+    return () => {
+      window.removeEventListener("pointerdown", handlePointerDown);
+      window.removeEventListener("keydown", handleKeyDown);
+    };
+  }, [accountMenuOpen]);
 
   useEffect(() => {
     if (selectedWorkspace) {
@@ -4574,7 +4603,10 @@ function App() {
           ) : null}
         </div>
 
-        <div className={`codex-card account-card auth-${authRow.tone}`}>
+        <div
+          className={`codex-card account-card auth-${authRow.tone}`}
+          ref={accountMenuContainerRef}
+        >
           {codexSignedIn ? (
             <>
               <button

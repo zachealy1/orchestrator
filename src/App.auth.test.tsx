@@ -2195,6 +2195,30 @@ describe("App Codex auth", () => {
     expect(accountButton.closest(".account-card")).toContainElement(menu);
   });
 
+  it("closes the account actions popover when clicking elsewhere on the screen", async () => {
+    mocks.listCodexAccountsMock.mockResolvedValue([signedInAccount]);
+    mocks.readCodexAccountMock.mockResolvedValue({
+      account: {
+        type: "chatgpt",
+        email: signedInAccount.email,
+        planType: signedInAccount.plan_type,
+      },
+      requiresOpenaiAuth: true,
+    });
+
+    const { user } = await renderApp();
+    const accountButton = await screen.findByLabelText("Codex account");
+    await user.click(accountButton);
+
+    expect(document.getElementById("codex-account-menu")).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: /analytics/i }));
+
+    await waitFor(() =>
+      expect(document.getElementById("codex-account-menu")).not.toBeInTheDocument(),
+    );
+    expect(accountButton).toHaveAttribute("aria-expanded", "false");
+  });
+
   it("switches accounts from the account menu", async () => {
     mocks.listCodexAccountsMock.mockResolvedValue([
       signedInAccount,
