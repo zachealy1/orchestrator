@@ -1279,11 +1279,12 @@ button.account-switcher-item:hover:not(:disabled) {
 }
 
 .task-hero {
-  flex: 1 1 auto;
+  flex: 1 1 0;
   display: flex;
   min-width: 0;
   min-height: 0;
   max-width: 100%;
+  overflow-x: hidden;
   overflow-y: auto;
   flex-direction: column;
   align-items: center;
@@ -1670,7 +1671,7 @@ summary.run-live-metrics::-webkit-details-marker {
   grid-template-rows: auto minmax(0, 1fr);
   border-left: 1px solid var(--color-divider);
   background: var(--color-component-background);
-  box-shadow: -12px 0 32px rgb(var(--shadow-rgb) / 0.12);
+  box-shadow: none;
   contain: layout paint;
   opacity: 1;
   overflow: hidden;
@@ -1698,22 +1699,20 @@ summary.run-live-metrics::-webkit-details-marker {
     visibility 0s linear 0.18s;
 }
 
-@media (max-width: 1280px) {
-  .codex-workspace-body.history-open .composer-toolbar {
-    align-items: stretch;
-  }
+.codex-workspace-body.history-open .composer-toolbar {
+  align-items: stretch;
+}
 
-  .codex-workspace-body.history-open .composer-action-group {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-  }
+.codex-workspace-body.history-open .composer-action-group {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
 
-  .codex-workspace-body.history-open .composer-options-row {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-  }
+.codex-workspace-body.history-open .composer-options-row {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
 
-  .codex-workspace-body.history-open .composer-run-group {
-    align-self: end;
-  }
+.codex-workspace-body.history-open .composer-run-group {
+  align-self: end;
 }
 
 .workspace-history-drawer header {
@@ -2471,6 +2470,8 @@ select:disabled {
 .composer-panel {
   position: relative;
   display: grid;
+  min-width: 0;
+  max-width: 100%;
   width: min(1040px, 100%);
   overflow: visible;
   border: 1px solid var(--color-divider);
