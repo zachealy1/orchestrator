@@ -2174,25 +2174,6 @@ function App() {
     }
   }
 
-  async function ensureSelectedBranch() {
-    if (!selectedWorkspace || !selectedBranch) {
-      return true;
-    }
-
-    try {
-      await checkoutGitBranch(selectedWorkspace.path, selectedBranch);
-      return true;
-    } catch (error) {
-      await refreshBranches(selectedWorkspace);
-      setStatusMessage(
-        `Could not switch to ${selectedBranch}: ${
-          error instanceof Error ? error.message : String(error)
-        }`,
-      );
-      return false;
-    }
-  }
-
   async function ensureRunBranch(workspace: Workspace, branch: string | null) {
     if (!branch) {
       return true;
@@ -2855,27 +2836,6 @@ function App() {
       codexAccountsRef.current = next;
       return next;
     });
-  }
-
-  async function handlePreflight() {
-    if (!selectedWorkspace || !prompt.trim()) {
-      setStatusMessage("Select a workspace and write a prompt first.");
-      return null;
-    }
-
-    if (!(await ensureSelectedBranch())) {
-      return null;
-    }
-
-    const report = await runPreflight({
-      workspace: selectedWorkspace,
-      prompt,
-      useOss,
-      ossProvider,
-    });
-    setPreflight(report);
-    setStatusMessage("Preflight completed.");
-    return report;
   }
 
   function openCommitPopover() {
@@ -4936,6 +4896,7 @@ function App() {
             <WorkspaceContextBanner
               workspace={selectedWorkspace}
               branch={selectedBranch}
+              branches={branches}
               gitState={selectedGitStatusState}
               gitSummary={selectedGitSummary}
               gitAction={headerGitAction}
@@ -4958,6 +4919,7 @@ function App() {
                   );
                 }
               }}
+              onBranchChange={(branch) => void selectBranch(branch)}
               historyOpen={historyDrawerOpen}
               onToggleHistory={() => setHistoryDrawerOpen((current) => !current)}
             />
@@ -4991,8 +4953,6 @@ function App() {
                   accounts={signedInAccounts}
                   selectedAccountId={selectedAccountId}
                   accountSelectionDisabled={runIsActive}
-                  branches={branches}
-                  selectedBranch={selectedBranch}
                   models={models}
                   modelLoadError={modelLoadError}
                   selectedModelId={selectedModelId}
@@ -5009,7 +4969,6 @@ function App() {
                   slashCommandSearchStatus={slashCommandSearchStatus}
                   slashCommandSearchError={slashCommandSearchError}
                   onAccountChange={(accountId) => void selectCodexAccount(accountId)}
-                  onBranchChange={(branch) => void selectBranch(branch)}
                   onPromptChange={(nextPrompt) => {
                     setPrompt(nextPrompt);
                     setContextFiles((current) =>
@@ -5046,7 +5005,6 @@ function App() {
                       current.filter((skill) => skill.id !== skillId),
                     )
                   }
-                  onPreflight={() => void handlePreflight()}
                   onRun={() => void launchRun()}
                   onStop={() => void stopActiveRun()}
                 />
@@ -5369,6 +5327,7 @@ function App() {
 function WorkspaceContextBanner({
   workspace,
   branch,
+  branches,
   gitState,
   gitSummary,
   gitAction,
@@ -5381,11 +5340,13 @@ function WorkspaceContextBanner({
   onCommitConfirm,
   onCommitCancel,
   onCommitRegenerate,
+  onBranchChange,
   historyOpen,
   onToggleHistory,
 }: {
   workspace: Workspace | null;
   branch: string | null;
+  branches: string[];
   gitState: WorkspaceGitStatusState | null;
   gitSummary: WorkspaceGitSummary;
   gitAction: HeaderGitAction;
@@ -5398,6 +5359,7 @@ function WorkspaceContextBanner({
   onCommitConfirm: () => void;
   onCommitCancel: () => void;
   onCommitRegenerate: () => void;
+  onBranchChange: (branch: string) => void;
   historyOpen: boolean;
   onToggleHistory: () => void;
 }) {
@@ -5451,10 +5413,19 @@ function WorkspaceContextBanner({
 
       <div className="workspace-context-side">
         <div className="workspace-context-chips" aria-label="Selected folder status">
-          <span className="workspace-context-chip branch">
-            <GitBranch size={14} aria-hidden="true" />
-            {branch ?? "No branch"}
-          </span>
+          <ComposerSelect
+            ariaLabel="Branch"
+            value={branch ?? ""}
+            options={branches.map((candidate) => ({
+              value: candidate,
+              label: candidate,
+            }))}
+            placeholder="No branch"
+            icon={<GitBranch size={14} />}
+            className="workspace-branch-select"
+            disabled={branches.length === 0}
+            onChange={onBranchChange}
+          />
           {gitLoading ? (
             <span className="workspace-context-chip">Checking git</span>
           ) : null}

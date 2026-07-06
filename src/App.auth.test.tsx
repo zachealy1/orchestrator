@@ -868,12 +868,35 @@ describe("App Codex auth", () => {
   });
 
   it("renders a selected folder banner with workspace, branch, and clean git state", async () => {
-    await renderApp();
+    mocks.listGitBranchesMock.mockResolvedValue({
+      branches: ["main", "feature/chat-controls"],
+      currentBranch: "main",
+    });
+
+    const { user } = await renderApp();
 
     const banner = screen.getByRole("region", { name: "Selected folder" });
     expect(within(banner).getByText("orchestrator")).toBeInTheDocument();
     expect(within(banner).getByText(workspace.path)).toBeInTheDocument();
-    expect(await within(banner).findByText("main")).toBeInTheDocument();
+    const branchSelect = await within(banner).findByRole("combobox", {
+      name: "Branch",
+    });
+    expect(branchSelect).toHaveTextContent("main");
+    expect(
+      within(screen.getByLabelText("Task composer")).queryByRole("combobox", {
+        name: "Branch",
+      }),
+    ).not.toBeInTheDocument();
+    await user.click(branchSelect);
+    await user.click(
+      screen.getByRole("option", { name: "feature/chat-controls" }),
+    );
+    await waitFor(() =>
+      expect(mocks.checkoutGitBranchMock).toHaveBeenCalledWith(
+        workspace.path,
+        "feature/chat-controls",
+      ),
+    );
     expect(await within(banner).findByText("Clean")).toBeInTheDocument();
   });
 

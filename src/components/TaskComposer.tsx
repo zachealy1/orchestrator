@@ -4,7 +4,6 @@ import {
   CircleUserRound,
   Flag,
   FileText,
-  GitBranch,
   Bot,
   Gauge,
   Paperclip,
@@ -42,8 +41,6 @@ type Props = {
   accounts: CodexAccountProfile[];
   selectedAccountId: number | null;
   accountSelectionDisabled: boolean;
-  branches: string[];
-  selectedBranch: string | null;
   models: CodexModel[];
   modelLoadError: string | null;
   selectedModelId: string | null;
@@ -60,7 +57,6 @@ type Props = {
   slashCommandSearchStatus: SlashCommandSearchStatus;
   slashCommandSearchError?: string | null;
   onAccountChange: (accountId: number) => void;
-  onBranchChange: (branch: string) => void;
   onPromptChange: (prompt: string) => void;
   onModelChange: (modelId: string) => void;
   onReasoningEffortChange: (effort: string) => void;
@@ -83,7 +79,6 @@ type Props = {
   onContextFileDropHandled?: () => void;
   onRemoveFile: (path: string) => void;
   onRemoveSkill: (skillId: string) => void;
-  onPreflight: () => void;
   onRun: () => void;
   onStop: () => void;
 };
@@ -106,8 +101,6 @@ export function TaskComposer({
   accounts,
   selectedAccountId,
   accountSelectionDisabled,
-  branches,
-  selectedBranch,
   models,
   modelLoadError,
   selectedModelId,
@@ -124,7 +117,6 @@ export function TaskComposer({
   slashCommandSearchStatus,
   slashCommandSearchError,
   onAccountChange,
-  onBranchChange,
   onPromptChange,
   onModelChange,
   onReasoningEffortChange,
@@ -147,7 +139,6 @@ export function TaskComposer({
   onContextFileDropHandled,
   onRemoveFile,
   onRemoveSkill,
-  onPreflight,
   onRun,
   onStop,
 }: Props) {
@@ -583,16 +574,6 @@ export function TaskComposer({
         <div className="composer-toolbar" role="toolbar" aria-label="Prompt actions">
           <div className="composer-action-group">
             <button
-              className="secondary"
-              type="button"
-              onClick={onPreflight}
-              disabled={disabled || runActive}
-            >
-              <ClipboardCheck size={16} />
-              Preflight
-            </button>
-
-            <button
               className={`mode-toggle ${goalMode ? "active" : ""}`}
               type="button"
               aria-pressed={goalMode}
@@ -648,17 +629,6 @@ export function TaskComposer({
               onChange={(value) => onAccountChange(Number(value))}
             />
           </div>
-
-          <ComposerSelect
-            ariaLabel="Branch"
-            value={selectedBranch ?? ""}
-            options={branches.map((branch) => ({ value: branch, label: branch }))}
-            placeholder="No branches"
-            icon={<GitBranch size={16} />}
-            className="branch-select"
-            disabled={branches.length === 0}
-            onChange={onBranchChange}
-          />
 
           <ComposerSelect
             ariaLabel="Access"

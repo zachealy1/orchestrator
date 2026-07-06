@@ -60,8 +60,6 @@ function renderComposer(overrides: Partial<TaskComposerProps> = {}) {
     accounts,
     selectedAccountId: 7,
     accountSelectionDisabled: false,
-    branches: ["main", "feature/chat-controls"],
-    selectedBranch: "main",
     models,
     modelLoadError: null,
     selectedModelId: "gpt-5.1-codex",
@@ -78,7 +76,6 @@ function renderComposer(overrides: Partial<TaskComposerProps> = {}) {
     slashCommandSearchStatus: "idle",
     slashCommandSearchError: null,
     onAccountChange: vi.fn(),
-    onBranchChange: vi.fn(),
     onPromptChange: vi.fn(),
     onModelChange: vi.fn(),
     onReasoningEffortChange: vi.fn(),
@@ -95,7 +92,6 @@ function renderComposer(overrides: Partial<TaskComposerProps> = {}) {
     onContextFilesDrop: vi.fn(),
     onRemoveFile: vi.fn(),
     onRemoveSkill: vi.fn(),
-    onPreflight: vi.fn(),
     onRun: vi.fn(),
     onStop: vi.fn(),
     ...overrides,
@@ -123,8 +119,6 @@ function renderControlledComposer(overrides: Partial<TaskComposerProps> = {}) {
       accounts,
       selectedAccountId: 7,
       accountSelectionDisabled: false,
-      branches: ["main", "feature/chat-controls"],
-      selectedBranch: "main",
       models,
       modelLoadError: null,
       selectedModelId: "gpt-5.1-codex",
@@ -141,7 +135,6 @@ function renderControlledComposer(overrides: Partial<TaskComposerProps> = {}) {
       slashCommandSearchStatus: "idle",
       slashCommandSearchError: null,
       onAccountChange: vi.fn(),
-      onBranchChange: vi.fn(),
       onModelChange: vi.fn(),
       onReasoningEffortChange: vi.fn(),
       onGoalModeChange: vi.fn(),
@@ -157,7 +150,6 @@ function renderControlledComposer(overrides: Partial<TaskComposerProps> = {}) {
       onContextFilesDrop: vi.fn(),
       onRemoveFile: vi.fn(),
       onRemoveSkill: vi.fn(),
-      onPreflight: vi.fn(),
       onRun: vi.fn(),
       onStop: vi.fn(),
       ...overrides,
@@ -236,16 +228,14 @@ function createEmptyDataTransfer() {
 }
 
 describe("TaskComposer", () => {
-  it("updates the prompt and exposes advisory actions", async () => {
+  it("updates the prompt and exposes composer actions", async () => {
     const onPromptChange = vi.fn();
-    const onPreflight = vi.fn();
-    const { user } = renderComposer({ onPromptChange, onPreflight });
+    const { user } = renderComposer({ onPromptChange });
 
     await user.type(screen.getByLabelText("Prompt"), "Fix the tests");
-    await user.click(screen.getByRole("button", { name: /preflight/i }));
 
     expect(onPromptChange).toHaveBeenCalled();
-    expect(onPreflight).toHaveBeenCalledOnce();
+    expect(screen.queryByRole("button", { name: /preflight/i })).not.toBeInTheDocument();
   });
 
   it("removes the old OSS and approval banner", () => {
@@ -338,19 +328,13 @@ describe("TaskComposer", () => {
     expect(onAccessLevelChange).toHaveBeenCalledWith("ask");
   });
 
-  it("keeps workspace selection out of the composer and renders branches", async () => {
-    const onBranchChange = vi.fn();
-    const { user } = renderComposer({ onBranchChange });
+  it("keeps workspace and branch selection out of the composer", () => {
+    renderComposer();
 
     expect(
       screen.queryByRole("combobox", { name: "Folder" }),
     ).not.toBeInTheDocument();
-    await user.click(screen.getByRole("combobox", { name: "Branch" }));
-    await user.click(
-      screen.getByRole("option", { name: "feature/chat-controls" }),
-    );
-
-    expect(onBranchChange).toHaveBeenCalledWith("feature/chat-controls");
+    expect(screen.queryByRole("combobox", { name: "Branch" })).not.toBeInTheDocument();
   });
 
   it("selects a run account", async () => {
@@ -511,11 +495,11 @@ describe("TaskComposer", () => {
     );
   });
 
-  it("keeps launch controls disabled until the advisory gate is ready", () => {
+  it("keeps launch controls disabled until the composer is ready", () => {
     renderComposer({ disabled: true });
 
     expect(screen.getByRole("button", { name: /run codex/i })).toBeDisabled();
-    expect(screen.getByRole("button", { name: /preflight/i })).toBeDisabled();
+    expect(screen.queryByRole("button", { name: /preflight/i })).not.toBeInTheDocument();
   });
 
   it("shows an enabled stop button while a run is active", async () => {
@@ -527,7 +511,7 @@ describe("TaskComposer", () => {
     });
 
     expect(screen.queryByRole("button", { name: /run codex/i })).not.toBeInTheDocument();
-    expect(screen.getByRole("button", { name: /preflight/i })).toBeDisabled();
+    expect(screen.queryByRole("button", { name: /preflight/i })).not.toBeInTheDocument();
     const stopButton = screen.getByRole("button", { name: /stop codex/i });
     expect(stopButton).toBeEnabled();
 
