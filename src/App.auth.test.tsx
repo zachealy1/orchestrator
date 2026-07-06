@@ -1071,7 +1071,10 @@ describe("App Codex auth", () => {
     expect(historyButton).toHaveAttribute("aria-pressed", "true");
     const layout = drawer.closest(".codex-workspace-body");
     expect(layout).toHaveClass("history-open");
-    expect(within(layout as HTMLElement).getByLabelText("Task chat")).toBeInTheDocument();
+    const taskChat = within(layout as HTMLElement).getByLabelText("Task chat");
+    expect(taskChat).toBeInTheDocument();
+    expect(taskChat).toHaveClass("task-hero");
+    expect(drawer.previousElementSibling).toBe(taskChat);
     expect(drawer).toHaveClass("workspace-history-drawer", "open");
     expect(drawer.parentElement).toHaveClass("codex-workspace-body");
     expect(within(drawer).queryByRole("tab")).not.toBeInTheDocument();
@@ -1144,7 +1147,7 @@ describe("App Codex auth", () => {
 
     const dialog = screen.getByRole("dialog", { name: "Remove chat?" });
     expect(
-      within(dialog).getByText(/Workspace files will not be changed/i),
+      within(dialog).getByText(/not permanently deleted/i),
     ).toBeInTheDocument();
     await user.click(within(dialog).getByRole("button", { name: "Cancel" }));
     expect(mocks.softDeleteRunMock).not.toHaveBeenCalled();

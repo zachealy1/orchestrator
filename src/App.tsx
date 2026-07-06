@@ -4870,8 +4870,8 @@ function App() {
               <p className="eyebrow">Chat</p>
               <h2 id="chat-delete-title">Remove chat?</h2>
               <p id="chat-delete-description">
-                This removes the chat from Orchestrator history. Workspace files
-                will not be changed.
+                This removes the chat from Orchestrator history, but it is not
+                permanently deleted.
               </p>
             </div>
             <div className="confirmation-actions">

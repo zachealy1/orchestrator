@@ -999,16 +999,20 @@ button.account-switcher-item:hover:not(:disabled) {
 }
 
 .codex-workspace-body {
-  display: grid;
+  --history-drawer-width: 0px;
+
+  display: flex;
   min-width: 0;
   min-height: 0;
-  grid-template-columns: minmax(0, 1fr) 0;
   overflow: hidden;
-  transition: grid-template-columns 0.22s ease;
 }
 
 .codex-workspace-body.history-open {
-  grid-template-columns: minmax(0, 1fr) clamp(340px, 30vw, 460px);
+  --history-drawer-width: clamp(340px, 30vw, 460px);
+}
+
+.codex-workspace-body.history-open .task-hero {
+  padding-inline: clamp(14px, 2vw, 28px);
 }
 
 .workspace-context-banner {
@@ -1275,13 +1279,16 @@ button.account-switcher-item:hover:not(:disabled) {
 }
 
 .task-hero {
+  flex: 1 1 auto;
   display: flex;
   min-width: 0;
   min-height: 0;
+  max-width: 100%;
   overflow-y: auto;
   flex-direction: column;
   align-items: center;
   justify-content: center;
+  contain: layout paint;
   gap: 22px;
   padding: 24px clamp(18px, 3vw, 38px) max(32px, 5vh);
   transition:
@@ -1308,6 +1315,8 @@ button.account-switcher-item:hover:not(:disabled) {
 
 .task-hero.has-chat .composer-panel,
 .task-chat-transcript {
+  min-width: 0;
+  max-width: 100%;
   width: min(1040px, 100%);
   align-self: center;
 }
@@ -1653,7 +1662,8 @@ summary.run-live-metrics::-webkit-details-marker {
   position: relative;
   z-index: 3;
   display: grid;
-  width: 100%;
+  flex: 0 0 var(--history-drawer-width);
+  width: var(--history-drawer-width);
   min-width: 0;
   height: 100%;
   min-height: 0;
@@ -1661,10 +1671,13 @@ summary.run-live-metrics::-webkit-details-marker {
   border-left: 1px solid var(--color-divider);
   background: var(--color-component-background);
   box-shadow: -12px 0 32px rgb(var(--shadow-rgb) / 0.12);
+  contain: layout paint;
   opacity: 1;
   overflow: hidden;
   transform: translateX(0);
   transition:
+    flex-basis 0.24s ease,
+    width 0.24s ease,
     opacity 0.18s ease,
     transform 0.22s ease,
     visibility 0s linear 0s;
@@ -1672,14 +1685,35 @@ summary.run-live-metrics::-webkit-details-marker {
 
 .workspace-history-drawer.closed {
   visibility: hidden;
+  border-left-width: 0;
   border-left-color: transparent;
   opacity: 0;
   pointer-events: none;
   transform: translateX(18px);
   transition:
+    flex-basis 0.2s ease,
+    width 0.2s ease,
     opacity 0.14s ease,
     transform 0.18s ease,
     visibility 0s linear 0.18s;
+}
+
+@media (max-width: 1280px) {
+  .codex-workspace-body.history-open .composer-toolbar {
+    align-items: stretch;
+  }
+
+  .codex-workspace-body.history-open .composer-action-group {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .codex-workspace-body.history-open .composer-options-row {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .codex-workspace-body.history-open .composer-run-group {
+    align-self: end;
+  }
 }
 
 .workspace-history-drawer header {
