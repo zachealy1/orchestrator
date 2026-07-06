@@ -3,6 +3,7 @@ import { openUrl } from "@tauri-apps/plugin-opener";
 import { listen } from "@tauri-apps/api/event";
 import {
   AlertCircle,
+  Archive,
   BarChart3,
   ChevronDown,
   ChevronRight,
@@ -10,6 +11,8 @@ import {
   Folder,
   FolderOpen,
   GitBranch,
+  GitCommitHorizontal,
+  History,
   Loader2,
   LogIn,
   LogOut,
@@ -21,6 +24,7 @@ import {
   Settings,
   Sun,
   Trash2,
+  UploadCloud,
   UserPlus,
   X,
 } from "lucide-react";
@@ -36,6 +40,7 @@ import type {
 import "./App.css";
 import orchestratorMark from "./assets/brand/orchestrator-mark.png";
 import {
+  archiveRun,
   appendRunEvent,
   completeDuplicateProfileCleanup,
   createCodexAccount,
@@ -44,6 +49,7 @@ import {
   getAnalyticsSummary,
   listCodexAccounts,
   listDuplicateProfilesPendingCleanup,
+  listWorkspaceRuns,
   listWorkspaces,
   recordTokenUsage,
   renameCodexAccount,
@@ -53,11 +59,13 @@ import {
   updateCodexAccount,
   updateRun,
   updateTaskStatus,
+  unarchiveRun,
   upsertWorkspace,
 } from "./db";
 import {
   cancelCodexLogin,
   codexRpc,
+  commitWorkspaceChanges,
   connectCodex,
   checkoutGitBranch,
   deleteCodexProfile,
@@ -67,6 +75,7 @@ import {
   listWorkspaceGitStatus,
   listWorkspaceDirectory,
   logoutCodexAccount,
+  pushWorkspaceBranch,
   readCodexFile,
   readCodexAccount,
   readWorkspaceGitDiff,
@@ -139,6 +148,7 @@ import type {
   ComposerContextFile,
   OssProvider,
   PreflightReport,
+  RunListItem,
   SelectedComposerSkill,
   SlashCommandItem,
   SlashCommandSearchStatus,
@@ -223,6 +233,19 @@ type RunSetupSnapshot = {
   goalMode: boolean;
   loginState: CodexLoginState;
 };
+
+type WorkspaceHistoryFilter = "active" | "archived";
+
+type WorkspaceHistoryState = {
+  status: "idle" | "loading" | "loaded" | "error";
+  runs: RunListItem[];
+  error: string | null;
+};
+
+type HeaderGitAction =
+  | { kind: "commit"; label: string; disabled: false }
+  | { kind: "push"; label: string; disabled: false }
+  | { kind: "disabled"; label: string; disabled: true; reason: string };
 
 type ExplorerPointerDrag = {
   active: boolean;
@@ -584,6 +607,22 @@ function App() {
   const [runView, setRunView] = useState<RunViewState>(emptyRunView);
   const [taskChatEntries, setTaskChatEntries] = useState<TaskChatEntry[]>([]);
   const [activeChatEntryId, setActiveChatEntryId] = useState<string | null>(null);
+  const [historyDrawerOpen, setHistoryDrawerOpen] = useState(false);
+  const [historyFilter, setHistoryFilter] =
+    useState<WorkspaceHistoryFilter>("active");
+  const [historyState, setHistoryState] = useState<WorkspaceHistoryState>({
+    status: "idle",
+    runs: [],
+    error: null,
+  });
+  const [selectedHistoryRunId, setSelectedHistoryRunId] = useState<number | null>(
+    null,
+  );
+  const [commitPopoverOpen, setCommitPopoverOpen] = useState(false);
+  const [commitMessage, setCommitMessage] = useState("");
+  const [gitActionStatus, setGitActionStatus] = useState<
+    "idle" | "committing" | "pushing"
+  >("idle");
   const [statusMessage, setStatusMessage] = useState("Choose a workspace to begin.");
   const [codexAccount, setCodexAccount] = useState<CodexAccount | null>(null);
   const [requiresOpenaiAuth, setRequiresOpenaiAuth] = useState(true);
@@ -724,6 +763,61 @@ function App() {
     () => summarizeWorkspaceGitStatus(selectedGitStatusState?.snapshot ?? null),
     [selectedGitStatusState?.snapshot],
   );
+  const selectedGitFiles = selectedGitStatusState?.snapshot?.files ?? [];
+  const headerGitAction = useMemo<HeaderGitAction>(() => {
+    if (!selectedWorkspace) {
+      return {
+        kind: "disabled",
+        label: "Git",
+        disabled: true,
+        reason: "Choose a workspace",
+      };
+    }
+    if (selectedGitStatusState?.status === "loading" || selectedGitStatusState?.status === "idle") {
+      return {
+        kind: "disabled",
+        label: "Checking",
+        disabled: true,
+        reason: "Checking git status",
+      };
+    }
+    if (selectedGitStatusState?.status === "error") {
+      return {
+        kind: "disabled",
+        label: "Git unavailable",
+        disabled: true,
+        reason: selectedGitStatusState.error ?? "Git unavailable",
+      };
+    }
+    if (selectedGitSummary.total > 0) {
+      return { kind: "commit", label: "Commit all", disabled: false };
+    }
+    const snapshot = selectedGitStatusState?.snapshot;
+    if (snapshot?.canPush) {
+      const ahead = snapshot.aheadCount ?? 0;
+      return {
+        kind: "push",
+        label: ahead > 0 ? `Push ${ahead}` : "Push",
+        disabled: false,
+      };
+    }
+    return {
+      kind: "disabled",
+      label: "No action",
+      disabled: true,
+      reason: "No changes or pushes available",
+    };
+  }, [
+    selectedGitStatusState?.error,
+    selectedGitStatusState?.snapshot,
+    selectedGitStatusState?.status,
+    selectedGitSummary.total,
+    selectedWorkspace,
+  ]);
+  const selectedHistoryRun =
+    historyState.runs.find((run) => run.id === selectedHistoryRunId) ??
+    historyState.runs[0] ??
+    null;
   const selectedWorkspaceChatEntries = useMemo(
     () =>
       selectedWorkspace
@@ -731,6 +825,10 @@ function App() {
         : [],
     [selectedWorkspace, taskChatEntries],
   );
+  const selectedWorkspaceContextUsage =
+    [...selectedWorkspaceChatEntries]
+      .reverse()
+      .find((entry) => entry.runView.tokenUsage)?.runView.tokenUsage ?? null;
   const hasTaskChat = selectedWorkspaceChatEntries.length > 0;
   const codexSignedIn = isCodexSignedIn(codexAccount);
   const authMessage = formatCodexAuthMessage({
@@ -884,6 +982,15 @@ function App() {
     void refreshBranches(selectedWorkspace);
     void refreshWorkspaceGitStatus(selectedWorkspace);
   }, [selectedWorkspace]);
+
+  useEffect(() => {
+    setSelectedHistoryRunId(null);
+    if (!historyDrawerOpen || !selectedWorkspace) {
+      return;
+    }
+
+    void loadWorkspaceRunHistory(selectedWorkspace.id, historyFilter);
+  }, [historyDrawerOpen, historyFilter, selectedWorkspace?.id]);
 
   useEffect(() => {
     workspaces.forEach((workspace) => {
@@ -1293,6 +1400,41 @@ function App() {
   async function refreshWorkspaceData(workspaceId: number) {
     const summary = await getAnalyticsSummary(workspaceId);
     setAnalytics(summary);
+  }
+
+  async function loadWorkspaceRunHistory(
+    workspaceId: number,
+    filter: WorkspaceHistoryFilter = historyFilter,
+  ) {
+    setHistoryState((current) => ({
+      ...current,
+      status: "loading",
+      error: null,
+    }));
+    try {
+      const runs = await listWorkspaceRuns(workspaceId, {
+        archived: filter === "archived",
+      });
+      setHistoryState({ status: "loaded", runs, error: null });
+      setSelectedHistoryRunId((current) =>
+        current && runs.some((run) => run.id === current)
+          ? current
+          : (runs[0]?.id ?? null),
+      );
+    } catch (error) {
+      setHistoryState({
+        status: "error",
+        runs: [],
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+  }
+
+  async function refreshSelectedWorkspaceHistory() {
+    if (!selectedWorkspaceRef.current || !historyDrawerOpen) {
+      return;
+    }
+    await loadWorkspaceRunHistory(selectedWorkspaceRef.current.id, historyFilter);
   }
 
   async function refreshWorkspaceGitStatus(
@@ -2639,6 +2781,80 @@ function App() {
     return report;
   }
 
+  function openCommitPopover() {
+    if (!selectedWorkspace) {
+      return;
+    }
+    setCommitMessage(
+      generateCommitMessage(selectedWorkspace, selectedGitFiles, selectedGitSummary),
+    );
+    setCommitPopoverOpen(true);
+  }
+
+  async function handleHeaderGitAction() {
+    if (!selectedWorkspace || headerGitAction.disabled || gitActionStatus !== "idle") {
+      return;
+    }
+
+    if (headerGitAction.kind === "commit") {
+      openCommitPopover();
+      return;
+    }
+
+    if (headerGitAction.kind === "push") {
+      setGitActionStatus("pushing");
+      setStatusMessage("Pushing current branch...");
+      try {
+        const result = await pushWorkspaceBranch(selectedWorkspace.path);
+        setStatusMessage(result.message || "Branch pushed.");
+        await refreshBranches(selectedWorkspace);
+        await refreshWorkspaceGitStatus(selectedWorkspace);
+      } catch (error) {
+        setStatusMessage(
+          `Push failed: ${error instanceof Error ? error.message : String(error)}`,
+        );
+      } finally {
+        setGitActionStatus("idle");
+      }
+    }
+  }
+
+  async function handleCommitAll() {
+    if (!selectedWorkspace || !commitMessage.trim()) {
+      setStatusMessage("Enter a commit message before committing.");
+      return;
+    }
+
+    setGitActionStatus("committing");
+    setStatusMessage("Committing workspace changes...");
+    try {
+      const result = await commitWorkspaceChanges(
+        selectedWorkspace.path,
+        commitMessage,
+      );
+      setCommitPopoverOpen(false);
+      setStatusMessage(result.message || "Workspace changes committed.");
+      await refreshBranches(selectedWorkspace);
+      await refreshWorkspaceGitStatus(selectedWorkspace);
+    } catch (error) {
+      setStatusMessage(
+        `Commit failed: ${error instanceof Error ? error.message : String(error)}`,
+      );
+    } finally {
+      setGitActionStatus("idle");
+    }
+  }
+
+  async function handleArchiveHistoryRun(runId: number) {
+    await archiveRun(runId);
+    await refreshSelectedWorkspaceHistory();
+  }
+
+  async function handleUnarchiveHistoryRun(runId: number) {
+    await unarchiveRun(runId);
+    await refreshSelectedWorkspaceHistory();
+  }
+
   function beginOptimisticRun(snapshot: RunSetupSnapshot) {
     const clientId = createTaskChatClientId();
     const submittedAt = new Date().toISOString();
@@ -3163,6 +3379,7 @@ function App() {
         await refreshWorkspaceData(selectedWorkspaceRef.current.id);
         await refreshWorkspaceGitStatus(selectedWorkspaceRef.current);
       }
+      await refreshSelectedWorkspaceHistory();
       currentRunId.current = null;
       currentTaskId.current = null;
       currentRunAccountId.current = null;
@@ -4586,6 +4803,27 @@ function App() {
               branch={selectedBranch}
               gitState={selectedGitStatusState}
               gitSummary={selectedGitSummary}
+              gitAction={headerGitAction}
+              gitActionStatus={gitActionStatus}
+              commitPopoverOpen={commitPopoverOpen}
+              commitMessage={commitMessage}
+              contextUsage={selectedWorkspaceContextUsage}
+              onGitAction={() => void handleHeaderGitAction()}
+              onCommitMessageChange={setCommitMessage}
+              onCommitConfirm={() => void handleCommitAll()}
+              onCommitCancel={() => setCommitPopoverOpen(false)}
+              onCommitRegenerate={() => {
+                if (selectedWorkspace) {
+                  setCommitMessage(
+                    generateCommitMessage(
+                      selectedWorkspace,
+                      selectedGitFiles,
+                      selectedGitSummary,
+                    ),
+                  );
+                }
+              }}
+              onOpenHistory={() => setHistoryDrawerOpen(true)}
             />
             <section
               className={`task-hero ${hasTaskChat ? "has-chat" : ""}`}
@@ -4688,6 +4926,18 @@ function App() {
               onClose={closeWorkspaceFilePreview}
               onResizeStart={startPreviewDrawerResize}
               onResizeKeyDown={handlePreviewResizeKeyDown}
+            />
+            <WorkspaceHistoryDrawer
+              open={historyDrawerOpen}
+              workspace={selectedWorkspace}
+              filter={historyFilter}
+              historyState={historyState}
+              selectedRun={selectedHistoryRun}
+              onFilterChange={setHistoryFilter}
+              onSelectRun={setSelectedHistoryRunId}
+              onArchiveRun={(runId) => void handleArchiveHistoryRun(runId)}
+              onUnarchiveRun={(runId) => void handleUnarchiveHistoryRun(runId)}
+              onClose={() => setHistoryDrawerOpen(false)}
             />
           </div>
         ) : null}
@@ -4960,11 +5210,33 @@ function WorkspaceContextBanner({
   branch,
   gitState,
   gitSummary,
+  gitAction,
+  gitActionStatus,
+  commitPopoverOpen,
+  commitMessage,
+  contextUsage,
+  onGitAction,
+  onCommitMessageChange,
+  onCommitConfirm,
+  onCommitCancel,
+  onCommitRegenerate,
+  onOpenHistory,
 }: {
   workspace: Workspace | null;
   branch: string | null;
   gitState: WorkspaceGitStatusState | null;
   gitSummary: WorkspaceGitSummary;
+  gitAction: HeaderGitAction;
+  gitActionStatus: "idle" | "committing" | "pushing";
+  commitPopoverOpen: boolean;
+  commitMessage: string;
+  contextUsage: RunViewState["tokenUsage"];
+  onGitAction: () => void;
+  onCommitMessageChange: (message: string) => void;
+  onCommitConfirm: () => void;
+  onCommitCancel: () => void;
+  onCommitRegenerate: () => void;
+  onOpenHistory: () => void;
 }) {
   if (!workspace) {
     return (
@@ -4977,6 +5249,17 @@ function WorkspaceContextBanner({
             <strong>No folder selected</strong>
             <span>Add or choose a workspace to start a task.</span>
           </div>
+        </div>
+        <div className="workspace-context-actions">
+          <button className="workspace-header-button" type="button" disabled>
+            <GitCommitHorizontal size={15} />
+            Git
+          </button>
+          <span className="workspace-context-meter loading">Context loading</span>
+          <button className="workspace-header-button" type="button" disabled>
+            <History size={15} />
+            History
+          </button>
         </div>
       </section>
     );
@@ -4998,52 +5281,115 @@ function WorkspaceContextBanner({
         </div>
       </div>
 
-      <div className="workspace-context-chips" aria-label="Selected folder status">
-        <span className="workspace-context-chip branch">
-          <GitBranch size={14} aria-hidden="true" />
-          {branch ?? "No branch"}
-        </span>
-        {gitLoading ? (
-          <span className="workspace-context-chip">Checking git</span>
-        ) : null}
-        {gitError ? (
-          <span className="workspace-context-chip warning">Git unavailable</span>
-        ) : null}
-        {gitClean ? (
-          <span className="workspace-context-chip clean">Clean</span>
-        ) : null}
-        {!gitLoading && !gitError && gitSummary.total > 0 ? (
-          <>
-            <span className="workspace-context-chip changed">
-              {gitSummary.total} changed
-            </span>
-            <WorkspaceContextGitBadge
-              label="M"
-              count={gitSummary.modified}
-              title="Modified files"
-            />
-            <WorkspaceContextGitBadge
-              label="A/R/C"
-              count={gitSummary.added}
-              title="Added, renamed, or copied files"
-            />
-            <WorkspaceContextGitBadge
-              label="D"
-              count={gitSummary.deleted}
-              title="Deleted files"
-            />
-            <WorkspaceContextGitBadge
-              label="U"
-              count={gitSummary.untracked}
-              title="Untracked files"
-            />
-            <WorkspaceContextGitBadge
-              label="U"
-              count={gitSummary.conflicted}
-              title="Conflicted files"
-            />
-          </>
-        ) : null}
+      <div className="workspace-context-side">
+        <div className="workspace-context-chips" aria-label="Selected folder status">
+          <span className="workspace-context-chip branch">
+            <GitBranch size={14} aria-hidden="true" />
+            {branch ?? "No branch"}
+          </span>
+          {gitLoading ? (
+            <span className="workspace-context-chip">Checking git</span>
+          ) : null}
+          {gitError ? (
+            <span className="workspace-context-chip warning">Git unavailable</span>
+          ) : null}
+          {gitClean ? (
+            <span className="workspace-context-chip clean">Clean</span>
+          ) : null}
+          {!gitLoading && !gitError && gitSummary.total > 0 ? (
+            <>
+              <span className="workspace-context-chip changed">
+                {gitSummary.total} changed
+              </span>
+              <WorkspaceContextGitBadge
+                label="M"
+                count={gitSummary.modified}
+                title="Modified files"
+              />
+              <WorkspaceContextGitBadge
+                label="A/R/C"
+                count={gitSummary.added}
+                title="Added, renamed, or copied files"
+              />
+              <WorkspaceContextGitBadge
+                label="D"
+                count={gitSummary.deleted}
+                title="Deleted files"
+              />
+              <WorkspaceContextGitBadge
+                label="U"
+                count={gitSummary.untracked}
+                title="Untracked files"
+              />
+              <WorkspaceContextGitBadge
+                label="U"
+                count={gitSummary.conflicted}
+                title="Conflicted files"
+              />
+            </>
+          ) : null}
+        </div>
+        <div className="workspace-context-actions">
+          <div className="workspace-git-action">
+            <button
+              className="workspace-header-button primary"
+              type="button"
+              onClick={onGitAction}
+              disabled={gitAction.disabled || gitActionStatus !== "idle"}
+              title={gitAction.disabled ? gitAction.reason : gitAction.label}
+            >
+              {gitActionStatus === "committing" || gitActionStatus === "pushing" ? (
+                <Loader2 className="spin" size={15} />
+              ) : gitAction.kind === "push" ? (
+                <UploadCloud size={15} />
+              ) : (
+                <GitCommitHorizontal size={15} />
+              )}
+              {gitActionStatus === "committing"
+                ? "Committing"
+                : gitActionStatus === "pushing"
+                  ? "Pushing"
+                  : gitAction.label}
+            </button>
+            {commitPopoverOpen ? (
+              <div className="commit-popover" role="dialog" aria-label="Commit changes">
+                <label>
+                  <span>Commit message</span>
+                  <input
+                    value={commitMessage}
+                    onChange={(event) => onCommitMessageChange(event.target.value)}
+                  />
+                </label>
+                <div className="commit-popover-actions">
+                  <button className="secondary" type="button" onClick={onCommitRegenerate}>
+                    Regenerate
+                  </button>
+                  <button className="secondary" type="button" onClick={onCommitCancel}>
+                    Cancel
+                  </button>
+                  <button
+                    type="button"
+                    onClick={onCommitConfirm}
+                    disabled={!commitMessage.trim() || gitActionStatus !== "idle"}
+                  >
+                    Commit
+                  </button>
+                </div>
+              </div>
+            ) : null}
+          </div>
+          <span className="workspace-context-meter">
+            {formatLiveContextUsage(contextUsage)}
+          </span>
+          <button
+            className="workspace-header-button"
+            type="button"
+            onClick={onOpenHistory}
+          >
+            <History size={15} />
+            History
+          </button>
+        </div>
       </div>
     </section>
   );
@@ -5067,6 +5413,148 @@ function WorkspaceContextGitBadge({
       <span>{label}</span>
       {count}
     </span>
+  );
+}
+
+function WorkspaceHistoryDrawer({
+  open,
+  workspace,
+  filter,
+  historyState,
+  selectedRun,
+  onFilterChange,
+  onSelectRun,
+  onArchiveRun,
+  onUnarchiveRun,
+  onClose,
+}: {
+  open: boolean;
+  workspace: Workspace | null;
+  filter: WorkspaceHistoryFilter;
+  historyState: WorkspaceHistoryState;
+  selectedRun: RunListItem | null;
+  onFilterChange: (filter: WorkspaceHistoryFilter) => void;
+  onSelectRun: (runId: number) => void;
+  onArchiveRun: (runId: number) => void;
+  onUnarchiveRun: (runId: number) => void;
+  onClose: () => void;
+}) {
+  if (!open) {
+    return null;
+  }
+
+  return (
+    <aside className="workspace-history-drawer" aria-label="Workspace chat history">
+      <header>
+        <div>
+          <p className="eyebrow">History</p>
+          <h2>{workspace?.label ?? "Workspace chats"}</h2>
+        </div>
+        <button
+          className="icon-button"
+          type="button"
+          onClick={onClose}
+          aria-label="Close chat history"
+        >
+          <X size={17} />
+        </button>
+      </header>
+
+      <div className="history-filter" role="tablist" aria-label="History filter">
+        <button
+          className={filter === "active" ? "active" : ""}
+          type="button"
+          role="tab"
+          aria-selected={filter === "active"}
+          onClick={() => onFilterChange("active")}
+        >
+          Chats
+        </button>
+        <button
+          className={filter === "archived" ? "active" : ""}
+          type="button"
+          role="tab"
+          aria-selected={filter === "archived"}
+          onClick={() => onFilterChange("archived")}
+        >
+          Archived
+        </button>
+      </div>
+
+      {historyState.status === "loading" ? (
+        <div className="history-empty">
+          <Loader2 className="spin" size={16} />
+          Loading chats...
+        </div>
+      ) : null}
+      {historyState.status === "error" ? (
+        <div className="history-empty error">{historyState.error}</div>
+      ) : null}
+      {historyState.status === "loaded" && historyState.runs.length === 0 ? (
+        <div className="history-empty">
+          {filter === "archived" ? "No archived chats." : "No chats yet."}
+        </div>
+      ) : null}
+
+      <div className="history-drawer-body">
+        <div className="history-run-list" aria-label="Workspace chats">
+          {historyState.runs.map((run) => (
+            <button
+              key={run.id}
+              className={selectedRun?.id === run.id ? "active" : ""}
+              type="button"
+              onClick={() => onSelectRun(run.id)}
+            >
+              <strong>{run.original_prompt}</strong>
+              <span>{formatHistoryRunMeta(run)}</span>
+            </button>
+          ))}
+        </div>
+
+        {selectedRun ? (
+          <article className="history-run-detail" aria-label="Selected chat">
+            <div className="history-detail-header">
+              <div>
+                <span>{formatHistoryTimestamp(selectedRun.started_at)}</span>
+                <h3>{selectedRun.original_prompt}</h3>
+              </div>
+              {filter === "archived" ? (
+                <button
+                  className="secondary"
+                  type="button"
+                  onClick={() => onUnarchiveRun(selectedRun.id)}
+                >
+                  Restore
+                </button>
+              ) : (
+                <button
+                  className="secondary"
+                  type="button"
+                  onClick={() => onArchiveRun(selectedRun.id)}
+                >
+                  <Archive size={15} />
+                  Archive
+                </button>
+              )}
+            </div>
+            <div className="history-detail-meta">
+              <span>{selectedRun.status}</span>
+              <span>{formatHistoryDuration(selectedRun.duration_ms)}</span>
+              <span>{formatHistoryTokens(selectedRun.latest_total_tokens)}</span>
+              {selectedRun.model ? <span>{selectedRun.model}</span> : null}
+              {selectedRun.account_label ? <span>{selectedRun.account_label}</span> : null}
+            </div>
+            <div className="history-detail-summary">
+              {selectedRun.final_message?.trim()
+                ? selectedRun.final_message
+                : selectedRun.error?.trim()
+                  ? selectedRun.error
+                  : "No final message was recorded for this chat."}
+            </div>
+          </article>
+        ) : null}
+      </div>
+    </aside>
   );
 }
 
@@ -5291,6 +5779,95 @@ function contextFileFromPath(path: string): ComposerContextFile {
     source: "picker",
     status: "ready",
   };
+}
+
+function generateCommitMessage(
+  workspace: Workspace,
+  files: WorkspaceGitFileStatus[],
+  summary: WorkspaceGitSummary,
+) {
+  if (summary.total === 1 && files[0]) {
+    const fileName = basename(files[0].relativePath);
+    switch (files[0].statusKind) {
+      case "added":
+      case "untracked":
+        return `Add ${fileName}`;
+      case "deleted":
+        return `Remove ${fileName}`;
+      case "renamed":
+        return `Rename ${fileName}`;
+      default:
+        return `Update ${fileName}`;
+    }
+  }
+
+  const pieces = [
+    summary.modified ? `${summary.modified} modified` : null,
+    summary.added ? `${summary.added} added` : null,
+    summary.deleted ? `${summary.deleted} deleted` : null,
+    summary.untracked ? `${summary.untracked} untracked` : null,
+  ].filter(Boolean);
+
+  return pieces.length > 0
+    ? `Update ${workspace.label} (${pieces.join(", ")})`
+    : `Update ${workspace.label}`;
+}
+
+function formatLiveContextUsage(tokenUsage: RunViewState["tokenUsage"]) {
+  if (!tokenUsage) {
+    return "Context loading";
+  }
+
+  const total = tokenUsage.totalTokens.toLocaleString();
+  const windowSize = tokenUsage.modelContextWindow;
+  if (!windowSize || windowSize <= 0) {
+    return `${total} tokens`;
+  }
+
+  const percentage = Math.min(
+    100,
+    Math.round((tokenUsage.totalTokens / windowSize) * 100),
+  );
+  return `${total} / ${windowSize.toLocaleString()} (${percentage}%)`;
+}
+
+function formatHistoryRunMeta(run: RunListItem) {
+  return [
+    formatHistoryTimestamp(run.started_at),
+    run.status,
+    formatHistoryDuration(run.duration_ms),
+    formatHistoryTokens(run.latest_total_tokens),
+  ].join(" · ");
+}
+
+function formatHistoryTimestamp(value: string) {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) {
+    return value;
+  }
+  return date.toLocaleString(undefined, {
+    month: "short",
+    day: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+  });
+}
+
+function formatHistoryDuration(milliseconds: number | null) {
+  if (!milliseconds || milliseconds <= 0) {
+    return "No duration";
+  }
+  const seconds = Math.round(milliseconds / 1000);
+  if (seconds < 60) {
+    return `${seconds}s`;
+  }
+  const minutes = Math.floor(seconds / 60);
+  const remainder = seconds % 60;
+  return remainder ? `${minutes}m ${remainder}s` : `${minutes}m`;
+}
+
+function formatHistoryTokens(tokens: number | null) {
+  return tokens && tokens > 0 ? `${tokens.toLocaleString()} tokens` : "No tokens";
 }
 
 async function collectWorkspaceFiles(

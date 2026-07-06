@@ -315,7 +315,8 @@ export async function createRun(input: {
   const run = await selectOne<RunRecord>(
     `SELECT id, task_id, workspace_id, account_id, account_label, account_email,
       codex_thread_id, codex_turn_id, model, model_provider,
-      sandbox, approval_policy, status, started_at, completed_at, duration_ms, final_message, error
+      sandbox, approval_policy, status, started_at, completed_at, duration_ms,
+      final_message, error, archived_at
      FROM runs WHERE id = $1`,
     [result.lastInsertId],
   );
@@ -371,6 +372,19 @@ export async function updateRun(
   );
 }
 
+export async function archiveRun(runId: number) {
+  const db = await getDatabase();
+  await db.execute(
+    "UPDATE runs SET archived_at = CURRENT_TIMESTAMP WHERE id = $1",
+    [runId],
+  );
+}
+
+export async function unarchiveRun(runId: number) {
+  const db = await getDatabase();
+  await db.execute("UPDATE runs SET archived_at = NULL WHERE id = $1", [runId]);
+}
+
 export async function appendRunEvent(input: {
   runId: number;
   sequence: number;
@@ -423,17 +437,31 @@ export async function recordTokenUsage(input: {
   );
 }
 
-export async function listWorkspaceRuns(workspaceId: number) {
+export async function listWorkspaceRuns(
+  workspaceId: number,
+  options: { archived?: boolean } = {},
+) {
   const db = await getDatabase();
+  const archived = options.archived ?? false;
   return db.select<RunListItem[]>(
     `SELECT runs.id, runs.task_id, runs.workspace_id, runs.codex_thread_id, runs.codex_turn_id,
       runs.account_id, runs.account_label, runs.account_email, runs.model, runs.model_provider,
       runs.sandbox, runs.approval_policy, runs.status,
       runs.started_at, runs.completed_at, runs.duration_ms, runs.final_message, runs.error,
-      tasks.original_prompt, tasks.improved_prompt, tasks.route_recommendation, tasks.budget_tokens
+      runs.archived_at,
+      tasks.original_prompt, tasks.improved_prompt, tasks.route_recommendation, tasks.budget_tokens,
+      latest_tokens.total_tokens AS latest_total_tokens,
+      latest_tokens.model_context_window AS latest_model_context_window
      FROM runs
      JOIN tasks ON tasks.id = runs.task_id
+     LEFT JOIN (
+       SELECT run_id, MAX(id) AS max_id
+       FROM token_usage_snapshots
+       GROUP BY run_id
+     ) latest ON latest.run_id = runs.id
+     LEFT JOIN token_usage_snapshots latest_tokens ON latest_tokens.id = latest.max_id
      WHERE runs.workspace_id = $1
+       AND ${archived ? "runs.archived_at IS NOT NULL" : "runs.archived_at IS NULL"}
      ORDER BY runs.started_at DESC
      LIMIT 50`,
     [workspaceId],

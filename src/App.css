@@ -1012,10 +1012,6 @@ button.account-switcher-item:hover:not(:disabled) {
   padding: 10px 18px;
 }
 
-.workspace-context-banner.empty {
-  grid-template-columns: minmax(0, 1fr);
-}
-
 .workspace-context-main {
   display: flex;
   min-width: 0;
@@ -1066,6 +1062,22 @@ button.account-switcher-item:hover:not(:disabled) {
   justify-content: flex-end;
 }
 
+.workspace-context-side {
+  display: grid;
+  min-width: 0;
+  gap: 7px;
+  justify-items: end;
+}
+
+.workspace-context-actions {
+  position: relative;
+  display: flex;
+  min-width: 0;
+  gap: 6px;
+  align-items: center;
+  justify-content: flex-end;
+}
+
 .workspace-context-chip {
   display: inline-flex;
   max-width: 220px;
@@ -1100,6 +1112,100 @@ button.account-switcher-item:hover:not(:disabled) {
   color: var(--muted);
   font-size: 0.68rem;
   font-weight: 800;
+}
+
+.workspace-header-button {
+  min-height: 28px;
+  gap: 6px;
+  border-radius: 7px;
+  background: var(--color-surface-soft);
+  color: var(--text);
+  font-size: 0.76rem;
+  font-weight: 720;
+  padding: 6px 9px;
+  white-space: nowrap;
+}
+
+.workspace-header-button.primary {
+  color: var(--color-selected-text);
+}
+
+.workspace-header-button:hover:not(:disabled),
+.workspace-header-button:focus-visible:not(:disabled) {
+  background: var(--color-button-active);
+  box-shadow: none;
+}
+
+.workspace-header-button:disabled {
+  padding: 6px 9px;
+}
+
+.workspace-context-meter {
+  display: inline-flex;
+  min-height: 28px;
+  align-items: center;
+  border-radius: 7px;
+  background: var(--color-surface-soft);
+  color: var(--muted);
+  font-size: 0.76rem;
+  font-weight: 700;
+  padding: 6px 9px;
+  white-space: nowrap;
+}
+
+.workspace-context-meter.loading {
+  opacity: 0.72;
+}
+
+.workspace-git-action {
+  position: relative;
+}
+
+.commit-popover {
+  position: absolute;
+  top: calc(100% + 8px);
+  right: 0;
+  z-index: 35;
+  display: grid;
+  width: min(360px, calc(100vw - 48px));
+  gap: 10px;
+  border: 1px solid var(--color-divider);
+  border-radius: 8px;
+  background: var(--color-component-background);
+  box-shadow: 0 18px 42px rgb(var(--shadow-rgb) / 0.24);
+  padding: 12px;
+}
+
+.commit-popover label {
+  display: grid;
+  gap: 6px;
+  color: var(--muted);
+  font-size: 0.74rem;
+  font-weight: 720;
+}
+
+.commit-popover input {
+  min-height: 38px;
+  border: 1px solid var(--color-divider);
+  border-radius: 7px;
+  background: var(--color-surface-soft);
+  color: var(--text);
+  padding: 8px 10px;
+}
+
+.commit-popover-actions {
+  display: flex;
+  gap: 6px;
+  justify-content: flex-end;
+}
+
+.commit-popover-actions button {
+  min-height: 32px;
+  padding: 6px 10px;
+}
+
+.spin {
+  animation: file-preview-spinner-rotate 0.9s linear infinite;
 }
 
 .task-hero {
@@ -1474,6 +1580,177 @@ summary.run-live-metrics::-webkit-details-marker {
   border-left: 1px solid var(--color-divider);
   background: var(--color-component-background);
   box-shadow: -18px 0 48px rgb(var(--shadow-rgb) / 0.18);
+}
+
+.workspace-history-drawer {
+  position: fixed;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 45;
+  display: grid;
+  width: min(520px, calc(100vw - 360px));
+  min-width: 360px;
+  grid-template-rows: auto auto minmax(0, 1fr);
+  border-left: 1px solid var(--color-divider);
+  background: var(--color-component-background);
+  box-shadow: -18px 0 48px rgb(var(--shadow-rgb) / 0.18);
+}
+
+.workspace-history-drawer header {
+  display: flex;
+  min-width: 0;
+  align-items: start;
+  justify-content: space-between;
+  gap: 12px;
+  border-bottom: 1px solid var(--color-divider);
+  padding: 18px;
+}
+
+.workspace-history-drawer h2,
+.workspace-history-drawer p {
+  margin: 0;
+}
+
+.workspace-history-drawer h2 {
+  color: var(--text);
+  font-size: 1rem;
+}
+
+.history-filter {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 4px;
+  border-bottom: 1px solid var(--color-divider);
+  padding: 8px 12px;
+}
+
+.history-filter button {
+  min-height: 34px;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--muted);
+  box-shadow: none;
+}
+
+.history-filter button.active,
+.history-filter button:hover:not(:disabled) {
+  background: var(--color-button-active);
+  color: var(--color-button-active-text);
+}
+
+.history-empty {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  color: var(--muted);
+  padding: 18px;
+}
+
+.history-empty.error {
+  color: var(--color-error);
+}
+
+.history-drawer-body {
+  display: grid;
+  min-height: 0;
+  grid-template-rows: minmax(0, 1fr) auto;
+}
+
+.history-run-list {
+  display: grid;
+  align-content: start;
+  gap: 4px;
+  overflow-y: auto;
+  padding: 10px;
+}
+
+.history-run-list button {
+  display: grid;
+  min-height: 58px;
+  justify-content: stretch;
+  gap: 5px;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--text);
+  box-shadow: none;
+  padding: 10px;
+  text-align: left;
+}
+
+.history-run-list button:hover:not(:disabled),
+.history-run-list button.active {
+  background: var(--color-button-active);
+  color: var(--text);
+}
+
+.history-run-list strong,
+.history-run-list span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.history-run-list span {
+  color: var(--muted);
+  font-size: 0.76rem;
+  font-weight: 560;
+}
+
+.history-run-detail {
+  display: grid;
+  gap: 12px;
+  border-top: 1px solid var(--color-divider);
+  background: var(--color-surface-soft);
+  padding: 14px;
+}
+
+.history-detail-header {
+  display: flex;
+  min-width: 0;
+  align-items: start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.history-detail-header h3,
+.history-detail-header span {
+  margin: 0;
+}
+
+.history-detail-header h3 {
+  color: var(--text);
+  font-size: 0.95rem;
+}
+
+.history-detail-header span {
+  color: var(--muted);
+  font-size: 0.74rem;
+}
+
+.history-detail-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.history-detail-meta span {
+  border-radius: 999px;
+  background: var(--color-component-background);
+  color: var(--muted);
+  font-size: 0.72rem;
+  font-weight: 700;
+  padding: 5px 8px;
+}
+
+.history-detail-summary {
+  overflow: auto;
+  max-height: 180px;
+  color: var(--text);
+  font-size: 0.84rem;
+  line-height: 1.5;
+  white-space: pre-wrap;
 }
 
 .file-preview-drawer.resizing {

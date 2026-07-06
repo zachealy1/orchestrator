@@ -9,6 +9,8 @@ const mocks = vi.hoisted(() => ({
   openDialogMock: vi.fn(),
   openUrlMock: vi.fn(),
   connectCodexMock: vi.fn(),
+  commitWorkspaceChangesMock: vi.fn(),
+  pushWorkspaceBranchMock: vi.fn(),
   deleteCodexProfileMock: vi.fn(),
   readCodexAccountMock: vi.fn(),
   startCodexLoginMock: vi.fn(),
@@ -32,6 +34,7 @@ const mocks = vi.hoisted(() => ({
   listCodexAccountsMock: vi.fn(),
   listDuplicateProfilesPendingCleanupMock: vi.fn(),
   completeDuplicateProfileCleanupMock: vi.fn(),
+  listWorkspaceRunsMock: vi.fn(),
   createCodexAccountMock: vi.fn(),
   updateCodexAccountMock: vi.fn(),
   renameCodexAccountMock: vi.fn(),
@@ -45,6 +48,8 @@ const mocks = vi.hoisted(() => ({
   updateTaskStatusMock: vi.fn(),
   appendRunEventMock: vi.fn(),
   recordTokenUsageMock: vi.fn(),
+  archiveRunMock: vi.fn(),
+  unarchiveRunMock: vi.fn(),
   upsertWorkspaceMock: vi.fn(),
 }));
 
@@ -76,6 +81,7 @@ vi.mock("./assets/brand/orchestrator-wordmark.png", () => ({
 vi.mock("./codexClient", () => ({
   cancelCodexLogin: mocks.cancelCodexLoginMock,
   codexRpc: mocks.codexRpcMock,
+  commitWorkspaceChanges: mocks.commitWorkspaceChangesMock,
   connectCodex: mocks.connectCodexMock,
   checkoutGitBranch: mocks.checkoutGitBranchMock,
   deleteCodexProfile: mocks.deleteCodexProfileMock,
@@ -86,6 +92,7 @@ vi.mock("./codexClient", () => ({
   listCodexSkills: mocks.listCodexSkillsMock,
   listWorkspaceDirectory: mocks.listWorkspaceDirectoryMock,
   logoutCodexAccount: mocks.logoutCodexAccountMock,
+  pushWorkspaceBranch: mocks.pushWorkspaceBranchMock,
   readCodexAccount: mocks.readCodexAccountMock,
   readCodexFile: mocks.readCodexFileMock,
   readWorkspaceFilePreview: mocks.readWorkspaceFilePreviewMock,
@@ -97,6 +104,7 @@ vi.mock("./codexClient", () => ({
 }));
 
 vi.mock("./db", () => ({
+  archiveRun: mocks.archiveRunMock,
   appendRunEvent: mocks.appendRunEventMock,
   completeDuplicateProfileCleanup: mocks.completeDuplicateProfileCleanupMock,
   createCodexAccount: mocks.createCodexAccountMock,
@@ -106,6 +114,7 @@ vi.mock("./db", () => ({
   listCodexAccounts: mocks.listCodexAccountsMock,
   listDuplicateProfilesPendingCleanup:
     mocks.listDuplicateProfilesPendingCleanupMock,
+  listWorkspaceRuns: mocks.listWorkspaceRunsMock,
   listWorkspaces: mocks.listWorkspacesMock,
   recordTokenUsage: mocks.recordTokenUsageMock,
   renameCodexAccount: mocks.renameCodexAccountMock,
@@ -115,6 +124,7 @@ vi.mock("./db", () => ({
   updateCodexAccount: mocks.updateCodexAccountMock,
   updateRun: mocks.updateRunMock,
   updateTaskStatus: mocks.updateTaskStatusMock,
+  unarchiveRun: mocks.unarchiveRunMock,
   upsertWorkspace: mocks.upsertWorkspaceMock,
 }));
 
@@ -175,11 +185,56 @@ const preflight = {
   recommendations: [],
 };
 
+function workspaceRunFixture(
+  overrides: Partial<{
+    id: number;
+    original_prompt: string;
+    final_message: string | null;
+    archived_at: string | null;
+  }> = {},
+) {
+  return {
+    id: overrides.id ?? 301,
+    task_id: 101,
+    workspace_id: workspace.id,
+    account_id: 7,
+    account_label: "dev@example.com",
+    account_email: "dev@example.com",
+    codex_thread_id: "thread-1",
+    codex_turn_id: "turn-1",
+    model: "GPT-5.5",
+    model_provider: null,
+    sandbox: "workspace-write",
+    approval_policy: "on-request",
+    status: "completed",
+    started_at: "2026-06-30T09:00:00Z",
+    completed_at: "2026-06-30T09:01:00Z",
+    duration_ms: 60000,
+    final_message: overrides.final_message ?? "Done.",
+    error: null,
+    archived_at: overrides.archived_at ?? null,
+    original_prompt: overrides.original_prompt ?? "Fix the app",
+    improved_prompt: "Objective\nFix the app",
+    route_recommendation: "direct-run" as const,
+    budget_tokens: 42,
+    latest_total_tokens: 1280,
+    latest_model_context_window: 128000,
+  };
+}
+
 function prepareDefaults() {
   mocks.connectCodexMock.mockResolvedValue({
     alreadyConnected: false,
     pid: 1234,
     initialize: {},
+  });
+  mocks.commitWorkspaceChangesMock.mockResolvedValue({
+    message: "Committed workspace changes",
+    branch: "main",
+  });
+  mocks.pushWorkspaceBranchMock.mockResolvedValue({
+    message: "Pushed main",
+    branch: "main",
   });
   mocks.deleteCodexProfileMock.mockResolvedValue(undefined);
   mocks.readCodexAccountMock.mockResolvedValue({
@@ -203,6 +258,11 @@ function prepareDefaults() {
   mocks.listWorkspaceGitStatusMock.mockResolvedValue({
     workspacePath: workspace.path,
     gitRoot: workspace.path,
+    currentBranch: "main",
+    aheadCount: 0,
+    hasUpstream: true,
+    hasOrigin: true,
+    canPush: false,
     files: [],
   });
   mocks.readWorkspaceGitDiffMock.mockResolvedValue({
@@ -228,6 +288,7 @@ function prepareDefaults() {
   mocks.listCodexAccountsMock.mockResolvedValue([]);
   mocks.listDuplicateProfilesPendingCleanupMock.mockResolvedValue([]);
   mocks.completeDuplicateProfileCleanupMock.mockResolvedValue(undefined);
+  mocks.listWorkspaceRunsMock.mockResolvedValue([]);
   mocks.createCodexAccountMock.mockResolvedValue(pendingAccount);
   mocks.updateCodexAccountMock.mockResolvedValue(undefined);
   mocks.renameCodexAccountMock.mockResolvedValue(undefined);
@@ -241,6 +302,8 @@ function prepareDefaults() {
   mocks.updateTaskStatusMock.mockResolvedValue(undefined);
   mocks.appendRunEventMock.mockResolvedValue(undefined);
   mocks.recordTokenUsageMock.mockResolvedValue(undefined);
+  mocks.archiveRunMock.mockResolvedValue(undefined);
+  mocks.unarchiveRunMock.mockResolvedValue(undefined);
   mocks.upsertWorkspaceMock.mockResolvedValue(workspace);
   mocks.openDialogMock.mockResolvedValue(null);
 }
@@ -892,6 +955,140 @@ describe("App Codex auth", () => {
     expect(within(banner).getByTitle("Deleted files")).toHaveTextContent("D1");
     expect(within(banner).getByTitle("Untracked files")).toHaveTextContent("U1");
     expect(within(banner).getByTitle("Conflicted files")).toHaveTextContent("U1");
+  });
+
+  it("commits all workspace changes from the selected folder banner", async () => {
+    mocks.listWorkspaceGitStatusMock.mockResolvedValue({
+      workspacePath: workspace.path,
+      gitRoot: workspace.path,
+      currentBranch: "main",
+      aheadCount: 0,
+      hasUpstream: true,
+      hasOrigin: true,
+      canPush: false,
+      files: [
+        {
+          path: "/repo/orchestrator/src/App.tsx",
+          relativePath: "src/App.tsx",
+          oldRelativePath: null,
+          indexStatus: " ",
+          worktreeStatus: "M",
+          statusKind: "modified",
+          badge: "M",
+        },
+      ],
+    });
+
+    const { user } = await renderApp();
+    const banner = screen.getByRole("region", { name: "Selected folder" });
+    await user.click(await within(banner).findByRole("button", { name: /commit all/i }));
+
+    const messageInput = within(banner).getByLabelText(/commit message/i);
+    expect(messageInput).toHaveValue("Update App.tsx");
+    await user.clear(messageInput);
+    await user.type(messageInput, "Update app shell");
+    await user.click(within(banner).getByRole("button", { name: /^commit$/i }));
+
+    await waitFor(() =>
+      expect(mocks.commitWorkspaceChangesMock).toHaveBeenCalledWith(
+        workspace.path,
+        "Update app shell",
+      ),
+    );
+    await waitFor(() =>
+      expect(mocks.listWorkspaceGitStatusMock).toHaveBeenCalledWith(workspace.path),
+    );
+  });
+
+  it("pushes the current branch from the selected folder banner when clean and ahead", async () => {
+    mocks.listWorkspaceGitStatusMock.mockResolvedValue({
+      workspacePath: workspace.path,
+      gitRoot: workspace.path,
+      currentBranch: "main",
+      aheadCount: 2,
+      hasUpstream: true,
+      hasOrigin: true,
+      canPush: true,
+      files: [],
+    });
+
+    const { user } = await renderApp();
+    const banner = screen.getByRole("region", { name: "Selected folder" });
+    await user.click(await within(banner).findByRole("button", { name: /push 2/i }));
+
+    await waitFor(() =>
+      expect(mocks.pushWorkspaceBranchMock).toHaveBeenCalledWith(workspace.path),
+    );
+  });
+
+  it("shows live context usage in the selected folder banner", async () => {
+    prepareSignedInRun();
+
+    const { user } = await renderApp();
+    const banner = screen.getByRole("region", { name: "Selected folder" });
+    expect(within(banner).getByText("Context loading")).toBeInTheDocument();
+
+    await startMockRun(user, "Measure context");
+    await emitCodexNotification({
+      method: "thread/tokenUsage/updated",
+      params: {
+        threadId: "thread-1",
+        turnId: "turn-1",
+        tokenUsage: {
+          total: {
+            totalTokens: 1280,
+            inputTokens: 1000,
+            cachedInputTokens: 100,
+            outputTokens: 200,
+            reasoningOutputTokens: 80,
+          },
+          modelContextWindow: 128000,
+        },
+      },
+    });
+
+    expect(
+      within(banner).getByText("1,280 / 128,000 (1%)"),
+    ).toBeInTheDocument();
+  });
+
+  it("opens workspace chat history and archives or restores persisted chats", async () => {
+    const activeRun = workspaceRunFixture({
+      id: 301,
+      original_prompt: "Fix the app header",
+      final_message: "Header fixed.",
+      archived_at: null,
+    });
+    const archivedRun = workspaceRunFixture({
+      id: 302,
+      original_prompt: "Old archived chat",
+      final_message: "Archived result.",
+      archived_at: "2026-06-30T10:00:00Z",
+    });
+    mocks.listWorkspaceRunsMock.mockImplementation(
+      async (_workspaceId: number, options?: { archived?: boolean }) =>
+        options?.archived ? [archivedRun] : [activeRun],
+    );
+
+    const { user } = await renderApp();
+    const banner = screen.getByRole("region", { name: "Selected folder" });
+    await user.click(within(banner).getByRole("button", { name: /history/i }));
+
+    const drawer = await screen.findByRole("complementary", {
+      name: "Workspace chat history",
+    });
+    expect(within(drawer).getAllByText("Fix the app header").length).toBeGreaterThan(0);
+    expect(within(drawer).getByText("Header fixed.")).toBeInTheDocument();
+
+    await user.click(within(drawer).getByRole("button", { name: /archive/i }));
+    await waitFor(() => expect(mocks.archiveRunMock).toHaveBeenCalledWith(301));
+
+    await user.click(within(drawer).getByRole("tab", { name: /archived/i }));
+    await waitFor(() =>
+      expect(within(drawer).getAllByText("Old archived chat").length).toBeGreaterThan(0),
+    );
+    await user.click(within(drawer).getByRole("button", { name: /restore/i }));
+    await waitFor(() => expect(mocks.unarchiveRunMock).toHaveBeenCalledWith(302));
   });
 
   it("renders an empty selected folder banner when no workspace is selected", async () => {

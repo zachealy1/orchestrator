@@ -139,11 +139,23 @@ struct GitCheckoutResult {
     branch: String,
 }
 
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct WorkspaceGitActionResult {
+    message: String,
+    branch: Option<String>,
+}
+
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 struct WorkspaceGitStatusSnapshot {
     workspace_path: String,
     git_root: String,
+    current_branch: Option<String>,
+    ahead_count: usize,
+    has_upstream: bool,
+    has_origin: bool,
+    can_push: bool,
     files: Vec<WorkspaceGitFileStatus>,
 }
 
@@ -419,6 +431,16 @@ fn migrations() -> Vec<Migration> {
 
                 CREATE INDEX IF NOT EXISTS idx_workspaces_active_last_opened
                     ON workspaces(deleted_at, last_opened_at DESC);
+            ",
+            kind: MigrationKind::Up,
+        },
+        Migration {
+            version: 6,
+            description: "add_archived_runs",
+            sql: "
+                ALTER TABLE runs ADD COLUMN archived_at TEXT;
+                CREATE INDEX IF NOT EXISTS idx_runs_workspace_archive_started
+                    ON runs(workspace_id, archived_at, started_at DESC);
             ",
             kind: MigrationKind::Up,
         },
@@ -924,31 +946,101 @@ fn checkout_git_branch(path: String, branch: String) -> Result<GitCheckoutResult
 }
 
 #[tauri::command]
+fn commit_workspace_changes(
+    workspace_path: String,
+    message: String,
+) -> Result<WorkspaceGitActionResult, String> {
+    let trimmed_message = message.trim();
+    if trimmed_message.is_empty() {
+        return Err("Enter a commit message before committing".to_string());
+    }
+
+    let workspace = canonical_workspace(&workspace_path)?;
+    let git_root = resolve_git_root(&workspace)?;
+    let pathspec = workspace_git_pathspec(&git_root, &workspace)?;
+
+    let status_probe = git_status_for_pathspec(&git_root, &pathspec);
+    if !status_probe.ok {
+        return Err(output_detail(&status_probe)
+            .unwrap_or_else(|| "Unable to inspect Git changes".to_string()));
+    }
+    if status_probe.stdout.trim().is_empty() {
+        return Err("No workspace changes to commit".to_string());
+    }
+
+    let root_arg = git_root.to_string_lossy();
+    let add_probe = run_command(
+        "git",
+        &["-C", root_arg.as_ref(), "add", "-A", "--", &pathspec],
+    );
+    if !add_probe.ok {
+        return Err(output_detail(&add_probe)
+            .unwrap_or_else(|| "Unable to stage workspace changes".to_string()));
+    }
+
+    let commit_probe = run_command(
+        "git",
+        &[
+            "-C",
+            root_arg.as_ref(),
+            "commit",
+            "-m",
+            trimmed_message,
+            "--",
+            &pathspec,
+        ],
+    );
+    if !commit_probe.ok {
+        return Err(output_detail(&commit_probe)
+            .unwrap_or_else(|| "Unable to commit workspace changes".to_string()));
+    }
+
+    Ok(WorkspaceGitActionResult {
+        message: first_non_empty_line(&commit_probe.stdout)
+            .unwrap_or_else(|| "Committed workspace changes".to_string()),
+        branch: current_git_branch(&git_root),
+    })
+}
+
+#[tauri::command]
+fn push_workspace_branch(workspace_path: String) -> Result<WorkspaceGitActionResult, String> {
+    let workspace = canonical_workspace(&workspace_path)?;
+    let git_root = resolve_git_root(&workspace)?;
+    let branch = current_git_branch(&git_root)
+        .ok_or_else(|| "Cannot push while detached from a branch".to_string())?;
+    let root_arg = git_root.to_string_lossy();
+
+    let push_probe = if git_upstream(&git_root).is_some() {
+        run_command("git", &["-C", root_arg.as_ref(), "push"])
+    } else if git_has_origin(&git_root) {
+        run_command(
+            "git",
+            &["-C", root_arg.as_ref(), "push", "-u", "origin", &branch],
+        )
+    } else {
+        return Err("No upstream branch or origin remote is configured".to_string());
+    };
+
+    if !push_probe.ok {
+        return Err(output_detail(&push_probe)
+            .unwrap_or_else(|| "Unable to push the current branch".to_string()));
+    }
+
+    Ok(WorkspaceGitActionResult {
+        message: output_detail(&push_probe)
+            .unwrap_or_else(|| format!("Pushed {branch}")),
+        branch: Some(branch),
+    })
+}
+
+#[tauri::command]
 fn list_workspace_git_status(
     workspace_path: String,
 ) -> Result<WorkspaceGitStatusSnapshot, String> {
     let workspace = canonical_workspace(&workspace_path)?;
     let git_root = resolve_git_root(&workspace)?;
-    let workspace_prefix = git_relative_path(&git_root, &workspace)?;
-    let pathspec = if workspace_prefix.is_empty() {
-        ".".to_string()
-    } else {
-        workspace_prefix.clone()
-    };
-    let git_root_arg = git_root.to_string_lossy();
-    let status_probe = run_command_raw(
-        "git",
-        &[
-            "-C",
-            git_root_arg.as_ref(),
-            "status",
-            "--porcelain=v1",
-            "-z",
-            "--untracked-files=normal",
-            "--",
-            &pathspec,
-        ],
-    );
+    let pathspec = workspace_git_pathspec(&git_root, &workspace)?;
+    let status_probe = git_status_for_pathspec(&git_root, &pathspec);
     if !status_probe.ok {
         return Err(output_detail(&status_probe)
             .unwrap_or_else(|| "Unable to read Git status".to_string()));
@@ -982,6 +1074,11 @@ fn list_workspace_git_status(
     Ok(WorkspaceGitStatusSnapshot {
         workspace_path: workspace.to_string_lossy().to_string(),
         git_root: git_root.to_string_lossy().to_string(),
+        current_branch: current_git_branch(&git_root),
+        ahead_count: git_ahead_count(&git_root),
+        has_upstream: git_upstream(&git_root).is_some(),
+        has_origin: git_has_origin(&git_root),
+        can_push: git_can_push(&git_root),
         files,
     })
 }
@@ -1694,6 +1791,111 @@ fn git_relative_path(git_root: &Path, path: &Path) -> Result<String, String> {
     Ok(relative)
 }
 
+fn workspace_git_pathspec(git_root: &Path, workspace: &Path) -> Result<String, String> {
+    let workspace_prefix = git_relative_path(git_root, workspace)?;
+    Ok(if workspace_prefix.is_empty() {
+        ".".to_string()
+    } else {
+        workspace_prefix
+    })
+}
+
+fn git_status_for_pathspec(git_root: &Path, pathspec: &str) -> CommandProbe {
+    let git_root_arg = git_root.to_string_lossy();
+    run_command_raw(
+        "git",
+        &[
+            "-C",
+            git_root_arg.as_ref(),
+            "status",
+            "--porcelain=v1",
+            "-z",
+            "--untracked-files=normal",
+            "--",
+            pathspec,
+        ],
+    )
+}
+
+fn current_git_branch(git_root: &Path) -> Option<String> {
+    let git_root_arg = git_root.to_string_lossy();
+    let probe = run_command(
+        "git",
+        &["-C", git_root_arg.as_ref(), "branch", "--show-current"],
+    );
+    if !probe.ok {
+        return None;
+    }
+
+    probe
+        .stdout
+        .lines()
+        .next()
+        .map(str::trim)
+        .filter(|branch| !branch.is_empty())
+        .map(str::to_string)
+}
+
+fn git_upstream(git_root: &Path) -> Option<String> {
+    let git_root_arg = git_root.to_string_lossy();
+    let probe = run_command(
+        "git",
+        &[
+            "-C",
+            git_root_arg.as_ref(),
+            "rev-parse",
+            "--abbrev-ref",
+            "--symbolic-full-name",
+            "@{u}",
+        ],
+    );
+    if !probe.ok {
+        return None;
+    }
+    probe
+        .stdout
+        .lines()
+        .next()
+        .map(str::trim)
+        .filter(|upstream| !upstream.is_empty())
+        .map(str::to_string)
+}
+
+fn git_has_origin(git_root: &Path) -> bool {
+    let git_root_arg = git_root.to_string_lossy();
+    run_command("git", &["-C", git_root_arg.as_ref(), "remote", "get-url", "origin"]).ok
+}
+
+fn git_ahead_count(git_root: &Path) -> usize {
+    if git_upstream(git_root).is_none() {
+        return 0;
+    }
+    let git_root_arg = git_root.to_string_lossy();
+    let probe = run_command(
+        "git",
+        &["-C", git_root_arg.as_ref(), "rev-list", "--count", "@{u}..HEAD"],
+    );
+    if !probe.ok {
+        return 0;
+    }
+    probe.stdout.trim().parse::<usize>().unwrap_or(0)
+}
+
+fn git_can_push(git_root: &Path) -> bool {
+    if current_git_branch(git_root).is_none() {
+        return false;
+    }
+    git_ahead_count(git_root) > 0 || (git_upstream(git_root).is_none() && git_has_origin(git_root))
+}
+
+fn first_non_empty_line(output: &str) -> Option<String> {
+    output
+        .lines()
+        .map(str::trim)
+        .find(|line| !line.is_empty())
+        .map(str::to_string)
+}
+
 fn git_path_to_workspace_child(
     git_root: &Path,
     workspace: &Path,
@@ -2077,6 +2279,8 @@ pub fn run() {
             codex_delete_profile,
             list_git_branches,
             checkout_git_branch,
+            commit_workspace_changes,
+            push_workspace_branch,
             list_workspace_git_status,
             read_workspace_git_diff,
             list_workspace_directory,
@@ -2181,6 +2385,35 @@ mod tests {
         assert!(migration
             .sql
             .contains("Duplicate account consolidated"));
+    }
+
+    #[test]
+    fn migration_versions_are_unique() {
+        let mut versions: Vec<i64> = migrations()
+            .into_iter()
+            .map(|migration| migration.version)
+            .collect();
+        versions.sort_unstable();
+
+        for pair in versions.windows(2) {
+            assert_ne!(pair[0], pair[1], "duplicate migration version {}", pair[0]);
+        }
+    }
+
+    #[test]
+    fn archived_runs_migration_does_not_modify_applied_workspace_deletion_migration() {
+        let all_migrations = migrations();
+        let soft_delete = all_migrations
+            .iter()
+            .find(|migration| migration.description == "soft_delete_workspaces")
+            .expect("soft delete workspaces migration");
+        let archived_runs = all_migrations
+            .iter()
+            .find(|migration| migration.description == "add_archived_runs")
+            .expect("archived runs migration");
+
+        assert_eq!(soft_delete.version, 5);
+        assert_eq!(archived_runs.version, 6);
     }
 
     #[test]
@@ -2539,6 +2772,102 @@ mod tests {
         assert_eq!(diff.sections[0].kind, "unstaged");
         assert!(diff.sections[0].is_binary);
         remove_test_directory(workspace);
+    }
+
+    #[test]
+    fn commit_workspace_changes_rejects_empty_message() {
+        let workspace = git_test_directory("git-commit-empty-message");
+        fs::write(workspace.join("app.ts"), "export const value = 1;\n").unwrap();
+
+        let result = commit_workspace_changes(
+            workspace.to_string_lossy().to_string(),
+            "   ".to_string(),
+        );
+
+        assert!(result.unwrap_err().contains("commit message"));
+        remove_test_directory(workspace);
+    }
+
+    #[test]
+    fn commit_workspace_changes_rejects_clean_workspace() {
+        let workspace = git_test_directory("git-commit-clean");
+
+        let result = commit_workspace_changes(
+            workspace.to_string_lossy().to_string(),
+            "Update workspace".to_string(),
+        );
+
+        assert!(result.unwrap_err().contains("No workspace changes"));
+        remove_test_directory(workspace);
+    }
+
+    #[test]
+    fn commit_workspace_changes_stages_and_commits_all_changes() {
+        let workspace = git_test_directory("git-commit-all");
+        fs::write(workspace.join("app.ts"), "export const value = 1;\n").unwrap();
+
+        let result = commit_workspace_changes(
+            workspace.to_string_lossy().to_string(),
+            "Add app source".to_string(),
+        )
+        .unwrap();
+
+        let status = Command::new("git")
+            .arg("-C")
+            .arg(&workspace)
+            .args(["status", "--porcelain"])
+            .output()
+            .expect("read git status");
+        let log = Command::new("git")
+            .arg("-C")
+            .arg(&workspace)
+            .args(["log", "-1", "--pretty=%s"])
+            .output()
+            .expect("read git log");
+
+        assert_eq!(result.branch.as_deref(), current_git_branch(&workspace).as_deref());
+        assert!(status.status.success());
+        assert!(String::from_utf8_lossy(&status.stdout).trim().is_empty());
+        assert_eq!(String::from_utf8_lossy(&log.stdout).trim(), "Add app source");
+        remove_test_directory(workspace);
+    }
+
+    #[test]
+    fn push_workspace_branch_reports_missing_remote() {
+        let workspace = git_test_directory("git-push-no-remote");
+        fs::write(workspace.join("app.ts"), "export const value = 1;\n").unwrap();
+        git(&workspace, &["add", "app.ts"]);
+        git(&workspace, &["commit", "-m", "initial"]);
+
+        let result = push_workspace_branch(workspace.to_string_lossy().to_string());
+
+        assert!(result.unwrap_err().contains("No upstream branch or origin"));
+        remove_test_directory(workspace);
+    }
+
+    #[test]
+    fn push_workspace_branch_uses_origin_fallback_without_upstream() {
+        let workspace = git_test_directory("git-push-origin");
+        let origin = test_directory("git-push-origin-bare");
+        git(&origin, &["init", "--bare"]);
+        fs::write(workspace.join("app.ts"), "export const value = 1;\n").unwrap();
+        git(&workspace, &["add", "app.ts"]);
+        git(&workspace, &["commit", "-m", "initial"]);
+        git(&workspace, &["remote", "add", "origin", origin.to_string_lossy().as_ref()]);
+
+        let result = push_workspace_branch(workspace.to_string_lossy().to_string()).unwrap();
+        let upstream = Command::new("git")
+            .arg("-C")
+            .arg(&workspace)
+            .args(["rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}"])
+            .output()
+            .expect("read git upstream");
+
+        assert_eq!(result.branch.as_deref(), current_git_branch(&workspace).as_deref());
+        assert!(upstream.status.success());
+        assert!(String::from_utf8_lossy(&upstream.stdout).contains("origin/"));
+        remove_test_directory(workspace);
+        remove_test_directory(origin);
     }
 
     fn git_test_directory(name: &str) -> PathBuf {

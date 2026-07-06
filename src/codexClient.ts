@@ -12,6 +12,7 @@ import type {
   PreflightReport,
   Workspace,
   WorkspaceFilePreview,
+  WorkspaceGitActionResult,
   WorkspaceGitDiff,
   WorkspaceGitStatusSnapshot,
   WorkspaceTreeEntry,
@@ -47,6 +48,19 @@ export function listGitBranches(path: string) {
 
 export function checkoutGitBranch(path: string, branch: string) {
   return invoke<{ branch: string }>("checkout_git_branch", { path, branch });
+}
+
+export function commitWorkspaceChanges(workspacePath: string, message: string) {
+  return invoke<WorkspaceGitActionResult>("commit_workspace_changes", {
+    workspacePath,
+    message,
+  });
+}
+
+export function pushWorkspaceBranch(workspacePath: string) {
+  return invoke<WorkspaceGitActionResult>("push_workspace_branch", {
+    workspacePath,
+  });
 }
 
 export function listWorkspaceGitStatus(workspacePath: string) {

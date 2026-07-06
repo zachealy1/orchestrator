@@ -74,7 +74,17 @@ export type WorkspaceGitFileStatus = {
 export type WorkspaceGitStatusSnapshot = {
   workspacePath: string;
   gitRoot: string;
+  currentBranch?: string | null;
+  aheadCount?: number;
+  hasUpstream?: boolean;
+  hasOrigin?: boolean;
+  canPush?: boolean;
   files: WorkspaceGitFileStatus[];
+};
+
+export type WorkspaceGitActionResult = {
+  message: string;
+  branch: string | null;
 };
 
 export type WorkspaceGitDiffSection = {
@@ -163,6 +173,7 @@ export type RunRecord = {
   duration_ms: number | null;
   final_message: string | null;
   error: string | null;
+  archived_at: string | null;
 };
 
 export type RunListItem = RunRecord & {
@@ -170,6 +181,8 @@ export type RunListItem = RunRecord & {
   improved_prompt: string;
   route_recommendation: RouteRecommendation;
   budget_tokens: number;
+  latest_total_tokens: number | null;
+  latest_model_context_window: number | null;
 };
 
 export type TokenUsageSnapshot = {
