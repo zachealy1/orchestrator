@@ -1326,6 +1326,121 @@ describe("App Codex auth", () => {
     );
   });
 
+  it("falls back when Codex repeats a commit message for different changes", async () => {
+    prepareSignedInRun();
+    mocks.generateWorkspaceCommitMessageMock.mockResolvedValue({
+      message: "Improve commit dialog staging controls",
+      source: "codex",
+    });
+
+    let currentStatus = {
+      workspacePath: workspace.path,
+      gitRoot: workspace.path,
+      currentBranch: "main",
+      aheadCount: 0,
+      hasUpstream: true,
+      hasOrigin: true,
+      canPush: true,
+      additions: 18,
+      deletions: 4,
+      files: [
+        {
+          path: "/repo/orchestrator/src/App.tsx",
+          relativePath: "src/App.tsx",
+          oldRelativePath: null,
+          indexStatus: " ",
+          worktreeStatus: "M",
+          statusKind: "modified" as const,
+          badge: "M",
+        },
+        {
+          path: "/repo/orchestrator/src-tauri/src/lib.rs",
+          relativePath: "src-tauri/src/lib.rs",
+          oldRelativePath: null,
+          indexStatus: " ",
+          worktreeStatus: "M",
+          statusKind: "modified" as const,
+          badge: "M",
+        },
+      ],
+    };
+    const nextStatus = {
+      ...currentStatus,
+      additions: 9,
+      deletions: 2,
+      files: [
+        {
+          path: "/repo/orchestrator/src/components/FilePreviewDrawer.tsx",
+          relativePath: "src/components/FilePreviewDrawer.tsx",
+          oldRelativePath: null,
+          indexStatus: " ",
+          worktreeStatus: "M",
+          statusKind: "modified" as const,
+          badge: "M",
+        },
+        {
+          path: "/repo/orchestrator/src/components/CodePreview.tsx",
+          relativePath: "src/components/CodePreview.tsx",
+          oldRelativePath: null,
+          indexStatus: " ",
+          worktreeStatus: "M",
+          statusKind: "modified" as const,
+          badge: "M",
+        },
+      ],
+    };
+    mocks.listWorkspaceGitStatusMock.mockImplementation(async () => currentStatus);
+    mocks.commitWorkspaceChangesMock.mockImplementation(async () => {
+      currentStatus = nextStatus;
+      return {
+        message: "Committed workspace changes",
+        branch: "main",
+      };
+    });
+
+    const { user } = await renderApp();
+    const banner = screen.getByRole("region", { name: "Selected folder" });
+
+    await user.click(
+      await within(banner).findByRole("button", { name: /commit or push/i }),
+    );
+    let dialog = screen.getByRole("dialog", { name: "Commit or push" });
+    await user.click(within(dialog).getByRole("button", { name: /^commit$/i }));
+
+    await waitFor(() =>
+      expect(mocks.commitWorkspaceChangesMock).toHaveBeenNthCalledWith(
+        1,
+        workspace.path,
+        "Improve commit dialog staging controls",
+        true,
+      ),
+    );
+    await waitFor(() =>
+      expect(screen.queryByRole("dialog", { name: "Commit or push" })).toBeNull(),
+    );
+
+    await user.click(
+      await within(banner).findByRole("button", { name: /commit or push/i }),
+    );
+    dialog = screen.getByRole("dialog", { name: "Commit or push" });
+    await user.click(within(dialog).getByRole("button", { name: /^commit$/i }));
+
+    await waitFor(() =>
+      expect(mocks.commitWorkspaceChangesMock).toHaveBeenNthCalledWith(
+        2,
+        workspace.path,
+        "Refine file preview behavior",
+        true,
+      ),
+    );
+    expect(mocks.commitWorkspaceChangesMock).not.toHaveBeenNthCalledWith(
+      2,
+      workspace.path,
+      "Improve commit dialog staging controls",
+      true,
+    );
+  });
+
   it("commits and pushes from the commit or push dialog", async () => {
     mocks.listWorkspaceGitStatusMock.mockResolvedValue({
       workspacePath: workspace.path,

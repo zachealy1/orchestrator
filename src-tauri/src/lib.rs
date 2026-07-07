@@ -1325,7 +1325,9 @@ fn commit_message_generation_prompt(context: &str, rejected_subject: Option<&str
          - Return only the commit subject, no markdown, no quotes, no explanation.\n\
          - Use imperative mood.\n\
          - Be specific about the behavior, UI, or logic changed.\n\
+         - Name the concrete feature or failure fixed, not just the broad changed area.\n\
          - Do not use generic area-only subjects like `Update desktop app workflow`, `Update React app`, `Update app styling`, or `Update Tauri backend`.\n\
+         - Avoid vague subjects like `Improve commit message generation` unless the subject names the specific behavior changed.\n\
          - Do not append change-count summaries like (5 modified).\n\
          - Keep it under 72 characters when possible.\n\
          Good examples:\n\
@@ -1334,10 +1336,13 @@ fn commit_message_generation_prompt(context: &str, rejected_subject: Option<&str
          - Simplify submitted prompt edit focus styles\n\
          - Tighten task chat transcript editing layout\n\
          - Make staged-only commits respect the checkbox\n\
+         - Reject duplicate AI commit subjects for changed diffs\n\
          Bad examples:\n\
          - Update desktop app workflow\n\
          - Update React app\n\
          - Update app styling\n\
+         - Improve commit message generation\n\
+         - Update Git workflow\n\
          - Update files\n\
          {retry_guidance}\n\
          Git context:\n{context}"
@@ -1509,6 +1514,15 @@ fn is_generic_commit_subject(subject: &str) -> bool {
         "update workspace",
         "update files",
         "update code",
+        "update git workflow",
+        "refine git workflow",
+        "improve git workflow",
+        "update commit messages",
+        "refine commit messages",
+        "improve commit messages",
+        "update commit message generation",
+        "refine commit message generation",
+        "improve commit message generation",
         "refine desktop app workflow",
         "refine desktop app integration",
     ];
@@ -3736,6 +3750,10 @@ mod tests {
         assert!(is_generic_commit_subject("Update React app"));
         assert!(is_generic_commit_subject("Improve app styling"));
         assert!(is_generic_commit_subject("Refine desktop app integration"));
+        assert!(is_generic_commit_subject(
+            "Improve commit message generation"
+        ));
+        assert!(is_generic_commit_subject("Update Git workflow"));
         assert!(!is_generic_commit_subject(
             "Fix inline context file label spacing"
         ));

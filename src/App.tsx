@@ -504,18 +504,30 @@ function gitStatusSnapshotKey(snapshot: WorkspaceGitStatusSnapshot | null) {
 function summarizeWorkspaceGitStatus(
   snapshot: WorkspaceGitStatusSnapshot | null,
 ): WorkspaceGitSummary {
+  return summarizeWorkspaceGitFiles(
+    snapshot?.files ?? [],
+    snapshot?.additions,
+    snapshot?.deletions,
+  );
+}
+
+function summarizeWorkspaceGitFiles(
+  files: WorkspaceGitFileStatus[],
+  additions?: number,
+  deletions?: number,
+): WorkspaceGitSummary {
   const summary: WorkspaceGitSummary = {
-    total: snapshot?.files.length ?? 0,
+    total: files.length,
     modified: 0,
     added: 0,
     deleted: 0,
     untracked: 0,
     conflicted: 0,
-    additions: snapshot?.additions ?? 0,
-    deletions: snapshot?.deletions ?? 0,
+    additions: additions ?? 0,
+    deletions: deletions ?? 0,
   };
 
-  snapshot?.files.forEach((file) => {
+  files.forEach((file) => {
     if (file.statusKind === "modified") {
       summary.modified += 1;
     } else if (
@@ -533,12 +545,54 @@ function summarizeWorkspaceGitStatus(
     }
   });
 
-  if (snapshot && snapshot.additions === undefined && snapshot.deletions === undefined) {
+  if (additions === undefined && deletions === undefined) {
     summary.additions = summary.modified + summary.added + summary.untracked;
     summary.deletions = summary.deleted + summary.conflicted;
   }
 
   return summary;
+}
+
+function filesIncludedInCommitMessage(
+  files: WorkspaceGitFileStatus[],
+  includeUnstaged: boolean,
+) {
+  if (includeUnstaged) {
+    return files;
+  }
+
+  return files.filter(
+    (file) =>
+      file.indexStatus !== " " &&
+      file.indexStatus !== "?" &&
+      file.indexStatus !== "",
+  );
+}
+
+function gitChangeFingerprint(
+  workspacePath: string | null,
+  files: WorkspaceGitFileStatus[],
+  summary: WorkspaceGitSummary,
+  includeUnstaged: boolean,
+) {
+  return [
+    workspacePath ?? "",
+    includeUnstaged ? "all" : "staged",
+    summary.additions,
+    summary.deletions,
+    ...files
+      .map((file) =>
+        [
+          file.relativePath,
+          file.oldRelativePath ?? "",
+          file.indexStatus,
+          file.worktreeStatus,
+          file.statusKind,
+          file.badge,
+        ].join(":"),
+      )
+      .sort(),
+  ].join("\u0001");
 }
 
 class DuplicateCodexAccountError extends Error {
@@ -780,6 +834,10 @@ function App() {
   const codexSkillRequestCache = useRef(
     new Map<number, Promise<CodexSkillSummary[]>>(),
   );
+  const lastCommitSubjectRef = useRef<{
+    subject: string;
+    changeKey: string;
+  } | null>(null);
   const workspaceContextMenuRef = useRef<HTMLDivElement | null>(null);
   const chatHistoryContextMenuRef = useRef<HTMLDivElement | null>(null);
   const accountMenuContainerRef = useRef<HTMLDivElement | null>(null);
@@ -852,6 +910,41 @@ function App() {
     [selectedGitStatusState?.snapshot],
   );
   const selectedGitFiles = selectedGitStatusState?.snapshot?.files ?? [];
+  const commitMessageFiles = useMemo(
+    () => filesIncludedInCommitMessage(selectedGitFiles, includeUnstagedChanges),
+    [includeUnstagedChanges, selectedGitFiles],
+  );
+  const commitMessageSummary = useMemo(
+    () =>
+      includeUnstagedChanges
+        ? summarizeWorkspaceGitFiles(
+            commitMessageFiles,
+            selectedGitStatusState?.snapshot?.additions,
+            selectedGitStatusState?.snapshot?.deletions,
+          )
+        : summarizeWorkspaceGitFiles(commitMessageFiles),
+    [
+      commitMessageFiles,
+      includeUnstagedChanges,
+      selectedGitStatusState?.snapshot?.additions,
+      selectedGitStatusState?.snapshot?.deletions,
+    ],
+  );
+  const commitMessageChangeKey = useMemo(
+    () =>
+      gitChangeFingerprint(
+        selectedWorkspace?.path ?? null,
+        commitMessageFiles,
+        commitMessageSummary,
+        includeUnstagedChanges,
+      ),
+    [
+      commitMessageFiles,
+      commitMessageSummary,
+      includeUnstagedChanges,
+      selectedWorkspace?.path,
+    ],
+  );
   const selectedHasStagedGitChanges = useMemo(
     () =>
       selectedGitFiles.some(
@@ -3346,8 +3439,8 @@ function App() {
 
     const fallback = generateCommitMessage(
       selectedWorkspace,
-      selectedGitFiles,
-      selectedGitSummary,
+      commitMessageFiles,
+      commitMessageSummary,
     );
     if (!selectedAccountId) {
       return fallback;
@@ -3364,6 +3457,17 @@ function App() {
       });
       const generated = cleanGeneratedCommitSubject(result.message);
       if (generated) {
+        const previous = lastCommitSubjectRef.current;
+        if (
+          previous &&
+          previous.changeKey !== commitMessageChangeKey &&
+          previous.subject.toLowerCase() === generated.toLowerCase()
+        ) {
+          setStatusMessage(
+            "Codex returned the same commit message for different changes, using a local summary.",
+          );
+          return fallback;
+        }
         setCommitMessage(generated);
         return generated;
       }
@@ -3398,6 +3502,10 @@ function App() {
         message,
         includeUnstagedChanges,
       );
+      lastCommitSubjectRef.current = {
+        subject: cleanGeneratedCommitSubject(message),
+        changeKey: commitMessageChangeKey,
+      };
       setStatusMessage(result.message || "Workspace changes committed.");
       await refreshBranches(selectedWorkspace);
       await refreshWorkspaceGitStatus(selectedWorkspace);
@@ -7215,13 +7323,8 @@ function inferCommitMessageTopic(files: WorkspaceGitFileStatus[]) {
   const normalizedPaths = paths.map((path) => path.toLowerCase());
   const hasPath = (pattern: string) =>
     normalizedPaths.some((path) => path.includes(pattern));
-  const touchesFrontend = paths.some((path) => path.startsWith("src/"));
-  const touchesTauri = paths.some((path) => path.startsWith("src-tauri/"));
   const touchesTests = paths.every((path) => /\.test\.[tj]sx?$/.test(path));
 
-  if (touchesTauri && (hasPath("codexclient") || hasPath("app.auth.test"))) {
-    return "commit message generation";
-  }
   if (hasPath("taskchattranscript")) {
     return "task chat transcript layout";
   }
@@ -7240,24 +7343,94 @@ function inferCommitMessageTopic(files: WorkspaceGitFileStatus[]) {
   if (touchesTests) {
     return "tests";
   }
-  if (touchesFrontend && touchesTauri) {
-    return "desktop app integration";
-  }
-  if (paths.some((path) => path.endsWith(".css"))) {
-    return "app styling";
-  }
-  if (paths.some((path) => path.startsWith("src/components/"))) {
-    return "React components";
-  }
-  if (touchesFrontend) {
-    return "React app";
-  }
-  if (touchesTauri) {
-    return "Tauri backend";
+
+  const topics = uniqueCommitTopics(
+    paths
+      .map(inferPathCommitTopic)
+      .filter((topic) => topic !== "tests"),
+  );
+  if (topics.length > 0) {
+    return formatCommitTopicList(topics);
   }
 
   const firstPath = paths[0];
   return firstPath ? humanizePathTopic(firstPath) : "workspace changes";
+}
+
+function inferPathCommitTopic(path: string) {
+  const normalized = path.toLowerCase();
+  if (normalized.includes("taskchattranscript")) {
+    return "task chat transcript layout";
+  }
+  if (normalized.includes("taskcomposer")) {
+    return "chat composer behavior";
+  }
+  if (
+    normalized.includes("filepreview") ||
+    normalized.includes("codepreview") ||
+    normalized.includes("diffpreview")
+  ) {
+    return "file preview behavior";
+  }
+  if (normalized.includes("workspacehistory")) {
+    return "workspace history drawer";
+  }
+  if (normalized.includes("codexeventreducer")) {
+    return "Codex event reducer";
+  }
+  if (normalized === "src/app.tsx") {
+    return "app shell";
+  }
+  if (normalized === "src/app.css") {
+    return "app styling";
+  }
+  if (normalized === "src/db.ts") {
+    return "chat database";
+  }
+  if (normalized === "src/codexclient.ts") {
+    return "Codex client";
+  }
+  if (normalized === "src/types.ts") {
+    return "shared chat types";
+  }
+  if (normalized === "src-tauri/src/lib.rs") {
+    return "Tauri bridge";
+  }
+  if (/\.test\.[tj]sx?$/.test(normalized)) {
+    return "tests";
+  }
+  if (normalized.endsWith(".css")) {
+    return "app styling";
+  }
+  if (normalized.startsWith("src/components/")) {
+    return humanizePathTopic(path);
+  }
+  if (normalized.startsWith("src/")) {
+    return "React app";
+  }
+  if (normalized.startsWith("src-tauri/")) {
+    return "Tauri backend";
+  }
+  return humanizePathTopic(path);
+}
+
+function uniqueCommitTopics(topics: string[]) {
+  const seen = new Set<string>();
+  return topics.filter((topic) => {
+    const key = topic.toLowerCase();
+    if (seen.has(key)) {
+      return false;
+    }
+    seen.add(key);
+    return true;
+  });
+}
+
+function formatCommitTopicList(topics: string[]) {
+  if (topics.length === 1) {
+    return topics[0];
+  }
+  return `${topics[0]} and ${topics[1]}`;
 }
 
 function humanizePathTopic(path: string) {
