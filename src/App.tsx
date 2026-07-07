@@ -5873,10 +5873,22 @@ function WorkspaceContextMeter({
       aria-valuemin={usage.percentage === null ? undefined : 0}
       aria-valuemax={usage.percentage === null ? undefined : 100}
       aria-valuenow={usage.percentage === null ? undefined : usage.percentage}
+      aria-valuetext={usage.label}
       title={usage.title}
       style={meterStyle}
     >
-      <span className="context-meter-copy">{usage.label}</span>
+      <span className="context-meter-copy">
+        {usage.percentage === null ? (
+          usage.label
+        ) : (
+          <>
+            <span className="context-meter-value">
+              {usage.usedLabel} / {usage.windowLabel}
+            </span>
+            <span className="context-meter-percent">{usage.percentage}%</span>
+          </>
+        )}
+      </span>
     </span>
   );
 }
@@ -6315,6 +6327,8 @@ function getLiveContextUsage(tokenUsage: RunViewState["tokenUsage"]) {
   if (!windowSize || windowSize <= 0) {
     return {
       label: `${total} tokens`,
+      usedLabel: total,
+      windowLabel: null,
       title: `${total} tokens used`,
       percentage: null,
     };
@@ -6326,6 +6340,8 @@ function getLiveContextUsage(tokenUsage: RunViewState["tokenUsage"]) {
   );
   return {
     label: `${total} / ${windowSize.toLocaleString()} (${percentage}%)`,
+    usedLabel: total,
+    windowLabel: windowSize.toLocaleString(),
     title: `${total} of ${windowSize.toLocaleString()} context tokens used`,
     percentage,
   };

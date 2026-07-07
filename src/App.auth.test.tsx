@@ -1159,11 +1159,11 @@ describe("App Codex auth", () => {
       },
     });
 
-    expect(
-      within(banner).getByText("1,280 / 128,000 (1%)"),
-    ).toBeInTheDocument();
-    expect(within(banner).getByRole("meter", { name: "Context usage" }))
-      .toHaveAttribute("aria-valuenow", "1");
+    expect(within(banner).getByText("1,280 / 128,000")).toBeInTheDocument();
+    expect(within(banner).getByText("1%")).toBeInTheDocument();
+    const meter = within(banner).getByRole("meter", { name: "Context usage" });
+    expect(meter).toHaveAttribute("aria-valuenow", "1");
+    expect(meter).toHaveAttribute("aria-valuetext", "1,280 / 128,000 (1%)");
   });
 
   it("opens workspace chat history without extra drawer controls", async () => {
