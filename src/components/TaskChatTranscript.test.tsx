@@ -98,6 +98,130 @@ describe("TaskChatTranscript", () => {
     expect(container.querySelector(".stream-loading-dots")).not.toBeNull();
   });
 
+  it("allows the latest completed prompt to be edited and rerun", () => {
+    const onEditPrompt = vi.fn();
+    render(
+      <TaskChatTranscript
+        entries={[
+          {
+            clientId: "chat-1",
+            workspaceId: 1,
+            chatId: 401,
+            turnIndex: 1,
+            runId: 2,
+            taskId: 3,
+            prompt: "Original prompt",
+            submittedAt: "2026-06-30T17:30:00Z",
+            status: "completed",
+            runView: {
+              ...emptyRunView,
+              status: "completed",
+              finalMessage: "Done.",
+            },
+          },
+        ]}
+        editablePromptEntryId="chat-1"
+        onEditPrompt={onEditPrompt}
+        onResolveRequest={vi.fn()}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Edit prompt" }));
+    fireEvent.change(screen.getByLabelText("Edit submitted prompt"), {
+      target: { value: "Edited prompt" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Run edited prompt" }));
+
+    expect(onEditPrompt).toHaveBeenCalledWith(
+      expect.objectContaining({ clientId: "chat-1" }),
+      "Edited prompt",
+    );
+  });
+
+  it("does not expose prompt editing for non-latest or running entries", () => {
+    render(
+      <TaskChatTranscript
+        entries={[
+          {
+            clientId: "chat-1",
+            workspaceId: 1,
+            chatId: 401,
+            turnIndex: 1,
+            runId: 2,
+            taskId: 3,
+            prompt: "Older prompt",
+            submittedAt: "2026-06-30T17:30:00Z",
+            status: "completed",
+            runView: {
+              ...emptyRunView,
+              status: "completed",
+              finalMessage: "Done.",
+            },
+          },
+          {
+            clientId: "chat-2",
+            workspaceId: 1,
+            chatId: 401,
+            turnIndex: 2,
+            runId: 4,
+            taskId: 5,
+            prompt: "Running prompt",
+            submittedAt: "2026-06-30T17:31:00Z",
+            status: "running",
+            runView: {
+              ...emptyRunView,
+              status: "running",
+            },
+          },
+        ]}
+        editablePromptEntryId="chat-2"
+        onEditPrompt={vi.fn()}
+        onResolveRequest={vi.fn()}
+      />,
+    );
+
+    expect(screen.queryByRole("button", { name: "Edit prompt" })).not.toBeInTheDocument();
+  });
+
+  it("cancels prompt editing without changing the submitted prompt", () => {
+    render(
+      <TaskChatTranscript
+        entries={[
+          {
+            clientId: "chat-1",
+            workspaceId: 1,
+            chatId: 401,
+            turnIndex: 1,
+            runId: 2,
+            taskId: 3,
+            prompt: "Original prompt",
+            submittedAt: "2026-06-30T17:30:00Z",
+            status: "completed",
+            runView: {
+              ...emptyRunView,
+              status: "completed",
+              finalMessage: "Done.",
+            },
+          },
+        ]}
+        editablePromptEntryId="chat-1"
+        onEditPrompt={vi.fn()}
+        onResolveRequest={vi.fn()}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Edit prompt" }));
+    fireEvent.change(screen.getByLabelText("Edit submitted prompt"), {
+      target: { value: "Edited prompt" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Cancel prompt edit" }));
+
+    expect(screen.getByLabelText("Submitted prompt")).toHaveTextContent(
+      "Original prompt",
+    );
+    expect(screen.queryByLabelText("Edit submitted prompt")).not.toBeInTheDocument();
+  });
+
   it("renders submitted inline file references as previewable links", () => {
     const onOpenFileLink = vi.fn(() => true);
     render(

@@ -56,6 +56,7 @@ import {
   renameCodexAccount,
   savePreflightReport,
   softDeleteChat,
+  softDeleteRun,
   softDeleteWorkspace,
   softDeleteCodexAccount,
   updateChat,
@@ -240,6 +241,13 @@ type RunSetupSnapshot = {
   chatId: number | null;
   threadId: string | null;
   turnIndex: number;
+  forceFreshThread?: boolean;
+  previousChatContext?: string | null;
+  supersededRunIds?: number[];
+  updateChatTitle?: boolean;
+  replacementClientId?: string | null;
+  restoreEntryOnSetupFailure?: TaskChatEntry | null;
+  restorePromptOnSetupFailure?: boolean;
 };
 
 type WorkspaceHistoryState = {
@@ -908,6 +916,23 @@ function App() {
     ? (workspaceChatSessions[selectedWorkspace.id] ?? null)
     : null;
   const visibleTaskChatEntries = selectedWorkspaceChatEntries;
+  const editablePromptEntryId = useMemo(() => {
+    if (runIsActive || activeChatEntryId !== null) {
+      return null;
+    }
+    const latestEntry =
+      visibleTaskChatEntries.length > 0
+        ? visibleTaskChatEntries[visibleTaskChatEntries.length - 1]
+        : null;
+    if (
+      !latestEntry ||
+      latestEntry.status === "connecting" ||
+      latestEntry.status === "running"
+    ) {
+      return null;
+    }
+    return latestEntry.clientId;
+  }, [activeChatEntryId, runIsActive, visibleTaskChatEntries]);
   const selectedWorkspaceContextUsage =
     [...selectedWorkspaceChatEntries]
       .reverse()
@@ -1919,6 +1944,27 @@ function App() {
     setActiveChatEntryId(entry.clientId);
     setRunView(entry.runView);
     setTaskChatEntries((current) => [...current, entry]);
+  }
+
+  function replaceTaskChatEntry(targetClientId: string, entry: TaskChatEntry) {
+    setSelectedHistoryChatId(entry.chatId ?? null);
+    activeChatEntryIdRef.current = entry.clientId;
+    runViewRef.current = entry.runView;
+    setActiveChatEntryId(entry.clientId);
+    setRunView(entry.runView);
+    setTaskChatEntries((current) =>
+      current.map((currentEntry) =>
+        currentEntry.clientId === targetClientId ? entry : currentEntry,
+      ),
+    );
+  }
+
+  function restoreTaskChatEntry(targetClientId: string, entry: TaskChatEntry) {
+    setTaskChatEntries((current) =>
+      current.map((currentEntry) =>
+        currentEntry.clientId === targetClientId ? entry : currentEntry,
+      ),
+    );
   }
 
   function updateTaskChatEntryIds(
@@ -3121,21 +3167,28 @@ function App() {
     };
 
     activeRunControlRef.current = runControl;
+    const nextEntry: TaskChatEntry = {
+      clientId,
+      workspaceId: snapshot.workspace.id,
+      chatId: snapshot.chatId,
+      turnIndex: snapshot.turnIndex,
+      runId: null,
+      taskId: null,
+      prompt: snapshot.promptText,
+      contextFiles: snapshot.contextFiles,
+      submittedAt,
+      status: initialRunView.status,
+      runView: initialRunView,
+    };
     flushSync(() => {
-      startTaskChatEntry({
-        clientId,
-        workspaceId: snapshot.workspace.id,
-        chatId: snapshot.chatId,
-        turnIndex: snapshot.turnIndex,
-        runId: null,
-        taskId: null,
-        prompt: snapshot.promptText,
-        contextFiles: snapshot.contextFiles,
-        submittedAt,
-        status: initialRunView.status,
-        runView: initialRunView,
-      });
-      setPrompt("");
+      if (snapshot.replacementClientId) {
+        replaceTaskChatEntry(snapshot.replacementClientId, nextEntry);
+      } else {
+        startTaskChatEntry(nextEntry);
+      }
+      if (snapshot.restorePromptOnSetupFailure !== false) {
+        setPrompt("");
+      }
     });
     markPerformance("orchestrator:submit:optimistic-committed");
 
@@ -3147,7 +3200,7 @@ function App() {
     snapshot: RunSetupSnapshot,
   ) {
     let chatId = snapshot.chatId;
-    let threadId = snapshot.threadId;
+    let threadId = snapshot.forceFreshThread ? null : snapshot.threadId;
     let taskId: number | null = null;
     let runId: number | null = null;
 
@@ -3245,6 +3298,10 @@ function App() {
       currentRunId.current = run.id;
       currentRunAccountId.current = snapshot.accountId;
       ensureRunControlActive(runControl);
+      for (const supersededRunId of snapshot.supersededRunIds ?? []) {
+        await softDeleteRun(supersededRunId);
+        ensureRunControlActive(runControl);
+      }
       eventSequence.current = 0;
       updateTaskChatEntryIds(runControl.clientId, {
         taskId: task.id,
@@ -3255,7 +3312,11 @@ function App() {
 
       let threadModel: string | null | undefined = snapshot.model;
       let threadModelProvider: string | null | undefined = snapshot.useOss ? "oss" : null;
-      if (!threadId) {
+      const startThread = async () => {
+        if (chatId === null) {
+          throw new Error("Chat was not prepared before starting a Codex thread.");
+        }
+        const activeChatId = chatId;
         const thread = await codexRpc<{
           thread: { id: string };
           model?: string;
@@ -3277,17 +3338,33 @@ function App() {
             : null,
         });
         ensureRunControlActive(runControl);
-        threadId = thread.thread.id;
-        threadModel = thread.model ?? snapshot.model;
-        threadModelProvider = thread.modelProvider ?? (snapshot.useOss ? "oss" : null);
-        await updateChat(chatId, {
-          codexThreadId: threadId,
+        const nextThreadId = thread.thread.id;
+        const nextThreadModel = thread.model ?? snapshot.model;
+        const nextThreadModelProvider =
+          thread.modelProvider ?? (snapshot.useOss ? "oss" : null);
+        await updateChat(activeChatId, {
+          codexThreadId: nextThreadId,
           status: "running",
+          ...(snapshot.updateChatTitle
+            ? { title: createChatTitle(snapshot.promptText) }
+            : {}),
         });
         setWorkspaceChatSession(snapshot.workspace.id, {
-          chatId,
-          threadId,
+          chatId: activeChatId,
+          threadId: nextThreadId,
         });
+        return {
+          threadId: nextThreadId,
+          model: nextThreadModel,
+          modelProvider: nextThreadModelProvider,
+        };
+      };
+
+      if (!threadId) {
+        const thread = await startThread();
+        threadId = thread.threadId;
+        threadModel = thread.model;
+        threadModelProvider = thread.modelProvider;
       } else {
         await updateChat(chatId, { status: "running" });
       }
@@ -3333,10 +3410,19 @@ function App() {
         baseTurnText,
         snapshot.selectedSkills,
       );
-      const { additionalContext, skippedFiles } = await buildAdditionalContext(
+      let { additionalContext, skippedFiles } = await buildAdditionalContext(
         snapshot.accountId,
         snapshot.contextFiles,
       );
+      if (snapshot.previousChatContext) {
+        additionalContext = {
+          ...(additionalContext ?? {}),
+          "chat:previous-turns": {
+            kind: "application",
+            value: snapshot.previousChatContext,
+          },
+        };
+      }
       ensureRunControlActive(runControl);
       if (skippedFiles.length > 0) {
         warnings.push(
@@ -3344,11 +3430,9 @@ function App() {
         );
       }
 
-      const turn = await codexRpc<{ turn: { id: string } }>(
-        snapshot.accountId,
-        "turn/start",
-        {
-          threadId,
+      const startTurn = (nextThreadId: string) =>
+        codexRpc<{ turn: { id: string } }>(snapshot.accountId, "turn/start", {
+          threadId: nextThreadId,
           input: [{ type: "text", text, text_elements: [] }],
           additionalContext,
           cwd: snapshot.workspace.path,
@@ -3356,8 +3440,46 @@ function App() {
           approvalsReviewer: "user",
           model: snapshot.model,
           effort: snapshot.effort,
-        },
-      );
+        });
+
+      let turn: { turn: { id: string } };
+      try {
+        turn = await startTurn(threadId);
+      } catch (error) {
+        if (!isCodexThreadNotFoundError(error)) {
+          throw error;
+        }
+        warnings.push(
+          "Previous Codex thread was no longer available, so Orchestrator started a fresh thread for this chat.",
+        );
+        const thread = await startThread();
+        threadId = thread.threadId;
+        threadModel = thread.model;
+        threadModelProvider = thread.modelProvider;
+        await updateRun(run.id, {
+          codexThreadId: threadId,
+          model: threadModel ?? snapshot.model,
+          modelProvider: threadModelProvider ?? (snapshot.useOss ? "oss" : null),
+          status: "running",
+        });
+        ensureRunControlActive(runControl);
+        if (snapshot.goalMode) {
+          try {
+            await setThreadGoal(snapshot.accountId, threadId, snapshot.promptText);
+            ensureRunControlActive(runControl);
+          } catch (goalError) {
+            if (goalError instanceof RunStoppedError) {
+              throw goalError;
+            }
+            warnings.push(
+              `Goal mode could not set a thread goal on the fresh thread: ${
+                goalError instanceof Error ? goalError.message : String(goalError)
+              }`,
+            );
+          }
+        }
+        turn = await startTurn(threadId);
+      }
       ensureRunControlActive(runControl);
 
       updateActiveRunView((current) => ({
@@ -3423,7 +3545,12 @@ function App() {
         };
       });
       if (runId === null) {
-        setPrompt(snapshot.promptFallback);
+        if (snapshot.restoreEntryOnSetupFailure) {
+          restoreTaskChatEntry(runControl.clientId, snapshot.restoreEntryOnSetupFailure);
+        }
+        if (snapshot.restorePromptOnSetupFailure !== false) {
+          setPrompt(snapshot.promptFallback);
+        }
       } else {
         await updateRun(runId, {
           status: "failed",
@@ -3447,6 +3574,18 @@ function App() {
       clearActiveChatRun();
       setStatusMessage(`Run setup failed: ${message}`);
     }
+  }
+
+  function scheduleRunSetup(runControl: ActiveRunControl, snapshot: RunSetupSnapshot) {
+    runControl.cancelScheduledSetup = scheduleAfterNextPaint(() => {
+      runControl.cancelScheduledSetup = null;
+      if (runControl.stopped || activeRunControlRef.current !== runControl) {
+        return;
+      }
+      runControl.setupStarted = true;
+      markPerformance("orchestrator:submit:setup-start");
+      void continueRunSetup(runControl, snapshot);
+    });
   }
 
   async function launchRun() {
@@ -3511,15 +3650,101 @@ function App() {
     };
 
     const runControl = beginOptimisticRun(snapshot);
-    runControl.cancelScheduledSetup = scheduleAfterNextPaint(() => {
-      runControl.cancelScheduledSetup = null;
-      if (runControl.stopped || activeRunControlRef.current !== runControl) {
-        return;
+    scheduleRunSetup(runControl, snapshot);
+  }
+
+  function handleEditLatestPrompt(entry: TaskChatEntry, nextPrompt: string) {
+    markPerformance("orchestrator:submit:start");
+
+    const promptText = nextPrompt.trim();
+    const workspace = selectedWorkspace;
+    const accountId = selectedAccountId;
+    const account = selectedAccount;
+
+    if (!workspace || !promptText) {
+      setStatusMessage("Select a workspace and provide a prompt before rerunning.");
+      return;
+    }
+    if (!accountId || !account) {
+      setStatusMessage("Sign in to a Codex account before rerunning a prompt.");
+      return;
+    }
+    if (entry.clientId !== editablePromptEntryId) {
+      setStatusMessage("Only the latest prompt can be edited.");
+      return;
+    }
+    if (runIsActive || activeChatEntryIdRef.current !== null) {
+      setStatusMessage("Wait for the active run to finish before editing a prompt.");
+      return;
+    }
+    if (shouldBlockRunForAuth(requiresOpenaiAuth, codexAccount)) {
+      setStatusMessage(
+        loginState === "waiting"
+          ? "Finish Codex sign-in before rerunning a prompt."
+          : "Sign in to Codex before rerunning a prompt.",
+      );
+      return;
+    }
+
+    const chatId = entry.chatId ?? selectedWorkspaceChatSession?.chatId ?? null;
+    if (chatId === null) {
+      setStatusMessage("This prompt is not attached to a chat yet.");
+      return;
+    }
+
+    const selectedModel =
+      models.find((modelOption) => modelOption.id === selectedModelId) ??
+      models[0] ??
+      null;
+    const model = useOss || modelLoadError ? null : (selectedModel?.model ?? null);
+    const editedTurnIndex =
+      entry.turnIndex ??
+      Math.max(
+        1,
+        visibleTaskChatEntries.findIndex(
+          (chatEntry) => chatEntry.clientId === entry.clientId,
+        ) + 1,
+      );
+    const previousEntries = visibleTaskChatEntries.filter((chatEntry) => {
+      if (chatEntry.clientId === entry.clientId) {
+        return false;
       }
-      runControl.setupStarted = true;
-      markPerformance("orchestrator:submit:setup-start");
-      void continueRunSetup(runControl, snapshot);
+      const currentTurnIndex = chatEntry.turnIndex ?? 0;
+      return currentTurnIndex > 0 && currentTurnIndex < editedTurnIndex;
     });
+    const snapshot: RunSetupSnapshot = {
+      promptText,
+      promptFallback: nextPrompt,
+      workspace: { ...workspace },
+      accountId,
+      account: { ...account },
+      selectedBranch,
+      cachedPreflight: null,
+      mode: planMode ? "plan" : "run",
+      access: accessSettings(accessLevel),
+      model,
+      effort: model ? selectedReasoningEffort : null,
+      useOss,
+      ossProvider,
+      improvedPrompt: improvePrompt(promptText),
+      contextFiles: [...(entry.contextFiles ?? [])],
+      selectedSkills: [...selectedSkills],
+      goalMode,
+      loginState,
+      chatId,
+      threadId: null,
+      turnIndex: editedTurnIndex,
+      forceFreshThread: true,
+      previousChatContext: buildPreviousChatContext(previousEntries),
+      supersededRunIds: entry.runId !== null ? [entry.runId] : [],
+      updateChatTitle: editedTurnIndex === 1,
+      replacementClientId: entry.clientId,
+      restoreEntryOnSetupFailure: entry,
+      restorePromptOnSetupFailure: false,
+    };
+
+    const runControl = beginOptimisticRun(snapshot);
+    scheduleRunSetup(runControl, snapshot);
   }
 
   async function buildAdditionalContext(
@@ -5198,6 +5423,8 @@ function App() {
                     entries={visibleTaskChatEntries}
                     onResolveRequest={handleResolveRequest}
                     onOpenFileLink={openTaskResponseFileLink}
+                    editablePromptEntryId={editablePromptEntryId}
+                    onEditPrompt={handleEditLatestPrompt}
                   />
                 ) : (
                   <h1>{taskQuote}</h1>
@@ -5975,6 +6202,32 @@ function WorkspaceHistoryDrawer({
 
 function createTaskChatEntriesFromHistoryChat(chat: ChatWithRuns): TaskChatEntry[] {
   return chat.runs.map((run) => createTaskChatEntryFromHistoryRun(run));
+}
+
+function buildPreviousChatContext(entries: TaskChatEntry[]) {
+  if (entries.length === 0) {
+    return null;
+  }
+
+  const sections = entries.map((entry, index) => {
+    const turnLabel = entry.turnIndex ?? index + 1;
+    const assistantResult =
+      entry.runView.finalMessage ||
+      entry.runView.error ||
+      "No assistant result was recorded for this turn.";
+    return [
+      `Turn ${turnLabel}`,
+      "User prompt:",
+      entry.prompt,
+      "Assistant result:",
+      assistantResult,
+    ].join("\n");
+  });
+
+  return [
+    "Previous chat context before the edited prompt. Use this as background only; continue from the edited prompt.",
+    ...sections,
+  ].join("\n\n");
 }
 
 function createTaskChatEntryFromHistoryRun(run: ChatWithRuns["runs"][number]): TaskChatEntry {
@@ -6785,6 +7038,38 @@ function readString(value: unknown) {
 
 function readNumber(value: unknown) {
   return typeof value === "number" ? value : null;
+}
+
+function isCodexThreadNotFoundError(error: unknown) {
+  const root = readObject(error);
+  const directMessage = readString(root.message);
+  const directCode = readNumber(root.code);
+  if (directCode === -32600 && directMessage?.toLowerCase().includes("thread not found")) {
+    return true;
+  }
+
+  const message =
+    error instanceof Error
+      ? error.message
+      : typeof error === "string"
+        ? error
+        : directMessage;
+  if (!message) {
+    return false;
+  }
+
+  try {
+    const parsed = JSON.parse(message);
+    const parsedObject = readObject(parsed);
+    const parsedMessage = readString(parsedObject.message);
+    const parsedCode = readNumber(parsedObject.code);
+    return (
+      parsedCode === -32600 &&
+      Boolean(parsedMessage?.toLowerCase().includes("thread not found"))
+    );
+  } catch {
+    return message.toLowerCase().includes("thread not found");
+  }
 }
 
 export default App;

@@ -1511,6 +1511,88 @@ describe("App Codex auth", () => {
     }
   });
 
+  it("starts a fresh Codex thread when a restored history thread is no longer available", async () => {
+    prepareSignedInRun();
+    const historicalChat = workspaceChatFixture({
+      id: 405,
+      title: "Restarted chat",
+      codex_thread_id: "stale-thread",
+    });
+    const historicalRun = workspaceRunFixture({
+      id: 305,
+      chat_id: historicalChat.id,
+      original_prompt: "Restarted chat",
+      final_message: "Older result.",
+    });
+    mocks.listWorkspaceChatsMock.mockResolvedValue([historicalChat]);
+    mocks.getChatWithRunsMock.mockResolvedValue(
+      workspaceChatWithRunsFixture(historicalChat, [historicalRun]),
+    );
+    mocks.codexRpcMock.mockImplementation(
+      async (_accountId: number, method: string, params?: unknown) => {
+        if (method === "thread/start") {
+          return { thread: { id: "fresh-thread" } };
+        }
+        if (method === "turn/start") {
+          const threadId =
+            params && typeof params === "object" && "threadId" in params
+              ? (params as { threadId?: string }).threadId
+              : null;
+          if (threadId === "stale-thread") {
+            throw new Error(
+              JSON.stringify({
+                code: -32600,
+                message: "thread not found: stale-thread",
+              }),
+            );
+          }
+          return { turn: { id: "fresh-turn" } };
+        }
+        return {};
+      },
+    );
+
+    const { user } = await renderApp();
+    const banner = screen.getByRole("region", { name: "Selected folder" });
+    await user.click(
+      within(banner).getByRole("button", { name: /open chat history/i }),
+    );
+    const drawer = await screen.findByRole("complementary", {
+      name: "Workspace chat history",
+    });
+    await user.click(within(drawer).getByRole("button", { name: /restarted chat/i }));
+
+    await user.type(screen.getByLabelText("Prompt"), "Continue after restart");
+    await user.keyboard("{Enter}");
+
+    await waitFor(() =>
+      expect(mocks.codexRpcMock).toHaveBeenCalledWith(
+        7,
+        "turn/start",
+        expect.objectContaining({ threadId: "fresh-thread" }),
+      ),
+    );
+    expect(mocks.codexRpcMock).toHaveBeenCalledWith(
+      7,
+      "turn/start",
+      expect.objectContaining({ threadId: "stale-thread" }),
+    );
+    expect(mocks.codexRpcMock).toHaveBeenCalledWith(
+      7,
+      "thread/start",
+      expect.objectContaining({ cwd: workspace.path }),
+    );
+    expect(mocks.updateChatMock).toHaveBeenCalledWith(405, {
+      codexThreadId: "fresh-thread",
+      status: "running",
+    });
+    expect(mocks.updateRunMock).toHaveBeenCalledWith(
+      202,
+      expect.objectContaining({ codexThreadId: "fresh-thread" }),
+    );
+    expect(screen.queryByText(/thread not found/i)).not.toBeInTheDocument();
+  });
+
   it("renders an empty selected folder banner when no workspace is selected", async () => {
     mocks.listWorkspacesMock.mockResolvedValue([]);
 
@@ -2861,6 +2943,67 @@ describe("App Codex auth", () => {
     expect(mocks.createRunMock).toHaveBeenLastCalledWith(
       expect.objectContaining({ chatId: 401, turnIndex: 2 }),
     );
+  });
+
+  it("edits and reruns only the latest submitted prompt on a fresh thread", async () => {
+    prepareSignedInRun();
+    mocks.createTaskMock
+      .mockResolvedValueOnce({ id: 101 })
+      .mockResolvedValueOnce({ id: 102 });
+    mocks.createRunMock
+      .mockResolvedValueOnce({ id: 202 })
+      .mockResolvedValueOnce({ id: 203 });
+
+    const { user } = await renderApp();
+    await startMockRun(user, "Original prompt");
+    await emitCodexNotification({
+      method: "item/agentMessage/delta",
+      params: { itemId: "final-1", delta: "Original result." },
+    });
+    await emitCodexNotification({
+      method: "item/completed",
+      params: {
+        item: {
+          type: "agentMessage",
+          id: "final-1",
+          text: "Original result.",
+          phase: "final_answer",
+        },
+      },
+    });
+    await emitCodexNotification({
+      method: "turn/completed",
+      params: { turn: { status: "completed", durationMs: 1000 } },
+    });
+
+    await user.click(await screen.findByRole("button", { name: "Edit prompt" }));
+    await user.clear(screen.getByLabelText("Edit submitted prompt"));
+    await user.type(screen.getByLabelText("Edit submitted prompt"), "Edited prompt");
+    await user.click(screen.getByRole("button", { name: "Run edited prompt" }));
+
+    await waitFor(() => expect(mocks.createTaskMock).toHaveBeenCalledTimes(2));
+    await waitFor(() => expect(mocks.createRunMock).toHaveBeenCalledTimes(2));
+    expect(mocks.softDeleteRunMock).toHaveBeenCalledWith(202);
+    expect(mocks.createTaskMock).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        chatId: 401,
+        turnIndex: 1,
+        originalPrompt: "Edited prompt",
+      }),
+    );
+    expect(mocks.createRunMock).toHaveBeenLastCalledWith(
+      expect.objectContaining({ chatId: 401, turnIndex: 1 }),
+    );
+    expect(
+      mocks.codexRpcMock.mock.calls.filter((call) => call[1] === "thread/start"),
+    ).toHaveLength(2);
+    const transcript = screen.getByLabelText("Task chat transcript");
+    expect(within(transcript).getByLabelText("Submitted prompt")).toHaveTextContent(
+      "Edited prompt",
+    );
+    expect(
+      within(transcript).queryByText("Original prompt"),
+    ).not.toBeInTheDocument();
   });
 
   it("starts a fresh Codex thread after New chat is clicked", async () => {

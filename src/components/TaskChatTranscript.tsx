@@ -11,7 +11,7 @@ import {
   Terminal,
   X,
 } from "lucide-react";
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { MouseEvent as ReactMouseEvent, ReactNode } from "react";
 import ReactMarkdown from "react-markdown";
 import type {
@@ -41,14 +41,20 @@ type Props = {
   entries: TaskChatEntry[];
   onResolveRequest: (request: CodexMessage, approved: boolean) => void;
   onOpenFileLink?: (href: string) => boolean;
+  editablePromptEntryId?: string | null;
+  onEditPrompt?: (entry: TaskChatEntry, prompt: string) => void;
 };
 
 export function TaskChatTranscript({
   entries,
   onResolveRequest,
   onOpenFileLink,
+  editablePromptEntryId = null,
+  onEditPrompt,
 }: Props) {
   const transcriptRef = useRef<HTMLDivElement | null>(null);
+  const [editingEntryId, setEditingEntryId] = useState<string | null>(null);
+  const [editingPrompt, setEditingPrompt] = useState("");
 
   useEffect(() => {
     const transcript = transcriptRef.current;
@@ -59,32 +65,116 @@ export function TaskChatTranscript({
     transcript.scrollTop = transcript.scrollHeight;
   }, [entries]);
 
+  useEffect(() => {
+    if (
+      editingEntryId !== null &&
+      !entries.some((entry) => entry.clientId === editingEntryId)
+    ) {
+      setEditingEntryId(null);
+      setEditingPrompt("");
+    }
+  }, [editingEntryId, entries]);
+
   return (
     <section
       className="task-chat-transcript"
       aria-label="Task chat transcript"
       ref={transcriptRef}
     >
-      {entries.map((entry) => (
-        <div className="task-chat-run" key={entry.clientId}>
-          <article className="submitted-prompt" aria-label="Submitted prompt">
-            <SubmittedPrompt
-              prompt={entry.prompt}
-              contextFiles={entry.contextFiles ?? []}
-              onOpenFileLink={onOpenFileLink}
-            />
-          </article>
-          <article className={`chat-message assistant-message status-${entry.status}`}>
-            <AssistantRunOutput
-              runView={entry.runView}
-              onResolveRequest={onResolveRequest}
-              onOpenFileLink={onOpenFileLink}
-            />
-          </article>
-        </div>
-      ))}
+      {entries.map((entry) => {
+        const editable =
+          Boolean(onEditPrompt) &&
+          entry.clientId === editablePromptEntryId &&
+          !isRunActiveStatus(entry.status);
+        const editing = editingEntryId === entry.clientId;
+
+        return (
+          <div className="task-chat-run" key={entry.clientId}>
+            <div
+              className={`submitted-prompt-stack ${editable ? "editable" : ""} ${
+                editing ? "editing" : ""
+              }`}
+            >
+              <article className="submitted-prompt" aria-label="Submitted prompt">
+                {editing ? (
+                  <form
+                    className="submitted-prompt-edit-form"
+                    onSubmit={(event) => {
+                      event.preventDefault();
+                      const nextPrompt = editingPrompt.trim();
+                      if (!nextPrompt || !onEditPrompt) {
+                        return;
+                      }
+                      setEditingEntryId(null);
+                      setEditingPrompt("");
+                      onEditPrompt(entry, nextPrompt);
+                    }}
+                  >
+                    <textarea
+                      aria-label="Edit submitted prompt"
+                      value={editingPrompt}
+                      onChange={(event) => setEditingPrompt(event.target.value)}
+                      autoFocus
+                    />
+                    <div className="submitted-prompt-edit-actions">
+                      <button
+                        type="submit"
+                        aria-label="Run edited prompt"
+                        disabled={!editingPrompt.trim()}
+                      >
+                        <Check size={15} aria-hidden="true" />
+                      </button>
+                      <button
+                        type="button"
+                        aria-label="Cancel prompt edit"
+                        onClick={() => {
+                          setEditingEntryId(null);
+                          setEditingPrompt("");
+                        }}
+                      >
+                        <X size={15} aria-hidden="true" />
+                      </button>
+                    </div>
+                  </form>
+                ) : (
+                  <SubmittedPrompt
+                    prompt={entry.prompt}
+                    contextFiles={entry.contextFiles ?? []}
+                    onOpenFileLink={onOpenFileLink}
+                  />
+                )}
+              </article>
+              {editable && !editing ? (
+                <button
+                  className="submitted-prompt-edit-button"
+                  type="button"
+                  aria-label="Edit prompt"
+                  title="Edit prompt"
+                  onClick={() => {
+                    setEditingEntryId(entry.clientId);
+                    setEditingPrompt(entry.prompt);
+                  }}
+                >
+                  <Pencil size={15} aria-hidden="true" />
+                </button>
+              ) : null}
+            </div>
+            <article className={`chat-message assistant-message status-${entry.status}`}>
+              <AssistantRunOutput
+                runView={entry.runView}
+                onResolveRequest={onResolveRequest}
+                onOpenFileLink={onOpenFileLink}
+              />
+            </article>
+          </div>
+        );
+      })}
     </section>
   );
+}
+
+function isRunActiveStatus(status: RunViewState["status"]) {
+  return status === "connecting" || status === "running";
 }
 
 function SubmittedPrompt({
