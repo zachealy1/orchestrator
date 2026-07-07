@@ -1658,10 +1658,14 @@ button.submitted-prompt-edit-button:focus-visible {
   line-height: 1.5;
   padding: 13px 16px;
   outline: none;
+  box-shadow: none;
+  appearance: none;
 }
 
-.submitted-prompt.editing:focus-within {
-  box-shadow: 0 0 0 2px color-mix(in srgb, var(--color-primary) 44%, transparent);
+.submitted-prompt-edit-form textarea:focus {
+  border: 0;
+  outline: none;
+  box-shadow: none;
 }
 
 .submitted-prompt-edit-actions {
