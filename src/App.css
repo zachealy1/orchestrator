@@ -1118,7 +1118,7 @@ button.account-switcher-item:hover:not(:disabled) {
 }
 
 .workspace-context-chip.branch {
-  color: var(--color-selected-text);
+  color: var(--color-text-secondary);
 }
 
 .composer-select.workspace-branch-select {
@@ -1136,7 +1136,7 @@ button.account-switcher-item:hover:not(:disabled) {
 .workspace-branch-select button.composer-select-trigger {
   height: 30px;
   min-height: 30px;
-  color: var(--color-selected-text);
+  color: var(--color-text-secondary);
   font-size: 0.76rem;
   font-weight: 700;
   letter-spacing: 0;
@@ -1160,27 +1160,27 @@ button.account-switcher-item:hover:not(:disabled) {
   left: 8px;
   width: 16px;
   height: 16px;
-  color: var(--color-selected-text);
+  color: var(--color-text-secondary);
 }
 
 .workspace-branch-select .select-chevron {
   right: 8px;
-  color: var(--color-selected-text);
+  color: var(--color-text-secondary);
 }
 
 .workspace-context-chip.clean {
-  color: var(--color-selected-text);
+  color: var(--color-text-secondary);
 }
 
 .workspace-context-chip.changed,
 .workspace-context-chip.warning {
-  color: var(--color-error);
+  color: var(--color-text-secondary);
 }
 
 .workspace-context-chip.git-summary {
   max-width: min(220px, 24vw);
   gap: 8px;
-  color: var(--color-text);
+  color: var(--color-text-secondary);
   font-size: 0.8rem;
   font-weight: 780;
   font-variant-numeric: tabular-nums;
@@ -1194,11 +1194,11 @@ button.account-switcher-item:hover:not(:disabled) {
 }
 
 .workspace-context-change-stat.additions {
-  color: var(--color-secondary);
+  color: var(--color-text-secondary);
 }
 
 .workspace-context-change-stat.deletions {
-  color: var(--color-error);
+  color: var(--color-text-secondary);
 }
 
 .workspace-header-button {
@@ -1228,18 +1228,18 @@ button.account-switcher-item:hover:not(:disabled) {
 }
 
 .workspace-header-button.primary {
-  color: var(--color-selected-text);
+  color: var(--color-text-secondary);
 }
 
 .workspace-header-button:hover:not(:disabled),
 .workspace-header-button:focus-visible:not(:disabled) {
   background: var(--panel-strong);
-  color: var(--text);
+  color: var(--color-text-secondary);
   box-shadow: none;
 }
 
 .history-panel-button {
-  color: var(--color-icon-muted);
+  color: var(--color-text-secondary);
   box-shadow: none;
 }
 
@@ -1250,32 +1250,32 @@ button.account-switcher-item:hover:not(:disabled) {
 .workspace-header-button.history-panel-button {
   background: rgb(var(--text-secondary-rgb) / 0.1);
   box-shadow: none;
-  color: var(--color-icon-muted);
+  color: var(--color-text-secondary);
 }
 
 .workspace-header-button.history-panel-button:hover:not(:disabled),
 .workspace-header-button.history-panel-button:focus-visible:not(:disabled) {
   background: var(--panel-strong);
   box-shadow: none;
-  color: var(--color-icon-muted);
+  color: var(--color-text-secondary);
 }
 
 .workspace-header-button.history-panel-button.active {
   background: rgb(var(--text-secondary-rgb) / 0.1);
   box-shadow: none;
-  color: var(--color-icon-muted);
+  color: var(--color-text-secondary);
 }
 
 .workspace-header-button.history-panel-button.active:hover:not(:disabled),
 .workspace-header-button.history-panel-button.active:focus-visible:not(:disabled) {
   background: var(--panel-strong);
   box-shadow: none;
-  color: var(--color-icon-muted);
+  color: var(--color-text-secondary);
 }
 
 .icon-button.history-panel-button:hover:not(:disabled),
 .icon-button.history-panel-button:focus-visible:not(:disabled) {
-  color: var(--color-icon-muted);
+  color: var(--color-text-secondary);
   box-shadow: none;
 }
 
@@ -1297,7 +1297,7 @@ button.account-switcher-item:hover:not(:disabled) {
   align-items: center;
   border-radius: 7px;
   background: rgb(var(--text-secondary-rgb) / 0.1);
-  color: var(--color-text);
+  color: var(--color-text-secondary);
   font-size: 0.76rem;
   font-weight: 700;
   padding: 0 9px;
@@ -1365,7 +1365,7 @@ button.account-switcher-item:hover:not(:disabled) {
 
 .context-meter-percent {
   flex: 0 0 auto;
-  color: var(--color-text);
+  color: var(--color-text-secondary);
   font-size: inherit;
   font-variant-numeric: tabular-nums;
   font-weight: 800;
