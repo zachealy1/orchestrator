@@ -428,6 +428,8 @@ type WorkspaceGitSummary = {
   deleted: number;
   untracked: number;
   conflicted: number;
+  additions: number;
+  deletions: number;
 };
 
 type RefreshWorkspaceGitStatusOptions = {
@@ -461,7 +463,13 @@ function gitStatusSnapshotKey(snapshot: WorkspaceGitStatusSnapshot | null) {
     .sort()
     .join("\u0001");
 
-  return [snapshot.workspacePath, snapshot.gitRoot, files].join("\u0002");
+  return [
+    snapshot.workspacePath,
+    snapshot.gitRoot,
+    snapshot.additions ?? "",
+    snapshot.deletions ?? "",
+    files,
+  ].join("\u0002");
 }
 
 function summarizeWorkspaceGitStatus(
@@ -474,6 +482,8 @@ function summarizeWorkspaceGitStatus(
     deleted: 0,
     untracked: 0,
     conflicted: 0,
+    additions: snapshot?.additions ?? 0,
+    deletions: snapshot?.deletions ?? 0,
   };
 
   snapshot?.files.forEach((file) => {
@@ -493,6 +503,11 @@ function summarizeWorkspaceGitStatus(
       summary.conflicted += 1;
     }
   });
+
+  if (snapshot && snapshot.additions === undefined && snapshot.deletions === undefined) {
+    summary.additions = summary.modified + summary.added + summary.untracked;
+    summary.deletions = summary.deleted + summary.conflicted;
+  }
 
   return summary;
 }
@@ -5684,36 +5699,7 @@ function WorkspaceContextBanner({
             <span className="workspace-context-chip clean">Clean</span>
           ) : null}
           {!gitLoading && !gitError && gitSummary.total > 0 ? (
-            <>
-              <span className="workspace-context-chip changed">
-                {gitSummary.total} changed
-              </span>
-              <WorkspaceContextGitBadge
-                label="M"
-                count={gitSummary.modified}
-                title="Modified files"
-              />
-              <WorkspaceContextGitBadge
-                label="A/R/C"
-                count={gitSummary.added}
-                title="Added, renamed, or copied files"
-              />
-              <WorkspaceContextGitBadge
-                label="D"
-                count={gitSummary.deleted}
-                title="Deleted files"
-              />
-              <WorkspaceContextGitBadge
-                label="U"
-                count={gitSummary.untracked}
-                title="Untracked files"
-              />
-              <WorkspaceContextGitBadge
-                label="U"
-                count={gitSummary.conflicted}
-                title="Conflicted files"
-              />
-            </>
+            <WorkspaceContextGitSummaryChip gitSummary={gitSummary} />
           ) : null}
         </div>
         <div className="workspace-context-actions">
@@ -5820,25 +5806,36 @@ function WorkspaceContextBanner({
   );
 }
 
-function WorkspaceContextGitBadge({
-  label,
-  count,
-  title,
+function WorkspaceContextGitSummaryChip({
+  gitSummary,
 }: {
-  label: string;
-  count: number;
-  title: string;
+  gitSummary: WorkspaceGitSummary;
 }) {
-  if (count === 0) {
-    return null;
-  }
+  const statusLabel = formatGitSummaryForStatus(gitSummary);
+  const label = `${statusLabel}; ${formatChangeStatLabel(
+    gitSummary.additions,
+    "addition",
+    "additions",
+  )}, ${formatChangeStatLabel(gitSummary.deletions, "deletion", "deletions")}`;
 
   return (
-    <span className="workspace-context-chip git-count" title={title}>
-      <span>{label}</span>
-      {count}
+    <span
+      className="workspace-context-chip changed git-summary"
+      title={label}
+      aria-label={label}
+    >
+      <span className="workspace-context-change-stat additions">
+        +{gitSummary.additions.toLocaleString()}
+      </span>
+      <span className="workspace-context-change-stat deletions">
+        -{gitSummary.deletions.toLocaleString()}
+      </span>
     </span>
   );
+}
+
+function formatChangeStatLabel(count: number, singular: string, plural: string) {
+  return `${count.toLocaleString()} ${count === 1 ? singular : plural}`;
 }
 
 function WorkspaceContextMeter({

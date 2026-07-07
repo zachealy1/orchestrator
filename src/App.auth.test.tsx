@@ -951,7 +951,7 @@ describe("App Codex auth", () => {
     const branchSelect = await within(banner).findByRole("combobox", {
       name: "Branch",
     });
-    expect(branchSelect).toHaveTextContent("main");
+    await waitFor(() => expect(branchSelect).toHaveTextContent("main"));
     expect(
       within(screen.getByLabelText("Task composer")).queryByRole("combobox", {
         name: "Branch",
@@ -974,6 +974,8 @@ describe("App Codex auth", () => {
     mocks.listWorkspaceGitStatusMock.mockResolvedValue({
       workspacePath: workspace.path,
       gitRoot: workspace.path,
+      additions: 167,
+      deletions: 82,
       files: [
         {
           path: "/repo/orchestrator/src/App.tsx",
@@ -1035,14 +1037,12 @@ describe("App Codex auth", () => {
     await renderApp();
 
     const banner = screen.getByRole("region", { name: "Selected folder" });
-    expect(await within(banner).findByText("6 changed")).toBeInTheDocument();
-    expect(within(banner).getByTitle("Modified files")).toHaveTextContent("M1");
-    expect(within(banner).getByTitle("Added, renamed, or copied files")).toHaveTextContent(
-      "A/R/C2",
+    const changeSummary = await within(banner).findByLabelText(
+      "6 changed (1 modified, 2 added, 1 deleted, 1 untracked, 1 conflicted); 167 additions, 82 deletions",
     );
-    expect(within(banner).getByTitle("Deleted files")).toHaveTextContent("D1");
-    expect(within(banner).getByTitle("Untracked files")).toHaveTextContent("U1");
-    expect(within(banner).getByTitle("Conflicted files")).toHaveTextContent("U1");
+    expect(changeSummary).toHaveClass("git-summary");
+    expect(within(changeSummary).getByText("+167")).toBeInTheDocument();
+    expect(within(changeSummary).getByText("-82")).toBeInTheDocument();
   });
 
   it("commits all workspace changes from the selected folder banner", async () => {
@@ -1551,6 +1551,8 @@ describe("App Codex auth", () => {
     const modifiedStatus = {
       workspacePath: workspace.path,
       gitRoot: workspace.path,
+      additions: 1,
+      deletions: 0,
       files: [
         {
           path: readmeEntry.path,
@@ -1604,9 +1606,12 @@ describe("App Codex auth", () => {
     expect(within(workspaceNav).getByLabelText("modified file")).toHaveTextContent("M");
     expect(within(workspaceNav).getByTitle("external.md")).toBeInTheDocument();
     expect(within(workspaceNav).getByLabelText("untracked file")).toHaveTextContent("U");
-    expect(within(banner).getByText("2 changed")).toBeInTheDocument();
-    expect(within(banner).getByTitle("Modified files")).toHaveTextContent("M1");
-    expect(within(banner).getByTitle("Untracked files")).toHaveTextContent("U1");
+    const changeSummary = within(banner).getByLabelText(
+      "2 changed (1 modified, 1 untracked); 1 addition, 0 deletions",
+    );
+    expect(changeSummary).toHaveClass("git-summary");
+    expect(within(changeSummary).getByText("+1")).toBeInTheDocument();
+    expect(within(changeSummary).getByText("-0")).toBeInTheDocument();
   });
 
   it("refreshes expanded directories when files are deleted outside Orchestrator", async () => {

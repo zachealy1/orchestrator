@@ -76,6 +76,8 @@ export type WorkspaceGitStatusSnapshot = {
   gitRoot: string;
   currentBranch?: string | null;
   aheadCount?: number;
+  additions?: number;
+  deletions?: number;
   hasUpstream?: boolean;
   hasOrigin?: boolean;
   canPush?: boolean;

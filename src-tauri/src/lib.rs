@@ -153,6 +153,8 @@ struct WorkspaceGitStatusSnapshot {
     git_root: String,
     current_branch: Option<String>,
     ahead_count: usize,
+    additions: usize,
+    deletions: usize,
     has_upstream: bool,
     has_origin: bool,
     can_push: bool,
@@ -1119,10 +1121,12 @@ fn list_workspace_git_status(
             .unwrap_or_else(|| "Unable to read Git status".to_string()));
     }
 
+    let (mut additions, deletions) = git_numstat_totals(&git_root, &pathspec);
     let mut files = Vec::new();
     for parsed in parse_git_status_porcelain(&status_probe.stdout)? {
         let absolute_path = git_path_to_workspace_child(&git_root, &workspace, &parsed.path)?;
         let relative_path = relative_workspace_path(&workspace, &absolute_path)?;
+        let status_kind = git_status_kind(parsed.index_status, parsed.worktree_status);
         let old_relative_path = parsed
             .old_path
             .as_ref()
@@ -1131,13 +1135,17 @@ fn list_workspace_git_status(
             })
             .and_then(|old_absolute| relative_workspace_path(&workspace, &old_absolute).ok());
 
+        if status_kind == "untracked" {
+            additions += untracked_file_additions(&workspace, &absolute_path);
+        }
+
         files.push(WorkspaceGitFileStatus {
             path: absolute_path.to_string_lossy().to_string(),
             relative_path,
             old_relative_path,
             index_status: parsed.index_status.to_string(),
             worktree_status: parsed.worktree_status.to_string(),
-            status_kind: git_status_kind(parsed.index_status, parsed.worktree_status).to_string(),
+            status_kind: status_kind.to_string(),
             badge: git_status_badge(parsed.index_status, parsed.worktree_status).to_string(),
         });
     }
@@ -1149,6 +1157,8 @@ fn list_workspace_git_status(
         git_root: git_root.to_string_lossy().to_string(),
         current_branch: current_git_branch(&git_root),
         ahead_count: git_ahead_count(&git_root),
+        additions,
+        deletions,
         has_upstream: git_upstream(&git_root).is_some(),
         has_origin: git_has_origin(&git_root),
         can_push: git_can_push(&git_root),
@@ -2107,6 +2117,62 @@ fn git_status_is_conflicted(index_status: char, worktree_status: char) -> bool {
         )
 }
 
+fn git_numstat_totals(git_root: &Path, pathspec: &str) -> (usize, usize) {
+    let git_root_arg = git_root.to_string_lossy();
+    let mut additions = 0;
+    let mut deletions = 0;
+
+    for staged in [false, true] {
+        let mut args = vec![
+            "-C",
+            git_root_arg.as_ref(),
+            "diff",
+            "--numstat",
+            "--no-ext-diff",
+            "--find-renames",
+            "--find-copies",
+        ];
+        if staged {
+            args.push("--cached");
+        }
+        args.extend(["--", pathspec]);
+
+        let probe = run_command("git", &args);
+        if probe.ok {
+            let (next_additions, next_deletions) = parse_git_numstat_totals(&probe.stdout);
+            additions += next_additions;
+            deletions += next_deletions;
+        }
+    }
+
+    (additions, deletions)
+}
+
+fn parse_git_numstat_totals(output: &str) -> (usize, usize) {
+    output.lines().fold((0, 0), |(additions, deletions), line| {
+        let mut fields = line.split('\t');
+        let Some(added) = fields.next() else {
+            return (additions, deletions);
+        };
+        let Some(deleted) = fields.next() else {
+            return (additions, deletions);
+        };
+
+        match (added.parse::<usize>(), deleted.parse::<usize>()) {
+            (Ok(added), Ok(deleted)) => (additions + added, deletions + deleted),
+            _ => (additions, deletions),
+        }
+    })
+}
+
+fn untracked_file_additions(workspace: &Path, file_path: &Path) -> usize {
+    read_workspace_file_preview_text(workspace, file_path)
+        .ok()
+        .filter(|preview| !preview.is_binary)
+        .map(|preview| preview.content.lines().count())
+        .unwrap_or(0)
+}
+
 fn run_git_diff(git_root: &Path, staged: bool, git_path: &str) -> Result<String, String> {
     let git_root_arg = git_root.to_string_lossy();
     let probe = if staged {
@@ -2673,6 +2739,17 @@ mod tests {
                 ("src/conflict.ts", "conflicted", "U", None),
             ]
         );
+    }
+
+    #[test]
+    fn git_numstat_parser_sums_text_changes_and_skips_binary_rows() {
+        let output = concat!(
+            "12\t4\tsrc/App.tsx\n",
+            "-\t-\tassets/image.png\n",
+            "3\t0\tsrc/New.ts\n"
+        );
+
+        assert_eq!(parse_git_numstat_totals(output), (15, 4));
     }
 
     #[test]

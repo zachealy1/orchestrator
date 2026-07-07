@@ -1177,10 +1177,28 @@ button.account-switcher-item:hover:not(:disabled) {
   color: var(--color-error);
 }
 
-.workspace-context-chip.git-count span {
-  color: var(--muted);
-  font-size: 0.68rem;
-  font-weight: 800;
+.workspace-context-chip.git-summary {
+  max-width: min(220px, 24vw);
+  gap: 8px;
+  color: var(--color-text);
+  font-size: 0.8rem;
+  font-weight: 780;
+  font-variant-numeric: tabular-nums;
+}
+
+.workspace-context-change-stat {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  line-height: 1;
+}
+
+.workspace-context-change-stat.additions {
+  color: var(--color-secondary);
+}
+
+.workspace-context-change-stat.deletions {
+  color: var(--color-error);
 }
 
 .workspace-header-button {
