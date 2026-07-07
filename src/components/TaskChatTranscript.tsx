@@ -23,6 +23,8 @@ import type {
 import { contextFileExtensionLabel } from "../lib/contextFiles";
 import type { CodexMessage, ComposerContextFile } from "../types";
 
+const AUTO_SCROLL_BOTTOM_THRESHOLD_PX = 48;
+
 export type TaskChatEntry = {
   clientId: string;
   workspaceId: number;
@@ -53,6 +55,8 @@ export function TaskChatTranscript({
   onEditPrompt,
 }: Props) {
   const transcriptRef = useRef<HTMLDivElement | null>(null);
+  const shouldFollowOutputRef = useRef(true);
+  const previousEntryCountRef = useRef(entries.length);
   const [editingEntryId, setEditingEntryId] = useState<string | null>(null);
   const [editingPrompt, setEditingPrompt] = useState("");
 
@@ -62,7 +66,15 @@ export function TaskChatTranscript({
       return;
     }
 
-    transcript.scrollTop = transcript.scrollHeight;
+    const entryCountIncreased = entries.length > previousEntryCountRef.current;
+    previousEntryCountRef.current = entries.length;
+    if (entryCountIncreased) {
+      shouldFollowOutputRef.current = true;
+    }
+
+    if (shouldFollowOutputRef.current) {
+      transcript.scrollTop = transcript.scrollHeight;
+    }
   }, [entries]);
 
   useEffect(() => {
@@ -80,6 +92,9 @@ export function TaskChatTranscript({
       className="task-chat-transcript"
       aria-label="Task chat transcript"
       ref={transcriptRef}
+      onScroll={(event) => {
+        shouldFollowOutputRef.current = isScrolledNearBottom(event.currentTarget);
+      }}
     >
       {entries.map((entry) => {
         const editable =
@@ -182,6 +197,12 @@ export function TaskChatTranscript({
 
 function isRunActiveStatus(status: RunViewState["status"]) {
   return status === "connecting" || status === "running";
+}
+
+function isScrolledNearBottom(element: HTMLElement) {
+  const remainingScroll =
+    element.scrollHeight - element.clientHeight - element.scrollTop;
+  return remainingScroll <= AUTO_SCROLL_BOTTOM_THRESHOLD_PX;
 }
 
 function SubmittedPrompt({

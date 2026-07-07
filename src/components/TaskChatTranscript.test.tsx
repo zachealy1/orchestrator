@@ -3,6 +3,20 @@ import { describe, expect, it, vi } from "vitest";
 import { emptyRunView } from "../lib/codexEventReducer";
 import { TaskChatTranscript } from "./TaskChatTranscript";
 
+function setElementScrollMetrics(
+  element: HTMLElement,
+  metrics: { scrollHeight: number; clientHeight: number },
+) {
+  Object.defineProperty(element, "scrollHeight", {
+    configurable: true,
+    value: metrics.scrollHeight,
+  });
+  Object.defineProperty(element, "clientHeight", {
+    configurable: true,
+    value: metrics.clientHeight,
+  });
+}
+
 describe("TaskChatTranscript", () => {
   it("renders submitted prompts and live output with real-time metrics", () => {
     render(
@@ -96,6 +110,128 @@ describe("TaskChatTranscript", () => {
       "Preparing run...",
     );
     expect(container.querySelector(".stream-loading-dots")).not.toBeNull();
+  });
+
+  it("does not force-scroll to the bottom when live output updates after the user scrolls up", () => {
+    const entry = {
+      clientId: "chat-1",
+      workspaceId: 1,
+      chatId: 401,
+      turnIndex: 1,
+      runId: 2,
+      taskId: 3,
+      prompt: "Run a long task",
+      submittedAt: "2026-06-30T17:30:00Z",
+      status: "running" as const,
+      runView: {
+        ...emptyRunView,
+        status: "running" as const,
+        streamEvents: [
+          {
+            id: "message-1",
+            kind: "message" as const,
+            text: "First update",
+            timestamp: "2026-06-30T17:30:01Z",
+          },
+        ],
+      },
+    };
+    const { rerender } = render(
+      <TaskChatTranscript entries={[entry]} onResolveRequest={vi.fn()} />,
+    );
+    const transcript = screen.getByLabelText("Task chat transcript");
+    setElementScrollMetrics(transcript, {
+      scrollHeight: 1000,
+      clientHeight: 200,
+    });
+    transcript.scrollTop = 200;
+    fireEvent.scroll(transcript);
+
+    rerender(
+      <TaskChatTranscript
+        entries={[
+          {
+            ...entry,
+            runView: {
+              ...entry.runView,
+              streamEvents: [
+                ...entry.runView.streamEvents,
+                {
+                  id: "message-2",
+                  kind: "message",
+                  text: "Second update",
+                  timestamp: "2026-06-30T17:30:02Z",
+                },
+              ],
+            },
+          },
+        ]}
+        onResolveRequest={vi.fn()}
+      />,
+    );
+
+    expect(transcript.scrollTop).toBe(200);
+  });
+
+  it("continues following live output when the user is already near the bottom", () => {
+    const entry = {
+      clientId: "chat-1",
+      workspaceId: 1,
+      chatId: 401,
+      turnIndex: 1,
+      runId: 2,
+      taskId: 3,
+      prompt: "Run a long task",
+      submittedAt: "2026-06-30T17:30:00Z",
+      status: "running" as const,
+      runView: {
+        ...emptyRunView,
+        status: "running" as const,
+        streamEvents: [
+          {
+            id: "message-1",
+            kind: "message" as const,
+            text: "First update",
+            timestamp: "2026-06-30T17:30:01Z",
+          },
+        ],
+      },
+    };
+    const { rerender } = render(
+      <TaskChatTranscript entries={[entry]} onResolveRequest={vi.fn()} />,
+    );
+    const transcript = screen.getByLabelText("Task chat transcript");
+    setElementScrollMetrics(transcript, {
+      scrollHeight: 1000,
+      clientHeight: 200,
+    });
+    transcript.scrollTop = 760;
+    fireEvent.scroll(transcript);
+
+    rerender(
+      <TaskChatTranscript
+        entries={[
+          {
+            ...entry,
+            runView: {
+              ...entry.runView,
+              streamEvents: [
+                ...entry.runView.streamEvents,
+                {
+                  id: "message-2",
+                  kind: "message",
+                  text: "Second update",
+                  timestamp: "2026-06-30T17:30:02Z",
+                },
+              ],
+            },
+          },
+        ]}
+        onResolveRequest={vi.fn()}
+      />,
+    );
+
+    expect(transcript.scrollTop).toBe(1000);
   });
 
   it("allows the latest completed prompt to be edited and rerun", () => {
