@@ -339,6 +339,9 @@ export type CodexModel = {
   displayName: string;
   description: string;
   hidden: boolean;
+  contextWindow?: number | null;
+  contextWindowTokens?: number | null;
+  modelContextWindow?: number | null;
   supportedReasoningEfforts: ReasoningEffortOption[];
   defaultReasoningEffort: string;
   isDefault: boolean;

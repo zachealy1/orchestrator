@@ -1136,9 +1136,12 @@ describe("App Codex auth", () => {
 
     const { user } = await renderApp();
     const banner = screen.getByRole("region", { name: "Selected folder" });
-    expect(within(banner).getByText("Context loading")).toBeInTheDocument();
-    expect(within(banner).getByRole("status", { name: "Context loading" }))
-      .toBeInTheDocument();
+    const emptyMeter = within(banner).getByRole("meter", { name: "Context usage" });
+    expect(within(emptyMeter).getByText("0 / 258,400")).toBeInTheDocument();
+    expect(within(emptyMeter).getByText("0%")).toBeInTheDocument();
+    expect(emptyMeter).toHaveAttribute("aria-valuenow", "0");
+    expect(emptyMeter).toHaveAttribute("aria-valuetext", "0 / 258,400 (0%)");
+    expect(within(banner).queryByText("Context loading")).not.toBeInTheDocument();
 
     await startMockRun(user, "Measure context");
     await emitCodexNotification({

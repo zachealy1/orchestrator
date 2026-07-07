@@ -180,6 +180,7 @@ const PREVIEW_DRAWER_RESIZE_STEP = 40;
 const PREVIEW_DRAWER_RESIZE_LARGE_STEP = 80;
 const DIFF_DRAWER_PREFERRED_WIDTH = 860;
 const DIFF_SIDE_BY_SIDE_MIN_WIDTH = 760;
+const DEFAULT_CONTEXT_WINDOW = 258_400;
 const GIT_STATUS_AUTO_REFRESH_INTERVAL_MS = 3000;
 const EMPTY_GIT_STATUS_BY_PATH = new Map<string, WorkspaceGitFileStatus>();
 const EMPTY_DIRTY_DIRECTORY_PATHS = new Set<string>();
@@ -764,6 +765,10 @@ function App() {
   const selectedWorkspacePath = selectedWorkspace?.path ?? "No workspace selected";
   const selectedAccount =
     codexAccounts.find((account) => account.id === selectedAccountId) ?? null;
+  const selectedModel =
+    models.find((model) => model.id === selectedModelId) ?? models[0] ?? null;
+  const selectedModelContextWindow =
+    getCodexModelContextWindow(selectedModel) ?? DEFAULT_CONTEXT_WINDOW;
   const signedInAccounts = codexAccounts.filter(
     (account) => account.status === "signed_in",
   );
@@ -2562,7 +2567,7 @@ function App() {
             workspace: selectedWorkspaceRef.current,
             branch: selectedBranch,
             account: selectedAccount,
-            model: models.find((model) => model.id === selectedModelId) ?? null,
+            model: selectedModel,
             reasoningEffort: selectedReasoningEffort,
             tokenEstimate,
             contextFiles,
@@ -5163,6 +5168,7 @@ function App() {
               commitPopoverOpen={commitPopoverOpen}
               commitMessage={commitMessage}
               contextUsage={selectedWorkspaceContextUsage}
+              contextWindow={selectedModelContextWindow}
               onGitAction={() => void handleHeaderGitAction()}
               onCommitMessageChange={setCommitMessage}
               onCommitConfirm={() => void handleCommitAll()}
@@ -5590,6 +5596,7 @@ function WorkspaceContextBanner({
   commitPopoverOpen,
   commitMessage,
   contextUsage,
+  contextWindow,
   onGitAction,
   onCommitMessageChange,
   onCommitConfirm,
@@ -5611,6 +5618,7 @@ function WorkspaceContextBanner({
   commitPopoverOpen: boolean;
   commitMessage: string;
   contextUsage: RunViewState["tokenUsage"];
+  contextWindow: number;
   onGitAction: () => void;
   onCommitMessageChange: (message: string) => void;
   onCommitConfirm: () => void;
@@ -5639,7 +5647,7 @@ function WorkspaceContextBanner({
             <GitCommitHorizontal size={15} />
             Git
           </button>
-          <WorkspaceContextMeter tokenUsage={null} />
+          <WorkspaceContextMeter tokenUsage={null} contextWindow={contextWindow} />
           <button className="workspace-header-button" type="button" disabled>
             <Plus size={15} />
             New chat
@@ -5777,7 +5785,7 @@ function WorkspaceContextBanner({
               </div>
             ) : null}
           </div>
-          <WorkspaceContextMeter tokenUsage={contextUsage} />
+          <WorkspaceContextMeter tokenUsage={contextUsage} contextWindow={contextWindow} />
           <button
             className="workspace-header-button"
             type="button"
@@ -5840,22 +5848,12 @@ function formatChangeStatLabel(count: number, singular: string, plural: string) 
 
 function WorkspaceContextMeter({
   tokenUsage,
+  contextWindow,
 }: {
   tokenUsage: RunViewState["tokenUsage"];
+  contextWindow: number;
 }) {
-  const usage = getLiveContextUsage(tokenUsage);
-
-  if (!usage) {
-    return (
-      <span
-        className="workspace-context-meter loading"
-        role="status"
-        aria-label="Context loading"
-      >
-        <span className="context-meter-copy">Context loading</span>
-      </span>
-    );
-  }
+  const usage = getLiveContextUsage(tokenUsage, contextWindow);
 
   const meterStyle =
     usage.percentage === null
@@ -5875,7 +5873,7 @@ function WorkspaceContextMeter({
       style={meterStyle}
     >
       <span className="context-meter-copy">
-        {usage.percentage === null ? (
+        {usage.percentage === null || usage.windowLabel === null ? (
           usage.label
         ) : (
           <>
@@ -6314,9 +6312,35 @@ function generateCommitMessage(
     : `Update ${workspace.label}`;
 }
 
-function getLiveContextUsage(tokenUsage: RunViewState["tokenUsage"]) {
+function getCodexModelContextWindow(model: CodexModel | null) {
+  const candidates = [
+    model?.modelContextWindow,
+    model?.contextWindow,
+    model?.contextWindowTokens,
+  ];
+
+  return (
+    candidates.find(
+      (value): value is number =>
+        typeof value === "number" && Number.isFinite(value) && value > 0,
+    ) ?? null
+  );
+}
+
+function getLiveContextUsage(
+  tokenUsage: RunViewState["tokenUsage"],
+  fallbackContextWindow = DEFAULT_CONTEXT_WINDOW,
+) {
   if (!tokenUsage) {
-    return null;
+    const windowSize =
+      fallbackContextWindow > 0 ? fallbackContextWindow : DEFAULT_CONTEXT_WINDOW;
+    return {
+      label: `0 / ${windowSize.toLocaleString()} (0%)`,
+      usedLabel: "0",
+      windowLabel: windowSize.toLocaleString(),
+      title: `0 of ${windowSize.toLocaleString()} context tokens used`,
+      percentage: 0,
+    };
   }
 
   const total = tokenUsage.totalTokens.toLocaleString();

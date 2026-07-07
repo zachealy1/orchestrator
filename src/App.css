@@ -1366,7 +1366,7 @@ button.account-switcher-item:hover:not(:disabled) {
 .context-meter-percent {
   flex: 0 0 auto;
   color: var(--color-text);
-  font-size: 0.7rem;
+  font-size: inherit;
   font-variant-numeric: tabular-nums;
   font-weight: 800;
   line-height: 1.2;
