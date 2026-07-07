@@ -21,6 +21,7 @@ import {
   Plus,
   RefreshCw,
   Settings,
+  SquarePen,
   Sun,
   Trash2,
   UploadCloud,
@@ -5650,9 +5651,14 @@ function WorkspaceContextBanner({
             <GitCommitHorizontal size={15} />
             Git
           </button>
-          <button className="workspace-header-button" type="button" disabled>
-            <Plus size={15} />
-            New chat
+          <button
+            className="workspace-header-button icon-only"
+            type="button"
+            disabled
+            aria-label="New chat"
+            title="Start a new chat"
+          >
+            <SquarePen size={15} />
           </button>
           <button
             className="workspace-header-button icon-only history-panel-button"
@@ -5790,14 +5796,14 @@ function WorkspaceContextBanner({
           ) : null}
         </div>
         <button
-          className="workspace-header-button"
+          className="workspace-header-button icon-only"
           type="button"
           onClick={onNewChat}
           disabled={newChatDisabled}
+          aria-label="New chat"
           title="Start a new chat"
         >
-          <Plus size={15} />
-          New chat
+          <SquarePen size={15} />
         </button>
         <button
           className={`workspace-header-button icon-only history-panel-button ${
