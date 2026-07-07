@@ -95,20 +95,23 @@ export function TaskChatTranscript({
                 editing ? "editing" : ""
               }`}
             >
-              <article className="submitted-prompt" aria-label="Submitted prompt">
-                {editing ? (
-                  <form
-                    className="submitted-prompt-edit-form"
-                    onSubmit={(event) => {
-                      event.preventDefault();
-                      const nextPrompt = editingPrompt.trim();
-                      if (!nextPrompt || !onEditPrompt) {
-                        return;
-                      }
-                      setEditingEntryId(null);
-                      setEditingPrompt("");
-                      onEditPrompt(entry, nextPrompt);
-                    }}
+              {editing ? (
+                <form
+                  className="submitted-prompt-edit-form"
+                  onSubmit={(event) => {
+                    event.preventDefault();
+                    const nextPrompt = editingPrompt.trim();
+                    if (!nextPrompt || !onEditPrompt) {
+                      return;
+                    }
+                    setEditingEntryId(null);
+                    setEditingPrompt("");
+                    onEditPrompt(entry, nextPrompt);
+                  }}
+                >
+                  <article
+                    className="submitted-prompt editing"
+                    aria-label="Submitted prompt"
                   >
                     <textarea
                       aria-label="Edit submitted prompt"
@@ -116,48 +119,52 @@ export function TaskChatTranscript({
                       onChange={(event) => setEditingPrompt(event.target.value)}
                       autoFocus
                     />
-                    <div className="submitted-prompt-edit-actions">
-                      <button
-                        type="submit"
-                        aria-label="Run edited prompt"
-                        disabled={!editingPrompt.trim()}
-                      >
-                        <Check size={15} aria-hidden="true" />
-                      </button>
-                      <button
-                        type="button"
-                        aria-label="Cancel prompt edit"
-                        onClick={() => {
-                          setEditingEntryId(null);
-                          setEditingPrompt("");
-                        }}
-                      >
-                        <X size={15} aria-hidden="true" />
-                      </button>
-                    </div>
-                  </form>
-                ) : (
-                  <SubmittedPrompt
-                    prompt={entry.prompt}
-                    contextFiles={entry.contextFiles ?? []}
-                    onOpenFileLink={onOpenFileLink}
-                  />
-                )}
-              </article>
-              {editable && !editing ? (
-                <button
-                  className="submitted-prompt-edit-button"
-                  type="button"
-                  aria-label="Edit prompt"
-                  title="Edit prompt"
-                  onClick={() => {
-                    setEditingEntryId(entry.clientId);
-                    setEditingPrompt(entry.prompt);
-                  }}
-                >
-                  <Pencil size={15} aria-hidden="true" />
-                </button>
-              ) : null}
+                  </article>
+                  <div className="submitted-prompt-edit-actions">
+                    <button
+                      type="submit"
+                      aria-label="Run edited prompt"
+                      disabled={!editingPrompt.trim()}
+                    >
+                      <Check size={15} aria-hidden="true" />
+                    </button>
+                    <button
+                      type="button"
+                      aria-label="Cancel prompt edit"
+                      onClick={() => {
+                        setEditingEntryId(null);
+                        setEditingPrompt("");
+                      }}
+                    >
+                      <X size={15} aria-hidden="true" />
+                    </button>
+                  </div>
+                </form>
+              ) : (
+                <>
+                  <article className="submitted-prompt" aria-label="Submitted prompt">
+                    <SubmittedPrompt
+                      prompt={entry.prompt}
+                      contextFiles={entry.contextFiles ?? []}
+                      onOpenFileLink={onOpenFileLink}
+                    />
+                  </article>
+                  {editable ? (
+                    <button
+                      className="submitted-prompt-edit-button"
+                      type="button"
+                      aria-label="Edit prompt"
+                      title="Edit prompt"
+                      onClick={() => {
+                        setEditingEntryId(entry.clientId);
+                        setEditingPrompt(entry.prompt);
+                      }}
+                    >
+                      <Pencil size={15} aria-hidden="true" />
+                    </button>
+                  ) : null}
+                </>
+              )}
             </div>
             <article className={`chat-message assistant-message status-${entry.status}`}>
               <AssistantRunOutput

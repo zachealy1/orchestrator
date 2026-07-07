@@ -1549,8 +1549,7 @@ button.account-switcher-item:hover:not(:disabled) {
   padding-block: 18px 20px;
 }
 
-.task-hero.has-chat .composer-panel,
-.task-chat-transcript {
+.task-hero.has-chat .composer-panel {
   min-width: 0;
   max-width: 100%;
   width: min(1040px, 100%);
@@ -1564,7 +1563,10 @@ button.account-switcher-item:hover:not(:disabled) {
 .task-chat-transcript {
   display: grid;
   flex: 1 1 auto;
+  width: 100%;
+  max-width: 100%;
   min-height: 0;
+  align-self: stretch;
   align-content: end;
   gap: 18px;
   overflow-y: auto;
@@ -1573,6 +1575,8 @@ button.account-switcher-item:hover:not(:disabled) {
 
 .task-chat-run {
   display: grid;
+  width: min(1040px, 100%);
+  justify-self: center;
   gap: 14px;
 }
 
@@ -1595,6 +1599,11 @@ button.account-switcher-item:hover:not(:disabled) {
   padding: 13px 16px;
   text-align: left;
   white-space: pre-wrap;
+}
+
+.submitted-prompt.editing {
+  width: 100%;
+  padding: 0;
 }
 
 button.submitted-prompt-edit-button {
@@ -1630,25 +1639,28 @@ button.submitted-prompt-edit-button:focus-visible {
 
 .submitted-prompt-edit-form {
   display: grid;
-  gap: 10px;
+  justify-items: end;
+  gap: 4px;
   min-width: min(520px, 64vw);
+  max-width: 100%;
 }
 
 .submitted-prompt-edit-form textarea {
+  display: block;
   width: 100%;
   min-height: 92px;
   resize: vertical;
   border: 0;
-  border-radius: 8px;
-  background: var(--color-component-background);
+  border-radius: 18px 18px 4px 18px;
+  background: transparent;
   color: var(--color-text);
   font: inherit;
   line-height: 1.5;
-  padding: 10px 12px;
+  padding: 13px 16px;
   outline: none;
 }
 
-.submitted-prompt-edit-form textarea:focus {
+.submitted-prompt.editing:focus-within {
   box-shadow: 0 0 0 2px color-mix(in srgb, var(--color-primary) 44%, transparent);
 }
 
@@ -1660,19 +1672,22 @@ button.submitted-prompt-edit-button:focus-visible {
 
 .submitted-prompt-edit-actions button {
   display: inline-grid;
-  width: 32px;
-  height: 32px;
+  width: 30px;
+  min-width: 30px;
+  height: 30px;
+  min-height: 30px;
   place-items: center;
   border: 0;
-  border-radius: 8px;
-  background: var(--color-button-secondary);
-  color: var(--color-button-secondary-text);
+  border-radius: 7px;
+  background: transparent;
+  color: var(--color-text-secondary);
+  padding: 0;
 }
 
 .submitted-prompt-edit-actions button:hover:not(:disabled),
 .submitted-prompt-edit-actions button:focus-visible {
-  background: var(--color-button-active);
-  color: var(--color-button-active-text);
+  background: var(--panel-strong);
+  color: var(--color-text-secondary);
   outline: none;
 }
 
