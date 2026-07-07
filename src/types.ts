@@ -36,6 +36,9 @@ export type GitBranchList = {
 export const ORCHESTRATOR_CONTEXT_FILE_MIME =
   "application/x-orchestrator-context-file";
 
+export const ORCHESTRATOR_PROMPT_CONTEXT_MIME =
+  "application/x-orchestrator-prompt-context";
+
 export type WorkspaceTreeEntry = {
   name: string;
   path: string;

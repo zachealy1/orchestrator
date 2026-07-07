@@ -1011,8 +1011,8 @@ button.account-switcher-item:hover:not(:disabled) {
   --history-drawer-width: clamp(340px, 30vw, 460px);
 }
 
-.codex-workspace-body.history-open .task-hero {
-  padding-inline: clamp(14px, 2vw, 28px);
+.codex-workspace-body.history-open .task-hero:not(.has-chat) {
+  --task-hero-inline-padding: clamp(14px, 2vw, 28px);
 }
 
 .workspace-context-banner {
@@ -1514,6 +1514,7 @@ button.account-switcher-item:hover:not(:disabled) {
 }
 
 .task-hero {
+  --task-hero-inline-padding: clamp(18px, 3vw, 38px);
   flex: 1 1 0;
   display: flex;
   min-width: 0;
@@ -1526,7 +1527,7 @@ button.account-switcher-item:hover:not(:disabled) {
   justify-content: center;
   contain: layout paint;
   gap: 22px;
-  padding: 24px clamp(18px, 3vw, 38px) max(32px, 5vh);
+  padding: 24px var(--task-hero-inline-padding) max(32px, 5vh);
   transition:
     background 0.16s ease,
     box-shadow 0.16s ease;
@@ -1546,13 +1547,15 @@ button.account-switcher-item:hover:not(:disabled) {
   align-items: stretch;
   justify-content: flex-end;
   gap: 14px;
-  padding-block: 18px 20px;
+  padding: 18px 0 20px;
 }
 
 .task-hero.has-chat .composer-panel {
   min-width: 0;
-  max-width: 100%;
-  width: min(1040px, 100%);
+  max-width: 1040px;
+  width: calc(
+    100% - var(--task-hero-inline-padding) - var(--task-hero-inline-padding)
+  );
   align-self: center;
 }
 
@@ -1570,7 +1573,7 @@ button.account-switcher-item:hover:not(:disabled) {
   align-content: end;
   gap: 18px;
   overflow-y: auto;
-  padding: 4px 0;
+  padding: 4px var(--task-hero-inline-padding);
 }
 
 .task-chat-run {
@@ -1594,8 +1597,8 @@ button.account-switcher-item:hover:not(:disabled) {
   border-radius: 18px 18px 4px 18px;
   background: var(--color-surface-soft);
   color: var(--color-text);
-  font-size: 0.98rem;
-  line-height: 1.55;
+  font-size: 1rem;
+  line-height: 1.5;
   padding: 13px 16px;
   text-align: left;
   white-space: pre-wrap;
@@ -1703,13 +1706,15 @@ button.submitted-prompt-edit-button:focus-visible {
 .submitted-inline-file,
 .inline-context-mention {
   color: var(--color-primary);
+  font: inherit;
+  line-height: inherit;
+  white-space: nowrap;
 }
 
 .submitted-inline-file {
   display: inline;
   cursor: pointer;
   text-decoration: none;
-  white-space: nowrap;
 }
 
 .submitted-inline-file:hover .submitted-inline-file-name,
@@ -1730,7 +1735,8 @@ button.submitted-prompt-edit-button:focus-visible {
   text-transform: uppercase;
 }
 
-.submitted-inline-file-name {
+.submitted-inline-file-name,
+.inline-context-name {
   color: inherit;
 }
 

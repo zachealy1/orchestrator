@@ -4,6 +4,7 @@ import { describe, expect, it, vi } from "vitest";
 import { TaskComposer } from "./TaskComposer";
 import { useState } from "react";
 import type { ComponentProps } from "react";
+import { ORCHESTRATOR_PROMPT_CONTEXT_MIME } from "../types";
 
 type TaskComposerProps = ComponentProps<typeof TaskComposer>;
 
@@ -227,6 +228,20 @@ function createEmptyDataTransfer() {
   };
 }
 
+function createPromptContextClipboardData(payload?: unknown) {
+  const data = new Map<string, string>();
+  if (payload !== undefined) {
+    data.set(ORCHESTRATOR_PROMPT_CONTEXT_MIME, JSON.stringify(payload));
+  }
+
+  return {
+    getData: vi.fn((type: string) => data.get(type) ?? ""),
+    setData: vi.fn((type: string, value: string) => {
+      data.set(type, value);
+    }),
+  };
+}
+
 describe("TaskComposer", () => {
   it("updates the prompt and exposes composer actions", async () => {
     const onPromptChange = vi.fn();
@@ -397,6 +412,84 @@ describe("TaskComposer", () => {
     expect(screen.getByText("App.tsx")).toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: /remove app\.tsx/i }));
     expect(onRemoveFile).toHaveBeenCalledWith("/repo/src/App.tsx");
+  });
+
+  it("copies inline file references with context metadata", () => {
+    const clipboardData = createPromptContextClipboardData();
+    renderComposer({
+      prompt: "Update TXT hello-world.txt",
+      contextFiles: [
+        {
+          path: "/repo/hello-world.txt",
+          name: "hello-world.txt",
+          source: "search",
+          status: "ready",
+        },
+      ],
+    });
+
+    const promptInput = screen.getByLabelText("Prompt") as HTMLTextAreaElement;
+    promptInput.setSelectionRange(7, "Update TXT hello-world.txt".length);
+    fireEvent.copy(promptInput, { clipboardData });
+
+    expect(clipboardData.setData).toHaveBeenCalledWith(
+      "text/plain",
+      "TXT hello-world.txt",
+    );
+    const rawPayload = clipboardData.setData.mock.calls.find(
+      ([type]) => type === ORCHESTRATOR_PROMPT_CONTEXT_MIME,
+    )?.[1];
+    if (typeof rawPayload !== "string") {
+      throw new Error("Missing prompt context clipboard payload");
+    }
+    expect(JSON.parse(rawPayload)).toMatchObject({
+      version: 1,
+      prompt: "TXT hello-world.txt",
+      files: [
+        {
+          path: "/repo/hello-world.txt",
+          name: "hello-world.txt",
+          source: "search",
+          status: "ready",
+        },
+      ],
+    });
+  });
+
+  it("pastes inline file references with context metadata", () => {
+    const onPromptChange = vi.fn();
+    const onMentionFileSelect = vi.fn();
+    const clipboardData = createPromptContextClipboardData({
+      version: 1,
+      prompt: "TXT hello-world.txt",
+      files: [
+        {
+          path: "/repo/hello-world.txt",
+          name: "hello-world.txt",
+          source: "search",
+          status: "ready",
+        },
+      ],
+    });
+    renderComposer({
+      prompt: "Delete the ",
+      onPromptChange,
+      onMentionFileSelect,
+    });
+
+    const promptInput = screen.getByLabelText("Prompt") as HTMLTextAreaElement;
+    promptInput.setSelectionRange("Delete the ".length, "Delete the ".length);
+    fireEvent.paste(promptInput, { clipboardData });
+
+    expect(onPromptChange).toHaveBeenCalledWith(
+      "Delete the TXT hello-world.txt",
+    );
+    expect(onMentionFileSelect).toHaveBeenCalledWith({
+      path: "/repo/hello-world.txt",
+      name: "hello-world.txt",
+      source: "search",
+      status: "ready",
+    });
   });
 
   it("adds explorer files from the internal drag payload", () => {

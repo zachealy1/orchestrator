@@ -12,7 +12,11 @@ import {
   X,
 } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
-import type { MouseEvent as ReactMouseEvent, ReactNode } from "react";
+import type {
+  ClipboardEvent as ReactClipboardEvent,
+  MouseEvent as ReactMouseEvent,
+  ReactNode,
+} from "react";
 import ReactMarkdown from "react-markdown";
 import type {
   RunCommandActivity,
@@ -21,7 +25,11 @@ import type {
   StreamEvent,
 } from "../lib/codexEventReducer";
 import { contextFileExtensionLabel } from "../lib/contextFiles";
-import type { CodexMessage, ComposerContextFile } from "../types";
+import {
+  ORCHESTRATOR_PROMPT_CONTEXT_MIME,
+  type CodexMessage,
+  type ComposerContextFile,
+} from "../types";
 
 const AUTO_SCROLL_BOTTOM_THRESHOLD_PX = 48;
 
@@ -157,7 +165,17 @@ export function TaskChatTranscript({
                 </form>
               ) : (
                 <>
-                  <article className="submitted-prompt" aria-label="Submitted prompt">
+                  <article
+                    className="submitted-prompt"
+                    aria-label="Submitted prompt"
+                    onCopy={(event) => {
+                      writeSubmittedPromptClipboard(
+                        event,
+                        entry.prompt,
+                        entry.contextFiles ?? [],
+                      );
+                    }}
+                  >
                     <SubmittedPrompt
                       prompt={entry.prompt}
                       contextFiles={entry.contextFiles ?? []}
@@ -482,6 +500,54 @@ function buildInlineFileTokenCandidates(files: ComposerContextFile[]) {
       { file, token: file.name },
     ])
     .sort((left, right) => right.token.length - left.token.length);
+}
+
+function writeSubmittedPromptClipboard(
+  event: ReactClipboardEvent<HTMLElement>,
+  prompt: string,
+  contextFiles: ComposerContextFile[],
+) {
+  const inlineFiles = contextFiles.filter((file) => file.source === "search");
+  if (inlineFiles.length === 0) {
+    return;
+  }
+
+  const selectedText = window.getSelection()?.toString() ?? "";
+  const copiedPrompt = selectedText.trim().length > 0 ? selectedText : prompt;
+  const copiedFiles = findInlineFilesReferencedByText(copiedPrompt, inlineFiles);
+  if (copiedFiles.length === 0) {
+    return;
+  }
+
+  event.preventDefault();
+  event.clipboardData.setData("text/plain", copiedPrompt);
+  event.clipboardData.setData(
+    ORCHESTRATOR_PROMPT_CONTEXT_MIME,
+    JSON.stringify({
+      version: 1,
+      prompt: copiedPrompt,
+      files: copiedFiles,
+    }),
+  );
+}
+
+function findInlineFilesReferencedByText(
+  text: string,
+  files: ComposerContextFile[],
+) {
+  const seen = new Set<string>();
+  const referencedFiles: ComposerContextFile[] = [];
+
+  for (const { file, token } of buildInlineFileTokenCandidates(files)) {
+    if (!text.includes(token) || seen.has(file.path)) {
+      continue;
+    }
+
+    seen.add(file.path);
+    referencedFiles.push(file);
+  }
+
+  return referencedFiles;
 }
 
 function findNextInlineFileIndex(

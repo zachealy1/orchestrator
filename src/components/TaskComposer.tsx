@@ -13,7 +13,12 @@ import {
   X,
 } from "lucide-react";
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
-import type { ChangeEvent, DragEvent, KeyboardEvent } from "react";
+import type {
+  ChangeEvent,
+  ClipboardEvent as ReactClipboardEvent,
+  DragEvent,
+  KeyboardEvent,
+} from "react";
 import { ComposerSelect } from "./ComposerSelect";
 import type {
   AccessLevel,
@@ -26,6 +31,7 @@ import type {
   SlashCommandItem,
   SlashCommandSearchStatus,
 } from "../types";
+import { ORCHESTRATOR_PROMPT_CONTEXT_MIME } from "../types";
 import {
   contextFileExtensionLabel,
   hasContextFilePayload,
@@ -91,6 +97,12 @@ type ComposerToken = {
 };
 
 type SlashPanel = "commands" | "reasoning";
+
+type PromptContextClipboardPayload = {
+  version: 1;
+  prompt: string;
+  files: ComposerContextFile[];
+};
 
 export function TaskComposer({
   disabled,
@@ -363,6 +375,59 @@ export function TaskComposer({
     });
   }
 
+  function handlePromptCopy(event: ReactClipboardEvent<HTMLTextAreaElement>) {
+    const textarea = event.currentTarget;
+    const selectionStart = textarea.selectionStart;
+    const selectionEnd = textarea.selectionEnd;
+    if (selectionEnd <= selectionStart || inlineContextFiles.length === 0) {
+      return;
+    }
+
+    const selectedPrompt = prompt.slice(selectionStart, selectionEnd);
+    const selectedFiles = getInlineFilesFullyInsideRange(
+      prompt,
+      inlineContextFiles,
+      selectionStart,
+      selectionEnd,
+    );
+    if (selectedFiles.length === 0) {
+      return;
+    }
+
+    writePromptContextClipboard(event, {
+      version: 1,
+      prompt: selectedPrompt,
+      files: selectedFiles,
+    });
+  }
+
+  function handlePromptPaste(event: ReactClipboardEvent<HTMLTextAreaElement>) {
+    const payload = readPromptContextClipboard(event.clipboardData);
+    if (!payload) {
+      return;
+    }
+
+    event.preventDefault();
+
+    const textarea = event.currentTarget;
+    const selectionStart = textarea.selectionStart;
+    const selectionEnd = textarea.selectionEnd;
+    const pastedPrompt = normalizePromptQuotes(payload.prompt);
+    const nextPrompt = `${prompt.slice(0, selectionStart)}${pastedPrompt}${prompt.slice(selectionEnd)}`;
+    const nextCaret = selectionStart + pastedPrompt.length;
+
+    onPromptChange(nextPrompt);
+    for (const file of payload.files) {
+      onMentionFileSelect(file);
+    }
+    closeActiveSearch();
+
+    window.requestAnimationFrame(() => {
+      promptTextareaRef.current?.focus();
+      promptTextareaRef.current?.setSelectionRange(nextCaret, nextCaret);
+    });
+  }
+
   function selectSlashCommand(item: SlashCommandItem | undefined) {
     if (!item || activeToken?.trigger !== "/") {
       return;
@@ -512,6 +577,8 @@ export function TaskComposer({
               aria-label="Prompt"
               value={prompt}
               onChange={handlePromptChange}
+              onCopy={handlePromptCopy}
+              onPaste={handlePromptPaste}
               onKeyDown={handlePromptKeyDown}
               onBlur={closeActiveSearch}
               autoCapitalize="none"
@@ -762,7 +829,7 @@ function PromptInlineHighlight({
             <span className="inline-context-type">
               {contextFileExtensionLabel(segment.file.name)}
             </span>{" "}
-            <span>{segment.text}</span>
+            <span className="inline-context-name">{segment.text}</span>
           </span>
         ) : (
           <span key={`text-${index}`}>{segment.text}</span>
@@ -1216,6 +1283,19 @@ function getInlineFileTokenRanges(
   return ranges;
 }
 
+function getInlineFilesFullyInsideRange(
+  prompt: string,
+  files: ComposerContextFile[],
+  selectionStart: number,
+  selectionEnd: number,
+) {
+  return dedupeComposerContextFiles(
+    getInlineFileTokenRanges(prompt, files)
+      .filter((range) => range.start >= selectionStart && range.end <= selectionEnd)
+      .map((range) => range.file),
+  );
+}
+
 function deletionTouchesInlineFileRange(
   prompt: string,
   range: { start: number; end: number },
@@ -1299,6 +1379,72 @@ function normalizePromptQuotes(prompt: string) {
   return prompt
     .replace(/[\u201c\u201d]/g, "\"")
     .replace(/[\u2018\u2019]/g, "'");
+}
+
+function writePromptContextClipboard(
+  event: ReactClipboardEvent<HTMLElement>,
+  payload: PromptContextClipboardPayload,
+) {
+  event.preventDefault();
+  event.clipboardData.setData("text/plain", payload.prompt);
+  event.clipboardData.setData(
+    ORCHESTRATOR_PROMPT_CONTEXT_MIME,
+    JSON.stringify(payload),
+  );
+}
+
+function readPromptContextClipboard(
+  clipboardData: Pick<DataTransfer, "getData">,
+): PromptContextClipboardPayload | null {
+  const raw = clipboardData.getData(ORCHESTRATOR_PROMPT_CONTEXT_MIME);
+  if (!raw) {
+    return null;
+  }
+
+  try {
+    const payload = JSON.parse(raw) as Partial<PromptContextClipboardPayload>;
+    if (
+      payload.version !== 1 ||
+      typeof payload.prompt !== "string" ||
+      !Array.isArray(payload.files)
+    ) {
+      return null;
+    }
+
+    const files = payload.files
+      .map(readPromptContextClipboardFile)
+      .filter((file): file is ComposerContextFile => file !== null);
+    if (files.length === 0) {
+      return null;
+    }
+
+    return {
+      version: 1,
+      prompt: payload.prompt,
+      files: dedupeComposerContextFiles(files),
+    };
+  } catch {
+    return null;
+  }
+}
+
+function readPromptContextClipboardFile(value: unknown): ComposerContextFile | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return null;
+  }
+
+  const file = value as Record<string, unknown>;
+  if (typeof file.path !== "string" || typeof file.name !== "string") {
+    return null;
+  }
+
+  return {
+    path: file.path,
+    name: file.name,
+    relativePath: typeof file.relativePath === "string" ? file.relativePath : undefined,
+    source: "search",
+    status: "ready",
+  };
 }
 
 function relativeFileLabel(file: ComposerContextFile) {

@@ -1,6 +1,7 @@
 import { fireEvent, render, screen, within } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import { emptyRunView } from "../lib/codexEventReducer";
+import { ORCHESTRATOR_PROMPT_CONTEXT_MIME } from "../types";
 import { TaskChatTranscript } from "./TaskChatTranscript";
 
 function setElementScrollMetrics(
@@ -404,6 +405,68 @@ describe("TaskChatTranscript", () => {
     fireEvent.click(fileLink);
 
     expect(onOpenFileLink).toHaveBeenCalledWith("/repo/hello-world.txt");
+  });
+
+  it("copies submitted inline file references with context metadata", () => {
+    const clipboardData = {
+      setData: vi.fn(),
+    };
+    render(
+      <TaskChatTranscript
+        entries={[
+          {
+            clientId: "chat-1",
+            workspaceId: 1,
+            chatId: 401,
+            turnIndex: 1,
+            runId: null,
+            taskId: null,
+            prompt: "Delete the TXT hello-world.txt file",
+            contextFiles: [
+              {
+                path: "/repo/hello-world.txt",
+                name: "hello-world.txt",
+                source: "search",
+                status: "ready",
+              },
+            ],
+            submittedAt: "2026-06-30T17:30:00Z",
+            status: "connecting",
+            runView: {
+              ...emptyRunView,
+              status: "connecting",
+              startedAt: "2026-06-30T17:30:00Z",
+            },
+          },
+        ]}
+        onResolveRequest={vi.fn()}
+      />,
+    );
+
+    fireEvent.copy(screen.getByLabelText("Submitted prompt"), { clipboardData });
+
+    expect(clipboardData.setData).toHaveBeenCalledWith(
+      "text/plain",
+      "Delete the TXT hello-world.txt file",
+    );
+    const rawPayload = clipboardData.setData.mock.calls.find(
+      ([type]) => type === ORCHESTRATOR_PROMPT_CONTEXT_MIME,
+    )?.[1];
+    if (typeof rawPayload !== "string") {
+      throw new Error("Missing prompt context clipboard payload");
+    }
+    expect(JSON.parse(rawPayload)).toMatchObject({
+      version: 1,
+      prompt: "Delete the TXT hello-world.txt file",
+      files: [
+        {
+          path: "/repo/hello-world.txt",
+          name: "hello-world.txt",
+          source: "search",
+          status: "ready",
+        },
+      ],
+    });
   });
 
   it("renders completed summaries as markdown and collapses the stream trace", () => {
