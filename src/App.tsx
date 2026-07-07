@@ -5723,11 +5723,12 @@ function WorkspaceContextBanner({
         />
         <div className="workspace-git-action">
           <button
-            className="workspace-header-button primary"
+            className="workspace-header-button icon-only primary"
             type="button"
             onClick={onGitAction}
             disabled={gitAction.disabled || gitActionStatus !== "idle"}
             title={gitAction.disabled ? gitAction.reason : gitAction.label}
+            aria-label={gitAction.label}
             aria-expanded={commitPopoverOpen}
           >
             {gitActionStatus === "committing" || gitActionStatus === "pushing" ? (
@@ -5735,11 +5736,6 @@ function WorkspaceContextBanner({
             ) : (
               <GitCommitHorizontal size={15} />
             )}
-            {gitActionStatus === "committing"
-              ? "Committing"
-              : gitActionStatus === "pushing"
-                ? "Pushing"
-                : gitAction.label}
           </button>
           {commitPopoverOpen ? (
             <div className="commit-popover" role="dialog" aria-label="Commit or push">
