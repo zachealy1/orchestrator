@@ -1073,23 +1073,126 @@ describe("App Codex auth", () => {
       await within(banner).findByRole("button", { name: /commit or push/i }),
     );
 
-    const messageInput = within(banner).getByLabelText(/commit message/i);
+    const dialog = screen.getByRole("dialog", { name: "Commit or push" });
+    expect(document.querySelector(".commit-popover")).toBeNull();
+    expect(dialog.querySelectorAll(".git-action-branch svg")).toHaveLength(1);
+    expect(within(dialog).getByText("Include unstaged changes")).toBeInTheDocument();
+    const messageInput = within(dialog).getByLabelText(/commit message/i);
     expect(messageInput).toHaveValue("");
     expect(messageInput).toHaveAttribute(
       "placeholder",
       "Commit message (leave blank to generate)...",
     );
     await user.type(messageInput, "Update app shell");
-    await user.click(within(banner).getByRole("button", { name: /^commit$/i }));
+    await user.click(within(dialog).getByRole("button", { name: /^commit$/i }));
 
     await waitFor(() =>
       expect(mocks.commitWorkspaceChangesMock).toHaveBeenCalledWith(
         workspace.path,
         "Update app shell",
+        true,
       ),
     );
     await waitFor(() =>
       expect(mocks.listWorkspaceGitStatusMock).toHaveBeenCalledWith(workspace.path),
+    );
+  });
+
+  it("can commit only staged changes when unstaged changes are excluded", async () => {
+    mocks.listWorkspaceGitStatusMock.mockResolvedValue({
+      workspacePath: workspace.path,
+      gitRoot: workspace.path,
+      currentBranch: "main",
+      aheadCount: 0,
+      hasUpstream: true,
+      hasOrigin: true,
+      canPush: true,
+      additions: 8,
+      deletions: 1,
+      files: [
+        {
+          path: "/repo/orchestrator/src/App.tsx",
+          relativePath: "src/App.tsx",
+          oldRelativePath: null,
+          indexStatus: "M",
+          worktreeStatus: "M",
+          statusKind: "modified",
+          badge: "M",
+        },
+      ],
+    });
+
+    const { user } = await renderApp();
+    const banner = screen.getByRole("region", { name: "Selected folder" });
+    await user.click(
+      await within(banner).findByRole("button", { name: /commit or push/i }),
+    );
+
+    const dialog = screen.getByRole("dialog", { name: "Commit or push" });
+    const includeUnstaged = within(dialog).getByRole("checkbox", {
+      name: /include unstaged changes/i,
+    });
+    expect(includeUnstaged).toBeChecked();
+
+    await user.click(includeUnstaged);
+    expect(includeUnstaged).not.toBeChecked();
+    await user.click(within(dialog).getByRole("button", { name: /^commit$/i }));
+
+    await waitFor(() =>
+      expect(mocks.commitWorkspaceChangesMock).toHaveBeenCalledWith(
+        workspace.path,
+        "Update App.tsx",
+        false,
+      ),
+    );
+  });
+
+  it("commits and pushes from the commit or push dialog", async () => {
+    mocks.listWorkspaceGitStatusMock.mockResolvedValue({
+      workspacePath: workspace.path,
+      gitRoot: workspace.path,
+      currentBranch: "main",
+      aheadCount: 0,
+      hasUpstream: true,
+      hasOrigin: true,
+      canPush: true,
+      additions: 10,
+      deletions: 2,
+      files: [
+        {
+          path: "/repo/orchestrator/src/App.tsx",
+          relativePath: "src/App.tsx",
+          oldRelativePath: null,
+          indexStatus: " ",
+          worktreeStatus: "M",
+          statusKind: "modified",
+          badge: "M",
+        },
+      ],
+    });
+
+    const { user } = await renderApp();
+    const banner = screen.getByRole("region", { name: "Selected folder" });
+    await user.click(
+      await within(banner).findByRole("button", { name: /commit or push/i }),
+    );
+
+    const dialog = screen.getByRole("dialog", { name: "Commit or push" });
+    expect(within(dialog).getByText("+10")).toBeInTheDocument();
+    expect(within(dialog).getByText("-2")).toBeInTheDocument();
+    await user.click(
+      within(dialog).getByRole("button", { name: /^commit and push$/i }),
+    );
+
+    await waitFor(() =>
+      expect(mocks.commitWorkspaceChangesMock).toHaveBeenCalledWith(
+        workspace.path,
+        "Update App.tsx",
+        true,
+      ),
+    );
+    await waitFor(() =>
+      expect(mocks.pushWorkspaceBranchMock).toHaveBeenCalledWith(workspace.path),
     );
   });
 
@@ -1110,8 +1213,9 @@ describe("App Codex auth", () => {
     await user.click(
       await within(banner).findByRole("button", { name: /commit or push/i }),
     );
-    expect(within(banner).getByText("2 ahead")).toBeInTheDocument();
-    await user.click(within(banner).getByRole("button", { name: /^push$/i }));
+    const dialog = screen.getByRole("dialog", { name: "Commit or push" });
+    expect(within(dialog).getByText("2 ahead")).toBeInTheDocument();
+    await user.click(within(dialog).getByRole("button", { name: /^push$/i }));
 
     await waitFor(() =>
       expect(mocks.pushWorkspaceBranchMock).toHaveBeenCalledWith(workspace.path),
@@ -1125,10 +1229,25 @@ describe("App Codex auth", () => {
       await within(banner).findByRole("button", { name: /commit or push/i }),
     );
 
-    const menu = within(banner).getByRole("dialog", { name: /commit or push/i });
-    expect(within(menu).getByText("No changes")).toBeInTheDocument();
-    expect(within(menu).getByRole("button", { name: /^commit$/i })).toBeDisabled();
-    expect(within(menu).getByRole("button", { name: /^push$/i })).toBeDisabled();
+    const dialog = screen.getByRole("dialog", { name: "Commit or push" });
+    expect(within(dialog).getByText("No changes")).toBeInTheDocument();
+    expect(within(dialog).getByRole("button", { name: /^commit$/i })).toBeDisabled();
+    expect(within(dialog).getByRole("button", { name: /^push$/i })).toBeDisabled();
+  });
+
+  it("closes the commit or push dialog from the backdrop without running git actions", async () => {
+    const { user } = await renderApp();
+    const banner = screen.getByRole("region", { name: "Selected folder" });
+    await user.click(
+      await within(banner).findByRole("button", { name: /commit or push/i }),
+    );
+
+    const dialog = screen.getByRole("dialog", { name: "Commit or push" });
+    fireEvent.mouseDown(dialog.parentElement as HTMLElement);
+
+    expect(screen.queryByRole("dialog", { name: "Commit or push" })).not.toBeInTheDocument();
+    expect(mocks.commitWorkspaceChangesMock).not.toHaveBeenCalled();
+    expect(mocks.pushWorkspaceBranchMock).not.toHaveBeenCalled();
   });
 
   it("shows live context usage in the selected folder banner", async () => {

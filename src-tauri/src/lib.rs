@@ -1,7 +1,7 @@
 use serde::Serialize;
 use serde_json::{json, Value};
 use std::{
-    collections::HashMap,
+    collections::{HashMap, HashSet},
     env,
     ffi::OsStr,
     fs,
@@ -1024,11 +1024,13 @@ fn checkout_git_branch(path: String, branch: String) -> Result<GitCheckoutResult
 fn commit_workspace_changes(
     workspace_path: String,
     message: String,
+    include_unstaged: Option<bool>,
 ) -> Result<WorkspaceGitActionResult, String> {
     let trimmed_message = message.trim();
     if trimmed_message.is_empty() {
         return Err("Enter a commit message before committing".to_string());
     }
+    let include_unstaged = include_unstaged.unwrap_or(true);
 
     let workspace = canonical_workspace(&workspace_path)?;
     let git_root = resolve_git_root(&workspace)?;
@@ -1044,27 +1046,59 @@ fn commit_workspace_changes(
     }
 
     let root_arg = git_root.to_string_lossy();
-    let add_probe = run_command(
-        "git",
-        &["-C", root_arg.as_ref(), "add", "-A", "--", &pathspec],
-    );
-    if !add_probe.ok {
-        return Err(output_detail(&add_probe)
-            .unwrap_or_else(|| "Unable to stage workspace changes".to_string()));
+    if include_unstaged {
+        let add_probe = run_command(
+            "git",
+            &["-C", root_arg.as_ref(), "add", "-A", "--", &pathspec],
+        );
+        if !add_probe.ok {
+            return Err(output_detail(&add_probe)
+                .unwrap_or_else(|| "Unable to stage workspace changes".to_string()));
+        }
     }
 
-    let commit_probe = run_command(
-        "git",
-        &[
-            "-C",
-            root_arg.as_ref(),
-            "commit",
-            "-m",
-            trimmed_message,
-            "--",
-            &pathspec,
-        ],
-    );
+    let staged_inside_workspace = git_staged_paths(&git_root, Some(&pathspec))?;
+    if staged_inside_workspace.is_empty() {
+        return Err(if include_unstaged {
+            "No workspace changes to commit".to_string()
+        } else {
+            "No staged workspace changes to commit".to_string()
+        });
+    }
+
+    let commit_probe = if include_unstaged {
+        run_command(
+            "git",
+            &[
+                "-C",
+                root_arg.as_ref(),
+                "commit",
+                "-m",
+                trimmed_message,
+                "--",
+                &pathspec,
+            ],
+        )
+    } else {
+        let inside_paths: HashSet<&str> = staged_inside_workspace
+            .iter()
+            .map(String::as_str)
+            .collect();
+        let staged_outside_workspace = git_staged_paths(&git_root, None)?
+            .into_iter()
+            .any(|path| !inside_paths.contains(path.as_str()));
+        if staged_outside_workspace {
+            return Err(
+                "Staged changes outside the selected workspace must be committed separately"
+                    .to_string(),
+            );
+        }
+
+        run_command(
+            "git",
+            &["-C", root_arg.as_ref(), "commit", "-m", trimmed_message],
+        )
+    };
     if !commit_probe.ok {
         return Err(output_detail(&commit_probe)
             .unwrap_or_else(|| "Unable to commit workspace changes".to_string()));
@@ -1075,6 +1109,34 @@ fn commit_workspace_changes(
             .unwrap_or_else(|| "Committed workspace changes".to_string()),
         branch: current_git_branch(&git_root),
     })
+}
+
+fn git_staged_paths(git_root: &Path, pathspec: Option<&str>) -> Result<Vec<String>, String> {
+    let git_root_arg = git_root.to_string_lossy();
+    let mut args = vec![
+        "-C",
+        git_root_arg.as_ref(),
+        "diff",
+        "--cached",
+        "--name-only",
+        "-z",
+    ];
+    if let Some(pathspec) = pathspec {
+        args.extend(["--", pathspec]);
+    }
+
+    let probe = run_command_raw("git", &args);
+    if !probe.ok {
+        return Err(output_detail(&probe)
+            .unwrap_or_else(|| "Unable to inspect staged Git changes".to_string()));
+    }
+
+    Ok(probe
+        .stdout
+        .split('\0')
+        .filter(|path| !path.is_empty())
+        .map(str::to_string)
+        .collect())
 }
 
 #[tauri::command]
@@ -2962,6 +3024,7 @@ mod tests {
         let result = commit_workspace_changes(
             workspace.to_string_lossy().to_string(),
             "   ".to_string(),
+            Some(true),
         );
 
         assert!(result.unwrap_err().contains("commit message"));
@@ -2975,6 +3038,7 @@ mod tests {
         let result = commit_workspace_changes(
             workspace.to_string_lossy().to_string(),
             "Update workspace".to_string(),
+            Some(true),
         );
 
         assert!(result.unwrap_err().contains("No workspace changes"));
@@ -2989,6 +3053,7 @@ mod tests {
         let result = commit_workspace_changes(
             workspace.to_string_lossy().to_string(),
             "Add app source".to_string(),
+            Some(true),
         )
         .unwrap();
 
@@ -3009,6 +3074,60 @@ mod tests {
         assert!(status.status.success());
         assert!(String::from_utf8_lossy(&status.stdout).trim().is_empty());
         assert_eq!(String::from_utf8_lossy(&log.stdout).trim(), "Add app source");
+        remove_test_directory(workspace);
+    }
+
+    #[test]
+    fn commit_workspace_changes_can_commit_only_staged_changes() {
+        let workspace = git_test_directory("git-commit-staged-only");
+        let app_file = workspace.join("app.ts");
+        fs::write(&app_file, "export const value = 1;\n").unwrap();
+        git(&workspace, &["add", "app.ts"]);
+        git(&workspace, &["commit", "-m", "initial"]);
+        fs::write(&app_file, "export const value = 2;\n").unwrap();
+        git(&workspace, &["add", "app.ts"]);
+        fs::write(&app_file, "export const value = 3;\n").unwrap();
+
+        let result = commit_workspace_changes(
+            workspace.to_string_lossy().to_string(),
+            "Add staged app source".to_string(),
+            Some(false),
+        )
+        .unwrap();
+
+        let status = Command::new("git")
+            .arg("-C")
+            .arg(&workspace)
+            .args(["status", "--porcelain"])
+            .output()
+            .expect("read git status");
+        let committed_app = Command::new("git")
+            .arg("-C")
+            .arg(&workspace)
+            .args(["show", "HEAD:app.ts"])
+            .output()
+            .expect("read committed app source");
+        let log = Command::new("git")
+            .arg("-C")
+            .arg(&workspace)
+            .args(["log", "-1", "--pretty=%s"])
+            .output()
+            .expect("read git log");
+
+        assert_eq!(result.branch.as_deref(), current_git_branch(&workspace).as_deref());
+        assert!(String::from_utf8_lossy(&status.stdout).contains(" M app.ts"));
+        assert_eq!(
+            String::from_utf8_lossy(&committed_app.stdout),
+            "export const value = 2;\n"
+        );
+        assert_eq!(
+            fs::read_to_string(app_file).unwrap(),
+            "export const value = 3;\n"
+        );
+        assert_eq!(
+            String::from_utf8_lossy(&log.stdout).trim(),
+            "Add staged app source"
+        );
         remove_test_directory(workspace);
     }
 

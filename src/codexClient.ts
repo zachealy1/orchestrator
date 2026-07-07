@@ -50,10 +50,15 @@ export function checkoutGitBranch(path: string, branch: string) {
   return invoke<{ branch: string }>("checkout_git_branch", { path, branch });
 }
 
-export function commitWorkspaceChanges(workspacePath: string, message: string) {
+export function commitWorkspaceChanges(
+  workspacePath: string,
+  message: string,
+  includeUnstaged: boolean,
+) {
   return invoke<WorkspaceGitActionResult>("commit_workspace_changes", {
     workspacePath,
     message,
+    includeUnstaged,
   });
 }
 
