@@ -242,7 +242,7 @@ function SubmittedPrompt({
           >
             <span className="submitted-inline-file-type" aria-hidden="true">
               {contextFileExtensionLabel(segment.file.name)}
-            </span>
+            </span>{" "}
             <span className="submitted-inline-file-name">{segment.file.name}</span>
           </a>
         );

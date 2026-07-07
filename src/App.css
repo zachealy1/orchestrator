@@ -1700,11 +1700,13 @@ button.submitted-prompt-edit-button:focus-visible {
   opacity: 0.45;
 }
 
-.submitted-inline-file {
-  display: inline-flex;
-  align-items: baseline;
-  gap: 4px;
+.submitted-inline-file,
+.inline-context-mention {
   color: var(--color-primary);
+}
+
+.submitted-inline-file {
+  display: inline;
   cursor: pointer;
   text-decoration: none;
   white-space: nowrap;
@@ -1718,18 +1720,14 @@ button.submitted-prompt-edit-button:focus-visible {
   text-underline-offset: 3px;
 }
 
-.submitted-inline-file-type {
-  display: inline-flex;
-  align-items: center;
+.submitted-inline-file-type,
+.inline-context-type {
+  display: inline;
   border-radius: 4px;
   background: var(--color-button-active);
+  box-shadow: 0 0 0 2px var(--color-button-active);
   color: var(--color-button-active-text);
-  font-size: 0.68em;
-  font-weight: 700;
-  line-height: 1.35;
-  padding: 0 4px;
   text-transform: uppercase;
-  transform: translateY(-0.08em);
 }
 
 .submitted-inline-file-name {
@@ -2939,19 +2937,6 @@ select:disabled {
   pointer-events: none;
   white-space: pre-wrap;
   word-break: break-word;
-}
-
-.inline-context-mention {
-  color: var(--color-primary);
-}
-
-.inline-context-type {
-  display: inline;
-  border-radius: 4px;
-  background: var(--color-button-active);
-  box-shadow: 0 0 0 2px var(--color-button-active);
-  color: var(--color-button-active-text);
-  text-transform: uppercase;
 }
 
 .prompt-field textarea:focus {
