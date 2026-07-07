@@ -1140,16 +1140,6 @@ fn generate_workspace_commit_message(
 
     let codex_binary = resolve_codex_binary()?;
     let codex_home = ensure_codex_home(&app, account_id)?;
-    let prompt = format!(
-        "Generate one concise Git commit subject line for these changes.\n\
-         Rules:\n\
-         - Return only the commit subject, no markdown, no quotes, no explanation.\n\
-         - Use imperative mood.\n\
-         - Be specific about the behavior or UI changed.\n\
-         - Do not append change-count summaries like (5 modified).\n\
-         - Keep it under 72 characters.\n\n\
-         Git context:\n{context}"
-    );
     let mut args = vec![
         "exec".to_string(),
         "--ephemeral".to_string(),
@@ -1170,6 +1160,7 @@ fn generate_workspace_commit_message(
     }
     args.push("-".to_string());
 
+    let prompt = commit_message_generation_prompt(&context, None);
     let output = run_command_with_stdin_timeout(
         &codex_binary,
         &args,
@@ -1182,12 +1173,71 @@ fn generate_workspace_commit_message(
             .unwrap_or_else(|| "Codex could not generate a commit message".to_string()));
     }
 
-    let message = sanitize_commit_subject(&output.stdout)
+    let first_message = sanitize_commit_subject(&output.stdout)
         .ok_or_else(|| "Codex returned an empty commit message".to_string())?;
+    let message = if is_generic_commit_subject(&first_message) {
+        let retry_prompt = commit_message_generation_prompt(&context, Some(&first_message));
+        let retry_output = run_command_with_stdin_timeout(
+            &codex_binary,
+            &args,
+            &retry_prompt,
+            Some(("CODEX_HOME", codex_home.as_os_str())),
+            Duration::from_secs(30),
+        )?;
+        if retry_output.ok {
+            sanitize_commit_subject(&retry_output.stdout)
+                .filter(|subject| !is_generic_commit_subject(subject))
+                .ok_or_else(|| {
+                    format!("Codex returned a generic commit message: {first_message}")
+                })?
+        } else {
+            return Err(output_detail(&retry_output).unwrap_or_else(|| {
+                format!("Codex returned a generic commit message: {first_message}")
+            }));
+        }
+    } else {
+        first_message
+    };
+
     Ok(WorkspaceCommitMessageResult {
         message,
         source: "codex".to_string(),
     })
+}
+
+fn commit_message_generation_prompt(context: &str, rejected_subject: Option<&str>) -> String {
+    let retry_guidance = rejected_subject
+        .map(|subject| {
+            format!(
+                "\nThe previous subject `{subject}` was rejected because it only names a broad area. \
+                 Generate a more specific subject that names the exact behavior, UI, or logic changed.\n"
+            )
+        })
+        .unwrap_or_default();
+
+    format!(
+        "Generate one concise Git commit subject line for these changes.\n\
+         Rules:\n\
+         - Return only the commit subject, no markdown, no quotes, no explanation.\n\
+         - Use imperative mood.\n\
+         - Be specific about the behavior, UI, or logic changed.\n\
+         - Do not use generic area-only subjects like `Update desktop app workflow`, `Update React app`, `Update app styling`, or `Update Tauri backend`.\n\
+         - Do not append change-count summaries like (5 modified).\n\
+         - Keep it under 72 characters when possible.\n\
+         Good examples:\n\
+         - Fix inline context file label spacing\n\
+         - Refine transcript auto-scroll behavior\n\
+         - Simplify submitted prompt edit focus styles\n\
+         - Tighten task chat transcript editing layout\n\
+         - Make staged-only commits respect the checkbox\n\
+         Bad examples:\n\
+         - Update desktop app workflow\n\
+         - Update React app\n\
+         - Update app styling\n\
+         - Update files\n\
+         {retry_guidance}\n\
+         Git context:\n{context}"
+    )
 }
 
 fn git_staged_paths(git_root: &Path, pathspec: Option<&str>) -> Result<Vec<String>, String> {
@@ -1336,6 +1386,49 @@ fn sanitize_commit_subject(output: &str) -> Option<String> {
         subject = subject.trim_end().to_string();
     }
     (!subject.is_empty()).then_some(subject)
+}
+
+fn is_generic_commit_subject(subject: &str) -> bool {
+    let normalized = subject
+        .trim()
+        .trim_end_matches('.')
+        .to_ascii_lowercase()
+        .replace('-', " ");
+    let words: Vec<&str> = normalized.split_whitespace().collect();
+    let generic_exact = [
+        "update desktop app workflow",
+        "update desktop app integration",
+        "update react app",
+        "update app styling",
+        "update tauri backend",
+        "update tests",
+        "update workspace",
+        "update files",
+        "update code",
+        "refine desktop app workflow",
+        "refine desktop app integration",
+    ];
+    if generic_exact.contains(&normalized.as_str()) {
+        return true;
+    }
+    words.len() <= 4
+        && words
+            .first()
+            .is_some_and(|verb| ["update", "refine", "improve"].contains(verb))
+        && words.iter().any(|word| {
+            [
+                "app",
+                "workflow",
+                "integration",
+                "workspace",
+                "backend",
+                "frontend",
+                "styling",
+                "files",
+                "code",
+            ]
+            .contains(word)
+        })
 }
 
 fn strip_commit_count_suffix(subject: &str) -> String {
@@ -3450,6 +3543,35 @@ mod tests {
             Some("Update app workflow")
         );
         assert_eq!(sanitize_commit_subject("   ").as_deref(), None);
+    }
+
+    #[test]
+    fn generic_commit_subject_detection_rejects_area_only_messages() {
+        assert!(is_generic_commit_subject("Update desktop app workflow"));
+        assert!(is_generic_commit_subject("Update React app"));
+        assert!(is_generic_commit_subject("Improve app styling"));
+        assert!(is_generic_commit_subject("Refine desktop app integration"));
+        assert!(!is_generic_commit_subject(
+            "Fix inline context file label spacing"
+        ));
+        assert!(!is_generic_commit_subject(
+            "Refine transcript auto-scroll behavior"
+        ));
+        assert!(!is_generic_commit_subject(
+            "Make staged-only commits respect the checkbox"
+        ));
+    }
+
+    #[test]
+    fn commit_message_prompt_names_rejected_generic_subject() {
+        let prompt = commit_message_generation_prompt(
+            "M src/App.tsx\nM src-tauri/src/lib.rs",
+            Some("Update desktop app workflow"),
+        );
+
+        assert!(prompt.contains("Update desktop app workflow"));
+        assert!(prompt.contains("names the exact behavior"));
+        assert!(prompt.contains("Fix inline context file label spacing"));
     }
 
     #[test]

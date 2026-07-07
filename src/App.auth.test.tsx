@@ -1165,8 +1165,8 @@ describe("App Codex auth", () => {
       deletions: 5,
       files: [
         {
-          path: "/repo/orchestrator/src/App.tsx",
-          relativePath: "src/App.tsx",
+          path: "/repo/orchestrator/src/components/TaskChatTranscript.tsx",
+          relativePath: "src/components/TaskChatTranscript.tsx",
           oldRelativePath: null,
           indexStatus: " ",
           worktreeStatus: "M",
@@ -1174,8 +1174,8 @@ describe("App Codex auth", () => {
           badge: "M",
         },
         {
-          path: "/repo/orchestrator/src/db.ts",
-          relativePath: "src/db.ts",
+          path: "/repo/orchestrator/src/components/TaskChatTranscript.test.tsx",
+          relativePath: "src/components/TaskChatTranscript.test.tsx",
           oldRelativePath: null,
           indexStatus: " ",
           worktreeStatus: "A",
@@ -1183,8 +1183,8 @@ describe("App Codex auth", () => {
           badge: "A",
         },
         {
-          path: "/repo/orchestrator/src/old.ts",
-          relativePath: "src/old.ts",
+          path: "/repo/orchestrator/src/components/taskChatFormatting.ts",
+          relativePath: "src/components/taskChatFormatting.ts",
           oldRelativePath: null,
           indexStatus: " ",
           worktreeStatus: "D",
@@ -1206,9 +1206,14 @@ describe("App Codex auth", () => {
     await waitFor(() =>
       expect(mocks.commitWorkspaceChangesMock).toHaveBeenCalledWith(
         workspace.path,
-        "Update React app",
+        "Refine task chat transcript layout",
         true,
       ),
+    );
+    expect(mocks.commitWorkspaceChangesMock).not.toHaveBeenCalledWith(
+      workspace.path,
+      expect.stringContaining("("),
+      true,
     );
   });
 

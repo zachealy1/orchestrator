@@ -6672,7 +6672,7 @@ function generateCommitMessage(
   }
 
   return summary.total > 0
-    ? `Update ${inferCommitMessageArea(workspace, files)}`
+    ? inferCommitMessageSubject(files)
     : `Update ${workspace.label}`;
 }
 
@@ -6685,17 +6685,55 @@ function cleanGeneratedCommitSubject(subject: string) {
     .trim();
 }
 
-function inferCommitMessageArea(workspace: Workspace, files: WorkspaceGitFileStatus[]) {
+function inferCommitMessageSubject(files: WorkspaceGitFileStatus[]) {
+  const topic = inferCommitMessageTopic(files);
+  if (files.every((file) => file.statusKind === "added" || file.statusKind === "untracked")) {
+    return `Add ${topic}`;
+  }
+  if (files.every((file) => file.statusKind === "deleted")) {
+    return `Remove ${topic}`;
+  }
+  if (files.every((file) => file.statusKind === "renamed")) {
+    return `Rename ${topic}`;
+  }
+  if (files.every((file) => /\.test\.[tj]sx?$/.test(file.relativePath))) {
+    return `Update ${topic}`;
+  }
+  return `Refine ${topic}`;
+}
+
+function inferCommitMessageTopic(files: WorkspaceGitFileStatus[]) {
   const paths = files.map((file) => file.relativePath);
+  const normalizedPaths = paths.map((path) => path.toLowerCase());
+  const hasPath = (pattern: string) =>
+    normalizedPaths.some((path) => path.includes(pattern));
   const touchesFrontend = paths.some((path) => path.startsWith("src/"));
   const touchesTauri = paths.some((path) => path.startsWith("src-tauri/"));
   const touchesTests = paths.every((path) => /\.test\.[tj]sx?$/.test(path));
 
+  if (touchesTauri && (hasPath("codexclient") || hasPath("app.auth.test"))) {
+    return "commit message generation";
+  }
+  if (hasPath("taskchattranscript")) {
+    return "task chat transcript layout";
+  }
+  if (hasPath("taskcomposer")) {
+    return "chat composer behavior";
+  }
+  if (hasPath("filepreview") || hasPath("codepreview") || hasPath("diffpreview")) {
+    return "file preview behavior";
+  }
+  if (hasPath("workspacehistory")) {
+    return "workspace history drawer";
+  }
+  if (hasPath("codexeventreducer")) {
+    return "Codex event reducer";
+  }
   if (touchesTests) {
     return "tests";
   }
   if (touchesFrontend && touchesTauri) {
-    return "desktop app workflow";
+    return "desktop app integration";
   }
   if (paths.some((path) => path.endsWith(".css"))) {
     return "app styling";
@@ -6710,7 +6748,19 @@ function inferCommitMessageArea(workspace: Workspace, files: WorkspaceGitFileSta
     return "Tauri backend";
   }
 
-  return workspace.label;
+  const firstPath = paths[0];
+  return firstPath ? humanizePathTopic(firstPath) : "workspace changes";
+}
+
+function humanizePathTopic(path: string) {
+  const fileName = basename(path).replace(/\.[^.]+$/, "");
+  const spaced = fileName
+    .replace(/\.test$/, "")
+    .replace(/([a-z0-9])([A-Z])/g, "$1 $2")
+    .replace(/[-_]+/g, " ")
+    .trim()
+    .toLowerCase();
+  return spaced || "workspace changes";
 }
 
 function getCodexModelContextWindow(model: CodexModel | null) {
