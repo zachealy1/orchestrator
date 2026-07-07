@@ -13,13 +13,14 @@ use std::{
         mpsc::{channel, Sender},
         Arc, Mutex,
     },
-    time::Duration,
+    time::{Duration, Instant},
 };
 use tauri::{AppHandle, Emitter, Manager, State};
 use tauri_plugin_sql::{Migration, MigrationKind};
 
 const DATABASE_URL: &str = "sqlite:app.db";
 const MAX_FILE_PREVIEW_BYTES: usize = 512 * 1024;
+const MAX_COMMIT_MESSAGE_CONTEXT_CHARS: usize = 24_000;
 const IGNORED_EXPLORER_DIRECTORIES: &[&str] =
     &[".git", "node_modules", "target", "dist", "build", ".next"];
 
@@ -144,6 +145,13 @@ struct GitCheckoutResult {
 struct WorkspaceGitActionResult {
     message: String,
     branch: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct WorkspaceCommitMessageResult {
+    message: String,
+    source: String,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -1111,6 +1119,76 @@ fn commit_workspace_changes(
     })
 }
 
+#[tauri::command]
+fn generate_workspace_commit_message(
+    app: AppHandle,
+    workspace_path: String,
+    account_id: Option<i64>,
+    include_unstaged: Option<bool>,
+    model: Option<String>,
+) -> Result<WorkspaceCommitMessageResult, String> {
+    let account_id = account_id.ok_or_else(|| "Sign in to generate a commit message".to_string())?;
+    validate_account_id(account_id)?;
+    let workspace = canonical_workspace(&workspace_path)?;
+    let git_root = resolve_git_root(&workspace)?;
+    let pathspec = workspace_git_pathspec(&git_root, &workspace)?;
+    let include_unstaged = include_unstaged.unwrap_or(true);
+    let context = workspace_commit_context(&git_root, &pathspec, include_unstaged)?;
+    if context.trim().is_empty() {
+        return Err("No Git changes were found for commit message generation".to_string());
+    }
+
+    let codex_binary = resolve_codex_binary()?;
+    let codex_home = ensure_codex_home(&app, account_id)?;
+    let prompt = format!(
+        "Generate one concise Git commit subject line for these changes.\n\
+         Rules:\n\
+         - Return only the commit subject, no markdown, no quotes, no explanation.\n\
+         - Use imperative mood.\n\
+         - Be specific about the behavior or UI changed.\n\
+         - Keep it under 72 characters.\n\n\
+         Git context:\n{context}"
+    );
+    let mut args = vec![
+        "exec".to_string(),
+        "--ephemeral".to_string(),
+        "--ignore-rules".to_string(),
+        "--skip-git-repo-check".to_string(),
+        "-s".to_string(),
+        "read-only".to_string(),
+        "-a".to_string(),
+        "never".to_string(),
+        "-C".to_string(),
+        workspace.to_string_lossy().to_string(),
+        "-c".to_string(),
+        "cli_auth_credentials_store=\"file\"".to_string(),
+    ];
+    if let Some(model) = model.as_deref().map(str::trim).filter(|value| !value.is_empty()) {
+        args.push("-m".to_string());
+        args.push(model.to_string());
+    }
+    args.push("-".to_string());
+
+    let output = run_command_with_stdin_timeout(
+        &codex_binary,
+        &args,
+        &prompt,
+        Some(("CODEX_HOME", codex_home.as_os_str())),
+        Duration::from_secs(30),
+    )?;
+    if !output.ok {
+        return Err(output_detail(&output)
+            .unwrap_or_else(|| "Codex could not generate a commit message".to_string()));
+    }
+
+    let message = sanitize_commit_subject(&output.stdout)
+        .ok_or_else(|| "Codex returned an empty commit message".to_string())?;
+    Ok(WorkspaceCommitMessageResult {
+        message,
+        source: "codex".to_string(),
+    })
+}
+
 fn git_staged_paths(git_root: &Path, pathspec: Option<&str>) -> Result<Vec<String>, String> {
     let git_root_arg = git_root.to_string_lossy();
     let mut args = vec![
@@ -1137,6 +1215,125 @@ fn git_staged_paths(git_root: &Path, pathspec: Option<&str>) -> Result<Vec<Strin
         .filter(|path| !path.is_empty())
         .map(str::to_string)
         .collect())
+}
+
+fn workspace_commit_context(
+    git_root: &Path,
+    pathspec: &str,
+    include_unstaged: bool,
+) -> Result<String, String> {
+    let mut sections = Vec::new();
+    sections.push((
+        "Status",
+        git_context_output(
+            git_root,
+            &["status", "--short", "--untracked-files=normal", "--", pathspec],
+        )?,
+    ));
+    sections.push((
+        "Staged diffstat",
+        git_context_output(git_root, &["diff", "--cached", "--stat", "--", pathspec])?,
+    ));
+    sections.push((
+        "Staged diff",
+        git_context_output(
+            git_root,
+            &[
+                "diff",
+                "--cached",
+                "--find-renames",
+                "--find-copies",
+                "--unified=3",
+                "--",
+                pathspec,
+            ],
+        )?,
+    ));
+
+    if include_unstaged {
+        sections.push((
+            "Working tree diffstat",
+            git_context_output(git_root, &["diff", "--stat", "--", pathspec])?,
+        ));
+        sections.push((
+            "Working tree diff",
+            git_context_output(
+                git_root,
+                &[
+                    "diff",
+                    "--find-renames",
+                    "--find-copies",
+                    "--unified=3",
+                    "--",
+                    pathspec,
+                ],
+            )?,
+        ));
+    }
+
+    let mut context = String::new();
+    for (title, body) in sections {
+        if body.trim().is_empty() {
+            continue;
+        }
+        context.push_str("## ");
+        context.push_str(title);
+        context.push('\n');
+        context.push_str(body.trim());
+        context.push_str("\n\n");
+        if context.len() >= MAX_COMMIT_MESSAGE_CONTEXT_CHARS {
+            context.truncate(MAX_COMMIT_MESSAGE_CONTEXT_CHARS);
+            context.push_str("\n[Commit context truncated]\n");
+            break;
+        }
+    }
+
+    Ok(context)
+}
+
+fn git_context_output(git_root: &Path, git_args: &[&str]) -> Result<String, String> {
+    let git_root_arg = git_root.to_string_lossy();
+    let mut args = vec!["-C", git_root_arg.as_ref()];
+    args.extend(git_args.iter().copied());
+    let probe = run_command_raw("git", &args);
+    if probe.ok {
+        Ok(probe.stdout)
+    } else {
+        Err(output_detail(&probe)
+            .unwrap_or_else(|| "Unable to inspect Git changes for commit message".to_string()))
+    }
+}
+
+fn sanitize_commit_subject(output: &str) -> Option<String> {
+    let line = output
+        .lines()
+        .rev()
+        .map(str::trim)
+        .find(|line| !line.is_empty())?;
+    let mut subject = line
+        .trim_start_matches(|ch: char| ch == '-' || ch == '*' || ch.is_ascii_digit() || ch == '.')
+        .trim()
+        .trim_matches('"')
+        .trim_matches('\'')
+        .trim_matches('`')
+        .trim()
+        .to_string();
+    for prefix in ["Commit message:", "commit message:", "Subject:", "subject:"] {
+        if let Some(rest) = subject.strip_prefix(prefix) {
+            subject = rest.trim().to_string();
+        }
+    }
+    subject = subject
+        .trim_matches('"')
+        .trim_matches('\'')
+        .trim_matches('`')
+        .trim()
+        .to_string();
+    if subject.len() > 100 {
+        subject.truncate(100);
+        subject = subject.trim_end().to_string();
+    }
+    (!subject.is_empty()).then_some(subject)
 }
 
 #[tauri::command]
@@ -1750,6 +1947,69 @@ fn run_command_raw(program: impl AsRef<OsStr>, args: &[&str]) -> CommandProbe {
             stdout: String::new(),
             stderr: err.to_string(),
         },
+    }
+}
+
+fn run_command_with_stdin_timeout(
+    program: impl AsRef<OsStr>,
+    args: &[String],
+    stdin_text: &str,
+    env_var: Option<(&str, &OsStr)>,
+    timeout: Duration,
+) -> Result<CommandProbe, String> {
+    let mut command = Command::new(program);
+    command
+        .args(args)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    if let Some((key, value)) = env_var {
+        command.env(key, value);
+    }
+
+    let mut child = command
+        .spawn()
+        .map_err(|error| format!("Failed to start Codex commit message generation: {error}"))?;
+    if let Some(mut stdin) = child.stdin.take() {
+        stdin
+            .write_all(stdin_text.as_bytes())
+            .map_err(|error| format!("Failed to send commit context to Codex: {error}"))?;
+    }
+
+    let started_at = Instant::now();
+    loop {
+        if let Some(_) = child
+            .try_wait()
+            .map_err(|error| format!("Failed to inspect Codex generation process: {error}"))?
+        {
+            let output = child
+                .wait_with_output()
+                .map_err(|error| format!("Failed to read Codex generation output: {error}"))?;
+            return Ok(CommandProbe {
+                ok: output.status.success(),
+                stdout: String::from_utf8_lossy(&output.stdout).trim().to_string(),
+                stderr: String::from_utf8_lossy(&output.stderr).trim().to_string(),
+            });
+        }
+
+        if started_at.elapsed() >= timeout {
+            let _ = child.kill();
+            let output = child
+                .wait_with_output()
+                .map_err(|error| format!("Failed to stop Codex generation process: {error}"))?;
+            let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+            return Ok(CommandProbe {
+                ok: false,
+                stdout: String::from_utf8_lossy(&output.stdout).trim().to_string(),
+                stderr: if stderr.is_empty() {
+                    "Timed out generating commit message".to_string()
+                } else {
+                    format!("Timed out generating commit message: {stderr}")
+                },
+            });
+        }
+
+        std::thread::sleep(Duration::from_millis(100));
     }
 }
 
@@ -2481,6 +2741,7 @@ pub fn run() {
             list_git_branches,
             checkout_git_branch,
             commit_workspace_changes,
+            generate_workspace_commit_message,
             push_workspace_branch,
             list_workspace_git_status,
             read_workspace_git_diff,
@@ -3129,6 +3390,16 @@ mod tests {
             "Add staged app source"
         );
         remove_test_directory(workspace);
+    }
+
+    #[test]
+    fn sanitize_commit_subject_returns_single_clean_line() {
+        assert_eq!(
+            sanitize_commit_subject("thinking...\nCommit message: `Improve commit dialog controls`\n")
+                .as_deref(),
+            Some("Improve commit dialog controls")
+        );
+        assert_eq!(sanitize_commit_subject("   ").as_deref(), None);
     }
 
     #[test]

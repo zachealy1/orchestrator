@@ -73,6 +73,7 @@ import {
   connectCodex,
   checkoutGitBranch,
   deleteCodexProfile,
+  generateWorkspaceCommitMessage,
   listGitBranches,
   listCodexModels,
   listCodexSkills,
@@ -681,7 +682,7 @@ function App() {
   const [commitMessage, setCommitMessage] = useState("");
   const [includeUnstagedChanges, setIncludeUnstagedChanges] = useState(true);
   const [gitActionStatus, setGitActionStatus] = useState<
-    "idle" | "committing" | "pushing"
+    "idle" | "generating" | "committing" | "pushing"
   >("idle");
   const [statusMessage, setStatusMessage] = useState("Choose a workspace to begin.");
   const [codexAccount, setCodexAccount] = useState<CodexAccount | null>(null);
@@ -3126,14 +3127,56 @@ function App() {
     }
   }
 
+  async function resolveCommitMessage() {
+    if (!selectedWorkspace) {
+      return "";
+    }
+
+    const fallback = generateCommitMessage(
+      selectedWorkspace,
+      selectedGitFiles,
+      selectedGitSummary,
+    );
+    if (!selectedAccountId) {
+      return fallback;
+    }
+
+    setGitActionStatus("generating");
+    setStatusMessage("Generating commit message...");
+    try {
+      const result = await generateWorkspaceCommitMessage({
+        workspacePath: selectedWorkspace.path,
+        accountId: selectedAccountId,
+        includeUnstaged: includeUnstagedChanges,
+        model: selectedModel?.model ?? selectedModel?.id ?? null,
+      });
+      const generated = result.message.trim();
+      if (generated) {
+        setCommitMessage(generated);
+        return generated;
+      }
+    } catch (error) {
+      setStatusMessage(
+        `Could not generate an AI commit message, using a local summary: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+      );
+    }
+
+    return fallback;
+  }
+
   async function handleCommitAll(options: { pushAfter?: boolean } = {}) {
     if (!selectedWorkspace || !canCommitFromDialog || gitActionStatus !== "idle") {
       return;
     }
 
-    const message =
-      commitMessage.trim() ||
-      generateCommitMessage(selectedWorkspace, selectedGitFiles, selectedGitSummary);
+    const message = commitMessage.trim() || (await resolveCommitMessage());
+    if (!message.trim()) {
+      setStatusMessage("Commit failed: no commit message was available.");
+      setGitActionStatus("idle");
+      return;
+    }
 
     setGitActionStatus("committing");
     setStatusMessage("Committing workspace changes...");
@@ -5439,10 +5482,12 @@ function App() {
                 <span>
                   {gitActionStatus === "committing" ? (
                     <Loader2 className="spin" size={16} aria-hidden="true" />
+                  ) : gitActionStatus === "generating" ? (
+                    <Loader2 className="spin" size={16} aria-hidden="true" />
                   ) : (
                     <GitCommitHorizontal size={16} aria-hidden="true" />
                   )}
-                  Commit
+                  {gitActionStatus === "generating" ? "Generating" : "Commit"}
                 </span>
                 <kbd>Cmd Return</kbd>
               </button>
@@ -5967,7 +6012,7 @@ function WorkspaceContextBanner({
   gitState: WorkspaceGitStatusState | null;
   gitSummary: WorkspaceGitSummary;
   gitAction: HeaderGitAction;
-  gitActionStatus: "idle" | "committing" | "pushing";
+  gitActionStatus: "idle" | "generating" | "committing" | "pushing";
   commitDialogOpen: boolean;
   contextUsage: RunViewState["tokenUsage"];
   contextWindow: number;
@@ -6078,7 +6123,9 @@ function WorkspaceContextBanner({
             aria-label={gitAction.label}
             aria-expanded={commitDialogOpen}
           >
-            {gitActionStatus === "committing" || gitActionStatus === "pushing" ? (
+            {gitActionStatus === "generating" ||
+            gitActionStatus === "committing" ||
+            gitActionStatus === "pushing" ? (
               <Loader2 className="spin" size={15} />
             ) : (
               <GitCommitHorizontal size={15} />
@@ -6632,8 +6679,36 @@ function generateCommitMessage(
   ].filter(Boolean);
 
   return pieces.length > 0
-    ? `Update ${workspace.label} (${pieces.join(", ")})`
+    ? `Update ${inferCommitMessageArea(workspace, files)} (${pieces.join(", ")})`
     : `Update ${workspace.label}`;
+}
+
+function inferCommitMessageArea(workspace: Workspace, files: WorkspaceGitFileStatus[]) {
+  const paths = files.map((file) => file.relativePath);
+  const touchesFrontend = paths.some((path) => path.startsWith("src/"));
+  const touchesTauri = paths.some((path) => path.startsWith("src-tauri/"));
+  const touchesTests = paths.every((path) => /\.test\.[tj]sx?$/.test(path));
+
+  if (touchesTests) {
+    return "tests";
+  }
+  if (touchesFrontend && touchesTauri) {
+    return "desktop app workflow";
+  }
+  if (paths.some((path) => path.endsWith(".css"))) {
+    return "app styling";
+  }
+  if (paths.some((path) => path.startsWith("src/components/"))) {
+    return "React components";
+  }
+  if (touchesFrontend) {
+    return "React app";
+  }
+  if (touchesTauri) {
+    return "Tauri backend";
+  }
+
+  return workspace.label;
 }
 
 function getCodexModelContextWindow(model: CodexModel | null) {

@@ -10,6 +10,7 @@ const mocks = vi.hoisted(() => ({
   openUrlMock: vi.fn(),
   connectCodexMock: vi.fn(),
   commitWorkspaceChangesMock: vi.fn(),
+  generateWorkspaceCommitMessageMock: vi.fn(),
   pushWorkspaceBranchMock: vi.fn(),
   deleteCodexProfileMock: vi.fn(),
   readCodexAccountMock: vi.fn(),
@@ -89,6 +90,7 @@ vi.mock("./codexClient", () => ({
   connectCodex: mocks.connectCodexMock,
   checkoutGitBranch: mocks.checkoutGitBranchMock,
   deleteCodexProfile: mocks.deleteCodexProfileMock,
+  generateWorkspaceCommitMessage: mocks.generateWorkspaceCommitMessageMock,
   listGitBranches: mocks.listGitBranchesMock,
   listWorkspaceGitStatus: mocks.listWorkspaceGitStatusMock,
   readWorkspaceGitDiff: mocks.readWorkspaceGitDiffMock,
@@ -281,6 +283,9 @@ function prepareDefaults() {
     message: "Committed workspace changes",
     branch: "main",
   });
+  mocks.generateWorkspaceCommitMessageMock.mockRejectedValue(
+    new Error("Codex unavailable"),
+  );
   mocks.pushWorkspaceBranchMock.mockResolvedValue({
     message: "Pushed main",
     branch: "main",
@@ -1143,6 +1148,71 @@ describe("App Codex auth", () => {
         workspace.path,
         "Update App.tsx",
         false,
+      ),
+    );
+  });
+
+  it("uses an AI-generated commit message when the commit message is blank", async () => {
+    prepareSignedInRun();
+    mocks.generateWorkspaceCommitMessageMock.mockResolvedValue({
+      message: "Improve commit dialog staging controls",
+      source: "codex",
+    });
+    mocks.listWorkspaceGitStatusMock.mockResolvedValue({
+      workspacePath: workspace.path,
+      gitRoot: workspace.path,
+      currentBranch: "main",
+      aheadCount: 0,
+      hasUpstream: true,
+      hasOrigin: true,
+      canPush: true,
+      additions: 14,
+      deletions: 4,
+      files: [
+        {
+          path: "/repo/orchestrator/src/App.tsx",
+          relativePath: "src/App.tsx",
+          oldRelativePath: null,
+          indexStatus: " ",
+          worktreeStatus: "M",
+          statusKind: "modified",
+          badge: "M",
+        },
+        {
+          path: "/repo/orchestrator/src-tauri/src/lib.rs",
+          relativePath: "src-tauri/src/lib.rs",
+          oldRelativePath: null,
+          indexStatus: " ",
+          worktreeStatus: "M",
+          statusKind: "modified",
+          badge: "M",
+        },
+      ],
+    });
+
+    const { user } = await renderApp();
+    const banner = screen.getByRole("region", { name: "Selected folder" });
+    await user.click(
+      await within(banner).findByRole("button", { name: /commit or push/i }),
+    );
+
+    const dialog = screen.getByRole("dialog", { name: "Commit or push" });
+    await user.click(within(dialog).getByRole("button", { name: /^commit$/i }));
+
+    await waitFor(() =>
+      expect(mocks.generateWorkspaceCommitMessageMock).toHaveBeenCalledWith(
+        expect.objectContaining({
+          workspacePath: workspace.path,
+          accountId: 7,
+          includeUnstaged: true,
+        }),
+      ),
+    );
+    await waitFor(() =>
+      expect(mocks.commitWorkspaceChangesMock).toHaveBeenCalledWith(
+        workspace.path,
+        "Improve commit dialog staging controls",
+        true,
       ),
     );
   });

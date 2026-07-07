@@ -62,6 +62,23 @@ export function commitWorkspaceChanges(
   });
 }
 
+export function generateWorkspaceCommitMessage(input: {
+  workspacePath: string;
+  accountId: number | null;
+  includeUnstaged: boolean;
+  model: string | null;
+}) {
+  return invoke<{ message: string; source: "codex" }>(
+    "generate_workspace_commit_message",
+    {
+      workspacePath: input.workspacePath,
+      accountId: input.accountId,
+      includeUnstaged: input.includeUnstaged,
+      model: input.model,
+    },
+  );
+}
+
 export function pushWorkspaceBranch(workspacePath: string) {
   return invoke<WorkspaceGitActionResult>("push_workspace_branch", {
     workspacePath,
