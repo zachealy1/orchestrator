@@ -1022,7 +1022,7 @@ button.account-switcher-item:hover:not(:disabled) {
   z-index: 12;
   display: grid;
   min-width: 0;
-  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-columns: minmax(0, 1fr) minmax(0, max-content);
   gap: var(--workspace-header-gap);
   align-items: center;
   border-bottom: 1px solid var(--color-divider);
@@ -1031,11 +1031,11 @@ button.account-switcher-item:hover:not(:disabled) {
 }
 
 .workspace-context-left {
-  display: flex;
+  display: grid;
   min-width: 0;
+  grid-template-columns: minmax(160px, 1fr) minmax(0, auto);
   align-items: center;
   gap: var(--workspace-header-gap);
-  justify-content: flex-start;
   overflow: hidden;
 }
 
@@ -1088,7 +1088,7 @@ button.account-switcher-item:hover:not(:disabled) {
   flex: 0 1 auto;
   flex-wrap: nowrap;
   gap: var(--workspace-header-gap);
-  justify-content: flex-start;
+  justify-content: flex-end;
   overflow: hidden;
 }
 
@@ -1106,7 +1106,7 @@ button.account-switcher-item:hover:not(:disabled) {
   display: flex;
   min-width: 0;
   max-width: 100%;
-  flex: 0 0 auto;
+  flex: 0 1 auto;
   gap: var(--workspace-header-gap);
   align-items: center;
   justify-content: flex-end;
@@ -1138,7 +1138,9 @@ button.account-switcher-item:hover:not(:disabled) {
   width: clamp(112px, 12vw, 180px);
   height: 30px;
   min-height: 30px;
-  flex: 0 0 auto;
+  flex: 1 1 112px;
+  min-width: 104px;
+  max-width: 180px;
   border-radius: 7px;
   background: rgb(var(--text-secondary-rgb) / 0.1);
   transition:
@@ -1306,7 +1308,8 @@ button.account-switcher-item:hover:not(:disabled) {
   overflow: hidden;
   height: 30px;
   min-height: 30px;
-  min-width: 188px;
+  min-width: 150px;
+  max-width: 188px;
   align-items: center;
   border-radius: 7px;
   background: rgb(var(--text-secondary-rgb) / 0.1);
@@ -4114,6 +4117,23 @@ pre {
 }
 
 @media (max-width: 1180px) {
+  .workspace-context-banner {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .workspace-context-left {
+    grid-template-columns: minmax(0, 1fr) auto;
+  }
+
+  .workspace-context-actions {
+    width: 100%;
+    justify-self: end;
+  }
+
+  .composer-select.workspace-branch-select {
+    max-width: min(180px, 34vw);
+  }
+
   .task-layout,
   .settings-grid {
     grid-template-columns: 1fr;

@@ -1152,10 +1152,70 @@ describe("App Codex auth", () => {
     );
   });
 
+  it("omits change counts from local fallback commit messages", async () => {
+    mocks.listWorkspaceGitStatusMock.mockResolvedValue({
+      workspacePath: workspace.path,
+      gitRoot: workspace.path,
+      currentBranch: "main",
+      aheadCount: 0,
+      hasUpstream: true,
+      hasOrigin: true,
+      canPush: true,
+      additions: 14,
+      deletions: 5,
+      files: [
+        {
+          path: "/repo/orchestrator/src/App.tsx",
+          relativePath: "src/App.tsx",
+          oldRelativePath: null,
+          indexStatus: " ",
+          worktreeStatus: "M",
+          statusKind: "modified",
+          badge: "M",
+        },
+        {
+          path: "/repo/orchestrator/src/db.ts",
+          relativePath: "src/db.ts",
+          oldRelativePath: null,
+          indexStatus: " ",
+          worktreeStatus: "A",
+          statusKind: "added",
+          badge: "A",
+        },
+        {
+          path: "/repo/orchestrator/src/old.ts",
+          relativePath: "src/old.ts",
+          oldRelativePath: null,
+          indexStatus: " ",
+          worktreeStatus: "D",
+          statusKind: "deleted",
+          badge: "D",
+        },
+      ],
+    });
+
+    const { user } = await renderApp();
+    const banner = screen.getByRole("region", { name: "Selected folder" });
+    await user.click(
+      await within(banner).findByRole("button", { name: /commit or push/i }),
+    );
+
+    const dialog = screen.getByRole("dialog", { name: "Commit or push" });
+    await user.click(within(dialog).getByRole("button", { name: /^commit$/i }));
+
+    await waitFor(() =>
+      expect(mocks.commitWorkspaceChangesMock).toHaveBeenCalledWith(
+        workspace.path,
+        "Update React app",
+        true,
+      ),
+    );
+  });
+
   it("uses an AI-generated commit message when the commit message is blank", async () => {
     prepareSignedInRun();
     mocks.generateWorkspaceCommitMessageMock.mockResolvedValue({
-      message: "Improve commit dialog staging controls",
+      message: "Improve commit dialog staging controls (2 modified)",
       source: "codex",
     });
     mocks.listWorkspaceGitStatusMock.mockResolvedValue({

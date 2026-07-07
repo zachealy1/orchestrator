@@ -1146,6 +1146,7 @@ fn generate_workspace_commit_message(
          - Return only the commit subject, no markdown, no quotes, no explanation.\n\
          - Use imperative mood.\n\
          - Be specific about the behavior or UI changed.\n\
+         - Do not append change-count summaries like (5 modified).\n\
          - Keep it under 72 characters.\n\n\
          Git context:\n{context}"
     );
@@ -1329,11 +1330,52 @@ fn sanitize_commit_subject(output: &str) -> Option<String> {
         .trim_matches('`')
         .trim()
         .to_string();
+    subject = strip_commit_count_suffix(&subject);
     if subject.len() > 100 {
         subject.truncate(100);
         subject = subject.trim_end().to_string();
     }
     (!subject.is_empty()).then_some(subject)
+}
+
+fn strip_commit_count_suffix(subject: &str) -> String {
+    let trimmed = subject.trim();
+    let Some(prefix) = trimmed.strip_suffix(')') else {
+        return trimmed.to_string();
+    };
+    let Some(open_index) = prefix.rfind(" (") else {
+        return trimmed.to_string();
+    };
+    let inner = &prefix[(open_index + 2)..];
+    if is_commit_count_suffix(inner) {
+        prefix[..open_index].trim_end().to_string()
+    } else {
+        trimmed.to_string()
+    }
+}
+
+fn is_commit_count_suffix(inner: &str) -> bool {
+    let allowed = [
+        "modified",
+        "added",
+        "deleted",
+        "untracked",
+        "renamed",
+        "copied",
+        "changed",
+    ];
+
+    inner.split(',').all(|part| {
+        let mut words = part.split_whitespace();
+        let Some(count) = words.next() else {
+            return false;
+        };
+        count.parse::<usize>().is_ok()
+            && words
+                .next()
+                .is_some_and(|status| allowed.contains(&status.to_ascii_lowercase().as_str()))
+            && words.next().is_none()
+    })
 }
 
 #[tauri::command]
@@ -3398,6 +3440,14 @@ mod tests {
             sanitize_commit_subject("thinking...\nCommit message: `Improve commit dialog controls`\n")
                 .as_deref(),
             Some("Improve commit dialog controls")
+        );
+        assert_eq!(
+            sanitize_commit_subject("Improve commit dialog controls (5 modified)").as_deref(),
+            Some("Improve commit dialog controls")
+        );
+        assert_eq!(
+            sanitize_commit_subject("Update app workflow (2 modified, 1 added)").as_deref(),
+            Some("Update app workflow")
         );
         assert_eq!(sanitize_commit_subject("   ").as_deref(), None);
     }

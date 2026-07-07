@@ -3150,7 +3150,7 @@ function App() {
         includeUnstaged: includeUnstagedChanges,
         model: selectedModel?.model ?? selectedModel?.id ?? null,
       });
-      const generated = result.message.trim();
+      const generated = cleanGeneratedCommitSubject(result.message);
       if (generated) {
         setCommitMessage(generated);
         return generated;
@@ -6671,16 +6671,18 @@ function generateCommitMessage(
     }
   }
 
-  const pieces = [
-    summary.modified ? `${summary.modified} modified` : null,
-    summary.added ? `${summary.added} added` : null,
-    summary.deleted ? `${summary.deleted} deleted` : null,
-    summary.untracked ? `${summary.untracked} untracked` : null,
-  ].filter(Boolean);
-
-  return pieces.length > 0
-    ? `Update ${inferCommitMessageArea(workspace, files)} (${pieces.join(", ")})`
+  return summary.total > 0
+    ? `Update ${inferCommitMessageArea(workspace, files)}`
     : `Update ${workspace.label}`;
+}
+
+function cleanGeneratedCommitSubject(subject: string) {
+  return subject
+    .replace(
+      /\s+\((?:\d+\s+(?:modified|added|deleted|untracked|renamed|copied|changed)(?:,\s*)?)+\)$/i,
+      "",
+    )
+    .trim();
 }
 
 function inferCommitMessageArea(workspace: Workspace, files: WorkspaceGitFileStatus[]) {
