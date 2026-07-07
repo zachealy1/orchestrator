@@ -22,8 +22,16 @@ export function connectCodex(accountId: number) {
   return invoke<CodexConnectResult>("codex_connect", { accountId });
 }
 
+export function connectDefaultCodexProfile() {
+  return invoke<CodexConnectResult>("codex_default_profile_connect");
+}
+
 export function stopCodex(accountId: number) {
   return invoke<void>("codex_stop", { accountId });
+}
+
+export function stopDefaultCodexProfile() {
+  return invoke<void>("codex_default_profile_stop");
 }
 
 export function deleteCodexProfile(accountId: number) {
@@ -34,12 +42,26 @@ export function codexRpc<T>(accountId: number, method: string, params: unknown =
   return invoke<T>("codex_rpc", { accountId, method, params });
 }
 
+export function codexDefaultProfileRpc<T>(method: string, params: unknown = {}) {
+  return invoke<T>("codex_default_profile_rpc", { method, params });
+}
+
 export function resolveCodexServerRequest(
   accountId: number,
   id: string | number,
   result: unknown,
 ) {
   return invoke<void>("codex_resolve_server_request", { accountId, id, result });
+}
+
+export function resolveDefaultCodexServerRequest(
+  id: string | number,
+  result: unknown,
+) {
+  return invoke<void>("codex_default_profile_resolve_server_request", {
+    id,
+    result,
+  });
 }
 
 export function listGitBranches(path: string) {
@@ -197,6 +219,14 @@ export async function readCodexFile(accountId: number, path: string) {
   const response = await codexRpc<{ dataBase64: string }>(accountId, "fs/readFile", {
     path,
   });
+  return decodeBase64Utf8(response.dataBase64);
+}
+
+export async function readDefaultCodexFile(path: string) {
+  const response = await codexDefaultProfileRpc<{ dataBase64: string }>(
+    "fs/readFile",
+    { path },
+  );
   return decodeBase64Utf8(response.dataBase64);
 }
 

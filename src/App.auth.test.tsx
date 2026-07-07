@@ -9,6 +9,7 @@ const mocks = vi.hoisted(() => ({
   openDialogMock: vi.fn(),
   openUrlMock: vi.fn(),
   connectCodexMock: vi.fn(),
+  connectDefaultCodexProfileMock: vi.fn(),
   commitWorkspaceChangesMock: vi.fn(),
   generateWorkspaceCommitMessageMock: vi.fn(),
   pushWorkspaceBranchMock: vi.fn(),
@@ -16,6 +17,7 @@ const mocks = vi.hoisted(() => ({
   readCodexAccountMock: vi.fn(),
   startCodexLoginMock: vi.fn(),
   stopCodexMock: vi.fn(),
+  stopDefaultCodexProfileMock: vi.fn(),
   cancelCodexLoginMock: vi.fn(),
   logoutCodexAccountMock: vi.fn(),
   listCodexModelsMock: vi.fn(),
@@ -28,9 +30,12 @@ const mocks = vi.hoisted(() => ({
   checkoutGitBranchMock: vi.fn(),
   runPreflightMock: vi.fn(),
   readCodexFileMock: vi.fn(),
+  readDefaultCodexFileMock: vi.fn(),
   setThreadGoalMock: vi.fn(),
   resolveCodexServerRequestMock: vi.fn(),
+  resolveDefaultCodexServerRequestMock: vi.fn(),
   codexRpcMock: vi.fn(),
+  codexDefaultProfileRpcMock: vi.fn(),
   listWorkspacesMock: vi.fn(),
   listCodexAccountsMock: vi.fn(),
   listDuplicateProfilesPendingCleanupMock: vi.fn(),
@@ -56,6 +61,7 @@ const mocks = vi.hoisted(() => ({
   recordTokenUsageMock: vi.fn(),
   softDeleteRunMock: vi.fn(),
   upsertWorkspaceMock: vi.fn(),
+  upsertExternalCodexChatsMock: vi.fn(),
 }));
 
 vi.mock("@tauri-apps/api/event", () => ({
@@ -85,8 +91,10 @@ vi.mock("./assets/brand/orchestrator-wordmark.png", () => ({
 
 vi.mock("./codexClient", () => ({
   cancelCodexLogin: mocks.cancelCodexLoginMock,
+  codexDefaultProfileRpc: mocks.codexDefaultProfileRpcMock,
   codexRpc: mocks.codexRpcMock,
   commitWorkspaceChanges: mocks.commitWorkspaceChangesMock,
+  connectDefaultCodexProfile: mocks.connectDefaultCodexProfileMock,
   connectCodex: mocks.connectCodexMock,
   checkoutGitBranch: mocks.checkoutGitBranchMock,
   deleteCodexProfile: mocks.deleteCodexProfileMock,
@@ -101,11 +109,14 @@ vi.mock("./codexClient", () => ({
   pushWorkspaceBranch: mocks.pushWorkspaceBranchMock,
   readCodexAccount: mocks.readCodexAccountMock,
   readCodexFile: mocks.readCodexFileMock,
+  readDefaultCodexFile: mocks.readDefaultCodexFileMock,
   readWorkspaceFilePreview: mocks.readWorkspaceFilePreviewMock,
+  resolveDefaultCodexServerRequest: mocks.resolveDefaultCodexServerRequestMock,
   resolveCodexServerRequest: mocks.resolveCodexServerRequestMock,
   runPreflight: mocks.runPreflightMock,
   setThreadGoal: mocks.setThreadGoalMock,
   startCodexLogin: mocks.startCodexLoginMock,
+  stopDefaultCodexProfile: mocks.stopDefaultCodexProfileMock,
   stopCodex: mocks.stopCodexMock,
 }));
 
@@ -135,6 +146,7 @@ vi.mock("./db", () => ({
   updateChat: mocks.updateChatMock,
   updateRun: mocks.updateRunMock,
   updateTaskStatus: mocks.updateTaskStatusMock,
+  upsertExternalCodexChats: mocks.upsertExternalCodexChatsMock,
   upsertWorkspace: mocks.upsertWorkspaceMock,
 }));
 
@@ -239,6 +251,10 @@ function workspaceChatFixture(
     id: number;
     title: string;
     codex_thread_id: string | null;
+    origin: "orchestrator" | "codex_external";
+    profile_key: `account:${number}` | "default" | null;
+    external_thread_id: string | null;
+    source_kind: string | null;
     status: string;
     turn_count: number;
     total_tokens: number | null;
@@ -254,6 +270,15 @@ function workspaceChatFixture(
     account_email: "dev@example.com",
     title: overrides.title ?? "Fix the app",
     codex_thread_id: overrides.codex_thread_id ?? "thread-1",
+    origin: overrides.origin ?? "orchestrator",
+    profile_key: overrides.profile_key ?? "account:7",
+    external_thread_id: overrides.external_thread_id ?? null,
+    source_kind: overrides.source_kind ?? null,
+    sync_status: "synced",
+    external_cwd: null,
+    external_created_at: null,
+    external_updated_at: null,
+    last_synced_at: null,
     status: overrides.status ?? "completed",
     created_at: "2026-06-30T09:00:00Z",
     updated_at: "2026-06-30T09:01:00Z",
@@ -301,6 +326,7 @@ function prepareDefaults() {
     authUrl: "https://example.com/auth",
   });
   mocks.stopCodexMock.mockResolvedValue(undefined);
+  mocks.stopDefaultCodexProfileMock.mockResolvedValue(undefined);
   mocks.cancelCodexLoginMock.mockResolvedValue(undefined);
   mocks.logoutCodexAccountMock.mockResolvedValue(undefined);
   mocks.listCodexModelsMock.mockResolvedValue([]);
@@ -335,9 +361,17 @@ function prepareDefaults() {
   mocks.checkoutGitBranchMock.mockResolvedValue({ branch: "main" });
   mocks.runPreflightMock.mockResolvedValue(preflight);
   mocks.readCodexFileMock.mockResolvedValue("file contents");
+  mocks.readDefaultCodexFileMock.mockResolvedValue("file contents");
   mocks.setThreadGoalMock.mockResolvedValue(undefined);
   mocks.resolveCodexServerRequestMock.mockResolvedValue(undefined);
+  mocks.resolveDefaultCodexServerRequestMock.mockResolvedValue(undefined);
   mocks.codexRpcMock.mockResolvedValue(undefined);
+  mocks.codexDefaultProfileRpcMock.mockResolvedValue(undefined);
+  mocks.connectDefaultCodexProfileMock.mockResolvedValue({
+    pid: 500,
+    alreadyConnected: false,
+    initialize: {},
+  });
   mocks.listWorkspacesMock.mockResolvedValue([workspace]);
   mocks.listCodexAccountsMock.mockResolvedValue([]);
   mocks.listDuplicateProfilesPendingCleanupMock.mockResolvedValue([]);
@@ -349,6 +383,15 @@ function prepareDefaults() {
     title: "Fix the auth flow",
     codex_thread_id: null,
     status: "starting",
+    origin: "orchestrator",
+    profile_key: "account:7",
+    external_thread_id: null,
+    source_kind: null,
+    sync_status: null,
+    external_cwd: null,
+    external_created_at: null,
+    external_updated_at: null,
+    last_synced_at: null,
     created_at: "2026-06-30T09:00:00Z",
     updated_at: "2026-06-30T09:00:00Z",
     deleted_at: null,
@@ -374,6 +417,7 @@ function prepareDefaults() {
   mocks.recordTokenUsageMock.mockResolvedValue(undefined);
   mocks.softDeleteChatMock.mockResolvedValue(undefined);
   mocks.softDeleteRunMock.mockResolvedValue(undefined);
+  mocks.upsertExternalCodexChatsMock.mockResolvedValue(undefined);
   mocks.upsertWorkspaceMock.mockResolvedValue(workspace);
   mocks.openDialogMock.mockResolvedValue(null);
 }
@@ -1564,6 +1608,124 @@ describe("App Codex auth", () => {
     expect(transcript).toHaveTextContent("Header fixed.");
     expect(transcript).toHaveTextContent("Add the history button");
     expect(transcript).toHaveTextContent("History button added.");
+  });
+
+  it("syncs, opens, and continues an external Codex chat through the default profile", async () => {
+    const externalChat = {
+      ...workspaceChatFixture({
+        id: 501,
+        title: "External VS Code task",
+        codex_thread_id: "external-thread-1",
+        origin: "codex_external",
+        profile_key: "default",
+        external_thread_id: "external-thread-1",
+        source_kind: "vscode",
+      }),
+      account_id: null,
+      account_label: null,
+      account_email: null,
+      turn_count: 1,
+      total_tokens: 340,
+    };
+    mocks.listWorkspaceChatsMock.mockResolvedValue([externalChat]);
+    mocks.codexDefaultProfileRpcMock.mockImplementation(async (method: string) => {
+      if (method === "thread/list") {
+        return {
+          threads: [
+            {
+              id: "external-thread-1",
+              preview: "External VS Code task",
+              cwd: workspace.path,
+              threadSource: "vscode",
+              status: "completed",
+              createdAt: "2026-07-07T10:00:00Z",
+              updatedAt: "2026-07-07T10:02:00Z",
+            },
+          ],
+        };
+      }
+      if (method === "thread/read") {
+        return {
+          thread: {
+            id: "external-thread-1",
+            turns: [
+              {
+                id: "external-turn-1",
+                status: "completed",
+                createdAt: "2026-07-07T10:00:00Z",
+                completedAt: "2026-07-07T10:02:00Z",
+                items: [
+                  { type: "userMessage", text: "Prompt from VS Code" },
+                  {
+                    type: "agentMessage",
+                    phase: "final_answer",
+                    text: "Answer from the Codex extension.",
+                  },
+                ],
+              },
+            ],
+          },
+        };
+      }
+      if (method === "turn/start") {
+        return { turn: { id: "external-turn-2" } };
+      }
+      return {};
+    });
+
+    const { user } = await renderApp();
+    const banner = screen.getByRole("region", { name: "Selected folder" });
+    await user.click(
+      within(banner).getByRole("button", { name: /open chat history/i }),
+    );
+
+    await waitFor(() =>
+      expect(mocks.upsertExternalCodexChatsMock).toHaveBeenCalledWith([
+        expect.objectContaining({
+          externalThreadId: "external-thread-1",
+          profileKey: "default",
+          sourceKind: "vscode",
+        }),
+      ]),
+    );
+    const drawer = await screen.findByRole("complementary", {
+      name: "Workspace chat history",
+    });
+    const row = within(drawer).getByRole("button", {
+      name: /external vs code task/i,
+    });
+    expect(row).toHaveTextContent("VS Code");
+    await user.click(row);
+
+    const transcript = await screen.findByLabelText("Task chat transcript");
+    expect(within(transcript).getByLabelText("Submitted prompt")).toHaveTextContent(
+      "Prompt from VS Code",
+    );
+    expect(transcript).toHaveTextContent("Answer from the Codex extension.");
+
+    await user.type(screen.getByLabelText("Prompt"), "Continue external thread");
+    await user.click(screen.getByRole("button", { name: /run codex/i }));
+    await waitFor(() =>
+      expect(mocks.codexDefaultProfileRpcMock).toHaveBeenCalledWith(
+        "turn/start",
+        expect.objectContaining({ threadId: "external-thread-1" }),
+      ),
+    );
+    expect(mocks.codexDefaultProfileRpcMock).toHaveBeenCalledWith(
+      "thread/resume",
+      expect.objectContaining({ threadId: "external-thread-1", cwd: workspace.path }),
+    );
+    expect(
+      mocks.codexRpcMock.mock.calls.some((call) => call[1] === "turn/start"),
+    ).toBe(false);
+    expect(mocks.createRunMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        accountId: null,
+        accountLabel: "Codex default profile",
+        chatId: 501,
+        turnIndex: 2,
+      }),
+    );
   });
 
   it("opens a chat history row with keyboard activation", async () => {

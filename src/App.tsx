@@ -64,12 +64,15 @@ import {
   updateCodexAccount,
   updateRun,
   updateTaskStatus,
+  upsertExternalCodexChats,
   upsertWorkspace,
 } from "./db";
 import {
   cancelCodexLogin,
+  codexDefaultProfileRpc,
   codexRpc,
   commitWorkspaceChanges,
+  connectDefaultCodexProfile,
   connectCodex,
   checkoutGitBranch,
   deleteCodexProfile,
@@ -81,14 +84,17 @@ import {
   listWorkspaceDirectory,
   logoutCodexAccount,
   pushWorkspaceBranch,
+  readDefaultCodexFile,
   readCodexFile,
   readCodexAccount,
   readWorkspaceGitDiff,
   readWorkspaceFilePreview,
   resolveCodexServerRequest,
+  resolveDefaultCodexServerRequest,
   runPreflight,
   setThreadGoal,
   startCodexLogin,
+  stopDefaultCodexProfile,
   stopCodex,
 } from "./codexClient";
 import { AnalyticsSummary } from "./components/AnalyticsSummary";
@@ -141,6 +147,7 @@ import type {
   AdditionalContextEntry,
   AnalyticsSummary as AnalyticsSummaryType,
   ChatListItem,
+  ChatOrigin,
   ChatWithRuns,
   CodexAccount,
   CodexAccountProfile,
@@ -152,6 +159,7 @@ import type {
   CodexSkillSummary,
   ComposerMentionSearchStatus,
   CodexProcessEvent,
+  CodexProfileKey,
   ComposerContextFile,
   OssProvider,
   PreflightReport,
@@ -188,6 +196,8 @@ const DEFAULT_CONTEXT_WINDOW = 258_400;
 const GIT_STATUS_AUTO_REFRESH_INTERVAL_MS = 3000;
 const EMPTY_GIT_STATUS_BY_PATH = new Map<string, WorkspaceGitFileStatus>();
 const EMPTY_DIRTY_DIRECTORY_PATHS = new Set<string>();
+const DEFAULT_CODEX_PROFILE_KEY: CodexProfileKey = "default";
+const EXTERNAL_CODEX_SOURCE_KINDS = ["vscode", "appServer", "cli"];
 
 type AppView = "task" | "analytics" | "settings";
 
@@ -206,6 +216,7 @@ class RunStoppedError extends Error {
 
 type ActiveRunControl = {
   accountId: number;
+  profileKey: CodexProfileKey;
   clientId: string;
   promptFallback: string;
   chatId: number | null;
@@ -226,7 +237,10 @@ type RunSetupSnapshot = {
   promptFallback: string;
   workspace: Workspace;
   accountId: number;
-  account: CodexAccountProfile;
+  account: CodexAccountProfile | null;
+  profileKey: CodexProfileKey;
+  chatOrigin: ChatOrigin;
+  externalThreadId: string | null;
   selectedBranch: string | null;
   cachedPreflight: PreflightReport | null;
   mode: "plan" | "run";
@@ -261,6 +275,9 @@ type WorkspaceHistoryState = {
 type WorkspaceChatSession = {
   chatId: number;
   threadId: string | null;
+  origin: ChatOrigin;
+  profileKey: CodexProfileKey | null;
+  externalThreadId: string | null;
 };
 
 type HeaderGitAction =
@@ -735,6 +752,7 @@ function App() {
   const currentRunId = useRef<number | null>(null);
   const currentTaskId = useRef<number | null>(null);
   const currentRunAccountId = useRef<number | null>(null);
+  const currentRunProfileKey = useRef<CodexProfileKey | null>(null);
   const runViewRef = useRef<RunViewState>(emptyRunView);
   const activeChatEntryIdRef = useRef<string | null>(null);
   const activeRunControlRef = useRef<ActiveRunControl | null>(null);
@@ -936,6 +954,9 @@ function App() {
     if (runIsActive || activeChatEntryId !== null) {
       return null;
     }
+    if (selectedWorkspaceChatSession?.origin === "codex_external") {
+      return null;
+    }
     const latestEntry =
       visibleTaskChatEntries.length > 0
         ? visibleTaskChatEntries[visibleTaskChatEntries.length - 1]
@@ -948,7 +969,12 @@ function App() {
       return null;
     }
     return latestEntry.clientId;
-  }, [activeChatEntryId, runIsActive, visibleTaskChatEntries]);
+  }, [
+    activeChatEntryId,
+    runIsActive,
+    selectedWorkspaceChatSession?.origin,
+    visibleTaskChatEntries,
+  ]);
   const selectedWorkspaceContextUsage =
     [...selectedWorkspaceChatEntries]
       .reverse()
@@ -1112,7 +1138,7 @@ function App() {
       return;
     }
 
-    void loadWorkspaceRunHistory(selectedWorkspace.id);
+    void loadWorkspaceRunHistory(selectedWorkspace);
   }, [historyDrawerOpen, selectedWorkspace?.id]);
 
   useEffect(() => {
@@ -1441,27 +1467,44 @@ function App() {
     let disposed = false;
 
     void listen<CodexMessageEvent>("codex:notification", (event) => {
-      void handleCodexNotification(event.payload.accountId, event.payload.message);
+      const profileKey =
+        event.payload.profileKey ??
+        (`account:${event.payload.accountId}` as CodexProfileKey);
+      void handleCodexNotification(
+        event.payload.accountId,
+        profileKey,
+        event.payload.message,
+      );
     }).then((unlisten) => {
       if (disposed) unlisten();
       else notificationUnlisten = unlisten;
     });
 
     void listen<CodexMessageEvent>("codex:server-request", (event) => {
-      void handleCodexServerRequest(event.payload.accountId, event.payload.message);
+      const profileKey =
+        event.payload.profileKey ??
+        (`account:${event.payload.accountId}` as CodexProfileKey);
+      void handleCodexServerRequest(
+        event.payload.accountId,
+        profileKey,
+        event.payload.message,
+      );
     }).then((unlisten) => {
       if (disposed) unlisten();
       else requestUnlisten = unlisten;
     });
 
     void listen<CodexProcessEvent>("codex:process", (event) => {
+      const profileKey =
+        event.payload.profileKey ??
+        (`account:${event.payload.accountId}` as CodexProfileKey);
       if (
         selectedAccountIdRef.current === event.payload.accountId ||
-        currentRunAccountId.current === event.payload.accountId
+        currentRunProfileKey.current === profileKey
       ) {
         setStatusMessage(event.payload.message);
       }
-      if (currentRunAccountId.current === event.payload.accountId) {
+      if (currentRunProfileKey.current === profileKey) {
         void persistRunEvent("process", event.payload.status, event.payload);
       }
       setConnectedAccountIds((current) => {
@@ -1608,13 +1651,89 @@ function App() {
     setAnalytics(summary);
   }
 
-  async function loadWorkspaceRunHistory(workspaceId: number) {
+  async function syncExternalCodexChats(workspace: Workspace) {
+    try {
+      await connectDefaultCodexProfile();
+      setConnectedAccountIds((current) => {
+        const next = new Set(current).add(0);
+        connectedAccountIdsRef.current = next;
+        return next;
+      });
+      const response = await codexDefaultProfileRpc<unknown>("thread/list", {
+        cwd: workspace.path,
+        sourceKinds: EXTERNAL_CODEX_SOURCE_KINDS,
+        archived: false,
+        sortKey: "recency_at",
+        sortDirection: "desc",
+        limit: 100,
+      });
+      const root = readObject(response);
+      const threads =
+        readArray(root.threads).length > 0
+          ? readArray(root.threads)
+          : readArray(root.data).length > 0
+            ? readArray(root.data)
+            : readArray(root.items);
+      await upsertExternalCodexChats(
+        threads.flatMap((threadValue) => {
+          const thread = readObject(threadValue);
+          const id = readString(thread.id);
+          if (!id) {
+            return [];
+          }
+          const threadSource = readString(thread.threadSource);
+          if (threadSource === "orchestrator") {
+            return [];
+          }
+          const sourceKind =
+            threadSource ?? readString(readObject(thread.source).kind) ?? "unknown";
+          const title =
+            readString(thread.name) ??
+            readString(thread.preview) ??
+            "Untitled Codex chat";
+          return [
+            {
+              workspaceId: workspace.id,
+              profileKey: "default" as const,
+              externalThreadId: id,
+              title,
+              status: readString(thread.status) ?? "completed",
+              sourceKind,
+              cwd: readString(thread.cwd),
+              createdAt: readString(thread.createdAt),
+              updatedAt: readString(thread.updatedAt),
+            },
+          ];
+        }),
+      );
+    } catch (error) {
+      setStatusMessage(
+        `Could not sync Codex history: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+      );
+    }
+  }
+
+  async function loadWorkspaceRunHistory(workspaceOrId: Workspace | number) {
+    const workspace =
+      typeof workspaceOrId === "number"
+        ? workspaces.find((candidate) => candidate.id === workspaceOrId) ??
+          (selectedWorkspaceRef.current?.id === workspaceOrId
+            ? selectedWorkspaceRef.current
+            : null)
+        : workspaceOrId;
+    const workspaceId =
+      typeof workspaceOrId === "number" ? workspaceOrId : workspaceOrId.id;
     setHistoryState((current) => ({
       ...current,
       status: "loading",
       error: null,
     }));
     try {
+      if (workspace) {
+        await syncExternalCodexChats(workspace);
+      }
       const chats = await listWorkspaceChats(workspaceId);
       setHistoryState({ status: "loaded", chats, error: null });
     } catch (error) {
@@ -1630,7 +1749,7 @@ function App() {
     if (!selectedWorkspaceRef.current || !historyDrawerOpen) {
       return;
     }
-    await loadWorkspaceRunHistory(selectedWorkspaceRef.current.id);
+    await loadWorkspaceRunHistory(selectedWorkspaceRef.current);
   }
 
   async function refreshWorkspaceGitStatus(
@@ -2089,6 +2208,10 @@ function App() {
     const control = activeRunControlRef.current;
     const accountId =
       control?.accountId ?? currentRunAccountId.current ?? selectedAccountIdRef.current;
+    const profileKey =
+      control?.profileKey ??
+      currentRunProfileKey.current ??
+      (accountId ? (`account:${accountId}` as CodexProfileKey) : null);
 
     if (!control && !runIsActive) {
       return;
@@ -2097,10 +2220,10 @@ function App() {
     const setupStarted = control?.setupStarted ?? false;
     const persistedRunId = currentRunId.current ?? control?.runId ?? null;
     const shouldStopCodex =
-      accountId !== null &&
+      profileKey !== null &&
       (setupStarted ||
         persistedRunId !== null ||
-        currentRunAccountId.current !== null);
+        currentRunProfileKey.current !== null);
 
     if (control) {
       control.stopped = true;
@@ -2119,13 +2242,18 @@ function App() {
     currentRunId.current = null;
     currentTaskId.current = null;
     currentRunAccountId.current = null;
+    currentRunProfileKey.current = null;
     activeRunControlRef.current = null;
     clearActiveChatRun();
     setStatusMessage("Codex run stopped.");
 
     if (shouldStopCodex) {
       try {
-        await stopCodex(accountId);
+        if (profileKey === DEFAULT_CODEX_PROFILE_KEY) {
+          await stopDefaultCodexProfile();
+        } else if (accountId !== null) {
+          await stopCodex(accountId);
+        }
       } catch (error) {
         setStatusMessage(
           `Run stopped locally, but Codex app-server did not stop cleanly: ${
@@ -2194,6 +2322,20 @@ function App() {
     setChatHistoryDeleteCandidate(chat);
   }
 
+  async function loadExternalCodexChatEntries(chat: ChatListItem) {
+    const threadId = chat.external_thread_id ?? chat.codex_thread_id;
+    if (!threadId) {
+      throw new Error("External Codex chat is missing its thread id.");
+    }
+
+    await ensureCodexProfileConnected(DEFAULT_CODEX_PROFILE_KEY, 0);
+    const response = await codexDefaultProfileRpc<unknown>("thread/read", {
+      threadId,
+      includeTurns: true,
+    });
+    return createTaskChatEntriesFromExternalCodexThread(chat, response);
+  }
+
   async function selectHistoryChat(chat: ChatListItem) {
     if (runIsActive) {
       setStatusMessage("Finish or stop the active run before opening history.");
@@ -2202,15 +2344,20 @@ function App() {
 
     setChatHistoryContextMenu(null);
     try {
-      const loadedChat = await getChatWithRuns(chat.id);
-      const entries = createTaskChatEntriesFromHistoryChat(loadedChat);
+      const entries =
+        chat.origin === "codex_external"
+          ? await loadExternalCodexChatEntries(chat)
+          : createTaskChatEntriesFromHistoryChat(await getChatWithRuns(chat.id));
       setTaskChatEntries((current) => [
         ...current.filter((entry) => entry.workspaceId !== chat.workspace_id),
         ...entries,
       ]);
       setWorkspaceChatSession(chat.workspace_id, {
         chatId: chat.id,
-        threadId: chat.codex_thread_id,
+        threadId: chat.external_thread_id ?? chat.codex_thread_id,
+        origin: chat.origin,
+        profileKey: chat.profile_key,
+        externalThreadId: chat.external_thread_id,
       });
       setSelectedHistoryChatId(chat.id);
       setHistoryDrawerOpen(false);
@@ -2723,6 +2870,71 @@ function App() {
     );
   }
 
+  async function ensureCodexProfileConnected(
+    profileKey: CodexProfileKey,
+    accountId: number,
+  ) {
+    if (profileKey !== DEFAULT_CODEX_PROFILE_KEY) {
+      await ensureCodexConnected(accountId);
+      return;
+    }
+
+    if (connectedAccountIdsRef.current.has(0)) {
+      return;
+    }
+
+    const connection = await connectDefaultCodexProfile();
+    setConnectedAccountIds((current) => {
+      const next = new Set(current).add(0);
+      connectedAccountIdsRef.current = next;
+      return next;
+    });
+    setStatusMessage(
+      connection.alreadyConnected
+        ? "Default Codex profile already connected."
+        : `Default Codex profile connected${
+            connection.pid ? ` as ${connection.pid}` : ""
+          }.`,
+    );
+  }
+
+  function codexRpcForProfile<T>(
+    profileKey: CodexProfileKey,
+    accountId: number,
+    method: string,
+    params: unknown = {},
+  ) {
+    return profileKey === DEFAULT_CODEX_PROFILE_KEY
+      ? codexDefaultProfileRpc<T>(method, params)
+      : codexRpc<T>(accountId, method, params);
+  }
+
+  function readCodexFileForProfile(
+    profileKey: CodexProfileKey,
+    accountId: number,
+    path: string,
+  ) {
+    return profileKey === DEFAULT_CODEX_PROFILE_KEY
+      ? readDefaultCodexFile(path)
+      : readCodexFile(accountId, path);
+  }
+
+  function setThreadGoalForProfile(
+    profileKey: CodexProfileKey,
+    accountId: number,
+    threadId: string,
+    objective: string,
+  ) {
+    return profileKey === DEFAULT_CODEX_PROFILE_KEY
+      ? codexDefaultProfileRpc("thread/goal/set", {
+          threadId,
+          objective,
+          status: "active",
+          tokenBudget: null,
+        })
+      : setThreadGoal(accountId, threadId, objective);
+  }
+
   async function selectCodexAccount(accountId: number) {
     if (runIsActive || selectedAccountIdRef.current === accountId) {
       return;
@@ -3216,6 +3428,7 @@ function App() {
     };
     const runControl: ActiveRunControl = {
       accountId: snapshot.accountId,
+      profileKey: snapshot.profileKey,
       clientId,
       promptFallback: snapshot.promptFallback,
       chatId: snapshot.chatId,
@@ -3288,19 +3501,24 @@ function App() {
       ensureRunControlActive(runControl);
       setPreflight(report);
 
-      await ensureCodexConnected(snapshot.accountId);
+      await ensureCodexProfileConnected(snapshot.profileKey, snapshot.accountId);
       ensureRunControlActive(runControl);
-      const authState = await refreshAccountState(snapshot.accountId, true);
-      ensureRunControlActive(runControl);
-      if (shouldBlockRunForAuth(authState.requiresOpenaiAuth, authState.account)) {
-        throw new Error(
-          snapshot.loginState === "waiting"
-            ? "Finish Codex sign-in before starting a run."
-            : "Sign in to Codex before starting a run.",
-        );
+      if (snapshot.chatOrigin === "orchestrator") {
+        const authState = await refreshAccountState(snapshot.accountId, true);
+        ensureRunControlActive(runControl);
+        if (shouldBlockRunForAuth(authState.requiresOpenaiAuth, authState.account)) {
+          throw new Error(
+            snapshot.loginState === "waiting"
+              ? "Finish Codex sign-in before starting a run."
+              : "Sign in to Codex before starting a run.",
+          );
+        }
       }
 
       if (chatId === null) {
+        if (snapshot.chatOrigin !== "orchestrator") {
+          throw new Error("External Codex chats must be opened from history before continuing.");
+        }
         const chat = await createChat({
           workspaceId: snapshot.workspace.id,
           accountId: snapshot.accountId,
@@ -3313,6 +3531,9 @@ function App() {
         setWorkspaceChatSession(snapshot.workspace.id, {
           chatId: chat.id,
           threadId,
+          origin: snapshot.chatOrigin,
+          profileKey: snapshot.profileKey,
+          externalThreadId: snapshot.externalThreadId,
         });
         setSelectedHistoryChatId(chat.id);
         updateTaskChatEntryIds(runControl.clientId, {
@@ -3344,9 +3565,9 @@ function App() {
         workspaceId: snapshot.workspace.id,
         chatId,
         turnIndex: snapshot.turnIndex,
-        accountId: snapshot.accountId,
-        accountLabel: snapshot.account.label,
-        accountEmail: snapshot.account.email,
+        accountId: snapshot.chatOrigin === "orchestrator" ? snapshot.accountId : null,
+        accountLabel: snapshot.account?.label ?? "Codex default profile",
+        accountEmail: snapshot.account?.email ?? null,
         status: "starting",
         sandbox: snapshot.access.sandbox,
         approvalPolicy: snapshot.access.approvalPolicy,
@@ -3357,6 +3578,7 @@ function App() {
       runControl.runId = run.id;
       currentRunId.current = run.id;
       currentRunAccountId.current = snapshot.accountId;
+      currentRunProfileKey.current = snapshot.profileKey;
       ensureRunControlActive(runControl);
       for (const supersededRunId of snapshot.supersededRunIds ?? []) {
         await softDeleteRun(supersededRunId);
@@ -3376,13 +3598,16 @@ function App() {
         if (chatId === null) {
           throw new Error("Chat was not prepared before starting a Codex thread.");
         }
+        if (snapshot.chatOrigin !== "orchestrator") {
+          throw new Error("External Codex chats cannot be restarted as Orchestrator threads.");
+        }
         const activeChatId = chatId;
-        const thread = await codexRpc<{
+        const thread = await codexRpcForProfile<{
           thread: { id: string };
           model?: string;
           modelProvider?: string;
           serviceTier?: string | null;
-        }>(snapshot.accountId, "thread/start", {
+        }>(snapshot.profileKey, snapshot.accountId, "thread/start", {
           cwd: snapshot.workspace.path,
           model: snapshot.model,
           approvalPolicy: snapshot.access.approvalPolicy,
@@ -3412,6 +3637,9 @@ function App() {
         setWorkspaceChatSession(snapshot.workspace.id, {
           chatId: activeChatId,
           threadId: nextThreadId,
+          origin: snapshot.chatOrigin,
+          profileKey: snapshot.profileKey,
+          externalThreadId: snapshot.externalThreadId,
         });
         return {
           threadId: nextThreadId,
@@ -3426,6 +3654,20 @@ function App() {
         threadModel = thread.model;
         threadModelProvider = thread.modelProvider;
       } else {
+        if (snapshot.chatOrigin === "codex_external") {
+          try {
+            await codexRpcForProfile(snapshot.profileKey, snapshot.accountId, "thread/resume", {
+              threadId,
+              cwd: snapshot.workspace.path,
+            });
+          } catch (error) {
+            throw new Error(
+              `Could not resume the external Codex thread: ${
+                error instanceof Error ? error.message : String(error)
+              }`,
+            );
+          }
+        }
         await updateChat(chatId, { status: "running" });
       }
       ensureRunControlActive(runControl);
@@ -3441,7 +3683,8 @@ function App() {
       const warnings: string[] = [];
       if (snapshot.goalMode) {
         try {
-          await setThreadGoal(
+          await setThreadGoalForProfile(
+            snapshot.profileKey,
             snapshot.accountId,
             threadId,
             snapshot.promptText,
@@ -3471,6 +3714,7 @@ function App() {
         snapshot.selectedSkills,
       );
       let { additionalContext, skippedFiles } = await buildAdditionalContext(
+        snapshot.profileKey,
         snapshot.accountId,
         snapshot.contextFiles,
       );
@@ -3491,7 +3735,11 @@ function App() {
       }
 
       const startTurn = (nextThreadId: string) =>
-        codexRpc<{ turn: { id: string } }>(snapshot.accountId, "turn/start", {
+        codexRpcForProfile<{ turn: { id: string } }>(
+          snapshot.profileKey,
+          snapshot.accountId,
+          "turn/start",
+          {
           threadId: nextThreadId,
           input: [{ type: "text", text, text_elements: [] }],
           additionalContext,
@@ -3500,13 +3748,14 @@ function App() {
           approvalsReviewer: "user",
           model: snapshot.model,
           effort: snapshot.effort,
-        });
+          },
+        );
 
       let turn: { turn: { id: string } };
       try {
         turn = await startTurn(threadId);
       } catch (error) {
-        if (!isCodexThreadNotFoundError(error)) {
+        if (!isCodexThreadNotFoundError(error) || snapshot.chatOrigin !== "orchestrator") {
           throw error;
         }
         warnings.push(
@@ -3525,7 +3774,12 @@ function App() {
         ensureRunControlActive(runControl);
         if (snapshot.goalMode) {
           try {
-            await setThreadGoal(snapshot.accountId, threadId, snapshot.promptText);
+            await setThreadGoalForProfile(
+              snapshot.profileKey,
+              snapshot.accountId,
+              threadId,
+              snapshot.promptText,
+            );
             ensureRunControlActive(runControl);
           } catch (goalError) {
             if (goalError instanceof RunStoppedError) {
@@ -3575,6 +3829,7 @@ function App() {
         currentRunId.current = null;
         currentTaskId.current = null;
         currentRunAccountId.current = null;
+        currentRunProfileKey.current = null;
         if (activeRunControlRef.current === runControl) {
           activeRunControlRef.current = null;
         }
@@ -3628,6 +3883,7 @@ function App() {
       currentRunId.current = null;
       currentTaskId.current = null;
       currentRunAccountId.current = null;
+      currentRunProfileKey.current = null;
       if (activeRunControlRef.current === runControl) {
         activeRunControlRef.current = null;
       }
@@ -3653,22 +3909,33 @@ function App() {
 
     const promptText = prompt.trim();
     const workspace = selectedWorkspace;
-    const accountId = selectedAccountId;
-    const account = selectedAccount;
+    const chatSession = workspace
+      ? (workspaceChatSessionsRef.current[workspace.id] ?? null)
+      : null;
+    const isExternalChat = chatSession?.origin === "codex_external";
+    const accountId = isExternalChat ? 0 : selectedAccountId;
+    const account = isExternalChat ? null : selectedAccount;
+    const profileKey: CodexProfileKey = isExternalChat
+      ? DEFAULT_CODEX_PROFILE_KEY
+      : (`account:${accountId}` as CodexProfileKey);
 
     if (!workspace || !promptText) {
       setStatusMessage("Select a workspace and write a prompt first.");
       return;
     }
-    if (!accountId || !account) {
+    if (!isExternalChat && (!accountId || !account)) {
       setStatusMessage("Sign in to a Codex account before starting a run.");
+      return;
+    }
+    if (isExternalChat && !chatSession?.threadId) {
+      setStatusMessage("This external Codex chat is missing its original thread id.");
       return;
     }
     if (runIsActive || activeChatEntryIdRef.current !== null) {
       setStatusMessage("Wait for the active run to finish before starting another.");
       return;
     }
-    if (shouldBlockRunForAuth(requiresOpenaiAuth, codexAccount)) {
+    if (!isExternalChat && shouldBlockRunForAuth(requiresOpenaiAuth, codexAccount)) {
       setStatusMessage(
         loginState === "waiting"
           ? "Finish Codex sign-in before starting a run."
@@ -3680,7 +3947,6 @@ function App() {
     const selectedModel =
       models.find((model) => model.id === selectedModelId) ?? models[0] ?? null;
     const model = useOss || modelLoadError ? null : (selectedModel?.model ?? null);
-    const chatSession = workspaceChatSessionsRef.current[workspace.id] ?? null;
     const turnIndex =
       selectedWorkspaceChatEntries.filter((entry) =>
         chatSession?.chatId ? entry.chatId === chatSession.chatId : true,
@@ -3689,8 +3955,11 @@ function App() {
       promptText,
       promptFallback: prompt,
       workspace: { ...workspace },
-      accountId,
-      account: { ...account },
+      accountId: accountId ?? 0,
+      account: account ? { ...account } : null,
+      profileKey,
+      chatOrigin: chatSession?.origin ?? "orchestrator",
+      externalThreadId: chatSession?.externalThreadId ?? null,
       selectedBranch,
       cachedPreflight: preflight,
       mode: planMode ? "plan" : "run",
@@ -3727,6 +3996,10 @@ function App() {
     }
     if (!accountId || !account) {
       setStatusMessage("Sign in to a Codex account before rerunning a prompt.");
+      return;
+    }
+    if (selectedWorkspaceChatSession?.origin === "codex_external") {
+      setStatusMessage("External Codex chats can be continued, but edited prompts require an Orchestrator chat.");
       return;
     }
     if (entry.clientId !== editablePromptEntryId) {
@@ -3778,6 +4051,9 @@ function App() {
       workspace: { ...workspace },
       accountId,
       account: { ...account },
+      profileKey: `account:${accountId}` as CodexProfileKey,
+      chatOrigin: "orchestrator",
+      externalThreadId: null,
       selectedBranch,
       cachedPreflight: null,
       mode: planMode ? "plan" : "run",
@@ -3808,6 +4084,7 @@ function App() {
   }
 
   async function buildAdditionalContext(
+    profileKey: CodexProfileKey,
     accountId: number,
     files: ComposerContextFile[],
   ) {
@@ -3817,7 +4094,11 @@ function App() {
 
     for (const file of files) {
       try {
-        const content = await readCodexFile(accountId, file.path);
+        const content = await readCodexFileForProfile(
+          profileKey,
+          accountId,
+          file.path,
+        );
         additionalContext[`file:${file.path}`] = {
           kind: "untrusted",
           value: `File: ${file.path}\n\n${content}`,
@@ -3913,20 +4194,24 @@ function App() {
     }
   }
 
-  async function handleCodexNotification(accountId: number, message: CodexMessage) {
+  async function handleCodexNotification(
+    accountId: number,
+    profileKey: CodexProfileKey,
+    message: CodexMessage,
+  ) {
     const method = message.method ?? null;
 
     const params = readObject(message.params);
 
-    if (method === "account/login/completed") {
+    if (profileKey !== DEFAULT_CODEX_PROFILE_KEY && method === "account/login/completed") {
       await handleAccountLoginCompleted(accountId, readAccountLoginCompleted(params));
     }
 
-    if (method === "account/updated") {
+    if (profileKey !== DEFAULT_CODEX_PROFILE_KEY && method === "account/updated") {
       await handleAccountUpdated(accountId, readAccountUpdated(params));
     }
 
-    if (currentRunAccountId.current !== accountId) {
+    if (currentRunProfileKey.current !== profileKey) {
       return;
     }
 
@@ -3980,16 +4265,18 @@ function App() {
       currentRunId.current = null;
       currentTaskId.current = null;
       currentRunAccountId.current = null;
+      currentRunProfileKey.current = null;
       activeRunControlRef.current = null;
       clearActiveChatRun();
     }
   }
 
   async function handleCodexServerRequest(
-    accountId: number,
+    _accountId: number,
+    profileKey: CodexProfileKey,
     request: CodexMessage,
   ) {
-    if (currentRunAccountId.current !== accountId) {
+    if (currentRunProfileKey.current !== profileKey) {
       return;
     }
     updateActiveRunView((current) => addServerRequest(current, request));
@@ -4022,14 +4309,22 @@ function App() {
     }
 
     const accountId = currentRunAccountId.current;
-    if (!accountId) {
+    const profileKey = currentRunProfileKey.current;
+    if (accountId === null || profileKey === null) {
       return;
     }
-    await resolveCodexServerRequest(
-      accountId,
-      request.id,
-      approvalResult(request, approved),
-    );
+    if (profileKey === DEFAULT_CODEX_PROFILE_KEY) {
+      await resolveDefaultCodexServerRequest(
+        request.id,
+        approvalResult(request, approved),
+      );
+    } else {
+      await resolveCodexServerRequest(
+        accountId,
+        request.id,
+        approvalResult(request, approved),
+      );
+    }
     updateActiveRunView((current) => resolveServerRequest(current, request.id!));
   }
 
@@ -6318,6 +6613,219 @@ function createTaskChatEntriesFromHistoryChat(chat: ChatWithRuns): TaskChatEntry
   return chat.runs.map((run) => createTaskChatEntryFromHistoryRun(run));
 }
 
+function createTaskChatEntriesFromExternalCodexThread(
+  chat: ChatListItem,
+  response: unknown,
+): TaskChatEntry[] {
+  const root = readObject(response);
+  const thread = Object.keys(readObject(root.thread)).length > 0
+    ? readObject(root.thread)
+    : root;
+  const turns =
+    readArray(thread.turns).length > 0
+      ? readArray(thread.turns)
+      : readArray(root.turns).length > 0
+        ? readArray(root.turns)
+        : readArray(root.data);
+
+  return turns.flatMap((turnValue, index) => {
+    const turn = readObject(turnValue);
+    const items =
+      readArray(turn.items).length > 0
+        ? readArray(turn.items)
+        : readArray(turn.output).length > 0
+          ? readArray(turn.output)
+          : readArray(turn.input);
+    const prompt = extractExternalUserPrompt(items);
+    if (!prompt) {
+      return [];
+    }
+    const finalMessage = extractExternalFinalAnswer(items);
+    const completedAt =
+      readString(turn.completedAt) ??
+      readString(turn.completed_at) ??
+      chat.external_updated_at ??
+      chat.updated_at;
+    const startedAt =
+      readString(turn.startedAt) ??
+      readString(turn.started_at) ??
+      readString(turn.createdAt) ??
+      readString(turn.created_at) ??
+      completedAt;
+    const status = normalizeExternalTurnStatus(readString(turn.status), finalMessage);
+    const finalMessageItemId = finalMessage ? `external-final-${chat.id}-${index}` : null;
+    const threadId = chat.external_thread_id ?? chat.codex_thread_id;
+
+    return [
+      {
+        clientId: `external-chat-${chat.id}-turn-${index}`,
+        workspaceId: chat.workspace_id,
+        chatId: chat.id,
+        turnIndex: index + 1,
+        runId: null,
+        taskId: null,
+        prompt,
+        submittedAt: startedAt,
+        status,
+        runView: {
+          ...emptyRunView,
+          status,
+          threadId,
+          turnId: readString(turn.id),
+          startedAt,
+          completedAt,
+          elapsedMs: readNumber(turn.durationMs) ?? 0,
+          finalMessage,
+          finalMessageItemId,
+          agentMessagesById:
+            finalMessageItemId === null
+              ? {}
+              : {
+                  [finalMessageItemId]: {
+                    text: finalMessage,
+                    phase: "final_answer" as const,
+                  },
+                },
+          commands: extractExternalCommands(items),
+          editedFiles: extractExternalEditedFiles(items),
+          error:
+            status === "failed"
+              ? JSON.stringify(readObject(turn.error) || "Turn failed")
+              : null,
+        },
+      },
+    ];
+  });
+}
+
+function extractExternalUserPrompt(items: unknown[]) {
+  const userItems = items
+    .map(readObject)
+    .filter((item) => readString(item.type) === "userMessage");
+  return userItems
+    .map((item) => extractTextFromExternalItem(item))
+    .filter(Boolean)
+    .join("\n\n")
+    .trim();
+}
+
+function extractExternalFinalAnswer(items: unknown[]) {
+  const agentMessages = items
+    .map(readObject)
+    .filter((item) => readString(item.type) === "agentMessage");
+  const finalAnswer =
+    agentMessages.find((item) => readString(item.phase) === "final_answer") ??
+    agentMessages[agentMessages.length - 1] ??
+    null;
+  return finalAnswer ? extractTextFromExternalItem(finalAnswer).trim() : "";
+}
+
+function extractTextFromExternalItem(item: Record<string, unknown>) {
+  const directText = readString(item.text);
+  if (directText) {
+    return directText;
+  }
+
+  const content = readArray(item.content);
+  if (content.length > 0) {
+    return content
+      .map((part) => {
+        if (typeof part === "string") {
+          return part;
+        }
+        const partObject = readObject(part);
+        return (
+          readString(partObject.text) ??
+          readString(partObject.value) ??
+          readString(partObject.content) ??
+          ""
+        );
+      })
+      .filter(Boolean)
+      .join("");
+  }
+
+  const message = readObject(item.message);
+  return readString(message.text) ?? "";
+}
+
+function extractExternalCommands(items: unknown[]): RunViewState["commands"] {
+  return items
+    .map(readObject)
+    .filter((item) => readString(item.type) === "commandExecution")
+    .map((item, index) => ({
+      id: readString(item.id) ?? `external-command-${index}`,
+      command:
+        readString(item.command) ??
+        readArray(item.argv).map(String).join(" ") ??
+        "Command",
+      status:
+        readString(item.status) === "failed"
+          ? "failed"
+          : readString(item.status) === "running"
+            ? "running"
+            : "completed",
+      durationMs: readNumber(item.durationMs),
+      output: readString(item.output) ?? "",
+    }));
+}
+
+function extractExternalEditedFiles(items: unknown[]): RunViewState["editedFiles"] {
+  return items
+    .map(readObject)
+    .filter((item) => readString(item.type) === "fileChange")
+    .flatMap((item, index) => {
+      const path =
+        readString(item.path) ??
+        readString(item.filePath) ??
+        readString(item.relativePath);
+      if (!path) {
+        return [];
+      }
+      return [
+        {
+          path,
+          name: path.split(/[\\/]/).filter(Boolean).pop() ?? path,
+          additions: readNumber(item.additions) ?? 0,
+          deletions: readNumber(item.deletions) ?? 0,
+          status: normalizeExternalFileStatus(readString(item.status), index),
+        },
+      ];
+    });
+}
+
+function normalizeExternalFileStatus(
+  status: string | null,
+  _index: number,
+): RunViewState["editedFiles"][number]["status"] {
+  if (
+    status === "added" ||
+    status === "modified" ||
+    status === "deleted" ||
+    status === "renamed" ||
+    status === "copied"
+  ) {
+    return status;
+  }
+  return "unknown";
+}
+
+function normalizeExternalTurnStatus(
+  status: string | null,
+  finalMessage: string,
+): RunViewState["status"] {
+  if (status === "failed") {
+    return "failed";
+  }
+  if (status === "running") {
+    return "running";
+  }
+  if (status === "interrupted" || status === "cancelled" || status === "canceled") {
+    return "interrupted";
+  }
+  return finalMessage ? "completed" : "interrupted";
+}
+
 function buildPreviousChatContext(entries: TaskChatEntry[]) {
   if (entries.length === 0) {
     return null;
@@ -6821,12 +7329,30 @@ function getLiveContextUsage(
 
 function formatHistoryChatMeta(chat: ChatListItem) {
   return [
+    formatChatSourceLabel(chat),
     formatHistoryTimestamp(chat.latest_activity_at),
     chat.status,
     `${chat.turn_count} turn${chat.turn_count === 1 ? "" : "s"}`,
     formatHistoryDuration(chat.duration_ms),
     formatHistoryTokens(chat.total_tokens),
   ].join(" · ");
+}
+
+function formatChatSourceLabel(chat: ChatListItem) {
+  if (chat.origin !== "codex_external") {
+    return "Orchestrator";
+  }
+
+  if (chat.source_kind === "vscode") {
+    return "VS Code";
+  }
+  if (chat.source_kind === "cli") {
+    return "CLI";
+  }
+  if (chat.source_kind === "appServer") {
+    return "Codex App";
+  }
+  return "Codex";
 }
 
 function formatHistoryTimestamp(value: string) {

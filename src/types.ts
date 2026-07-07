@@ -193,6 +193,9 @@ export type RunListItem = RunRecord & {
   latest_model_context_window: number | null;
 };
 
+export type ChatOrigin = "orchestrator" | "codex_external";
+export type CodexProfileKey = `account:${number}` | "default";
+
 export type ChatRecord = {
   id: number;
   workspace_id: number;
@@ -200,6 +203,15 @@ export type ChatRecord = {
   title: string;
   codex_thread_id: string | null;
   status: string;
+  origin: ChatOrigin;
+  profile_key: CodexProfileKey | null;
+  external_thread_id: string | null;
+  source_kind: string | null;
+  sync_status: string | null;
+  external_cwd: string | null;
+  external_created_at: string | null;
+  external_updated_at: string | null;
+  last_synced_at: string | null;
   created_at: string;
   updated_at: string;
   deleted_at: string | null;
@@ -318,11 +330,13 @@ export type CodexMessage = {
 
 export type CodexMessageEvent = {
   accountId: number;
+  profileKey: CodexProfileKey;
   message: CodexMessage;
 };
 
 export type CodexProcessEvent = {
   accountId: number;
+  profileKey: CodexProfileKey;
   status: string;
   message: string;
 };

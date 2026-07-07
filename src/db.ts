@@ -206,19 +206,23 @@ export async function createChat(input: {
   status: string;
 }) {
   const db = await getDatabase();
+  const profileKey = input.accountId === null ? null : `account:${input.accountId}`;
   const result = await db.execute(
-    `INSERT INTO chats (workspace_id, account_id, title, status)
-     VALUES ($1, $2, $3, $4)`,
+    `INSERT INTO chats (workspace_id, account_id, title, status, origin, profile_key)
+     VALUES ($1, $2, $3, $4, 'orchestrator', $5)`,
     [
       input.workspaceId,
       input.accountId,
       input.title.trim() || "Untitled chat",
       input.status,
+      profileKey,
     ],
   );
 
   const chat = await selectOne<ChatRecord>(
     `SELECT id, workspace_id, account_id, title, codex_thread_id, status,
+      origin, profile_key, external_thread_id, source_kind, sync_status,
+      external_cwd, external_created_at, external_updated_at, last_synced_at,
       created_at, updated_at, deleted_at
      FROM chats WHERE id = $1`,
     [result.lastInsertId],
@@ -229,6 +233,94 @@ export async function createChat(input: {
   }
 
   return chat;
+}
+
+export type ExternalCodexChatInput = {
+  workspaceId: number;
+  profileKey: "default";
+  externalThreadId: string;
+  title: string;
+  status: string;
+  sourceKind: string | null;
+  cwd: string | null;
+  createdAt: string | null;
+  updatedAt: string | null;
+};
+
+export async function upsertExternalCodexChats(chats: ExternalCodexChatInput[]) {
+  if (chats.length === 0) {
+    return;
+  }
+
+  const db = await getDatabase();
+  for (const chat of chats) {
+    const existing = await selectOne<{ id: number; deleted_at: string | null }>(
+      `SELECT id, deleted_at
+       FROM chats
+       WHERE origin = 'codex_external'
+         AND profile_key = $1
+         AND external_thread_id = $2
+       LIMIT 1`,
+      [chat.profileKey, chat.externalThreadId],
+    );
+
+    const title = chat.title.trim() || "Untitled Codex chat";
+    const createdAt = chat.createdAt ?? new Date().toISOString();
+    const updatedAt = chat.updatedAt ?? createdAt;
+    if (existing) {
+      await db.execute(
+        `UPDATE chats
+         SET workspace_id = $1,
+             title = $2,
+             codex_thread_id = $3,
+             status = $4,
+             source_kind = $5,
+             sync_status = 'synced',
+             external_cwd = $6,
+             external_created_at = $7,
+             external_updated_at = $8,
+             updated_at = $8,
+             last_synced_at = CURRENT_TIMESTAMP
+         WHERE id = $9`,
+        [
+          chat.workspaceId,
+          title,
+          chat.externalThreadId,
+          chat.status,
+          chat.sourceKind,
+          chat.cwd,
+          createdAt,
+          updatedAt,
+          existing.id,
+        ],
+      );
+      continue;
+    }
+
+    await db.execute(
+      `INSERT INTO chats (
+         workspace_id, account_id, title, codex_thread_id, status, origin,
+         profile_key, external_thread_id, source_kind, sync_status,
+         external_cwd, external_created_at, external_updated_at,
+         created_at, updated_at, last_synced_at
+       )
+       VALUES ($1, NULL, $2, $3, $4, 'codex_external',
+         $5, $3, $6, 'synced',
+         $7, $8, $9,
+         $8, $9, CURRENT_TIMESTAMP)`,
+      [
+        chat.workspaceId,
+        title,
+        chat.externalThreadId,
+        chat.status,
+        chat.profileKey,
+        chat.sourceKind,
+        chat.cwd,
+        createdAt,
+        updatedAt,
+      ],
+    );
+  }
 }
 
 export async function updateChat(
@@ -355,7 +447,7 @@ export async function createRun(input: {
   workspaceId: number;
   chatId?: number | null;
   turnIndex?: number | null;
-  accountId: number;
+  accountId: number | null;
   accountLabel: string;
   accountEmail?: string | null;
   status: string;
@@ -540,10 +632,16 @@ export async function listWorkspaceChats(workspaceId: number) {
   return db.select<ChatListItem[]>(
     `SELECT chats.id, chats.workspace_id, chats.account_id, chats.title,
       chats.codex_thread_id, chats.status, chats.created_at, chats.updated_at,
-      chats.deleted_at,
+      chats.deleted_at, chats.origin, chats.profile_key, chats.external_thread_id,
+      chats.source_kind, chats.sync_status, chats.external_cwd,
+      chats.external_created_at, chats.external_updated_at, chats.last_synced_at,
       latest_run.account_label,
       latest_run.account_email,
-      COALESCE(MAX(COALESCE(runs.completed_at, runs.started_at)), chats.updated_at)
+      COALESCE(
+        chats.external_updated_at,
+        MAX(COALESCE(runs.completed_at, runs.started_at)),
+        chats.updated_at
+      )
         AS latest_activity_at,
       COUNT(runs.id) AS turn_count,
       COALESCE(SUM(latest_tokens.total_tokens), 0) AS total_tokens,
@@ -579,10 +677,16 @@ export async function getChatWithRuns(chatId: number): Promise<ChatWithRuns> {
   const chat = await selectOne<ChatListItem>(
     `SELECT chats.id, chats.workspace_id, chats.account_id, chats.title,
       chats.codex_thread_id, chats.status, chats.created_at, chats.updated_at,
-      chats.deleted_at,
+      chats.deleted_at, chats.origin, chats.profile_key, chats.external_thread_id,
+      chats.source_kind, chats.sync_status, chats.external_cwd,
+      chats.external_created_at, chats.external_updated_at, chats.last_synced_at,
       latest_run.account_label,
       latest_run.account_email,
-      COALESCE(MAX(COALESCE(runs.completed_at, runs.started_at)), chats.updated_at)
+      COALESCE(
+        chats.external_updated_at,
+        MAX(COALESCE(runs.completed_at, runs.started_at)),
+        chats.updated_at
+      )
         AS latest_activity_at,
       COUNT(runs.id) AS turn_count,
       COALESCE(SUM(latest_tokens.total_tokens), 0) AS total_tokens,

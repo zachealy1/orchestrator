@@ -21,6 +21,8 @@ use tauri_plugin_sql::{Migration, MigrationKind};
 const DATABASE_URL: &str = "sqlite:app.db";
 const MAX_FILE_PREVIEW_BYTES: usize = 512 * 1024;
 const MAX_COMMIT_MESSAGE_CONTEXT_CHARS: usize = 24_000;
+const DEFAULT_CODEX_PROFILE_ID: i64 = 0;
+const DEFAULT_CODEX_PROFILE_KEY: &str = "default";
 const IGNORED_EXPLORER_DIRECTORIES: &[&str] =
     &[".git", "node_modules", "target", "dist", "build", ".next"];
 
@@ -67,6 +69,7 @@ struct CodexConnectResult {
 #[serde(rename_all = "camelCase")]
 struct ProcessEvent {
     account_id: i64,
+    profile_key: String,
     status: String,
     message: String,
 }
@@ -75,6 +78,7 @@ struct ProcessEvent {
 #[serde(rename_all = "camelCase")]
 struct CodexMessageEvent {
     account_id: i64,
+    profile_key: String,
     message: Value,
 }
 
@@ -527,7 +531,48 @@ fn migrations() -> Vec<Migration> {
             ",
             kind: MigrationKind::Up,
         },
+        Migration {
+            version: 9,
+            description: "add_external_codex_chats",
+            sql: "
+                ALTER TABLE chats ADD COLUMN origin TEXT NOT NULL DEFAULT 'orchestrator';
+                ALTER TABLE chats ADD COLUMN profile_key TEXT;
+                ALTER TABLE chats ADD COLUMN external_thread_id TEXT;
+                ALTER TABLE chats ADD COLUMN source_kind TEXT;
+                ALTER TABLE chats ADD COLUMN sync_status TEXT;
+                ALTER TABLE chats ADD COLUMN external_cwd TEXT;
+                ALTER TABLE chats ADD COLUMN external_created_at TEXT;
+                ALTER TABLE chats ADD COLUMN external_updated_at TEXT;
+                ALTER TABLE chats ADD COLUMN last_synced_at TEXT;
+
+                UPDATE chats
+                SET origin = 'orchestrator',
+                    profile_key = CASE
+                        WHEN account_id IS NULL THEN NULL
+                        ELSE 'account:' || account_id
+                    END
+                WHERE origin IS NULL OR origin = 'orchestrator';
+
+                CREATE UNIQUE INDEX IF NOT EXISTS idx_chats_external_thread
+                    ON chats(profile_key, external_thread_id)
+                    WHERE origin = 'codex_external'
+                      AND deleted_at IS NULL
+                      AND external_thread_id IS NOT NULL;
+
+                CREATE INDEX IF NOT EXISTS idx_chats_origin_workspace_updated
+                    ON chats(workspace_id, origin, deleted_at, updated_at DESC);
+            ",
+            kind: MigrationKind::Up,
+        },
     ]
+}
+
+fn profile_key_for_account(account_id: i64) -> String {
+    if account_id == DEFAULT_CODEX_PROFILE_ID {
+        DEFAULT_CODEX_PROFILE_KEY.to_string()
+    } else {
+        format!("account:{account_id}")
+    }
 }
 
 fn emit_process(app: &AppHandle, account_id: i64, status: &str, message: impl Into<String>) {
@@ -535,6 +580,7 @@ fn emit_process(app: &AppHandle, account_id: i64, status: &str, message: impl In
         "codex:process",
         ProcessEvent {
             account_id,
+            profile_key: profile_key_for_account(account_id),
             status: status.to_string(),
             message: message.into(),
         },
@@ -579,6 +625,7 @@ fn process_stdout(
                                 "codex:server-request",
                                 CodexMessageEvent {
                                     account_id,
+                                    profile_key: profile_key_for_account(account_id),
                                     message,
                                 },
                             );
@@ -595,6 +642,7 @@ fn process_stdout(
                                 "codex:notification",
                                 CodexMessageEvent {
                                     account_id,
+                                    profile_key: profile_key_for_account(account_id),
                                     message,
                                 },
                             );
@@ -714,6 +762,32 @@ fn codex_connect(
     state: State<'_, CodexState>,
 ) -> Result<CodexConnectResult, String> {
     validate_account_id(account_id)?;
+    let codex_home = ensure_codex_home(&app, account_id)?;
+    connect_codex_profile(account_id, &app, &state, codex_home, true)
+}
+
+#[tauri::command]
+fn codex_default_profile_connect(
+    app: AppHandle,
+    state: State<'_, CodexState>,
+) -> Result<CodexConnectResult, String> {
+    let codex_home = ensure_default_codex_home()?;
+    connect_codex_profile(
+        DEFAULT_CODEX_PROFILE_ID,
+        &app,
+        &state,
+        codex_home,
+        false,
+    )
+}
+
+fn connect_codex_profile(
+    account_id: i64,
+    app: &AppHandle,
+    state: &CodexState,
+    codex_home: PathBuf,
+    isolated_file_store: bool,
+) -> Result<CodexConnectResult, String> {
     {
         let mut processes = state
             .processes
@@ -737,15 +811,12 @@ fn codex_connect(
         }
 
         let codex_binary = resolve_codex_binary()?;
-        let codex_home = ensure_codex_home(&app, account_id)?;
-        let mut child = Command::new(&codex_binary)
-            .args([
-                "app-server",
-                "--listen",
-                "stdio://",
-                "-c",
-                "cli_auth_credentials_store=\"file\"",
-            ])
+        let mut command = Command::new(&codex_binary);
+        command.args(["app-server", "--listen", "stdio://"]);
+        if isolated_file_store {
+            command.args(["-c", "cli_auth_credentials_store=\"file\""]);
+        }
+        let mut child = command
             .env("CODEX_HOME", &codex_home)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
@@ -815,7 +886,7 @@ fn codex_connect(
         .ok()
         .and_then(|processes| processes.get(&account_id).map(|process| process.child.id()));
 
-    emit_process(&app, account_id, "connected", "Codex app-server connected");
+    emit_process(app, account_id, "connected", "Codex app-server connected");
 
     Ok(CodexConnectResult {
         pid,
@@ -863,6 +934,15 @@ fn codex_rpc(
 }
 
 #[tauri::command]
+fn codex_default_profile_rpc(
+    method: String,
+    params: Value,
+    state: State<'_, CodexState>,
+) -> Result<Value, String> {
+    send_request(&state, DEFAULT_CODEX_PROFILE_ID, &method, params)
+}
+
+#[tauri::command]
 fn codex_resolve_server_request(
     account_id: i64,
     id: Value,
@@ -880,12 +960,36 @@ fn codex_resolve_server_request(
 }
 
 #[tauri::command]
+fn codex_default_profile_resolve_server_request(
+    id: Value,
+    result: Value,
+    state: State<'_, CodexState>,
+) -> Result<(), String> {
+    send_notification(
+        &state,
+        DEFAULT_CODEX_PROFILE_ID,
+        json!({
+            "id": id,
+            "result": result
+        }),
+    )
+}
+
+#[tauri::command]
 fn codex_stop(
     account_id: i64,
     app: AppHandle,
     state: State<'_, CodexState>,
 ) -> Result<(), String> {
     stop_codex_account(account_id, &app, &state)
+}
+
+#[tauri::command]
+fn codex_default_profile_stop(
+    app: AppHandle,
+    state: State<'_, CodexState>,
+) -> Result<(), String> {
+    stop_codex_account(DEFAULT_CODEX_PROFILE_ID, &app, &state)
 }
 
 fn stop_codex_account(
@@ -2004,6 +2108,38 @@ fn ensure_codex_home(app: &AppHandle, account_id: i64) -> Result<PathBuf, String
     Ok(codex_home)
 }
 
+fn default_codex_home_from_home(home: &Path) -> PathBuf {
+    home.join(".codex")
+}
+
+fn ensure_default_codex_home() -> Result<PathBuf, String> {
+    let home = env::var_os("HOME")
+        .map(PathBuf::from)
+        .ok_or_else(|| "Could not resolve HOME for the default Codex profile".to_string())?;
+    let codex_home = default_codex_home_from_home(&home);
+    fs::create_dir_all(&codex_home).map_err(|error| {
+        format!(
+            "Could not create default Codex home {}: {error}",
+            codex_home.display()
+        )
+    })?;
+
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        fs::set_permissions(&codex_home, fs::Permissions::from_mode(0o700)).map_err(
+            |error| {
+                format!(
+                    "Could not secure default Codex home {}: {error}",
+                    codex_home.display()
+                )
+            },
+        )?;
+    }
+
+    Ok(codex_home)
+}
+
 fn resolve_codex_binary() -> Result<PathBuf, String> {
     if let Some(configured) = env::var_os("ORCHESTRATOR_CODEX_BIN") {
         let path = PathBuf::from(configured);
@@ -2869,9 +3005,13 @@ pub fn run() {
         )
         .invoke_handler(tauri::generate_handler![
             codex_connect,
+            codex_default_profile_connect,
             codex_rpc,
+            codex_default_profile_rpc,
             codex_resolve_server_request,
+            codex_default_profile_resolve_server_request,
             codex_stop,
+            codex_default_profile_stop,
             codex_delete_profile,
             list_git_branches,
             checkout_git_branch,
@@ -2922,6 +3062,17 @@ mod tests {
     }
 
     #[test]
+    fn default_profile_uses_local_codex_home() {
+        let home = Path::new("/tmp/orchestrator-user-home");
+        assert_eq!(
+            default_codex_home_from_home(home),
+            home.join(".codex")
+        );
+        assert_eq!(profile_key_for_account(0), "default");
+        assert_eq!(profile_key_for_account(12), "account:12");
+    }
+
+    #[test]
     fn pending_requests_are_filtered_by_account() {
         let (sender_one, _receiver_one) = channel();
         let (sender_two, _receiver_two) = channel();
@@ -2949,11 +3100,13 @@ mod tests {
     fn account_events_include_their_owner() {
         let event = CodexMessageEvent {
             account_id: 9,
+            profile_key: profile_key_for_account(9),
             message: json!({ "method": "account/updated" }),
         };
         let value = serde_json::to_value(event).unwrap();
 
         assert_eq!(value["accountId"], 9);
+        assert_eq!(value["profileKey"], "account:9");
         assert_eq!(value["message"]["method"], "account/updated");
     }
 
@@ -3041,6 +3194,38 @@ mod tests {
         assert!(threaded_chats.sql.contains("ALTER TABLE runs ADD COLUMN chat_id"));
         assert!(threaded_chats.sql.contains("ALTER TABLE tasks ADD COLUMN chat_id"));
         assert!(threaded_chats.sql.contains("INSERT INTO chats"));
+    }
+
+    #[test]
+    fn external_chat_migration_preserves_previous_history_migrations() {
+        let all_migrations = migrations();
+        let archive_compatibility = all_migrations
+            .iter()
+            .find(|migration| migration.version == 6)
+            .expect("migration 6");
+        let soft_delete_runs = all_migrations
+            .iter()
+            .find(|migration| migration.version == 7)
+            .expect("migration 7");
+        let threaded_chats = all_migrations
+            .iter()
+            .find(|migration| migration.version == 8)
+            .expect("migration 8");
+        let external_chats = all_migrations
+            .iter()
+            .find(|migration| migration.version == 9)
+            .expect("migration 9");
+
+        assert_eq!(archive_compatibility.description, "add_archived_runs");
+        assert_eq!(soft_delete_runs.description, "soft_delete_runs");
+        assert_eq!(
+            threaded_chats.description,
+            "create_chats_for_threaded_history"
+        );
+        assert_eq!(external_chats.description, "add_external_codex_chats");
+        assert!(external_chats.sql.contains("ADD COLUMN origin"));
+        assert!(external_chats.sql.contains("external_thread_id"));
+        assert!(external_chats.sql.contains("idx_chats_external_thread"));
     }
 
     #[test]
