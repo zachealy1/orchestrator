@@ -1016,23 +1016,34 @@ button.account-switcher-item:hover:not(:disabled) {
 }
 
 .workspace-context-banner {
+  --workspace-header-gap: 8px;
   position: sticky;
   top: 0;
   z-index: 12;
   display: grid;
   min-width: 0;
   grid-template-columns: minmax(0, 1fr) auto;
-  gap: 16px;
+  gap: var(--workspace-header-gap);
   align-items: center;
   border-bottom: 1px solid var(--color-divider);
   background: rgb(var(--component-rgb) / 0.96);
   padding: 10px 18px;
 }
 
+.workspace-context-left {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: var(--workspace-header-gap);
+  justify-content: flex-start;
+  overflow: hidden;
+}
+
 .workspace-context-main {
   display: flex;
   min-width: 0;
-  gap: 10px;
+  flex: 1 1 auto;
+  gap: var(--workspace-header-gap);
   align-items: center;
 }
 
@@ -1074,17 +1085,18 @@ button.account-switcher-item:hover:not(:disabled) {
 .workspace-context-chips {
   display: flex;
   min-width: 0;
-  flex: 0 0 auto;
+  flex: 0 1 auto;
   flex-wrap: nowrap;
-  gap: 7px;
-  justify-content: flex-end;
+  gap: var(--workspace-header-gap);
+  justify-content: flex-start;
+  overflow: hidden;
 }
 
 .workspace-context-side {
   display: flex;
   min-width: 0;
   align-items: center;
-  gap: 10px;
+  gap: var(--workspace-header-gap);
   justify-content: flex-end;
   overflow: hidden;
 }
@@ -1093,8 +1105,9 @@ button.account-switcher-item:hover:not(:disabled) {
   position: relative;
   display: flex;
   min-width: 0;
+  max-width: 100%;
   flex: 0 0 auto;
-  gap: 7px;
+  gap: var(--workspace-header-gap);
   align-items: center;
   justify-content: flex-end;
 }
@@ -1105,7 +1118,7 @@ button.account-switcher-item:hover:not(:disabled) {
   height: 30px;
   min-height: 30px;
   align-items: center;
-  gap: 6px;
+  gap: var(--workspace-header-gap);
   border: 0;
   border-radius: 7px;
   background: rgb(var(--text-secondary-rgb) / 0.1);
@@ -1179,7 +1192,7 @@ button.account-switcher-item:hover:not(:disabled) {
 
 .workspace-context-chip.git-summary {
   max-width: min(220px, 24vw);
-  gap: 8px;
+  gap: var(--workspace-header-gap);
   color: var(--color-text-secondary);
   font-size: 0.8rem;
   font-weight: 780;
@@ -1204,7 +1217,7 @@ button.account-switcher-item:hover:not(:disabled) {
 .workspace-header-button {
   height: 30px;
   min-height: 30px;
-  gap: 7px;
+  gap: var(--workspace-header-gap);
   border-radius: 7px;
   background: rgb(var(--text-secondary-rgb) / 0.1);
   color: var(--color-text-secondary);
@@ -1351,7 +1364,7 @@ button.account-switcher-item:hover:not(:disabled) {
   width: 100%;
   align-items: center;
   justify-content: space-between;
-  gap: 8px;
+  gap: var(--workspace-header-gap);
   overflow: hidden;
   text-overflow: ellipsis;
 }

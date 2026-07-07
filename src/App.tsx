@@ -5633,21 +5633,23 @@ function WorkspaceContextBanner({
   if (!workspace) {
     return (
       <section className="workspace-context-banner empty" aria-label="Selected folder">
-        <div className="workspace-context-main">
-          <span className="workspace-context-icon" aria-hidden="true">
-            <Folder size={17} />
-          </span>
-          <div>
-            <strong>No folder selected</strong>
-            <span>Add or choose a workspace to start a task.</span>
+        <div className="workspace-context-left">
+          <div className="workspace-context-main">
+            <span className="workspace-context-icon" aria-hidden="true">
+              <Folder size={17} />
+            </span>
+            <div>
+              <strong>No folder selected</strong>
+              <span>Add or choose a workspace to start a task.</span>
+            </div>
           </div>
+          <WorkspaceContextMeter tokenUsage={null} contextWindow={contextWindow} />
         </div>
         <div className="workspace-context-actions">
           <button className="workspace-header-button" type="button" disabled>
             <GitCommitHorizontal size={15} />
             Git
           </button>
-          <WorkspaceContextMeter tokenUsage={null} contextWindow={contextWindow} />
           <button className="workspace-header-button" type="button" disabled>
             <Plus size={15} />
             New chat
@@ -5672,31 +5674,17 @@ function WorkspaceContextBanner({
 
   return (
     <section className="workspace-context-banner" aria-label="Selected folder">
-      <div className="workspace-context-main">
-        <span className="workspace-context-icon" aria-hidden="true">
-          <Folder size={17} />
-        </span>
-        <div>
-          <strong>{workspace.label}</strong>
-          <span title={workspace.path}>{workspace.path}</span>
+      <div className="workspace-context-left">
+        <div className="workspace-context-main">
+          <span className="workspace-context-icon" aria-hidden="true">
+            <Folder size={17} />
+          </span>
+          <div>
+            <strong>{workspace.label}</strong>
+            <span title={workspace.path}>{workspace.path}</span>
+          </div>
         </div>
-      </div>
-
-      <div className="workspace-context-side">
         <div className="workspace-context-chips" aria-label="Selected folder status">
-          <ComposerSelect
-            ariaLabel="Branch"
-            value={branch ?? ""}
-            options={branches.map((candidate) => ({
-              value: candidate,
-              label: candidate,
-            }))}
-            placeholder="No branch"
-            icon={<GitBranch size={14} />}
-            className="workspace-branch-select"
-            disabled={branches.length === 0}
-            onChange={onBranchChange}
-          />
           {gitLoading ? (
             <span className="workspace-context-chip">Checking git</span>
           ) : null}
@@ -5709,106 +5697,120 @@ function WorkspaceContextBanner({
           {!gitLoading && !gitError && gitSummary.total > 0 ? (
             <WorkspaceContextGitSummaryChip gitSummary={gitSummary} />
           ) : null}
-        </div>
-        <div className="workspace-context-actions">
-          <div className="workspace-git-action">
-            <button
-              className="workspace-header-button primary"
-              type="button"
-              onClick={onGitAction}
-              disabled={gitAction.disabled || gitActionStatus !== "idle"}
-              title={gitAction.disabled ? gitAction.reason : gitAction.label}
-              aria-expanded={commitPopoverOpen}
-            >
-              {gitActionStatus === "committing" || gitActionStatus === "pushing" ? (
-                <Loader2 className="spin" size={15} />
-              ) : (
-                <GitCommitHorizontal size={15} />
-              )}
-              {gitActionStatus === "committing"
-                ? "Committing"
-                : gitActionStatus === "pushing"
-                  ? "Pushing"
-                  : gitAction.label}
-            </button>
-            {commitPopoverOpen ? (
-              <div className="commit-popover" role="dialog" aria-label="Commit or push">
-                <div className="commit-popover-status">
-                  <span className="commit-popover-branch">
-                    <GitBranch size={15} />
-                    <span>{branch ?? "No branch"}</span>
-                    <ChevronDown size={14} />
-                  </span>
-                  <span className={`commit-popover-state ${gitAction.statusKind}`}>
-                    {gitAction.statusLabel}
-                  </span>
-                </div>
-                <textarea
-                  aria-label="Commit message"
-                  placeholder="Commit message (leave blank to generate)..."
-                  value={commitMessage}
-                  onChange={(event) => onCommitMessageChange(event.target.value)}
-                />
-                <label className="commit-popover-check">
-                  <input type="checkbox" checked readOnly />
-                  <span>Include unstaged changes</span>
-                </label>
-                <div className="commit-popover-actions" role="group" aria-label="Git actions">
-                  <button
-                    className="commit-popover-action"
-                    type="button"
-                    onClick={onCommitConfirm}
-                    disabled={!gitAction.canCommit || gitActionStatus !== "idle"}
-                  >
-                    <GitCommitHorizontal size={15} />
-                    Commit
-                  </button>
-                  <button
-                    className="commit-popover-action"
-                    type="button"
-                    onClick={onCommitAndPush}
-                    disabled={!gitAction.canCommit || gitActionStatus !== "idle"}
-                  >
-                    <UploadCloud size={15} />
-                    Commit and push
-                  </button>
-                  <button
-                    className="commit-popover-action"
-                    type="button"
-                    onClick={onPush}
-                    disabled={!gitAction.canPush || gitActionStatus !== "idle"}
-                  >
-                    <UploadCloud size={15} />
-                    Push
-                  </button>
-                </div>
-              </div>
-            ) : null}
-          </div>
           <WorkspaceContextMeter tokenUsage={contextUsage} contextWindow={contextWindow} />
-          <button
-            className="workspace-header-button"
-            type="button"
-            onClick={onNewChat}
-            disabled={newChatDisabled}
-            title="Start a new chat"
-          >
-            <Plus size={15} />
-            New chat
-          </button>
-          <button
-            className={`workspace-header-button icon-only history-panel-button ${
-              historyOpen ? "active" : ""
-            }`}
-            type="button"
-            onClick={onToggleHistory}
-            aria-label={historyOpen ? "Close chat history" : "Open chat history"}
-            title={historyOpen ? "Close history" : "Open history"}
-            aria-pressed={historyOpen}
-          >
-            <PanelRight size={15} />
-          </button>
         </div>
+      </div>
+
+      <div className="workspace-context-actions">
+        <ComposerSelect
+          ariaLabel="Branch"
+          value={branch ?? ""}
+          options={branches.map((candidate) => ({
+            value: candidate,
+            label: candidate,
+          }))}
+          placeholder="No branch"
+          icon={<GitBranch size={14} />}
+          className="workspace-branch-select"
+          disabled={branches.length === 0}
+          onChange={onBranchChange}
+        />
+        <div className="workspace-git-action">
+          <button
+            className="workspace-header-button primary"
+            type="button"
+            onClick={onGitAction}
+            disabled={gitAction.disabled || gitActionStatus !== "idle"}
+            title={gitAction.disabled ? gitAction.reason : gitAction.label}
+            aria-expanded={commitPopoverOpen}
+          >
+            {gitActionStatus === "committing" || gitActionStatus === "pushing" ? (
+              <Loader2 className="spin" size={15} />
+            ) : (
+              <GitCommitHorizontal size={15} />
+            )}
+            {gitActionStatus === "committing"
+              ? "Committing"
+              : gitActionStatus === "pushing"
+                ? "Pushing"
+                : gitAction.label}
+          </button>
+          {commitPopoverOpen ? (
+            <div className="commit-popover" role="dialog" aria-label="Commit or push">
+              <div className="commit-popover-status">
+                <span className="commit-popover-branch">
+                  <GitBranch size={15} />
+                  <span>{branch ?? "No branch"}</span>
+                  <ChevronDown size={14} />
+                </span>
+                <span className={`commit-popover-state ${gitAction.statusKind}`}>
+                  {gitAction.statusLabel}
+                </span>
+              </div>
+              <textarea
+                aria-label="Commit message"
+                placeholder="Commit message (leave blank to generate)..."
+                value={commitMessage}
+                onChange={(event) => onCommitMessageChange(event.target.value)}
+              />
+              <label className="commit-popover-check">
+                <input type="checkbox" checked readOnly />
+                <span>Include unstaged changes</span>
+              </label>
+              <div className="commit-popover-actions" role="group" aria-label="Git actions">
+                <button
+                  className="commit-popover-action"
+                  type="button"
+                  onClick={onCommitConfirm}
+                  disabled={!gitAction.canCommit || gitActionStatus !== "idle"}
+                >
+                  <GitCommitHorizontal size={15} />
+                  Commit
+                </button>
+                <button
+                  className="commit-popover-action"
+                  type="button"
+                  onClick={onCommitAndPush}
+                  disabled={!gitAction.canCommit || gitActionStatus !== "idle"}
+                >
+                  <UploadCloud size={15} />
+                  Commit and push
+                </button>
+                <button
+                  className="commit-popover-action"
+                  type="button"
+                  onClick={onPush}
+                  disabled={!gitAction.canPush || gitActionStatus !== "idle"}
+                >
+                  <UploadCloud size={15} />
+                  Push
+                </button>
+              </div>
+            </div>
+          ) : null}
+        </div>
+        <button
+          className="workspace-header-button"
+          type="button"
+          onClick={onNewChat}
+          disabled={newChatDisabled}
+          title="Start a new chat"
+        >
+          <Plus size={15} />
+          New chat
+        </button>
+        <button
+          className={`workspace-header-button icon-only history-panel-button ${
+            historyOpen ? "active" : ""
+          }`}
+          type="button"
+          onClick={onToggleHistory}
+          aria-label={historyOpen ? "Close chat history" : "Open chat history"}
+          title={historyOpen ? "Close history" : "Open history"}
+          aria-pressed={historyOpen}
+        >
+          <PanelRight size={15} />
+        </button>
       </div>
     </section>
   );
