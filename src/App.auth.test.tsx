@@ -1137,6 +1137,8 @@ describe("App Codex auth", () => {
     const { user } = await renderApp();
     const banner = screen.getByRole("region", { name: "Selected folder" });
     expect(within(banner).getByText("Context loading")).toBeInTheDocument();
+    expect(within(banner).getByRole("status", { name: "Context loading" }))
+      .toBeInTheDocument();
 
     await startMockRun(user, "Measure context");
     await emitCodexNotification({
@@ -1160,6 +1162,8 @@ describe("App Codex auth", () => {
     expect(
       within(banner).getByText("1,280 / 128,000 (1%)"),
     ).toBeInTheDocument();
+    expect(within(banner).getByRole("meter", { name: "Context usage" }))
+      .toHaveAttribute("aria-valuenow", "1");
   });
 
   it("opens workspace chat history without extra drawer controls", async () => {

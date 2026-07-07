@@ -1244,21 +1244,73 @@ button.account-switcher-item:hover:not(:disabled) {
 }
 
 .workspace-context-meter {
+  --context-meter-fill: 0%;
+  position: relative;
   display: inline-flex;
+  overflow: hidden;
   height: 30px;
   min-height: 30px;
   align-items: center;
   border-radius: 7px;
   background: var(--color-surface-soft);
-  color: var(--muted);
+  color: var(--color-text);
   font-size: 0.76rem;
   font-weight: 700;
   padding: 0 10px;
   white-space: nowrap;
 }
 
-.workspace-context-meter.loading {
-  opacity: 0.72;
+.workspace-context-meter::before {
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: var(--context-meter-fill);
+  border-radius: inherit;
+  background: linear-gradient(
+    90deg,
+    rgb(var(--primary-rgb) / 0.34),
+    rgb(var(--accent-rgb) / 0.24)
+  );
+  content: "";
+  transition: width 180ms ease;
+}
+
+.workspace-context-meter.loading,
+.workspace-context-meter.unknown {
+  color: var(--color-text-secondary);
+}
+
+.workspace-context-meter.loading::before,
+.workspace-context-meter.unknown::before {
+  width: 48%;
+  background: linear-gradient(
+    90deg,
+    rgb(var(--primary-rgb) / 0.25),
+    var(--color-primary),
+    rgb(var(--primary-rgb) / 0.25)
+  );
+  animation: context-meter-loading 1.1s ease-in-out infinite;
+}
+
+.context-meter-copy {
+  position: relative;
+  z-index: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+@keyframes context-meter-loading {
+  0% {
+    opacity: 0.35;
+  }
+
+  50% {
+    opacity: 1;
+  }
+
+  100% {
+    opacity: 0.35;
+  }
 }
 
 .workspace-git-action {
@@ -1458,6 +1510,42 @@ button.account-switcher-item:hover:not(:disabled) {
   padding: 13px 16px;
   text-align: left;
   white-space: pre-wrap;
+}
+
+.submitted-inline-file {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 4px;
+  color: var(--color-primary);
+  cursor: pointer;
+  text-decoration: none;
+  white-space: nowrap;
+}
+
+.submitted-inline-file:hover .submitted-inline-file-name,
+.submitted-inline-file:focus-visible .submitted-inline-file-name {
+  color: var(--color-secondary);
+  text-decoration: underline;
+  text-decoration-thickness: 2px;
+  text-underline-offset: 3px;
+}
+
+.submitted-inline-file-type {
+  display: inline-flex;
+  align-items: center;
+  border-radius: 4px;
+  background: var(--color-button-active);
+  color: var(--color-button-active-text);
+  font-size: 0.68em;
+  font-weight: 700;
+  line-height: 1.35;
+  padding: 0 4px;
+  text-transform: uppercase;
+  transform: translateY(-0.08em);
+}
+
+.submitted-inline-file-name {
+  color: inherit;
 }
 
 .chat-message {

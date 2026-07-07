@@ -20,7 +20,8 @@ import type {
   RunViewState,
   StreamEvent,
 } from "../lib/codexEventReducer";
-import type { CodexMessage } from "../types";
+import { contextFileExtensionLabel } from "../lib/contextFiles";
+import type { CodexMessage, ComposerContextFile } from "../types";
 
 export type TaskChatEntry = {
   clientId: string;
@@ -30,6 +31,7 @@ export type TaskChatEntry = {
   runId: number | null;
   taskId: number | null;
   prompt: string;
+  contextFiles?: ComposerContextFile[];
   submittedAt: string;
   status: RunViewState["status"];
   runView: RunViewState;
@@ -66,7 +68,11 @@ export function TaskChatTranscript({
       {entries.map((entry) => (
         <div className="task-chat-run" key={entry.clientId}>
           <article className="submitted-prompt" aria-label="Submitted prompt">
-            {entry.prompt}
+            <SubmittedPrompt
+              prompt={entry.prompt}
+              contextFiles={entry.contextFiles ?? []}
+              onOpenFileLink={onOpenFileLink}
+            />
           </article>
           <article className={`chat-message assistant-message status-${entry.status}`}>
             <AssistantRunOutput
@@ -78,6 +84,52 @@ export function TaskChatTranscript({
         </div>
       ))}
     </section>
+  );
+}
+
+function SubmittedPrompt({
+  prompt,
+  contextFiles,
+  onOpenFileLink,
+}: {
+  prompt: string;
+  contextFiles: ComposerContextFile[];
+  onOpenFileLink?: (href: string) => boolean;
+}) {
+  const inlineFiles = contextFiles.filter((file) => file.source === "search");
+
+  if (inlineFiles.length === 0) {
+    return <>{prompt}</>;
+  }
+
+  return (
+    <>
+      {buildSubmittedPromptSegments(prompt, inlineFiles).map((segment, index) => {
+        if (segment.kind === "text") {
+          return <span key={`text-${index}`}>{segment.text}</span>;
+        }
+
+        return (
+          <a
+            className="submitted-inline-file"
+            href={segment.file.path}
+            key={`${segment.file.path}-${index}`}
+            title={`Preview ${segment.file.path}`}
+            onClick={(event: ReactMouseEvent<HTMLAnchorElement>) => {
+              if (onOpenFileLink?.(segment.file.path)) {
+                event.preventDefault();
+                event.stopPropagation();
+              }
+            }}
+          >
+            <span className="submitted-inline-file-type" aria-hidden="true">
+              {contextFileExtensionLabel(segment.file.name)}
+            </span>
+            <span className="submitted-inline-file-name">{segment.file.name}</span>
+          </a>
+        );
+      })}
+    </>
   );
 }
 
@@ -271,6 +323,79 @@ function isPreviewableSummaryLink(href: string) {
   } catch {
     return !/^[a-z][a-z\d+.-]*:/i.test(value);
   }
+}
+
+function buildSubmittedPromptSegments(
+  prompt: string,
+  files: ComposerContextFile[],
+) {
+  const candidates = buildInlineFileTokenCandidates(files);
+  const segments: Array<
+    | { kind: "text"; text: string }
+    | { kind: "file"; file: ComposerContextFile }
+  > = [];
+  let cursor = 0;
+
+  while (cursor < prompt.length) {
+    const match = candidates.find((candidate) =>
+      matchesInlineFileToken(prompt, cursor, candidate.token),
+    );
+
+    if (!match) {
+      const nextMatchIndex = findNextInlineFileIndex(prompt, cursor + 1, candidates);
+      const end = nextMatchIndex === -1 ? prompt.length : nextMatchIndex;
+      segments.push({ kind: "text", text: prompt.slice(cursor, end) });
+      cursor = end;
+      continue;
+    }
+
+    segments.push({ kind: "file", file: match.file });
+    cursor += match.token.length;
+  }
+
+  return segments;
+}
+
+function buildInlineFileTokenCandidates(files: ComposerContextFile[]) {
+  return files
+    .filter((file) => file.name.trim().length > 0)
+    .flatMap((file) => [
+      { file, token: `${contextFileExtensionLabel(file.name)} ${file.name}` },
+      { file, token: file.name },
+    ])
+    .sort((left, right) => right.token.length - left.token.length);
+}
+
+function findNextInlineFileIndex(
+  prompt: string,
+  start: number,
+  candidates: Array<{ file: ComposerContextFile; token: string }>,
+) {
+  for (let index = start; index < prompt.length; index += 1) {
+    if (
+      candidates.some((candidate) =>
+        matchesInlineFileToken(prompt, index, candidate.token),
+      )
+    ) {
+      return index;
+    }
+  }
+
+  return -1;
+}
+
+function matchesInlineFileToken(prompt: string, index: number, token: string) {
+  if (!prompt.startsWith(token, index)) {
+    return false;
+  }
+
+  const before = index === 0 ? "" : prompt[index - 1];
+  const after = prompt[index + token.length] ?? "";
+  return !isFileNameBoundaryCharacter(before) && !isFileNameBoundaryCharacter(after);
+}
+
+function isFileNameBoundaryCharacter(value: string) {
+  return /[A-Za-z0-9_.-]/.test(value);
 }
 
 function RunTimeline({ runView }: { runView: RunViewState }) {

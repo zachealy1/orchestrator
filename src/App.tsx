@@ -3109,6 +3109,7 @@ function App() {
         runId: null,
         taskId: null,
         prompt: snapshot.promptText,
+        contextFiles: snapshot.contextFiles,
         submittedAt,
         status: initialRunView.status,
         runView: initialRunView,
@@ -5623,7 +5624,7 @@ function WorkspaceContextBanner({
             <GitCommitHorizontal size={15} />
             Git
           </button>
-          <span className="workspace-context-meter loading">Context loading</span>
+          <WorkspaceContextMeter tokenUsage={null} />
           <button className="workspace-header-button" type="button" disabled>
             <Plus size={15} />
             New chat
@@ -5790,9 +5791,7 @@ function WorkspaceContextBanner({
               </div>
             ) : null}
           </div>
-          <span className="workspace-context-meter">
-            {formatLiveContextUsage(contextUsage)}
-          </span>
+          <WorkspaceContextMeter tokenUsage={contextUsage} />
           <button
             className="workspace-header-button"
             type="button"
@@ -5838,6 +5837,46 @@ function WorkspaceContextGitBadge({
     <span className="workspace-context-chip git-count" title={title}>
       <span>{label}</span>
       {count}
+    </span>
+  );
+}
+
+function WorkspaceContextMeter({
+  tokenUsage,
+}: {
+  tokenUsage: RunViewState["tokenUsage"];
+}) {
+  const usage = getLiveContextUsage(tokenUsage);
+
+  if (!usage) {
+    return (
+      <span
+        className="workspace-context-meter loading"
+        role="status"
+        aria-label="Context loading"
+      >
+        <span className="context-meter-copy">Context loading</span>
+      </span>
+    );
+  }
+
+  const meterStyle =
+    usage.percentage === null
+      ? undefined
+      : ({ "--context-meter-fill": `${usage.percentage}%` } as CSSProperties);
+
+  return (
+    <span
+      className={`workspace-context-meter ${usage.percentage === null ? "unknown" : ""}`}
+      role={usage.percentage === null ? "status" : "meter"}
+      aria-label="Context usage"
+      aria-valuemin={usage.percentage === null ? undefined : 0}
+      aria-valuemax={usage.percentage === null ? undefined : 100}
+      aria-valuenow={usage.percentage === null ? undefined : usage.percentage}
+      title={usage.title}
+      style={meterStyle}
+    >
+      <span className="context-meter-copy">{usage.label}</span>
     </span>
   );
 }
@@ -6266,22 +6305,30 @@ function generateCommitMessage(
     : `Update ${workspace.label}`;
 }
 
-function formatLiveContextUsage(tokenUsage: RunViewState["tokenUsage"]) {
+function getLiveContextUsage(tokenUsage: RunViewState["tokenUsage"]) {
   if (!tokenUsage) {
-    return "Context loading";
+    return null;
   }
 
   const total = tokenUsage.totalTokens.toLocaleString();
   const windowSize = tokenUsage.modelContextWindow;
   if (!windowSize || windowSize <= 0) {
-    return `${total} tokens`;
+    return {
+      label: `${total} tokens`,
+      title: `${total} tokens used`,
+      percentage: null,
+    };
   }
 
   const percentage = Math.min(
     100,
     Math.round((tokenUsage.totalTokens / windowSize) * 100),
   );
-  return `${total} / ${windowSize.toLocaleString()} (${percentage}%)`;
+  return {
+    label: `${total} / ${windowSize.toLocaleString()} (${percentage}%)`,
+    title: `${total} of ${windowSize.toLocaleString()} context tokens used`,
+    percentage,
+  };
 }
 
 function formatHistoryChatMeta(chat: ChatListItem) {

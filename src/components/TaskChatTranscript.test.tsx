@@ -98,6 +98,54 @@ describe("TaskChatTranscript", () => {
     expect(container.querySelector(".stream-loading-dots")).not.toBeNull();
   });
 
+  it("renders submitted inline file references as previewable links", () => {
+    const onOpenFileLink = vi.fn(() => true);
+    render(
+      <TaskChatTranscript
+        entries={[
+          {
+            clientId: "chat-1",
+            workspaceId: 1,
+            chatId: 401,
+            turnIndex: 1,
+            runId: null,
+            taskId: null,
+            prompt: "Delete the TXT hello-world.txt file",
+            contextFiles: [
+              {
+                path: "/repo/hello-world.txt",
+                name: "hello-world.txt",
+                source: "search",
+                status: "ready",
+              },
+            ],
+            submittedAt: "2026-06-30T17:30:00Z",
+            status: "connecting",
+            runView: {
+              ...emptyRunView,
+              status: "connecting",
+              startedAt: "2026-06-30T17:30:00Z",
+            },
+          },
+        ]}
+        onResolveRequest={vi.fn()}
+        onOpenFileLink={onOpenFileLink}
+      />,
+    );
+
+    const submittedPrompt = screen.getByLabelText("Submitted prompt");
+    const fileLink = within(submittedPrompt).getByRole("link", {
+      name: "hello-world.txt",
+    });
+
+    expect(fileLink).toHaveClass("submitted-inline-file");
+    expect(within(fileLink).getByText("TXT")).toBeInTheDocument();
+
+    fireEvent.click(fileLink);
+
+    expect(onOpenFileLink).toHaveBeenCalledWith("/repo/hello-world.txt");
+  });
+
   it("renders completed summaries as markdown and collapses the stream trace", () => {
     render(
       <TaskChatTranscript
