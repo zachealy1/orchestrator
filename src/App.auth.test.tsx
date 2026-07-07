@@ -34,6 +34,11 @@ const mocks = vi.hoisted(() => ({
   listCodexAccountsMock: vi.fn(),
   listDuplicateProfilesPendingCleanupMock: vi.fn(),
   completeDuplicateProfileCleanupMock: vi.fn(),
+  createChatMock: vi.fn(),
+  updateChatMock: vi.fn(),
+  listWorkspaceChatsMock: vi.fn(),
+  getChatWithRunsMock: vi.fn(),
+  softDeleteChatMock: vi.fn(),
   listWorkspaceRunsMock: vi.fn(),
   createCodexAccountMock: vi.fn(),
   updateCodexAccountMock: vi.fn(),
@@ -105,22 +110,27 @@ vi.mock("./codexClient", () => ({
 vi.mock("./db", () => ({
   appendRunEvent: mocks.appendRunEventMock,
   completeDuplicateProfileCleanup: mocks.completeDuplicateProfileCleanupMock,
+  createChat: mocks.createChatMock,
   createCodexAccount: mocks.createCodexAccountMock,
   createRun: mocks.createRunMock,
   createTask: mocks.createTaskMock,
+  getChatWithRuns: mocks.getChatWithRunsMock,
   getAnalyticsSummary: mocks.getAnalyticsSummaryMock,
   listCodexAccounts: mocks.listCodexAccountsMock,
   listDuplicateProfilesPendingCleanup:
     mocks.listDuplicateProfilesPendingCleanupMock,
+  listWorkspaceChats: mocks.listWorkspaceChatsMock,
   listWorkspaceRuns: mocks.listWorkspaceRunsMock,
   listWorkspaces: mocks.listWorkspacesMock,
   recordTokenUsage: mocks.recordTokenUsageMock,
   renameCodexAccount: mocks.renameCodexAccountMock,
   softDeleteWorkspace: mocks.softDeleteWorkspaceMock,
   savePreflightReport: mocks.savePreflightReportMock,
+  softDeleteChat: mocks.softDeleteChatMock,
   softDeleteCodexAccount: mocks.softDeleteCodexAccountMock,
   softDeleteRun: mocks.softDeleteRunMock,
   updateCodexAccount: mocks.updateCodexAccountMock,
+  updateChat: mocks.updateChatMock,
   updateRun: mocks.updateRunMock,
   updateTaskStatus: mocks.updateTaskStatusMock,
   upsertWorkspace: mocks.upsertWorkspaceMock,
@@ -186,6 +196,8 @@ const preflight = {
 function workspaceRunFixture(
   overrides: Partial<{
     id: number;
+    chat_id: number | null;
+    turn_index: number | null;
     original_prompt: string;
     final_message: string | null;
   }> = {},
@@ -194,6 +206,8 @@ function workspaceRunFixture(
     id: overrides.id ?? 301,
     task_id: 101,
     workspace_id: workspace.id,
+    chat_id: overrides.chat_id ?? 401,
+    turn_index: overrides.turn_index ?? 1,
     account_id: 7,
     account_label: "dev@example.com",
     account_email: "dev@example.com",
@@ -216,6 +230,45 @@ function workspaceRunFixture(
     latest_total_tokens: 1280,
     latest_model_context_window: 128000,
   };
+}
+
+function workspaceChatFixture(
+  overrides: Partial<{
+    id: number;
+    title: string;
+    codex_thread_id: string | null;
+    status: string;
+    turn_count: number;
+    total_tokens: number | null;
+    duration_ms: number | null;
+    latest_activity_at: string;
+  }> = {},
+) {
+  return {
+    id: overrides.id ?? 401,
+    workspace_id: workspace.id,
+    account_id: 7,
+    account_label: "dev@example.com",
+    account_email: "dev@example.com",
+    title: overrides.title ?? "Fix the app",
+    codex_thread_id: overrides.codex_thread_id ?? "thread-1",
+    status: overrides.status ?? "completed",
+    created_at: "2026-06-30T09:00:00Z",
+    updated_at: "2026-06-30T09:01:00Z",
+    deleted_at: null,
+    latest_activity_at: overrides.latest_activity_at ?? "2026-06-30T09:01:00Z",
+    turn_count: overrides.turn_count ?? 1,
+    total_tokens: overrides.total_tokens ?? 1280,
+    duration_ms: overrides.duration_ms ?? 60000,
+    latest_model: "GPT-5.5",
+  };
+}
+
+function workspaceChatWithRunsFixture(
+  chat = workspaceChatFixture(),
+  runs = [workspaceRunFixture({ chat_id: chat.id, original_prompt: chat.title })],
+) {
+  return { chat, runs };
 }
 
 function prepareDefaults() {
@@ -284,6 +337,22 @@ function prepareDefaults() {
   mocks.listCodexAccountsMock.mockResolvedValue([]);
   mocks.listDuplicateProfilesPendingCleanupMock.mockResolvedValue([]);
   mocks.completeDuplicateProfileCleanupMock.mockResolvedValue(undefined);
+  mocks.createChatMock.mockResolvedValue({
+    id: 401,
+    workspace_id: workspace.id,
+    account_id: 7,
+    title: "Fix the auth flow",
+    codex_thread_id: null,
+    status: "starting",
+    created_at: "2026-06-30T09:00:00Z",
+    updated_at: "2026-06-30T09:00:00Z",
+    deleted_at: null,
+  });
+  mocks.updateChatMock.mockResolvedValue(undefined);
+  mocks.listWorkspaceChatsMock.mockResolvedValue([]);
+  mocks.getChatWithRunsMock.mockImplementation(async (chatId: number) =>
+    workspaceChatWithRunsFixture(workspaceChatFixture({ id: chatId })),
+  );
   mocks.listWorkspaceRunsMock.mockResolvedValue([]);
   mocks.createCodexAccountMock.mockResolvedValue(pendingAccount);
   mocks.updateCodexAccountMock.mockResolvedValue(undefined);
@@ -298,6 +367,7 @@ function prepareDefaults() {
   mocks.updateTaskStatusMock.mockResolvedValue(undefined);
   mocks.appendRunEventMock.mockResolvedValue(undefined);
   mocks.recordTokenUsageMock.mockResolvedValue(undefined);
+  mocks.softDeleteChatMock.mockResolvedValue(undefined);
   mocks.softDeleteRunMock.mockResolvedValue(undefined);
   mocks.upsertWorkspaceMock.mockResolvedValue(workspace);
   mocks.openDialogMock.mockResolvedValue(null);
@@ -1093,12 +1163,11 @@ describe("App Codex auth", () => {
   });
 
   it("opens workspace chat history without extra drawer controls", async () => {
-    const activeRun = workspaceRunFixture({
-      id: 301,
-      original_prompt: "Fix the app header",
-      final_message: "Header fixed.",
+    const activeChat = workspaceChatFixture({
+      id: 401,
+      title: "Fix the app header",
     });
-    mocks.listWorkspaceRunsMock.mockResolvedValue([activeRun]);
+    mocks.listWorkspaceChatsMock.mockResolvedValue([activeChat]);
 
     const { user } = await renderApp();
     const banner = screen.getByRole("region", { name: "Selected folder" });
@@ -1144,12 +1213,20 @@ describe("App Codex auth", () => {
   });
 
   it("opens a clicked chat history row in the chat window and closes the drawer", async () => {
+    const historicalChat = workspaceChatFixture({
+      id: 401,
+      title: "Fix the app header",
+    });
     const historicalRun = workspaceRunFixture({
       id: 301,
+      chat_id: historicalChat.id,
       original_prompt: "Fix the app header",
       final_message: "Header fixed.",
     });
-    mocks.listWorkspaceRunsMock.mockResolvedValue([historicalRun]);
+    mocks.listWorkspaceChatsMock.mockResolvedValue([historicalChat]);
+    mocks.getChatWithRunsMock.mockResolvedValue(
+      workspaceChatWithRunsFixture(historicalChat, [historicalRun]),
+    );
 
     const { user } = await renderApp();
     const banner = screen.getByRole("region", { name: "Selected folder" });
@@ -1181,13 +1258,68 @@ describe("App Codex auth", () => {
     expect(within(transcript).getByText("1,280 tokens")).toBeInTheDocument();
   });
 
+  it("opens a multi-turn chat history row in the chat window", async () => {
+    const historicalChat = workspaceChatFixture({
+      id: 405,
+      title: "Fix the app header",
+      turn_count: 2,
+      total_tokens: 2560,
+      duration_ms: 90000,
+    });
+    const firstRun = workspaceRunFixture({
+      id: 305,
+      chat_id: historicalChat.id,
+      turn_index: 1,
+      original_prompt: "Fix the app header",
+      final_message: "Header fixed.",
+    });
+    const secondRun = workspaceRunFixture({
+      id: 306,
+      chat_id: historicalChat.id,
+      turn_index: 2,
+      original_prompt: "Add the history button",
+      final_message: "History button added.",
+    });
+    mocks.listWorkspaceChatsMock.mockResolvedValue([historicalChat]);
+    mocks.getChatWithRunsMock.mockResolvedValue(
+      workspaceChatWithRunsFixture(historicalChat, [firstRun, secondRun]),
+    );
+
+    const { user } = await renderApp();
+    const banner = screen.getByRole("region", { name: "Selected folder" });
+    await user.click(
+      within(banner).getByRole("button", { name: /open chat history/i }),
+    );
+    const drawer = await screen.findByRole("complementary", {
+      name: "Workspace chat history",
+    });
+
+    expect(within(drawer).getByText(/2 turns/)).toBeInTheDocument();
+    await user.click(within(drawer).getByRole("button", { name: /fix the app header/i }));
+
+    const transcript = screen.getByLabelText("Task chat transcript");
+    expect(within(transcript).getAllByLabelText("Submitted prompt")).toHaveLength(2);
+    expect(transcript).toHaveTextContent("Fix the app header");
+    expect(transcript).toHaveTextContent("Header fixed.");
+    expect(transcript).toHaveTextContent("Add the history button");
+    expect(transcript).toHaveTextContent("History button added.");
+  });
+
   it("opens a chat history row with keyboard activation", async () => {
+    const historicalChat = workspaceChatFixture({
+      id: 402,
+      title: "Keyboard open chat",
+    });
     const historicalRun = workspaceRunFixture({
       id: 302,
+      chat_id: historicalChat.id,
       original_prompt: "Keyboard open chat",
       final_message: "Opened from keyboard.",
     });
-    mocks.listWorkspaceRunsMock.mockResolvedValue([historicalRun]);
+    mocks.listWorkspaceChatsMock.mockResolvedValue([historicalChat]);
+    mocks.getChatWithRunsMock.mockResolvedValue(
+      workspaceChatWithRunsFixture(historicalChat, [historicalRun]),
+    );
 
     const { user } = await renderApp();
     const banner = screen.getByRole("region", { name: "Selected folder" });
@@ -1211,13 +1343,12 @@ describe("App Codex auth", () => {
   });
 
   it("removes a chat from history through the row context menu", async () => {
-    const activeRun = workspaceRunFixture({
-      id: 301,
-      original_prompt: "Fix the app header",
-      final_message: "Header fixed.",
+    const activeChat = workspaceChatFixture({
+      id: 401,
+      title: "Fix the app header",
     });
-    mocks.listWorkspaceRunsMock
-      .mockResolvedValueOnce([activeRun])
+    mocks.listWorkspaceChatsMock
+      .mockResolvedValueOnce([activeChat])
       .mockResolvedValueOnce([]);
 
     const { user } = await renderApp();
@@ -1263,7 +1394,7 @@ describe("App Codex auth", () => {
       within(dialog).getByText(/not permanently deleted/i),
     ).toBeInTheDocument();
     await user.click(within(dialog).getByRole("button", { name: "Cancel" }));
-    expect(mocks.softDeleteRunMock).not.toHaveBeenCalled();
+    expect(mocks.softDeleteChatMock).not.toHaveBeenCalled();
     expect(screen.queryByRole("dialog", { name: "Remove chat?" })).not.toBeInTheDocument();
 
     fireEvent.contextMenu(row as HTMLElement, { clientX: 120, clientY: 140 });
@@ -1275,7 +1406,7 @@ describe("App Codex auth", () => {
       ),
     );
 
-    await waitFor(() => expect(mocks.softDeleteRunMock).toHaveBeenCalledWith(301));
+    await waitFor(() => expect(mocks.softDeleteChatMock).toHaveBeenCalledWith(401));
     await waitFor(() =>
       expect(within(drawer).queryByText("Fix the app header")).not.toBeInTheDocument(),
     );
@@ -1283,12 +1414,20 @@ describe("App Codex auth", () => {
 
   it("does not switch to a history chat while a run is active", async () => {
     prepareSignedInRun();
+    const historicalChat = workspaceChatFixture({
+      id: 403,
+      title: "Old chat",
+    });
     const historicalRun = workspaceRunFixture({
       id: 303,
+      chat_id: historicalChat.id,
       original_prompt: "Old chat",
       final_message: "Old result.",
     });
-    mocks.listWorkspaceRunsMock.mockResolvedValue([historicalRun]);
+    mocks.listWorkspaceChatsMock.mockResolvedValue([historicalChat]);
+    mocks.getChatWithRunsMock.mockResolvedValue(
+      workspaceChatWithRunsFixture(historicalChat, [historicalRun]),
+    );
 
     const { user } = await renderApp();
     const animationFrames = holdNextAnimationFrames();
@@ -1320,14 +1459,22 @@ describe("App Codex auth", () => {
     }
   });
 
-  it("clears the selected history chat when submitting a new prompt", async () => {
+  it("keeps a selected history chat visible when submitting a follow-up prompt", async () => {
     prepareSignedInRun();
+    const historicalChat = workspaceChatFixture({
+      id: 404,
+      title: "Old selected chat",
+    });
     const historicalRun = workspaceRunFixture({
       id: 304,
+      chat_id: historicalChat.id,
       original_prompt: "Old selected chat",
       final_message: "Old selected result.",
     });
-    mocks.listWorkspaceRunsMock.mockResolvedValue([historicalRun]);
+    mocks.listWorkspaceChatsMock.mockResolvedValue([historicalChat]);
+    mocks.getChatWithRunsMock.mockResolvedValue(
+      workspaceChatWithRunsFixture(historicalChat, [historicalRun]),
+    );
 
     const { user } = await renderApp();
     const banner = screen.getByRole("region", { name: "Selected folder" });
@@ -1351,7 +1498,7 @@ describe("App Codex auth", () => {
 
       const transcript = screen.getByLabelText("Task chat transcript");
       expect(transcript).toHaveTextContent("Start fresh work");
-      expect(transcript).not.toHaveTextContent("Old selected result.");
+      expect(transcript).toHaveTextContent("Old selected result.");
     } finally {
       animationFrames.restore();
     }
@@ -2665,6 +2812,91 @@ describe("App Codex auth", () => {
     );
     expect(screen.queryByLabelText("Run history")).not.toBeInTheDocument();
     expect(screen.queryByLabelText("Codex run console")).not.toBeInTheDocument();
+  });
+
+  it("reuses the same Codex thread for follow-up prompts in one chat", async () => {
+    prepareSignedInRun();
+
+    const { user } = await renderApp();
+    await startMockRun(user, "First prompt");
+    await emitCodexNotification({
+      method: "turn/completed",
+      params: { turn: { status: "completed", durationMs: 1000 } },
+    });
+
+    await user.type(screen.getByLabelText("Prompt"), "Follow-up prompt");
+    await user.click(screen.getByRole("button", { name: /run codex/i }));
+    await waitFor(() =>
+      expect(
+        mocks.codexRpcMock.mock.calls.filter((call) => call[1] === "turn/start"),
+      ).toHaveLength(2),
+    );
+
+    const threadStarts = mocks.codexRpcMock.mock.calls.filter(
+      (call) => call[1] === "thread/start",
+    );
+    const turnStarts = mocks.codexRpcMock.mock.calls.filter(
+      (call) => call[1] === "turn/start",
+    );
+    expect(threadStarts).toHaveLength(1);
+    expect(turnStarts[1]?.[2]).toEqual(
+      expect.objectContaining({ threadId: "thread-1" }),
+    );
+    expect(mocks.createChatMock).toHaveBeenCalledTimes(1);
+    expect(mocks.createTaskMock).toHaveBeenLastCalledWith(
+      expect.objectContaining({ chatId: 401, turnIndex: 2 }),
+    );
+    expect(mocks.createRunMock).toHaveBeenLastCalledWith(
+      expect.objectContaining({ chatId: 401, turnIndex: 2 }),
+    );
+  });
+
+  it("starts a fresh Codex thread after New chat is clicked", async () => {
+    prepareSignedInRun();
+    mocks.createChatMock
+      .mockResolvedValueOnce({
+        id: 401,
+        workspace_id: workspace.id,
+        account_id: 7,
+        title: "First prompt",
+        codex_thread_id: null,
+        status: "starting",
+        created_at: "2026-06-30T09:00:00Z",
+        updated_at: "2026-06-30T09:00:00Z",
+        deleted_at: null,
+      })
+      .mockResolvedValueOnce({
+        id: 402,
+        workspace_id: workspace.id,
+        account_id: 7,
+        title: "Second prompt",
+        codex_thread_id: null,
+        status: "starting",
+        created_at: "2026-06-30T09:02:00Z",
+        updated_at: "2026-06-30T09:02:00Z",
+        deleted_at: null,
+      });
+
+    const { user } = await renderApp();
+    await startMockRun(user, "First prompt");
+    await emitCodexNotification({
+      method: "turn/completed",
+      params: { turn: { status: "completed", durationMs: 1000 } },
+    });
+
+    await user.click(screen.getByRole("button", { name: /new chat/i }));
+    expect(screen.queryByLabelText("Task chat transcript")).not.toBeInTheDocument();
+    await user.type(screen.getByLabelText("Prompt"), "Second prompt");
+    await user.click(screen.getByRole("button", { name: /run codex/i }));
+    await waitFor(() =>
+      expect(
+        mocks.codexRpcMock.mock.calls.filter((call) => call[1] === "thread/start"),
+      ).toHaveLength(2),
+    );
+    expect(mocks.createChatMock).toHaveBeenCalledTimes(2);
+    expect(mocks.createRunMock).toHaveBeenLastCalledWith(
+      expect.objectContaining({ chatId: 402, turnIndex: 1 }),
+    );
   });
 
   it("shows the submitted prompt immediately while run setup is pending", async () => {

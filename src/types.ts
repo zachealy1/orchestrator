@@ -146,6 +146,8 @@ export type RouteRecommendation = "plan-first" | "direct-run";
 export type TaskRecord = {
   id: number;
   workspace_id: number;
+  chat_id: number | null;
+  turn_index: number | null;
   original_prompt: string;
   improved_prompt: string;
   route_recommendation: RouteRecommendation;
@@ -158,6 +160,8 @@ export type RunRecord = {
   id: number;
   task_id: number;
   workspace_id: number;
+  chat_id: number | null;
+  turn_index: number | null;
   account_id: number | null;
   account_label: string | null;
   account_email: string | null;
@@ -182,6 +186,33 @@ export type RunListItem = RunRecord & {
   budget_tokens: number;
   latest_total_tokens: number | null;
   latest_model_context_window: number | null;
+};
+
+export type ChatRecord = {
+  id: number;
+  workspace_id: number;
+  account_id: number | null;
+  title: string;
+  codex_thread_id: string | null;
+  status: string;
+  created_at: string;
+  updated_at: string;
+  deleted_at: string | null;
+};
+
+export type ChatListItem = ChatRecord & {
+  account_label: string | null;
+  account_email: string | null;
+  latest_activity_at: string;
+  turn_count: number;
+  total_tokens: number | null;
+  duration_ms: number | null;
+  latest_model: string | null;
+};
+
+export type ChatWithRuns = {
+  chat: ChatListItem;
+  runs: RunListItem[];
 };
 
 export type TokenUsageSnapshot = {

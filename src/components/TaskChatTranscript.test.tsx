@@ -11,6 +11,8 @@ describe("TaskChatTranscript", () => {
           {
             clientId: "chat-1",
             workspaceId: 1,
+            chatId: 401,
+            turnIndex: 1,
             runId: 2,
             taskId: 3,
             prompt: "Objective:\nFix the failing auth tests",
@@ -69,6 +71,8 @@ describe("TaskChatTranscript", () => {
           {
             clientId: "chat-1",
             workspaceId: 1,
+            chatId: 401,
+            turnIndex: 1,
             runId: null,
             taskId: null,
             prompt: "Fix slow submission",
@@ -101,6 +105,8 @@ describe("TaskChatTranscript", () => {
           {
             clientId: "chat-1",
             workspaceId: 1,
+            chatId: 401,
+            turnIndex: 1,
             runId: 2,
             taskId: 3,
             prompt: "Finish the task",
@@ -190,6 +196,8 @@ describe("TaskChatTranscript", () => {
           {
             clientId: "chat-1",
             workspaceId: 1,
+            chatId: 401,
+            turnIndex: 1,
             runId: 2,
             taskId: 3,
             prompt: "Add a line",
@@ -223,6 +231,8 @@ describe("TaskChatTranscript", () => {
           {
             clientId: "chat-1",
             workspaceId: 1,
+            chatId: 401,
+            turnIndex: 1,
             runId: 2,
             taskId: 3,
             prompt: "Finish the task",
@@ -266,6 +276,8 @@ describe("TaskChatTranscript", () => {
           {
             clientId: "chat-1",
             workspaceId: 1,
+            chatId: 401,
+            turnIndex: 1,
             runId: 2,
             taskId: 3,
             prompt: "Update the transcript",

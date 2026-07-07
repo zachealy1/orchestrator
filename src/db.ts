@@ -1,6 +1,9 @@
 import Database from "@tauri-apps/plugin-sql";
 import type {
   AnalyticsSummary,
+  ChatListItem,
+  ChatRecord,
+  ChatWithRuns,
   CodexAccountProfile,
   CodexAccountStatus,
   PreflightReport,
@@ -196,8 +199,71 @@ export async function softDeleteCodexAccount(accountId: number) {
   );
 }
 
+export async function createChat(input: {
+  workspaceId: number;
+  accountId: number | null;
+  title: string;
+  status: string;
+}) {
+  const db = await getDatabase();
+  const result = await db.execute(
+    `INSERT INTO chats (workspace_id, account_id, title, status)
+     VALUES ($1, $2, $3, $4)`,
+    [
+      input.workspaceId,
+      input.accountId,
+      input.title.trim() || "Untitled chat",
+      input.status,
+    ],
+  );
+
+  const chat = await selectOne<ChatRecord>(
+    `SELECT id, workspace_id, account_id, title, codex_thread_id, status,
+      created_at, updated_at, deleted_at
+     FROM chats WHERE id = $1`,
+    [result.lastInsertId],
+  );
+
+  if (!chat) {
+    throw new Error("Chat was not created");
+  }
+
+  return chat;
+}
+
+export async function updateChat(
+  chatId: number,
+  fields: Partial<{
+    title: string;
+    codexThreadId: string | null;
+    status: string;
+  }>,
+) {
+  const db = await getDatabase();
+  const assignments: string[] = [];
+  const values: unknown[] = [];
+  const add = (column: string, value: unknown) => {
+    assignments.push(`${column} = $${assignments.length + 1}`);
+    values.push(value);
+  };
+
+  if ("title" in fields) add("title", fields.title);
+  if ("codexThreadId" in fields) add("codex_thread_id", fields.codexThreadId);
+  if ("status" in fields) add("status", fields.status);
+  assignments.push("updated_at = CURRENT_TIMESTAMP");
+
+  values.push(chatId);
+  await db.execute(
+    `UPDATE chats SET ${assignments.join(", ")}
+     WHERE id = $${values.length} AND deleted_at IS NULL`,
+    values,
+  );
+}
+
 export async function createTask(input: {
   workspaceId: number;
+  chatId?: number | null;
+  turnIndex?: number | null;
   originalPrompt: string;
   improvedPrompt: string;
   routeRecommendation: string;
@@ -206,10 +272,13 @@ export async function createTask(input: {
   const db = await getDatabase();
   const result = await db.execute(
     `INSERT INTO tasks (
-      workspace_id, original_prompt, improved_prompt, route_recommendation, budget_tokens, status
-    ) VALUES ($1, $2, $3, $4, $5, 'created')`,
+      workspace_id, chat_id, turn_index, original_prompt, improved_prompt,
+      route_recommendation, budget_tokens, status
+    ) VALUES ($1, $2, $3, $4, $5, $6, $7, 'created')`,
     [
       input.workspaceId,
+      input.chatId ?? null,
+      input.turnIndex ?? null,
       input.originalPrompt,
       input.improvedPrompt,
       input.routeRecommendation,
@@ -218,7 +287,8 @@ export async function createTask(input: {
   );
 
   const task = await selectOne<TaskRecord>(
-    `SELECT id, workspace_id, original_prompt, improved_prompt, route_recommendation,
+    `SELECT id, workspace_id, chat_id, turn_index,
+      original_prompt, improved_prompt, route_recommendation,
       budget_tokens, status, created_at
      FROM tasks WHERE id = $1`,
     [result.lastInsertId],
@@ -283,6 +353,8 @@ export async function savePreflightReport(
 export async function createRun(input: {
   taskId: number;
   workspaceId: number;
+  chatId?: number | null;
+  turnIndex?: number | null;
   accountId: number;
   accountLabel: string;
   accountEmail?: string | null;
@@ -295,12 +367,15 @@ export async function createRun(input: {
   const db = await getDatabase();
   const result = await db.execute(
     `INSERT INTO runs (
-      task_id, workspace_id, account_id, account_label, account_email,
+      task_id, workspace_id, chat_id, turn_index,
+      account_id, account_label, account_email,
       status, sandbox, approval_policy, model, model_provider
-    ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
+    ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)`,
     [
       input.taskId,
       input.workspaceId,
+      input.chatId ?? null,
+      input.turnIndex ?? null,
       input.accountId,
       input.accountLabel,
       input.accountEmail ?? null,
@@ -313,7 +388,8 @@ export async function createRun(input: {
   );
 
   const run = await selectOne<RunRecord>(
-    `SELECT id, task_id, workspace_id, account_id, account_label, account_email,
+    `SELECT id, task_id, workspace_id, chat_id, turn_index,
+      account_id, account_label, account_email,
       codex_thread_id, codex_turn_id, model, model_provider,
       sandbox, approval_policy, status, started_at, completed_at, duration_ms,
       final_message, error
@@ -435,7 +511,8 @@ export async function recordTokenUsage(input: {
 export async function listWorkspaceRuns(workspaceId: number) {
   const db = await getDatabase();
   return db.select<RunListItem[]>(
-    `SELECT runs.id, runs.task_id, runs.workspace_id, runs.codex_thread_id, runs.codex_turn_id,
+    `SELECT runs.id, runs.task_id, runs.workspace_id, runs.chat_id, runs.turn_index,
+      runs.codex_thread_id, runs.codex_turn_id,
       runs.account_id, runs.account_label, runs.account_email, runs.model, runs.model_provider,
       runs.sandbox, runs.approval_policy, runs.status,
       runs.started_at, runs.completed_at, runs.duration_ms, runs.final_message, runs.error,
@@ -455,6 +532,125 @@ export async function listWorkspaceRuns(workspaceId: number) {
      ORDER BY runs.started_at DESC
      LIMIT 50`,
     [workspaceId],
+  );
+}
+
+export async function listWorkspaceChats(workspaceId: number) {
+  const db = await getDatabase();
+  return db.select<ChatListItem[]>(
+    `SELECT chats.id, chats.workspace_id, chats.account_id, chats.title,
+      chats.codex_thread_id, chats.status, chats.created_at, chats.updated_at,
+      chats.deleted_at,
+      latest_run.account_label,
+      latest_run.account_email,
+      COALESCE(MAX(COALESCE(runs.completed_at, runs.started_at)), chats.updated_at)
+        AS latest_activity_at,
+      COUNT(runs.id) AS turn_count,
+      COALESCE(SUM(latest_tokens.total_tokens), 0) AS total_tokens,
+      COALESCE(SUM(runs.duration_ms), 0) AS duration_ms,
+      latest_run.model AS latest_model
+     FROM chats
+     LEFT JOIN runs ON runs.chat_id = chats.id AND runs.deleted_at IS NULL
+     LEFT JOIN (
+       SELECT run_id, MAX(id) AS max_id
+       FROM token_usage_snapshots
+       GROUP BY run_id
+     ) latest ON latest.run_id = runs.id
+     LEFT JOIN token_usage_snapshots latest_tokens ON latest_tokens.id = latest.max_id
+     LEFT JOIN runs latest_run ON latest_run.id = (
+       SELECT inner_runs.id
+       FROM runs inner_runs
+       WHERE inner_runs.chat_id = chats.id
+         AND inner_runs.deleted_at IS NULL
+       ORDER BY COALESCE(inner_runs.turn_index, inner_runs.id) DESC,
+         inner_runs.started_at DESC
+       LIMIT 1
+     )
+     WHERE chats.workspace_id = $1
+       AND chats.deleted_at IS NULL
+     GROUP BY chats.id
+     ORDER BY latest_activity_at DESC
+     LIMIT 50`,
+    [workspaceId],
+  );
+}
+
+export async function getChatWithRuns(chatId: number): Promise<ChatWithRuns> {
+  const chat = await selectOne<ChatListItem>(
+    `SELECT chats.id, chats.workspace_id, chats.account_id, chats.title,
+      chats.codex_thread_id, chats.status, chats.created_at, chats.updated_at,
+      chats.deleted_at,
+      latest_run.account_label,
+      latest_run.account_email,
+      COALESCE(MAX(COALESCE(runs.completed_at, runs.started_at)), chats.updated_at)
+        AS latest_activity_at,
+      COUNT(runs.id) AS turn_count,
+      COALESCE(SUM(latest_tokens.total_tokens), 0) AS total_tokens,
+      COALESCE(SUM(runs.duration_ms), 0) AS duration_ms,
+      latest_run.model AS latest_model
+     FROM chats
+     LEFT JOIN runs ON runs.chat_id = chats.id AND runs.deleted_at IS NULL
+     LEFT JOIN (
+       SELECT run_id, MAX(id) AS max_id
+       FROM token_usage_snapshots
+       GROUP BY run_id
+     ) latest ON latest.run_id = runs.id
+     LEFT JOIN token_usage_snapshots latest_tokens ON latest_tokens.id = latest.max_id
+     LEFT JOIN runs latest_run ON latest_run.id = (
+       SELECT inner_runs.id
+       FROM runs inner_runs
+       WHERE inner_runs.chat_id = chats.id
+         AND inner_runs.deleted_at IS NULL
+       ORDER BY COALESCE(inner_runs.turn_index, inner_runs.id) DESC,
+         inner_runs.started_at DESC
+       LIMIT 1
+     )
+     WHERE chats.id = $1
+       AND chats.deleted_at IS NULL
+     GROUP BY chats.id`,
+    [chatId],
+  );
+
+  if (!chat) {
+    throw new Error("Chat was not found");
+  }
+
+  const db = await getDatabase();
+  const runs = await db.select<RunListItem[]>(
+    `SELECT runs.id, runs.task_id, runs.workspace_id, runs.chat_id, runs.turn_index,
+      runs.codex_thread_id, runs.codex_turn_id,
+      runs.account_id, runs.account_label, runs.account_email, runs.model, runs.model_provider,
+      runs.sandbox, runs.approval_policy, runs.status,
+      runs.started_at, runs.completed_at, runs.duration_ms, runs.final_message, runs.error,
+      tasks.original_prompt, tasks.improved_prompt, tasks.route_recommendation, tasks.budget_tokens,
+      latest_tokens.total_tokens AS latest_total_tokens,
+      latest_tokens.model_context_window AS latest_model_context_window
+     FROM runs
+     JOIN tasks ON tasks.id = runs.task_id
+     LEFT JOIN (
+       SELECT run_id, MAX(id) AS max_id
+       FROM token_usage_snapshots
+       GROUP BY run_id
+     ) latest ON latest.run_id = runs.id
+     LEFT JOIN token_usage_snapshots latest_tokens ON latest_tokens.id = latest.max_id
+     WHERE runs.chat_id = $1
+       AND runs.deleted_at IS NULL
+     ORDER BY COALESCE(runs.turn_index, runs.id), runs.started_at`,
+    [chatId],
+  );
+
+  return { chat, runs };
+}
+
+export async function softDeleteChat(chatId: number) {
+  const db = await getDatabase();
+  await db.execute(
+    "UPDATE chats SET deleted_at = CURRENT_TIMESTAMP WHERE id = $1",
+    [chatId],
+  );
+  await db.execute(
+    "UPDATE runs SET deleted_at = CURRENT_TIMESTAMP WHERE chat_id = $1",
+    [chatId],
   );
 }
 

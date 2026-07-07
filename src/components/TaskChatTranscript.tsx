@@ -25,6 +25,8 @@ import type { CodexMessage } from "../types";
 export type TaskChatEntry = {
   clientId: string;
   workspaceId: number;
+  chatId: number | null;
+  turnIndex: number | null;
   runId: number | null;
   taskId: number | null;
   prompt: string;

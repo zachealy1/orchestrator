@@ -41,20 +41,23 @@ import orchestratorMark from "./assets/brand/orchestrator-mark.png";
 import {
   appendRunEvent,
   completeDuplicateProfileCleanup,
+  createChat,
   createCodexAccount,
   createRun,
   createTask,
+  getChatWithRuns,
   getAnalyticsSummary,
+  listWorkspaceChats,
   listCodexAccounts,
   listDuplicateProfilesPendingCleanup,
-  listWorkspaceRuns,
   listWorkspaces,
   recordTokenUsage,
   renameCodexAccount,
   savePreflightReport,
+  softDeleteChat,
   softDeleteWorkspace,
   softDeleteCodexAccount,
-  softDeleteRun,
+  updateChat,
   updateCodexAccount,
   updateRun,
   updateTaskStatus,
@@ -133,6 +136,8 @@ import type {
   AccountUpdatedNotification,
   AdditionalContextEntry,
   AnalyticsSummary as AnalyticsSummaryType,
+  ChatListItem,
+  ChatWithRuns,
   CodexAccount,
   CodexAccountProfile,
   CodexAccountStatus,
@@ -146,7 +151,6 @@ import type {
   ComposerContextFile,
   OssProvider,
   PreflightReport,
-  RunListItem,
   SelectedComposerSkill,
   SlashCommandItem,
   SlashCommandSearchStatus,
@@ -199,6 +203,7 @@ type ActiveRunControl = {
   accountId: number;
   clientId: string;
   promptFallback: string;
+  chatId: number | null;
   stopped: boolean;
   taskId: number | null;
   runId: number | null;
@@ -230,12 +235,20 @@ type RunSetupSnapshot = {
   selectedSkills: SelectedComposerSkill[];
   goalMode: boolean;
   loginState: CodexLoginState;
+  chatId: number | null;
+  threadId: string | null;
+  turnIndex: number;
 };
 
 type WorkspaceHistoryState = {
   status: "idle" | "loading" | "loaded" | "error";
-  runs: RunListItem[];
+  chats: ChatListItem[];
   error: string | null;
+};
+
+type WorkspaceChatSession = {
+  chatId: number;
+  threadId: string | null;
 };
 
 type HeaderGitAction =
@@ -403,7 +416,7 @@ type WorkspaceContextMenuState = {
 };
 
 type ChatHistoryContextMenuState = {
-  run: RunListItem;
+  chat: ChatListItem;
   x: number;
   y: number;
 };
@@ -570,7 +583,7 @@ function App() {
   const [chatHistoryContextMenu, setChatHistoryContextMenu] =
     useState<ChatHistoryContextMenuState | null>(null);
   const [chatHistoryDeleteCandidate, setChatHistoryDeleteCandidate] =
-    useState<RunListItem | null>(null);
+    useState<ChatListItem | null>(null);
   const [expandedWorkspaceIds, setExpandedWorkspaceIds] = useState<Set<number>>(
     () => new Set(),
   );
@@ -631,10 +644,13 @@ function App() {
   const [historyDrawerOpen, setHistoryDrawerOpen] = useState(false);
   const [historyState, setHistoryState] = useState<WorkspaceHistoryState>({
     status: "idle",
-    runs: [],
+    chats: [],
     error: null,
   });
-  const [selectedHistoryRun, setSelectedHistoryRun] = useState<RunListItem | null>(null);
+  const [selectedHistoryChatId, setSelectedHistoryChatId] = useState<number | null>(null);
+  const [workspaceChatSessions, setWorkspaceChatSessions] = useState<
+    Record<number, WorkspaceChatSession | undefined>
+  >({});
   const [commitPopoverOpen, setCommitPopoverOpen] = useState(false);
   const [commitMessage, setCommitMessage] = useState("");
   const [gitActionStatus, setGitActionStatus] = useState<
@@ -694,6 +710,9 @@ function App() {
   const runViewRef = useRef<RunViewState>(emptyRunView);
   const activeChatEntryIdRef = useRef<string | null>(null);
   const activeRunControlRef = useRef<ActiveRunControl | null>(null);
+  const workspaceChatSessionsRef = useRef<
+    Record<number, WorkspaceChatSession | undefined>
+  >({});
   const eventSequence = useRef(0);
   const selectedWorkspaceRef = useRef<Workspace | null>(null);
   const codexAccountsRef = useRef<CodexAccountProfile[]>([]);
@@ -864,16 +883,10 @@ function App() {
         : [],
     [selectedWorkspace, taskChatEntries],
   );
-  const selectedHistoryChatEntry = useMemo(() => {
-    if (!selectedWorkspace || selectedHistoryRun?.workspace_id !== selectedWorkspace.id) {
-      return null;
-    }
-
-    return createTaskChatEntryFromHistoryRun(selectedHistoryRun);
-  }, [selectedHistoryRun, selectedWorkspace]);
-  const visibleTaskChatEntries = selectedHistoryChatEntry
-    ? [selectedHistoryChatEntry]
-    : selectedWorkspaceChatEntries;
+  const selectedWorkspaceChatSession = selectedWorkspace
+    ? (workspaceChatSessions[selectedWorkspace.id] ?? null)
+    : null;
+  const visibleTaskChatEntries = selectedWorkspaceChatEntries;
   const selectedWorkspaceContextUsage =
     [...selectedWorkspaceChatEntries]
       .reverse()
@@ -1540,12 +1553,12 @@ function App() {
       error: null,
     }));
     try {
-      const runs = await listWorkspaceRuns(workspaceId);
-      setHistoryState({ status: "loaded", runs, error: null });
+      const chats = await listWorkspaceChats(workspaceId);
+      setHistoryState({ status: "loaded", chats, error: null });
     } catch (error) {
       setHistoryState({
         status: "error",
-        runs: [],
+        chats: [],
         error: error instanceof Error ? error.message : String(error),
       });
     }
@@ -1850,7 +1863,7 @@ function App() {
 
     setWorkspaceContextMenu(null);
     setSelectedWorkspace(workspace);
-    setSelectedHistoryRun(null);
+    setSelectedHistoryChatId(workspaceChatSessionsRef.current[workspace.id]?.chatId ?? null);
     setActiveView("task");
     setPreflight(null);
     setStatusMessage(`Selected ${workspace.label}`);
@@ -1862,8 +1875,24 @@ function App() {
     }
   }
 
+  function setWorkspaceChatSession(
+    workspaceId: number,
+    session: WorkspaceChatSession | undefined,
+  ) {
+    setWorkspaceChatSessions((current) => {
+      const next = { ...current };
+      if (session) {
+        next[workspaceId] = session;
+      } else {
+        delete next[workspaceId];
+      }
+      workspaceChatSessionsRef.current = next;
+      return next;
+    });
+  }
+
   function startTaskChatEntry(entry: TaskChatEntry) {
-    setSelectedHistoryRun(null);
+    setSelectedHistoryChatId(entry.chatId ?? null);
     activeChatEntryIdRef.current = entry.clientId;
     runViewRef.current = entry.runView;
     setActiveChatEntryId(entry.clientId);
@@ -1873,7 +1902,12 @@ function App() {
 
   function updateTaskChatEntryIds(
     clientId: string,
-    ids: { taskId: number; runId: number },
+    ids: {
+      taskId?: number;
+      runId?: number;
+      chatId?: number;
+      turnIndex?: number;
+    },
   ) {
     setTaskChatEntries((current) =>
       current.map((entry) =>
@@ -1955,6 +1989,12 @@ function App() {
         durationMs: stoppedRunView.elapsedMs,
         error: stoppedRunView.error ?? "Stopped by user.",
       }).catch(() => undefined);
+    }
+
+    if (control?.chatId !== null && control?.chatId !== undefined) {
+      await updateChat(control.chatId, { status: "interrupted" }).catch(
+        () => undefined,
+      );
     }
 
     if (taskId !== null) {
@@ -2048,7 +2088,7 @@ function App() {
   }
 
   function openChatHistoryContextMenu(
-    run: RunListItem,
+    chat: ChatListItem,
     event:
       | ReactMouseEvent<HTMLElement>
       | ReactKeyboardEvent<HTMLElement>,
@@ -2056,46 +2096,87 @@ function App() {
     event.preventDefault();
     event.stopPropagation();
     setChatHistoryContextMenu({
-      run,
+      chat,
       ...contextMenuPosition(event),
     });
   }
 
-  function requestChatHistoryDelete(run: RunListItem) {
+  function requestChatHistoryDelete(chat: ChatListItem) {
     setChatHistoryContextMenu(null);
-    if (runIsActive && currentRunId.current === run.id) {
+    if (runIsActive && activeRunControlRef.current?.chatId === chat.id) {
       setStatusMessage("Wait for the active run to finish before removing this chat.");
       return;
     }
 
-    setChatHistoryDeleteCandidate(run);
+    setChatHistoryDeleteCandidate(chat);
   }
 
-  function selectHistoryRun(run: RunListItem) {
+  async function selectHistoryChat(chat: ChatListItem) {
     if (runIsActive) {
       setStatusMessage("Finish or stop the active run before opening history.");
       return;
     }
 
     setChatHistoryContextMenu(null);
-    setSelectedHistoryRun(run);
-    setHistoryDrawerOpen(false);
-    setActiveView("task");
-    setStatusMessage(`Opened chat from ${formatHistoryTimestamp(run.started_at)}.`);
+    try {
+      const loadedChat = await getChatWithRuns(chat.id);
+      const entries = createTaskChatEntriesFromHistoryChat(loadedChat);
+      setTaskChatEntries((current) => [
+        ...current.filter((entry) => entry.workspaceId !== chat.workspace_id),
+        ...entries,
+      ]);
+      setWorkspaceChatSession(chat.workspace_id, {
+        chatId: chat.id,
+        threadId: chat.codex_thread_id,
+      });
+      setSelectedHistoryChatId(chat.id);
+      setHistoryDrawerOpen(false);
+      setActiveView("task");
+      setStatusMessage(`Opened chat from ${formatHistoryTimestamp(chat.latest_activity_at)}.`);
+    } catch (error) {
+      setStatusMessage(
+        `Could not open chat: ${error instanceof Error ? error.message : String(error)}`,
+      );
+    }
   }
 
-  async function confirmChatHistoryDelete() {
-    const run = chatHistoryDeleteCandidate;
-    if (!run) {
+  function startNewWorkspaceChat() {
+    if (!selectedWorkspace) {
+      setStatusMessage("Choose a workspace before starting a new chat.");
+      return;
+    }
+    if (runIsActive || activeChatEntryIdRef.current !== null) {
+      setStatusMessage("Finish or stop the active run before starting a new chat.");
       return;
     }
 
-    await softDeleteRun(run.id);
-    setSelectedHistoryRun((current) => (current?.id === run.id ? null : current));
+    setTaskChatEntries((current) =>
+      current.filter((entry) => entry.workspaceId !== selectedWorkspace.id),
+    );
+    setWorkspaceChatSession(selectedWorkspace.id, undefined);
+    setSelectedHistoryChatId(null);
+    setPreflight(null);
+    setStatusMessage("Started a new chat.");
+  }
+
+  async function confirmChatHistoryDelete() {
+    const chat = chatHistoryDeleteCandidate;
+    if (!chat) {
+      return;
+    }
+
+    await softDeleteChat(chat.id);
+    if (selectedHistoryChatId === chat.id) {
+      setSelectedHistoryChatId(null);
+      setWorkspaceChatSession(chat.workspace_id, undefined);
+      setTaskChatEntries((current) =>
+        current.filter((entry) => entry.chatId !== chat.id),
+      );
+    }
     setChatHistoryDeleteCandidate(null);
     setStatusMessage("Removed chat from history.");
     await refreshSelectedWorkspaceHistory();
-    await refreshWorkspaceData(run.workspace_id);
+    await refreshWorkspaceData(chat.workspace_id);
   }
 
   async function confirmWorkspaceDelete() {
@@ -2161,6 +2242,10 @@ function App() {
     setTaskChatEntries((current) =>
       current.filter((entry) => entry.workspaceId !== workspace.id),
     );
+    setWorkspaceChatSession(workspace.id, undefined);
+    if (selectedHistoryChatId !== null) {
+      setSelectedHistoryChatId(null);
+    }
     if (activeChatEntryId !== null) {
       const activeEntry = taskChatEntries.find(
         (entry) => entry.clientId === activeChatEntryId,
@@ -3006,6 +3091,7 @@ function App() {
       accountId: snapshot.accountId,
       clientId,
       promptFallback: snapshot.promptFallback,
+      chatId: snapshot.chatId,
       stopped: false,
       taskId: null,
       runId: null,
@@ -3018,6 +3104,8 @@ function App() {
       startTaskChatEntry({
         clientId,
         workspaceId: snapshot.workspace.id,
+        chatId: snapshot.chatId,
+        turnIndex: snapshot.turnIndex,
         runId: null,
         taskId: null,
         prompt: snapshot.promptText,
@@ -3036,6 +3124,8 @@ function App() {
     runControl: ActiveRunControl,
     snapshot: RunSetupSnapshot,
   ) {
+    let chatId = snapshot.chatId;
+    let threadId = snapshot.threadId;
     let taskId: number | null = null;
     let runId: number | null = null;
 
@@ -3075,8 +3165,32 @@ function App() {
         );
       }
 
+      if (chatId === null) {
+        const chat = await createChat({
+          workspaceId: snapshot.workspace.id,
+          accountId: snapshot.accountId,
+          title: createChatTitle(snapshot.promptText),
+          status: "starting",
+        });
+        chatId = chat.id;
+        threadId = chat.codex_thread_id;
+        runControl.chatId = chat.id;
+        setWorkspaceChatSession(snapshot.workspace.id, {
+          chatId: chat.id,
+          threadId,
+        });
+        setSelectedHistoryChatId(chat.id);
+        updateTaskChatEntryIds(runControl.clientId, {
+          chatId: chat.id,
+          turnIndex: snapshot.turnIndex,
+        });
+      }
+      ensureRunControlActive(runControl);
+
       const task = await createTask({
         workspaceId: snapshot.workspace.id,
+        chatId,
+        turnIndex: snapshot.turnIndex,
         originalPrompt: snapshot.promptText,
         improvedPrompt: report.improvedPrompt || snapshot.improvedPrompt,
         routeRecommendation: report.routeRecommendation,
@@ -3093,6 +3207,8 @@ function App() {
       const run = await createRun({
         taskId: task.id,
         workspaceId: snapshot.workspace.id,
+        chatId,
+        turnIndex: snapshot.turnIndex,
         accountId: snapshot.accountId,
         accountLabel: snapshot.account.label,
         accountEmail: snapshot.account.email,
@@ -3111,34 +3227,54 @@ function App() {
       updateTaskChatEntryIds(runControl.clientId, {
         taskId: task.id,
         runId: run.id,
+        chatId,
+        turnIndex: snapshot.turnIndex,
       });
 
-      const thread = await codexRpc<{
-        thread: { id: string };
-        model?: string;
-        modelProvider?: string;
-        serviceTier?: string | null;
-      }>(snapshot.accountId, "thread/start", {
-        cwd: snapshot.workspace.path,
-        model: snapshot.model,
-        approvalPolicy: snapshot.access.approvalPolicy,
-        approvalsReviewer: "user",
-        sandbox: snapshot.access.sandbox,
-        serviceName: "orchestrator",
-        threadSource: "orchestrator",
-        config: snapshot.useOss
-          ? {
-              model_provider: "oss",
-              oss_provider: snapshot.ossProvider,
-            }
-          : null,
-      });
+      let threadModel: string | null | undefined = snapshot.model;
+      let threadModelProvider: string | null | undefined = snapshot.useOss ? "oss" : null;
+      if (!threadId) {
+        const thread = await codexRpc<{
+          thread: { id: string };
+          model?: string;
+          modelProvider?: string;
+          serviceTier?: string | null;
+        }>(snapshot.accountId, "thread/start", {
+          cwd: snapshot.workspace.path,
+          model: snapshot.model,
+          approvalPolicy: snapshot.access.approvalPolicy,
+          approvalsReviewer: "user",
+          sandbox: snapshot.access.sandbox,
+          serviceName: "orchestrator",
+          threadSource: "orchestrator",
+          config: snapshot.useOss
+            ? {
+                model_provider: "oss",
+                oss_provider: snapshot.ossProvider,
+              }
+            : null,
+        });
+        ensureRunControlActive(runControl);
+        threadId = thread.thread.id;
+        threadModel = thread.model ?? snapshot.model;
+        threadModelProvider = thread.modelProvider ?? (snapshot.useOss ? "oss" : null);
+        await updateChat(chatId, {
+          codexThreadId: threadId,
+          status: "running",
+        });
+        setWorkspaceChatSession(snapshot.workspace.id, {
+          chatId,
+          threadId,
+        });
+      } else {
+        await updateChat(chatId, { status: "running" });
+      }
       ensureRunControlActive(runControl);
 
       await updateRun(run.id, {
-        codexThreadId: thread.thread.id,
-        model: thread.model ?? snapshot.model,
-        modelProvider: thread.modelProvider ?? (snapshot.useOss ? "oss" : null),
+        codexThreadId: threadId,
+        model: threadModel ?? snapshot.model,
+        modelProvider: threadModelProvider ?? (snapshot.useOss ? "oss" : null),
         status: "running",
       });
       ensureRunControlActive(runControl);
@@ -3148,7 +3284,7 @@ function App() {
         try {
           await setThreadGoal(
             snapshot.accountId,
-            thread.thread.id,
+            threadId,
             snapshot.promptText,
           );
           ensureRunControlActive(runControl);
@@ -3190,7 +3326,7 @@ function App() {
         snapshot.accountId,
         "turn/start",
         {
-          threadId: thread.thread.id,
+          threadId,
           input: [{ type: "text", text, text_elements: [] }],
           additionalContext,
           cwd: snapshot.workspace.path,
@@ -3205,7 +3341,7 @@ function App() {
       updateActiveRunView((current) => ({
         ...current,
         status: "running",
-        threadId: thread.thread.id,
+        threadId,
         turnId: turn.turn.id,
       }));
       await updateRun(run.id, {
@@ -3277,6 +3413,9 @@ function App() {
       if (taskId !== null) {
         await updateTaskStatus(taskId, "failed").catch(() => undefined);
       }
+      if (chatId !== null) {
+        await updateChat(chatId, { status: "failed" }).catch(() => undefined);
+      }
       currentRunId.current = null;
       currentTaskId.current = null;
       currentRunAccountId.current = null;
@@ -3320,6 +3459,11 @@ function App() {
     const selectedModel =
       models.find((model) => model.id === selectedModelId) ?? models[0] ?? null;
     const model = useOss || modelLoadError ? null : (selectedModel?.model ?? null);
+    const chatSession = workspaceChatSessionsRef.current[workspace.id] ?? null;
+    const turnIndex =
+      selectedWorkspaceChatEntries.filter((entry) =>
+        chatSession?.chatId ? entry.chatId === chatSession.chatId : true,
+      ).length + 1;
     const snapshot: RunSetupSnapshot = {
       promptText,
       promptFallback: prompt,
@@ -3339,6 +3483,9 @@ function App() {
       selectedSkills: [...selectedSkills],
       goalMode,
       loginState,
+      chatId: chatSession?.chatId ?? null,
+      threadId: chatSession?.threadId ?? null,
+      turnIndex,
     };
 
     const runControl = beginOptimisticRun(snapshot);
@@ -3510,6 +3657,10 @@ function App() {
       });
       if (currentTaskId.current) {
         await updateTaskStatus(currentTaskId.current, status);
+      }
+      const activeChatId = activeRunControlRef.current?.chatId ?? null;
+      if (activeChatId !== null) {
+        await updateChat(activeChatId, { status }).catch(() => undefined);
       }
       if (selectedWorkspaceRef.current) {
         invalidateWorkspacePreviewCaches(selectedWorkspaceRef.current, undefined, {
@@ -5002,6 +5153,8 @@ function App() {
               onCommitAndPush={() => void handleCommitAll({ pushAfter: true })}
               onPush={() => void handlePushOnly()}
               onBranchChange={(branch) => void selectBranch(branch)}
+              newChatDisabled={runIsActive}
+              onNewChat={startNewWorkspaceChat}
               historyOpen={historyDrawerOpen}
               onToggleHistory={() => setHistoryDrawerOpen((current) => !current)}
             />
@@ -5095,17 +5248,17 @@ function App() {
                 open={historyDrawerOpen}
                 workspace={selectedWorkspace}
                 historyState={historyState}
-                selectedRunId={selectedHistoryRun?.id ?? null}
+                selectedChatId={selectedHistoryChatId ?? selectedWorkspaceChatSession?.chatId ?? null}
                 runSelectionDisabled={runIsActive}
-                onSelectRun={selectHistoryRun}
-                onOpenRunContextMenu={openChatHistoryContextMenu}
+                onSelectChat={(chat) => void selectHistoryChat(chat)}
+                onOpenChatContextMenu={openChatHistoryContextMenu}
               />
               {chatHistoryContextMenu ? (
                 <div
                   className="workspace-context-menu"
                   ref={chatHistoryContextMenuRef}
                   role="menu"
-                  aria-label={`${chatHistoryContextMenu.run.original_prompt} chat actions`}
+                  aria-label={`${chatHistoryContextMenu.chat.title} chat actions`}
                   style={{
                     left: chatHistoryContextMenu.x,
                     top: chatHistoryContextMenu.y,
@@ -5115,9 +5268,10 @@ function App() {
                     className="workspace-context-menu-item danger"
                     type="button"
                     role="menuitem"
-                    onClick={() => requestChatHistoryDelete(chatHistoryContextMenu.run)}
+                    onClick={() => requestChatHistoryDelete(chatHistoryContextMenu.chat)}
                     disabled={
-                      runIsActive && currentRunId.current === chatHistoryContextMenu.run.id
+                      runIsActive &&
+                      activeRunControlRef.current?.chatId === chatHistoryContextMenu.chat.id
                     }
                   >
                     <Trash2 size={15} aria-hidden="true" />
@@ -5426,6 +5580,8 @@ function WorkspaceContextBanner({
   onCommitAndPush,
   onPush,
   onBranchChange,
+  newChatDisabled,
+  onNewChat,
   historyOpen,
   onToggleHistory,
 }: {
@@ -5445,6 +5601,8 @@ function WorkspaceContextBanner({
   onCommitAndPush: () => void;
   onPush: () => void;
   onBranchChange: (branch: string) => void;
+  newChatDisabled: boolean;
+  onNewChat: () => void;
   historyOpen: boolean;
   onToggleHistory: () => void;
 }) {
@@ -5466,6 +5624,10 @@ function WorkspaceContextBanner({
             Git
           </button>
           <span className="workspace-context-meter loading">Context loading</span>
+          <button className="workspace-header-button" type="button" disabled>
+            <Plus size={15} />
+            New chat
+          </button>
           <button
             className="workspace-header-button icon-only history-panel-button"
             type="button"
@@ -5632,6 +5794,16 @@ function WorkspaceContextBanner({
             {formatLiveContextUsage(contextUsage)}
           </span>
           <button
+            className="workspace-header-button"
+            type="button"
+            onClick={onNewChat}
+            disabled={newChatDisabled}
+            title="Start a new chat"
+          >
+            <Plus size={15} />
+            New chat
+          </button>
+          <button
             className={`workspace-header-button icon-only history-panel-button ${
               historyOpen ? "active" : ""
             }`}
@@ -5674,19 +5846,19 @@ function WorkspaceHistoryDrawer({
   open,
   workspace,
   historyState,
-  selectedRunId,
+  selectedChatId,
   runSelectionDisabled,
-  onSelectRun,
-  onOpenRunContextMenu,
+  onSelectChat,
+  onOpenChatContextMenu,
 }: {
   open: boolean;
   workspace: Workspace | null;
   historyState: WorkspaceHistoryState;
-  selectedRunId: number | null;
+  selectedChatId: number | null;
   runSelectionDisabled: boolean;
-  onSelectRun: (run: RunListItem) => void;
-  onOpenRunContextMenu: (
-    run: RunListItem,
+  onSelectChat: (chat: ChatListItem) => void;
+  onOpenChatContextMenu: (
+    chat: ChatListItem,
     event: ReactMouseEvent<HTMLElement> | ReactKeyboardEvent<HTMLElement>,
   ) => void;
 }) {
@@ -5713,36 +5885,36 @@ function WorkspaceHistoryDrawer({
       {historyState.status === "error" ? (
         <div className="history-empty error">{historyState.error}</div>
       ) : null}
-      {historyState.status === "loaded" && historyState.runs.length === 0 ? (
+      {historyState.status === "loaded" && historyState.chats.length === 0 ? (
         <div className="history-empty">No chats yet.</div>
       ) : null}
 
       <div className="history-drawer-body">
         <div className="history-run-list" aria-label="Workspace chats">
-          {historyState.runs.map((run) => (
+          {historyState.chats.map((chat) => (
             <button
-              key={run.id}
-              className={`history-run-item ${selectedRunId === run.id ? "selected" : ""} ${
+              key={chat.id}
+              className={`history-run-item ${selectedChatId === chat.id ? "selected" : ""} ${
                 runSelectionDisabled ? "disabled" : ""
               }`}
               type="button"
-              aria-pressed={selectedRunId === run.id}
+              aria-pressed={selectedChatId === chat.id}
               aria-disabled={runSelectionDisabled}
               title={
                 runSelectionDisabled
                   ? "Finish or stop the active run before opening history"
-                  : run.original_prompt
+                  : chat.title
               }
-              onClick={() => onSelectRun(run)}
-              onContextMenu={(event) => onOpenRunContextMenu(run, event)}
+              onClick={() => onSelectChat(chat)}
+              onContextMenu={(event) => onOpenChatContextMenu(chat, event)}
               onKeyDown={(event) => {
                 if (event.key === "ContextMenu" || (event.key === "F10" && event.shiftKey)) {
-                  onOpenRunContextMenu(run, event);
+                  onOpenChatContextMenu(chat, event);
                 }
               }}
             >
-              <strong>{run.original_prompt}</strong>
-              <span>{formatHistoryRunMeta(run)}</span>
+              <strong>{chat.title}</strong>
+              <span>{formatHistoryChatMeta(chat)}</span>
             </button>
           ))}
         </div>
@@ -5751,7 +5923,11 @@ function WorkspaceHistoryDrawer({
   );
 }
 
-function createTaskChatEntryFromHistoryRun(run: RunListItem): TaskChatEntry {
+function createTaskChatEntriesFromHistoryChat(chat: ChatWithRuns): TaskChatEntry[] {
+  return chat.runs.map((run) => createTaskChatEntryFromHistoryRun(run));
+}
+
+function createTaskChatEntryFromHistoryRun(run: ChatWithRuns["runs"][number]): TaskChatEntry {
   const status = normalizeHistoryRunStatus(run);
   const finalMessage = run.final_message ?? "";
   const finalMessageItemId = finalMessage ? `history-final-${run.id}` : null;
@@ -5759,6 +5935,8 @@ function createTaskChatEntryFromHistoryRun(run: RunListItem): TaskChatEntry {
   return {
     clientId: `history-run-${run.id}`,
     workspaceId: run.workspace_id,
+    chatId: run.chat_id,
+    turnIndex: run.turn_index,
     runId: run.id,
     taskId: run.task_id,
     prompt: run.original_prompt,
@@ -5799,7 +5977,7 @@ function createTaskChatEntryFromHistoryRun(run: RunListItem): TaskChatEntry {
   };
 }
 
-function normalizeHistoryRunStatus(run: RunListItem): RunViewState["status"] {
+function normalizeHistoryRunStatus(run: ChatWithRuns["runs"][number]): RunViewState["status"] {
   if (
     run.status === "completed" ||
     run.status === "failed" ||
@@ -6048,6 +6226,14 @@ function contextFileFromPath(path: string): ComposerContextFile {
   };
 }
 
+function createChatTitle(prompt: string) {
+  const normalized = prompt.replace(/\s+/g, " ").trim();
+  if (!normalized) {
+    return "Untitled chat";
+  }
+  return normalized.length > 120 ? `${normalized.slice(0, 117)}...` : normalized;
+}
+
 function generateCommitMessage(
   workspace: Workspace,
   files: WorkspaceGitFileStatus[],
@@ -6098,12 +6284,13 @@ function formatLiveContextUsage(tokenUsage: RunViewState["tokenUsage"]) {
   return `${total} / ${windowSize.toLocaleString()} (${percentage}%)`;
 }
 
-function formatHistoryRunMeta(run: RunListItem) {
+function formatHistoryChatMeta(chat: ChatListItem) {
   return [
-    formatHistoryTimestamp(run.started_at),
-    run.status,
-    formatHistoryDuration(run.duration_ms),
-    formatHistoryTokens(run.latest_total_tokens),
+    formatHistoryTimestamp(chat.latest_activity_at),
+    chat.status,
+    `${chat.turn_count} turn${chat.turn_count === 1 ? "" : "s"}`,
+    formatHistoryDuration(chat.duration_ms),
+    formatHistoryTokens(chat.total_tokens),
   ].join(" · ");
 }
 
