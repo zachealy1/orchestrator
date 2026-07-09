@@ -752,6 +752,7 @@ function App() {
   const [commitDialogOpen, setCommitDialogOpen] = useState(false);
   const [commitIntent, setCommitIntent] = useState("");
   const [commitMessage, setCommitMessage] = useState("");
+  const [commitDialogMessage, setCommitDialogMessage] = useState("");
   const [includeUnstagedChanges, setIncludeUnstagedChanges] = useState(true);
   const [gitActionStatus, setGitActionStatus] = useState<
     "idle" | "generating" | "committing" | "pushing"
@@ -3388,6 +3389,7 @@ function App() {
     }
     setCommitIntent(suggestedCommitIntent ?? "");
     setCommitMessage("");
+    setCommitDialogMessage("");
     setIncludeUnstagedChanges(true);
     setCommitDialogOpen(true);
   }
@@ -3444,18 +3446,10 @@ function App() {
     }
 
     const intent = commitIntent.trim();
-    const fallback = intent
-      ? generateCommitMessageFromIntent(intent)
-      : generateCommitMessage(
-          selectedWorkspace,
-          commitMessageFiles,
-          commitMessageSummary,
-        );
-    if (!selectedAccountId) {
-      return fallback;
-    }
+    const fallback = intent ? generateCommitMessageFromIntent(intent) : "";
 
     setGitActionStatus("generating");
+    setCommitDialogMessage("Generating an intent-driven commit message...");
     setStatusMessage("Generating commit message...");
     try {
       const result = await generateWorkspaceCommitMessage({
@@ -3467,10 +3461,18 @@ function App() {
       });
       const generated = cleanGeneratedCommitSubject(result.message);
       if (generated) {
-        if (intent && commitSubjectIgnoresIntent(generated, commitMessageFiles)) {
+        if (isDiffDrivenCommitSubject(generated, commitMessageFiles)) {
           setStatusMessage(
-            "Codex returned a file-focused commit message, using the change intent instead.",
+            fallback
+              ? "Codex returned a file-focused commit message, using the chat intent instead."
+              : "Codex returned a file-focused commit message. Write a specific commit message or try again.",
           );
+          setCommitDialogMessage(
+            fallback
+              ? "Codex returned a file-focused subject, so Orchestrator used the current chat intent."
+              : "Codex returned a file-focused subject. Write a specific message or try again.",
+          );
+          setGitActionStatus("idle");
           return fallback;
         }
         const previous = lastCommitSubjectRef.current;
@@ -3480,22 +3482,33 @@ function App() {
           previous.subject.toLowerCase() === generated.toLowerCase()
         ) {
           setStatusMessage(
-            "Codex returned the same commit message for different changes, using a local summary.",
+            fallback
+              ? "Codex returned the same commit message for different changes, using the chat intent instead."
+              : "Codex returned the same commit message for different changes. Write a specific commit message or try again.",
           );
+          setCommitDialogMessage(
+            fallback
+              ? "Codex repeated an earlier subject, so Orchestrator used the current chat intent."
+              : "Codex repeated an earlier subject. Write a specific message or try again.",
+          );
+          setGitActionStatus("idle");
           return fallback;
         }
         setCommitMessage(generated);
+        setCommitDialogMessage(`Generated: ${generated}`);
         return generated;
       }
     } catch (error) {
-      setStatusMessage(
-        `Could not generate an AI commit message, using a local summary: ${
-          error instanceof Error ? error.message : String(error)
-        }`,
-      );
+      const localFallback = fallback || "Apply requested workspace changes";
+      const message = `Using a local commit message because generation failed: ${
+        error instanceof Error ? error.message : String(error)
+      }`;
+      setCommitDialogMessage(message);
+      setStatusMessage(message);
+      return localFallback;
     }
 
-    return fallback;
+    return fallback || "Apply requested workspace changes";
   }
 
   async function handleCommitAll(options: { pushAfter?: boolean } = {}) {
@@ -3505,7 +3518,6 @@ function App() {
 
     const message = commitMessage.trim() || (await resolveCommitMessage());
     if (!message.trim()) {
-      setStatusMessage("Commit failed: no commit message was available.");
       setGitActionStatus("idle");
       return;
     }
@@ -3534,6 +3546,7 @@ function App() {
       setCommitDialogOpen(false);
       setCommitIntent("");
       setCommitMessage("");
+      setCommitDialogMessage("");
     } catch (error) {
       setStatusMessage(
         `Commit failed: ${error instanceof Error ? error.message : String(error)}`,
@@ -5866,10 +5879,19 @@ function App() {
                 aria-label="Commit message"
                 placeholder="Commit message (leave blank to generate)..."
                 value={commitMessage}
-                onChange={(event) => setCommitMessage(event.target.value)}
+                onChange={(event) => {
+                  setCommitMessage(event.target.value);
+                  setCommitDialogMessage("");
+                }}
                 disabled={gitActionStatus !== "idle"}
               />
             </label>
+
+            {commitDialogMessage ? (
+              <p className="git-action-feedback" role="status">
+                {commitDialogMessage}
+              </p>
+            ) : null}
 
             <label
               className={`git-action-include-row ${
@@ -5919,8 +5941,14 @@ function App() {
                 disabled={!canCommitFromDialog || gitActionStatus !== "idle"}
               >
                 <span>
-                  <UploadCloud size={16} aria-hidden="true" />
-                  Commit and push
+                  {gitActionStatus === "generating" ? (
+                    <Loader2 className="spin" size={16} aria-hidden="true" />
+                  ) : (
+                    <UploadCloud size={16} aria-hidden="true" />
+                  )}
+                  {gitActionStatus === "generating"
+                    ? "Generating"
+                    : "Commit and push"}
                 </span>
               </button>
               <button
@@ -7305,31 +7333,6 @@ function truncateCommitIntent(intent: string) {
   return normalized.length > 1600 ? `${normalized.slice(0, 1597).trimEnd()}...` : normalized;
 }
 
-function generateCommitMessage(
-  workspace: Workspace,
-  files: WorkspaceGitFileStatus[],
-  summary: WorkspaceGitSummary,
-) {
-  if (summary.total === 1 && files[0]) {
-    const fileName = basename(files[0].relativePath);
-    switch (files[0].statusKind) {
-      case "added":
-      case "untracked":
-        return `Add ${fileName}`;
-      case "deleted":
-        return `Remove ${fileName}`;
-      case "renamed":
-        return `Rename ${fileName}`;
-      default:
-        return `Update ${fileName}`;
-    }
-  }
-
-  return summary.total > 0
-    ? inferCommitMessageSubject(files)
-    : `Update ${workspace.label}`;
-}
-
 function generateCommitMessageFromIntent(intent: string) {
   const subject = extractCommitIntentSubject(intent);
   return cleanGeneratedCommitSubject(subject) || "Describe workspace change";
@@ -7374,29 +7377,29 @@ function cleanGeneratedCommitSubject(subject: string) {
     .trim();
 }
 
-function commitSubjectIgnoresIntent(
+function isDiffDrivenCommitSubject(
   subject: string,
   files: WorkspaceGitFileStatus[],
 ) {
   const normalized = cleanGeneratedCommitSubject(subject)
     .toLowerCase()
-    .replace(/[-_]+/g, " ")
+    .replace(/[._/-]+/g, " ")
     .replace(/\s+/g, " ")
     .trim();
   if (!normalized) {
     return true;
   }
 
-  const fileNames = files.map((file) =>
-    basename(file.relativePath)
+  const normalizeSubjectPart = (value: string) =>
+    value
       .toLowerCase()
-      .replace(/[-_]+/g, " ")
+      .replace(/[._/-]+/g, " ")
       .replace(/\s+/g, " ")
-      .trim(),
-  );
-  const fileStemSubjects = fileNames.flatMap((fileName) => {
+      .trim();
+  const fileStemSubjects = files.flatMap((file) => {
+    const fileName = basename(file.relativePath);
     const stem = fileName.replace(/\.[^.]+$/, "").trim();
-    return [fileName, stem].filter(Boolean);
+    return [normalizeSubjectPart(fileName), normalizeSubjectPart(stem)].filter(Boolean);
   });
   const fileOnlyVerbs = ["update", "refine", "improve", "change", "modify"];
   if (
@@ -7407,158 +7410,88 @@ function commitSubjectIgnoresIntent(
     return true;
   }
 
-  return [
-    "update app styling",
-    "refine app styling",
-    "improve app styling",
-    "update react app",
-    "refine react app",
-    "update files",
-    "update code",
-  ].includes(normalized);
-}
-
-function inferCommitMessageSubject(files: WorkspaceGitFileStatus[]) {
-  const topic = inferCommitMessageTopic(files);
-  if (files.every((file) => file.statusKind === "added" || file.statusKind === "untracked")) {
-    return `Add ${topic}`;
-  }
-  if (files.every((file) => file.statusKind === "deleted")) {
-    return `Remove ${topic}`;
-  }
-  if (files.every((file) => file.statusKind === "renamed")) {
-    return `Rename ${topic}`;
-  }
-  if (files.every((file) => /\.test\.[tj]sx?$/.test(file.relativePath))) {
-    return `Update ${topic}`;
-  }
-  return `Refine ${topic}`;
-}
-
-function inferCommitMessageTopic(files: WorkspaceGitFileStatus[]) {
-  const paths = files.map((file) => file.relativePath);
-  const normalizedPaths = paths.map((path) => path.toLowerCase());
-  const hasPath = (pattern: string) =>
-    normalizedPaths.some((path) => path.includes(pattern));
-  const touchesTests = paths.every((path) => /\.test\.[tj]sx?$/.test(path));
-
-  if (hasPath("taskchattranscript")) {
-    return "task chat transcript layout";
-  }
-  if (hasPath("taskcomposer")) {
-    return "chat composer behavior";
-  }
-  if (hasPath("filepreview") || hasPath("codepreview") || hasPath("diffpreview")) {
-    return "file preview behavior";
-  }
-  if (hasPath("workspacehistory")) {
-    return "workspace history drawer";
-  }
-  if (hasPath("codexeventreducer")) {
-    return "Codex event reducer";
-  }
-  if (touchesTests) {
-    return "tests";
-  }
-
-  const topics = uniqueCommitTopics(
-    paths
-      .map(inferPathCommitTopic)
-      .filter((topic) => topic !== "tests"),
-  );
-  if (topics.length > 0) {
-    return formatCommitTopicList(topics);
-  }
-
-  const firstPath = paths[0];
-  return firstPath ? humanizePathTopic(firstPath) : "workspace changes";
-}
-
-function inferPathCommitTopic(path: string) {
-  const normalized = path.toLowerCase();
-  if (normalized.includes("taskchattranscript")) {
-    return "task chat transcript layout";
-  }
-  if (normalized.includes("taskcomposer")) {
-    return "chat composer behavior";
-  }
   if (
-    normalized.includes("filepreview") ||
-    normalized.includes("codepreview") ||
-    normalized.includes("diffpreview")
+    [
+      "update app css",
+      "refine app css",
+      "improve app css",
+      "update app tsx",
+      "refine app tsx",
+      "improve app tsx",
+      "update lib rs",
+      "refine lib rs",
+      "improve lib rs",
+    ].includes(normalized)
   ) {
-    return "file preview behavior";
-  }
-  if (normalized.includes("workspacehistory")) {
-    return "workspace history drawer";
-  }
-  if (normalized.includes("codexeventreducer")) {
-    return "Codex event reducer";
-  }
-  if (normalized === "src/app.tsx") {
-    return "app shell";
-  }
-  if (normalized === "src/app.css") {
-    return "app styling";
-  }
-  if (normalized === "src/db.ts") {
-    return "chat database";
-  }
-  if (normalized === "src/codexclient.ts") {
-    return "Codex client";
-  }
-  if (normalized === "src/types.ts") {
-    return "shared chat types";
-  }
-  if (normalized === "src-tauri/src/lib.rs") {
-    return "Tauri bridge";
-  }
-  if (/\.test\.[tj]sx?$/.test(normalized)) {
-    return "tests";
-  }
-  if (normalized.endsWith(".css")) {
-    return "app styling";
-  }
-  if (normalized.startsWith("src/components/")) {
-    return humanizePathTopic(path);
-  }
-  if (normalized.startsWith("src/")) {
-    return "React app";
-  }
-  if (normalized.startsWith("src-tauri/")) {
-    return "Tauri backend";
-  }
-  return humanizePathTopic(path);
-}
-
-function uniqueCommitTopics(topics: string[]) {
-  const seen = new Set<string>();
-  return topics.filter((topic) => {
-    const key = topic.toLowerCase();
-    if (seen.has(key)) {
-      return false;
-    }
-    seen.add(key);
     return true;
-  });
-}
-
-function formatCommitTopicList(topics: string[]) {
-  if (topics.length === 1) {
-    return topics[0];
   }
-  return `${topics[0]} and ${topics[1]}`;
-}
 
-function humanizePathTopic(path: string) {
-  const fileName = basename(path).replace(/\.[^.]+$/, "");
-  const spaced = fileName
-    .replace(/\.test$/, "")
-    .replace(/([a-z0-9])([A-Z])/g, "$1 $2")
-    .replace(/[-_]+/g, " ")
-    .trim()
-    .toLowerCase();
-  return spaced || "workspace changes";
+  if (
+    [
+      "update app styling",
+      "refine app styling",
+      "improve app styling",
+      "update app shell",
+      "refine app shell",
+      "improve app shell",
+      "update tauri bridge",
+      "refine tauri bridge",
+      "improve tauri bridge",
+      "update tauri backend",
+      "refine tauri backend",
+      "improve tauri backend",
+      "update app styling and app shell",
+      "refine app styling and app shell",
+      "improve app styling and app shell",
+      "update app shell and app styling",
+      "refine app shell and app styling",
+      "improve app shell and app styling",
+      "update tauri bridge and app styling",
+      "refine tauri bridge and app styling",
+      "improve tauri bridge and app styling",
+      "update app styling and tauri bridge",
+      "refine app styling and tauri bridge",
+      "improve app styling and tauri bridge",
+      "update react app",
+      "refine react app",
+      "improve react app",
+      "update files",
+      "refine files",
+      "improve files",
+      "update code",
+      "refine code",
+      "improve code",
+    ].includes(normalized)
+  ) {
+    return true;
+  }
+
+  const words = normalized.split(" ").filter((word) => word !== "and");
+  const [verb, ...rest] = words;
+  const broadWords = new Set([
+    "app",
+    "application",
+    "backend",
+    "bridge",
+    "code",
+    "desktop",
+    "files",
+    "frontend",
+    "integration",
+    "react",
+    "shell",
+    "styling",
+    "tauri",
+    "ui",
+    "workflow",
+    "workspace",
+  ]);
+  return (
+    ["update", "refine", "improve"].includes(verb ?? "") &&
+    rest.length > 0 &&
+    rest.length <= 5 &&
+    rest.every((word) => broadWords.has(word))
+  );
 }
 
 function getCodexModelContextWindow(model: CodexModel | null) {

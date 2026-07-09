@@ -91,7 +91,7 @@ export function generateWorkspaceCommitMessage(input: {
   model: string | null;
   intent?: string | null;
 }) {
-  return invoke<{ message: string; source: "codex" }>(
+  return invoke<{ message: string; source: "codex" | "local" }>(
     "generate_workspace_commit_message",
     {
       workspacePath: input.workspacePath,

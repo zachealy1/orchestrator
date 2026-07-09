@@ -1185,18 +1185,22 @@ describe("App Codex auth", () => {
 
     await user.click(includeUnstaged);
     expect(includeUnstaged).not.toBeChecked();
+    await user.type(
+      within(dialog).getByLabelText(/commit message/i),
+      "Commit staged app source",
+    );
     await user.click(within(dialog).getByRole("button", { name: /^commit$/i }));
 
     await waitFor(() =>
       expect(mocks.commitWorkspaceChangesMock).toHaveBeenCalledWith(
         workspace.path,
-        "Update App.tsx",
+        "Commit staged app source",
         false,
       ),
     );
   });
 
-  it("omits change counts from local fallback commit messages", async () => {
+  it("does not use a diff-topic fallback when generation fails", async () => {
     mocks.listWorkspaceGitStatusMock.mockResolvedValue({
       workspacePath: workspace.path,
       gitRoot: workspace.path,
@@ -1250,13 +1254,13 @@ describe("App Codex auth", () => {
     await waitFor(() =>
       expect(mocks.commitWorkspaceChangesMock).toHaveBeenCalledWith(
         workspace.path,
-        "Refine task chat transcript layout",
+        "Apply requested workspace changes",
         true,
       ),
     );
     expect(mocks.commitWorkspaceChangesMock).not.toHaveBeenCalledWith(
       workspace.path,
-      expect.stringContaining("("),
+      "Refine task chat transcript layout",
       true,
     );
   });
@@ -1324,6 +1328,177 @@ describe("App Codex auth", () => {
         true,
       ),
     );
+  });
+
+  it("generates a message before committing and pushing when the message is blank", async () => {
+    prepareSignedInRun();
+    mocks.generateWorkspaceCommitMessageMock.mockResolvedValue({
+      message: "Keep header controls on one row",
+      source: "codex",
+    });
+    mocks.listWorkspaceGitStatusMock.mockResolvedValue({
+      workspacePath: workspace.path,
+      gitRoot: workspace.path,
+      currentBranch: "main",
+      aheadCount: 0,
+      hasUpstream: true,
+      hasOrigin: true,
+      canPush: true,
+      additions: 10,
+      deletions: 2,
+      files: [
+        {
+          path: "/repo/orchestrator/src/App.css",
+          relativePath: "src/App.css",
+          oldRelativePath: null,
+          indexStatus: " ",
+          worktreeStatus: "M",
+          statusKind: "modified",
+          badge: "M",
+        },
+      ],
+    });
+
+    const { user } = await renderApp();
+    const banner = screen.getByRole("region", { name: "Selected folder" });
+    await user.click(
+      await within(banner).findByRole("button", { name: /commit or push/i }),
+    );
+
+    const dialog = screen.getByRole("dialog", { name: "Commit or push" });
+    await user.click(
+      within(dialog).getByRole("button", { name: /^commit and push$/i }),
+    );
+
+    await waitFor(() =>
+      expect(mocks.generateWorkspaceCommitMessageMock).toHaveBeenCalled(),
+    );
+    await waitFor(() =>
+      expect(mocks.commitWorkspaceChangesMock).toHaveBeenCalledWith(
+        workspace.path,
+        "Keep header controls on one row",
+        true,
+      ),
+    );
+    await waitFor(() =>
+      expect(mocks.pushWorkspaceBranchMock).toHaveBeenCalledWith(workspace.path),
+    );
+  });
+
+  it("uses the local commit-message fallback when no account is selected", async () => {
+    mocks.generateWorkspaceCommitMessageMock.mockResolvedValue({
+      message: "Generate intent-driven messages before commit and push",
+      source: "local",
+    });
+    mocks.listWorkspaceGitStatusMock.mockResolvedValue({
+      workspacePath: workspace.path,
+      gitRoot: workspace.path,
+      currentBranch: "main",
+      aheadCount: 0,
+      hasUpstream: true,
+      hasOrigin: true,
+      canPush: true,
+      additions: 5,
+      deletions: 2,
+      files: [
+        {
+          path: "/repo/orchestrator/src/App.tsx",
+          relativePath: "src/App.tsx",
+          oldRelativePath: null,
+          indexStatus: " ",
+          worktreeStatus: "M",
+          statusKind: "modified",
+          badge: "M",
+        },
+      ],
+    });
+
+    const { user } = await renderApp();
+    const banner = screen.getByRole("region", { name: "Selected folder" });
+    await user.click(
+      await within(banner).findByRole("button", { name: /commit or push/i }),
+    );
+
+    const dialog = screen.getByRole("dialog", { name: "Commit or push" });
+    await user.click(
+      within(dialog).getByRole("button", { name: /^commit and push$/i }),
+    );
+
+    await waitFor(() =>
+      expect(mocks.generateWorkspaceCommitMessageMock).toHaveBeenCalledWith(
+        expect.objectContaining({
+          workspacePath: workspace.path,
+          accountId: null,
+          includeUnstaged: true,
+        }),
+      ),
+    );
+    await waitFor(() =>
+      expect(mocks.commitWorkspaceChangesMock).toHaveBeenCalledWith(
+        workspace.path,
+        "Generate intent-driven messages before commit and push",
+        true,
+      ),
+    );
+    await waitFor(() =>
+      expect(mocks.pushWorkspaceBranchMock).toHaveBeenCalledWith(workspace.path),
+    );
+  });
+
+  it("rejects broad AI commit messages that only describe changed areas", async () => {
+    prepareSignedInRun();
+    mocks.generateWorkspaceCommitMessageMock.mockResolvedValue({
+      message: "Refine Tauri bridge and app styling",
+      source: "codex",
+    });
+    mocks.listWorkspaceGitStatusMock.mockResolvedValue({
+      workspacePath: workspace.path,
+      gitRoot: workspace.path,
+      currentBranch: "main",
+      aheadCount: 0,
+      hasUpstream: true,
+      hasOrigin: true,
+      canPush: true,
+      additions: 8,
+      deletions: 3,
+      files: [
+        {
+          path: "/repo/orchestrator/src/App.css",
+          relativePath: "src/App.css",
+          oldRelativePath: null,
+          indexStatus: " ",
+          worktreeStatus: "M",
+          statusKind: "modified",
+          badge: "M",
+        },
+        {
+          path: "/repo/orchestrator/src-tauri/src/lib.rs",
+          relativePath: "src-tauri/src/lib.rs",
+          oldRelativePath: null,
+          indexStatus: " ",
+          worktreeStatus: "M",
+          statusKind: "modified",
+          badge: "M",
+        },
+      ],
+    });
+
+    const { user } = await renderApp();
+    const banner = screen.getByRole("region", { name: "Selected folder" });
+    await user.click(
+      await within(banner).findByRole("button", { name: /commit or push/i }),
+    );
+
+    const dialog = screen.getByRole("dialog", { name: "Commit or push" });
+    await user.click(within(dialog).getByRole("button", { name: /^commit$/i }));
+
+    await waitFor(() =>
+      expect(mocks.generateWorkspaceCommitMessageMock).toHaveBeenCalled(),
+    );
+    expect(mocks.commitWorkspaceChangesMock).not.toHaveBeenCalled();
+    expect(
+      within(dialog).getByText(/file-focused subject/i),
+    ).toBeInTheDocument();
   });
 
   it("falls back when Codex repeats a commit message for different changes", async () => {
@@ -1426,19 +1601,9 @@ describe("App Codex auth", () => {
     await user.click(within(dialog).getByRole("button", { name: /^commit$/i }));
 
     await waitFor(() =>
-      expect(mocks.commitWorkspaceChangesMock).toHaveBeenNthCalledWith(
-        2,
-        workspace.path,
-        "Refine file preview behavior",
-        true,
-      ),
+      expect(mocks.generateWorkspaceCommitMessageMock).toHaveBeenCalledTimes(2),
     );
-    expect(mocks.commitWorkspaceChangesMock).not.toHaveBeenNthCalledWith(
-      2,
-      workspace.path,
-      "Improve commit dialog staging controls",
-      true,
-    );
+    expect(mocks.commitWorkspaceChangesMock).toHaveBeenCalledTimes(1);
   });
 
   it("commits and pushes from the commit or push dialog", async () => {
@@ -1474,6 +1639,10 @@ describe("App Codex auth", () => {
     const dialog = screen.getByRole("dialog", { name: "Commit or push" });
     expect(within(dialog).getByText("+10")).toBeInTheDocument();
     expect(within(dialog).getByText("-2")).toBeInTheDocument();
+    await user.type(
+      within(dialog).getByLabelText(/commit message/i),
+      "Commit workspace changes",
+    );
     await user.click(
       within(dialog).getByRole("button", { name: /^commit and push$/i }),
     );
@@ -1481,7 +1650,7 @@ describe("App Codex auth", () => {
     await waitFor(() =>
       expect(mocks.commitWorkspaceChangesMock).toHaveBeenCalledWith(
         workspace.path,
-        "Update App.tsx",
+        "Commit workspace changes",
         true,
       ),
     );
