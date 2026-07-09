@@ -1125,7 +1125,7 @@ button.account-switcher-item:hover:not(:disabled) {
   border: 0;
   border-radius: 7px;
   background: rgb(var(--text-secondary-rgb) / 0.1);
-  color: var(--color-text-secondary);
+  color: var(--color-button-primary-text);
   font-size: 0.76rem;
   font-weight: 680;
   line-height: 1;
@@ -1134,7 +1134,7 @@ button.account-switcher-item:hover:not(:disabled) {
 }
 
 .workspace-context-chip.branch {
-  color: var(--color-text-secondary);
+  color: var(--color-button-primary-text);
 }
 
 .composer-select.workspace-branch-select {
@@ -1154,7 +1154,7 @@ button.account-switcher-item:hover:not(:disabled) {
 .workspace-branch-select button.composer-select-trigger {
   height: 30px;
   min-height: 30px;
-  color: var(--color-text-secondary);
+  color: var(--color-button-primary-text);
   font-size: 0.76rem;
   font-weight: 700;
   letter-spacing: 0;
@@ -1178,27 +1178,27 @@ button.account-switcher-item:hover:not(:disabled) {
   left: 8px;
   width: 16px;
   height: 16px;
-  color: var(--color-text-secondary);
+  color: var(--color-button-primary-text);
 }
 
 .workspace-branch-select .select-chevron {
   right: 8px;
-  color: var(--color-text-secondary);
+  color: var(--color-button-primary-text);
 }
 
 .workspace-context-chip.clean {
-  color: var(--color-text-secondary);
+  color: var(--color-button-primary-text);
 }
 
 .workspace-context-chip.changed,
 .workspace-context-chip.warning {
-  color: var(--color-text-secondary);
+  color: var(--color-button-primary-text);
 }
 
 .workspace-context-chip.git-summary {
   max-width: min(160px, 16vw);
   gap: var(--workspace-header-gap);
-  color: var(--color-text-secondary);
+  color: var(--color-button-primary-text);
   font-size: 0.8rem;
   font-weight: 780;
   font-variant-numeric: tabular-nums;
@@ -1212,11 +1212,11 @@ button.account-switcher-item:hover:not(:disabled) {
 }
 
 .workspace-context-change-stat.additions {
-  color: var(--color-text-secondary);
+  color: var(--color-diff-addition);
 }
 
 .workspace-context-change-stat.deletions {
-  color: var(--color-text-secondary);
+  color: var(--color-error);
 }
 
 .workspace-header-button {
@@ -1225,7 +1225,7 @@ button.account-switcher-item:hover:not(:disabled) {
   gap: var(--workspace-header-gap);
   border-radius: 7px;
   background: rgb(var(--text-secondary-rgb) / 0.1);
-  color: var(--color-text-secondary);
+  color: var(--color-button-primary-text);
   font-size: 0.76rem;
   font-weight: 700;
   padding: 0 10px;
@@ -1246,18 +1246,18 @@ button.account-switcher-item:hover:not(:disabled) {
 }
 
 .workspace-header-button.primary {
-  color: var(--color-text-secondary);
+  color: var(--color-button-primary-text);
 }
 
 .workspace-header-button:hover:not(:disabled),
 .workspace-header-button:focus-visible:not(:disabled) {
   background: var(--panel-strong);
-  color: var(--color-text-secondary);
+  color: var(--color-button-primary-text);
   box-shadow: none;
 }
 
 .history-panel-button {
-  color: var(--color-text-secondary);
+  color: var(--color-button-primary-text);
   box-shadow: none;
 }
 
@@ -1268,39 +1268,39 @@ button.account-switcher-item:hover:not(:disabled) {
 .workspace-header-button.history-panel-button {
   background: rgb(var(--text-secondary-rgb) / 0.1);
   box-shadow: none;
-  color: var(--color-text-secondary);
+  color: var(--color-button-primary-text);
 }
 
 .workspace-header-button.history-panel-button:hover:not(:disabled),
 .workspace-header-button.history-panel-button:focus-visible:not(:disabled) {
   background: var(--panel-strong);
   box-shadow: none;
-  color: var(--color-text-secondary);
+  color: var(--color-button-primary-text);
 }
 
 .workspace-header-button.history-panel-button.active {
   background: rgb(var(--text-secondary-rgb) / 0.1);
   box-shadow: none;
-  color: var(--color-text-secondary);
+  color: var(--color-button-primary-text);
 }
 
 .workspace-header-button.history-panel-button.active:hover:not(:disabled),
 .workspace-header-button.history-panel-button.active:focus-visible:not(:disabled) {
   background: var(--panel-strong);
   box-shadow: none;
-  color: var(--color-text-secondary);
+  color: var(--color-button-primary-text);
 }
 
 .icon-button.history-panel-button:hover:not(:disabled),
 .icon-button.history-panel-button:focus-visible:not(:disabled) {
-  color: var(--color-text-secondary);
+  color: var(--color-button-primary-text);
   box-shadow: none;
 }
 
 .workspace-header-button:disabled {
   padding: 0 10px;
   background: rgb(var(--text-secondary-rgb) / 0.08);
-  color: var(--color-text-secondary);
+  color: var(--color-button-primary-text);
   opacity: 0.68;
 }
 
@@ -1317,7 +1317,7 @@ button.account-switcher-item:hover:not(:disabled) {
   align-items: center;
   border-radius: 7px;
   background: rgb(var(--text-secondary-rgb) / 0.1);
-  color: var(--color-text-secondary);
+  color: var(--color-button-primary-text);
   font-size: 0.76rem;
   font-weight: 700;
   padding: 0 9px;
@@ -1344,7 +1344,7 @@ button.account-switcher-item:hover:not(:disabled) {
 
 .workspace-context-meter.loading,
 .workspace-context-meter.unknown {
-  color: var(--color-text-secondary);
+  color: var(--color-button-primary-text);
 }
 
 .workspace-context-meter.loading::before,
