@@ -1230,6 +1230,7 @@ fn generate_workspace_commit_message(
     account_id: Option<i64>,
     include_unstaged: Option<bool>,
     model: Option<String>,
+    intent: Option<String>,
 ) -> Result<WorkspaceCommitMessageResult, String> {
     let account_id = account_id.ok_or_else(|| "Sign in to generate a commit message".to_string())?;
     validate_account_id(account_id)?;
@@ -1264,7 +1265,12 @@ fn generate_workspace_commit_message(
     }
     args.push("-".to_string());
 
-    let prompt = commit_message_generation_prompt(&context, None);
+    let intent = intent
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_string);
+    let prompt = commit_message_generation_prompt(&context, intent.as_deref(), None);
     let output = run_command_with_stdin_timeout(
         &codex_binary,
         &args,
@@ -1279,8 +1285,11 @@ fn generate_workspace_commit_message(
 
     let first_message = sanitize_commit_subject(&output.stdout)
         .ok_or_else(|| "Codex returned an empty commit message".to_string())?;
-    let message = if is_generic_commit_subject(&first_message) {
-        let retry_prompt = commit_message_generation_prompt(&context, Some(&first_message));
+    let message = if is_generic_commit_subject(&first_message)
+        || commit_subject_ignores_intent(&first_message, intent.as_deref())
+    {
+        let retry_prompt =
+            commit_message_generation_prompt(&context, intent.as_deref(), Some(&first_message));
         let retry_output = run_command_with_stdin_timeout(
             &codex_binary,
             &args,
@@ -1291,12 +1300,13 @@ fn generate_workspace_commit_message(
         if retry_output.ok {
             sanitize_commit_subject(&retry_output.stdout)
                 .filter(|subject| !is_generic_commit_subject(subject))
+                .filter(|subject| !commit_subject_ignores_intent(subject, intent.as_deref()))
                 .ok_or_else(|| {
-                    format!("Codex returned a generic commit message: {first_message}")
+                    format!("Codex returned a file-focused commit message: {first_message}")
                 })?
         } else {
             return Err(output_detail(&retry_output).unwrap_or_else(|| {
-                format!("Codex returned a generic commit message: {first_message}")
+                format!("Codex returned a file-focused commit message: {first_message}")
             }));
         }
     } else {
@@ -1309,12 +1319,24 @@ fn generate_workspace_commit_message(
     })
 }
 
-fn commit_message_generation_prompt(context: &str, rejected_subject: Option<&str>) -> String {
+fn commit_message_generation_prompt(
+    context: &str,
+    intent: Option<&str>,
+    rejected_subject: Option<&str>,
+) -> String {
     let retry_guidance = rejected_subject
         .map(|subject| {
             format!(
                 "\nThe previous subject `{subject}` was rejected because it only names a broad area. \
                  Generate a more specific subject that names the exact behavior, UI, or logic changed.\n"
+            )
+        })
+        .unwrap_or_default();
+    let intent_section = intent
+        .map(|value| {
+            format!(
+                "Intent:\n{}\n\n",
+                value.trim()
             )
         })
         .unwrap_or_default();
@@ -1324,9 +1346,12 @@ fn commit_message_generation_prompt(context: &str, rejected_subject: Option<&str
          Rules:\n\
          - Return only the commit subject, no markdown, no quotes, no explanation.\n\
          - Use imperative mood.\n\
+         - If Intent is present, treat it as the source of truth for why the change exists.\n\
+         - Prefer the behavioral outcome over file names or implementation details.\n\
          - Be specific about the behavior, UI, or logic changed.\n\
          - Name the concrete feature or failure fixed, not just the broad changed area.\n\
          - Do not use generic area-only subjects like `Update desktop app workflow`, `Update React app`, `Update app styling`, or `Update Tauri backend`.\n\
+         - Do not return file-only subjects like `Update App.css` when Intent names a user-facing outcome.\n\
          - Avoid vague subjects like `Improve commit message generation` unless the subject names the specific behavior changed.\n\
          - Do not append change-count summaries like (5 modified).\n\
          - Keep it under 72 characters when possible.\n\
@@ -1343,9 +1368,10 @@ fn commit_message_generation_prompt(context: &str, rejected_subject: Option<&str
          - Update app styling\n\
          - Improve commit message generation\n\
          - Update Git workflow\n\
+         - Update App.css\n\
          - Update files\n\
          {retry_guidance}\n\
-         Git context:\n{context}"
+         {intent_section}Git context:\n{context}"
     )
 }
 
@@ -1547,6 +1573,35 @@ fn is_generic_commit_subject(subject: &str) -> bool {
             ]
             .contains(word)
         })
+}
+
+fn commit_subject_ignores_intent(subject: &str, intent: Option<&str>) -> bool {
+    if intent.map(str::trim).unwrap_or_default().is_empty() {
+        return false;
+    }
+
+    let normalized = subject
+        .trim()
+        .trim_end_matches('.')
+        .to_ascii_lowercase()
+        .replace(['-', '_'], " ");
+    let normalized = normalized
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ");
+    let generic_exact = [
+        "update app css",
+        "refine app css",
+        "improve app css",
+        "update app styling",
+        "refine app styling",
+        "improve app styling",
+        "update react app",
+        "refine react app",
+        "update files",
+        "update code",
+    ];
+    generic_exact.contains(&normalized.as_str())
 }
 
 fn strip_commit_count_suffix(subject: &str) -> String {
@@ -3769,12 +3824,46 @@ mod tests {
     fn commit_message_prompt_names_rejected_generic_subject() {
         let prompt = commit_message_generation_prompt(
             "M src/App.tsx\nM src-tauri/src/lib.rs",
+            None,
             Some("Update desktop app workflow"),
         );
 
         assert!(prompt.contains("Update desktop app workflow"));
         assert!(prompt.contains("names the exact behavior"));
         assert!(prompt.contains("Fix inline context file label spacing"));
+    }
+
+    #[test]
+    fn commit_message_prompt_prioritizes_intent_before_git_context() {
+        let prompt = commit_message_generation_prompt(
+            "M src/App.css",
+            Some("Keep header controls on one row at smaller widths"),
+            None,
+        );
+
+        assert!(prompt.contains("Intent:\nKeep header controls on one row"));
+        assert!(prompt.contains("source of truth"));
+        assert!(prompt.contains("Prefer the behavioral outcome"));
+        assert!(
+            prompt.find("Intent:").unwrap() < prompt.find("Git context:").unwrap()
+        );
+    }
+
+    #[test]
+    fn commit_subject_with_intent_rejects_file_only_subjects() {
+        assert!(commit_subject_ignores_intent(
+            "Update App.css",
+            Some("Keep header controls on one row")
+        ));
+        assert!(commit_subject_ignores_intent(
+            "Update app styling",
+            Some("Keep header controls on one row")
+        ));
+        assert!(!commit_subject_ignores_intent("Update App.css", None));
+        assert!(!commit_subject_ignores_intent(
+            "Keep header controls on one row",
+            Some("Keep header controls on one row")
+        ));
     }
 
     #[test]

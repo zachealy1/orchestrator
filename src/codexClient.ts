@@ -89,6 +89,7 @@ export function generateWorkspaceCommitMessage(input: {
   accountId: number | null;
   includeUnstaged: boolean;
   model: string | null;
+  intent?: string | null;
 }) {
   return invoke<{ message: string; source: "codex" }>(
     "generate_workspace_commit_message",
@@ -97,6 +98,7 @@ export function generateWorkspaceCommitMessage(input: {
       accountId: input.accountId,
       includeUnstaged: input.includeUnstaged,
       model: input.model,
+      intent: input.intent ?? null,
     },
   );
 }

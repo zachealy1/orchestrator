@@ -750,6 +750,7 @@ function App() {
     Record<number, WorkspaceChatSession | undefined>
   >({});
   const [commitDialogOpen, setCommitDialogOpen] = useState(false);
+  const [commitIntent, setCommitIntent] = useState("");
   const [commitMessage, setCommitMessage] = useState("");
   const [includeUnstagedChanges, setIncludeUnstagedChanges] = useState(true);
   const [gitActionStatus, setGitActionStatus] = useState<
@@ -1043,6 +1044,10 @@ function App() {
     ? (workspaceChatSessions[selectedWorkspace.id] ?? null)
     : null;
   const visibleTaskChatEntries = selectedWorkspaceChatEntries;
+  const suggestedCommitIntent = useMemo(
+    () => buildCommitIntentFromChatEntries(visibleTaskChatEntries),
+    [visibleTaskChatEntries],
+  );
   const editablePromptEntryId = useMemo(() => {
     if (runIsActive || activeChatEntryId !== null) {
       return null;
@@ -3381,6 +3386,7 @@ function App() {
     if (!selectedWorkspace) {
       return;
     }
+    setCommitIntent(suggestedCommitIntent ?? "");
     setCommitMessage("");
     setIncludeUnstagedChanges(true);
     setCommitDialogOpen(true);
@@ -3437,11 +3443,14 @@ function App() {
       return "";
     }
 
-    const fallback = generateCommitMessage(
-      selectedWorkspace,
-      commitMessageFiles,
-      commitMessageSummary,
-    );
+    const intent = commitIntent.trim();
+    const fallback = intent
+      ? generateCommitMessageFromIntent(intent)
+      : generateCommitMessage(
+          selectedWorkspace,
+          commitMessageFiles,
+          commitMessageSummary,
+        );
     if (!selectedAccountId) {
       return fallback;
     }
@@ -3454,9 +3463,16 @@ function App() {
         accountId: selectedAccountId,
         includeUnstaged: includeUnstagedChanges,
         model: selectedModel?.model ?? selectedModel?.id ?? null,
+        intent,
       });
       const generated = cleanGeneratedCommitSubject(result.message);
       if (generated) {
+        if (intent && commitSubjectIgnoresIntent(generated, commitMessageFiles)) {
+          setStatusMessage(
+            "Codex returned a file-focused commit message, using the change intent instead.",
+          );
+          return fallback;
+        }
         const previous = lastCommitSubjectRef.current;
         if (
           previous &&
@@ -3516,6 +3532,7 @@ function App() {
         }
       }
       setCommitDialogOpen(false);
+      setCommitIntent("");
       setCommitMessage("");
     } catch (error) {
       setStatusMessage(
@@ -5844,6 +5861,17 @@ function App() {
               )}
             </div>
 
+            <label className="git-action-message intent">
+              <span>Change intent</span>
+              <textarea
+                aria-label="Change intent"
+                placeholder="What was this change meant to achieve?"
+                value={commitIntent}
+                onChange={(event) => setCommitIntent(event.target.value)}
+                disabled={gitActionStatus !== "idle"}
+              />
+            </label>
+
             <label className="git-action-message">
               <textarea
                 aria-label="Commit message"
@@ -7267,6 +7295,27 @@ function createChatTitle(prompt: string) {
   return normalized.length > 120 ? `${normalized.slice(0, 117)}...` : normalized;
 }
 
+function buildCommitIntentFromChatEntries(entries: TaskChatEntry[]) {
+  const latestEntry = [...entries]
+    .reverse()
+    .find((entry) => entry.prompt.trim().length > 0);
+  if (!latestEntry) {
+    return "";
+  }
+
+  const parts = [`Goal: ${latestEntry.prompt.trim()}`];
+  const finalSummary = latestEntry.runView.finalMessage.trim();
+  if (finalSummary) {
+    parts.push(`Summary: ${finalSummary}`);
+  }
+  return truncateCommitIntent(parts.join("\n\n"));
+}
+
+function truncateCommitIntent(intent: string) {
+  const normalized = intent.trim();
+  return normalized.length > 1600 ? `${normalized.slice(0, 1597).trimEnd()}...` : normalized;
+}
+
 function generateCommitMessage(
   workspace: Workspace,
   files: WorkspaceGitFileStatus[],
@@ -7292,6 +7341,41 @@ function generateCommitMessage(
     : `Update ${workspace.label}`;
 }
 
+function generateCommitMessageFromIntent(intent: string) {
+  const subject = extractCommitIntentSubject(intent);
+  return cleanGeneratedCommitSubject(subject) || "Describe workspace change";
+}
+
+function extractCommitIntentSubject(intent: string) {
+  const lines = intent
+    .split(/\n+/)
+    .map((line) => line.trim())
+    .filter(Boolean);
+  const preferredLine =
+    lines.find((line) => /^goal\s*:/i.test(line)) ??
+    lines.find((line) => /^prompt\s*:/i.test(line)) ??
+    lines[0] ??
+    "";
+  let subject = preferredLine
+    .replace(/^(goal|prompt|intent|summary)\s*:\s*/i, "")
+    .replace(/^please\s+/i, "")
+    .replace(/^can you\s+/i, "")
+    .replace(/^could you\s+/i, "")
+    .replace(/^i want you to\s+/i, "")
+    .replace(/^i want to\s+/i, "")
+    .replace(/^make sure\s+/i, "Ensure ")
+    .replace(/\s+/g, " ")
+    .trim();
+
+  if (!subject) {
+    return "Describe workspace change";
+  }
+
+  subject = subject.replace(/[.!?]+$/g, "").trim();
+  subject = subject.charAt(0).toUpperCase() + subject.slice(1);
+  return subject.length > 72 ? `${subject.slice(0, 69).trimEnd()}...` : subject;
+}
+
 function cleanGeneratedCommitSubject(subject: string) {
   return subject
     .replace(
@@ -7299,6 +7383,50 @@ function cleanGeneratedCommitSubject(subject: string) {
       "",
     )
     .trim();
+}
+
+function commitSubjectIgnoresIntent(
+  subject: string,
+  files: WorkspaceGitFileStatus[],
+) {
+  const normalized = cleanGeneratedCommitSubject(subject)
+    .toLowerCase()
+    .replace(/[-_]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+  if (!normalized) {
+    return true;
+  }
+
+  const fileNames = files.map((file) =>
+    basename(file.relativePath)
+      .toLowerCase()
+      .replace(/[-_]+/g, " ")
+      .replace(/\s+/g, " ")
+      .trim(),
+  );
+  const fileStemSubjects = fileNames.flatMap((fileName) => {
+    const stem = fileName.replace(/\.[^.]+$/, "").trim();
+    return [fileName, stem].filter(Boolean);
+  });
+  const fileOnlyVerbs = ["update", "refine", "improve", "change", "modify"];
+  if (
+    fileStemSubjects.some((fileName) =>
+      fileOnlyVerbs.some((verb) => normalized === `${verb} ${fileName}`),
+    )
+  ) {
+    return true;
+  }
+
+  return [
+    "update app styling",
+    "refine app styling",
+    "improve app styling",
+    "update react app",
+    "refine react app",
+    "update files",
+    "update code",
+  ].includes(normalized);
 }
 
 function inferCommitMessageSubject(files: WorkspaceGitFileStatus[]) {

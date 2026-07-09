@@ -1468,6 +1468,20 @@ button.account-switcher-item:hover:not(:disabled) {
   display: block;
 }
 
+.git-action-message.intent {
+  display: grid;
+  gap: 8px;
+  padding: 16px 26px 0;
+}
+
+.git-action-message.intent span {
+  color: var(--color-text-secondary);
+  font-size: 0.72rem;
+  font-weight: 760;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
 .git-action-message textarea {
   width: 100%;
   min-height: 142px;
@@ -1481,6 +1495,11 @@ button.account-switcher-item:hover:not(:disabled) {
   line-height: 1.45;
   outline: none;
   padding: 26px;
+}
+
+.git-action-message.intent textarea {
+  min-height: 74px;
+  padding: 0;
 }
 
 .git-action-message textarea:focus {
