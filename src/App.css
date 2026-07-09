@@ -1022,18 +1022,19 @@ button.account-switcher-item:hover:not(:disabled) {
   z-index: 12;
   display: grid;
   min-width: 0;
-  grid-template-columns: minmax(0, 1fr) minmax(0, max-content);
+  grid-template-columns: minmax(0, 1fr) max-content;
   gap: var(--workspace-header-gap);
   align-items: center;
   border-bottom: 1px solid var(--color-divider);
   background: rgb(var(--component-rgb) / 0.96);
   padding: 10px 18px;
+  white-space: nowrap;
 }
 
 .workspace-context-left {
   display: grid;
   min-width: 0;
-  grid-template-columns: minmax(160px, 1fr) minmax(0, auto);
+  grid-template-columns: minmax(0, 1fr) minmax(0, auto);
   align-items: center;
   gap: var(--workspace-header-gap);
   overflow: hidden;
@@ -1045,6 +1046,7 @@ button.account-switcher-item:hover:not(:disabled) {
   flex: 1 1 auto;
   gap: var(--workspace-header-gap);
   align-items: center;
+  overflow: hidden;
 }
 
 .workspace-context-main > div {
@@ -1106,7 +1108,8 @@ button.account-switcher-item:hover:not(:disabled) {
   display: flex;
   min-width: 0;
   max-width: 100%;
-  flex: 0 1 auto;
+  flex: 0 0 auto;
+  flex-wrap: nowrap;
   gap: var(--workspace-header-gap);
   align-items: center;
   justify-content: flex-end;
@@ -1135,11 +1138,11 @@ button.account-switcher-item:hover:not(:disabled) {
 }
 
 .composer-select.workspace-branch-select {
-  width: clamp(112px, 12vw, 180px);
+  width: clamp(96px, 11vw, 180px);
   height: 30px;
   min-height: 30px;
-  flex: 1 1 112px;
-  min-width: 104px;
+  flex: 0 1 180px;
+  min-width: 96px;
   max-width: 180px;
   border-radius: 7px;
   background: rgb(var(--text-secondary-rgb) / 0.1);
@@ -1193,7 +1196,7 @@ button.account-switcher-item:hover:not(:disabled) {
 }
 
 .workspace-context-chip.git-summary {
-  max-width: min(220px, 24vw);
+  max-width: min(160px, 16vw);
   gap: var(--workspace-header-gap);
   color: var(--color-text-secondary);
   font-size: 0.8rem;
@@ -1308,8 +1311,9 @@ button.account-switcher-item:hover:not(:disabled) {
   overflow: hidden;
   height: 30px;
   min-height: 30px;
-  min-width: 150px;
+  min-width: 132px;
   max-width: 188px;
+  flex: 0 1 188px;
   align-items: center;
   border-radius: 7px;
   background: rgb(var(--text-secondary-rgb) / 0.1);
@@ -4117,21 +4121,8 @@ pre {
 }
 
 @media (max-width: 1180px) {
-  .workspace-context-banner {
-    grid-template-columns: minmax(0, 1fr);
-  }
-
-  .workspace-context-left {
-    grid-template-columns: minmax(0, 1fr) auto;
-  }
-
-  .workspace-context-actions {
-    width: 100%;
-    justify-self: end;
-  }
-
   .composer-select.workspace-branch-select {
-    max-width: min(180px, 34vw);
+    max-width: min(180px, 18vw);
   }
 
   .task-layout,
