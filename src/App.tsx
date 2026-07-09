@@ -5861,17 +5861,6 @@ function App() {
               )}
             </div>
 
-            <label className="git-action-message intent">
-              <span>Change intent</span>
-              <textarea
-                aria-label="Change intent"
-                placeholder="What was this change meant to achieve?"
-                value={commitIntent}
-                onChange={(event) => setCommitIntent(event.target.value)}
-                disabled={gitActionStatus !== "idle"}
-              />
-            </label>
-
             <label className="git-action-message">
               <textarea
                 aria-label="Commit message"
