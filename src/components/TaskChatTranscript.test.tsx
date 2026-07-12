@@ -1,8 +1,11 @@
-import { fireEvent, render, screen, within } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import { emptyRunView } from "../lib/codexEventReducer";
 import { ORCHESTRATOR_PROMPT_CONTEXT_MIME } from "../types";
-import { TaskChatTranscript } from "./TaskChatTranscript";
+import {
+  TaskChatTranscript,
+  type TaskChatEntry,
+} from "./TaskChatTranscript";
 
 function setElementScrollMetrics(
   element: HTMLElement,
@@ -18,7 +21,171 @@ function setElementScrollMetrics(
   });
 }
 
+function historyEntry(turnIndex: number): TaskChatEntry {
+  return {
+    clientId: `history-${turnIndex}`,
+    workspaceId: 1,
+    chatId: 401,
+    turnIndex,
+    runId: turnIndex,
+    taskId: turnIndex,
+    prompt: `Prompt ${turnIndex}`,
+    submittedAt: "2026-06-30T17:30:00Z",
+    status: "completed",
+    runView: {
+      ...emptyRunView,
+      status: "completed",
+      finalMessage: `Completed turn ${turnIndex}.`,
+    },
+  };
+}
+
 describe("TaskChatTranscript", () => {
+  it("renders only a bounded window of turns for a large historical chat", async () => {
+    const entries: TaskChatEntry[] = Array.from({ length: 500 }, (_, index) => ({
+      clientId: `chat-${index + 1}`,
+      workspaceId: 1,
+      chatId: 401,
+      turnIndex: index + 1,
+      runId: index + 1,
+      taskId: index + 1,
+      prompt: `Prompt ${index + 1}`,
+      submittedAt: "2026-06-30T17:30:00Z",
+      status: "completed",
+      runView: {
+        ...emptyRunView,
+        status: "completed",
+        finalMessage: `Completed turn ${index + 1}.`,
+      },
+    }));
+
+    const { container } = render(
+      <TaskChatTranscript entries={entries} onResolveRequest={vi.fn()} />,
+    );
+
+    expect(await screen.findByText("Prompt 500")).toBeInTheDocument();
+    expect(container.querySelectorAll(".task-chat-virtual-row").length).toBeLessThan(
+      40,
+    );
+    expect(screen.queryByText("Prompt 1")).not.toBeInTheDocument();
+    const spacer = container.querySelector<HTMLElement>(
+      ".task-chat-virtual-spacer",
+    );
+    expect(Number.parseFloat(spacer?.style.height ?? "0")).toBeGreaterThan(
+      100_000,
+    );
+  });
+
+  it("stays at the most recent turn when older history pages are prepended", () => {
+    const latestEntries = Array.from({ length: 20 }, (_, index) =>
+      historyEntry(index + 46),
+    );
+    const olderEntries = Array.from({ length: 45 }, (_, index) =>
+      historyEntry(index + 1),
+    );
+    const { rerender } = render(
+      <TaskChatTranscript entries={latestEntries} onResolveRequest={vi.fn()} />,
+    );
+    const transcript = screen.getByLabelText("Task chat transcript");
+    setElementScrollMetrics(transcript, {
+      scrollHeight: 24_000,
+      clientHeight: 600,
+    });
+    transcript.scrollTop = 0;
+
+    rerender(
+      <TaskChatTranscript
+        entries={[...olderEntries, ...latestEntries]}
+        onResolveRequest={vi.fn()}
+      />,
+    );
+
+    expect(transcript.scrollTop).toBe(24_000);
+  });
+
+  it("opens a single-page historical chat at its most recent turn", () => {
+    const latestEntries = Array.from({ length: 12 }, (_, index) =>
+      historyEntry(index + 1),
+    );
+    const { rerender } = render(
+      <TaskChatTranscript entries={[]} onResolveRequest={vi.fn()} />,
+    );
+    const transcript = screen.getByLabelText("Task chat transcript");
+    setElementScrollMetrics(transcript, {
+      scrollHeight: 8_000,
+      clientHeight: 600,
+    });
+
+    rerender(
+      <TaskChatTranscript entries={latestEntries} onResolveRequest={vi.fn()} />,
+    );
+
+    expect(transcript.scrollTop).toBe(8_000);
+  });
+
+  it("honors a new drawer scroll request when chats have equal turn counts", () => {
+    const firstChatEntries = Array.from({ length: 12 }, (_, index) =>
+      historyEntry(index + 1),
+    );
+    const secondChatEntries = firstChatEntries.map((entry) => ({
+      ...entry,
+      clientId: `second-${entry.turnIndex}`,
+      chatId: 402,
+      prompt: `Second chat prompt ${entry.turnIndex}`,
+    }));
+    const { rerender } = render(
+      <TaskChatTranscript
+        entries={firstChatEntries}
+        onResolveRequest={vi.fn()}
+        scrollToLatestRequest={1}
+      />,
+    );
+    const transcript = screen.getByLabelText("Task chat transcript");
+    setElementScrollMetrics(transcript, {
+      scrollHeight: 8_000,
+      clientHeight: 600,
+    });
+    transcript.scrollTop = 0;
+
+    rerender(
+      <TaskChatTranscript
+        entries={secondChatEntries}
+        onResolveRequest={vi.fn()}
+        scrollToLatestRequest={2}
+      />,
+    );
+
+    expect(transcript.scrollTop).toBe(8_000);
+  });
+
+  it("does not return to the latest turn after the user scrolls up during hydration", () => {
+    const latestEntries = Array.from({ length: 20 }, (_, index) =>
+      historyEntry(index + 46),
+    );
+    const olderEntries = Array.from({ length: 45 }, (_, index) =>
+      historyEntry(index + 1),
+    );
+    const { rerender } = render(
+      <TaskChatTranscript entries={latestEntries} onResolveRequest={vi.fn()} />,
+    );
+    const transcript = screen.getByLabelText("Task chat transcript");
+    setElementScrollMetrics(transcript, {
+      scrollHeight: 24_000,
+      clientHeight: 600,
+    });
+    transcript.scrollTop = 1_000;
+    fireEvent.scroll(transcript);
+
+    rerender(
+      <TaskChatTranscript
+        entries={[...olderEntries, ...latestEntries]}
+        onResolveRequest={vi.fn()}
+      />,
+    );
+
+    expect(transcript.scrollTop).not.toBe(24_000);
+  });
+
   it("renders submitted prompts and live output with real-time metrics", () => {
     render(
       <TaskChatTranscript
@@ -174,7 +341,91 @@ describe("TaskChatTranscript", () => {
     expect(transcript.scrollTop).toBe(200);
   });
 
-  it("continues following live output when the user is already near the bottom", () => {
+  it("cancels a pending follow-to-bottom frame when the user scrolls away", () => {
+    let pendingFrame: FrameRequestCallback | null = null;
+    vi.stubGlobal(
+      "requestAnimationFrame",
+      vi.fn((callback: FrameRequestCallback) => {
+        pendingFrame = callback;
+        return 91;
+      }),
+    );
+    vi.stubGlobal(
+      "cancelAnimationFrame",
+      vi.fn(() => {
+        pendingFrame = null;
+      }),
+    );
+
+    try {
+      const entry = {
+        clientId: "chat-1",
+        workspaceId: 1,
+        chatId: 401,
+        turnIndex: 1,
+        runId: 2,
+        taskId: 3,
+        prompt: "Run a long task",
+        submittedAt: "2026-06-30T17:30:00Z",
+        status: "running" as const,
+        runView: {
+          ...emptyRunView,
+          status: "running" as const,
+          streamEvents: [
+            {
+              id: "message-1",
+              kind: "message" as const,
+              text: "First update",
+              timestamp: "2026-06-30T17:30:01Z",
+            },
+          ],
+        },
+      };
+      const { rerender } = render(
+        <TaskChatTranscript entries={[entry]} onResolveRequest={vi.fn()} />,
+      );
+      const transcript = screen.getByLabelText("Task chat transcript");
+      setElementScrollMetrics(transcript, {
+        scrollHeight: 1000,
+        clientHeight: 200,
+      });
+      transcript.scrollTop = 790;
+      fireEvent.scroll(transcript);
+
+      rerender(
+        <TaskChatTranscript
+          entries={[
+            {
+              ...entry,
+              runView: {
+                ...entry.runView,
+                streamEvents: [
+                  ...entry.runView.streamEvents,
+                  {
+                    id: "message-2",
+                    kind: "message",
+                    text: "Second update",
+                    timestamp: "2026-06-30T17:30:02Z",
+                  },
+                ],
+              },
+            },
+          ]}
+          onResolveRequest={vi.fn()}
+        />,
+      );
+
+      expect(pendingFrame).not.toBeNull();
+      transcript.scrollTop = 200;
+      fireEvent.scroll(transcript);
+      expect(pendingFrame).toBeNull();
+      expect(transcript.scrollTop).toBe(200);
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it("continues following live output when the user is already near the bottom", async () => {
     const entry = {
       clientId: "chat-1",
       workspaceId: 1,
@@ -232,7 +483,7 @@ describe("TaskChatTranscript", () => {
       />,
     );
 
-    expect(transcript.scrollTop).toBe(1000);
+    await waitFor(() => expect(transcript.scrollTop).toBe(1000));
   });
 
   it("allows the latest completed prompt to be edited and rerun", () => {
@@ -469,7 +720,7 @@ describe("TaskChatTranscript", () => {
     });
   });
 
-  it("renders completed summaries as markdown and collapses the stream trace", () => {
+  it("renders completed summaries as markdown and collapses the stream trace", async () => {
     render(
       <TaskChatTranscript
         entries={[
@@ -547,13 +798,15 @@ describe("TaskChatTranscript", () => {
     expect(within(traceTrigger).getByText("2m 3s")).toBeInTheDocument();
     expect(within(traceTrigger).getByText("69,839 tokens")).toBeInTheDocument();
     expect(screen.queryByText("2m 3s • 69,839 tokens")).not.toBeInTheDocument();
+    fireEvent.click(traceTrigger);
+    const stream = await screen.findByLabelText("App-server stream");
     expect(
-      within(screen.getByLabelText("App-server stream")).getByText(
+      within(stream).getByText(
         "I will inspect the current styling first.",
       ),
     ).toBeInTheDocument();
     expect(
-      within(screen.getByLabelText("App-server stream")).queryByText(
+      within(stream).queryByText(
         "Removed the border from the submitted chat message styling.",
       ),
     ).not.toBeInTheDocument();

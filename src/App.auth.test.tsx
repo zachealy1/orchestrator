@@ -437,6 +437,51 @@ async function renderApp() {
   return { user };
 }
 
+function mockTranscriptScrollMetrics(scrollHeight: number, clientHeight: number) {
+  const scrollHeightDescriptor = Object.getOwnPropertyDescriptor(
+    HTMLElement.prototype,
+    "scrollHeight",
+  );
+  const clientHeightDescriptor = Object.getOwnPropertyDescriptor(
+    HTMLElement.prototype,
+    "clientHeight",
+  );
+
+  Object.defineProperty(HTMLElement.prototype, "scrollHeight", {
+    configurable: true,
+    get() {
+      return this.classList.contains("task-chat-transcript") ? scrollHeight : 0;
+    },
+  });
+  Object.defineProperty(HTMLElement.prototype, "clientHeight", {
+    configurable: true,
+    get() {
+      return this.classList.contains("task-chat-transcript") ? clientHeight : 0;
+    },
+  });
+
+  return () => {
+    if (scrollHeightDescriptor) {
+      Object.defineProperty(
+        HTMLElement.prototype,
+        "scrollHeight",
+        scrollHeightDescriptor,
+      );
+    } else {
+      Reflect.deleteProperty(HTMLElement.prototype, "scrollHeight");
+    }
+    if (clientHeightDescriptor) {
+      Object.defineProperty(
+        HTMLElement.prototype,
+        "clientHeight",
+        clientHeightDescriptor,
+      );
+    } else {
+      Reflect.deleteProperty(HTMLElement.prototype, "clientHeight");
+    }
+  };
+}
+
 function createContextFileDataTransfer(files: unknown[]) {
   let dropEffect = "none";
 
@@ -1846,13 +1891,135 @@ describe("App Codex auth", () => {
 
     await waitFor(() => expect(drawer).toHaveClass("closed"));
     expect(drawer).toHaveAttribute("aria-hidden", "true");
+    const submittedPrompt = await screen.findByLabelText("Submitted prompt");
     const transcript = screen.getByLabelText("Task chat transcript");
-    expect(within(transcript).getByLabelText("Submitted prompt")).toHaveTextContent(
-      "Fix the app header",
-    );
+    expect(submittedPrompt).toHaveTextContent("Fix the app header");
     expect(within(transcript).getByText("Header fixed.")).toBeInTheDocument();
     expect(within(transcript).getByText("1m 0s")).toBeInTheDocument();
     expect(within(transcript).getByText("1,280 tokens")).toBeInTheDocument();
+  });
+
+  it("closes history immediately and progressively hydrates a large chat", async () => {
+    const restoreScrollMetrics = mockTranscriptScrollMetrics(24_000, 600);
+    const historicalChat = workspaceChatFixture({
+      id: 451,
+      title: "Large history chat",
+      turn_count: 65,
+    });
+    const historicalRuns = Array.from({ length: 65 }, (_, index) =>
+      workspaceRunFixture({
+        id: 500 + index,
+        chat_id: historicalChat.id,
+        turn_index: index + 1,
+        original_prompt: `Prompt ${index + 1}`,
+        final_message: `Result ${index + 1}.`,
+      }),
+    );
+    mocks.listWorkspaceChatsMock.mockResolvedValue([historicalChat]);
+    mocks.listChatRunsPageMock.mockImplementation(
+      async (_chatId: number, offset: number, limit: number) =>
+        historicalRuns.slice(offset, offset + limit),
+    );
+
+    try {
+      const { user } = await renderApp();
+      const banner = screen.getByRole("region", { name: "Selected folder" });
+      await user.click(
+        within(banner).getByRole("button", { name: /open chat history/i }),
+      );
+      const drawer = await screen.findByRole("complementary", {
+        name: "Workspace chat history",
+      });
+
+      await user.click(
+        within(drawer).getByRole("button", { name: /large history chat/i }),
+      );
+
+      expect(drawer).toHaveClass("closed");
+      expect(screen.getByLabelText("Loading chat")).toHaveTextContent(
+        "Loading Large history chat",
+      );
+      expect(await screen.findByText("Result 65.")).toBeInTheDocument();
+      expect(mocks.listChatRunsPageMock).toHaveBeenNthCalledWith(1, 451, 45, 20);
+
+      await waitFor(() =>
+        expect(mocks.listChatRunsPageMock).toHaveBeenCalledTimes(4),
+      );
+      expect(mocks.listChatRunsPageMock.mock.calls.slice(1)).toEqual([
+        [451, 25, 20],
+        [451, 5, 20],
+        [451, 0, 5],
+      ]);
+      const transcript = screen.getByLabelText("Task chat transcript");
+      await waitFor(() => expect(transcript.scrollTop).toBe(24_000));
+      expect(document.querySelectorAll(".task-chat-virtual-row").length).toBeLessThan(
+        40,
+      );
+    } finally {
+      restoreScrollMetrics();
+    }
+  });
+
+  it("ignores a stale history load after another chat is selected", async () => {
+    const firstChat = workspaceChatFixture({ id: 461, title: "Slow chat" });
+    const secondChat = workspaceChatFixture({ id: 462, title: "Fast chat" });
+    let resolveSlowChat: ((runs: ReturnType<typeof workspaceRunFixture>[]) => void) | null =
+      null;
+    const slowChatRuns = new Promise<ReturnType<typeof workspaceRunFixture>[]>(
+      (resolve) => {
+        resolveSlowChat = resolve;
+      },
+    );
+    mocks.listWorkspaceChatsMock.mockResolvedValue([firstChat, secondChat]);
+    mocks.listChatRunsPageMock.mockImplementation(async (chatId: number) => {
+      if (chatId === firstChat.id) {
+        return slowChatRuns;
+      }
+      return [
+        workspaceRunFixture({
+          id: 602,
+          chat_id: secondChat.id,
+          original_prompt: "Fast chat prompt",
+          final_message: "Fast chat result.",
+        }),
+      ];
+    });
+
+    const { user } = await renderApp();
+    const banner = screen.getByRole("region", { name: "Selected folder" });
+    const historyButton = within(banner).getByRole("button", {
+      name: /open chat history/i,
+    });
+    await user.click(historyButton);
+    let drawer = await screen.findByRole("complementary", {
+      name: "Workspace chat history",
+    });
+    await user.click(within(drawer).getByRole("button", { name: /slow chat/i }));
+    await waitFor(() =>
+      expect(mocks.listChatRunsPageMock).toHaveBeenCalledWith(461, 0, 1),
+    );
+
+    await user.click(historyButton);
+    drawer = screen.getByRole("complementary", {
+      name: "Workspace chat history",
+    });
+    await user.click(within(drawer).getByRole("button", { name: /fast chat/i }));
+    expect(await screen.findByText("Fast chat result.")).toBeInTheDocument();
+
+    await act(async () => {
+      resolveSlowChat?.([
+        workspaceRunFixture({
+          id: 601,
+          chat_id: firstChat.id,
+          original_prompt: "Slow chat prompt",
+          final_message: "Slow chat result.",
+        }),
+      ]);
+      await Promise.resolve();
+    });
+
+    expect(screen.getByText("Fast chat result.")).toBeInTheDocument();
+    expect(screen.queryByText("Slow chat result.")).not.toBeInTheDocument();
   });
 
   it("opens a multi-turn chat history row in the chat window", async () => {
@@ -1894,6 +2061,7 @@ describe("App Codex auth", () => {
     expect(within(drawer).getByText(/2 turns/)).toBeInTheDocument();
     await user.click(within(drawer).getByRole("button", { name: /fix the app header/i }));
 
+    await screen.findByText("History button added.");
     const transcript = screen.getByLabelText("Task chat transcript");
     expect(within(transcript).getAllByLabelText("Submitted prompt")).toHaveLength(2);
     expect(transcript).toHaveTextContent("Fix the app header");
@@ -1936,27 +2104,25 @@ describe("App Codex auth", () => {
           ],
         };
       }
-      if (method === "thread/read") {
+      if (method === "thread/turns/list") {
         return {
-          thread: {
-            id: "external-thread-1",
-            turns: [
-              {
-                id: "external-turn-1",
-                status: "completed",
-                createdAt: "2026-07-07T10:00:00Z",
-                completedAt: "2026-07-07T10:02:00Z",
-                items: [
-                  { type: "userMessage", text: "Prompt from VS Code" },
-                  {
-                    type: "agentMessage",
-                    phase: "final_answer",
-                    text: "Answer from the Codex extension.",
-                  },
-                ],
-              },
-            ],
-          },
+          data: [
+            {
+              id: "external-turn-1",
+              status: "completed",
+              createdAt: "2026-07-07T10:00:00Z",
+              completedAt: "2026-07-07T10:02:00Z",
+              items: [
+                { type: "userMessage", text: "Prompt from VS Code" },
+                {
+                  type: "agentMessage",
+                  phase: "final_answer",
+                  text: "Answer from the Codex extension.",
+                },
+              ],
+            },
+          ],
+          nextCursor: null,
         };
       }
       if (method === "turn/start") {
@@ -1989,11 +2155,24 @@ describe("App Codex auth", () => {
     expect(row).toHaveTextContent("VS Code");
     await user.click(row);
 
-    const transcript = await screen.findByLabelText("Task chat transcript");
-    expect(within(transcript).getByLabelText("Submitted prompt")).toHaveTextContent(
-      "Prompt from VS Code",
-    );
+    const submittedPrompt = await screen.findByLabelText("Submitted prompt");
+    const transcript = screen.getByLabelText("Task chat transcript");
+    expect(submittedPrompt).toHaveTextContent("Prompt from VS Code");
     expect(transcript).toHaveTextContent("Answer from the Codex extension.");
+    expect(mocks.codexDefaultProfileRpcMock).toHaveBeenCalledWith(
+      "thread/turns/list",
+      expect.objectContaining({
+        threadId: "external-thread-1",
+        limit: 20,
+        sortDirection: "desc",
+        itemsView: "full",
+      }),
+    );
+    expect(
+      mocks.codexDefaultProfileRpcMock.mock.calls.some(
+        ([method]) => method === "thread/read",
+      ),
+    ).toBe(false);
 
     await user.type(screen.getByLabelText("Prompt"), "Continue external thread");
     await user.click(screen.getByRole("button", { name: /run codex/i }));
@@ -2052,9 +2231,7 @@ describe("App Codex auth", () => {
     await user.keyboard("{Enter}");
 
     await waitFor(() => expect(drawer).toHaveClass("closed"));
-    expect(screen.getByLabelText("Task chat transcript")).toHaveTextContent(
-      "Opened from keyboard.",
-    );
+    expect(await screen.findByText("Opened from keyboard.")).toBeInTheDocument();
   });
 
   it("removes a chat from history through the row context menu", async () => {
@@ -2202,9 +2379,7 @@ describe("App Codex auth", () => {
     await user.click(
       within(drawer).getByRole("button", { name: /old selected chat/i }),
     );
-    expect(screen.getByLabelText("Task chat transcript")).toHaveTextContent(
-      "Old selected result.",
-    );
+    expect(await screen.findByText("Old selected result.")).toBeInTheDocument();
 
     const animationFrames = holdNextAnimationFrames();
     try {

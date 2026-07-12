@@ -1005,6 +1005,7 @@ button.account-switcher-item:hover:not(:disabled) {
   min-width: 0;
   min-height: 0;
   overflow: hidden;
+  contain: layout paint;
 }
 
 .codex-workspace-body.history-open {
@@ -1637,6 +1638,7 @@ button.account-switcher-item:hover:not(:disabled) {
   align-items: stretch;
   justify-content: flex-end;
   gap: 14px;
+  overflow: hidden;
   padding: 18px 0 20px;
 }
 
@@ -1661,6 +1663,7 @@ button.account-switcher-item:hover:not(:disabled) {
   min-height: 0;
   align-self: stretch;
   overflow-y: auto;
+  overscroll-behavior: contain;
   padding: 4px var(--task-hero-inline-padding);
 }
 
@@ -1688,9 +1691,7 @@ button.account-switcher-item:hover:not(:disabled) {
   justify-items: center;
   box-sizing: border-box;
   padding-bottom: 18px;
-  content-visibility: auto;
-  contain: layout paint style;
-  contain-intrinsic-size: 1px 360px;
+  contain: paint style;
 }
 
 .task-chat-run {
@@ -2165,7 +2166,7 @@ summary.run-live-metrics::-webkit-details-marker {
   position: relative;
   z-index: 3;
   display: grid;
-  flex: 0 0 var(--history-drawer-width);
+  flex: 0 0 auto;
   width: var(--history-drawer-width);
   min-width: 0;
   height: 100%;
@@ -2179,11 +2180,16 @@ summary.run-live-metrics::-webkit-details-marker {
   overflow: hidden;
   transform: translateX(0);
   transition:
-    flex-basis 0.24s ease,
-    width 0.24s ease,
-    opacity 0.18s ease,
-    transform 0.22s ease,
+    width 0.2s cubic-bezier(0.2, 0, 0, 1),
+    opacity 0.16s ease,
+    transform 0.2s cubic-bezier(0.2, 0, 0, 1),
     visibility 0s linear 0s;
+  will-change: width, opacity, transform;
+}
+
+.workspace-history-drawer > * {
+  width: clamp(340px, 30vw, 460px);
+  min-width: 340px;
 }
 
 .workspace-history-drawer.closed {
@@ -2194,10 +2200,9 @@ summary.run-live-metrics::-webkit-details-marker {
   pointer-events: none;
   transform: translateX(18px);
   transition:
-    flex-basis 0.2s ease,
-    width 0.2s ease,
-    opacity 0.14s ease,
-    transform 0.18s ease,
+    width 0.18s cubic-bezier(0.4, 0, 1, 1),
+    opacity 0.12s ease,
+    transform 0.18s cubic-bezier(0.4, 0, 1, 1),
     visibility 0s linear 0.18s;
 }
 

@@ -201,7 +201,7 @@ const DIFF_DRAWER_PREFERRED_WIDTH = 860;
 const DIFF_SIDE_BY_SIDE_MIN_WIDTH = 760;
 const DEFAULT_CONTEXT_WINDOW = 258_400;
 const GIT_STATUS_AUTO_REFRESH_INTERVAL_MS = 3000;
-const HISTORY_CHAT_PAGE_SIZE = 25;
+const HISTORY_CHAT_PAGE_SIZE = 20;
 const EMPTY_GIT_STATUS_BY_PATH = new Map<string, WorkspaceGitFileStatus>();
 const EMPTY_DIRTY_DIRECTORY_PATHS = new Set<string>();
 const DEFAULT_CODEX_PROFILE_KEY: CodexProfileKey = "default";
@@ -230,9 +230,23 @@ function waitForNextPaint() {
   });
 }
 
-function yieldToBrowser() {
+function waitForIdleWork() {
   return new Promise<void>((resolve) => {
-    setTimeout(resolve, 0);
+    const requestIdle = (
+      globalThis as typeof globalThis & {
+        requestIdleCallback?: (
+          callback: () => void,
+          options?: { timeout: number },
+        ) => number;
+      }
+    ).requestIdleCallback;
+
+    if (requestIdle) {
+      requestIdle(resolve, { timeout: 180 });
+      return;
+    }
+
+    setTimeout(resolve, 16);
   });
 }
 
@@ -794,6 +808,10 @@ function App() {
   const [historyChatLoadState, setHistoryChatLoadState] =
     useState<HistoryChatLoadState | null>(null);
   const [selectedHistoryChatId, setSelectedHistoryChatId] = useState<number | null>(null);
+  const [historyScrollRequest, setHistoryScrollRequest] = useState<{
+    workspaceId: number;
+    requestId: number;
+  } | null>(null);
   const [workspaceChatSessions, setWorkspaceChatSessions] = useState<
     Record<number, WorkspaceChatSession | undefined>
   >({});
@@ -2505,6 +2523,147 @@ function App() {
     return createTaskChatEntriesFromExternalCodexThread(chat, response);
   }
 
+  async function loadExternalCodexChatProgressively(
+    chat: ChatListItem,
+    loadId: number,
+  ) {
+    const threadId = chat.external_thread_id ?? chat.codex_thread_id;
+    if (!threadId) {
+      throw new Error("External Codex chat is missing its thread id.");
+    }
+
+    await ensureCodexProfileConnected(DEFAULT_CODEX_PROFILE_KEY, 0);
+    let cursor: string | null = null;
+    let latestEntries: TaskChatEntry[] = [];
+    const olderEntryPages: TaskChatEntry[][] = [];
+    let firstPageLoaded = false;
+    let publishedEntryCount = 0;
+
+    const collectHydratedEntries = () => [
+      ...[...olderEntryPages].reverse().flat(),
+      ...latestEntries,
+    ];
+
+    do {
+      let response: unknown;
+      try {
+        response = await codexDefaultProfileRpc<unknown>("thread/turns/list", {
+          threadId,
+          cursor,
+          limit: HISTORY_CHAT_PAGE_SIZE,
+          sortDirection: "desc",
+          itemsView: "full",
+        });
+      } catch (error) {
+        if (firstPageLoaded) {
+          const hydratedEntries = collectHydratedEntries();
+          if (
+            historyChatLoadIdRef.current === loadId &&
+            hydratedEntries.length > publishedEntryCount
+          ) {
+            const entriesSnapshot = hydratedEntries;
+            startTransition(() => {
+              setTaskChatEntries((current) =>
+                replaceWorkspaceChatEntries(
+                  current,
+                  chat.workspace_id,
+                  entriesSnapshot,
+                ),
+              );
+            });
+          }
+          setStatusMessage(
+            `Opened recent turns; older turns could not be loaded: ${
+              error instanceof Error ? error.message : String(error)
+            }`,
+          );
+          return;
+        }
+        break;
+      }
+
+      const root = readObject(response);
+      if (!("data" in root)) {
+        break;
+      }
+      if (historyChatLoadIdRef.current !== loadId) {
+        return;
+      }
+
+      const pageTurns = [...readArray(root.data)].reverse();
+      const pageEntries = createTaskChatEntriesFromExternalCodexThread(chat, {
+        data: pageTurns,
+      });
+      const isFirstPage = !firstPageLoaded;
+
+      if (isFirstPage) {
+        latestEntries = pageEntries;
+        publishedEntryCount = latestEntries.length;
+        startTransition(() => {
+          setTaskChatEntries((current) =>
+            replaceWorkspaceChatEntries(
+              current,
+              chat.workspace_id,
+              latestEntries,
+            ),
+          );
+          setHistoryChatLoadState(null);
+        });
+        firstPageLoaded = true;
+        setStatusMessage(
+          `Opened chat from ${formatHistoryTimestamp(chat.latest_activity_at)}.`,
+        );
+      } else {
+        olderEntryPages.push(pageEntries);
+      }
+
+      cursor = readString(root.nextCursor);
+      if (cursor) {
+        await waitForIdleWork();
+        if (historyChatLoadIdRef.current !== loadId) {
+          return;
+        }
+      }
+    } while (cursor);
+
+    if (firstPageLoaded) {
+      const hydratedEntries = collectHydratedEntries();
+      if (
+        historyChatLoadIdRef.current === loadId &&
+        hydratedEntries.length > publishedEntryCount
+      ) {
+        const entriesSnapshot = hydratedEntries;
+        startTransition(() => {
+          setTaskChatEntries((current) =>
+            replaceWorkspaceChatEntries(
+              current,
+              chat.workspace_id,
+              entriesSnapshot,
+            ),
+          );
+          setHistoryChatLoadState(null);
+        });
+      } else {
+        startTransition(() => setHistoryChatLoadState(null));
+      }
+      return;
+    }
+
+    const entries = await loadExternalCodexChatEntries(chat);
+    if (historyChatLoadIdRef.current !== loadId) {
+      return;
+    }
+    startTransition(() => {
+      setTaskChatEntries((current) =>
+        replaceWorkspaceChatEntries(current, chat.workspace_id, entries),
+      );
+      setHistoryChatLoadState(null);
+    });
+    setStatusMessage(
+      `Opened chat from ${formatHistoryTimestamp(chat.latest_activity_at)}.`,
+    );
+  }
+
   async function selectHistoryChat(chat: ChatListItem) {
     if (runIsActive) {
       setStatusMessage("Finish or stop the active run before opening history.");
@@ -2530,6 +2689,10 @@ function App() {
         workspaceId: chat.workspace_id,
         title: chat.title,
       });
+      setHistoryScrollRequest({
+        workspaceId: chat.workspace_id,
+        requestId: loadId,
+      });
       setTaskChatEntries((current) =>
         replaceWorkspaceChatEntries(current, chat.workspace_id, []),
       );
@@ -2545,19 +2708,7 @@ function App() {
       }
 
       if (chat.origin === "codex_external") {
-        const entries = await loadExternalCodexChatEntries(chat);
-        if (historyChatLoadIdRef.current !== loadId) {
-          return;
-        }
-        startTransition(() => {
-          setTaskChatEntries((current) =>
-            replaceWorkspaceChatEntries(current, chat.workspace_id, entries),
-          );
-          setHistoryChatLoadState(null);
-        });
-        setStatusMessage(
-          `Opened chat from ${formatHistoryTimestamp(chat.latest_activity_at)}.`,
-        );
+        await loadExternalCodexChatProgressively(chat, loadId);
         return;
       }
 
@@ -2588,54 +2739,76 @@ function App() {
       return;
     }
 
-    let offset = Math.max(0, totalTurns - HISTORY_CHAT_PAGE_SIZE);
-    let hydratedEntries: TaskChatEntry[] = [];
+    let pageEnd = totalTurns;
+    let offset = Math.max(0, pageEnd - HISTORY_CHAT_PAGE_SIZE);
+    let latestEntries: TaskChatEntry[] = [];
+    const olderEntryPages: TaskChatEntry[][] = [];
     let firstPageLoaded = false;
+    let publishedEntryCount = 0;
 
-    while (offset >= 0) {
-      const limit = firstPageLoaded
-        ? HISTORY_CHAT_PAGE_SIZE
-        : totalTurns - offset;
+    while (pageEnd > 0) {
+      const limit = pageEnd - offset;
       const runs = await listChatRunsPage(chat.id, offset, limit);
       if (historyChatLoadIdRef.current !== loadId) {
         return;
       }
 
       const pageEntries = runs.map((run) => createTaskChatEntryFromHistoryRun(run));
-      hydratedEntries = firstPageLoaded
-        ? [...pageEntries, ...hydratedEntries]
-        : pageEntries;
       const isFirstPage = !firstPageLoaded;
 
+      if (isFirstPage) {
+        latestEntries = pageEntries;
+        publishedEntryCount = latestEntries.length;
+        startTransition(() => {
+          setTaskChatEntries((current) =>
+            replaceWorkspaceChatEntries(
+              current,
+              chat.workspace_id,
+              latestEntries,
+            ),
+          );
+          setHistoryChatLoadState(null);
+        });
+        firstPageLoaded = true;
+        setStatusMessage(
+          `Opened chat from ${formatHistoryTimestamp(chat.latest_activity_at)}.`,
+        );
+      } else {
+        olderEntryPages.push(pageEntries);
+      }
+
+      pageEnd = offset;
+      if (pageEnd === 0) {
+        break;
+      }
+
+      offset = Math.max(0, pageEnd - HISTORY_CHAT_PAGE_SIZE);
+      await waitForIdleWork();
+      if (historyChatLoadIdRef.current !== loadId) {
+        return;
+      }
+    }
+
+    const hydratedEntries = [
+      ...[...olderEntryPages].reverse().flat(),
+      ...latestEntries,
+    ];
+    if (
+      historyChatLoadIdRef.current === loadId &&
+      hydratedEntries.length > publishedEntryCount
+    ) {
+      const entriesSnapshot = hydratedEntries;
       startTransition(() => {
         setTaskChatEntries((current) =>
           replaceWorkspaceChatEntries(
             current,
             chat.workspace_id,
-            hydratedEntries,
+            entriesSnapshot,
           ),
         );
-        if (isFirstPage) {
-          setHistoryChatLoadState(null);
-        }
+        setHistoryChatLoadState(null);
       });
-
-      if (isFirstPage) {
-        firstPageLoaded = true;
-        setStatusMessage(
-          `Opened chat from ${formatHistoryTimestamp(chat.latest_activity_at)}.`,
-        );
-      }
-
-      if (offset === 0) {
-        break;
-      }
-
-      offset = Math.max(0, offset - HISTORY_CHAT_PAGE_SIZE);
-      await yieldToBrowser();
-      if (historyChatLoadIdRef.current !== loadId) {
-        return;
-      }
+      return;
     }
 
     startTransition(() => {
@@ -2655,6 +2828,7 @@ function App() {
 
     historyChatLoadIdRef.current += 1;
     setHistoryChatLoadState(null);
+    setHistoryScrollRequest(null);
     setTaskChatEntries((current) =>
       current.filter((entry) => entry.workspaceId !== selectedWorkspace.id),
     );
@@ -6232,6 +6406,12 @@ function App() {
                     onOpenFileLink={openTaskResponseFileLink}
                     editablePromptEntryId={editablePromptEntryId}
                     onEditPrompt={handleEditLatestPrompt}
+                    scrollToLatestRequest={
+                      historyScrollRequest !== null &&
+                      historyScrollRequest.workspaceId === selectedWorkspace?.id
+                        ? historyScrollRequest.requestId
+                        : null
+                    }
                   />
                 ) : selectedHistoryChatLoading ? (
                   <HistoryChatLoading title={selectedHistoryChatLoading.title} />
@@ -6980,6 +7160,7 @@ function createTaskChatEntriesFromExternalCodexThread(
 
   return turns.flatMap((turnValue, index) => {
     const turn = readObject(turnValue);
+    const turnId = readString(turn.id);
     const items =
       readArray(turn.items).length > 0
         ? readArray(turn.items)
@@ -6992,26 +7173,29 @@ function createTaskChatEntriesFromExternalCodexThread(
     }
     const finalMessage = extractExternalFinalAnswer(items);
     const completedAt =
-      readString(turn.completedAt) ??
-      readString(turn.completed_at) ??
+      readTimestamp(turn.completedAt) ??
+      readTimestamp(turn.completed_at) ??
       chat.external_updated_at ??
       chat.updated_at;
     const startedAt =
-      readString(turn.startedAt) ??
-      readString(turn.started_at) ??
-      readString(turn.createdAt) ??
-      readString(turn.created_at) ??
+      readTimestamp(turn.startedAt) ??
+      readTimestamp(turn.started_at) ??
+      readTimestamp(turn.createdAt) ??
+      readTimestamp(turn.created_at) ??
       completedAt;
     const status = normalizeExternalTurnStatus(readString(turn.status), finalMessage);
-    const finalMessageItemId = finalMessage ? `external-final-${chat.id}-${index}` : null;
+    const stableTurnKey = turnId ?? `${startedAt}-${index}`;
+    const finalMessageItemId = finalMessage
+      ? `external-final-${chat.id}-${stableTurnKey}`
+      : null;
     const threadId = chat.external_thread_id ?? chat.codex_thread_id;
 
     return [
       {
-        clientId: `external-chat-${chat.id}-turn-${index}`,
+        clientId: `external-chat-${chat.id}-turn-${stableTurnKey}`,
         workspaceId: chat.workspace_id,
         chatId: chat.id,
-        turnIndex: index + 1,
+        turnIndex: null,
         runId: null,
         taskId: null,
         prompt,
@@ -7021,7 +7205,7 @@ function createTaskChatEntriesFromExternalCodexThread(
           ...emptyRunView,
           status,
           threadId,
-          turnId: readString(turn.id),
+          turnId,
           startedAt,
           completedAt,
           elapsedMs: readNumber(turn.durationMs) ?? 0,
@@ -8171,6 +8355,18 @@ function readArray(value: unknown): unknown[] {
 
 function readString(value: unknown) {
   return typeof value === "string" ? value : null;
+}
+
+function readTimestamp(value: unknown) {
+  if (typeof value === "string") {
+    return value;
+  }
+  if (typeof value !== "number" || !Number.isFinite(value)) {
+    return null;
+  }
+
+  const milliseconds = value > 10_000_000_000 ? value : value * 1000;
+  return new Date(milliseconds).toISOString();
 }
 
 function readNumber(value: unknown) {

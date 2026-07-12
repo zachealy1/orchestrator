@@ -12,7 +12,15 @@ import {
   Terminal,
   X,
 } from "lucide-react";
-import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  memo,
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import type {
   ClipboardEvent as ReactClipboardEvent,
   MouseEvent as ReactMouseEvent,
@@ -36,14 +44,23 @@ import {
 const AUTO_SCROLL_BOTTOM_THRESHOLD_PX = 48;
 const TRANSCRIPT_ROW_ESTIMATE_PX = 360;
 const TRANSCRIPT_OVERSCAN_ROWS = 6;
+const EMPTY_CONTEXT_FILES: ComposerContextFile[] = [];
 
 function scheduleAnimationFrame(callback: FrameRequestCallback) {
   if (typeof requestAnimationFrame === "function") {
     return requestAnimationFrame(callback);
   }
 
-  setTimeout(() => callback(performance.now()), 0);
-  return 0;
+  return window.setTimeout(() => callback(Date.now()), 0);
+}
+
+function cancelScheduledAnimationFrame(handle: number) {
+  if (typeof cancelAnimationFrame === "function") {
+    cancelAnimationFrame(handle);
+    return;
+  }
+
+  window.clearTimeout(handle);
 }
 
 export type TaskChatEntry = {
@@ -66,6 +83,7 @@ type Props = {
   onOpenFileLink?: (href: string) => boolean;
   editablePromptEntryId?: string | null;
   onEditPrompt?: (entry: TaskChatEntry, prompt: string) => void;
+  scrollToLatestRequest?: string | number | null;
 };
 
 export function TaskChatTranscript({
@@ -74,10 +92,63 @@ export function TaskChatTranscript({
   onOpenFileLink,
   editablePromptEntryId = null,
   onEditPrompt,
+  scrollToLatestRequest = null,
+}: Props) {
+  const callbacksRef = useRef({
+    onResolveRequest,
+    onOpenFileLink,
+    onEditPrompt,
+  });
+  callbacksRef.current = {
+    onResolveRequest,
+    onOpenFileLink,
+    onEditPrompt,
+  };
+
+  const stableResolveRequest = useCallback(
+    (request: CodexMessage, approved: boolean) =>
+      callbacksRef.current.onResolveRequest(request, approved),
+    [],
+  );
+  const stableOpenFileLink = useCallback(
+    (href: string) => callbacksRef.current.onOpenFileLink?.(href) ?? false,
+    [],
+  );
+  const stableEditPrompt = useCallback(
+    (entry: TaskChatEntry, prompt: string) =>
+      callbacksRef.current.onEditPrompt?.(entry, prompt),
+    [],
+  );
+
+  return (
+    <VirtualizedTaskChatTranscript
+      entries={entries}
+      onResolveRequest={stableResolveRequest}
+      onOpenFileLink={onOpenFileLink ? stableOpenFileLink : undefined}
+      editablePromptEntryId={editablePromptEntryId}
+      onEditPrompt={onEditPrompt ? stableEditPrompt : undefined}
+      scrollToLatestRequest={scrollToLatestRequest}
+    />
+  );
+}
+
+const VirtualizedTaskChatTranscript = memo(function VirtualizedTaskChatTranscript({
+  entries,
+  onResolveRequest,
+  onOpenFileLink,
+  editablePromptEntryId = null,
+  onEditPrompt,
+  scrollToLatestRequest = null,
 }: Props) {
   const transcriptRef = useRef<HTMLDivElement | null>(null);
   const shouldFollowOutputRef = useRef(true);
-  const previousEntryCountRef = useRef(entries.length);
+  const followFrameRef = useRef<number | null>(null);
+  const previousEntriesRef = useRef({
+    count: 0,
+    lastId: null as string | null,
+    totalSize: 0,
+  });
+  const previousScrollRequestRef = useRef<string | number | null>(null);
   const [editingEntryId, setEditingEntryId] = useState<string | null>(null);
   const [editingPrompt, setEditingPrompt] = useState("");
   const rowVirtualizer = useVirtualizer({
@@ -85,6 +156,10 @@ export function TaskChatTranscript({
     getScrollElement: () => transcriptRef.current,
     estimateSize: () => TRANSCRIPT_ROW_ESTIMATE_PX,
     overscan: TRANSCRIPT_OVERSCAN_ROWS,
+    anchorTo: "end",
+    followOnAppend: "auto",
+    scrollEndThreshold: AUTO_SCROLL_BOTTOM_THRESHOLD_PX,
+    useAnimationFrameWithResizeObserver: true,
     getItemKey: useCallback(
       (index: number) => entries[index]?.clientId ?? index,
       [entries],
@@ -95,24 +170,92 @@ export function TaskChatTranscript({
     },
   });
 
-  useEffect(() => {
+  const virtualItems = rowVirtualizer.getVirtualItems();
+  const renderedRows =
+    virtualItems.length > 0
+      ? virtualItems
+      : buildFallbackTranscriptRows(entries.length);
+  const totalSize = rowVirtualizer.getTotalSize();
+
+  useLayoutEffect(() => {
     const transcript = transcriptRef.current;
     if (!transcript) {
       return;
     }
 
-    const entryCountIncreased = entries.length > previousEntryCountRef.current;
-    previousEntryCountRef.current = entries.length;
-    if (entryCountIncreased) {
+    const previous = previousEntriesRef.current;
+    const lastId = entries[entries.length - 1]?.clientId ?? null;
+    const scrollRequestChanged =
+      scrollToLatestRequest !== null &&
+      scrollToLatestRequest !== previousScrollRequestRef.current;
+    const entryCountIncreased = entries.length > previous.count;
+    const appended = entryCountIncreased && lastId !== previous.lastId;
+    const prepended =
+      entryCountIncreased && previous.count > 0 && lastId === previous.lastId;
+    const initialLoad = previous.count === 0 && entries.length > 0;
+    const contentUpdated =
+      previous.count === entries.length && previous.lastId === lastId;
+    const totalSizeChanged = previous.totalSize !== totalSize;
+
+    if (appended || scrollRequestChanged) {
       shouldFollowOutputRef.current = true;
     }
 
-    if (shouldFollowOutputRef.current && entries.length > 0) {
-      scheduleAnimationFrame(() => {
-        rowVirtualizer.scrollToIndex(entries.length - 1, { align: "end" });
+    previousScrollRequestRef.current = scrollToLatestRequest;
+    previousEntriesRef.current = {
+      count: entries.length,
+      lastId,
+      totalSize,
+    };
+
+    if (followFrameRef.current !== null) {
+      cancelScheduledAnimationFrame(followFrameRef.current);
+      followFrameRef.current = null;
+    }
+
+    const scrollToLatest = () => {
+      rowVirtualizer.scrollToIndex(entries.length - 1, { align: "end" });
+      transcript.scrollTop = transcript.scrollHeight;
+    };
+
+    if (
+      shouldFollowOutputRef.current &&
+      entries.length > 0 &&
+      (initialLoad || appended || prepended || scrollRequestChanged)
+    ) {
+      scrollToLatest();
+      followFrameRef.current = scheduleAnimationFrame(() => {
+        followFrameRef.current = null;
+        if (shouldFollowOutputRef.current) {
+          scrollToLatest();
+        }
+      });
+      return;
+    }
+
+    if (
+      shouldFollowOutputRef.current &&
+      entries.length > 0 &&
+      (contentUpdated || totalSizeChanged)
+    ) {
+      followFrameRef.current = scheduleAnimationFrame(() => {
+        followFrameRef.current = null;
+        if (!shouldFollowOutputRef.current) {
+          return;
+        }
+        scrollToLatest();
       });
     }
-  }, [entries, rowVirtualizer]);
+  }, [entries, rowVirtualizer, scrollToLatestRequest, totalSize]);
+
+  useEffect(
+    () => () => {
+      if (followFrameRef.current !== null) {
+        cancelScheduledAnimationFrame(followFrameRef.current);
+      }
+    },
+    [],
+  );
 
   useEffect(() => {
     if (
@@ -146,22 +289,25 @@ export function TaskChatTranscript({
     setEditingPrompt(entry.prompt);
   }, []);
 
-  const virtualItems = rowVirtualizer.getVirtualItems();
-
   return (
     <section
       className="task-chat-transcript"
       aria-label="Task chat transcript"
       ref={transcriptRef}
       onScroll={(event) => {
-        shouldFollowOutputRef.current = isScrolledNearBottom(event.currentTarget);
+        const shouldFollow = isScrolledNearBottom(event.currentTarget);
+        shouldFollowOutputRef.current = shouldFollow;
+        if (!shouldFollow && followFrameRef.current !== null) {
+          cancelScheduledAnimationFrame(followFrameRef.current);
+          followFrameRef.current = null;
+        }
       }}
     >
       <div
         className="task-chat-virtual-spacer"
-        style={{ height: rowVirtualizer.getTotalSize() }}
+        style={{ height: totalSize }}
       >
-        {virtualItems.map((virtualItem) => {
+        {renderedRows.map((virtualItem) => {
           const entry = entries[virtualItem.index];
           if (!entry) {
             return null;
@@ -199,6 +345,20 @@ export function TaskChatTranscript({
       </div>
     </section>
   );
+});
+
+function buildFallbackTranscriptRows(count: number) {
+  const visibleCount = Math.min(count, TRANSCRIPT_OVERSCAN_ROWS * 2 + 1);
+  const startIndex = Math.max(0, count - visibleCount);
+
+  return Array.from({ length: visibleCount }, (_, offset) => {
+    const index = startIndex + offset;
+    return {
+      key: `transcript-fallback-${index}`,
+      index,
+      start: index * TRANSCRIPT_ROW_ESTIMATE_PX,
+    };
+  });
 }
 
 const TaskChatTurn = memo(function TaskChatTurn({
@@ -279,7 +439,7 @@ const TaskChatTurn = memo(function TaskChatTurn({
             >
               <SubmittedPrompt
                 prompt={entry.prompt}
-                contextFiles={entry.contextFiles ?? []}
+                contextFiles={entry.contextFiles ?? EMPTY_CONTEXT_FILES}
                 onOpenFileLink={onOpenFileLink}
               />
             </article>
@@ -473,30 +633,6 @@ const RunSummary = memo(function RunSummary({
   runView: RunViewState;
   onOpenFileLink?: (href: string) => boolean;
 }) {
-  if (runView.status === "failed" && runView.error) {
-    return (
-      <div className="run-summary error" aria-label="Run error">
-        {runView.error}
-      </div>
-    );
-  }
-
-  if (runView.status === "interrupted") {
-    return (
-      <div className="run-summary muted" aria-label="Run summary">
-        {runView.error ?? "Stopped by user."}
-      </div>
-    );
-  }
-
-  if (!runView.finalMessage.trim()) {
-    return (
-      <div className="run-summary muted" aria-label="Run summary">
-        Completed without a final message.
-      </div>
-    );
-  }
-
   const markdownComponents = useMemo<Components>(
     () => ({
       a: ({ href, children, node: _node, ...props }) => {
@@ -530,6 +666,30 @@ const RunSummary = memo(function RunSummary({
     }),
     [onOpenFileLink],
   );
+
+  if (runView.status === "failed" && runView.error) {
+    return (
+      <div className="run-summary error" aria-label="Run error">
+        {runView.error}
+      </div>
+    );
+  }
+
+  if (runView.status === "interrupted") {
+    return (
+      <div className="run-summary muted" aria-label="Run summary">
+        {runView.error ?? "Stopped by user."}
+      </div>
+    );
+  }
+
+  if (!runView.finalMessage.trim()) {
+    return (
+      <div className="run-summary muted" aria-label="Run summary">
+        Completed without a final message.
+      </div>
+    );
+  }
 
   return (
     <div className="run-summary markdown-summary" aria-label="Run summary">
