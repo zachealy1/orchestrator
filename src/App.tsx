@@ -29,7 +29,14 @@ import {
   UserPlus,
   X,
 } from "lucide-react";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  startTransition,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import { flushSync } from "react-dom";
 import type {
   CSSProperties,
@@ -47,8 +54,8 @@ import {
   createCodexAccount,
   createRun,
   createTask,
-  getChatWithRuns,
   getAnalyticsSummary,
+  listChatRunsPage,
   listWorkspaceChats,
   listCodexAccounts,
   listDuplicateProfilesPendingCleanup,
@@ -194,6 +201,7 @@ const DIFF_DRAWER_PREFERRED_WIDTH = 860;
 const DIFF_SIDE_BY_SIDE_MIN_WIDTH = 760;
 const DEFAULT_CONTEXT_WINDOW = 258_400;
 const GIT_STATUS_AUTO_REFRESH_INTERVAL_MS = 3000;
+const HISTORY_CHAT_PAGE_SIZE = 25;
 const EMPTY_GIT_STATUS_BY_PATH = new Map<string, WorkspaceGitFileStatus>();
 const EMPTY_DIRTY_DIRECTORY_PATHS = new Set<string>();
 const DEFAULT_CODEX_PROFILE_KEY: CodexProfileKey = "default";
@@ -205,6 +213,38 @@ function createTaskChatClientId() {
   return `chat-${Date.now().toString(36)}-${Math.random()
     .toString(36)
     .slice(2, 8)}`;
+}
+
+function waitForNextPaint() {
+  return new Promise<void>((resolve) => {
+    const scheduleFrame =
+      typeof requestAnimationFrame === "function"
+        ? requestAnimationFrame
+        : (callback: FrameRequestCallback) => {
+            setTimeout(() => callback(performance.now()), 0);
+            return 0;
+          };
+    scheduleFrame(() => {
+      setTimeout(resolve, 0);
+    });
+  });
+}
+
+function yieldToBrowser() {
+  return new Promise<void>((resolve) => {
+    setTimeout(resolve, 0);
+  });
+}
+
+function replaceWorkspaceChatEntries(
+  current: TaskChatEntry[],
+  workspaceId: number,
+  entries: TaskChatEntry[],
+) {
+  return [
+    ...current.filter((entry) => entry.workspaceId !== workspaceId),
+    ...entries,
+  ];
 }
 
 class RunStoppedError extends Error {
@@ -270,6 +310,12 @@ type WorkspaceHistoryState = {
   status: "idle" | "loading" | "loaded" | "error";
   chats: ChatListItem[];
   error: string | null;
+};
+
+type HistoryChatLoadState = {
+  chatId: number;
+  workspaceId: number;
+  title: string;
 };
 
 type WorkspaceChatSession = {
@@ -745,6 +791,8 @@ function App() {
     chats: [],
     error: null,
   });
+  const [historyChatLoadState, setHistoryChatLoadState] =
+    useState<HistoryChatLoadState | null>(null);
   const [selectedHistoryChatId, setSelectedHistoryChatId] = useState<number | null>(null);
   const [workspaceChatSessions, setWorkspaceChatSessions] = useState<
     Record<number, WorkspaceChatSession | undefined>
@@ -812,6 +860,7 @@ function App() {
   const runViewRef = useRef<RunViewState>(emptyRunView);
   const activeChatEntryIdRef = useRef<string | null>(null);
   const activeRunControlRef = useRef<ActiveRunControl | null>(null);
+  const historyChatLoadIdRef = useRef(0);
   const workspaceChatSessionsRef = useRef<
     Record<number, WorkspaceChatSession | undefined>
   >({});
@@ -1045,9 +1094,35 @@ function App() {
     ? (workspaceChatSessions[selectedWorkspace.id] ?? null)
     : null;
   const visibleTaskChatEntries = selectedWorkspaceChatEntries;
+  const selectedWorkspaceChatMeta = useMemo(() => {
+    let latestPromptEntry: TaskChatEntry | null = null;
+    let latestTokenUsage: RunViewState["tokenUsage"] = null;
+
+    for (let index = selectedWorkspaceChatEntries.length - 1; index >= 0; index -= 1) {
+      const entry = selectedWorkspaceChatEntries[index];
+      if (!latestPromptEntry && entry.prompt.trim().length > 0) {
+        latestPromptEntry = entry;
+      }
+      if (!latestTokenUsage && entry.runView.tokenUsage) {
+        latestTokenUsage = entry.runView.tokenUsage;
+      }
+      if (latestPromptEntry && latestTokenUsage) {
+        break;
+      }
+    }
+
+    return {
+      latestPromptEntry,
+      latestTokenUsage,
+    };
+  }, [selectedWorkspaceChatEntries]);
+  const selectedHistoryChatLoading =
+    selectedWorkspace && historyChatLoadState?.workspaceId === selectedWorkspace.id
+      ? historyChatLoadState
+      : null;
   const suggestedCommitIntent = useMemo(
-    () => buildCommitIntentFromChatEntries(visibleTaskChatEntries),
-    [visibleTaskChatEntries],
+    () => buildCommitIntentFromChatEntry(selectedWorkspaceChatMeta.latestPromptEntry),
+    [selectedWorkspaceChatMeta.latestPromptEntry],
   );
   const editablePromptEntryId = useMemo(() => {
     if (runIsActive || activeChatEntryId !== null) {
@@ -1056,10 +1131,7 @@ function App() {
     if (selectedWorkspaceChatSession?.origin === "codex_external") {
       return null;
     }
-    const latestEntry =
-      visibleTaskChatEntries.length > 0
-        ? visibleTaskChatEntries[visibleTaskChatEntries.length - 1]
-        : null;
+    const latestEntry = selectedWorkspaceChatMeta.latestPromptEntry;
     if (
       !latestEntry ||
       latestEntry.status === "connecting" ||
@@ -1072,13 +1144,11 @@ function App() {
     activeChatEntryId,
     runIsActive,
     selectedWorkspaceChatSession?.origin,
-    visibleTaskChatEntries,
+    selectedWorkspaceChatMeta.latestPromptEntry,
   ]);
-  const selectedWorkspaceContextUsage =
-    [...selectedWorkspaceChatEntries]
-      .reverse()
-      .find((entry) => entry.runView.tokenUsage)?.runView.tokenUsage ?? null;
-  const hasTaskChat = visibleTaskChatEntries.length > 0;
+  const selectedWorkspaceContextUsage = selectedWorkspaceChatMeta.latestTokenUsage;
+  const hasTaskChat =
+    visibleTaskChatEntries.length > 0 || selectedHistoryChatLoading !== null;
   const codexSignedIn = isCodexSignedIn(codexAccount);
   const authMessage = formatCodexAuthMessage({
     connected: codexConnected,
@@ -2441,32 +2511,136 @@ function App() {
       return;
     }
 
-    setChatHistoryContextMenu(null);
-    try {
-      const entries =
-        chat.origin === "codex_external"
-          ? await loadExternalCodexChatEntries(chat)
-          : createTaskChatEntriesFromHistoryChat(await getChatWithRuns(chat.id));
-      setTaskChatEntries((current) => [
-        ...current.filter((entry) => entry.workspaceId !== chat.workspace_id),
-        ...entries,
-      ]);
-      setWorkspaceChatSession(chat.workspace_id, {
-        chatId: chat.id,
-        threadId: chat.external_thread_id ?? chat.codex_thread_id,
-        origin: chat.origin,
-        profileKey: chat.profile_key,
-        externalThreadId: chat.external_thread_id,
-      });
+    const loadId = historyChatLoadIdRef.current + 1;
+    historyChatLoadIdRef.current = loadId;
+    const session: WorkspaceChatSession = {
+      chatId: chat.id,
+      threadId: chat.external_thread_id ?? chat.codex_thread_id,
+      origin: chat.origin,
+      profileKey: chat.profile_key,
+      externalThreadId: chat.external_thread_id,
+    };
+
+    flushSync(() => {
+      setChatHistoryContextMenu(null);
       setSelectedHistoryChatId(chat.id);
+      setWorkspaceChatSession(chat.workspace_id, session);
+      setHistoryChatLoadState({
+        chatId: chat.id,
+        workspaceId: chat.workspace_id,
+        title: chat.title,
+      });
+      setTaskChatEntries((current) =>
+        replaceWorkspaceChatEntries(current, chat.workspace_id, []),
+      );
       setHistoryDrawerOpen(false);
       setActiveView("task");
-      setStatusMessage(`Opened chat from ${formatHistoryTimestamp(chat.latest_activity_at)}.`);
+    });
+
+    setStatusMessage(`Opening chat from ${formatHistoryTimestamp(chat.latest_activity_at)}.`);
+    try {
+      await waitForNextPaint();
+      if (historyChatLoadIdRef.current !== loadId) {
+        return;
+      }
+
+      if (chat.origin === "codex_external") {
+        const entries = await loadExternalCodexChatEntries(chat);
+        if (historyChatLoadIdRef.current !== loadId) {
+          return;
+        }
+        startTransition(() => {
+          setTaskChatEntries((current) =>
+            replaceWorkspaceChatEntries(current, chat.workspace_id, entries),
+          );
+          setHistoryChatLoadState(null);
+        });
+        setStatusMessage(
+          `Opened chat from ${formatHistoryTimestamp(chat.latest_activity_at)}.`,
+        );
+        return;
+      }
+
+      await loadLocalHistoryChatProgressively(chat, loadId);
     } catch (error) {
+      if (historyChatLoadIdRef.current !== loadId) {
+        return;
+      }
+      setHistoryChatLoadState(null);
       setStatusMessage(
         `Could not open chat: ${error instanceof Error ? error.message : String(error)}`,
       );
     }
+  }
+
+  async function loadLocalHistoryChatProgressively(
+    chat: ChatListItem,
+    loadId: number,
+  ) {
+    const totalTurns = Math.max(0, Number(chat.turn_count) || 0);
+    if (totalTurns === 0) {
+      startTransition(() => {
+        setTaskChatEntries((current) =>
+          replaceWorkspaceChatEntries(current, chat.workspace_id, []),
+        );
+        setHistoryChatLoadState(null);
+      });
+      return;
+    }
+
+    let offset = Math.max(0, totalTurns - HISTORY_CHAT_PAGE_SIZE);
+    let hydratedEntries: TaskChatEntry[] = [];
+    let firstPageLoaded = false;
+
+    while (offset >= 0) {
+      const limit = firstPageLoaded
+        ? HISTORY_CHAT_PAGE_SIZE
+        : totalTurns - offset;
+      const runs = await listChatRunsPage(chat.id, offset, limit);
+      if (historyChatLoadIdRef.current !== loadId) {
+        return;
+      }
+
+      const pageEntries = runs.map((run) => createTaskChatEntryFromHistoryRun(run));
+      hydratedEntries = firstPageLoaded
+        ? [...pageEntries, ...hydratedEntries]
+        : pageEntries;
+      const isFirstPage = !firstPageLoaded;
+
+      startTransition(() => {
+        setTaskChatEntries((current) =>
+          replaceWorkspaceChatEntries(
+            current,
+            chat.workspace_id,
+            hydratedEntries,
+          ),
+        );
+        if (isFirstPage) {
+          setHistoryChatLoadState(null);
+        }
+      });
+
+      if (isFirstPage) {
+        firstPageLoaded = true;
+        setStatusMessage(
+          `Opened chat from ${formatHistoryTimestamp(chat.latest_activity_at)}.`,
+        );
+      }
+
+      if (offset === 0) {
+        break;
+      }
+
+      offset = Math.max(0, offset - HISTORY_CHAT_PAGE_SIZE);
+      await yieldToBrowser();
+      if (historyChatLoadIdRef.current !== loadId) {
+        return;
+      }
+    }
+
+    startTransition(() => {
+      setHistoryChatLoadState(null);
+    });
   }
 
   function startNewWorkspaceChat() {
@@ -2479,6 +2653,8 @@ function App() {
       return;
     }
 
+    historyChatLoadIdRef.current += 1;
+    setHistoryChatLoadState(null);
     setTaskChatEntries((current) =>
       current.filter((entry) => entry.workspaceId !== selectedWorkspace.id),
     );
@@ -2495,6 +2671,10 @@ function App() {
     }
 
     await softDeleteChat(chat.id);
+    historyChatLoadIdRef.current += 1;
+    setHistoryChatLoadState((current) =>
+      current?.chatId === chat.id ? null : current,
+    );
     if (selectedHistoryChatId === chat.id) {
       setSelectedHistoryChatId(null);
       setWorkspaceChatSession(chat.workspace_id, undefined);
@@ -2537,6 +2717,7 @@ function App() {
   }
 
   function clearWorkspaceRuntimeState(workspace: Workspace) {
+    historyChatLoadIdRef.current += 1;
     const workspaceRoot = normalizeWorkspacePath(workspace.path);
     const workspacePrefix = `${workspaceRoot}/`;
     const belongsToWorkspace = (path: string) => {
@@ -2572,6 +2753,9 @@ function App() {
       current.filter((entry) => entry.workspaceId !== workspace.id),
     );
     setWorkspaceChatSession(workspace.id, undefined);
+    setHistoryChatLoadState((current) =>
+      current?.workspaceId === workspace.id ? null : current,
+    );
     if (selectedHistoryChatId !== null) {
       setSelectedHistoryChatId(null);
     }
@@ -6041,7 +6225,7 @@ function App() {
                 onDragLeave={handleTaskContextDragLeave}
                 onDrop={handleTaskContextDrop}
               >
-                {hasTaskChat ? (
+                {visibleTaskChatEntries.length > 0 ? (
                   <TaskChatTranscript
                     entries={visibleTaskChatEntries}
                     onResolveRequest={handleResolveRequest}
@@ -6049,6 +6233,8 @@ function App() {
                     editablePromptEntryId={editablePromptEntryId}
                     onEditPrompt={handleEditLatestPrompt}
                   />
+                ) : selectedHistoryChatLoading ? (
+                  <HistoryChatLoading title={selectedHistoryChatLoading.title} />
                 ) : (
                   <h1>{taskQuote}</h1>
                 )}
@@ -6607,6 +6793,21 @@ function WorkspaceContextBanner({
   );
 }
 
+function HistoryChatLoading({ title }: { title: string }) {
+  return (
+    <section className="task-chat-loading" aria-label="Task chat transcript">
+      <p className="stream-placeholder stream-preparing" aria-label="Loading chat">
+        <span className="stream-loading-dots" aria-hidden="true">
+          <span />
+          <span />
+          <span />
+        </span>
+        Loading {title}
+      </p>
+    </section>
+  );
+}
+
 function WorkspaceContextGitSummaryChip({
   gitSummary,
 }: {
@@ -6760,10 +6961,6 @@ function WorkspaceHistoryDrawer({
       </div>
     </aside>
   );
-}
-
-function createTaskChatEntriesFromHistoryChat(chat: ChatWithRuns): TaskChatEntry[] {
-  return chat.runs.map((run) => createTaskChatEntryFromHistoryRun(run));
 }
 
 function createTaskChatEntriesFromExternalCodexThread(
@@ -7312,10 +7509,7 @@ function createChatTitle(prompt: string) {
   return normalized.length > 120 ? `${normalized.slice(0, 117)}...` : normalized;
 }
 
-function buildCommitIntentFromChatEntries(entries: TaskChatEntry[]) {
-  const latestEntry = [...entries]
-    .reverse()
-    .find((entry) => entry.prompt.trim().length > 0);
+function buildCommitIntentFromChatEntry(latestEntry: TaskChatEntry | null) {
   if (!latestEntry) {
     return "";
   }

@@ -1654,16 +1654,43 @@ button.account-switcher-item:hover:not(:disabled) {
 }
 
 .task-chat-transcript {
-  display: grid;
+  display: block;
   flex: 1 1 auto;
   width: 100%;
   max-width: 100%;
   min-height: 0;
   align-self: stretch;
-  align-content: end;
-  gap: 18px;
   overflow-y: auto;
   padding: 4px var(--task-hero-inline-padding);
+}
+
+.task-chat-loading {
+  display: grid;
+  flex: 1 1 auto;
+  width: 100%;
+  min-height: 0;
+  place-items: center;
+  padding: 4px var(--task-hero-inline-padding);
+}
+
+.task-chat-virtual-spacer {
+  position: relative;
+  width: 100%;
+  min-height: 100%;
+}
+
+.task-chat-virtual-row {
+  position: absolute;
+  top: 0;
+  left: 0;
+  display: grid;
+  width: 100%;
+  justify-items: center;
+  box-sizing: border-box;
+  padding-bottom: 18px;
+  content-visibility: auto;
+  contain: layout paint style;
+  contain-intrinsic-size: 1px 360px;
 }
 
 .task-chat-run {

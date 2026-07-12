@@ -1,3 +1,4 @@
+import { useVirtualizer } from "@tanstack/react-virtual";
 import {
   Activity,
   BrainCircuit,
@@ -11,13 +12,14 @@ import {
   Terminal,
   X,
 } from "lucide-react";
-import { useEffect, useRef, useState } from "react";
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type {
   ClipboardEvent as ReactClipboardEvent,
   MouseEvent as ReactMouseEvent,
   ReactNode,
 } from "react";
 import ReactMarkdown from "react-markdown";
+import type { Components } from "react-markdown";
 import type {
   RunCommandActivity,
   RunEditedFile,
@@ -32,6 +34,17 @@ import {
 } from "../types";
 
 const AUTO_SCROLL_BOTTOM_THRESHOLD_PX = 48;
+const TRANSCRIPT_ROW_ESTIMATE_PX = 360;
+const TRANSCRIPT_OVERSCAN_ROWS = 6;
+
+function scheduleAnimationFrame(callback: FrameRequestCallback) {
+  if (typeof requestAnimationFrame === "function") {
+    return requestAnimationFrame(callback);
+  }
+
+  setTimeout(() => callback(performance.now()), 0);
+  return 0;
+}
 
 export type TaskChatEntry = {
   clientId: string;
@@ -67,6 +80,20 @@ export function TaskChatTranscript({
   const previousEntryCountRef = useRef(entries.length);
   const [editingEntryId, setEditingEntryId] = useState<string | null>(null);
   const [editingPrompt, setEditingPrompt] = useState("");
+  const rowVirtualizer = useVirtualizer({
+    count: entries.length,
+    getScrollElement: () => transcriptRef.current,
+    estimateSize: () => TRANSCRIPT_ROW_ESTIMATE_PX,
+    overscan: TRANSCRIPT_OVERSCAN_ROWS,
+    getItemKey: useCallback(
+      (index: number) => entries[index]?.clientId ?? index,
+      [entries],
+    ),
+    initialRect: {
+      width: 1024,
+      height: 720,
+    },
+  });
 
   useEffect(() => {
     const transcript = transcriptRef.current;
@@ -80,10 +107,12 @@ export function TaskChatTranscript({
       shouldFollowOutputRef.current = true;
     }
 
-    if (shouldFollowOutputRef.current) {
-      transcript.scrollTop = transcript.scrollHeight;
+    if (shouldFollowOutputRef.current && entries.length > 0) {
+      scheduleAnimationFrame(() => {
+        rowVirtualizer.scrollToIndex(entries.length - 1, { align: "end" });
+      });
     }
-  }, [entries]);
+  }, [entries, rowVirtualizer]);
 
   useEffect(() => {
     if (
@@ -95,6 +124,30 @@ export function TaskChatTranscript({
     }
   }, [editingEntryId, entries]);
 
+  const handleSubmitEdit = useCallback(
+    (entry: TaskChatEntry, nextPrompt: string) => {
+      if (!nextPrompt || !onEditPrompt) {
+        return;
+      }
+      setEditingEntryId(null);
+      setEditingPrompt("");
+      onEditPrompt(entry, nextPrompt);
+    },
+    [onEditPrompt],
+  );
+
+  const handleCancelEdit = useCallback(() => {
+    setEditingEntryId(null);
+    setEditingPrompt("");
+  }, []);
+
+  const handleStartEdit = useCallback((entry: TaskChatEntry) => {
+    setEditingEntryId(entry.clientId);
+    setEditingPrompt(entry.prompt);
+  }, []);
+
+  const virtualItems = rowVirtualizer.getVirtualItems();
+
   return (
     <section
       className="task-chat-transcript"
@@ -104,114 +157,156 @@ export function TaskChatTranscript({
         shouldFollowOutputRef.current = isScrolledNearBottom(event.currentTarget);
       }}
     >
-      {entries.map((entry) => {
-        const editable =
-          Boolean(onEditPrompt) &&
-          entry.clientId === editablePromptEntryId &&
-          !isRunActiveStatus(entry.status);
-        const editing = editingEntryId === entry.clientId;
+      <div
+        className="task-chat-virtual-spacer"
+        style={{ height: rowVirtualizer.getTotalSize() }}
+      >
+        {virtualItems.map((virtualItem) => {
+          const entry = entries[virtualItem.index];
+          if (!entry) {
+            return null;
+          }
 
-        return (
-          <div className="task-chat-run" key={entry.clientId}>
+          const editable =
+            Boolean(onEditPrompt) &&
+            entry.clientId === editablePromptEntryId &&
+            !isRunActiveStatus(entry.status);
+          const editing = editingEntryId === entry.clientId;
+
+          return (
             <div
-              className={`submitted-prompt-stack ${editable ? "editable" : ""} ${
-                editing ? "editing" : ""
-              }`}
+              className="task-chat-virtual-row"
+              data-index={virtualItem.index}
+              key={virtualItem.key}
+              ref={rowVirtualizer.measureElement}
+              style={{ transform: `translateY(${virtualItem.start}px)` }}
             >
-              {editing ? (
-                <form
-                  className="submitted-prompt-edit-form"
-                  onSubmit={(event) => {
-                    event.preventDefault();
-                    const nextPrompt = editingPrompt.trim();
-                    if (!nextPrompt || !onEditPrompt) {
-                      return;
-                    }
-                    setEditingEntryId(null);
-                    setEditingPrompt("");
-                    onEditPrompt(entry, nextPrompt);
-                  }}
-                >
-                  <article
-                    className="submitted-prompt editing"
-                    aria-label="Submitted prompt"
-                  >
-                    <textarea
-                      aria-label="Edit submitted prompt"
-                      value={editingPrompt}
-                      onChange={(event) => setEditingPrompt(event.target.value)}
-                      autoFocus
-                    />
-                  </article>
-                  <div className="submitted-prompt-edit-actions">
-                    <button
-                      type="submit"
-                      aria-label="Run edited prompt"
-                      disabled={!editingPrompt.trim()}
-                    >
-                      <Check size={15} aria-hidden="true" />
-                    </button>
-                    <button
-                      type="button"
-                      aria-label="Cancel prompt edit"
-                      onClick={() => {
-                        setEditingEntryId(null);
-                        setEditingPrompt("");
-                      }}
-                    >
-                      <X size={15} aria-hidden="true" />
-                    </button>
-                  </div>
-                </form>
-              ) : (
-                <>
-                  <article
-                    className="submitted-prompt"
-                    aria-label="Submitted prompt"
-                    onCopy={(event) => {
-                      writeSubmittedPromptClipboard(
-                        event,
-                        entry.prompt,
-                        entry.contextFiles ?? [],
-                      );
-                    }}
-                  >
-                    <SubmittedPrompt
-                      prompt={entry.prompt}
-                      contextFiles={entry.contextFiles ?? []}
-                      onOpenFileLink={onOpenFileLink}
-                    />
-                  </article>
-                  {editable ? (
-                    <button
-                      className="submitted-prompt-edit-button"
-                      type="button"
-                      aria-label="Edit prompt"
-                      title="Edit prompt"
-                      onClick={() => {
-                        setEditingEntryId(entry.clientId);
-                        setEditingPrompt(entry.prompt);
-                      }}
-                    >
-                      <Pencil size={15} aria-hidden="true" />
-                    </button>
-                  ) : null}
-                </>
-              )}
-            </div>
-            <article className={`chat-message assistant-message status-${entry.status}`}>
-              <AssistantRunOutput
-                runView={entry.runView}
-                onResolveRequest={onResolveRequest}
+              <TaskChatTurn
+                editable={editable}
+                editing={editing}
+                editingPrompt={editingPrompt}
+                entry={entry}
+                onCancelEdit={handleCancelEdit}
+                onEditingPromptChange={setEditingPrompt}
                 onOpenFileLink={onOpenFileLink}
+                onResolveRequest={onResolveRequest}
+                onStartEdit={handleStartEdit}
+                onSubmitEdit={handleSubmitEdit}
               />
-            </article>
-          </div>
-        );
-      })}
+            </div>
+          );
+        })}
+      </div>
     </section>
   );
 }
+
+const TaskChatTurn = memo(function TaskChatTurn({
+  entry,
+  editable,
+  editing,
+  editingPrompt,
+  onEditingPromptChange,
+  onSubmitEdit,
+  onCancelEdit,
+  onStartEdit,
+  onResolveRequest,
+  onOpenFileLink,
+}: {
+  entry: TaskChatEntry;
+  editable: boolean;
+  editing: boolean;
+  editingPrompt: string;
+  onEditingPromptChange: (prompt: string) => void;
+  onSubmitEdit: (entry: TaskChatEntry, prompt: string) => void;
+  onCancelEdit: () => void;
+  onStartEdit: (entry: TaskChatEntry) => void;
+  onResolveRequest: (request: CodexMessage, approved: boolean) => void;
+  onOpenFileLink?: (href: string) => boolean;
+}) {
+  return (
+    <div className="task-chat-run">
+      <div
+        className={`submitted-prompt-stack ${editable ? "editable" : ""} ${
+          editing ? "editing" : ""
+        }`}
+      >
+        {editing ? (
+          <form
+            className="submitted-prompt-edit-form"
+            onSubmit={(event) => {
+              event.preventDefault();
+              onSubmitEdit(entry, editingPrompt.trim());
+            }}
+          >
+            <article className="submitted-prompt editing" aria-label="Submitted prompt">
+              <textarea
+                aria-label="Edit submitted prompt"
+                value={editingPrompt}
+                onChange={(event) => onEditingPromptChange(event.target.value)}
+                autoFocus
+              />
+            </article>
+            <div className="submitted-prompt-edit-actions">
+              <button
+                type="submit"
+                aria-label="Run edited prompt"
+                disabled={!editingPrompt.trim()}
+              >
+                <Check size={15} aria-hidden="true" />
+              </button>
+              <button
+                type="button"
+                aria-label="Cancel prompt edit"
+                onClick={onCancelEdit}
+              >
+                <X size={15} aria-hidden="true" />
+              </button>
+            </div>
+          </form>
+        ) : (
+          <>
+            <article
+              className="submitted-prompt"
+              aria-label="Submitted prompt"
+              onCopy={(event) => {
+                writeSubmittedPromptClipboard(
+                  event,
+                  entry.prompt,
+                  entry.contextFiles ?? [],
+                );
+              }}
+            >
+              <SubmittedPrompt
+                prompt={entry.prompt}
+                contextFiles={entry.contextFiles ?? []}
+                onOpenFileLink={onOpenFileLink}
+              />
+            </article>
+            {editable ? (
+              <button
+                className="submitted-prompt-edit-button"
+                type="button"
+                aria-label="Edit prompt"
+                title="Edit prompt"
+                onClick={() => onStartEdit(entry)}
+              >
+                <Pencil size={15} aria-hidden="true" />
+              </button>
+            ) : null}
+          </>
+        )}
+      </div>
+      <article className={`chat-message assistant-message status-${entry.status}`}>
+        <AssistantRunOutput
+          runView={entry.runView}
+          onResolveRequest={onResolveRequest}
+          onOpenFileLink={onOpenFileLink}
+        />
+      </article>
+    </div>
+  );
+});
 
 function isRunActiveStatus(status: RunViewState["status"]) {
   return status === "connecting" || status === "running";
@@ -223,7 +318,7 @@ function isScrolledNearBottom(element: HTMLElement) {
   return remainingScroll <= AUTO_SCROLL_BOTTOM_THRESHOLD_PX;
 }
 
-function SubmittedPrompt({
+const SubmittedPrompt = memo(function SubmittedPrompt({
   prompt,
   contextFiles,
   onOpenFileLink,
@@ -267,9 +362,9 @@ function SubmittedPrompt({
       })}
     </>
   );
-}
+});
 
-function AssistantRunOutput({
+const AssistantRunOutput = memo(function AssistantRunOutput({
   runView,
   onResolveRequest,
   onOpenFileLink,
@@ -323,7 +418,7 @@ function AssistantRunOutput({
       <RunApprovalRequests runView={runView} onResolveRequest={onResolveRequest} />
     </div>
   );
-}
+});
 
 function PreparingRunStatus() {
   return (
@@ -339,8 +434,13 @@ function PreparingRunStatus() {
 }
 
 function RunTraceDropdown({ runView }: { runView: RunViewState }) {
+  const [open, setOpen] = useState(false);
+
   return (
-    <details className="stream-trace">
+    <details
+      className="stream-trace"
+      onToggle={(event) => setOpen(event.currentTarget.open)}
+    >
       <summary className="run-live-metrics" aria-label="Run trace">
         <span>
           <Clock size={15} aria-hidden="true" />
@@ -349,7 +449,7 @@ function RunTraceDropdown({ runView }: { runView: RunViewState }) {
         <span>{formatTokenCount(runView)}</span>
         <ChevronRight className="run-trace-chevron" size={15} aria-hidden="true" />
       </summary>
-      <RunTimeline runView={runView} />
+      {open ? <RunTimeline runView={runView} /> : null}
     </details>
   );
 }
@@ -366,7 +466,7 @@ function RunMetrics({ runView }: { runView: RunViewState }) {
   );
 }
 
-function RunSummary({
+const RunSummary = memo(function RunSummary({
   runView,
   onOpenFileLink,
 }: {
@@ -397,45 +497,48 @@ function RunSummary({
     );
   }
 
+  const markdownComponents = useMemo<Components>(
+    () => ({
+      a: ({ href, children, node: _node, ...props }) => {
+        const previewable = Boolean(
+          href && onOpenFileLink && isPreviewableSummaryLink(href),
+        );
+        const className = [
+          props.className,
+          previewable ? "markdown-preview-link" : null,
+        ]
+          .filter(Boolean)
+          .join(" ");
+
+        return (
+          <a
+            {...props}
+            className={className || undefined}
+            href={href}
+            title={previewable ? "Click to preview file" : props.title}
+            onClick={(event: ReactMouseEvent<HTMLAnchorElement>) => {
+              if (href && onOpenFileLink?.(href)) {
+                event.preventDefault();
+                event.stopPropagation();
+              }
+            }}
+          >
+            {children}
+          </a>
+        );
+      },
+    }),
+    [onOpenFileLink],
+  );
+
   return (
     <div className="run-summary markdown-summary" aria-label="Run summary">
-      <ReactMarkdown
-        components={{
-          a: ({ href, children, ...props }) => {
-            const previewable = Boolean(
-              href && onOpenFileLink && isPreviewableSummaryLink(href),
-            );
-            const className = [
-              props.className,
-              previewable ? "markdown-preview-link" : null,
-            ]
-              .filter(Boolean)
-              .join(" ");
-
-            return (
-              <a
-                {...props}
-                className={className || undefined}
-                href={href}
-                title={previewable ? "Click to preview file" : props.title}
-                onClick={(event: ReactMouseEvent<HTMLAnchorElement>) => {
-                  if (href && onOpenFileLink?.(href)) {
-                    event.preventDefault();
-                    event.stopPropagation();
-                  }
-                }}
-              >
-                {children}
-              </a>
-            );
-          },
-        }}
-      >
+      <ReactMarkdown components={markdownComponents}>
         {runView.finalMessage}
       </ReactMarkdown>
     </div>
   );
-}
+});
 
 function isPreviewableSummaryLink(href: string) {
   const value = href.trim();

@@ -746,6 +746,37 @@ export async function getChatWithRuns(chatId: number): Promise<ChatWithRuns> {
   return { chat, runs };
 }
 
+export async function listChatRunsPage(
+  chatId: number,
+  offset: number,
+  limit: number,
+) {
+  const db = await getDatabase();
+  return db.select<RunListItem[]>(
+    `SELECT runs.id, runs.task_id, runs.workspace_id, runs.chat_id, runs.turn_index,
+      runs.codex_thread_id, runs.codex_turn_id,
+      runs.account_id, runs.account_label, runs.account_email, runs.model, runs.model_provider,
+      runs.sandbox, runs.approval_policy, runs.status,
+      runs.started_at, runs.completed_at, runs.duration_ms, runs.final_message, runs.error,
+      tasks.original_prompt, tasks.improved_prompt, tasks.route_recommendation, tasks.budget_tokens,
+      latest_tokens.total_tokens AS latest_total_tokens,
+      latest_tokens.model_context_window AS latest_model_context_window
+     FROM runs
+     JOIN tasks ON tasks.id = runs.task_id
+     LEFT JOIN (
+       SELECT run_id, MAX(id) AS max_id
+       FROM token_usage_snapshots
+       GROUP BY run_id
+     ) latest ON latest.run_id = runs.id
+     LEFT JOIN token_usage_snapshots latest_tokens ON latest_tokens.id = latest.max_id
+     WHERE runs.chat_id = $1
+       AND runs.deleted_at IS NULL
+     ORDER BY COALESCE(runs.turn_index, runs.id), runs.started_at
+     LIMIT $2 OFFSET $3`,
+    [chatId, limit, offset],
+  );
+}
+
 export async function softDeleteChat(chatId: number) {
   const db = await getDatabase();
   await db.execute(

@@ -44,6 +44,7 @@ const mocks = vi.hoisted(() => ({
   updateChatMock: vi.fn(),
   listWorkspaceChatsMock: vi.fn(),
   getChatWithRunsMock: vi.fn(),
+  listChatRunsPageMock: vi.fn(),
   softDeleteChatMock: vi.fn(),
   listWorkspaceRunsMock: vi.fn(),
   createCodexAccountMock: vi.fn(),
@@ -129,6 +130,7 @@ vi.mock("./db", () => ({
   createTask: mocks.createTaskMock,
   getChatWithRuns: mocks.getChatWithRunsMock,
   getAnalyticsSummary: mocks.getAnalyticsSummaryMock,
+  listChatRunsPage: mocks.listChatRunsPageMock,
   listCodexAccounts: mocks.listCodexAccountsMock,
   listDuplicateProfilesPendingCleanup:
     mocks.listDuplicateProfilesPendingCleanupMock,
@@ -400,6 +402,12 @@ function prepareDefaults() {
   mocks.listWorkspaceChatsMock.mockResolvedValue([]);
   mocks.getChatWithRunsMock.mockImplementation(async (chatId: number) =>
     workspaceChatWithRunsFixture(workspaceChatFixture({ id: chatId })),
+  );
+  mocks.listChatRunsPageMock.mockImplementation(
+    async (chatId: number, offset: number, limit: number) => {
+      const chat = await mocks.getChatWithRunsMock(chatId);
+      return chat.runs.slice(offset, offset + limit);
+    },
   );
   mocks.listWorkspaceRunsMock.mockResolvedValue([]);
   mocks.createCodexAccountMock.mockResolvedValue(pendingAccount);

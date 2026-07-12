@@ -2491,26 +2491,43 @@ fn resolve_codex_binary() -> Result<PathBuf, String> {
 
     #[cfg(target_os = "macos")]
     {
-        let mut candidates = vec![PathBuf::from(
-            "/Applications/Codex.app/Contents/Resources/codex",
-        )];
-
-        if let Some(home) = env::var_os("HOME") {
-            candidates.push(
-                PathBuf::from(home)
-                    .join("Applications/Codex.app/Contents/Resources/codex"),
-            );
-        }
-
-        if let Some(path) = candidates.into_iter().find(|path| path.is_file()) {
+        let home = env::var_os("HOME").map(PathBuf::from);
+        if let Some(path) = macos_codex_binary_candidates(home.as_deref())
+            .into_iter()
+            .find(|path| path.is_file())
+        {
             return Ok(path);
         }
     }
 
     Err(
-        "Codex CLI was not found. Install Codex, add `codex` to PATH, or set ORCHESTRATOR_CODEX_BIN."
+        "Codex CLI was not found. Install Codex or ChatGPT Desktop, add `codex` to PATH, or set ORCHESTRATOR_CODEX_BIN."
             .to_string(),
     )
+}
+
+#[cfg(target_os = "macos")]
+fn macos_codex_binary_candidates(home: Option<&Path>) -> Vec<PathBuf> {
+    let mut candidates = vec![
+        PathBuf::from("/Applications/Codex.app/Contents/Resources/codex"),
+        PathBuf::from("/Applications/ChatGPT.app/Contents/Resources/codex"),
+        PathBuf::from("/opt/homebrew/bin/codex"),
+        PathBuf::from("/usr/local/bin/codex"),
+    ];
+
+    if let Some(home) = home {
+        candidates.extend([
+            home.join("Applications/Codex.app/Contents/Resources/codex"),
+            home.join("Applications/ChatGPT.app/Contents/Resources/codex"),
+            home.join(".cargo/bin/codex"),
+            home.join(".local/bin/codex"),
+            home.join(".npm-global/bin/codex"),
+            home.join("Library/pnpm/codex"),
+            home.join(".local/share/pnpm/codex"),
+        ]);
+    }
+
+    candidates
 }
 
 fn find_codex_on_path(path_value: Option<std::ffi::OsString>) -> Option<PathBuf> {
@@ -3380,6 +3397,23 @@ mod tests {
         assert_eq!(find_codex_on_path(Some(path_value)), Some(binary));
 
         std::fs::remove_dir_all(directory).expect("remove test directory");
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn checks_desktop_bundles_and_common_cli_locations_on_macos() {
+        let home = Path::new("/Users/orchestrator-test");
+        let candidates = macos_codex_binary_candidates(Some(home));
+
+        assert!(candidates.contains(&PathBuf::from(
+            "/Applications/Codex.app/Contents/Resources/codex"
+        )));
+        assert!(candidates.contains(&PathBuf::from(
+            "/Applications/ChatGPT.app/Contents/Resources/codex"
+        )));
+        assert!(candidates.contains(&PathBuf::from("/opt/homebrew/bin/codex")));
+        assert!(candidates.contains(&home.join(".cargo/bin/codex")));
+        assert!(candidates.contains(&home.join(".local/bin/codex")));
     }
 
     #[test]
