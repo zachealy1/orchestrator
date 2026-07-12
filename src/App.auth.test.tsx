@@ -1951,7 +1951,7 @@ describe("App Codex auth", () => {
         [451, 0, 5],
       ]);
       const transcript = screen.getByLabelText("Task chat transcript");
-      await waitFor(() => expect(transcript.scrollTop).toBe(24_000));
+      await waitFor(() => expect(transcript.scrollTop).toBe(23_400));
       expect(document.querySelectorAll(".task-chat-virtual-row").length).toBeLessThan(
         40,
       );

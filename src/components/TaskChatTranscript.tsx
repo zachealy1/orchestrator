@@ -42,6 +42,7 @@ import {
 } from "../types";
 
 const AUTO_SCROLL_BOTTOM_THRESHOLD_PX = 48;
+const HISTORY_SCROLL_SETTLE_DELAY_MS = 120;
 const TRANSCRIPT_ROW_ESTIMATE_PX = 360;
 const TRANSCRIPT_OVERSCAN_ROWS = 6;
 const EMPTY_CONTEXT_FILES: ComposerContextFile[] = [];
@@ -77,13 +78,21 @@ export type TaskChatEntry = {
   runView: RunViewState;
 };
 
+export type TranscriptHistoryOpenRequest = {
+  requestId: number;
+  phase: "loading" | "hydrating" | "complete";
+};
+
+type TranscriptScrollMode = "pinning" | "manual" | "settled";
+
 type Props = {
   entries: TaskChatEntry[];
   onResolveRequest: (request: CodexMessage, approved: boolean) => void;
   onOpenFileLink?: (href: string) => boolean;
   editablePromptEntryId?: string | null;
   onEditPrompt?: (entry: TaskChatEntry, prompt: string) => void;
-  scrollToLatestRequest?: string | number | null;
+  historyOpenRequest?: TranscriptHistoryOpenRequest | null;
+  onHistoryPositionSettled?: (requestId: number) => void;
 };
 
 export function TaskChatTranscript({
@@ -92,17 +101,20 @@ export function TaskChatTranscript({
   onOpenFileLink,
   editablePromptEntryId = null,
   onEditPrompt,
-  scrollToLatestRequest = null,
+  historyOpenRequest = null,
+  onHistoryPositionSettled,
 }: Props) {
   const callbacksRef = useRef({
     onResolveRequest,
     onOpenFileLink,
     onEditPrompt,
+    onHistoryPositionSettled,
   });
   callbacksRef.current = {
     onResolveRequest,
     onOpenFileLink,
     onEditPrompt,
+    onHistoryPositionSettled,
   };
 
   const stableResolveRequest = useCallback(
@@ -119,6 +131,11 @@ export function TaskChatTranscript({
       callbacksRef.current.onEditPrompt?.(entry, prompt),
     [],
   );
+  const stableHistoryPositionSettled = useCallback(
+    (requestId: number) =>
+      callbacksRef.current.onHistoryPositionSettled?.(requestId),
+    [],
+  );
 
   return (
     <VirtualizedTaskChatTranscript
@@ -127,7 +144,10 @@ export function TaskChatTranscript({
       onOpenFileLink={onOpenFileLink ? stableOpenFileLink : undefined}
       editablePromptEntryId={editablePromptEntryId}
       onEditPrompt={onEditPrompt ? stableEditPrompt : undefined}
-      scrollToLatestRequest={scrollToLatestRequest}
+      historyOpenRequest={historyOpenRequest}
+      onHistoryPositionSettled={
+        onHistoryPositionSettled ? stableHistoryPositionSettled : undefined
+      }
     />
   );
 }
@@ -138,26 +158,40 @@ const VirtualizedTaskChatTranscript = memo(function VirtualizedTaskChatTranscrip
   onOpenFileLink,
   editablePromptEntryId = null,
   onEditPrompt,
-  scrollToLatestRequest = null,
+  historyOpenRequest = null,
+  onHistoryPositionSettled,
 }: Props) {
   const transcriptRef = useRef<HTMLDivElement | null>(null);
-  const shouldFollowOutputRef = useRef(true);
+  const liveFollowRef = useRef(true);
+  const historyRequestRef = useRef<TranscriptHistoryOpenRequest | null>(
+    historyOpenRequest,
+  );
+  const historyRequestIdRef = useRef<number | null>(null);
+  const historyScrollModeRef = useRef<TranscriptScrollMode>("settled");
+  const onHistoryPositionSettledRef = useRef(onHistoryPositionSettled);
+  const programmaticScrollRef = useRef(false);
   const followFrameRef = useRef<number | null>(null);
+  const programmaticReleaseFrameRef = useRef<number | null>(null);
+  const historySettleFrameRef = useRef<number | null>(null);
+  const historySettleTimeoutRef = useRef<number | null>(null);
   const previousEntriesRef = useRef({
     count: 0,
     lastId: null as string | null,
     totalSize: 0,
+    entries: entries as TaskChatEntry[],
   });
-  const previousScrollRequestRef = useRef<string | number | null>(null);
   const [editingEntryId, setEditingEntryId] = useState<string | null>(null);
   const [editingPrompt, setEditingPrompt] = useState("");
+  historyRequestRef.current = historyOpenRequest;
+  onHistoryPositionSettledRef.current = onHistoryPositionSettled;
+
   const rowVirtualizer = useVirtualizer({
     count: entries.length,
     getScrollElement: () => transcriptRef.current,
     estimateSize: () => TRANSCRIPT_ROW_ESTIMATE_PX,
     overscan: TRANSCRIPT_OVERSCAN_ROWS,
     anchorTo: "end",
-    followOnAppend: "auto",
+    followOnAppend: false,
     scrollEndThreshold: AUTO_SCROLL_BOTTOM_THRESHOLD_PX,
     useAnimationFrameWithResizeObserver: true,
     getItemKey: useCallback(
@@ -177,84 +211,225 @@ const VirtualizedTaskChatTranscript = memo(function VirtualizedTaskChatTranscrip
       : buildFallbackTranscriptRows(entries.length);
   const totalSize = rowVirtualizer.getTotalSize();
 
-  useLayoutEffect(() => {
-    const transcript = transcriptRef.current;
-    if (!transcript) {
-      return;
-    }
-
-    const previous = previousEntriesRef.current;
-    const lastId = entries[entries.length - 1]?.clientId ?? null;
-    const scrollRequestChanged =
-      scrollToLatestRequest !== null &&
-      scrollToLatestRequest !== previousScrollRequestRef.current;
-    const entryCountIncreased = entries.length > previous.count;
-    const appended = entryCountIncreased && lastId !== previous.lastId;
-    const prepended =
-      entryCountIncreased && previous.count > 0 && lastId === previous.lastId;
-    const initialLoad = previous.count === 0 && entries.length > 0;
-    const contentUpdated =
-      previous.count === entries.length && previous.lastId === lastId;
-    const totalSizeChanged = previous.totalSize !== totalSize;
-
-    if (appended || scrollRequestChanged) {
-      shouldFollowOutputRef.current = true;
-    }
-
-    previousScrollRequestRef.current = scrollToLatestRequest;
-    previousEntriesRef.current = {
-      count: entries.length,
-      lastId,
-      totalSize,
-    };
-
+  const clearQueuedFollow = useCallback(() => {
     if (followFrameRef.current !== null) {
       cancelScheduledAnimationFrame(followFrameRef.current);
       followFrameRef.current = null;
     }
+  }, []);
 
-    const scrollToLatest = () => {
-      rowVirtualizer.scrollToIndex(entries.length - 1, { align: "end" });
-      transcript.scrollTop = transcript.scrollHeight;
-    };
+  const clearHistorySettlement = useCallback(() => {
+    if (historySettleTimeoutRef.current !== null) {
+      window.clearTimeout(historySettleTimeoutRef.current);
+      historySettleTimeoutRef.current = null;
+    }
+    if (historySettleFrameRef.current !== null) {
+      cancelScheduledAnimationFrame(historySettleFrameRef.current);
+      historySettleFrameRef.current = null;
+    }
+  }, []);
 
-    if (
-      shouldFollowOutputRef.current &&
-      entries.length > 0 &&
-      (initialLoad || appended || prepended || scrollRequestChanged)
-    ) {
-      scrollToLatest();
-      followFrameRef.current = scheduleAnimationFrame(() => {
-        followFrameRef.current = null;
-        if (shouldFollowOutputRef.current) {
-          scrollToLatest();
-        }
-      });
+  const scrollToTranscriptEnd = useCallback(() => {
+    const transcript = transcriptRef.current;
+    if (!transcript || entries.length === 0) {
       return;
     }
 
-    if (
-      shouldFollowOutputRef.current &&
-      entries.length > 0 &&
-      (contentUpdated || totalSizeChanged)
-    ) {
-      followFrameRef.current = scheduleAnimationFrame(() => {
-        followFrameRef.current = null;
-        if (!shouldFollowOutputRef.current) {
+    programmaticScrollRef.current = true;
+    rowVirtualizer.scrollToIndex(entries.length - 1, { align: "end" });
+    const maxScrollTop = Math.max(
+      0,
+      transcript.scrollHeight - transcript.clientHeight,
+    );
+    if (Number.isFinite(maxScrollTop)) {
+      transcript.scrollTop = maxScrollTop;
+    }
+
+    if (programmaticReleaseFrameRef.current !== null) {
+      cancelScheduledAnimationFrame(programmaticReleaseFrameRef.current);
+    }
+    programmaticReleaseFrameRef.current = scheduleAnimationFrame(() => {
+      programmaticReleaseFrameRef.current = null;
+      programmaticScrollRef.current = false;
+    });
+  }, [entries.length, rowVirtualizer]);
+
+  const queueScrollToTranscriptEnd = useCallback(() => {
+    if (followFrameRef.current !== null) {
+      return;
+    }
+    followFrameRef.current = scheduleAnimationFrame(() => {
+      followFrameRef.current = null;
+      const request = historyRequestRef.current;
+      const shouldPinHistory =
+        request !== null && historyScrollModeRef.current === "pinning";
+      if (!shouldPinHistory && !liveFollowRef.current) {
+        return;
+      }
+      scrollToTranscriptEnd();
+    });
+  }, [scrollToTranscriptEnd]);
+
+  const scheduleHistorySettlement = useCallback(() => {
+    clearHistorySettlement();
+    const request = historyRequestRef.current;
+    if (!request || request.phase !== "complete") {
+      return;
+    }
+
+    historySettleTimeoutRef.current = window.setTimeout(() => {
+      historySettleTimeoutRef.current = null;
+      const currentRequest = historyRequestRef.current;
+      if (
+        !currentRequest ||
+        currentRequest.requestId !== request.requestId ||
+        currentRequest.phase !== "complete"
+      ) {
+        return;
+      }
+
+      if (historyScrollModeRef.current === "pinning") {
+        scrollToTranscriptEnd();
+      }
+      historySettleFrameRef.current = scheduleAnimationFrame(() => {
+        historySettleFrameRef.current = null;
+        const settledRequest = historyRequestRef.current;
+        if (
+          !settledRequest ||
+          settledRequest.requestId !== request.requestId ||
+          settledRequest.phase !== "complete"
+        ) {
           return;
         }
-        scrollToLatest();
+        historyScrollModeRef.current = "settled";
+        onHistoryPositionSettledRef.current?.(request.requestId);
       });
+    }, HISTORY_SCROLL_SETTLE_DELAY_MS);
+  }, [clearHistorySettlement, scrollToTranscriptEnd]);
+
+  const releaseHistoryPin = useCallback(() => {
+    if (
+      historyRequestRef.current &&
+      historyScrollModeRef.current === "pinning"
+    ) {
+      historyScrollModeRef.current = "manual";
     }
-  }, [entries, rowVirtualizer, scrollToLatestRequest, totalSize]);
+    liveFollowRef.current = false;
+    clearQueuedFollow();
+  }, [clearQueuedFollow]);
+
+  useLayoutEffect(() => {
+    const request = historyOpenRequest;
+    if (!request) {
+      if (historyRequestIdRef.current !== null) {
+        historyRequestIdRef.current = null;
+        historyScrollModeRef.current = "settled";
+        clearHistorySettlement();
+      }
+      return;
+    }
+
+    if (historyRequestIdRef.current !== request.requestId) {
+      historyRequestIdRef.current = request.requestId;
+      historyScrollModeRef.current = "pinning";
+      liveFollowRef.current = true;
+      clearHistorySettlement();
+      scrollToTranscriptEnd();
+      queueScrollToTranscriptEnd();
+    } else if (historyScrollModeRef.current === "pinning") {
+      queueScrollToTranscriptEnd();
+    }
+    scheduleHistorySettlement();
+  }, [
+    clearHistorySettlement,
+    historyOpenRequest,
+    queueScrollToTranscriptEnd,
+    scheduleHistorySettlement,
+    scrollToTranscriptEnd,
+  ]);
+
+  useLayoutEffect(() => {
+    const previous = previousEntriesRef.current;
+    const lastId = entries[entries.length - 1]?.clientId ?? null;
+    const entryCountIncreased = entries.length > previous.count;
+    const appended = entryCountIncreased && lastId !== previous.lastId;
+    const initialLoad = previous.count === 0 && entries.length > 0;
+    const entriesChanged = previous.entries !== entries;
+    const totalSizeChanged = previous.totalSize !== totalSize;
+    previousEntriesRef.current = {
+      count: entries.length,
+      lastId,
+      totalSize,
+      entries,
+    };
+
+    const request = historyRequestRef.current;
+    if (request) {
+      if (historyScrollModeRef.current === "pinning") {
+        scrollToTranscriptEnd();
+        queueScrollToTranscriptEnd();
+      }
+      scheduleHistorySettlement();
+      return;
+    }
+
+    if (initialLoad || appended) {
+      liveFollowRef.current = true;
+    }
+    if (
+      entries.length > 0 &&
+      liveFollowRef.current &&
+      (initialLoad || appended || entriesChanged || totalSizeChanged)
+    ) {
+      queueScrollToTranscriptEnd();
+    }
+  }, [
+    entries,
+    queueScrollToTranscriptEnd,
+    scheduleHistorySettlement,
+    scrollToTranscriptEnd,
+    totalSize,
+  ]);
+
+  useEffect(() => {
+    const transcript = transcriptRef.current;
+    if (!transcript || typeof ResizeObserver === "undefined") {
+      return;
+    }
+
+    let previousWidth = transcript.clientWidth;
+    let previousHeight = transcript.clientHeight;
+    const observer = new ResizeObserver(() => {
+      const width = transcript.clientWidth;
+      const height = transcript.clientHeight;
+      if (width === previousWidth && height === previousHeight) {
+        return;
+      }
+      previousWidth = width;
+      previousHeight = height;
+
+      if (
+        (historyRequestRef.current &&
+          historyScrollModeRef.current === "pinning") ||
+        (!historyRequestRef.current && liveFollowRef.current)
+      ) {
+        queueScrollToTranscriptEnd();
+      }
+      scheduleHistorySettlement();
+    });
+    observer.observe(transcript);
+    return () => observer.disconnect();
+  }, [queueScrollToTranscriptEnd, scheduleHistorySettlement]);
 
   useEffect(
     () => () => {
-      if (followFrameRef.current !== null) {
-        cancelScheduledAnimationFrame(followFrameRef.current);
+      clearQueuedFollow();
+      clearHistorySettlement();
+      if (programmaticReleaseFrameRef.current !== null) {
+        cancelScheduledAnimationFrame(programmaticReleaseFrameRef.current);
       }
     },
-    [],
+    [clearHistorySettlement, clearQueuedFollow],
   );
 
   useEffect(() => {
@@ -294,12 +469,37 @@ const VirtualizedTaskChatTranscript = memo(function VirtualizedTaskChatTranscrip
       className="task-chat-transcript"
       aria-label="Task chat transcript"
       ref={transcriptRef}
+      tabIndex={0}
+      onKeyDownCapture={(event) => {
+        if (
+          event.key === "ArrowUp" ||
+          event.key === "PageUp" ||
+          event.key === "Home" ||
+          (event.key === " " && event.shiftKey)
+        ) {
+          releaseHistoryPin();
+        }
+      }}
+      onPointerDownCapture={(event) => {
+        const bounds = event.currentTarget.getBoundingClientRect();
+        if (event.clientX >= bounds.right - 20) {
+          releaseHistoryPin();
+        }
+      }}
       onScroll={(event) => {
+        if (programmaticScrollRef.current) {
+          return;
+        }
         const shouldFollow = isScrolledNearBottom(event.currentTarget);
-        shouldFollowOutputRef.current = shouldFollow;
-        if (!shouldFollow && followFrameRef.current !== null) {
-          cancelScheduledAnimationFrame(followFrameRef.current);
-          followFrameRef.current = null;
+        liveFollowRef.current = shouldFollow;
+        if (!shouldFollow && !historyRequestRef.current) {
+          clearQueuedFollow();
+        }
+      }}
+      onTouchMoveCapture={releaseHistoryPin}
+      onWheelCapture={(event) => {
+        if (event.deltaY < 0) {
+          releaseHistoryPin();
         }
       }}
     >

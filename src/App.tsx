@@ -332,6 +332,15 @@ type HistoryChatLoadState = {
   title: string;
 };
 
+type HistoryOpenPhase = "loading" | "hydrating" | "complete";
+
+type HistoryOpenRequest = {
+  requestId: number;
+  workspaceId: number;
+  chatId: number;
+  phase: HistoryOpenPhase;
+};
+
 type WorkspaceChatSession = {
   chatId: number;
   threadId: string | null;
@@ -808,10 +817,8 @@ function App() {
   const [historyChatLoadState, setHistoryChatLoadState] =
     useState<HistoryChatLoadState | null>(null);
   const [selectedHistoryChatId, setSelectedHistoryChatId] = useState<number | null>(null);
-  const [historyScrollRequest, setHistoryScrollRequest] = useState<{
-    workspaceId: number;
-    requestId: number;
-  } | null>(null);
+  const [historyOpenRequest, setHistoryOpenRequest] =
+    useState<HistoryOpenRequest | null>(null);
   const [workspaceChatSessions, setWorkspaceChatSessions] = useState<
     Record<number, WorkspaceChatSession | undefined>
   >({});
@@ -910,6 +917,20 @@ function App() {
   const workspaceContextMenuRef = useRef<HTMLDivElement | null>(null);
   const chatHistoryContextMenuRef = useRef<HTMLDivElement | null>(null);
   const accountMenuContainerRef = useRef<HTMLDivElement | null>(null);
+
+  const setHistoryOpenRequestPhase = useCallback(
+    (requestId: number, phase: HistoryOpenPhase) => {
+      setHistoryOpenRequest((current) =>
+        current?.requestId === requestId ? { ...current, phase } : current,
+      );
+    },
+    [],
+  );
+  const handleHistoryPositionSettled = useCallback((requestId: number) => {
+    setHistoryOpenRequest((current) =>
+      current?.requestId === requestId ? null : current,
+    );
+  }, []);
 
   const improvedPrompt = useMemo(() => improvePrompt(prompt), [prompt]);
   const routeRecommendation = useMemo(() => recommendRoute(prompt), [prompt]);
@@ -2217,6 +2238,9 @@ function App() {
     }
 
     const workspace = await upsertWorkspace(selected);
+    historyChatLoadIdRef.current += 1;
+    setHistoryChatLoadState(null);
+    setHistoryOpenRequest(null);
     setWorkspaces(await listWorkspaces());
     setSelectedWorkspace(workspace);
     setActiveView("task");
@@ -2229,6 +2253,11 @@ function App() {
       return;
     }
 
+    if (selectedWorkspaceRef.current?.id !== workspace.id) {
+      historyChatLoadIdRef.current += 1;
+      setHistoryChatLoadState(null);
+      setHistoryOpenRequest(null);
+    }
     setWorkspaceContextMenu(null);
     setSelectedWorkspace(workspace);
     setSelectedHistoryChatId(workspaceChatSessionsRef.current[workspace.id]?.chatId ?? null);
@@ -2555,6 +2584,9 @@ function App() {
           itemsView: "full",
         });
       } catch (error) {
+        if (historyChatLoadIdRef.current !== loadId) {
+          return;
+        }
         if (firstPageLoaded) {
           const hydratedEntries = collectHydratedEntries();
           if (
@@ -2570,7 +2602,10 @@ function App() {
                   entriesSnapshot,
                 ),
               );
+              setHistoryOpenRequestPhase(loadId, "complete");
             });
+          } else {
+            setHistoryOpenRequestPhase(loadId, "complete");
           }
           setStatusMessage(
             `Opened recent turns; older turns could not be loaded: ${
@@ -2608,6 +2643,7 @@ function App() {
             ),
           );
           setHistoryChatLoadState(null);
+          setHistoryOpenRequestPhase(loadId, "hydrating");
         });
         firstPageLoaded = true;
         setStatusMessage(
@@ -2642,9 +2678,13 @@ function App() {
             ),
           );
           setHistoryChatLoadState(null);
+          setHistoryOpenRequestPhase(loadId, "complete");
         });
       } else {
-        startTransition(() => setHistoryChatLoadState(null));
+        startTransition(() => {
+          setHistoryChatLoadState(null);
+          setHistoryOpenRequestPhase(loadId, "complete");
+        });
       }
       return;
     }
@@ -2658,7 +2698,13 @@ function App() {
         replaceWorkspaceChatEntries(current, chat.workspace_id, entries),
       );
       setHistoryChatLoadState(null);
+      setHistoryOpenRequestPhase(loadId, "hydrating");
     });
+    await waitForNextPaint();
+    if (historyChatLoadIdRef.current !== loadId) {
+      return;
+    }
+    setHistoryOpenRequestPhase(loadId, "complete");
     setStatusMessage(
       `Opened chat from ${formatHistoryTimestamp(chat.latest_activity_at)}.`,
     );
@@ -2689,9 +2735,11 @@ function App() {
         workspaceId: chat.workspace_id,
         title: chat.title,
       });
-      setHistoryScrollRequest({
+      setHistoryOpenRequest({
         workspaceId: chat.workspace_id,
+        chatId: chat.id,
         requestId: loadId,
+        phase: "loading",
       });
       setTaskChatEntries((current) =>
         replaceWorkspaceChatEntries(current, chat.workspace_id, []),
@@ -2718,6 +2766,9 @@ function App() {
         return;
       }
       setHistoryChatLoadState(null);
+      setHistoryOpenRequest((current) =>
+        current?.requestId === loadId ? null : current,
+      );
       setStatusMessage(
         `Could not open chat: ${error instanceof Error ? error.message : String(error)}`,
       );
@@ -2735,6 +2786,7 @@ function App() {
           replaceWorkspaceChatEntries(current, chat.workspace_id, []),
         );
         setHistoryChatLoadState(null);
+        setHistoryOpenRequestPhase(loadId, "complete");
       });
       return;
     }
@@ -2748,7 +2800,41 @@ function App() {
 
     while (pageEnd > 0) {
       const limit = pageEnd - offset;
-      const runs = await listChatRunsPage(chat.id, offset, limit);
+      let runs: Awaited<ReturnType<typeof listChatRunsPage>>;
+      try {
+        runs = await listChatRunsPage(chat.id, offset, limit);
+      } catch (error) {
+        if (historyChatLoadIdRef.current !== loadId) {
+          return;
+        }
+        if (!firstPageLoaded) {
+          throw error;
+        }
+        const hydratedEntries = [
+          ...[...olderEntryPages].reverse().flat(),
+          ...latestEntries,
+        ];
+        if (hydratedEntries.length > publishedEntryCount) {
+          startTransition(() => {
+            setTaskChatEntries((current) =>
+              replaceWorkspaceChatEntries(
+                current,
+                chat.workspace_id,
+                hydratedEntries,
+              ),
+            );
+            setHistoryOpenRequestPhase(loadId, "complete");
+          });
+        } else {
+          setHistoryOpenRequestPhase(loadId, "complete");
+        }
+        setStatusMessage(
+          `Opened recent turns; older turns could not be loaded: ${
+            error instanceof Error ? error.message : String(error)
+          }`,
+        );
+        return;
+      }
       if (historyChatLoadIdRef.current !== loadId) {
         return;
       }
@@ -2768,6 +2854,7 @@ function App() {
             ),
           );
           setHistoryChatLoadState(null);
+          setHistoryOpenRequestPhase(loadId, "hydrating");
         });
         firstPageLoaded = true;
         setStatusMessage(
@@ -2807,12 +2894,14 @@ function App() {
           ),
         );
         setHistoryChatLoadState(null);
+        setHistoryOpenRequestPhase(loadId, "complete");
       });
       return;
     }
 
     startTransition(() => {
       setHistoryChatLoadState(null);
+      setHistoryOpenRequestPhase(loadId, "complete");
     });
   }
 
@@ -2828,7 +2917,7 @@ function App() {
 
     historyChatLoadIdRef.current += 1;
     setHistoryChatLoadState(null);
-    setHistoryScrollRequest(null);
+    setHistoryOpenRequest(null);
     setTaskChatEntries((current) =>
       current.filter((entry) => entry.workspaceId !== selectedWorkspace.id),
     );
@@ -2845,8 +2934,17 @@ function App() {
     }
 
     await softDeleteChat(chat.id);
-    historyChatLoadIdRef.current += 1;
+    if (
+      historyChatLoadState?.chatId === chat.id ||
+      historyOpenRequest?.chatId === chat.id ||
+      selectedHistoryChatId === chat.id
+    ) {
+      historyChatLoadIdRef.current += 1;
+    }
     setHistoryChatLoadState((current) =>
+      current?.chatId === chat.id ? null : current,
+    );
+    setHistoryOpenRequest((current) =>
       current?.chatId === chat.id ? null : current,
     );
     if (selectedHistoryChatId === chat.id) {
@@ -2891,7 +2989,12 @@ function App() {
   }
 
   function clearWorkspaceRuntimeState(workspace: Workspace) {
-    historyChatLoadIdRef.current += 1;
+    if (
+      historyChatLoadState?.workspaceId === workspace.id ||
+      historyOpenRequest?.workspaceId === workspace.id
+    ) {
+      historyChatLoadIdRef.current += 1;
+    }
     const workspaceRoot = normalizeWorkspacePath(workspace.path);
     const workspacePrefix = `${workspaceRoot}/`;
     const belongsToWorkspace = (path: string) => {
@@ -2928,6 +3031,9 @@ function App() {
     );
     setWorkspaceChatSession(workspace.id, undefined);
     setHistoryChatLoadState((current) =>
+      current?.workspaceId === workspace.id ? null : current,
+    );
+    setHistoryOpenRequest((current) =>
       current?.workspaceId === workspace.id ? null : current,
     );
     if (selectedHistoryChatId !== null) {
@@ -3915,6 +4021,9 @@ function App() {
   }
 
   function beginOptimisticRun(snapshot: RunSetupSnapshot) {
+    historyChatLoadIdRef.current += 1;
+    setHistoryChatLoadState(null);
+    setHistoryOpenRequest(null);
     const clientId = createTaskChatClientId();
     const submittedAt = new Date().toISOString();
     const initialRunView = {
@@ -6406,12 +6515,13 @@ function App() {
                     onOpenFileLink={openTaskResponseFileLink}
                     editablePromptEntryId={editablePromptEntryId}
                     onEditPrompt={handleEditLatestPrompt}
-                    scrollToLatestRequest={
-                      historyScrollRequest !== null &&
-                      historyScrollRequest.workspaceId === selectedWorkspace?.id
-                        ? historyScrollRequest.requestId
+                    historyOpenRequest={
+                      historyOpenRequest !== null &&
+                      historyOpenRequest.workspaceId === selectedWorkspace?.id
+                        ? historyOpenRequest
                         : null
                     }
+                    onHistoryPositionSettled={handleHistoryPositionSettled}
                   />
                 ) : selectedHistoryChatLoading ? (
                   <HistoryChatLoading title={selectedHistoryChatLoading.title} />
