@@ -273,13 +273,19 @@ export type ExternalTranscriptSnapshot = {
   turns: ExternalTranscriptTurnSummary[];
 };
 
+export type HistoricalChatOpenRequest = {
+  requestId: number;
+  chatId: number;
+  transcriptVersion: string;
+};
+
 export type HistoricalTranscriptState = {
   chatId: number;
   sourceVersion: string;
   complete: boolean;
   firstItemIndex: number;
   positionIntent: "latest" | "preserve";
-  openAtLatestRequestId: number | null;
+  openAtLatestRequest: HistoricalChatOpenRequest | null;
   syncStatus: "idle" | "latest" | "syncing" | "complete" | "error";
 };
 

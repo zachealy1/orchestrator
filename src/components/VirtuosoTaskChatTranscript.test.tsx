@@ -16,6 +16,7 @@ import {
 const virtuosoMock = vi.hoisted(() => ({
   lastProps: null as any,
   state: { ranges: [{ startIndex: 292, endIndex: 299 }], scrollTop: 42 },
+  scrollToIndex: vi.fn(),
 }));
 
 vi.mock("react-virtuoso", async () => {
@@ -27,6 +28,7 @@ vi.mock("react-virtuoso", async () => {
       React.useImperativeHandle(ref, () => ({
         getState: (callback: (state: unknown) => void) =>
           callback(virtuosoMock.state),
+        scrollToIndex: virtuosoMock.scrollToIndex,
       }));
       React.useEffect(() => {
         props.scrollerRef?.(viewportRef.current);
@@ -74,11 +76,30 @@ function historyEntry(turnIndex: number): TaskChatEntry {
   };
 }
 
+function latestRequest(requestId: number, transcriptVersion = "v1") {
+  return {
+    requestId,
+    chatId: 401,
+    transcriptVersion,
+  };
+}
+
+function reportLatestTurnVisible(entryCount: number, firstItemIndex: number) {
+  act(() => {
+    virtuosoMock.lastProps.rangeChanged({
+      startIndex: firstItemIndex + Math.max(0, entryCount - 8),
+      endIndex: firstItemIndex + entryCount - 1,
+    });
+    virtuosoMock.lastProps.atBottomStateChange(true);
+  });
+}
+
 describe("VirtuosoTaskChatTranscript", () => {
   beforeEach(() => {
     clearTranscriptStateCache();
     clearTranscriptMeasurementCache();
     virtuosoMock.lastProps = null;
+    virtuosoMock.scrollToIndex.mockClear();
   });
 
   afterEach(() => {
@@ -93,7 +114,7 @@ describe("VirtuosoTaskChatTranscript", () => {
         transcriptIdentity="chat:401"
         transcriptVersion="v1"
         firstItemIndex={999_700}
-        openAtLatestRequestId={1}
+        openAtLatestRequest={latestRequest(1)}
         liveFollow={false}
         onResolveRequest={vi.fn()}
       />,
@@ -119,7 +140,7 @@ describe("VirtuosoTaskChatTranscript", () => {
         transcriptIdentity="chat:fast-scroll"
         transcriptVersion="v1"
         firstItemIndex={999_700}
-        openAtLatestRequestId={1}
+        openAtLatestRequest={latestRequest(1)}
         liveFollow={false}
         onResolveRequest={vi.fn()}
       />,
@@ -151,7 +172,7 @@ describe("VirtuosoTaskChatTranscript", () => {
         transcriptVersion="v1"
         viewportWidth={480}
         firstItemIndex={999_700}
-        openAtLatestRequestId={1}
+        openAtLatestRequest={latestRequest(1)}
         liveFollow={false}
         onResolveRequest={vi.fn()}
       />,
@@ -165,7 +186,7 @@ describe("VirtuosoTaskChatTranscript", () => {
         transcriptVersion="v1"
         viewportWidth={1_024}
         firstItemIndex={999_700}
-        openAtLatestRequestId={1}
+        openAtLatestRequest={latestRequest(1)}
         liveFollow={false}
         onResolveRequest={vi.fn()}
       />,
@@ -185,7 +206,7 @@ describe("VirtuosoTaskChatTranscript", () => {
         transcriptVersion="v1"
         viewportWidth={900}
         firstItemIndex={1_000_000}
-        openAtLatestRequestId={1}
+        openAtLatestRequest={latestRequest(1)}
         liveFollow={false}
         onResolveRequest={vi.fn()}
       />,
@@ -211,7 +232,7 @@ describe("VirtuosoTaskChatTranscript", () => {
         transcriptVersion="v1"
         viewportWidth={900}
         firstItemIndex={1_000_000 - 45}
-        openAtLatestRequestId={null}
+        openAtLatestRequest={null}
         liveFollow={false}
         onResolveRequest={vi.fn()}
       />,
@@ -229,7 +250,7 @@ describe("VirtuosoTaskChatTranscript", () => {
         transcriptVersion="v1"
         viewportWidth={640}
         firstItemIndex={999_700}
-        openAtLatestRequestId={null}
+        openAtLatestRequest={null}
         liveFollow={false}
         onResolveRequest={vi.fn()}
       />,
@@ -249,7 +270,7 @@ describe("VirtuosoTaskChatTranscript", () => {
         transcriptVersion="v1"
         viewportWidth={640}
         firstItemIndex={999_700}
-        openAtLatestRequestId={null}
+        openAtLatestRequest={null}
         liveFollow={false}
         onResolveRequest={vi.fn()}
       />,
@@ -268,7 +289,7 @@ describe("VirtuosoTaskChatTranscript", () => {
         transcriptVersion="v1"
         viewportWidth={640}
         firstItemIndex={999_700}
-        openAtLatestRequestId={null}
+        openAtLatestRequest={null}
         liveFollow={false}
         onResolveRequest={vi.fn()}
       />,
@@ -308,7 +329,7 @@ describe("VirtuosoTaskChatTranscript", () => {
         transcriptIdentity="live:401"
         transcriptVersion="1"
         firstItemIndex={1_000_000}
-        openAtLatestRequestId={null}
+        openAtLatestRequest={null}
         liveFollow
         onResolveRequest={vi.fn()}
       />,
@@ -324,7 +345,7 @@ describe("VirtuosoTaskChatTranscript", () => {
         transcriptIdentity="live:401"
         transcriptVersion="1"
         firstItemIndex={1_000_000}
-        openAtLatestRequestId={null}
+        openAtLatestRequest={null}
         liveFollow={false}
         onResolveRequest={vi.fn()}
       />,
@@ -341,7 +362,7 @@ describe("VirtuosoTaskChatTranscript", () => {
         transcriptIdentity="chat:activity"
         transcriptVersion="v1"
         firstItemIndex={999_700}
-        openAtLatestRequestId={null}
+        openAtLatestRequest={null}
         liveFollow={false}
         onResolveRequest={vi.fn()}
         onScrollActivityChange={onScrollActivityChange}
@@ -379,7 +400,7 @@ describe("VirtuosoTaskChatTranscript", () => {
         transcriptIdentity={`chat:${_name}`}
         transcriptVersion="v1"
         firstItemIndex={999_700}
-        openAtLatestRequestId={null}
+        openAtLatestRequest={null}
         liveFollow={false}
         onResolveRequest={vi.fn()}
         onScrollActivityChange={onScrollActivityChange}
@@ -400,7 +421,7 @@ describe("VirtuosoTaskChatTranscript", () => {
         transcriptIdentity="chat:401"
         transcriptVersion="stable-v1"
         firstItemIndex={1_000_000}
-        openAtLatestRequestId={null}
+        openAtLatestRequest={null}
         liveFollow={false}
         onResolveRequest={vi.fn()}
       />,
@@ -414,7 +435,7 @@ describe("VirtuosoTaskChatTranscript", () => {
         transcriptIdentity="chat:401"
         transcriptVersion="stable-v1"
         firstItemIndex={1_000_000}
-        openAtLatestRequestId={null}
+        openAtLatestRequest={null}
         liveFollow={false}
         onResolveRequest={vi.fn()}
       />,
@@ -432,7 +453,7 @@ describe("VirtuosoTaskChatTranscript", () => {
         transcriptIdentity="chat:401"
         transcriptVersion="stable-v1"
         firstItemIndex={1_000_000}
-        openAtLatestRequestId={11}
+        openAtLatestRequest={latestRequest(11, "stable-v1")}
         liveFollow={false}
         onResolveRequest={vi.fn()}
       />,
@@ -445,7 +466,7 @@ describe("VirtuosoTaskChatTranscript", () => {
         transcriptIdentity="chat:401"
         transcriptVersion="stable-v1"
         firstItemIndex={1_000_000}
-        openAtLatestRequestId={12}
+        openAtLatestRequest={latestRequest(12, "stable-v1")}
         liveFollow={false}
         onResolveRequest={vi.fn()}
       />,
@@ -469,21 +490,31 @@ describe("VirtuosoTaskChatTranscript", () => {
         transcriptIdentity="chat:hydrating"
         transcriptVersion="v1"
         firstItemIndex={1_000_000}
-        openAtLatestRequestId={31}
+        openAtLatestRequest={latestRequest(31)}
         liveFollow={false}
         onOpenAtLatestApplied={onOpenAtLatestApplied}
         onResolveRequest={vi.fn()}
       />,
     );
 
-    await vi.waitFor(() => expect(onOpenAtLatestApplied).toHaveBeenCalledWith(31));
+    await vi.waitFor(() => {
+      expect(virtuosoMock.scrollToIndex).toHaveBeenCalledWith({
+        index: "LAST",
+        align: "end",
+        behavior: "auto",
+      });
+    });
+    expect(onOpenAtLatestApplied).not.toHaveBeenCalled();
+    reportLatestTurnVisible(latestEntries.length, 1_000_000);
+    expect(onOpenAtLatestApplied).toHaveBeenCalledWith(latestRequest(31));
+
     rerender(
       <VirtuosoTaskChatTranscript
         entries={Array.from({ length: 65 }, (_, index) => historyEntry(index + 1))}
         transcriptIdentity="chat:hydrating"
         transcriptVersion="v1"
         firstItemIndex={1_000_000 - 45}
-        openAtLatestRequestId={null}
+        openAtLatestRequest={null}
         liveFollow={false}
         onOpenAtLatestApplied={onOpenAtLatestApplied}
         onResolveRequest={vi.fn()}
@@ -495,5 +526,72 @@ describe("VirtuosoTaskChatTranscript", () => {
     });
     expect(onOpenAtLatestApplied).toHaveBeenCalledTimes(1);
     expect(virtuosoMock.lastProps.firstItemIndex).toBe(1_000_000 - 45);
+  });
+
+  it("issues a fresh latest-position command when an equal-sized chat request changes", async () => {
+    const entries = Array.from({ length: 20 }, (_, index) => historyEntry(index + 1));
+    const firstRequest = latestRequest(51);
+    const secondRequest = latestRequest(52);
+    const onOpenAtLatestApplied = vi.fn();
+    const { rerender } = render(
+      <VirtuosoTaskChatTranscript
+        entries={entries}
+        transcriptIdentity="chat:401"
+        transcriptVersion="v1"
+        firstItemIndex={1_000_000}
+        openAtLatestRequest={firstRequest}
+        liveFollow={false}
+        onOpenAtLatestApplied={onOpenAtLatestApplied}
+        onResolveRequest={vi.fn()}
+      />,
+    );
+
+    await vi.waitFor(() => expect(virtuosoMock.scrollToIndex).toHaveBeenCalledTimes(1));
+    reportLatestTurnVisible(entries.length, 1_000_000);
+    expect(onOpenAtLatestApplied).toHaveBeenCalledWith(firstRequest);
+
+    rerender(
+      <VirtuosoTaskChatTranscript
+        entries={entries}
+        transcriptIdentity="chat:401"
+        transcriptVersion="v1"
+        firstItemIndex={1_000_000}
+        openAtLatestRequest={secondRequest}
+        liveFollow={false}
+        onOpenAtLatestApplied={onOpenAtLatestApplied}
+        onResolveRequest={vi.fn()}
+      />,
+    );
+
+    await vi.waitFor(() => expect(virtuosoMock.scrollToIndex).toHaveBeenCalledTimes(2));
+    reportLatestTurnVisible(entries.length, 1_000_000);
+    expect(onOpenAtLatestApplied).toHaveBeenLastCalledWith(secondRequest);
+  });
+
+  it("cancels latest positioning when the user scrolls before confirmation", async () => {
+    const request = latestRequest(61);
+    const onOpenAtLatestApplied = vi.fn();
+    const onOpenAtLatestCancelled = vi.fn();
+    const entries = Array.from({ length: 20 }, (_, index) => historyEntry(index + 1));
+    render(
+      <VirtuosoTaskChatTranscript
+        entries={entries}
+        transcriptIdentity="chat:401"
+        transcriptVersion="v1"
+        firstItemIndex={1_000_000}
+        openAtLatestRequest={request}
+        liveFollow={false}
+        onOpenAtLatestApplied={onOpenAtLatestApplied}
+        onOpenAtLatestCancelled={onOpenAtLatestCancelled}
+        onResolveRequest={vi.fn()}
+      />,
+    );
+
+    await vi.waitFor(() => expect(virtuosoMock.scrollToIndex).toHaveBeenCalled());
+    fireEvent.wheel(screen.getByTestId("virtuoso-viewport"), { deltaY: -600 });
+    reportLatestTurnVisible(entries.length, 1_000_000);
+
+    expect(onOpenAtLatestCancelled).toHaveBeenCalledWith(request);
+    expect(onOpenAtLatestApplied).not.toHaveBeenCalled();
   });
 });

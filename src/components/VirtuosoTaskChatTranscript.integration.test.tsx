@@ -23,6 +23,10 @@ const originalClientWidth = Object.getOwnPropertyDescriptor(
   HTMLElement.prototype,
   "clientWidth",
 );
+const originalScrollHeight = Object.getOwnPropertyDescriptor(
+  HTMLElement.prototype,
+  "scrollHeight",
+);
 const originalOffsetParent = Object.getOwnPropertyDescriptor(
   HTMLElement.prototype,
   "offsetParent",
@@ -140,6 +144,28 @@ describe("VirtuosoTaskChatTranscript with real Virtuoso", () => {
         return this.getBoundingClientRect().width;
       },
     });
+    Object.defineProperty(HTMLElement.prototype, "scrollHeight", {
+      configurable: true,
+      get() {
+        const element = this as HTMLElement;
+        if (!element.classList.contains("task-chat-virtuoso")) {
+          return element.getBoundingClientRect().height;
+        }
+        const list = element.querySelector<HTMLElement>(
+          '[data-testid="virtuoso-item-list"]',
+        );
+        if (!list) return element.getBoundingClientRect().height;
+        const padding =
+          Number.parseFloat(list.style.paddingTop || "0") +
+          Number.parseFloat(list.style.paddingBottom || "0");
+        const renderedHeight = Array.from(list.children).reduce(
+          (total, child) =>
+            total + (child instanceof HTMLElement ? child.offsetHeight : 0),
+          0,
+        );
+        return Math.max(element.clientHeight, padding + renderedHeight);
+      },
+    });
     Object.defineProperty(HTMLElement.prototype, "offsetParent", {
       configurable: true,
       get() {
@@ -176,6 +202,7 @@ describe("VirtuosoTaskChatTranscript with real Virtuoso", () => {
     restoreHTMLElementProperty("offsetWidth", originalOffsetWidth);
     restoreHTMLElementProperty("clientHeight", originalClientHeight);
     restoreHTMLElementProperty("clientWidth", originalClientWidth);
+    restoreHTMLElementProperty("scrollHeight", originalScrollHeight);
     restoreHTMLElementProperty("offsetParent", originalOffsetParent);
     HTMLElement.prototype.scrollTo = originalScrollTo;
     window.getComputedStyle = originalGetComputedStyle;
@@ -196,19 +223,53 @@ describe("VirtuosoTaskChatTranscript with real Virtuoso", () => {
           transcriptVersion="v1"
           viewportWidth={900}
           firstItemIndex={999_700}
-          openAtLatestRequestId={null}
+          openAtLatestRequest={null}
           liveFollow={false}
           onResolveRequest={vi.fn()}
         />
       </div>,
     );
 
-    expect(await screen.findByText("Prompt 1")).toBeInTheDocument();
     await waitFor(() => {
       const mountedRows = document.querySelectorAll(".task-chat-virtuoso-row");
       expect(mountedRows.length).toBeGreaterThan(0);
       expect(mountedRows.length).toBeLessThan(80);
     });
-    expect(screen.queryByText("Prompt 300")).not.toBeInTheDocument();
+  });
+
+  it("opens a 300-turn historical chat with the latest turn mounted", async () => {
+    const { VirtuosoTaskChatTranscript } = transcriptModule;
+    const openRequest = {
+      requestId: 1,
+      chatId: 901,
+      transcriptVersion: "v1",
+    };
+    const onOpenAtLatestApplied = vi.fn();
+    render(
+      <div style={{ width: 900, height: 600 }}>
+        <VirtuosoTaskChatTranscript
+          entries={Array.from({ length: 300 }, (_, index) => entry(index + 1))}
+          transcriptIdentity="chat:latest-real-virtuoso"
+          transcriptVersion="v1"
+          viewportWidth={900}
+          firstItemIndex={999_700}
+          openAtLatestRequest={openRequest}
+          liveFollow={false}
+          onOpenAtLatestApplied={onOpenAtLatestApplied}
+          onResolveRequest={vi.fn()}
+        />
+      </div>,
+    );
+
+    expect(await screen.findByText("Prompt 300")).toBeInTheDocument();
+    expect(screen.queryByText("Prompt 1")).not.toBeInTheDocument();
+    await waitFor(() => {
+      expect(onOpenAtLatestApplied).toHaveBeenCalledWith(openRequest);
+    });
+    await waitFor(() => {
+      const mountedRows = document.querySelectorAll(".task-chat-virtuoso-row");
+      expect(mountedRows.length).toBeGreaterThan(0);
+      expect(mountedRows.length).toBeLessThan(80);
+    });
   });
 });

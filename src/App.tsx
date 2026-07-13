@@ -184,6 +184,7 @@ import type {
   WorkspaceTreeEntry,
   HistoryRunSummary,
   ExternalTranscriptSnapshot,
+  HistoricalChatOpenRequest,
   HistoricalTranscriptState,
 } from "./types";
 
@@ -1114,13 +1115,17 @@ function App() {
 
     schedulePendingTranscriptCommit();
   }, [schedulePendingTranscriptCommit, settleTranscriptViewportWidth]);
-  const handleHistoricalLatestPositionApplied = useCallback((requestId: number) => {
+  const clearHistoricalLatestPositionRequest = useCallback((
+    request: HistoricalChatOpenRequest,
+  ) => {
     setHistoricalTranscript((current) =>
-      current?.openAtLatestRequestId === requestId
+      current?.openAtLatestRequest?.requestId === request.requestId &&
+      current.openAtLatestRequest.chatId === request.chatId &&
+      current.openAtLatestRequest.transcriptVersion === request.transcriptVersion
         ? {
             ...current,
             positionIntent: "preserve",
-            openAtLatestRequestId: null,
+            openAtLatestRequest: null,
           }
         : current,
     );
@@ -2757,7 +2762,7 @@ function App() {
     const cacheableTranscript: HistoricalTranscriptState = {
       ...transcript,
       positionIntent: "preserve",
-      openAtLatestRequestId: null,
+      openAtLatestRequest: null,
     };
     const cache = stableHistoryChatCacheRef.current;
     cache.delete(chat.id);
@@ -2784,7 +2789,14 @@ function App() {
     const publishedTranscript: HistoricalTranscriptState = {
       ...transcript,
       positionIntent,
-      openAtLatestRequestId: positionIntent === "latest" ? loadId : null,
+      openAtLatestRequest:
+        positionIntent === "latest"
+          ? {
+              requestId: loadId,
+              chatId: chat.id,
+              transcriptVersion: transcript.sourceVersion,
+            }
+          : null,
     };
     const allEntries = replaceWorkspaceChatEntries(
       taskChatEntriesRef.current,
@@ -2889,7 +2901,7 @@ function App() {
         complete: true,
         firstItemIndex: HISTORY_VIRTUOSO_BASE_INDEX,
         positionIntent: publication === "initial" ? "latest" : "preserve",
-        openAtLatestRequestId: publication === "initial" ? loadId : null,
+        openAtLatestRequest: null,
         syncStatus: "complete",
       };
       cacheStableHistoryChat(chat, completeEntries, transcript);
@@ -2976,7 +2988,7 @@ function App() {
           complete: true,
           firstItemIndex: HISTORY_VIRTUOSO_BASE_INDEX,
           positionIntent: "latest",
-          openAtLatestRequestId: loadId,
+          openAtLatestRequest: null,
           syncStatus: "complete",
         },
         loadId,
@@ -2998,7 +3010,7 @@ function App() {
           complete: true,
           firstItemIndex: HISTORY_VIRTUOSO_BASE_INDEX,
           positionIntent: "latest",
-          openAtLatestRequestId: loadId,
+          openAtLatestRequest: null,
           syncStatus: "syncing",
         },
         loadId,
@@ -3111,7 +3123,7 @@ function App() {
       complete: true,
       firstItemIndex: HISTORY_VIRTUOSO_BASE_INDEX,
       positionIntent: "latest",
-      openAtLatestRequestId: loadId,
+      openAtLatestRequest: null,
       syncStatus: "complete",
     };
     publishStableHistoryChat(chat, entries, transcript, loadId);
@@ -6855,6 +6867,11 @@ function App() {
               >
                 {visibleTaskChatEntries.length > 0 ? (
                   <VirtuosoTaskChatTranscript
+                    key={
+                      selectedHistoricalTranscript
+                        ? `history:${selectedHistoricalTranscript.chatId}:${selectedHistoricalTranscript.sourceVersion}`
+                        : `live:${selectedWorkspace?.id ?? "none"}`
+                    }
                     entries={visibleTaskChatEntries}
                     transcriptIdentity={
                       selectedWorkspaceChatSession?.chatId
@@ -6870,11 +6887,14 @@ function App() {
                       selectedHistoricalTranscript?.firstItemIndex ??
                       HISTORY_VIRTUOSO_BASE_INDEX
                     }
-                    openAtLatestRequestId={
-                      selectedHistoricalTranscript?.openAtLatestRequestId ?? null
+                    openAtLatestRequest={
+                      selectedHistoricalTranscript?.openAtLatestRequest ?? null
                     }
                     onOpenAtLatestApplied={
-                      handleHistoricalLatestPositionApplied
+                      clearHistoricalLatestPositionRequest
+                    }
+                    onOpenAtLatestCancelled={
+                      clearHistoricalLatestPositionRequest
                     }
                     liveFollow={runIsActive}
                     onResolveRequest={resolveTranscriptRequest}
