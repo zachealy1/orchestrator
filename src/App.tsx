@@ -131,6 +131,11 @@ import {
   shouldBlockRunForAuth,
 } from "./lib/codexAuth";
 import {
+  cancelHistoricalTranscriptPreparation,
+  HISTORICAL_RENDER_PIPELINE_VERSION,
+  prepareHistoricalTranscript,
+} from "./lib/historicalTranscriptPreparation";
+import {
   buildPlanPrompt,
   buildRunPrompt,
   estimateTokens,
@@ -208,6 +213,7 @@ const DEFAULT_CONTEXT_WINDOW = 258_400;
 const GIT_STATUS_AUTO_REFRESH_INTERVAL_MS = 3000;
 const HISTORY_CHAT_PAGE_SIZE = 20;
 const HISTORY_CHAT_CACHE_LIMIT = 5;
+const HISTORY_CHAT_CACHE_SOURCE_CHARACTER_BUDGET = 2_000_000;
 const HISTORY_ACTIVITY_PAGE_SIZE = 50;
 const HISTORY_ACTIVITY_CACHE_LIMIT = 200;
 const HISTORY_VIRTUOSO_BASE_INDEX = 1_000_000;
@@ -373,8 +379,10 @@ type HistoryOpenRequest = {
 
 type StableHistoryChatCacheEntry = {
   version: string;
+  renderVersion: string;
   entries: TaskChatEntry[];
   transcript: HistoricalTranscriptState;
+  sourceCharacters: number;
 };
 
 type WorkspaceChatSession = {
@@ -938,6 +946,7 @@ function App() {
     chatId: number;
     requestId: string;
   } | null>(null);
+  const historicalPreparationAbortRef = useRef<AbortController | null>(null);
   const pendingTranscriptCommitRef = useRef<(() => void) | null>(null);
   const transcriptCommitIdleTimerRef = useRef<number | null>(null);
   const transcriptViewportStableRef = useRef(true);
@@ -953,6 +962,13 @@ function App() {
       string,
       Promise<Awaited<ReturnType<typeof loadDefaultProfileTurnActivity>>>
     >(),
+  );
+  useEffect(
+    () => () => {
+      historicalPreparationAbortRef.current?.abort();
+      cancelHistoricalTranscriptPreparation();
+    },
+    [],
   );
   taskChatEntriesRef.current = taskChatEntries;
   const workspaceChatSessionsRef = useRef<
@@ -2448,6 +2464,7 @@ function App() {
     const workspace = await upsertWorkspace(selected);
     historyChatLoadIdRef.current += 1;
     cancelActiveExternalTranscriptSync();
+    cancelActiveHistoricalTranscriptPreparation();
     pendingTranscriptCommitRef.current = null;
     transcriptScrollActiveRef.current = false;
     setHistoryChatLoadState(null);
@@ -2468,6 +2485,7 @@ function App() {
     if (selectedWorkspaceRef.current?.id !== workspace.id) {
       historyChatLoadIdRef.current += 1;
       cancelActiveExternalTranscriptSync();
+      cancelActiveHistoricalTranscriptPreparation();
       pendingTranscriptCommitRef.current = null;
       transcriptScrollActiveRef.current = false;
       setHistoryChatLoadState(null);
@@ -2766,12 +2784,29 @@ function App() {
     };
     const cache = stableHistoryChatCacheRef.current;
     cache.delete(chat.id);
+    const sourceCharacters = entries.reduce(
+      (total, entry) => total + entry.runView.finalMessage.length,
+      0,
+    );
+    if (sourceCharacters > HISTORY_CHAT_CACHE_SOURCE_CHARACTER_BUDGET) {
+      return;
+    }
     cache.set(chat.id, {
       version: historyChatVersion(chat),
+      renderVersion: HISTORICAL_RENDER_PIPELINE_VERSION,
       entries,
       transcript: cacheableTranscript,
+      sourceCharacters,
     });
-    while (cache.size > HISTORY_CHAT_CACHE_LIMIT) {
+    const cachedSourceCharacters = () =>
+      [...cache.values()].reduce(
+        (total, entry) => total + entry.sourceCharacters,
+        0,
+      );
+    while (
+      cache.size > HISTORY_CHAT_CACHE_LIMIT ||
+      cachedSourceCharacters() > HISTORY_CHAT_CACHE_SOURCE_CHARACTER_BUDGET
+    ) {
       const oldest = cache.keys().next().value;
       if (typeof oldest !== "number") break;
       cache.delete(oldest);
@@ -2869,6 +2904,42 @@ function App() {
     }
   }
 
+  function cancelActiveHistoricalTranscriptPreparation() {
+    historicalPreparationAbortRef.current?.abort();
+    historicalPreparationAbortRef.current = null;
+    cancelHistoricalTranscriptPreparation();
+  }
+
+  async function prepareHistoryChatEntries(
+    chat: ChatListItem,
+    entries: TaskChatEntry[],
+    transcript: HistoricalTranscriptState,
+    loadId: number,
+  ) {
+    cancelActiveHistoricalTranscriptPreparation();
+    const controller = new AbortController();
+    historicalPreparationAbortRef.current = controller;
+    try {
+      const preparedEntries = await prepareHistoricalTranscript(
+        entries,
+        `${HISTORICAL_RENDER_PIPELINE_VERSION}:${chat.id}:${transcript.sourceVersion}`,
+        controller.signal,
+      );
+      if (
+        controller.signal.aborted ||
+        historyChatLoadIdRef.current !== loadId ||
+        selectedWorkspaceRef.current?.id !== chat.workspace_id
+      ) {
+        return null;
+      }
+      return preparedEntries;
+    } finally {
+      if (historicalPreparationAbortRef.current === controller) {
+        historicalPreparationAbortRef.current = null;
+      }
+    }
+  }
+
   async function synchronizeExternalTranscript(
     chat: ChatListItem,
     loadId: number,
@@ -2904,16 +2975,26 @@ function App() {
         openAtLatestRequest: null,
         syncStatus: "complete",
       };
-      cacheStableHistoryChat(chat, completeEntries, transcript);
+      if (publication === "none") {
+        stableHistoryChatCacheRef.current.delete(chat.id);
+        return;
+      }
+      const preparedEntries = await prepareHistoryChatEntries(
+        chat,
+        completeEntries,
+        transcript,
+        loadId,
+      );
+      if (!preparedEntries) return;
+      cacheStableHistoryChat(chat, preparedEntries, transcript);
       if (
-        publication !== "none" &&
         historyChatLoadIdRef.current === loadId &&
         selectedWorkspaceRef.current?.id === chat.workspace_id
       ) {
         const publish = () => {
           publishStableHistoryChat(
             chat,
-            completeEntries,
+            preparedEntries,
             transcript,
             loadId,
             publication === "initial" ? "latest" : "preserve",
@@ -2979,18 +3060,26 @@ function App() {
         chat,
         currentSnapshot,
       );
-      publishStableHistoryChat(
+      const transcript: HistoricalTranscriptState = {
+        chatId: chat.id,
+        sourceVersion,
+        complete: true,
+        firstItemIndex: HISTORY_VIRTUOSO_BASE_INDEX,
+        positionIntent: "latest",
+        openAtLatestRequest: null,
+        syncStatus: "complete",
+      };
+      const preparedEntries = await prepareHistoryChatEntries(
         chat,
         entries,
-        {
-          chatId: chat.id,
-          sourceVersion,
-          complete: true,
-          firstItemIndex: HISTORY_VIRTUOSO_BASE_INDEX,
-          positionIntent: "latest",
-          openAtLatestRequest: null,
-          syncStatus: "complete",
-        },
+        transcript,
+        loadId,
+      );
+      if (!preparedEntries) return;
+      publishStableHistoryChat(
+        chat,
+        preparedEntries,
+        transcript,
         loadId,
       );
       setStatusMessage(`Opened chat from ${formatHistoryTimestamp(chat.latest_activity_at)}.`);
@@ -3001,18 +3090,26 @@ function App() {
     if (historyChatLoadIdRef.current !== loadId) return;
     if (staleSnapshot) {
       const entries = createTaskChatEntriesFromExternalTranscriptSnapshot(chat, staleSnapshot);
-      publishStableHistoryChat(
+      const transcript: HistoricalTranscriptState = {
+        chatId: chat.id,
+        sourceVersion: staleSnapshot.sourceVersion,
+        complete: true,
+        firstItemIndex: HISTORY_VIRTUOSO_BASE_INDEX,
+        positionIntent: "latest",
+        openAtLatestRequest: null,
+        syncStatus: "syncing",
+      };
+      const preparedEntries = await prepareHistoryChatEntries(
         chat,
         entries,
-        {
-          chatId: chat.id,
-          sourceVersion: staleSnapshot.sourceVersion,
-          complete: true,
-          firstItemIndex: HISTORY_VIRTUOSO_BASE_INDEX,
-          positionIntent: "latest",
-          openAtLatestRequest: null,
-          syncStatus: "syncing",
-        },
+        transcript,
+        loadId,
+      );
+      if (!preparedEntries) return;
+      publishStableHistoryChat(
+        chat,
+        preparedEntries,
+        transcript,
         loadId,
       );
       void synchronizeExternalTranscript(chat, loadId, "none");
@@ -3031,6 +3128,7 @@ function App() {
     const loadId = historyChatLoadIdRef.current + 1;
     historyChatLoadIdRef.current = loadId;
     cancelActiveExternalTranscriptSync();
+    cancelActiveHistoricalTranscriptPreparation();
     pendingTranscriptCommitRef.current = null;
     transcriptScrollActiveRef.current = false;
     markTranscriptViewportUnstable();
@@ -3076,7 +3174,10 @@ function App() {
       }
 
       const cached = stableHistoryChatCacheRef.current.get(chat.id);
-      if (cached?.version === historyChatVersion(chat)) {
+      if (
+        cached?.version === historyChatVersion(chat) &&
+        cached.renderVersion === HISTORICAL_RENDER_PIPELINE_VERSION
+      ) {
         publishStableHistoryChat(chat, cached.entries, cached.transcript, loadId);
         setStatusMessage(
           `Opened chat from ${formatHistoryTimestamp(chat.latest_activity_at)}.`,
@@ -3126,7 +3227,14 @@ function App() {
       openAtLatestRequest: null,
       syncStatus: "complete",
     };
-    publishStableHistoryChat(chat, entries, transcript, loadId);
+    const preparedEntries = await prepareHistoryChatEntries(
+      chat,
+      entries,
+      transcript,
+      loadId,
+    );
+    if (!preparedEntries) return;
+    publishStableHistoryChat(chat, preparedEntries, transcript, loadId);
     setStatusMessage(`Opened chat from ${formatHistoryTimestamp(chat.latest_activity_at)}.`);
   }
 
@@ -3244,6 +3352,7 @@ function App() {
 
     historyChatLoadIdRef.current += 1;
     cancelActiveExternalTranscriptSync();
+    cancelActiveHistoricalTranscriptPreparation();
     pendingTranscriptCommitRef.current = null;
     transcriptScrollActiveRef.current = false;
     setHistoryChatLoadState(null);
@@ -3273,6 +3382,7 @@ function App() {
     ) {
       historyChatLoadIdRef.current += 1;
       cancelActiveExternalTranscriptSync();
+      cancelActiveHistoricalTranscriptPreparation();
       pendingTranscriptCommitRef.current = null;
       transcriptScrollActiveRef.current = false;
     }
@@ -3333,6 +3443,7 @@ function App() {
     ) {
       historyChatLoadIdRef.current += 1;
       cancelActiveExternalTranscriptSync();
+      cancelActiveHistoricalTranscriptPreparation();
       pendingTranscriptCommitRef.current = null;
       transcriptScrollActiveRef.current = false;
     }
@@ -4369,6 +4480,7 @@ function App() {
   function beginOptimisticRun(snapshot: RunSetupSnapshot) {
     historyChatLoadIdRef.current += 1;
     cancelActiveExternalTranscriptSync();
+    cancelActiveHistoricalTranscriptPreparation();
     pendingTranscriptCommitRef.current = null;
     setHistoryChatLoadState(null);
     setHistoryOpenRequest(null);

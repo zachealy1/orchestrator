@@ -10,6 +10,7 @@ import type { CodexMessage, HistoricalChatOpenRequest } from "../types";
 import {
   cacheTranscriptRowHeight,
   calculateTranscriptDefaultItemHeight,
+  estimateTranscriptRowHeight,
   getTranscriptWidthBucket,
 } from "../lib/transcriptVirtualization";
 import {
@@ -18,7 +19,8 @@ import {
 } from "./TaskChatTranscript";
 
 const TRANSCRIPT_STATE_CACHE_LIMIT = 5;
-export const TRANSCRIPT_RENDER_AHEAD_PX = 900;
+export const TRANSCRIPT_RENDER_AHEAD_PX = 3_200;
+export const TRANSCRIPT_MIN_OVERSCAN_ITEMS = 10;
 export const TRANSCRIPT_SCROLL_IDLE_MS = 160;
 export const LATEST_TURN_POSITION_RETRY_MS = 80;
 export const LATEST_TURN_POSITION_MAX_ATTEMPTS = 6;
@@ -42,6 +44,11 @@ type PendingTranscriptMeasurement = {
 type StableDefaultItemHeight = {
   key: string;
   height: number;
+};
+
+type StableHeightEstimates = {
+  key: string;
+  heights: number[];
 };
 
 type CachedTranscriptState = {
@@ -158,6 +165,7 @@ export const VirtuosoTaskChatTranscript = memo(
     const stableDefaultItemHeightRef = useRef<StableDefaultItemHeight | null>(
       null,
     );
+    const stableHeightEstimatesRef = useRef<StableHeightEstimates | null>(null);
     const cacheMetadataRef = useRef({
       cacheKey: "",
       entryCount: entries.length,
@@ -181,6 +189,22 @@ export const VirtuosoTaskChatTranscript = memo(
       };
     }
     const defaultItemHeight = stableDefaultItemHeightRef.current.height;
+    const heightEstimateKey = [
+      geometryScope,
+      viewportWidthBucket,
+      entries.length,
+      entries[0]?.clientId ?? "empty",
+      entries[entries.length - 1]?.clientId ?? "empty",
+    ].join(":");
+    if (stableHeightEstimatesRef.current?.key !== heightEstimateKey) {
+      stableHeightEstimatesRef.current = {
+        key: heightEstimateKey,
+        heights: entries.map((entry) =>
+          estimateTranscriptRowHeight(entry, viewportWidthBucket, geometryScope),
+        ),
+      };
+    }
+    const heightEstimates = stableHeightEstimatesRef.current.heights;
     const clearLatestPositionSchedule = useCallback(() => {
       if (latestPositionFrameRef.current !== null) {
         window.cancelAnimationFrame(latestPositionFrameRef.current);
@@ -574,7 +598,12 @@ export const VirtuosoTaskChatTranscript = memo(
           firstItemIndex={firstItemIndex}
           computeItemKey={(_index, entry) => entry.clientId}
           defaultItemHeight={defaultItemHeight}
+          heightEstimates={heightEstimates}
           increaseViewportBy={transcriptIncreaseViewportBy}
+          minOverscanItemCount={{
+            top: TRANSCRIPT_MIN_OVERSCAN_ITEMS,
+            bottom: TRANSCRIPT_MIN_OVERSCAN_ITEMS,
+          }}
           scrollerRef={handleScrollerRef}
           initialTopMostItemIndex={
             suppressRestoreOnMountRef.current

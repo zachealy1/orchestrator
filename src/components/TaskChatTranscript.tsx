@@ -42,6 +42,7 @@ import type {
   StreamEvent,
 } from "../lib/codexEventReducer";
 import { contextFileExtensionLabel } from "../lib/contextFiles";
+import { isPreviewableSummaryLink } from "../lib/summaryLinks";
 import {
   cacheTranscriptRowHeight,
   estimateHistoryPlaceholderHeight,
@@ -57,6 +58,7 @@ import {
   type HistoryPageDescriptor,
   type HistoryTranscriptIndex,
   type HistoryTurnHint,
+  type PreparedHistoricalSummary,
 } from "../types";
 
 const AUTO_SCROLL_BOTTOM_THRESHOLD_PX = 48;
@@ -95,6 +97,7 @@ export type TaskChatEntry = {
   submittedAt: string;
   status: RunViewState["status"];
   runView: RunViewState;
+  preparedSummary?: PreparedHistoricalSummary;
   historicalActivity?: {
     profileKey: "default";
     threadId: string;
@@ -1318,7 +1321,11 @@ const AssistantRunOutput = memo(function AssistantRunOutput({
         ) : (
           <RunMetrics runView={runView} />
         )}
-        <RunSummary runView={runView} onOpenFileLink={onOpenFileLink} />
+        <RunSummary
+          runView={runView}
+          preparedSummary={entry.preparedSummary}
+          onOpenFileLink={onOpenFileLink}
+        />
         <RunApprovalRequests
           runView={runView}
           onResolveRequest={onResolveRequest}
@@ -1449,9 +1456,11 @@ const RunMetrics = memo(function RunMetrics({
 
 const RunSummary = memo(function RunSummary({
   runView,
+  preparedSummary,
   onOpenFileLink,
 }: {
   runView: RunViewState;
+  preparedSummary?: PreparedHistoricalSummary;
   onOpenFileLink?: (href: string) => boolean;
 }) {
   const markdownComponents = useMemo<Components>(
@@ -1512,6 +1521,37 @@ const RunSummary = memo(function RunSummary({
     );
   }
 
+  if (preparedSummary?.kind === "plain") {
+    return (
+      <div
+        className="run-summary markdown-summary historical-summary-plain"
+        aria-label="Run summary"
+      >
+        {preparedSummary.text}
+      </div>
+    );
+  }
+
+  if (preparedSummary?.kind === "html") {
+    return (
+      <div
+        className="run-summary markdown-summary historical-summary-html"
+        aria-label="Run summary"
+        dangerouslySetInnerHTML={{ __html: preparedSummary.html }}
+        onClick={(event) => {
+          const target = event.target;
+          const anchor =
+            target instanceof Element ? target.closest("a[href]") : null;
+          const href = anchor?.getAttribute("href");
+          if (href && onOpenFileLink?.(href)) {
+            event.preventDefault();
+            event.stopPropagation();
+          }
+        }}
+      />
+    );
+  }
+
   return (
     <div className="run-summary markdown-summary" aria-label="Run summary">
       <ReactMarkdown components={markdownComponents}>
@@ -1520,30 +1560,6 @@ const RunSummary = memo(function RunSummary({
     </div>
   );
 });
-
-function isPreviewableSummaryLink(href: string) {
-  const value = href.trim();
-  if (!value || value.startsWith("#")) {
-    return false;
-  }
-
-  if (value.startsWith("/") || value.startsWith("./") || value.startsWith("../")) {
-    return true;
-  }
-
-  try {
-    const url = new URL(value);
-    return (
-      url.protocol === "file:" ||
-      ((url.protocol === "http:" || url.protocol === "https:") &&
-        (url.hostname === "localhost" ||
-          url.hostname === "127.0.0.1" ||
-          url.hostname === "::1"))
-    );
-  } catch {
-    return !/^[a-z][a-z\d+.-]*:/i.test(value);
-  }
-}
 
 function buildSubmittedPromptSegments(
   prompt: string,

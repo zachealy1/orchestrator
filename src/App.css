@@ -2203,28 +2203,45 @@ summary.run-live-metrics::-webkit-details-marker {
 }
 
 .markdown-summary {
+  display: grid;
+  gap: 18px;
   white-space: normal;
 }
 
-.markdown-summary p,
-.markdown-summary ul,
-.markdown-summary ol {
-  margin: 0 0 18px;
+.markdown-summary :where(
+    p,
+    h1,
+    h2,
+    h3,
+    h4,
+    h5,
+    h6,
+    ul,
+    ol,
+    blockquote,
+    pre,
+    hr
+  ) {
+  margin: 0;
 }
 
-.markdown-summary p:last-child,
-.markdown-summary ul:last-child,
-.markdown-summary ol:last-child {
-  margin-bottom: 0;
-}
-
 .markdown-summary ul,
 .markdown-summary ol {
+  display: grid;
+  gap: 10px;
   padding-left: 1.4rem;
 }
 
 .markdown-summary li + li {
-  margin-top: 10px;
+  margin-top: 0;
+}
+
+.markdown-summary li > :where(p, ul, ol, blockquote, pre) + :where(p, ul, ol, blockquote, pre) {
+  padding-top: 10px;
+}
+
+.historical-summary-plain {
+  white-space: pre-wrap;
 }
 
 .markdown-summary code {

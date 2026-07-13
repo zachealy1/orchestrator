@@ -273,6 +273,52 @@ export type ExternalTranscriptSnapshot = {
   turns: ExternalTranscriptTurnSummary[];
 };
 
+export type PreparedHistoricalSummary =
+  | {
+      kind: "html";
+      html: string;
+      sourceHash: string;
+    }
+  | {
+      kind: "plain";
+      text: string;
+      sourceHash: string;
+    };
+
+export type PreparedHistoricalTurn = {
+  entryId: string;
+  summary: PreparedHistoricalSummary;
+};
+
+export type HistoricalRenderGeneration = {
+  generationId: string;
+  transcriptKey: string;
+  sourceCharacters: number;
+  turns: PreparedHistoricalTurn[];
+};
+
+export type HistoricalMarkdownWorkerRequest = {
+  type: "prepare";
+  generationId: string;
+  transcriptKey: string;
+  turns: Array<{
+    entryId: string;
+    markdown: string;
+    sourceHash: string;
+  }>;
+};
+
+export type HistoricalMarkdownWorkerResponse =
+  | {
+      type: "prepared";
+      generation: HistoricalRenderGeneration;
+    }
+  | {
+      type: "error";
+      generationId: string;
+      message: string;
+    };
+
 export type HistoricalChatOpenRequest = {
   requestId: number;
   chatId: number;

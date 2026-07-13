@@ -8,6 +8,7 @@ import {
 import type { TaskChatEntry } from "./TaskChatTranscript";
 import {
   clearTranscriptStateCache,
+  TRANSCRIPT_MIN_OVERSCAN_ITEMS,
   TRANSCRIPT_RENDER_AHEAD_PX,
   TRANSCRIPT_SCROLL_IDLE_MS,
   VirtuosoTaskChatTranscript,
@@ -132,7 +133,7 @@ describe("VirtuosoTaskChatTranscript", () => {
     expect(screen.queryByText("Prompt 1")).not.toBeInTheDocument();
   });
 
-  it("uses one moderate render-ahead window without scroll-seek substitution", () => {
+  it("uses a large real-row render-ahead window without scroll-seek substitution", () => {
     const entries = Array.from({ length: 300 }, (_, index) => historyEntry(index + 1));
     render(
       <VirtuosoTaskChatTranscript
@@ -150,7 +151,11 @@ describe("VirtuosoTaskChatTranscript", () => {
       top: TRANSCRIPT_RENDER_AHEAD_PX,
       bottom: TRANSCRIPT_RENDER_AHEAD_PX,
     });
-    expect(virtuosoMock.lastProps.minOverscanItemCount).toBeUndefined();
+    expect(TRANSCRIPT_RENDER_AHEAD_PX).toBe(3_200);
+    expect(virtuosoMock.lastProps.minOverscanItemCount).toEqual({
+      top: TRANSCRIPT_MIN_OVERSCAN_ITEMS,
+      bottom: TRANSCRIPT_MIN_OVERSCAN_ITEMS,
+    });
     expect(virtuosoMock.lastProps.overscan).toBeUndefined();
     expect(virtuosoMock.lastProps.scrollSeekConfiguration).toBeUndefined();
     expect(virtuosoMock.lastProps.components).toBeUndefined();
@@ -193,6 +198,34 @@ describe("VirtuosoTaskChatTranscript", () => {
     );
 
     expect(narrowDefault).toBeGreaterThan(virtuosoMock.lastProps.defaultItemHeight);
+  });
+
+  it("provides a stable content-aware height estimate for every turn", () => {
+    const short = historyEntry(1);
+    const long = {
+      ...historyEntry(2),
+      runView: {
+        ...historyEntry(2).runView,
+        finalMessage: "Long historical response. ".repeat(400),
+      },
+    };
+    render(
+      <VirtuosoTaskChatTranscript
+        entries={[short, long]}
+        transcriptIdentity="chat:height-estimates"
+        transcriptVersion="v1"
+        viewportWidth={720}
+        firstItemIndex={999_700}
+        openAtLatestRequest={latestRequest(1)}
+        liveFollow={false}
+        onResolveRequest={vi.fn()}
+      />,
+    );
+
+    expect(virtuosoMock.lastProps.heightEstimates).toHaveLength(2);
+    expect(virtuosoMock.lastProps.heightEstimates[1]).toBeGreaterThan(
+      virtuosoMock.lastProps.heightEstimates[0],
+    );
   });
 
   it("keeps the default row geometry stable when older turns prepend", () => {

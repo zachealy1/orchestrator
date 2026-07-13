@@ -6,6 +6,7 @@ import {
   type HistoryTranscriptIndex,
 } from "../types";
 import {
+  TaskChatTurn,
   TaskChatTranscript,
   type TaskChatEntry,
 } from "./TaskChatTranscript";
@@ -44,6 +45,69 @@ function historyEntry(turnIndex: number): TaskChatEntry {
 }
 
 describe("TaskChatTranscript", () => {
+  it("renders prepared historical HTML instead of parsing the raw summary on mount", () => {
+    const entry = {
+      ...historyEntry(1),
+      runView: {
+        ...historyEntry(1).runView,
+        finalMessage: "Raw summary that should not be mounted.",
+      },
+      preparedSummary: {
+        kind: "html" as const,
+        html: "<h2>Prepared summary</h2><p>Rendered before publication.</p>",
+        sourceHash: "prepared",
+      },
+    };
+
+    render(
+      <TaskChatTurn
+        entry={entry}
+        editable={false}
+        editing={false}
+        editingPrompt=""
+        onEditingPromptChange={vi.fn()}
+        onSubmitEdit={vi.fn()}
+        onCancelEdit={vi.fn()}
+        onStartEdit={vi.fn()}
+        onResolveRequest={vi.fn()}
+      />,
+    );
+
+    expect(screen.getByRole("heading", { name: "Prepared summary" })).toBeInTheDocument();
+    expect(screen.getByText("Rendered before publication.")).toBeInTheDocument();
+    expect(screen.queryByText("Raw summary that should not be mounted.")).toBeNull();
+  });
+
+  it("delegates prepared historical file links to the preview handler", () => {
+    const onOpenFileLink = vi.fn(() => true);
+    const entry = {
+      ...historyEntry(1),
+      preparedSummary: {
+        kind: "html" as const,
+        html: '<p>Updated <a class="markdown-preview-link" href="/repo/App.tsx">App.tsx</a>.</p>',
+        sourceHash: "prepared-link",
+      },
+    };
+
+    render(
+      <TaskChatTurn
+        entry={entry}
+        editable={false}
+        editing={false}
+        editingPrompt=""
+        onEditingPromptChange={vi.fn()}
+        onSubmitEdit={vi.fn()}
+        onCancelEdit={vi.fn()}
+        onStartEdit={vi.fn()}
+        onResolveRequest={vi.fn()}
+        onOpenFileLink={onOpenFileLink}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("link", { name: "App.tsx" }));
+    expect(onOpenFileLink).toHaveBeenCalledWith("/repo/App.tsx");
+  });
+
   it("renders only a bounded window of turns for a large historical chat", async () => {
     const entries: TaskChatEntry[] = Array.from({ length: 500 }, (_, index) => ({
       clientId: `chat-${index + 1}`,
