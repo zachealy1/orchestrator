@@ -6,6 +6,7 @@ const TRANSCRIPT_MEASUREMENT_CACHE_LIMIT = 4_000;
 const MIN_TRANSCRIPT_ROW_HEIGHT_PX = 180;
 const APPROXIMATE_CHARACTER_WIDTH_PX = 8.2;
 const APPROXIMATE_LINE_HEIGHT_PX = 24;
+const MAX_TRANSCRIPT_DEFAULT_ROW_HEIGHT_PX = 1_400;
 
 export type TranscriptGeometryEntry = {
   clientId: string;
@@ -15,8 +16,7 @@ export type TranscriptGeometryEntry = {
 };
 
 const transcriptMeasurementCache = new Map<string, number>();
-let transcriptEntryRevisions = new WeakMap<TranscriptGeometryEntry, number>();
-let nextTranscriptEntryRevision = 1;
+let transcriptEntryFingerprints = new WeakMap<TranscriptGeometryEntry, string>();
 
 export function getTranscriptWidthBucket(width: number) {
   const safeWidth = Number.isFinite(width) && width > 0 ? width : 1_024;
@@ -30,41 +30,22 @@ export function getTranscriptWidthBucket(width: number) {
 export function buildTranscriptMeasurementKey(
   entry: TranscriptGeometryEntry,
   width: number,
+  scope = "global",
 ) {
-  const runView = entry.runView;
-  const streamTextLength = runView.streamEvents.reduce(
-    (total, event) => total + event.text.length,
-    0,
-  );
-  const commandTextLength = runView.commands.reduce(
-    (total, command) => total + command.command.length + command.output.length,
-    0,
-  );
-
   return [
+    scope,
     entry.clientId,
     getTranscriptWidthBucket(width),
-    getTranscriptEntryRevision(entry),
-    entry.status,
-    entry.prompt.length,
-    runView.finalMessage.length,
-    runView.error?.length ?? 0,
-    runView.streamEvents.length,
-    streamTextLength,
-    runView.commands.length,
-    commandTextLength,
-    runView.editedFiles.length,
-    runView.serverRequests.length,
-    runView.latestPlan.length,
-    runView.latestDiff.length,
+    getTranscriptEntryFingerprint(entry),
   ].join(":");
 }
 
 export function getCachedTranscriptRowHeight(
   entry: TranscriptGeometryEntry,
   width: number,
+  scope = "global",
 ) {
-  const key = buildTranscriptMeasurementKey(entry, width);
+  const key = buildTranscriptMeasurementKey(entry, width, scope);
   const cached = transcriptMeasurementCache.get(key);
   if (cached === undefined) {
     return undefined;
@@ -79,12 +60,13 @@ export function cacheTranscriptRowHeight(
   entry: TranscriptGeometryEntry,
   width: number,
   height: number,
+  scope = "global",
 ) {
   if (!Number.isFinite(height) || height <= 0) {
     return;
   }
 
-  const key = buildTranscriptMeasurementKey(entry, width);
+  const key = buildTranscriptMeasurementKey(entry, width, scope);
   transcriptMeasurementCache.delete(key);
   transcriptMeasurementCache.set(key, Math.ceil(height));
 
@@ -100,8 +82,9 @@ export function cacheTranscriptRowHeight(
 export function estimateTranscriptRowHeight(
   entry: TranscriptGeometryEntry,
   width: number,
+  scope = "global",
 ) {
-  const cached = getCachedTranscriptRowHeight(entry, width);
+  const cached = getCachedTranscriptRowHeight(entry, width, scope);
   if (cached !== undefined) {
     return cached;
   }
@@ -142,6 +125,30 @@ export function estimateTranscriptRowHeight(
   );
 }
 
+export function calculateTranscriptDefaultItemHeight(
+  entries: TranscriptGeometryEntry[],
+  width: number,
+  scope = "global",
+) {
+  if (entries.length === 0) {
+    return MIN_TRANSCRIPT_ROW_HEIGHT_PX;
+  }
+
+  const estimates = entries
+    .map((entry) => estimateTranscriptRowHeight(entry, width, scope))
+    .sort((left, right) => left - right);
+  const trimCount = estimates.length >= 10 ? Math.floor(estimates.length * 0.1) : 0;
+  const trimmed = estimates.slice(trimCount, estimates.length - trimCount);
+  const average =
+    trimmed.reduce((total, estimate) => total + estimate, 0) /
+    Math.max(1, trimmed.length);
+
+  return Math.max(
+    MIN_TRANSCRIPT_ROW_HEIGHT_PX,
+    Math.min(MAX_TRANSCRIPT_DEFAULT_ROW_HEIGHT_PX, Math.round(average)),
+  );
+}
+
 export function estimateHistoryPlaceholderHeight(
   hint: HistoryTurnHint | undefined,
   width: number,
@@ -174,20 +181,50 @@ export function estimateHistoryPlaceholderHeight(
 
 export function clearTranscriptMeasurementCache() {
   transcriptMeasurementCache.clear();
-  transcriptEntryRevisions = new WeakMap<TranscriptGeometryEntry, number>();
-  nextTranscriptEntryRevision = 1;
+  transcriptEntryFingerprints = new WeakMap<TranscriptGeometryEntry, string>();
 }
 
-function getTranscriptEntryRevision(entry: TranscriptGeometryEntry) {
-  const existing = transcriptEntryRevisions.get(entry);
+function getTranscriptEntryFingerprint(entry: TranscriptGeometryEntry) {
+  const existing = transcriptEntryFingerprints.get(entry);
   if (existing !== undefined) {
     return existing;
   }
 
-  const revision = nextTranscriptEntryRevision;
-  nextTranscriptEntryRevision += 1;
-  transcriptEntryRevisions.set(entry, revision);
-  return revision;
+  const runView = entry.runView;
+  const parts = [
+    entry.status,
+    entry.prompt,
+    runView.finalMessage,
+    runView.error ?? "",
+    ...runView.streamEvents.flatMap((event) => [event.kind, event.text]),
+    ...runView.commands.flatMap((command) => [
+      command.id,
+      command.command,
+      command.status,
+      command.output,
+    ]),
+    ...runView.editedFiles.flatMap((file) => [
+      file.path,
+      file.status,
+      String(file.additions),
+      String(file.deletions),
+    ]),
+    String(runView.serverRequests.length),
+    runView.latestPlan,
+    runView.latestDiff,
+  ];
+  let hash = 2_166_136_261;
+  parts.forEach((part) => {
+    for (let index = 0; index < part.length; index += 1) {
+      hash ^= part.charCodeAt(index);
+      hash = Math.imul(hash, 16_777_619);
+    }
+    hash ^= 0xff;
+    hash = Math.imul(hash, 16_777_619);
+  });
+  const fingerprint = (hash >>> 0).toString(36);
+  transcriptEntryFingerprints.set(entry, fingerprint);
+  return fingerprint;
 }
 
 function estimateWrappedLineCount(text: string, charactersPerLine: number) {

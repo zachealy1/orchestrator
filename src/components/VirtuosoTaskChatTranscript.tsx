@@ -1,18 +1,62 @@
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   Virtuoso,
+  type Components as VirtuosoComponents,
+  type ContextProp,
+  type ListItem,
+  type ScrollSeekConfiguration,
+  type ScrollSeekPlaceholderProps,
   type StateSnapshot,
   type VirtuosoHandle,
 } from "react-virtuoso";
 import type { CodexMessage } from "../types";
+import {
+  cacheTranscriptRowHeight,
+  calculateTranscriptDefaultItemHeight,
+  getTranscriptWidthBucket,
+} from "../lib/transcriptVirtualization";
 import {
   TaskChatTurn,
   type TaskChatEntry,
 } from "./TaskChatTranscript";
 
 const TRANSCRIPT_STATE_CACHE_LIMIT = 5;
-const TRANSCRIPT_WIDTH_BUCKET_SIZE = 32;
-const TRANSCRIPT_DEFAULT_ITEM_HEIGHT = 360;
+// Keep enough measured rows around the viewport for WebKit trackpad flings.
+// Pixel overscan alone is not reliable for tall, variable-height Markdown turns.
+export const TRANSCRIPT_FAST_SCROLL_BUFFER = {
+  viewportPixels: 1_600,
+  minimumItems: 12,
+  renderChunkPixels: 1_000,
+} as const;
+export const TRANSCRIPT_FAST_SCROLL_SEEK = {
+  enterVelocity: 600,
+  exitVelocity: 30,
+  rangeJumpItems: 6,
+} as const;
+
+const transcriptIncreaseViewportBy = {
+  top: TRANSCRIPT_FAST_SCROLL_BUFFER.viewportPixels,
+  bottom: TRANSCRIPT_FAST_SCROLL_BUFFER.viewportPixels,
+} as const;
+const transcriptMinimumOverscan = {
+  top: TRANSCRIPT_FAST_SCROLL_BUFFER.minimumItems,
+  bottom: TRANSCRIPT_FAST_SCROLL_BUFFER.minimumItems,
+} as const;
+const transcriptRenderChunk = {
+  main: TRANSCRIPT_FAST_SCROLL_BUFFER.renderChunkPixels,
+  reverse: TRANSCRIPT_FAST_SCROLL_BUFFER.renderChunkPixels,
+} as const;
+type TranscriptScrollSeekContext = {
+  entriesByAbsoluteIndex: Map<number, TaskChatEntry>;
+  entries: TaskChatEntry[];
+};
+
+type TranscriptViewportMode =
+  | "opening"
+  | "manual-scrolling"
+  | "fast-seeking"
+  | "live-following"
+  | "settling";
 
 type CachedTranscriptState = {
   snapshot: StateSnapshot;
@@ -20,14 +64,6 @@ type CachedTranscriptState = {
 };
 
 const transcriptStateCache = new Map<string, CachedTranscriptState>();
-
-function widthBucket(width: number) {
-  return Math.max(
-    TRANSCRIPT_WIDTH_BUCKET_SIZE,
-    Math.round(width / TRANSCRIPT_WIDTH_BUCKET_SIZE) *
-      TRANSCRIPT_WIDTH_BUCKET_SIZE,
-  );
-}
 
 function readCachedTranscriptState(key: string, entryCount: number) {
   const cached = transcriptStateCache.get(key);
@@ -53,10 +89,62 @@ function writeCachedTranscriptState(
   }
 }
 
+function getScrollSeekEntry(
+  index: number,
+  { entries, entriesByAbsoluteIndex }: TranscriptScrollSeekContext,
+) {
+  return entriesByAbsoluteIndex.get(index) ?? entries[index];
+}
+
+const TranscriptScrollSeekPreview = memo(function TranscriptScrollSeekPreview({
+  context,
+  height,
+  index,
+  type,
+}: ScrollSeekPlaceholderProps & ContextProp<TranscriptScrollSeekContext>) {
+  const entry = type === "item" ? getScrollSeekEntry(index, context) : undefined;
+  const summary =
+    entry?.runView.finalMessage.trim() || entry?.runView.error?.trim() || "";
+
+  return (
+    <div
+      aria-hidden="true"
+      className="task-chat-virtuoso-row task-chat-scroll-seek-row"
+      style={{ height }}
+    >
+      {entry ? (
+        <div className="task-chat-run task-chat-scroll-seek-preview">
+          <div className="submitted-prompt-stack">
+            <article className="submitted-prompt task-chat-scroll-seek-prompt">
+              {entry.prompt}
+            </article>
+          </div>
+          {summary ? (
+            <article className="chat-message assistant-message">
+              <div className="run-summary task-chat-scroll-seek-summary">
+                {summary}
+              </div>
+            </article>
+          ) : null}
+        </div>
+      ) : null}
+    </div>
+  );
+});
+
+const transcriptVirtuosoComponents: VirtuosoComponents<
+  TaskChatEntry,
+  TranscriptScrollSeekContext
+> = {
+  ScrollSeekPlaceholder: TranscriptScrollSeekPreview,
+};
+
 export type VirtuosoTaskChatTranscriptProps = {
   entries: TaskChatEntry[];
   transcriptIdentity: string;
   transcriptVersion: string;
+  viewportWidth?: number;
+  viewportStable?: boolean;
   firstItemIndex: number;
   openAtLatestRequestId: number | null;
   liveFollow: boolean;
@@ -74,6 +162,8 @@ export const VirtuosoTaskChatTranscript = memo(
     entries,
     transcriptIdentity,
     transcriptVersion,
+    viewportWidth = 1_024,
+    viewportStable = true,
     firstItemIndex,
     openAtLatestRequestId,
     liveFollow,
@@ -87,16 +177,80 @@ export const VirtuosoTaskChatTranscript = memo(
   }: VirtuosoTaskChatTranscriptProps) {
     const virtuosoRef = useRef<VirtuosoHandle | null>(null);
     const hostRef = useRef<HTMLElement | null>(null);
-    const entryCountRef = useRef(entries.length);
-    entryCountRef.current = entries.length;
+    const viewportModeRef = useRef<TranscriptViewportMode>(
+      openAtLatestRequestId === null ? "settling" : "opening",
+    );
+    const scrollingRef = useRef(false);
+    const fastSeekingRef = useRef(false);
+    const reportedActivityRef = useRef(false);
+    const lastSeekRangeStartRef = useRef<number | null>(null);
+    const cacheMetadataRef = useRef({
+      cacheKey: "",
+      entryCount: entries.length,
+    });
     const [editingEntryId, setEditingEntryId] = useState<string | null>(null);
     const [editingPrompt, setEditingPrompt] = useState("");
     const [openAtLatestOnMount] = useState(openAtLatestRequestId !== null);
-    const initialWidthBucket = useMemo(
-      () => widthBucket(typeof window === "undefined" ? 1_024 : window.innerWidth),
-      [],
+    const viewportWidthBucket = getTranscriptWidthBucket(viewportWidth);
+    const geometryScope = `${transcriptIdentity}:${transcriptVersion}`;
+    const cacheKey = `${transcriptIdentity}:${transcriptVersion}:${viewportWidthBucket}`;
+    cacheMetadataRef.current = { cacheKey, entryCount: entries.length };
+    const defaultItemHeight = useMemo(
+      () =>
+        calculateTranscriptDefaultItemHeight(
+          entries,
+          viewportWidthBucket,
+          geometryScope,
+        ),
+      [entries, geometryScope, viewportWidthBucket],
     );
-    const cacheKey = `${transcriptIdentity}:${transcriptVersion}:${initialWidthBucket}`;
+    const scrollSeekContext = useMemo<TranscriptScrollSeekContext>(
+      () => ({
+        entries,
+        entriesByAbsoluteIndex: new Map(
+          entries.map((entry, offset) => [firstItemIndex + offset, entry]),
+        ),
+      }),
+      [entries, firstItemIndex],
+    );
+    const reportViewportActivity = useCallback(() => {
+      const active = scrollingRef.current || fastSeekingRef.current;
+      if (reportedActivityRef.current === active) return;
+      reportedActivityRef.current = active;
+      onScrollActivityChange?.(active);
+    }, [onScrollActivityChange]);
+    const scrollSeekConfiguration = useMemo<ScrollSeekConfiguration>(
+      () => ({
+        enter: (velocity, range) => {
+          const previousStart = lastSeekRangeStartRef.current;
+          lastSeekRangeStartRef.current = range.startIndex;
+          const jumped =
+            previousStart !== null &&
+            Math.abs(range.startIndex - previousStart) >=
+              TRANSCRIPT_FAST_SCROLL_SEEK.rangeJumpItems;
+          const shouldSeek =
+            Math.abs(velocity) >= TRANSCRIPT_FAST_SCROLL_SEEK.enterVelocity ||
+            jumped;
+          if (shouldSeek) {
+            viewportModeRef.current = "fast-seeking";
+            fastSeekingRef.current = true;
+            reportViewportActivity();
+          }
+          return shouldSeek;
+        },
+        exit: (velocity) => {
+          const shouldExit =
+            Math.abs(velocity) <= TRANSCRIPT_FAST_SCROLL_SEEK.exitVelocity;
+          if (shouldExit) {
+            viewportModeRef.current = "settling";
+            fastSeekingRef.current = false;
+            reportViewportActivity();
+          }
+          return shouldExit;
+        },
+      }),
+      [reportViewportActivity],
+    );
     const restoredState = useMemo(
       () =>
         openAtLatestOnMount
@@ -110,6 +264,7 @@ export const VirtuosoTaskChatTranscript = memo(
     useEffect(() => {
       if (openAtLatestRequestId === null || !onOpenAtLatestApplied) return;
       const frame = window.requestAnimationFrame(() => {
+        viewportModeRef.current = "settling";
         onOpenAtLatestApplied(openAtLatestRequestId);
       });
       return () => window.cancelAnimationFrame(frame);
@@ -118,11 +273,19 @@ export const VirtuosoTaskChatTranscript = memo(
     useEffect(() => {
       const handle = virtuosoRef.current;
       return () => {
+        if (reportedActivityRef.current) {
+          onScrollActivityChange?.(false);
+        }
         handle?.getState((snapshot) => {
-          writeCachedTranscriptState(cacheKey, entryCountRef.current, snapshot);
+          const metadata = cacheMetadataRef.current;
+          writeCachedTranscriptState(
+            metadata.cacheKey,
+            metadata.entryCount,
+            snapshot,
+          );
         });
       };
-    }, [cacheKey]);
+    }, [onScrollActivityChange]);
 
     useEffect(() => {
       if (
@@ -152,6 +315,43 @@ export const VirtuosoTaskChatTranscript = memo(
         onEditPrompt(entry, nextPrompt);
       },
       [onEditPrompt],
+    );
+
+    const handleItemsRendered = useCallback(
+      (items: ListItem<TaskChatEntry>[]) => {
+        if (!viewportStable) return;
+        if (!fastSeekingRef.current && items[0]) {
+          lastSeekRangeStartRef.current = items[0].index;
+        }
+        items.forEach((item) => {
+          if (item.data && item.size > 0) {
+            cacheTranscriptRowHeight(
+              item.data,
+              viewportWidthBucket,
+              item.size,
+              geometryScope,
+            );
+          }
+        });
+      },
+      [geometryScope, viewportStable, viewportWidthBucket],
+    );
+
+    const handleIsScrolling = useCallback(
+      (active: boolean) => {
+        scrollingRef.current = active;
+        if (active) {
+          if (viewportModeRef.current !== "fast-seeking") {
+            viewportModeRef.current = "manual-scrolling";
+          }
+        } else if (viewportModeRef.current !== "opening") {
+          viewportModeRef.current = liveFollow
+            ? "live-following"
+            : "settling";
+        }
+        reportViewportActivity();
+      },
+      [liveFollow, reportViewportActivity],
     );
 
     const itemContent = useCallback(
@@ -203,11 +403,15 @@ export const VirtuosoTaskChatTranscript = memo(
           className="task-chat-virtuoso"
           ref={virtuosoRef}
           data={entries}
+          context={scrollSeekContext}
+          components={transcriptVirtuosoComponents}
           firstItemIndex={firstItemIndex}
           computeItemKey={(_index, entry) => entry.clientId}
-          defaultItemHeight={TRANSCRIPT_DEFAULT_ITEM_HEIGHT}
-          increaseViewportBy={{ top: 480, bottom: 480 }}
-          minOverscanItemCount={{ top: 2, bottom: 2 }}
+          defaultItemHeight={defaultItemHeight}
+          increaseViewportBy={transcriptIncreaseViewportBy}
+          minOverscanItemCount={transcriptMinimumOverscan}
+          overscan={transcriptRenderChunk}
+          scrollSeekConfiguration={scrollSeekConfiguration}
           initialTopMostItemIndex={
             openAtLatestOnMount
               ? { index: "LAST", align: "end" }
@@ -219,7 +423,8 @@ export const VirtuosoTaskChatTranscript = memo(
           followOutput={(isAtBottom) =>
             liveFollow && isAtBottom ? "auto" : false
           }
-          isScrolling={onScrollActivityChange}
+          isScrolling={handleIsScrolling}
+          itemsRendered={handleItemsRendered}
           itemContent={itemContent}
         />
       </section>

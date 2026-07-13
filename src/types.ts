@@ -278,6 +278,7 @@ export type HistoricalTranscriptState = {
   sourceVersion: string;
   complete: boolean;
   firstItemIndex: number;
+  positionIntent: "latest" | "preserve";
   openAtLatestRequestId: number | null;
   syncStatus: "idle" | "latest" | "syncing" | "complete" | "error";
 };

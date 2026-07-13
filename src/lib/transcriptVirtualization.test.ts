@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it } from "vitest";
 import { emptyRunView } from "./codexEventReducer";
 import {
+  calculateTranscriptDefaultItemHeight,
   cacheTranscriptRowHeight,
   clearTranscriptMeasurementCache,
   estimateTranscriptRowHeight,
@@ -53,6 +54,22 @@ describe("transcript virtualization geometry", () => {
     ).toBeUndefined();
   });
 
+  it("isolates exact measurements by transcript scope", () => {
+    const entry = geometryEntry();
+    cacheTranscriptRowHeight(entry, 1_024, 417.2, "chat:one:v1");
+
+    expect(
+      getCachedTranscriptRowHeight(
+        geometryEntry(),
+        1_024,
+        "chat:one:v1",
+      ),
+    ).toBe(418);
+    expect(
+      getCachedTranscriptRowHeight(entry, 1_024, "chat:two:v1"),
+    ).toBeUndefined();
+  });
+
   it("uses content and viewport width for unmeasured row estimates", () => {
     const entry = geometryEntry("entry-long", "Long output ".repeat(240));
 
@@ -61,6 +78,25 @@ describe("transcript virtualization geometry", () => {
     );
     expect(estimateTranscriptRowHeight(geometryEntry(), 1_024)).toBeGreaterThanOrEqual(
       180,
+    );
+  });
+
+  it("calculates a content-aware default without letting one outlier dominate", () => {
+    const entries = [
+      ...Array.from({ length: 14 }, (_, index) =>
+        geometryEntry(`short-${index}`, "A concise result."),
+      ),
+      ...Array.from({ length: 6 }, (_, index) =>
+        geometryEntry(`long-${index}`, "Long output ".repeat(300)),
+      ),
+    ];
+
+    const defaultHeight = calculateTranscriptDefaultItemHeight(entries, 800);
+
+    expect(defaultHeight).toBeGreaterThanOrEqual(180);
+    expect(defaultHeight).toBeLessThan(1_000);
+    expect(calculateTranscriptDefaultItemHeight(entries, 480)).toBeGreaterThan(
+      defaultHeight,
     );
   });
 

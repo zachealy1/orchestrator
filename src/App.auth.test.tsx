@@ -109,6 +109,7 @@ vi.mock("react-virtuoso", async () => {
         className,
         computeItemKey,
         data = [],
+        firstItemIndex,
         initialTopMostItemIndex,
         isScrolling,
         itemContent,
@@ -131,6 +132,7 @@ vi.mock("react-virtuoso", async () => {
               : ""
           }
           data-restored={restoreStateFrom ? "true" : "false"}
+          data-first-item-index={firstItemIndex}
         >
           {data.map((entry: any, index: number) => (
             <div key={computeItemKey?.(index, entry) ?? index}>
@@ -2224,6 +2226,10 @@ describe("App Codex auth", () => {
     );
     expect(await screen.findByText("External result 65.")).toBeInTheDocument();
     expect(screen.queryByText("External result 1.")).not.toBeInTheDocument();
+    expect(screen.getByTestId("mock-virtuoso")).toHaveAttribute(
+      "data-first-item-index",
+      String(1_000_000),
+    );
 
     fireEvent.click(screen.getByLabelText("Start transcript scrolling"));
     await act(async () => {
@@ -2240,8 +2246,122 @@ describe("App Codex auth", () => {
 
     fireEvent.click(screen.getByLabelText("Stop transcript scrolling"));
     expect(await screen.findByText("External result 1.")).toBeInTheDocument();
+    expect(screen.getByTestId("mock-virtuoso")).toHaveAttribute(
+      "data-first-item-index",
+      String(1_000_000 - 45),
+    );
     expect(mocks.syncDefaultProfileThreadTranscriptMock).toHaveBeenCalledTimes(1);
     expect(mocks.listChatRunsPageMock).not.toHaveBeenCalled();
+  });
+
+  it("defers complete transcript hydration until drawer resizing has settled", async () => {
+    let notifyTaskResize: ((width: number) => void) | null = null;
+    vi.stubGlobal(
+      "ResizeObserver",
+      class {
+        private callback: ResizeObserverCallback;
+
+        constructor(callback: ResizeObserverCallback) {
+          this.callback = callback;
+        }
+
+        observe(element: Element) {
+          if (element.classList.contains("task-hero")) {
+            notifyTaskResize = (width: number) => {
+              this.callback(
+                [{ contentRect: { width } } as ResizeObserverEntry],
+                this as unknown as ResizeObserver,
+              );
+            };
+          }
+        }
+
+        unobserve() {}
+
+        disconnect() {}
+      },
+    );
+
+    try {
+      const historicalChat = {
+        ...workspaceChatFixture({
+          id: 462,
+          title: "Resize-safe external chat",
+          codex_thread_id: "external-thread-resize",
+          origin: "codex_external",
+          profile_key: "default",
+          external_thread_id: "external-thread-resize",
+          source_kind: "vscode",
+          turn_count: 65,
+        }),
+        account_id: null,
+        account_label: null,
+        account_email: null,
+        external_updated_at: "2026-06-30T10:30:00Z",
+      };
+      let resolveSnapshot:
+        | ((snapshot: ReturnType<typeof externalTranscriptSnapshotFixture>) => void)
+        | null = null;
+      mocks.listWorkspaceChatsMock.mockResolvedValue([historicalChat]);
+      mocks.codexDefaultProfileRpcMock.mockImplementation(async (method: string) => {
+        if (method === "thread/list") return { threads: [] };
+        if (method === "thread/turns/list") {
+          return {
+            data: Array.from({ length: 20 }, (_, index) =>
+              externalTurnFixture(65 - index),
+            ),
+          };
+        }
+        return {};
+      });
+      mocks.syncDefaultProfileThreadTranscriptMock.mockReturnValue(
+        new Promise((resolve) => {
+          resolveSnapshot = resolve;
+        }),
+      );
+
+      const { user } = await renderApp();
+      const banner = screen.getByRole("region", { name: "Selected folder" });
+      await user.click(
+        within(banner).getByRole("button", { name: /open chat history/i }),
+      );
+      const drawer = await screen.findByRole("complementary", {
+        name: "Workspace chat history",
+      });
+      await user.click(
+        within(drawer).getByRole("button", { name: /resize-safe external chat/i }),
+      );
+
+      const triggerResize = notifyTaskResize as ((width: number) => void) | null;
+      expect(triggerResize).not.toBeNull();
+      if (!triggerResize) {
+        throw new Error("Task viewport ResizeObserver was not attached.");
+      }
+      act(() => triggerResize(900));
+      expect(await screen.findByText("External result 65.")).toBeInTheDocument();
+
+      act(() => {
+        resolveSnapshot?.(externalTranscriptSnapshotFixture(65));
+      });
+      act(() => triggerResize(880));
+      await act(async () => {
+        await new Promise((resolve) => window.setTimeout(resolve, 80));
+      });
+      act(() => triggerResize(860));
+      await act(async () => {
+        await new Promise((resolve) => window.setTimeout(resolve, 80));
+      });
+      act(() => triggerResize(840));
+      await act(async () => {
+        await new Promise((resolve) => window.setTimeout(resolve, 100));
+      });
+      expect(screen.queryByText("External result 1.")).not.toBeInTheDocument();
+
+      act(() => triggerResize(820));
+      expect(await screen.findByText("External result 1.")).toBeInTheDocument();
+    } finally {
+      vi.unstubAllGlobals();
+    }
   });
 
   it("opens a current external transcript snapshot without an app-server history request", async () => {

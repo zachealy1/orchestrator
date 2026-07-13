@@ -1,9 +1,12 @@
-import { render, screen } from "@testing-library/react";
+import { act, render, screen, within } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { emptyRunView } from "../lib/codexEventReducer";
+import { clearTranscriptMeasurementCache } from "../lib/transcriptVirtualization";
 import type { TaskChatEntry } from "./TaskChatTranscript";
 import {
   clearTranscriptStateCache,
+  TRANSCRIPT_FAST_SCROLL_BUFFER,
+  TRANSCRIPT_FAST_SCROLL_SEEK,
   VirtuosoTaskChatTranscript,
 } from "./VirtuosoTaskChatTranscript";
 
@@ -61,6 +64,7 @@ function historyEntry(turnIndex: number): TaskChatEntry {
 describe("VirtuosoTaskChatTranscript", () => {
   beforeEach(() => {
     clearTranscriptStateCache();
+    clearTranscriptMeasurementCache();
     virtuosoMock.lastProps = null;
   });
 
@@ -88,6 +92,181 @@ describe("VirtuosoTaskChatTranscript", () => {
     expect(container.querySelectorAll(".task-chat-virtuoso-row")).toHaveLength(8);
     expect(screen.getByText("Prompt 300")).toBeInTheDocument();
     expect(screen.queryByText("Prompt 1")).not.toBeInTheDocument();
+  });
+
+  it("keeps a deep, symmetric guard band for high-velocity scrolling", () => {
+    const entries = Array.from({ length: 300 }, (_, index) => historyEntry(index + 1));
+    render(
+      <VirtuosoTaskChatTranscript
+        entries={entries}
+        transcriptIdentity="chat:fast-scroll"
+        transcriptVersion="v1"
+        firstItemIndex={999_700}
+        openAtLatestRequestId={1}
+        liveFollow={false}
+        onResolveRequest={vi.fn()}
+      />,
+    );
+
+    expect(virtuosoMock.lastProps.increaseViewportBy).toEqual({
+      top: TRANSCRIPT_FAST_SCROLL_BUFFER.viewportPixels,
+      bottom: TRANSCRIPT_FAST_SCROLL_BUFFER.viewportPixels,
+    });
+    expect(virtuosoMock.lastProps.minOverscanItemCount).toEqual({
+      top: TRANSCRIPT_FAST_SCROLL_BUFFER.minimumItems,
+      bottom: TRANSCRIPT_FAST_SCROLL_BUFFER.minimumItems,
+    });
+    expect(virtuosoMock.lastProps.overscan).toEqual({
+      main: TRANSCRIPT_FAST_SCROLL_BUFFER.renderChunkPixels,
+      reverse: TRANSCRIPT_FAST_SCROLL_BUFFER.renderChunkPixels,
+    });
+    expect(TRANSCRIPT_FAST_SCROLL_BUFFER.minimumItems).toBeGreaterThanOrEqual(10);
+    expect(
+      virtuosoMock.lastProps.scrollSeekConfiguration.enter(
+        TRANSCRIPT_FAST_SCROLL_SEEK.enterVelocity + 1,
+        { startIndex: 120, endIndex: 140 },
+      ),
+    ).toBe(true);
+    expect(
+      virtuosoMock.lastProps.scrollSeekConfiguration.enter(
+        -(TRANSCRIPT_FAST_SCROLL_SEEK.enterVelocity + 1),
+        { startIndex: 120, endIndex: 140 },
+      ),
+    ).toBe(true);
+    expect(
+      virtuosoMock.lastProps.scrollSeekConfiguration.enter(
+        TRANSCRIPT_FAST_SCROLL_SEEK.enterVelocity - 1,
+        { startIndex: 120, endIndex: 140 },
+      ),
+    ).toBe(false);
+    expect(
+      virtuosoMock.lastProps.scrollSeekConfiguration.exit(
+        TRANSCRIPT_FAST_SCROLL_SEEK.exitVelocity,
+        { startIndex: 120, endIndex: 140 },
+      ),
+    ).toBe(true);
+    expect(
+      virtuosoMock.lastProps.scrollSeekConfiguration.exit(
+        TRANSCRIPT_FAST_SCROLL_SEEK.exitVelocity + 1,
+        { startIndex: 120, endIndex: 140 },
+      ),
+    ).toBe(false);
+    expect(
+      virtuosoMock.lastProps.scrollSeekConfiguration.enter(100, {
+        startIndex: 130,
+        endIndex: 150,
+      }),
+    ).toBe(true);
+  });
+
+  it("renders cached chat content instead of a blank fast-scroll placeholder", () => {
+    const entries = Array.from({ length: 300 }, (_, index) => historyEntry(index + 1));
+    render(
+      <VirtuosoTaskChatTranscript
+        entries={entries}
+        transcriptIdentity="chat:seek-preview"
+        transcriptVersion="v1"
+        firstItemIndex={999_700}
+        openAtLatestRequestId={1}
+        liveFollow={false}
+        onResolveRequest={vi.fn()}
+      />,
+    );
+
+    const ScrollSeekPreview =
+      virtuosoMock.lastProps.components.ScrollSeekPlaceholder;
+    const preview = render(
+      <ScrollSeekPreview
+        context={virtuosoMock.lastProps.context}
+        height={720}
+        index={999_850}
+        type="item"
+      />,
+    );
+
+    expect(within(preview.container).getByText("Prompt 151")).toBeInTheDocument();
+    expect(within(preview.container).getByText("Result 151.")).toBeInTheDocument();
+    expect(preview.container.querySelector(".task-chat-scroll-seek-row")).toHaveStyle({
+      height: "720px",
+    });
+    expect(within(preview.container).queryByText(/loading/i)).not.toBeInTheDocument();
+    expect(virtuosoMock.lastProps.context.entriesByAbsoluteIndex.size).toBe(300);
+  });
+
+  it("uses the transcript viewport width for content-aware row geometry", () => {
+    const entries = Array.from({ length: 12 }, (_, index) => ({
+      ...historyEntry(index + 1),
+      runView: {
+        ...historyEntry(index + 1).runView,
+        finalMessage: "Detailed response content ".repeat(180),
+      },
+    }));
+    const { rerender } = render(
+      <VirtuosoTaskChatTranscript
+        entries={entries}
+        transcriptIdentity="chat:geometry"
+        transcriptVersion="v1"
+        viewportWidth={480}
+        firstItemIndex={999_700}
+        openAtLatestRequestId={1}
+        liveFollow={false}
+        onResolveRequest={vi.fn()}
+      />,
+    );
+    const narrowDefault = virtuosoMock.lastProps.defaultItemHeight;
+
+    rerender(
+      <VirtuosoTaskChatTranscript
+        entries={entries}
+        transcriptIdentity="chat:geometry"
+        transcriptVersion="v1"
+        viewportWidth={1_024}
+        firstItemIndex={999_700}
+        openAtLatestRequestId={1}
+        liveFollow={false}
+        onResolveRequest={vi.fn()}
+      />,
+    );
+
+    expect(narrowDefault).toBeGreaterThan(virtuosoMock.lastProps.defaultItemHeight);
+  });
+
+  it("feeds exact Virtuoso row measurements back into the geometry cache", () => {
+    const entry = historyEntry(1);
+    const first = render(
+      <VirtuosoTaskChatTranscript
+        entries={[entry]}
+        transcriptIdentity="chat:measured"
+        transcriptVersion="v1"
+        viewportWidth={640}
+        firstItemIndex={999_700}
+        openAtLatestRequestId={null}
+        liveFollow={false}
+        onResolveRequest={vi.fn()}
+      />,
+    );
+
+    act(() => {
+      virtuosoMock.lastProps.itemsRendered([
+        { data: entry, index: 999_700, offset: 0, size: 612 },
+      ]);
+    });
+    first.unmount();
+
+    render(
+      <VirtuosoTaskChatTranscript
+        entries={[historyEntry(1)]}
+        transcriptIdentity="chat:measured"
+        transcriptVersion="v1"
+        viewportWidth={640}
+        firstItemIndex={999_700}
+        openAtLatestRequestId={null}
+        liveFollow={false}
+        onResolveRequest={vi.fn()}
+      />,
+    );
+
+    expect(virtuosoMock.lastProps.defaultItemHeight).toBe(612);
   });
 
   it("follows live output only when the viewport remains at the bottom", () => {
@@ -119,6 +298,41 @@ describe("VirtuosoTaskChatTranscript", () => {
       />,
     );
     expect(virtuosoMock.lastProps.followOutput(true)).toBe(false);
+  });
+
+  it("keeps viewport activity active until fast seeking has also settled", () => {
+    const onScrollActivityChange = vi.fn();
+    render(
+      <VirtuosoTaskChatTranscript
+        entries={Array.from({ length: 40 }, (_, index) => historyEntry(index + 1))}
+        transcriptIdentity="chat:activity"
+        transcriptVersion="v1"
+        firstItemIndex={999_700}
+        openAtLatestRequestId={null}
+        liveFollow={false}
+        onResolveRequest={vi.fn()}
+        onScrollActivityChange={onScrollActivityChange}
+      />,
+    );
+
+    act(() => virtuosoMock.lastProps.isScrolling(true));
+    expect(onScrollActivityChange).toHaveBeenLastCalledWith(true);
+    act(() => {
+      virtuosoMock.lastProps.scrollSeekConfiguration.enter(800, {
+        startIndex: 999_710,
+        endIndex: 999_720,
+      });
+      virtuosoMock.lastProps.isScrolling(false);
+    });
+    expect(onScrollActivityChange).toHaveBeenCalledTimes(1);
+
+    act(() => {
+      virtuosoMock.lastProps.scrollSeekConfiguration.exit(0, {
+        startIndex: 999_710,
+        endIndex: 999_720,
+      });
+    });
+    expect(onScrollActivityChange).toHaveBeenLastCalledWith(false);
   });
 
   it("restores cached measurements and scroll state for the same transcript", () => {
@@ -185,5 +399,44 @@ describe("VirtuosoTaskChatTranscript", () => {
       index: "LAST",
       align: "end",
     });
+  });
+
+  it("does not issue a second latest-position request when older turns hydrate", async () => {
+    const onOpenAtLatestApplied = vi.fn();
+    const latestEntries = Array.from({ length: 20 }, (_, index) =>
+      historyEntry(index + 46),
+    );
+    const { rerender } = render(
+      <VirtuosoTaskChatTranscript
+        entries={latestEntries}
+        transcriptIdentity="chat:hydrating"
+        transcriptVersion="v1"
+        firstItemIndex={1_000_000}
+        openAtLatestRequestId={31}
+        liveFollow={false}
+        onOpenAtLatestApplied={onOpenAtLatestApplied}
+        onResolveRequest={vi.fn()}
+      />,
+    );
+
+    await vi.waitFor(() => expect(onOpenAtLatestApplied).toHaveBeenCalledWith(31));
+    rerender(
+      <VirtuosoTaskChatTranscript
+        entries={Array.from({ length: 65 }, (_, index) => historyEntry(index + 1))}
+        transcriptIdentity="chat:hydrating"
+        transcriptVersion="v1"
+        firstItemIndex={1_000_000 - 45}
+        openAtLatestRequestId={null}
+        liveFollow={false}
+        onOpenAtLatestApplied={onOpenAtLatestApplied}
+        onResolveRequest={vi.fn()}
+      />,
+    );
+
+    await act(async () => {
+      await Promise.resolve();
+    });
+    expect(onOpenAtLatestApplied).toHaveBeenCalledTimes(1);
+    expect(virtuosoMock.lastProps.firstItemIndex).toBe(1_000_000 - 45);
   });
 });

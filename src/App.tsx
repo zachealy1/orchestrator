@@ -212,6 +212,8 @@ const HISTORY_ACTIVITY_PAGE_SIZE = 50;
 const HISTORY_ACTIVITY_CACHE_LIMIT = 200;
 const HISTORY_VIRTUOSO_BASE_INDEX = 1_000_000;
 const HISTORY_TRANSCRIPT_COMMIT_IDLE_MS = 150;
+const HISTORY_TRANSCRIPT_RESIZE_IDLE_MS = 120;
+const HISTORY_TRANSCRIPT_RESIZE_WAIT_LIMIT_MS = 500;
 const EMPTY_GIT_STATUS_BY_PATH = new Map<string, WorkspaceGitFileStatus>();
 const EMPTY_DIRTY_DIRECTORY_PATHS = new Set<string>();
 const DEFAULT_CODEX_PROFILE_KEY: CodexProfileKey = "default";
@@ -856,6 +858,10 @@ function App() {
     useState<HistoryOpenRequest | null>(null);
   const [historicalTranscript, setHistoricalTranscript] =
     useState<HistoricalTranscriptState | null>(null);
+  const [taskViewportElement, setTaskViewportElement] =
+    useState<HTMLElement | null>(null);
+  const [taskViewportWidth, setTaskViewportWidth] = useState(1_024);
+  const [taskViewportStable, setTaskViewportStable] = useState(true);
   const [workspaceChatSessions, setWorkspaceChatSessions] = useState<
     Record<number, WorkspaceChatSession | undefined>
   >({});
@@ -934,6 +940,10 @@ function App() {
   } | null>(null);
   const pendingTranscriptCommitRef = useRef<(() => void) | null>(null);
   const transcriptCommitIdleTimerRef = useRef<number | null>(null);
+  const transcriptViewportStableRef = useRef(true);
+  const transcriptViewportWidthRef = useRef(1_024);
+  const transcriptViewportResizeTimerRef = useRef<number | null>(null);
+  const transcriptViewportWaitersRef = useRef(new Set<() => void>());
   const historicalActivityCacheRef = useRef(
     new Map<string, Awaited<ReturnType<typeof loadDefaultProfileTurnActivity>>>(),
   );
@@ -976,6 +986,104 @@ function App() {
   const chatHistoryContextMenuRef = useRef<HTMLDivElement | null>(null);
   const accountMenuContainerRef = useRef<HTMLDivElement | null>(null);
 
+  const schedulePendingTranscriptCommit = useCallback(() => {
+    if (
+      !pendingTranscriptCommitRef.current ||
+      transcriptScrollActiveRef.current ||
+      !transcriptViewportStableRef.current
+    ) {
+      return;
+    }
+    if (transcriptCommitIdleTimerRef.current !== null) {
+      window.clearTimeout(transcriptCommitIdleTimerRef.current);
+    }
+    transcriptCommitIdleTimerRef.current = window.setTimeout(() => {
+      transcriptCommitIdleTimerRef.current = null;
+      if (
+        transcriptScrollActiveRef.current ||
+        !transcriptViewportStableRef.current
+      ) {
+        return;
+      }
+      const commit = pendingTranscriptCommitRef.current;
+      pendingTranscriptCommitRef.current = null;
+      commit?.();
+    }, HISTORY_TRANSCRIPT_COMMIT_IDLE_MS);
+  }, []);
+
+  useEffect(() => {
+    if (!taskViewportElement) return;
+
+    const initialWidth = taskViewportElement.getBoundingClientRect().width;
+    if (initialWidth > 0) {
+      transcriptViewportWidthRef.current = initialWidth;
+      setTaskViewportWidth(initialWidth);
+    }
+    transcriptViewportStableRef.current = true;
+    setTaskViewportStable(true);
+
+    if (typeof ResizeObserver === "undefined") {
+      return;
+    }
+
+    let latestWidth = transcriptViewportWidthRef.current;
+    const observer = new ResizeObserver((entries) => {
+      const nextWidth =
+        entries[0]?.contentRect.width ??
+        taskViewportElement.getBoundingClientRect().width;
+      if (nextWidth <= 0 || Math.abs(nextWidth - latestWidth) < 0.5) {
+        return;
+      }
+      latestWidth = nextWidth;
+      transcriptViewportStableRef.current = false;
+      setTaskViewportStable(false);
+      if (transcriptCommitIdleTimerRef.current !== null) {
+        window.clearTimeout(transcriptCommitIdleTimerRef.current);
+        transcriptCommitIdleTimerRef.current = null;
+      }
+      if (transcriptViewportResizeTimerRef.current !== null) {
+        window.clearTimeout(transcriptViewportResizeTimerRef.current);
+      }
+      transcriptViewportResizeTimerRef.current = window.setTimeout(() => {
+        transcriptViewportResizeTimerRef.current = null;
+        transcriptViewportWidthRef.current = latestWidth;
+        transcriptViewportStableRef.current = true;
+        setTaskViewportStable(true);
+        setTaskViewportWidth(latestWidth);
+        transcriptViewportWaitersRef.current.forEach((resolve) => resolve());
+        transcriptViewportWaitersRef.current.clear();
+        schedulePendingTranscriptCommit();
+      }, HISTORY_TRANSCRIPT_RESIZE_IDLE_MS);
+    });
+    observer.observe(taskViewportElement);
+
+    return () => {
+      observer.disconnect();
+      if (transcriptViewportResizeTimerRef.current !== null) {
+        window.clearTimeout(transcriptViewportResizeTimerRef.current);
+        transcriptViewportResizeTimerRef.current = null;
+      }
+      transcriptViewportStableRef.current = true;
+      setTaskViewportStable(true);
+      transcriptViewportWaitersRef.current.forEach((resolve) => resolve());
+      transcriptViewportWaitersRef.current.clear();
+    };
+  }, [schedulePendingTranscriptCommit, taskViewportElement]);
+
+  useEffect(
+    () => () => {
+      if (transcriptCommitIdleTimerRef.current !== null) {
+        window.clearTimeout(transcriptCommitIdleTimerRef.current);
+      }
+      if (transcriptViewportResizeTimerRef.current !== null) {
+        window.clearTimeout(transcriptViewportResizeTimerRef.current);
+      }
+      transcriptViewportWaitersRef.current.forEach((resolve) => resolve());
+      transcriptViewportWaitersRef.current.clear();
+    },
+    [],
+  );
+
   const handleTranscriptScrollActivityChange = useCallback((active: boolean) => {
     transcriptScrollActiveRef.current = active;
     if (active) {
@@ -986,20 +1094,16 @@ function App() {
       return;
     }
 
-    if (pendingTranscriptCommitRef.current) {
-      transcriptCommitIdleTimerRef.current = window.setTimeout(() => {
-        transcriptCommitIdleTimerRef.current = null;
-        const commit = pendingTranscriptCommitRef.current;
-        pendingTranscriptCommitRef.current = null;
-        commit?.();
-      }, HISTORY_TRANSCRIPT_COMMIT_IDLE_MS);
-    }
-
-  }, []);
+    schedulePendingTranscriptCommit();
+  }, [schedulePendingTranscriptCommit]);
   const handleHistoricalLatestPositionApplied = useCallback((requestId: number) => {
     setHistoricalTranscript((current) =>
       current?.openAtLatestRequestId === requestId
-        ? { ...current, openAtLatestRequestId: null }
+        ? {
+            ...current,
+            positionIntent: "preserve",
+            openAtLatestRequestId: null,
+          }
         : current,
     );
   }, []);
@@ -2632,12 +2736,17 @@ function App() {
     entries: TaskChatEntry[],
     transcript: HistoricalTranscriptState,
   ) {
+    const cacheableTranscript: HistoricalTranscriptState = {
+      ...transcript,
+      positionIntent: "preserve",
+      openAtLatestRequestId: null,
+    };
     const cache = stableHistoryChatCacheRef.current;
     cache.delete(chat.id);
     cache.set(chat.id, {
       version: historyChatVersion(chat),
       entries,
-      transcript,
+      transcript: cacheableTranscript,
     });
     while (cache.size > HISTORY_CHAT_CACHE_LIMIT) {
       const oldest = cache.keys().next().value;
@@ -2651,11 +2760,13 @@ function App() {
     entries: TaskChatEntry[],
     transcript: HistoricalTranscriptState,
     loadId: number,
+    positionIntent: HistoricalTranscriptState["positionIntent"] = "latest",
   ) {
     if (historyChatLoadIdRef.current !== loadId) return;
-    const publishedTranscript = {
+    const publishedTranscript: HistoricalTranscriptState = {
       ...transcript,
-      openAtLatestRequestId: loadId,
+      positionIntent,
+      openAtLatestRequestId: positionIntent === "latest" ? loadId : null,
     };
     const allEntries = replaceWorkspaceChatEntries(
       taskChatEntriesRef.current,
@@ -2674,16 +2785,44 @@ function App() {
 
   function deferStableTranscriptCommit(commit: () => void) {
     pendingTranscriptCommitRef.current = commit;
-    if (transcriptScrollActiveRef.current) return;
+    schedulePendingTranscriptCommit();
+  }
+
+  function markTranscriptViewportUnstable() {
+    if (!taskViewportElement || typeof ResizeObserver === "undefined") {
+      return;
+    }
+    transcriptViewportStableRef.current = false;
+    setTaskViewportStable(false);
     if (transcriptCommitIdleTimerRef.current !== null) {
       window.clearTimeout(transcriptCommitIdleTimerRef.current);
-    }
-    transcriptCommitIdleTimerRef.current = window.setTimeout(() => {
       transcriptCommitIdleTimerRef.current = null;
-      const pending = pendingTranscriptCommitRef.current;
-      pendingTranscriptCommitRef.current = null;
-      pending?.();
-    }, HISTORY_TRANSCRIPT_COMMIT_IDLE_MS);
+    }
+    if (transcriptViewportResizeTimerRef.current !== null) {
+      window.clearTimeout(transcriptViewportResizeTimerRef.current);
+    }
+    transcriptViewportResizeTimerRef.current = window.setTimeout(() => {
+      transcriptViewportResizeTimerRef.current = null;
+      const width = taskViewportElement.getBoundingClientRect().width;
+      if (width > 0) {
+        transcriptViewportWidthRef.current = width;
+        setTaskViewportWidth(width);
+      }
+      transcriptViewportStableRef.current = true;
+      setTaskViewportStable(true);
+      transcriptViewportWaitersRef.current.forEach((resolve) => resolve());
+      transcriptViewportWaitersRef.current.clear();
+      schedulePendingTranscriptCommit();
+    }, HISTORY_TRANSCRIPT_RESIZE_WAIT_LIMIT_MS);
+  }
+
+  async function waitForTranscriptViewportStable() {
+    if (transcriptViewportStableRef.current) {
+      return;
+    }
+    await new Promise<void>((resolve) => {
+      transcriptViewportWaitersRef.current.add(resolve);
+    });
   }
 
   function cancelActiveExternalTranscriptSync() {
@@ -2724,7 +2863,8 @@ function App() {
         sourceVersion,
         complete: true,
         firstItemIndex: HISTORY_VIRTUOSO_BASE_INDEX - olderTurnCount,
-        openAtLatestRequestId: loadId,
+        positionIntent: "preserve",
+        openAtLatestRequestId: null,
         syncStatus: "complete",
       };
       cacheStableHistoryChat(chat, entries, transcript);
@@ -2734,7 +2874,13 @@ function App() {
         selectedWorkspaceRef.current?.id === chat.workspace_id
       ) {
         deferStableTranscriptCommit(() => {
-          publishStableHistoryChat(chat, entries, transcript, loadId);
+          publishStableHistoryChat(
+            chat,
+            entries,
+            transcript,
+            loadId,
+            "preserve",
+          );
           setStatusMessage(
             `Opened chat from ${formatHistoryTimestamp(chat.latest_activity_at)}.`,
           );
@@ -2787,6 +2933,7 @@ function App() {
           sourceVersion,
           complete: true,
           firstItemIndex: HISTORY_VIRTUOSO_BASE_INDEX,
+          positionIntent: "latest",
           openAtLatestRequestId: loadId,
           syncStatus: "complete",
         },
@@ -2808,6 +2955,7 @@ function App() {
           sourceVersion: staleSnapshot.sourceVersion,
           complete: true,
           firstItemIndex: HISTORY_VIRTUOSO_BASE_INDEX,
+          positionIntent: "latest",
           openAtLatestRequestId: loadId,
           syncStatus: "syncing",
         },
@@ -2851,6 +2999,7 @@ function App() {
         sourceVersion,
         complete: false,
         firstItemIndex: HISTORY_VIRTUOSO_BASE_INDEX,
+        positionIntent: "latest",
         openAtLatestRequestId: loadId,
         syncStatus: "syncing",
       },
@@ -2870,6 +3019,7 @@ function App() {
     cancelActiveExternalTranscriptSync();
     pendingTranscriptCommitRef.current = null;
     transcriptScrollActiveRef.current = false;
+    markTranscriptViewportUnstable();
     const session: WorkspaceChatSession = {
       chatId: chat.id,
       threadId: chat.external_thread_id ?? chat.codex_thread_id,
@@ -2906,6 +3056,7 @@ function App() {
     setStatusMessage(`Opening chat from ${formatHistoryTimestamp(chat.latest_activity_at)}.`);
     try {
       await waitForNextPaint();
+      await waitForTranscriptViewportStable();
       if (historyChatLoadIdRef.current !== loadId) {
         return;
       }
@@ -2957,6 +3108,7 @@ function App() {
       sourceVersion: historyChatVersion(chat),
       complete: true,
       firstItemIndex: HISTORY_VIRTUOSO_BASE_INDEX,
+      positionIntent: "latest",
       openAtLatestRequestId: loadId,
       syncStatus: "complete",
     };
@@ -6694,6 +6846,7 @@ function App() {
               <section
                 className={`task-hero ${hasTaskChat ? "has-chat" : ""}`}
                 aria-label="Task chat"
+                ref={setTaskViewportElement}
                 onDragOver={handleTaskContextDragOver}
                 onDragLeave={handleTaskContextDragLeave}
                 onDrop={handleTaskContextDrop}
@@ -6709,6 +6862,8 @@ function App() {
                     transcriptVersion={
                       selectedHistoricalTranscript?.sourceVersion ?? "live"
                     }
+                    viewportWidth={taskViewportWidth}
+                    viewportStable={taskViewportStable}
                     firstItemIndex={
                       selectedHistoricalTranscript?.firstItemIndex ??
                       HISTORY_VIRTUOSO_BASE_INDEX
