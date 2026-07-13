@@ -58,8 +58,9 @@ export type VirtuosoTaskChatTranscriptProps = {
   transcriptIdentity: string;
   transcriptVersion: string;
   firstItemIndex: number;
-  openAtLatest: boolean;
+  openAtLatestRequestId: number | null;
   liveFollow: boolean;
+  onOpenAtLatestApplied?: (requestId: number) => void;
   onResolveRequest: (request: CodexMessage, approved: boolean) => void;
   onOpenFileLink?: (href: string) => boolean;
   editablePromptEntryId?: string | null;
@@ -74,8 +75,9 @@ export const VirtuosoTaskChatTranscript = memo(
     transcriptIdentity,
     transcriptVersion,
     firstItemIndex,
-    openAtLatest,
+    openAtLatestRequestId,
     liveFollow,
+    onOpenAtLatestApplied,
     onResolveRequest,
     onOpenFileLink,
     editablePromptEntryId = null,
@@ -89,17 +91,29 @@ export const VirtuosoTaskChatTranscript = memo(
     entryCountRef.current = entries.length;
     const [editingEntryId, setEditingEntryId] = useState<string | null>(null);
     const [editingPrompt, setEditingPrompt] = useState("");
+    const [openAtLatestOnMount] = useState(openAtLatestRequestId !== null);
     const initialWidthBucket = useMemo(
       () => widthBucket(typeof window === "undefined" ? 1_024 : window.innerWidth),
       [],
     );
     const cacheKey = `${transcriptIdentity}:${transcriptVersion}:${initialWidthBucket}`;
     const restoredState = useMemo(
-      () => readCachedTranscriptState(cacheKey, entries.length),
+      () =>
+        openAtLatestOnMount
+          ? undefined
+          : readCachedTranscriptState(cacheKey, entries.length),
       // State restoration is intentionally read only when a transcript identity mounts.
       // eslint-disable-next-line react-hooks/exhaustive-deps
-      [cacheKey],
+      [cacheKey, openAtLatestOnMount],
     );
+
+    useEffect(() => {
+      if (openAtLatestRequestId === null || !onOpenAtLatestApplied) return;
+      const frame = window.requestAnimationFrame(() => {
+        onOpenAtLatestApplied(openAtLatestRequestId);
+      });
+      return () => window.cancelAnimationFrame(frame);
+    }, [onOpenAtLatestApplied, openAtLatestRequestId]);
 
     useEffect(() => {
       const handle = virtuosoRef.current;
@@ -195,9 +209,9 @@ export const VirtuosoTaskChatTranscript = memo(
           increaseViewportBy={{ top: 480, bottom: 480 }}
           minOverscanItemCount={{ top: 2, bottom: 2 }}
           initialTopMostItemIndex={
-            restoredState || !openAtLatest
-              ? undefined
-              : { index: "LAST", align: "end" }
+            openAtLatestOnMount
+              ? { index: "LAST", align: "end" }
+              : undefined
           }
           restoreStateFrom={restoredState}
           alignToBottom

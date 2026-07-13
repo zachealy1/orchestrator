@@ -72,7 +72,7 @@ describe("VirtuosoTaskChatTranscript", () => {
         transcriptIdentity="chat:401"
         transcriptVersion="v1"
         firstItemIndex={999_700}
-        openAtLatest
+        openAtLatestRequestId={1}
         liveFollow={false}
         onResolveRequest={vi.fn()}
       />,
@@ -97,7 +97,7 @@ describe("VirtuosoTaskChatTranscript", () => {
         transcriptIdentity="live:401"
         transcriptVersion="1"
         firstItemIndex={1_000_000}
-        openAtLatest={false}
+        openAtLatestRequestId={null}
         liveFollow
         onResolveRequest={vi.fn()}
       />,
@@ -113,7 +113,7 @@ describe("VirtuosoTaskChatTranscript", () => {
         transcriptIdentity="live:401"
         transcriptVersion="1"
         firstItemIndex={1_000_000}
-        openAtLatest={false}
+        openAtLatestRequestId={null}
         liveFollow={false}
         onResolveRequest={vi.fn()}
       />,
@@ -129,7 +129,7 @@ describe("VirtuosoTaskChatTranscript", () => {
         transcriptIdentity="chat:401"
         transcriptVersion="stable-v1"
         firstItemIndex={1_000_000}
-        openAtLatest
+        openAtLatestRequestId={null}
         liveFollow={false}
         onResolveRequest={vi.fn()}
       />,
@@ -143,7 +143,7 @@ describe("VirtuosoTaskChatTranscript", () => {
         transcriptIdentity="chat:401"
         transcriptVersion="stable-v1"
         firstItemIndex={1_000_000}
-        openAtLatest
+        openAtLatestRequestId={null}
         liveFollow={false}
         onResolveRequest={vi.fn()}
       />,
@@ -151,5 +151,39 @@ describe("VirtuosoTaskChatTranscript", () => {
 
     expect(virtuosoMock.lastProps.restoreStateFrom).toEqual(virtuosoMock.state);
     expect(virtuosoMock.lastProps.initialTopMostItemIndex).toBeUndefined();
+  });
+
+  it("ignores a saved top position when the same history chat is explicitly selected again", () => {
+    const entries = Array.from({ length: 20 }, (_, index) => historyEntry(index + 1));
+    const first = render(
+      <VirtuosoTaskChatTranscript
+        entries={entries}
+        transcriptIdentity="chat:401"
+        transcriptVersion="stable-v1"
+        firstItemIndex={1_000_000}
+        openAtLatestRequestId={11}
+        liveFollow={false}
+        onResolveRequest={vi.fn()}
+      />,
+    );
+    first.unmount();
+
+    render(
+      <VirtuosoTaskChatTranscript
+        entries={entries}
+        transcriptIdentity="chat:401"
+        transcriptVersion="stable-v1"
+        firstItemIndex={1_000_000}
+        openAtLatestRequestId={12}
+        liveFollow={false}
+        onResolveRequest={vi.fn()}
+      />,
+    );
+
+    expect(virtuosoMock.lastProps.restoreStateFrom).toBeUndefined();
+    expect(virtuosoMock.lastProps.initialTopMostItemIndex).toEqual({
+      index: "LAST",
+      align: "end",
+    });
   });
 });

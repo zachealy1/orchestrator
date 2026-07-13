@@ -109,8 +109,10 @@ vi.mock("react-virtuoso", async () => {
         className,
         computeItemKey,
         data = [],
+        initialTopMostItemIndex,
         isScrolling,
         itemContent,
+        restoreStateFrom,
       }: any,
       ref,
     ) {
@@ -120,7 +122,16 @@ vi.mock("react-virtuoso", async () => {
         scrollToIndex: vi.fn(),
       }));
       return (
-        <div className={className} data-testid="mock-virtuoso">
+        <div
+          className={className}
+          data-testid="mock-virtuoso"
+          data-initial-index={
+            initialTopMostItemIndex
+              ? JSON.stringify(initialTopMostItemIndex)
+              : ""
+          }
+          data-restored={restoreStateFrom ? "true" : "false"}
+        >
           {data.map((entry: any, index: number) => (
             <div key={computeItemKey?.(index, entry) ?? index}>
               {itemContent(index, entry)}
@@ -2101,6 +2112,62 @@ describe("App Codex auth", () => {
     expect(mocks.listLocalChatTranscriptMock).toHaveBeenCalledTimes(1);
     expect(mocks.listChatRunsPageMock).not.toHaveBeenCalled();
     expect(screen.queryByText("Loading older messages...")).not.toBeInTheDocument();
+  });
+
+  it("reopens the same historical chat at its latest turn instead of restoring the top", async () => {
+    const historicalChat = workspaceChatFixture({
+      id: 455,
+      title: "Reselected history chat",
+      turn_count: 2,
+    });
+    const historicalRuns = [
+      workspaceRunFixture({
+        id: 610,
+        chat_id: historicalChat.id,
+        turn_index: 1,
+        original_prompt: "First prompt",
+        final_message: "First result.",
+      }),
+      workspaceRunFixture({
+        id: 611,
+        chat_id: historicalChat.id,
+        turn_index: 2,
+        original_prompt: "Latest prompt",
+        final_message: "Latest result.",
+      }),
+    ];
+    mocks.listWorkspaceChatsMock.mockResolvedValue([historicalChat]);
+    mocks.listLocalChatTranscriptMock.mockResolvedValue(historicalRuns);
+
+    const { user } = await renderApp();
+    const banner = screen.getByRole("region", { name: "Selected folder" });
+    const historyButton = within(banner).getByRole("button", {
+      name: /open chat history/i,
+    });
+    await user.click(historyButton);
+    let drawer = await screen.findByRole("complementary", {
+      name: "Workspace chat history",
+    });
+    await user.click(
+      within(drawer).getByRole("button", { name: /reselected history chat/i }),
+    );
+    expect(await screen.findByText("Latest result.")).toBeInTheDocument();
+
+    await user.click(historyButton);
+    drawer = screen.getByRole("complementary", {
+      name: "Workspace chat history",
+    });
+    await user.click(
+      within(drawer).getByRole("button", { name: /reselected history chat/i }),
+    );
+    expect(await screen.findByText("Latest result.")).toBeInTheDocument();
+
+    const transcript = screen.getByTestId("mock-virtuoso");
+    expect(transcript).toHaveAttribute(
+      "data-initial-index",
+      JSON.stringify({ index: "LAST", align: "end" }),
+    );
+    expect(transcript).toHaveAttribute("data-restored", "false");
   });
 
   it("shows the latest external turns first and commits the full snapshot after scrolling is idle", async () => {

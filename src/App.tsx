@@ -996,6 +996,13 @@ function App() {
     }
 
   }, []);
+  const handleHistoricalLatestPositionApplied = useCallback((requestId: number) => {
+    setHistoricalTranscript((current) =>
+      current?.openAtLatestRequestId === requestId
+        ? { ...current, openAtLatestRequestId: null }
+        : current,
+    );
+  }, []);
   const resolveTranscriptRequest = useStableEvent(handleResolveRequest);
   const openTranscriptFileLink = useStableEvent(openTaskResponseFileLink);
   const editTranscriptPrompt = useStableEvent(handleEditLatestPrompt);
@@ -2646,6 +2653,10 @@ function App() {
     loadId: number,
   ) {
     if (historyChatLoadIdRef.current !== loadId) return;
+    const publishedTranscript = {
+      ...transcript,
+      openAtLatestRequestId: loadId,
+    };
     const allEntries = replaceWorkspaceChatEntries(
       taskChatEntriesRef.current,
       chat.workspace_id,
@@ -2654,11 +2665,11 @@ function App() {
     taskChatEntriesRef.current = allEntries;
     startTransition(() => {
       setTaskChatEntries(allEntries);
-      setHistoricalTranscript(transcript);
+      setHistoricalTranscript(publishedTranscript);
       setHistoryChatLoadState(null);
       setHistoryOpenRequest(null);
     });
-    cacheStableHistoryChat(chat, entries, transcript);
+    cacheStableHistoryChat(chat, entries, publishedTranscript);
   }
 
   function deferStableTranscriptCommit(commit: () => void) {
@@ -2713,6 +2724,7 @@ function App() {
         sourceVersion,
         complete: true,
         firstItemIndex: HISTORY_VIRTUOSO_BASE_INDEX - olderTurnCount,
+        openAtLatestRequestId: loadId,
         syncStatus: "complete",
       };
       cacheStableHistoryChat(chat, entries, transcript);
@@ -2775,6 +2787,7 @@ function App() {
           sourceVersion,
           complete: true,
           firstItemIndex: HISTORY_VIRTUOSO_BASE_INDEX,
+          openAtLatestRequestId: loadId,
           syncStatus: "complete",
         },
         loadId,
@@ -2795,6 +2808,7 @@ function App() {
           sourceVersion: staleSnapshot.sourceVersion,
           complete: true,
           firstItemIndex: HISTORY_VIRTUOSO_BASE_INDEX,
+          openAtLatestRequestId: loadId,
           syncStatus: "syncing",
         },
         loadId,
@@ -2837,6 +2851,7 @@ function App() {
         sourceVersion,
         complete: false,
         firstItemIndex: HISTORY_VIRTUOSO_BASE_INDEX,
+        openAtLatestRequestId: loadId,
         syncStatus: "syncing",
       },
       loadId,
@@ -2942,6 +2957,7 @@ function App() {
       sourceVersion: historyChatVersion(chat),
       complete: true,
       firstItemIndex: HISTORY_VIRTUOSO_BASE_INDEX,
+      openAtLatestRequestId: loadId,
       syncStatus: "complete",
     };
     publishStableHistoryChat(chat, entries, transcript, loadId);
@@ -6697,7 +6713,12 @@ function App() {
                       selectedHistoricalTranscript?.firstItemIndex ??
                       HISTORY_VIRTUOSO_BASE_INDEX
                     }
-                    openAtLatest={selectedHistoryChatId !== null}
+                    openAtLatestRequestId={
+                      selectedHistoricalTranscript?.openAtLatestRequestId ?? null
+                    }
+                    onOpenAtLatestApplied={
+                      handleHistoricalLatestPositionApplied
+                    }
                     liveFollow={runIsActive}
                     onResolveRequest={resolveTranscriptRequest}
                     onOpenFileLink={openTranscriptFileLink}
