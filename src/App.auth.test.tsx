@@ -3773,6 +3773,49 @@ describe("App Codex auth", () => {
     expect(screen.queryByLabelText("Selected context files")).not.toBeInTheDocument();
   });
 
+  it("submits @ file references as Markdown without changing their visual token", async () => {
+    prepareSignedInRun();
+    mocks.listWorkspaceDirectoryMock.mockResolvedValue([
+      {
+        name: "App.tsx",
+        path: `${workspace.path}/src/App.tsx`,
+        relativePath: "src/App.tsx",
+        kind: "file",
+      },
+    ]);
+
+    const { user } = await renderApp();
+    const promptInput = screen.getByLabelText("Prompt");
+    await user.type(promptInput, "Update @app");
+    await user.click(await screen.findByRole("option", { name: /app\.tsx/i }));
+
+    expect(promptInput).toHaveValue("Update TSX App.tsx ");
+    await user.click(screen.getByRole("button", { name: /run codex/i }));
+
+    const markdownPrompt =
+      "Update [App.tsx](/repo/orchestrator/src/App.tsx:1)";
+    await waitFor(() =>
+      expect(mocks.createTaskMock).toHaveBeenCalledWith(
+        expect.objectContaining({ originalPrompt: markdownPrompt }),
+      ),
+    );
+    expect(mocks.runPreflightMock).toHaveBeenCalledWith(
+      expect.objectContaining({ prompt: markdownPrompt }),
+    );
+
+    const submittedPrompt = within(
+      screen.getByLabelText("Task chat transcript"),
+    ).getByLabelText("Submitted prompt");
+    const fileLink = within(submittedPrompt).getByRole("link", {
+      name: "App.tsx",
+    });
+    expect(within(fileLink).getByText("TSX")).toBeInTheDocument();
+    expect(fileLink).toHaveAttribute(
+      "href",
+      "/repo/orchestrator/src/App.tsx:1",
+    );
+  });
+
   it("sorts @ mention search results and limits visible files", async () => {
     mocks.listWorkspaceDirectoryMock.mockResolvedValue([
       {

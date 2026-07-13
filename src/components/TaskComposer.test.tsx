@@ -434,7 +434,7 @@ describe("TaskComposer", () => {
 
     expect(clipboardData.setData).toHaveBeenCalledWith(
       "text/plain",
-      "TXT hello-world.txt",
+      "[hello-world.txt](/repo/hello-world.txt:1)",
     );
     const rawPayload = clipboardData.setData.mock.calls.find(
       ([type]) => type === ORCHESTRATOR_PROMPT_CONTEXT_MIME,
@@ -444,7 +444,7 @@ describe("TaskComposer", () => {
     }
     expect(JSON.parse(rawPayload)).toMatchObject({
       version: 1,
-      prompt: "TXT hello-world.txt",
+      prompt: "[hello-world.txt](/repo/hello-world.txt:1)",
       files: [
         {
           path: "/repo/hello-world.txt",
@@ -461,7 +461,7 @@ describe("TaskComposer", () => {
     const onMentionFileSelect = vi.fn();
     const clipboardData = createPromptContextClipboardData({
       version: 1,
-      prompt: "TXT hello-world.txt",
+      prompt: "[hello-world.txt](/repo/hello-world.txt:1)",
       files: [
         {
           path: "/repo/hello-world.txt",

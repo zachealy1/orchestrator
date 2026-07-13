@@ -990,7 +990,7 @@ describe("TaskChatTranscript", () => {
             turnIndex: 1,
             runId: null,
             taskId: null,
-            prompt: "Delete the TXT hello-world.txt file",
+            prompt: "Delete the [hello-world.txt](/repo/hello-world.txt:1) file",
             contextFiles: [
               {
                 path: "/repo/hello-world.txt",
@@ -1023,7 +1023,41 @@ describe("TaskChatTranscript", () => {
 
     fireEvent.click(fileLink);
 
-    expect(onOpenFileLink).toHaveBeenCalledWith("/repo/hello-world.txt");
+    expect(onOpenFileLink).toHaveBeenCalledWith("/repo/hello-world.txt:1");
+  });
+
+  it("restores the inline file appearance from persisted Markdown alone", () => {
+    render(
+      <TaskChatTranscript
+        entries={[
+          {
+            clientId: "history-chat-1",
+            workspaceId: 1,
+            chatId: 401,
+            turnIndex: 1,
+            runId: 301,
+            taskId: 101,
+            prompt: "Update [hello-world.txt](/repo/hello-world.txt:1)",
+            submittedAt: "2026-06-30T17:30:00Z",
+            status: "completed",
+            runView: {
+              ...emptyRunView,
+              status: "completed",
+              finalMessage: "Done.",
+            },
+          },
+        ]}
+        onResolveRequest={vi.fn()}
+      />,
+    );
+
+    const submittedPrompt = screen.getByLabelText("Submitted prompt");
+    const fileLink = within(submittedPrompt).getByRole("link", {
+      name: "hello-world.txt",
+    });
+    expect(within(fileLink).getByText("TXT")).toBeInTheDocument();
+    expect(fileLink).toHaveAttribute("href", "/repo/hello-world.txt:1");
+    expect(submittedPrompt).not.toHaveTextContent("[hello-world.txt](");
   });
 
   it("copies submitted inline file references with context metadata", () => {
@@ -1040,7 +1074,7 @@ describe("TaskChatTranscript", () => {
             turnIndex: 1,
             runId: null,
             taskId: null,
-            prompt: "Delete the TXT hello-world.txt file",
+            prompt: "Delete the [hello-world.txt](/repo/hello-world.txt:1) file",
             contextFiles: [
               {
                 path: "/repo/hello-world.txt",
@@ -1066,7 +1100,7 @@ describe("TaskChatTranscript", () => {
 
     expect(clipboardData.setData).toHaveBeenCalledWith(
       "text/plain",
-      "Delete the TXT hello-world.txt file",
+      "Delete the [hello-world.txt](/repo/hello-world.txt:1) file",
     );
     const rawPayload = clipboardData.setData.mock.calls.find(
       ([type]) => type === ORCHESTRATOR_PROMPT_CONTEXT_MIME,
@@ -1076,7 +1110,7 @@ describe("TaskChatTranscript", () => {
     }
     expect(JSON.parse(rawPayload)).toMatchObject({
       version: 1,
-      prompt: "Delete the TXT hello-world.txt file",
+      prompt: "Delete the [hello-world.txt](/repo/hello-world.txt:1) file",
       files: [
         {
           path: "/repo/hello-world.txt",

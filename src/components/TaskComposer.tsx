@@ -33,9 +33,13 @@ import type {
 } from "../types";
 import { ORCHESTRATOR_PROMPT_CONTEXT_MIME } from "../types";
 import {
+  contextFileDisplayReference,
   contextFileExtensionLabel,
+  contextFileInlineReferenceTokens,
   hasContextFilePayload,
   readDroppedContextFiles,
+  restorePromptInlineFileReferencesForComposer,
+  serializePromptInlineFileReferences,
 } from "../lib/contextFiles";
 
 type Props = {
@@ -396,7 +400,7 @@ export function TaskComposer({
 
     writePromptContextClipboard(event, {
       version: 1,
-      prompt: selectedPrompt,
+      prompt: serializePromptInlineFileReferences(selectedPrompt, selectedFiles),
       files: selectedFiles,
     });
   }
@@ -412,7 +416,9 @@ export function TaskComposer({
     const textarea = event.currentTarget;
     const selectionStart = textarea.selectionStart;
     const selectionEnd = textarea.selectionEnd;
-    const pastedPrompt = normalizePromptQuotes(payload.prompt);
+    const pastedPrompt = normalizePromptQuotes(
+      restorePromptInlineFileReferencesForComposer(payload.prompt, payload.files),
+    );
     const nextPrompt = `${prompt.slice(0, selectionStart)}${pastedPrompt}${prompt.slice(selectionEnd)}`;
     const nextCaret = selectionStart + pastedPrompt.length;
 
@@ -1318,10 +1324,9 @@ function deletionTouchesInlineFileRange(
 function buildInlineFileTokenCandidates(files: ComposerContextFile[]) {
   return files
     .filter((file) => file.name.trim().length > 0)
-    .flatMap((file) => [
-      { file, token: inlineFilePromptToken(file) },
-      { file, token: file.name },
-    ])
+    .flatMap((file) =>
+      contextFileInlineReferenceTokens(file).map((token) => ({ file, token })),
+    )
     .sort((a, b) => b.token.length - a.token.length);
 }
 
@@ -1372,7 +1377,7 @@ function isFileNameBoundaryCharacter(value: string) {
 }
 
 function inlineFilePromptToken(file: ComposerContextFile) {
-  return `${contextFileExtensionLabel(file.name)} ${file.name}`;
+  return contextFileDisplayReference(file);
 }
 
 function normalizePromptQuotes(prompt: string) {

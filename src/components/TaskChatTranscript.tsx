@@ -41,7 +41,11 @@ import type {
   RunViewState,
   StreamEvent,
 } from "../lib/codexEventReducer";
-import { contextFileExtensionLabel } from "../lib/contextFiles";
+import {
+  contextFileExtensionLabel,
+  contextFileInlineReferenceTokens,
+  contextFileLineReference,
+} from "../lib/contextFiles";
 import { isPreviewableSummaryLink } from "../lib/summaryLinks";
 import {
   cacheTranscriptRowHeight,
@@ -1251,14 +1255,15 @@ const SubmittedPrompt = memo(function SubmittedPrompt({
   onOpenFileLink?: (href: string) => boolean;
 }) {
   const inlineFiles = contextFiles.filter((file) => file.source === "search");
+  const segments = buildSubmittedPromptSegments(prompt, inlineFiles);
 
-  if (inlineFiles.length === 0) {
+  if (!segments.some((segment) => segment.kind === "file")) {
     return <>{prompt}</>;
   }
 
   return (
     <>
-      {buildSubmittedPromptSegments(prompt, inlineFiles).map((segment, index) => {
+      {segments.map((segment, index) => {
         if (segment.kind === "text") {
           return <span key={`text-${index}`}>{segment.text}</span>;
         }
@@ -1266,11 +1271,11 @@ const SubmittedPrompt = memo(function SubmittedPrompt({
         return (
           <a
             className="submitted-inline-file"
-            href={segment.file.path}
-            key={`${segment.file.path}-${index}`}
-            title={`Preview ${segment.file.path}`}
+            href={segment.href}
+            key={`${segment.href}-${index}`}
+            title={`Preview ${segment.href}`}
             onClick={(event: ReactMouseEvent<HTMLAnchorElement>) => {
-              if (onOpenFileLink?.(segment.file.path)) {
+              if (onOpenFileLink?.(segment.href)) {
                 event.preventDefault();
                 event.stopPropagation();
               }
@@ -1565,10 +1570,10 @@ function buildSubmittedPromptSegments(
   prompt: string,
   files: ComposerContextFile[],
 ) {
-  const candidates = buildInlineFileTokenCandidates(files);
+  const candidates = buildSubmittedPromptTokenCandidates(prompt, files);
   const segments: Array<
     | { kind: "text"; text: string }
-    | { kind: "file"; file: ComposerContextFile }
+    | { kind: "file"; file: ComposerContextFile; href: string }
   > = [];
   let cursor = 0;
 
@@ -1585,20 +1590,59 @@ function buildSubmittedPromptSegments(
       continue;
     }
 
-    segments.push({ kind: "file", file: match.file });
+    segments.push({ kind: "file", file: match.file, href: match.href });
     cursor += match.token.length;
   }
 
   return segments;
 }
 
+function buildSubmittedPromptTokenCandidates(
+  prompt: string,
+  files: ComposerContextFile[],
+) {
+  const candidates = buildInlineFileTokenCandidates(files).map((candidate) => ({
+    ...candidate,
+    href: contextFileLineReference(candidate.file),
+  }));
+  const knownTokens = new Set(candidates.map((candidate) => candidate.token));
+  const markdownLinkPattern = /\[([^\]\n]+)\]\(([^)\n]+)\)/g;
+
+  for (const match of prompt.matchAll(markdownLinkPattern)) {
+    const token = match[0];
+    const name = match[1]?.replace(/\\([\\\[\]])/g, "$1").trim();
+    const href = match[2]?.trim();
+    if (
+      !name ||
+      !href ||
+      knownTokens.has(token) ||
+      !isPreviewableSummaryLink(href)
+    ) {
+      continue;
+    }
+
+    knownTokens.add(token);
+    candidates.push({
+      token,
+      href,
+      file: {
+        path: href,
+        name,
+        source: "search",
+        status: "ready",
+      },
+    });
+  }
+
+  return candidates.sort((left, right) => right.token.length - left.token.length);
+}
+
 function buildInlineFileTokenCandidates(files: ComposerContextFile[]) {
   return files
     .filter((file) => file.name.trim().length > 0)
-    .flatMap((file) => [
-      { file, token: `${contextFileExtensionLabel(file.name)} ${file.name}` },
-      { file, token: file.name },
-    ])
+    .flatMap((file) =>
+      contextFileInlineReferenceTokens(file).map((token) => ({ file, token })),
+    )
     .sort((left, right) => right.token.length - left.token.length);
 }
 

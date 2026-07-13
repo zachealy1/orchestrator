@@ -153,6 +153,8 @@ import {
 import {
   hasContextFilePayload,
   readDroppedContextFiles,
+  restorePromptInlineFileReferencesForComposer,
+  serializePromptInlineFileReferences,
 } from "./lib/contextFiles";
 import type {
   AccessLevel,
@@ -1151,7 +1153,6 @@ function App() {
   const editTranscriptPrompt = useStableEvent(handleEditLatestPrompt);
   const loadTranscriptHistoricalActivity = useStableEvent(loadHistoricalActivity);
 
-  const improvedPrompt = useMemo(() => improvePrompt(prompt), [prompt]);
   const routeRecommendation = useMemo(() => recommendRoute(prompt), [prompt]);
   const tokenEstimate = useMemo(() => estimateTokens(prompt), [prompt]);
   const taskQuote = useMemo(
@@ -4588,7 +4589,12 @@ function App() {
         const chat = await createChat({
           workspaceId: snapshot.workspace.id,
           accountId: snapshot.accountId,
-          title: createChatTitle(snapshot.promptText),
+          title: createChatTitle(
+            restorePromptInlineFileReferencesForComposer(
+              snapshot.promptText,
+              snapshot.contextFiles.filter((file) => file.source === "search"),
+            ),
+          ),
           status: "starting",
         });
         chatId = chat.id;
@@ -4698,7 +4704,16 @@ function App() {
           codexThreadId: nextThreadId,
           status: "running",
           ...(snapshot.updateChatTitle
-            ? { title: createChatTitle(snapshot.promptText) }
+            ? {
+                title: createChatTitle(
+                  restorePromptInlineFileReferencesForComposer(
+                    snapshot.promptText,
+                    snapshot.contextFiles.filter(
+                      (file) => file.source === "search",
+                    ),
+                  ),
+                ),
+              }
             : {}),
         });
         setWorkspaceChatSession(snapshot.workspace.id, {
@@ -4983,7 +4998,10 @@ function App() {
   async function launchRun() {
     markPerformance("orchestrator:submit:start");
 
-    const promptText = prompt.trim();
+    const promptText = serializePromptInlineFileReferences(
+      prompt.trim(),
+      contextFiles.filter((file) => file.source === "search"),
+    );
     const workspace = selectedWorkspace;
     const chatSession = workspace
       ? (workspaceChatSessionsRef.current[workspace.id] ?? null)
@@ -5041,7 +5059,7 @@ function App() {
       effort: model ? selectedReasoningEffort : null,
       useOss,
       ossProvider,
-      improvedPrompt,
+      improvedPrompt: improvePrompt(promptText),
       contextFiles: [...contextFiles],
       selectedSkills: [...selectedSkills],
       goalMode,
@@ -5058,7 +5076,10 @@ function App() {
   function handleEditLatestPrompt(entry: TaskChatEntry, nextPrompt: string) {
     markPerformance("orchestrator:submit:start");
 
-    const promptText = nextPrompt.trim();
+    const promptText = serializePromptInlineFileReferences(
+      nextPrompt.trim(),
+      (entry.contextFiles ?? []).filter((file) => file.source === "search"),
+    );
     const workspace = selectedWorkspace;
     const accountId = selectedAccountId;
     const account = selectedAccount;
