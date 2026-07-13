@@ -1664,26 +1664,29 @@ button.account-switcher-item:hover:not(:disabled) {
   min-height: 0;
   align-self: stretch;
   overflow-y: auto;
+  overflow-anchor: none;
   overscroll-behavior: contain;
   padding: 4px var(--task-hero-inline-padding);
 }
 
 .history-older-turns-status {
-  position: sticky;
-  top: 4px;
+  position: absolute;
+  top: 8px;
+  left: 50%;
   z-index: 4;
   display: flex;
   width: fit-content;
   max-width: calc(100% - 24px);
   align-items: center;
   gap: 8px;
-  margin: 0 auto -30px;
+  margin: 0;
   border-radius: 6px;
   background: var(--color-component-background);
   color: var(--color-text-secondary);
   box-shadow: 0 4px 16px rgb(var(--shadow-rgb) / 0.14);
   font-size: 0.78rem;
   padding: 6px 9px;
+  transform: translateX(-50%);
 }
 
 .history-older-turns-status.error {
@@ -1732,6 +1735,7 @@ button.account-switcher-item:hover:not(:disabled) {
   position: relative;
   width: 100%;
   min-height: 100%;
+  overflow-anchor: none;
 }
 
 .task-chat-virtual-row {
@@ -1743,7 +1747,7 @@ button.account-switcher-item:hover:not(:disabled) {
   justify-items: center;
   box-sizing: border-box;
   padding-bottom: 18px;
-  contain: paint style;
+  contain: layout paint style;
 }
 
 .task-chat-run {

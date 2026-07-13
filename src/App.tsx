@@ -387,6 +387,12 @@ type HistoryChatCacheEntry = {
   pagination: Omit<HistoryPaginationState, "requestId" | "status" | "error">;
 };
 
+type PendingHistoryPageCommit = {
+  requestId: number;
+  chatId: number;
+  commit: () => void;
+};
+
 type WorkspaceChatSession = {
   chatId: number;
   threadId: string | null;
@@ -937,6 +943,10 @@ function App() {
   const historyChatLoadIdRef = useRef(0);
   const taskChatEntriesRef = useRef<TaskChatEntry[]>([]);
   const historyPaginationRef = useRef<HistoryPaginationState | null>(null);
+  const transcriptScrollActiveRef = useRef(false);
+  const pendingHistoryPageCommitRef = useRef<PendingHistoryPageCommit | null>(
+    null,
+  );
   const historyChatCacheRef = useRef(new Map<number, HistoryChatCacheEntry>());
   const historicalActivityCacheRef = useRef(
     new Map<string, Awaited<ReturnType<typeof loadDefaultProfileTurnActivity>>>(),
@@ -1007,6 +1017,16 @@ function App() {
     setHistoryOpenRequest((current) =>
       current?.requestId === requestId ? null : current,
     );
+  }, []);
+  const handleTranscriptScrollActivityChange = useCallback((active: boolean) => {
+    transcriptScrollActiveRef.current = active;
+    if (active) {
+      return;
+    }
+
+    const pending = pendingHistoryPageCommitRef.current;
+    pendingHistoryPageCommitRef.current = null;
+    pending?.commit();
   }, []);
 
   const improvedPrompt = useMemo(() => improvePrompt(prompt), [prompt]);
@@ -2322,6 +2342,8 @@ function App() {
 
     const workspace = await upsertWorkspace(selected);
     historyChatLoadIdRef.current += 1;
+    pendingHistoryPageCommitRef.current = null;
+    transcriptScrollActiveRef.current = false;
     setHistoryChatLoadState(null);
     setHistoryOpenRequest(null);
     updateHistoryPagination(null);
@@ -2339,6 +2361,8 @@ function App() {
 
     if (selectedWorkspaceRef.current?.id !== workspace.id) {
       historyChatLoadIdRef.current += 1;
+      pendingHistoryPageCommitRef.current = null;
+      transcriptScrollActiveRef.current = false;
       setHistoryChatLoadState(null);
       setHistoryOpenRequest(null);
       updateHistoryPagination(null);
@@ -2686,6 +2710,8 @@ function App() {
 
     const loadId = historyChatLoadIdRef.current + 1;
     historyChatLoadIdRef.current = loadId;
+    pendingHistoryPageCommitRef.current = null;
+    transcriptScrollActiveRef.current = false;
     const session: WorkspaceChatSession = {
       chatId: chat.id,
       threadId: chat.external_thread_id ?? chat.codex_thread_id,
@@ -2921,10 +2947,6 @@ function App() {
         return;
       }
 
-      const currentEntries = taskChatEntriesRef.current.filter(
-        (entry) => entry.workspaceId === pagination.workspaceId,
-      );
-      const mergedEntries = mergeHistoryEntries(pageEntries, currentEntries);
       const nextPagination: HistoryPaginationState = {
         ...pagination,
         status: "idle",
@@ -2933,19 +2955,52 @@ function App() {
         externalCursor: nextExternalCursor,
         localOffset: nextLocalOffset,
       };
-      startTransition(() => {
-        setTaskChatEntries((current) =>
-          replaceWorkspaceChatEntries(
-            current,
-            pagination.workspaceId,
-            mergedEntries,
-          ),
+      const commitPage = () => {
+        const latestPagination = historyPaginationRef.current;
+        if (
+          historyChatLoadIdRef.current !== pagination.requestId ||
+          !latestPagination ||
+          latestPagination.requestId !== pagination.requestId ||
+          latestPagination.chatId !== pagination.chatId
+        ) {
+          return;
+        }
+
+        const currentEntries = taskChatEntriesRef.current.filter(
+          (entry) => entry.workspaceId === pagination.workspaceId,
         );
-        updateHistoryPagination(nextPagination);
-      });
-      cacheHistoryChat(chat, mergedEntries, nextPagination);
+        const mergedEntries = mergeHistoryEntries(pageEntries, currentEntries);
+        startTransition(() => {
+          setTaskChatEntries((current) =>
+            replaceWorkspaceChatEntries(
+              current,
+              pagination.workspaceId,
+              mergedEntries,
+            ),
+          );
+          updateHistoryPagination(nextPagination);
+        });
+        cacheHistoryChat(chat, mergedEntries, nextPagination);
+      };
+
+      if (transcriptScrollActiveRef.current) {
+        pendingHistoryPageCommitRef.current = {
+          requestId: pagination.requestId,
+          chatId: pagination.chatId,
+          commit: commitPage,
+        };
+      } else {
+        commitPage();
+      }
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
+      const pending = pendingHistoryPageCommitRef.current;
+      if (
+        pending?.requestId === pagination.requestId &&
+        pending.chatId === pagination.chatId
+      ) {
+        pendingHistoryPageCommitRef.current = null;
+      }
       updateHistoryPagination((current) =>
         current?.chatId === pagination.chatId
           ? { ...current, status: "error", error: message }
@@ -3067,6 +3122,8 @@ function App() {
     }
 
     historyChatLoadIdRef.current += 1;
+    pendingHistoryPageCommitRef.current = null;
+    transcriptScrollActiveRef.current = false;
     setHistoryChatLoadState(null);
     setHistoryOpenRequest(null);
     updateHistoryPagination(null);
@@ -3093,6 +3150,8 @@ function App() {
       selectedHistoryChatId === chat.id
     ) {
       historyChatLoadIdRef.current += 1;
+      pendingHistoryPageCommitRef.current = null;
+      transcriptScrollActiveRef.current = false;
     }
     setHistoryChatLoadState((current) =>
       current?.chatId === chat.id ? null : current,
@@ -3150,6 +3209,8 @@ function App() {
       historyOpenRequest?.workspaceId === workspace.id
     ) {
       historyChatLoadIdRef.current += 1;
+      pendingHistoryPageCommitRef.current = null;
+      transcriptScrollActiveRef.current = false;
     }
     updateHistoryPagination((current) =>
       current?.workspaceId === workspace.id ? null : current,
@@ -6693,6 +6754,9 @@ function App() {
                     olderTurnsStatus={selectedHistoryPagination?.status ?? "idle"}
                     olderTurnsError={selectedHistoryPagination?.error ?? null}
                     onLoadOlderTurns={() => void loadOlderHistoryTurns()}
+                    onScrollActivityChange={
+                      handleTranscriptScrollActivityChange
+                    }
                     onLoadHistoricalActivity={(entry) =>
                       void loadHistoricalActivity(entry)
                     }

@@ -72,11 +72,11 @@ describe("TaskChatTranscript", () => {
       ".task-chat-virtual-spacer",
     );
     expect(Number.parseFloat(spacer?.style.height ?? "0")).toBeGreaterThan(
-      100_000,
+      80_000,
     );
   });
 
-  it("loads one older page near the top and dedupes repeated scroll events", () => {
+  it("loads one older page after scrolling becomes idle near the top", async () => {
     const onLoadOlderTurns = vi.fn();
     render(
       <TaskChatTranscript
@@ -98,9 +98,31 @@ describe("TaskChatTranscript", () => {
     expect(onLoadOlderTurns).not.toHaveBeenCalled();
 
     transcript.scrollTop = 200;
+    fireEvent.wheel(transcript, { deltaY: -120 });
     fireEvent.scroll(transcript);
     fireEvent.scroll(transcript);
-    expect(onLoadOlderTurns).toHaveBeenCalledTimes(1);
+    expect(onLoadOlderTurns).not.toHaveBeenCalled();
+    await waitFor(() => expect(onLoadOlderTurns).toHaveBeenCalledTimes(1));
+  });
+
+  it("reports active scrolling immediately and settles after input becomes idle", async () => {
+    const onScrollActivityChange = vi.fn();
+    render(
+      <TaskChatTranscript
+        entries={Array.from({ length: 20 }, (_, index) => historyEntry(index + 1))}
+        onResolveRequest={vi.fn()}
+        onScrollActivityChange={onScrollActivityChange}
+      />,
+    );
+    const transcript = screen.getByLabelText("Task chat transcript");
+
+    fireEvent.wheel(transcript, { deltaY: -120 });
+    expect(onScrollActivityChange).toHaveBeenLastCalledWith(true);
+    expect(onScrollActivityChange).not.toHaveBeenCalledWith(false);
+
+    await waitFor(() =>
+      expect(onScrollActivityChange).toHaveBeenLastCalledWith(false),
+    );
   });
 
   it("loads external historical activity only when its trace is expanded", async () => {
@@ -132,7 +154,7 @@ describe("TaskChatTranscript", () => {
     expect(onLoadHistoricalActivity).toHaveBeenCalledWith(entry);
   });
 
-  it("stays at the most recent turn when older history pages are prepended", () => {
+  it("stays at the most recent turn when older history pages are prepended", async () => {
     const latestEntries = Array.from({ length: 20 }, (_, index) =>
       historyEntry(index + 46),
     );
@@ -161,10 +183,10 @@ describe("TaskChatTranscript", () => {
       />,
     );
 
-    expect(transcript.scrollTop).toBe(23_400);
+    await waitFor(() => expect(transcript.scrollTop).toBe(23_400));
   });
 
-  it("opens a single-page historical chat at its most recent turn", () => {
+  it("opens a single-page historical chat at its most recent turn", async () => {
     const latestEntries = Array.from({ length: 12 }, (_, index) =>
       historyEntry(index + 1),
     );
@@ -185,10 +207,10 @@ describe("TaskChatTranscript", () => {
       />,
     );
 
-    expect(transcript.scrollTop).toBe(7_400);
+    await waitFor(() => expect(transcript.scrollTop).toBe(7_400));
   });
 
-  it("honors a new drawer scroll request when chats have equal turn counts", () => {
+  it("honors a new drawer scroll request when chats have equal turn counts", async () => {
     const firstChatEntries = Array.from({ length: 12 }, (_, index) =>
       historyEntry(index + 1),
     );
@@ -220,7 +242,7 @@ describe("TaskChatTranscript", () => {
       />,
     );
 
-    expect(transcript.scrollTop).toBe(7_400);
+    await waitFor(() => expect(transcript.scrollTop).toBe(7_400));
   });
 
   it("does not return to the latest turn after the user scrolls up during hydration", () => {
@@ -245,6 +267,10 @@ describe("TaskChatTranscript", () => {
     transcript.scrollTop = 1_000;
     fireEvent.wheel(transcript, { deltaY: -120 });
     fireEvent.scroll(transcript);
+    const beforeSize = Number.parseFloat(
+      document.querySelector<HTMLElement>(".task-chat-virtual-spacer")?.style
+        .height ?? "0",
+    );
 
     rerender(
       <TaskChatTranscript
@@ -254,7 +280,11 @@ describe("TaskChatTranscript", () => {
       />,
     );
 
-    expect(transcript.scrollTop).toBe(1_000);
+    const afterSize = Number.parseFloat(
+      document.querySelector<HTMLElement>(".task-chat-virtual-spacer")?.style
+        .height ?? "0",
+    );
+    expect(transcript.scrollTop).toBe(1_000 + afterSize - beforeSize);
   });
 
   it.each([
@@ -297,6 +327,11 @@ describe("TaskChatTranscript", () => {
       clientHeight: 600,
     });
     transcript.scrollTop = 1_200;
+    fireEvent.scroll(transcript);
+    const beforeSize = Number.parseFloat(
+      document.querySelector<HTMLElement>(".task-chat-virtual-spacer")?.style
+        .height ?? "0",
+    );
     releasePin(transcript);
 
     rerender(
@@ -307,10 +342,14 @@ describe("TaskChatTranscript", () => {
       />,
     );
 
-    expect(transcript.scrollTop).toBe(1_200);
+    const afterSize = Number.parseFloat(
+      document.querySelector<HTMLElement>(".task-chat-virtual-spacer")?.style
+        .height ?? "0",
+    );
+    expect(transcript.scrollTop).toBe(1_200 + afterSize - beforeSize);
   });
 
-  it("ignores non-user scroll events while a history chat is pinned", () => {
+  it("ignores non-user scroll events while a history chat is pinned", async () => {
     const latestEntries = Array.from({ length: 20 }, (_, index) =>
       historyEntry(index + 46),
     );
@@ -340,7 +379,7 @@ describe("TaskChatTranscript", () => {
       />,
     );
 
-    expect(transcript.scrollTop).toBe(23_400);
+    await waitFor(() => expect(transcript.scrollTop).toBe(23_400));
   });
 
   it("re-pins after the transcript viewport changes size", async () => {
@@ -646,6 +685,7 @@ describe("TaskChatTranscript", () => {
 
       expect(pendingFrame).not.toBeNull();
       transcript.scrollTop = 200;
+      fireEvent.wheel(transcript, { deltaY: -120 });
       fireEvent.scroll(transcript);
       expect(pendingFrame).toBeNull();
       expect(transcript.scrollTop).toBe(200);

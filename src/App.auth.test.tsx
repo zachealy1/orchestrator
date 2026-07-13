@@ -1971,6 +1971,83 @@ describe("App Codex auth", () => {
     }
   });
 
+  it("defers an older history page that finishes during active scrolling", async () => {
+    const restoreScrollMetrics = mockTranscriptScrollMetrics(24_000, 600);
+    const historicalChat = workspaceChatFixture({
+      id: 452,
+      title: "Deferred history chat",
+      turn_count: 65,
+    });
+    const historicalRuns = Array.from({ length: 65 }, (_, index) =>
+      workspaceRunFixture({
+        id: 700 + index,
+        chat_id: historicalChat.id,
+        turn_index: index + 1,
+        original_prompt: `Deferred prompt ${index + 1}`,
+        final_message: `Deferred result ${index + 1}.`,
+      }),
+    );
+    let resolveOlderPage:
+      | ((runs: ReturnType<typeof workspaceRunFixture>[]) => void)
+      | null = null;
+    const olderPage = new Promise<ReturnType<typeof workspaceRunFixture>[]>(
+      (resolve) => {
+        resolveOlderPage = resolve;
+      },
+    );
+    mocks.listWorkspaceChatsMock.mockResolvedValue([historicalChat]);
+    mocks.listChatRunsPageMock.mockImplementation(
+      async (_chatId: number, offset: number, limit: number) =>
+        offset === 25
+          ? olderPage
+          : historicalRuns.slice(offset, offset + limit),
+    );
+
+    try {
+      const { user } = await renderApp();
+      const banner = screen.getByRole("region", { name: "Selected folder" });
+      await user.click(
+        within(banner).getByRole("button", { name: /open chat history/i }),
+      );
+      const drawer = await screen.findByRole("complementary", {
+        name: "Workspace chat history",
+      });
+      await user.click(
+        within(drawer).getByRole("button", { name: /deferred history chat/i }),
+      );
+      expect(await screen.findByText("Deferred result 65.")).toBeInTheDocument();
+
+      const transcript = screen.getByLabelText("Task chat transcript");
+      await waitFor(() => expect(transcript.scrollTop).toBe(23_400));
+      const spacer = document.querySelector<HTMLElement>(
+        ".task-chat-virtual-spacer",
+      );
+      const initialHeight = Number.parseFloat(spacer?.style.height ?? "0");
+
+      transcript.scrollTop = 200;
+      fireEvent.wheel(transcript, { deltaY: -120 });
+      fireEvent.scroll(transcript);
+      await waitFor(() =>
+        expect(mocks.listChatRunsPageMock).toHaveBeenCalledTimes(2),
+      );
+
+      fireEvent.wheel(transcript, { deltaY: -120 });
+      await act(async () => {
+        resolveOlderPage?.(historicalRuns.slice(25, 45));
+        await Promise.resolve();
+      });
+      expect(Number.parseFloat(spacer?.style.height ?? "0")).toBe(initialHeight);
+
+      await waitFor(() =>
+        expect(Number.parseFloat(spacer?.style.height ?? "0")).toBeGreaterThan(
+          initialHeight,
+        ),
+      );
+    } finally {
+      restoreScrollMetrics();
+    }
+  });
+
   it("ignores a stale history load after another chat is selected", async () => {
     const firstChat = workspaceChatFixture({ id: 461, title: "Slow chat" });
     const secondChat = workspaceChatFixture({ id: 462, title: "Fast chat" });

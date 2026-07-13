@@ -1,4 +1,9 @@
-import { useVirtualizer } from "@tanstack/react-virtual";
+import {
+  measureElement as measureVirtualElement,
+  useVirtualizer,
+  type VirtualItem,
+  type Virtualizer,
+} from "@tanstack/react-virtual";
 import {
   Activity,
   BrainCircuit,
@@ -24,6 +29,7 @@ import {
 import type {
   ClipboardEvent as ReactClipboardEvent,
   MouseEvent as ReactMouseEvent,
+  RefObject,
   ReactNode,
 } from "react";
 import ReactMarkdown from "react-markdown";
@@ -36,6 +42,12 @@ import type {
 } from "../lib/codexEventReducer";
 import { contextFileExtensionLabel } from "../lib/contextFiles";
 import {
+  cacheTranscriptRowHeight,
+  estimateTranscriptRowHeight,
+  getCachedTranscriptRowHeight,
+  getTranscriptWidthBucket,
+} from "../lib/transcriptVirtualization";
+import {
   ORCHESTRATOR_PROMPT_CONTEXT_MIME,
   type CodexMessage,
   type ComposerContextFile,
@@ -44,7 +56,7 @@ import {
 const AUTO_SCROLL_BOTTOM_THRESHOLD_PX = 48;
 const HISTORY_OLDER_TURNS_THRESHOLD_PX = 240;
 const HISTORY_SCROLL_SETTLE_DELAY_MS = 120;
-const TRANSCRIPT_ROW_ESTIMATE_PX = 360;
+const TRANSCRIPT_SCROLL_IDLE_DELAY_MS = 120;
 const TRANSCRIPT_OVERSCAN_ROWS = 6;
 const EMPTY_CONTEXT_FILES: ComposerContextFile[] = [];
 
@@ -92,7 +104,305 @@ export type TranscriptHistoryOpenRequest = {
   phase: "loading" | "hydrating" | "complete";
 };
 
-type TranscriptScrollMode = "pinning" | "manual" | "settled";
+type TranscriptScrollMode =
+  | "opening-history"
+  | "following-live"
+  | "manual";
+
+type TranscriptScrollControllerOptions = {
+  transcriptRef: RefObject<HTMLElement | null>;
+  rowVirtualizer: Virtualizer<HTMLElement, HTMLDivElement>;
+  entryCount: number;
+  historyOpenRequest: TranscriptHistoryOpenRequest | null;
+  onHistoryPositionSettled?: (requestId: number) => void;
+  onScrollActivityChange?: (active: boolean) => void;
+  onScrollIdle?: (transcript: HTMLElement) => void;
+};
+
+function shouldAdjustTranscriptScrollPosition(
+  item: VirtualItem,
+  _delta: number,
+  instance: Virtualizer<HTMLElement, HTMLDivElement>,
+) {
+  return item.end <= (instance.scrollOffset ?? 0);
+}
+
+function scrollTranscriptElement(
+  offset: number,
+  {
+    adjustments = 0,
+    behavior = "auto",
+  }: { adjustments?: number; behavior?: "auto" | "smooth" | "instant" },
+  instance: Virtualizer<HTMLElement, HTMLDivElement>,
+) {
+  const transcript = instance.scrollElement;
+  if (!transcript) {
+    return;
+  }
+
+  const top = offset + adjustments;
+  if (typeof transcript.scrollTo === "function") {
+    transcript.scrollTo({
+      top,
+      behavior: behavior === "smooth" ? "smooth" : "auto",
+    });
+    return;
+  }
+
+  // Older WebKit and the test DOM do not expose Element.scrollTo.
+  transcript.scrollTop = top;
+}
+
+function useTranscriptScrollController({
+  transcriptRef,
+  rowVirtualizer,
+  entryCount,
+  historyOpenRequest,
+  onHistoryPositionSettled,
+  onScrollActivityChange,
+  onScrollIdle,
+}: TranscriptScrollControllerOptions) {
+  const modeRef = useRef<TranscriptScrollMode>("following-live");
+  const entryCountRef = useRef(entryCount);
+  const historyRequestRef = useRef(historyOpenRequest);
+  const historyRequestIdRef = useRef<number | null>(null);
+  const callbacksRef = useRef({
+    onHistoryPositionSettled,
+    onScrollActivityChange,
+    onScrollIdle,
+  });
+  const followFrameRef = useRef<number | null>(null);
+  const settlementFrameRef = useRef<number | null>(null);
+  const settlementTimeoutRef = useRef<number | null>(null);
+  const scrollIdleTimeoutRef = useRef<number | null>(null);
+  const scrollActivityRef = useRef(false);
+
+  entryCountRef.current = entryCount;
+  historyRequestRef.current = historyOpenRequest;
+  callbacksRef.current = {
+    onHistoryPositionSettled,
+    onScrollActivityChange,
+    onScrollIdle,
+  };
+
+  const clearQueuedEnd = useCallback(() => {
+    if (followFrameRef.current !== null) {
+      cancelScheduledAnimationFrame(followFrameRef.current);
+      followFrameRef.current = null;
+    }
+  }, []);
+
+  const clearSettlement = useCallback(() => {
+    if (settlementTimeoutRef.current !== null) {
+      window.clearTimeout(settlementTimeoutRef.current);
+      settlementTimeoutRef.current = null;
+    }
+    if (settlementFrameRef.current !== null) {
+      cancelScheduledAnimationFrame(settlementFrameRef.current);
+      settlementFrameRef.current = null;
+    }
+  }, []);
+
+  const setScrollActivity = useCallback((active: boolean) => {
+    if (scrollActivityRef.current === active) {
+      return;
+    }
+    scrollActivityRef.current = active;
+    callbacksRef.current.onScrollActivityChange?.(active);
+  }, []);
+
+  const scrollToTranscriptEnd = useCallback(() => {
+    if (entryCountRef.current === 0) {
+      return;
+    }
+    rowVirtualizer.scrollToEnd({ behavior: "auto" });
+  }, [rowVirtualizer]);
+
+  const queueScrollToTranscriptEnd = useCallback(() => {
+    if (followFrameRef.current !== null || modeRef.current === "manual") {
+      return;
+    }
+    followFrameRef.current = scheduleAnimationFrame(() => {
+      followFrameRef.current = null;
+      if (modeRef.current !== "manual") {
+        scrollToTranscriptEnd();
+      }
+    });
+  }, [scrollToTranscriptEnd]);
+
+  const scheduleHistorySettlement = useCallback(() => {
+    clearSettlement();
+    const request = historyRequestRef.current;
+    if (!request || request.phase !== "complete") {
+      return;
+    }
+
+    settlementTimeoutRef.current = window.setTimeout(() => {
+      settlementTimeoutRef.current = null;
+      const currentRequest = historyRequestRef.current;
+      if (
+        !currentRequest ||
+        currentRequest.requestId !== request.requestId ||
+        currentRequest.phase !== "complete"
+      ) {
+        return;
+      }
+
+      if (modeRef.current === "opening-history") {
+        scrollToTranscriptEnd();
+      }
+      settlementFrameRef.current = scheduleAnimationFrame(() => {
+        settlementFrameRef.current = null;
+        const settledRequest = historyRequestRef.current;
+        if (
+          !settledRequest ||
+          settledRequest.requestId !== request.requestId ||
+          settledRequest.phase !== "complete"
+        ) {
+          return;
+        }
+        if (modeRef.current === "opening-history") {
+          modeRef.current = "following-live";
+        }
+        callbacksRef.current.onHistoryPositionSettled?.(request.requestId);
+      });
+    }, HISTORY_SCROLL_SETTLE_DELAY_MS);
+  }, [clearSettlement, scrollToTranscriptEnd]);
+
+  const finishScrollActivity = useCallback(() => {
+    scrollIdleTimeoutRef.current = null;
+    setScrollActivity(false);
+    const transcript = transcriptRef.current;
+    if (!transcript) {
+      return;
+    }
+    if (
+      !historyRequestRef.current &&
+      isScrolledNearBottom(transcript)
+    ) {
+      modeRef.current = "following-live";
+    }
+    callbacksRef.current.onScrollIdle?.(transcript);
+  }, [setScrollActivity, transcriptRef]);
+
+  const markScrollActivity = useCallback(() => {
+    setScrollActivity(true);
+    if (scrollIdleTimeoutRef.current !== null) {
+      window.clearTimeout(scrollIdleTimeoutRef.current);
+    }
+    scrollIdleTimeoutRef.current = window.setTimeout(
+      finishScrollActivity,
+      TRANSCRIPT_SCROLL_IDLE_DELAY_MS,
+    );
+  }, [finishScrollActivity, setScrollActivity]);
+
+  const registerUserScrollIntent = useCallback(() => {
+    modeRef.current = "manual";
+    clearQueuedEnd();
+    markScrollActivity();
+    scheduleHistorySettlement();
+  }, [clearQueuedEnd, markScrollActivity, scheduleHistorySettlement]);
+
+  const handleScroll = useCallback(
+    (transcript: HTMLElement) => {
+      if (scrollActivityRef.current) {
+        markScrollActivity();
+        return;
+      }
+      if (
+        !historyRequestRef.current &&
+        modeRef.current !== "manual" &&
+        isScrolledNearBottom(transcript)
+      ) {
+        modeRef.current = "following-live";
+      }
+    },
+    [markScrollActivity],
+  );
+
+  const handleGeometryChange = useCallback(() => {
+    if (
+      modeRef.current === "opening-history" ||
+      modeRef.current === "following-live"
+    ) {
+      queueScrollToTranscriptEnd();
+    }
+    scheduleHistorySettlement();
+  }, [queueScrollToTranscriptEnd, scheduleHistorySettlement]);
+
+  const handleEntriesChanged = useCallback(
+    ({ initialLoad, appended }: { initialLoad: boolean; appended: boolean }) => {
+      if (
+        !historyRequestRef.current &&
+        modeRef.current !== "manual" &&
+        (initialLoad || appended)
+      ) {
+        modeRef.current = "following-live";
+      }
+      handleGeometryChange();
+    },
+    [handleGeometryChange],
+  );
+
+  useLayoutEffect(() => {
+    const request = historyOpenRequest;
+    if (!request) {
+      if (historyRequestIdRef.current !== null) {
+        historyRequestIdRef.current = null;
+        clearSettlement();
+        if (modeRef.current === "opening-history") {
+          modeRef.current = "following-live";
+        }
+      }
+      return;
+    }
+
+    if (historyRequestIdRef.current !== request.requestId) {
+      historyRequestIdRef.current = request.requestId;
+      modeRef.current = "opening-history";
+      clearQueuedEnd();
+      clearSettlement();
+      queueScrollToTranscriptEnd();
+    } else if (modeRef.current === "opening-history") {
+      queueScrollToTranscriptEnd();
+    }
+    scheduleHistorySettlement();
+  }, [
+    clearQueuedEnd,
+    clearSettlement,
+    historyOpenRequest,
+    queueScrollToTranscriptEnd,
+    scheduleHistorySettlement,
+  ]);
+
+  useEffect(
+    () => () => {
+      clearQueuedEnd();
+      clearSettlement();
+      if (scrollIdleTimeoutRef.current !== null) {
+        window.clearTimeout(scrollIdleTimeoutRef.current);
+      }
+      setScrollActivity(false);
+    },
+    [clearQueuedEnd, clearSettlement, setScrollActivity],
+  );
+
+  return useMemo(
+    () => ({
+      handleEntriesChanged,
+      handleGeometryChange,
+      handleScroll,
+      registerUserScrollIntent,
+      isUserScrolling: () => scrollActivityRef.current,
+    }),
+    [
+      handleEntriesChanged,
+      handleGeometryChange,
+      handleScroll,
+      registerUserScrollIntent,
+    ],
+  );
+}
 
 type Props = {
   entries: TaskChatEntry[];
@@ -107,6 +417,7 @@ type Props = {
   olderTurnsError?: string | null;
   onLoadOlderTurns?: () => void;
   onLoadHistoricalActivity?: (entry: TaskChatEntry) => void;
+  onScrollActivityChange?: (active: boolean) => void;
 };
 
 export function TaskChatTranscript({
@@ -122,6 +433,7 @@ export function TaskChatTranscript({
   olderTurnsError = null,
   onLoadOlderTurns,
   onLoadHistoricalActivity,
+  onScrollActivityChange,
 }: Props) {
   const callbacksRef = useRef({
     onResolveRequest,
@@ -130,6 +442,7 @@ export function TaskChatTranscript({
     onHistoryPositionSettled,
     onLoadOlderTurns,
     onLoadHistoricalActivity,
+    onScrollActivityChange,
   });
   callbacksRef.current = {
     onResolveRequest,
@@ -138,6 +451,7 @@ export function TaskChatTranscript({
     onHistoryPositionSettled,
     onLoadOlderTurns,
     onLoadHistoricalActivity,
+    onScrollActivityChange,
   };
 
   const stableResolveRequest = useCallback(
@@ -168,6 +482,11 @@ export function TaskChatTranscript({
       callbacksRef.current.onLoadHistoricalActivity?.(entry),
     [],
   );
+  const stableScrollActivityChange = useCallback(
+    (active: boolean) =>
+      callbacksRef.current.onScrollActivityChange?.(active),
+    [],
+  );
 
   return (
     <VirtualizedTaskChatTranscript
@@ -187,6 +506,9 @@ export function TaskChatTranscript({
       onLoadHistoricalActivity={
         onLoadHistoricalActivity ? stableLoadHistoricalActivity : undefined
       }
+      onScrollActivityChange={
+        onScrollActivityChange ? stableScrollActivityChange : undefined
+      }
     />
   );
 }
@@ -204,47 +526,94 @@ const VirtualizedTaskChatTranscript = memo(function VirtualizedTaskChatTranscrip
   olderTurnsError = null,
   onLoadOlderTurns,
   onLoadHistoricalActivity,
+  onScrollActivityChange,
 }: Props) {
-  const transcriptRef = useRef<HTMLDivElement | null>(null);
-  const liveFollowRef = useRef(true);
-  const historyRequestRef = useRef<TranscriptHistoryOpenRequest | null>(
-    historyOpenRequest,
+  const transcriptRef = useRef<HTMLElement | null>(null);
+  const stableTranscriptWidthRef = useRef(1_024);
+  const pendingTranscriptWidthRef = useRef(1_024);
+  const transcriptWidthChangingRef = useRef(false);
+  const transcriptWidthSettleTimeoutRef = useRef<number | null>(null);
+  const pendingRowMeasurementsRef = useRef(
+    new Map<string, { height: number; width: number }>(),
   );
-  const historyRequestIdRef = useRef<number | null>(null);
-  const historyScrollModeRef = useRef<TranscriptScrollMode>("settled");
-  const onHistoryPositionSettledRef = useRef(onHistoryPositionSettled);
-  const programmaticScrollRef = useRef(false);
-  const followFrameRef = useRef<number | null>(null);
-  const programmaticReleaseFrameRef = useRef<number | null>(null);
-  const historySettleFrameRef = useRef<number | null>(null);
-  const historySettleTimeoutRef = useRef<number | null>(null);
+  const geometryChangeHandlerRef = useRef<() => void>(() => undefined);
   const previousEntriesRef = useRef({
     count: 0,
     lastId: null as string | null,
     totalSize: 0,
     entries: entries as TaskChatEntry[],
   });
-  const prependAnchorRef = useRef<{
-    entryCount: number;
-    scrollHeight: number;
-    scrollTop: number;
-  } | null>(null);
-  const prependAnchorFrameRef = useRef<number | null>(null);
   const olderRequestPendingRef = useRef(false);
   const [editingEntryId, setEditingEntryId] = useState<string | null>(null);
   const [editingPrompt, setEditingPrompt] = useState("");
-  historyRequestRef.current = historyOpenRequest;
-  onHistoryPositionSettledRef.current = onHistoryPositionSettled;
+
+  const measureTranscriptRow = useCallback(
+    (
+      element: HTMLDivElement,
+      resizeEntry: ResizeObserverEntry | undefined,
+      instance: Virtualizer<HTMLElement, HTMLDivElement>,
+    ) => {
+      const measuredHeight = measureVirtualElement(
+        element,
+        resizeEntry,
+        instance,
+      );
+      const index = instance.indexFromElement(element);
+      const chatEntry = entries[index];
+      if (!chatEntry) {
+        return measuredHeight;
+      }
+
+      if (transcriptWidthChangingRef.current) {
+        pendingRowMeasurementsRef.current.set(chatEntry.clientId, {
+          height: measuredHeight,
+          width: pendingTranscriptWidthRef.current,
+        });
+        return (
+          instance.itemSizeCache.get(chatEntry.clientId) ??
+          getCachedTranscriptRowHeight(
+            chatEntry,
+            stableTranscriptWidthRef.current,
+          ) ??
+          estimateTranscriptRowHeight(
+            chatEntry,
+            stableTranscriptWidthRef.current,
+          )
+        );
+      }
+
+      cacheTranscriptRowHeight(
+        chatEntry,
+        stableTranscriptWidthRef.current,
+        measuredHeight,
+      );
+      geometryChangeHandlerRef.current();
+      return measuredHeight;
+    },
+    [entries],
+  );
 
   const rowVirtualizer = useVirtualizer({
     count: entries.length,
     getScrollElement: () => transcriptRef.current,
-    estimateSize: () => TRANSCRIPT_ROW_ESTIMATE_PX,
+    scrollToFn: scrollTranscriptElement,
+    estimateSize: (index) => {
+      const entry = entries[index];
+      return entry
+        ? estimateTranscriptRowHeight(
+            entry,
+            stableTranscriptWidthRef.current,
+          )
+        : 180;
+    },
+    measureElement: measureTranscriptRow,
     overscan: TRANSCRIPT_OVERSCAN_ROWS,
     anchorTo: "end",
     followOnAppend: false,
     scrollEndThreshold: AUTO_SCROLL_BOTTOM_THRESHOLD_PX,
     useAnimationFrameWithResizeObserver: true,
+    directDomUpdates: true,
+    directDomUpdatesMode: "transform",
     getItemKey: useCallback(
       (index: number) => entries[index]?.clientId ?? index,
       [entries],
@@ -254,126 +623,19 @@ const VirtualizedTaskChatTranscript = memo(function VirtualizedTaskChatTranscrip
       height: 720,
     },
   });
+  rowVirtualizer.shouldAdjustScrollPositionOnItemSizeChange =
+    shouldAdjustTranscriptScrollPosition;
 
   const virtualItems = rowVirtualizer.getVirtualItems();
+  const usingFallbackRows = virtualItems.length === 0;
   const renderedRows =
-    virtualItems.length > 0
+    !usingFallbackRows
       ? virtualItems
-      : buildFallbackTranscriptRows(entries.length);
+      : buildFallbackTranscriptRows(entries);
   const totalSize = rowVirtualizer.getTotalSize();
 
-  const clearQueuedFollow = useCallback(() => {
-    if (followFrameRef.current !== null) {
-      cancelScheduledAnimationFrame(followFrameRef.current);
-      followFrameRef.current = null;
-    }
-  }, []);
-
-  const clearHistorySettlement = useCallback(() => {
-    if (historySettleTimeoutRef.current !== null) {
-      window.clearTimeout(historySettleTimeoutRef.current);
-      historySettleTimeoutRef.current = null;
-    }
-    if (historySettleFrameRef.current !== null) {
-      cancelScheduledAnimationFrame(historySettleFrameRef.current);
-      historySettleFrameRef.current = null;
-    }
-  }, []);
-
-  const scrollToTranscriptEnd = useCallback(() => {
-    const transcript = transcriptRef.current;
-    if (!transcript || entries.length === 0) {
-      return;
-    }
-
-    programmaticScrollRef.current = true;
-    rowVirtualizer.scrollToIndex(entries.length - 1, { align: "end" });
-    const maxScrollTop = Math.max(
-      0,
-      transcript.scrollHeight - transcript.clientHeight,
-    );
-    if (Number.isFinite(maxScrollTop)) {
-      transcript.scrollTop = maxScrollTop;
-    }
-
-    if (programmaticReleaseFrameRef.current !== null) {
-      cancelScheduledAnimationFrame(programmaticReleaseFrameRef.current);
-    }
-    programmaticReleaseFrameRef.current = scheduleAnimationFrame(() => {
-      programmaticReleaseFrameRef.current = null;
-      programmaticScrollRef.current = false;
-    });
-  }, [entries.length, rowVirtualizer]);
-
-  const queueScrollToTranscriptEnd = useCallback(() => {
-    if (followFrameRef.current !== null) {
-      return;
-    }
-    followFrameRef.current = scheduleAnimationFrame(() => {
-      followFrameRef.current = null;
-      const request = historyRequestRef.current;
-      const shouldPinHistory =
-        request !== null && historyScrollModeRef.current === "pinning";
-      if (!shouldPinHistory && !liveFollowRef.current) {
-        return;
-      }
-      scrollToTranscriptEnd();
-    });
-  }, [scrollToTranscriptEnd]);
-
-  const scheduleHistorySettlement = useCallback(() => {
-    clearHistorySettlement();
-    const request = historyRequestRef.current;
-    if (!request || request.phase !== "complete") {
-      return;
-    }
-
-    historySettleTimeoutRef.current = window.setTimeout(() => {
-      historySettleTimeoutRef.current = null;
-      const currentRequest = historyRequestRef.current;
-      if (
-        !currentRequest ||
-        currentRequest.requestId !== request.requestId ||
-        currentRequest.phase !== "complete"
-      ) {
-        return;
-      }
-
-      if (historyScrollModeRef.current === "pinning") {
-        scrollToTranscriptEnd();
-      }
-      historySettleFrameRef.current = scheduleAnimationFrame(() => {
-        historySettleFrameRef.current = null;
-        const settledRequest = historyRequestRef.current;
-        if (
-          !settledRequest ||
-          settledRequest.requestId !== request.requestId ||
-          settledRequest.phase !== "complete"
-        ) {
-          return;
-        }
-        historyScrollModeRef.current = "settled";
-        onHistoryPositionSettledRef.current?.(request.requestId);
-      });
-    }, HISTORY_SCROLL_SETTLE_DELAY_MS);
-  }, [clearHistorySettlement, scrollToTranscriptEnd]);
-
-  const releaseHistoryPin = useCallback(() => {
-    if (
-      historyRequestRef.current &&
-      historyScrollModeRef.current === "pinning"
-    ) {
-      historyScrollModeRef.current = "manual";
-    }
-    programmaticScrollRef.current = false;
-    liveFollowRef.current = false;
-    clearQueuedFollow();
-  }, [clearQueuedFollow]);
-
   const requestOlderTurns = useCallback((retry = false) => {
-    const transcript = transcriptRef.current;
     if (
-      !transcript ||
       !hasOlderTurns ||
       olderRequestPendingRef.current ||
       (!retry && olderTurnsStatus !== "idle") ||
@@ -384,49 +646,34 @@ const VirtualizedTaskChatTranscript = memo(function VirtualizedTaskChatTranscrip
     }
 
     olderRequestPendingRef.current = true;
-    prependAnchorRef.current = {
-      entryCount: entries.length,
-      scrollHeight: transcript.scrollHeight,
-      scrollTop: transcript.scrollTop,
-    };
     onLoadOlderTurns();
-  }, [entries.length, hasOlderTurns, olderTurnsStatus, onLoadOlderTurns]);
+  }, [hasOlderTurns, olderTurnsStatus, onLoadOlderTurns]);
+
+  const handleScrollIdle = useCallback(
+    (transcript: HTMLElement) => {
+      if (transcript.scrollTop <= HISTORY_OLDER_TURNS_THRESHOLD_PX) {
+        requestOlderTurns();
+      }
+    },
+    [requestOlderTurns],
+  );
+
+  const scrollController = useTranscriptScrollController({
+    transcriptRef,
+    rowVirtualizer,
+    entryCount: entries.length,
+    historyOpenRequest,
+    onHistoryPositionSettled,
+    onScrollActivityChange,
+    onScrollIdle: handleScrollIdle,
+  });
+  geometryChangeHandlerRef.current = scrollController.handleGeometryChange;
 
   useEffect(() => {
     if (olderTurnsStatus !== "loading") {
       olderRequestPendingRef.current = false;
     }
   }, [entries.length, olderTurnsStatus]);
-
-  useLayoutEffect(() => {
-    const request = historyOpenRequest;
-    if (!request) {
-      if (historyRequestIdRef.current !== null) {
-        historyRequestIdRef.current = null;
-        historyScrollModeRef.current = "settled";
-        clearHistorySettlement();
-      }
-      return;
-    }
-
-    if (historyRequestIdRef.current !== request.requestId) {
-      historyRequestIdRef.current = request.requestId;
-      historyScrollModeRef.current = "pinning";
-      liveFollowRef.current = true;
-      clearHistorySettlement();
-      scrollToTranscriptEnd();
-      queueScrollToTranscriptEnd();
-    } else if (historyScrollModeRef.current === "pinning") {
-      queueScrollToTranscriptEnd();
-    }
-    scheduleHistorySettlement();
-  }, [
-    clearHistorySettlement,
-    historyOpenRequest,
-    queueScrollToTranscriptEnd,
-    scheduleHistorySettlement,
-    scrollToTranscriptEnd,
-  ]);
 
   useLayoutEffect(() => {
     const previous = previousEntriesRef.current;
@@ -443,61 +690,12 @@ const VirtualizedTaskChatTranscript = memo(function VirtualizedTaskChatTranscrip
       entries,
     };
 
-    const prependAnchor = prependAnchorRef.current;
-    if (prependAnchor && entries.length > prependAnchor.entryCount) {
-      prependAnchorRef.current = null;
-      programmaticScrollRef.current = true;
-      const firstHeightDelta = Math.max(
-        0,
-        (transcriptRef.current?.scrollHeight ?? prependAnchor.scrollHeight) -
-          prependAnchor.scrollHeight,
-      );
-      if (transcriptRef.current) {
-        transcriptRef.current.scrollTop = prependAnchor.scrollTop + firstHeightDelta;
-      }
-      if (prependAnchorFrameRef.current !== null) {
-        cancelScheduledAnimationFrame(prependAnchorFrameRef.current);
-      }
-      prependAnchorFrameRef.current = scheduleAnimationFrame(() => {
-        prependAnchorFrameRef.current = null;
-        const transcript = transcriptRef.current;
-        if (transcript) {
-          const measuredDelta = Math.max(
-            0,
-            transcript.scrollHeight - prependAnchor.scrollHeight,
-          );
-          transcript.scrollTop = prependAnchor.scrollTop + measuredDelta;
-        }
-        programmaticScrollRef.current = false;
-      });
-      return;
-    }
-
-    const request = historyRequestRef.current;
-    if (request) {
-      if (historyScrollModeRef.current === "pinning") {
-        scrollToTranscriptEnd();
-        queueScrollToTranscriptEnd();
-      }
-      scheduleHistorySettlement();
-      return;
-    }
-
-    if (initialLoad || appended) {
-      liveFollowRef.current = true;
-    }
-    if (
-      entries.length > 0 &&
-      liveFollowRef.current &&
-      (initialLoad || appended || entriesChanged || totalSizeChanged)
-    ) {
-      queueScrollToTranscriptEnd();
+    if (initialLoad || appended || entriesChanged || totalSizeChanged) {
+      scrollController.handleEntriesChanged({ initialLoad, appended });
     }
   }, [
     entries,
-    queueScrollToTranscriptEnd,
-    scheduleHistorySettlement,
-    scrollToTranscriptEnd,
+    scrollController,
     totalSize,
   ]);
 
@@ -507,42 +705,58 @@ const VirtualizedTaskChatTranscript = memo(function VirtualizedTaskChatTranscrip
       return;
     }
 
-    let previousWidth = transcript.clientWidth;
+    let previousWidth = stableTranscriptWidthRef.current;
     let previousHeight = transcript.clientHeight;
     const observer = new ResizeObserver(() => {
       const width = transcript.clientWidth;
       const height = transcript.clientHeight;
-      if (width === previousWidth && height === previousHeight) {
+      const widthChanged = width > 0 && width !== previousWidth;
+      const heightChanged = height !== previousHeight;
+      if (!widthChanged && !heightChanged) {
         return;
       }
-      previousWidth = width;
       previousHeight = height;
 
-      if (
-        (historyRequestRef.current &&
-          historyScrollModeRef.current === "pinning") ||
-        (!historyRequestRef.current && liveFollowRef.current)
-      ) {
-        queueScrollToTranscriptEnd();
+      if (widthChanged) {
+        previousWidth = width;
+        pendingTranscriptWidthRef.current = getTranscriptWidthBucket(width);
+        transcriptWidthChangingRef.current = true;
+        if (transcriptWidthSettleTimeoutRef.current !== null) {
+          window.clearTimeout(transcriptWidthSettleTimeoutRef.current);
+        }
+        transcriptWidthSettleTimeoutRef.current = window.setTimeout(() => {
+          transcriptWidthSettleTimeoutRef.current = null;
+          stableTranscriptWidthRef.current = pendingTranscriptWidthRef.current;
+          transcriptWidthChangingRef.current = false;
+          rowVirtualizer.measure();
+          for (const [clientId, measurement] of pendingRowMeasurementsRef.current) {
+            const index = entries.findIndex((entry) => entry.clientId === clientId);
+            const entry = entries[index];
+            if (!entry || index < 0) {
+              continue;
+            }
+            cacheTranscriptRowHeight(entry, measurement.width, measurement.height);
+            rowVirtualizer.resizeItem(index, measurement.height);
+          }
+          pendingRowMeasurementsRef.current.clear();
+          scrollController.handleGeometryChange();
+        }, HISTORY_SCROLL_SETTLE_DELAY_MS);
       }
-      scheduleHistorySettlement();
+      if (heightChanged) {
+        scrollController.handleGeometryChange();
+      }
     });
     observer.observe(transcript);
     return () => observer.disconnect();
-  }, [queueScrollToTranscriptEnd, scheduleHistorySettlement]);
+  }, [entries, rowVirtualizer, scrollController]);
 
   useEffect(
     () => () => {
-      clearQueuedFollow();
-      clearHistorySettlement();
-      if (programmaticReleaseFrameRef.current !== null) {
-        cancelScheduledAnimationFrame(programmaticReleaseFrameRef.current);
-      }
-      if (prependAnchorFrameRef.current !== null) {
-        cancelScheduledAnimationFrame(prependAnchorFrameRef.current);
+      if (transcriptWidthSettleTimeoutRef.current !== null) {
+        window.clearTimeout(transcriptWidthSettleTimeoutRef.current);
       }
     },
-    [clearHistorySettlement, clearQueuedFollow],
+    [],
   );
 
   useEffect(() => {
@@ -554,13 +768,14 @@ const VirtualizedTaskChatTranscript = memo(function VirtualizedTaskChatTranscrip
       if (
         transcript &&
         transcript.scrollTop <= HISTORY_OLDER_TURNS_THRESHOLD_PX &&
-        transcript.scrollHeight <= transcript.clientHeight + 1
+        transcript.scrollHeight <= transcript.clientHeight + 1 &&
+        !scrollController.isUserScrolling()
       ) {
         requestOlderTurns();
       }
     });
     return () => cancelScheduledAnimationFrame(frame);
-  }, [hasOlderTurns, olderTurnsStatus, requestOlderTurns]);
+  }, [hasOlderTurns, olderTurnsStatus, requestOlderTurns, scrollController]);
 
   useEffect(() => {
     if (
@@ -602,41 +817,22 @@ const VirtualizedTaskChatTranscript = memo(function VirtualizedTaskChatTranscrip
       tabIndex={0}
       onKeyDownCapture={(event) => {
         if (
-          event.key === "ArrowUp" ||
-          event.key === "PageUp" ||
-          event.key === "Home" ||
-          (event.key === " " && event.shiftKey)
+          event.target === event.currentTarget &&
+          isTranscriptScrollKey(event.key)
         ) {
-          releaseHistoryPin();
+          scrollController.registerUserScrollIntent();
         }
       }}
       onPointerDownCapture={(event) => {
         const bounds = event.currentTarget.getBoundingClientRect();
         if (event.clientX >= bounds.right - 20) {
-          releaseHistoryPin();
+          scrollController.registerUserScrollIntent();
         }
       }}
-      onScroll={(event) => {
-        if (programmaticScrollRef.current) {
-          return;
-        }
-        const shouldFollow = isScrolledNearBottom(event.currentTarget);
-        liveFollowRef.current = shouldFollow;
-        if (!shouldFollow && !historyRequestRef.current) {
-          clearQueuedFollow();
-        }
-        if (
-          event.currentTarget.scrollTop <= HISTORY_OLDER_TURNS_THRESHOLD_PX
-        ) {
-          requestOlderTurns();
-        }
-      }}
-      onTouchMoveCapture={releaseHistoryPin}
-      onWheelCapture={(event) => {
-        if (event.deltaY < 0) {
-          releaseHistoryPin();
-        }
-      }}
+      onScroll={(event) => scrollController.handleScroll(event.currentTarget)}
+      onTouchStartCapture={scrollController.registerUserScrollIntent}
+      onTouchMoveCapture={scrollController.registerUserScrollIntent}
+      onWheelCapture={scrollController.registerUserScrollIntent}
     >
       {olderTurnsStatus === "loading" ? (
         <div className="history-older-turns-status" role="status">
@@ -652,7 +848,7 @@ const VirtualizedTaskChatTranscript = memo(function VirtualizedTaskChatTranscrip
       ) : null}
       <div
         className="task-chat-virtual-spacer"
-        style={{ height: totalSize }}
+        ref={rowVirtualizer.containerRef}
       >
         {renderedRows.map((virtualItem) => {
           const entry = entries[virtualItem.index];
@@ -672,7 +868,11 @@ const VirtualizedTaskChatTranscript = memo(function VirtualizedTaskChatTranscrip
               data-index={virtualItem.index}
               key={virtualItem.key}
               ref={rowVirtualizer.measureElement}
-              style={{ transform: `translateY(${virtualItem.start}px)` }}
+              style={
+                usingFallbackRows
+                  ? { transform: `translateY(${virtualItem.start}px)` }
+                  : undefined
+              }
             >
               <TaskChatTurn
                 editable={editable}
@@ -695,18 +895,39 @@ const VirtualizedTaskChatTranscript = memo(function VirtualizedTaskChatTranscrip
   );
 });
 
-function buildFallbackTranscriptRows(count: number) {
-  const visibleCount = Math.min(count, TRANSCRIPT_OVERSCAN_ROWS * 2 + 1);
-  const startIndex = Math.max(0, count - visibleCount);
+function buildFallbackTranscriptRows(entries: TaskChatEntry[]) {
+  const visibleCount = Math.min(entries.length, TRANSCRIPT_OVERSCAN_ROWS * 2 + 1);
+  const startIndex = Math.max(0, entries.length - visibleCount);
+  const width = 1_024;
+  let start = entries
+    .slice(0, startIndex)
+    .reduce(
+      (total, entry) => total + estimateTranscriptRowHeight(entry, width),
+      0,
+    );
 
   return Array.from({ length: visibleCount }, (_, offset) => {
     const index = startIndex + offset;
-    return {
+    const row = {
       key: `transcript-fallback-${index}`,
       index,
-      start: index * TRANSCRIPT_ROW_ESTIMATE_PX,
+      start,
     };
+    start += estimateTranscriptRowHeight(entries[index], width);
+    return row;
   });
+}
+
+function isTranscriptScrollKey(key: string) {
+  return (
+    key === "ArrowUp" ||
+    key === "ArrowDown" ||
+    key === "PageUp" ||
+    key === "PageDown" ||
+    key === "Home" ||
+    key === "End" ||
+    key === " "
+  );
 }
 
 const TaskChatTurn = memo(function TaskChatTurn({
