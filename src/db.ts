@@ -7,6 +7,7 @@ import type {
   CodexAccountProfile,
   CodexAccountStatus,
   PreflightReport,
+  HistoryRunSummary,
   RunListItem,
   RunRecord,
   TaskRecord,
@@ -752,13 +753,12 @@ export async function listChatRunsPage(
   limit: number,
 ) {
   const db = await getDatabase();
-  return db.select<RunListItem[]>(
+  return db.select<HistoryRunSummary[]>(
     `SELECT runs.id, runs.task_id, runs.workspace_id, runs.chat_id, runs.turn_index,
       runs.codex_thread_id, runs.codex_turn_id,
-      runs.account_id, runs.account_label, runs.account_email, runs.model, runs.model_provider,
-      runs.sandbox, runs.approval_policy, runs.status,
+      runs.status,
       runs.started_at, runs.completed_at, runs.duration_ms, runs.final_message, runs.error,
-      tasks.original_prompt, tasks.improved_prompt, tasks.route_recommendation, tasks.budget_tokens,
+      tasks.original_prompt,
       latest_tokens.total_tokens AS latest_total_tokens,
       latest_tokens.model_context_window AS latest_model_context_window
      FROM runs

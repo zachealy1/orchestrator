@@ -36,6 +36,7 @@ const mocks = vi.hoisted(() => ({
   resolveDefaultCodexServerRequestMock: vi.fn(),
   codexRpcMock: vi.fn(),
   codexDefaultProfileRpcMock: vi.fn(),
+  loadDefaultProfileTurnActivityMock: vi.fn(),
   listWorkspacesMock: vi.fn(),
   listCodexAccountsMock: vi.fn(),
   listDuplicateProfilesPendingCleanupMock: vi.fn(),
@@ -106,6 +107,7 @@ vi.mock("./codexClient", () => ({
   listCodexModels: mocks.listCodexModelsMock,
   listCodexSkills: mocks.listCodexSkillsMock,
   listWorkspaceDirectory: mocks.listWorkspaceDirectoryMock,
+  loadDefaultProfileTurnActivity: mocks.loadDefaultProfileTurnActivityMock,
   logoutCodexAccount: mocks.logoutCodexAccountMock,
   pushWorkspaceBranch: mocks.pushWorkspaceBranchMock,
   readCodexAccount: mocks.readCodexAccountMock,
@@ -369,6 +371,11 @@ function prepareDefaults() {
   mocks.resolveDefaultCodexServerRequestMock.mockResolvedValue(undefined);
   mocks.codexRpcMock.mockResolvedValue(undefined);
   mocks.codexDefaultProfileRpcMock.mockResolvedValue(undefined);
+  mocks.loadDefaultProfileTurnActivityMock.mockResolvedValue({
+    commands: [],
+    editedFiles: [],
+    nextCursor: null,
+  });
   mocks.connectDefaultCodexProfileMock.mockResolvedValue({
     pid: 500,
     alreadyConnected: false,
@@ -1899,7 +1906,7 @@ describe("App Codex auth", () => {
     expect(within(transcript).getByText("1,280 tokens")).toBeInTheDocument();
   });
 
-  it("closes history immediately and progressively hydrates a large chat", async () => {
+  it("closes history immediately and loads older large-chat turns near the top", async () => {
     const restoreScrollMetrics = mockTranscriptScrollMetrics(24_000, 600);
     const historicalChat = workspaceChatFixture({
       id: 451,
@@ -1942,16 +1949,20 @@ describe("App Codex auth", () => {
       expect(await screen.findByText("Result 65.")).toBeInTheDocument();
       expect(mocks.listChatRunsPageMock).toHaveBeenNthCalledWith(1, 451, 45, 20);
 
-      await waitFor(() =>
-        expect(mocks.listChatRunsPageMock).toHaveBeenCalledTimes(4),
-      );
-      expect(mocks.listChatRunsPageMock.mock.calls.slice(1)).toEqual([
-        [451, 25, 20],
-        [451, 5, 20],
-        [451, 0, 5],
-      ]);
       const transcript = screen.getByLabelText("Task chat transcript");
       await waitFor(() => expect(transcript.scrollTop).toBe(23_400));
+      expect(mocks.listChatRunsPageMock).toHaveBeenCalledTimes(1);
+
+      await act(async () => {
+        await new Promise((resolve) => window.setTimeout(resolve, 180));
+      });
+      transcript.scrollTop = 200;
+      fireEvent.wheel(transcript, { deltaY: -120 });
+      fireEvent.scroll(transcript);
+      await waitFor(() =>
+        expect(mocks.listChatRunsPageMock).toHaveBeenCalledTimes(2),
+      );
+      expect(mocks.listChatRunsPageMock).toHaveBeenNthCalledWith(2, 451, 25, 20);
       expect(document.querySelectorAll(".task-chat-virtual-row").length).toBeLessThan(
         40,
       );
@@ -2165,7 +2176,7 @@ describe("App Codex auth", () => {
         threadId: "external-thread-1",
         limit: 20,
         sortDirection: "desc",
-        itemsView: "full",
+        itemsView: "summary",
       }),
     );
     expect(
@@ -2173,6 +2184,30 @@ describe("App Codex auth", () => {
         ([method]) => method === "thread/read",
       ),
     ).toBe(false);
+
+    expect(mocks.loadDefaultProfileTurnActivityMock).not.toHaveBeenCalled();
+    mocks.loadDefaultProfileTurnActivityMock.mockResolvedValueOnce({
+      commands: [
+        {
+          id: "command-1",
+          command: "npm test -- --run",
+          status: "completed",
+          durationMs: 1200,
+        },
+      ],
+      editedFiles: [],
+      nextCursor: null,
+    });
+    await user.click(within(transcript).getByLabelText("Run trace"));
+    await waitFor(() =>
+      expect(mocks.loadDefaultProfileTurnActivityMock).toHaveBeenCalledWith({
+        threadId: "external-thread-1",
+        turnId: "external-turn-1",
+        cursor: null,
+        limit: 50,
+      }),
+    );
+    expect(await within(transcript).findByText("Ran 1 command")).toBeInTheDocument();
 
     await user.type(screen.getByLabelText("Prompt"), "Continue external thread");
     await user.click(screen.getByRole("button", { name: /run codex/i }));
@@ -2197,6 +2232,54 @@ describe("App Codex auth", () => {
         turnIndex: 2,
       }),
     );
+  });
+
+  it("shows upgrade guidance instead of falling back to unbounded external history", async () => {
+    const externalChat = {
+      ...workspaceChatFixture({
+        id: 502,
+        title: "Unsupported external history",
+        codex_thread_id: "external-thread-unsupported",
+        origin: "codex_external",
+        profile_key: "default",
+        external_thread_id: "external-thread-unsupported",
+        source_kind: "vscode",
+      }),
+      account_id: null,
+      account_label: null,
+      account_email: null,
+    };
+    mocks.listWorkspaceChatsMock.mockResolvedValue([externalChat]);
+    mocks.codexDefaultProfileRpcMock.mockImplementation(async (method: string) => {
+      if (method === "thread/list") {
+        return { threads: [] };
+      }
+      if (method === "thread/turns/list") {
+        throw new Error("method not found");
+      }
+      return {};
+    });
+
+    const { user } = await renderApp();
+    const banner = screen.getByRole("region", { name: "Selected folder" });
+    await user.click(
+      within(banner).getByRole("button", { name: /open chat history/i }),
+    );
+    const drawer = await screen.findByRole("complementary", {
+      name: "Workspace chat history",
+    });
+    await user.click(
+      within(drawer).getByRole("button", { name: /unsupported external history/i }),
+    );
+
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "Paged Codex history is unavailable. Update Codex and try again.",
+    );
+    expect(
+      mocks.codexDefaultProfileRpcMock.mock.calls.some(
+        ([method]) => method === "thread/read",
+      ),
+    ).toBe(false);
   });
 
   it("opens a chat history row with keyboard activation", async () => {

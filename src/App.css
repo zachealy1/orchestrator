@@ -1656,6 +1656,7 @@ button.account-switcher-item:hover:not(:disabled) {
 }
 
 .task-chat-transcript {
+  position: relative;
   display: block;
   flex: 1 1 auto;
   width: 100%;
@@ -1667,6 +1668,49 @@ button.account-switcher-item:hover:not(:disabled) {
   padding: 4px var(--task-hero-inline-padding);
 }
 
+.history-older-turns-status {
+  position: sticky;
+  top: 4px;
+  z-index: 4;
+  display: flex;
+  width: fit-content;
+  max-width: calc(100% - 24px);
+  align-items: center;
+  gap: 8px;
+  margin: 0 auto -30px;
+  border-radius: 6px;
+  background: var(--color-component-background);
+  color: var(--color-text-secondary);
+  box-shadow: 0 4px 16px rgb(var(--shadow-rgb) / 0.14);
+  font-size: 0.78rem;
+  padding: 6px 9px;
+}
+
+.history-older-turns-status.error {
+  color: var(--color-error);
+}
+
+.history-older-turns-status button,
+.historical-activity-status button,
+.historical-activity-more {
+  min-height: 28px;
+  border: 0;
+  border-radius: 5px;
+  background: var(--color-button-secondary);
+  color: var(--color-button-secondary-text);
+  box-shadow: none;
+  padding: 4px 8px;
+}
+
+.history-older-turns-status button:hover,
+.historical-activity-status button:hover,
+.historical-activity-more:hover {
+  background: var(--color-button-active);
+  color: var(--color-button-secondary-text);
+  box-shadow: none;
+  transform: none;
+}
+
 .task-chat-loading {
   display: grid;
   flex: 1 1 auto;
@@ -1674,6 +1718,14 @@ button.account-switcher-item:hover:not(:disabled) {
   min-height: 0;
   place-items: center;
   padding: 4px var(--task-hero-inline-padding);
+}
+
+.history-chat-load-error {
+  max-width: 620px;
+  margin: 0;
+  color: var(--color-error);
+  line-height: 1.5;
+  text-align: center;
 }
 
 .task-chat-virtual-spacer {
@@ -2144,6 +2196,23 @@ summary.run-live-metrics::-webkit-details-marker {
 
 .stream-trace .stream-event-list {
   margin-top: 18px;
+}
+
+.historical-activity-status {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 14px 0 0;
+  color: var(--color-text-secondary);
+  font-size: 0.82rem;
+}
+
+.historical-activity-status.error {
+  color: var(--color-error);
+}
+
+.historical-activity-more {
+  margin-top: 12px;
 }
 
 .file-preview-drawer {

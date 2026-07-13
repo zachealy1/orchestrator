@@ -193,6 +193,27 @@ export type RunListItem = RunRecord & {
   latest_model_context_window: number | null;
 };
 
+export type HistoryRunSummary = Pick<
+  RunRecord,
+  | "id"
+  | "task_id"
+  | "workspace_id"
+  | "chat_id"
+  | "turn_index"
+  | "codex_thread_id"
+  | "codex_turn_id"
+  | "status"
+  | "started_at"
+  | "completed_at"
+  | "duration_ms"
+  | "final_message"
+  | "error"
+> & {
+  original_prompt: string;
+  latest_total_tokens: number | null;
+  latest_model_context_window: number | null;
+};
+
 export type ChatOrigin = "orchestrator" | "codex_external";
 export type CodexProfileKey = `account:${number}` | "default";
 

@@ -1,5 +1,9 @@
 import { invoke } from "@tauri-apps/api/core";
 import type {
+  RunCommandActivity,
+  RunEditedFile,
+} from "./lib/codexEventReducer";
+import type {
   CodexAccountResponse,
   CodexConnectResult,
   CodexLoginResponse,
@@ -44,6 +48,29 @@ export function codexRpc<T>(accountId: number, method: string, params: unknown =
 
 export function codexDefaultProfileRpc<T>(method: string, params: unknown = {}) {
   return invoke<T>("codex_default_profile_rpc", { method, params });
+}
+
+export type HistoricalTurnActivityResponse = {
+  commands: Array<Omit<RunCommandActivity, "output">>;
+  editedFiles: RunEditedFile[];
+  nextCursor: string | null;
+};
+
+export function loadDefaultProfileTurnActivity(input: {
+  threadId: string;
+  turnId: string;
+  cursor?: string | null;
+  limit?: number;
+}) {
+  return invoke<HistoricalTurnActivityResponse>(
+    "codex_default_profile_turn_activity",
+    {
+      threadId: input.threadId,
+      turnId: input.turnId,
+      cursor: input.cursor ?? null,
+      limit: input.limit ?? 50,
+    },
+  );
 }
 
 export function resolveCodexServerRequest(

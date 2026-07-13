@@ -76,6 +76,62 @@ describe("TaskChatTranscript", () => {
     );
   });
 
+  it("loads one older page near the top and dedupes repeated scroll events", () => {
+    const onLoadOlderTurns = vi.fn();
+    render(
+      <TaskChatTranscript
+        entries={Array.from({ length: 20 }, (_, index) => historyEntry(index + 21))}
+        hasOlderTurns
+        olderTurnsStatus="idle"
+        onLoadOlderTurns={onLoadOlderTurns}
+        onResolveRequest={vi.fn()}
+      />,
+    );
+    const transcript = screen.getByLabelText("Task chat transcript");
+    setElementScrollMetrics(transcript, {
+      scrollHeight: 8_000,
+      clientHeight: 600,
+    });
+
+    transcript.scrollTop = 260;
+    fireEvent.scroll(transcript);
+    expect(onLoadOlderTurns).not.toHaveBeenCalled();
+
+    transcript.scrollTop = 200;
+    fireEvent.scroll(transcript);
+    fireEvent.scroll(transcript);
+    expect(onLoadOlderTurns).toHaveBeenCalledTimes(1);
+  });
+
+  it("loads external historical activity only when its trace is expanded", async () => {
+    const onLoadHistoricalActivity = vi.fn();
+    const entry = {
+      ...historyEntry(1),
+      historicalActivity: {
+        profileKey: "default" as const,
+        threadId: "thread-1",
+        turnId: "turn-1",
+        status: "available" as const,
+        nextCursor: null,
+        error: null,
+      },
+    };
+    render(
+      <TaskChatTranscript
+        entries={[entry]}
+        onLoadHistoricalActivity={onLoadHistoricalActivity}
+        onResolveRequest={vi.fn()}
+      />,
+    );
+
+    expect(onLoadHistoricalActivity).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByLabelText("Run trace"));
+    await waitFor(() =>
+      expect(onLoadHistoricalActivity).toHaveBeenCalledTimes(1),
+    );
+    expect(onLoadHistoricalActivity).toHaveBeenCalledWith(entry);
+  });
+
   it("stays at the most recent turn when older history pages are prepended", () => {
     const latestEntries = Array.from({ length: 20 }, (_, index) =>
       historyEntry(index + 46),

@@ -42,6 +42,7 @@ import {
 } from "../types";
 
 const AUTO_SCROLL_BOTTOM_THRESHOLD_PX = 48;
+const HISTORY_OLDER_TURNS_THRESHOLD_PX = 240;
 const HISTORY_SCROLL_SETTLE_DELAY_MS = 120;
 const TRANSCRIPT_ROW_ESTIMATE_PX = 360;
 const TRANSCRIPT_OVERSCAN_ROWS = 6;
@@ -76,6 +77,14 @@ export type TaskChatEntry = {
   submittedAt: string;
   status: RunViewState["status"];
   runView: RunViewState;
+  historicalActivity?: {
+    profileKey: "default";
+    threadId: string;
+    turnId: string;
+    status: "available" | "loading" | "loaded" | "error";
+    nextCursor: string | null;
+    error: string | null;
+  };
 };
 
 export type TranscriptHistoryOpenRequest = {
@@ -93,6 +102,11 @@ type Props = {
   onEditPrompt?: (entry: TaskChatEntry, prompt: string) => void;
   historyOpenRequest?: TranscriptHistoryOpenRequest | null;
   onHistoryPositionSettled?: (requestId: number) => void;
+  hasOlderTurns?: boolean;
+  olderTurnsStatus?: "idle" | "loading" | "error";
+  olderTurnsError?: string | null;
+  onLoadOlderTurns?: () => void;
+  onLoadHistoricalActivity?: (entry: TaskChatEntry) => void;
 };
 
 export function TaskChatTranscript({
@@ -103,18 +117,27 @@ export function TaskChatTranscript({
   onEditPrompt,
   historyOpenRequest = null,
   onHistoryPositionSettled,
+  hasOlderTurns = false,
+  olderTurnsStatus = "idle",
+  olderTurnsError = null,
+  onLoadOlderTurns,
+  onLoadHistoricalActivity,
 }: Props) {
   const callbacksRef = useRef({
     onResolveRequest,
     onOpenFileLink,
     onEditPrompt,
     onHistoryPositionSettled,
+    onLoadOlderTurns,
+    onLoadHistoricalActivity,
   });
   callbacksRef.current = {
     onResolveRequest,
     onOpenFileLink,
     onEditPrompt,
     onHistoryPositionSettled,
+    onLoadOlderTurns,
+    onLoadHistoricalActivity,
   };
 
   const stableResolveRequest = useCallback(
@@ -136,6 +159,15 @@ export function TaskChatTranscript({
       callbacksRef.current.onHistoryPositionSettled?.(requestId),
     [],
   );
+  const stableLoadOlderTurns = useCallback(
+    () => callbacksRef.current.onLoadOlderTurns?.(),
+    [],
+  );
+  const stableLoadHistoricalActivity = useCallback(
+    (entry: TaskChatEntry) =>
+      callbacksRef.current.onLoadHistoricalActivity?.(entry),
+    [],
+  );
 
   return (
     <VirtualizedTaskChatTranscript
@@ -147,6 +179,13 @@ export function TaskChatTranscript({
       historyOpenRequest={historyOpenRequest}
       onHistoryPositionSettled={
         onHistoryPositionSettled ? stableHistoryPositionSettled : undefined
+      }
+      hasOlderTurns={hasOlderTurns}
+      olderTurnsStatus={olderTurnsStatus}
+      olderTurnsError={olderTurnsError}
+      onLoadOlderTurns={onLoadOlderTurns ? stableLoadOlderTurns : undefined}
+      onLoadHistoricalActivity={
+        onLoadHistoricalActivity ? stableLoadHistoricalActivity : undefined
       }
     />
   );
@@ -160,6 +199,11 @@ const VirtualizedTaskChatTranscript = memo(function VirtualizedTaskChatTranscrip
   onEditPrompt,
   historyOpenRequest = null,
   onHistoryPositionSettled,
+  hasOlderTurns = false,
+  olderTurnsStatus = "idle",
+  olderTurnsError = null,
+  onLoadOlderTurns,
+  onLoadHistoricalActivity,
 }: Props) {
   const transcriptRef = useRef<HTMLDivElement | null>(null);
   const liveFollowRef = useRef(true);
@@ -180,6 +224,13 @@ const VirtualizedTaskChatTranscript = memo(function VirtualizedTaskChatTranscrip
     totalSize: 0,
     entries: entries as TaskChatEntry[],
   });
+  const prependAnchorRef = useRef<{
+    entryCount: number;
+    scrollHeight: number;
+    scrollTop: number;
+  } | null>(null);
+  const prependAnchorFrameRef = useRef<number | null>(null);
+  const olderRequestPendingRef = useRef(false);
   const [editingEntryId, setEditingEntryId] = useState<string | null>(null);
   const [editingPrompt, setEditingPrompt] = useState("");
   historyRequestRef.current = historyOpenRequest;
@@ -314,9 +365,38 @@ const VirtualizedTaskChatTranscript = memo(function VirtualizedTaskChatTranscrip
     ) {
       historyScrollModeRef.current = "manual";
     }
+    programmaticScrollRef.current = false;
     liveFollowRef.current = false;
     clearQueuedFollow();
   }, [clearQueuedFollow]);
+
+  const requestOlderTurns = useCallback((retry = false) => {
+    const transcript = transcriptRef.current;
+    if (
+      !transcript ||
+      !hasOlderTurns ||
+      olderRequestPendingRef.current ||
+      (!retry && olderTurnsStatus !== "idle") ||
+      (retry && olderTurnsStatus === "loading") ||
+      !onLoadOlderTurns
+    ) {
+      return;
+    }
+
+    olderRequestPendingRef.current = true;
+    prependAnchorRef.current = {
+      entryCount: entries.length,
+      scrollHeight: transcript.scrollHeight,
+      scrollTop: transcript.scrollTop,
+    };
+    onLoadOlderTurns();
+  }, [entries.length, hasOlderTurns, olderTurnsStatus, onLoadOlderTurns]);
+
+  useEffect(() => {
+    if (olderTurnsStatus !== "loading") {
+      olderRequestPendingRef.current = false;
+    }
+  }, [entries.length, olderTurnsStatus]);
 
   useLayoutEffect(() => {
     const request = historyOpenRequest;
@@ -362,6 +442,36 @@ const VirtualizedTaskChatTranscript = memo(function VirtualizedTaskChatTranscrip
       totalSize,
       entries,
     };
+
+    const prependAnchor = prependAnchorRef.current;
+    if (prependAnchor && entries.length > prependAnchor.entryCount) {
+      prependAnchorRef.current = null;
+      programmaticScrollRef.current = true;
+      const firstHeightDelta = Math.max(
+        0,
+        (transcriptRef.current?.scrollHeight ?? prependAnchor.scrollHeight) -
+          prependAnchor.scrollHeight,
+      );
+      if (transcriptRef.current) {
+        transcriptRef.current.scrollTop = prependAnchor.scrollTop + firstHeightDelta;
+      }
+      if (prependAnchorFrameRef.current !== null) {
+        cancelScheduledAnimationFrame(prependAnchorFrameRef.current);
+      }
+      prependAnchorFrameRef.current = scheduleAnimationFrame(() => {
+        prependAnchorFrameRef.current = null;
+        const transcript = transcriptRef.current;
+        if (transcript) {
+          const measuredDelta = Math.max(
+            0,
+            transcript.scrollHeight - prependAnchor.scrollHeight,
+          );
+          transcript.scrollTop = prependAnchor.scrollTop + measuredDelta;
+        }
+        programmaticScrollRef.current = false;
+      });
+      return;
+    }
 
     const request = historyRequestRef.current;
     if (request) {
@@ -428,9 +538,29 @@ const VirtualizedTaskChatTranscript = memo(function VirtualizedTaskChatTranscrip
       if (programmaticReleaseFrameRef.current !== null) {
         cancelScheduledAnimationFrame(programmaticReleaseFrameRef.current);
       }
+      if (prependAnchorFrameRef.current !== null) {
+        cancelScheduledAnimationFrame(prependAnchorFrameRef.current);
+      }
     },
     [clearHistorySettlement, clearQueuedFollow],
   );
+
+  useEffect(() => {
+    if (!hasOlderTurns || olderTurnsStatus !== "idle") {
+      return;
+    }
+    const frame = scheduleAnimationFrame(() => {
+      const transcript = transcriptRef.current;
+      if (
+        transcript &&
+        transcript.scrollTop <= HISTORY_OLDER_TURNS_THRESHOLD_PX &&
+        transcript.scrollHeight <= transcript.clientHeight + 1
+      ) {
+        requestOlderTurns();
+      }
+    });
+    return () => cancelScheduledAnimationFrame(frame);
+  }, [hasOlderTurns, olderTurnsStatus, requestOlderTurns]);
 
   useEffect(() => {
     if (
@@ -495,6 +625,11 @@ const VirtualizedTaskChatTranscript = memo(function VirtualizedTaskChatTranscrip
         if (!shouldFollow && !historyRequestRef.current) {
           clearQueuedFollow();
         }
+        if (
+          event.currentTarget.scrollTop <= HISTORY_OLDER_TURNS_THRESHOLD_PX
+        ) {
+          requestOlderTurns();
+        }
       }}
       onTouchMoveCapture={releaseHistoryPin}
       onWheelCapture={(event) => {
@@ -503,6 +638,18 @@ const VirtualizedTaskChatTranscript = memo(function VirtualizedTaskChatTranscrip
         }
       }}
     >
+      {olderTurnsStatus === "loading" ? (
+        <div className="history-older-turns-status" role="status">
+          Loading older messages...
+        </div>
+      ) : olderTurnsStatus === "error" ? (
+        <div className="history-older-turns-status error" role="alert">
+          <span>{olderTurnsError ?? "Older messages could not be loaded."}</span>
+          <button type="button" onClick={() => requestOlderTurns(true)}>
+            Retry
+          </button>
+        </div>
+      ) : null}
       <div
         className="task-chat-virtual-spacer"
         style={{ height: totalSize }}
@@ -538,6 +685,7 @@ const VirtualizedTaskChatTranscript = memo(function VirtualizedTaskChatTranscrip
                 onResolveRequest={onResolveRequest}
                 onStartEdit={handleStartEdit}
                 onSubmitEdit={handleSubmitEdit}
+                onLoadHistoricalActivity={onLoadHistoricalActivity}
               />
             </div>
           );
@@ -572,6 +720,7 @@ const TaskChatTurn = memo(function TaskChatTurn({
   onStartEdit,
   onResolveRequest,
   onOpenFileLink,
+  onLoadHistoricalActivity,
 }: {
   entry: TaskChatEntry;
   editable: boolean;
@@ -583,6 +732,7 @@ const TaskChatTurn = memo(function TaskChatTurn({
   onStartEdit: (entry: TaskChatEntry) => void;
   onResolveRequest: (request: CodexMessage, approved: boolean) => void;
   onOpenFileLink?: (href: string) => boolean;
+  onLoadHistoricalActivity?: (entry: TaskChatEntry) => void;
 }) {
   return (
     <div className="task-chat-run">
@@ -659,9 +809,11 @@ const TaskChatTurn = memo(function TaskChatTurn({
       </div>
       <article className={`chat-message assistant-message status-${entry.status}`}>
         <AssistantRunOutput
+          entry={entry}
           runView={entry.runView}
           onResolveRequest={onResolveRequest}
           onOpenFileLink={onOpenFileLink}
+          onLoadHistoricalActivity={onLoadHistoricalActivity}
         />
       </article>
     </div>
@@ -725,13 +877,17 @@ const SubmittedPrompt = memo(function SubmittedPrompt({
 });
 
 const AssistantRunOutput = memo(function AssistantRunOutput({
+  entry,
   runView,
   onResolveRequest,
   onOpenFileLink,
+  onLoadHistoricalActivity,
 }: {
+  entry: TaskChatEntry;
   runView: RunViewState;
   onResolveRequest: (request: CodexMessage, approved: boolean) => void;
   onOpenFileLink?: (href: string) => boolean;
+  onLoadHistoricalActivity?: (entry: TaskChatEntry) => void;
 }) {
   const completed =
     runView.status === "completed" ||
@@ -739,12 +895,18 @@ const AssistantRunOutput = memo(function AssistantRunOutput({
     runView.status === "interrupted";
 
   if (completed) {
-    const hasTrace = buildTimelineItems(runView).length > 0;
+    const hasTrace =
+      buildTimelineItems(runView).length > 0 ||
+      entry.historicalActivity !== undefined;
 
     return (
       <div className="run-output-surface completed">
         {hasTrace ? (
-          <RunTraceDropdown runView={runView} />
+          <RunTraceDropdown
+            entry={entry}
+            runView={runView}
+            onLoadHistoricalActivity={onLoadHistoricalActivity}
+          />
         ) : (
           <RunMetrics runView={runView} />
         )}
@@ -793,13 +955,30 @@ function PreparingRunStatus() {
   );
 }
 
-function RunTraceDropdown({ runView }: { runView: RunViewState }) {
+function RunTraceDropdown({
+  entry,
+  runView,
+  onLoadHistoricalActivity,
+}: {
+  entry: TaskChatEntry;
+  runView: RunViewState;
+  onLoadHistoricalActivity?: (entry: TaskChatEntry) => void;
+}) {
   const [open, setOpen] = useState(false);
 
   return (
     <details
       className="stream-trace"
-      onToggle={(event) => setOpen(event.currentTarget.open)}
+      onToggle={(event) => {
+        const nextOpen = event.currentTarget.open;
+        setOpen(nextOpen);
+        if (
+          nextOpen &&
+          entry.historicalActivity?.status === "available"
+        ) {
+          onLoadHistoricalActivity?.(entry);
+        }
+      }}
     >
       <summary className="run-live-metrics" aria-label="Run trace">
         <span>
@@ -809,7 +988,37 @@ function RunTraceDropdown({ runView }: { runView: RunViewState }) {
         <span>{formatTokenCount(runView)}</span>
         <ChevronRight className="run-trace-chevron" size={15} aria-hidden="true" />
       </summary>
-      {open ? <RunTimeline runView={runView} /> : null}
+      {open ? (
+        <>
+          {entry.historicalActivity?.status === "loading" ? (
+            <p className="historical-activity-status">Loading activity...</p>
+          ) : null}
+          {entry.historicalActivity?.status === "error" ? (
+            <div className="historical-activity-status error">
+              <span>
+                {entry.historicalActivity.error ?? "Activity could not be loaded."}
+              </span>
+              <button
+                type="button"
+                onClick={() => onLoadHistoricalActivity?.(entry)}
+              >
+                Retry
+              </button>
+            </div>
+          ) : null}
+          <RunTimeline runView={runView} />
+          {entry.historicalActivity?.status === "loaded" &&
+          entry.historicalActivity.nextCursor ? (
+            <button
+              className="historical-activity-more"
+              type="button"
+              onClick={() => onLoadHistoricalActivity?.(entry)}
+            >
+              Load older activity
+            </button>
+          ) : null}
+        </>
+      ) : null}
     </details>
   );
 }

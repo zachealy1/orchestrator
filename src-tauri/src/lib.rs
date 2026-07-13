@@ -10,13 +10,13 @@ use std::{
     process::{Child, ChildStdin, Command, Stdio},
     sync::{
         atomic::{AtomicU64, Ordering},
-        mpsc::{channel, Sender},
         Arc, Mutex,
     },
     time::{Duration, Instant},
 };
 use tauri::{AppHandle, Emitter, Manager, State};
 use tauri_plugin_sql::{Migration, MigrationKind};
+use tokio::{sync::oneshot, time::timeout};
 
 const DATABASE_URL: &str = "sqlite:app.db";
 const MAX_FILE_PREVIEW_BYTES: usize = 512 * 1024;
@@ -28,7 +28,7 @@ const IGNORED_EXPLORER_DIRECTORIES: &[&str] =
 
 struct PendingResponse {
     account_id: i64,
-    sender: Sender<Result<Value, String>>,
+    sender: oneshot::Sender<Result<Value, String>>,
 }
 
 type PendingMap = Arc<Mutex<HashMap<String, PendingResponse>>>;
@@ -80,6 +80,33 @@ struct CodexMessageEvent {
     account_id: i64,
     profile_key: String,
     message: Value,
+}
+
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct HistoricalCommandActivity {
+    id: String,
+    command: String,
+    status: String,
+    duration_ms: Option<i64>,
+}
+
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct HistoricalEditedFile {
+    path: String,
+    name: String,
+    additions: usize,
+    deletions: usize,
+    status: String,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct HistoricalTurnActivityResponse {
+    commands: Vec<HistoricalCommandActivity>,
+    edited_files: Vec<HistoricalEditedFile>,
+    next_cursor: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -676,6 +703,11 @@ fn process_stdout(
         }
     }
 
+    reject_pending_for_account(
+        &pending,
+        account_id,
+        "Codex app-server exited before responding",
+    );
     emit_process(&app, account_id, "exited", "Codex app-server stdout closed");
 }
 
@@ -707,7 +739,7 @@ fn process_stdin(state: &CodexState, account_id: i64) -> Result<Arc<Mutex<ChildS
         .ok_or_else(|| format!("Codex account {account_id} is not connected"))
 }
 
-fn send_request(
+async fn send_request(
     state: &CodexState,
     account_id: i64,
     method: &str,
@@ -716,7 +748,7 @@ fn send_request(
     let stdin = process_stdin(state, account_id)?;
     let id = state.next_id.fetch_add(1, Ordering::SeqCst);
     let key = id.to_string();
-    let (tx, rx) = channel();
+    let (tx, rx) = oneshot::channel();
 
     state
         .pending
@@ -741,13 +773,127 @@ fn send_request(
         return Err(err);
     }
 
-    match rx.recv_timeout(Duration::from_secs(60)) {
-        Ok(result) => result,
+    match timeout(Duration::from_secs(60), rx).await {
+        Ok(Ok(result)) => result,
+        Ok(Err(_)) => {
+            let _ = state.pending.lock().map(|mut map| map.remove(&key));
+            Err(format!("Codex response channel closed while waiting for {method}"))
+        }
         Err(_) => {
             let _ = state.pending.lock().map(|mut map| map.remove(&key));
             Err(format!("Timed out waiting for Codex response to {method}"))
         }
     }
+}
+
+fn project_historical_turn_activity(response: &Value) -> HistoricalTurnActivityResponse {
+    let mut commands = Vec::new();
+    let mut edited_files: Vec<HistoricalEditedFile> = Vec::new();
+    let items = response
+        .get("data")
+        .and_then(Value::as_array)
+        .cloned()
+        .unwrap_or_default();
+
+    for item in items {
+        match item.get("type").and_then(Value::as_str) {
+            Some("commandExecution") => {
+                let id = item
+                    .get("id")
+                    .and_then(Value::as_str)
+                    .unwrap_or("historical-command")
+                    .to_string();
+                let command = item
+                    .get("command")
+                    .and_then(Value::as_str)
+                    .unwrap_or("Command")
+                    .to_string();
+                let status = match item.get("status").and_then(Value::as_str) {
+                    Some("inProgress") => "running",
+                    Some("failed") | Some("declined") => "failed",
+                    _ => "completed",
+                }
+                .to_string();
+                commands.push(HistoricalCommandActivity {
+                    id,
+                    command,
+                    status,
+                    duration_ms: item.get("durationMs").and_then(Value::as_i64),
+                });
+            }
+            Some("fileChange") => {
+                let changes = item
+                    .get("changes")
+                    .and_then(Value::as_array)
+                    .cloned()
+                    .unwrap_or_default();
+                for change in changes {
+                    let Some(path) = change.get("path").and_then(Value::as_str) else {
+                        continue;
+                    };
+                    let diff = change.get("diff").and_then(Value::as_str).unwrap_or("");
+                    let (additions, deletions) = count_unified_diff_lines(diff);
+                    let kind = change
+                        .get("kind")
+                        .and_then(Value::as_object)
+                        .and_then(|kind| kind.get("type"))
+                        .and_then(Value::as_str);
+                    let moved = change
+                        .get("kind")
+                        .and_then(Value::as_object)
+                        .and_then(|kind| kind.get("move_path"))
+                        .and_then(Value::as_str)
+                        .is_some();
+                    let status = match (kind, moved) {
+                        (_, true) => "renamed",
+                        (Some("add"), _) => "added",
+                        (Some("delete"), _) => "deleted",
+                        _ => "modified",
+                    };
+
+                    if let Some(existing) = edited_files.iter_mut().find(|file| file.path == path) {
+                        existing.additions = additions;
+                        existing.deletions = deletions;
+                        existing.status = status.to_string();
+                    } else {
+                        edited_files.push(HistoricalEditedFile {
+                            path: path.to_string(),
+                            name: Path::new(path)
+                                .file_name()
+                                .and_then(OsStr::to_str)
+                                .unwrap_or(path)
+                                .to_string(),
+                            additions,
+                            deletions,
+                            status: status.to_string(),
+                        });
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+
+    HistoricalTurnActivityResponse {
+        commands,
+        edited_files,
+        next_cursor: response
+            .get("nextCursor")
+            .and_then(Value::as_str)
+            .map(str::to_string),
+    }
+}
+
+fn count_unified_diff_lines(diff: &str) -> (usize, usize) {
+    let additions = diff
+        .lines()
+        .filter(|line| line.starts_with('+') && !line.starts_with("+++"))
+        .count();
+    let deletions = diff
+        .lines()
+        .filter(|line| line.starts_with('-') && !line.starts_with("---"))
+        .count();
+    (additions, deletions)
 }
 
 fn send_notification(state: &CodexState, account_id: i64, message: Value) -> Result<(), String> {
@@ -756,18 +902,18 @@ fn send_notification(state: &CodexState, account_id: i64, message: Value) -> Res
 }
 
 #[tauri::command]
-fn codex_connect(
+async fn codex_connect(
     account_id: i64,
     app: AppHandle,
     state: State<'_, CodexState>,
 ) -> Result<CodexConnectResult, String> {
     validate_account_id(account_id)?;
     let codex_home = ensure_codex_home(&app, account_id)?;
-    connect_codex_profile(account_id, &app, &state, codex_home, true)
+    connect_codex_profile(account_id, &app, &state, codex_home, true).await
 }
 
 #[tauri::command]
-fn codex_default_profile_connect(
+async fn codex_default_profile_connect(
     app: AppHandle,
     state: State<'_, CodexState>,
 ) -> Result<CodexConnectResult, String> {
@@ -779,9 +925,10 @@ fn codex_default_profile_connect(
         codex_home,
         false,
     )
+    .await
 }
 
-fn connect_codex_profile(
+async fn connect_codex_profile(
     account_id: i64,
     app: &AppHandle,
     state: &CodexState,
@@ -872,7 +1019,8 @@ fn connect_codex_profile(
                 "experimentalApi": true
             }
         }),
-    )?;
+    )
+    .await?;
 
     send_notification(
         &state,
@@ -896,7 +1044,7 @@ fn connect_codex_profile(
 }
 
 #[tauri::command]
-fn codex_rpc(
+async fn codex_rpc(
     account_id: i64,
     method: String,
     params: Value,
@@ -917,7 +1065,7 @@ fn codex_rpc(
         *active = Some(account_id);
     }
 
-    let response = send_request(&state, account_id, &method, params);
+    let response = send_request(&state, account_id, &method, params).await;
 
     if response.is_err()
         || method == "account/login/cancel"
@@ -934,12 +1082,40 @@ fn codex_rpc(
 }
 
 #[tauri::command]
-fn codex_default_profile_rpc(
+async fn codex_default_profile_rpc(
     method: String,
     params: Value,
     state: State<'_, CodexState>,
 ) -> Result<Value, String> {
-    send_request(&state, DEFAULT_CODEX_PROFILE_ID, &method, params)
+    send_request(&state, DEFAULT_CODEX_PROFILE_ID, &method, params).await
+}
+
+#[tauri::command]
+async fn codex_default_profile_turn_activity(
+    thread_id: String,
+    turn_id: String,
+    cursor: Option<String>,
+    limit: Option<u32>,
+    state: State<'_, CodexState>,
+) -> Result<HistoricalTurnActivityResponse, String> {
+    if thread_id.trim().is_empty() || turn_id.trim().is_empty() {
+        return Err("Thread and turn ids are required".to_string());
+    }
+    let limit = limit.unwrap_or(50).clamp(1, 50);
+    let response = send_request(
+        &state,
+        DEFAULT_CODEX_PROFILE_ID,
+        "thread/items/list",
+        json!({
+            "threadId": thread_id,
+            "turnId": turn_id,
+            "cursor": cursor,
+            "limit": limit,
+            "sortDirection": "desc"
+        }),
+    )
+    .await?;
+    Ok(project_historical_turn_activity(&response))
 }
 
 #[tauri::command]
@@ -1007,16 +1183,11 @@ fn stop_codex_account(
         let _ = process.child.wait();
     }
 
-    if let Ok(mut pending) = state.pending.lock() {
-        let stopped_keys = pending_keys_for_account(&pending, account_id);
-        for key in stopped_keys {
-            if let Some(response) = pending.remove(&key) {
-                let _ = response
-                    .sender
-                    .send(Err("Codex app-server was stopped".to_string()));
-            }
-        }
-    }
+    reject_pending_for_account(
+        &state.pending,
+        account_id,
+        "Codex app-server was stopped",
+    );
 
     if let Ok(mut active) = state.login_account.lock() {
         if *active == Some(account_id) {
@@ -1038,6 +1209,17 @@ fn pending_keys_for_account(
             (response.account_id == account_id).then_some(key.clone())
         })
         .collect()
+}
+
+fn reject_pending_for_account(pending: &PendingMap, account_id: i64, message: &str) {
+    if let Ok(mut pending) = pending.lock() {
+        let rejected_keys = pending_keys_for_account(&pending, account_id);
+        for key in rejected_keys {
+            if let Some(response) = pending.remove(&key) {
+                let _ = response.sender.send(Err(message.to_string()));
+            }
+        }
+    }
 }
 
 #[tauri::command]
@@ -3357,6 +3539,7 @@ pub fn run() {
             codex_default_profile_connect,
             codex_rpc,
             codex_default_profile_rpc,
+            codex_default_profile_turn_activity,
             codex_resolve_server_request,
             codex_default_profile_resolve_server_request,
             codex_stop,
@@ -3440,8 +3623,8 @@ mod tests {
 
     #[test]
     fn pending_requests_are_filtered_by_account() {
-        let (sender_one, _receiver_one) = channel();
-        let (sender_two, _receiver_two) = channel();
+        let (sender_one, _receiver_one) = oneshot::channel();
+        let (sender_two, _receiver_two) = oneshot::channel();
         let mut pending = HashMap::new();
         pending.insert(
             "1".to_string(),
@@ -3463,6 +3646,38 @@ mod tests {
     }
 
     #[test]
+    fn stopping_one_profile_rejects_only_its_pending_requests() {
+        let (sender_one, receiver_one) = oneshot::channel();
+        let (sender_two, _receiver_two) = oneshot::channel();
+        let pending: PendingMap = Arc::new(Mutex::new(HashMap::from([
+            (
+                "1".to_string(),
+                PendingResponse {
+                    account_id: 7,
+                    sender: sender_one,
+                },
+            ),
+            (
+                "2".to_string(),
+                PendingResponse {
+                    account_id: 8,
+                    sender: sender_two,
+                },
+            ),
+        ])));
+
+        reject_pending_for_account(&pending, 7, "profile stopped");
+
+        assert_eq!(
+            receiver_one.blocking_recv().unwrap().unwrap_err(),
+            "profile stopped"
+        );
+        let remaining = pending.lock().unwrap();
+        assert!(!remaining.contains_key("1"));
+        assert!(remaining.contains_key("2"));
+    }
+
+    #[test]
     fn account_events_include_their_owner() {
         let event = CodexMessageEvent {
             account_id: 9,
@@ -3474,6 +3689,52 @@ mod tests {
         assert_eq!(value["accountId"], 9);
         assert_eq!(value["profileKey"], "account:9");
         assert_eq!(value["message"]["method"], "account/updated");
+    }
+
+    #[test]
+    fn historical_activity_projection_omits_bulk_item_content() {
+        let response = json!({
+            "data": [
+                {
+                    "type": "commandExecution",
+                    "id": "command-1",
+                    "command": "npm test -- --run",
+                    "status": "completed",
+                    "durationMs": 1200,
+                    "aggregatedOutput": "very large command output that must not cross the bridge"
+                },
+                {
+                    "type": "reasoning",
+                    "id": "reasoning-1",
+                    "content": "private reasoning body"
+                },
+                {
+                    "type": "fileChange",
+                    "changes": [
+                        {
+                            "path": "src/App.tsx",
+                            "kind": { "type": "update" },
+                            "diff": "--- a/src/App.tsx\n+++ b/src/App.tsx\n-old\n+new\n+another"
+                        }
+                    ]
+                }
+            ],
+            "nextCursor": "older-items"
+        });
+
+        let projected = project_historical_turn_activity(&response);
+        let value = serde_json::to_value(&projected).unwrap();
+        let serialized = value.to_string();
+
+        assert_eq!(value["commands"][0]["command"], "npm test -- --run");
+        assert_eq!(value["commands"][0]["durationMs"], 1200);
+        assert_eq!(value["editedFiles"][0]["path"], "src/App.tsx");
+        assert_eq!(value["editedFiles"][0]["additions"], 2);
+        assert_eq!(value["editedFiles"][0]["deletions"], 1);
+        assert_eq!(value["nextCursor"], "older-items");
+        assert!(!serialized.contains("very large command output"));
+        assert!(!serialized.contains("private reasoning body"));
+        assert!(!serialized.contains("--- a/src/App.tsx"));
     }
 
     #[test]
