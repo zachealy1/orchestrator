@@ -30,7 +30,6 @@ import {
   X,
 } from "lucide-react";
 import {
-  startTransition,
   useCallback,
   useEffect,
   useMemo,
@@ -942,6 +941,7 @@ function App() {
   const transcriptCommitIdleTimerRef = useRef<number | null>(null);
   const transcriptViewportStableRef = useRef(true);
   const transcriptViewportWidthRef = useRef(1_024);
+  const pendingTranscriptViewportWidthRef = useRef<number | null>(null);
   const transcriptViewportResizeTimerRef = useRef<number | null>(null);
   const transcriptViewportWaitersRef = useRef(new Set<() => void>());
   const historicalActivityCacheRef = useRef(
@@ -1011,6 +1011,20 @@ function App() {
     }, HISTORY_TRANSCRIPT_COMMIT_IDLE_MS);
   }, []);
 
+  const settleTranscriptViewportWidth = useCallback(
+    (width: number) => {
+      pendingTranscriptViewportWidthRef.current = null;
+      transcriptViewportWidthRef.current = width;
+      transcriptViewportStableRef.current = true;
+      setTaskViewportStable(true);
+      setTaskViewportWidth(width);
+      transcriptViewportWaitersRef.current.forEach((resolve) => resolve());
+      transcriptViewportWaitersRef.current.clear();
+      schedulePendingTranscriptCommit();
+    },
+    [schedulePendingTranscriptCommit],
+  );
+
   useEffect(() => {
     if (!taskViewportElement) return;
 
@@ -1046,13 +1060,10 @@ function App() {
       }
       transcriptViewportResizeTimerRef.current = window.setTimeout(() => {
         transcriptViewportResizeTimerRef.current = null;
-        transcriptViewportWidthRef.current = latestWidth;
-        transcriptViewportStableRef.current = true;
-        setTaskViewportStable(true);
-        setTaskViewportWidth(latestWidth);
-        transcriptViewportWaitersRef.current.forEach((resolve) => resolve());
-        transcriptViewportWaitersRef.current.clear();
-        schedulePendingTranscriptCommit();
+        pendingTranscriptViewportWidthRef.current = latestWidth;
+        if (!transcriptScrollActiveRef.current) {
+          settleTranscriptViewportWidth(latestWidth);
+        }
       }, HISTORY_TRANSCRIPT_RESIZE_IDLE_MS);
     });
     observer.observe(taskViewportElement);
@@ -1064,11 +1075,12 @@ function App() {
         transcriptViewportResizeTimerRef.current = null;
       }
       transcriptViewportStableRef.current = true;
+      pendingTranscriptViewportWidthRef.current = null;
       setTaskViewportStable(true);
       transcriptViewportWaitersRef.current.forEach((resolve) => resolve());
       transcriptViewportWaitersRef.current.clear();
     };
-  }, [schedulePendingTranscriptCommit, taskViewportElement]);
+  }, [settleTranscriptViewportWidth, taskViewportElement]);
 
   useEffect(
     () => () => {
@@ -1094,8 +1106,14 @@ function App() {
       return;
     }
 
+    const pendingViewportWidth = pendingTranscriptViewportWidthRef.current;
+    if (pendingViewportWidth !== null) {
+      settleTranscriptViewportWidth(pendingViewportWidth);
+      return;
+    }
+
     schedulePendingTranscriptCommit();
-  }, [schedulePendingTranscriptCommit]);
+  }, [schedulePendingTranscriptCommit, settleTranscriptViewportWidth]);
   const handleHistoricalLatestPositionApplied = useCallback((requestId: number) => {
     setHistoricalTranscript((current) =>
       current?.openAtLatestRequestId === requestId
@@ -2774,7 +2792,7 @@ function App() {
       entries,
     );
     taskChatEntriesRef.current = allEntries;
-    startTransition(() => {
+    flushSync(() => {
       setTaskChatEntries(allEntries);
       setHistoricalTranscript(publishedTranscript);
       setHistoryChatLoadState(null);
@@ -2805,14 +2823,20 @@ function App() {
       transcriptViewportResizeTimerRef.current = null;
       const width = taskViewportElement.getBoundingClientRect().width;
       if (width > 0) {
-        transcriptViewportWidthRef.current = width;
-        setTaskViewportWidth(width);
+        pendingTranscriptViewportWidthRef.current = width;
       }
-      transcriptViewportStableRef.current = true;
-      setTaskViewportStable(true);
-      transcriptViewportWaitersRef.current.forEach((resolve) => resolve());
-      transcriptViewportWaitersRef.current.clear();
-      schedulePendingTranscriptCommit();
+      if (transcriptScrollActiveRef.current) {
+        return;
+      }
+      if (width > 0) {
+        settleTranscriptViewportWidth(width);
+      } else {
+        transcriptViewportStableRef.current = true;
+        setTaskViewportStable(true);
+        transcriptViewportWaitersRef.current.forEach((resolve) => resolve());
+        transcriptViewportWaitersRef.current.clear();
+        schedulePendingTranscriptCommit();
+      }
     }, HISTORY_TRANSCRIPT_RESIZE_WAIT_LIMIT_MS);
   }
 
@@ -2856,7 +2880,14 @@ function App() {
         return;
       }
       await activateExternalTranscriptSnapshot(chat.id, snapshot);
-      const entries = createTaskChatEntriesFromExternalTranscriptSnapshot(chat, snapshot);
+      const completeEntries = createTaskChatEntriesFromExternalTranscriptSnapshot(
+        chat,
+        snapshot,
+      );
+      const entries = preserveVisibleTranscriptTail(
+        completeEntries,
+        visibleEntries,
+      );
       const olderTurnCount = Math.max(0, entries.length - visibleEntries.length);
       const transcript: HistoricalTranscriptState = {
         chatId: chat.id,
@@ -7799,6 +7830,35 @@ function createTaskChatEntriesFromExternalTranscriptSnapshot(
           : undefined,
     };
   });
+}
+
+function preserveVisibleTranscriptTail(
+  completeEntries: TaskChatEntry[],
+  visibleEntries: TaskChatEntry[],
+) {
+  if (
+    visibleEntries.length === 0 ||
+    completeEntries.length < visibleEntries.length
+  ) {
+    return completeEntries;
+  }
+
+  const tailStart = completeEntries.length - visibleEntries.length;
+  const completeTail = completeEntries.slice(tailStart);
+  const matchesVisibleTail = completeTail.every((entry, index) => {
+    const visibleEntry = visibleEntries[index];
+    return (
+      entry.clientId === visibleEntry.clientId ||
+      (Boolean(entry.runView.turnId) &&
+        entry.runView.turnId === visibleEntry.runView.turnId)
+    );
+  });
+
+  if (!matchesVisibleTail) {
+    return completeEntries;
+  }
+
+  return [...completeEntries.slice(0, tailStart), ...visibleEntries];
 }
 
 function normalizeExternalTranscriptTimestamp(value: string | null) {

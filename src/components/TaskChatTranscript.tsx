@@ -1363,7 +1363,7 @@ function PreparingRunStatus() {
   );
 }
 
-function RunTraceDropdown({
+const RunTraceDropdown = memo(function RunTraceDropdown({
   entry,
   runView,
   onLoadHistoricalActivity,
@@ -1429,9 +1429,13 @@ function RunTraceDropdown({
       ) : null}
     </details>
   );
-}
+});
 
-function RunMetrics({ runView }: { runView: RunViewState }) {
+const RunMetrics = memo(function RunMetrics({
+  runView,
+}: {
+  runView: RunViewState;
+}) {
   return (
     <div className="run-live-metrics" aria-label="Run metrics">
       <span>
@@ -1441,7 +1445,7 @@ function RunMetrics({ runView }: { runView: RunViewState }) {
       <span>{formatTokenCount(runView)}</span>
     </div>
   );
-}
+});
 
 const RunSummary = memo(function RunSummary({
   runView,
@@ -1662,7 +1666,11 @@ function isFileNameBoundaryCharacter(value: string) {
   return /[A-Za-z0-9_.-]/.test(value);
 }
 
-function RunTimeline({ runView }: { runView: RunViewState }) {
+const RunTimeline = memo(function RunTimeline({
+  runView,
+}: {
+  runView: RunViewState;
+}) {
   const items = buildTimelineItems(runView);
 
   if (items.length === 0) {
@@ -1692,7 +1700,7 @@ function RunTimeline({ runView }: { runView: RunViewState }) {
       })}
     </div>
   );
-}
+});
 
 function RunActivityGroups({ children }: { children: ReactNode }) {
   return (
@@ -1844,7 +1852,11 @@ function selectCommandsForEvent(
   );
 }
 
-function EditedFilesGroup({ files }: { files: RunEditedFile[] }) {
+const EditedFilesGroup = memo(function EditedFilesGroup({
+  files,
+}: {
+  files: RunEditedFile[];
+}) {
   return (
     <details className="run-activity-group edited-files">
       <summary>
@@ -1868,9 +1880,13 @@ function EditedFilesGroup({ files }: { files: RunEditedFile[] }) {
       </div>
     </details>
   );
-}
+});
 
-function CommandsGroup({ commands }: { commands: RunCommandActivity[] }) {
+const CommandsGroup = memo(function CommandsGroup({
+  commands,
+}: {
+  commands: RunCommandActivity[];
+}) {
   return (
     <details className="run-activity-group command-runs">
       <summary>
@@ -1893,7 +1909,7 @@ function CommandsGroup({ commands }: { commands: RunCommandActivity[] }) {
       </div>
     </details>
   );
-}
+});
 
 function StreamEventRow({ event }: { event: StreamEvent }) {
   if (event.kind === "message") {
@@ -1927,7 +1943,7 @@ function streamEventIcon(kind: StreamEvent["kind"]) {
   }
 }
 
-function RunApprovalRequests({
+const RunApprovalRequests = memo(function RunApprovalRequests({
   runView,
   onResolveRequest,
 }: {
@@ -1968,7 +1984,7 @@ function RunApprovalRequests({
       ))}
     </div>
   );
-}
+});
 
 function formatDuration(milliseconds: number) {
   const totalSeconds = Math.max(0, Math.floor(milliseconds / 1000));

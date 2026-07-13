@@ -1690,31 +1690,6 @@ button.account-switcher-item:hover:not(:disabled) {
   contain: layout paint style;
 }
 
-.task-chat-scroll-seek-row {
-  overflow: hidden;
-  pointer-events: none;
-}
-
-.task-chat-scroll-seek-preview {
-  overflow: hidden;
-}
-
-.task-chat-scroll-seek-prompt,
-.task-chat-scroll-seek-summary {
-  display: -webkit-box;
-  overflow: hidden;
-  -webkit-box-orient: vertical;
-}
-
-.task-chat-scroll-seek-prompt {
-  -webkit-line-clamp: 3;
-}
-
-.task-chat-scroll-seek-summary {
-  -webkit-line-clamp: 8;
-  white-space: pre-wrap;
-}
-
 .historical-activity-status button,
 .historical-activity-more {
   min-height: 28px;

@@ -1,12 +1,15 @@
-import { act, render, screen, within } from "@testing-library/react";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { act, fireEvent, render, screen } from "@testing-library/react";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { emptyRunView } from "../lib/codexEventReducer";
-import { clearTranscriptMeasurementCache } from "../lib/transcriptVirtualization";
+import {
+  clearTranscriptMeasurementCache,
+  getCachedTranscriptRowHeight,
+} from "../lib/transcriptVirtualization";
 import type { TaskChatEntry } from "./TaskChatTranscript";
 import {
   clearTranscriptStateCache,
-  TRANSCRIPT_FAST_SCROLL_BUFFER,
-  TRANSCRIPT_FAST_SCROLL_SEEK,
+  TRANSCRIPT_RENDER_AHEAD_PX,
+  TRANSCRIPT_SCROLL_IDLE_MS,
   VirtuosoTaskChatTranscript,
 } from "./VirtuosoTaskChatTranscript";
 
@@ -20,14 +23,24 @@ vi.mock("react-virtuoso", async () => {
   return {
     Virtuoso: React.forwardRef(function MockVirtuoso(props: any, ref) {
       virtuosoMock.lastProps = props;
+      const viewportRef = React.useRef<HTMLDivElement | null>(null);
       React.useImperativeHandle(ref, () => ({
         getState: (callback: (state: unknown) => void) =>
           callback(virtuosoMock.state),
       }));
+      React.useEffect(() => {
+        props.scrollerRef?.(viewportRef.current);
+        return () => props.scrollerRef?.(null);
+      }, [props.scrollerRef]);
       const data = props.data ?? [];
       const startIndex = Math.max(0, data.length - 8);
       return (
-        <div data-testid="virtuoso-viewport" className={props.className}>
+        <div
+          data-testid="virtuoso-viewport"
+          className={props.className}
+          ref={viewportRef}
+          tabIndex={0}
+        >
           {data.slice(startIndex).map((entry: TaskChatEntry, offset: number) => {
             const index = startIndex + offset;
             return (
@@ -68,6 +81,10 @@ describe("VirtuosoTaskChatTranscript", () => {
     virtuosoMock.lastProps = null;
   });
 
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
   it("supplies the full transcript while mounting only the virtualized rows", () => {
     const entries = Array.from({ length: 300 }, (_, index) => historyEntry(index + 1));
     const { container } = render(
@@ -94,7 +111,7 @@ describe("VirtuosoTaskChatTranscript", () => {
     expect(screen.queryByText("Prompt 1")).not.toBeInTheDocument();
   });
 
-  it("keeps a deep, symmetric guard band for high-velocity scrolling", () => {
+  it("uses one moderate render-ahead window without scroll-seek substitution", () => {
     const entries = Array.from({ length: 300 }, (_, index) => historyEntry(index + 1));
     render(
       <VirtuosoTaskChatTranscript
@@ -109,88 +126,14 @@ describe("VirtuosoTaskChatTranscript", () => {
     );
 
     expect(virtuosoMock.lastProps.increaseViewportBy).toEqual({
-      top: TRANSCRIPT_FAST_SCROLL_BUFFER.viewportPixels,
-      bottom: TRANSCRIPT_FAST_SCROLL_BUFFER.viewportPixels,
+      top: TRANSCRIPT_RENDER_AHEAD_PX,
+      bottom: TRANSCRIPT_RENDER_AHEAD_PX,
     });
-    expect(virtuosoMock.lastProps.minOverscanItemCount).toEqual({
-      top: TRANSCRIPT_FAST_SCROLL_BUFFER.minimumItems,
-      bottom: TRANSCRIPT_FAST_SCROLL_BUFFER.minimumItems,
-    });
-    expect(virtuosoMock.lastProps.overscan).toEqual({
-      main: TRANSCRIPT_FAST_SCROLL_BUFFER.renderChunkPixels,
-      reverse: TRANSCRIPT_FAST_SCROLL_BUFFER.renderChunkPixels,
-    });
-    expect(TRANSCRIPT_FAST_SCROLL_BUFFER.minimumItems).toBeGreaterThanOrEqual(10);
-    expect(
-      virtuosoMock.lastProps.scrollSeekConfiguration.enter(
-        TRANSCRIPT_FAST_SCROLL_SEEK.enterVelocity + 1,
-        { startIndex: 120, endIndex: 140 },
-      ),
-    ).toBe(true);
-    expect(
-      virtuosoMock.lastProps.scrollSeekConfiguration.enter(
-        -(TRANSCRIPT_FAST_SCROLL_SEEK.enterVelocity + 1),
-        { startIndex: 120, endIndex: 140 },
-      ),
-    ).toBe(true);
-    expect(
-      virtuosoMock.lastProps.scrollSeekConfiguration.enter(
-        TRANSCRIPT_FAST_SCROLL_SEEK.enterVelocity - 1,
-        { startIndex: 120, endIndex: 140 },
-      ),
-    ).toBe(false);
-    expect(
-      virtuosoMock.lastProps.scrollSeekConfiguration.exit(
-        TRANSCRIPT_FAST_SCROLL_SEEK.exitVelocity,
-        { startIndex: 120, endIndex: 140 },
-      ),
-    ).toBe(true);
-    expect(
-      virtuosoMock.lastProps.scrollSeekConfiguration.exit(
-        TRANSCRIPT_FAST_SCROLL_SEEK.exitVelocity + 1,
-        { startIndex: 120, endIndex: 140 },
-      ),
-    ).toBe(false);
-    expect(
-      virtuosoMock.lastProps.scrollSeekConfiguration.enter(100, {
-        startIndex: 130,
-        endIndex: 150,
-      }),
-    ).toBe(true);
-  });
-
-  it("renders cached chat content instead of a blank fast-scroll placeholder", () => {
-    const entries = Array.from({ length: 300 }, (_, index) => historyEntry(index + 1));
-    render(
-      <VirtuosoTaskChatTranscript
-        entries={entries}
-        transcriptIdentity="chat:seek-preview"
-        transcriptVersion="v1"
-        firstItemIndex={999_700}
-        openAtLatestRequestId={1}
-        liveFollow={false}
-        onResolveRequest={vi.fn()}
-      />,
-    );
-
-    const ScrollSeekPreview =
-      virtuosoMock.lastProps.components.ScrollSeekPlaceholder;
-    const preview = render(
-      <ScrollSeekPreview
-        context={virtuosoMock.lastProps.context}
-        height={720}
-        index={999_850}
-        type="item"
-      />,
-    );
-
-    expect(within(preview.container).getByText("Prompt 151")).toBeInTheDocument();
-    expect(within(preview.container).getByText("Result 151.")).toBeInTheDocument();
-    expect(preview.container.querySelector(".task-chat-scroll-seek-row")).toHaveStyle({
-      height: "720px",
-    });
-    expect(within(preview.container).queryByText(/loading/i)).not.toBeInTheDocument();
-    expect(virtuosoMock.lastProps.context.entriesByAbsoluteIndex.size).toBe(300);
+    expect(virtuosoMock.lastProps.minOverscanItemCount).toBeUndefined();
+    expect(virtuosoMock.lastProps.overscan).toBeUndefined();
+    expect(virtuosoMock.lastProps.scrollSeekConfiguration).toBeUndefined();
+    expect(virtuosoMock.lastProps.components).toBeUndefined();
+    expect(document.querySelector(".task-chat-scroll-seek-row")).toBeNull();
   });
 
   it("uses the transcript viewport width for content-aware row geometry", () => {
@@ -231,6 +174,52 @@ describe("VirtuosoTaskChatTranscript", () => {
     expect(narrowDefault).toBeGreaterThan(virtuosoMock.lastProps.defaultItemHeight);
   });
 
+  it("keeps the default row geometry stable when older turns prepend", () => {
+    const latestEntries = Array.from({ length: 20 }, (_, index) =>
+      historyEntry(index + 46),
+    );
+    const { rerender } = render(
+      <VirtuosoTaskChatTranscript
+        entries={latestEntries}
+        transcriptIdentity="chat:stable-geometry"
+        transcriptVersion="v1"
+        viewportWidth={900}
+        firstItemIndex={1_000_000}
+        openAtLatestRequestId={1}
+        liveFollow={false}
+        onResolveRequest={vi.fn()}
+      />,
+    );
+    const initialDefault = virtuosoMock.lastProps.defaultItemHeight;
+    const completeEntries = Array.from({ length: 65 }, (_, index) => {
+      const nextEntry = historyEntry(index + 1);
+      return index < 45
+        ? {
+            ...nextEntry,
+            runView: {
+              ...nextEntry.runView,
+              finalMessage: "Long historical response. ".repeat(400),
+            },
+          }
+        : latestEntries[index - 45];
+    });
+
+    rerender(
+      <VirtuosoTaskChatTranscript
+        entries={completeEntries}
+        transcriptIdentity="chat:stable-geometry"
+        transcriptVersion="v1"
+        viewportWidth={900}
+        firstItemIndex={1_000_000 - 45}
+        openAtLatestRequestId={null}
+        liveFollow={false}
+        onResolveRequest={vi.fn()}
+      />,
+    );
+
+    expect(virtuosoMock.lastProps.defaultItemHeight).toBe(initialDefault);
+  });
+
   it("feeds exact Virtuoso row measurements back into the geometry cache", () => {
     const entry = historyEntry(1);
     const first = render(
@@ -269,6 +258,49 @@ describe("VirtuosoTaskChatTranscript", () => {
     expect(virtuosoMock.lastProps.defaultItemHeight).toBe(612);
   });
 
+  it("defers row-height cache writes until momentum scrolling is idle", () => {
+    vi.useFakeTimers();
+    const entry = historyEntry(1);
+    render(
+      <VirtuosoTaskChatTranscript
+        entries={[entry]}
+        transcriptIdentity="chat:deferred-measurement"
+        transcriptVersion="v1"
+        viewportWidth={640}
+        firstItemIndex={999_700}
+        openAtLatestRequestId={null}
+        liveFollow={false}
+        onResolveRequest={vi.fn()}
+      />,
+    );
+    const viewport = screen.getByTestId("virtuoso-viewport");
+
+    fireEvent.wheel(viewport, { deltaY: 900 });
+    act(() => {
+      virtuosoMock.lastProps.itemsRendered([
+        { data: entry, index: 999_700, offset: 0, size: 612 },
+      ]);
+    });
+    expect(
+      getCachedTranscriptRowHeight(
+        entry,
+        640,
+        "chat:deferred-measurement:v1",
+      ),
+    ).toBeUndefined();
+
+    act(() => {
+      vi.advanceTimersByTime(TRANSCRIPT_SCROLL_IDLE_MS);
+    });
+    expect(
+      getCachedTranscriptRowHeight(
+        entry,
+        640,
+        "chat:deferred-measurement:v1",
+      ),
+    ).toBe(612);
+  });
+
   it("follows live output only when the viewport remains at the bottom", () => {
     const { rerender } = render(
       <VirtuosoTaskChatTranscript
@@ -300,7 +332,8 @@ describe("VirtuosoTaskChatTranscript", () => {
     expect(virtuosoMock.lastProps.followOutput(true)).toBe(false);
   });
 
-  it("keeps viewport activity active until fast seeking has also settled", () => {
+  it("keeps viewport activity active through gaps in macOS momentum events", () => {
+    vi.useFakeTimers();
     const onScrollActivityChange = vi.fn();
     render(
       <VirtuosoTaskChatTranscript
@@ -315,23 +348,47 @@ describe("VirtuosoTaskChatTranscript", () => {
       />,
     );
 
-    act(() => virtuosoMock.lastProps.isScrolling(true));
+    const viewport = screen.getByTestId("virtuoso-viewport");
+    fireEvent.wheel(viewport, { deltaY: 700 });
     expect(onScrollActivityChange).toHaveBeenLastCalledWith(true);
-    act(() => {
-      virtuosoMock.lastProps.scrollSeekConfiguration.enter(800, {
-        startIndex: 999_710,
-        endIndex: 999_720,
-      });
-      virtuosoMock.lastProps.isScrolling(false);
-    });
+    act(() => virtuosoMock.lastProps.isScrolling(true));
+    act(() => virtuosoMock.lastProps.isScrolling(false));
     expect(onScrollActivityChange).toHaveBeenCalledTimes(1);
 
+    fireEvent.scroll(viewport);
     act(() => {
-      virtuosoMock.lastProps.scrollSeekConfiguration.exit(0, {
-        startIndex: 999_710,
-        endIndex: 999_720,
-      });
+      vi.advanceTimersByTime(TRANSCRIPT_SCROLL_IDLE_MS - 1);
     });
+    expect(onScrollActivityChange).toHaveBeenCalledTimes(1);
+    act(() => vi.advanceTimersByTime(1));
+    expect(onScrollActivityChange).toHaveBeenLastCalledWith(false);
+  });
+
+  it.each([
+    ["touch", (viewport: HTMLElement) => fireEvent.touchStart(viewport)],
+    ["keyboard", (viewport: HTMLElement) =>
+      fireEvent.keyDown(viewport, { key: "PageDown" })],
+    ["scrollbar", (viewport: HTMLElement) =>
+      fireEvent.pointerDown(viewport, { clientX: 0 })],
+  ])("reports %s transcript gestures until the idle window", (_name, begin) => {
+    vi.useFakeTimers();
+    const onScrollActivityChange = vi.fn();
+    render(
+      <VirtuosoTaskChatTranscript
+        entries={Array.from({ length: 20 }, (_, index) => historyEntry(index + 1))}
+        transcriptIdentity={`chat:${_name}`}
+        transcriptVersion="v1"
+        firstItemIndex={999_700}
+        openAtLatestRequestId={null}
+        liveFollow={false}
+        onResolveRequest={vi.fn()}
+        onScrollActivityChange={onScrollActivityChange}
+      />,
+    );
+
+    begin(screen.getByTestId("virtuoso-viewport"));
+    expect(onScrollActivityChange).toHaveBeenLastCalledWith(true);
+    act(() => vi.advanceTimersByTime(TRANSCRIPT_SCROLL_IDLE_MS));
     expect(onScrollActivityChange).toHaveBeenLastCalledWith(false);
   });
 
