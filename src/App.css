@@ -1026,7 +1026,7 @@ button.account-switcher-item:hover:not(:disabled) {
   grid-template-columns: minmax(0, 1fr) max-content;
   gap: var(--workspace-header-gap);
   align-items: center;
-  border-bottom: 0;
+  border-bottom: 1px solid var(--color-divider);
   background: rgb(var(--component-rgb) / 0.96);
   padding: 10px 18px;
   white-space: nowrap;
@@ -3153,7 +3153,7 @@ select:disabled {
   max-width: 100%;
   width: min(1040px, 100%);
   overflow: visible;
-  border: 0;
+  border: 1px solid var(--color-divider);
   border-radius: var(--radius);
   background: var(--composer);
   box-shadow: 0 18px 56px rgb(var(--shadow-rgb) / 0.16);
