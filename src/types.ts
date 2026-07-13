@@ -214,6 +214,73 @@ export type HistoryRunSummary = Pick<
   latest_model_context_window: number | null;
 };
 
+export type HistoryPageLoadState = "idle" | "loading" | "loaded" | "error";
+
+export type HistoryTurnHint = {
+  slotIndex: number;
+  turnId: string | null;
+  promptCharacters: number;
+  responseCharacters: number;
+  promptLines: number;
+  responseLines: number;
+};
+
+export type HistoryPageDescriptor = {
+  id: string;
+  pageIndex: number;
+  startIndex: number;
+  turnCount: number;
+  cursor: string | null;
+  localOffset: number | null;
+};
+
+export type HistoryTranscriptIndex = {
+  chatId: number;
+  threadId: string | null;
+  sourceVersion: string;
+  totalTurns: number;
+  pageSize: number;
+  pages: HistoryPageDescriptor[];
+  hints: HistoryTurnHint[];
+};
+
+export type ExternalThreadHistoryIndex = Omit<
+  HistoryTranscriptIndex,
+  "chatId"
+> & {
+  requestId: string;
+};
+
+export type ExternalTranscriptTurnSummary = {
+  slotIndex: number;
+  turnId: string | null;
+  prompt: string;
+  finalMessage: string;
+  error: string | null;
+  status: string;
+  startedAt: string | null;
+  completedAt: string | null;
+  durationMs: number | null;
+  totalTokens: number | null;
+  modelContextWindow: number | null;
+};
+
+export type ExternalTranscriptSnapshot = {
+  requestId: string;
+  threadId: string;
+  sourceVersion: string;
+  totalTurns: number;
+  turns: ExternalTranscriptTurnSummary[];
+};
+
+export type HistoricalTranscriptState = {
+  chatId: number;
+  sourceVersion: string;
+  complete: boolean;
+  firstItemIndex: number;
+  syncStatus: "idle" | "latest" | "syncing" | "complete" | "error";
+};
+
 export type ChatOrigin = "orchestrator" | "codex_external";
 export type CodexProfileKey = `account:${number}` | "default";
 

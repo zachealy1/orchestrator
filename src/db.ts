@@ -6,8 +6,13 @@ import type {
   ChatWithRuns,
   CodexAccountProfile,
   CodexAccountStatus,
+  ExternalTranscriptSnapshot,
+  ExternalThreadHistoryIndex,
+  HistoryPageDescriptor,
   PreflightReport,
   HistoryRunSummary,
+  HistoryTranscriptIndex,
+  HistoryTurnHint,
   RunListItem,
   RunRecord,
   TaskRecord,
@@ -294,6 +299,11 @@ export async function upsertExternalCodexChats(chats: ExternalCodexChatInput[]) 
           updatedAt,
           existing.id,
         ],
+      );
+      await db.execute(
+        `DELETE FROM external_chat_history_indexes
+         WHERE chat_id = $1 AND source_version <> $2`,
+        [existing.id, updatedAt],
       );
       continue;
     }
@@ -777,8 +787,375 @@ export async function listChatRunsPage(
   );
 }
 
+export async function listLocalChatTranscript(chatId: number) {
+  const db = await getDatabase();
+  return db.select<HistoryRunSummary[]>(
+    `SELECT runs.id, runs.task_id, runs.workspace_id, runs.chat_id, runs.turn_index,
+      runs.codex_thread_id, runs.codex_turn_id,
+      runs.status,
+      runs.started_at, runs.completed_at, runs.duration_ms, runs.final_message, runs.error,
+      tasks.original_prompt,
+      latest_tokens.total_tokens AS latest_total_tokens,
+      latest_tokens.model_context_window AS latest_model_context_window
+     FROM runs
+     JOIN tasks ON tasks.id = runs.task_id
+     LEFT JOIN (
+       SELECT run_id, MAX(id) AS max_id
+       FROM token_usage_snapshots
+       GROUP BY run_id
+     ) latest ON latest.run_id = runs.id
+     LEFT JOIN token_usage_snapshots latest_tokens ON latest_tokens.id = latest.max_id
+     WHERE runs.chat_id = $1
+       AND runs.deleted_at IS NULL
+     ORDER BY COALESCE(runs.turn_index, runs.id), runs.started_at`,
+    [chatId],
+  );
+}
+
+type LocalHistoryTurnIndexRow = {
+  turn_id: string | null;
+  prompt_characters: number;
+  response_characters: number;
+  prompt_lines: number;
+  response_lines: number;
+};
+
+type ExternalHistoryIndexRow = {
+  chat_id: number;
+  thread_id: string;
+  source_version: string;
+  page_size: number;
+  total_turns: number;
+  pages_json: string;
+  hints_json: string;
+};
+
+type ExternalTranscriptSnapshotRow = {
+  chat_id: number;
+  thread_id: string;
+  source_version: string;
+  turn_count: number;
+  synced_at: string;
+};
+
+type ExternalTranscriptTurnRow = {
+  slot_index: number;
+  external_turn_id: string | null;
+  prompt: string;
+  final_message: string;
+  error: string | null;
+  status: string;
+  started_at: string | null;
+  completed_at: string | null;
+  duration_ms: number | null;
+  total_tokens: number | null;
+  model_context_window: number | null;
+};
+
+export type CachedExternalTranscriptSnapshot = ExternalTranscriptSnapshot & {
+  chatId: number;
+  syncedAt: string;
+};
+
+export async function readExternalTranscriptSnapshot(
+  chatId: number,
+  sourceVersion?: string,
+): Promise<CachedExternalTranscriptSnapshot | null> {
+  const versionFilter = sourceVersion ? "AND snapshots.source_version = $2" : "";
+  const snapshot = await selectOne<ExternalTranscriptSnapshotRow>(
+    `SELECT snapshots.chat_id,
+      COALESCE(chats.external_thread_id, chats.codex_thread_id, '') AS thread_id,
+      snapshots.source_version, snapshots.turn_count, snapshots.synced_at
+     FROM external_chat_transcript_snapshots snapshots
+     JOIN chats ON chats.id = snapshots.chat_id
+     WHERE snapshots.chat_id = $1 ${versionFilter}`,
+    sourceVersion ? [chatId, sourceVersion] : [chatId],
+  );
+  if (!snapshot || !snapshot.thread_id) {
+    return null;
+  }
+
+  const db = await getDatabase();
+  const rows = await db.select<ExternalTranscriptTurnRow[]>(
+    `SELECT slot_index, external_turn_id, prompt, final_message, error, status,
+      started_at, completed_at, duration_ms, total_tokens, model_context_window
+     FROM external_chat_turn_summaries
+     WHERE chat_id = $1 AND source_version = $2
+     ORDER BY slot_index`,
+    [chatId, snapshot.source_version],
+  );
+  if (rows.length !== Number(snapshot.turn_count)) {
+    return null;
+  }
+
+  return {
+    requestId: "cached",
+    chatId: snapshot.chat_id,
+    threadId: snapshot.thread_id,
+    sourceVersion: snapshot.source_version,
+    totalTurns: rows.length,
+    syncedAt: snapshot.synced_at,
+    turns: rows.map((row) => ({
+      slotIndex: Number(row.slot_index),
+      turnId: row.external_turn_id,
+      prompt: row.prompt,
+      finalMessage: row.final_message,
+      error: row.error,
+      status: row.status,
+      startedAt: row.started_at,
+      completedAt: row.completed_at,
+      durationMs: row.duration_ms === null ? null : Number(row.duration_ms),
+      totalTokens: row.total_tokens === null ? null : Number(row.total_tokens),
+      modelContextWindow:
+        row.model_context_window === null ? null : Number(row.model_context_window),
+    })),
+  };
+}
+
+export async function activateExternalTranscriptSnapshot(
+  chatId: number,
+  snapshot: ExternalTranscriptSnapshot,
+) {
+  if (snapshot.turns.length !== snapshot.totalTurns) {
+    throw new Error("External transcript snapshot is incomplete");
+  }
+
+  const db = await getDatabase();
+  const active = await selectOne<{ source_version: string }>(
+    `SELECT source_version
+     FROM external_chat_transcript_snapshots
+     WHERE chat_id = $1`,
+    [chatId],
+  );
+  if (active?.source_version === snapshot.sourceVersion) {
+    return;
+  }
+
+  await db.execute(
+    `DELETE FROM external_chat_turn_summaries
+     WHERE chat_id = $1 AND source_version = $2`,
+    [chatId, snapshot.sourceVersion],
+  );
+
+  const batchSize = 40;
+  for (let offset = 0; offset < snapshot.turns.length; offset += batchSize) {
+    const batch = snapshot.turns.slice(offset, offset + batchSize);
+    const values: unknown[] = [];
+    const placeholders = batch.map((turn) => {
+      const start = values.length + 1;
+      values.push(
+        chatId,
+        snapshot.sourceVersion,
+        turn.slotIndex,
+        turn.turnId,
+        turn.prompt,
+        turn.finalMessage,
+        turn.error,
+        turn.status,
+        turn.startedAt,
+        turn.completedAt,
+        turn.durationMs,
+        turn.totalTokens,
+        turn.modelContextWindow,
+      );
+      return `(${Array.from({ length: 13 }, (_, index) => `$${start + index}`).join(", ")})`;
+    });
+    await db.execute(
+      `INSERT INTO external_chat_turn_summaries (
+         chat_id, source_version, slot_index, external_turn_id,
+         prompt, final_message, error, status, started_at, completed_at,
+         duration_ms, total_tokens, model_context_window
+       ) VALUES ${placeholders.join(", ")}`,
+      values,
+    );
+  }
+
+  const count = await selectOne<{ count: number }>(
+    `SELECT COUNT(*) AS count
+     FROM external_chat_turn_summaries
+     WHERE chat_id = $1 AND source_version = $2`,
+    [chatId, snapshot.sourceVersion],
+  );
+  if (Number(count?.count ?? 0) !== snapshot.totalTurns) {
+    throw new Error("External transcript snapshot could not be verified");
+  }
+
+  await db.execute(
+    `INSERT INTO external_chat_transcript_snapshots (
+       chat_id, source_version, turn_count, synced_at
+     ) VALUES ($1, $2, $3, CURRENT_TIMESTAMP)
+     ON CONFLICT(chat_id) DO UPDATE SET
+       source_version = excluded.source_version,
+       turn_count = excluded.turn_count,
+       synced_at = CURRENT_TIMESTAMP`,
+    [chatId, snapshot.sourceVersion, snapshot.totalTurns],
+  );
+  await db.execute(
+    `DELETE FROM external_chat_turn_summaries
+     WHERE chat_id = $1 AND source_version <> $2`,
+    [chatId, snapshot.sourceVersion],
+  );
+}
+
+export async function deleteExternalTranscriptSnapshots(chatId: number) {
+  const db = await getDatabase();
+  await db.execute(
+    "DELETE FROM external_chat_transcript_snapshots WHERE chat_id = $1",
+    [chatId],
+  );
+  await db.execute(
+    "DELETE FROM external_chat_turn_summaries WHERE chat_id = $1",
+    [chatId],
+  );
+}
+
+export async function buildLocalChatHistoryIndex(
+  chat: ChatListItem,
+  pageSize = 20,
+): Promise<HistoryTranscriptIndex> {
+  const db = await getDatabase();
+  const rows = await db.select<LocalHistoryTurnIndexRow[]>(
+    `SELECT runs.codex_turn_id AS turn_id,
+      LENGTH(tasks.original_prompt) AS prompt_characters,
+      LENGTH(COALESCE(runs.final_message, runs.error, '')) AS response_characters,
+      CASE
+        WHEN LENGTH(tasks.original_prompt) = 0 THEN 0
+        ELSE 1 + LENGTH(tasks.original_prompt)
+          - LENGTH(REPLACE(tasks.original_prompt, CHAR(10), ''))
+      END AS prompt_lines,
+      CASE
+        WHEN LENGTH(COALESCE(runs.final_message, runs.error, '')) = 0 THEN 0
+        ELSE 1 + LENGTH(COALESCE(runs.final_message, runs.error, ''))
+          - LENGTH(REPLACE(COALESCE(runs.final_message, runs.error, ''), CHAR(10), ''))
+      END AS response_lines
+     FROM runs
+     JOIN tasks ON tasks.id = runs.task_id
+     WHERE runs.chat_id = $1
+       AND runs.deleted_at IS NULL
+     ORDER BY COALESCE(runs.turn_index, runs.id), runs.started_at`,
+    [chat.id],
+  );
+  const safePageSize = Math.max(1, Math.floor(pageSize));
+  const hints: HistoryTurnHint[] = rows.map((row, slotIndex) => ({
+    slotIndex,
+    turnId: row.turn_id,
+    promptCharacters: Number(row.prompt_characters) || 0,
+    responseCharacters: Number(row.response_characters) || 0,
+    promptLines: Number(row.prompt_lines) || 0,
+    responseLines: Number(row.response_lines) || 0,
+  }));
+  const pages = buildLocalHistoryPages(chat.id, rows.length, safePageSize);
+
+  return {
+    chatId: chat.id,
+    threadId: chat.codex_thread_id,
+    sourceVersion: chat.updated_at,
+    totalTurns: rows.length,
+    pageSize: safePageSize,
+    pages,
+    hints,
+  };
+}
+
+export async function readExternalChatHistoryIndex(
+  chatId: number,
+  sourceVersion: string,
+): Promise<HistoryTranscriptIndex | null> {
+  const row = await selectOne<ExternalHistoryIndexRow>(
+    `SELECT chat_id, thread_id, source_version, page_size, total_turns,
+      pages_json, hints_json
+     FROM external_chat_history_indexes
+     WHERE chat_id = $1 AND source_version = $2`,
+    [chatId, sourceVersion],
+  );
+  if (!row) {
+    return null;
+  }
+
+  try {
+    const pages = JSON.parse(row.pages_json) as HistoryPageDescriptor[];
+    const hints = JSON.parse(row.hints_json) as HistoryTurnHint[];
+    if (!Array.isArray(pages) || !Array.isArray(hints)) {
+      return null;
+    }
+    return {
+      chatId: row.chat_id,
+      threadId: row.thread_id,
+      sourceVersion: row.source_version,
+      totalTurns: Number(row.total_turns) || 0,
+      pageSize: Number(row.page_size) || 20,
+      pages,
+      hints,
+    };
+  } catch {
+    return null;
+  }
+}
+
+export async function saveExternalChatHistoryIndex(
+  chatId: number,
+  index: ExternalThreadHistoryIndex,
+) {
+  const db = await getDatabase();
+  await db.execute(
+    `INSERT INTO external_chat_history_indexes (
+       chat_id, thread_id, source_version, page_size, total_turns,
+       pages_json, hints_json, indexed_at
+     ) VALUES ($1, $2, $3, $4, $5, $6, $7, CURRENT_TIMESTAMP)
+     ON CONFLICT(chat_id) DO UPDATE SET
+       thread_id = excluded.thread_id,
+       source_version = excluded.source_version,
+       page_size = excluded.page_size,
+       total_turns = excluded.total_turns,
+       pages_json = excluded.pages_json,
+       hints_json = excluded.hints_json,
+       indexed_at = CURRENT_TIMESTAMP`,
+    [
+      chatId,
+      index.threadId,
+      index.sourceVersion,
+      index.pageSize,
+      index.totalTurns,
+      JSON.stringify(index.pages),
+      JSON.stringify(index.hints),
+    ],
+  );
+}
+
+function buildLocalHistoryPages(
+  chatId: number,
+  totalTurns: number,
+  pageSize: number,
+) {
+  const pages: HistoryPageDescriptor[] = [];
+  for (let startIndex = 0; startIndex < totalTurns; startIndex += pageSize) {
+    const pageIndex = pages.length;
+    pages.push({
+      id: `local:${chatId}:${pageIndex}`,
+      pageIndex,
+      startIndex,
+      turnCount: Math.min(pageSize, totalTurns - startIndex),
+      cursor: null,
+      localOffset: startIndex,
+    });
+  }
+  return pages;
+}
+
 export async function softDeleteChat(chatId: number) {
   const db = await getDatabase();
+  await db.execute(
+    "DELETE FROM external_chat_history_indexes WHERE chat_id = $1",
+    [chatId],
+  );
+  await db.execute(
+    "DELETE FROM external_chat_transcript_snapshots WHERE chat_id = $1",
+    [chatId],
+  );
+  await db.execute(
+    "DELETE FROM external_chat_turn_summaries WHERE chat_id = $1",
+    [chatId],
+  );
   await db.execute(
     "UPDATE chats SET deleted_at = CURRENT_TIMESTAMP WHERE id = $1",
     [chatId],

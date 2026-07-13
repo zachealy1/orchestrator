@@ -37,6 +37,10 @@ const mocks = vi.hoisted(() => ({
   codexRpcMock: vi.fn(),
   codexDefaultProfileRpcMock: vi.fn(),
   loadDefaultProfileTurnActivityMock: vi.fn(),
+  indexDefaultProfileThreadMock: vi.fn(),
+  cancelDefaultProfileThreadIndexMock: vi.fn(),
+  syncDefaultProfileThreadTranscriptMock: vi.fn(),
+  cancelDefaultProfileThreadTranscriptMock: vi.fn(),
   listWorkspacesMock: vi.fn(),
   listCodexAccountsMock: vi.fn(),
   listDuplicateProfilesPendingCleanupMock: vi.fn(),
@@ -46,6 +50,12 @@ const mocks = vi.hoisted(() => ({
   listWorkspaceChatsMock: vi.fn(),
   getChatWithRunsMock: vi.fn(),
   listChatRunsPageMock: vi.fn(),
+  buildLocalChatHistoryIndexMock: vi.fn(),
+  readExternalChatHistoryIndexMock: vi.fn(),
+  saveExternalChatHistoryIndexMock: vi.fn(),
+  listLocalChatTranscriptMock: vi.fn(),
+  readExternalTranscriptSnapshotMock: vi.fn(),
+  activateExternalTranscriptSnapshotMock: vi.fn(),
   softDeleteChatMock: vi.fn(),
   listWorkspaceRunsMock: vi.fn(),
   createCodexAccountMock: vi.fn(),
@@ -91,6 +101,49 @@ vi.mock("./assets/brand/orchestrator-wordmark.png", () => ({
   default: "orchestrator-wordmark.png",
 }));
 
+vi.mock("react-virtuoso", async () => {
+  const React = await import("react");
+  return {
+    Virtuoso: React.forwardRef(function MockVirtuoso(
+      {
+        className,
+        computeItemKey,
+        data = [],
+        isScrolling,
+        itemContent,
+      }: any,
+      ref,
+    ) {
+      React.useImperativeHandle(ref, () => ({
+        getState: (callback: (state: unknown) => void) =>
+          callback({ ranges: [], scrollTop: 0 }),
+        scrollToIndex: vi.fn(),
+      }));
+      return (
+        <div className={className} data-testid="mock-virtuoso">
+          {data.map((entry: any, index: number) => (
+            <div key={computeItemKey?.(index, entry) ?? index}>
+              {itemContent(index, entry)}
+            </div>
+          ))}
+          <button
+            type="button"
+            hidden
+            onClick={() => isScrolling?.(true)}
+            aria-label="Start transcript scrolling"
+          />
+          <button
+            type="button"
+            hidden
+            onClick={() => isScrolling?.(false)}
+            aria-label="Stop transcript scrolling"
+          />
+        </div>
+      );
+    }),
+  };
+});
+
 vi.mock("./codexClient", () => ({
   cancelCodexLogin: mocks.cancelCodexLoginMock,
   codexDefaultProfileRpc: mocks.codexDefaultProfileRpcMock,
@@ -108,6 +161,12 @@ vi.mock("./codexClient", () => ({
   listCodexSkills: mocks.listCodexSkillsMock,
   listWorkspaceDirectory: mocks.listWorkspaceDirectoryMock,
   loadDefaultProfileTurnActivity: mocks.loadDefaultProfileTurnActivityMock,
+  indexDefaultProfileThread: mocks.indexDefaultProfileThreadMock,
+  cancelDefaultProfileThreadIndex: mocks.cancelDefaultProfileThreadIndexMock,
+  syncDefaultProfileThreadTranscript:
+    mocks.syncDefaultProfileThreadTranscriptMock,
+  cancelDefaultProfileThreadTranscript:
+    mocks.cancelDefaultProfileThreadTranscriptMock,
   logoutCodexAccount: mocks.logoutCodexAccountMock,
   pushWorkspaceBranch: mocks.pushWorkspaceBranchMock,
   readCodexAccount: mocks.readCodexAccountMock,
@@ -125,6 +184,7 @@ vi.mock("./codexClient", () => ({
 
 vi.mock("./db", () => ({
   appendRunEvent: mocks.appendRunEventMock,
+  buildLocalChatHistoryIndex: mocks.buildLocalChatHistoryIndexMock,
   completeDuplicateProfileCleanup: mocks.completeDuplicateProfileCleanupMock,
   createChat: mocks.createChatMock,
   createCodexAccount: mocks.createCodexAccountMock,
@@ -140,9 +200,15 @@ vi.mock("./db", () => ({
   listWorkspaceRuns: mocks.listWorkspaceRunsMock,
   listWorkspaces: mocks.listWorkspacesMock,
   recordTokenUsage: mocks.recordTokenUsageMock,
+  readExternalChatHistoryIndex: mocks.readExternalChatHistoryIndexMock,
+  readExternalTranscriptSnapshot: mocks.readExternalTranscriptSnapshotMock,
   renameCodexAccount: mocks.renameCodexAccountMock,
   softDeleteWorkspace: mocks.softDeleteWorkspaceMock,
   savePreflightReport: mocks.savePreflightReportMock,
+  saveExternalChatHistoryIndex: mocks.saveExternalChatHistoryIndexMock,
+  activateExternalTranscriptSnapshot:
+    mocks.activateExternalTranscriptSnapshotMock,
+  listLocalChatTranscript: mocks.listLocalChatTranscriptMock,
   softDeleteChat: mocks.softDeleteChatMock,
   softDeleteCodexAccount: mocks.softDeleteCodexAccountMock,
   softDeleteRun: mocks.softDeleteRunMock,
@@ -302,6 +368,45 @@ function workspaceChatWithRunsFixture(
   return { chat, runs };
 }
 
+function externalTurnFixture(index: number) {
+  return {
+    id: `external-turn-${index}`,
+    status: "completed",
+    createdAt: `2026-06-30T09:${String(index % 60).padStart(2, "0")}:00Z`,
+    completedAt: `2026-06-30T09:${String(index % 60).padStart(2, "0")}:30Z`,
+    items: [
+      { type: "userMessage", text: `External prompt ${index}` },
+      {
+        type: "agentMessage",
+        phase: "final_answer",
+        text: `External result ${index}.`,
+      },
+    ],
+  };
+}
+
+function externalTranscriptSnapshotFixture(count: number) {
+  return {
+    requestId: "transcript-sync-large",
+    threadId: "external-thread-large",
+    sourceVersion: "2026-06-30T10:30:00Z",
+    totalTurns: count,
+    turns: Array.from({ length: count }, (_, slotIndex) => ({
+      slotIndex,
+      turnId: `external-turn-${slotIndex + 1}`,
+      prompt: `External prompt ${slotIndex + 1}`,
+      finalMessage: `External result ${slotIndex + 1}.`,
+      error: null,
+      status: "completed",
+      startedAt: "2026-06-30T09:00:00Z",
+      completedAt: "2026-06-30T09:00:30Z",
+      durationMs: 30_000,
+      totalTokens: 1_000 + slotIndex,
+      modelContextWindow: 128_000,
+    })),
+  };
+}
+
 function prepareDefaults() {
   mocks.connectCodexMock.mockResolvedValue({
     alreadyConnected: false,
@@ -376,6 +481,56 @@ function prepareDefaults() {
     editedFiles: [],
     nextCursor: null,
   });
+  mocks.cancelDefaultProfileThreadIndexMock.mockResolvedValue(undefined);
+  mocks.cancelDefaultProfileThreadTranscriptMock.mockResolvedValue(undefined);
+  mocks.syncDefaultProfileThreadTranscriptMock.mockResolvedValue({
+    requestId: "transcript-sync-1",
+    threadId: "thread-external",
+    sourceVersion: "2026-06-30T09:01:00Z",
+    totalTurns: 1,
+    turns: [
+      {
+        slotIndex: 0,
+        turnId: "turn-external",
+        prompt: "External prompt",
+        finalMessage: "External answer.",
+        error: null,
+        status: "completed",
+        startedAt: "2026-06-30T09:00:00Z",
+        completedAt: "2026-06-30T09:01:00Z",
+        durationMs: 60_000,
+        totalTokens: 1_280,
+        modelContextWindow: 128_000,
+      },
+    ],
+  });
+  mocks.indexDefaultProfileThreadMock.mockResolvedValue({
+    requestId: "history-index-1",
+    threadId: "thread-external",
+    sourceVersion: "2026-06-30T09:01:00Z",
+    totalTurns: 1,
+    pageSize: 20,
+    pages: [
+      {
+        id: "external:thread-external:0",
+        pageIndex: 0,
+        startIndex: 0,
+        turnCount: 1,
+        cursor: null,
+        localOffset: null,
+      },
+    ],
+    hints: [
+      {
+        slotIndex: 0,
+        turnId: "turn-external",
+        promptCharacters: 24,
+        responseCharacters: 32,
+        promptLines: 1,
+        responseLines: 1,
+      },
+    ],
+  });
   mocks.connectDefaultCodexProfileMock.mockResolvedValue({
     pid: 500,
     alreadyConnected: false,
@@ -416,6 +571,45 @@ function prepareDefaults() {
       return chat.runs.slice(offset, offset + limit);
     },
   );
+  mocks.listLocalChatTranscriptMock.mockImplementation(async (chatId: number) => {
+    const chat = await mocks.getChatWithRunsMock(chatId);
+    return chat.runs;
+  });
+  mocks.readExternalTranscriptSnapshotMock.mockResolvedValue(null);
+  mocks.activateExternalTranscriptSnapshotMock.mockResolvedValue(undefined);
+  mocks.buildLocalChatHistoryIndexMock.mockImplementation(async (chat: any) => {
+    const totalTurns = Math.max(0, Number(chat.turn_count) || 0);
+    const pages = [];
+    for (let startIndex = 0; startIndex < totalTurns; startIndex += 20) {
+      const pageIndex: number = pages.length;
+      pages.push({
+        id: `local:${chat.id}:${pageIndex}`,
+        pageIndex,
+        startIndex,
+        turnCount: Math.min(20, totalTurns - startIndex),
+        cursor: null,
+        localOffset: startIndex,
+      });
+    }
+    return {
+      chatId: chat.id,
+      threadId: chat.codex_thread_id,
+      sourceVersion: chat.updated_at,
+      totalTurns,
+      pageSize: 20,
+      pages,
+      hints: Array.from({ length: totalTurns }, (_, slotIndex) => ({
+        slotIndex,
+        turnId: `turn-${slotIndex + 1}`,
+        promptCharacters: 24,
+        responseCharacters: 32,
+        promptLines: 1,
+        responseLines: 1,
+      })),
+    };
+  });
+  mocks.readExternalChatHistoryIndexMock.mockResolvedValue(null);
+  mocks.saveExternalChatHistoryIndexMock.mockResolvedValue(undefined);
   mocks.listWorkspaceRunsMock.mockResolvedValue([]);
   mocks.createCodexAccountMock.mockResolvedValue(pendingAccount);
   mocks.updateCodexAccountMock.mockResolvedValue(undefined);
@@ -442,51 +636,6 @@ async function renderApp() {
   render(<App />);
   await waitFor(() => expect(mocks.listCodexAccountsMock).toHaveBeenCalled());
   return { user };
-}
-
-function mockTranscriptScrollMetrics(scrollHeight: number, clientHeight: number) {
-  const scrollHeightDescriptor = Object.getOwnPropertyDescriptor(
-    HTMLElement.prototype,
-    "scrollHeight",
-  );
-  const clientHeightDescriptor = Object.getOwnPropertyDescriptor(
-    HTMLElement.prototype,
-    "clientHeight",
-  );
-
-  Object.defineProperty(HTMLElement.prototype, "scrollHeight", {
-    configurable: true,
-    get() {
-      return this.classList.contains("task-chat-transcript") ? scrollHeight : 0;
-    },
-  });
-  Object.defineProperty(HTMLElement.prototype, "clientHeight", {
-    configurable: true,
-    get() {
-      return this.classList.contains("task-chat-transcript") ? clientHeight : 0;
-    },
-  });
-
-  return () => {
-    if (scrollHeightDescriptor) {
-      Object.defineProperty(
-        HTMLElement.prototype,
-        "scrollHeight",
-        scrollHeightDescriptor,
-      );
-    } else {
-      Reflect.deleteProperty(HTMLElement.prototype, "scrollHeight");
-    }
-    if (clientHeightDescriptor) {
-      Object.defineProperty(
-        HTMLElement.prototype,
-        "clientHeight",
-        clientHeightDescriptor,
-      );
-    } else {
-      Reflect.deleteProperty(HTMLElement.prototype, "clientHeight");
-    }
-  };
 }
 
 function createContextFileDataTransfer(files: unknown[]) {
@@ -1906,8 +2055,7 @@ describe("App Codex auth", () => {
     expect(within(transcript).getByText("1,280 tokens")).toBeInTheDocument();
   });
 
-  it("closes history immediately and loads older large-chat turns near the top", async () => {
-    const restoreScrollMetrics = mockTranscriptScrollMetrics(24_000, 600);
+  it("loads a complete local transcript once and performs no history reads while scrolling", async () => {
     const historicalChat = workspaceChatFixture({
       id: 451,
       title: "Large history chat",
@@ -1923,129 +2071,218 @@ describe("App Codex auth", () => {
       }),
     );
     mocks.listWorkspaceChatsMock.mockResolvedValue([historicalChat]);
-    mocks.listChatRunsPageMock.mockImplementation(
-      async (_chatId: number, offset: number, limit: number) =>
-        historicalRuns.slice(offset, offset + limit),
+    mocks.listLocalChatTranscriptMock.mockResolvedValue(historicalRuns);
+
+    const { user } = await renderApp();
+    const banner = screen.getByRole("region", { name: "Selected folder" });
+    await user.click(
+      within(banner).getByRole("button", { name: /open chat history/i }),
+    );
+    const drawer = await screen.findByRole("complementary", {
+      name: "Workspace chat history",
+    });
+
+    await user.click(
+      within(drawer).getByRole("button", { name: /large history chat/i }),
     );
 
-    try {
-      const { user } = await renderApp();
-      const banner = screen.getByRole("region", { name: "Selected folder" });
-      await user.click(
-        within(banner).getByRole("button", { name: /open chat history/i }),
-      );
-      const drawer = await screen.findByRole("complementary", {
-        name: "Workspace chat history",
-      });
+    expect(drawer).toHaveClass("closed");
+    expect(screen.getByLabelText("Loading chat")).toHaveTextContent(
+      "Loading Large history chat",
+    );
+    expect(await screen.findByText("Result 65.")).toBeInTheDocument();
+    expect(screen.getByText("Result 1.")).toBeInTheDocument();
+    expect(mocks.listLocalChatTranscriptMock).toHaveBeenCalledTimes(1);
+    expect(mocks.listLocalChatTranscriptMock).toHaveBeenCalledWith(451);
 
-      await user.click(
-        within(drawer).getByRole("button", { name: /large history chat/i }),
-      );
-
-      expect(drawer).toHaveClass("closed");
-      expect(screen.getByLabelText("Loading chat")).toHaveTextContent(
-        "Loading Large history chat",
-      );
-      expect(await screen.findByText("Result 65.")).toBeInTheDocument();
-      expect(mocks.listChatRunsPageMock).toHaveBeenNthCalledWith(1, 451, 45, 20);
-
-      const transcript = screen.getByLabelText("Task chat transcript");
-      await waitFor(() => expect(transcript.scrollTop).toBe(23_400));
-      expect(mocks.listChatRunsPageMock).toHaveBeenCalledTimes(1);
-
-      await act(async () => {
-        await new Promise((resolve) => window.setTimeout(resolve, 180));
-      });
-      transcript.scrollTop = 200;
-      fireEvent.wheel(transcript, { deltaY: -120 });
-      fireEvent.scroll(transcript);
-      await waitFor(() =>
-        expect(mocks.listChatRunsPageMock).toHaveBeenCalledTimes(2),
-      );
-      expect(mocks.listChatRunsPageMock).toHaveBeenNthCalledWith(2, 451, 25, 20);
-      expect(document.querySelectorAll(".task-chat-virtual-row").length).toBeLessThan(
-        40,
-      );
-    } finally {
-      restoreScrollMetrics();
-    }
+    const transcript = screen.getByLabelText("Task chat transcript");
+    fireEvent.wheel(transcript, { deltaY: -120 });
+    fireEvent.scroll(transcript);
+    expect(mocks.listLocalChatTranscriptMock).toHaveBeenCalledTimes(1);
+    expect(mocks.listChatRunsPageMock).not.toHaveBeenCalled();
+    expect(screen.queryByText("Loading older messages...")).not.toBeInTheDocument();
   });
 
-  it("defers an older history page that finishes during active scrolling", async () => {
-    const restoreScrollMetrics = mockTranscriptScrollMetrics(24_000, 600);
-    const historicalChat = workspaceChatFixture({
+  it("shows the latest external turns first and commits the full snapshot after scrolling is idle", async () => {
+    const historicalChat = {
+      ...workspaceChatFixture({
       id: 452,
-      title: "Deferred history chat",
+      title: "External history chat",
+      codex_thread_id: "external-thread-large",
+      origin: "codex_external",
+      profile_key: "default",
+      external_thread_id: "external-thread-large",
+      source_kind: "vscode",
       turn_count: 65,
-    });
-    const historicalRuns = Array.from({ length: 65 }, (_, index) =>
-      workspaceRunFixture({
-        id: 700 + index,
-        chat_id: historicalChat.id,
-        turn_index: index + 1,
-        original_prompt: `Deferred prompt ${index + 1}`,
-        final_message: `Deferred result ${index + 1}.`,
       }),
-    );
-    let resolveOlderPage:
-      | ((runs: ReturnType<typeof workspaceRunFixture>[]) => void)
+      account_id: null,
+      account_label: null,
+      account_email: null,
+      external_updated_at: "2026-06-30T10:30:00Z",
+    };
+    let resolveSnapshot:
+      | ((snapshot: ReturnType<typeof externalTranscriptSnapshotFixture>) => void)
       | null = null;
-    const olderPage = new Promise<ReturnType<typeof workspaceRunFixture>[]>(
+    const snapshotPromise = new Promise<
+      ReturnType<typeof externalTranscriptSnapshotFixture>
+    >(
       (resolve) => {
-        resolveOlderPage = resolve;
+        resolveSnapshot = resolve;
       },
     );
     mocks.listWorkspaceChatsMock.mockResolvedValue([historicalChat]);
-    mocks.listChatRunsPageMock.mockImplementation(
-      async (_chatId: number, offset: number, limit: number) =>
-        offset === 25
-          ? olderPage
-          : historicalRuns.slice(offset, offset + limit),
+    mocks.codexDefaultProfileRpcMock.mockImplementation(async (method: string) => {
+      if (method === "thread/list") return { threads: [] };
+      if (method === "thread/turns/list") {
+        return {
+          data: Array.from({ length: 20 }, (_, index) =>
+            externalTurnFixture(65 - index),
+          ),
+        };
+      }
+      return {};
+    });
+    mocks.syncDefaultProfileThreadTranscriptMock.mockReturnValue(snapshotPromise);
+
+    const { user } = await renderApp();
+    const banner = screen.getByRole("region", { name: "Selected folder" });
+    await user.click(
+      within(banner).getByRole("button", { name: /open chat history/i }),
+    );
+    const drawer = await screen.findByRole("complementary", {
+      name: "Workspace chat history",
+    });
+    await user.click(
+      within(drawer).getByRole("button", { name: /external history chat/i }),
+    );
+    expect(await screen.findByText("External result 65.")).toBeInTheDocument();
+    expect(screen.queryByText("External result 1.")).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByLabelText("Start transcript scrolling"));
+    await act(async () => {
+      resolveSnapshot?.(externalTranscriptSnapshotFixture(65));
+      await Promise.resolve();
+    });
+    await waitFor(() =>
+      expect(mocks.activateExternalTranscriptSnapshotMock).toHaveBeenCalled(),
+    );
+    await act(async () => {
+      await new Promise((resolve) => window.setTimeout(resolve, 180));
+    });
+    expect(screen.queryByText("External result 1.")).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByLabelText("Stop transcript scrolling"));
+    expect(await screen.findByText("External result 1.")).toBeInTheDocument();
+    expect(mocks.syncDefaultProfileThreadTranscriptMock).toHaveBeenCalledTimes(1);
+    expect(mocks.listChatRunsPageMock).not.toHaveBeenCalled();
+  });
+
+  it("opens a current external transcript snapshot without an app-server history request", async () => {
+    const historicalChat = {
+      ...workspaceChatFixture({
+        id: 453,
+        title: "Cached external chat",
+        codex_thread_id: "external-thread-large",
+        origin: "codex_external",
+        profile_key: "default",
+        external_thread_id: "external-thread-large",
+        source_kind: "vscode",
+        turn_count: 3,
+      }),
+      account_id: null,
+      account_label: null,
+      account_email: null,
+      external_updated_at: "2026-06-30T10:30:00Z",
+    };
+    const cachedSnapshot = {
+      ...externalTranscriptSnapshotFixture(3),
+      requestId: "cached",
+      chatId: historicalChat.id,
+      syncedAt: "2026-06-30T10:31:00Z",
+    };
+    mocks.listWorkspaceChatsMock.mockResolvedValue([historicalChat]);
+    mocks.readExternalTranscriptSnapshotMock.mockImplementation(
+      async (_chatId: number, sourceVersion?: string) =>
+        sourceVersion === historicalChat.external_updated_at ? cachedSnapshot : null,
     );
 
-    try {
-      const { user } = await renderApp();
-      const banner = screen.getByRole("region", { name: "Selected folder" });
-      await user.click(
-        within(banner).getByRole("button", { name: /open chat history/i }),
-      );
-      const drawer = await screen.findByRole("complementary", {
-        name: "Workspace chat history",
-      });
-      await user.click(
-        within(drawer).getByRole("button", { name: /deferred history chat/i }),
-      );
-      expect(await screen.findByText("Deferred result 65.")).toBeInTheDocument();
+    const { user } = await renderApp();
+    const banner = screen.getByRole("region", { name: "Selected folder" });
+    await user.click(
+      within(banner).getByRole("button", { name: /open chat history/i }),
+    );
+    const drawer = await screen.findByRole("complementary", {
+      name: "Workspace chat history",
+    });
+    await user.click(
+      within(drawer).getByRole("button", { name: /cached external chat/i }),
+    );
 
-      const transcript = screen.getByLabelText("Task chat transcript");
-      await waitFor(() => expect(transcript.scrollTop).toBe(23_400));
-      const spacer = document.querySelector<HTMLElement>(
-        ".task-chat-virtual-spacer",
-      );
-      const initialHeight = Number.parseFloat(spacer?.style.height ?? "0");
+    expect(await screen.findByText("External result 3.")).toBeInTheDocument();
+    expect(screen.getByText("External result 1.")).toBeInTheDocument();
+    expect(mocks.syncDefaultProfileThreadTranscriptMock).not.toHaveBeenCalled();
+    expect(mocks.activateExternalTranscriptSnapshotMock).not.toHaveBeenCalled();
+    expect(mocks.codexDefaultProfileRpcMock).not.toHaveBeenCalledWith(
+      "thread/turns/list",
+      expect.anything(),
+    );
+  });
 
-      transcript.scrollTop = 200;
-      fireEvent.wheel(transcript, { deltaY: -120 });
-      fireEvent.scroll(transcript);
-      await waitFor(() =>
-        expect(mocks.listChatRunsPageMock).toHaveBeenCalledTimes(2),
-      );
+  it("keeps a stale cached transcript visible when its background refresh fails", async () => {
+    const historicalChat = {
+      ...workspaceChatFixture({
+        id: 454,
+        title: "Stale external chat",
+        codex_thread_id: "external-thread-large",
+        origin: "codex_external",
+        profile_key: "default",
+        external_thread_id: "external-thread-large",
+        source_kind: "vscode",
+        turn_count: 3,
+      }),
+      account_id: null,
+      account_label: null,
+      account_email: null,
+      external_updated_at: "2026-06-30T11:30:00Z",
+    };
+    const staleSnapshot = {
+      ...externalTranscriptSnapshotFixture(3),
+      requestId: "cached",
+      chatId: historicalChat.id,
+      sourceVersion: "2026-06-30T10:30:00Z",
+      syncedAt: "2026-06-30T10:31:00Z",
+    };
+    mocks.listWorkspaceChatsMock.mockResolvedValue([historicalChat]);
+    mocks.readExternalTranscriptSnapshotMock.mockImplementation(
+      async (_chatId: number, sourceVersion?: string) =>
+        sourceVersion ? null : staleSnapshot,
+    );
+    mocks.syncDefaultProfileThreadTranscriptMock.mockRejectedValue(
+      new Error("History sync unavailable"),
+    );
 
-      fireEvent.wheel(transcript, { deltaY: -120 });
-      await act(async () => {
-        resolveOlderPage?.(historicalRuns.slice(25, 45));
-        await Promise.resolve();
-      });
-      expect(Number.parseFloat(spacer?.style.height ?? "0")).toBe(initialHeight);
+    const { user } = await renderApp();
+    const banner = screen.getByRole("region", { name: "Selected folder" });
+    await user.click(
+      within(banner).getByRole("button", { name: /open chat history/i }),
+    );
+    const drawer = await screen.findByRole("complementary", {
+      name: "Workspace chat history",
+    });
+    await user.click(
+      within(drawer).getByRole("button", { name: /stale external chat/i }),
+    );
 
-      await waitFor(() =>
-        expect(Number.parseFloat(spacer?.style.height ?? "0")).toBeGreaterThan(
-          initialHeight,
-        ),
-      );
-    } finally {
-      restoreScrollMetrics();
-    }
+    expect(await screen.findByText("External result 3.")).toBeInTheDocument();
+    await waitFor(() =>
+      expect(mocks.syncDefaultProfileThreadTranscriptMock).toHaveBeenCalledTimes(1),
+    );
+    expect(screen.getByText("External result 1.")).toBeInTheDocument();
+    expect(mocks.activateExternalTranscriptSnapshotMock).not.toHaveBeenCalled();
+    expect(mocks.codexDefaultProfileRpcMock).not.toHaveBeenCalledWith(
+      "thread/turns/list",
+      expect.anything(),
+    );
   });
 
   it("ignores a stale history load after another chat is selected", async () => {
@@ -2059,7 +2296,7 @@ describe("App Codex auth", () => {
       },
     );
     mocks.listWorkspaceChatsMock.mockResolvedValue([firstChat, secondChat]);
-    mocks.listChatRunsPageMock.mockImplementation(async (chatId: number) => {
+    mocks.listLocalChatTranscriptMock.mockImplementation(async (chatId: number) => {
       if (chatId === firstChat.id) {
         return slowChatRuns;
       }
@@ -2084,7 +2321,7 @@ describe("App Codex auth", () => {
     });
     await user.click(within(drawer).getByRole("button", { name: /slow chat/i }));
     await waitFor(() =>
-      expect(mocks.listChatRunsPageMock).toHaveBeenCalledWith(461, 0, 1),
+      expect(mocks.listLocalChatTranscriptMock).toHaveBeenCalledWith(461),
     );
 
     await user.click(historyButton);

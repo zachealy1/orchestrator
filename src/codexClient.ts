@@ -10,6 +10,8 @@ import type {
   CodexModel,
   CodexSkillSummary,
   ComposerContextFile,
+  ExternalTranscriptSnapshot,
+  ExternalThreadHistoryIndex,
   GitBranchList,
   ModelListResponse,
   OssProvider,
@@ -71,6 +73,52 @@ export function loadDefaultProfileTurnActivity(input: {
       limit: input.limit ?? 50,
     },
   );
+}
+
+export function indexDefaultProfileThread(input: {
+  threadId: string;
+  sourceVersion: string;
+  pageSize?: number;
+  requestId: string;
+}) {
+  return invoke<ExternalThreadHistoryIndex>(
+    "codex_default_profile_thread_index",
+    {
+      threadId: input.threadId,
+      sourceVersion: input.sourceVersion,
+      pageSize: input.pageSize ?? 20,
+      requestId: input.requestId,
+    },
+  );
+}
+
+export function cancelDefaultProfileThreadIndex(requestId: string) {
+  return invoke<void>("codex_default_profile_thread_index_cancel", {
+    requestId,
+  });
+}
+
+export function syncDefaultProfileThreadTranscript(input: {
+  threadId: string;
+  sourceVersion: string;
+  pageSize?: number;
+  requestId: string;
+}) {
+  return invoke<ExternalTranscriptSnapshot>(
+    "codex_default_profile_thread_transcript_sync",
+    {
+      threadId: input.threadId,
+      sourceVersion: input.sourceVersion,
+      pageSize: input.pageSize ?? 20,
+      requestId: input.requestId,
+    },
+  );
+}
+
+export function cancelDefaultProfileThreadTranscript(requestId: string) {
+  return invoke<void>("codex_default_profile_thread_transcript_cancel", {
+    requestId,
+  });
 }
 
 export function resolveCodexServerRequest(

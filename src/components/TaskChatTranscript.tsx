@@ -14,6 +14,7 @@ import {
   FileText,
   MessageSquare,
   Pencil,
+  RefreshCw,
   Terminal,
   X,
 } from "lucide-react";
@@ -43,6 +44,7 @@ import type {
 import { contextFileExtensionLabel } from "../lib/contextFiles";
 import {
   cacheTranscriptRowHeight,
+  estimateHistoryPlaceholderHeight,
   estimateTranscriptRowHeight,
   getCachedTranscriptRowHeight,
   getTranscriptWidthBucket,
@@ -51,10 +53,13 @@ import {
   ORCHESTRATOR_PROMPT_CONTEXT_MIME,
   type CodexMessage,
   type ComposerContextFile,
+  type HistoryPageLoadState,
+  type HistoryPageDescriptor,
+  type HistoryTranscriptIndex,
+  type HistoryTurnHint,
 } from "../types";
 
 const AUTO_SCROLL_BOTTOM_THRESHOLD_PX = 48;
-const HISTORY_OLDER_TURNS_THRESHOLD_PX = 240;
 const HISTORY_SCROLL_SETTLE_DELAY_MS = 120;
 const TRANSCRIPT_SCROLL_IDLE_DELAY_MS = 120;
 const TRANSCRIPT_OVERSCAN_ROWS = 6;
@@ -82,6 +87,7 @@ export type TaskChatEntry = {
   workspaceId: number;
   chatId: number | null;
   turnIndex: number | null;
+  historySlotIndex?: number;
   runId: number | null;
   taskId: number | null;
   prompt: string;
@@ -98,6 +104,13 @@ export type TaskChatEntry = {
     error: string | null;
   };
 };
+
+export type HistoryVisibleRange = {
+  startIndex: number;
+  endIndex: number;
+};
+
+export type HistoryScrollDirection = "backward" | "forward";
 
 export type TranscriptHistoryOpenRequest = {
   requestId: number;
@@ -412,10 +425,13 @@ type Props = {
   onEditPrompt?: (entry: TaskChatEntry, prompt: string) => void;
   historyOpenRequest?: TranscriptHistoryOpenRequest | null;
   onHistoryPositionSettled?: (requestId: number) => void;
-  hasOlderTurns?: boolean;
-  olderTurnsStatus?: "idle" | "loading" | "error";
-  olderTurnsError?: string | null;
-  onLoadOlderTurns?: () => void;
+  historyIndex?: HistoryTranscriptIndex | null;
+  historyPageStates?: Record<string, HistoryPageLoadState>;
+  onVisibleHistoryRangeChange?: (
+    range: HistoryVisibleRange,
+    direction: HistoryScrollDirection,
+  ) => void;
+  onRetryHistoryPage?: (pageId: string) => void;
   onLoadHistoricalActivity?: (entry: TaskChatEntry) => void;
   onScrollActivityChange?: (active: boolean) => void;
 };
@@ -428,10 +444,10 @@ export function TaskChatTranscript({
   onEditPrompt,
   historyOpenRequest = null,
   onHistoryPositionSettled,
-  hasOlderTurns = false,
-  olderTurnsStatus = "idle",
-  olderTurnsError = null,
-  onLoadOlderTurns,
+  historyIndex = null,
+  historyPageStates,
+  onVisibleHistoryRangeChange,
+  onRetryHistoryPage,
   onLoadHistoricalActivity,
   onScrollActivityChange,
 }: Props) {
@@ -440,7 +456,8 @@ export function TaskChatTranscript({
     onOpenFileLink,
     onEditPrompt,
     onHistoryPositionSettled,
-    onLoadOlderTurns,
+    onVisibleHistoryRangeChange,
+    onRetryHistoryPage,
     onLoadHistoricalActivity,
     onScrollActivityChange,
   });
@@ -449,7 +466,8 @@ export function TaskChatTranscript({
     onOpenFileLink,
     onEditPrompt,
     onHistoryPositionSettled,
-    onLoadOlderTurns,
+    onVisibleHistoryRangeChange,
+    onRetryHistoryPage,
     onLoadHistoricalActivity,
     onScrollActivityChange,
   };
@@ -473,8 +491,13 @@ export function TaskChatTranscript({
       callbacksRef.current.onHistoryPositionSettled?.(requestId),
     [],
   );
-  const stableLoadOlderTurns = useCallback(
-    () => callbacksRef.current.onLoadOlderTurns?.(),
+  const stableVisibleHistoryRangeChange = useCallback(
+    (range: HistoryVisibleRange, direction: HistoryScrollDirection) =>
+      callbacksRef.current.onVisibleHistoryRangeChange?.(range, direction),
+    [],
+  );
+  const stableRetryHistoryPage = useCallback(
+    (pageId: string) => callbacksRef.current.onRetryHistoryPage?.(pageId),
     [],
   );
   const stableLoadHistoricalActivity = useCallback(
@@ -499,10 +522,16 @@ export function TaskChatTranscript({
       onHistoryPositionSettled={
         onHistoryPositionSettled ? stableHistoryPositionSettled : undefined
       }
-      hasOlderTurns={hasOlderTurns}
-      olderTurnsStatus={olderTurnsStatus}
-      olderTurnsError={olderTurnsError}
-      onLoadOlderTurns={onLoadOlderTurns ? stableLoadOlderTurns : undefined}
+      historyIndex={historyIndex}
+      historyPageStates={historyPageStates}
+      onVisibleHistoryRangeChange={
+        onVisibleHistoryRangeChange
+          ? stableVisibleHistoryRangeChange
+          : undefined
+      }
+      onRetryHistoryPage={
+        onRetryHistoryPage ? stableRetryHistoryPage : undefined
+      }
       onLoadHistoricalActivity={
         onLoadHistoricalActivity ? stableLoadHistoricalActivity : undefined
       }
@@ -513,7 +542,7 @@ export function TaskChatTranscript({
   );
 }
 
-const VirtualizedTaskChatTranscript = memo(function VirtualizedTaskChatTranscript({
+const VirtualizedTaskChatTranscript = /* @__PURE__ */ memo(function VirtualizedTaskChatTranscript({
   entries,
   onResolveRequest,
   onOpenFileLink,
@@ -521,10 +550,10 @@ const VirtualizedTaskChatTranscript = memo(function VirtualizedTaskChatTranscrip
   onEditPrompt,
   historyOpenRequest = null,
   onHistoryPositionSettled,
-  hasOlderTurns = false,
-  olderTurnsStatus = "idle",
-  olderTurnsError = null,
-  onLoadOlderTurns,
+  historyIndex = null,
+  historyPageStates = {},
+  onVisibleHistoryRangeChange,
+  onRetryHistoryPage,
   onLoadHistoricalActivity,
   onScrollActivityChange,
 }: Props) {
@@ -537,15 +566,67 @@ const VirtualizedTaskChatTranscript = memo(function VirtualizedTaskChatTranscrip
     new Map<string, { height: number; width: number }>(),
   );
   const geometryChangeHandlerRef = useRef<() => void>(() => undefined);
+  const visibleRangeFrameRef = useRef<number | null>(null);
+  const previousScrollTopRef = useRef(0);
+  const pendingScrollDirectionRef = useRef<HistoryScrollDirection | null>(null);
   const previousEntriesRef = useRef({
     count: 0,
     lastId: null as string | null,
     totalSize: 0,
     entries: entries as TaskChatEntry[],
   });
-  const olderRequestPendingRef = useRef(false);
   const [editingEntryId, setEditingEntryId] = useState<string | null>(null);
   const [editingPrompt, setEditingPrompt] = useState("");
+
+  const loadedEntriesBySlot = useMemo(() => {
+    const loaded = new Map<number, TaskChatEntry>();
+    entries.forEach((entry, index) => {
+      const slotIndex = historyIndex ? entry.historySlotIndex : index;
+      if (slotIndex !== undefined && slotIndex >= 0) {
+        loaded.set(slotIndex, entry);
+      }
+    });
+    return loaded;
+  }, [entries, historyIndex]);
+  const entrySlotsById = useMemo(
+    () =>
+      new Map(
+        [...loadedEntriesBySlot.entries()].map(([slotIndex, entry]) => [
+          entry.clientId,
+          slotIndex,
+        ]),
+      ),
+    [loadedEntriesBySlot],
+  );
+  const historyHintsBySlot = useMemo(
+    () =>
+      new Map(
+        (historyIndex?.hints ?? []).map((hint) => [hint.slotIndex, hint]),
+      ),
+    [historyIndex],
+  );
+  const historyPagesBySlot = useMemo(() => {
+    const pages = new Map<number, HistoryPageDescriptor>();
+    for (const page of historyIndex?.pages ?? []) {
+      for (
+        let slotIndex = page.startIndex;
+        slotIndex < page.startIndex + page.turnCount;
+        slotIndex += 1
+      ) {
+        pages.set(slotIndex, page);
+      }
+    }
+    return pages;
+  }, [historyIndex]);
+  const virtualCount = historyIndex?.totalTurns ?? entries.length;
+  const entryAt = useCallback(
+    (index: number) => loadedEntriesBySlot.get(index),
+    [loadedEntriesBySlot],
+  );
+  const hintAt = useCallback(
+    (index: number) => historyHintsBySlot.get(index),
+    [historyHintsBySlot],
+  );
 
   const measureTranscriptRow = useCallback(
     (
@@ -559,9 +640,15 @@ const VirtualizedTaskChatTranscript = memo(function VirtualizedTaskChatTranscrip
         instance,
       );
       const index = instance.indexFromElement(element);
-      const chatEntry = entries[index];
+      const chatEntry = entryAt(index);
       if (!chatEntry) {
-        return measuredHeight;
+        return Math.max(
+          measuredHeight,
+          estimateHistoryPlaceholderHeight(
+            hintAt(index),
+            stableTranscriptWidthRef.current,
+          ),
+        );
       }
 
       if (transcriptWidthChangingRef.current) {
@@ -590,21 +677,24 @@ const VirtualizedTaskChatTranscript = memo(function VirtualizedTaskChatTranscrip
       geometryChangeHandlerRef.current();
       return measuredHeight;
     },
-    [entries],
+    [entryAt, hintAt],
   );
 
   const rowVirtualizer = useVirtualizer({
-    count: entries.length,
+    count: virtualCount,
     getScrollElement: () => transcriptRef.current,
     scrollToFn: scrollTranscriptElement,
     estimateSize: (index) => {
-      const entry = entries[index];
+      const entry = entryAt(index);
       return entry
         ? estimateTranscriptRowHeight(
             entry,
             stableTranscriptWidthRef.current,
           )
-        : 180;
+        : estimateHistoryPlaceholderHeight(
+            hintAt(index),
+            stableTranscriptWidthRef.current,
+          );
     },
     measureElement: measureTranscriptRow,
     overscan: TRANSCRIPT_OVERSCAN_ROWS,
@@ -615,8 +705,10 @@ const VirtualizedTaskChatTranscript = memo(function VirtualizedTaskChatTranscrip
     directDomUpdates: true,
     directDomUpdatesMode: "transform",
     getItemKey: useCallback(
-      (index: number) => entries[index]?.clientId ?? index,
-      [entries],
+      (index: number) =>
+        entryAt(index)?.clientId ??
+        `history-placeholder:${historyIndex?.chatId ?? "live"}:${index}`,
+      [entryAt, historyIndex?.chatId],
     ),
     initialRect: {
       width: 1024,
@@ -631,60 +723,77 @@ const VirtualizedTaskChatTranscript = memo(function VirtualizedTaskChatTranscrip
   const renderedRows =
     !usingFallbackRows
       ? virtualItems
-      : buildFallbackTranscriptRows(entries);
+      : buildFallbackTranscriptRows(
+          virtualCount,
+          entryAt,
+          hintAt,
+        );
   const totalSize = rowVirtualizer.getTotalSize();
-
-  const requestOlderTurns = useCallback((retry = false) => {
-    if (
-      !hasOlderTurns ||
-      olderRequestPendingRef.current ||
-      (!retry && olderTurnsStatus !== "idle") ||
-      (retry && olderTurnsStatus === "loading") ||
-      !onLoadOlderTurns
-    ) {
-      return;
-    }
-
-    olderRequestPendingRef.current = true;
-    onLoadOlderTurns();
-  }, [hasOlderTurns, olderTurnsStatus, onLoadOlderTurns]);
-
-  const handleScrollIdle = useCallback(
-    (transcript: HTMLElement) => {
-      if (transcript.scrollTop <= HISTORY_OLDER_TURNS_THRESHOLD_PX) {
-        requestOlderTurns();
-      }
-    },
-    [requestOlderTurns],
-  );
 
   const scrollController = useTranscriptScrollController({
     transcriptRef,
     rowVirtualizer,
-    entryCount: entries.length,
+    entryCount: virtualCount,
     historyOpenRequest,
     onHistoryPositionSettled,
     onScrollActivityChange,
-    onScrollIdle: handleScrollIdle,
   });
   geometryChangeHandlerRef.current = scrollController.handleGeometryChange;
 
-  useEffect(() => {
-    if (olderTurnsStatus !== "loading") {
-      olderRequestPendingRef.current = false;
-    }
-  }, [entries.length, olderTurnsStatus]);
+  const reportVisibleHistoryRange = useCallback(
+    (direction: HistoryScrollDirection) => {
+      if (!historyIndex || !onVisibleHistoryRangeChange) {
+        return;
+      }
+      if (visibleRangeFrameRef.current !== null) {
+        cancelScheduledAnimationFrame(visibleRangeFrameRef.current);
+      }
+      visibleRangeFrameRef.current = scheduleAnimationFrame(() => {
+        visibleRangeFrameRef.current = null;
+        const virtualIndexes = rowVirtualizer.getVirtualIndexes();
+        const fallbackCount = Math.min(
+          virtualCount,
+          TRANSCRIPT_OVERSCAN_ROWS * 2 + 1,
+        );
+        const transcript = transcriptRef.current;
+        const maxFallbackStart = Math.max(0, virtualCount - fallbackCount);
+        const scrollRange = transcript
+          ? Math.max(0, transcript.scrollHeight - transcript.clientHeight)
+          : 0;
+        const fallbackStart = Math.round(
+          maxFallbackStart *
+            (scrollRange > 0 && transcript ? transcript.scrollTop / scrollRange : 1),
+        );
+        const indexes =
+          virtualIndexes.length > 0
+            ? virtualIndexes
+            : Array.from(
+                { length: fallbackCount },
+                (_, offset) => fallbackStart + offset,
+              );
+        if (indexes.length === 0) return;
+        onVisibleHistoryRangeChange(
+          {
+            startIndex: indexes[0],
+            endIndex: indexes[indexes.length - 1],
+          },
+          direction,
+        );
+      });
+    },
+    [historyIndex, onVisibleHistoryRangeChange, rowVirtualizer, virtualCount],
+  );
 
   useLayoutEffect(() => {
     const previous = previousEntriesRef.current;
-    const lastId = entries[entries.length - 1]?.clientId ?? null;
-    const entryCountIncreased = entries.length > previous.count;
+    const lastId = entryAt(virtualCount - 1)?.clientId ?? null;
+    const entryCountIncreased = virtualCount > previous.count;
     const appended = entryCountIncreased && lastId !== previous.lastId;
-    const initialLoad = previous.count === 0 && entries.length > 0;
+    const initialLoad = previous.count === 0 && virtualCount > 0;
     const entriesChanged = previous.entries !== entries;
     const totalSizeChanged = previous.totalSize !== totalSize;
     previousEntriesRef.current = {
-      count: entries.length,
+      count: virtualCount,
       lastId,
       totalSize,
       entries,
@@ -695,8 +804,10 @@ const VirtualizedTaskChatTranscript = memo(function VirtualizedTaskChatTranscrip
     }
   }, [
     entries,
+    entryAt,
     scrollController,
     totalSize,
+    virtualCount,
   ]);
 
   useEffect(() => {
@@ -730,9 +841,9 @@ const VirtualizedTaskChatTranscript = memo(function VirtualizedTaskChatTranscrip
           transcriptWidthChangingRef.current = false;
           rowVirtualizer.measure();
           for (const [clientId, measurement] of pendingRowMeasurementsRef.current) {
-            const index = entries.findIndex((entry) => entry.clientId === clientId);
-            const entry = entries[index];
-            if (!entry || index < 0) {
+            const index = entrySlotsById.get(clientId);
+            const entry = index === undefined ? undefined : entryAt(index);
+            if (!entry || index === undefined) {
               continue;
             }
             cacheTranscriptRowHeight(entry, measurement.width, measurement.height);
@@ -748,34 +859,19 @@ const VirtualizedTaskChatTranscript = memo(function VirtualizedTaskChatTranscrip
     });
     observer.observe(transcript);
     return () => observer.disconnect();
-  }, [entries, rowVirtualizer, scrollController]);
+  }, [entryAt, entrySlotsById, rowVirtualizer, scrollController]);
 
   useEffect(
     () => () => {
       if (transcriptWidthSettleTimeoutRef.current !== null) {
         window.clearTimeout(transcriptWidthSettleTimeoutRef.current);
       }
+      if (visibleRangeFrameRef.current !== null) {
+        cancelScheduledAnimationFrame(visibleRangeFrameRef.current);
+      }
     },
     [],
   );
-
-  useEffect(() => {
-    if (!hasOlderTurns || olderTurnsStatus !== "idle") {
-      return;
-    }
-    const frame = scheduleAnimationFrame(() => {
-      const transcript = transcriptRef.current;
-      if (
-        transcript &&
-        transcript.scrollTop <= HISTORY_OLDER_TURNS_THRESHOLD_PX &&
-        transcript.scrollHeight <= transcript.clientHeight + 1 &&
-        !scrollController.isUserScrolling()
-      ) {
-        requestOlderTurns();
-      }
-    });
-    return () => cancelScheduledAnimationFrame(frame);
-  }, [hasOlderTurns, olderTurnsStatus, requestOlderTurns, scrollController]);
 
   useEffect(() => {
     if (
@@ -820,6 +916,11 @@ const VirtualizedTaskChatTranscript = memo(function VirtualizedTaskChatTranscrip
           event.target === event.currentTarget &&
           isTranscriptScrollKey(event.key)
         ) {
+          pendingScrollDirectionRef.current = isBackwardTranscriptScrollKey(
+            event.key,
+          )
+            ? "backward"
+            : "forward";
           scrollController.registerUserScrollIntent();
         }
       }}
@@ -829,31 +930,62 @@ const VirtualizedTaskChatTranscript = memo(function VirtualizedTaskChatTranscrip
           scrollController.registerUserScrollIntent();
         }
       }}
-      onScroll={(event) => scrollController.handleScroll(event.currentTarget)}
+      onScroll={(event) => {
+        const transcript = event.currentTarget;
+        const direction: HistoryScrollDirection =
+          pendingScrollDirectionRef.current ??
+          (transcript.scrollTop < previousScrollTopRef.current
+            ? "backward"
+            : "forward");
+        pendingScrollDirectionRef.current = null;
+        previousScrollTopRef.current = transcript.scrollTop;
+        scrollController.handleScroll(transcript);
+        reportVisibleHistoryRange(direction);
+      }}
       onTouchStartCapture={scrollController.registerUserScrollIntent}
       onTouchMoveCapture={scrollController.registerUserScrollIntent}
-      onWheelCapture={scrollController.registerUserScrollIntent}
+      onWheelCapture={(event) => {
+        pendingScrollDirectionRef.current =
+          event.deltaY < 0 ? "backward" : "forward";
+        scrollController.registerUserScrollIntent();
+      }}
     >
-      {olderTurnsStatus === "loading" ? (
-        <div className="history-older-turns-status" role="status">
-          Loading older messages...
-        </div>
-      ) : olderTurnsStatus === "error" ? (
-        <div className="history-older-turns-status error" role="alert">
-          <span>{olderTurnsError ?? "Older messages could not be loaded."}</span>
-          <button type="button" onClick={() => requestOlderTurns(true)}>
-            Retry
-          </button>
-        </div>
-      ) : null}
       <div
         className="task-chat-virtual-spacer"
         ref={rowVirtualizer.containerRef}
       >
         {renderedRows.map((virtualItem) => {
-          const entry = entries[virtualItem.index];
+          const entry = entryAt(virtualItem.index);
           if (!entry) {
-            return null;
+            const hint = hintAt(virtualItem.index);
+            const page = historyPagesBySlot.get(virtualItem.index);
+            const pageState = page
+              ? historyPageStates[page.id] ?? "idle"
+              : "idle";
+
+            return (
+              <div
+                className="task-chat-virtual-row"
+                data-index={virtualItem.index}
+                key={virtualItem.key}
+                ref={rowVirtualizer.measureElement}
+                style={
+                  usingFallbackRows
+                    ? { transform: `translateY(${virtualItem.start}px)` }
+                    : undefined
+                }
+              >
+                <HistoryTurnSkeleton
+                  estimatedHeight={estimateHistoryPlaceholderHeight(
+                    hint,
+                    stableTranscriptWidthRef.current,
+                  )}
+                  page={page}
+                  pageState={pageState}
+                  onRetryHistoryPage={onRetryHistoryPage}
+                />
+              </div>
+            );
           }
 
           const editable =
@@ -895,16 +1027,21 @@ const VirtualizedTaskChatTranscript = memo(function VirtualizedTaskChatTranscrip
   );
 });
 
-function buildFallbackTranscriptRows(entries: TaskChatEntry[]) {
-  const visibleCount = Math.min(entries.length, TRANSCRIPT_OVERSCAN_ROWS * 2 + 1);
-  const startIndex = Math.max(0, entries.length - visibleCount);
+function buildFallbackTranscriptRows(
+  count: number,
+  entryAt: (index: number) => TaskChatEntry | undefined,
+  hintAt: (index: number) => HistoryTurnHint | undefined,
+) {
+  const visibleCount = Math.min(count, TRANSCRIPT_OVERSCAN_ROWS * 2 + 1);
+  const startIndex = Math.max(0, count - visibleCount);
   const width = 1_024;
-  let start = entries
-    .slice(0, startIndex)
-    .reduce(
-      (total, entry) => total + estimateTranscriptRowHeight(entry, width),
-      0,
-    );
+  let start = 0;
+  for (let index = 0; index < startIndex; index += 1) {
+    const entry = entryAt(index);
+    start += entry
+      ? estimateTranscriptRowHeight(entry, width)
+      : estimateHistoryPlaceholderHeight(hintAt(index), width);
+  }
 
   return Array.from({ length: visibleCount }, (_, offset) => {
     const index = startIndex + offset;
@@ -913,10 +1050,56 @@ function buildFallbackTranscriptRows(entries: TaskChatEntry[]) {
       index,
       start,
     };
-    start += estimateTranscriptRowHeight(entries[index], width);
+    const entry = entryAt(index);
+    start += entry
+      ? estimateTranscriptRowHeight(entry, width)
+      : estimateHistoryPlaceholderHeight(hintAt(index), width);
     return row;
   });
 }
+
+const HistoryTurnSkeleton = /* @__PURE__ */ memo(function HistoryTurnSkeleton({
+  estimatedHeight,
+  page,
+  pageState,
+  onRetryHistoryPage,
+}: {
+  estimatedHeight: number;
+  page: HistoryPageDescriptor | undefined;
+  pageState: HistoryPageLoadState;
+  onRetryHistoryPage?: (pageId: string) => void;
+}) {
+  const canRetry = pageState === "error" && page && onRetryHistoryPage;
+
+  return (
+    <div
+      className={`history-turn-skeleton state-${pageState}`}
+      style={{ minHeight: `${estimatedHeight}px` }}
+      aria-hidden={canRetry ? undefined : "true"}
+    >
+      <div className="history-turn-skeleton-prompt">
+        <span />
+        <span />
+      </div>
+      <div className="history-turn-skeleton-response">
+        <span />
+        <span />
+        <span />
+      </div>
+      {canRetry ? (
+        <button
+          className="history-turn-skeleton-retry"
+          type="button"
+          aria-label="Retry loading this part of the chat"
+          title="Retry loading"
+          onClick={() => onRetryHistoryPage(page.id)}
+        >
+          <RefreshCw size={15} aria-hidden="true" />
+        </button>
+      ) : null}
+    </div>
+  );
+});
 
 function isTranscriptScrollKey(key: string) {
   return (
@@ -930,7 +1113,11 @@ function isTranscriptScrollKey(key: string) {
   );
 }
 
-const TaskChatTurn = memo(function TaskChatTurn({
+function isBackwardTranscriptScrollKey(key: string) {
+  return key === "ArrowUp" || key === "PageUp" || key === "Home";
+}
+
+export const TaskChatTurn = memo(function TaskChatTurn({
   entry,
   editable,
   editing,

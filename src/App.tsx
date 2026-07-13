@@ -49,18 +49,20 @@ import "./App.css";
 import orchestratorMark from "./assets/brand/orchestrator-mark.png";
 import {
   appendRunEvent,
+  activateExternalTranscriptSnapshot,
   completeDuplicateProfileCleanup,
   createChat,
   createCodexAccount,
   createRun,
   createTask,
   getAnalyticsSummary,
-  listChatRunsPage,
+  listLocalChatTranscript,
   listWorkspaceChats,
   listCodexAccounts,
   listDuplicateProfilesPendingCleanup,
   listWorkspaces,
   recordTokenUsage,
+  readExternalTranscriptSnapshot,
   renameCodexAccount,
   savePreflightReport,
   softDeleteChat,
@@ -76,6 +78,7 @@ import {
 } from "./db";
 import {
   cancelCodexLogin,
+  cancelDefaultProfileThreadTranscript,
   codexDefaultProfileRpc,
   codexRpc,
   commitWorkspaceChanges,
@@ -104,14 +107,13 @@ import {
   startCodexLogin,
   stopDefaultCodexProfile,
   stopCodex,
+  syncDefaultProfileThreadTranscript,
 } from "./codexClient";
 import { AnalyticsSummary } from "./components/AnalyticsSummary";
 import { ComposerSelect } from "./components/ComposerSelect";
 import { FilePreviewDrawer } from "./components/FilePreviewDrawer";
-import {
-  TaskChatTranscript,
-  type TaskChatEntry,
-} from "./components/TaskChatTranscript";
+import type { TaskChatEntry } from "./components/TaskChatTranscript";
+import { VirtuosoTaskChatTranscript } from "./components/VirtuosoTaskChatTranscript";
 import { TaskComposer } from "./components/TaskComposer";
 import {
   addServerRequest,
@@ -182,6 +184,8 @@ import type {
   WorkspacePreviewState,
   WorkspaceTreeEntry,
   HistoryRunSummary,
+  ExternalTranscriptSnapshot,
+  HistoricalTranscriptState,
 } from "./types";
 
 const DEFAULT_ANALYTICS: AnalyticsSummaryType = {
@@ -206,6 +210,8 @@ const HISTORY_CHAT_PAGE_SIZE = 20;
 const HISTORY_CHAT_CACHE_LIMIT = 5;
 const HISTORY_ACTIVITY_PAGE_SIZE = 50;
 const HISTORY_ACTIVITY_CACHE_LIMIT = 200;
+const HISTORY_VIRTUOSO_BASE_INDEX = 1_000_000;
+const HISTORY_TRANSCRIPT_COMMIT_IDLE_MS = 150;
 const EMPTY_GIT_STATUS_BY_PATH = new Map<string, WorkspaceGitFileStatus>();
 const EMPTY_DIRTY_DIRECTORY_PATHS = new Set<string>();
 const DEFAULT_CODEX_PROFILE_KEY: CodexProfileKey = "default";
@@ -234,6 +240,16 @@ function waitForNextPaint() {
   });
 }
 
+function useStableEvent<T extends (...args: never[]) => unknown>(callback: T): T {
+  const callbackRef = useRef(callback);
+  callbackRef.current = callback;
+
+  return useCallback(
+    ((...args: Parameters<T>) => callbackRef.current(...args)) as T,
+    [],
+  );
+}
+
 function replaceWorkspaceChatEntries(
   current: TaskChatEntry[],
   workspaceId: number,
@@ -243,20 +259,6 @@ function replaceWorkspaceChatEntries(
     ...current.filter((entry) => entry.workspaceId !== workspaceId),
     ...entries,
   ];
-}
-
-function mergeHistoryEntries(
-  olderEntries: TaskChatEntry[],
-  currentEntries: TaskChatEntry[],
-) {
-  const seen = new Set<string>();
-  return [...olderEntries, ...currentEntries].filter((entry) => {
-    if (seen.has(entry.clientId)) {
-      return false;
-    }
-    seen.add(entry.clientId);
-    return true;
-  });
 }
 
 function mergeCommandActivities(
@@ -367,30 +369,10 @@ type HistoryOpenRequest = {
   phase: HistoryOpenPhase;
 };
 
-type HistoryOlderTurnsStatus = "idle" | "loading" | "error";
-
-type HistoryPaginationState = {
-  requestId: number;
-  workspaceId: number;
-  chatId: number;
-  origin: ChatOrigin;
-  status: HistoryOlderTurnsStatus;
-  hasOlder: boolean;
-  error: string | null;
-  externalCursor: string | null;
-  localOffset: number | null;
-};
-
-type HistoryChatCacheEntry = {
+type StableHistoryChatCacheEntry = {
   version: string;
   entries: TaskChatEntry[];
-  pagination: Omit<HistoryPaginationState, "requestId" | "status" | "error">;
-};
-
-type PendingHistoryPageCommit = {
-  requestId: number;
-  chatId: number;
-  commit: () => void;
+  transcript: HistoricalTranscriptState;
 };
 
 type WorkspaceChatSession = {
@@ -872,8 +854,8 @@ function App() {
   const [selectedHistoryChatId, setSelectedHistoryChatId] = useState<number | null>(null);
   const [historyOpenRequest, setHistoryOpenRequest] =
     useState<HistoryOpenRequest | null>(null);
-  const [historyPagination, setHistoryPagination] =
-    useState<HistoryPaginationState | null>(null);
+  const [historicalTranscript, setHistoricalTranscript] =
+    useState<HistoricalTranscriptState | null>(null);
   const [workspaceChatSessions, setWorkspaceChatSessions] = useState<
     Record<number, WorkspaceChatSession | undefined>
   >({});
@@ -942,12 +924,16 @@ function App() {
   const activeRunControlRef = useRef<ActiveRunControl | null>(null);
   const historyChatLoadIdRef = useRef(0);
   const taskChatEntriesRef = useRef<TaskChatEntry[]>([]);
-  const historyPaginationRef = useRef<HistoryPaginationState | null>(null);
   const transcriptScrollActiveRef = useRef(false);
-  const pendingHistoryPageCommitRef = useRef<PendingHistoryPageCommit | null>(
-    null,
+  const stableHistoryChatCacheRef = useRef(
+    new Map<number, StableHistoryChatCacheEntry>(),
   );
-  const historyChatCacheRef = useRef(new Map<number, HistoryChatCacheEntry>());
+  const activeExternalTranscriptSyncRef = useRef<{
+    chatId: number;
+    requestId: string;
+  } | null>(null);
+  const pendingTranscriptCommitRef = useRef<(() => void) | null>(null);
+  const transcriptCommitIdleTimerRef = useRef<number | null>(null);
   const historicalActivityCacheRef = useRef(
     new Map<string, Awaited<ReturnType<typeof loadDefaultProfileTurnActivity>>>(),
   );
@@ -990,44 +976,30 @@ function App() {
   const chatHistoryContextMenuRef = useRef<HTMLDivElement | null>(null);
   const accountMenuContainerRef = useRef<HTMLDivElement | null>(null);
 
-  const setHistoryOpenRequestPhase = useCallback(
-    (requestId: number, phase: HistoryOpenPhase) => {
-      setHistoryOpenRequest((current) =>
-        current?.requestId === requestId ? { ...current, phase } : current,
-      );
-    },
-    [],
-  );
-  const updateHistoryPagination = useCallback(
-    (
-      updater:
-        | HistoryPaginationState
-        | null
-        | ((current: HistoryPaginationState | null) => HistoryPaginationState | null),
-    ) => {
-      setHistoryPagination((current) => {
-        const next = typeof updater === "function" ? updater(current) : updater;
-        historyPaginationRef.current = next;
-        return next;
-      });
-    },
-    [],
-  );
-  const handleHistoryPositionSettled = useCallback((requestId: number) => {
-    setHistoryOpenRequest((current) =>
-      current?.requestId === requestId ? null : current,
-    );
-  }, []);
   const handleTranscriptScrollActivityChange = useCallback((active: boolean) => {
     transcriptScrollActiveRef.current = active;
     if (active) {
+      if (transcriptCommitIdleTimerRef.current !== null) {
+        window.clearTimeout(transcriptCommitIdleTimerRef.current);
+        transcriptCommitIdleTimerRef.current = null;
+      }
       return;
     }
 
-    const pending = pendingHistoryPageCommitRef.current;
-    pendingHistoryPageCommitRef.current = null;
-    pending?.commit();
+    if (pendingTranscriptCommitRef.current) {
+      transcriptCommitIdleTimerRef.current = window.setTimeout(() => {
+        transcriptCommitIdleTimerRef.current = null;
+        const commit = pendingTranscriptCommitRef.current;
+        pendingTranscriptCommitRef.current = null;
+        commit?.();
+      }, HISTORY_TRANSCRIPT_COMMIT_IDLE_MS);
+    }
+
   }, []);
+  const resolveTranscriptRequest = useStableEvent(handleResolveRequest);
+  const openTranscriptFileLink = useStableEvent(openTaskResponseFileLink);
+  const editTranscriptPrompt = useStableEvent(handleEditLatestPrompt);
+  const loadTranscriptHistoricalActivity = useStableEvent(loadHistoricalActivity);
 
   const improvedPrompt = useMemo(() => improvePrompt(prompt), [prompt]);
   const routeRecommendation = useMemo(() => recommendRoute(prompt), [prompt]);
@@ -1256,11 +1228,10 @@ function App() {
     selectedWorkspace && historyChatLoadState?.workspaceId === selectedWorkspace.id
       ? historyChatLoadState
       : null;
-  const selectedHistoryPagination =
+  const selectedHistoricalTranscript =
     selectedWorkspace &&
-    historyPagination?.workspaceId === selectedWorkspace.id &&
-    historyPagination.chatId === selectedWorkspaceChatSession?.chatId
-      ? historyPagination
+    historicalTranscript?.chatId === selectedWorkspaceChatSession?.chatId
+      ? historicalTranscript
       : null;
   const suggestedCommitIntent = useMemo(
     () => buildCommitIntentFromChatEntry(selectedWorkspaceChatMeta.latestPromptEntry),
@@ -2342,11 +2313,12 @@ function App() {
 
     const workspace = await upsertWorkspace(selected);
     historyChatLoadIdRef.current += 1;
-    pendingHistoryPageCommitRef.current = null;
+    cancelActiveExternalTranscriptSync();
+    pendingTranscriptCommitRef.current = null;
     transcriptScrollActiveRef.current = false;
     setHistoryChatLoadState(null);
     setHistoryOpenRequest(null);
-    updateHistoryPagination(null);
+    setHistoricalTranscript(null);
     setWorkspaces(await listWorkspaces());
     setSelectedWorkspace(workspace);
     setActiveView("task");
@@ -2361,11 +2333,12 @@ function App() {
 
     if (selectedWorkspaceRef.current?.id !== workspace.id) {
       historyChatLoadIdRef.current += 1;
-      pendingHistoryPageCommitRef.current = null;
+      cancelActiveExternalTranscriptSync();
+      pendingTranscriptCommitRef.current = null;
       transcriptScrollActiveRef.current = false;
       setHistoryChatLoadState(null);
       setHistoryOpenRequest(null);
-      updateHistoryPagination(null);
+      setHistoricalTranscript(null);
     }
     setWorkspaceContextMenu(null);
     setSelectedWorkspace(workspace);
@@ -2647,6 +2620,137 @@ function App() {
     setChatHistoryDeleteCandidate(chat);
   }
 
+  function cacheStableHistoryChat(
+    chat: ChatListItem,
+    entries: TaskChatEntry[],
+    transcript: HistoricalTranscriptState,
+  ) {
+    const cache = stableHistoryChatCacheRef.current;
+    cache.delete(chat.id);
+    cache.set(chat.id, {
+      version: historyChatVersion(chat),
+      entries,
+      transcript,
+    });
+    while (cache.size > HISTORY_CHAT_CACHE_LIMIT) {
+      const oldest = cache.keys().next().value;
+      if (typeof oldest !== "number") break;
+      cache.delete(oldest);
+    }
+  }
+
+  function publishStableHistoryChat(
+    chat: ChatListItem,
+    entries: TaskChatEntry[],
+    transcript: HistoricalTranscriptState,
+    loadId: number,
+  ) {
+    if (historyChatLoadIdRef.current !== loadId) return;
+    const allEntries = replaceWorkspaceChatEntries(
+      taskChatEntriesRef.current,
+      chat.workspace_id,
+      entries,
+    );
+    taskChatEntriesRef.current = allEntries;
+    startTransition(() => {
+      setTaskChatEntries(allEntries);
+      setHistoricalTranscript(transcript);
+      setHistoryChatLoadState(null);
+      setHistoryOpenRequest(null);
+    });
+    cacheStableHistoryChat(chat, entries, transcript);
+  }
+
+  function deferStableTranscriptCommit(commit: () => void) {
+    pendingTranscriptCommitRef.current = commit;
+    if (transcriptScrollActiveRef.current) return;
+    if (transcriptCommitIdleTimerRef.current !== null) {
+      window.clearTimeout(transcriptCommitIdleTimerRef.current);
+    }
+    transcriptCommitIdleTimerRef.current = window.setTimeout(() => {
+      transcriptCommitIdleTimerRef.current = null;
+      const pending = pendingTranscriptCommitRef.current;
+      pendingTranscriptCommitRef.current = null;
+      pending?.();
+    }, HISTORY_TRANSCRIPT_COMMIT_IDLE_MS);
+  }
+
+  function cancelActiveExternalTranscriptSync() {
+    const active = activeExternalTranscriptSyncRef.current;
+    activeExternalTranscriptSyncRef.current = null;
+    if (active) {
+      void cancelDefaultProfileThreadTranscript(active.requestId).catch(() => undefined);
+    }
+  }
+
+  async function synchronizeExternalTranscript(
+    chat: ChatListItem,
+    loadId: number,
+    visibleEntries: TaskChatEntry[],
+    replaceVisibleWhenReady: boolean,
+  ) {
+    const threadId = chat.external_thread_id ?? chat.codex_thread_id;
+    if (!threadId) return;
+    const sourceVersion = chat.external_updated_at ?? chat.updated_at;
+    const requestId = `transcript-${chat.id}-${Date.now().toString(36)}`;
+    activeExternalTranscriptSyncRef.current = { chatId: chat.id, requestId };
+    try {
+      await ensureCodexProfileConnected(DEFAULT_CODEX_PROFILE_KEY, 0);
+      const snapshot = await syncDefaultProfileThreadTranscript({
+        threadId,
+        sourceVersion,
+        pageSize: HISTORY_CHAT_PAGE_SIZE,
+        requestId,
+      });
+      if (activeExternalTranscriptSyncRef.current?.requestId !== requestId) {
+        return;
+      }
+      await activateExternalTranscriptSnapshot(chat.id, snapshot);
+      const entries = createTaskChatEntriesFromExternalTranscriptSnapshot(chat, snapshot);
+      const olderTurnCount = Math.max(0, entries.length - visibleEntries.length);
+      const transcript: HistoricalTranscriptState = {
+        chatId: chat.id,
+        sourceVersion,
+        complete: true,
+        firstItemIndex: HISTORY_VIRTUOSO_BASE_INDEX - olderTurnCount,
+        syncStatus: "complete",
+      };
+      cacheStableHistoryChat(chat, entries, transcript);
+      if (
+        replaceVisibleWhenReady &&
+        historyChatLoadIdRef.current === loadId &&
+        selectedWorkspaceRef.current?.id === chat.workspace_id
+      ) {
+        deferStableTranscriptCommit(() => {
+          publishStableHistoryChat(chat, entries, transcript, loadId);
+          setStatusMessage(
+            `Opened chat from ${formatHistoryTimestamp(chat.latest_activity_at)}.`,
+          );
+        });
+      }
+    } catch (error) {
+      if (
+        historyChatLoadIdRef.current === loadId &&
+        !/cancelled/i.test(String(error))
+      ) {
+        setHistoricalTranscript((current) =>
+          current?.chatId === chat.id
+            ? { ...current, syncStatus: "error" }
+            : current,
+        );
+        setStatusMessage(
+          `Opened the available turns, but transcript sync failed: ${
+            error instanceof Error ? error.message : String(error)
+          }`,
+        );
+      }
+    } finally {
+      if (activeExternalTranscriptSyncRef.current?.requestId === requestId) {
+        activeExternalTranscriptSyncRef.current = null;
+      }
+    }
+  }
+
   async function loadExternalCodexChatProgressively(
     chat: ChatListItem,
     loadId: number,
@@ -2655,10 +2759,54 @@ function App() {
     if (!threadId) {
       throw new Error("External Codex chat is missing its thread id.");
     }
+    const sourceVersion = chat.external_updated_at ?? chat.updated_at;
+    const currentSnapshot = await readExternalTranscriptSnapshot(chat.id, sourceVersion);
+    if (historyChatLoadIdRef.current !== loadId) return;
+    if (currentSnapshot) {
+      const entries = createTaskChatEntriesFromExternalTranscriptSnapshot(
+        chat,
+        currentSnapshot,
+      );
+      publishStableHistoryChat(
+        chat,
+        entries,
+        {
+          chatId: chat.id,
+          sourceVersion,
+          complete: true,
+          firstItemIndex: HISTORY_VIRTUOSO_BASE_INDEX,
+          syncStatus: "complete",
+        },
+        loadId,
+      );
+      setStatusMessage(`Opened chat from ${formatHistoryTimestamp(chat.latest_activity_at)}.`);
+      return;
+    }
+
+    const staleSnapshot = await readExternalTranscriptSnapshot(chat.id);
+    if (historyChatLoadIdRef.current !== loadId) return;
+    if (staleSnapshot) {
+      const entries = createTaskChatEntriesFromExternalTranscriptSnapshot(chat, staleSnapshot);
+      publishStableHistoryChat(
+        chat,
+        entries,
+        {
+          chatId: chat.id,
+          sourceVersion: staleSnapshot.sourceVersion,
+          complete: true,
+          firstItemIndex: HISTORY_VIRTUOSO_BASE_INDEX,
+          syncStatus: "syncing",
+        },
+        loadId,
+      );
+      void synchronizeExternalTranscript(chat, loadId, entries, false);
+      return;
+    }
+
     await ensureCodexProfileConnected(DEFAULT_CODEX_PROFILE_KEY, 0);
-    let response: unknown;
+    let latestResponse: unknown;
     try {
-      response = await codexDefaultProfileRpc<unknown>("thread/turns/list", {
+      latestResponse = await codexDefaultProfileRpc<unknown>("thread/turns/list", {
         threadId,
         cursor: null,
         limit: HISTORY_CHAT_PAGE_SIZE,
@@ -2666,40 +2814,34 @@ function App() {
         itemsView: "summary",
       });
     } catch (error) {
-      throw new Error(
-        `Paged Codex history is unavailable. Update Codex and try again. ${
-          error instanceof Error ? error.message : String(error)
-        }`,
-      );
+      if (/method not found|unknown method|-32601/i.test(String(error))) {
+        throw new Error("Paged Codex history is unavailable. Update Codex and try again.");
+      }
+      throw error;
     }
-
-    const root = readObject(response);
-    if (!("data" in root)) {
-      throw new Error(
-        "Paged Codex history is unavailable. Update Codex and try again.",
-      );
+    const latestRoot = readObject(latestResponse);
+    if (!("data" in latestRoot)) {
+      throw new Error("Paged Codex history is unavailable. Update Codex and try again.");
     }
-    if (historyChatLoadIdRef.current !== loadId) {
-      return;
-    }
-
-    const entries = createTaskChatEntriesFromExternalCodexThread(chat, {
-      data: [...readArray(root.data)].reverse(),
-    });
-    const nextCursor = readString(root.nextCursor);
-    const pagination: HistoryPaginationState = {
-      requestId: loadId,
-      workspaceId: chat.workspace_id,
-      chatId: chat.id,
-      origin: chat.origin,
-      status: "idle",
-      hasOlder: Boolean(nextCursor),
-      error: null,
-      externalCursor: nextCursor,
-      localOffset: null,
-    };
-    publishInitialHistoryPage(chat, entries, pagination);
-    await settleInitialHistoryPage(chat, loadId);
+    if (historyChatLoadIdRef.current !== loadId) return;
+    const entries = createTaskChatEntriesFromExternalCodexThread(
+      chat,
+      { data: [...readArray(latestRoot.data)].reverse() },
+      0,
+    );
+    publishStableHistoryChat(
+      chat,
+      entries,
+      {
+        chatId: chat.id,
+        sourceVersion,
+        complete: false,
+        firstItemIndex: HISTORY_VIRTUOSO_BASE_INDEX,
+        syncStatus: "syncing",
+      },
+      loadId,
+    );
+    void synchronizeExternalTranscript(chat, loadId, entries, true);
   }
 
   async function selectHistoryChat(chat: ChatListItem) {
@@ -2710,7 +2852,8 @@ function App() {
 
     const loadId = historyChatLoadIdRef.current + 1;
     historyChatLoadIdRef.current = loadId;
-    pendingHistoryPageCommitRef.current = null;
+    cancelActiveExternalTranscriptSync();
+    pendingTranscriptCommitRef.current = null;
     transcriptScrollActiveRef.current = false;
     const session: WorkspaceChatSession = {
       chatId: chat.id,
@@ -2737,7 +2880,7 @@ function App() {
         requestId: loadId,
         phase: "loading",
       });
-      updateHistoryPagination(null);
+      setHistoricalTranscript(null);
       setTaskChatEntries((current) =>
         replaceWorkspaceChatEntries(current, chat.workspace_id, []),
       );
@@ -2752,16 +2895,12 @@ function App() {
         return;
       }
 
-      const cached = historyChatCacheRef.current.get(chat.id);
+      const cached = stableHistoryChatCacheRef.current.get(chat.id);
       if (cached?.version === historyChatVersion(chat)) {
-        const pagination: HistoryPaginationState = {
-          ...cached.pagination,
-          requestId: loadId,
-          status: "idle",
-          error: null,
-        };
-        publishInitialHistoryPage(chat, cached.entries, pagination);
-        await settleInitialHistoryPage(chat, loadId);
+        publishStableHistoryChat(chat, cached.entries, cached.transcript, loadId);
+        setStatusMessage(
+          `Opened chat from ${formatHistoryTimestamp(chat.latest_activity_at)}.`,
+        );
         return;
       }
 
@@ -2779,7 +2918,7 @@ function App() {
       setHistoryChatLoadState((current) =>
         current?.chatId === chat.id ? { ...current, error: message } : current,
       );
-      updateHistoryPagination(null);
+      setHistoricalTranscript(null);
       setHistoryOpenRequest((current) =>
         current?.requestId === loadId ? null : current,
       );
@@ -2793,220 +2932,20 @@ function App() {
     chat: ChatListItem,
     loadId: number,
   ) {
-    const totalTurns = Math.max(0, Number(chat.turn_count) || 0);
-    if (totalTurns === 0) {
-      const pagination: HistoryPaginationState = {
-        requestId: loadId,
-        workspaceId: chat.workspace_id,
-        chatId: chat.id,
-        origin: chat.origin,
-        status: "idle",
-        hasOlder: false,
-        error: null,
-        externalCursor: null,
-        localOffset: 0,
-      };
-      publishInitialHistoryPage(chat, [], pagination);
-      await settleInitialHistoryPage(chat, loadId);
-      return;
-    }
-
-    const offset = Math.max(0, totalTurns - HISTORY_CHAT_PAGE_SIZE);
-    const runs = await listChatRunsPage(
-      chat.id,
-      offset,
-      totalTurns - offset,
-    );
+    const runs = await listLocalChatTranscript(chat.id);
     if (historyChatLoadIdRef.current !== loadId) {
       return;
     }
-    const entries = runs.map((run) => createTaskChatEntryFromHistoryRun(run));
-    const pagination: HistoryPaginationState = {
-      requestId: loadId,
-      workspaceId: chat.workspace_id,
+    const entries = runs.map(createTaskChatEntryFromHistoryRun);
+    const transcript: HistoricalTranscriptState = {
       chatId: chat.id,
-      origin: chat.origin,
-      status: "idle",
-      hasOlder: offset > 0,
-      error: null,
-      externalCursor: null,
-      localOffset: offset,
+      sourceVersion: historyChatVersion(chat),
+      complete: true,
+      firstItemIndex: HISTORY_VIRTUOSO_BASE_INDEX,
+      syncStatus: "complete",
     };
-    publishInitialHistoryPage(chat, entries, pagination);
-    await settleInitialHistoryPage(chat, loadId);
-  }
-
-  function publishInitialHistoryPage(
-    chat: ChatListItem,
-    entries: TaskChatEntry[],
-    pagination: HistoryPaginationState,
-  ) {
-    startTransition(() => {
-      setTaskChatEntries((current) =>
-        replaceWorkspaceChatEntries(current, chat.workspace_id, entries),
-      );
-      setHistoryChatLoadState(null);
-      updateHistoryPagination(pagination);
-      setHistoryOpenRequestPhase(pagination.requestId, "hydrating");
-    });
-    cacheHistoryChat(chat, entries, pagination);
-  }
-
-  async function settleInitialHistoryPage(chat: ChatListItem, loadId: number) {
-    await waitForNextPaint();
-    if (historyChatLoadIdRef.current !== loadId) {
-      return;
-    }
-    setHistoryOpenRequestPhase(loadId, "complete");
-    setStatusMessage(
-      `Opened chat from ${formatHistoryTimestamp(chat.latest_activity_at)}.`,
-    );
-  }
-
-  function cacheHistoryChat(
-    chat: ChatListItem,
-    entries: TaskChatEntry[],
-    pagination: HistoryPaginationState,
-  ) {
-    const cache = historyChatCacheRef.current;
-    cache.delete(chat.id);
-    cache.set(chat.id, {
-      version: historyChatVersion(chat),
-      entries,
-      pagination: {
-        workspaceId: pagination.workspaceId,
-        chatId: pagination.chatId,
-        origin: pagination.origin,
-        hasOlder: pagination.hasOlder,
-        externalCursor: pagination.externalCursor,
-        localOffset: pagination.localOffset,
-      },
-    });
-    while (cache.size > HISTORY_CHAT_CACHE_LIMIT) {
-      const oldestKey = cache.keys().next().value;
-      if (typeof oldestKey !== "number") {
-        break;
-      }
-      cache.delete(oldestKey);
-    }
-  }
-
-  async function loadOlderHistoryTurns() {
-    const pagination = historyPaginationRef.current;
-    if (!pagination || !pagination.hasOlder || pagination.status === "loading") {
-      return;
-    }
-    const chat = historyState.chats.find((candidate) => candidate.id === pagination.chatId);
-    if (!chat) {
-      return;
-    }
-
-    updateHistoryPagination({ ...pagination, status: "loading", error: null });
-    try {
-      let pageEntries: TaskChatEntry[];
-      let nextExternalCursor = pagination.externalCursor;
-      let nextLocalOffset = pagination.localOffset;
-      let hasOlder = false;
-
-      if (pagination.origin === "codex_external") {
-        const threadId = chat.external_thread_id ?? chat.codex_thread_id;
-        if (!threadId || !pagination.externalCursor) {
-          throw new Error("The external chat has no older-page cursor.");
-        }
-        const response = await codexDefaultProfileRpc<unknown>("thread/turns/list", {
-          threadId,
-          cursor: pagination.externalCursor,
-          limit: HISTORY_CHAT_PAGE_SIZE,
-          sortDirection: "desc",
-          itemsView: "summary",
-        });
-        const root = readObject(response);
-        if (!("data" in root)) {
-          throw new Error("Codex did not return a paged history response.");
-        }
-        pageEntries = createTaskChatEntriesFromExternalCodexThread(chat, {
-          data: [...readArray(root.data)].reverse(),
-        });
-        nextExternalCursor = readString(root.nextCursor);
-        hasOlder = Boolean(nextExternalCursor);
-      } else {
-        const pageEnd = pagination.localOffset ?? 0;
-        const offset = Math.max(0, pageEnd - HISTORY_CHAT_PAGE_SIZE);
-        const runs = await listChatRunsPage(chat.id, offset, pageEnd - offset);
-        pageEntries = runs.map((run) => createTaskChatEntryFromHistoryRun(run));
-        nextLocalOffset = offset;
-        hasOlder = offset > 0;
-      }
-
-      const currentPagination = historyPaginationRef.current;
-      if (
-        historyChatLoadIdRef.current !== pagination.requestId ||
-        !currentPagination ||
-        currentPagination.chatId !== pagination.chatId
-      ) {
-        return;
-      }
-
-      const nextPagination: HistoryPaginationState = {
-        ...pagination,
-        status: "idle",
-        hasOlder,
-        error: null,
-        externalCursor: nextExternalCursor,
-        localOffset: nextLocalOffset,
-      };
-      const commitPage = () => {
-        const latestPagination = historyPaginationRef.current;
-        if (
-          historyChatLoadIdRef.current !== pagination.requestId ||
-          !latestPagination ||
-          latestPagination.requestId !== pagination.requestId ||
-          latestPagination.chatId !== pagination.chatId
-        ) {
-          return;
-        }
-
-        const currentEntries = taskChatEntriesRef.current.filter(
-          (entry) => entry.workspaceId === pagination.workspaceId,
-        );
-        const mergedEntries = mergeHistoryEntries(pageEntries, currentEntries);
-        startTransition(() => {
-          setTaskChatEntries((current) =>
-            replaceWorkspaceChatEntries(
-              current,
-              pagination.workspaceId,
-              mergedEntries,
-            ),
-          );
-          updateHistoryPagination(nextPagination);
-        });
-        cacheHistoryChat(chat, mergedEntries, nextPagination);
-      };
-
-      if (transcriptScrollActiveRef.current) {
-        pendingHistoryPageCommitRef.current = {
-          requestId: pagination.requestId,
-          chatId: pagination.chatId,
-          commit: commitPage,
-        };
-      } else {
-        commitPage();
-      }
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      const pending = pendingHistoryPageCommitRef.current;
-      if (
-        pending?.requestId === pagination.requestId &&
-        pending.chatId === pagination.chatId
-      ) {
-        pendingHistoryPageCommitRef.current = null;
-      }
-      updateHistoryPagination((current) =>
-        current?.chatId === pagination.chatId
-          ? { ...current, status: "error", error: message }
-          : current,
-      );
-    }
+    publishStableHistoryChat(chat, entries, transcript, loadId);
+    setStatusMessage(`Opened chat from ${formatHistoryTimestamp(chat.latest_activity_at)}.`);
   }
 
   async function loadHistoricalActivity(entry: TaskChatEntry) {
@@ -3122,11 +3061,12 @@ function App() {
     }
 
     historyChatLoadIdRef.current += 1;
-    pendingHistoryPageCommitRef.current = null;
+    cancelActiveExternalTranscriptSync();
+    pendingTranscriptCommitRef.current = null;
     transcriptScrollActiveRef.current = false;
     setHistoryChatLoadState(null);
     setHistoryOpenRequest(null);
-    updateHistoryPagination(null);
+    setHistoricalTranscript(null);
     setTaskChatEntries((current) =>
       current.filter((entry) => entry.workspaceId !== selectedWorkspace.id),
     );
@@ -3143,14 +3083,15 @@ function App() {
     }
 
     await softDeleteChat(chat.id);
-    historyChatCacheRef.current.delete(chat.id);
+    stableHistoryChatCacheRef.current.delete(chat.id);
     if (
       historyChatLoadState?.chatId === chat.id ||
       historyOpenRequest?.chatId === chat.id ||
       selectedHistoryChatId === chat.id
     ) {
       historyChatLoadIdRef.current += 1;
-      pendingHistoryPageCommitRef.current = null;
+      cancelActiveExternalTranscriptSync();
+      pendingTranscriptCommitRef.current = null;
       transcriptScrollActiveRef.current = false;
     }
     setHistoryChatLoadState((current) =>
@@ -3159,7 +3100,7 @@ function App() {
     setHistoryOpenRequest((current) =>
       current?.chatId === chat.id ? null : current,
     );
-    updateHistoryPagination((current) =>
+    setHistoricalTranscript((current) =>
       current?.chatId === chat.id ? null : current,
     );
     if (selectedHistoryChatId === chat.id) {
@@ -3209,11 +3150,14 @@ function App() {
       historyOpenRequest?.workspaceId === workspace.id
     ) {
       historyChatLoadIdRef.current += 1;
-      pendingHistoryPageCommitRef.current = null;
+      cancelActiveExternalTranscriptSync();
+      pendingTranscriptCommitRef.current = null;
       transcriptScrollActiveRef.current = false;
     }
-    updateHistoryPagination((current) =>
-      current?.workspaceId === workspace.id ? null : current,
+    setHistoricalTranscript((current) =>
+      current?.chatId === workspaceChatSessionsRef.current[workspace.id]?.chatId
+        ? null
+        : current,
     );
     const workspaceRoot = normalizeWorkspacePath(workspace.path);
     const workspacePrefix = `${workspaceRoot}/`;
@@ -4242,9 +4186,11 @@ function App() {
 
   function beginOptimisticRun(snapshot: RunSetupSnapshot) {
     historyChatLoadIdRef.current += 1;
+    cancelActiveExternalTranscriptSync();
+    pendingTranscriptCommitRef.current = null;
     setHistoryChatLoadState(null);
     setHistoryOpenRequest(null);
-    updateHistoryPagination(null);
+    setHistoricalTranscript(null);
     const clientId = createTaskChatClientId();
     const submittedAt = new Date().toISOString();
     const initialRunView = {
@@ -6737,29 +6683,30 @@ function App() {
                 onDrop={handleTaskContextDrop}
               >
                 {visibleTaskChatEntries.length > 0 ? (
-                  <TaskChatTranscript
+                  <VirtuosoTaskChatTranscript
                     entries={visibleTaskChatEntries}
-                    onResolveRequest={handleResolveRequest}
-                    onOpenFileLink={openTaskResponseFileLink}
-                    editablePromptEntryId={editablePromptEntryId}
-                    onEditPrompt={handleEditLatestPrompt}
-                    historyOpenRequest={
-                      historyOpenRequest !== null &&
-                      historyOpenRequest.workspaceId === selectedWorkspace?.id
-                        ? historyOpenRequest
-                        : null
+                    transcriptIdentity={
+                      selectedWorkspaceChatSession?.chatId
+                        ? `chat:${selectedWorkspaceChatSession.chatId}`
+                        : `workspace:${selectedWorkspace?.id ?? "none"}:live`
                     }
-                    onHistoryPositionSettled={handleHistoryPositionSettled}
-                    hasOlderTurns={selectedHistoryPagination?.hasOlder ?? false}
-                    olderTurnsStatus={selectedHistoryPagination?.status ?? "idle"}
-                    olderTurnsError={selectedHistoryPagination?.error ?? null}
-                    onLoadOlderTurns={() => void loadOlderHistoryTurns()}
+                    transcriptVersion={
+                      selectedHistoricalTranscript?.sourceVersion ?? "live"
+                    }
+                    firstItemIndex={
+                      selectedHistoricalTranscript?.firstItemIndex ??
+                      HISTORY_VIRTUOSO_BASE_INDEX
+                    }
+                    openAtLatest={selectedHistoryChatId !== null}
+                    liveFollow={runIsActive}
+                    onResolveRequest={resolveTranscriptRequest}
+                    onOpenFileLink={openTranscriptFileLink}
+                    editablePromptEntryId={editablePromptEntryId}
+                    onEditPrompt={editTranscriptPrompt}
                     onScrollActivityChange={
                       handleTranscriptScrollActivityChange
                     }
-                    onLoadHistoricalActivity={(entry) =>
-                      void loadHistoricalActivity(entry)
-                    }
+                    onLoadHistoricalActivity={loadTranscriptHistoricalActivity}
                   />
                 ) : selectedHistoryChatLoading ? (
                   <HistoryChatLoading
@@ -7509,6 +7456,7 @@ function WorkspaceHistoryDrawer({
 function createTaskChatEntriesFromExternalCodexThread(
   chat: ChatListItem,
   response: unknown,
+  startSlotIndex = 0,
 ): TaskChatEntry[] {
   const root = readObject(response);
   const thread = Object.keys(readObject(root.thread)).length > 0
@@ -7558,6 +7506,7 @@ function createTaskChatEntriesFromExternalCodexThread(
         clientId: `external-chat-${chat.id}-turn-${stableTurnKey}`,
         workspaceId: chat.workspace_id,
         chatId: chat.id,
+        historySlotIndex: startSlotIndex + index,
         turnIndex: null,
         runId: null,
         taskId: null,
@@ -7602,6 +7551,86 @@ function createTaskChatEntriesFromExternalCodexThread(
       },
     ];
   });
+}
+
+function createTaskChatEntriesFromExternalTranscriptSnapshot(
+  chat: ChatListItem,
+  snapshot: Pick<ExternalTranscriptSnapshot, "threadId" | "turns">,
+): TaskChatEntry[] {
+  return snapshot.turns.map((turn) => {
+    const status = normalizeExternalTurnStatus(turn.status, turn.finalMessage);
+    const startedAt = normalizeExternalTranscriptTimestamp(turn.startedAt)
+      ?? chat.external_created_at
+      ?? chat.created_at;
+    const completedAt = normalizeExternalTranscriptTimestamp(turn.completedAt)
+      ?? (status === "completed" ? chat.external_updated_at ?? chat.updated_at : null);
+    const stableTurnKey = turn.turnId ?? `${turn.slotIndex}-${startedAt}`;
+    const finalMessageItemId = turn.finalMessage
+      ? `external-final-${chat.id}-${stableTurnKey}`
+      : null;
+    return {
+      clientId: `external-chat-${chat.id}-turn-${stableTurnKey}`,
+      workspaceId: chat.workspace_id,
+      chatId: chat.id,
+      turnIndex: turn.slotIndex + 1,
+      runId: null,
+      taskId: null,
+      prompt: turn.prompt,
+      submittedAt: startedAt,
+      status,
+      runView: {
+        ...emptyRunView,
+        status,
+        threadId: snapshot.threadId,
+        turnId: turn.turnId,
+        startedAt,
+        completedAt,
+        elapsedMs: turn.durationMs ?? 0,
+        finalMessage: turn.finalMessage,
+        finalMessageItemId,
+        agentMessagesById:
+          finalMessageItemId === null
+            ? {}
+            : {
+                [finalMessageItemId]: {
+                  text: turn.finalMessage,
+                  phase: "final_answer" as const,
+                },
+              },
+        error: turn.error,
+        tokenUsage:
+          turn.totalTokens === null
+            ? null
+            : {
+                totalTokens: turn.totalTokens,
+                inputTokens: 0,
+                cachedInputTokens: 0,
+                outputTokens: 0,
+                reasoningOutputTokens: 0,
+                modelContextWindow: turn.modelContextWindow,
+              },
+      },
+      historicalActivity:
+        turn.turnId
+          ? {
+              profileKey: "default" as const,
+              threadId: snapshot.threadId,
+              turnId: turn.turnId,
+              status: "available" as const,
+              nextCursor: null,
+              error: null,
+            }
+          : undefined,
+    };
+  });
+}
+
+function normalizeExternalTranscriptTimestamp(value: string | null) {
+  if (!value) return null;
+  if (/^\d+$/.test(value)) {
+    return readTimestamp(Number(value));
+  }
+  return value;
 }
 
 function extractExternalUserPrompt(items: unknown[]) {

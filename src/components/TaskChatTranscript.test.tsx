@@ -1,7 +1,10 @@
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import { emptyRunView } from "../lib/codexEventReducer";
-import { ORCHESTRATOR_PROMPT_CONTEXT_MIME } from "../types";
+import {
+  ORCHESTRATOR_PROMPT_CONTEXT_MIME,
+  type HistoryTranscriptIndex,
+} from "../types";
 import {
   TaskChatTranscript,
   type TaskChatEntry,
@@ -76,14 +79,44 @@ describe("TaskChatTranscript", () => {
     );
   });
 
-  it("loads one older page after scrolling becomes idle near the top", async () => {
-    const onLoadOlderTurns = vi.fn();
+  it("reports sparse history ranges without rendering a loading banner", async () => {
+    const onVisibleHistoryRangeChange = vi.fn();
+    const historyIndex: HistoryTranscriptIndex = {
+      chatId: 401,
+      threadId: "thread-401",
+      sourceVersion: "v1",
+      totalTurns: 60,
+      pageSize: 20,
+      pages: Array.from({ length: 3 }, (_, pageIndex) => ({
+        id: `page-${pageIndex}`,
+        pageIndex,
+        startIndex: pageIndex * 20,
+        turnCount: 20,
+        cursor: null,
+        localOffset: pageIndex * 20,
+      })),
+      hints: Array.from({ length: 60 }, (_, slotIndex) => ({
+        slotIndex,
+        turnId: `turn-${slotIndex}`,
+        promptCharacters: 20,
+        responseCharacters: 40,
+        promptLines: 1,
+        responseLines: 2,
+      })),
+    };
     render(
       <TaskChatTranscript
-        entries={Array.from({ length: 20 }, (_, index) => historyEntry(index + 21))}
-        hasOlderTurns
-        olderTurnsStatus="idle"
-        onLoadOlderTurns={onLoadOlderTurns}
+        entries={Array.from({ length: 5 }, (_, index) => ({
+          ...historyEntry(index + 56),
+          historySlotIndex: index + 55,
+        }))}
+        historyIndex={historyIndex}
+        historyPageStates={{
+          "page-0": "idle",
+          "page-1": "idle",
+          "page-2": "loaded",
+        }}
+        onVisibleHistoryRangeChange={onVisibleHistoryRangeChange}
         onResolveRequest={vi.fn()}
       />,
     );
@@ -93,16 +126,18 @@ describe("TaskChatTranscript", () => {
       clientHeight: 600,
     });
 
-    transcript.scrollTop = 260;
-    fireEvent.scroll(transcript);
-    expect(onLoadOlderTurns).not.toHaveBeenCalled();
-
     transcript.scrollTop = 200;
     fireEvent.wheel(transcript, { deltaY: -120 });
     fireEvent.scroll(transcript);
-    fireEvent.scroll(transcript);
-    expect(onLoadOlderTurns).not.toHaveBeenCalled();
-    await waitFor(() => expect(onLoadOlderTurns).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(onVisibleHistoryRangeChange).toHaveBeenCalled());
+    const [range, direction] =
+      onVisibleHistoryRangeChange.mock.calls[
+        onVisibleHistoryRangeChange.mock.calls.length - 1
+      ] ?? [];
+    expect(direction).toBe("backward");
+    expect(range.startIndex).toBeLessThan(20);
+    expect(document.querySelector(".history-turn-skeleton")).toBeInTheDocument();
+    expect(screen.queryByText("Loading older messages...")).not.toBeInTheDocument();
   });
 
   it("reports active scrolling immediately and settles after input becomes idle", async () => {

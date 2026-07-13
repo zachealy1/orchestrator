@@ -1669,31 +1669,27 @@ button.account-switcher-item:hover:not(:disabled) {
   padding: 4px var(--task-hero-inline-padding);
 }
 
-.history-older-turns-status {
-  position: absolute;
-  top: 8px;
-  left: 50%;
-  z-index: 4;
-  display: flex;
-  width: fit-content;
-  max-width: calc(100% - 24px);
-  align-items: center;
-  gap: 8px;
-  margin: 0;
-  border-radius: 6px;
-  background: var(--color-component-background);
-  color: var(--color-text-secondary);
-  box-shadow: 0 4px 16px rgb(var(--shadow-rgb) / 0.14);
-  font-size: 0.78rem;
-  padding: 6px 9px;
-  transform: translateX(-50%);
+.task-chat-transcript.virtuoso-transcript {
+  overflow: hidden;
+  padding: 0;
 }
 
-.history-older-turns-status.error {
-  color: var(--color-error);
+.task-chat-virtuoso {
+  width: 100%;
+  height: 100%;
+  overflow-anchor: none;
+  overscroll-behavior: contain;
 }
 
-.history-older-turns-status button,
+.task-chat-virtuoso-row {
+  display: grid;
+  width: 100%;
+  justify-items: center;
+  box-sizing: border-box;
+  padding: 4px var(--task-hero-inline-padding) 18px;
+  contain: layout paint style;
+}
+
 .historical-activity-status button,
 .historical-activity-more {
   min-height: 28px;
@@ -1705,7 +1701,6 @@ button.account-switcher-item:hover:not(:disabled) {
   padding: 4px 8px;
 }
 
-.history-older-turns-status button:hover,
 .historical-activity-status button:hover,
 .historical-activity-more:hover {
   background: var(--color-button-active);
@@ -1748,6 +1743,86 @@ button.account-switcher-item:hover:not(:disabled) {
   box-sizing: border-box;
   padding-bottom: 18px;
   contain: layout paint style;
+}
+
+.history-turn-skeleton {
+  position: relative;
+  display: grid;
+  width: min(1040px, 100%);
+  align-content: start;
+  gap: 30px;
+  box-sizing: border-box;
+  opacity: 0.48;
+  padding: 12px 0 28px;
+}
+
+.history-turn-skeleton-prompt,
+.history-turn-skeleton-response {
+  display: grid;
+  gap: 9px;
+}
+
+.history-turn-skeleton-prompt {
+  width: min(58%, 540px);
+  justify-self: end;
+}
+
+.history-turn-skeleton-response {
+  width: min(76%, 720px);
+  justify-self: start;
+}
+
+.history-turn-skeleton span {
+  display: block;
+  height: 11px;
+  border-radius: 4px;
+  background: var(--color-surface-muted);
+}
+
+.history-turn-skeleton-prompt span:last-child {
+  width: 62%;
+  justify-self: end;
+}
+
+.history-turn-skeleton-response span:nth-child(2) {
+  width: 88%;
+}
+
+.history-turn-skeleton-response span:last-child {
+  width: 54%;
+}
+
+.history-turn-skeleton.state-loading {
+  opacity: 0.58;
+}
+
+.history-turn-skeleton.state-error {
+  opacity: 0.7;
+}
+
+.history-turn-skeleton-retry {
+  position: absolute;
+  top: 10px;
+  left: 0;
+  display: inline-grid;
+  width: 30px;
+  height: 30px;
+  min-height: 30px;
+  place-items: center;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--color-icon-muted);
+  box-shadow: none;
+  padding: 0;
+}
+
+.history-turn-skeleton-retry:hover,
+.history-turn-skeleton-retry:focus-visible {
+  background: var(--color-button-secondary);
+  color: var(--color-icon-muted);
+  box-shadow: none;
+  transform: none;
 }
 
 .task-chat-run {

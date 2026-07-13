@@ -1,4 +1,5 @@
 import type { RunViewState } from "./codexEventReducer";
+import type { HistoryTurnHint } from "../types";
 
 const TRANSCRIPT_WIDTH_BUCKET_PX = 32;
 const TRANSCRIPT_MEASUREMENT_CACHE_LIMIT = 4_000;
@@ -138,6 +139,36 @@ export function estimateTranscriptRowHeight(
       assistantLines * APPROXIMATE_LINE_HEIGHT_PX +
       activityRows * 34 +
       traceRows * 34,
+  );
+}
+
+export function estimateHistoryPlaceholderHeight(
+  hint: HistoryTurnHint | undefined,
+  width: number,
+) {
+  if (!hint) {
+    return MIN_TRANSCRIPT_ROW_HEIGHT_PX;
+  }
+
+  const contentWidth = Math.max(280, Math.min(1_040, width) - 72);
+  const charactersPerLine = Math.max(
+    28,
+    Math.floor(contentWidth / APPROXIMATE_CHARACTER_WIDTH_PX),
+  );
+  const promptLines = Math.max(
+    hint.promptLines,
+    Math.ceil(hint.promptCharacters / charactersPerLine),
+  );
+  const responseLines = Math.max(
+    hint.responseLines,
+    Math.ceil(hint.responseCharacters / charactersPerLine),
+  );
+
+  return Math.max(
+    MIN_TRANSCRIPT_ROW_HEIGHT_PX,
+    104 +
+      promptLines * APPROXIMATE_LINE_HEIGHT_PX +
+      responseLines * APPROXIMATE_LINE_HEIGHT_PX,
   );
 }
 

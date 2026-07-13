@@ -44,6 +44,8 @@ struct CodexState {
     pending: PendingMap,
     next_id: AtomicU64,
     login_account: Arc<Mutex<Option<i64>>>,
+    history_index_requests: Arc<Mutex<HashSet<String>>>,
+    transcript_sync_requests: Arc<Mutex<HashSet<String>>>,
 }
 
 impl Drop for CodexState {
@@ -107,6 +109,66 @@ struct HistoricalTurnActivityResponse {
     commands: Vec<HistoricalCommandActivity>,
     edited_files: Vec<HistoricalEditedFile>,
     next_cursor: Option<String>,
+}
+
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct HistoryTurnHint {
+    slot_index: usize,
+    turn_id: Option<String>,
+    prompt_characters: usize,
+    response_characters: usize,
+    prompt_lines: usize,
+    response_lines: usize,
+}
+
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct HistoryPageDescriptor {
+    id: String,
+    page_index: usize,
+    start_index: usize,
+    turn_count: usize,
+    cursor: Option<String>,
+    local_offset: Option<usize>,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ExternalThreadHistoryIndex {
+    request_id: String,
+    thread_id: String,
+    source_version: String,
+    total_turns: usize,
+    page_size: usize,
+    pages: Vec<HistoryPageDescriptor>,
+    hints: Vec<HistoryTurnHint>,
+}
+
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ExternalTranscriptTurnSummary {
+    slot_index: usize,
+    turn_id: Option<String>,
+    prompt: String,
+    final_message: String,
+    error: Option<String>,
+    status: String,
+    started_at: Option<String>,
+    completed_at: Option<String>,
+    duration_ms: Option<i64>,
+    total_tokens: Option<i64>,
+    model_context_window: Option<i64>,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ExternalTranscriptSnapshot {
+    request_id: String,
+    thread_id: String,
+    source_version: String,
+    total_turns: usize,
+    turns: Vec<ExternalTranscriptTurnSummary>,
 }
 
 #[derive(Serialize)]
@@ -591,6 +653,71 @@ fn migrations() -> Vec<Migration> {
             ",
             kind: MigrationKind::Up,
         },
+        Migration {
+            version: 10,
+            description: "cache_external_chat_history_indexes",
+            sql: "
+                CREATE TABLE IF NOT EXISTS external_chat_history_indexes (
+                    chat_id INTEGER PRIMARY KEY,
+                    thread_id TEXT NOT NULL,
+                    source_version TEXT NOT NULL,
+                    page_size INTEGER NOT NULL,
+                    total_turns INTEGER NOT NULL,
+                    pages_json TEXT NOT NULL,
+                    hints_json TEXT NOT NULL,
+                    indexed_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    FOREIGN KEY (chat_id) REFERENCES chats(id) ON DELETE CASCADE
+                );
+
+                CREATE INDEX IF NOT EXISTS idx_external_chat_history_index_version
+                    ON external_chat_history_indexes(thread_id, source_version);
+            ",
+            kind: MigrationKind::Up,
+        },
+        // Migration 11 has shipped. Keep this SQL byte-for-byte stable and use a
+        // new migration version for every subsequent transcript schema change.
+        Migration {
+            version: 11,
+            description: "cache_external_chat_transcript_snapshots",
+            sql: "
+                CREATE TABLE IF NOT EXISTS external_chat_transcript_snapshots (
+                    chat_id INTEGER PRIMARY KEY,
+                    source_version TEXT NOT NULL,
+                    turn_count INTEGER NOT NULL,
+                    synced_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    FOREIGN KEY (chat_id) REFERENCES chats(id) ON DELETE CASCADE
+                );
+
+                CREATE TABLE IF NOT EXISTS external_chat_turn_summaries (
+                    chat_id INTEGER NOT NULL,
+                    source_version TEXT NOT NULL,
+                    slot_index INTEGER NOT NULL,
+                    external_turn_id TEXT,
+                    prompt TEXT NOT NULL,
+                    final_message TEXT NOT NULL,
+                    status TEXT NOT NULL,
+                    started_at TEXT,
+                    completed_at TEXT,
+                    duration_ms INTEGER,
+                    total_tokens INTEGER,
+                    model_context_window INTEGER,
+                    PRIMARY KEY (chat_id, source_version, slot_index),
+                    FOREIGN KEY (chat_id) REFERENCES chats(id) ON DELETE CASCADE
+                );
+
+                CREATE INDEX IF NOT EXISTS idx_external_chat_turn_summaries_active
+                    ON external_chat_turn_summaries(chat_id, source_version, slot_index);
+            ",
+            kind: MigrationKind::Up,
+        },
+        Migration {
+            version: 12,
+            description: "add_external_transcript_turn_errors",
+            sql: "
+                ALTER TABLE external_chat_turn_summaries ADD COLUMN error TEXT;
+            ",
+            kind: MigrationKind::Up,
+        },
     ]
 }
 
@@ -884,6 +1011,396 @@ fn project_historical_turn_activity(response: &Value) -> HistoricalTurnActivityR
     }
 }
 
+struct RawHistoryIndexPage {
+    cursor: Option<String>,
+    hints: Vec<HistoryTurnHint>,
+}
+
+fn text_metrics(text: &str) -> (usize, usize) {
+    if text.is_empty() {
+        return (0, 0);
+    }
+    (text.chars().count(), text.bytes().filter(|byte| *byte == b'\n').count() + 1)
+}
+
+fn item_text_metrics(item: &Value) -> (usize, usize) {
+    if let Some(text) = item.get("text").and_then(Value::as_str) {
+        return text_metrics(text);
+    }
+
+    if let Some(content) = item.get("content").and_then(Value::as_array) {
+        let mut characters = 0;
+        let mut lines = 0;
+        for part in content {
+            let text = part
+                .as_str()
+                .or_else(|| part.get("text").and_then(Value::as_str))
+                .or_else(|| part.get("value").and_then(Value::as_str))
+                .or_else(|| part.get("content").and_then(Value::as_str));
+            if let Some(text) = text {
+                let (part_characters, part_lines) = text_metrics(text);
+                characters += part_characters;
+                lines += part_lines;
+            }
+        }
+        return (characters, lines);
+    }
+
+    item.get("message")
+        .and_then(|message| message.get("text"))
+        .and_then(Value::as_str)
+        .map(text_metrics)
+        .unwrap_or((0, 0))
+}
+
+fn project_history_turn_hint(turn: &Value) -> HistoryTurnHint {
+    let items = turn
+        .get("items")
+        .and_then(Value::as_array)
+        .cloned()
+        .unwrap_or_default();
+    let mut prompt_characters = 0;
+    let mut prompt_lines = 0;
+    let mut fallback_agent: Option<&Value> = None;
+    let mut final_agent: Option<&Value> = None;
+
+    for item in &items {
+        match item.get("type").and_then(Value::as_str) {
+            Some("userMessage") => {
+                let (characters, lines) = item_text_metrics(item);
+                prompt_characters += characters;
+                prompt_lines += lines;
+            }
+            Some("agentMessage") => {
+                fallback_agent = Some(item);
+                if item.get("phase").and_then(Value::as_str) == Some("final_answer") {
+                    final_agent = Some(item);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    let (response_characters, response_lines) = final_agent
+        .or(fallback_agent)
+        .map(item_text_metrics)
+        .unwrap_or((0, 0));
+    HistoryTurnHint {
+        slot_index: 0,
+        turn_id: turn.get("id").and_then(Value::as_str).map(str::to_string),
+        prompt_characters,
+        response_characters,
+        prompt_lines,
+        response_lines,
+    }
+}
+
+fn external_item_text(item: &Value) -> String {
+    if let Some(text) = item.get("text").and_then(Value::as_str) {
+        return text.to_string();
+    }
+
+    if let Some(content) = item.get("content").and_then(Value::as_array) {
+        return content
+            .iter()
+            .filter_map(|part| {
+                part.as_str()
+                    .or_else(|| part.get("text").and_then(Value::as_str))
+                    .or_else(|| part.get("value").and_then(Value::as_str))
+                    .or_else(|| part.get("content").and_then(Value::as_str))
+            })
+            .collect::<String>();
+    }
+
+    item.get("message")
+        .and_then(|message| message.get("text"))
+        .and_then(Value::as_str)
+        .unwrap_or_default()
+        .to_string()
+}
+
+fn external_turn_items(turn: &Value) -> Vec<Value> {
+    for key in ["items", "output", "input"] {
+        if let Some(items) = turn.get(key).and_then(Value::as_array) {
+            if !items.is_empty() {
+                return items.clone();
+            }
+        }
+    }
+    Vec::new()
+}
+
+fn external_timestamp(turn: &Value, keys: &[&str]) -> Option<String> {
+    keys.iter().find_map(|key| {
+        let value = turn.get(*key)?;
+        value
+            .as_str()
+            .map(str::to_string)
+            .or_else(|| value.as_i64().map(|timestamp| timestamp.to_string()))
+            .or_else(|| value.as_u64().map(|timestamp| timestamp.to_string()))
+    })
+}
+
+fn external_token_metric(turn: &Value, keys: &[&str]) -> Option<i64> {
+    [turn.get("tokenUsage"), turn.get("token_usage"), turn.get("usage")]
+        .into_iter()
+        .flatten()
+        .find_map(|usage| {
+            keys.iter().find_map(|key| {
+                let value = usage.get(*key)?;
+                value
+                    .as_i64()
+                    .or_else(|| value.as_u64().and_then(|number| i64::try_from(number).ok()))
+            })
+        })
+}
+
+fn external_turn_error(turn: &Value) -> Option<String> {
+    let error = turn.get("error")?;
+    if error.is_null() {
+        return None;
+    }
+    error
+        .as_str()
+        .map(str::to_string)
+        .or_else(|| error.get("message").and_then(Value::as_str).map(str::to_string))
+        .or_else(|| Some(error.to_string()))
+}
+
+fn project_external_transcript_turn(turn: &Value) -> Option<ExternalTranscriptTurnSummary> {
+    let items = external_turn_items(turn);
+    let prompt = items
+        .iter()
+        .filter(|item| item.get("type").and_then(Value::as_str) == Some("userMessage"))
+        .map(external_item_text)
+        .filter(|text| !text.trim().is_empty())
+        .collect::<Vec<_>>()
+        .join("\n\n")
+        .trim()
+        .to_string();
+    if prompt.is_empty() {
+        return None;
+    }
+
+    let agent_messages = items
+        .iter()
+        .filter(|item| item.get("type").and_then(Value::as_str) == Some("agentMessage"))
+        .collect::<Vec<_>>();
+    let final_agent = agent_messages
+        .iter()
+        .find(|item| item.get("phase").and_then(Value::as_str) == Some("final_answer"))
+        .copied()
+        .or_else(|| agent_messages.last().copied());
+    let final_message = final_agent
+        .map(|item| external_item_text(item).trim().to_string())
+        .unwrap_or_default();
+    let raw_status = turn.get("status").and_then(Value::as_str).unwrap_or_default();
+    let status = match raw_status {
+        "failed" => "failed",
+        "running" => "running",
+        "interrupted" | "cancelled" | "canceled" => "interrupted",
+        _ if !final_message.is_empty() => "completed",
+        _ => "interrupted",
+    }
+    .to_string();
+
+    Some(ExternalTranscriptTurnSummary {
+        slot_index: 0,
+        turn_id: turn.get("id").and_then(Value::as_str).map(str::to_string),
+        prompt,
+        final_message,
+        error: external_turn_error(turn),
+        status,
+        started_at: external_timestamp(
+            turn,
+            &["startedAt", "started_at", "createdAt", "created_at"],
+        ),
+        completed_at: external_timestamp(turn, &["completedAt", "completed_at"]),
+        duration_ms: turn
+            .get("durationMs")
+            .or_else(|| turn.get("duration_ms"))
+            .and_then(Value::as_i64),
+        total_tokens: external_token_metric(turn, &["totalTokens", "total_tokens"]),
+        model_context_window: external_token_metric(
+            turn,
+            &["modelContextWindow", "model_context_window"],
+        ),
+    })
+}
+
+fn transcript_sync_request_active(state: &CodexState, request_id: &str) -> bool {
+    state
+        .transcript_sync_requests
+        .lock()
+        .map(|requests| requests.contains(request_id))
+        .unwrap_or(false)
+}
+
+async fn build_external_thread_transcript(
+    state: &CodexState,
+    thread_id: &str,
+    source_version: &str,
+    page_size: usize,
+    request_id: &str,
+) -> Result<ExternalTranscriptSnapshot, String> {
+    let mut cursor: Option<String> = None;
+    let mut pages: Vec<Vec<ExternalTranscriptTurnSummary>> = Vec::new();
+
+    loop {
+        if !transcript_sync_request_active(state, request_id) {
+            return Err("Transcript synchronization cancelled".to_string());
+        }
+        let response = send_request(
+            state,
+            DEFAULT_CODEX_PROFILE_ID,
+            "thread/turns/list",
+            json!({
+                "threadId": thread_id,
+                "cursor": cursor,
+                "limit": page_size,
+                "sortDirection": "desc",
+                "itemsView": "summary",
+            }),
+        )
+        .await?;
+        if !transcript_sync_request_active(state, request_id) {
+            return Err("Transcript synchronization cancelled".to_string());
+        }
+
+        let data = response
+            .get("data")
+            .and_then(Value::as_array)
+            .cloned()
+            .unwrap_or_default();
+        if data.is_empty() {
+            break;
+        }
+        pages.push(
+            data.iter()
+                .filter_map(project_external_transcript_turn)
+                .collect(),
+        );
+        cursor = response
+            .get("nextCursor")
+            .and_then(Value::as_str)
+            .map(str::to_string);
+        if cursor.is_none() {
+            break;
+        }
+    }
+
+    pages.reverse();
+    let mut turns = Vec::new();
+    for mut page in pages {
+        page.reverse();
+        for mut turn in page {
+            turn.slot_index = turns.len();
+            turns.push(turn);
+        }
+    }
+
+    Ok(ExternalTranscriptSnapshot {
+        request_id: request_id.to_string(),
+        thread_id: thread_id.to_string(),
+        source_version: source_version.to_string(),
+        total_turns: turns.len(),
+        turns,
+    })
+}
+
+fn history_index_request_active(state: &CodexState, request_id: &str) -> bool {
+    state
+        .history_index_requests
+        .lock()
+        .map(|requests| requests.contains(request_id))
+        .unwrap_or(false)
+}
+
+async fn build_external_thread_history_index(
+    state: &CodexState,
+    thread_id: &str,
+    source_version: &str,
+    page_size: usize,
+    request_id: &str,
+) -> Result<ExternalThreadHistoryIndex, String> {
+    let mut cursor: Option<String> = None;
+    let mut raw_pages = Vec::new();
+
+    loop {
+        if !history_index_request_active(state, request_id) {
+            return Err("History indexing cancelled".to_string());
+        }
+        let response = send_request(
+            state,
+            DEFAULT_CODEX_PROFILE_ID,
+            "thread/turns/list",
+            json!({
+                "threadId": thread_id,
+                "cursor": cursor,
+                "limit": page_size,
+                "sortDirection": "desc",
+                "itemsView": "summary",
+            }),
+        )
+        .await?;
+        if !history_index_request_active(state, request_id) {
+            return Err("History indexing cancelled".to_string());
+        }
+
+        let data = response
+            .get("data")
+            .and_then(Value::as_array)
+            .cloned()
+            .unwrap_or_default();
+        if data.is_empty() {
+            break;
+        }
+        raw_pages.push(RawHistoryIndexPage {
+            cursor: cursor.clone(),
+            hints: data.iter().map(project_history_turn_hint).collect(),
+        });
+        cursor = response
+            .get("nextCursor")
+            .and_then(Value::as_str)
+            .map(str::to_string);
+        if cursor.is_none() {
+            break;
+        }
+    }
+
+    raw_pages.reverse();
+    let mut pages = Vec::with_capacity(raw_pages.len());
+    let mut hints = Vec::new();
+    let mut start_index = 0;
+    for (page_index, mut raw_page) in raw_pages.into_iter().enumerate() {
+        raw_page.hints.reverse();
+        let turn_count = raw_page.hints.len();
+        for mut hint in raw_page.hints {
+            hint.slot_index = hints.len();
+            hints.push(hint);
+        }
+        pages.push(HistoryPageDescriptor {
+            id: format!("external:{thread_id}:{page_index}"),
+            page_index,
+            start_index,
+            turn_count,
+            cursor: raw_page.cursor,
+            local_offset: None,
+        });
+        start_index += turn_count;
+    }
+
+    Ok(ExternalThreadHistoryIndex {
+        request_id: request_id.to_string(),
+        thread_id: thread_id.to_string(),
+        source_version: source_version.to_string(),
+        total_turns: hints.len(),
+        page_size,
+        pages,
+        hints,
+    })
+}
+
 fn count_unified_diff_lines(diff: &str) -> (usize, usize) {
     let additions = diff
         .lines()
@@ -1116,6 +1633,96 @@ async fn codex_default_profile_turn_activity(
     )
     .await?;
     Ok(project_historical_turn_activity(&response))
+}
+
+#[tauri::command]
+async fn codex_default_profile_thread_index(
+    thread_id: String,
+    source_version: String,
+    page_size: Option<u32>,
+    request_id: String,
+    state: State<'_, CodexState>,
+) -> Result<ExternalThreadHistoryIndex, String> {
+    if thread_id.trim().is_empty() || request_id.trim().is_empty() {
+        return Err("Thread id and index request id are required".to_string());
+    }
+    let page_size = page_size.unwrap_or(20).clamp(1, 100) as usize;
+    state
+        .history_index_requests
+        .lock()
+        .map_err(|_| "History index request lock was poisoned".to_string())?
+        .insert(request_id.clone());
+    let result = build_external_thread_history_index(
+        &state,
+        &thread_id,
+        &source_version,
+        page_size,
+        &request_id,
+    )
+    .await;
+    let _ = state
+        .history_index_requests
+        .lock()
+        .map(|mut requests| requests.remove(&request_id));
+    result
+}
+
+#[tauri::command]
+fn codex_default_profile_thread_index_cancel(
+    request_id: String,
+    state: State<'_, CodexState>,
+) -> Result<(), String> {
+    state
+        .history_index_requests
+        .lock()
+        .map_err(|_| "History index request lock was poisoned".to_string())?
+        .remove(&request_id);
+    Ok(())
+}
+
+#[tauri::command]
+async fn codex_default_profile_thread_transcript_sync(
+    thread_id: String,
+    source_version: String,
+    page_size: Option<u32>,
+    request_id: String,
+    state: State<'_, CodexState>,
+) -> Result<ExternalTranscriptSnapshot, String> {
+    if thread_id.trim().is_empty() || request_id.trim().is_empty() {
+        return Err("Thread id and transcript request id are required".to_string());
+    }
+    let page_size = page_size.unwrap_or(20).clamp(1, 100) as usize;
+    state
+        .transcript_sync_requests
+        .lock()
+        .map_err(|_| "Transcript sync request lock was poisoned".to_string())?
+        .insert(request_id.clone());
+    let result = build_external_thread_transcript(
+        &state,
+        &thread_id,
+        &source_version,
+        page_size,
+        &request_id,
+    )
+    .await;
+    let _ = state
+        .transcript_sync_requests
+        .lock()
+        .map(|mut requests| requests.remove(&request_id));
+    result
+}
+
+#[tauri::command]
+fn codex_default_profile_thread_transcript_cancel(
+    request_id: String,
+    state: State<'_, CodexState>,
+) -> Result<(), String> {
+    state
+        .transcript_sync_requests
+        .lock()
+        .map_err(|_| "Transcript sync request lock was poisoned".to_string())?
+        .remove(&request_id);
+    Ok(())
 }
 
 #[tauri::command]
@@ -3540,6 +4147,10 @@ pub fn run() {
             codex_rpc,
             codex_default_profile_rpc,
             codex_default_profile_turn_activity,
+            codex_default_profile_thread_index,
+            codex_default_profile_thread_index_cancel,
+            codex_default_profile_thread_transcript_sync,
+            codex_default_profile_thread_transcript_cancel,
             codex_resolve_server_request,
             codex_default_profile_resolve_server_request,
             codex_stop,
@@ -3738,6 +4349,109 @@ mod tests {
     }
 
     #[test]
+    fn history_index_projection_returns_metrics_without_message_content() {
+        let prompt = "private prompt text\nwith another line";
+        let final_answer = "private final answer";
+        let turn = json!({
+            "id": "turn-1",
+            "items": [
+                {
+                    "type": "userMessage",
+                    "text": prompt
+                },
+                {
+                    "type": "reasoning",
+                    "content": "private reasoning content"
+                },
+                {
+                    "type": "commandExecution",
+                    "command": "cat secret.txt",
+                    "aggregatedOutput": "private command output"
+                },
+                {
+                    "type": "fileChange",
+                    "changes": [{
+                        "path": "secret.txt",
+                        "diff": "--- a/secret.txt\n+++ b/secret.txt\n-secret\n+private diff"
+                    }]
+                },
+                {
+                    "type": "agentMessage",
+                    "phase": "final_answer",
+                    "text": final_answer
+                }
+            ]
+        });
+
+        let hint = project_history_turn_hint(&turn);
+        let serialized = serde_json::to_string(&hint).unwrap();
+
+        assert_eq!(hint.turn_id.as_deref(), Some("turn-1"));
+        assert_eq!(hint.prompt_characters, prompt.chars().count());
+        assert_eq!(hint.prompt_lines, 2);
+        assert_eq!(hint.response_characters, final_answer.chars().count());
+        assert_eq!(hint.response_lines, 1);
+        assert!(!serialized.contains("private prompt text"));
+        assert!(!serialized.contains("private final answer"));
+        assert!(!serialized.contains("private reasoning content"));
+        assert!(!serialized.contains("private command output"));
+        assert!(!serialized.contains("private diff"));
+    }
+
+    #[test]
+    fn transcript_projection_keeps_only_prompt_and_final_answer() {
+        let turn = json!({
+            "id": "turn-1",
+            "status": "completed",
+            "startedAt": "2026-07-13T10:00:00Z",
+            "completedAt": "2026-07-13T10:00:12Z",
+            "durationMs": 12000,
+            "tokenUsage": {
+                "totalTokens": 4200,
+                "modelContextWindow": 128000
+            },
+            "items": [
+                { "type": "userMessage", "text": "Keep this prompt" },
+                { "type": "reasoning", "content": "exclude private reasoning" },
+                {
+                    "type": "agentMessage",
+                    "phase": "commentary",
+                    "text": "exclude streamed commentary"
+                },
+                {
+                    "type": "commandExecution",
+                    "command": "cat secret.txt",
+                    "aggregatedOutput": "exclude command output"
+                },
+                {
+                    "type": "fileChange",
+                    "changes": [{
+                        "path": "secret.txt",
+                        "diff": "exclude raw diff"
+                    }]
+                },
+                {
+                    "type": "agentMessage",
+                    "phase": "final_answer",
+                    "text": "Keep only this final answer"
+                }
+            ]
+        });
+
+        let projected = project_external_transcript_turn(&turn).expect("projected turn");
+        let serialized = serde_json::to_string(&projected).unwrap();
+
+        assert_eq!(projected.prompt, "Keep this prompt");
+        assert_eq!(projected.final_message, "Keep only this final answer");
+        assert_eq!(projected.total_tokens, Some(4200));
+        assert_eq!(projected.model_context_window, Some(128000));
+        assert!(!serialized.contains("exclude private reasoning"));
+        assert!(!serialized.contains("exclude streamed commentary"));
+        assert!(!serialized.contains("exclude command output"));
+        assert!(!serialized.contains("exclude raw diff"));
+    }
+
+    #[test]
     fn main_window_can_write_to_sqlite() {
         let capability: Value =
             serde_json::from_str(include_str!("../capabilities/default.json")).unwrap();
@@ -3853,6 +4567,81 @@ mod tests {
         assert!(external_chats.sql.contains("ADD COLUMN origin"));
         assert!(external_chats.sql.contains("external_thread_id"));
         assert!(external_chats.sql.contains("idx_chats_external_thread"));
+    }
+
+    #[test]
+    fn history_index_migration_uses_a_new_slot_and_preserves_history_migrations() {
+        let all_migrations = migrations();
+        let expected = [
+            (6, "add_archived_runs"),
+            (7, "soft_delete_runs"),
+            (8, "create_chats_for_threaded_history"),
+            (9, "add_external_codex_chats"),
+            (10, "cache_external_chat_history_indexes"),
+        ];
+
+        for (version, description) in expected {
+            let migration = all_migrations
+                .iter()
+                .find(|migration| migration.version == version)
+                .unwrap_or_else(|| panic!("migration {version}"));
+            assert_eq!(migration.description, description);
+        }
+
+        let history_index = all_migrations
+            .iter()
+            .find(|migration| migration.version == 10)
+            .expect("migration 10");
+        assert!(history_index
+            .sql
+            .contains("CREATE TABLE IF NOT EXISTS external_chat_history_indexes"));
+        assert!(history_index.sql.contains("thread_id TEXT NOT NULL"));
+        assert!(history_index.sql.contains("source_version TEXT NOT NULL"));
+    }
+
+    #[test]
+    fn transcript_cache_migration_uses_slot_eleven_and_preserves_prior_slots() {
+        let all_migrations = migrations();
+        let expected = [
+            (6, "add_archived_runs"),
+            (7, "soft_delete_runs"),
+            (8, "create_chats_for_threaded_history"),
+            (9, "add_external_codex_chats"),
+            (10, "cache_external_chat_history_indexes"),
+            (11, "cache_external_chat_transcript_snapshots"),
+            (12, "add_external_transcript_turn_errors"),
+        ];
+
+        for (version, description) in expected {
+            let migration = all_migrations
+                .iter()
+                .find(|migration| migration.version == version)
+                .unwrap_or_else(|| panic!("migration {version}"));
+            assert_eq!(migration.description, description);
+        }
+
+        let transcript_cache = all_migrations
+            .iter()
+            .find(|migration| migration.version == 11)
+            .expect("migration 11");
+        assert!(transcript_cache.sql.contains(
+            "CREATE TABLE IF NOT EXISTS external_chat_transcript_snapshots"
+        ));
+        assert!(transcript_cache.sql.contains(
+            "CREATE TABLE IF NOT EXISTS external_chat_turn_summaries"
+        ));
+        assert!(transcript_cache
+            .sql
+            .contains("PRIMARY KEY (chat_id, source_version, slot_index)"));
+        assert!(!transcript_cache.sql.contains("error TEXT"));
+
+        let transcript_errors = all_migrations
+            .iter()
+            .find(|migration| migration.version == 12)
+            .expect("migration 12");
+        assert!(transcript_errors
+            .sql
+            .contains("ALTER TABLE external_chat_turn_summaries ADD COLUMN error TEXT"));
     }
 
     #[test]
