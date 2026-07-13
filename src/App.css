@@ -1637,9 +1637,9 @@ button.account-switcher-item:hover:not(:disabled) {
 .task-hero.has-chat {
   align-items: stretch;
   justify-content: flex-end;
-  gap: 14px;
+  gap: 0;
   overflow: hidden;
-  padding: 18px 0 20px;
+  padding: 0 0 20px;
 }
 
 .task-hero.has-chat .composer-panel {
@@ -1649,6 +1649,8 @@ button.account-switcher-item:hover:not(:disabled) {
     100% - var(--task-hero-inline-padding) - var(--task-hero-inline-padding)
   );
   align-self: center;
+  z-index: 2;
+  margin-top: calc(-1 * var(--radius));
 }
 
 .task-hero.has-chat .composer-panel {
