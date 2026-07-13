@@ -2172,7 +2172,7 @@ describe("App Codex auth", () => {
     expect(transcript).toHaveAttribute("data-restored", "false");
   });
 
-  it("shows the latest external turns first and commits the full snapshot after scrolling is idle", async () => {
+  it("publishes an uncached external transcript once after its full snapshot is ready", async () => {
     const historicalChat = {
       ...workspaceChatFixture({
       id: 452,
@@ -2224,14 +2224,12 @@ describe("App Codex auth", () => {
     await user.click(
       within(drawer).getByRole("button", { name: /external history chat/i }),
     );
-    expect(await screen.findByText("External result 65.")).toBeInTheDocument();
-    expect(screen.queryByText("External result 1.")).not.toBeInTheDocument();
-    expect(screen.getByTestId("mock-virtuoso")).toHaveAttribute(
-      "data-first-item-index",
-      String(1_000_000),
+    expect(screen.getByLabelText("Loading chat")).toHaveTextContent(
+      "Loading External history chat",
     );
+    expect(screen.queryByText("External result 65.")).not.toBeInTheDocument();
+    expect(screen.queryByText("External result 1.")).not.toBeInTheDocument();
 
-    fireEvent.click(screen.getByLabelText("Start transcript scrolling"));
     await act(async () => {
       resolveSnapshot?.(externalTranscriptSnapshotFixture(65));
       await Promise.resolve();
@@ -2239,18 +2237,17 @@ describe("App Codex auth", () => {
     await waitFor(() =>
       expect(mocks.activateExternalTranscriptSnapshotMock).toHaveBeenCalled(),
     );
-    await act(async () => {
-      await new Promise((resolve) => window.setTimeout(resolve, 180));
-    });
-    expect(screen.queryByText("External result 1.")).not.toBeInTheDocument();
-
-    fireEvent.click(screen.getByLabelText("Stop transcript scrolling"));
+    expect(await screen.findByText("External result 65.")).toBeInTheDocument();
     expect(await screen.findByText("External result 1.")).toBeInTheDocument();
     expect(screen.getByTestId("mock-virtuoso")).toHaveAttribute(
       "data-first-item-index",
-      String(1_000_000 - 45),
+      String(1_000_000),
     );
     expect(mocks.syncDefaultProfileThreadTranscriptMock).toHaveBeenCalledTimes(1);
+    expect(mocks.codexDefaultProfileRpcMock).not.toHaveBeenCalledWith(
+      "thread/turns/list",
+      expect.anything(),
+    );
     expect(mocks.listChatRunsPageMock).not.toHaveBeenCalled();
   });
 
@@ -2338,7 +2335,9 @@ describe("App Codex auth", () => {
         throw new Error("Task viewport ResizeObserver was not attached.");
       }
       act(() => triggerResize(900));
-      expect(await screen.findByText("External result 65.")).toBeInTheDocument();
+      expect(screen.getByLabelText("Loading chat")).toHaveTextContent(
+        "Loading Resize-safe external chat",
+      );
 
       act(() => {
         resolveSnapshot?.(externalTranscriptSnapshotFixture(65));
@@ -2355,9 +2354,11 @@ describe("App Codex auth", () => {
       await act(async () => {
         await new Promise((resolve) => window.setTimeout(resolve, 100));
       });
+      expect(screen.queryByText("External result 65.")).not.toBeInTheDocument();
       expect(screen.queryByText("External result 1.")).not.toBeInTheDocument();
 
       act(() => triggerResize(820));
+      expect(await screen.findByText("External result 65.")).toBeInTheDocument();
       expect(await screen.findByText("External result 1.")).toBeInTheDocument();
     } finally {
       vi.unstubAllGlobals();
@@ -2600,6 +2601,27 @@ describe("App Codex auth", () => {
       total_tokens: 340,
     };
     mocks.listWorkspaceChatsMock.mockResolvedValue([externalChat]);
+    mocks.syncDefaultProfileThreadTranscriptMock.mockResolvedValue({
+      requestId: "transcript-sync-external-thread-1",
+      threadId: "external-thread-1",
+      sourceVersion: externalChat.external_updated_at ?? externalChat.updated_at,
+      totalTurns: 1,
+      turns: [
+        {
+          slotIndex: 0,
+          turnId: "external-turn-1",
+          prompt: "Prompt from VS Code",
+          finalMessage: "Answer from the Codex extension.",
+          error: null,
+          status: "completed",
+          startedAt: "2026-07-07T10:00:00Z",
+          completedAt: "2026-07-07T10:02:00Z",
+          durationMs: 120_000,
+          totalTokens: 340,
+          modelContextWindow: 128_000,
+        },
+      ],
+    });
     mocks.codexDefaultProfileRpcMock.mockImplementation(async (method: string) => {
       if (method === "thread/list") {
         return {
@@ -2671,13 +2693,10 @@ describe("App Codex auth", () => {
     const transcript = screen.getByLabelText("Task chat transcript");
     expect(submittedPrompt).toHaveTextContent("Prompt from VS Code");
     expect(transcript).toHaveTextContent("Answer from the Codex extension.");
-    expect(mocks.codexDefaultProfileRpcMock).toHaveBeenCalledWith(
-      "thread/turns/list",
+    expect(mocks.syncDefaultProfileThreadTranscriptMock).toHaveBeenCalledWith(
       expect.objectContaining({
         threadId: "external-thread-1",
-        limit: 20,
-        sortDirection: "desc",
-        itemsView: "summary",
+        pageSize: 20,
       }),
     );
     expect(
@@ -2751,6 +2770,9 @@ describe("App Codex auth", () => {
       account_email: null,
     };
     mocks.listWorkspaceChatsMock.mockResolvedValue([externalChat]);
+    mocks.syncDefaultProfileThreadTranscriptMock.mockRejectedValue(
+      new Error("method not found"),
+    );
     mocks.codexDefaultProfileRpcMock.mockImplementation(async (method: string) => {
       if (method === "thread/list") {
         return { threads: [] };

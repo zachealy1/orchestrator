@@ -2860,8 +2860,7 @@ function App() {
   async function synchronizeExternalTranscript(
     chat: ChatListItem,
     loadId: number,
-    visibleEntries: TaskChatEntry[],
-    replaceVisibleWhenReady: boolean,
+    publication: "none" | "initial",
   ) {
     const threadId = chat.external_thread_id ?? chat.codex_thread_id;
     if (!threadId) return;
@@ -2884,40 +2883,52 @@ function App() {
         chat,
         snapshot,
       );
-      const entries = preserveVisibleTranscriptTail(
-        completeEntries,
-        visibleEntries,
-      );
-      const olderTurnCount = Math.max(0, entries.length - visibleEntries.length);
       const transcript: HistoricalTranscriptState = {
         chatId: chat.id,
         sourceVersion,
         complete: true,
-        firstItemIndex: HISTORY_VIRTUOSO_BASE_INDEX - olderTurnCount,
-        positionIntent: "preserve",
-        openAtLatestRequestId: null,
+        firstItemIndex: HISTORY_VIRTUOSO_BASE_INDEX,
+        positionIntent: publication === "initial" ? "latest" : "preserve",
+        openAtLatestRequestId: publication === "initial" ? loadId : null,
         syncStatus: "complete",
       };
-      cacheStableHistoryChat(chat, entries, transcript);
+      cacheStableHistoryChat(chat, completeEntries, transcript);
       if (
-        replaceVisibleWhenReady &&
+        publication !== "none" &&
         historyChatLoadIdRef.current === loadId &&
         selectedWorkspaceRef.current?.id === chat.workspace_id
       ) {
-        deferStableTranscriptCommit(() => {
+        const publish = () => {
           publishStableHistoryChat(
             chat,
-            entries,
+            completeEntries,
             transcript,
             loadId,
-            "preserve",
+            publication === "initial" ? "latest" : "preserve",
           );
           setStatusMessage(
             `Opened chat from ${formatHistoryTimestamp(chat.latest_activity_at)}.`,
           );
-        });
+        };
+        if (
+          publication === "initial" &&
+          transcriptViewportStableRef.current &&
+          !transcriptScrollActiveRef.current
+        ) {
+          publish();
+        } else {
+          deferStableTranscriptCommit(publish);
+        }
       }
     } catch (error) {
+      if (publication === "initial") {
+        if (/method not found|unknown method|-32601/i.test(String(error))) {
+          throw new Error(
+            "Paged Codex history is unavailable. Update Codex and try again.",
+          );
+        }
+        throw error;
+      }
       if (
         historyChatLoadIdRef.current === loadId &&
         !/cancelled/i.test(String(error))
@@ -2940,7 +2951,7 @@ function App() {
     }
   }
 
-  async function loadExternalCodexChatProgressively(
+  async function loadExternalCodexChat(
     chat: ChatListItem,
     loadId: number,
   ) {
@@ -2992,51 +3003,11 @@ function App() {
         },
         loadId,
       );
-      void synchronizeExternalTranscript(chat, loadId, entries, false);
+      void synchronizeExternalTranscript(chat, loadId, "none");
       return;
     }
 
-    await ensureCodexProfileConnected(DEFAULT_CODEX_PROFILE_KEY, 0);
-    let latestResponse: unknown;
-    try {
-      latestResponse = await codexDefaultProfileRpc<unknown>("thread/turns/list", {
-        threadId,
-        cursor: null,
-        limit: HISTORY_CHAT_PAGE_SIZE,
-        sortDirection: "desc",
-        itemsView: "summary",
-      });
-    } catch (error) {
-      if (/method not found|unknown method|-32601/i.test(String(error))) {
-        throw new Error("Paged Codex history is unavailable. Update Codex and try again.");
-      }
-      throw error;
-    }
-    const latestRoot = readObject(latestResponse);
-    if (!("data" in latestRoot)) {
-      throw new Error("Paged Codex history is unavailable. Update Codex and try again.");
-    }
-    if (historyChatLoadIdRef.current !== loadId) return;
-    const entries = createTaskChatEntriesFromExternalCodexThread(
-      chat,
-      { data: [...readArray(latestRoot.data)].reverse() },
-      0,
-    );
-    publishStableHistoryChat(
-      chat,
-      entries,
-      {
-        chatId: chat.id,
-        sourceVersion,
-        complete: false,
-        firstItemIndex: HISTORY_VIRTUOSO_BASE_INDEX,
-        positionIntent: "latest",
-        openAtLatestRequestId: loadId,
-        syncStatus: "syncing",
-      },
-      loadId,
-    );
-    void synchronizeExternalTranscript(chat, loadId, entries, true);
+    await synchronizeExternalTranscript(chat, loadId, "initial");
   }
 
   async function selectHistoryChat(chat: ChatListItem) {
@@ -3102,7 +3073,7 @@ function App() {
       }
 
       if (chat.origin === "codex_external") {
-        await loadExternalCodexChatProgressively(chat, loadId);
+        await loadExternalCodexChat(chat, loadId);
         return;
       }
 
@@ -7660,106 +7631,6 @@ function WorkspaceHistoryDrawer({
   );
 }
 
-function createTaskChatEntriesFromExternalCodexThread(
-  chat: ChatListItem,
-  response: unknown,
-  startSlotIndex = 0,
-): TaskChatEntry[] {
-  const root = readObject(response);
-  const thread = Object.keys(readObject(root.thread)).length > 0
-    ? readObject(root.thread)
-    : root;
-  const turns =
-    readArray(thread.turns).length > 0
-      ? readArray(thread.turns)
-      : readArray(root.turns).length > 0
-        ? readArray(root.turns)
-        : readArray(root.data);
-
-  return turns.flatMap((turnValue, index) => {
-    const turn = readObject(turnValue);
-    const turnId = readString(turn.id);
-    const items =
-      readArray(turn.items).length > 0
-        ? readArray(turn.items)
-        : readArray(turn.output).length > 0
-          ? readArray(turn.output)
-          : readArray(turn.input);
-    const prompt = extractExternalUserPrompt(items);
-    if (!prompt) {
-      return [];
-    }
-    const finalMessage = extractExternalFinalAnswer(items);
-    const completedAt =
-      readTimestamp(turn.completedAt) ??
-      readTimestamp(turn.completed_at) ??
-      chat.external_updated_at ??
-      chat.updated_at;
-    const startedAt =
-      readTimestamp(turn.startedAt) ??
-      readTimestamp(turn.started_at) ??
-      readTimestamp(turn.createdAt) ??
-      readTimestamp(turn.created_at) ??
-      completedAt;
-    const status = normalizeExternalTurnStatus(readString(turn.status), finalMessage);
-    const stableTurnKey = turnId ?? `${startedAt}-${index}`;
-    const finalMessageItemId = finalMessage
-      ? `external-final-${chat.id}-${stableTurnKey}`
-      : null;
-    const threadId = chat.external_thread_id ?? chat.codex_thread_id;
-
-    return [
-      {
-        clientId: `external-chat-${chat.id}-turn-${stableTurnKey}`,
-        workspaceId: chat.workspace_id,
-        chatId: chat.id,
-        historySlotIndex: startSlotIndex + index,
-        turnIndex: null,
-        runId: null,
-        taskId: null,
-        prompt,
-        submittedAt: startedAt,
-        status,
-        runView: {
-          ...emptyRunView,
-          status,
-          threadId,
-          turnId,
-          startedAt,
-          completedAt,
-          elapsedMs: readNumber(turn.durationMs) ?? 0,
-          finalMessage,
-          finalMessageItemId,
-          agentMessagesById:
-            finalMessageItemId === null
-              ? {}
-              : {
-                  [finalMessageItemId]: {
-                    text: finalMessage,
-                    phase: "final_answer" as const,
-                  },
-                },
-          error:
-            status === "failed"
-              ? JSON.stringify(readObject(turn.error) || "Turn failed")
-              : null,
-        },
-        historicalActivity:
-          threadId && turnId
-            ? {
-                profileKey: "default" as const,
-                threadId,
-                turnId,
-                status: "available" as const,
-                nextCursor: null,
-                error: null,
-              }
-            : undefined,
-      },
-    ];
-  });
-}
-
 function createTaskChatEntriesFromExternalTranscriptSnapshot(
   chat: ChatListItem,
   snapshot: Pick<ExternalTranscriptSnapshot, "threadId" | "turns">,
@@ -7832,92 +7703,12 @@ function createTaskChatEntriesFromExternalTranscriptSnapshot(
   });
 }
 
-function preserveVisibleTranscriptTail(
-  completeEntries: TaskChatEntry[],
-  visibleEntries: TaskChatEntry[],
-) {
-  if (
-    visibleEntries.length === 0 ||
-    completeEntries.length < visibleEntries.length
-  ) {
-    return completeEntries;
-  }
-
-  const tailStart = completeEntries.length - visibleEntries.length;
-  const completeTail = completeEntries.slice(tailStart);
-  const matchesVisibleTail = completeTail.every((entry, index) => {
-    const visibleEntry = visibleEntries[index];
-    return (
-      entry.clientId === visibleEntry.clientId ||
-      (Boolean(entry.runView.turnId) &&
-        entry.runView.turnId === visibleEntry.runView.turnId)
-    );
-  });
-
-  if (!matchesVisibleTail) {
-    return completeEntries;
-  }
-
-  return [...completeEntries.slice(0, tailStart), ...visibleEntries];
-}
-
 function normalizeExternalTranscriptTimestamp(value: string | null) {
   if (!value) return null;
   if (/^\d+$/.test(value)) {
     return readTimestamp(Number(value));
   }
   return value;
-}
-
-function extractExternalUserPrompt(items: unknown[]) {
-  const userItems = items
-    .map(readObject)
-    .filter((item) => readString(item.type) === "userMessage");
-  return userItems
-    .map((item) => extractTextFromExternalItem(item))
-    .filter(Boolean)
-    .join("\n\n")
-    .trim();
-}
-
-function extractExternalFinalAnswer(items: unknown[]) {
-  const agentMessages = items
-    .map(readObject)
-    .filter((item) => readString(item.type) === "agentMessage");
-  const finalAnswer =
-    agentMessages.find((item) => readString(item.phase) === "final_answer") ??
-    agentMessages[agentMessages.length - 1] ??
-    null;
-  return finalAnswer ? extractTextFromExternalItem(finalAnswer).trim() : "";
-}
-
-function extractTextFromExternalItem(item: Record<string, unknown>) {
-  const directText = readString(item.text);
-  if (directText) {
-    return directText;
-  }
-
-  const content = readArray(item.content);
-  if (content.length > 0) {
-    return content
-      .map((part) => {
-        if (typeof part === "string") {
-          return part;
-        }
-        const partObject = readObject(part);
-        return (
-          readString(partObject.text) ??
-          readString(partObject.value) ??
-          readString(partObject.content) ??
-          ""
-        );
-      })
-      .filter(Boolean)
-      .join("");
-  }
-
-  const message = readObject(item.message);
-  return readString(message.text) ?? "";
 }
 
 function normalizeExternalTurnStatus(
