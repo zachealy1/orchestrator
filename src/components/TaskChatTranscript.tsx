@@ -42,6 +42,12 @@ import type {
   StreamEvent,
 } from "../lib/codexEventReducer";
 import {
+  isNativeUserInputRequest,
+  requestKey,
+  type NativeUserInputRequest,
+  type UserInputResponse,
+} from "../lib/nativePlanMode";
+import {
   contextFileExtensionLabel,
   contextFileInlineReferenceTokens,
   contextFileLineReference,
@@ -427,6 +433,14 @@ function useTranscriptScrollController({
 type Props = {
   entries: TaskChatEntry[];
   onResolveRequest: (request: CodexMessage, approved: boolean) => void;
+  onAnswerUserInput?: (
+    entry: TaskChatEntry,
+    request: NativeUserInputRequest,
+    response: UserInputResponse,
+  ) => void;
+  onImplementPlan?: (entry: TaskChatEntry) => void;
+  onRevisePlan?: (entry: TaskChatEntry, revision: string) => void;
+  onCancelPlan?: (entry: TaskChatEntry) => void;
   onOpenFileLink?: (href: string) => boolean;
   editablePromptEntryId?: string | null;
   onEditPrompt?: (entry: TaskChatEntry, prompt: string) => void;
@@ -446,6 +460,10 @@ type Props = {
 export function TaskChatTranscript({
   entries,
   onResolveRequest,
+  onAnswerUserInput,
+  onImplementPlan,
+  onRevisePlan,
+  onCancelPlan,
   onOpenFileLink,
   editablePromptEntryId = null,
   onEditPrompt,
@@ -460,6 +478,10 @@ export function TaskChatTranscript({
 }: Props) {
   const callbacksRef = useRef({
     onResolveRequest,
+    onAnswerUserInput,
+    onImplementPlan,
+    onRevisePlan,
+    onCancelPlan,
     onOpenFileLink,
     onEditPrompt,
     onHistoryPositionSettled,
@@ -470,6 +492,10 @@ export function TaskChatTranscript({
   });
   callbacksRef.current = {
     onResolveRequest,
+    onAnswerUserInput,
+    onImplementPlan,
+    onRevisePlan,
+    onCancelPlan,
     onOpenFileLink,
     onEditPrompt,
     onHistoryPositionSettled,
@@ -522,6 +548,10 @@ export function TaskChatTranscript({
     <VirtualizedTaskChatTranscript
       entries={entries}
       onResolveRequest={stableResolveRequest}
+      onAnswerUserInput={onAnswerUserInput}
+      onImplementPlan={onImplementPlan}
+      onRevisePlan={onRevisePlan}
+      onCancelPlan={onCancelPlan}
       onOpenFileLink={onOpenFileLink ? stableOpenFileLink : undefined}
       editablePromptEntryId={editablePromptEntryId}
       onEditPrompt={onEditPrompt ? stableEditPrompt : undefined}
@@ -552,6 +582,10 @@ export function TaskChatTranscript({
 const VirtualizedTaskChatTranscript = /* @__PURE__ */ memo(function VirtualizedTaskChatTranscript({
   entries,
   onResolveRequest,
+  onAnswerUserInput,
+  onImplementPlan,
+  onRevisePlan,
+  onCancelPlan,
   onOpenFileLink,
   editablePromptEntryId = null,
   onEditPrompt,
@@ -1022,6 +1056,10 @@ const VirtualizedTaskChatTranscript = /* @__PURE__ */ memo(function VirtualizedT
                 onEditingPromptChange={setEditingPrompt}
                 onOpenFileLink={onOpenFileLink}
                 onResolveRequest={onResolveRequest}
+                onAnswerUserInput={onAnswerUserInput}
+                onImplementPlan={onImplementPlan}
+                onRevisePlan={onRevisePlan}
+                onCancelPlan={onCancelPlan}
                 onStartEdit={handleStartEdit}
                 onSubmitEdit={handleSubmitEdit}
                 onLoadHistoricalActivity={onLoadHistoricalActivity}
@@ -1134,6 +1172,10 @@ export const TaskChatTurn = memo(function TaskChatTurn({
   onCancelEdit,
   onStartEdit,
   onResolveRequest,
+  onAnswerUserInput,
+  onImplementPlan,
+  onRevisePlan,
+  onCancelPlan,
   onOpenFileLink,
   onLoadHistoricalActivity,
 }: {
@@ -1146,6 +1188,10 @@ export const TaskChatTurn = memo(function TaskChatTurn({
   onCancelEdit: () => void;
   onStartEdit: (entry: TaskChatEntry) => void;
   onResolveRequest: (request: CodexMessage, approved: boolean) => void;
+  onAnswerUserInput?: Props["onAnswerUserInput"];
+  onImplementPlan?: Props["onImplementPlan"];
+  onRevisePlan?: Props["onRevisePlan"];
+  onCancelPlan?: Props["onCancelPlan"];
   onOpenFileLink?: (href: string) => boolean;
   onLoadHistoricalActivity?: (entry: TaskChatEntry) => void;
 }) {
@@ -1227,6 +1273,10 @@ export const TaskChatTurn = memo(function TaskChatTurn({
           entry={entry}
           runView={entry.runView}
           onResolveRequest={onResolveRequest}
+          onAnswerUserInput={onAnswerUserInput}
+          onImplementPlan={onImplementPlan}
+          onRevisePlan={onRevisePlan}
+          onCancelPlan={onCancelPlan}
           onOpenFileLink={onOpenFileLink}
           onLoadHistoricalActivity={onLoadHistoricalActivity}
         />
@@ -1296,12 +1346,20 @@ const AssistantRunOutput = memo(function AssistantRunOutput({
   entry,
   runView,
   onResolveRequest,
+  onAnswerUserInput,
+  onImplementPlan,
+  onRevisePlan,
+  onCancelPlan,
   onOpenFileLink,
   onLoadHistoricalActivity,
 }: {
   entry: TaskChatEntry;
   runView: RunViewState;
   onResolveRequest: (request: CodexMessage, approved: boolean) => void;
+  onAnswerUserInput?: Props["onAnswerUserInput"];
+  onImplementPlan?: Props["onImplementPlan"];
+  onRevisePlan?: Props["onRevisePlan"];
+  onCancelPlan?: Props["onCancelPlan"];
   onOpenFileLink?: (href: string) => boolean;
   onLoadHistoricalActivity?: (entry: TaskChatEntry) => void;
 }) {
@@ -1317,6 +1375,12 @@ const AssistantRunOutput = memo(function AssistantRunOutput({
 
     return (
       <div className="run-output-surface completed">
+        <NativePlanCard
+          entry={entry}
+          onImplementPlan={onImplementPlan}
+          onRevisePlan={onRevisePlan}
+          onCancelPlan={onCancelPlan}
+        />
         {hasTrace ? (
           <RunTraceDropdown
             entry={entry}
@@ -1326,14 +1390,21 @@ const AssistantRunOutput = memo(function AssistantRunOutput({
         ) : (
           <RunMetrics runView={runView} />
         )}
-        <RunSummary
-          runView={runView}
-          preparedSummary={entry.preparedSummary}
-          onOpenFileLink={onOpenFileLink}
-        />
+        {runView.finalMessage.trim() ||
+        runView.status === "failed" ||
+        runView.status === "interrupted" ||
+        !runView.nativePlan.completedText ? (
+          <RunSummary
+            runView={runView}
+            preparedSummary={entry.preparedSummary}
+            onOpenFileLink={onOpenFileLink}
+          />
+        ) : null}
         <RunApprovalRequests
+          entry={entry}
           runView={runView}
           onResolveRequest={onResolveRequest}
+          onAnswerUserInput={onAnswerUserInput}
         />
       </div>
     );
@@ -1343,13 +1414,22 @@ const AssistantRunOutput = memo(function AssistantRunOutput({
     runView.streamEvents.length > 0 ||
     runView.editedFiles.length > 0 ||
     runView.commands.length > 0;
+  const hasPlanPreview = Boolean(
+    runView.nativePlan.completedText || runView.nativePlan.previewText,
+  );
 
   return (
     <div className="run-output-surface running" aria-label="Live run output">
+      <NativePlanCard
+        entry={entry}
+        onImplementPlan={onImplementPlan}
+        onRevisePlan={onRevisePlan}
+        onCancelPlan={onCancelPlan}
+      />
       <RunMetrics runView={runView} />
       {hasTimeline ? (
         <RunTimeline runView={runView} />
-      ) : runView.status === "connecting" ? (
+      ) : hasPlanPreview ? null : runView.status === "connecting" ? (
         <PreparingRunStatus />
       ) : (
         <p className="stream-placeholder">
@@ -1357,7 +1437,12 @@ const AssistantRunOutput = memo(function AssistantRunOutput({
           Waiting for app-server output...
         </p>
       )}
-      <RunApprovalRequests runView={runView} onResolveRequest={onResolveRequest} />
+      <RunApprovalRequests
+        entry={entry}
+        runView={runView}
+        onResolveRequest={onResolveRequest}
+        onAnswerUserInput={onAnswerUserInput}
+      />
     </div>
   );
 });
@@ -2003,12 +2088,267 @@ function streamEventIcon(kind: StreamEvent["kind"]) {
   }
 }
 
+const NativePlanCard = memo(function NativePlanCard({
+  entry,
+  onImplementPlan,
+  onRevisePlan,
+  onCancelPlan,
+}: {
+  entry: TaskChatEntry;
+  onImplementPlan?: Props["onImplementPlan"];
+  onRevisePlan?: Props["onRevisePlan"];
+  onCancelPlan?: Props["onCancelPlan"];
+}) {
+  const [revising, setRevising] = useState(false);
+  const [revision, setRevision] = useState("");
+  const plan = entry.runView.nativePlan;
+  const text = plan.completedText || plan.previewText;
+  if (!text) {
+    return null;
+  }
+
+  const canReview = plan.reviewState === "available";
+  const busy = plan.reviewState === "submitting";
+  const heading = canReview
+    ? "Plan ready"
+    : plan.reviewState === "approved"
+      ? "Plan approved"
+      : plan.reviewState === "superseded"
+        ? "Plan superseded"
+        : plan.reviewState === "cancelled"
+          ? "Plan cancelled"
+          : "Plan";
+  const detail = canReview
+    ? "Review before implementation"
+    : plan.reviewState === "approved"
+      ? "Implementation started"
+      : plan.reviewState === "superseded"
+        ? "A revised plan follows"
+        : plan.reviewState === "cancelled"
+          ? "No implementation was started"
+          : "Drafting";
+  return (
+    <section className="native-plan-card" aria-label="Codex plan">
+      <header>
+        <div>
+          <strong>{heading}</strong>
+          <span>{detail}</span>
+        </div>
+        {plan.mode ? <span className="native-plan-mode">{plan.mode}</span> : null}
+      </header>
+      <div className="native-plan-markdown markdown-summary">
+        <ReactMarkdown>{text}</ReactMarkdown>
+      </div>
+      {canReview && !revising ? (
+        <div className="native-plan-actions">
+          <button
+            type="button"
+            className="small"
+            disabled={busy || !onImplementPlan}
+            onClick={() => onImplementPlan?.(entry)}
+          >
+            <Check size={15} aria-hidden="true" />
+            Implement plan
+          </button>
+          <button
+            type="button"
+            className="small"
+            disabled={busy || !onRevisePlan}
+            onClick={() => setRevising(true)}
+          >
+            <Pencil size={15} aria-hidden="true" />
+            Revise
+          </button>
+          <button
+            type="button"
+            className="small danger"
+            disabled={busy || !onCancelPlan}
+            onClick={() => onCancelPlan?.(entry)}
+          >
+            <X size={15} aria-hidden="true" />
+            Cancel
+          </button>
+        </div>
+      ) : null}
+      {canReview && revising ? (
+        <form
+          className="native-plan-revision"
+          onSubmit={(event) => {
+            event.preventDefault();
+            const value = revision.trim();
+            if (value) onRevisePlan?.(entry, value);
+          }}
+        >
+          <label htmlFor={`plan-revision-${entry.clientId}`}>What should change?</label>
+          <textarea
+            id={`plan-revision-${entry.clientId}`}
+            value={revision}
+            onChange={(event) => setRevision(event.target.value)}
+            autoFocus
+          />
+          <div className="native-plan-actions">
+            <button type="submit" className="small" disabled={!revision.trim() || busy}>
+              Send revision
+            </button>
+            <button type="button" className="small" onClick={() => setRevising(false)}>
+              Back
+            </button>
+          </div>
+        </form>
+      ) : null}
+    </section>
+  );
+});
+
+const UserInputRequestCard = memo(function UserInputRequestCard({
+  entry,
+  request,
+  onAnswerUserInput,
+}: {
+  entry: TaskChatEntry;
+  request: NativeUserInputRequest;
+  onAnswerUserInput?: Props["onAnswerUserInput"];
+}) {
+  const [values, setValues] = useState<Record<string, string>>({});
+  const [notes, setNotes] = useState<Record<string, string>>({});
+  const [otherValues, setOtherValues] = useState<Record<string, string>>({});
+  const state = entry.runView.nativePlan.requestStates[requestKey(request)];
+  const busy = state === "submitting";
+
+  return (
+    <form
+      className="approval native-user-input"
+      onSubmit={(event) => {
+        event.preventDefault();
+        const answers: UserInputResponse["answers"] = {};
+        request.params.questions.forEach((question) => {
+          const selected = values[question.id] ?? "";
+          const primary = selected === "__other__"
+            ? otherValues[question.id]?.trim() ?? ""
+            : selected.trim();
+          const note = notes[question.id]?.trim() ?? "";
+          answers[question.id] = {
+            answers: [primary, note].filter(Boolean),
+          };
+        });
+        onAnswerUserInput?.(entry, request, { answers });
+      }}
+    >
+      <div className="native-user-input-heading">
+        <strong>Codex needs your input</strong>
+        {request.params.autoResolutionMs ? (
+          <span>Auto-continues if unanswered</span>
+        ) : null}
+      </div>
+      {request.params.questions.map((question) => {
+        const selected = values[question.id] ?? "";
+        return (
+          <fieldset key={question.id} disabled={busy}>
+            <legend>{question.header}</legend>
+            <p>{question.question}</p>
+            {question.options ? (
+              <div className="native-user-input-options">
+                {question.options.map((option) => (
+                  <label key={option.label}>
+                    <input
+                      type="radio"
+                      name={`${request.id}-${question.id}`}
+                      value={option.label}
+                      checked={selected === option.label}
+                      onChange={(event) =>
+                        setValues((current) => ({
+                          ...current,
+                          [question.id]: event.target.value,
+                        }))
+                      }
+                    />
+                    <span>
+                      <strong>{option.label}</strong>
+                      <small>{option.description}</small>
+                    </span>
+                  </label>
+                ))}
+                {question.isOther ? (
+                  <label>
+                    <input
+                      type="radio"
+                      name={`${request.id}-${question.id}`}
+                      value="__other__"
+                      checked={selected === "__other__"}
+                      onChange={(event) =>
+                        setValues((current) => ({
+                          ...current,
+                          [question.id]: event.target.value,
+                        }))
+                      }
+                    />
+                    <span><strong>None of the above</strong></span>
+                  </label>
+                ) : null}
+              </div>
+            ) : (
+              <input
+                type={question.isSecret ? "password" : "text"}
+                aria-label={question.header}
+                value={selected}
+                onChange={(event) =>
+                  setValues((current) => ({
+                    ...current,
+                    [question.id]: event.target.value,
+                  }))
+                }
+              />
+            )}
+            {selected === "__other__" ? (
+              <input
+                type={question.isSecret ? "password" : "text"}
+                aria-label={`${question.header} other answer`}
+                placeholder="Enter another answer"
+                value={otherValues[question.id] ?? ""}
+                onChange={(event) =>
+                  setOtherValues((current) => ({
+                    ...current,
+                    [question.id]: event.target.value,
+                  }))
+                }
+              />
+            ) : null}
+            <input
+              type="text"
+              aria-label={`${question.header} note`}
+              placeholder="Add a note (optional)"
+              value={notes[question.id] ?? ""}
+              onChange={(event) =>
+                setNotes((current) => ({
+                  ...current,
+                  [question.id]: event.target.value,
+                }))
+              }
+            />
+          </fieldset>
+        );
+      })}
+      {state === "failed" ? <p className="native-user-input-error">Could not send that answer. Try again.</p> : null}
+      <div className="approval-actions">
+        <button className="small" type="submit" disabled={busy || !onAnswerUserInput}>
+          <Check size={15} aria-hidden="true" />
+          {busy ? "Sending…" : "Continue"}
+        </button>
+      </div>
+    </form>
+  );
+});
+
 const RunApprovalRequests = memo(function RunApprovalRequests({
+  entry,
   runView,
   onResolveRequest,
+  onAnswerUserInput,
 }: {
+  entry: TaskChatEntry;
   runView: RunViewState;
   onResolveRequest: (request: CodexMessage, approved: boolean) => void;
+  onAnswerUserInput?: Props["onAnswerUserInput"];
 }) {
   if (runView.serverRequests.length === 0) {
     return null;
@@ -2016,7 +2356,15 @@ const RunApprovalRequests = memo(function RunApprovalRequests({
 
   return (
     <div className="approval-stack chat-approval-stack">
-      {runView.serverRequests.map((request) => (
+      {runView.serverRequests.map((request) =>
+        isNativeUserInputRequest(request) ? (
+          <UserInputRequestCard
+            entry={entry}
+            request={request}
+            onAnswerUserInput={onAnswerUserInput}
+            key={String(request.id)}
+          />
+        ) : (
         <article className="approval" key={String(request.id)}>
           <div>
             <strong>{request.method}</strong>
@@ -2041,7 +2389,8 @@ const RunApprovalRequests = memo(function RunApprovalRequests({
             </button>
           </div>
         </article>
-      ))}
+        ),
+      )}
     </div>
   );
 });

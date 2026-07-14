@@ -7,67 +7,57 @@ export type TranscriptViewportAnchor = {
   atBottom: boolean;
 };
 
-function maximumScrollTop(element: HTMLElement) {
-  return Math.max(0, element.scrollHeight - element.clientHeight);
-}
-
-function scrollTo(element: HTMLElement, top: number) {
-  const clampedTop = Math.min(maximumScrollTop(element), Math.max(0, top));
-  if (typeof element.scrollTo === "function") {
-    element.scrollTo({ top: clampedTop, behavior: "auto" });
-    return;
-  }
-  element.scrollTop = clampedTop;
+function maxScrollTop(scroller: HTMLElement) {
+  return Math.max(0, scroller.scrollHeight - scroller.clientHeight);
 }
 
 export function captureTranscriptViewportAnchor(
-  taskViewport: HTMLElement | null,
+  scroller: HTMLElement | null,
 ): TranscriptViewportAnchor | null {
-  const scroller = taskViewport?.querySelector<HTMLElement>(
-    ".task-chat-transcript.native-transcript",
-  );
-  if (!scroller) return null;
+  if (!scroller?.isConnected) return null;
 
-  const maxScrollTop = maximumScrollTop(scroller);
-  const atBottom =
-    scroller.scrollTop <= maxScrollTop + 1 &&
-    maxScrollTop - scroller.scrollTop <= TRANSCRIPT_BOTTOM_THRESHOLD_PX;
   const viewportTop = scroller.getBoundingClientRect().top;
-  const rows = Array.from(
+  const maximumScrollTop = maxScrollTop(scroller);
+  const anchorRow = Array.from(
     scroller.querySelectorAll<HTMLElement>("[data-transcript-entry-id]"),
-  );
-  const anchor = rows.find(
-    (row) => row.getBoundingClientRect().bottom > viewportTop + 1,
-  );
+  ).find((row) => row.getBoundingClientRect().bottom > viewportTop + 1);
 
   return {
     scroller,
-    entryId: anchor?.dataset.transcriptEntryId ?? null,
-    offset: anchor ? anchor.getBoundingClientRect().top - viewportTop : 0,
-    atBottom,
+    entryId: anchorRow?.dataset.transcriptEntryId ?? null,
+    offset: anchorRow
+      ? anchorRow.getBoundingClientRect().top - viewportTop
+      : 0,
+    atBottom:
+      scroller.scrollTop <= maximumScrollTop + 1 &&
+      maximumScrollTop - scroller.scrollTop <= TRANSCRIPT_BOTTOM_THRESHOLD_PX,
   };
 }
 
 export function restoreTranscriptViewportAnchor(
   anchor: TranscriptViewportAnchor | null,
 ) {
-  if (!anchor || !anchor.scroller.isConnected) return;
+  if (!anchor?.scroller.isConnected) return;
 
+  const { scroller } = anchor;
   if (anchor.atBottom) {
-    scrollTo(anchor.scroller, maximumScrollTop(anchor.scroller));
+    scroller.scrollTop = maxScrollTop(scroller);
     return;
   }
   if (!anchor.entryId) return;
 
-  const row = Array.from(
-    anchor.scroller.querySelectorAll<HTMLElement>("[data-transcript-entry-id]"),
-  ).find((candidate) => candidate.dataset.transcriptEntryId === anchor.entryId);
-  if (!row) return;
+  const anchorRow = Array.from(
+    scroller.querySelectorAll<HTMLElement>("[data-transcript-entry-id]"),
+  ).find((row) => row.dataset.transcriptEntryId === anchor.entryId);
+  if (!anchorRow) return;
 
-  const viewportTop = anchor.scroller.getBoundingClientRect().top;
-  const rowTop = row.getBoundingClientRect().top;
-  scrollTo(
-    anchor.scroller,
-    anchor.scroller.scrollTop + rowTop - viewportTop - anchor.offset,
+  const viewportTop = scroller.getBoundingClientRect().top;
+  const currentOffset = anchorRow.getBoundingClientRect().top - viewportTop;
+  scroller.scrollTop = Math.max(
+    0,
+    Math.min(
+      maxScrollTop(scroller),
+      scroller.scrollTop + currentOffset - anchor.offset,
+    ),
   );
 }

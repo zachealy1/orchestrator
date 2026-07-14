@@ -1929,6 +1929,7 @@ describe("App Codex auth", () => {
     const historyButton = within(banner).getByRole("button", {
       name: /open chat history/i,
     });
+    const composer = screen.getByLabelText("Task composer");
     expect(historyButton).toHaveTextContent("");
     expect(historyButton).toHaveAttribute("title", "Open history");
     await user.click(historyButton);
@@ -1944,8 +1945,14 @@ describe("App Codex auth", () => {
     expect(taskChat).toBeInTheDocument();
     expect(taskChat).toHaveClass("task-hero");
     expect(drawer.previousElementSibling).toBe(taskChat);
-    expect(drawer).toHaveClass("workspace-history-drawer", "open");
+    expect(drawer).toHaveClass("workspace-history-drawer", "opening");
     expect(drawer.parentElement).toHaveClass("codex-workspace-body");
+    expect(drawer.parentElement).not.toHaveClass("history-space-reserved");
+    expect(drawer.parentElement).toHaveClass(
+      "history-input-animating",
+      "history-input-contracted",
+    );
+    expect(screen.getByLabelText("Task composer")).toBe(composer);
     expect(within(drawer).queryByRole("tab")).not.toBeInTheDocument();
     expect(
       within(drawer).queryByRole("button", { name: /close chat history/i }),
@@ -1956,15 +1963,48 @@ describe("App Codex auth", () => {
     expect(
       within(drawer).queryByRole("article", { name: /selected chat/i }),
     ).not.toBeInTheDocument();
+    expect(mocks.codexDefaultProfileRpcMock).not.toHaveBeenCalledWith(
+      "thread/list",
+      expect.anything(),
+    );
+
+    fireEvent.transitionEnd(drawer, { propertyName: "transform" });
+    expect(drawer).toHaveClass("open");
+    expect(drawer.parentElement).toHaveClass("history-space-reserved");
+    expect(drawer.parentElement).not.toHaveClass(
+      "history-input-animating",
+      "history-input-contracted",
+    );
+    expect(screen.getByLabelText("Task composer")).toBe(composer);
+    await waitFor(() =>
+      expect(mocks.codexDefaultProfileRpcMock).toHaveBeenCalledWith(
+        "thread/list",
+        expect.objectContaining({ cwd: workspace.path }),
+      ),
+    );
 
     await user.click(historyButton);
     const closedDrawer = document.querySelector(".workspace-history-drawer");
     expect(closedDrawer).toBeInTheDocument();
-    expect(closedDrawer).toHaveClass("closed");
     expect(closedDrawer).toHaveAttribute("aria-hidden", "true");
     expect(closedDrawer).toHaveAttribute("inert");
+    await waitFor(() => expect(closedDrawer).toHaveClass("closing"));
+    expect(closedDrawer?.parentElement).not.toHaveClass(
+      "history-space-reserved",
+    );
+    expect(closedDrawer?.parentElement).toHaveClass("history-input-animating");
+    expect(closedDrawer?.parentElement).not.toHaveClass(
+      "history-input-contracted",
+    );
+    expect(screen.getByLabelText("Task composer")).toBe(composer);
     expect(historyButton).toHaveAttribute("aria-label", "Open chat history");
     expect(historyButton).toHaveAttribute("aria-pressed", "false");
+
+    fireEvent.transitionEnd(closedDrawer as HTMLElement, {
+      propertyName: "transform",
+    });
+    expect(closedDrawer).toHaveClass("closed");
+    expect(closedDrawer?.parentElement).not.toHaveClass("history-space-reserved");
   });
 
   it("coordinates drawer and composer phases without remounting the prompt", async () => {
@@ -2141,7 +2181,7 @@ describe("App Codex auth", () => {
       within(drawer).getByRole("button", { name: /large history chat/i }),
     );
 
-    expect(drawer).toHaveClass("closed");
+    expect(drawer).toHaveClass("closing");
     expect(screen.getByLabelText("Loading chat")).toHaveTextContent(
       "Loading Large history chat",
     );
@@ -2156,6 +2196,44 @@ describe("App Codex auth", () => {
     expect(mocks.listLocalChatTranscriptMock).toHaveBeenCalledTimes(1);
     expect(mocks.listChatRunsPageMock).not.toHaveBeenCalled();
     expect(screen.queryByText("Loading older messages...")).not.toBeInTheDocument();
+
+    const firstTranscriptRow = transcript.querySelector(
+      "[data-transcript-entry-id]",
+    );
+    transcript.scrollTop = 640;
+    await user.click(
+      within(banner).getByRole("button", { name: /open chat history/i }),
+    );
+    const reopenedDrawer = await screen.findByRole("complementary", {
+      name: "Workspace chat history",
+    });
+    expect(reopenedDrawer).toHaveClass("opening");
+    expect(screen.getByLabelText("Task chat transcript")).toBe(transcript);
+    expect(
+      transcript.querySelector("[data-transcript-entry-id]"),
+    ).toBe(firstTranscriptRow);
+    expect(transcript.scrollTop).toBe(640);
+
+    fireEvent.transitionEnd(reopenedDrawer, { propertyName: "transform" });
+    fireEvent.wheel(transcript, { deltaY: -120 });
+    fireEvent.scroll(transcript);
+    await user.click(
+      within(banner).getByRole("button", { name: /close chat history/i }),
+    );
+    expect(reopenedDrawer).toHaveClass("open");
+    expect(screen.getByLabelText("Task chat transcript")).toBe(transcript);
+    expect(transcript.scrollTop).toBe(640);
+    expect(reopenedDrawer.parentElement).toHaveClass("history-space-reserved");
+    await waitFor(() => expect(reopenedDrawer).toHaveClass("closing"));
+    expect(reopenedDrawer.parentElement).not.toHaveClass(
+      "history-space-reserved",
+    );
+    fireEvent.transitionEnd(reopenedDrawer, { propertyName: "transform" });
+    await waitFor(() => expect(reopenedDrawer).toHaveClass("closed"));
+    expect(reopenedDrawer.parentElement).not.toHaveClass(
+      "history-space-reserved",
+    );
+    expect(transcript.scrollTop).toBe(640);
   });
 
   it("reopens the same historical chat at its latest turn instead of restoring the top", async () => {
@@ -2198,7 +2276,7 @@ describe("App Codex auth", () => {
     expect(await screen.findByText("Latest result.")).toBeInTheDocument();
 
     await user.click(historyButton);
-    drawer = screen.getByRole("complementary", {
+    drawer = await screen.findByRole("complementary", {
       name: "Workspace chat history",
     });
     await user.click(
@@ -2555,7 +2633,7 @@ describe("App Codex auth", () => {
     );
 
     await user.click(historyButton);
-    drawer = screen.getByRole("complementary", {
+    drawer = await screen.findByRole("complementary", {
       name: "Workspace chat history",
     });
     await user.click(within(drawer).getByRole("button", { name: /fast chat/i }));
@@ -2991,7 +3069,7 @@ describe("App Codex auth", () => {
 
       await user.click(row);
 
-      expect(drawer).toHaveClass("open");
+      expect(drawer).not.toHaveClass("closing", "closed");
       expect(transcript).toHaveTextContent("Current active run");
       expect(screen.queryByText("Old result.")).not.toBeInTheDocument();
     } finally {
@@ -3149,6 +3227,326 @@ describe("App Codex auth", () => {
     await user.click(planModeButton);
     expect(planModeButton).toHaveAttribute("aria-pressed", "true");
     expect(goalModeButton).toHaveAttribute("aria-pressed", "false");
+  });
+
+  it("uses native Plan collaboration mode and implements the completed plan on the same thread", async () => {
+    prepareSignedInRun();
+    let turnNumber = 0;
+    mocks.codexRpcMock.mockImplementation(
+      async (_accountId: number, method: string) => {
+        if (method === "collaborationMode/list") {
+          return {
+            data: [
+              {
+                name: "Plan",
+                mode: "plan",
+                model: null,
+                reasoning_effort: "medium",
+              },
+              {
+                name: "Default",
+                mode: "default",
+                model: null,
+                reasoning_effort: null,
+              },
+            ],
+          };
+        }
+        if (method === "thread/start") {
+          return { thread: { id: "thread-plan" } };
+        }
+        if (method === "turn/start") {
+          turnNumber += 1;
+          return { turn: { id: `turn-${turnNumber}` } };
+        }
+        return {};
+      },
+    );
+
+    const { user } = await renderApp();
+    await user.click(screen.getByRole("button", { name: /plan mode/i }));
+    await user.type(screen.getByLabelText("Prompt"), "Design native planning");
+    await user.click(screen.getByRole("button", { name: /run codex/i }));
+
+    await waitFor(() =>
+      expect(mocks.codexRpcMock).toHaveBeenCalledWith(
+        7,
+        "turn/start",
+        expect.objectContaining({
+          threadId: "thread-plan",
+          collaborationMode: expect.objectContaining({
+            mode: "plan",
+            settings: expect.objectContaining({
+              reasoning_effort: "medium",
+              developer_instructions: null,
+            }),
+          }),
+          clientUserMessageId: expect.any(String),
+        }),
+      ),
+    );
+    const planningCall = mocks.codexRpcMock.mock.calls.find(
+      (call) => call[1] === "turn/start",
+    );
+    expect(planningCall?.[2]).toEqual(
+      expect.objectContaining({
+        input: [
+          expect.objectContaining({
+            text: expect.not.stringContaining("Do not edit files yet"),
+          }),
+        ],
+      }),
+    );
+
+    await emitCodexServerRequest({
+      id: "question-1",
+      method: "item/tool/requestUserInput",
+      params: {
+        threadId: "thread-plan",
+        turnId: "turn-1",
+        itemId: "question-item-1",
+        autoResolutionMs: null,
+        questions: [
+          {
+            id: "scope",
+            header: "Scope",
+            question: "Choose the implementation scope",
+            isOther: false,
+            isSecret: false,
+            options: [
+              { label: "Focused", description: "Keep the change small" },
+              { label: "Broad", description: "Include adjacent cleanup" },
+            ],
+          },
+        ],
+      },
+    });
+    await user.click(screen.getByRole("radio", { name: /Focused/ }));
+    await user.click(screen.getByRole("button", { name: "Continue" }));
+    await waitFor(() =>
+      expect(mocks.resolveCodexServerRequestMock).toHaveBeenCalledWith(
+        7,
+        "question-1",
+        { answers: { scope: { answers: ["Focused"] } } },
+      ),
+    );
+    await emitCodexServerRequest({
+      id: "question-auto",
+      method: "item/tool/requestUserInput",
+      params: {
+        threadId: "thread-plan",
+        turnId: "turn-1",
+        itemId: "question-item-auto",
+        autoResolutionMs: 5,
+        questions: [
+          {
+            id: "optional",
+            header: "Optional",
+            question: "This may auto-resolve",
+            isOther: false,
+            isSecret: false,
+            options: null,
+          },
+        ],
+      },
+    });
+    await waitFor(() =>
+      expect(mocks.resolveCodexServerRequestMock).toHaveBeenCalledWith(
+        7,
+        "question-auto",
+        { answers: {} },
+      ),
+    );
+
+    await emitCodexNotification({
+      method: "item/plan/delta",
+      params: {
+        threadId: "thread-plan",
+        turnId: "turn-1",
+        itemId: "plan-item-1",
+        delta: "Draft preview",
+      },
+    });
+    await emitCodexNotification({
+      method: "item/completed",
+      params: {
+        threadId: "thread-plan",
+        turnId: "turn-1",
+        item: {
+          type: "plan",
+          id: "plan-item-1",
+          text: "# Native plan\n\n1. Apply the change",
+        },
+      },
+    });
+    expect(
+      screen.queryByRole("button", { name: "Implement plan" }),
+    ).not.toBeInTheDocument();
+
+    await emitCodexNotification({
+      method: "turn/completed",
+      params: {
+        threadId: "thread-plan",
+        turnId: "turn-1",
+        turn: { id: "turn-1", status: "completed", durationMs: 100 },
+      },
+    });
+
+    const implement = await screen.findByRole("button", {
+      name: "Implement plan",
+    });
+    expect(screen.getByRole("combobox", { name: "Run account" })).toBeDisabled();
+    expect(screen.getByRole("combobox", { name: "Agent" })).toBeDisabled();
+    fireEvent.click(implement);
+    fireEvent.click(implement);
+
+    await waitFor(() => {
+      const turnCalls = mocks.codexRpcMock.mock.calls.filter(
+        (call) => call[1] === "turn/start",
+      );
+      expect(turnCalls).toHaveLength(2);
+      expect(turnCalls[1][2]).toEqual(
+        expect.objectContaining({
+          threadId: "thread-plan",
+          collaborationMode: expect.objectContaining({ mode: "default" }),
+          input: [
+            expect.objectContaining({ text: "Implement the plan." }),
+          ],
+        }),
+      );
+    });
+    expect(mocks.codexRpcMock).toHaveBeenCalledWith(
+      7,
+      "thread/settings/update",
+      expect.objectContaining({
+        threadId: "thread-plan",
+        collaborationMode: expect.objectContaining({ mode: "default" }),
+      }),
+    );
+  });
+
+  it("fails closed when native Plan and Default presets are unavailable", async () => {
+    prepareSignedInRun();
+    mocks.codexRpcMock.mockImplementation(
+      async (_accountId: number, method: string) => {
+        if (method === "collaborationMode/list") {
+          return { data: [{ name: "Default", mode: "default" }] };
+        }
+        return {};
+      },
+    );
+
+    const { user } = await renderApp();
+    await user.click(screen.getByRole("button", { name: /plan mode/i }));
+    await user.type(screen.getByLabelText("Prompt"), "Plan unsupported work");
+    await user.click(screen.getByRole("button", { name: /run codex/i }));
+
+    await waitFor(() =>
+      expect(screen.getByLabelText("Prompt")).toHaveValue("Plan unsupported work"),
+    );
+    expect(mocks.createChatMock).not.toHaveBeenCalled();
+    expect(
+      mocks.codexRpcMock.mock.calls.some((call) => call[1] === "turn/start"),
+    ).toBe(false);
+  });
+
+  it("reconstructs and reconciles a persisted completed Plan when history reopens", async () => {
+    prepareSignedInRun();
+    const defaultMode = {
+      mode: "default",
+      settings: {
+        model: "gpt-5.5",
+        reasoning_effort: "high",
+        developer_instructions: null,
+      },
+    };
+    const chat = {
+      ...workspaceChatFixture({ title: "Persisted native plan" }),
+      collaboration_mode: "plan",
+      saved_default_collaboration_mode_json: JSON.stringify(defaultMode),
+    };
+    const run = {
+      ...workspaceRunFixture({
+        chat_id: chat.id,
+        original_prompt: "Plan persisted work",
+        final_message: null,
+      }),
+      collaboration_mode: "plan",
+      run_intent: "plan",
+      client_user_message_id: "client-message-1",
+      completed_plan_item_id: "plan-item-1",
+      completed_plan_text: "# Persisted plan\n\n1. Reconcile it",
+      plan_review_state: "available",
+    };
+    mocks.listWorkspaceChatsMock.mockResolvedValue([chat]);
+    mocks.getChatWithRunsMock.mockResolvedValue(
+      workspaceChatWithRunsFixture(chat, [run]),
+    );
+    mocks.listLocalChatTranscriptMock.mockResolvedValue([run]);
+    mocks.codexRpcMock.mockImplementation(
+      async (_accountId: number, method: string) => {
+        if (method === "collaborationMode/list") {
+          return {
+            data: [
+              { name: "Plan", mode: "plan", reasoning_effort: "medium" },
+              { name: "Default", mode: "default" },
+            ],
+          };
+        }
+        if (method === "thread/resume") {
+          return { thread: { id: "thread-1" } };
+        }
+        if (method === "thread/read") {
+          return {
+            thread: {
+              id: "thread-1",
+              turns: [
+                {
+                  id: "turn-1",
+                  status: "completed",
+                  items: [
+                    {
+                      type: "plan",
+                      id: "plan-item-1",
+                      text: "# Persisted plan\n\n1. Reconcile it",
+                    },
+                  ],
+                },
+              ],
+            },
+          };
+        }
+        return {};
+      },
+    );
+
+    const { user } = await renderApp();
+    const banner = screen.getByRole("region", { name: "Selected folder" });
+    await user.click(
+      within(banner).getByRole("button", { name: /open chat history/i }),
+    );
+    const drawer = await screen.findByRole("complementary", {
+      name: "Workspace chat history",
+    });
+    await user.click(
+      within(drawer).getByRole("button", { name: /persisted native plan/i }),
+    );
+
+    expect(
+      await screen.findByRole("button", { name: "Implement plan" }),
+    ).toBeInTheDocument();
+    await waitFor(() =>
+      expect(mocks.codexRpcMock).toHaveBeenCalledWith(
+        7,
+        "thread/read",
+        { threadId: "thread-1", includeTurns: true },
+      ),
+    );
+    expect(mocks.codexRpcMock).toHaveBeenCalledWith(
+      7,
+      "thread/resume",
+      { threadId: "thread-1", cwd: workspace.path },
+    );
   });
 
   it("auto-refreshes git status when files change outside Orchestrator", async () => {

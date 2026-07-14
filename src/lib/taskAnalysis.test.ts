@@ -1,6 +1,5 @@
 import { describe, expect, it } from "vitest";
 import {
-  buildPlanPrompt,
   buildRunPrompt,
   estimateTokens,
   improvePrompt,
@@ -23,10 +22,6 @@ describe("taskAnalysis", () => {
     expect(improved).toContain("Objective:");
     expect(improved).toContain("Acceptance criteria:");
     expect(improved).toContain("Add search");
-  });
-
-  it("wraps plan-first prompts without write instructions", () => {
-    expect(buildPlanPrompt("Objective:\nFix CI")).toContain("Do not edit files yet");
   });
 
   it("adds subagent recommendations to run prompts", () => {

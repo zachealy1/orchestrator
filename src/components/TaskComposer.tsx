@@ -51,6 +51,7 @@ type Props = {
   accounts: CodexAccountProfile[];
   selectedAccountId: number | null;
   accountSelectionDisabled: boolean;
+  modelSelectionDisabled?: boolean;
   models: CodexModel[];
   modelLoadError: string | null;
   selectedModelId: string | null;
@@ -117,6 +118,7 @@ export function TaskComposer({
   accounts,
   selectedAccountId,
   accountSelectionDisabled,
+  modelSelectionDisabled = false,
   models,
   modelLoadError,
   selectedModelId,
@@ -726,7 +728,7 @@ export function TaskComposer({
             placeholder={modelLoadError ? "Models unavailable" : "Connect Codex"}
             icon={<Bot size={16} />}
             className="agent-select"
-            disabled={controlsDisabled}
+            disabled={controlsDisabled || modelSelectionDisabled}
             onChange={onModelChange}
           />
 
@@ -740,7 +742,9 @@ export function TaskComposer({
             placeholder="Default"
             icon={<Gauge size={16} />}
             className="reasoning-select"
-            disabled={controlsDisabled || reasoningOptions.length === 0}
+            disabled={
+              controlsDisabled || modelSelectionDisabled || reasoningOptions.length === 0
+            }
             onChange={onReasoningEffortChange}
           />
         </div>

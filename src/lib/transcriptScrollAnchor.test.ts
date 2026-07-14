@@ -1,83 +1,84 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
 import {
   captureTranscriptViewportAnchor,
   restoreTranscriptViewportAnchor,
 } from "./transcriptScrollAnchor";
 
-function setReadonlyNumber(
-  element: HTMLElement,
-  property: "clientHeight" | "scrollHeight",
-  read: () => number,
+function defineScrollGeometry(
+  scroller: HTMLElement,
+  geometry: { clientHeight: number; scrollHeight: number },
 ) {
-  Object.defineProperty(element, property, {
+  Object.defineProperty(scroller, "clientHeight", {
     configurable: true,
-    get: read,
+    get: () => geometry.clientHeight,
+  });
+  Object.defineProperty(scroller, "scrollHeight", {
+    configurable: true,
+    get: () => geometry.scrollHeight,
   });
 }
 
-describe("transcript scroll anchoring", () => {
-  let viewport: HTMLElement;
-  let scroller: HTMLElement;
-  let row: HTMLElement;
-  let scrollHeight: number;
-  let rowTop: number;
-
-  beforeEach(() => {
-    viewport = document.createElement("section");
-    scroller = document.createElement("section");
-    row = document.createElement("article");
-    scroller.className = "task-chat-transcript native-transcript";
-    row.dataset.transcriptEntryId = "turn-20";
-    scroller.append(row);
-    viewport.append(scroller);
-    document.body.append(viewport);
-
-    scrollHeight = 1_000;
-    rowTop = 20;
-    setReadonlyNumber(scroller, "clientHeight", () => 200);
-    setReadonlyNumber(scroller, "scrollHeight", () => scrollHeight);
-    scroller.getBoundingClientRect = () =>
-      ({ top: 0, bottom: 200 } as DOMRect);
-    row.getBoundingClientRect = () =>
-      ({ top: rowTop, bottom: rowTop + 100 } as DOMRect);
-    scroller.scrollTo = vi.fn(
-      (optionsOrX?: ScrollToOptions | number, y?: number) => {
-        scroller.scrollTop =
-          typeof optionsOrX === "number"
-            ? Number(y ?? 0)
-            : Number(optionsOrX?.top ?? 0);
-      },
-    ) as HTMLElement["scrollTo"];
+describe("transcript viewport anchors", () => {
+  afterEach(() => {
+    document.body.replaceChildren();
   });
 
-  it("preserves the first visible turn and its pixel offset after a width reflow", () => {
+  it("preserves the first visible row and its viewport offset", () => {
+    const scroller = document.createElement("section");
+    const first = document.createElement("div");
+    const second = document.createElement("div");
+    first.dataset.transcriptEntryId = "first";
+    second.dataset.transcriptEntryId = "second";
+    scroller.append(first, second);
+    document.body.append(scroller);
+
+    const geometry = { clientHeight: 200, scrollHeight: 1_200 };
+    defineScrollGeometry(scroller, geometry);
     scroller.scrollTop = 300;
-    const anchor = captureTranscriptViewportAnchor(viewport);
+    scroller.getBoundingClientRect = () =>
+      ({ top: 100, bottom: 300 } as DOMRect);
+    first.getBoundingClientRect = () =>
+      ({ top: 30, bottom: 90 } as DOMRect);
+    let secondTop = 90;
+    second.getBoundingClientRect = () =>
+      ({ top: secondTop, bottom: secondTop + 80 } as DOMRect);
 
-    rowTop = 50;
+    const anchor = captureTranscriptViewportAnchor(scroller);
+    expect(anchor).toMatchObject({ entryId: "second", offset: -10, atBottom: false });
+
+    secondTop = 70;
     restoreTranscriptViewportAnchor(anchor);
 
-    expect(scroller.scrollTop).toBe(330);
+    expect(scroller.scrollTop).toBe(280);
   });
 
-  it("stays at the bottom when the resized transcript remains in follow mode", () => {
+  it("keeps a bottom-pinned transcript at the new bottom", () => {
+    const scroller = document.createElement("section");
+    document.body.append(scroller);
+    const geometry = { clientHeight: 200, scrollHeight: 1_000 };
+    defineScrollGeometry(scroller, geometry);
     scroller.scrollTop = 800;
-    const anchor = captureTranscriptViewportAnchor(viewport);
 
-    scrollHeight = 1_200;
+    const anchor = captureTranscriptViewportAnchor(scroller);
+    expect(anchor?.atBottom).toBe(true);
+
+    geometry.scrollHeight = 1_250;
     restoreTranscriptViewportAnchor(anchor);
 
-    expect(scroller.scrollTop).toBe(1_000);
+    expect(scroller.scrollTop).toBe(1_050);
   });
 
-  it("does not misclassify an invalid position beyond the old bottom", () => {
-    scroller.scrollTop = 900;
-    const anchor = captureTranscriptViewportAnchor(viewport);
+  it("does not alter a detached transcript", () => {
+    const scroller = document.createElement("section");
+    document.body.append(scroller);
+    const geometry = { clientHeight: 200, scrollHeight: 1_000 };
+    defineScrollGeometry(scroller, geometry);
+    scroller.scrollTop = 400;
 
-    scrollHeight = 1_200;
-    rowTop = 40;
+    const anchor = captureTranscriptViewportAnchor(scroller);
+    scroller.remove();
     restoreTranscriptViewportAnchor(anchor);
 
-    expect(scroller.scrollTop).toBe(920);
+    expect(scroller.scrollTop).toBe(400);
   });
 });
