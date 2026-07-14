@@ -1,5 +1,13 @@
 import type { CodexMessage } from "../types";
 import type { CodexApprovalRequest } from "./codexApprovals";
+import {
+  emptyNativePlanState,
+  isNativePlanItem,
+  isNativeUserInputRequest,
+  readThreadStatus,
+  requestKey,
+  type NativePlanState,
+} from "./nativePlanMode";
 
 export type TokenUsage = {
   totalTokens: number;
@@ -73,6 +81,8 @@ export type RunViewState = {
   tokenUsage: TokenUsage | null;
   approvalRequests: CodexApprovalRequest[];
   approvalResourcesByItemId: Record<string, string[]>;
+  serverRequests: CodexMessage[];
+  nativePlan: NativePlanState;
 };
 
 export const emptyRunView: RunViewState = {
@@ -95,6 +105,8 @@ export const emptyRunView: RunViewState = {
   tokenUsage: null,
   approvalRequests: [],
   approvalResourcesByItemId: {},
+  serverRequests: [],
+  nativePlan: emptyNativePlanState,
 };
 
 export function applyCodexMessage(
@@ -119,6 +131,46 @@ export function applyCodexMessage(
         ...state,
         turnId: readString(turn.id) ?? state.turnId,
         status: "running",
+        nativePlan: {
+          ...state.nativePlan,
+          phase:
+            state.nativePlan.intent === "plan-revision"
+              ? "revising"
+              : state.nativePlan.intent === "plan"
+                ? "analysing"
+                : state.nativePlan.intent === "plan-implementation"
+                  ? "implementing"
+                  : state.nativePlan.phase,
+        },
+      };
+    }
+    case "thread/status/changed": {
+      const status = readThreadStatus(message);
+      const activeFlags = status?.type === "active" ? status.activeFlags : [];
+      return {
+        ...state,
+        nativePlan: {
+          ...state.nativePlan,
+          threadActiveFlags: activeFlags,
+          phase: activeFlags.includes("waitingOnUserInput")
+            ? "awaiting-clarification"
+            : state.nativePlan.phase,
+        },
+      };
+    }
+    case "thread/settings/updated": {
+      const settings = readObject(params.threadSettings);
+      const collaborationMode = readObject(settings.collaborationMode);
+      const mode = readString(collaborationMode.mode);
+      if (mode !== "plan" && mode !== "default") {
+        return state;
+      }
+      return {
+        ...state,
+        nativePlan: {
+          ...state.nativePlan,
+          mode,
+        },
       };
     }
     case "thread/tokenUsage/updated": {
@@ -153,13 +205,24 @@ export function applyCodexMessage(
         latestPlan,
       };
     }
-    case "item/plan/delta":
-      return appendStreamEvent(
-        appendLine(state, "system", readString(params.delta) ?? ""),
-        "reasoning",
-        readString(params.delta) ?? "",
-        true,
-      );
+    case "item/plan/delta": {
+      const delta = readString(params.delta) ?? "";
+      const itemId = readString(params.itemId);
+      const currentPreview =
+        itemId && state.nativePlan.planItemId !== itemId
+          ? ""
+          : state.nativePlan.previewText;
+      return {
+        ...state,
+        nativePlan: {
+          ...state.nativePlan,
+          phase:
+            state.nativePlan.intent === "plan-revision" ? "revising" : "drafting",
+          planItemId: itemId ?? state.nativePlan.planItemId,
+          previewText: `${currentPreview}${delta}`,
+        },
+      };
+    }
     case "turn/diff/updated": {
       const diff = readString(params.diff) ?? "";
       const editedFiles = extractEditedFiles(params, diff);
@@ -267,6 +330,31 @@ export function applyCodexMessage(
     }
     case "item/completed": {
       const item = readObject(params.item);
+      const planItem = params.item;
+      if (isNativePlanItem(planItem)) {
+        const text = planItem.text;
+        const itemId =
+          planItem.id ?? readString(params.itemId) ?? state.nativePlan.planItemId;
+        if (
+          itemId === state.nativePlan.planItemId &&
+          text === state.nativePlan.completedText
+        ) {
+          return state;
+        }
+        return {
+          ...appendStreamEvent(state, "activity", "Plan ready for review"),
+          latestPlan: text,
+          nativePlan: {
+            ...state.nativePlan,
+            phase: "drafting",
+            planItemId: itemId,
+            previewText: text,
+            completedText: text,
+            completedTurnId:
+              readString(params.turnId) ?? state.turnId,
+          },
+        };
+      }
       if (item.type === "agentMessage") {
         return completeAgentMessage(state, params, item);
       }
@@ -311,7 +399,27 @@ export function applyCodexMessage(
         error: failed ? JSON.stringify(turn.error ?? "Turn failed") : null,
         approvalRequests: [],
         approvalResourcesByItemId: {},
+        nativePlan: {
+          ...state.nativePlan,
+          phase: failed
+            ? "failed"
+            : state.nativePlan.intent === "plan-implementation"
+              ? "completed"
+              : state.nativePlan.completedText
+                ? "awaiting-approval"
+                : state.nativePlan.phase,
+          reviewState:
+            !failed &&
+            state.nativePlan.intent !== "plan-implementation" &&
+            state.nativePlan.completedText
+              ? "available"
+              : state.nativePlan.reviewState,
+        },
       };
+    }
+    case "serverRequest/resolved": {
+      const requestId = params.requestId;
+      return requestId === undefined ? state : resolveServerRequest(state, requestId as string | number);
     }
     case "error": {
       const completedAt = new Date().toISOString();
@@ -327,6 +435,7 @@ export function applyCodexMessage(
         error: JSON.stringify(params.error ?? message),
         approvalRequests: [],
         approvalResourcesByItemId: {},
+        nativePlan: { ...state.nativePlan, phase: "failed" },
       };
     }
     default:
@@ -426,6 +535,73 @@ export function resolveApprovalRequest(
         request.id !== requestId ||
         (threadId !== undefined && request.threadId !== threadId),
     ),
+  };
+}
+
+export function addServerRequest(state: RunViewState, request: CodexMessage) {
+  if (
+    request.id !== undefined &&
+    state.serverRequests.some(
+      (existing) => String(existing.id) === String(request.id),
+    )
+  ) {
+    return state;
+  }
+  return {
+    ...state,
+    serverRequests: [...state.serverRequests, request],
+    nativePlan: isNativeUserInputRequest(request)
+      ? { ...state.nativePlan, phase: "awaiting-clarification" as const }
+      : state.nativePlan,
+  };
+}
+
+export function resolveServerRequest(state: RunViewState, requestId: string | number) {
+  const nextRequests = state.serverRequests.filter(
+    (request) => request.id !== requestId && String(request.id) !== String(requestId),
+  );
+  const nextRequestStates = { ...state.nativePlan.requestStates };
+  delete nextRequestStates[String(requestId)];
+  return {
+    ...state,
+    serverRequests: nextRequests,
+    nativePlan: {
+      ...state.nativePlan,
+      phase:
+        state.nativePlan.phase === "awaiting-clarification" &&
+        !nextRequests.some(isNativeUserInputRequest)
+          ? "drafting"
+          : state.nativePlan.phase,
+      requestStates: nextRequestStates,
+    },
+  };
+}
+
+export function setServerRequestSubmissionState(
+  state: RunViewState,
+  request: CodexMessage,
+  submissionState: "submitting" | "failed" | null,
+) {
+  const next = { ...state.nativePlan.requestStates };
+  if (submissionState === null) {
+    delete next[requestKey(request)];
+  } else {
+    next[requestKey(request)] = submissionState;
+  }
+  return {
+    ...state,
+    nativePlan: { ...state.nativePlan, requestStates: next },
+  };
+}
+
+export function updateNativePlanReview(
+  state: RunViewState,
+  reviewState: NativePlanState["reviewState"],
+  phase: NativePlanState["phase"] = state.nativePlan.phase,
+) {
+  return {
+    ...state,
+    nativePlan: { ...state.nativePlan, reviewState, phase },
   };
 }
 

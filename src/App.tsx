@@ -30,6 +30,7 @@ import {
   X,
 } from "lucide-react";
 import {
+  memo,
   useCallback,
   useEffect,
   useLayoutEffect,
@@ -117,24 +118,17 @@ import type { TaskChatEntry } from "./components/TaskChatTranscript";
 import { VirtuosoTaskChatTranscript } from "./components/VirtuosoTaskChatTranscript";
 import { TaskComposer } from "./components/TaskComposer";
 import {
-  historyDrawerInputAnimating,
-  historyDrawerInputContracted,
-  historyDrawerReservesSpace,
-  type HistoryDrawerPhase,
-} from "./lib/historyDrawerTransition";
-import {
-  captureTranscriptViewportAnchor,
-  restoreTranscriptViewportAnchor,
-  type TranscriptViewportAnchor,
-} from "./lib/transcriptScrollAnchor";
-import {
   addApprovalRequest,
+  addServerRequest,
   applyCodexMessage,
   emptyRunView,
   markApprovalAwaitingResolution,
   markApprovalError,
   markApprovalSubmitting,
   resolveApprovalRequest,
+  resolveServerRequest,
+  setServerRequestSubmissionState,
+  updateNativePlanReview,
   updateRunElapsed,
   type RunViewState,
 } from "./lib/codexEventReducer";
@@ -152,6 +146,19 @@ import {
   type CodexAccessSettings,
 } from "./lib/codexAccess";
 import {
+  createStableClientMessageId,
+  isCollaborationModeMask,
+  isNativeUserInputRequest,
+  messageMatchesRun,
+  requestKey,
+  selectNativePlanModes,
+  type CollaborationMode,
+  type CollaborationModeMask,
+  type NativeUserInputRequest,
+  type RunIntent,
+  type UserInputResponse,
+} from "./lib/nativePlanMode";
+import {
   formatCodexAuthMessage,
   formatCodexPlanType,
   getCodexAccountSummary,
@@ -165,7 +172,11 @@ import {
   prepareHistoricalTranscript,
 } from "./lib/historicalTranscriptPreparation";
 import {
-  buildPlanPrompt,
+  captureTranscriptViewportAnchor,
+  restoreTranscriptViewportAnchor,
+  type TranscriptViewportAnchor,
+} from "./lib/transcriptScrollAnchor";
+import {
   buildRunPrompt,
   estimateTokens,
   improvePrompt,
@@ -253,13 +264,21 @@ const HISTORY_VIRTUOSO_BASE_INDEX = 1_000_000;
 const HISTORY_TRANSCRIPT_COMMIT_IDLE_MS = 150;
 const HISTORY_TRANSCRIPT_RESIZE_IDLE_MS = 120;
 const HISTORY_TRANSCRIPT_RESIZE_WAIT_LIMIT_MS = 500;
-const HISTORY_DRAWER_TRANSITION_FALLBACK_MS = 260;
+const HISTORY_DRAWER_TRANSITION_FALLBACK_MS = 240;
 const EMPTY_GIT_STATUS_BY_PATH = new Map<string, WorkspaceGitFileStatus>();
 const EMPTY_DIRTY_DIRECTORY_PATHS = new Set<string>();
 const DEFAULT_CODEX_PROFILE_KEY: CodexProfileKey = "default";
 const EXTERNAL_CODEX_SOURCE_KINDS = ["vscode", "appServer", "cli"];
 
 type AppView = "task" | "analytics" | "settings";
+type HistoryDrawerPhase =
+  | "closed"
+  | "preparing"
+  | "opening"
+  | "open"
+  | "releasing"
+  | "closing-ready"
+  | "closing";
 
 function createTaskChatClientId() {
   return `chat-${Date.now().toString(36)}-${Math.random()
@@ -351,6 +370,8 @@ type ActiveRunControl = {
   interactionMode: RunInteractionMode;
   threadId: string | null;
   turnId: string | null;
+  intent: RunIntent;
+  clientUserMessageId: string;
 };
 
 type RunAccessSettings = CodexAccessSettings;
@@ -367,6 +388,8 @@ type RunSetupSnapshot = {
   selectedBranch: string | null;
   cachedPreflight: PreflightReport | null;
   mode: "plan" | "run";
+  intent?: RunIntent;
+  clientUserMessageId?: string;
   access: RunAccessSettings;
   model: string | null;
   effort: string | null;
@@ -387,12 +410,19 @@ type RunSetupSnapshot = {
   replacementClientId?: string | null;
   restoreEntryOnSetupFailure?: TaskChatEntry | null;
   restorePromptOnSetupFailure?: boolean;
+  sourcePlanEntry?: TaskChatEntry;
+  defaultCollaborationMode?: CollaborationMode | null;
 };
 
 type WorkspaceHistoryState = {
   status: "idle" | "loading" | "loaded" | "error";
   chats: ChatListItem[];
   error: string | null;
+};
+
+type LoadWorkspaceHistoryOptions = {
+  syncExternal?: boolean;
+  showLoading?: boolean;
 };
 
 type HistoryChatLoadState = {
@@ -426,6 +456,7 @@ type WorkspaceChatSession = {
   profileKey: CodexProfileKey | null;
   externalThreadId: string | null;
   nextTurnIndex: number;
+  savedDefaultCollaborationMode?: CollaborationMode | null;
 };
 
 type HeaderGitAction =
@@ -887,9 +918,22 @@ function App() {
   const [runView, setRunView] = useState<RunViewState>(emptyRunView);
   const [taskChatEntries, setTaskChatEntries] = useState<TaskChatEntry[]>([]);
   const [activeChatEntryId, setActiveChatEntryId] = useState<string | null>(null);
-  const [historyDrawerOpen, setHistoryDrawerOpen] = useState(false);
-  const [historyDrawerPhase, setHistoryDrawerPhaseState] =
+  const [historyDrawerPhase, setHistoryDrawerPhase] =
     useState<HistoryDrawerPhase>("closed");
+  const historyDrawerOpen =
+    historyDrawerPhase === "preparing" ||
+    historyDrawerPhase === "opening" ||
+    historyDrawerPhase === "open";
+  const historyDrawerSpaceReserved = historyDrawerPhase === "open";
+  const historyInputAnimating =
+    historyDrawerPhase === "preparing" ||
+    historyDrawerPhase === "opening" ||
+    historyDrawerPhase === "closing-ready" ||
+    historyDrawerPhase === "closing";
+  const historyInputContracted =
+    historyDrawerPhase === "opening" ||
+    historyDrawerPhase === "releasing" ||
+    historyDrawerPhase === "closing-ready";
   const [historyState, setHistoryState] = useState<WorkspaceHistoryState>({
     status: "idle",
     chats: [],
@@ -984,19 +1028,15 @@ function App() {
   const [approvalSafetyWarning, setApprovalSafetyWarning] = useState<
     string | null
   >(null);
+  const collaborationModeMasksRef = useRef(
+    new Map<CodexProfileKey, Promise<CollaborationModeMask[]>>(),
+  );
+  const userInputAutoResolutionTimersRef = useRef(new Map<string, number>());
+  const requestActionLocksRef = useRef(new Set<string>());
+  const planActionLocksRef = useRef(new Set<string>());
   const historyChatLoadIdRef = useRef(0);
   const taskChatEntriesRef = useRef<TaskChatEntry[]>([]);
   const transcriptScrollActiveRef = useRef(false);
-  const historyDrawerDesiredOpenRef = useRef(false);
-  const historyDrawerPhaseRef = useRef<HistoryDrawerPhase>("closed");
-  const historyDrawerAdvanceFramesRef = useRef<number[]>([]);
-  const historyDrawerTransitionTimerRef = useRef<number | null>(null);
-  const historyDrawerPendingOpenCommitRef = useRef(false);
-  const historyDrawerLayoutAnchorRef = useRef<TranscriptViewportAnchor | null>(null);
-  const historyDrawerClosedWaitersRef = useRef(new Set<() => void>());
-  const driveHistoryDrawerTransitionRef = useRef<() => void>(() => undefined);
-  const completeHistoryDrawerMotionRef = useRef<() => void>(() => undefined);
-  const taskViewportElementRef = useRef<HTMLElement | null>(null);
   const stableHistoryChatCacheRef = useRef(
     new Map<number, StableHistoryChatCacheEntry>(),
   );
@@ -1012,6 +1052,13 @@ function App() {
   const pendingTranscriptViewportWidthRef = useRef<number | null>(null);
   const transcriptViewportResizeTimerRef = useRef<number | null>(null);
   const transcriptViewportWaitersRef = useRef(new Set<() => void>());
+  const historyDrawerPhaseRef = useRef<HistoryDrawerPhase>("closed");
+  const historyDrawerClosedWaitersRef = useRef(new Set<() => void>());
+  const historyDrawerAnchorRef = useRef<TranscriptViewportAnchor | null>(null);
+  const historyDrawerPhaseTimerRef = useRef<number | null>(null);
+  const historyDrawerOpenReadyRef = useRef(false);
+  const pendingHistoryDrawerOpenRef = useRef(false);
+  const pendingHistoryDrawerCloseRef = useRef(false);
   const historicalActivityCacheRef = useRef(
     new Map<string, Awaited<ReturnType<typeof loadDefaultProfileTurnActivity>>>(),
   );
@@ -1025,6 +1072,10 @@ function App() {
     () => () => {
       historicalPreparationAbortRef.current?.abort();
       cancelHistoricalTranscriptPreparation();
+      userInputAutoResolutionTimersRef.current.forEach((timer) =>
+        window.clearTimeout(timer),
+      );
+      userInputAutoResolutionTimersRef.current.clear();
     },
     [],
   );
@@ -1060,8 +1111,239 @@ function App() {
   const workspaceContextMenuRef = useRef<HTMLDivElement | null>(null);
   const chatHistoryContextMenuRef = useRef<HTMLDivElement | null>(null);
   const accountMenuContainerRef = useRef<HTMLDivElement | null>(null);
-  taskViewportElementRef.current = taskViewportElement;
-  historyDrawerDesiredOpenRef.current = historyDrawerOpen;
+
+  const updateHistoryDrawerPhase = useCallback((phase: HistoryDrawerPhase) => {
+    historyDrawerPhaseRef.current = phase;
+    setHistoryDrawerPhase(phase);
+  }, []);
+
+  const captureHistoryDrawerAnchor = useCallback(() => {
+    const scroller = taskViewportElement?.querySelector<HTMLElement>(
+      ".task-chat-transcript.native-transcript",
+    );
+    return captureTranscriptViewportAnchor(scroller ?? null);
+  }, [taskViewportElement]);
+
+  const finalizeHistoryDrawerOpen = useCallback(() => {
+    if (historyDrawerPhaseRef.current !== "opening") return;
+    historyDrawerOpenReadyRef.current = false;
+    historyDrawerAnchorRef.current = captureHistoryDrawerAnchor();
+    updateHistoryDrawerPhase("open");
+  }, [captureHistoryDrawerAnchor, updateHistoryDrawerPhase]);
+
+  const finalizeHistoryDrawerClose = useCallback(() => {
+    if (historyDrawerPhaseRef.current === "closed") return;
+    pendingHistoryDrawerCloseRef.current = false;
+    updateHistoryDrawerPhase("closed");
+  }, [updateHistoryDrawerPhase]);
+
+  const completeHistoryDrawerTransition = useCallback(
+    (phase: "opening" | "closing") => {
+      if (historyDrawerPhaseRef.current !== phase) return;
+
+      if (phase === "opening") {
+        if (transcriptScrollActiveRef.current) {
+          historyDrawerOpenReadyRef.current = true;
+          return;
+        }
+        finalizeHistoryDrawerOpen();
+        return;
+      }
+
+      finalizeHistoryDrawerClose();
+    },
+    [finalizeHistoryDrawerClose, finalizeHistoryDrawerOpen],
+  );
+
+  const beginHistoryDrawerOpen = useCallback(() => {
+    const phase = historyDrawerPhaseRef.current;
+    if (phase === "preparing" || phase === "opening" || phase === "open") {
+      return;
+    }
+
+    pendingHistoryDrawerOpenRef.current = false;
+    pendingHistoryDrawerCloseRef.current = false;
+    historyDrawerOpenReadyRef.current = false;
+    if (historyDrawerPhaseTimerRef.current !== null) {
+      window.clearTimeout(historyDrawerPhaseTimerRef.current);
+      historyDrawerPhaseTimerRef.current = null;
+    }
+    if (phase === "releasing" || phase === "closing-ready") {
+      historyDrawerAnchorRef.current = captureHistoryDrawerAnchor();
+      updateHistoryDrawerPhase("open");
+      return;
+    }
+    updateHistoryDrawerPhase("preparing");
+  }, [captureHistoryDrawerAnchor, updateHistoryDrawerPhase]);
+
+  const openHistoryDrawer = useCallback(() => {
+    if (transcriptScrollActiveRef.current) {
+      pendingHistoryDrawerOpenRef.current = true;
+      return;
+    }
+    beginHistoryDrawerOpen();
+  }, [beginHistoryDrawerOpen]);
+
+  const beginHistoryDrawerClose = useCallback(() => {
+    const phase = historyDrawerPhaseRef.current;
+    if (
+      phase === "closed" ||
+      phase === "releasing" ||
+      phase === "closing-ready" ||
+      phase === "closing"
+    ) {
+      return;
+    }
+
+    pendingHistoryDrawerOpenRef.current = false;
+    pendingHistoryDrawerCloseRef.current = false;
+    historyDrawerOpenReadyRef.current = false;
+    if (phase === "preparing") {
+      finalizeHistoryDrawerClose();
+      return;
+    }
+    if (phase === "opening") {
+      updateHistoryDrawerPhase("closing");
+      return;
+    }
+
+    historyDrawerAnchorRef.current = captureHistoryDrawerAnchor();
+    updateHistoryDrawerPhase("releasing");
+  }, [
+    captureHistoryDrawerAnchor,
+    finalizeHistoryDrawerClose,
+    updateHistoryDrawerPhase,
+  ]);
+
+  const closeHistoryDrawer = useCallback(() => {
+    pendingHistoryDrawerOpenRef.current = false;
+    const phase = historyDrawerPhaseRef.current;
+    if (
+      phase === "closed" ||
+      phase === "releasing" ||
+      phase === "closing-ready" ||
+      phase === "closing"
+    ) {
+      return;
+    }
+    if (phase === "open" && transcriptScrollActiveRef.current) {
+      pendingHistoryDrawerCloseRef.current = true;
+      return;
+    }
+    beginHistoryDrawerClose();
+  }, [beginHistoryDrawerClose]);
+
+  const toggleHistoryDrawer = useCallback(() => {
+    const phase = historyDrawerPhaseRef.current;
+    if (phase === "open" || phase === "opening" || phase === "preparing") {
+      closeHistoryDrawer();
+    } else {
+      openHistoryDrawer();
+    }
+  }, [closeHistoryDrawer, openHistoryDrawer]);
+
+  const waitForHistoryDrawerClosed = useCallback(() => {
+    if (
+      historyDrawerPhaseRef.current === "closed" &&
+      !pendingHistoryDrawerOpenRef.current &&
+      !pendingHistoryDrawerCloseRef.current
+    ) {
+      return Promise.resolve();
+    }
+    return new Promise<void>((resolve) => {
+      historyDrawerClosedWaitersRef.current.add(resolve);
+    });
+  }, []);
+
+  const handleHistoryDrawerTransitionEnd = useCallback(
+    (event: ReactTransitionEvent<HTMLElement>) => {
+      if (event.currentTarget !== event.target || event.propertyName !== "transform") {
+        return;
+      }
+      const phase = historyDrawerPhaseRef.current;
+      if (phase === "opening" || phase === "closing") {
+        completeHistoryDrawerTransition(phase);
+      }
+    },
+    [completeHistoryDrawerTransition],
+  );
+
+  useEffect(() => {
+    if (historyDrawerPhase !== "opening" && historyDrawerPhase !== "closing") {
+      return;
+    }
+
+    const timer = window.setTimeout(
+      () => completeHistoryDrawerTransition(historyDrawerPhase),
+      HISTORY_DRAWER_TRANSITION_FALLBACK_MS,
+    );
+    return () => window.clearTimeout(timer);
+  }, [completeHistoryDrawerTransition, historyDrawerPhase]);
+
+  useLayoutEffect(() => {
+    if (historyDrawerPhase === "preparing") {
+      void taskViewportElement?.querySelector<HTMLElement>(".composer-panel")
+        ?.offsetWidth;
+      historyDrawerPhaseTimerRef.current = window.setTimeout(() => {
+        historyDrawerPhaseTimerRef.current = null;
+        if (historyDrawerPhaseRef.current === "preparing") {
+          updateHistoryDrawerPhase("opening");
+        }
+      }, 0);
+      return () => {
+        if (historyDrawerPhaseTimerRef.current !== null) {
+          window.clearTimeout(historyDrawerPhaseTimerRef.current);
+          historyDrawerPhaseTimerRef.current = null;
+        }
+      };
+    }
+
+    if (historyDrawerPhase === "open") {
+      restoreTranscriptViewportAnchor(historyDrawerAnchorRef.current);
+      historyDrawerAnchorRef.current = null;
+      return;
+    }
+
+    if (historyDrawerPhase === "releasing") {
+      restoreTranscriptViewportAnchor(historyDrawerAnchorRef.current);
+      historyDrawerAnchorRef.current = null;
+      historyDrawerPhaseTimerRef.current = window.setTimeout(() => {
+        historyDrawerPhaseTimerRef.current = null;
+        if (historyDrawerPhaseRef.current === "releasing") {
+          updateHistoryDrawerPhase("closing-ready");
+        }
+      }, 0);
+      return () => {
+        if (historyDrawerPhaseTimerRef.current !== null) {
+          window.clearTimeout(historyDrawerPhaseTimerRef.current);
+          historyDrawerPhaseTimerRef.current = null;
+        }
+      };
+    }
+
+    if (historyDrawerPhase === "closing-ready") {
+      void taskViewportElement?.querySelector<HTMLElement>(".composer-panel")
+        ?.offsetWidth;
+      historyDrawerPhaseTimerRef.current = window.setTimeout(() => {
+        historyDrawerPhaseTimerRef.current = null;
+        if (historyDrawerPhaseRef.current === "closing-ready") {
+          updateHistoryDrawerPhase("closing");
+        }
+      }, 0);
+      return () => {
+        if (historyDrawerPhaseTimerRef.current !== null) {
+          window.clearTimeout(historyDrawerPhaseTimerRef.current);
+          historyDrawerPhaseTimerRef.current = null;
+        }
+      };
+    }
+
+    if (historyDrawerPhase === "closed") {
+      historyDrawerAnchorRef.current = null;
+      historyDrawerClosedWaitersRef.current.forEach((resolve) => resolve());
+      historyDrawerClosedWaitersRef.current.clear();
+    }
+  }, [historyDrawerPhase, taskViewportElement, updateHistoryDrawerPhase]);
 
   const schedulePendingTranscriptCommit = useCallback(() => {
     if (
@@ -1167,8 +1449,17 @@ function App() {
       if (transcriptViewportResizeTimerRef.current !== null) {
         window.clearTimeout(transcriptViewportResizeTimerRef.current);
       }
+      if (historyDrawerPhaseTimerRef.current !== null) {
+        window.clearTimeout(historyDrawerPhaseTimerRef.current);
+      }
+      pendingHistoryDrawerOpenRef.current = false;
+      pendingHistoryDrawerCloseRef.current = false;
+      historyDrawerOpenReadyRef.current = false;
+      historyDrawerAnchorRef.current = null;
       transcriptViewportWaitersRef.current.forEach((resolve) => resolve());
       transcriptViewportWaitersRef.current.clear();
+      historyDrawerClosedWaitersRef.current.forEach((resolve) => resolve());
+      historyDrawerClosedWaitersRef.current.clear();
     },
     [],
   );
@@ -1183,20 +1474,32 @@ function App() {
       return;
     }
 
-    if (historyDrawerPendingOpenCommitRef.current) {
-      completeHistoryDrawerMotionRef.current();
-    } else {
-      driveHistoryDrawerTransitionRef.current();
-    }
-
     const pendingViewportWidth = pendingTranscriptViewportWidthRef.current;
     if (pendingViewportWidth !== null) {
       settleTranscriptViewportWidth(pendingViewportWidth);
-      return;
+    }
+
+    if (pendingHistoryDrawerCloseRef.current) {
+      beginHistoryDrawerClose();
+    } else if (pendingHistoryDrawerOpenRef.current) {
+      beginHistoryDrawerOpen();
+    }
+
+    if (
+      historyDrawerPhaseRef.current === "opening" &&
+      historyDrawerOpenReadyRef.current
+    ) {
+      finalizeHistoryDrawerOpen();
     }
 
     schedulePendingTranscriptCommit();
-  }, [schedulePendingTranscriptCommit, settleTranscriptViewportWidth]);
+  }, [
+    beginHistoryDrawerClose,
+    beginHistoryDrawerOpen,
+    finalizeHistoryDrawerOpen,
+    schedulePendingTranscriptCommit,
+    settleTranscriptViewportWidth,
+  ]);
   const clearHistoricalLatestPositionRequest = useCallback((
     request: HistoricalChatOpenRequest,
   ) => {
@@ -1213,9 +1516,19 @@ function App() {
     );
   }, []);
   const resolveTranscriptRequest = useStableEvent(handleResolveRequest);
+  const answerTranscriptUserInput = useStableEvent(handleAnswerUserInput);
+  const implementTranscriptPlan = useStableEvent(handleImplementPlan);
+  const reviseTranscriptPlan = useStableEvent(handleRevisePlan);
+  const cancelTranscriptPlan = useStableEvent(handleCancelPlan);
   const openTranscriptFileLink = useStableEvent(openTaskResponseFileLink);
   const editTranscriptPrompt = useStableEvent(handleEditLatestPrompt);
   const loadTranscriptHistoricalActivity = useStableEvent(loadHistoricalActivity);
+  const selectHistoryChatFromDrawer = useStableEvent((chat: ChatListItem) => {
+    void selectHistoryChat(chat);
+  });
+  const openChatHistoryContextMenuFromDrawer = useStableEvent(
+    openChatHistoryContextMenu,
+  );
 
   const routeRecommendation = useMemo(() => recommendRoute(prompt), [prompt]);
   const tokenEstimate = useMemo(() => estimateTokens(prompt), [prompt]);
@@ -1417,6 +1730,9 @@ function App() {
     ? (workspaceChatSessions[selectedWorkspace.id] ?? null)
     : null;
   const visibleTaskChatEntries = selectedWorkspaceChatEntries;
+  const planReviewAwaiting = visibleTaskChatEntries.some(
+    (entry) => entry.runView.nativePlan.reviewState === "available",
+  );
   const selectedWorkspaceChatMeta = useMemo(() => {
     let latestPromptEntry: TaskChatEntry | null = null;
     let latestTokenUsage: RunViewState["tokenUsage"] = null;
@@ -1635,8 +1951,22 @@ function App() {
       return;
     }
 
-    void loadWorkspaceRunHistory(selectedWorkspace);
+    void loadWorkspaceRunHistory(selectedWorkspace, {
+      syncExternal: false,
+      showLoading: true,
+    });
   }, [historyDrawerOpen, selectedWorkspace?.id]);
+
+  useEffect(() => {
+    if (historyDrawerPhase !== "open" || !selectedWorkspace) {
+      return;
+    }
+
+    void loadWorkspaceRunHistory(selectedWorkspace, {
+      syncExternal: true,
+      showLoading: false,
+    });
+  }, [historyDrawerPhase, selectedWorkspace?.id]);
 
   useEffect(() => {
     workspaces.forEach((workspace) => {
@@ -2035,6 +2365,7 @@ function App() {
         return next;
       });
       if (event.payload.status === "exited" || event.payload.status === "stopped") {
+        collaborationModeMasksRef.current.delete(profileKey);
         if (selectedAccountIdRef.current === event.payload.accountId) {
           setRequiresOpenaiAuth(true);
         }
@@ -2232,7 +2563,12 @@ function App() {
     }
   }
 
-  async function loadWorkspaceRunHistory(workspaceOrId: Workspace | number) {
+  async function loadWorkspaceRunHistory(
+    workspaceOrId: Workspace | number,
+    options: LoadWorkspaceHistoryOptions = {},
+  ) {
+    const syncExternal = options.syncExternal ?? true;
+    const showLoading = options.showLoading ?? true;
     const workspace =
       typeof workspaceOrId === "number"
         ? workspaces.find((candidate) => candidate.id === workspaceOrId) ??
@@ -2242,23 +2578,33 @@ function App() {
         : workspaceOrId;
     const workspaceId =
       typeof workspaceOrId === "number" ? workspaceOrId : workspaceOrId.id;
-    setHistoryState((current) => ({
-      ...current,
-      status: "loading",
-      error: null,
-    }));
+    if (showLoading) {
+      setHistoryState((current) => ({
+        ...current,
+        status: "loading",
+        error: null,
+      }));
+    }
     try {
-      if (workspace) {
+      if (workspace && syncExternal) {
         await syncExternalCodexChats(workspace);
       }
       const chats = await listWorkspaceChats(workspaceId);
       setHistoryState({ status: "loaded", chats, error: null });
     } catch (error) {
-      setHistoryState({
-        status: "error",
-        chats: [],
-        error: error instanceof Error ? error.message : String(error),
-      });
+      if (showLoading) {
+        setHistoryState({
+          status: "error",
+          chats: [],
+          error: error instanceof Error ? error.message : String(error),
+        });
+      } else {
+        setStatusMessage(
+          `Could not refresh chat history: ${
+            error instanceof Error ? error.message : String(error)
+          }`,
+        );
+      }
     }
   }
 
@@ -2653,6 +2999,19 @@ function App() {
     );
   }
 
+  function updateTaskChatEntryRunView(
+    clientId: string,
+    updater: (runView: RunViewState) => RunViewState,
+  ) {
+    setTaskChatEntries((current) =>
+      current.map((entry) => {
+        if (entry.clientId !== clientId) return entry;
+        const nextRunView = updater(entry.runView);
+        return { ...entry, status: nextRunView.status, runView: nextRunView };
+      }),
+    );
+  }
+
   function updateActiveRunView(
     updater: (current: RunViewState) => RunViewState,
   ) {
@@ -2707,6 +3066,14 @@ function App() {
                   timestamp: completedAt,
                 },
               ],
+        nativePlan:
+          elapsedRunView.nativePlan.mode === "plan"
+            ? {
+                ...elapsedRunView.nativePlan,
+                phase: "cancelled",
+                reviewState: "cancelled",
+              }
+            : elapsedRunView.nativePlan,
       };
     });
 
@@ -2758,7 +3125,15 @@ function App() {
 
     const setupStarted = control?.setupStarted ?? false;
     const persistedRunId = currentRunId.current ?? control?.runId ?? null;
+    const planningThreadId = runViewRef.current.threadId;
+    const planningTurnId = runViewRef.current.turnId;
+    const interruptNativePlan =
+      runViewRef.current.nativePlan.mode === "plan" &&
+      planningThreadId !== null &&
+      planningTurnId !== null &&
+      profileKey !== null;
     const shouldStopCodex =
+      !interruptNativePlan &&
       profileKey !== null &&
       (setupStarted ||
         persistedRunId !== null ||
@@ -2777,6 +3152,35 @@ function App() {
       setPrompt(control.promptFallback);
     }
     await persistInterruptedRun(control, completedAt, stoppedRunView);
+
+    if (interruptNativePlan && profileKey !== null && accountId !== null) {
+      try {
+        await codexRpcForProfile(profileKey, accountId, "turn/interrupt", {
+          threadId: planningThreadId,
+          turnId: planningTurnId,
+        });
+        const modes = await collaborationModesForRun(
+          profileKey,
+          accountId,
+          selectedModel?.model ?? null,
+          selectedReasoningEffort,
+          false,
+        );
+        await codexRpcForProfile(profileKey, accountId, "thread/settings/update", {
+          threadId: planningThreadId,
+          collaborationMode: modes.default,
+        });
+        if (control?.chatId !== null && control?.chatId !== undefined) {
+          await updateChat(control.chatId, { collaborationMode: "default" });
+        }
+      } catch (error) {
+        setStatusMessage(
+          `Plan turn stopped locally, but mode reset failed: ${
+            error instanceof Error ? error.message : String(error)
+          }`,
+        );
+      }
+    }
 
     currentRunId.current = null;
     currentTaskId.current = null;
@@ -2948,6 +3352,78 @@ function App() {
       setHistoryOpenRequest(null);
     });
     cacheStableHistoryChat(chat, entries, publishedTranscript);
+    if (
+      chat.origin === "orchestrator" &&
+      entries.some((entry) => entry.runView.nativePlan.reviewState === "available")
+    ) {
+      void reconcileReopenedPlanWorkflow(chat, entries, loadId);
+    }
+  }
+
+  async function reconcileReopenedPlanWorkflow(
+    chat: ChatListItem,
+    entries: TaskChatEntry[],
+    loadId: number,
+  ) {
+    const entry = [...entries]
+      .reverse()
+      .find((candidate) => candidate.runView.nativePlan.reviewState === "available");
+    const threadId = entry?.runView.threadId ?? chat.codex_thread_id;
+    if (!entry || !threadId) return;
+    const profileKey =
+      chat.profile_key ??
+      (chat.account_id === null
+        ? null
+        : (`account:${chat.account_id}` as CodexProfileKey));
+    if (!profileKey) return;
+    const accountId = profileKey === DEFAULT_CODEX_PROFILE_KEY
+      ? 0
+      : Number(profileKey.slice("account:".length));
+    const workspace = selectedWorkspaceRef.current;
+    if (!Number.isFinite(accountId) || !workspace) return;
+
+    try {
+      await ensureCodexProfileConnected(profileKey, accountId);
+      await codexRpcForProfile(profileKey, accountId, "thread/resume", {
+        threadId,
+        cwd: workspace.path,
+      });
+      const response = await codexRpcForProfile<{ thread?: unknown }>(
+        profileKey,
+        accountId,
+        "thread/read",
+        { threadId, includeTurns: true },
+      );
+      if (historyChatLoadIdRef.current !== loadId) return;
+      const thread = readObject(response.thread);
+      const turn = (Array.isArray(thread.turns) ? thread.turns : [])
+        .map(readObject)
+        .find((candidate) => readString(candidate.id) === entry.runView.turnId);
+      const planItem = (turn && Array.isArray(turn.items) ? turn.items : [])
+        .map(readObject)
+        .find((item) => item.type === "plan");
+      const text = planItem ? readString(planItem.text) : null;
+      if (text && text !== entry.runView.nativePlan.completedText) {
+        updateTaskChatEntryRunView(entry.clientId, (current) => ({
+          ...current,
+          latestPlan: text,
+          nativePlan: {
+            ...current.nativePlan,
+            planItemId: readString(planItem?.id) ?? current.nativePlan.planItemId,
+            previewText: text,
+            completedText: text,
+          },
+        }));
+        if (entry.runId !== null) {
+          await updateRun(entry.runId, {
+            completedPlanItemId: readString(planItem?.id),
+            completedPlanText: text,
+          });
+        }
+      }
+    } catch {
+      // The persisted completed plan remains reviewable while App Server reconnects.
+    }
   }
 
   function deferStableTranscriptCommit(commit: () => void) {
@@ -2955,9 +3431,8 @@ function App() {
     schedulePendingTranscriptCommit();
   }
 
-  const markTranscriptViewportUnstable = useCallback(() => {
-    const viewportElement = taskViewportElementRef.current;
-    if (!viewportElement || typeof ResizeObserver === "undefined") {
+  function markTranscriptViewportUnstable() {
+    if (!taskViewportElement || typeof ResizeObserver === "undefined") {
       return;
     }
     transcriptViewportStableRef.current = false;
@@ -2971,7 +3446,7 @@ function App() {
     }
     transcriptViewportResizeTimerRef.current = window.setTimeout(() => {
       transcriptViewportResizeTimerRef.current = null;
-      const width = viewportElement.getBoundingClientRect().width;
+      const width = taskViewportElement.getBoundingClientRect().width;
       if (width > 0) {
         pendingTranscriptViewportWidthRef.current = width;
       }
@@ -2988,7 +3463,7 @@ function App() {
         schedulePendingTranscriptCommit();
       }
     }, HISTORY_TRANSCRIPT_RESIZE_WAIT_LIMIT_MS);
-  }, [schedulePendingTranscriptCommit, settleTranscriptViewportWidth]);
+  }
 
   async function waitForTranscriptViewportStable() {
     if (transcriptViewportStableRef.current) {
@@ -2998,171 +3473,6 @@ function App() {
       transcriptViewportWaitersRef.current.add(resolve);
     });
   }
-
-  const updateHistoryDrawerPhase = useCallback((phase: HistoryDrawerPhase) => {
-    historyDrawerPhaseRef.current = phase;
-    setHistoryDrawerPhaseState(phase);
-  }, []);
-
-  const clearHistoryDrawerSchedule = useCallback(() => {
-    historyDrawerAdvanceFramesRef.current.forEach((frame) => {
-      window.cancelAnimationFrame(frame);
-    });
-    historyDrawerAdvanceFramesRef.current = [];
-    if (historyDrawerTransitionTimerRef.current !== null) {
-      window.clearTimeout(historyDrawerTransitionTimerRef.current);
-      historyDrawerTransitionTimerRef.current = null;
-    }
-  }, []);
-
-  const updateHistoryDrawerLayoutPhase = useCallback(
-    (phase: "open" | "releasing") => {
-      historyDrawerLayoutAnchorRef.current = captureTranscriptViewportAnchor(
-        taskViewportElementRef.current,
-      );
-      markTranscriptViewportUnstable();
-      updateHistoryDrawerPhase(phase);
-    },
-    [markTranscriptViewportUnstable, updateHistoryDrawerPhase],
-  );
-
-  const driveHistoryDrawerTransition = useCallback(() => {
-    if (transcriptScrollActiveRef.current) return;
-
-    const phase = historyDrawerPhaseRef.current;
-    if (historyDrawerDesiredOpenRef.current) {
-      if (phase === "closed") {
-        updateHistoryDrawerPhase("preparing");
-      } else if (
-        phase === "releasing" ||
-        phase === "closing-ready" ||
-        phase === "closing"
-      ) {
-        updateHistoryDrawerPhase("opening");
-      }
-      return;
-    }
-    if (phase === "preparing") {
-      updateHistoryDrawerPhase("closed");
-    } else if (phase === "opening") {
-      updateHistoryDrawerPhase("closing");
-    } else if (phase === "open") {
-      updateHistoryDrawerLayoutPhase("releasing");
-    }
-  }, [updateHistoryDrawerLayoutPhase, updateHistoryDrawerPhase]);
-  driveHistoryDrawerTransitionRef.current = driveHistoryDrawerTransition;
-
-  const completeHistoryDrawerMotion = useCallback(() => {
-    const phase = historyDrawerPhaseRef.current;
-    if (phase === "opening") {
-      if (!historyDrawerDesiredOpenRef.current) {
-        historyDrawerPendingOpenCommitRef.current = false;
-        updateHistoryDrawerPhase("closing");
-        return;
-      }
-      if (transcriptScrollActiveRef.current) {
-        historyDrawerPendingOpenCommitRef.current = true;
-        return;
-      }
-      historyDrawerPendingOpenCommitRef.current = false;
-      updateHistoryDrawerLayoutPhase("open");
-      return;
-    }
-    if (phase === "closing") {
-      updateHistoryDrawerPhase("closed");
-    }
-  }, [updateHistoryDrawerLayoutPhase, updateHistoryDrawerPhase]);
-  completeHistoryDrawerMotionRef.current = completeHistoryDrawerMotion;
-
-  const requestHistoryDrawerOpen = useCallback(
-    (open: boolean) => {
-      historyDrawerDesiredOpenRef.current = open;
-      setHistoryDrawerOpen(open);
-      driveHistoryDrawerTransitionRef.current();
-    },
-    [],
-  );
-
-  const waitForHistoryDrawerClosed = useCallback(() => {
-    if (historyDrawerPhaseRef.current === "closed") {
-      return Promise.resolve();
-    }
-    return new Promise<void>((resolve) => {
-      historyDrawerClosedWaitersRef.current.add(resolve);
-    });
-  }, []);
-
-  const handleHistoryDrawerTransitionEnd = useCallback(
-    (event: ReactTransitionEvent<HTMLElement>) => {
-      if (
-        event.target !== event.currentTarget ||
-        event.propertyName !== "transform"
-      ) {
-        return;
-      }
-      completeHistoryDrawerMotionRef.current();
-    },
-    [],
-  );
-
-  useLayoutEffect(() => {
-    if (historyDrawerPhase === "open" || historyDrawerPhase === "releasing") {
-      const anchor = historyDrawerLayoutAnchorRef.current;
-      historyDrawerLayoutAnchorRef.current = null;
-      restoreTranscriptViewportAnchor(anchor);
-    }
-
-    if (historyDrawerPhase === "closed") {
-      historyDrawerClosedWaitersRef.current.forEach((resolve) => resolve());
-      historyDrawerClosedWaitersRef.current.clear();
-    }
-  }, [historyDrawerPhase]);
-
-  useEffect(() => {
-    clearHistoryDrawerSchedule();
-    const phase = historyDrawerPhaseRef.current;
-    const nextPhase =
-      phase === "preparing"
-        ? "opening"
-        : phase === "releasing"
-          ? "closing-ready"
-          : phase === "closing-ready"
-            ? "closing"
-            : null;
-
-    if (nextPhase) {
-      const firstFrame = window.requestAnimationFrame(() => {
-        const secondFrame = window.requestAnimationFrame(() => {
-          if (historyDrawerPhaseRef.current === phase) {
-            updateHistoryDrawerPhase(nextPhase);
-          }
-        });
-        historyDrawerAdvanceFramesRef.current.push(secondFrame);
-      });
-      historyDrawerAdvanceFramesRef.current.push(firstFrame);
-    } else if (phase === "opening" || phase === "closing") {
-      const reduceMotion = window.matchMedia?.(
-        "(prefers-reduced-motion: reduce)",
-      ).matches;
-      historyDrawerTransitionTimerRef.current = window.setTimeout(
-        () => completeHistoryDrawerMotionRef.current(),
-        reduceMotion ? 0 : HISTORY_DRAWER_TRANSITION_FALLBACK_MS,
-      );
-    } else if (phase === "open" || phase === "closed") {
-      driveHistoryDrawerTransitionRef.current();
-    }
-
-    return clearHistoryDrawerSchedule;
-  }, [clearHistoryDrawerSchedule, historyDrawerPhase, updateHistoryDrawerPhase]);
-
-  useEffect(
-    () => () => {
-      clearHistoryDrawerSchedule();
-      historyDrawerClosedWaitersRef.current.forEach((resolve) => resolve());
-      historyDrawerClosedWaitersRef.current.clear();
-    },
-    [clearHistoryDrawerSchedule],
-  );
 
   function cancelActiveExternalTranscriptSync() {
     const active = activeExternalTranscriptSyncRef.current;
@@ -3388,8 +3698,12 @@ function App() {
   }
 
   async function selectHistoryChat(chat: ChatListItem) {
-    if (runIsActive) {
-      setStatusMessage("Finish or stop the active run before opening history.");
+    if (runIsActive || planReviewAwaiting) {
+      setStatusMessage(
+        planReviewAwaiting
+          ? "Approve, revise, or cancel the current plan before opening another chat."
+          : "Finish or stop the active run before opening history.",
+      );
       return;
     }
 
@@ -3399,7 +3713,6 @@ function App() {
     cancelActiveHistoricalTranscriptPreparation();
     pendingTranscriptCommitRef.current = null;
     transcriptScrollActiveRef.current = false;
-    historyDrawerDesiredOpenRef.current = false;
     const session: WorkspaceChatSession = {
       chatId: chat.id,
       threadId: chat.external_thread_id ?? chat.codex_thread_id,
@@ -3407,6 +3720,9 @@ function App() {
       profileKey: chat.profile_key,
       externalThreadId: chat.external_thread_id,
       nextTurnIndex: Math.max(1, (Number(chat.turn_count) || 0) + 1),
+      savedDefaultCollaborationMode: parseSavedDefaultCollaborationMode(
+        chat.saved_default_collaboration_mode_json,
+      ),
     };
 
     flushSync(() => {
@@ -3429,14 +3745,15 @@ function App() {
       setTaskChatEntries((current) =>
         replaceWorkspaceChatEntries(current, chat.workspace_id, []),
       );
-      setHistoryDrawerOpen(false);
+      closeHistoryDrawer();
       setActiveView("task");
     });
-    driveHistoryDrawerTransitionRef.current();
 
     setStatusMessage(`Opening chat from ${formatHistoryTimestamp(chat.latest_activity_at)}.`);
     try {
+      await waitForNextPaint();
       await waitForHistoryDrawerClosed();
+      markTranscriptViewportUnstable();
       await waitForNextPaint();
       await waitForTranscriptViewportStable();
       if (historyChatLoadIdRef.current !== loadId) {
@@ -3617,6 +3934,10 @@ function App() {
     }
     if (runIsActive || activeChatEntryIdRef.current !== null) {
       setStatusMessage("Finish or stop the active run before starting a new chat.");
+      return;
+    }
+    if (planReviewAwaiting) {
+      setStatusMessage("Approve, revise, or cancel the current plan first.");
       return;
     }
 
@@ -4166,26 +4487,82 @@ function App() {
   ) {
     if (profileKey !== DEFAULT_CODEX_PROFILE_KEY) {
       await ensureCodexConnected(accountId);
+      await probeCollaborationModes(profileKey, accountId);
       return;
     }
 
-    if (connectedAccountIdsRef.current.has(0)) {
-      return;
+    if (!connectedAccountIdsRef.current.has(0)) {
+      const connection = await connectDefaultCodexProfile();
+      setConnectedAccountIds((current) => {
+        const next = new Set(current).add(0);
+        connectedAccountIdsRef.current = next;
+        return next;
+      });
+      setStatusMessage(
+        connection.alreadyConnected
+          ? "Default Codex profile already connected."
+          : `Default Codex profile connected${
+              connection.pid ? ` as ${connection.pid}` : ""
+            }.`,
+      );
     }
+    await probeCollaborationModes(profileKey, accountId);
+  }
 
-    const connection = await connectDefaultCodexProfile();
-    setConnectedAccountIds((current) => {
-      const next = new Set(current).add(0);
-      connectedAccountIdsRef.current = next;
-      return next;
-    });
-    setStatusMessage(
-      connection.alreadyConnected
-        ? "Default Codex profile already connected."
-        : `Default Codex profile connected${
-            connection.pid ? ` as ${connection.pid}` : ""
-          }.`,
-    );
+  function probeCollaborationModes(
+    profileKey: CodexProfileKey,
+    accountId: number,
+  ) {
+    const cached = collaborationModeMasksRef.current.get(profileKey);
+    if (cached) return cached;
+    const request = codexRpcForProfile<{ data?: CollaborationModeMask[] }>(
+      profileKey,
+      accountId,
+      "collaborationMode/list",
+      {},
+    )
+      .then((response) =>
+        (Array.isArray(response.data) ? response.data : []).filter(
+          isCollaborationModeMask,
+        ),
+      )
+      .catch(() => {
+        collaborationModeMasksRef.current.delete(profileKey);
+        return [];
+      });
+    collaborationModeMasksRef.current.set(profileKey, request);
+    return request;
+  }
+
+  async function collaborationModesForRun(
+    profileKey: CodexProfileKey,
+    accountId: number,
+    model: string | null,
+    effort: string | null,
+    requirePlan: boolean,
+  ) {
+    const masks = await probeCollaborationModes(profileKey, accountId);
+    if (masks.length > 0) {
+      try {
+        return selectNativePlanModes(masks, model, effort);
+      } catch (error) {
+        if (requirePlan) throw error;
+      }
+    }
+    if (requirePlan) {
+      throw new Error(
+        "Plan mode requires a Codex app-server with native collaboration-mode support.",
+      );
+    }
+    const defaultMode: CollaborationMode = {
+      mode: "default",
+      settings: {
+        model: model ?? "",
+        reasoning_effort: effort,
+        developer_instructions: null,
+      },
+    };
+    return { plan: null, default: defaultMode };
   }
 
   function codexRpcForProfile<T>(
@@ -4756,11 +5133,29 @@ function App() {
     setHistoryOpenRequest(null);
     setHistoricalTranscript(null);
     const clientId = createTaskChatClientId();
+    const intent: RunIntent =
+      snapshot.intent ?? (snapshot.mode === "plan" ? "plan" : "normal");
+    const clientUserMessageId =
+      snapshot.clientUserMessageId ?? createStableClientMessageId();
+    snapshot.intent = intent;
+    snapshot.clientUserMessageId = clientUserMessageId;
     const submittedAt = new Date().toISOString();
     const initialRunView = {
       ...emptyRunView,
       status: "connecting" as const,
       startedAt: submittedAt,
+      nativePlan: {
+        ...emptyRunView.nativePlan,
+        intent,
+        mode:
+          intent === "plan" || intent === "plan-revision" ? "plan" as const : "default" as const,
+        phase:
+          intent === "plan" || intent === "plan-revision"
+            ? "activating" as const
+            : intent === "plan-implementation"
+              ? "implementing" as const
+              : "inactive" as const,
+      },
     };
     const runControl: ActiveRunControl = {
       accountId: snapshot.accountId,
@@ -4776,6 +5171,8 @@ function App() {
       interactionMode: interactionModeForSnapshot(snapshot),
       threadId: snapshot.threadId,
       turnId: null,
+      intent,
+      clientUserMessageId,
     };
 
     activeRunControlRef.current = runControl;
@@ -4841,6 +5238,21 @@ function App() {
       setPreflight(report);
 
       await ensureCodexProfileConnected(snapshot.profileKey, snapshot.accountId);
+      ensureRunControlActive(runControl);
+      const collaborationModes = await collaborationModesForRun(
+        snapshot.profileKey,
+        snapshot.accountId,
+        snapshot.model,
+        snapshot.effort,
+        snapshot.mode === "plan",
+      );
+      const collaborationMode =
+        snapshot.mode === "plan"
+          ? collaborationModes.plan
+          : snapshot.defaultCollaborationMode ?? collaborationModes.default;
+      if (!collaborationMode) {
+        throw new Error("Codex did not return a native Plan collaboration mode.");
+      }
       ensureRunControlActive(runControl);
       if (snapshot.chatOrigin === "orchestrator") {
         const authState = await refreshAccountState(snapshot.accountId, true);
@@ -4918,6 +5330,9 @@ function App() {
         approvalPolicy: snapshot.access.approvalPolicy,
         model: snapshot.model,
         modelProvider: snapshot.useOss ? "oss" : null,
+        collaborationMode: collaborationMode.mode,
+        runIntent: runControl.intent,
+        clientUserMessageId: runControl.clientUserMessageId,
       });
       runId = run.id;
       runControl.runId = run.id;
@@ -5035,8 +5450,31 @@ function App() {
             );
           }
         }
+        try {
+          await codexRpcForProfile(
+            snapshot.profileKey,
+            snapshot.accountId,
+            "thread/settings/update",
+            {
+              threadId,
+              collaborationMode,
+            },
+          );
+        } catch (error) {
+          if (!isCodexThreadNotFoundError(error)) throw error;
+        }
+        ensureRunControlActive(runControl);
         await updateChat(chatId, { status: "running" });
       }
+      await updateChat(chatId, {
+        collaborationMode: collaborationMode.mode,
+        savedDefaultCollaborationModeJson:
+          snapshot.mode === "plan"
+            ? JSON.stringify(
+                snapshot.defaultCollaborationMode ?? collaborationModes.default,
+              )
+            : null,
+      });
       setWorkspaceChatSession(snapshot.workspace.id, {
         chatId,
         threadId,
@@ -5044,6 +5482,10 @@ function App() {
         profileKey: snapshot.profileKey,
         externalThreadId: snapshot.externalThreadId,
         nextTurnIndex: snapshot.turnIndex + 1,
+        savedDefaultCollaborationMode:
+          snapshot.mode === "plan"
+            ? snapshot.defaultCollaborationMode ?? collaborationModes.default
+            : null,
       });
       ensureRunControlActive(runControl);
 
@@ -5052,6 +5494,8 @@ function App() {
         model: threadModel ?? snapshot.model,
         modelProvider: threadModelProvider ?? (snapshot.useOss ? "oss" : null),
         status: "running",
+        collaborationMode: collaborationMode.mode,
+        runIntent: runControl.intent,
       });
       ensureRunControlActive(runControl);
 
@@ -5078,8 +5522,11 @@ function App() {
       }
 
       const baseTurnText =
-        snapshot.mode === "plan"
-          ? buildPlanPrompt(report.improvedPrompt || snapshot.improvedPrompt)
+        runControl.intent === "plan-revision" ||
+        runControl.intent === "plan-implementation"
+          ? snapshot.promptText
+          : snapshot.mode === "plan"
+          ? report.improvedPrompt || snapshot.improvedPrompt
           : buildRunPrompt(
               report.improvedPrompt || snapshot.improvedPrompt,
               report.recommendations,
@@ -5124,6 +5571,8 @@ function App() {
             permissions: snapshot.access.permissionProfile,
             model: snapshot.model,
             effort: snapshot.effort,
+            collaborationMode,
+            clientUserMessageId: runControl.clientUserMessageId,
           },
         );
 
@@ -5146,6 +5595,8 @@ function App() {
           model: threadModel ?? snapshot.model,
           modelProvider: threadModelProvider ?? (snapshot.useOss ? "oss" : null),
           status: "running",
+          collaborationMode: collaborationMode.mode,
+          runIntent: runControl.intent,
         });
         ensureRunControlActive(runControl);
         if (snapshot.goalMode) {
@@ -5216,6 +5667,18 @@ function App() {
       }
 
       const message = error instanceof Error ? error.message : String(error);
+      if (snapshot.sourcePlanEntry) {
+        restoreTaskChatEntry(
+          snapshot.sourcePlanEntry.clientId,
+          snapshot.sourcePlanEntry,
+        );
+        planActionLocksRef.current.delete(snapshot.sourcePlanEntry.clientId);
+        if (snapshot.sourcePlanEntry.runId !== null) {
+          await updateRun(snapshot.sourcePlanEntry.runId, {
+            planReviewState: "available",
+          }).catch(() => undefined);
+        }
+      }
       const completedAt = new Date().toISOString();
       const failedRunView = updateActiveRunView((current) => {
         const elapsedRunView = updateRunElapsed(current);
@@ -5315,6 +5778,10 @@ function App() {
     }
     if (runIsActive || activeChatEntryIdRef.current !== null) {
       setStatusMessage("Wait for the active run to finish before starting another.");
+      return;
+    }
+    if (planReviewAwaiting) {
+      setStatusMessage("Approve, revise, or cancel the current plan first.");
       return;
     }
     if (!isExternalChat && shouldBlockRunForAuth(requiresOpenaiAuth, codexAccount)) {
@@ -5609,6 +6076,15 @@ function App() {
     if (currentRunProfileKey.current !== profileKey) {
       return;
     }
+    if (
+      !messageMatchesRun(
+        message,
+        runViewRef.current.threadId,
+        runViewRef.current.turnId,
+      )
+    ) {
+      return;
+    }
 
     const nextRunView = updateActiveRunView((current) => {
       const next = applyCodexMessage(current, message);
@@ -5624,6 +6100,24 @@ function App() {
       );
     });
     await persistRunEvent("notification", method, message);
+
+    if (method === "serverRequest/resolved") {
+      const requestId = params.requestId;
+      if (requestId !== undefined) {
+        clearUserInputAutoResolutionTimer(profileKey, requestId as string | number);
+      }
+    }
+
+    if (method === "thread/settings/updated") {
+      const collaborationMode = readObject(
+        readObject(params.threadSettings).collaborationMode,
+      );
+      const mode = readString(collaborationMode.mode);
+      const chatId = activeRunControlRef.current?.chatId ?? null;
+      if (chatId !== null && (mode === "plan" || mode === "default")) {
+        await updateChat(chatId, { collaborationMode: mode });
+      }
+    }
 
     const runId = currentRunId.current;
     if (!runId) {
@@ -5651,6 +6145,14 @@ function App() {
         durationMs: readNumber(turn.durationMs) ?? nextRunView.elapsedMs,
         finalMessage: nextRunView.finalMessage,
         error: status === "failed" ? JSON.stringify(turn.error ?? "Turn failed") : null,
+        collaborationMode: nextRunView.nativePlan.mode,
+        runIntent: nextRunView.nativePlan.intent,
+        completedPlanItemId: nextRunView.nativePlan.planItemId,
+        completedPlanText: nextRunView.nativePlan.completedText || null,
+        planReviewState:
+          nextRunView.nativePlan.reviewState === "submitting"
+            ? "available"
+            : nextRunView.nativePlan.reviewState,
       });
       if (currentTaskId.current) {
         await updateTaskStatus(currentTaskId.current, status);
@@ -5696,38 +6198,79 @@ function App() {
       requestToken,
       interactionMode: control?.interactionMode ?? "chat",
     });
-    if (!parsed) {
-      const warning = "Codex sent an invalid server request. It was left unresolved.";
-      setStatusMessage(warning);
-      setApprovalSafetyWarning(warning);
+    if (parsed && !isNativeUserInputRequest(request)) {
+      const activeThreadId = control?.threadId ?? runViewRef.current.threadId;
+      const activeTurnId = control?.turnId ?? runViewRef.current.turnId;
+      const belongsToActiveRun =
+        currentRunProfileKey.current === profileKey &&
+        (!parsed.threadId || parsed.threadId === activeThreadId) &&
+        (!parsed.turnId || parsed.turnId === activeTurnId);
+
+      if (!belongsToActiveRun) {
+        setUnroutedApprovals((current) =>
+          current.some((candidate) => candidate.key === parsed.key)
+            ? current
+            : [...current, parsed],
+        );
+        setStatusMessage(
+          "Codex is waiting for approval in another conversation. The request remains blocked and was not approved.",
+        );
+        return;
+      }
+
+      updateActiveRunView((current) => addApprovalRequest(current, parsed));
+      await persistRunEvent("server-request", request.method ?? null, request);
       return;
     }
 
-    const activeThreadId = control?.threadId ?? runViewRef.current.threadId;
-    const activeTurnId = control?.turnId ?? runViewRef.current.turnId;
-    const belongsToActiveRun =
-      currentRunProfileKey.current === profileKey &&
-      (!parsed.threadId || parsed.threadId === activeThreadId) &&
-      (!parsed.turnId || parsed.turnId === activeTurnId);
-
-    if (!belongsToActiveRun) {
-      setUnroutedApprovals((current) =>
-        current.some((candidate) => candidate.key === parsed.key)
-          ? current
-          : [...current, parsed],
-      );
-      setStatusMessage(
-        "Codex is waiting for approval in another conversation. The request remains blocked and was not approved.",
-      );
+    if (
+      !messageMatchesRun(
+        request,
+        runViewRef.current.threadId,
+        runViewRef.current.turnId,
+      )
+    ) {
       return;
     }
-
-    updateActiveRunView((current) => addApprovalRequest(current, parsed));
+    if (
+      request.id !== undefined &&
+      runViewRef.current.serverRequests.some(
+        (existing) => String(existing.id) === String(request.id),
+      )
+    ) {
+      return;
+    }
+    updateActiveRunView((current) =>
+      addServerRequest(current, { ...request, requestToken }),
+    );
     await persistRunEvent("server-request", request.method ?? null, request);
+    if (isNativeUserInputRequest(request) && request.params.autoResolutionMs) {
+      const timerKey = `${profileKey}:${requestKey(request)}`;
+      const timer = window.setTimeout(() => {
+        userInputAutoResolutionTimersRef.current.delete(timerKey);
+        const activeEntry = taskChatEntriesRef.current.find(
+          (entry) => entry.clientId === activeChatEntryIdRef.current,
+        );
+        if (activeEntry) {
+          void handleAnswerUserInput(activeEntry, request, { answers: {} });
+        }
+      }, request.params.autoResolutionMs);
+      userInputAutoResolutionTimersRef.current.set(timerKey, timer);
+    }
+  }
+
+  function clearUserInputAutoResolutionTimer(
+    profileKey: CodexProfileKey,
+    requestId: string | number,
+  ) {
+    const key = `${profileKey}:${String(requestId)}`;
+    const timer = userInputAutoResolutionTimersRef.current.get(key);
+    if (timer !== undefined) window.clearTimeout(timer);
+    userInputAutoResolutionTimersRef.current.delete(key);
   }
 
   async function persistRunEvent(
-    eventType: "notification" | "server-request" | "process",
+    eventType: "notification" | "server-request" | "process" | "client-action",
     method: string | null,
     payload: unknown,
   ) {
@@ -5827,6 +6370,267 @@ function App() {
           currentRequest.key,
           error instanceof Error ? error.message : String(error),
         ),
+      );
+    }
+  }
+
+  async function handleAnswerUserInput(
+    entry: TaskChatEntry,
+    request: NativeUserInputRequest,
+    response: UserInputResponse,
+  ) {
+    const actionKey = `${request.params.threadId}:${request.params.turnId}:${requestKey(request)}`;
+    if (requestActionLocksRef.current.has(actionKey)) return;
+    const activeEntryId = activeChatEntryIdRef.current;
+    const accountId = currentRunAccountId.current;
+    const profileKey = currentRunProfileKey.current;
+    if (
+      activeEntryId !== entry.clientId ||
+      accountId === null ||
+      profileKey === null ||
+      entry.runView.threadId !== request.params.threadId ||
+      entry.runView.turnId !== request.params.turnId ||
+      !entry.runView.serverRequests.some(
+        (candidate) => String(candidate.id) === String(request.id),
+      )
+    ) {
+      setStatusMessage("That Codex question is no longer active.");
+      return;
+    }
+    requestActionLocksRef.current.add(actionKey);
+
+    const requestToken = request.requestToken;
+    if (!requestToken) {
+      requestActionLocksRef.current.delete(actionKey);
+      setStatusMessage("That Codex question is missing its native request token.");
+      return;
+    }
+
+    updateActiveRunView((current) =>
+      setServerRequestSubmissionState(current, request, "submitting"),
+    );
+    clearUserInputAutoResolutionTimer(profileKey, request.id);
+    try {
+      if (profileKey === DEFAULT_CODEX_PROFILE_KEY) {
+        await resolveDefaultCodexServerRequest(request.id, requestToken, response);
+      } else {
+        await resolveCodexServerRequest(accountId, request.id, requestToken, response);
+      }
+    } catch (error) {
+      requestActionLocksRef.current.delete(actionKey);
+      updateActiveRunView((current) =>
+        setServerRequestSubmissionState(current, request, "failed"),
+      );
+      setStatusMessage(
+        `Could not send Codex input: ${error instanceof Error ? error.message : String(error)}`,
+      );
+      return;
+    }
+
+    try {
+      await persistRunEvent("client-action", request.method, {
+        requestId: request.id,
+        threadId: request.params.threadId,
+        turnId: request.params.turnId,
+        response: {
+          answers: Object.fromEntries(
+            request.params.questions.map((question) => [
+              question.id,
+              question.isSecret
+                ? { answers: ["<redacted>"] }
+                : response.answers[question.id] ?? { answers: [] },
+            ]),
+          ),
+        },
+      });
+    } catch (error) {
+      setStatusMessage(
+        `Codex accepted the answer, but Orchestrator could not save its audit event: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+      );
+    }
+    updateActiveRunView((current) => resolveServerRequest(current, request.id));
+    requestActionLocksRef.current.delete(actionKey);
+  }
+
+  function launchPlanFollowUp(
+    entry: TaskChatEntry,
+    promptText: string,
+    intent: "plan-revision" | "plan-implementation",
+  ) {
+    const workspace = selectedWorkspaceRef.current;
+    const chatSession = workspace
+      ? workspaceChatSessionsRef.current[workspace.id] ?? null
+      : null;
+    if (
+      !workspace ||
+      !chatSession ||
+      entry.chatId === null ||
+      chatSession.chatId !== entry.chatId ||
+      !chatSession.threadId
+    ) {
+      setStatusMessage("Reopen the plan's chat before continuing this workflow.");
+      return;
+    }
+    if (runIsActive || activeChatEntryIdRef.current !== null) {
+      setStatusMessage("Wait for the active turn to finish first.");
+      return;
+    }
+    if (entry.runView.nativePlan.reviewState !== "available") {
+      setStatusMessage("That plan is no longer awaiting review.");
+      return;
+    }
+    const external = chatSession.origin === "codex_external";
+    const sessionProfileKey = chatSession.profileKey;
+    const sessionAccountId =
+      sessionProfileKey?.startsWith("account:")
+        ? Number(sessionProfileKey.slice("account:".length))
+        : null;
+    const accountId = external
+      ? 0
+      : Number.isFinite(sessionAccountId)
+        ? sessionAccountId
+        : selectedAccountIdRef.current;
+    const account = external
+      ? null
+      : codexAccountsRef.current.find((candidate) => candidate.id === accountId) ?? null;
+    if (!external && (!accountId || !account)) {
+      setStatusMessage("Sign in to the plan's Codex account before continuing.");
+      return;
+    }
+    if (planActionLocksRef.current.has(entry.clientId)) return;
+    planActionLocksRef.current.add(entry.clientId);
+    const selectedModel =
+      models.find((option) => option.id === selectedModelId) ?? models[0] ?? null;
+    const model = useOss || modelLoadError ? null : selectedModel?.model ?? null;
+    const profileKey: CodexProfileKey = external
+      ? DEFAULT_CODEX_PROFILE_KEY
+      : sessionProfileKey ?? (`account:${accountId}` as CodexProfileKey);
+
+    updateTaskChatEntryRunView(entry.clientId, (current) =>
+      updateNativePlanReview(
+        current,
+        intent === "plan-revision" ? "superseded" : "approved",
+        "transitioning",
+      ),
+    );
+    if (entry.runId !== null) {
+      void updateRun(entry.runId, {
+        planReviewState:
+          intent === "plan-revision" ? "superseded" : "approved",
+      });
+    }
+    setPlanMode(intent === "plan-revision");
+    setGoalMode(false);
+
+    const snapshot: RunSetupSnapshot = {
+      promptText,
+      promptFallback: promptText,
+      workspace: { ...workspace },
+      accountId: accountId ?? 0,
+      account: account ? { ...account } : null,
+      profileKey,
+      chatOrigin: chatSession.origin,
+      externalThreadId: chatSession.externalThreadId,
+      selectedBranch,
+      cachedPreflight: null,
+      mode: intent === "plan-revision" ? "plan" : "run",
+      intent,
+      clientUserMessageId: createStableClientMessageId(),
+      access: accessSettings({ approvalMode, sandboxMode }),
+      model,
+      effort: model ? selectedReasoningEffort : null,
+      useOss,
+      ossProvider,
+      improvedPrompt: promptText,
+      contextFiles: [],
+      selectedSkills: [],
+      goalMode: false,
+      loginState,
+      chatId: entry.chatId,
+      threadId: chatSession.threadId,
+      turnIndex: chatSession.nextTurnIndex,
+      restorePromptOnSetupFailure: false,
+      sourcePlanEntry: entry,
+      defaultCollaborationMode: chatSession.savedDefaultCollaborationMode,
+    };
+    const runControl = beginOptimisticRun(snapshot);
+    scheduleRunSetup(runControl, snapshot);
+  }
+
+  function handleImplementPlan(entry: TaskChatEntry) {
+    launchPlanFollowUp(entry, "Implement the plan.", "plan-implementation");
+  }
+
+  function handleRevisePlan(entry: TaskChatEntry, revision: string) {
+    launchPlanFollowUp(entry, revision, "plan-revision");
+  }
+
+  async function handleCancelPlan(entry: TaskChatEntry) {
+    if (entry.runView.nativePlan.reviewState !== "available") {
+      setStatusMessage("That plan is no longer awaiting review.");
+      return;
+    }
+    const workspace = selectedWorkspaceRef.current;
+    const session = workspace
+      ? workspaceChatSessionsRef.current[workspace.id] ?? null
+      : null;
+    if (!session?.threadId || entry.chatId === null || session.chatId !== entry.chatId) {
+      setStatusMessage("Reopen the plan's chat before cancelling it.");
+      return;
+    }
+    const external = session.origin === "codex_external";
+    const sessionAccountId = session.profileKey?.startsWith("account:")
+      ? Number(session.profileKey.slice("account:".length))
+      : null;
+    const accountId = external
+      ? 0
+      : Number.isFinite(sessionAccountId)
+        ? sessionAccountId
+        : selectedAccountIdRef.current;
+    if (!external && !accountId) return;
+    if (planActionLocksRef.current.has(entry.clientId)) return;
+    planActionLocksRef.current.add(entry.clientId);
+    updateTaskChatEntryRunView(entry.clientId, (current) =>
+      updateNativePlanReview(current, "submitting", "cancelling"),
+    );
+    const profileKey: CodexProfileKey = external
+      ? DEFAULT_CODEX_PROFILE_KEY
+      : session.profileKey ?? (`account:${accountId}` as CodexProfileKey);
+    try {
+      await ensureCodexProfileConnected(profileKey, accountId ?? 0);
+      const modes = await collaborationModesForRun(
+        profileKey,
+        accountId ?? 0,
+        selectedModel?.model ?? null,
+        selectedReasoningEffort,
+        false,
+      );
+      await codexRpcForProfile(profileKey, accountId ?? 0, "thread/settings/update", {
+        threadId: session.threadId,
+        collaborationMode: session.savedDefaultCollaborationMode ?? modes.default,
+      });
+      updateTaskChatEntryRunView(entry.clientId, (current) =>
+        updateNativePlanReview(current, "cancelled", "cancelled"),
+      );
+      if (entry.runId !== null) {
+        await updateRun(entry.runId, { planReviewState: "cancelled" });
+      }
+      await updateChat(entry.chatId, {
+        status: "completed",
+        collaborationMode: "default",
+        savedDefaultCollaborationModeJson: null,
+      });
+      setPlanMode(false);
+      setStatusMessage("Plan cancelled. Codex returned to Default mode.");
+    } catch (error) {
+      planActionLocksRef.current.delete(entry.clientId);
+      updateTaskChatEntryRunView(entry.clientId, (current) =>
+        updateNativePlanReview(current, "available", "awaiting-approval"),
+      );
+      setStatusMessage(
+        `Could not cancel Plan mode: ${error instanceof Error ? error.message : String(error)}`,
       );
     }
   }
@@ -7415,28 +8219,19 @@ function App() {
               contextWindow={selectedModelContextWindow}
               onGitAction={() => void handleHeaderGitAction()}
               onBranchChange={(branch) => void selectBranch(branch)}
-              newChatDisabled={runIsActive}
+              newChatDisabled={runIsActive || planReviewAwaiting}
               onNewChat={startNewWorkspaceChat}
               historyOpen={historyDrawerOpen}
-              onToggleHistory={() => requestHistoryDrawerOpen(!historyDrawerOpen)}
+              onToggleHistory={toggleHistoryDrawer}
             />
             <div
-              className={`codex-workspace-body history-phase-${historyDrawerPhase} ${
-                historyDrawerOpen ? "history-open" : ""
-              } ${
-                historyDrawerReservesSpace(historyDrawerPhase)
-                  ? "history-space-reserved"
-                  : ""
-              } ${
-                historyDrawerInputAnimating(historyDrawerPhase)
-                  ? "history-input-animating"
-                  : ""
-              } ${
-                historyDrawerInputContracted(historyDrawerPhase)
-                  ? "history-input-contracted"
-                  : ""
+              className={`codex-workspace-body${
+                historyDrawerSpaceReserved ? " history-space-reserved" : ""
+              }${historyDrawerOpen ? " history-open" : ""}${
+                historyInputAnimating ? " history-input-animating" : ""
+              }${
+                historyInputContracted ? " history-input-contracted" : ""
               }`}
-              data-history-transition-phase={historyDrawerPhase}
             >
               <section
                 className={`task-hero ${hasTaskChat ? "has-chat" : ""}`}
@@ -7479,6 +8274,10 @@ function App() {
                     }
                     liveFollow={runIsActive}
                     onResolveRequest={resolveTranscriptRequest}
+                    onAnswerUserInput={answerTranscriptUserInput}
+                    onImplementPlan={implementTranscriptPlan}
+                    onRevisePlan={reviseTranscriptPlan}
+                    onCancelPlan={cancelTranscriptPlan}
                     onOpenFileLink={openTranscriptFileLink}
                     editablePromptEntryId={editablePromptEntryId}
                     onEditPrompt={editTranscriptPrompt}
@@ -7512,14 +8311,15 @@ function App() {
                   </div>
                 ) : null}
                 <TaskComposer
-                  disabled={!canRun}
+                  disabled={!canRun || planReviewAwaiting}
                   runActive={runIsActive}
                   prompt={prompt}
                   routeRecommendation={preflight?.routeRecommendation ?? routeRecommendation}
                   tokenEstimate={preflight?.tokenEstimate ?? tokenEstimate}
                   accounts={signedInAccounts}
                   selectedAccountId={selectedAccountId}
-                  accountSelectionDisabled={runIsActive}
+                  accountSelectionDisabled={runIsActive || planReviewAwaiting}
+                  modelSelectionDisabled={runIsActive || planReviewAwaiting}
                   models={models}
                   modelLoadError={modelLoadError}
                   selectedModelId={selectedModelId}
@@ -7579,14 +8379,13 @@ function App() {
                 />
               </section>
               <WorkspaceHistoryDrawer
-                open={historyDrawerOpen}
                 phase={historyDrawerPhase}
                 workspace={selectedWorkspace}
                 historyState={historyState}
                 selectedChatId={selectedHistoryChatId ?? selectedWorkspaceChatSession?.chatId ?? null}
                 runSelectionDisabled={runIsActive}
-                onSelectChat={(chat) => void selectHistoryChat(chat)}
-                onOpenChatContextMenu={openChatHistoryContextMenu}
+                onSelectChat={selectHistoryChatFromDrawer}
+                onOpenChatContextMenu={openChatHistoryContextMenuFromDrawer}
                 onTransitionEnd={handleHistoryDrawerTransitionEnd}
               />
               {chatHistoryContextMenu ? (
@@ -8171,8 +8970,7 @@ function WorkspaceContextMeter({
   );
 }
 
-function WorkspaceHistoryDrawer({
-  open,
+const WorkspaceHistoryDrawer = memo(function WorkspaceHistoryDrawer({
   phase,
   workspace,
   historyState,
@@ -8182,7 +8980,6 @@ function WorkspaceHistoryDrawer({
   onOpenChatContextMenu,
   onTransitionEnd,
 }: {
-  open: boolean;
   phase: HistoryDrawerPhase;
   workspace: Workspace | null;
   historyState: WorkspaceHistoryState;
@@ -8195,13 +8992,13 @@ function WorkspaceHistoryDrawer({
   ) => void;
   onTransitionEnd: (event: ReactTransitionEvent<HTMLElement>) => void;
 }) {
+  const open = phase === "opening" || phase === "open";
   return (
     <aside
-      className={`workspace-history-drawer ${open ? "open" : "closed"} phase-${phase}`}
+      className={`workspace-history-drawer ${phase}`}
       aria-label="Workspace chat history"
       aria-hidden={!open}
       inert={!open ? true : undefined}
-      data-transition-phase={phase}
       onTransitionEnd={onTransitionEnd}
     >
       <header>
@@ -8256,7 +9053,7 @@ function WorkspaceHistoryDrawer({
       </div>
     </aside>
   );
-}
+});
 
 function createTaskChatEntriesFromExternalTranscriptSnapshot(
   chat: ChatListItem,
@@ -8415,6 +9212,33 @@ function createTaskChatEntryFromHistoryRun(run: HistoryRunSummary): TaskChatEntr
               },
             },
       error: run.error,
+      latestPlan: run.completed_plan_text ?? "",
+      nativePlan: {
+        ...emptyRunView.nativePlan,
+        intent: run.run_intent ?? "normal",
+        mode: run.collaboration_mode ?? null,
+        phase:
+          run.completed_plan_text && run.run_intent !== "plan-implementation"
+            ? run.plan_review_state === "cancelled"
+              ? "cancelled"
+              : run.plan_review_state === "approved" ||
+                  run.plan_review_state === "superseded"
+                ? "completed"
+                : "awaiting-approval"
+            : run.run_intent === "plan-implementation" && status === "completed"
+              ? "completed"
+              : "inactive",
+        planItemId: run.completed_plan_item_id,
+        previewText: run.completed_plan_text ?? "",
+        completedText: run.completed_plan_text ?? "",
+        completedTurnId: run.codex_turn_id,
+        reviewState:
+          run.completed_plan_text && run.run_intent !== "plan-implementation"
+            ? run.plan_review_state === "none"
+              ? "available"
+              : run.plan_review_state
+            : "none",
+      },
       tokenUsage:
         run.latest_total_tokens === null
           ? null
@@ -8454,6 +9278,26 @@ function normalizeHistoryRunStatus(run: HistoryRunSummary): RunViewState["status
   }
 
   return "interrupted";
+}
+
+function parseSavedDefaultCollaborationMode(value: string | null | undefined) {
+  if (!value) return null;
+  try {
+    const parsed = JSON.parse(value) as Partial<CollaborationMode>;
+    const settings = readObject(parsed.settings);
+    if (
+      parsed.mode === "default" &&
+      typeof settings.model === "string" &&
+      (typeof settings.reasoning_effort === "string" ||
+        settings.reasoning_effort === null) &&
+      settings.developer_instructions === null
+    ) {
+      return parsed as CollaborationMode;
+    }
+  } catch {
+    // Ignore corrupt persisted settings and rebuild the Default preset.
+  }
+  return null;
 }
 
 function buildSlashCommandResults(

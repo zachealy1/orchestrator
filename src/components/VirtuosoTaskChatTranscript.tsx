@@ -9,6 +9,10 @@ import {
 } from "react";
 import type { HistoricalChatOpenRequest } from "../types";
 import type { ApprovalResolutionHandler } from "../lib/codexApprovals";
+import type {
+  NativeUserInputRequest,
+  UserInputResponse,
+} from "../lib/nativePlanMode";
 import { getTranscriptWidthBucket } from "../lib/transcriptVirtualization";
 import { TaskChatTurn, type TaskChatEntry } from "./TaskChatTranscript";
 
@@ -137,6 +141,14 @@ export type VirtuosoTaskChatTranscriptProps = {
   onOpenAtLatestApplied?: (request: HistoricalChatOpenRequest) => void;
   onOpenAtLatestCancelled?: (request: HistoricalChatOpenRequest) => void;
   onResolveRequest: ApprovalResolutionHandler;
+  onAnswerUserInput?: (
+    entry: TaskChatEntry,
+    request: NativeUserInputRequest,
+    response: UserInputResponse,
+  ) => void;
+  onImplementPlan?: (entry: TaskChatEntry) => void;
+  onRevisePlan?: (entry: TaskChatEntry, revision: string) => void;
+  onCancelPlan?: (entry: TaskChatEntry) => void;
   onOpenFileLink?: (href: string) => boolean;
   editablePromptEntryId?: string | null;
   onEditPrompt?: (entry: TaskChatEntry, prompt: string) => void;
@@ -154,6 +166,10 @@ const NativeTranscriptRow = memo(function NativeTranscriptRow({
   onCancelEdit,
   onStartEdit,
   onResolveRequest,
+  onAnswerUserInput,
+  onImplementPlan,
+  onRevisePlan,
+  onCancelPlan,
   onOpenFileLink,
   onLoadHistoricalActivity,
 }: {
@@ -166,6 +182,10 @@ const NativeTranscriptRow = memo(function NativeTranscriptRow({
   onCancelEdit: () => void;
   onStartEdit: (entry: TaskChatEntry) => void;
   onResolveRequest: ApprovalResolutionHandler;
+  onAnswerUserInput?: VirtuosoTaskChatTranscriptProps["onAnswerUserInput"];
+  onImplementPlan?: VirtuosoTaskChatTranscriptProps["onImplementPlan"];
+  onRevisePlan?: VirtuosoTaskChatTranscriptProps["onRevisePlan"];
+  onCancelPlan?: VirtuosoTaskChatTranscriptProps["onCancelPlan"];
   onOpenFileLink?: (href: string) => boolean;
   onLoadHistoricalActivity?: (entry: TaskChatEntry) => void;
 }) {
@@ -183,6 +203,10 @@ const NativeTranscriptRow = memo(function NativeTranscriptRow({
         onEditingPromptChange={onEditingPromptChange}
         onOpenFileLink={onOpenFileLink}
         onResolveRequest={onResolveRequest}
+        onAnswerUserInput={onAnswerUserInput}
+        onImplementPlan={onImplementPlan}
+        onRevisePlan={onRevisePlan}
+        onCancelPlan={onCancelPlan}
         onStartEdit={onStartEdit}
         onSubmitEdit={onSubmitEdit}
         onLoadHistoricalActivity={onLoadHistoricalActivity}
@@ -203,6 +227,10 @@ export const VirtuosoTaskChatTranscript = memo(
     onOpenAtLatestApplied,
     onOpenAtLatestCancelled,
     onResolveRequest,
+    onAnswerUserInput,
+    onImplementPlan,
+    onRevisePlan,
+    onCancelPlan,
     onOpenFileLink,
     editablePromptEntryId = null,
     onEditPrompt,
@@ -567,6 +595,10 @@ export const VirtuosoTaskChatTranscript = memo(
               onEditingPromptChange={setEditingPrompt}
               onOpenFileLink={onOpenFileLink}
               onResolveRequest={onResolveRequest}
+              onAnswerUserInput={onAnswerUserInput}
+              onImplementPlan={onImplementPlan}
+              onRevisePlan={onRevisePlan}
+              onCancelPlan={onCancelPlan}
               onStartEdit={handleStartEdit}
               onSubmitEdit={handleSubmitEdit}
               onLoadHistoricalActivity={onLoadHistoricalActivity}
@@ -585,6 +617,10 @@ export const VirtuosoTaskChatTranscript = memo(
         onLoadHistoricalActivity,
         onOpenFileLink,
         onResolveRequest,
+        onAnswerUserInput,
+        onImplementPlan,
+        onRevisePlan,
+        onCancelPlan,
       ],
     );
 

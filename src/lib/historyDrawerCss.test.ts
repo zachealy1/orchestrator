@@ -7,7 +7,8 @@ declare const process: { cwd(): string };
 const css = readFileSync(`${process.cwd()}/src/App.css`, "utf8");
 
 function rule(selector: string) {
-  const selectorStart = css.indexOf(selector);
+  const exactStart = css.indexOf(`\n${selector} {`);
+  const selectorStart = exactStart >= 0 ? exactStart + 1 : css.indexOf(selector);
   if (selectorStart < 0) throw new Error(`Missing CSS rule: ${selector}`);
   const blockStart = css.indexOf("{", selectorStart);
   const blockEnd = css.indexOf("}", blockStart);

@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   addApprovalRequest,
+  addServerRequest,
   applyCodexMessage,
   emptyRunView,
   invalidateApprovalRequests,
@@ -14,6 +15,87 @@ import type { RunViewState } from "./codexEventReducer";
 import { parseApprovalRequest } from "./codexApprovals";
 
 describe("codexEventReducer", () => {
+  it("keeps Plan deltas as preview text and gates only the completed plan item", () => {
+    let state: RunViewState = {
+      ...emptyRunView,
+      status: "running",
+      turnId: "turn-plan",
+      nativePlan: {
+        ...emptyRunView.nativePlan,
+        intent: "plan",
+        mode: "plan",
+        phase: "drafting",
+      },
+    };
+    state = applyCodexMessage(state, {
+      method: "item/plan/delta",
+      params: { itemId: "plan-1", delta: "Preview that may " },
+    });
+    state = applyCodexMessage(state, {
+      method: "item/plan/delta",
+      params: { itemId: "plan-1", delta: "change" },
+    });
+
+    expect(state.nativePlan.previewText).toBe("Preview that may change");
+    expect(state.nativePlan.completedText).toBe("");
+    expect(state.nativePlan.reviewState).toBe("none");
+    expect(state.console).toHaveLength(0);
+
+    state = applyCodexMessage(state, {
+      method: "item/completed",
+      params: {
+        threadId: "thread-1",
+        turnId: "turn-plan",
+        item: { type: "plan", id: "plan-1", text: "Final authoritative plan" },
+      },
+    });
+    expect(state.nativePlan.completedText).toBe("Final authoritative plan");
+    expect(state.nativePlan.reviewState).toBe("none");
+
+    state = applyCodexMessage(state, {
+      method: "turn/completed",
+      params: { turn: { id: "turn-plan", status: "completed" } },
+    });
+    expect(state.nativePlan.phase).toBe("awaiting-approval");
+    expect(state.nativePlan.reviewState).toBe("available");
+  });
+
+  it("projects structured questions and serverRequest resolution into Plan phase", () => {
+    const request = {
+      id: "question-1",
+      method: "item/tool/requestUserInput",
+      params: {
+        threadId: "thread-1",
+        turnId: "turn-1",
+        itemId: "tool-1",
+        questions: [],
+        autoResolutionMs: null,
+      },
+    };
+    let state = addServerRequest(
+      {
+        ...emptyRunView,
+        nativePlan: {
+          ...emptyRunView.nativePlan,
+          intent: "plan",
+          mode: "plan",
+          phase: "drafting",
+        },
+      },
+      request,
+    );
+    state = addServerRequest(state, request);
+    expect(state.serverRequests).toHaveLength(1);
+    expect(state.nativePlan.phase).toBe("awaiting-clarification");
+
+    state = applyCodexMessage(state, {
+      method: "serverRequest/resolved",
+      params: { requestId: "question-1" },
+    });
+    expect(state.serverRequests).toHaveLength(0);
+    expect(state.nativePlan.phase).toBe("drafting");
+  });
+
   it("tracks thread, turn, and token usage notifications", () => {
     let state = applyCodexMessage(emptyRunView, {
       method: "thread/started",

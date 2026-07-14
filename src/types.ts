@@ -182,6 +182,12 @@ export type RunRecord = {
   duration_ms: number | null;
   final_message: string | null;
   error: string | null;
+  collaboration_mode: "plan" | "default" | null;
+  run_intent: "normal" | "plan" | "plan-revision" | "plan-implementation";
+  client_user_message_id: string | null;
+  completed_plan_item_id: string | null;
+  completed_plan_text: string | null;
+  plan_review_state: "none" | "available" | "superseded" | "approved" | "cancelled";
 };
 
 export type RunListItem = RunRecord & {
@@ -208,6 +214,12 @@ export type HistoryRunSummary = Pick<
   | "duration_ms"
   | "final_message"
   | "error"
+  | "collaboration_mode"
+  | "run_intent"
+  | "client_user_message_id"
+  | "completed_plan_item_id"
+  | "completed_plan_text"
+  | "plan_review_state"
 > & {
   original_prompt: string;
   latest_total_tokens: number | null;
@@ -354,6 +366,8 @@ export type ChatRecord = {
   external_created_at: string | null;
   external_updated_at: string | null;
   last_synced_at: string | null;
+  collaboration_mode?: "plan" | "default" | null;
+  saved_default_collaboration_mode_json?: string | null;
   created_at: string;
   updated_at: string;
   deleted_at: string | null;
@@ -465,6 +479,7 @@ export type AccountUpdatedNotification = {
 export type CodexMessage = {
   method?: string;
   id?: string | number;
+  requestToken?: string | null;
   params?: Record<string, unknown>;
   result?: unknown;
   error?: unknown;
