@@ -759,10 +759,27 @@ async function emitCodexNotification(message: unknown) {
   });
 }
 
-async function emitCodexServerRequest(message: unknown) {
+async function emitCodexServerRequest(
+  message: unknown,
+  options: {
+    accountId?: number;
+    profileKey?: `account:${number}` | "default";
+    requestToken?: string | null;
+  } = {},
+) {
   await act(async () => {
     mocks.listeners.get("codex:server-request")?.({
-      payload: { accountId: 7, message },
+      payload: {
+        accountId: options.accountId ?? 7,
+        profileKey: options.profileKey ?? "account:7",
+        ...(options.requestToken === null
+          ? {}
+          : {
+              requestToken:
+                options.requestToken ?? "server-request-7-1-9",
+            }),
+        message,
+      },
     });
     await Promise.resolve();
   });
@@ -4384,6 +4401,122 @@ describe("App Codex auth", () => {
     expect(screen.queryByLabelText("Codex run console")).not.toBeInTheDocument();
   });
 
+  it("sends and persists independent approval and sandbox settings on every turn", async () => {
+    prepareSignedInRun();
+    const confirm = vi.spyOn(window, "confirm").mockReturnValue(true);
+
+    const { user } = await renderApp();
+    await user.click(screen.getByRole("combobox", { name: "Approvals" }));
+    await user.click(screen.getByRole("option", { name: "Strict approval" }));
+    await user.click(screen.getByRole("combobox", { name: "Sandbox" }));
+    await user.click(screen.getByRole("option", { name: "Full access" }));
+    expect(confirm).toHaveBeenCalledWith(expect.stringMatching(/full access removes/i));
+    expect(screen.getByText(/Full access removes filesystem and network restrictions/i)).toBeInTheDocument();
+
+    await startMockRun(user, "First guarded turn");
+    const threadStart = mocks.codexRpcMock.mock.calls.find(
+      (call) => call[1] === "thread/start",
+    );
+    const firstTurnStart = mocks.codexRpcMock.mock.calls.find(
+      (call) => call[1] === "turn/start",
+    );
+    expect(threadStart?.[2]).toEqual(
+      expect.objectContaining({
+        approvalPolicy: "untrusted",
+        approvalsReviewer: "user",
+        permissions: ":danger-full-access",
+      }),
+    );
+    expect(firstTurnStart?.[2]).toEqual(
+      expect.objectContaining({
+        approvalPolicy: "untrusted",
+        approvalsReviewer: "user",
+        permissions: ":danger-full-access",
+      }),
+    );
+    expect(mocks.createRunMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        approvalPolicy: "untrusted",
+        sandbox: "danger-full-access",
+      }),
+    );
+    expect(JSON.parse(localStorage.getItem("orchestrator.codex-access.v1")!)).toEqual({
+      approvalMode: "strict",
+      sandboxMode: "full",
+    });
+    expect(screen.getByRole("combobox", { name: "Approvals" })).toBeDisabled();
+    expect(screen.getByRole("combobox", { name: "Sandbox" })).toBeDisabled();
+
+    await emitCodexNotification({
+      method: "turn/completed",
+      params: { turn: { id: "turn-1", status: "completed", durationMs: 1000 } },
+    });
+    await user.type(screen.getByLabelText("Prompt"), "Follow-up guarded turn");
+    await user.click(screen.getByRole("button", { name: /run codex/i }));
+    await waitFor(() =>
+      expect(
+        mocks.codexRpcMock.mock.calls.filter((call) => call[1] === "turn/start"),
+      ).toHaveLength(2),
+    );
+    const secondTurnStart = mocks.codexRpcMock.mock.calls.filter(
+      (call) => call[1] === "turn/start",
+    )[1];
+    expect(secondTurnStart[2]).toEqual(
+      expect.objectContaining({
+        approvalPolicy: "untrusted",
+        approvalsReviewer: "user",
+        permissions: ":danger-full-access",
+      }),
+    );
+  });
+
+  it("fails closed when Codex reports a different active permission profile", async () => {
+    prepareSignedInRun();
+    mocks.codexRpcMock.mockImplementation(
+      async (_accountId: number, method: string) => {
+        if (method === "thread/start") {
+          return {
+            thread: { id: "thread-1" },
+            approvalPolicy: "on-request",
+            activePermissionProfile: { id: ":danger-full-access" },
+          };
+        }
+        if (method === "turn/start") {
+          return { turn: { id: "turn-1" } };
+        }
+        return {};
+      },
+    );
+
+    const { user } = await renderApp();
+    await user.type(screen.getByLabelText("Prompt"), "Do not weaken access");
+    await user.click(screen.getByRole("button", { name: /run codex/i }));
+
+    expect(
+      await screen.findByText(/stopped to avoid a sandbox mismatch/i),
+    ).toBeInTheDocument();
+    expect(
+      mocks.codexRpcMock.mock.calls.some((call) => call[1] === "turn/start"),
+    ).toBe(false);
+  });
+
+  it("requires confirmation before disabling native approval prompts", async () => {
+    prepareSignedInRun();
+    const confirm = vi.spyOn(window, "confirm").mockReturnValue(false);
+
+    const { user } = await renderApp();
+    await user.click(screen.getByRole("combobox", { name: "Approvals" }));
+    await user.click(screen.getByRole("option", { name: "Automatic" }));
+
+    expect(confirm).toHaveBeenCalledWith(
+      expect.stringMatching(/disables native approval prompts/i),
+    );
+    expect(screen.getByRole("combobox", { name: "Approvals" })).toHaveTextContent(
+      "On request",
+    );
+    expect(localStorage.getItem("orchestrator.codex-access.v1")).toBeNull();
+  });
+
   it("reuses the same Codex thread for follow-up prompts in one chat", async () => {
     prepareSignedInRun();
 
@@ -4679,7 +4812,12 @@ describe("App Codex auth", () => {
     expect(stopButton).toBeEnabled();
     await user.click(stopButton);
 
-    await waitFor(() => expect(mocks.stopCodexMock).toHaveBeenCalledWith(7));
+    await waitFor(() =>
+      expect(mocks.codexRpcMock).toHaveBeenCalledWith(7, "turn/interrupt", {
+        threadId: "thread-1",
+        turnId: "turn-1",
+      }),
+    );
     await waitFor(() =>
       expect(mocks.updateRunMock).toHaveBeenCalledWith(
         202,
@@ -4721,20 +4859,305 @@ describe("App Codex auth", () => {
     await emitCodexServerRequest({
       id: 9,
       method: "item/commandExecution/requestApproval",
-      params: { command: "npm test" },
+      params: {
+        threadId: "thread-1",
+        turnId: "turn-1",
+        itemId: "command-1",
+        command: "npm test",
+        cwd: "/repo/orchestrator",
+        reason: "Tests require access outside the current sandbox.",
+        availableDecisions: ["accept", "decline", "cancel"],
+      },
     });
 
-    expect(screen.getByText("item/commandExecution/requestApproval")).toBeInTheDocument();
-    expect(screen.getByText(/npm test/)).toBeInTheDocument();
+    const approval = screen
+      .getByText("Codex needs approval to run a command")
+      .closest("article")!;
+    expect(approval).toBeInTheDocument();
+    expect(within(approval).getByText(/npm test/)).toBeInTheDocument();
+    expect(within(approval).getByText("/repo/orchestrator")).toBeInTheDocument();
 
-    await user.click(screen.getByRole("button", { name: /approve/i }));
+    await user.click(screen.getByRole("button", { name: /approve once/i }));
     await waitFor(() =>
       expect(mocks.resolveCodexServerRequestMock).toHaveBeenCalledWith(
         7,
         9,
-        expect.any(Object),
+        "server-request-7-1-9",
+        { decision: "accept" },
       ),
     );
+    expect(screen.getByText(/waiting for codex to resolve/i)).toBeInTheDocument();
+
+    await emitCodexNotification({
+      method: "serverRequest/resolved",
+      params: { threadId: "thread-1", requestId: 9 },
+    });
+    expect(
+      screen.queryByText("Codex needs approval to run a command"),
+    ).not.toBeInTheDocument();
+  });
+
+  it("submits a native approval at most once during rapid clicks", async () => {
+    prepareSignedInRun();
+    let finishSubmission!: () => void;
+    mocks.resolveCodexServerRequestMock.mockReturnValueOnce(
+      new Promise<void>((resolve) => {
+        finishSubmission = resolve;
+      }),
+    );
+
+    const { user } = await renderApp();
+    await startMockRun(user, "Run a guarded command");
+    await emitCodexServerRequest({
+      id: 9,
+      method: "item/commandExecution/requestApproval",
+      params: {
+        threadId: "thread-1",
+        turnId: "turn-1",
+        command: "npm test",
+        availableDecisions: ["accept", "cancel"],
+      },
+    });
+
+    const approve = screen.getByRole("button", { name: /approve once/i });
+    fireEvent.click(approve);
+    fireEvent.click(approve);
+    expect(mocks.resolveCodexServerRequestMock).toHaveBeenCalledTimes(1);
+    expect(approve).toBeDisabled();
+
+    await act(async () => finishSubmission());
+    expect(screen.getByText(/waiting for codex to resolve/i)).toBeInTheDocument();
+  });
+
+  it("keeps a failed approval visible and retries with the exact selected decision", async () => {
+    prepareSignedInRun();
+    mocks.resolveCodexServerRequestMock
+      .mockRejectedValueOnce(new Error("native stdin closed"))
+      .mockResolvedValueOnce(undefined);
+
+    const { user } = await renderApp();
+    await startMockRun(user, "Run a guarded command");
+    await emitCodexServerRequest({
+      id: 9,
+      method: "item/commandExecution/requestApproval",
+      params: {
+        threadId: "thread-1",
+        turnId: "turn-1",
+        command: "npm test",
+        availableDecisions: ["accept", "decline", "cancel"],
+      },
+    });
+
+    await user.click(screen.getByRole("button", { name: /approve once/i }));
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "native stdin closed",
+    );
+    await user.click(screen.getByRole("button", { name: /reject/i }));
+
+    expect(mocks.resolveCodexServerRequestMock).toHaveBeenNthCalledWith(
+      2,
+      7,
+      9,
+      "server-request-7-1-9",
+      { decision: "decline" },
+    );
+  });
+
+  it("passes session and command-rule choices through without translating them", async () => {
+    prepareSignedInRun();
+    const ruleDecision = {
+      acceptWithExecpolicyAmendment: {
+        execpolicy_amendment: ["npm", "test"],
+      },
+    };
+
+    const { user } = await renderApp();
+    await startMockRun(user, "Run guarded commands");
+    await emitCodexServerRequest({
+      id: 9,
+      method: "item/commandExecution/requestApproval",
+      params: {
+        threadId: "thread-1",
+        turnId: "turn-1",
+        command: "npm test",
+        availableDecisions: ["acceptForSession", ruleDecision, "cancel"],
+      },
+    });
+
+    await user.click(
+      screen.getByRole("button", { name: /approve for session/i }),
+    );
+    expect(mocks.resolveCodexServerRequestMock).toHaveBeenLastCalledWith(
+      7,
+      9,
+      "server-request-7-1-9",
+      { decision: "acceptForSession" },
+    );
+    await emitCodexNotification({
+      method: "serverRequest/resolved",
+      params: { threadId: "thread-1", requestId: 9 },
+    });
+
+    await emitCodexServerRequest(
+      {
+        id: 10,
+        method: "item/commandExecution/requestApproval",
+        params: {
+          threadId: "thread-1",
+          turnId: "turn-1",
+          command: "npm test -- --run",
+          availableDecisions: [ruleDecision, "cancel"],
+        },
+      },
+      { requestToken: "server-request-7-1-10" },
+    );
+    await user.click(
+      screen.getByRole("button", { name: /approve command rule/i }),
+    );
+    expect(mocks.resolveCodexServerRequestMock).toHaveBeenLastCalledWith(
+      7,
+      10,
+      "server-request-7-1-10",
+      { decision: ruleDecision },
+    );
+  });
+
+  it("deduplicates approval replays and leaves mismatched or untracked requests blocked", async () => {
+    prepareSignedInRun();
+
+    const { user } = await renderApp();
+    await startMockRun(user, "Run guarded commands");
+    const request = {
+      id: 9,
+      method: "item/commandExecution/requestApproval",
+      params: {
+        threadId: "thread-1",
+        turnId: "turn-1",
+        command: "npm test",
+        availableDecisions: ["accept", "cancel"],
+      },
+    };
+    await emitCodexServerRequest(request);
+    await emitCodexServerRequest(request);
+    expect(
+      screen.getAllByText("Codex needs approval to run a command"),
+    ).toHaveLength(1);
+
+    await emitCodexServerRequest(
+      {
+        ...request,
+        id: 10,
+        params: { ...request.params, threadId: "thread-other" },
+      },
+      { requestToken: "server-request-7-1-10" },
+    );
+    expect(screen.getByRole("alert")).toHaveTextContent(
+      /approval in another conversation/i,
+    );
+
+    await emitCodexServerRequest(
+      { ...request, id: 11 },
+      { requestToken: null },
+    );
+    expect(screen.getByText(/without a one-shot request token/i)).toBeInTheDocument();
+    expect(mocks.resolveCodexServerRequestMock).not.toHaveBeenCalled();
+  });
+
+  it("shows lifecycle file paths and the active interaction mode in approval cards", async () => {
+    prepareSignedInRun();
+
+    const { user } = await renderApp();
+    await user.click(screen.getByRole("button", { name: /plan mode/i }));
+    await startMockRun(user, "Plan a guarded edit");
+    await emitCodexNotification({
+      method: "item/started",
+      params: {
+        item: {
+          id: "file-change-1",
+          type: "fileChange",
+          changes: [
+            { path: "/repo/orchestrator/src/App.tsx", kind: "update", diff: "" },
+            { path: "/repo/orchestrator/src/App.css", kind: "update", diff: "" },
+          ],
+        },
+      },
+    });
+    await emitCodexServerRequest({
+      id: 9,
+      method: "item/fileChange/requestApproval",
+      params: {
+        threadId: "thread-1",
+        turnId: "turn-1",
+        itemId: "file-change-1",
+        reason: "The edit is outside the current write scope.",
+      },
+    });
+
+    const approval = screen
+      .getByText("Codex needs approval to change files")
+      .closest("article")!;
+    expect(within(approval).getByText("Plan Mode")).toBeInTheDocument();
+    expect(within(approval).getByText(/src\/App\.tsx/)).toBeInTheDocument();
+    expect(within(approval).getByText(/src\/App\.css/)).toBeInTheDocument();
+  });
+
+  it("keeps Goal Mode on the same native approval path", async () => {
+    prepareSignedInRun();
+
+    const { user } = await renderApp();
+    await user.click(screen.getByRole("button", { name: /goal mode/i }));
+    await startMockRun(user, "Run a goal command");
+    await emitCodexServerRequest({
+      id: 9,
+      method: "item/commandExecution/requestApproval",
+      params: {
+        threadId: "thread-1",
+        turnId: "turn-1",
+        command: "npm test",
+        availableDecisions: ["accept", "cancel"],
+      },
+    });
+
+    const approval = screen
+      .getByText("Codex needs approval to run a command")
+      .closest("article")!;
+    expect(within(approval).getByText("Goal Mode")).toBeInTheDocument();
+  });
+
+  it("removes pending approval controls when the App Server disconnects", async () => {
+    prepareSignedInRun();
+
+    const { user } = await renderApp();
+    await startMockRun(user, "Run a guarded command");
+    await emitCodexServerRequest({
+      id: 9,
+      method: "item/commandExecution/requestApproval",
+      params: {
+        threadId: "thread-1",
+        turnId: "turn-1",
+        command: "npm test",
+        availableDecisions: ["accept", "cancel"],
+      },
+    });
+    expect(
+      screen.getByText("Codex needs approval to run a command"),
+    ).toBeInTheDocument();
+
+    await act(async () => {
+      mocks.listeners.get("codex:process")?.({
+        payload: {
+          accountId: 7,
+          profileKey: "account:7",
+          status: "exited",
+          message: "Codex app-server stdout closed",
+        },
+      });
+    });
+
+    expect(
+      screen.queryByText("Codex needs approval to run a command"),
+    ).not.toBeInTheDocument();
+    expect(mocks.resolveCodexServerRequestMock).not.toHaveBeenCalled();
   });
 
   it("marks completed chat runs and persists the final assistant message", async () => {

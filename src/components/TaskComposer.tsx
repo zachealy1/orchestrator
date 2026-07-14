@@ -21,12 +21,13 @@ import type {
 } from "react";
 import { ComposerSelect } from "./ComposerSelect";
 import type {
-  AccessLevel,
+  ApprovalMode,
   CodexAccountProfile,
   ComposerMentionSearchStatus,
   CodexModel,
   ComposerContextFile,
   RouteRecommendation,
+  SandboxAccessMode,
   SelectedComposerSkill,
   SlashCommandItem,
   SlashCommandSearchStatus,
@@ -57,7 +58,8 @@ type Props = {
   selectedReasoningEffort: string | null;
   goalMode: boolean;
   planMode: boolean;
-  accessLevel: AccessLevel;
+  approvalMode: ApprovalMode;
+  sandboxMode: SandboxAccessMode;
   contextFiles: ComposerContextFile[];
   selectedSkills: SelectedComposerSkill[];
   mentionResults: ComposerContextFile[];
@@ -72,7 +74,8 @@ type Props = {
   onReasoningEffortChange: (effort: string) => void;
   onGoalModeChange: (value: boolean) => void;
   onPlanModeChange: (value: boolean) => void;
-  onAccessLevelChange: (accessLevel: AccessLevel) => void;
+  onApprovalModeChange: (approvalMode: ApprovalMode) => void;
+  onSandboxModeChange: (sandboxMode: SandboxAccessMode) => void;
   onAddFiles: () => void;
   onMentionSearch: (query: string) => void;
   onMentionFileSelect: (file: ComposerContextFile) => void;
@@ -123,7 +126,8 @@ export function TaskComposer({
   selectedReasoningEffort,
   goalMode,
   planMode,
-  accessLevel,
+  approvalMode,
+  sandboxMode,
   contextFiles,
   selectedSkills,
   mentionResults,
@@ -138,7 +142,8 @@ export function TaskComposer({
   onReasoningEffortChange,
   onGoalModeChange,
   onPlanModeChange,
-  onAccessLevelChange,
+  onApprovalModeChange,
+  onSandboxModeChange,
   onAddFiles,
   onMentionSearch,
   onMentionFileSelect,
@@ -704,16 +709,33 @@ export function TaskComposer({
           </div>
 
           <ComposerSelect
-            ariaLabel="Access"
-            value={accessLevel}
+            ariaLabel="Approvals"
+            value={approvalMode}
             options={[
-              { value: "ask", label: "Ask for approval" },
-              { value: "full", label: "Full access" },
+              { value: "strict", label: "Strict approval" },
+              { value: "on-request", label: "On request" },
+              { value: "automatic", label: "Automatic" },
             ]}
-            placeholder="Ask for approval"
+            placeholder="On request"
             icon={<ShieldCheck size={16} />}
             className="access-select"
-            onChange={(value) => onAccessLevelChange(value as AccessLevel)}
+            disabled={runActive}
+            onChange={(value) => onApprovalModeChange(value as ApprovalMode)}
+          />
+
+          <ComposerSelect
+            ariaLabel="Sandbox"
+            value={sandboxMode}
+            options={[
+              { value: "read-only", label: "Read only" },
+              { value: "workspace", label: "Workspace" },
+              { value: "full", label: "Full access" },
+            ]}
+            placeholder="Workspace"
+            icon={<ShieldCheck size={16} />}
+            className="access-select"
+            disabled={runActive}
+            onChange={(value) => onSandboxModeChange(value as SandboxAccessMode)}
           />
 
           <ComposerSelect
@@ -744,6 +766,14 @@ export function TaskComposer({
             onChange={onReasoningEffortChange}
           />
         </div>
+
+        <p
+          className={`composer-access-summary ${
+            isPermissiveAccess(approvalMode, sandboxMode) ? "warning" : ""
+          }`}
+        >
+          {approvalModeDescription(approvalMode)} {sandboxModeDescription(sandboxMode)}
+        </p>
 
         {selectedSkills.length > 0 ? (
           <div className="context-file-list" aria-label="Selected skills">
@@ -1460,4 +1490,33 @@ function relativeFileLabel(file: ComposerContextFile) {
   const normalizedName = file.name.replace(/\\/g, "/");
   const normalizedPath = file.path.replace(/\\/g, "/");
   return normalizedPath.endsWith(`/${normalizedName}`) ? normalizedPath : file.path;
+}
+
+function approvalModeDescription(mode: ApprovalMode) {
+  switch (mode) {
+    case "strict":
+      return "Strict: known-safe commands may run; other commands ask first.";
+    case "automatic":
+      return "Automatic: Codex will not show approval prompts.";
+    default:
+      return "On request: work inside the sandbox runs automatically; boundary crossings ask first.";
+  }
+}
+
+function sandboxModeDescription(mode: SandboxAccessMode) {
+  switch (mode) {
+    case "read-only":
+      return "The sandbox is read only.";
+    case "full":
+      return "Full access removes filesystem and network restrictions.";
+    default:
+      return "The sandbox can write only in the workspace and has no command network access by default.";
+  }
+}
+
+function isPermissiveAccess(
+  approvalMode: ApprovalMode,
+  sandboxMode: SandboxAccessMode,
+) {
+  return approvalMode === "automatic" || sandboxMode === "full";
 }

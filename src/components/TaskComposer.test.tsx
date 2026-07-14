@@ -67,7 +67,8 @@ function renderComposer(overrides: Partial<TaskComposerProps> = {}) {
     selectedReasoningEffort: "medium",
     goalMode: false,
     planMode: false,
-    accessLevel: "ask",
+    approvalMode: "on-request",
+    sandboxMode: "workspace",
     contextFiles: [],
     selectedSkills: [],
     mentionResults: [],
@@ -82,7 +83,8 @@ function renderComposer(overrides: Partial<TaskComposerProps> = {}) {
     onReasoningEffortChange: vi.fn(),
     onGoalModeChange: vi.fn(),
     onPlanModeChange: vi.fn(),
-    onAccessLevelChange: vi.fn(),
+    onApprovalModeChange: vi.fn(),
+    onSandboxModeChange: vi.fn(),
     onAddFiles: vi.fn(),
     onMentionSearch: vi.fn(),
     onMentionFileSelect: vi.fn(),
@@ -126,7 +128,8 @@ function renderControlledComposer(overrides: Partial<TaskComposerProps> = {}) {
       selectedReasoningEffort: "medium",
       goalMode: false,
       planMode: false,
-      accessLevel: "ask",
+      approvalMode: "on-request",
+      sandboxMode: "workspace",
       contextFiles: [],
       selectedSkills: [],
       mentionResults: [],
@@ -140,7 +143,8 @@ function renderControlledComposer(overrides: Partial<TaskComposerProps> = {}) {
       onReasoningEffortChange: vi.fn(),
       onGoalModeChange: vi.fn(),
       onPlanModeChange: vi.fn(),
-      onAccessLevelChange: vi.fn(),
+      onApprovalModeChange: vi.fn(),
+      onSandboxModeChange: vi.fn(),
       onAddFiles: vi.fn(),
       onMentionSearch: vi.fn(),
       onMentionFileSelect: vi.fn(),
@@ -330,17 +334,21 @@ describe("TaskComposer", () => {
     expect(screen.queryByLabelText(/search workspace files/i)).not.toBeInTheDocument();
   });
 
-  it("renders access level as a dropdown", async () => {
-    const onAccessLevelChange = vi.fn();
-    const { user } = renderComposer({ onAccessLevelChange });
+  it("renders separate approval and sandbox dropdowns", async () => {
+    const onApprovalModeChange = vi.fn();
+    const onSandboxModeChange = vi.fn();
+    const { user } = renderComposer({
+      onApprovalModeChange,
+      onSandboxModeChange,
+    });
 
-    await user.click(screen.getByRole("combobox", { name: "Access" }));
+    await user.click(screen.getByRole("combobox", { name: "Approvals" }));
+    await user.click(screen.getByRole("option", { name: "Strict approval" }));
+    await user.click(screen.getByRole("combobox", { name: "Sandbox" }));
     await user.click(screen.getByRole("option", { name: "Full access" }));
-    await user.click(screen.getByRole("combobox", { name: "Access" }));
-    await user.click(screen.getByRole("option", { name: "Ask for approval" }));
 
-    expect(onAccessLevelChange).toHaveBeenCalledWith("full");
-    expect(onAccessLevelChange).toHaveBeenCalledWith("ask");
+    expect(onApprovalModeChange).toHaveBeenCalledWith("strict");
+    expect(onSandboxModeChange).toHaveBeenCalledWith("full");
   });
 
   it("keeps workspace and branch selection out of the composer", () => {

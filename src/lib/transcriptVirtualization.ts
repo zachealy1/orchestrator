@@ -106,8 +106,12 @@ export function estimateTranscriptRowHeight(
   );
   const activityRows =
     Number(runView.commands.length > 0) +
-    Number(runView.editedFiles.length > 0) +
-    Number(runView.serverRequests.length > 0);
+    Number(runView.editedFiles.length > 0);
+  const approvalHeight = runView.approvalRequests.reduce(
+    (height, request) =>
+      height + 170 + Math.ceil(request.choices.length / 2) * 58,
+    0,
+  );
   const traceRows =
     runView.streamEvents.length > 0 ||
     runView.latestPlan.length > 0 ||
@@ -121,6 +125,7 @@ export function estimateTranscriptRowHeight(
       promptLines * APPROXIMATE_LINE_HEIGHT_PX +
       assistantLines * APPROXIMATE_LINE_HEIGHT_PX +
       activityRows * 34 +
+      approvalHeight +
       traceRows * 34,
   );
 }
@@ -209,7 +214,20 @@ function getTranscriptEntryFingerprint(entry: TranscriptGeometryEntry) {
       String(file.additions),
       String(file.deletions),
     ]),
-    String(runView.serverRequests.length),
+    ...runView.approvalRequests.flatMap((request) => [
+      request.key,
+      request.status,
+      request.selectedChoiceId ?? "",
+      request.error ?? "",
+      ...request.choices.flatMap((choice) => [
+        choice.id,
+        choice.label,
+        choice.description,
+      ]),
+    ]),
+    ...Object.entries(runView.approvalResourcesByItemId).flatMap(
+      ([itemId, resources]) => [itemId, ...resources],
+    ),
     runView.latestPlan,
     runView.latestDiff,
   ];

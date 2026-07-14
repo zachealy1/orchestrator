@@ -474,6 +474,7 @@ export type CodexMessageEvent = {
   accountId: number;
   profileKey: CodexProfileKey;
   message: CodexMessage;
+  requestToken?: string | null;
 };
 
 export type CodexProcessEvent = {
@@ -485,7 +486,11 @@ export type CodexProcessEvent = {
 
 export type OssProvider = "ollama" | "lmstudio";
 
-export type AccessLevel = "ask" | "full";
+export type ApprovalMode = "strict" | "on-request" | "automatic";
+
+export type SandboxAccessMode = "read-only" | "workspace" | "full";
+
+export type RunInteractionMode = "chat" | "plan" | "goal" | "goal-plan";
 
 export type ReasoningEffortOption = {
   reasoningEffort: string;

@@ -1,12 +1,17 @@
 import { describe, expect, it } from "vitest";
 import {
-  addServerRequest,
+  addApprovalRequest,
   applyCodexMessage,
   emptyRunView,
-  resolveServerRequest,
+  invalidateApprovalRequests,
+  markApprovalAwaitingResolution,
+  markApprovalError,
+  markApprovalSubmitting,
+  resolveApprovalRequest,
   updateRunElapsed,
 } from "./codexEventReducer";
 import type { RunViewState } from "./codexEventReducer";
+import { parseApprovalRequest } from "./codexApprovals";
 
 describe("codexEventReducer", () => {
   it("tracks thread, turn, and token usage notifications", () => {
@@ -425,15 +430,191 @@ describe("codexEventReducer", () => {
     });
   });
 
-  it("tracks and resolves server requests", () => {
-    const request = {
-      id: 9,
-      method: "item/commandExecution/requestApproval",
-      params: { command: "npm test" },
-    };
-    const state = addServerRequest(emptyRunView, request);
+  it("keeps a command pending until Codex reports execution or asks for approval", () => {
+    let state = applyCodexMessage(emptyRunView, {
+      method: "item/started",
+      params: {
+        item: {
+          id: "command-1",
+          type: "commandExecution",
+          command: "npm test",
+        },
+      },
+    });
+    expect(state.commands[0]).toMatchObject({
+      id: "command-1",
+      status: "pending",
+    });
 
-    expect(state.serverRequests).toHaveLength(1);
-    expect(resolveServerRequest(state, 9).serverRequests).toHaveLength(0);
+    const request = parseApprovalRequest({
+      message: {
+        id: 9,
+        method: "item/commandExecution/requestApproval",
+        params: {
+          itemId: "command-1",
+          threadId: "thread-1",
+          turnId: "turn-1",
+          command: "npm test",
+        },
+      },
+      profileKey: "account:7",
+      requestToken: "request-9",
+      interactionMode: "chat",
+    })!;
+    state = addApprovalRequest(state, request);
+    expect(state.commands[0].status).toBe("awaiting-approval");
+
+    state = applyCodexMessage(state, {
+      method: "item/commandExecution/started",
+      params: { itemId: "command-1", command: "npm test" },
+    });
+    expect(state.commands[0].status).toBe("running");
+
+    state = applyCodexMessage(state, {
+      method: "item/completed",
+      params: {
+        item: {
+          id: "command-1",
+          type: "commandExecution",
+          command: "npm test",
+          status: "declined",
+        },
+      },
+    });
+    expect(state.commands[0].status).toBe("declined");
+  });
+
+  it("correlates file approval resources with the native lifecycle item", () => {
+    const state = applyCodexMessage(emptyRunView, {
+      method: "item/started",
+      params: {
+        item: {
+          id: "file-change-1",
+          type: "fileChange",
+          changes: [
+            { path: "/repo/src/App.tsx", kind: "update", diff: "" },
+            { path: "/repo/src/App.css", kind: "update", diff: "" },
+          ],
+        },
+      },
+    });
+
+    expect(state.approvalResourcesByItemId["file-change-1"]).toEqual([
+      "/repo/src/App.tsx",
+      "/repo/src/App.css",
+    ]);
+  });
+
+  it("tracks native approval submission, retry, invalidation, and resolution", () => {
+    const request = parseApprovalRequest({
+      message: {
+        id: 9,
+        method: "item/commandExecution/requestApproval",
+        params: { command: "npm test", threadId: "thread-1" },
+      },
+      profileKey: "account:7",
+      requestToken: "request-9",
+      interactionMode: "chat",
+    })!;
+    const state = addApprovalRequest(emptyRunView, request);
+
+    expect(state.approvalRequests).toHaveLength(1);
+    const submitting = markApprovalSubmitting(state, request.key, "accept");
+    expect(submitting.approvalRequests[0]).toMatchObject({
+      status: "submitting",
+      selectedChoiceId: "accept",
+    });
+    const awaiting = markApprovalAwaitingResolution(submitting, request.key);
+    expect(awaiting.approvalRequests[0].status).toBe("awaiting-resolution");
+    const failed = markApprovalError(awaiting, request.key, "stdin failed");
+    expect(failed.approvalRequests[0]).toMatchObject({
+      status: "error",
+      selectedChoiceId: null,
+      error: "stdin failed",
+    });
+    const stale = invalidateApprovalRequests(failed, "disconnected");
+    expect(stale.approvalRequests[0]).toMatchObject({
+      status: "stale",
+      error: "disconnected",
+    });
+    expect(
+      resolveApprovalRequest(state, 9, "thread-1").approvalRequests,
+    ).toHaveLength(0);
+  });
+
+  it("deduplicates request replays and fails closed on a reused request token", () => {
+    const first = parseApprovalRequest({
+      message: {
+        id: 9,
+        method: "item/commandExecution/requestApproval",
+        params: { threadId: "thread-1", turnId: "turn-1" },
+      },
+      profileKey: "account:7",
+      requestToken: "request-9",
+      interactionMode: "chat",
+    })!;
+    const duplicate = parseApprovalRequest({
+      message: {
+        id: 9,
+        method: "item/commandExecution/requestApproval",
+        params: { threadId: "thread-1", turnId: "turn-1" },
+      },
+      profileKey: "account:7",
+      requestToken: "request-9",
+      interactionMode: "chat",
+    })!;
+    const conflict = parseApprovalRequest({
+      message: {
+        id: 10,
+        method: "item/fileChange/requestApproval",
+        params: { threadId: "thread-1", turnId: "turn-1" },
+      },
+      profileKey: "account:7",
+      requestToken: "request-9",
+      interactionMode: "chat",
+    })!;
+
+    const original = addApprovalRequest(emptyRunView, first);
+    expect(addApprovalRequest(original, duplicate)).toBe(original);
+    const blocked = addApprovalRequest(original, conflict);
+    expect(blocked.approvalRequests).toHaveLength(1);
+    expect(blocked.approvalRequests[0]).toMatchObject({
+      status: "stale",
+      error: expect.stringContaining("reused an approval identity"),
+    });
+  });
+
+  it("removes approval UI when a turn completes or errors", () => {
+    const request = parseApprovalRequest({
+      message: {
+        id: 9,
+        method: "item/commandExecution/requestApproval",
+        params: { threadId: "thread-1", turnId: "turn-1" },
+      },
+      profileKey: "account:7",
+      requestToken: "request-9",
+      interactionMode: "chat",
+    })!;
+    const pending = addApprovalRequest(
+      {
+        ...emptyRunView,
+        approvalResourcesByItemId: { "file-1": ["/repo/file.txt"] },
+      },
+      request,
+    );
+
+    const completed = applyCodexMessage(pending, {
+      method: "turn/completed",
+      params: { turn: { id: "turn-1", status: "completed" } },
+    });
+    expect(completed.approvalRequests).toEqual([]);
+    expect(completed.approvalResourcesByItemId).toEqual({});
+
+    const errored = applyCodexMessage(pending, {
+      method: "error",
+      params: { error: { message: "turn aborted" } },
+    });
+    expect(errored.approvalRequests).toEqual([]);
+    expect(errored.approvalResourcesByItemId).toEqual({});
   });
 });

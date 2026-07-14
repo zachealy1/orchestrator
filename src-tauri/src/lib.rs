@@ -33,16 +33,35 @@ struct PendingResponse {
 
 type PendingMap = Arc<Mutex<HashMap<String, PendingResponse>>>;
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum ServerRequestResponseState {
+    Pending,
+    Responding,
+}
+
+struct PendingServerRequest {
+    account_id: i64,
+    connection_generation: u64,
+    request_id: Value,
+    response_state: ServerRequestResponseState,
+}
+
+type PendingServerRequestMap = Arc<Mutex<HashMap<String, PendingServerRequest>>>;
+
 struct CodexProcess {
     child: Child,
     stdin: Arc<Mutex<ChildStdin>>,
+    connection_generation: u64,
 }
 
 #[derive(Default)]
 struct CodexState {
     processes: Mutex<HashMap<i64, CodexProcess>>,
     pending: PendingMap,
+    pending_server_requests: PendingServerRequestMap,
     next_id: AtomicU64,
+    next_connection_generation: AtomicU64,
+    next_server_request_token: Arc<AtomicU64>,
     login_account: Arc<Mutex<Option<i64>>>,
     history_index_requests: Arc<Mutex<HashSet<String>>>,
     transcript_sync_requests: Arc<Mutex<HashSet<String>>>,
@@ -82,6 +101,8 @@ struct CodexMessageEvent {
     account_id: i64,
     profile_key: String,
     message: Value,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    request_token: Option<String>,
 }
 
 #[derive(Clone, Serialize)]
@@ -761,8 +782,11 @@ fn write_message(stdin: &Arc<Mutex<ChildStdin>>, message: &Value) -> Result<(), 
 fn process_stdout(
     app: AppHandle,
     account_id: i64,
+    connection_generation: u64,
     stdout: impl std::io::Read + Send + 'static,
     pending: PendingMap,
+    pending_server_requests: PendingServerRequestMap,
+    next_server_request_token: Arc<AtomicU64>,
     login_account: Arc<Mutex<Option<i64>>>,
 ) {
     for line in BufReader::new(stdout).lines() {
@@ -774,13 +798,21 @@ fn process_stdout(
                     let id = message.get("id").cloned();
 
                     match (method, id) {
-                        (Some(_), Some(_)) => {
+                        (Some(_), Some(request_id)) => {
+                            let request_token = register_server_request(
+                                &pending_server_requests,
+                                &next_server_request_token,
+                                account_id,
+                                connection_generation,
+                                request_id,
+                            );
                             let _ = app.emit(
                                 "codex:server-request",
                                 CodexMessageEvent {
                                     account_id,
                                     profile_key: profile_key_for_account(account_id),
                                     message,
+                                    request_token: Some(request_token),
                                 },
                             );
                         }
@@ -792,12 +824,26 @@ fn process_stdout(
                                     }
                                 }
                             }
+                            if method == "serverRequest/resolved" {
+                                if let Some(request_id) = message
+                                    .get("params")
+                                    .and_then(|params| params.get("requestId"))
+                                {
+                                    resolve_tracked_server_request(
+                                        &pending_server_requests,
+                                        account_id,
+                                        connection_generation,
+                                        request_id,
+                                    );
+                                }
+                            }
                             let _ = app.emit(
                                 "codex:notification",
                                 CodexMessageEvent {
                                     account_id,
                                     profile_key: profile_key_for_account(account_id),
                                     message,
+                                    request_token: None,
                                 },
                             );
                         }
@@ -835,7 +881,118 @@ fn process_stdout(
         account_id,
         "Codex app-server exited before responding",
     );
+    clear_server_requests_for_generation(
+        &pending_server_requests,
+        account_id,
+        connection_generation,
+    );
     emit_process(&app, account_id, "exited", "Codex app-server stdout closed");
+}
+
+fn register_server_request(
+    pending: &PendingServerRequestMap,
+    sequence: &AtomicU64,
+    account_id: i64,
+    connection_generation: u64,
+    request_id: Value,
+) -> String {
+    let mut requests = pending
+        .lock()
+        .expect("pending server request lock was poisoned");
+    if let Some((token, _)) = requests.iter().find(|(_, request)| {
+        request.account_id == account_id
+            && request.connection_generation == connection_generation
+            && request.request_id == request_id
+    }) {
+        return token.clone();
+    }
+
+    let token = format!(
+        "server-request-{account_id}-{connection_generation}-{}",
+        sequence.fetch_add(1, Ordering::SeqCst) + 1
+    );
+    requests.insert(
+        token.clone(),
+        PendingServerRequest {
+            account_id,
+            connection_generation,
+            request_id,
+            response_state: ServerRequestResponseState::Pending,
+        },
+    );
+    token
+}
+
+fn resolve_tracked_server_request(
+    pending: &PendingServerRequestMap,
+    account_id: i64,
+    connection_generation: u64,
+    request_id: &Value,
+) {
+    if let Ok(mut requests) = pending.lock() {
+        let token = requests.iter().find_map(|(token, request)| {
+            (request.account_id == account_id
+                && request.connection_generation == connection_generation
+                && &request.request_id == request_id)
+                .then(|| token.clone())
+        });
+        if let Some(token) = token {
+            requests.remove(&token);
+        }
+    }
+}
+
+fn clear_server_requests_for_generation(
+    pending: &PendingServerRequestMap,
+    account_id: i64,
+    connection_generation: u64,
+) {
+    if let Ok(mut requests) = pending.lock() {
+        requests.retain(|_, request| {
+            request.account_id != account_id
+                || request.connection_generation != connection_generation
+        });
+    }
+}
+
+fn clear_server_requests_for_account(pending: &PendingServerRequestMap, account_id: i64) {
+    if let Ok(mut requests) = pending.lock() {
+        requests.retain(|_, request| request.account_id != account_id);
+    }
+}
+
+fn claim_server_request(
+    pending: &PendingServerRequestMap,
+    account_id: i64,
+    connection_generation: u64,
+    request_token: &str,
+    request_id: &Value,
+) -> Result<(), String> {
+    let mut requests = pending
+        .lock()
+        .map_err(|_| "Pending Codex server request lock was poisoned".to_string())?;
+    let request = requests
+        .get_mut(request_token)
+        .ok_or_else(|| "This Codex approval request is stale or already resolved".to_string())?;
+    if request.account_id != account_id
+        || request.connection_generation != connection_generation
+        || &request.request_id != request_id
+    {
+        return Err("The approval response does not match the active native request".to_string());
+    }
+    if request.response_state != ServerRequestResponseState::Pending {
+        return Err("A response to this Codex approval request was already submitted".to_string());
+    }
+    request.response_state = ServerRequestResponseState::Responding;
+    Ok(())
+}
+
+fn release_server_request_claim(pending: &PendingServerRequestMap, request_token: &str) {
+    if let Ok(mut requests) = pending.lock() {
+        if let Some(request) = requests.get_mut(request_token) {
+            request.response_state = ServerRequestResponseState::Pending;
+        }
+    }
 }
 
 fn process_stderr(
@@ -937,7 +1094,8 @@ fn project_historical_turn_activity(response: &Value) -> HistoricalTurnActivityR
                     .to_string();
                 let status = match item.get("status").and_then(Value::as_str) {
                     Some("inProgress") => "running",
-                    Some("failed") | Some("declined") => "failed",
+                    Some("failed") => "failed",
+                    Some("declined") => "declined",
                     _ => "completed",
                 }
                 .to_string();
@@ -1452,6 +1610,8 @@ async fn connect_codex_profile(
     codex_home: PathBuf,
     isolated_file_store: bool,
 ) -> Result<CodexConnectResult, String> {
+    let connection_generation =
+        state.next_connection_generation.fetch_add(1, Ordering::SeqCst) + 1;
     {
         let mut processes = state
             .processes
@@ -1507,10 +1667,21 @@ async fn connect_codex_profile(
             .ok_or_else(|| "Codex stdin was not available".to_string())?;
 
         let pending = Arc::clone(&state.pending);
+        let pending_server_requests = Arc::clone(&state.pending_server_requests);
+        let next_server_request_token = Arc::clone(&state.next_server_request_token);
         let login_account = Arc::clone(&state.login_account);
         let stdout_app = app.clone();
         std::thread::spawn(move || {
-            process_stdout(stdout_app, account_id, stdout, pending, login_account)
+            process_stdout(
+                stdout_app,
+                account_id,
+                connection_generation,
+                stdout,
+                pending,
+                pending_server_requests,
+                next_server_request_token,
+                login_account,
+            )
         });
 
         let stderr_app = app.clone();
@@ -1519,6 +1690,7 @@ async fn connect_codex_profile(
         processes.insert(account_id, CodexProcess {
             child,
             stdin: Arc::new(Mutex::new(stdin)),
+            connection_generation,
         });
     }
 
@@ -1729,33 +1901,59 @@ fn codex_default_profile_thread_transcript_cancel(
 fn codex_resolve_server_request(
     account_id: i64,
     id: Value,
+    request_token: String,
     result: Value,
     state: State<'_, CodexState>,
 ) -> Result<(), String> {
-    send_notification(
-        &state,
-        account_id,
-        json!({
-            "id": id,
-            "result": result
-        }),
-    )
+    resolve_server_request_once(&state, account_id, &request_token, id, result)
 }
 
 #[tauri::command]
 fn codex_default_profile_resolve_server_request(
     id: Value,
+    request_token: String,
     result: Value,
     state: State<'_, CodexState>,
 ) -> Result<(), String> {
-    send_notification(
+    resolve_server_request_once(
         &state,
         DEFAULT_CODEX_PROFILE_ID,
-        json!({
-            "id": id,
-            "result": result
-        }),
+        &request_token,
+        id,
+        result,
     )
+}
+
+fn resolve_server_request_once(
+    state: &CodexState,
+    account_id: i64,
+    request_token: &str,
+    id: Value,
+    result: Value,
+) -> Result<(), String> {
+    let connection_generation = state
+        .processes
+        .lock()
+        .map_err(|_| "Codex processes lock was poisoned".to_string())?
+        .get(&account_id)
+        .map(|process| process.connection_generation)
+        .ok_or_else(|| format!("Codex account {account_id} is not connected"))?;
+
+    claim_server_request(
+        &state.pending_server_requests,
+        account_id,
+        connection_generation,
+        request_token,
+        &id,
+    )?;
+
+    let response = json!({ "id": id, "result": result });
+    if let Err(error) = send_notification(state, account_id, response) {
+        release_server_request_claim(&state.pending_server_requests, request_token);
+        return Err(error);
+    }
+
+    Ok(())
 }
 
 #[tauri::command]
@@ -1795,6 +1993,7 @@ fn stop_codex_account(
         account_id,
         "Codex app-server was stopped",
     );
+    clear_server_requests_for_account(&state.pending_server_requests, account_id);
 
     if let Ok(mut active) = state.login_account.lock() {
         if *active == Some(account_id) {
@@ -4257,6 +4456,73 @@ mod tests {
     }
 
     #[test]
+    fn native_server_request_registry_deduplicates_within_one_connection() {
+        let pending: PendingServerRequestMap = Arc::new(Mutex::new(HashMap::new()));
+        let sequence = AtomicU64::new(0);
+
+        let first = register_server_request(&pending, &sequence, 7, 3, json!(9));
+        let replay = register_server_request(&pending, &sequence, 7, 3, json!(9));
+        let reconnected = register_server_request(&pending, &sequence, 7, 4, json!(9));
+
+        assert_eq!(first, replay);
+        assert_ne!(first, reconnected);
+        assert_eq!(pending.lock().unwrap().len(), 2);
+
+        resolve_tracked_server_request(&pending, 7, 3, &json!(9));
+        let requests = pending.lock().unwrap();
+        assert!(!requests.contains_key(&first));
+        assert!(requests.contains_key(&reconnected));
+    }
+
+    #[test]
+    fn native_server_request_claim_is_one_shot_and_bound_to_identity() {
+        let pending: PendingServerRequestMap = Arc::new(Mutex::new(HashMap::new()));
+        let sequence = AtomicU64::new(0);
+        let token = register_server_request(&pending, &sequence, 7, 3, json!(9));
+
+        assert!(claim_server_request(&pending, 7, 3, &token, &json!(9)).is_ok());
+        assert!(claim_server_request(&pending, 7, 3, &token, &json!(9))
+            .unwrap_err()
+            .contains("already submitted"));
+
+        release_server_request_claim(&pending, &token);
+        assert!(claim_server_request(&pending, 8, 3, &token, &json!(9))
+            .unwrap_err()
+            .contains("does not match"));
+        assert!(claim_server_request(&pending, 7, 4, &token, &json!(9))
+            .unwrap_err()
+            .contains("does not match"));
+        assert!(claim_server_request(&pending, 7, 3, &token, &json!(10))
+            .unwrap_err()
+            .contains("does not match"));
+        assert!(claim_server_request(&pending, 7, 3, "missing-token", &json!(9))
+            .unwrap_err()
+            .contains("stale or already resolved"));
+    }
+
+    #[test]
+    fn native_server_request_cleanup_invalidates_stale_connections_and_accounts() {
+        let pending: PendingServerRequestMap = Arc::new(Mutex::new(HashMap::new()));
+        let sequence = AtomicU64::new(0);
+        let account_seven_old = register_server_request(&pending, &sequence, 7, 3, json!(9));
+        let account_seven_new = register_server_request(&pending, &sequence, 7, 4, json!(10));
+        let account_eight = register_server_request(&pending, &sequence, 8, 3, json!(11));
+
+        clear_server_requests_for_generation(&pending, 7, 3);
+        {
+            let requests = pending.lock().unwrap();
+            assert!(!requests.contains_key(&account_seven_old));
+            assert!(requests.contains_key(&account_seven_new));
+            assert!(requests.contains_key(&account_eight));
+        }
+
+        clear_server_requests_for_account(&pending, 7);
+        let requests = pending.lock().unwrap();
+        assert!(!requests.contains_key(&account_seven_new));
+        assert!(requests.contains_key(&account_eight));
+    }
+
+    #[test]
     fn stopping_one_profile_rejects_only_its_pending_requests() {
         let (sender_one, receiver_one) = oneshot::channel();
         let (sender_two, _receiver_two) = oneshot::channel();
@@ -4294,6 +4560,7 @@ mod tests {
             account_id: 9,
             profile_key: profile_key_for_account(9),
             message: json!({ "method": "account/updated" }),
+            request_token: None,
         };
         let value = serde_json::to_value(event).unwrap();
 

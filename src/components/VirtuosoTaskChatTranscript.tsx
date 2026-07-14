@@ -7,7 +7,8 @@ import {
   useRef,
   useState,
 } from "react";
-import type { CodexMessage, HistoricalChatOpenRequest } from "../types";
+import type { HistoricalChatOpenRequest } from "../types";
+import type { ApprovalResolutionHandler } from "../lib/codexApprovals";
 import { getTranscriptWidthBucket } from "../lib/transcriptVirtualization";
 import { TaskChatTurn, type TaskChatEntry } from "./TaskChatTranscript";
 
@@ -135,7 +136,7 @@ export type VirtuosoTaskChatTranscriptProps = {
   liveFollow: boolean;
   onOpenAtLatestApplied?: (request: HistoricalChatOpenRequest) => void;
   onOpenAtLatestCancelled?: (request: HistoricalChatOpenRequest) => void;
-  onResolveRequest: (request: CodexMessage, approved: boolean) => void;
+  onResolveRequest: ApprovalResolutionHandler;
   onOpenFileLink?: (href: string) => boolean;
   editablePromptEntryId?: string | null;
   onEditPrompt?: (entry: TaskChatEntry, prompt: string) => void;
@@ -164,7 +165,7 @@ const NativeTranscriptRow = memo(function NativeTranscriptRow({
   onSubmitEdit: (entry: TaskChatEntry, prompt: string) => void;
   onCancelEdit: () => void;
   onStartEdit: (entry: TaskChatEntry) => void;
-  onResolveRequest: (request: CodexMessage, approved: boolean) => void;
+  onResolveRequest: ApprovalResolutionHandler;
   onOpenFileLink?: (href: string) => boolean;
   onLoadHistoricalActivity?: (entry: TaskChatEntry) => void;
 }) {

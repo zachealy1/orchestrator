@@ -8,6 +8,7 @@
     "dev": "vite",
     "build": "tsc && vite build",
     "test": "vitest run",
+    "test:native-approval": "node scripts/native-approval-smoke.mjs",
     "test:watch": "vitest",
     "preview": "vite preview",
     "tauri": "tauri"

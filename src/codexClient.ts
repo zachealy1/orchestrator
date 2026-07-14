@@ -124,17 +124,25 @@ export function cancelDefaultProfileThreadTranscript(requestId: string) {
 export function resolveCodexServerRequest(
   accountId: number,
   id: string | number,
+  requestToken: string,
   result: unknown,
 ) {
-  return invoke<void>("codex_resolve_server_request", { accountId, id, result });
+  return invoke<void>("codex_resolve_server_request", {
+    accountId,
+    id,
+    requestToken,
+    result,
+  });
 }
 
 export function resolveDefaultCodexServerRequest(
   id: string | number,
+  requestToken: string,
   result: unknown,
 ) {
   return invoke<void>("codex_default_profile_resolve_server_request", {
     id,
+    requestToken,
     result,
   });
 }

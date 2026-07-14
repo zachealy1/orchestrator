@@ -15,6 +15,7 @@ import {
   MessageSquare,
   Pencil,
   RefreshCw,
+  ShieldAlert,
   Terminal,
   X,
 } from "lucide-react";
@@ -41,6 +42,10 @@ import type {
   RunViewState,
   StreamEvent,
 } from "../lib/codexEventReducer";
+import type {
+  ApprovalResolutionHandler,
+  CodexApprovalRequest,
+} from "../lib/codexApprovals";
 import {
   contextFileExtensionLabel,
   contextFileInlineReferenceTokens,
@@ -56,7 +61,6 @@ import {
 } from "../lib/transcriptVirtualization";
 import {
   ORCHESTRATOR_PROMPT_CONTEXT_MIME,
-  type CodexMessage,
   type ComposerContextFile,
   type HistoryPageLoadState,
   type HistoryPageDescriptor,
@@ -426,7 +430,7 @@ function useTranscriptScrollController({
 
 type Props = {
   entries: TaskChatEntry[];
-  onResolveRequest: (request: CodexMessage, approved: boolean) => void;
+  onResolveRequest: ApprovalResolutionHandler;
   onOpenFileLink?: (href: string) => boolean;
   editablePromptEntryId?: string | null;
   onEditPrompt?: (entry: TaskChatEntry, prompt: string) => void;
@@ -480,8 +484,8 @@ export function TaskChatTranscript({
   };
 
   const stableResolveRequest = useCallback(
-    (request: CodexMessage, approved: boolean) =>
-      callbacksRef.current.onResolveRequest(request, approved),
+    (request: CodexApprovalRequest, choice: CodexApprovalRequest["choices"][number]) =>
+      callbacksRef.current.onResolveRequest(request, choice),
     [],
   );
   const stableOpenFileLink = useCallback(
@@ -1145,7 +1149,7 @@ export const TaskChatTurn = memo(function TaskChatTurn({
   onSubmitEdit: (entry: TaskChatEntry, prompt: string) => void;
   onCancelEdit: () => void;
   onStartEdit: (entry: TaskChatEntry) => void;
-  onResolveRequest: (request: CodexMessage, approved: boolean) => void;
+  onResolveRequest: ApprovalResolutionHandler;
   onOpenFileLink?: (href: string) => boolean;
   onLoadHistoricalActivity?: (entry: TaskChatEntry) => void;
 }) {
@@ -1301,7 +1305,7 @@ const AssistantRunOutput = memo(function AssistantRunOutput({
 }: {
   entry: TaskChatEntry;
   runView: RunViewState;
-  onResolveRequest: (request: CodexMessage, approved: boolean) => void;
+  onResolveRequest: ApprovalResolutionHandler;
   onOpenFileLink?: (href: string) => boolean;
   onLoadHistoricalActivity?: (entry: TaskChatEntry) => void;
 }) {
@@ -2008,43 +2012,246 @@ const RunApprovalRequests = memo(function RunApprovalRequests({
   onResolveRequest,
 }: {
   runView: RunViewState;
-  onResolveRequest: (request: CodexMessage, approved: boolean) => void;
+  onResolveRequest: ApprovalResolutionHandler;
 }) {
-  if (runView.serverRequests.length === 0) {
+  if (runView.approvalRequests.length === 0) {
     return null;
   }
 
   return (
-    <div className="approval-stack chat-approval-stack">
-      {runView.serverRequests.map((request) => (
-        <article className="approval" key={String(request.id)}>
-          <div>
-            <strong>{request.method}</strong>
-            <pre>{JSON.stringify(request.params ?? {}, null, 2)}</pre>
-          </div>
-          <div className="approval-actions">
-            <button
-              className="small"
-              type="button"
-              onClick={() => onResolveRequest(request, true)}
-            >
-              <Check size={15} />
-              Approve
-            </button>
-            <button
-              className="small danger"
-              type="button"
-              onClick={() => onResolveRequest(request, false)}
-            >
-              <X size={15} />
-              Deny
-            </button>
-          </div>
-        </article>
+    <div
+      className="approval-stack chat-approval-stack"
+      aria-label="Pending Codex approvals"
+    >
+      {runView.approvalRequests.map((request) => (
+        <ApprovalCard
+          key={request.key}
+          request={request}
+          itemResources={
+            request.itemId
+              ? (runView.approvalResourcesByItemId[request.itemId] ?? [])
+              : []
+          }
+          onResolveRequest={onResolveRequest}
+        />
       ))}
     </div>
   );
 });
+
+const ApprovalCard = memo(function ApprovalCard({
+  request,
+  itemResources,
+  onResolveRequest,
+}: {
+  request: CodexApprovalRequest;
+  itemResources: string[];
+  onResolveRequest: ApprovalResolutionHandler;
+}) {
+  const cardRef = useRef<HTMLElement>(null);
+  const busy =
+    request.status === "submitting" || request.status === "awaiting-resolution";
+  const disabled = busy || request.status === "stale";
+  const command = approvalCommand(request);
+  const cwd = approvalString(request.params.cwd);
+  const reason = approvalString(request.params.reason);
+  const environmentId = approvalString(request.params.environmentId);
+  const network = approvalRecord(request.params.networkApprovalContext);
+  const permissions =
+    approvalRecord(request.params.additionalPermissions) ??
+    approvalRecord(request.params.permissions);
+  const resources = approvalResources(request, itemResources);
+
+  useEffect(() => {
+    if (request.status !== "pending") return;
+    cardRef.current?.focus({ preventScroll: true });
+  }, [request.key, request.status]);
+
+  return (
+    <article
+      className={`approval native-approval approval-${request.status}`}
+      ref={cardRef}
+      tabIndex={-1}
+      aria-labelledby={`${request.key}-title`}
+      aria-busy={busy}
+    >
+      <header className="approval-header">
+        <ShieldAlert size={19} aria-hidden="true" />
+        <div>
+          <strong id={`${request.key}-title`}>{approvalTitle(request)}</strong>
+          <span>{interactionModeLabel(request.interactionMode)}</span>
+        </div>
+      </header>
+
+      {command ? (
+        <div className="approval-command">
+          <span>Command</span>
+          <pre>{command}</pre>
+        </div>
+      ) : null}
+
+      <dl className="approval-context">
+        {cwd ? (
+          <>
+            <dt>Working directory</dt>
+            <dd>{cwd}</dd>
+          </>
+        ) : null}
+        {environmentId ? (
+          <>
+            <dt>Environment</dt>
+            <dd>{environmentId}</dd>
+          </>
+        ) : null}
+        {reason ? (
+          <>
+            <dt>Why approval is required</dt>
+            <dd>{reason}</dd>
+          </>
+        ) : null}
+        {network ? (
+          <>
+            <dt>Network access</dt>
+            <dd>{approvalNetworkLabel(network)}</dd>
+          </>
+        ) : null}
+        {resources.length > 0 ? (
+          <>
+            <dt>Affected resources</dt>
+            <dd>{resources.join(", ")}</dd>
+          </>
+        ) : null}
+      </dl>
+
+      {permissions ? (
+        <details className="approval-permissions" open>
+          <summary>Requested permission scope</summary>
+          <pre>{JSON.stringify(permissions, null, 2)}</pre>
+        </details>
+      ) : null}
+
+      {request.error ? (
+        <p className="approval-error" role="alert">
+          {request.error}
+        </p>
+      ) : null}
+
+      <div className="approval-actions" role="group" aria-label="Approval choices">
+        {request.choices.map((choice, index) => {
+          const descriptionId = `${request.key}-choice-${index}-description`;
+          return (
+            <button
+              className={`approval-choice approval-choice-${choice.tone}`}
+              type="button"
+              key={choice.id}
+              disabled={disabled}
+              aria-describedby={descriptionId}
+              onClick={() => onResolveRequest(request, choice)}
+            >
+              <span>{choice.label}</span>
+              <small id={descriptionId}>
+                {choice.description}
+                {choice.broadScope ? " This is broader than one operation." : ""}
+              </small>
+            </button>
+          );
+        })}
+      </div>
+
+      <p className="approval-status" aria-live="polite">
+        {approvalStatusLabel(request)}
+      </p>
+    </article>
+  );
+});
+
+function approvalTitle(request: CodexApprovalRequest) {
+  switch (request.kind) {
+    case "command":
+    case "legacy-command":
+      return "Codex needs approval to run a command";
+    case "file-change":
+    case "legacy-file-change":
+      return "Codex needs approval to change files";
+    case "permissions":
+      return "Codex is requesting additional permissions";
+    default:
+      return "Unsupported native Codex request";
+  }
+}
+
+function interactionModeLabel(mode: CodexApprovalRequest["interactionMode"]) {
+  switch (mode) {
+    case "plan":
+      return "Plan Mode";
+    case "goal":
+      return "Goal Mode";
+    case "goal-plan":
+      return "Goal and Plan Mode";
+    default:
+      return "Normal chat";
+  }
+}
+
+function approvalStatusLabel(request: CodexApprovalRequest) {
+  switch (request.status) {
+    case "submitting":
+      return "Submitting your decision to Codex…";
+    case "awaiting-resolution":
+      return "Decision submitted. Waiting for Codex to resolve the native request…";
+    case "error":
+      return "The decision was not submitted. Choose an available option to retry.";
+    case "stale":
+      return "This request is no longer connected to the native Codex operation.";
+    default:
+      return request.choices.length > 0
+        ? "Codex is blocked until you choose one of the native options."
+        : "Codex remains blocked. Stop the turn to cancel this unsupported request safely.";
+  }
+}
+
+function approvalCommand(request: CodexApprovalRequest) {
+  const command = request.params.command;
+  if (typeof command === "string") return command;
+  if (Array.isArray(command) && command.every((item) => typeof item === "string")) {
+    return command.join(" ");
+  }
+  return null;
+}
+
+function approvalResources(
+  request: CodexApprovalRequest,
+  itemResources: string[],
+) {
+  const resources: string[] = [...itemResources];
+  const grantRoot = approvalString(request.params.grantRoot);
+  if (grantRoot) resources.push(grantRoot);
+  const fileChanges = approvalRecord(request.params.fileChanges);
+  if (fileChanges) resources.push(...Object.keys(fileChanges));
+  const changes = Array.isArray(request.params.changes) ? request.params.changes : [];
+  for (const change of changes) {
+    const record = approvalRecord(change);
+    const path = approvalString(record?.path);
+    if (path) resources.push(path);
+  }
+  return Array.from(new Set(resources));
+}
+
+function approvalNetworkLabel(network: Record<string, unknown>) {
+  const host = approvalString(network.host) ?? "an external host";
+  const protocol = approvalString(network.protocol);
+  return protocol ? `${protocol}://${host}` : host;
+}
+
+function approvalString(value: unknown) {
+  return typeof value === "string" && value.length > 0 ? value : null;
+}
+
+function approvalRecord(value: unknown): Record<string, unknown> | null {
+  return value !== null && typeof value === "object" && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : null;
+}
 
 function formatDuration(milliseconds: number) {
   const totalSeconds = Math.max(0, Math.floor(milliseconds / 1000));
@@ -2081,8 +2288,17 @@ function commandActionLabel(status: RunCommandActivity["status"]) {
   if (status === "failed") {
     return "Failed";
   }
+  if (status === "declined") {
+    return "Skipped";
+  }
   if (status === "running") {
     return "Running";
+  }
+  if (status === "awaiting-approval") {
+    return "Awaiting approval";
+  }
+  if (status === "pending") {
+    return "Preparing";
   }
   return "Ran";
 }

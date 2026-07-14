@@ -115,13 +115,29 @@ import type { TaskChatEntry } from "./components/TaskChatTranscript";
 import { VirtuosoTaskChatTranscript } from "./components/VirtuosoTaskChatTranscript";
 import { TaskComposer } from "./components/TaskComposer";
 import {
-  addServerRequest,
+  addApprovalRequest,
   applyCodexMessage,
   emptyRunView,
-  resolveServerRequest,
+  markApprovalAwaitingResolution,
+  markApprovalError,
+  markApprovalSubmitting,
+  resolveApprovalRequest,
   updateRunElapsed,
   type RunViewState,
 } from "./lib/codexEventReducer";
+import {
+  parseApprovalRequest,
+  type ApprovalChoice,
+  type CodexApprovalRequest,
+} from "./lib/codexApprovals";
+import {
+  accessSettings,
+  approvalModeWarning,
+  persistCodexAccessPreference,
+  readCodexAccessPreference,
+  sandboxModeWarning,
+  type CodexAccessSettings,
+} from "./lib/codexAccess";
 import {
   formatCodexAuthMessage,
   formatCodexPlanType,
@@ -157,7 +173,7 @@ import {
   serializePromptInlineFileReferences,
 } from "./lib/contextFiles";
 import type {
-  AccessLevel,
+  ApprovalMode,
   AccountLoginCompletedNotification,
   AccountUpdatedNotification,
   AdditionalContextEntry,
@@ -178,6 +194,8 @@ import type {
   ComposerContextFile,
   OssProvider,
   PreflightReport,
+  RunInteractionMode,
+  SandboxAccessMode,
   SelectedComposerSkill,
   SlashCommandItem,
   SlashCommandSearchStatus,
@@ -316,12 +334,12 @@ type ActiveRunControl = {
   runId: number | null;
   setupStarted: boolean;
   cancelScheduledSetup: (() => void) | null;
+  interactionMode: RunInteractionMode;
+  threadId: string | null;
+  turnId: string | null;
 };
 
-type RunAccessSettings = {
-  sandbox: string;
-  approvalPolicy: string;
-};
+type RunAccessSettings = CodexAccessSettings;
 
 type RunSetupSnapshot = {
   promptText: string;
@@ -900,7 +918,13 @@ function App() {
   const [selectedReasoningEffort, setSelectedReasoningEffort] = useState<string | null>(null);
   const [goalMode, setGoalMode] = useState(false);
   const [planMode, setPlanMode] = useState(false);
-  const [accessLevel, setAccessLevel] = useState<AccessLevel>("ask");
+  const [initialAccessPreference] = useState(readCodexAccessPreference);
+  const [approvalMode, setApprovalMode] = useState<ApprovalMode>(
+    initialAccessPreference.approvalMode,
+  );
+  const [sandboxMode, setSandboxMode] = useState<SandboxAccessMode>(
+    initialAccessPreference.sandboxMode,
+  );
   const [contextFiles, setContextFiles] = useState<ComposerContextFile[]>([]);
   const [taskContextDropActive, setTaskContextDropActive] = useState(false);
   const [explorerDragPreview, setExplorerDragPreview] =
@@ -938,6 +962,12 @@ function App() {
   const runViewRef = useRef<RunViewState>(emptyRunView);
   const activeChatEntryIdRef = useRef<string | null>(null);
   const activeRunControlRef = useRef<ActiveRunControl | null>(null);
+  const [unroutedApprovals, setUnroutedApprovals] = useState<
+    CodexApprovalRequest[]
+  >([]);
+  const [approvalSafetyWarning, setApprovalSafetyWarning] = useState<
+    string | null
+  >(null);
   const historyChatLoadIdRef = useRef(0);
   const taskChatEntriesRef = useRef<TaskChatEntry[]>([]);
   const transcriptScrollActiveRef = useRef(false);
@@ -1921,6 +1951,7 @@ function App() {
         event.payload.accountId,
         profileKey,
         event.payload.message,
+        event.payload.requestToken ?? null,
       );
     }).then((unlisten) => {
       if (disposed) unlisten();
@@ -1937,8 +1968,27 @@ function App() {
       ) {
         setStatusMessage(event.payload.message);
       }
+      if (
+        event.payload.status === "exited" ||
+        event.payload.status === "stopped"
+      ) {
+        setApprovalSafetyWarning(null);
+        setUnroutedApprovals((current) =>
+          current.filter((request) => request.profileKey !== profileKey),
+        );
+      }
       if (currentRunProfileKey.current === profileKey) {
         void persistRunEvent("process", event.payload.status, event.payload);
+        if (
+          event.payload.status === "exited" ||
+          event.payload.status === "stopped"
+        ) {
+          updateActiveRunView((current) => ({
+            ...current,
+            approvalRequests: [],
+            approvalResourcesByItemId: {},
+          }));
+        }
       }
       setConnectedAccountIds((current) => {
         const next = new Set(current);
@@ -2610,6 +2660,8 @@ function App() {
         status: "interrupted",
         completedAt,
         error: message,
+        approvalRequests: [],
+        approvalResourcesByItemId: {},
         streamEvents:
           elapsedRunView.streamEvents.length > 0
             ? elapsedRunView.streamEvents
@@ -2663,6 +2715,8 @@ function App() {
       control?.profileKey ??
       currentRunProfileKey.current ??
       (accountId ? (`account:${accountId}` as CodexProfileKey) : null);
+    const threadId = control?.threadId ?? runViewRef.current.threadId;
+    const turnId = control?.turnId ?? runViewRef.current.turnId;
 
     if (!control && !runIsActive) {
       return;
@@ -2700,17 +2754,30 @@ function App() {
 
     if (shouldStopCodex) {
       try {
-        if (profileKey === DEFAULT_CODEX_PROFILE_KEY) {
+        if (threadId && turnId && profileKey) {
+          await codexRpcForProfile(profileKey, accountId ?? 0, "turn/interrupt", {
+            threadId,
+            turnId,
+          });
+        } else if (profileKey === DEFAULT_CODEX_PROFILE_KEY) {
           await stopDefaultCodexProfile();
         } else if (accountId !== null) {
           await stopCodex(accountId);
         }
       } catch (error) {
-        setStatusMessage(
-          `Run stopped locally, but Codex app-server did not stop cleanly: ${
-            error instanceof Error ? error.message : String(error)
-          }`,
-        );
+        try {
+          if (profileKey === DEFAULT_CODEX_PROFILE_KEY) {
+            await stopDefaultCodexProfile();
+          } else if (accountId !== null) {
+            await stopCodex(accountId);
+          }
+        } catch (stopError) {
+          setStatusMessage(
+            `Run stopped locally, but Codex could not be interrupted safely: ${
+              stopError instanceof Error ? stopError.message : String(stopError)
+            }`,
+          );
+        }
       }
     }
   }
@@ -4504,6 +4571,9 @@ function App() {
       runId: null,
       setupStarted: false,
       cancelScheduledSetup: null,
+      interactionMode: interactionModeForSnapshot(snapshot),
+      threadId: snapshot.threadId,
+      turnId: null,
     };
 
     activeRunControlRef.current = runControl;
@@ -4680,12 +4750,14 @@ function App() {
           model?: string;
           modelProvider?: string;
           serviceTier?: string | null;
+          approvalPolicy?: string;
+          activePermissionProfile?: { id?: string | null } | null;
         }>(snapshot.profileKey, snapshot.accountId, "thread/start", {
           cwd: snapshot.workspace.path,
           model: snapshot.model,
           approvalPolicy: snapshot.access.approvalPolicy,
           approvalsReviewer: "user",
-          sandbox: snapshot.access.sandbox,
+          permissions: snapshot.access.permissionProfile,
           serviceName: "orchestrator",
           threadSource: "orchestrator",
           config: snapshot.useOss
@@ -4696,7 +4768,9 @@ function App() {
             : null,
         });
         ensureRunControlActive(runControl);
+        assertRuntimeAccessMatches(thread, snapshot.access);
         const nextThreadId = thread.thread.id;
+        runControl.threadId = nextThreadId;
         const nextThreadModel = thread.model ?? snapshot.model;
         const nextThreadModelProvider =
           thread.modelProvider ?? (snapshot.useOss ? "oss" : null);
@@ -4737,12 +4811,20 @@ function App() {
         threadModel = thread.model;
         threadModelProvider = thread.modelProvider;
       } else {
+        runControl.threadId = threadId;
         if (snapshot.chatOrigin === "codex_external") {
           try {
-            await codexRpcForProfile(snapshot.profileKey, snapshot.accountId, "thread/resume", {
+            const resumed = await codexRpcForProfile<{
+              approvalPolicy?: string;
+              activePermissionProfile?: { id?: string | null } | null;
+            }>(snapshot.profileKey, snapshot.accountId, "thread/resume", {
               threadId,
               cwd: snapshot.workspace.path,
+              approvalPolicy: snapshot.access.approvalPolicy,
+              approvalsReviewer: "user",
+              permissions: snapshot.access.permissionProfile,
             });
+            assertRuntimeAccessMatches(resumed, snapshot.access);
           } catch (error) {
             throw new Error(
               `Could not resume the external Codex thread: ${
@@ -4831,14 +4913,15 @@ function App() {
           snapshot.accountId,
           "turn/start",
           {
-          threadId: nextThreadId,
-          input: [{ type: "text", text, text_elements: [] }],
-          additionalContext,
-          cwd: snapshot.workspace.path,
-          approvalPolicy: snapshot.access.approvalPolicy,
-          approvalsReviewer: "user",
-          model: snapshot.model,
-          effort: snapshot.effort,
+            threadId: nextThreadId,
+            input: [{ type: "text", text, text_elements: [] }],
+            additionalContext,
+            cwd: snapshot.workspace.path,
+            approvalPolicy: snapshot.access.approvalPolicy,
+            approvalsReviewer: "user",
+            permissions: snapshot.access.permissionProfile,
+            model: snapshot.model,
+            effort: snapshot.effort,
           },
         );
 
@@ -4886,6 +4969,8 @@ function App() {
         turn = await startTurn(threadId);
       }
       ensureRunControlActive(runControl);
+      runControl.threadId = threadId;
+      runControl.turnId = turn.turn.id;
 
       updateActiveRunView((current) => ({
         ...current,
@@ -4997,6 +5082,7 @@ function App() {
 
   async function launchRun() {
     markPerformance("orchestrator:submit:start");
+    setApprovalSafetyWarning(null);
 
     const promptText = serializePromptInlineFileReferences(
       prompt.trim(),
@@ -5054,7 +5140,7 @@ function App() {
       selectedBranch,
       cachedPreflight: preflight,
       mode: planMode ? "plan" : "run",
-      access: accessSettings(accessLevel),
+      access: accessSettings({ approvalMode, sandboxMode }),
       model,
       effort: model ? selectedReasoningEffort : null,
       useOss,
@@ -5151,7 +5237,7 @@ function App() {
       selectedBranch,
       cachedPreflight: null,
       mode: planMode ? "plan" : "run",
-      access: accessSettings(accessLevel),
+      access: accessSettings({ approvalMode, sandboxMode }),
       model,
       effort: model ? selectedReasoningEffort : null,
       useOss,
@@ -5305,13 +5391,36 @@ function App() {
       await handleAccountUpdated(accountId, readAccountUpdated(params));
     }
 
+    if (method === "serverRequest/resolved") {
+      const requestId = params.requestId;
+      const threadId = readString(params.threadId);
+      setUnroutedApprovals((current) =>
+        current.filter(
+          (request) =>
+            request.profileKey !== profileKey ||
+            request.id !== requestId ||
+            request.threadId !== threadId,
+        ),
+      );
+    }
+
     if (currentRunProfileKey.current !== profileKey) {
       return;
     }
 
-    const nextRunView = updateActiveRunView((current) =>
-      applyCodexMessage(current, message),
-    );
+    const nextRunView = updateActiveRunView((current) => {
+      const next = applyCodexMessage(current, message);
+      if (method !== "serverRequest/resolved") return next;
+      const requestId = params.requestId;
+      if (typeof requestId !== "string" && typeof requestId !== "number") {
+        return next;
+      }
+      return resolveApprovalRequest(
+        next,
+        requestId,
+        readString(params.threadId),
+      );
+    });
     await persistRunEvent("notification", method, message);
 
     const runId = currentRunId.current;
@@ -5369,11 +5478,49 @@ function App() {
     _accountId: number,
     profileKey: CodexProfileKey,
     request: CodexMessage,
+    requestToken: string | null,
   ) {
-    if (currentRunProfileKey.current !== profileKey) {
+    if (!requestToken) {
+      const warning =
+        "Codex sent a server request without a one-shot request token. It was left unresolved for safety.";
+      setStatusMessage(warning);
+      setApprovalSafetyWarning(warning);
       return;
     }
-    updateActiveRunView((current) => addServerRequest(current, request));
+    const control = activeRunControlRef.current;
+    const parsed = parseApprovalRequest({
+      message: request,
+      profileKey,
+      requestToken,
+      interactionMode: control?.interactionMode ?? "chat",
+    });
+    if (!parsed) {
+      const warning = "Codex sent an invalid server request. It was left unresolved.";
+      setStatusMessage(warning);
+      setApprovalSafetyWarning(warning);
+      return;
+    }
+
+    const activeThreadId = control?.threadId ?? runViewRef.current.threadId;
+    const activeTurnId = control?.turnId ?? runViewRef.current.turnId;
+    const belongsToActiveRun =
+      currentRunProfileKey.current === profileKey &&
+      (!parsed.threadId || parsed.threadId === activeThreadId) &&
+      (!parsed.turnId || parsed.turnId === activeTurnId);
+
+    if (!belongsToActiveRun) {
+      setUnroutedApprovals((current) =>
+        current.some((candidate) => candidate.key === parsed.key)
+          ? current
+          : [...current, parsed],
+      );
+      setStatusMessage(
+        "Codex is waiting for approval in another conversation. The request remains blocked and was not approved.",
+      );
+      return;
+    }
+
+    updateActiveRunView((current) => addApprovalRequest(current, parsed));
     await persistRunEvent("server-request", request.method ?? null, request);
   }
 
@@ -5397,29 +5544,89 @@ function App() {
     });
   }
 
-  async function handleResolveRequest(request: CodexMessage, approved: boolean) {
-    if (request.id === undefined) {
-      return;
-    }
-
+  async function handleResolveRequest(
+    request: CodexApprovalRequest,
+    choice: ApprovalChoice,
+  ) {
     const accountId = currentRunAccountId.current;
     const profileKey = currentRunProfileKey.current;
     if (accountId === null || profileKey === null) {
       return;
     }
-    if (profileKey === DEFAULT_CODEX_PROFILE_KEY) {
-      await resolveDefaultCodexServerRequest(
-        request.id,
-        approvalResult(request, approved),
+    const currentRequest = runViewRef.current.approvalRequests.find(
+      (candidate) => candidate.key === request.key,
+    );
+    const selectedChoice = currentRequest?.choices.find(
+      (candidate) => candidate.id === choice.id,
+    );
+    if (
+      !currentRequest ||
+      (currentRequest.status !== "pending" && currentRequest.status !== "error") ||
+      !selectedChoice ||
+      currentRequest.profileKey !== profileKey
+    ) {
+      return;
+    }
+    const control = activeRunControlRef.current;
+    if (
+      currentRequest.threadId &&
+      control?.threadId &&
+      currentRequest.threadId !== control.threadId
+    ) {
+      updateActiveRunView((current) =>
+        markApprovalError(
+          current,
+          request.key,
+          "This approval belongs to a different Codex thread.",
+        ),
       );
-    } else {
-      await resolveCodexServerRequest(
-        accountId,
-        request.id,
-        approvalResult(request, approved),
+      return;
+    }
+    if (
+      currentRequest.turnId &&
+      control?.turnId &&
+      currentRequest.turnId !== control.turnId
+    ) {
+      updateActiveRunView((current) =>
+        markApprovalError(
+          current,
+          currentRequest.key,
+          "This approval belongs to a different Codex turn.",
+        ),
+      );
+      return;
+    }
+
+    updateActiveRunView((current) =>
+      markApprovalSubmitting(current, currentRequest.key, selectedChoice.id),
+    );
+    try {
+      if (profileKey === DEFAULT_CODEX_PROFILE_KEY) {
+        await resolveDefaultCodexServerRequest(
+          currentRequest.id,
+          currentRequest.requestToken,
+          selectedChoice.response,
+        );
+      } else {
+        await resolveCodexServerRequest(
+          accountId,
+          currentRequest.id,
+          currentRequest.requestToken,
+          selectedChoice.response,
+        );
+      }
+      updateActiveRunView((current) =>
+        markApprovalAwaitingResolution(current, currentRequest.key),
+      );
+    } catch (error) {
+      updateActiveRunView((current) =>
+        markApprovalError(
+          current,
+          currentRequest.key,
+          error instanceof Error ? error.message : String(error),
+        ),
       );
     }
-    updateActiveRunView((current) => resolveServerRequest(current, request.id!));
   }
 
   async function loadWorkspaceDirectory(
@@ -5829,6 +6036,32 @@ function App() {
       setGoalMode(false);
     }
   }, []);
+
+  const handleApprovalModeChange = useCallback(
+    (nextApprovalMode: ApprovalMode) => {
+      const warning = approvalModeWarning(nextApprovalMode);
+      if (warning && !window.confirm(warning)) return;
+      setApprovalMode(nextApprovalMode);
+      persistCodexAccessPreference({
+        approvalMode: nextApprovalMode,
+        sandboxMode,
+      });
+    },
+    [sandboxMode],
+  );
+
+  const handleSandboxModeChange = useCallback(
+    (nextSandboxMode: SandboxAccessMode) => {
+      const warning = sandboxModeWarning(nextSandboxMode);
+      if (warning && !window.confirm(warning)) return;
+      setSandboxMode(nextSandboxMode);
+      persistCodexAccessPreference({
+        approvalMode,
+        sandboxMode: nextSandboxMode,
+      });
+    },
+    [approvalMode],
+  );
 
   const growPreviewDrawerForDiff = useCallback(() => {
     setPreviewDrawerWidth((current) =>
@@ -7047,6 +7280,22 @@ function App() {
                 ) : (
                   <h1>{taskQuote}</h1>
                 )}
+                {unroutedApprovals.length > 0 ? (
+                  <div className="unrouted-approval-warning" role="alert">
+                    <AlertCircle size={16} aria-hidden="true" />
+                    <span>
+                      Codex is waiting for {unroutedApprovals.length} approval
+                      {unroutedApprovals.length === 1 ? "" : "s"} in another
+                      conversation. The request remains blocked and has not been approved.
+                    </span>
+                  </div>
+                ) : null}
+                {approvalSafetyWarning ? (
+                  <div className="unrouted-approval-warning" role="alert">
+                    <AlertCircle size={16} aria-hidden="true" />
+                    <span>{approvalSafetyWarning}</span>
+                  </div>
+                ) : null}
                 <TaskComposer
                   disabled={!canRun}
                   runActive={runIsActive}
@@ -7062,7 +7311,8 @@ function App() {
                   selectedReasoningEffort={selectedReasoningEffort}
                   goalMode={goalMode}
                   planMode={planMode}
-                  accessLevel={accessLevel}
+                  approvalMode={approvalMode}
+                  sandboxMode={sandboxMode}
                   contextFiles={contextFiles}
                   selectedSkills={selectedSkills}
                   mentionResults={mentionResults}
@@ -7083,7 +7333,8 @@ function App() {
                   onReasoningEffortChange={setSelectedReasoningEffort}
                   onGoalModeChange={handleGoalModeChange}
                   onPlanModeChange={handlePlanModeChange}
-                  onAccessLevelChange={setAccessLevel}
+                  onApprovalModeChange={handleApprovalModeChange}
+                  onSandboxModeChange={handleSandboxModeChange}
                   onAddFiles={() => void chooseContextFiles()}
                   onMentionSearch={(query) => void searchMentionFiles(query)}
                   onMentionFileSelect={addMentionFileToContext}
@@ -7982,21 +8233,6 @@ function normalizeHistoryRunStatus(run: HistoryRunSummary): RunViewState["status
   return "interrupted";
 }
 
-function approvalResult(request: CodexMessage, approved: boolean) {
-  if (request.method === "execCommandApproval" || request.method === "applyPatchApproval") {
-    return { decision: approved ? "approved" : "denied" };
-  }
-
-  if (request.method === "item/permissions/requestApproval") {
-    const params = (request.params ?? {}) as Record<string, unknown>;
-    return approved
-      ? { permissions: params.permissions ?? {}, scope: "turn" }
-      : { permissions: {}, scope: "turn" };
-  }
-
-  return { decision: approved ? "accept" : "decline" };
-}
-
 function buildSlashCommandResults(
   query: string,
   skills: CodexSkillSummary[],
@@ -8182,10 +8418,33 @@ function formatReasoningEffort(effort: string) {
     .join(" ");
 }
 
-function accessSettings(accessLevel: AccessLevel) {
-  return accessLevel === "full"
-    ? { sandbox: "danger-full-access", approvalPolicy: "never" }
-    : { sandbox: "workspace-write", approvalPolicy: "on-request" };
+function interactionModeForSnapshot(snapshot: RunSetupSnapshot): RunInteractionMode {
+  if (snapshot.goalMode && snapshot.mode === "plan") return "goal-plan";
+  if (snapshot.goalMode) return "goal";
+  return snapshot.mode === "plan" ? "plan" : "chat";
+}
+
+function assertRuntimeAccessMatches(
+  runtime: {
+    approvalPolicy?: string;
+    activePermissionProfile?: { id?: string | null } | null;
+  },
+  expected: RunAccessSettings,
+) {
+  if (
+    runtime.approvalPolicy &&
+    runtime.approvalPolicy !== expected.approvalPolicy
+  ) {
+    throw new Error(
+      `Codex activated approval policy ${runtime.approvalPolicy}, but the application requested ${expected.approvalPolicy}. The run was stopped to avoid a permission mismatch.`,
+    );
+  }
+  const activeProfile = runtime.activePermissionProfile?.id;
+  if (activeProfile && activeProfile !== expected.permissionProfile) {
+    throw new Error(
+      `Codex activated permission profile ${activeProfile}, but the application requested ${expected.permissionProfile}. The run was stopped to avoid a sandbox mismatch.`,
+    );
+  }
 }
 
 function normalizeDialogSelection(selection: unknown) {
