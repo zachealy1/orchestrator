@@ -16,10 +16,16 @@ function rule(selector: string) {
 }
 
 describe("history drawer animation CSS", () => {
-  it("uses one duration and easing source for drawer and workspace geometry", () => {
+  it("uses one animated drawer width for workspace and composer geometry", () => {
+    const workspace = rule(".codex-workspace");
     const workspaceBody = rule(".codex-workspace-body");
+    const reservedBody = rule(".codex-workspace-body.history-space-reserved");
+    const composer = rule(".composer-panel");
     const drawer = rule(".workspace-history-drawer");
 
+    expect(css).toContain("@property --history-active-drawer-width");
+    expect(css).toContain("@property --history-composer-max-width");
+    expect(workspace).toContain("container-type: inline-size");
     expect(workspaceBody).toContain("--history-transition-duration: 200ms");
     expect(workspaceBody).toContain(
       "--history-transition-easing: cubic-bezier(0.2, 0, 0, 1)",
@@ -31,7 +37,19 @@ describe("history drawer animation CSS", () => {
       "opacity var(--history-transition-duration) var(--history-transition-easing)",
     );
     expect(workspaceBody).toContain(
-      "transition: grid-template-columns var(--history-transition-duration)",
+      "grid-template-columns: minmax(0, 1fr) var(--history-active-drawer-width)",
+    );
+    expect(workspaceBody).toContain(
+      "--history-active-drawer-width var(--history-transition-duration)",
+    );
+    expect(workspaceBody).toContain(
+      "--history-composer-max-width var(--history-transition-duration)",
+    );
+    expect(reservedBody).toContain(
+      "--history-active-drawer-width: var(--history-drawer-width)",
+    );
+    expect(composer).toContain(
+      "max-width: var(--history-composer-max-width, 1040px)",
     );
     expect(css).not.toContain("history-input-animating");
     expect(css).not.toContain("history-input-contracted");
@@ -44,6 +62,9 @@ describe("history drawer animation CSS", () => {
     expect(drawer).toContain("position: absolute");
     expect(drawer.match(/transition:[\s\S]*?;/)?.[0]).not.toContain("width");
     expect(composer).not.toContain("transition:");
+    expect(rule(".task-hero.has-chat .composer-panel")).not.toMatch(
+      /\n\s+(?:max-)?width:/,
+    );
   });
 
   it("clips and insets the native scrollbar around the rounded chat corners", () => {

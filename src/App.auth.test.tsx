@@ -2073,6 +2073,8 @@ describe("App Codex auth", () => {
     const { user } = await renderApp();
     const prompt = screen.getByLabelText("Prompt");
     await user.type(prompt, "Keep this draft through reversal");
+    const promptTextarea = prompt as HTMLTextAreaElement;
+    promptTextarea.setSelectionRange(9, 9);
     const banner = screen.getByRole("region", { name: "Selected folder" });
     const historyButton = within(banner).getByRole("button", {
       name: /open chat history/i,
@@ -2098,6 +2100,8 @@ describe("App Codex auth", () => {
     expect(layout).toHaveAttribute("data-history-transition-phase", "open");
     expect(screen.getByLabelText("Prompt")).toBe(prompt);
     expect(prompt).toHaveValue("Keep this draft through reversal");
+    expect(promptTextarea.selectionStart).toBe(9);
+    expect(promptTextarea.selectionEnd).toBe(9);
     await waitFor(() =>
       expect(mocks.codexDefaultProfileRpcMock).toHaveBeenCalledWith(
         "thread/list",

@@ -10,6 +10,18 @@
   --radius: 8px;
 }
 
+@property --history-active-drawer-width {
+  syntax: "<length>";
+  inherits: true;
+  initial-value: 0px;
+}
+
+@property --history-composer-max-width {
+  syntax: "<length>";
+  inherits: true;
+  initial-value: 1040px;
+}
+
 .native-plan-card {
   display: grid;
   gap: 12px;
@@ -1125,26 +1137,47 @@ button.account-switcher-item:hover:not(:disabled) {
   height: 100%;
   min-height: 0;
   overflow: hidden;
+  container-type: inline-size;
 }
 
 .codex-workspace-body {
   --history-drawer-width: clamp(340px, 30vw, 460px);
+  --history-active-drawer-width: 0px;
+  --task-hero-inline-padding: clamp(18px, 3vw, 38px);
+  --history-composer-max-width: min(
+    1040px,
+    calc(
+      100cqw - var(--task-hero-inline-padding) -
+        var(--task-hero-inline-padding)
+    )
+  );
   --history-transition-duration: 200ms;
   --history-transition-easing: cubic-bezier(0.2, 0, 0, 1);
 
   position: relative;
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 0;
+  grid-template-columns: minmax(0, 1fr) var(--history-active-drawer-width);
   min-width: 0;
   min-height: 0;
   overflow: hidden;
   contain: layout paint;
-  transition: grid-template-columns var(--history-transition-duration)
-    var(--history-transition-easing);
+  transition:
+    --history-active-drawer-width var(--history-transition-duration)
+      var(--history-transition-easing),
+    --history-composer-max-width var(--history-transition-duration)
+      var(--history-transition-easing);
 }
 
 .codex-workspace-body.history-space-reserved {
-  grid-template-columns: minmax(0, 1fr) var(--history-drawer-width);
+  --history-active-drawer-width: var(--history-drawer-width);
+  --history-composer-max-width: min(
+    1040px,
+    calc(
+      100cqw - var(--history-drawer-width) -
+        var(--task-hero-inline-padding) -
+        var(--task-hero-inline-padding)
+    )
+  );
 }
 
 .workspace-context-banner {
@@ -1736,7 +1769,6 @@ button.account-switcher-item:hover:not(:disabled) {
 }
 
 .task-hero {
-  --task-hero-inline-padding: clamp(18px, 3vw, 38px);
   flex: 1 1 0;
   display: flex;
   min-width: 0;
@@ -1775,10 +1807,6 @@ button.account-switcher-item:hover:not(:disabled) {
 
 .task-hero.has-chat .composer-panel {
   min-width: 0;
-  max-width: 1040px;
-  width: calc(
-    100% - var(--task-hero-inline-padding) - var(--task-hero-inline-padding)
-  );
   align-self: center;
   z-index: 2;
   margin-top: calc(-1 * var(--radius));
@@ -3320,8 +3348,8 @@ select:disabled {
   position: relative;
   display: grid;
   min-width: 0;
-  max-width: 100%;
-  width: min(1040px, 100%);
+  max-width: var(--history-composer-max-width, 1040px);
+  width: 100%;
   overflow: visible;
   border: 1px solid var(--color-divider);
   border-radius: var(--radius);

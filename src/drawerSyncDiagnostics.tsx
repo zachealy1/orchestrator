@@ -6,10 +6,8 @@ import {
 
 type Phase =
   | "closed"
-  | "preparing"
   | "opening"
   | "open"
-  | "releasing"
   | "closing";
 
 type Sample = {
@@ -20,6 +18,7 @@ type Sample = {
 };
 
 type SequenceResult = {
+  variant: "chat" | "empty" | "multiline";
   rows: number;
   openingStartDeltaMs: number | null;
   openingEndDeltaMs: number | null;
@@ -32,6 +31,12 @@ type SequenceResult = {
   openAnchorDelta: number;
   closeAnchorDelta: number;
   openCommitGeometryDelta: number;
+  openingWidthReversals: number;
+  openingMaxReversePx: number;
+  closingWidthReversals: number;
+  closingMaxReversePx: number;
+  closedComposerWidth: number;
+  openComposerWidth: number;
   drawerTransition: string;
   composerTransition: string;
 };
@@ -140,6 +145,25 @@ function asSample(composer: DOMRect, drawer: DOMRect): Sample {
   };
 }
 
+function analyzeWidthDirection(
+  samples: Sample[],
+  direction: "opening" | "closing",
+) {
+  let reversals = 0;
+  let maxReversePx = 0;
+
+  for (let index = 1; index < samples.length; index += 1) {
+    const delta = samples[index].composerWidth - samples[index - 1].composerWidth;
+    const reverseDelta = direction === "opening" ? delta : -delta;
+    if (reverseDelta > 0.25) {
+      reversals += 1;
+      maxReversePx = Math.max(maxReversePx, reverseDelta);
+    }
+  }
+
+  return { reversals, maxReversePx };
+}
+
 export default function DrawerSyncDiagnostics() {
   const bodyRef = useRef<HTMLDivElement | null>(null);
   const drawerRef = useRef<HTMLElement | null>(null);
@@ -164,20 +188,28 @@ export default function DrawerSyncDiagnostics() {
 
     const setPhase = (phase: Phase) => {
       body.className = `codex-workspace-body${
-        phase === "open" ? " history-space-reserved history-open" : ""
-      }${phase === "preparing" ? " history-open history-input-animating" : ""}${
-        phase === "opening"
-          ? " history-open history-input-animating history-input-contracted"
+        phase === "opening" || phase === "open"
+          ? " history-space-reserved history-open"
           : ""
-      }${
-        phase === "releasing"
-          ? " history-input-animating history-input-contracted"
-          : ""
-      }${phase === "closing" ? " history-input-animating" : ""}`;
+      }`;
+      body.dataset.historyTransitionPhase = phase;
       drawer.className = `workspace-history-drawer ${phase}`;
     };
 
-    const runSequence = async (rowCount: number): Promise<SequenceResult> => {
+    const runSequence = async (
+      rowCount: number,
+      variant: SequenceResult["variant"] = "chat",
+    ): Promise<SequenceResult> => {
+      const hero = body.querySelector<HTMLElement>(".task-hero");
+      const textarea = composer.querySelector<HTMLTextAreaElement>("textarea");
+      if (hero) hero.className = variant === "empty" ? "task-hero" : "task-hero has-chat";
+      if (textarea) {
+        textarea.value =
+          variant === "multiline"
+            ? "First line\nSecond line\nThird line\nFourth line"
+            : "Profile the coordinated input animation";
+        textarea.style.height = variant === "multiline" ? "116px" : "";
+      }
       transcript.querySelectorAll<HTMLElement>(".task-chat-native-row").forEach(
         (row, index) => {
           row.hidden = index >= rowCount;
@@ -186,26 +218,11 @@ export default function DrawerSyncDiagnostics() {
       setPhase("closed");
       await delay(80);
       transcript.scrollTop = Math.min(4_000, transcript.scrollHeight / 3);
-      let closed = asSample(
+      const closed = asSample(
         composer.getBoundingClientRect(),
         drawer.getBoundingClientRect(),
       );
 
-      setPhase("releasing");
-      const contracted = asSample(
-        composer.getBoundingClientRect(),
-        drawer.getBoundingClientRect(),
-      );
-      setPhase("closed");
-      await delay(80);
-      closed = asSample(
-        composer.getBoundingClientRect(),
-        drawer.getBoundingClientRect(),
-      );
-
-      setPhase("preparing");
-      void composer.offsetWidth;
-      await delay(0);
       setPhase("opening");
       const drawerTransition = getComputedStyle(drawer).transition;
       const composerTransition = getComputedStyle(composer).transition;
@@ -225,39 +242,40 @@ export default function DrawerSyncDiagnostics() {
       const opening = analyzeProgress(
         openingSamples,
         closed,
-        contracted,
+        open,
         "opening",
       );
+      const finalOpeningSample = openingSamples[openingSamples.length - 1];
       const openCommitGeometryDelta = Math.max(
-        Math.abs(open.composerLeft - contracted.composerLeft),
-        Math.abs(open.composerWidth - contracted.composerWidth),
-        Math.abs(open.drawerLeft - contracted.drawerLeft),
+        Math.abs(open.composerLeft - finalOpeningSample.composerLeft),
+        Math.abs(open.composerWidth - finalOpeningSample.composerWidth),
+        Math.abs(open.drawerLeft - finalOpeningSample.drawerLeft),
       );
+      const openingDirection = analyzeWidthDirection(openingSamples, "opening");
 
       await delay(80);
       const closeAnchor = captureTranscriptViewportAnchor(transcript);
       const closeAnchorBefore = visibleAnchorOffset(transcript);
-      setPhase("releasing");
-      restoreTranscriptViewportAnchor(closeAnchor);
-      void composer.offsetWidth;
-      const closeAnchorDelta = Math.abs(
-        visibleAnchorOffset(transcript) - closeAnchorBefore,
-      );
-      await delay(0);
       setPhase("closing");
       const closingSamples = await collectSamples(composer, drawer, 230);
       setPhase("closed");
+      restoreTranscriptViewportAnchor(closeAnchor);
+      const closeAnchorDelta = Math.abs(
+        visibleAnchorOffset(transcript) - closeAnchorBefore,
+      );
       await nextFrame();
       const finalClosed = asSample(
         composer.getBoundingClientRect(),
         drawer.getBoundingClientRect(),
       );
       const closing = analyzeProgress(closingSamples, open, finalClosed, "closing");
+      const closingDirection = analyzeWidthDirection(closingSamples, "closing");
       const frameDeltas = [openingSamples, closingSamples].flatMap((samples) =>
         samples.slice(1).map((sample, index) => sample.time - samples[index].time),
       );
 
       return {
+        variant,
         rows: rowCount,
         openingStartDeltaMs: opening.startDelta,
         openingEndDeltaMs: opening.endDelta,
@@ -270,8 +288,64 @@ export default function DrawerSyncDiagnostics() {
         openAnchorDelta,
         closeAnchorDelta,
         openCommitGeometryDelta,
+        openingWidthReversals: openingDirection.reversals,
+        openingMaxReversePx: openingDirection.maxReversePx,
+        closingWidthReversals: closingDirection.reversals,
+        closingMaxReversePx: closingDirection.maxReversePx,
+        closedComposerWidth: closed.composerWidth,
+        openComposerWidth: open.composerWidth,
         drawerTransition,
         composerTransition,
+      };
+    };
+
+    const runRapidReversal = async () => {
+      const hero = body.querySelector<HTMLElement>(".task-hero");
+      if (hero) hero.className = "task-hero has-chat";
+      setPhase("closed");
+      await delay(80);
+      const textarea = composer.querySelector("textarea");
+      const originalTextarea = textarea;
+      const originalValue = textarea?.value ?? "";
+      textarea?.focus();
+      textarea?.setSelectionRange(7, 7);
+      const closedWidth = composer.getBoundingClientRect().width;
+
+      setPhase("opening");
+      const firstOpening = await collectSamples(composer, drawer, 72);
+      setPhase("closing");
+      const reversedClosing = await collectSamples(composer, drawer, 72);
+      setPhase("opening");
+      const finalOpening = await collectSamples(composer, drawer, 230);
+      setPhase("open");
+      const openWidth = composer.getBoundingClientRect().width;
+      const samples = [...firstOpening, ...reversedClosing, ...finalOpening];
+      const lowerBound = Math.min(closedWidth, openWidth) - 0.25;
+      const upperBound = Math.max(closedWidth, openWidth) + 0.25;
+      const frameDeltas = samples
+        .slice(1)
+        .map((sample, index) => sample.time - samples[index].time);
+      const finalReversalSample = finalOpening[finalOpening.length - 1];
+
+      return {
+        firstOpeningReversals: analyzeWidthDirection(firstOpening, "opening").reversals,
+        reversedClosingReversals: analyzeWidthDirection(reversedClosing, "closing")
+          .reversals,
+        finalOpeningReversals: analyzeWidthDirection(finalOpening, "opening").reversals,
+        samplesOutsideEndpointBounds: samples.filter(
+          (sample) =>
+            sample.composerWidth < lowerBound || sample.composerWidth > upperBound,
+        ).length,
+        finalWidthDelta: Math.abs(
+          finalReversalSample.composerWidth - openWidth,
+        ),
+        maxFrameMs: Math.max(0, ...frameDeltas),
+        framesOverBudget: frameDeltas.filter((value) => value > 20).length,
+        textareaPreserved:
+          composer.querySelector("textarea") === originalTextarea &&
+          textarea?.value === originalValue &&
+          textarea?.selectionStart === 7 &&
+          textarea?.selectionEnd === 7,
       };
     };
 
@@ -279,10 +353,18 @@ export default function DrawerSyncDiagnostics() {
       await delay(500);
       const small = await runSequence(6);
       const large = await runSequence(300);
+      const empty = await runSequence(0, "empty");
+      const multiline = await runSequence(6, "multiline");
+      const rapidReversal = await runRapidReversal();
       if (cancelled) return;
-      const payload = encodeURIComponent(JSON.stringify({ small, large }));
-      const beacon = new Image();
-      beacon.src = `http://127.0.0.1:8765/profile?data=${payload}`;
+      const result = document.getElementById("profile-result");
+      if (result) {
+        result.textContent = JSON.stringify(
+          { small, large, empty, multiline, rapidReversal },
+          null,
+          2,
+        );
+      }
       document.title = "Drawer profile complete";
     })();
 
@@ -292,7 +374,9 @@ export default function DrawerSyncDiagnostics() {
   }, []);
 
   return (
-    <main style={{ width: "100vw", height: "100vh" }}>
+    <main
+      style={{ width: "100vw", height: "100vh", containerType: "inline-size" }}
+    >
       <div className="codex-workspace-body" ref={bodyRef} style={{ height: "100%" }}>
         <section className="task-hero has-chat" aria-label="Diagnostic chat">
           <section
@@ -334,6 +418,7 @@ export default function DrawerSyncDiagnostics() {
           <header><h2>History</h2></header>
           <div className="history-drawer-body">Native profile fixture</div>
         </aside>
+        <pre id="profile-result" hidden />
       </div>
     </main>
   );
