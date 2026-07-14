@@ -101,62 +101,6 @@ vi.mock("./assets/brand/orchestrator-wordmark.png", () => ({
   default: "orchestrator-wordmark.png",
 }));
 
-vi.mock("react-virtuoso", async () => {
-  const React = await import("react");
-  return {
-    Virtuoso: React.forwardRef(function MockVirtuoso(
-      {
-        className,
-        computeItemKey,
-        data = [],
-        firstItemIndex,
-        initialTopMostItemIndex,
-        isScrolling,
-        itemContent,
-        restoreStateFrom,
-      }: any,
-      ref,
-    ) {
-      React.useImperativeHandle(ref, () => ({
-        getState: (callback: (state: unknown) => void) =>
-          callback({ ranges: [], scrollTop: 0 }),
-        scrollToIndex: vi.fn(),
-      }));
-      return (
-        <div
-          className={className}
-          data-testid="mock-virtuoso"
-          data-initial-index={
-            initialTopMostItemIndex
-              ? JSON.stringify(initialTopMostItemIndex)
-              : ""
-          }
-          data-restored={restoreStateFrom ? "true" : "false"}
-          data-first-item-index={firstItemIndex}
-        >
-          {data.map((entry: any, index: number) => (
-            <div key={computeItemKey?.(index, entry) ?? index}>
-              {itemContent(index, entry)}
-            </div>
-          ))}
-          <button
-            type="button"
-            hidden
-            onClick={() => isScrolling?.(true)}
-            aria-label="Start transcript scrolling"
-          />
-          <button
-            type="button"
-            hidden
-            onClick={() => isScrolling?.(false)}
-            aria-label="Stop transcript scrolling"
-          />
-        </div>
-      );
-    }),
-  };
-});
-
 vi.mock("./codexClient", () => ({
   cancelCodexLogin: mocks.cancelCodexLoginMock,
   codexDefaultProfileRpc: mocks.codexDefaultProfileRpcMock,
@@ -2164,12 +2108,11 @@ describe("App Codex auth", () => {
     );
     expect(await screen.findByText("Latest result.")).toBeInTheDocument();
 
-    const transcript = screen.getByTestId("mock-virtuoso");
-    expect(transcript).toHaveAttribute(
-      "data-initial-index",
-      JSON.stringify({ index: "LAST", align: "end" }),
-    );
-    expect(transcript).toHaveAttribute("data-restored", "false");
+    const transcript = screen.getByRole("region", {
+      name: "Task chat transcript",
+    });
+    expect(transcript).toHaveClass("native-transcript");
+    expect(transcript.querySelectorAll(".task-chat-native-row")).toHaveLength(2);
   });
 
   it("publishes an uncached external transcript once after its full snapshot is ready", async () => {
@@ -2239,10 +2182,11 @@ describe("App Codex auth", () => {
     );
     expect(await screen.findByText("External result 65.")).toBeInTheDocument();
     expect(await screen.findByText("External result 1.")).toBeInTheDocument();
-    expect(screen.getByTestId("mock-virtuoso")).toHaveAttribute(
-      "data-first-item-index",
-      String(1_000_000),
-    );
+    expect(
+      screen
+        .getByRole("region", { name: "Task chat transcript" })
+        .querySelectorAll(".task-chat-native-row"),
+    ).toHaveLength(65);
     expect(mocks.syncDefaultProfileThreadTranscriptMock).toHaveBeenCalledTimes(1);
     expect(mocks.codexDefaultProfileRpcMock).not.toHaveBeenCalledWith(
       "thread/turns/list",

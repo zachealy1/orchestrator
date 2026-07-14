@@ -1671,23 +1671,30 @@ button.account-switcher-item:hover:not(:disabled) {
   padding: 4px var(--task-hero-inline-padding);
 }
 
-.task-chat-transcript.virtuoso-transcript {
-  overflow: hidden;
+.task-chat-transcript.native-transcript {
+  overflow-x: hidden;
+  overflow-y: auto;
+  overflow-anchor: auto;
+  border-radius: var(--radius) var(--radius) 0 0;
   padding: 0;
+  -webkit-overflow-scrolling: touch;
 }
 
-.task-chat-virtuoso {
+.task-chat-transcript.native-transcript::-webkit-scrollbar-track {
+  margin-block: var(--radius);
+}
+
+.task-chat-native-list {
   width: 100%;
-  height: 100%;
-  overflow-anchor: none;
-  overscroll-behavior: contain;
+  min-height: 100%;
 }
 
-.task-chat-virtuoso-row {
+.task-chat-native-row {
   display: grid;
   width: 100%;
   justify-items: center;
   box-sizing: border-box;
+  overflow-anchor: auto;
   padding: 4px var(--task-hero-inline-padding) 18px;
   contain: layout paint style;
 }
