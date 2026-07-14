@@ -32,6 +32,7 @@ import {
 import {
   useCallback,
   useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -43,6 +44,7 @@ import type {
   KeyboardEvent as ReactKeyboardEvent,
   MouseEvent as ReactMouseEvent,
   PointerEvent as ReactPointerEvent,
+  TransitionEvent as ReactTransitionEvent,
 } from "react";
 import "./App.css";
 import orchestratorMark from "./assets/brand/orchestrator-mark.png";
@@ -114,6 +116,17 @@ import { FilePreviewDrawer } from "./components/FilePreviewDrawer";
 import type { TaskChatEntry } from "./components/TaskChatTranscript";
 import { VirtuosoTaskChatTranscript } from "./components/VirtuosoTaskChatTranscript";
 import { TaskComposer } from "./components/TaskComposer";
+import {
+  historyDrawerInputAnimating,
+  historyDrawerInputContracted,
+  historyDrawerReservesSpace,
+  type HistoryDrawerPhase,
+} from "./lib/historyDrawerTransition";
+import {
+  captureTranscriptViewportAnchor,
+  restoreTranscriptViewportAnchor,
+  type TranscriptViewportAnchor,
+} from "./lib/transcriptScrollAnchor";
 import {
   addServerRequest,
   applyCodexMessage,
@@ -222,6 +235,7 @@ const HISTORY_VIRTUOSO_BASE_INDEX = 1_000_000;
 const HISTORY_TRANSCRIPT_COMMIT_IDLE_MS = 150;
 const HISTORY_TRANSCRIPT_RESIZE_IDLE_MS = 120;
 const HISTORY_TRANSCRIPT_RESIZE_WAIT_LIMIT_MS = 500;
+const HISTORY_DRAWER_TRANSITION_FALLBACK_MS = 260;
 const EMPTY_GIT_STATUS_BY_PATH = new Map<string, WorkspaceGitFileStatus>();
 const EMPTY_DIRTY_DIRECTORY_PATHS = new Set<string>();
 const DEFAULT_CODEX_PROFILE_KEY: CodexProfileKey = "default";
@@ -856,6 +870,8 @@ function App() {
   const [taskChatEntries, setTaskChatEntries] = useState<TaskChatEntry[]>([]);
   const [activeChatEntryId, setActiveChatEntryId] = useState<string | null>(null);
   const [historyDrawerOpen, setHistoryDrawerOpen] = useState(false);
+  const [historyDrawerPhase, setHistoryDrawerPhaseState] =
+    useState<HistoryDrawerPhase>("closed");
   const [historyState, setHistoryState] = useState<WorkspaceHistoryState>({
     status: "idle",
     chats: [],
@@ -941,6 +957,16 @@ function App() {
   const historyChatLoadIdRef = useRef(0);
   const taskChatEntriesRef = useRef<TaskChatEntry[]>([]);
   const transcriptScrollActiveRef = useRef(false);
+  const historyDrawerDesiredOpenRef = useRef(false);
+  const historyDrawerPhaseRef = useRef<HistoryDrawerPhase>("closed");
+  const historyDrawerAdvanceFramesRef = useRef<number[]>([]);
+  const historyDrawerTransitionTimerRef = useRef<number | null>(null);
+  const historyDrawerPendingOpenCommitRef = useRef(false);
+  const historyDrawerLayoutAnchorRef = useRef<TranscriptViewportAnchor | null>(null);
+  const historyDrawerClosedWaitersRef = useRef(new Set<() => void>());
+  const driveHistoryDrawerTransitionRef = useRef<() => void>(() => undefined);
+  const completeHistoryDrawerMotionRef = useRef<() => void>(() => undefined);
+  const taskViewportElementRef = useRef<HTMLElement | null>(null);
   const stableHistoryChatCacheRef = useRef(
     new Map<number, StableHistoryChatCacheEntry>(),
   );
@@ -1004,6 +1030,8 @@ function App() {
   const workspaceContextMenuRef = useRef<HTMLDivElement | null>(null);
   const chatHistoryContextMenuRef = useRef<HTMLDivElement | null>(null);
   const accountMenuContainerRef = useRef<HTMLDivElement | null>(null);
+  taskViewportElementRef.current = taskViewportElement;
+  historyDrawerDesiredOpenRef.current = historyDrawerOpen;
 
   const schedulePendingTranscriptCommit = useCallback(() => {
     if (
@@ -1123,6 +1151,12 @@ function App() {
         transcriptCommitIdleTimerRef.current = null;
       }
       return;
+    }
+
+    if (historyDrawerPendingOpenCommitRef.current) {
+      completeHistoryDrawerMotionRef.current();
+    } else {
+      driveHistoryDrawerTransitionRef.current();
     }
 
     const pendingViewportWidth = pendingTranscriptViewportWidthRef.current;
@@ -2854,8 +2888,9 @@ function App() {
     schedulePendingTranscriptCommit();
   }
 
-  function markTranscriptViewportUnstable() {
-    if (!taskViewportElement || typeof ResizeObserver === "undefined") {
+  const markTranscriptViewportUnstable = useCallback(() => {
+    const viewportElement = taskViewportElementRef.current;
+    if (!viewportElement || typeof ResizeObserver === "undefined") {
       return;
     }
     transcriptViewportStableRef.current = false;
@@ -2869,7 +2904,7 @@ function App() {
     }
     transcriptViewportResizeTimerRef.current = window.setTimeout(() => {
       transcriptViewportResizeTimerRef.current = null;
-      const width = taskViewportElement.getBoundingClientRect().width;
+      const width = viewportElement.getBoundingClientRect().width;
       if (width > 0) {
         pendingTranscriptViewportWidthRef.current = width;
       }
@@ -2886,7 +2921,7 @@ function App() {
         schedulePendingTranscriptCommit();
       }
     }, HISTORY_TRANSCRIPT_RESIZE_WAIT_LIMIT_MS);
-  }
+  }, [schedulePendingTranscriptCommit, settleTranscriptViewportWidth]);
 
   async function waitForTranscriptViewportStable() {
     if (transcriptViewportStableRef.current) {
@@ -2896,6 +2931,171 @@ function App() {
       transcriptViewportWaitersRef.current.add(resolve);
     });
   }
+
+  const updateHistoryDrawerPhase = useCallback((phase: HistoryDrawerPhase) => {
+    historyDrawerPhaseRef.current = phase;
+    setHistoryDrawerPhaseState(phase);
+  }, []);
+
+  const clearHistoryDrawerSchedule = useCallback(() => {
+    historyDrawerAdvanceFramesRef.current.forEach((frame) => {
+      window.cancelAnimationFrame(frame);
+    });
+    historyDrawerAdvanceFramesRef.current = [];
+    if (historyDrawerTransitionTimerRef.current !== null) {
+      window.clearTimeout(historyDrawerTransitionTimerRef.current);
+      historyDrawerTransitionTimerRef.current = null;
+    }
+  }, []);
+
+  const updateHistoryDrawerLayoutPhase = useCallback(
+    (phase: "open" | "releasing") => {
+      historyDrawerLayoutAnchorRef.current = captureTranscriptViewportAnchor(
+        taskViewportElementRef.current,
+      );
+      markTranscriptViewportUnstable();
+      updateHistoryDrawerPhase(phase);
+    },
+    [markTranscriptViewportUnstable, updateHistoryDrawerPhase],
+  );
+
+  const driveHistoryDrawerTransition = useCallback(() => {
+    if (transcriptScrollActiveRef.current) return;
+
+    const phase = historyDrawerPhaseRef.current;
+    if (historyDrawerDesiredOpenRef.current) {
+      if (phase === "closed") {
+        updateHistoryDrawerPhase("preparing");
+      } else if (
+        phase === "releasing" ||
+        phase === "closing-ready" ||
+        phase === "closing"
+      ) {
+        updateHistoryDrawerPhase("opening");
+      }
+      return;
+    }
+    if (phase === "preparing") {
+      updateHistoryDrawerPhase("closed");
+    } else if (phase === "opening") {
+      updateHistoryDrawerPhase("closing");
+    } else if (phase === "open") {
+      updateHistoryDrawerLayoutPhase("releasing");
+    }
+  }, [updateHistoryDrawerLayoutPhase, updateHistoryDrawerPhase]);
+  driveHistoryDrawerTransitionRef.current = driveHistoryDrawerTransition;
+
+  const completeHistoryDrawerMotion = useCallback(() => {
+    const phase = historyDrawerPhaseRef.current;
+    if (phase === "opening") {
+      if (!historyDrawerDesiredOpenRef.current) {
+        historyDrawerPendingOpenCommitRef.current = false;
+        updateHistoryDrawerPhase("closing");
+        return;
+      }
+      if (transcriptScrollActiveRef.current) {
+        historyDrawerPendingOpenCommitRef.current = true;
+        return;
+      }
+      historyDrawerPendingOpenCommitRef.current = false;
+      updateHistoryDrawerLayoutPhase("open");
+      return;
+    }
+    if (phase === "closing") {
+      updateHistoryDrawerPhase("closed");
+    }
+  }, [updateHistoryDrawerLayoutPhase, updateHistoryDrawerPhase]);
+  completeHistoryDrawerMotionRef.current = completeHistoryDrawerMotion;
+
+  const requestHistoryDrawerOpen = useCallback(
+    (open: boolean) => {
+      historyDrawerDesiredOpenRef.current = open;
+      setHistoryDrawerOpen(open);
+      driveHistoryDrawerTransitionRef.current();
+    },
+    [],
+  );
+
+  const waitForHistoryDrawerClosed = useCallback(() => {
+    if (historyDrawerPhaseRef.current === "closed") {
+      return Promise.resolve();
+    }
+    return new Promise<void>((resolve) => {
+      historyDrawerClosedWaitersRef.current.add(resolve);
+    });
+  }, []);
+
+  const handleHistoryDrawerTransitionEnd = useCallback(
+    (event: ReactTransitionEvent<HTMLElement>) => {
+      if (
+        event.target !== event.currentTarget ||
+        event.propertyName !== "transform"
+      ) {
+        return;
+      }
+      completeHistoryDrawerMotionRef.current();
+    },
+    [],
+  );
+
+  useLayoutEffect(() => {
+    if (historyDrawerPhase === "open" || historyDrawerPhase === "releasing") {
+      const anchor = historyDrawerLayoutAnchorRef.current;
+      historyDrawerLayoutAnchorRef.current = null;
+      restoreTranscriptViewportAnchor(anchor);
+    }
+
+    if (historyDrawerPhase === "closed") {
+      historyDrawerClosedWaitersRef.current.forEach((resolve) => resolve());
+      historyDrawerClosedWaitersRef.current.clear();
+    }
+  }, [historyDrawerPhase]);
+
+  useEffect(() => {
+    clearHistoryDrawerSchedule();
+    const phase = historyDrawerPhaseRef.current;
+    const nextPhase =
+      phase === "preparing"
+        ? "opening"
+        : phase === "releasing"
+          ? "closing-ready"
+          : phase === "closing-ready"
+            ? "closing"
+            : null;
+
+    if (nextPhase) {
+      const firstFrame = window.requestAnimationFrame(() => {
+        const secondFrame = window.requestAnimationFrame(() => {
+          if (historyDrawerPhaseRef.current === phase) {
+            updateHistoryDrawerPhase(nextPhase);
+          }
+        });
+        historyDrawerAdvanceFramesRef.current.push(secondFrame);
+      });
+      historyDrawerAdvanceFramesRef.current.push(firstFrame);
+    } else if (phase === "opening" || phase === "closing") {
+      const reduceMotion = window.matchMedia?.(
+        "(prefers-reduced-motion: reduce)",
+      ).matches;
+      historyDrawerTransitionTimerRef.current = window.setTimeout(
+        () => completeHistoryDrawerMotionRef.current(),
+        reduceMotion ? 0 : HISTORY_DRAWER_TRANSITION_FALLBACK_MS,
+      );
+    } else if (phase === "open" || phase === "closed") {
+      driveHistoryDrawerTransitionRef.current();
+    }
+
+    return clearHistoryDrawerSchedule;
+  }, [clearHistoryDrawerSchedule, historyDrawerPhase, updateHistoryDrawerPhase]);
+
+  useEffect(
+    () => () => {
+      clearHistoryDrawerSchedule();
+      historyDrawerClosedWaitersRef.current.forEach((resolve) => resolve());
+      historyDrawerClosedWaitersRef.current.clear();
+    },
+    [clearHistoryDrawerSchedule],
+  );
 
   function cancelActiveExternalTranscriptSync() {
     const active = activeExternalTranscriptSyncRef.current;
@@ -3132,7 +3332,7 @@ function App() {
     cancelActiveHistoricalTranscriptPreparation();
     pendingTranscriptCommitRef.current = null;
     transcriptScrollActiveRef.current = false;
-    markTranscriptViewportUnstable();
+    historyDrawerDesiredOpenRef.current = false;
     const session: WorkspaceChatSession = {
       chatId: chat.id,
       threadId: chat.external_thread_id ?? chat.codex_thread_id,
@@ -3165,9 +3365,11 @@ function App() {
       setHistoryDrawerOpen(false);
       setActiveView("task");
     });
+    driveHistoryDrawerTransitionRef.current();
 
     setStatusMessage(`Opening chat from ${formatHistoryTimestamp(chat.latest_activity_at)}.`);
     try {
+      await waitForHistoryDrawerClosed();
       await waitForNextPaint();
       await waitForTranscriptViewportStable();
       if (historyChatLoadIdRef.current !== loadId) {
@@ -6983,12 +7185,25 @@ function App() {
               newChatDisabled={runIsActive}
               onNewChat={startNewWorkspaceChat}
               historyOpen={historyDrawerOpen}
-              onToggleHistory={() => setHistoryDrawerOpen((current) => !current)}
+              onToggleHistory={() => requestHistoryDrawerOpen(!historyDrawerOpen)}
             />
             <div
-              className={`codex-workspace-body ${
+              className={`codex-workspace-body history-phase-${historyDrawerPhase} ${
                 historyDrawerOpen ? "history-open" : ""
+              } ${
+                historyDrawerReservesSpace(historyDrawerPhase)
+                  ? "history-space-reserved"
+                  : ""
+              } ${
+                historyDrawerInputAnimating(historyDrawerPhase)
+                  ? "history-input-animating"
+                  : ""
+              } ${
+                historyDrawerInputContracted(historyDrawerPhase)
+                  ? "history-input-contracted"
+                  : ""
               }`}
+              data-history-transition-phase={historyDrawerPhase}
             >
               <section
                 className={`task-hero ${hasTaskChat ? "has-chat" : ""}`}
@@ -7114,12 +7329,14 @@ function App() {
               </section>
               <WorkspaceHistoryDrawer
                 open={historyDrawerOpen}
+                phase={historyDrawerPhase}
                 workspace={selectedWorkspace}
                 historyState={historyState}
                 selectedChatId={selectedHistoryChatId ?? selectedWorkspaceChatSession?.chatId ?? null}
                 runSelectionDisabled={runIsActive}
                 onSelectChat={(chat) => void selectHistoryChat(chat)}
                 onOpenChatContextMenu={openChatHistoryContextMenu}
+                onTransitionEnd={handleHistoryDrawerTransitionEnd}
               />
               {chatHistoryContextMenu ? (
                 <div
@@ -7705,14 +7922,17 @@ function WorkspaceContextMeter({
 
 function WorkspaceHistoryDrawer({
   open,
+  phase,
   workspace,
   historyState,
   selectedChatId,
   runSelectionDisabled,
   onSelectChat,
   onOpenChatContextMenu,
+  onTransitionEnd,
 }: {
   open: boolean;
+  phase: HistoryDrawerPhase;
   workspace: Workspace | null;
   historyState: WorkspaceHistoryState;
   selectedChatId: number | null;
@@ -7722,13 +7942,16 @@ function WorkspaceHistoryDrawer({
     chat: ChatListItem,
     event: ReactMouseEvent<HTMLElement> | ReactKeyboardEvent<HTMLElement>,
   ) => void;
+  onTransitionEnd: (event: ReactTransitionEvent<HTMLElement>) => void;
 }) {
   return (
     <aside
-      className={`workspace-history-drawer ${open ? "open" : "closed"}`}
+      className={`workspace-history-drawer ${open ? "open" : "closed"} phase-${phase}`}
       aria-label="Workspace chat history"
       aria-hidden={!open}
       inert={!open ? true : undefined}
+      data-transition-phase={phase}
+      onTransitionEnd={onTransitionEnd}
     >
       <header>
         <div>

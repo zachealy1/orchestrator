@@ -1967,6 +1967,104 @@ describe("App Codex auth", () => {
     expect(historyButton).toHaveAttribute("aria-pressed", "false");
   });
 
+  it("coordinates drawer and composer phases without remounting the prompt", async () => {
+    mocks.listWorkspaceChatsMock.mockResolvedValue([]);
+    const { user } = await renderApp();
+    const prompt = screen.getByLabelText("Prompt");
+    await user.type(prompt, "Keep this draft");
+    const banner = screen.getByRole("region", { name: "Selected folder" });
+    const historyButton = within(banner).getByRole("button", {
+      name: /open chat history/i,
+    });
+
+    await user.click(historyButton);
+    const drawer = screen.getByRole("complementary", {
+      name: "Workspace chat history",
+    });
+    const layout = drawer.closest<HTMLElement>(".codex-workspace-body");
+    expect(layout).not.toBeNull();
+
+    await waitFor(() =>
+      expect(layout).toHaveAttribute("data-history-transition-phase", "opening"),
+    );
+    expect(layout).toHaveClass("history-input-animating");
+    expect(layout).toHaveClass("history-input-contracted");
+    expect(layout).not.toHaveClass("history-space-reserved");
+    expect(screen.getByLabelText("Prompt")).toBe(prompt);
+    expect(prompt).toHaveValue("Keep this draft");
+
+    fireEvent.transitionEnd(drawer, { propertyName: "transform" });
+    await waitFor(() =>
+      expect(layout).toHaveAttribute("data-history-transition-phase", "open"),
+    );
+    expect(layout).toHaveClass("history-space-reserved");
+    expect(layout).not.toHaveClass("history-input-animating");
+
+    await user.click(historyButton);
+    await waitFor(() =>
+      expect(layout).toHaveAttribute("data-history-transition-phase", "closing"),
+    );
+    expect(layout).toHaveClass("history-input-animating");
+    expect(layout).not.toHaveClass("history-input-contracted");
+    expect(layout).not.toHaveClass("history-space-reserved");
+
+    fireEvent.transitionEnd(drawer, { propertyName: "transform" });
+    await waitFor(() =>
+      expect(layout).toHaveAttribute("data-history-transition-phase", "closed"),
+    );
+    expect(screen.getByLabelText("Prompt")).toBe(prompt);
+    expect(prompt).toHaveValue("Keep this draft");
+  });
+
+  it("waits for transcript momentum to settle before resizing the chat viewport", async () => {
+    const historicalChat = workspaceChatFixture({
+      id: 405,
+      title: "Scroll-safe history chat",
+    });
+    mocks.listWorkspaceChatsMock.mockResolvedValue([historicalChat]);
+    mocks.listLocalChatTranscriptMock.mockResolvedValue([
+      workspaceRunFixture({
+        id: 305,
+        chat_id: historicalChat.id,
+        original_prompt: "Keep scrolling smooth",
+        final_message: "The transcript is ready.",
+      }),
+    ]);
+    const { user } = await renderApp();
+    const banner = screen.getByRole("region", { name: "Selected folder" });
+    const historyButton = within(banner).getByRole("button", {
+      name: /open chat history/i,
+    });
+
+    await user.click(historyButton);
+    const drawer = screen.getByRole("complementary", {
+      name: "Workspace chat history",
+    });
+    await user.click(
+      await within(drawer).findByRole("button", {
+        name: /scroll-safe history chat/i,
+      }),
+    );
+    expect(await screen.findByText("The transcript is ready.")).toBeInTheDocument();
+
+    const transcript = screen.getByLabelText("Task chat transcript");
+    const layout = transcript.closest<HTMLElement>(".codex-workspace-body");
+    expect(layout).toHaveAttribute("data-history-transition-phase", "closed");
+    fireEvent.wheel(transcript, { deltaY: -120 });
+    await user.click(historyButton);
+
+    expect(layout).toHaveAttribute("data-history-transition-phase", "closed");
+    expect(layout).not.toHaveClass("history-input-animating");
+    await waitFor(
+      () =>
+        expect(layout).toHaveAttribute(
+          "data-history-transition-phase",
+          "preparing",
+        ),
+      { timeout: 1_000 },
+    );
+  });
+
   it("opens a clicked chat history row in the chat window and closes the drawer", async () => {
     const historicalChat = workspaceChatFixture({
       id: 401,
