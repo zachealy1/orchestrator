@@ -999,21 +999,23 @@ button.account-switcher-item:hover:not(:disabled) {
 }
 
 .codex-workspace-body {
-  --history-drawer-width: 0px;
+  --history-drawer-width: clamp(340px, 30vw, 460px);
+  --history-composer-shift: clamp(-230px, -15vw, -170px);
+  --history-transition-duration: 200ms;
+  --history-transition-easing: cubic-bezier(0.2, 0, 0, 1);
 
+  position: relative;
   display: flex;
+  box-sizing: border-box;
   min-width: 0;
   min-height: 0;
   overflow: hidden;
   contain: layout paint;
+  padding-right: 0;
 }
 
-.codex-workspace-body.history-open {
-  --history-drawer-width: clamp(340px, 30vw, 460px);
-}
-
-.codex-workspace-body.history-open .task-hero:not(.has-chat) {
-  --task-hero-inline-padding: clamp(14px, 2vw, 28px);
+.codex-workspace-body.history-space-reserved {
+  padding-right: var(--history-drawer-width);
 }
 
 .workspace-context-banner {
@@ -1657,6 +1659,33 @@ button.account-switcher-item:hover:not(:disabled) {
   flex: 0 0 auto;
 }
 
+.codex-workspace-body.history-input-animating .composer-panel {
+  transition:
+    width var(--history-transition-duration) var(--history-transition-easing),
+    transform var(--history-transition-duration) var(--history-transition-easing);
+  will-change: width, transform;
+}
+
+.codex-workspace-body.history-input-contracted
+  .task-hero:not(.has-chat)
+  .composer-panel {
+  width: min(1040px, calc(100% - var(--history-drawer-width)));
+  transform: translateX(var(--history-composer-shift));
+}
+
+.codex-workspace-body.history-input-contracted
+  .task-hero.has-chat
+  .composer-panel {
+  width: min(
+    1040px,
+    calc(
+      100% - var(--task-hero-inline-padding) - var(--task-hero-inline-padding) -
+        var(--history-drawer-width)
+    )
+  );
+  transform: translateX(var(--history-composer-shift));
+}
+
 .task-chat-transcript {
   position: relative;
   display: block;
@@ -1672,6 +1701,8 @@ button.account-switcher-item:hover:not(:disabled) {
 }
 
 .task-chat-transcript.native-transcript {
+  --chat-scrollbar-corner-inset: calc(var(--radius) + 4px);
+
   overflow-x: hidden;
   overflow-y: auto;
   overflow-anchor: auto;
@@ -1681,7 +1712,7 @@ button.account-switcher-item:hover:not(:disabled) {
 }
 
 .task-chat-transcript.native-transcript::-webkit-scrollbar-track {
-  margin-block: var(--radius);
+  margin-block: var(--chat-scrollbar-corner-inset);
 }
 
 .task-chat-native-list {
@@ -2337,10 +2368,12 @@ summary.run-live-metrics::-webkit-details-marker {
 }
 
 .workspace-history-drawer {
-  position: relative;
+  position: absolute;
+  top: 0;
+  right: 0;
+  bottom: 0;
   z-index: 3;
   display: grid;
-  flex: 0 0 auto;
   width: var(--history-drawer-width);
   min-width: 0;
   height: 100%;
@@ -2354,30 +2387,47 @@ summary.run-live-metrics::-webkit-details-marker {
   overflow: hidden;
   transform: translateX(0);
   transition:
-    width 0.2s cubic-bezier(0.2, 0, 0, 1),
-    opacity 0.16s ease,
-    transform 0.2s cubic-bezier(0.2, 0, 0, 1),
+    opacity var(--history-transition-duration) var(--history-transition-easing),
+    transform var(--history-transition-duration) var(--history-transition-easing),
     visibility 0s linear 0s;
-  will-change: width, opacity, transform;
+  will-change: opacity, transform;
 }
 
 .workspace-history-drawer > * {
-  width: clamp(340px, 30vw, 460px);
+  width: var(--history-drawer-width);
   min-width: 340px;
 }
 
-.workspace-history-drawer.closed {
+.workspace-history-drawer.phase-closed {
   visibility: hidden;
   border-left-width: 0;
   border-left-color: transparent;
   opacity: 0;
   pointer-events: none;
-  transform: translateX(18px);
-  transition:
-    width 0.18s cubic-bezier(0.4, 0, 1, 1),
-    opacity 0.12s ease,
-    transform 0.18s cubic-bezier(0.4, 0, 1, 1),
-    visibility 0s linear 0.18s;
+  transform: translateX(100%);
+}
+
+.workspace-history-drawer.phase-preparing {
+  visibility: visible;
+  opacity: 0;
+  pointer-events: none;
+  transform: translateX(100%);
+}
+
+.workspace-history-drawer.phase-opening,
+.workspace-history-drawer.phase-open,
+.workspace-history-drawer.phase-releasing,
+.workspace-history-drawer.phase-closing-ready {
+  visibility: visible;
+  opacity: 1;
+  transform: translateX(0);
+}
+
+.workspace-history-drawer.phase-closing {
+  visibility: visible;
+  opacity: 0;
+  pointer-events: none;
+  transform: translateX(100%);
 }
 
 .workspace-history-drawer header {
@@ -2662,6 +2712,7 @@ button.history-run-item.disabled {
 
 @media (prefers-reduced-motion: reduce) {
   .codex-workspace-body,
+  .codex-workspace-body.history-input-animating .composer-panel,
   .workspace-history-drawer,
   .file-preview-mode-toggle::before {
     transition: none;
