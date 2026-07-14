@@ -16,12 +16,9 @@ function rule(selector: string) {
 }
 
 describe("history drawer animation CSS", () => {
-  it("uses one duration and easing source for the drawer and composer", () => {
+  it("uses one duration and easing source for drawer and workspace geometry", () => {
     const workspaceBody = rule(".codex-workspace-body");
     const drawer = rule(".workspace-history-drawer");
-    const composerAnimation = rule(
-      ".codex-workspace-body.history-input-animating .composer-panel",
-    );
 
     expect(workspaceBody).toContain("--history-transition-duration: 200ms");
     expect(workspaceBody).toContain(
@@ -30,15 +27,17 @@ describe("history drawer animation CSS", () => {
     expect(drawer).toContain(
       "transform var(--history-transition-duration) var(--history-transition-easing)",
     );
-    expect(composerAnimation).toContain(
-      "width var(--history-transition-duration) var(--history-transition-easing)",
+    expect(drawer).toContain(
+      "opacity var(--history-transition-duration) var(--history-transition-easing)",
     );
-    expect(composerAnimation).toContain(
-      "transform var(--history-transition-duration) var(--history-transition-easing)",
+    expect(workspaceBody).toContain(
+      "transition: grid-template-columns var(--history-transition-duration)",
     );
+    expect(css).not.toContain("history-input-animating");
+    expect(css).not.toContain("history-input-contracted");
   });
 
-  it("keeps drawer motion compositor-only and ordinary window resizing unanimated", () => {
+  it("keeps drawer motion transform-based with no independent composer animation", () => {
     const drawer = rule(".workspace-history-drawer");
     const composer = rule(".composer-panel");
 
@@ -47,9 +46,15 @@ describe("history drawer animation CSS", () => {
     expect(composer).not.toContain("transition:");
   });
 
-  it("insets the native scrollbar track beyond the rounded chat corners", () => {
+  it("clips and insets the native scrollbar around the rounded chat corners", () => {
+    const frame = rule(".task-chat-scroll-frame");
+    expect(frame).toContain("overflow: hidden");
+    expect(frame).toContain("border-radius: var(--radius)");
     expect(rule(".task-chat-transcript.native-transcript")).toContain(
-      "--chat-scrollbar-corner-inset: calc(var(--radius) + 4px)",
+      "--chat-scrollbar-corner-inset: 12px",
+    );
+    expect(rule(".task-chat-transcript.native-transcript")).toContain(
+      "scroll-padding-block: var(--chat-scrollbar-corner-inset)",
     );
     expect(
       rule(".task-chat-transcript.native-transcript::-webkit-scrollbar-track"),

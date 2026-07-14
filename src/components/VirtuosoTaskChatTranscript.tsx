@@ -9,6 +9,7 @@ import {
 } from "react";
 import type { HistoricalChatOpenRequest } from "../types";
 import type { ApprovalResolutionHandler } from "../lib/codexApprovals";
+import { findFirstVisibleTranscriptRow } from "../lib/transcriptScrollAnchor";
 import type {
   NativeUserInputRequest,
   UserInputResponse,
@@ -19,6 +20,7 @@ import { TaskChatTurn, type TaskChatEntry } from "./TaskChatTranscript";
 const TRANSCRIPT_STATE_CACHE_LIMIT = 5;
 const TRANSCRIPT_BOTTOM_THRESHOLD_PX = 48;
 const SCROLL_POSITION_EPSILON_PX = 2;
+const CHAT_SCROLLBAR_CORNER_INSET_PX = 12;
 export const TRANSCRIPT_SCROLL_IDLE_MS = 280;
 export const LATEST_TURN_POSITION_RETRY_MS = 80;
 export const LATEST_TURN_POSITION_MAX_ATTEMPTS = 8;
@@ -92,10 +94,10 @@ function isEditableScrollTarget(target: EventTarget | null) {
 
 function captureTranscriptState(element: HTMLElement): CachedTranscriptState {
   const viewportTop = element.getBoundingClientRect().top;
-  const rows = Array.from(
+  const anchor = findFirstVisibleTranscriptRow(
     element.querySelectorAll<HTMLElement>("[data-transcript-entry-id]"),
+    viewportTop,
   );
-  const anchor = rows.find((row) => row.getBoundingClientRect().bottom > viewportTop + 1);
 
   return {
     anchorEntryId: anchor?.dataset.transcriptEntryId ?? null,
@@ -458,7 +460,21 @@ export const VirtuosoTaskChatTranscript = memo(
           14,
           scroller.offsetWidth - scroller.clientWidth,
         );
-        if (event.clientX >= bounds.right - scrollbarHitWidth) {
+        const cornerInset = Number.parseFloat(
+          window
+            .getComputedStyle(scroller)
+            .getPropertyValue("--chat-scrollbar-corner-inset"),
+        );
+        const effectiveCornerInset = Number.isFinite(cornerInset)
+          ? cornerInset
+          : CHAT_SCROLLBAR_CORNER_INSET_PX;
+        const scrollbarStart = bounds.top + effectiveCornerInset;
+        const scrollbarEnd = bounds.bottom - effectiveCornerInset;
+        if (
+          event.clientX >= bounds.right - scrollbarHitWidth &&
+          event.clientY >= scrollbarStart &&
+          event.clientY <= scrollbarEnd
+        ) {
           scrollbarPointerActiveRef.current = true;
           markUserScrollActivity();
         }
@@ -625,14 +641,16 @@ export const VirtuosoTaskChatTranscript = memo(
     );
 
     return (
-      <section
-        className="task-chat-transcript native-transcript"
-        aria-label="Task chat transcript"
-        ref={scrollerRef}
-        tabIndex={0}
-      >
-        <div className="task-chat-native-list">{rows}</div>
-      </section>
+      <div className="task-chat-scroll-frame">
+        <section
+          className="task-chat-transcript native-transcript"
+          aria-label="Task chat transcript"
+          ref={scrollerRef}
+          tabIndex={0}
+        >
+          <div className="task-chat-native-list">{rows}</div>
+        </section>
+      </div>
     );
   },
 );

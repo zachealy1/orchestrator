@@ -1964,10 +1964,10 @@ describe("App Codex auth", () => {
     expect(drawer.previousElementSibling).toBe(taskChat);
     expect(drawer).toHaveClass("workspace-history-drawer", "opening");
     expect(drawer.parentElement).toHaveClass("codex-workspace-body");
-    expect(drawer.parentElement).not.toHaveClass("history-space-reserved");
-    expect(drawer.parentElement).toHaveClass(
-      "history-input-animating",
-      "history-input-contracted",
+    expect(drawer.parentElement).toHaveClass("history-space-reserved");
+    expect(drawer.parentElement).toHaveAttribute(
+      "data-history-transition-phase",
+      "opening",
     );
     expect(screen.getByLabelText("Task composer")).toBe(composer);
     expect(within(drawer).queryByRole("tab")).not.toBeInTheDocument();
@@ -1988,9 +1988,9 @@ describe("App Codex auth", () => {
     fireEvent.transitionEnd(drawer, { propertyName: "transform" });
     expect(drawer).toHaveClass("open");
     expect(drawer.parentElement).toHaveClass("history-space-reserved");
-    expect(drawer.parentElement).not.toHaveClass(
-      "history-input-animating",
-      "history-input-contracted",
+    expect(drawer.parentElement).toHaveAttribute(
+      "data-history-transition-phase",
+      "open",
     );
     expect(screen.getByLabelText("Task composer")).toBe(composer);
     await waitFor(() =>
@@ -2009,9 +2009,9 @@ describe("App Codex auth", () => {
     expect(closedDrawer?.parentElement).not.toHaveClass(
       "history-space-reserved",
     );
-    expect(closedDrawer?.parentElement).toHaveClass("history-input-animating");
-    expect(closedDrawer?.parentElement).not.toHaveClass(
-      "history-input-contracted",
+    expect(closedDrawer?.parentElement).toHaveAttribute(
+      "data-history-transition-phase",
+      "closing",
     );
     expect(screen.getByLabelText("Task composer")).toBe(composer);
     expect(historyButton).toHaveAttribute("aria-label", "Open chat history");
@@ -2044,9 +2044,7 @@ describe("App Codex auth", () => {
     await waitFor(() =>
       expect(layout).toHaveAttribute("data-history-transition-phase", "opening"),
     );
-    expect(layout).toHaveClass("history-input-animating");
-    expect(layout).toHaveClass("history-input-contracted");
-    expect(layout).not.toHaveClass("history-space-reserved");
+    expect(layout).toHaveClass("history-space-reserved");
     expect(screen.getByLabelText("Prompt")).toBe(prompt);
     expect(prompt).toHaveValue("Keep this draft");
 
@@ -2055,14 +2053,11 @@ describe("App Codex auth", () => {
       expect(layout).toHaveAttribute("data-history-transition-phase", "open"),
     );
     expect(layout).toHaveClass("history-space-reserved");
-    expect(layout).not.toHaveClass("history-input-animating");
 
     await user.click(historyButton);
     await waitFor(() =>
       expect(layout).toHaveAttribute("data-history-transition-phase", "closing"),
     );
-    expect(layout).toHaveClass("history-input-animating");
-    expect(layout).not.toHaveClass("history-input-contracted");
     expect(layout).not.toHaveClass("history-space-reserved");
 
     fireEvent.transitionEnd(drawer, { propertyName: "transform" });
@@ -2071,6 +2066,83 @@ describe("App Codex auth", () => {
     );
     expect(screen.getByLabelText("Prompt")).toBe(prompt);
     expect(prompt).toHaveValue("Keep this draft");
+  });
+
+  it("reverses rapid drawer toggles without remounting or losing the prompt", async () => {
+    mocks.listWorkspaceChatsMock.mockResolvedValue([]);
+    const { user } = await renderApp();
+    const prompt = screen.getByLabelText("Prompt");
+    await user.type(prompt, "Keep this draft through reversal");
+    const banner = screen.getByRole("region", { name: "Selected folder" });
+    const historyButton = within(banner).getByRole("button", {
+      name: /open chat history/i,
+    });
+
+    await user.click(historyButton);
+    const drawer = screen.getByRole("complementary", {
+      name: "Workspace chat history",
+    });
+    const layout = drawer.closest<HTMLElement>(".codex-workspace-body");
+    expect(layout).toHaveAttribute("data-history-transition-phase", "opening");
+    expect(layout).toHaveClass("history-space-reserved");
+
+    await user.click(historyButton);
+    expect(layout).toHaveAttribute("data-history-transition-phase", "closing");
+    expect(layout).not.toHaveClass("history-space-reserved");
+
+    await user.click(historyButton);
+    expect(layout).toHaveAttribute("data-history-transition-phase", "opening");
+    expect(layout).toHaveClass("history-space-reserved");
+
+    fireEvent.transitionEnd(drawer, { propertyName: "transform" });
+    expect(layout).toHaveAttribute("data-history-transition-phase", "open");
+    expect(screen.getByLabelText("Prompt")).toBe(prompt);
+    expect(prompt).toHaveValue("Keep this draft through reversal");
+    await waitFor(() =>
+      expect(mocks.codexDefaultProfileRpcMock).toHaveBeenCalledWith(
+        "thread/list",
+        expect.objectContaining({ cwd: workspace.path }),
+      ),
+    );
+  });
+
+  it("settles the shared drawer transition immediately for reduced motion", async () => {
+    const matchMediaSpy = vi
+      .spyOn(window, "matchMedia")
+      .mockImplementation((query: string) => ({
+        matches: query === "(prefers-reduced-motion: reduce)",
+        media: query,
+        onchange: null,
+        addEventListener: vi.fn(),
+        removeEventListener: vi.fn(),
+        addListener: vi.fn(),
+        removeListener: vi.fn(),
+        dispatchEvent: vi.fn(() => false),
+      }));
+    mocks.listWorkspaceChatsMock.mockResolvedValue([]);
+
+    const { user } = await renderApp();
+    const historyButton = within(
+      screen.getByRole("region", { name: "Selected folder" }),
+    ).getByRole("button", { name: /open chat history/i });
+    await user.click(historyButton);
+
+    const drawer = screen.getByRole("complementary", {
+      name: "Workspace chat history",
+    });
+    await waitFor(() => expect(drawer).toHaveClass("open"));
+    expect(drawer.parentElement).toHaveAttribute(
+      "data-history-transition-phase",
+      "open",
+    );
+
+    await user.click(historyButton);
+    await waitFor(() => expect(drawer).toHaveClass("closed"));
+    expect(drawer.parentElement).toHaveAttribute(
+      "data-history-transition-phase",
+      "closed",
+    );
+    matchMediaSpy.mockRestore();
   });
 
   it("waits for transcript momentum to settle before resizing the chat viewport", async () => {
@@ -2111,12 +2183,11 @@ describe("App Codex auth", () => {
     await user.click(historyButton);
 
     expect(layout).toHaveAttribute("data-history-transition-phase", "closed");
-    expect(layout).not.toHaveClass("history-input-animating");
     await waitFor(
       () =>
         expect(layout).toHaveAttribute(
           "data-history-transition-phase",
-          "preparing",
+          "opening",
         ),
       { timeout: 1_000 },
     );

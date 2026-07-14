@@ -208,6 +208,22 @@ describe("native task chat transcript", () => {
     expect(container.querySelector('[data-testid="virtuoso-item-list"]')).toBeNull();
   });
 
+  it("clips the native scroll host within a rounded chat frame", () => {
+    render(
+      <VirtuosoTaskChatTranscript
+        entries={[historyEntry(1)]}
+        transcriptIdentity="chat:rounded-frame"
+        transcriptVersion="v1"
+        firstItemIndex={1_000_000}
+        openAtLatestRequest={null}
+        liveFollow={false}
+        onResolveRequest={vi.fn()}
+      />,
+    );
+
+    expect(transcript().parentElement).toHaveClass("task-chat-scroll-frame");
+  });
+
   it("opens an explicitly selected historical chat at the final turn", async () => {
     const request = latestRequest(1);
     const onApplied = vi.fn();
@@ -306,7 +322,11 @@ describe("native task chat transcript", () => {
   it.each([
     ["touch", (element: HTMLElement) => fireEvent.touchStart(element)],
     ["keyboard", (element: HTMLElement) => fireEvent.keyDown(element, { key: "PageDown" })],
-    ["scrollbar", (element: HTMLElement) => fireEvent.pointerDown(element, { clientX: 899 })],
+    [
+      "scrollbar",
+      (element: HTMLElement) =>
+        fireEvent.pointerDown(element, { clientX: 899, clientY: 300 }),
+    ],
   ])("tracks %s input as native user scrolling", (_name, begin) => {
     vi.useFakeTimers();
     const onActivity = vi.fn();
@@ -325,6 +345,26 @@ describe("native task chat transcript", () => {
 
     begin(transcript());
     expect(onActivity).toHaveBeenLastCalledWith(true);
+  });
+
+  it("does not treat a rounded scrollbar corner as a scrollbar drag", () => {
+    const onActivity = vi.fn();
+    render(
+      <VirtuosoTaskChatTranscript
+        entries={[historyEntry(1)]}
+        transcriptIdentity="chat:scrollbar-corner"
+        transcriptVersion="v1"
+        firstItemIndex={1_000_000}
+        openAtLatestRequest={null}
+        liveFollow={false}
+        onScrollActivityChange={onActivity}
+        onResolveRequest={vi.fn()}
+      />,
+    );
+
+    fireEvent.pointerDown(transcript(), { clientX: 899, clientY: 0 });
+
+    expect(onActivity).not.toHaveBeenCalled();
   });
 
   it("does not classify an ordinary programmatic scroll event as user input", () => {

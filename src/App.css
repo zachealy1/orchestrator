@@ -1129,7 +1129,6 @@ button.account-switcher-item:hover:not(:disabled) {
 
 .codex-workspace-body {
   --history-drawer-width: clamp(340px, 30vw, 460px);
-  --history-composer-shift: clamp(-230px, -15vw, -170px);
   --history-transition-duration: 200ms;
   --history-transition-easing: cubic-bezier(0.2, 0, 0, 1);
 
@@ -1140,37 +1139,12 @@ button.account-switcher-item:hover:not(:disabled) {
   min-height: 0;
   overflow: hidden;
   contain: layout paint;
+  transition: grid-template-columns var(--history-transition-duration)
+    var(--history-transition-easing);
 }
 
 .codex-workspace-body.history-space-reserved {
   grid-template-columns: minmax(0, 1fr) var(--history-drawer-width);
-}
-
-.codex-workspace-body.history-input-animating .composer-panel {
-  transition:
-    width var(--history-transition-duration) var(--history-transition-easing),
-    transform var(--history-transition-duration) var(--history-transition-easing);
-  will-change: width, transform;
-}
-
-.codex-workspace-body.history-input-contracted
-  .composer-panel {
-  transform: translateX(var(--history-composer-shift));
-}
-
-.codex-workspace-body.history-input-contracted
-  .task-hero:not(.has-chat)
-  .composer-panel {
-  width: min(1040px, calc(100% - var(--history-drawer-width)));
-}
-
-.codex-workspace-body.history-input-contracted
-  .task-hero.has-chat
-  .composer-panel {
-  width: calc(
-    100% - var(--task-hero-inline-padding) - var(--task-hero-inline-padding) -
-      var(--history-drawer-width)
-  );
 }
 
 .workspace-context-banner {
@@ -1814,6 +1788,19 @@ button.account-switcher-item:hover:not(:disabled) {
   flex: 0 0 auto;
 }
 
+.task-chat-scroll-frame {
+  position: relative;
+  display: flex;
+  flex: 1 1 auto;
+  width: 100%;
+  max-width: 100%;
+  min-height: 0;
+  align-self: stretch;
+  overflow: hidden;
+  border-radius: var(--radius);
+  isolation: isolate;
+}
+
 .task-chat-transcript {
   position: relative;
   display: block;
@@ -1829,18 +1816,21 @@ button.account-switcher-item:hover:not(:disabled) {
 }
 
 .task-chat-transcript.native-transcript {
-  --chat-scrollbar-corner-inset: calc(var(--radius) + 4px);
+  --chat-scrollbar-corner-inset: 12px;
 
   overflow-x: hidden;
   overflow-y: auto;
   overflow-anchor: auto;
-  border-radius: var(--radius) var(--radius) 0 0;
+  border-radius: inherit;
+  scroll-padding-block: var(--chat-scrollbar-corner-inset);
   padding: 0;
   -webkit-overflow-scrolling: touch;
 }
 
 .task-chat-transcript.native-transcript::-webkit-scrollbar-track {
   margin-block: var(--chat-scrollbar-corner-inset);
+  margin-top: var(--chat-scrollbar-corner-inset);
+  margin-bottom: var(--chat-scrollbar-corner-inset);
 }
 
 .task-chat-native-list {
@@ -2517,7 +2507,7 @@ summary.run-live-metrics::-webkit-details-marker {
   pointer-events: none;
   transform: translateX(100%);
   transition:
-    opacity 0.16s ease,
+    opacity var(--history-transition-duration) var(--history-transition-easing),
     transform var(--history-transition-duration) var(--history-transition-easing),
     visibility 0s linear var(--history-transition-duration);
   will-change: opacity, transform;
@@ -2530,7 +2520,6 @@ summary.run-live-metrics::-webkit-details-marker {
 
 .workspace-history-drawer.opening,
 .workspace-history-drawer.open,
-.workspace-history-drawer.releasing,
 .workspace-history-drawer.closing {
   visibility: visible;
 }
@@ -2541,16 +2530,9 @@ summary.run-live-metrics::-webkit-details-marker {
   pointer-events: auto;
   transform: translateX(0);
   transition:
-    opacity 0.16s ease,
+    opacity var(--history-transition-duration) var(--history-transition-easing),
     transform var(--history-transition-duration) var(--history-transition-easing),
     visibility 0s linear 0s;
-}
-
-.workspace-history-drawer.releasing {
-  opacity: 1;
-  pointer-events: none;
-  transform: translateX(0);
-  transition: none;
 }
 
 .workspace-history-drawer.closing {
@@ -2842,7 +2824,6 @@ button.history-run-item.disabled {
 @media (prefers-reduced-motion: reduce) {
   .codex-workspace-body,
   .workspace-history-drawer,
-  .codex-workspace-body.history-input-animating .composer-panel,
   .file-preview-mode-toggle::before {
     transition: none;
   }

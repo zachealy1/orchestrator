@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it } from "vitest";
 import {
   captureTranscriptViewportAnchor,
+  findFirstVisibleTranscriptRow,
   restoreTranscriptViewportAnchor,
 } from "./transcriptScrollAnchor";
 
@@ -80,5 +81,26 @@ describe("transcript viewport anchors", () => {
     restoreTranscriptViewportAnchor(anchor);
 
     expect(scroller.scrollTop).toBe(400);
+  });
+
+  it("finds a visible anchor without measuring the full transcript", () => {
+    let measurementCount = 0;
+    const rows = Array.from({ length: 1_024 }, (_, index) => {
+      const row = document.createElement("div");
+      row.dataset.transcriptEntryId = `entry-${index}`;
+      row.getBoundingClientRect = () => {
+        measurementCount += 1;
+        return {
+          top: index * 20,
+          bottom: (index + 1) * 20,
+        } as DOMRect;
+      };
+      return row;
+    });
+
+    expect(findFirstVisibleTranscriptRow(rows, 10_000)?.dataset.transcriptEntryId).toBe(
+      "entry-500",
+    );
+    expect(measurementCount).toBeLessThanOrEqual(11);
   });
 });

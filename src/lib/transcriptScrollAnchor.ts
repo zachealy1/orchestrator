@@ -11,6 +11,28 @@ function maxScrollTop(scroller: HTMLElement) {
   return Math.max(0, scroller.scrollHeight - scroller.clientHeight);
 }
 
+export function findFirstVisibleTranscriptRow(
+  rows: ArrayLike<HTMLElement>,
+  viewportTop: number,
+) {
+  let lower = 0;
+  let upper = rows.length - 1;
+  let match: HTMLElement | null = null;
+
+  while (lower <= upper) {
+    const index = Math.floor((lower + upper) / 2);
+    const row = rows[index];
+    if (row.getBoundingClientRect().bottom > viewportTop + 1) {
+      match = row;
+      upper = index - 1;
+    } else {
+      lower = index + 1;
+    }
+  }
+
+  return match;
+}
+
 export function captureTranscriptViewportAnchor(
   scroller: HTMLElement | null,
 ): TranscriptViewportAnchor | null {
@@ -18,9 +40,10 @@ export function captureTranscriptViewportAnchor(
 
   const viewportTop = scroller.getBoundingClientRect().top;
   const maximumScrollTop = maxScrollTop(scroller);
-  const anchorRow = Array.from(
+  const anchorRow = findFirstVisibleTranscriptRow(
     scroller.querySelectorAll<HTMLElement>("[data-transcript-entry-id]"),
-  ).find((row) => row.getBoundingClientRect().bottom > viewportTop + 1);
+    viewportTop,
+  );
 
   return {
     scroller,

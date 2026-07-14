@@ -33,7 +33,6 @@ import {
   memo,
   useCallback,
   useEffect,
-  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -177,6 +176,11 @@ import {
   type TranscriptViewportAnchor,
 } from "./lib/transcriptScrollAnchor";
 import {
+  historyDrawerReservesSpace,
+  historyDrawerTargetsOpen,
+  type HistoryDrawerPhase,
+} from "./lib/historyDrawerTransition";
+import {
   buildRunPrompt,
   estimateTokens,
   improvePrompt,
@@ -271,14 +275,6 @@ const DEFAULT_CODEX_PROFILE_KEY: CodexProfileKey = "default";
 const EXTERNAL_CODEX_SOURCE_KINDS = ["vscode", "appServer", "cli"];
 
 type AppView = "task" | "analytics" | "settings";
-type HistoryDrawerPhase =
-  | "closed"
-  | "preparing"
-  | "opening"
-  | "open"
-  | "releasing"
-  | "closing-ready"
-  | "closing";
 
 function createTaskChatClientId() {
   return `chat-${Date.now().toString(36)}-${Math.random()
@@ -920,20 +916,9 @@ function App() {
   const [activeChatEntryId, setActiveChatEntryId] = useState<string | null>(null);
   const [historyDrawerPhase, setHistoryDrawerPhase] =
     useState<HistoryDrawerPhase>("closed");
-  const historyDrawerOpen =
-    historyDrawerPhase === "preparing" ||
-    historyDrawerPhase === "opening" ||
-    historyDrawerPhase === "open";
-  const historyDrawerSpaceReserved = historyDrawerPhase === "open";
-  const historyInputAnimating =
-    historyDrawerPhase === "preparing" ||
-    historyDrawerPhase === "opening" ||
-    historyDrawerPhase === "closing-ready" ||
-    historyDrawerPhase === "closing";
-  const historyInputContracted =
-    historyDrawerPhase === "opening" ||
-    historyDrawerPhase === "releasing" ||
-    historyDrawerPhase === "closing-ready";
+  const historyDrawerOpen = historyDrawerTargetsOpen(historyDrawerPhase);
+  const historyDrawerSpaceReserved =
+    historyDrawerReservesSpace(historyDrawerPhase);
   const [historyState, setHistoryState] = useState<WorkspaceHistoryState>({
     status: "idle",
     chats: [],
@@ -1055,8 +1040,6 @@ function App() {
   const historyDrawerPhaseRef = useRef<HistoryDrawerPhase>("closed");
   const historyDrawerClosedWaitersRef = useRef(new Set<() => void>());
   const historyDrawerAnchorRef = useRef<TranscriptViewportAnchor | null>(null);
-  const historyDrawerPhaseTimerRef = useRef<number | null>(null);
-  const historyDrawerOpenReadyRef = useRef(false);
   const pendingHistoryDrawerOpenRef = useRef(false);
   const pendingHistoryDrawerCloseRef = useRef(false);
   const historicalActivityCacheRef = useRef(
@@ -1126,14 +1109,16 @@ function App() {
 
   const finalizeHistoryDrawerOpen = useCallback(() => {
     if (historyDrawerPhaseRef.current !== "opening") return;
-    historyDrawerOpenReadyRef.current = false;
-    historyDrawerAnchorRef.current = captureHistoryDrawerAnchor();
+    restoreTranscriptViewportAnchor(historyDrawerAnchorRef.current);
+    historyDrawerAnchorRef.current = null;
     updateHistoryDrawerPhase("open");
-  }, [captureHistoryDrawerAnchor, updateHistoryDrawerPhase]);
+  }, [updateHistoryDrawerPhase]);
 
   const finalizeHistoryDrawerClose = useCallback(() => {
-    if (historyDrawerPhaseRef.current === "closed") return;
+    if (historyDrawerPhaseRef.current !== "closing") return;
     pendingHistoryDrawerCloseRef.current = false;
+    restoreTranscriptViewportAnchor(historyDrawerAnchorRef.current);
+    historyDrawerAnchorRef.current = null;
     updateHistoryDrawerPhase("closed");
   }, [updateHistoryDrawerPhase]);
 
@@ -1142,10 +1127,6 @@ function App() {
       if (historyDrawerPhaseRef.current !== phase) return;
 
       if (phase === "opening") {
-        if (transcriptScrollActiveRef.current) {
-          historyDrawerOpenReadyRef.current = true;
-          return;
-        }
         finalizeHistoryDrawerOpen();
         return;
       }
@@ -1157,23 +1138,14 @@ function App() {
 
   const beginHistoryDrawerOpen = useCallback(() => {
     const phase = historyDrawerPhaseRef.current;
-    if (phase === "preparing" || phase === "opening" || phase === "open") {
+    if (phase === "opening" || phase === "open") {
       return;
     }
 
     pendingHistoryDrawerOpenRef.current = false;
     pendingHistoryDrawerCloseRef.current = false;
-    historyDrawerOpenReadyRef.current = false;
-    if (historyDrawerPhaseTimerRef.current !== null) {
-      window.clearTimeout(historyDrawerPhaseTimerRef.current);
-      historyDrawerPhaseTimerRef.current = null;
-    }
-    if (phase === "releasing" || phase === "closing-ready") {
-      historyDrawerAnchorRef.current = captureHistoryDrawerAnchor();
-      updateHistoryDrawerPhase("open");
-      return;
-    }
-    updateHistoryDrawerPhase("preparing");
+    historyDrawerAnchorRef.current = captureHistoryDrawerAnchor();
+    updateHistoryDrawerPhase("opening");
   }, [captureHistoryDrawerAnchor, updateHistoryDrawerPhase]);
 
   const openHistoryDrawer = useCallback(() => {
@@ -1186,47 +1158,23 @@ function App() {
 
   const beginHistoryDrawerClose = useCallback(() => {
     const phase = historyDrawerPhaseRef.current;
-    if (
-      phase === "closed" ||
-      phase === "releasing" ||
-      phase === "closing-ready" ||
-      phase === "closing"
-    ) {
+    if (phase === "closed" || phase === "closing") {
       return;
     }
 
     pendingHistoryDrawerOpenRef.current = false;
     pendingHistoryDrawerCloseRef.current = false;
-    historyDrawerOpenReadyRef.current = false;
-    if (phase === "preparing") {
-      finalizeHistoryDrawerClose();
-      return;
-    }
-    if (phase === "opening") {
-      updateHistoryDrawerPhase("closing");
-      return;
-    }
-
     historyDrawerAnchorRef.current = captureHistoryDrawerAnchor();
-    updateHistoryDrawerPhase("releasing");
-  }, [
-    captureHistoryDrawerAnchor,
-    finalizeHistoryDrawerClose,
-    updateHistoryDrawerPhase,
-  ]);
+    updateHistoryDrawerPhase("closing");
+  }, [captureHistoryDrawerAnchor, updateHistoryDrawerPhase]);
 
   const closeHistoryDrawer = useCallback(() => {
     pendingHistoryDrawerOpenRef.current = false;
     const phase = historyDrawerPhaseRef.current;
-    if (
-      phase === "closed" ||
-      phase === "releasing" ||
-      phase === "closing-ready" ||
-      phase === "closing"
-    ) {
+    if (phase === "closed" || phase === "closing") {
       return;
     }
-    if (phase === "open" && transcriptScrollActiveRef.current) {
+    if (transcriptScrollActiveRef.current) {
       pendingHistoryDrawerCloseRef.current = true;
       return;
     }
@@ -1235,7 +1183,7 @@ function App() {
 
   const toggleHistoryDrawer = useCallback(() => {
     const phase = historyDrawerPhaseRef.current;
-    if (phase === "open" || phase === "opening" || phase === "preparing") {
+    if (phase === "open" || phase === "opening") {
       closeHistoryDrawer();
     } else {
       openHistoryDrawer();
@@ -1273,6 +1221,13 @@ function App() {
       return;
     }
 
+    if (window.matchMedia?.("(prefers-reduced-motion: reduce)").matches) {
+      const frame = window.requestAnimationFrame(() =>
+        completeHistoryDrawerTransition(historyDrawerPhase),
+      );
+      return () => window.cancelAnimationFrame(frame);
+    }
+
     const timer = window.setTimeout(
       () => completeHistoryDrawerTransition(historyDrawerPhase),
       HISTORY_DRAWER_TRANSITION_FALLBACK_MS,
@@ -1280,70 +1235,13 @@ function App() {
     return () => window.clearTimeout(timer);
   }, [completeHistoryDrawerTransition, historyDrawerPhase]);
 
-  useLayoutEffect(() => {
-    if (historyDrawerPhase === "preparing") {
-      void taskViewportElement?.querySelector<HTMLElement>(".composer-panel")
-        ?.offsetWidth;
-      historyDrawerPhaseTimerRef.current = window.setTimeout(() => {
-        historyDrawerPhaseTimerRef.current = null;
-        if (historyDrawerPhaseRef.current === "preparing") {
-          updateHistoryDrawerPhase("opening");
-        }
-      }, 0);
-      return () => {
-        if (historyDrawerPhaseTimerRef.current !== null) {
-          window.clearTimeout(historyDrawerPhaseTimerRef.current);
-          historyDrawerPhaseTimerRef.current = null;
-        }
-      };
-    }
-
-    if (historyDrawerPhase === "open") {
-      restoreTranscriptViewportAnchor(historyDrawerAnchorRef.current);
-      historyDrawerAnchorRef.current = null;
-      return;
-    }
-
-    if (historyDrawerPhase === "releasing") {
-      restoreTranscriptViewportAnchor(historyDrawerAnchorRef.current);
-      historyDrawerAnchorRef.current = null;
-      historyDrawerPhaseTimerRef.current = window.setTimeout(() => {
-        historyDrawerPhaseTimerRef.current = null;
-        if (historyDrawerPhaseRef.current === "releasing") {
-          updateHistoryDrawerPhase("closing-ready");
-        }
-      }, 0);
-      return () => {
-        if (historyDrawerPhaseTimerRef.current !== null) {
-          window.clearTimeout(historyDrawerPhaseTimerRef.current);
-          historyDrawerPhaseTimerRef.current = null;
-        }
-      };
-    }
-
-    if (historyDrawerPhase === "closing-ready") {
-      void taskViewportElement?.querySelector<HTMLElement>(".composer-panel")
-        ?.offsetWidth;
-      historyDrawerPhaseTimerRef.current = window.setTimeout(() => {
-        historyDrawerPhaseTimerRef.current = null;
-        if (historyDrawerPhaseRef.current === "closing-ready") {
-          updateHistoryDrawerPhase("closing");
-        }
-      }, 0);
-      return () => {
-        if (historyDrawerPhaseTimerRef.current !== null) {
-          window.clearTimeout(historyDrawerPhaseTimerRef.current);
-          historyDrawerPhaseTimerRef.current = null;
-        }
-      };
-    }
-
+  useEffect(() => {
     if (historyDrawerPhase === "closed") {
       historyDrawerAnchorRef.current = null;
       historyDrawerClosedWaitersRef.current.forEach((resolve) => resolve());
       historyDrawerClosedWaitersRef.current.clear();
     }
-  }, [historyDrawerPhase, taskViewportElement, updateHistoryDrawerPhase]);
+  }, [historyDrawerPhase]);
 
   const schedulePendingTranscriptCommit = useCallback(() => {
     if (
@@ -1449,12 +1347,8 @@ function App() {
       if (transcriptViewportResizeTimerRef.current !== null) {
         window.clearTimeout(transcriptViewportResizeTimerRef.current);
       }
-      if (historyDrawerPhaseTimerRef.current !== null) {
-        window.clearTimeout(historyDrawerPhaseTimerRef.current);
-      }
       pendingHistoryDrawerOpenRef.current = false;
       pendingHistoryDrawerCloseRef.current = false;
-      historyDrawerOpenReadyRef.current = false;
       historyDrawerAnchorRef.current = null;
       transcriptViewportWaitersRef.current.forEach((resolve) => resolve());
       transcriptViewportWaitersRef.current.clear();
@@ -1467,6 +1361,7 @@ function App() {
   const handleTranscriptScrollActivityChange = useCallback((active: boolean) => {
     transcriptScrollActiveRef.current = active;
     if (active) {
+      historyDrawerAnchorRef.current = null;
       if (transcriptCommitIdleTimerRef.current !== null) {
         window.clearTimeout(transcriptCommitIdleTimerRef.current);
         transcriptCommitIdleTimerRef.current = null;
@@ -1485,18 +1380,10 @@ function App() {
       beginHistoryDrawerOpen();
     }
 
-    if (
-      historyDrawerPhaseRef.current === "opening" &&
-      historyDrawerOpenReadyRef.current
-    ) {
-      finalizeHistoryDrawerOpen();
-    }
-
     schedulePendingTranscriptCommit();
   }, [
     beginHistoryDrawerClose,
     beginHistoryDrawerOpen,
-    finalizeHistoryDrawerOpen,
     schedulePendingTranscriptCommit,
     settleTranscriptViewportWidth,
   ]);
@@ -8227,11 +8114,8 @@ function App() {
             <div
               className={`codex-workspace-body${
                 historyDrawerSpaceReserved ? " history-space-reserved" : ""
-              }${historyDrawerOpen ? " history-open" : ""}${
-                historyInputAnimating ? " history-input-animating" : ""
-              }${
-                historyInputContracted ? " history-input-contracted" : ""
-              }`}
+              }${historyDrawerOpen ? " history-open" : ""}`}
+              data-history-transition-phase={historyDrawerPhase}
             >
               <section
                 className={`task-hero ${hasTaskChat ? "has-chat" : ""}`}
