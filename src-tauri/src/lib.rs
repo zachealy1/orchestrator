@@ -718,6 +718,26 @@ fn migrations() -> Vec<Migration> {
             ",
             kind: MigrationKind::Up,
         },
+        Migration {
+            version: 13,
+            description: "persist_native_plan_mode_workflows",
+            sql: "
+                ALTER TABLE chats ADD COLUMN collaboration_mode TEXT;
+                ALTER TABLE chats ADD COLUMN saved_default_collaboration_mode_json TEXT;
+
+                ALTER TABLE runs ADD COLUMN collaboration_mode TEXT;
+                ALTER TABLE runs ADD COLUMN run_intent TEXT NOT NULL DEFAULT 'normal';
+                ALTER TABLE runs ADD COLUMN client_user_message_id TEXT;
+                ALTER TABLE runs ADD COLUMN completed_plan_item_id TEXT;
+                ALTER TABLE runs ADD COLUMN completed_plan_text TEXT;
+                ALTER TABLE runs ADD COLUMN plan_review_state TEXT NOT NULL DEFAULT 'none';
+
+                CREATE UNIQUE INDEX IF NOT EXISTS idx_runs_client_user_message_id
+                    ON runs(client_user_message_id)
+                    WHERE client_user_message_id IS NOT NULL;
+            ",
+            kind: MigrationKind::Up,
+        },
     ]
 }
 
@@ -4642,6 +4662,31 @@ mod tests {
         assert!(transcript_errors
             .sql
             .contains("ALTER TABLE external_chat_turn_summaries ADD COLUMN error TEXT"));
+    }
+
+    #[test]
+    fn native_plan_mode_migration_persists_workflow_identity_and_review_state() {
+        let all_migrations = migrations();
+        let native_plan = all_migrations
+            .iter()
+            .find(|migration| migration.version == 13)
+            .expect("migration 13");
+
+        assert_eq!(native_plan.description, "persist_native_plan_mode_workflows");
+        for column in [
+            "collaboration_mode",
+            "saved_default_collaboration_mode_json",
+            "run_intent",
+            "client_user_message_id",
+            "completed_plan_item_id",
+            "completed_plan_text",
+            "plan_review_state",
+        ] {
+            assert!(native_plan.sql.contains(column), "missing {column}");
+        }
+        assert!(native_plan
+            .sql
+            .contains("CREATE UNIQUE INDEX IF NOT EXISTS idx_runs_client_user_message_id"));
     }
 
     #[test]

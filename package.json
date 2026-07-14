@@ -8,6 +8,7 @@
     "dev": "vite",
     "build": "tsc && vite build",
     "test": "vitest run",
+    "test:live-plan": "RUN_CODEX_LIVE_PLAN_TEST=1 node scripts/live-native-plan-mode.mjs",
     "test:watch": "vitest",
     "preview": "vite preview",
     "tauri": "tauri"

@@ -55,16 +55,6 @@ export function improvePrompt(prompt: string) {
   ].join("\n");
 }
 
-export function buildPlanPrompt(improvedPrompt: string) {
-  return [
-    "Plan first. Do not edit files yet.",
-    "",
-    improvedPrompt,
-    "",
-    "Return a concise implementation plan with risks, validation steps, and any questions that must be answered before writing code.",
-  ].join("\n");
-}
-
 export function buildRunPrompt(
   improvedPrompt: string,
   recommendations: RecommendationDraft[],

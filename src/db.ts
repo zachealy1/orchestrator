@@ -340,6 +340,8 @@ export async function updateChat(
     title: string;
     codexThreadId: string | null;
     status: string;
+    collaborationMode: "plan" | "default" | null;
+    savedDefaultCollaborationModeJson: string | null;
   }>,
 ) {
   const db = await getDatabase();
@@ -353,6 +355,10 @@ export async function updateChat(
   if ("title" in fields) add("title", fields.title);
   if ("codexThreadId" in fields) add("codex_thread_id", fields.codexThreadId);
   if ("status" in fields) add("status", fields.status);
+  if ("collaborationMode" in fields) add("collaboration_mode", fields.collaborationMode);
+  if ("savedDefaultCollaborationModeJson" in fields) {
+    add("saved_default_collaboration_mode_json", fields.savedDefaultCollaborationModeJson);
+  }
   assignments.push("updated_at = CURRENT_TIMESTAMP");
 
   values.push(chatId);
@@ -466,14 +472,18 @@ export async function createRun(input: {
   approvalPolicy: string;
   model?: string | null;
   modelProvider?: string | null;
+  collaborationMode?: "plan" | "default" | null;
+  runIntent?: "normal" | "plan" | "plan-revision" | "plan-implementation";
+  clientUserMessageId?: string | null;
 }) {
   const db = await getDatabase();
   const result = await db.execute(
     `INSERT INTO runs (
       task_id, workspace_id, chat_id, turn_index,
       account_id, account_label, account_email,
-      status, sandbox, approval_policy, model, model_provider
-    ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)`,
+      status, sandbox, approval_policy, model, model_provider,
+      collaboration_mode, run_intent, client_user_message_id
+    ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)`,
     [
       input.taskId,
       input.workspaceId,
@@ -487,6 +497,9 @@ export async function createRun(input: {
       input.approvalPolicy,
       input.model ?? null,
       input.modelProvider ?? null,
+      input.collaborationMode ?? null,
+      input.runIntent ?? "normal",
+      input.clientUserMessageId ?? null,
     ],
   );
 
@@ -495,7 +508,9 @@ export async function createRun(input: {
       account_id, account_label, account_email,
       codex_thread_id, codex_turn_id, model, model_provider,
       sandbox, approval_policy, status, started_at, completed_at, duration_ms,
-      final_message, error
+      final_message, error, collaboration_mode, run_intent,
+      client_user_message_id, completed_plan_item_id, completed_plan_text,
+      plan_review_state
      FROM runs WHERE id = $1`,
     [result.lastInsertId],
   );
@@ -519,6 +534,11 @@ export async function updateRun(
     durationMs: number | null;
     finalMessage: string | null;
     error: string | null;
+    collaborationMode: "plan" | "default" | null;
+    runIntent: "normal" | "plan" | "plan-revision" | "plan-implementation";
+    completedPlanItemId: string | null;
+    completedPlanText: string | null;
+    planReviewState: "none" | "available" | "superseded" | "approved" | "cancelled";
   }>,
 ) {
   const db = await getDatabase();
@@ -539,6 +559,13 @@ export async function updateRun(
   if ("durationMs" in fields) add("duration_ms", fields.durationMs);
   if ("finalMessage" in fields) add("final_message", fields.finalMessage);
   if ("error" in fields) add("error", fields.error);
+  if ("collaborationMode" in fields) add("collaboration_mode", fields.collaborationMode);
+  if ("runIntent" in fields) add("run_intent", fields.runIntent);
+  if ("completedPlanItemId" in fields) {
+    add("completed_plan_item_id", fields.completedPlanItemId);
+  }
+  if ("completedPlanText" in fields) add("completed_plan_text", fields.completedPlanText);
+  if ("planReviewState" in fields) add("plan_review_state", fields.planReviewState);
 
   if (assignments.length === 0) {
     return;
@@ -562,7 +589,7 @@ export async function softDeleteRun(runId: number) {
 export async function appendRunEvent(input: {
   runId: number;
   sequence: number;
-  eventType: "notification" | "server-request" | "process";
+  eventType: "notification" | "server-request" | "process" | "client-action";
   method: string | null;
   payload: unknown;
 }) {
@@ -619,6 +646,8 @@ export async function listWorkspaceRuns(workspaceId: number) {
       runs.account_id, runs.account_label, runs.account_email, runs.model, runs.model_provider,
       runs.sandbox, runs.approval_policy, runs.status,
       runs.started_at, runs.completed_at, runs.duration_ms, runs.final_message, runs.error,
+      runs.collaboration_mode, runs.run_intent, runs.client_user_message_id,
+      runs.completed_plan_item_id, runs.completed_plan_text, runs.plan_review_state,
       tasks.original_prompt, tasks.improved_prompt, tasks.route_recommendation, tasks.budget_tokens,
       latest_tokens.total_tokens AS latest_total_tokens,
       latest_tokens.model_context_window AS latest_model_context_window
@@ -646,6 +675,7 @@ export async function listWorkspaceChats(workspaceId: number) {
       chats.deleted_at, chats.origin, chats.profile_key, chats.external_thread_id,
       chats.source_kind, chats.sync_status, chats.external_cwd,
       chats.external_created_at, chats.external_updated_at, chats.last_synced_at,
+      chats.collaboration_mode, chats.saved_default_collaboration_mode_json,
       latest_run.account_label,
       latest_run.account_email,
       COALESCE(
@@ -691,6 +721,7 @@ export async function getChatWithRuns(chatId: number): Promise<ChatWithRuns> {
       chats.deleted_at, chats.origin, chats.profile_key, chats.external_thread_id,
       chats.source_kind, chats.sync_status, chats.external_cwd,
       chats.external_created_at, chats.external_updated_at, chats.last_synced_at,
+      chats.collaboration_mode, chats.saved_default_collaboration_mode_json,
       latest_run.account_label,
       latest_run.account_email,
       COALESCE(
@@ -737,6 +768,8 @@ export async function getChatWithRuns(chatId: number): Promise<ChatWithRuns> {
       runs.account_id, runs.account_label, runs.account_email, runs.model, runs.model_provider,
       runs.sandbox, runs.approval_policy, runs.status,
       runs.started_at, runs.completed_at, runs.duration_ms, runs.final_message, runs.error,
+      runs.collaboration_mode, runs.run_intent, runs.client_user_message_id,
+      runs.completed_plan_item_id, runs.completed_plan_text, runs.plan_review_state,
       tasks.original_prompt, tasks.improved_prompt, tasks.route_recommendation, tasks.budget_tokens,
       latest_tokens.total_tokens AS latest_total_tokens,
       latest_tokens.model_context_window AS latest_model_context_window
@@ -768,6 +801,8 @@ export async function listChatRunsPage(
       runs.codex_thread_id, runs.codex_turn_id,
       runs.status,
       runs.started_at, runs.completed_at, runs.duration_ms, runs.final_message, runs.error,
+      runs.collaboration_mode, runs.run_intent, runs.client_user_message_id,
+      runs.completed_plan_item_id, runs.completed_plan_text, runs.plan_review_state,
       tasks.original_prompt,
       latest_tokens.total_tokens AS latest_total_tokens,
       latest_tokens.model_context_window AS latest_model_context_window
@@ -794,6 +829,8 @@ export async function listLocalChatTranscript(chatId: number) {
       runs.codex_thread_id, runs.codex_turn_id,
       runs.status,
       runs.started_at, runs.completed_at, runs.duration_ms, runs.final_message, runs.error,
+      runs.collaboration_mode, runs.run_intent, runs.client_user_message_id,
+      runs.completed_plan_item_id, runs.completed_plan_text, runs.plan_review_state,
       tasks.original_prompt,
       latest_tokens.total_tokens AS latest_total_tokens,
       latest_tokens.model_context_window AS latest_model_context_window
