@@ -7,7 +7,8 @@ import {
   useRef,
   useState,
 } from "react";
-import type { CodexMessage, HistoricalChatOpenRequest } from "../types";
+import type { HistoricalChatOpenRequest } from "../types";
+import type { ApprovalResolutionHandler } from "../lib/codexApprovals";
 import type {
   NativeUserInputRequest,
   UserInputResponse,
@@ -139,7 +140,7 @@ export type VirtuosoTaskChatTranscriptProps = {
   liveFollow: boolean;
   onOpenAtLatestApplied?: (request: HistoricalChatOpenRequest) => void;
   onOpenAtLatestCancelled?: (request: HistoricalChatOpenRequest) => void;
-  onResolveRequest: (request: CodexMessage, approved: boolean) => void;
+  onResolveRequest: ApprovalResolutionHandler;
   onAnswerUserInput?: (
     entry: TaskChatEntry,
     request: NativeUserInputRequest,
@@ -180,7 +181,7 @@ const NativeTranscriptRow = memo(function NativeTranscriptRow({
   onSubmitEdit: (entry: TaskChatEntry, prompt: string) => void;
   onCancelEdit: () => void;
   onStartEdit: (entry: TaskChatEntry) => void;
-  onResolveRequest: (request: CodexMessage, approved: boolean) => void;
+  onResolveRequest: ApprovalResolutionHandler;
   onAnswerUserInput?: VirtuosoTaskChatTranscriptProps["onAnswerUserInput"];
   onImplementPlan?: VirtuosoTaskChatTranscriptProps["onImplementPlan"];
   onRevisePlan?: VirtuosoTaskChatTranscriptProps["onRevisePlan"];

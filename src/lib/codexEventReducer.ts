@@ -1,4 +1,5 @@
 import type { CodexMessage } from "../types";
+import type { CodexApprovalRequest } from "./codexApprovals";
 import {
   emptyNativePlanState,
   isNativePlanItem,
@@ -42,7 +43,13 @@ export type RunEditedFile = {
 export type RunCommandActivity = {
   id: string;
   command: string;
-  status: "running" | "completed" | "failed";
+  status:
+    | "pending"
+    | "awaiting-approval"
+    | "running"
+    | "completed"
+    | "failed"
+    | "declined";
   durationMs: number | null;
   output: string;
 };
@@ -72,6 +79,8 @@ export type RunViewState = {
   finalMessage: string;
   error: string | null;
   tokenUsage: TokenUsage | null;
+  approvalRequests: CodexApprovalRequest[];
+  approvalResourcesByItemId: Record<string, string[]>;
   serverRequests: CodexMessage[];
   nativePlan: NativePlanState;
 };
@@ -94,6 +103,8 @@ export const emptyRunView: RunViewState = {
   finalMessage: "",
   error: null,
   tokenUsage: null,
+  approvalRequests: [],
+  approvalResourcesByItemId: {},
   serverRequests: [],
   nativePlan: emptyNativePlanState,
 };
@@ -294,7 +305,22 @@ export function applyCodexMessage(
         );
       }
       if (item.type === "commandExecution" || item.type === "command") {
-        return upsertCommandActivity(state, params, "running", true);
+        return upsertCommandActivity(state, params, "pending", true);
+      }
+      if (item.type === "fileChange") {
+        const itemId = readString(item.id);
+        const resources = extractFileChangeResources(item);
+        const withResources =
+          itemId && resources.length > 0
+            ? {
+                ...state,
+                approvalResourcesByItemId: {
+                  ...state.approvalResourcesByItemId,
+                  [itemId]: resources,
+                },
+              }
+            : state;
+        return appendThinkingEvent(withResources);
       }
       if (isHiddenLifecycleItemType(readString(item.type))) {
         return appendThinkingEvent(state);
@@ -371,6 +397,8 @@ export function applyCodexMessage(
           durationMs ??
           calculateElapsedMs(state.startedAt, completedAt, state.elapsedMs),
         error: failed ? JSON.stringify(turn.error ?? "Turn failed") : null,
+        approvalRequests: [],
+        approvalResourcesByItemId: {},
         nativePlan: {
           ...state.nativePlan,
           phase: failed
@@ -405,11 +433,109 @@ export function applyCodexMessage(
         completedAt,
         elapsedMs: calculateElapsedMs(state.startedAt, completedAt, state.elapsedMs),
         error: JSON.stringify(params.error ?? message),
+        approvalRequests: [],
+        approvalResourcesByItemId: {},
+        nativePlan: { ...state.nativePlan, phase: "failed" },
       };
     }
     default:
       return state;
   }
+}
+
+export function addApprovalRequest(
+  state: RunViewState,
+  request: CodexApprovalRequest,
+) {
+  const existing = state.approvalRequests.find(
+    (candidate) => candidate.key === request.key,
+  );
+  if (existing) {
+    const duplicateMatches =
+      existing.id === request.id &&
+      existing.method === request.method &&
+      existing.threadId === request.threadId &&
+      existing.turnId === request.turnId &&
+      existing.itemId === request.itemId;
+    if (duplicateMatches) return state;
+    return {
+      ...state,
+      approvalRequests: state.approvalRequests.map((candidate) =>
+        candidate.key === request.key
+          ? {
+              ...candidate,
+              status: "stale" as const,
+              error: "Codex reused an approval identity for a different request. The request was blocked.",
+            }
+          : candidate,
+      ),
+    };
+  }
+
+  const commands = request.itemId
+    ? state.commands.map((command) =>
+        command.id === request.itemId
+          ? { ...command, status: "awaiting-approval" as const }
+          : command,
+      )
+    : state.commands;
+  return {
+    ...state,
+    commands,
+    approvalRequests: [...state.approvalRequests, request],
+  };
+}
+
+export function markApprovalSubmitting(
+  state: RunViewState,
+  requestKey: string,
+  choiceId: string,
+) {
+  return updateApprovalRequest(state, requestKey, (request) => ({
+    ...request,
+    status: "submitting",
+    selectedChoiceId: choiceId,
+    error: null,
+  }));
+}
+
+export function markApprovalAwaitingResolution(
+  state: RunViewState,
+  requestKey: string,
+) {
+  return updateApprovalRequest(state, requestKey, (request) => ({
+    ...request,
+    status: "awaiting-resolution",
+    error: null,
+  }));
+}
+
+export function markApprovalError(
+  state: RunViewState,
+  requestKey: string,
+  error: string,
+) {
+  return updateApprovalRequest(state, requestKey, (request) => ({
+    ...request,
+    status: "error",
+    selectedChoiceId: null,
+    error,
+  }));
+}
+
+export function resolveApprovalRequest(
+  state: RunViewState,
+  requestId: string | number,
+  threadId?: string | null,
+) {
+  return {
+    ...state,
+    approvalRequests: state.approvalRequests.filter(
+      (request) =>
+        request.id !== requestId ||
+        (threadId !== undefined && request.threadId !== threadId),
+    ),
+  };
 }
 
 export function addServerRequest(state: RunViewState, request: CodexMessage) {
@@ -477,6 +603,44 @@ export function updateNativePlanReview(
     ...state,
     nativePlan: { ...state.nativePlan, reviewState, phase },
   };
+}
+
+export function invalidateApprovalRequests(
+  state: RunViewState,
+  message: string,
+  turnId?: string | null,
+) {
+  return {
+    ...state,
+    approvalRequests: state.approvalRequests.map((request) =>
+      turnId === undefined || request.turnId === turnId
+        ? { ...request, status: "stale" as const, error: message }
+        : request,
+    ),
+  };
+}
+
+function updateApprovalRequest(
+  state: RunViewState,
+  requestKey: string,
+  update: (request: CodexApprovalRequest) => CodexApprovalRequest,
+) {
+  return {
+    ...state,
+    approvalRequests: state.approvalRequests.map((request) =>
+      request.key === requestKey ? update(request) : request,
+    ),
+  };
+}
+
+function extractFileChangeResources(item: Record<string, unknown>) {
+  const resources: string[] = [];
+  const changes = Array.isArray(item.changes) ? item.changes : [];
+  for (const change of changes) {
+    const path = readString(readObject(change).path);
+    if (path) resources.push(path);
+  }
+  return Array.from(new Set(resources));
 }
 
 export function updateRunElapsed(
@@ -927,12 +1091,22 @@ function commandOutputActivityIds(
 }
 
 function commandTimelineLabel(command: RunCommandActivity) {
-  const action =
-    command.status === "failed"
-      ? "Failed"
-      : command.status === "running"
-        ? "Running"
-        : "Ran";
+  const action = (() => {
+    switch (command.status) {
+      case "failed":
+        return "Failed";
+      case "declined":
+        return "Skipped";
+      case "running":
+        return "Running";
+      case "awaiting-approval":
+        return "Awaiting approval for";
+      case "pending":
+        return "Preparing";
+      default:
+        return "Ran";
+    }
+  })();
   return `${action} ${command.command}`;
 }
 
@@ -1040,6 +1214,9 @@ function commandStatusFromParams(params: Record<string, unknown>) {
   const status = readString(params.status) ?? readString(item.status);
   if (status === "failed" || status === "error") {
     return "failed";
+  }
+  if (status === "declined") {
+    return "declined";
   }
   return "completed";
 }
