@@ -2,75 +2,92 @@ import {
   memo,
   useCallback,
   useEffect,
-  useLayoutEffect,
   useMemo,
   useRef,
   useState,
 } from "react";
+import {
+  Virtuoso,
+  type Components,
+  type ListItem,
+  type ListRange,
+  type ScrollSeekConfiguration,
+  type ScrollSeekPlaceholderProps,
+  type StateSnapshot,
+  type VirtuosoHandle,
+} from "react-virtuoso";
 import type { HistoricalChatOpenRequest } from "../types";
 import type { ApprovalResolutionHandler } from "../lib/codexApprovals";
-import { findFirstVisibleTranscriptRow } from "../lib/transcriptScrollAnchor";
 import type {
   NativeUserInputRequest,
   UserInputResponse,
 } from "../lib/nativePlanMode";
-import { getTranscriptWidthBucket } from "../lib/transcriptVirtualization";
+import {
+  cacheTranscriptRowHeight,
+  calculateTranscriptDefaultItemHeight,
+  estimateTranscriptRowHeight,
+  getTranscriptWidthBucket,
+} from "../lib/transcriptVirtualization";
 import { TaskChatTurn, type TaskChatEntry } from "./TaskChatTranscript";
 
 const TRANSCRIPT_STATE_CACHE_LIMIT = 5;
 const TRANSCRIPT_BOTTOM_THRESHOLD_PX = 48;
-const SCROLL_POSITION_EPSILON_PX = 2;
 const CHAT_SCROLLBAR_CORNER_INSET_PX = 12;
+export const TRANSCRIPT_RENDER_AHEAD_PX = 3_600;
+export const TRANSCRIPT_MIN_OVERSCAN_ITEMS = 12;
 export const TRANSCRIPT_SCROLL_IDLE_MS = 280;
+export const TRANSCRIPT_SCROLL_SEEK_ENTER_PX_PER_SECOND = 4_000;
+export const TRANSCRIPT_SCROLL_SEEK_EXIT_PX_PER_SECOND = 900;
 export const LATEST_TURN_POSITION_RETRY_MS = 80;
 export const LATEST_TURN_POSITION_MAX_ATTEMPTS = 8;
 
+const transcriptIncreaseViewportBy = {
+  top: TRANSCRIPT_RENDER_AHEAD_PX,
+  bottom: TRANSCRIPT_RENDER_AHEAD_PX,
+} as const;
+
+type PendingTranscriptMeasurement = {
+  entry: TaskChatEntry;
+  height: number;
+};
+
+type StableDefaultItemHeight = {
+  key: string;
+  height: number;
+};
+
+type StableHeightEstimates = {
+  key: string;
+  heights: number[];
+};
+
 type CachedTranscriptState = {
-  anchorEntryId: string | null;
-  anchorOffset: number;
-  atBottom: boolean;
+  snapshot: StateSnapshot;
+  entryCount: number;
 };
 
 const transcriptStateCache = new Map<string, CachedTranscriptState>();
 
-function readCachedTranscriptState(key: string) {
+function readCachedTranscriptState(key: string, entryCount: number) {
   const cached = transcriptStateCache.get(key);
-  if (!cached) return undefined;
+  if (!cached || cached.entryCount !== entryCount) return undefined;
   transcriptStateCache.delete(key);
   transcriptStateCache.set(key, cached);
-  return cached;
+  return cached.snapshot;
 }
 
-function writeCachedTranscriptState(key: string, state: CachedTranscriptState) {
+function writeCachedTranscriptState(
+  key: string,
+  entryCount: number,
+  snapshot: StateSnapshot,
+) {
   transcriptStateCache.delete(key);
-  transcriptStateCache.set(key, state);
+  transcriptStateCache.set(key, { entryCount, snapshot });
   while (transcriptStateCache.size > TRANSCRIPT_STATE_CACHE_LIMIT) {
     const oldest = transcriptStateCache.keys().next().value;
     if (typeof oldest !== "string") break;
     transcriptStateCache.delete(oldest);
   }
-}
-
-function maxScrollTop(element: HTMLElement) {
-  return Math.max(0, element.scrollHeight - element.clientHeight);
-}
-
-function isNearTranscriptBottom(element: HTMLElement) {
-  return maxScrollTop(element) - element.scrollTop <= TRANSCRIPT_BOTTOM_THRESHOLD_PX;
-}
-
-function scrollTranscriptTo(element: HTMLElement, top: number) {
-  if (typeof element.scrollTo === "function") {
-    element.scrollTo({ top, behavior: "auto" });
-    return;
-  }
-
-  // JSDOM and older embedded WebKit builds do not expose Element.scrollTo.
-  element.scrollTop = top;
-}
-
-function scrollToTranscriptEnd(element: HTMLElement) {
-  scrollTranscriptTo(element, maxScrollTop(element));
 }
 
 function isTranscriptScrollKey(key: string) {
@@ -92,44 +109,42 @@ function isEditableScrollTarget(target: EventTarget | null) {
   );
 }
 
-function captureTranscriptState(element: HTMLElement): CachedTranscriptState {
-  const viewportTop = element.getBoundingClientRect().top;
-  const anchor = findFirstVisibleTranscriptRow(
-    element.querySelectorAll<HTMLElement>("[data-transcript-entry-id]"),
-    viewportTop,
-  );
-
-  return {
-    anchorEntryId: anchor?.dataset.transcriptEntryId ?? null,
-    anchorOffset: anchor ? anchor.getBoundingClientRect().top - viewportTop : 0,
-    atBottom: isNearTranscriptBottom(element),
-  };
-}
-
-function restoreTranscriptState(
-  element: HTMLElement,
-  state: CachedTranscriptState,
-) {
-  if (state.atBottom) {
-    scrollToTranscriptEnd(element);
-    return;
-  }
-  if (!state.anchorEntryId) return;
-  const row = Array.from(
-    element.querySelectorAll<HTMLElement>("[data-transcript-entry-id]"),
-  ).find((candidate) => candidate.dataset.transcriptEntryId === state.anchorEntryId);
-  if (!row) return;
-  const viewportTop = element.getBoundingClientRect().top;
-  const rowTop = row.getBoundingClientRect().top;
-  scrollTranscriptTo(
-    element,
-    Math.max(0, element.scrollTop + rowTop - viewportTop - state.anchorOffset),
-  );
-}
-
 function monotonicNow() {
   return typeof performance === "undefined" ? Date.now() : performance.now();
 }
+
+export function TranscriptScrollSeekPlaceholder({
+  height,
+}: ScrollSeekPlaceholderProps) {
+  return (
+    <div
+      className="task-chat-scroll-seek-row"
+      style={{ height: `${Math.max(1, height)}px` }}
+      aria-hidden="true"
+    >
+      <div className="task-chat-scroll-seek-prompt">
+        <span />
+        <span />
+      </div>
+      <div className="task-chat-scroll-seek-response">
+        <span />
+        <span />
+        <span />
+      </div>
+    </div>
+  );
+}
+
+const transcriptComponents: Components<TaskChatEntry> = {
+  ScrollSeekPlaceholder: TranscriptScrollSeekPlaceholder,
+};
+
+const transcriptScrollSeekConfiguration: ScrollSeekConfiguration = {
+  enter: (velocity) =>
+    Math.abs(velocity) > TRANSCRIPT_SCROLL_SEEK_ENTER_PX_PER_SECOND,
+  exit: (velocity) =>
+    Math.abs(velocity) < TRANSCRIPT_SCROLL_SEEK_EXIT_PX_PER_SECOND,
+};
 
 export type VirtuosoTaskChatTranscriptProps = {
   entries: TaskChatEntry[];
@@ -158,7 +173,7 @@ export type VirtuosoTaskChatTranscriptProps = {
   onScrollActivityChange?: (active: boolean) => void;
 };
 
-const NativeTranscriptRow = memo(function NativeTranscriptRow({
+const VirtualTranscriptRow = memo(function VirtualTranscriptRow({
   entry,
   editable,
   editing,
@@ -193,7 +208,7 @@ const NativeTranscriptRow = memo(function NativeTranscriptRow({
 }) {
   return (
     <div
-      className="task-chat-native-row"
+      className="task-chat-virtuoso-row"
       data-transcript-entry-id={entry.clientId}
     >
       <TaskChatTurn
@@ -224,6 +239,7 @@ export const VirtuosoTaskChatTranscript = memo(
     transcriptVersion,
     viewportWidth = 1_024,
     viewportStable = true,
+    firstItemIndex,
     openAtLatestRequest,
     liveFollow,
     onOpenAtLatestApplied,
@@ -239,32 +255,81 @@ export const VirtuosoTaskChatTranscript = memo(
     onLoadHistoricalActivity,
     onScrollActivityChange,
   }: VirtuosoTaskChatTranscriptProps) {
+    const virtuosoRef = useRef<VirtuosoHandle | null>(null);
     const scrollerRef = useRef<HTMLElement | null>(null);
-    const latestRequestRef = useRef<HistoricalChatOpenRequest | null>(
+    const detachScrollerListenersRef = useRef<(() => void) | null>(null);
+    const activeLatestRequestRef = useRef<HistoricalChatOpenRequest | null>(
       openAtLatestRequest,
     );
     const latestPositionFrameRef = useRef<number | null>(null);
-    const latestPositionTimerRef = useRef<number | null>(null);
-    const latestPositionAttemptRef = useRef(0);
+    const latestPositionRetryTimerRef = useRef<number | null>(null);
+    const latestPositionAttemptCountRef = useRef(0);
+    const latestTurnVisibleRef = useRef(false);
+    const atBottomRef = useRef(false);
+    const virtuosoScrollingRef = useRef(false);
     const userScrollActiveRef = useRef(false);
     const scrollbarPointerActiveRef = useRef(false);
     const scrollIdleCheckRef = useRef<number | null>(null);
     const lastUserScrollEventAtRef = useRef(0);
-    const atBottomRef = useRef(true);
     const reportedActivityRef = useRef(false);
-    const initialRestoreAppliedRef = useRef(false);
+    const pendingMeasurementsRef = useRef(
+      new Map<string, PendingTranscriptMeasurement>(),
+    );
+    const stableDefaultItemHeightRef = useRef<StableDefaultItemHeight | null>(
+      null,
+    );
+    const stableHeightEstimatesRef = useRef<StableHeightEstimates | null>(null);
+    const cacheMetadataRef = useRef({
+      cacheKey: "",
+      entryCount: entries.length,
+    });
+    const suppressRestoreOnMountRef = useRef(openAtLatestRequest !== null);
     const [editingEntryId, setEditingEntryId] = useState<string | null>(null);
     const [editingPrompt, setEditingPrompt] = useState("");
 
     const viewportWidthBucket = getTranscriptWidthBucket(viewportWidth);
-    const cacheKey = `${transcriptIdentity}:${transcriptVersion}:${viewportWidthBucket}`;
-    const cacheMetadataRef = useRef(cacheKey);
-    cacheMetadataRef.current = cacheKey;
-    const suppressRestoreOnMountRef = useRef(openAtLatestRequest !== null);
-    const restoredStateRef = useRef<CachedTranscriptState | undefined>(
-      suppressRestoreOnMountRef.current
-        ? undefined
-        : readCachedTranscriptState(cacheKey),
+    const geometryScope = `${transcriptIdentity}:${transcriptVersion}`;
+    const cacheKey = `${geometryScope}:${viewportWidthBucket}`;
+    cacheMetadataRef.current = { cacheKey, entryCount: entries.length };
+
+    const defaultHeightKey = `${geometryScope}:${viewportWidthBucket}`;
+    if (stableDefaultItemHeightRef.current?.key !== defaultHeightKey) {
+      stableDefaultItemHeightRef.current = {
+        key: defaultHeightKey,
+        height: calculateTranscriptDefaultItemHeight(
+          entries,
+          viewportWidthBucket,
+          geometryScope,
+        ),
+      };
+    }
+    const defaultItemHeight = stableDefaultItemHeightRef.current.height;
+
+    const heightEstimateKey = [
+      geometryScope,
+      viewportWidthBucket,
+      entries.length,
+      entries[0]?.clientId ?? "empty",
+      entries[entries.length - 1]?.clientId ?? "empty",
+    ].join(":");
+    if (stableHeightEstimatesRef.current?.key !== heightEstimateKey) {
+      stableHeightEstimatesRef.current = {
+        key: heightEstimateKey,
+        heights: entries.map((entry) =>
+          estimateTranscriptRowHeight(entry, viewportWidthBucket, geometryScope),
+        ),
+      };
+    }
+    const heightEstimates = stableHeightEstimatesRef.current.heights;
+
+    const restoredState = useMemo(
+      () =>
+        suppressRestoreOnMountRef.current
+          ? undefined
+          : readCachedTranscriptState(cacheKey, entries.length),
+      // Restoration is intentionally read only when this transcript mounts.
+      // eslint-disable-next-line react-hooks/exhaustive-deps
+      [cacheKey],
     );
 
     const clearLatestPositionSchedule = useCallback(() => {
@@ -272,9 +337,9 @@ export const VirtuosoTaskChatTranscript = memo(
         window.cancelAnimationFrame(latestPositionFrameRef.current);
         latestPositionFrameRef.current = null;
       }
-      if (latestPositionTimerRef.current !== null) {
-        window.clearTimeout(latestPositionTimerRef.current);
-        latestPositionTimerRef.current = null;
+      if (latestPositionRetryTimerRef.current !== null) {
+        window.clearTimeout(latestPositionRetryTimerRef.current);
+        latestPositionRetryTimerRef.current = null;
       }
     }, []);
 
@@ -285,21 +350,34 @@ export const VirtuosoTaskChatTranscript = memo(
       }
     }, []);
 
-    const reportScrollActivity = useCallback(
-      (active: boolean) => {
-        if (reportedActivityRef.current === active) return;
-        reportedActivityRef.current = active;
-        onScrollActivityChange?.(active);
-      },
-      [onScrollActivityChange],
-    );
+    const reportScrollActivity = useCallback(() => {
+      const active =
+        virtuosoScrollingRef.current || userScrollActiveRef.current;
+      if (reportedActivityRef.current === active) return;
+      reportedActivityRef.current = active;
+      onScrollActivityChange?.(active);
+    }, [onScrollActivityChange]);
+
+    const flushPendingMeasurements = useCallback(() => {
+      if (virtuosoScrollingRef.current || userScrollActiveRef.current) return;
+      pendingMeasurementsRef.current.forEach(({ entry, height }) => {
+        cacheTranscriptRowHeight(
+          entry,
+          viewportWidthBucket,
+          height,
+          geometryScope,
+        );
+      });
+      pendingMeasurementsRef.current.clear();
+    }, [geometryScope, viewportWidthBucket]);
 
     const finishUserScrollActivity = useCallback(() => {
-      if (!userScrollActiveRef.current || scrollbarPointerActiveRef.current) return;
+      if (scrollbarPointerActiveRef.current) return;
       clearScrollIdleCheck();
       userScrollActiveRef.current = false;
-      reportScrollActivity(false);
-    }, [clearScrollIdleCheck, reportScrollActivity]);
+      flushPendingMeasurements();
+      reportScrollActivity();
+    }, [clearScrollIdleCheck, flushPendingMeasurements, reportScrollActivity]);
 
     const scheduleScrollIdleCheck = useCallback(() => {
       if (scrollIdleCheckRef.current !== null) return;
@@ -325,10 +403,27 @@ export const VirtuosoTaskChatTranscript = memo(
       );
     }, [finishUserScrollActivity]);
 
+    const confirmLatestPosition = useCallback(() => {
+      const request = activeLatestRequestRef.current;
+      if (
+        !request ||
+        userScrollActiveRef.current ||
+        !latestTurnVisibleRef.current ||
+        !atBottomRef.current
+      ) {
+        return false;
+      }
+
+      activeLatestRequestRef.current = null;
+      clearLatestPositionSchedule();
+      onOpenAtLatestApplied?.(request);
+      return true;
+    }, [clearLatestPositionSchedule, onOpenAtLatestApplied]);
+
     const cancelLatestPosition = useCallback(() => {
-      const request = latestRequestRef.current;
+      const request = activeLatestRequestRef.current;
       if (!request) return;
-      latestRequestRef.current = null;
+      activeLatestRequestRef.current = null;
       clearLatestPositionSchedule();
       onOpenAtLatestCancelled?.(request);
     }, [clearLatestPositionSchedule, onOpenAtLatestCancelled]);
@@ -338,229 +433,177 @@ export const VirtuosoTaskChatTranscript = memo(
       if (!userScrollActiveRef.current) {
         userScrollActiveRef.current = true;
         cancelLatestPosition();
-        reportScrollActivity(true);
       }
+      reportScrollActivity();
       scheduleScrollIdleCheck();
     }, [cancelLatestPosition, reportScrollActivity, scheduleScrollIdleCheck]);
 
-    const confirmLatestPosition = useCallback(() => {
-      const request = latestRequestRef.current;
-      const scroller = scrollerRef.current;
-      if (!request || !scroller || userScrollActiveRef.current) return false;
-      if (
-        Math.abs(maxScrollTop(scroller) - scroller.scrollTop) >
-        SCROLL_POSITION_EPSILON_PX
-      ) {
-        return false;
-      }
-      latestRequestRef.current = null;
-      clearLatestPositionSchedule();
-      atBottomRef.current = true;
-      onOpenAtLatestApplied?.(request);
-      return true;
-    }, [clearLatestPositionSchedule, onOpenAtLatestApplied]);
+    const handleScrollerRef = useCallback(
+      (element: HTMLElement | Window | null) => {
+        detachScrollerListenersRef.current?.();
+        detachScrollerListenersRef.current = null;
+        const nextScroller = element instanceof HTMLElement ? element : null;
+        scrollerRef.current = nextScroller;
+        if (!nextScroller) return;
 
-    const applyLatestPosition = useCallback(() => {
-      const request = latestRequestRef.current;
-      const scroller = scrollerRef.current;
-      if (!request || !scroller || userScrollActiveRef.current) return;
-      latestPositionAttemptRef.current += 1;
-      scrollToTranscriptEnd(scroller);
-      if (confirmLatestPosition()) return;
-      if (latestPositionAttemptRef.current >= LATEST_TURN_POSITION_MAX_ATTEMPTS) {
+        const handleWheel = () => markUserScrollActivity();
+        const handleTouch = () => markUserScrollActivity();
+        const handleKeyDown = (event: KeyboardEvent) => {
+          if (
+            isTranscriptScrollKey(event.key) &&
+            !isEditableScrollTarget(event.target)
+          ) {
+            markUserScrollActivity();
+          }
+        };
+        const handlePointerDown = (event: PointerEvent) => {
+          const bounds = nextScroller.getBoundingClientRect();
+          const scrollbarHitWidth = Math.max(
+            14,
+            nextScroller.offsetWidth - nextScroller.clientWidth,
+          );
+          const cornerInset = Number.parseFloat(
+            window
+              .getComputedStyle(nextScroller)
+              .getPropertyValue("--chat-scrollbar-corner-inset"),
+          );
+          const effectiveCornerInset = Number.isFinite(cornerInset)
+            ? cornerInset
+            : CHAT_SCROLLBAR_CORNER_INSET_PX;
+          if (
+            event.clientX >= bounds.right - scrollbarHitWidth &&
+            event.clientY >= bounds.top + effectiveCornerInset &&
+            event.clientY <= bounds.bottom - effectiveCornerInset
+          ) {
+            scrollbarPointerActiveRef.current = true;
+            markUserScrollActivity();
+          }
+        };
+        const handlePointerMove = () => {
+          if (scrollbarPointerActiveRef.current) markUserScrollActivity();
+        };
+        const handlePointerUp = () => {
+          if (!scrollbarPointerActiveRef.current) return;
+          scrollbarPointerActiveRef.current = false;
+          lastUserScrollEventAtRef.current = monotonicNow();
+          scheduleScrollIdleCheck();
+        };
+        const handleScroll = () => {
+          if (userScrollActiveRef.current) {
+            lastUserScrollEventAtRef.current = monotonicNow();
+            scheduleScrollIdleCheck();
+          }
+        };
+        const handleScrollEnd = () => {
+          if (userScrollActiveRef.current && !scrollbarPointerActiveRef.current) {
+            finishUserScrollActivity();
+          }
+        };
+
+        nextScroller.addEventListener("wheel", handleWheel, { passive: true });
+        nextScroller.addEventListener("touchstart", handleTouch, {
+          passive: true,
+        });
+        nextScroller.addEventListener("touchmove", handleTouch, {
+          passive: true,
+        });
+        nextScroller.addEventListener("touchend", handleTouch, {
+          passive: true,
+        });
+        nextScroller.addEventListener("keydown", handleKeyDown);
+        nextScroller.addEventListener("pointerdown", handlePointerDown);
+        nextScroller.addEventListener("scroll", handleScroll, { passive: true });
+        nextScroller.addEventListener("scrollend", handleScrollEnd);
+        window.addEventListener("pointermove", handlePointerMove, {
+          passive: true,
+        });
+        window.addEventListener("pointerup", handlePointerUp, {
+          passive: true,
+        });
+
+        detachScrollerListenersRef.current = () => {
+          nextScroller.removeEventListener("wheel", handleWheel);
+          nextScroller.removeEventListener("touchstart", handleTouch);
+          nextScroller.removeEventListener("touchmove", handleTouch);
+          nextScroller.removeEventListener("touchend", handleTouch);
+          nextScroller.removeEventListener("keydown", handleKeyDown);
+          nextScroller.removeEventListener("pointerdown", handlePointerDown);
+          nextScroller.removeEventListener("scroll", handleScroll);
+          nextScroller.removeEventListener("scrollend", handleScrollEnd);
+          window.removeEventListener("pointermove", handlePointerMove);
+          window.removeEventListener("pointerup", handlePointerUp);
+        };
+      },
+      [finishUserScrollActivity, markUserScrollActivity, scheduleScrollIdleCheck],
+    );
+
+    useEffect(() => {
+      clearLatestPositionSchedule();
+      activeLatestRequestRef.current = openAtLatestRequest;
+      latestPositionAttemptCountRef.current = 0;
+      latestTurnVisibleRef.current = false;
+      atBottomRef.current = false;
+
+      if (
+        !openAtLatestRequest ||
+        openAtLatestRequest.transcriptVersion !== transcriptVersion ||
+        entries.length === 0 ||
+        !viewportStable
+      ) {
         return;
       }
-      latestPositionTimerRef.current = window.setTimeout(() => {
-        latestPositionTimerRef.current = null;
-        latestPositionFrameRef.current = window.requestAnimationFrame(() => {
-          latestPositionFrameRef.current = null;
-          applyLatestPosition();
-        });
-      }, LATEST_TURN_POSITION_RETRY_MS);
-    }, [confirmLatestPosition]);
 
-    useLayoutEffect(() => {
-      clearLatestPositionSchedule();
-      latestRequestRef.current = openAtLatestRequest;
-      latestPositionAttemptRef.current = 0;
-      const scroller = scrollerRef.current;
-      if (!scroller || entries.length === 0 || !viewportStable) return;
-
-      if (
-        openAtLatestRequest &&
-        openAtLatestRequest.transcriptVersion === transcriptVersion
-      ) {
-        scrollToTranscriptEnd(scroller);
-        latestPositionFrameRef.current = window.requestAnimationFrame(() => {
-          latestPositionFrameRef.current = null;
-          if (!confirmLatestPosition()) applyLatestPosition();
-        });
-        return;
-      }
-
-      if (!initialRestoreAppliedRef.current) {
-        initialRestoreAppliedRef.current = true;
-        const restoredState = restoredStateRef.current;
-        if (restoredState) {
-          restoreTranscriptState(scroller, restoredState);
-          atBottomRef.current = restoredState.atBottom;
-        } else if (liveFollow) {
-          scrollToTranscriptEnd(scroller);
-          atBottomRef.current = true;
+      let disposed = false;
+      const attemptPositioning = () => {
+        latestPositionFrameRef.current = null;
+        if (
+          disposed ||
+          activeLatestRequestRef.current?.requestId !==
+            openAtLatestRequest.requestId ||
+          userScrollActiveRef.current
+        ) {
+          return;
         }
-      }
+
+        latestPositionAttemptCountRef.current += 1;
+        virtuosoRef.current?.scrollToIndex({
+          index: "LAST",
+          align: "end",
+          behavior: "auto",
+        });
+        if (
+          !confirmLatestPosition() &&
+          latestPositionAttemptCountRef.current <
+            LATEST_TURN_POSITION_MAX_ATTEMPTS
+        ) {
+          latestPositionRetryTimerRef.current = window.setTimeout(() => {
+            latestPositionRetryTimerRef.current = null;
+            latestPositionFrameRef.current = window.requestAnimationFrame(
+              attemptPositioning,
+            );
+          }, LATEST_TURN_POSITION_RETRY_MS);
+        }
+      };
+
+      latestPositionFrameRef.current = window.requestAnimationFrame(
+        attemptPositioning,
+      );
+      return () => {
+        disposed = true;
+        clearLatestPositionSchedule();
+      };
     }, [
-      applyLatestPosition,
       clearLatestPositionSchedule,
       confirmLatestPosition,
       entries.length,
-      liveFollow,
       openAtLatestRequest,
       transcriptVersion,
       viewportStable,
     ]);
 
-    useLayoutEffect(() => {
-      const scroller = scrollerRef.current;
-      if (
-        scroller &&
-        liveFollow &&
-        atBottomRef.current &&
-        !userScrollActiveRef.current
-      ) {
-        scrollToTranscriptEnd(scroller);
-      }
-    }, [entries, liveFollow]);
-
     useEffect(() => {
-      const scroller = scrollerRef.current;
-      if (!scroller) return;
-
-      const handleScroll = () => {
-        atBottomRef.current = isNearTranscriptBottom(scroller);
-        if (userScrollActiveRef.current) {
-          lastUserScrollEventAtRef.current = monotonicNow();
-          scheduleScrollIdleCheck();
-        }
-        confirmLatestPosition();
-      };
-      const handleWheel = () => markUserScrollActivity();
-      const handleTouch = () => markUserScrollActivity();
-      const handleKeyDown = (event: KeyboardEvent) => {
-        if (
-          isTranscriptScrollKey(event.key) &&
-          !isEditableScrollTarget(event.target)
-        ) {
-          markUserScrollActivity();
-        }
-      };
-      const handlePointerDown = (event: PointerEvent) => {
-        const bounds = scroller.getBoundingClientRect();
-        const scrollbarHitWidth = Math.max(
-          14,
-          scroller.offsetWidth - scroller.clientWidth,
-        );
-        const cornerInset = Number.parseFloat(
-          window
-            .getComputedStyle(scroller)
-            .getPropertyValue("--chat-scrollbar-corner-inset"),
-        );
-        const effectiveCornerInset = Number.isFinite(cornerInset)
-          ? cornerInset
-          : CHAT_SCROLLBAR_CORNER_INSET_PX;
-        const scrollbarStart = bounds.top + effectiveCornerInset;
-        const scrollbarEnd = bounds.bottom - effectiveCornerInset;
-        if (
-          event.clientX >= bounds.right - scrollbarHitWidth &&
-          event.clientY >= scrollbarStart &&
-          event.clientY <= scrollbarEnd
-        ) {
-          scrollbarPointerActiveRef.current = true;
-          markUserScrollActivity();
-        }
-      };
-      const handlePointerMove = () => {
-        if (scrollbarPointerActiveRef.current) markUserScrollActivity();
-      };
-      const handlePointerUp = () => {
-        if (!scrollbarPointerActiveRef.current) return;
-        scrollbarPointerActiveRef.current = false;
-        lastUserScrollEventAtRef.current = monotonicNow();
-        scheduleScrollIdleCheck();
-      };
-      const handleScrollEnd = () => {
-        if (userScrollActiveRef.current && !scrollbarPointerActiveRef.current) {
-          finishUserScrollActivity();
-        }
-      };
-
-      scroller.addEventListener("scroll", handleScroll, { passive: true });
-      scroller.addEventListener("scrollend", handleScrollEnd);
-      scroller.addEventListener("wheel", handleWheel, { passive: true });
-      scroller.addEventListener("touchstart", handleTouch, { passive: true });
-      scroller.addEventListener("touchmove", handleTouch, { passive: true });
-      scroller.addEventListener("touchend", handleTouch, { passive: true });
-      scroller.addEventListener("keydown", handleKeyDown);
-      scroller.addEventListener("pointerdown", handlePointerDown);
-      window.addEventListener("pointermove", handlePointerMove, { passive: true });
-      window.addEventListener("pointerup", handlePointerUp, { passive: true });
-
-      return () => {
-        scroller.removeEventListener("scroll", handleScroll);
-        scroller.removeEventListener("scrollend", handleScrollEnd);
-        scroller.removeEventListener("wheel", handleWheel);
-        scroller.removeEventListener("touchstart", handleTouch);
-        scroller.removeEventListener("touchmove", handleTouch);
-        scroller.removeEventListener("touchend", handleTouch);
-        scroller.removeEventListener("keydown", handleKeyDown);
-        scroller.removeEventListener("pointerdown", handlePointerDown);
-        window.removeEventListener("pointermove", handlePointerMove);
-        window.removeEventListener("pointerup", handlePointerUp);
-      };
-    }, [
-      confirmLatestPosition,
-      finishUserScrollActivity,
-      markUserScrollActivity,
-      scheduleScrollIdleCheck,
-    ]);
-
-    useEffect(() => {
-      const scroller = scrollerRef.current;
-      if (!scroller || typeof ResizeObserver === "undefined") return;
-      const observer = new ResizeObserver(() => {
-        if (
-          liveFollow &&
-          atBottomRef.current &&
-          !userScrollActiveRef.current
-        ) {
-          scrollToTranscriptEnd(scroller);
-        }
-      });
-      const content = scroller.firstElementChild;
-      if (content) observer.observe(content);
-      observer.observe(scroller);
-      return () => observer.disconnect();
-    }, [liveFollow]);
-
-    useLayoutEffect(
-      () => () => {
-        const scroller = scrollerRef.current;
-        if (scroller) {
-          writeCachedTranscriptState(
-            cacheMetadataRef.current,
-            captureTranscriptState(scroller),
-          );
-        }
-        clearLatestPositionSchedule();
-        clearScrollIdleCheck();
-        if (reportedActivityRef.current) onScrollActivityChange?.(false);
-      },
-      [
-        clearLatestPositionSchedule,
-        clearScrollIdleCheck,
-        onScrollActivityChange,
-      ],
-    );
+      pendingMeasurementsRef.current.clear();
+    }, [geometryScope, viewportWidthBucket]);
 
     useEffect(() => {
       if (
@@ -572,14 +615,39 @@ export const VirtuosoTaskChatTranscript = memo(
       }
     }, [editingEntryId, entries]);
 
+    useEffect(() => {
+      const handle = virtuosoRef.current;
+      return () => {
+        detachScrollerListenersRef.current?.();
+        detachScrollerListenersRef.current = null;
+        clearLatestPositionSchedule();
+        clearScrollIdleCheck();
+        if (reportedActivityRef.current) onScrollActivityChange?.(false);
+        handle?.getState((snapshot) => {
+          const metadata = cacheMetadataRef.current;
+          writeCachedTranscriptState(
+            metadata.cacheKey,
+            metadata.entryCount,
+            snapshot,
+          );
+        });
+      };
+    }, [
+      clearLatestPositionSchedule,
+      clearScrollIdleCheck,
+      onScrollActivityChange,
+    ]);
+
     const handleStartEdit = useCallback((entry: TaskChatEntry) => {
       setEditingEntryId(entry.clientId);
       setEditingPrompt(entry.prompt);
     }, []);
+
     const handleCancelEdit = useCallback(() => {
       setEditingEntryId(null);
       setEditingPrompt("");
     }, []);
+
     const handleSubmitEdit = useCallback(
       (entry: TaskChatEntry, nextPrompt: string) => {
         if (!nextPrompt || !onEditPrompt) return;
@@ -590,66 +658,142 @@ export const VirtuosoTaskChatTranscript = memo(
       [onEditPrompt],
     );
 
-    const rows = useMemo(
-      () =>
-        entries.map((entry) => {
-          const editable =
-            Boolean(onEditPrompt) &&
-            entry.clientId === editablePromptEntryId &&
-            entry.status !== "connecting" &&
-            entry.status !== "running";
-          return (
-            <NativeTranscriptRow
-              key={entry.clientId}
-              editable={editable}
-              editing={editingEntryId === entry.clientId}
-              editingPrompt={
-                editingEntryId === entry.clientId ? editingPrompt : ""
-              }
-              entry={entry}
-              onCancelEdit={handleCancelEdit}
-              onEditingPromptChange={setEditingPrompt}
-              onOpenFileLink={onOpenFileLink}
-              onResolveRequest={onResolveRequest}
-              onAnswerUserInput={onAnswerUserInput}
-              onImplementPlan={onImplementPlan}
-              onRevisePlan={onRevisePlan}
-              onCancelPlan={onCancelPlan}
-              onStartEdit={handleStartEdit}
-              onSubmitEdit={handleSubmitEdit}
-              onLoadHistoricalActivity={onLoadHistoricalActivity}
-            />
-          );
-        }),
+    const handleItemsRendered = useCallback(
+      (items: ListItem<TaskChatEntry>[]) => {
+        if (!viewportStable) return;
+        items.forEach((item) => {
+          if (!item.data || item.size <= 0) return;
+          if (virtuosoScrollingRef.current || userScrollActiveRef.current) {
+            pendingMeasurementsRef.current.set(item.data.clientId, {
+              entry: item.data,
+              height: item.size,
+            });
+          } else {
+            cacheTranscriptRowHeight(
+              item.data,
+              viewportWidthBucket,
+              item.size,
+              geometryScope,
+            );
+          }
+        });
+      },
+      [geometryScope, viewportStable, viewportWidthBucket],
+    );
+
+    const handleRangeChanged = useCallback(
+      (range: ListRange) => {
+        const latestIndex = firstItemIndex + entries.length - 1;
+        latestTurnVisibleRef.current =
+          entries.length > 0 && range.endIndex >= latestIndex;
+        confirmLatestPosition();
+      },
+      [confirmLatestPosition, entries.length, firstItemIndex],
+    );
+
+    const handleAtBottomStateChange = useCallback(
+      (atBottom: boolean) => {
+        atBottomRef.current = atBottom;
+        confirmLatestPosition();
+      },
+      [confirmLatestPosition],
+    );
+
+    const handleIsScrolling = useCallback(
+      (active: boolean) => {
+        virtuosoScrollingRef.current = active;
+        if (!active) flushPendingMeasurements();
+        reportScrollActivity();
+      },
+      [flushPendingMeasurements, reportScrollActivity],
+    );
+
+    const itemContent = useCallback(
+      (_index: number, entry: TaskChatEntry) => {
+        const editable =
+          Boolean(onEditPrompt) &&
+          entry.clientId === editablePromptEntryId &&
+          entry.status !== "connecting" &&
+          entry.status !== "running";
+        return (
+          <VirtualTranscriptRow
+            editable={editable}
+            editing={editingEntryId === entry.clientId}
+            editingPrompt={
+              editingEntryId === entry.clientId ? editingPrompt : ""
+            }
+            entry={entry}
+            onCancelEdit={handleCancelEdit}
+            onEditingPromptChange={setEditingPrompt}
+            onOpenFileLink={onOpenFileLink}
+            onResolveRequest={onResolveRequest}
+            onAnswerUserInput={onAnswerUserInput}
+            onImplementPlan={onImplementPlan}
+            onRevisePlan={onRevisePlan}
+            onCancelPlan={onCancelPlan}
+            onStartEdit={handleStartEdit}
+            onSubmitEdit={handleSubmitEdit}
+            onLoadHistoricalActivity={onLoadHistoricalActivity}
+          />
+        );
+      },
       [
         editablePromptEntryId,
         editingEntryId,
         editingPrompt,
-        entries,
         handleCancelEdit,
         handleStartEdit,
         handleSubmitEdit,
+        onAnswerUserInput,
+        onCancelPlan,
         onEditPrompt,
+        onImplementPlan,
         onLoadHistoricalActivity,
         onOpenFileLink,
         onResolveRequest,
-        onAnswerUserInput,
-        onImplementPlan,
         onRevisePlan,
-        onCancelPlan,
       ],
     );
 
     return (
       <div className="task-chat-scroll-frame">
-        <section
-          className="task-chat-transcript native-transcript"
+        <Virtuoso
+          className="task-chat-transcript virtuoso-transcript task-chat-virtuoso"
+          role="region"
           aria-label="Task chat transcript"
-          ref={scrollerRef}
           tabIndex={0}
-        >
-          <div className="task-chat-native-list">{rows}</div>
-        </section>
+          ref={virtuosoRef}
+          data={entries}
+          firstItemIndex={firstItemIndex}
+          initialItemCount={Math.min(entries.length, 20)}
+          computeItemKey={(_index, entry) => entry.clientId}
+          defaultItemHeight={defaultItemHeight}
+          heightEstimates={heightEstimates}
+          increaseViewportBy={transcriptIncreaseViewportBy}
+          minOverscanItemCount={{
+            top: TRANSCRIPT_MIN_OVERSCAN_ITEMS,
+            bottom: TRANSCRIPT_MIN_OVERSCAN_ITEMS,
+          }}
+          components={transcriptComponents}
+          scrollSeekConfiguration={transcriptScrollSeekConfiguration}
+          scrollerRef={handleScrollerRef}
+          initialTopMostItemIndex={
+            suppressRestoreOnMountRef.current
+              ? { index: "LAST", align: "end" }
+              : undefined
+          }
+          restoreStateFrom={restoredState}
+          alignToBottom
+          atBottomThreshold={TRANSCRIPT_BOTTOM_THRESHOLD_PX}
+          followOutput={(isAtBottom) =>
+            liveFollow && isAtBottom ? "auto" : false
+          }
+          atBottomStateChange={handleAtBottomStateChange}
+          rangeChanged={handleRangeChanged}
+          isScrolling={handleIsScrolling}
+          itemsRendered={handleItemsRendered}
+          itemContent={itemContent}
+        />
       </div>
     );
   },

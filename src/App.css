@@ -1843,37 +1843,78 @@ button.account-switcher-item:hover:not(:disabled) {
   padding: 4px var(--task-hero-inline-padding);
 }
 
-.task-chat-transcript.native-transcript {
+.task-chat-transcript.virtuoso-transcript {
   --chat-scrollbar-corner-inset: 12px;
 
   overflow-x: hidden;
   overflow-y: auto;
-  overflow-anchor: auto;
+  overflow-anchor: none;
   border-radius: inherit;
   scroll-padding-block: var(--chat-scrollbar-corner-inset);
   padding: 0;
   -webkit-overflow-scrolling: touch;
 }
 
-.task-chat-transcript.native-transcript::-webkit-scrollbar-track {
+.task-chat-transcript.virtuoso-transcript::-webkit-scrollbar-track {
   margin-block: var(--chat-scrollbar-corner-inset);
   margin-top: var(--chat-scrollbar-corner-inset);
   margin-bottom: var(--chat-scrollbar-corner-inset);
 }
 
-.task-chat-native-list {
-  width: 100%;
-  min-height: 100%;
-}
-
-.task-chat-native-row {
+.task-chat-virtuoso-row {
   display: grid;
   width: 100%;
   justify-items: center;
   box-sizing: border-box;
-  overflow-anchor: auto;
+  overflow-anchor: none;
   padding: 4px var(--task-hero-inline-padding) 18px;
   contain: layout paint style;
+}
+
+.task-chat-scroll-seek-row {
+  display: grid;
+  width: 100%;
+  min-height: 1px;
+  align-content: start;
+  box-sizing: border-box;
+  overflow: hidden;
+  gap: 18px;
+  padding: 4px var(--task-hero-inline-padding) 18px;
+  contain: strict;
+  pointer-events: none;
+}
+
+.task-chat-scroll-seek-prompt,
+.task-chat-scroll-seek-response {
+  display: grid;
+  gap: 9px;
+}
+
+.task-chat-scroll-seek-prompt {
+  width: min(62%, 640px);
+  justify-self: end;
+}
+
+.task-chat-scroll-seek-response {
+  width: min(78%, 820px);
+}
+
+.task-chat-scroll-seek-row span {
+  display: block;
+  height: 12px;
+  border-radius: 4px;
+  background: var(--color-surface-soft);
+  opacity: 0.72;
+}
+
+.task-chat-scroll-seek-prompt span:first-child,
+.task-chat-scroll-seek-response span:nth-child(2) {
+  width: 74%;
+}
+
+.task-chat-scroll-seek-prompt span:last-child,
+.task-chat-scroll-seek-response span:last-child {
+  width: 48%;
 }
 
 .historical-activity-status button,

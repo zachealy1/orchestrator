@@ -67,18 +67,18 @@ describe("history drawer animation CSS", () => {
     );
   });
 
-  it("clips and insets the native scrollbar around the rounded chat corners", () => {
+  it("clips and insets the virtualized scrollbar around the rounded chat corners", () => {
     const frame = rule(".task-chat-scroll-frame");
     expect(frame).toContain("overflow: hidden");
     expect(frame).toContain("border-radius: var(--radius)");
-    expect(rule(".task-chat-transcript.native-transcript")).toContain(
+    expect(rule(".task-chat-transcript.virtuoso-transcript")).toContain(
       "--chat-scrollbar-corner-inset: 12px",
     );
-    expect(rule(".task-chat-transcript.native-transcript")).toContain(
+    expect(rule(".task-chat-transcript.virtuoso-transcript")).toContain(
       "scroll-padding-block: var(--chat-scrollbar-corner-inset)",
     );
     expect(
-      rule(".task-chat-transcript.native-transcript::-webkit-scrollbar-track"),
+      rule(".task-chat-transcript.virtuoso-transcript::-webkit-scrollbar-track"),
     ).toContain("margin-block: var(--chat-scrollbar-corner-inset)");
   });
 });

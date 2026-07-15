@@ -101,6 +101,56 @@ vi.mock("./assets/brand/orchestrator-wordmark.png", () => ({
   default: "orchestrator-wordmark.png",
 }));
 
+vi.mock("react-virtuoso", async () => {
+  const React = await import("react");
+  return {
+    Virtuoso: React.forwardRef(function TestVirtuoso(props: any, ref) {
+      const scrollerRef = React.useRef<HTMLDivElement | null>(null);
+      React.useImperativeHandle(ref, () => ({
+        getState: (callback: (state: unknown) => void) =>
+          callback({ ranges: [], scrollTop: 0 }),
+        scrollToIndex: () => undefined,
+      }));
+      React.useEffect(() => {
+        props.scrollerRef?.(scrollerRef.current);
+        return () => props.scrollerRef?.(null);
+      }, [props.scrollerRef]);
+      React.useEffect(() => {
+        const data = props.data ?? [];
+        if (data.length > 0) {
+          props.rangeChanged?.({
+            startIndex: props.firstItemIndex,
+            endIndex: props.firstItemIndex + data.length - 1,
+          });
+          props.atBottomStateChange?.(true);
+        }
+      }, [props.data?.length, props.firstItemIndex]);
+
+      const data = props.data ?? [];
+      const startIndex = Math.max(0, data.length - 24);
+
+      return (
+        <div
+          aria-label={props["aria-label"]}
+          className={props.className}
+          ref={scrollerRef}
+          role={props.role}
+          tabIndex={props.tabIndex}
+        >
+          {data.slice(startIndex).map((entry: any, offset: number) => {
+            const index = startIndex + offset;
+            return (
+              <div key={props.computeItemKey(index, entry)}>
+                {props.itemContent(index, entry)}
+              </div>
+            );
+          })}
+        </div>
+      );
+    }),
+  };
+});
+
 vi.mock("./codexClient", () => ({
   cancelCodexLogin: mocks.cancelCodexLoginMock,
   codexDefaultProfileRpc: mocks.codexDefaultProfileRpcMock,
@@ -2278,7 +2328,7 @@ describe("App Codex auth", () => {
       "Loading Large history chat",
     );
     expect(await screen.findByText("Result 65.")).toBeInTheDocument();
-    expect(screen.getByText("Result 1.")).toBeInTheDocument();
+    expect(screen.queryByText("Result 1.")).not.toBeInTheDocument();
     expect(mocks.listLocalChatTranscriptMock).toHaveBeenCalledTimes(1);
     expect(mocks.listLocalChatTranscriptMock).toHaveBeenCalledWith(451);
 
@@ -2379,8 +2429,8 @@ describe("App Codex auth", () => {
     const transcript = screen.getByRole("region", {
       name: "Task chat transcript",
     });
-    expect(transcript).toHaveClass("native-transcript");
-    expect(transcript.querySelectorAll(".task-chat-native-row")).toHaveLength(2);
+    expect(transcript).toHaveClass("virtuoso-transcript");
+    expect(transcript.querySelectorAll(".task-chat-virtuoso-row")).toHaveLength(2);
   });
 
   it("publishes an uncached external transcript once after its full snapshot is ready", async () => {
@@ -2449,12 +2499,12 @@ describe("App Codex auth", () => {
       expect(mocks.activateExternalTranscriptSnapshotMock).toHaveBeenCalled(),
     );
     expect(await screen.findByText("External result 65.")).toBeInTheDocument();
-    expect(await screen.findByText("External result 1.")).toBeInTheDocument();
+    expect(screen.queryByText("External result 1.")).not.toBeInTheDocument();
     expect(
       screen
         .getByRole("region", { name: "Task chat transcript" })
-        .querySelectorAll(".task-chat-native-row"),
-    ).toHaveLength(65);
+        .querySelectorAll(".task-chat-virtuoso-row"),
+    ).toHaveLength(24);
     expect(mocks.syncDefaultProfileThreadTranscriptMock).toHaveBeenCalledTimes(1);
     expect(mocks.codexDefaultProfileRpcMock).not.toHaveBeenCalledWith(
       "thread/turns/list",
@@ -2571,7 +2621,7 @@ describe("App Codex auth", () => {
 
       act(() => triggerResize(820));
       expect(await screen.findByText("External result 65.")).toBeInTheDocument();
-      expect(await screen.findByText("External result 1.")).toBeInTheDocument();
+      expect(screen.queryByText("External result 1.")).not.toBeInTheDocument();
     } finally {
       vi.unstubAllGlobals();
     }
