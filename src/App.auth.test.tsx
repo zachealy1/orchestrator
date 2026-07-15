@@ -2342,6 +2342,26 @@ describe("App Codex auth", () => {
     const firstTranscriptRow = transcript.querySelector(
       "[data-transcript-entry-id]",
     );
+    const transcriptRows = Array.from(
+      transcript.querySelectorAll<HTMLElement>("[data-transcript-entry-id]"),
+    );
+    let transcriptRowShift = 0;
+    Object.defineProperties(transcript, {
+      clientHeight: { configurable: true, value: 500 },
+      scrollHeight: { configurable: true, value: 4_000 },
+    });
+    transcript.getBoundingClientRect = () =>
+      ({ top: 100, bottom: 600 } as DOMRect);
+    transcriptRows.forEach((row, index) => {
+      row.getBoundingClientRect = () => {
+        const top =
+          80 +
+          index * 120 +
+          transcriptRowShift -
+          (transcript.scrollTop - 640);
+        return { top, bottom: top + 100 } as DOMRect;
+      };
+    });
     transcript.scrollTop = 640;
     await user.click(
       within(banner).getByRole("button", { name: /open chat history/i }),
@@ -2356,7 +2376,11 @@ describe("App Codex auth", () => {
     ).toBe(firstTranscriptRow);
     expect(transcript.scrollTop).toBe(640);
 
+    transcriptRowShift = -60;
     fireEvent.transitionEnd(reopenedDrawer, { propertyName: "transform" });
+    await waitFor(() => expect(transcript.scrollTop).toBe(580));
+    transcriptRowShift = -90;
+    await waitFor(() => expect(transcript.scrollTop).toBe(550));
     fireEvent.wheel(transcript, { deltaY: -120 });
     fireEvent.scroll(transcript);
     await user.click(
@@ -2364,12 +2388,13 @@ describe("App Codex auth", () => {
     );
     expect(reopenedDrawer).toHaveClass("open");
     expect(screen.getByLabelText("Task chat transcript")).toBe(transcript);
-    expect(transcript.scrollTop).toBe(640);
+    expect(transcript.scrollTop).toBe(550);
     expect(reopenedDrawer.parentElement).toHaveClass("history-space-reserved");
     await waitFor(() => expect(reopenedDrawer).toHaveClass("closing"));
     expect(reopenedDrawer.parentElement).not.toHaveClass(
       "history-space-reserved",
     );
+    transcriptRowShift = 0;
     fireEvent.transitionEnd(reopenedDrawer, { propertyName: "transform" });
     await waitFor(() => expect(reopenedDrawer).toHaveClass("closed"));
     expect(reopenedDrawer.parentElement).not.toHaveClass(

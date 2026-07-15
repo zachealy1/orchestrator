@@ -1040,6 +1040,8 @@ function App() {
   const historyDrawerPhaseRef = useRef<HistoryDrawerPhase>("closed");
   const historyDrawerClosedWaitersRef = useRef(new Set<() => void>());
   const historyDrawerAnchorRef = useRef<TranscriptViewportAnchor | null>(null);
+  const historyDrawerAnchorRestoreFrameRef = useRef<number | null>(null);
+  const historyDrawerAnchorReleaseTimerRef = useRef<number | null>(null);
   const pendingHistoryDrawerOpenRef = useRef(false);
   const pendingHistoryDrawerCloseRef = useRef(false);
   const historicalActivityCacheRef = useRef(
@@ -1102,25 +1104,93 @@ function App() {
 
   const captureHistoryDrawerAnchor = useCallback(() => {
     const scroller = taskViewportElement?.querySelector<HTMLElement>(
-      ".task-chat-transcript.native-transcript",
+      ".task-chat-transcript.virtuoso-transcript, .task-chat-transcript.native-transcript",
     );
     return captureTranscriptViewportAnchor(scroller ?? null);
   }, [taskViewportElement]);
 
+  const cancelHistoryDrawerAnchorSchedule = useCallback(() => {
+    if (historyDrawerAnchorRestoreFrameRef.current !== null) {
+      window.cancelAnimationFrame(historyDrawerAnchorRestoreFrameRef.current);
+      historyDrawerAnchorRestoreFrameRef.current = null;
+    }
+    if (historyDrawerAnchorReleaseTimerRef.current !== null) {
+      window.clearTimeout(historyDrawerAnchorReleaseTimerRef.current);
+      historyDrawerAnchorReleaseTimerRef.current = null;
+    }
+  }, []);
+
+  const scheduleHistoryDrawerAnchorRestore = useCallback(() => {
+    if (
+      !historyDrawerAnchorRef.current ||
+      transcriptScrollActiveRef.current ||
+      historyDrawerAnchorRestoreFrameRef.current !== null
+    ) {
+      return;
+    }
+
+    historyDrawerAnchorRestoreFrameRef.current = window.requestAnimationFrame(
+      () => {
+        historyDrawerAnchorRestoreFrameRef.current = null;
+        if (transcriptScrollActiveRef.current) return;
+        restoreTranscriptViewportAnchor(historyDrawerAnchorRef.current);
+      },
+    );
+  }, []);
+
+  const releaseHistoryDrawerAnchorAfterResize = useCallback(() => {
+    if (historyDrawerAnchorReleaseTimerRef.current !== null) {
+      window.clearTimeout(historyDrawerAnchorReleaseTimerRef.current);
+    }
+    historyDrawerAnchorReleaseTimerRef.current = window.setTimeout(() => {
+      historyDrawerAnchorReleaseTimerRef.current = null;
+      const anchor = historyDrawerAnchorRef.current;
+      if (!anchor || transcriptScrollActiveRef.current) return;
+
+      if (historyDrawerAnchorRestoreFrameRef.current !== null) {
+        window.cancelAnimationFrame(historyDrawerAnchorRestoreFrameRef.current);
+      }
+      historyDrawerAnchorRestoreFrameRef.current = window.requestAnimationFrame(
+        () => {
+          historyDrawerAnchorRestoreFrameRef.current = null;
+          if (transcriptScrollActiveRef.current) return;
+          restoreTranscriptViewportAnchor(anchor);
+          if (historyDrawerAnchorRef.current === anchor) {
+            historyDrawerAnchorRef.current = null;
+          }
+        },
+      );
+    }, HISTORY_TRANSCRIPT_RESIZE_IDLE_MS + 32);
+  }, []);
+
   const finalizeHistoryDrawerOpen = useCallback(() => {
     if (historyDrawerPhaseRef.current !== "opening") return;
-    restoreTranscriptViewportAnchor(historyDrawerAnchorRef.current);
-    historyDrawerAnchorRef.current = null;
+    if (!transcriptScrollActiveRef.current) {
+      restoreTranscriptViewportAnchor(historyDrawerAnchorRef.current);
+    }
+    scheduleHistoryDrawerAnchorRestore();
+    releaseHistoryDrawerAnchorAfterResize();
     updateHistoryDrawerPhase("open");
-  }, [updateHistoryDrawerPhase]);
+  }, [
+    releaseHistoryDrawerAnchorAfterResize,
+    scheduleHistoryDrawerAnchorRestore,
+    updateHistoryDrawerPhase,
+  ]);
 
   const finalizeHistoryDrawerClose = useCallback(() => {
     if (historyDrawerPhaseRef.current !== "closing") return;
     pendingHistoryDrawerCloseRef.current = false;
-    restoreTranscriptViewportAnchor(historyDrawerAnchorRef.current);
-    historyDrawerAnchorRef.current = null;
+    if (!transcriptScrollActiveRef.current) {
+      restoreTranscriptViewportAnchor(historyDrawerAnchorRef.current);
+    }
+    scheduleHistoryDrawerAnchorRestore();
+    releaseHistoryDrawerAnchorAfterResize();
     updateHistoryDrawerPhase("closed");
-  }, [updateHistoryDrawerPhase]);
+  }, [
+    releaseHistoryDrawerAnchorAfterResize,
+    scheduleHistoryDrawerAnchorRestore,
+    updateHistoryDrawerPhase,
+  ]);
 
   const completeHistoryDrawerTransition = useCallback(
     (phase: "opening" | "closing") => {
@@ -1144,9 +1214,14 @@ function App() {
 
     pendingHistoryDrawerOpenRef.current = false;
     pendingHistoryDrawerCloseRef.current = false;
+    cancelHistoryDrawerAnchorSchedule();
     historyDrawerAnchorRef.current = captureHistoryDrawerAnchor();
     updateHistoryDrawerPhase("opening");
-  }, [captureHistoryDrawerAnchor, updateHistoryDrawerPhase]);
+  }, [
+    cancelHistoryDrawerAnchorSchedule,
+    captureHistoryDrawerAnchor,
+    updateHistoryDrawerPhase,
+  ]);
 
   const openHistoryDrawer = useCallback(() => {
     if (transcriptScrollActiveRef.current) {
@@ -1164,9 +1239,14 @@ function App() {
 
     pendingHistoryDrawerOpenRef.current = false;
     pendingHistoryDrawerCloseRef.current = false;
+    cancelHistoryDrawerAnchorSchedule();
     historyDrawerAnchorRef.current = captureHistoryDrawerAnchor();
     updateHistoryDrawerPhase("closing");
-  }, [captureHistoryDrawerAnchor, updateHistoryDrawerPhase]);
+  }, [
+    cancelHistoryDrawerAnchorSchedule,
+    captureHistoryDrawerAnchor,
+    updateHistoryDrawerPhase,
+  ]);
 
   const closeHistoryDrawer = useCallback(() => {
     pendingHistoryDrawerOpenRef.current = false;
@@ -1237,7 +1317,6 @@ function App() {
 
   useEffect(() => {
     if (historyDrawerPhase === "closed") {
-      historyDrawerAnchorRef.current = null;
       historyDrawerClosedWaitersRef.current.forEach((resolve) => resolve());
       historyDrawerClosedWaitersRef.current.clear();
     }
@@ -1275,11 +1354,17 @@ function App() {
       transcriptViewportStableRef.current = true;
       setTaskViewportStable(true);
       setTaskViewportWidth(width);
+      scheduleHistoryDrawerAnchorRestore();
+      releaseHistoryDrawerAnchorAfterResize();
       transcriptViewportWaitersRef.current.forEach((resolve) => resolve());
       transcriptViewportWaitersRef.current.clear();
       schedulePendingTranscriptCommit();
     },
-    [schedulePendingTranscriptCommit],
+    [
+      releaseHistoryDrawerAnchorAfterResize,
+      scheduleHistoryDrawerAnchorRestore,
+      schedulePendingTranscriptCommit,
+    ],
   );
 
   useEffect(() => {
@@ -1308,6 +1393,8 @@ function App() {
       latestWidth = nextWidth;
       transcriptViewportStableRef.current = false;
       setTaskViewportStable(false);
+      scheduleHistoryDrawerAnchorRestore();
+      releaseHistoryDrawerAnchorAfterResize();
       if (transcriptCommitIdleTimerRef.current !== null) {
         window.clearTimeout(transcriptCommitIdleTimerRef.current);
         transcriptCommitIdleTimerRef.current = null;
@@ -1337,7 +1424,12 @@ function App() {
       transcriptViewportWaitersRef.current.forEach((resolve) => resolve());
       transcriptViewportWaitersRef.current.clear();
     };
-  }, [settleTranscriptViewportWidth, taskViewportElement]);
+  }, [
+    releaseHistoryDrawerAnchorAfterResize,
+    scheduleHistoryDrawerAnchorRestore,
+    settleTranscriptViewportWidth,
+    taskViewportElement,
+  ]);
 
   useEffect(
     () => () => {
@@ -1349,18 +1441,20 @@ function App() {
       }
       pendingHistoryDrawerOpenRef.current = false;
       pendingHistoryDrawerCloseRef.current = false;
+      cancelHistoryDrawerAnchorSchedule();
       historyDrawerAnchorRef.current = null;
       transcriptViewportWaitersRef.current.forEach((resolve) => resolve());
       transcriptViewportWaitersRef.current.clear();
       historyDrawerClosedWaitersRef.current.forEach((resolve) => resolve());
       historyDrawerClosedWaitersRef.current.clear();
     },
-    [],
+    [cancelHistoryDrawerAnchorSchedule],
   );
 
   const handleTranscriptScrollActivityChange = useCallback((active: boolean) => {
     transcriptScrollActiveRef.current = active;
     if (active) {
+      cancelHistoryDrawerAnchorSchedule();
       historyDrawerAnchorRef.current = null;
       if (transcriptCommitIdleTimerRef.current !== null) {
         window.clearTimeout(transcriptCommitIdleTimerRef.current);
@@ -1384,6 +1478,7 @@ function App() {
   }, [
     beginHistoryDrawerClose,
     beginHistoryDrawerOpen,
+    cancelHistoryDrawerAnchorSchedule,
     schedulePendingTranscriptCommit,
     settleTranscriptViewportWidth,
   ]);

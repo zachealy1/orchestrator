@@ -9,7 +9,6 @@ import {
 import {
   Virtuoso,
   type Components,
-  type ListItem,
   type ListRange,
   type ScrollSeekConfiguration,
   type ScrollSeekPlaceholderProps,
@@ -23,7 +22,6 @@ import type {
   UserInputResponse,
 } from "../lib/nativePlanMode";
 import {
-  cacheTranscriptRowHeight,
   calculateTranscriptDefaultItemHeight,
   estimateTranscriptRowHeight,
   getTranscriptWidthBucket,
@@ -33,11 +31,12 @@ import { TaskChatTurn, type TaskChatEntry } from "./TaskChatTranscript";
 const TRANSCRIPT_STATE_CACHE_LIMIT = 5;
 const TRANSCRIPT_BOTTOM_THRESHOLD_PX = 48;
 const CHAT_SCROLLBAR_CORNER_INSET_PX = 12;
-export const TRANSCRIPT_RENDER_AHEAD_PX = 3_600;
+export const TRANSCRIPT_RENDER_AHEAD_PX = 4_800;
 export const TRANSCRIPT_MIN_OVERSCAN_ITEMS = 12;
 export const TRANSCRIPT_SCROLL_IDLE_MS = 280;
-export const TRANSCRIPT_SCROLL_SEEK_ENTER_PX_PER_SECOND = 4_000;
-export const TRANSCRIPT_SCROLL_SEEK_EXIT_PX_PER_SECOND = 900;
+// Virtuoso reports the scrollTop delta from its 100 ms velocity sample.
+export const TRANSCRIPT_SCROLL_SEEK_ENTER_VELOCITY = 200;
+export const TRANSCRIPT_SCROLL_SEEK_EXIT_VELOCITY = 30;
 export const LATEST_TURN_POSITION_RETRY_MS = 80;
 export const LATEST_TURN_POSITION_MAX_ATTEMPTS = 8;
 
@@ -45,11 +44,6 @@ const transcriptIncreaseViewportBy = {
   top: TRANSCRIPT_RENDER_AHEAD_PX,
   bottom: TRANSCRIPT_RENDER_AHEAD_PX,
 } as const;
-
-type PendingTranscriptMeasurement = {
-  entry: TaskChatEntry;
-  height: number;
-};
 
 type StableDefaultItemHeight = {
   key: string;
@@ -141,9 +135,9 @@ const transcriptComponents: Components<TaskChatEntry> = {
 
 const transcriptScrollSeekConfiguration: ScrollSeekConfiguration = {
   enter: (velocity) =>
-    Math.abs(velocity) > TRANSCRIPT_SCROLL_SEEK_ENTER_PX_PER_SECOND,
+    Math.abs(velocity) > TRANSCRIPT_SCROLL_SEEK_ENTER_VELOCITY,
   exit: (velocity) =>
-    Math.abs(velocity) < TRANSCRIPT_SCROLL_SEEK_EXIT_PX_PER_SECOND,
+    Math.abs(velocity) < TRANSCRIPT_SCROLL_SEEK_EXIT_VELOCITY,
 };
 
 export type VirtuosoTaskChatTranscriptProps = {
@@ -272,9 +266,6 @@ export const VirtuosoTaskChatTranscript = memo(
     const scrollIdleCheckRef = useRef<number | null>(null);
     const lastUserScrollEventAtRef = useRef(0);
     const reportedActivityRef = useRef(false);
-    const pendingMeasurementsRef = useRef(
-      new Map<string, PendingTranscriptMeasurement>(),
-    );
     const stableDefaultItemHeightRef = useRef<StableDefaultItemHeight | null>(
       null,
     );
@@ -351,33 +342,25 @@ export const VirtuosoTaskChatTranscript = memo(
     }, []);
 
     const reportScrollActivity = useCallback(() => {
-      const active =
+      const visualScrollActive =
         virtuosoScrollingRef.current || userScrollActiveRef.current;
-      if (reportedActivityRef.current === active) return;
-      reportedActivityRef.current = active;
-      onScrollActivityChange?.(active);
-    }, [onScrollActivityChange]);
+      scrollerRef.current?.classList.toggle(
+        "is-scroll-active",
+        visualScrollActive,
+      );
 
-    const flushPendingMeasurements = useCallback(() => {
-      if (virtuosoScrollingRef.current || userScrollActiveRef.current) return;
-      pendingMeasurementsRef.current.forEach(({ entry, height }) => {
-        cacheTranscriptRowHeight(
-          entry,
-          viewportWidthBucket,
-          height,
-          geometryScope,
-        );
-      });
-      pendingMeasurementsRef.current.clear();
-    }, [geometryScope, viewportWidthBucket]);
+      const userScrollActive = userScrollActiveRef.current;
+      if (reportedActivityRef.current === userScrollActive) return;
+      reportedActivityRef.current = userScrollActive;
+      onScrollActivityChange?.(userScrollActive);
+    }, [onScrollActivityChange]);
 
     const finishUserScrollActivity = useCallback(() => {
       if (scrollbarPointerActiveRef.current) return;
       clearScrollIdleCheck();
       userScrollActiveRef.current = false;
-      flushPendingMeasurements();
       reportScrollActivity();
-    }, [clearScrollIdleCheck, flushPendingMeasurements, reportScrollActivity]);
+    }, [clearScrollIdleCheck, reportScrollActivity]);
 
     const scheduleScrollIdleCheck = useCallback(() => {
       if (scrollIdleCheckRef.current !== null) return;
@@ -445,9 +428,17 @@ export const VirtuosoTaskChatTranscript = memo(
         const nextScroller = element instanceof HTMLElement ? element : null;
         scrollerRef.current = nextScroller;
         if (!nextScroller) return;
+        nextScroller.classList.toggle(
+          "is-scroll-active",
+          reportedActivityRef.current,
+        );
 
         const handleWheel = () => markUserScrollActivity();
         const handleTouch = () => markUserScrollActivity();
+        const handleTouchCancel = () => {
+          lastUserScrollEventAtRef.current = monotonicNow();
+          scheduleScrollIdleCheck();
+        };
         const handleKeyDown = (event: KeyboardEvent) => {
           if (
             isTranscriptScrollKey(event.key) &&
@@ -482,11 +473,16 @@ export const VirtuosoTaskChatTranscript = memo(
         const handlePointerMove = () => {
           if (scrollbarPointerActiveRef.current) markUserScrollActivity();
         };
-        const handlePointerUp = () => {
+        const handlePointerRelease = () => {
           if (!scrollbarPointerActiveRef.current) return;
           scrollbarPointerActiveRef.current = false;
           lastUserScrollEventAtRef.current = monotonicNow();
           scheduleScrollIdleCheck();
+        };
+        const handleWindowBlur = () => {
+          scrollbarPointerActiveRef.current = false;
+          virtuosoScrollingRef.current = false;
+          finishUserScrollActivity();
         };
         const handleScroll = () => {
           if (userScrollActiveRef.current) {
@@ -510,6 +506,9 @@ export const VirtuosoTaskChatTranscript = memo(
         nextScroller.addEventListener("touchend", handleTouch, {
           passive: true,
         });
+        nextScroller.addEventListener("touchcancel", handleTouchCancel, {
+          passive: true,
+        });
         nextScroller.addEventListener("keydown", handleKeyDown);
         nextScroller.addEventListener("pointerdown", handlePointerDown);
         nextScroller.addEventListener("scroll", handleScroll, { passive: true });
@@ -517,21 +516,28 @@ export const VirtuosoTaskChatTranscript = memo(
         window.addEventListener("pointermove", handlePointerMove, {
           passive: true,
         });
-        window.addEventListener("pointerup", handlePointerUp, {
+        window.addEventListener("pointerup", handlePointerRelease, {
           passive: true,
         });
+        window.addEventListener("pointercancel", handlePointerRelease, {
+          passive: true,
+        });
+        window.addEventListener("blur", handleWindowBlur);
 
         detachScrollerListenersRef.current = () => {
           nextScroller.removeEventListener("wheel", handleWheel);
           nextScroller.removeEventListener("touchstart", handleTouch);
           nextScroller.removeEventListener("touchmove", handleTouch);
           nextScroller.removeEventListener("touchend", handleTouch);
+          nextScroller.removeEventListener("touchcancel", handleTouchCancel);
           nextScroller.removeEventListener("keydown", handleKeyDown);
           nextScroller.removeEventListener("pointerdown", handlePointerDown);
           nextScroller.removeEventListener("scroll", handleScroll);
           nextScroller.removeEventListener("scrollend", handleScrollEnd);
           window.removeEventListener("pointermove", handlePointerMove);
-          window.removeEventListener("pointerup", handlePointerUp);
+          window.removeEventListener("pointerup", handlePointerRelease);
+          window.removeEventListener("pointercancel", handlePointerRelease);
+          window.removeEventListener("blur", handleWindowBlur);
         };
       },
       [finishUserScrollActivity, markUserScrollActivity, scheduleScrollIdleCheck],
@@ -602,10 +608,6 @@ export const VirtuosoTaskChatTranscript = memo(
     ]);
 
     useEffect(() => {
-      pendingMeasurementsRef.current.clear();
-    }, [geometryScope, viewportWidthBucket]);
-
-    useEffect(() => {
       if (
         editingEntryId !== null &&
         !entries.some((entry) => entry.clientId === editingEntryId)
@@ -658,29 +660,6 @@ export const VirtuosoTaskChatTranscript = memo(
       [onEditPrompt],
     );
 
-    const handleItemsRendered = useCallback(
-      (items: ListItem<TaskChatEntry>[]) => {
-        if (!viewportStable) return;
-        items.forEach((item) => {
-          if (!item.data || item.size <= 0) return;
-          if (virtuosoScrollingRef.current || userScrollActiveRef.current) {
-            pendingMeasurementsRef.current.set(item.data.clientId, {
-              entry: item.data,
-              height: item.size,
-            });
-          } else {
-            cacheTranscriptRowHeight(
-              item.data,
-              viewportWidthBucket,
-              item.size,
-              geometryScope,
-            );
-          }
-        });
-      },
-      [geometryScope, viewportStable, viewportWidthBucket],
-    );
-
     const handleRangeChanged = useCallback(
       (range: ListRange) => {
         const latestIndex = firstItemIndex + entries.length - 1;
@@ -702,10 +681,9 @@ export const VirtuosoTaskChatTranscript = memo(
     const handleIsScrolling = useCallback(
       (active: boolean) => {
         virtuosoScrollingRef.current = active;
-        if (!active) flushPendingMeasurements();
         reportScrollActivity();
       },
-      [flushPendingMeasurements, reportScrollActivity],
+      [reportScrollActivity],
     );
 
     const itemContent = useCallback(
@@ -791,7 +769,6 @@ export const VirtuosoTaskChatTranscript = memo(
           atBottomStateChange={handleAtBottomStateChange}
           rangeChanged={handleRangeChanged}
           isScrolling={handleIsScrolling}
-          itemsRendered={handleItemsRendered}
           itemContent={itemContent}
         />
       </div>
