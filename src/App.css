@@ -1779,7 +1779,7 @@ button.account-switcher-item:hover:not(:disabled) {
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  contain: layout paint;
+  contain: layout;
   gap: 22px;
   padding: 24px var(--task-hero-inline-padding) max(32px, 5vh);
   transition:
@@ -1880,7 +1880,7 @@ button.account-switcher-item:hover:not(:disabled) {
   box-sizing: border-box;
   overflow-anchor: none;
   padding: 4px var(--task-hero-inline-padding) 18px;
-  contain: layout paint style;
+  contain: layout style;
   background: var(--color-background);
 }
 

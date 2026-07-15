@@ -15,6 +15,7 @@ type Sample = {
   composerLeft: number;
   composerWidth: number;
   drawerLeft: number;
+  messageWidth: number;
 };
 
 type SequenceResult = {
@@ -35,6 +36,10 @@ type SequenceResult = {
   openingMaxReversePx: number;
   closingWidthReversals: number;
   closingMaxReversePx: number;
+  openingMessageWidthReversals: number;
+  openingMessageMaxReversePx: number;
+  closingMessageWidthReversals: number;
+  closingMessageMaxReversePx: number;
   closedComposerWidth: number;
   openComposerWidth: number;
   drawerTransition: string;
@@ -64,6 +69,7 @@ function visibleAnchorOffset(scroller: HTMLElement) {
 async function collectSamples(
   composer: HTMLElement,
   drawer: HTMLElement,
+  message: HTMLElement,
   durationMs: number,
 ) {
   const samples: Sample[] = [];
@@ -72,11 +78,13 @@ async function collectSamples(
     await nextFrame();
     const composerRect = composer.getBoundingClientRect();
     const drawerRect = drawer.getBoundingClientRect();
+    const messageRect = message.getBoundingClientRect();
     samples.push({
       time: performance.now(),
       composerLeft: composerRect.left,
       composerWidth: composerRect.width,
       drawerLeft: drawerRect.left,
+      messageWidth: messageRect.width,
     });
   }
   return samples;
@@ -136,24 +144,26 @@ function analyzeProgress(
   };
 }
 
-function asSample(composer: DOMRect, drawer: DOMRect): Sample {
+function asSample(composer: DOMRect, drawer: DOMRect, message: DOMRect): Sample {
   return {
     time: performance.now(),
     composerLeft: composer.left,
     composerWidth: composer.width,
     drawerLeft: drawer.left,
+    messageWidth: message.width,
   };
 }
 
 function analyzeWidthDirection(
   samples: Sample[],
   direction: "opening" | "closing",
+  field: "composerWidth" | "messageWidth" = "composerWidth",
 ) {
   let reversals = 0;
   let maxReversePx = 0;
 
   for (let index = 1; index < samples.length; index += 1) {
-    const delta = samples[index].composerWidth - samples[index - 1].composerWidth;
+    const delta = samples[index][field] - samples[index - 1][field];
     const reverseDelta = direction === "opening" ? delta : -delta;
     if (reverseDelta > 0.25) {
       reversals += 1;
@@ -165,6 +175,7 @@ function analyzeWidthDirection(
 }
 
 export default function DrawerSyncDiagnostics() {
+  const runGenerationRef = useRef(0);
   const bodyRef = useRef<HTMLDivElement | null>(null);
   const drawerRef = useRef<HTMLElement | null>(null);
   const composerRef = useRef<HTMLDivElement | null>(null);
@@ -180,13 +191,33 @@ export default function DrawerSyncDiagnostics() {
 
   useEffect(() => {
     let cancelled = false;
+    const runGeneration = runGenerationRef.current + 1;
+    runGenerationRef.current = runGeneration;
     const body = bodyRef.current;
     const drawer = drawerRef.current;
     const composer = composerRef.current;
     const transcript = transcriptRef.current;
     if (!body || !drawer || !composer || !transcript) return;
 
+    const findVisibleMessage = () => {
+      const transcriptBounds = transcript.getBoundingClientRect();
+      return (
+        Array.from(
+          transcript.querySelectorAll<HTMLElement>(
+            ".task-chat-native-row:not([hidden]) article",
+          ),
+        ).find((candidate) => {
+          const bounds = candidate.getBoundingClientRect();
+          return (
+            bounds.bottom > transcriptBounds.top &&
+            bounds.top < transcriptBounds.bottom
+          );
+        }) ?? null
+      );
+    };
+
     const setPhase = (phase: Phase) => {
+      if (cancelled || runGenerationRef.current !== runGeneration) return;
       body.className = `codex-workspace-body${
         phase === "opening" || phase === "open"
           ? " history-space-reserved history-open"
@@ -218,15 +249,17 @@ export default function DrawerSyncDiagnostics() {
       setPhase("closed");
       await delay(80);
       transcript.scrollTop = Math.min(4_000, transcript.scrollHeight / 3);
+      const message = findVisibleMessage() ?? transcript;
       const closed = asSample(
         composer.getBoundingClientRect(),
         drawer.getBoundingClientRect(),
+        message.getBoundingClientRect(),
       );
 
       setPhase("opening");
       const drawerTransition = getComputedStyle(drawer).transition;
       const composerTransition = getComputedStyle(composer).transition;
-      const openingSamples = await collectSamples(composer, drawer, 230);
+      const openingSamples = await collectSamples(composer, drawer, message, 230);
       const openAnchor = captureTranscriptViewportAnchor(transcript);
       const openAnchorBefore = visibleAnchorOffset(transcript);
       setPhase("open");
@@ -238,6 +271,7 @@ export default function DrawerSyncDiagnostics() {
       const open = asSample(
         composer.getBoundingClientRect(),
         drawer.getBoundingClientRect(),
+        message.getBoundingClientRect(),
       );
       const opening = analyzeProgress(
         openingSamples,
@@ -252,12 +286,17 @@ export default function DrawerSyncDiagnostics() {
         Math.abs(open.drawerLeft - finalOpeningSample.drawerLeft),
       );
       const openingDirection = analyzeWidthDirection(openingSamples, "opening");
+      const openingMessageDirection = analyzeWidthDirection(
+        openingSamples,
+        "opening",
+        "messageWidth",
+      );
 
       await delay(80);
       const closeAnchor = captureTranscriptViewportAnchor(transcript);
       const closeAnchorBefore = visibleAnchorOffset(transcript);
       setPhase("closing");
-      const closingSamples = await collectSamples(composer, drawer, 230);
+      const closingSamples = await collectSamples(composer, drawer, message, 230);
       setPhase("closed");
       restoreTranscriptViewportAnchor(closeAnchor);
       const closeAnchorDelta = Math.abs(
@@ -267,9 +306,15 @@ export default function DrawerSyncDiagnostics() {
       const finalClosed = asSample(
         composer.getBoundingClientRect(),
         drawer.getBoundingClientRect(),
+        message.getBoundingClientRect(),
       );
       const closing = analyzeProgress(closingSamples, open, finalClosed, "closing");
       const closingDirection = analyzeWidthDirection(closingSamples, "closing");
+      const closingMessageDirection = analyzeWidthDirection(
+        closingSamples,
+        "closing",
+        "messageWidth",
+      );
       const frameDeltas = [openingSamples, closingSamples].flatMap((samples) =>
         samples.slice(1).map((sample, index) => sample.time - samples[index].time),
       );
@@ -292,6 +337,10 @@ export default function DrawerSyncDiagnostics() {
         openingMaxReversePx: openingDirection.maxReversePx,
         closingWidthReversals: closingDirection.reversals,
         closingMaxReversePx: closingDirection.maxReversePx,
+        openingMessageWidthReversals: openingMessageDirection.reversals,
+        openingMessageMaxReversePx: openingMessageDirection.maxReversePx,
+        closingMessageWidthReversals: closingMessageDirection.reversals,
+        closingMessageMaxReversePx: closingMessageDirection.maxReversePx,
         closedComposerWidth: closed.composerWidth,
         openComposerWidth: open.composerWidth,
         drawerTransition,
@@ -303,7 +352,11 @@ export default function DrawerSyncDiagnostics() {
       const hero = body.querySelector<HTMLElement>(".task-hero");
       if (hero) hero.className = "task-hero has-chat";
       setPhase("closed");
-      await delay(80);
+      await delay(240);
+      const message = findVisibleMessage();
+      if (!message) {
+        throw new Error("The diagnostic transcript has no visible message.");
+      }
       const textarea = composer.querySelector("textarea");
       const originalTextarea = textarea;
       const originalValue = textarea?.value ?? "";
@@ -312,11 +365,11 @@ export default function DrawerSyncDiagnostics() {
       const closedWidth = composer.getBoundingClientRect().width;
 
       setPhase("opening");
-      const firstOpening = await collectSamples(composer, drawer, 72);
+      const firstOpening = await collectSamples(composer, drawer, message, 72);
       setPhase("closing");
-      const reversedClosing = await collectSamples(composer, drawer, 72);
+      const reversedClosing = await collectSamples(composer, drawer, message, 72);
       setPhase("opening");
-      const finalOpening = await collectSamples(composer, drawer, 230);
+      const finalOpening = await collectSamples(composer, drawer, message, 230);
       setPhase("open");
       const openWidth = composer.getBoundingClientRect().width;
       const samples = [...firstOpening, ...reversedClosing, ...finalOpening];
@@ -370,6 +423,9 @@ export default function DrawerSyncDiagnostics() {
 
     return () => {
       cancelled = true;
+      if (runGenerationRef.current === runGeneration) {
+        runGenerationRef.current += 1;
+      }
     };
   }, []);
 

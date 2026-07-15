@@ -67,6 +67,15 @@ describe("history drawer animation CSS", () => {
     );
   });
 
+  it("avoids independently scaled paint layers while transcript width changes", () => {
+    expect(rule(".task-hero")).toContain("contain: layout");
+    expect(rule(".task-hero")).not.toContain("contain: layout paint");
+    expect(rule(".task-chat-virtuoso-row")).toContain(
+      "contain: layout style",
+    );
+    expect(rule(".task-chat-virtuoso-row")).not.toContain("paint");
+  });
+
   it("clips and insets the virtualized scrollbar around the rounded chat corners", () => {
     const frame = rule(".task-chat-scroll-frame");
     expect(frame).toContain("overflow: hidden");
