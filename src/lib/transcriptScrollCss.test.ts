@@ -16,25 +16,16 @@ function rule(selector: string) {
 }
 
 describe("high-speed transcript scrolling CSS", () => {
-  it("represents the full height of tall scroll-seek rows", () => {
-    const placeholder = rule(".task-chat-scroll-seek-row");
-    const continuation = rule(".task-chat-scroll-seek-row::before");
-
-    expect(placeholder).toContain("contain: strict");
-    expect(continuation).toContain("bottom: 18px");
-    expect(continuation).toContain("repeating-linear-gradient");
-    expect(continuation).toContain("var(--color-surface-soft)");
-  });
-
-  it("provides a compositor-safe fallback behind virtual rows", () => {
-    const fallback = rule(
-      ".task-chat-transcript.virtuoso-transcript.is-scroll-active",
-    );
+  it("keeps prepared rows as the only visible fast-scroll content", () => {
+    const transcript = rule(".task-chat-transcript.virtuoso-transcript");
     const realRow = rule(".task-chat-virtuoso-row");
 
-    expect(fallback).toContain("background-color: var(--color-background)");
-    expect(fallback).toContain("repeating-linear-gradient");
-    expect(fallback).toContain("var(--color-surface-soft)");
+    expect(css).not.toContain("task-chat-scroll-seek");
+    expect(css).not.toContain(
+      ".task-chat-transcript.virtuoso-transcript.is-scroll-active",
+    );
+    expect(transcript).toContain("overflow-anchor: none");
+    expect(transcript).toContain("-webkit-overflow-scrolling: touch");
     expect(realRow).toContain("background: var(--color-background)");
   });
 });

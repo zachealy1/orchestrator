@@ -8,10 +8,7 @@ import {
 } from "react";
 import {
   Virtuoso,
-  type Components,
   type ListRange,
-  type ScrollSeekConfiguration,
-  type ScrollSeekPlaceholderProps,
   type StateSnapshot,
   type VirtuosoHandle,
 } from "react-virtuoso";
@@ -31,12 +28,9 @@ import { TaskChatTurn, type TaskChatEntry } from "./TaskChatTranscript";
 const TRANSCRIPT_STATE_CACHE_LIMIT = 5;
 const TRANSCRIPT_BOTTOM_THRESHOLD_PX = 48;
 const CHAT_SCROLLBAR_CORNER_INSET_PX = 12;
-export const TRANSCRIPT_RENDER_AHEAD_PX = 4_800;
-export const TRANSCRIPT_MIN_OVERSCAN_ITEMS = 12;
+export const TRANSCRIPT_RENDER_AHEAD_PX = 3_200;
+export const TRANSCRIPT_MIN_OVERSCAN_ITEMS = 8;
 export const TRANSCRIPT_SCROLL_IDLE_MS = 280;
-// Virtuoso reports the scrollTop delta from its 100 ms velocity sample.
-export const TRANSCRIPT_SCROLL_SEEK_ENTER_VELOCITY = 200;
-export const TRANSCRIPT_SCROLL_SEEK_EXIT_VELOCITY = 30;
 export const LATEST_TURN_POSITION_RETRY_MS = 80;
 export const LATEST_TURN_POSITION_MAX_ATTEMPTS = 8;
 
@@ -106,39 +100,6 @@ function isEditableScrollTarget(target: EventTarget | null) {
 function monotonicNow() {
   return typeof performance === "undefined" ? Date.now() : performance.now();
 }
-
-export function TranscriptScrollSeekPlaceholder({
-  height,
-}: ScrollSeekPlaceholderProps) {
-  return (
-    <div
-      className="task-chat-scroll-seek-row"
-      style={{ height: `${Math.max(1, height)}px` }}
-      aria-hidden="true"
-    >
-      <div className="task-chat-scroll-seek-prompt">
-        <span />
-        <span />
-      </div>
-      <div className="task-chat-scroll-seek-response">
-        <span />
-        <span />
-        <span />
-      </div>
-    </div>
-  );
-}
-
-const transcriptComponents: Components<TaskChatEntry> = {
-  ScrollSeekPlaceholder: TranscriptScrollSeekPlaceholder,
-};
-
-const transcriptScrollSeekConfiguration: ScrollSeekConfiguration = {
-  enter: (velocity) =>
-    Math.abs(velocity) > TRANSCRIPT_SCROLL_SEEK_ENTER_VELOCITY,
-  exit: (velocity) =>
-    Math.abs(velocity) < TRANSCRIPT_SCROLL_SEEK_EXIT_VELOCITY,
-};
 
 export type VirtuosoTaskChatTranscriptProps = {
   entries: TaskChatEntry[];
@@ -492,7 +453,8 @@ export const VirtuosoTaskChatTranscript = memo(
         };
         const handleScrollEnd = () => {
           if (userScrollActiveRef.current && !scrollbarPointerActiveRef.current) {
-            finishUserScrollActivity();
+            lastUserScrollEventAtRef.current = monotonicNow();
+            scheduleScrollIdleCheck();
           }
         };
 
@@ -752,8 +714,6 @@ export const VirtuosoTaskChatTranscript = memo(
             top: TRANSCRIPT_MIN_OVERSCAN_ITEMS,
             bottom: TRANSCRIPT_MIN_OVERSCAN_ITEMS,
           }}
-          components={transcriptComponents}
-          scrollSeekConfiguration={transcriptScrollSeekConfiguration}
           scrollerRef={handleScrollerRef}
           initialTopMostItemIndex={
             suppressRestoreOnMountRef.current

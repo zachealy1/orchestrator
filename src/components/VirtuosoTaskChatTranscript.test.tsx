@@ -11,14 +11,11 @@ import {
   TRANSCRIPT_MIN_OVERSCAN_ITEMS,
   TRANSCRIPT_RENDER_AHEAD_PX,
   TRANSCRIPT_SCROLL_IDLE_MS,
-  TRANSCRIPT_SCROLL_SEEK_ENTER_VELOCITY,
-  TRANSCRIPT_SCROLL_SEEK_EXIT_VELOCITY,
   VirtuosoTaskChatTranscript,
 } from "./VirtuosoTaskChatTranscript";
 
 const virtuosoMock = vi.hoisted(() => ({
   lastProps: null as any,
-  scrollSeeking: false,
   state: { ranges: [{ startIndex: 292, endIndex: 299 }], scrollTop: 42 },
   scrollToIndex: vi.fn(),
 }));
@@ -41,7 +38,6 @@ vi.mock("react-virtuoso", async () => {
 
       const data = props.data ?? [];
       const startIndex = Math.max(0, data.length - 8);
-      const Placeholder = props.components?.ScrollSeekPlaceholder;
       return (
         <div
           aria-label={props["aria-label"]}
@@ -56,15 +52,7 @@ vi.mock("react-virtuoso", async () => {
               const index = startIndex + offset;
               return (
                 <div key={props.computeItemKey(index, entry)}>
-                  {virtuosoMock.scrollSeeking && Placeholder ? (
-                    <Placeholder
-                      height={props.heightEstimates[index]}
-                      index={index}
-                      type="item"
-                    />
-                  ) : (
-                    props.itemContent(index, entry)
-                  )}
+                  {props.itemContent(index, entry)}
                 </div>
               );
             })}
@@ -141,7 +129,6 @@ describe("VirtuosoTaskChatTranscript", () => {
     clearTranscriptStateCache();
     clearTranscriptMeasurementCache();
     virtuosoMock.lastProps = null;
-    virtuosoMock.scrollSeeking = false;
     virtuosoMock.scrollToIndex.mockClear();
   });
 
@@ -187,16 +174,15 @@ describe("VirtuosoTaskChatTranscript", () => {
       top: TRANSCRIPT_RENDER_AHEAD_PX,
       bottom: TRANSCRIPT_RENDER_AHEAD_PX,
     });
-    expect(TRANSCRIPT_RENDER_AHEAD_PX).toBe(4_800);
+    expect(TRANSCRIPT_RENDER_AHEAD_PX).toBe(3_200);
     expect(virtuosoMock.lastProps.minOverscanItemCount).toEqual({
       top: TRANSCRIPT_MIN_OVERSCAN_ITEMS,
       bottom: TRANSCRIPT_MIN_OVERSCAN_ITEMS,
     });
-    expect(TRANSCRIPT_MIN_OVERSCAN_ITEMS).toBe(12);
+    expect(TRANSCRIPT_MIN_OVERSCAN_ITEMS).toBe(8);
   });
 
-  it("uses exact-height stable placeholders before fast scrolling outruns rendering", () => {
-    virtuosoMock.scrollSeeking = true;
+  it("keeps real prepared turns mounted during high-speed scrolling", () => {
     const entries = [
       historyEntry(1),
       {
@@ -207,7 +193,7 @@ describe("VirtuosoTaskChatTranscript", () => {
         },
       },
     ];
-    const { container } = render(
+    render(
       <VirtuosoTaskChatTranscript
         entries={entries}
         transcriptIdentity="chat:seek"
@@ -219,41 +205,9 @@ describe("VirtuosoTaskChatTranscript", () => {
       />,
     );
 
-    const placeholders = container.querySelectorAll<HTMLElement>(
-      ".task-chat-scroll-seek-row",
-    );
-    expect(placeholders).toHaveLength(2);
-    expect(placeholders[1].style.height).toBe(
-      `${virtuosoMock.lastProps.heightEstimates[1]}px`,
-    );
-    expect(Number.parseFloat(placeholders[1].style.height)).toBeGreaterThan(600);
-    expect(screen.queryByText("Prompt 2")).not.toBeInTheDocument();
-    expect(
-      virtuosoMock.lastProps.scrollSeekConfiguration.enter(
-        TRANSCRIPT_SCROLL_SEEK_ENTER_VELOCITY - 1,
-        { startIndex: 0, endIndex: 1 },
-      ),
-    ).toBe(false);
-    expect(
-      virtuosoMock.lastProps.scrollSeekConfiguration.enter(
-        TRANSCRIPT_SCROLL_SEEK_ENTER_VELOCITY + 1,
-        { startIndex: 0, endIndex: 1 },
-      ),
-    ).toBe(true);
-    expect(
-      virtuosoMock.lastProps.scrollSeekConfiguration.exit(
-        TRANSCRIPT_SCROLL_SEEK_EXIT_VELOCITY + 1,
-        { startIndex: 0, endIndex: 1 },
-      ),
-    ).toBe(false);
-    expect(
-      virtuosoMock.lastProps.scrollSeekConfiguration.exit(
-        TRANSCRIPT_SCROLL_SEEK_EXIT_VELOCITY - 1,
-        { startIndex: 0, endIndex: 1 },
-      ),
-    ).toBe(true);
-    expect(TRANSCRIPT_SCROLL_SEEK_ENTER_VELOCITY).toBe(200);
-    expect(TRANSCRIPT_SCROLL_SEEK_EXIT_VELOCITY).toBe(30);
+    expect(screen.getByText("Prompt 2")).toBeInTheDocument();
+    expect(virtuosoMock.lastProps.scrollSeekConfiguration).toBeUndefined();
+    expect(virtuosoMock.lastProps.components).toBeUndefined();
   });
 
   it("provides stable content-aware geometry for every turn", () => {
@@ -386,7 +340,7 @@ describe("VirtuosoTaskChatTranscript", () => {
     expect(onActivity.mock.calls).toEqual([[true], [false]]);
   });
 
-  it("uses native scrollend to release momentum state immediately", () => {
+  it("keeps native scrollend inside the macOS momentum idle window", () => {
     vi.useFakeTimers();
     const onActivity = vi.fn();
     render(
@@ -404,6 +358,10 @@ describe("VirtuosoTaskChatTranscript", () => {
 
     fireEvent.wheel(transcript(), { deltaY: 300 });
     fireEvent(transcript(), new Event("scrollend"));
+    expect(onActivity.mock.calls).toEqual([[true]]);
+    act(() => vi.advanceTimersByTime(TRANSCRIPT_SCROLL_IDLE_MS - 1));
+    expect(onActivity.mock.calls).toEqual([[true]]);
+    act(() => vi.advanceTimersByTime(1));
     expect(onActivity.mock.calls).toEqual([[true], [false]]);
   });
 
