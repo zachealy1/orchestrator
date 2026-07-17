@@ -257,12 +257,14 @@ describe("TaskComposer", () => {
     expect(screen.queryByRole("button", { name: /preflight/i })).not.toBeInTheDocument();
   });
 
-  it("removes the old OSS and approval banner", () => {
+  it("removes legacy access guidance from the composer", () => {
     renderComposer();
 
     expect(screen.queryByText("Use Codex OSS mode")).not.toBeInTheDocument();
     expect(screen.queryByText("workspace-write")).not.toBeInTheDocument();
     expect(screen.queryByText("on-request approvals")).not.toBeInTheDocument();
+    expect(screen.queryByText(/boundary crossings ask first/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/no command network access/i)).not.toBeInTheDocument();
   });
 
   it("renders agent and reasoning controls", async () => {
@@ -349,6 +351,9 @@ describe("TaskComposer", () => {
 
     expect(onApprovalModeChange).toHaveBeenCalledWith("strict");
     expect(onSandboxModeChange).toHaveBeenCalledWith("full");
+    expect(
+      screen.queryByText(/Full access removes filesystem and network restrictions/i),
+    ).not.toBeInTheDocument();
   });
 
   it("keeps workspace and branch selection out of the composer", () => {

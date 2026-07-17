@@ -5057,7 +5057,9 @@ describe("App Codex auth", () => {
     await user.click(screen.getByRole("combobox", { name: "Sandbox" }));
     await user.click(screen.getByRole("option", { name: "Full access" }));
     expect(confirm).toHaveBeenCalledWith(expect.stringMatching(/full access removes/i));
-    expect(screen.getByText(/Full access removes filesystem and network restrictions/i)).toBeInTheDocument();
+    expect(
+      screen.queryByText(/Full access removes filesystem and network restrictions/i),
+    ).not.toBeInTheDocument();
 
     await startMockRun(user, "First guarded turn");
     const threadStart = mocks.codexRpcMock.mock.calls.find(

@@ -3643,17 +3643,6 @@ button.mention-search-option.active {
   min-width: 0;
 }
 
-.composer-access-summary {
-  margin: -1px 2px 0;
-  color: var(--muted);
-  font-size: 0.72rem;
-  line-height: 1.35;
-}
-
-.composer-access-summary.warning {
-  color: var(--color-warning, #b77519);
-}
-
 .agent-select {
   min-width: 0;
 }

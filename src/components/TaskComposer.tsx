@@ -771,14 +771,6 @@ export function TaskComposer({
           />
         </div>
 
-        <p
-          className={`composer-access-summary ${
-            isPermissiveAccess(approvalMode, sandboxMode) ? "warning" : ""
-          }`}
-        >
-          {approvalModeDescription(approvalMode)} {sandboxModeDescription(sandboxMode)}
-        </p>
-
         {selectedSkills.length > 0 ? (
           <div className="context-file-list" aria-label="Selected skills">
             {selectedSkills.map((skill) => (
@@ -1494,33 +1486,4 @@ function relativeFileLabel(file: ComposerContextFile) {
   const normalizedName = file.name.replace(/\\/g, "/");
   const normalizedPath = file.path.replace(/\\/g, "/");
   return normalizedPath.endsWith(`/${normalizedName}`) ? normalizedPath : file.path;
-}
-
-function approvalModeDescription(mode: ApprovalMode) {
-  switch (mode) {
-    case "strict":
-      return "Strict: known-safe commands may run; other commands ask first.";
-    case "automatic":
-      return "Automatic: Codex will not show approval prompts.";
-    default:
-      return "On request: work inside the sandbox runs automatically; boundary crossings ask first.";
-  }
-}
-
-function sandboxModeDescription(mode: SandboxAccessMode) {
-  switch (mode) {
-    case "read-only":
-      return "The sandbox is read only.";
-    case "full":
-      return "Full access removes filesystem and network restrictions.";
-    default:
-      return "The sandbox can write only in the workspace and has no command network access by default.";
-  }
-}
-
-function isPermissiveAccess(
-  approvalMode: ApprovalMode,
-  sandboxMode: SandboxAccessMode,
-) {
-  return approvalMode === "automatic" || sandboxMode === "full";
 }
