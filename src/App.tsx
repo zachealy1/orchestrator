@@ -50,6 +50,7 @@ import "./App.css";
 import orchestratorMark from "./assets/brand/orchestrator-mark.png";
 import {
   appendRunEvent,
+  appendRunEvents,
   activateExternalTranscriptSnapshot,
   completeDuplicateProfileCleanup,
   createChat,
@@ -76,6 +77,7 @@ import {
   updateTaskStatus,
   upsertExternalCodexChats,
   upsertWorkspace,
+  type RunEventInput,
 } from "./db";
 import {
   cancelCodexLogin,
@@ -185,6 +187,10 @@ import {
   improvePrompt,
 } from "./lib/taskAnalysis";
 import {
+  coalesceFrameBatchedCodexMessages,
+  shouldFrameBatchCodexMessage,
+} from "./lib/codexNotificationBatch";
+import {
   applyDocumentTheme,
   applyThemePreference,
   persistThemePreference,
@@ -266,6 +272,8 @@ const HISTORY_TRANSCRIPT_COMMIT_IDLE_MS = 150;
 const HISTORY_TRANSCRIPT_RESIZE_IDLE_MS = 120;
 const HISTORY_TRANSCRIPT_RESIZE_WAIT_LIMIT_MS = 500;
 const HISTORY_DRAWER_TRANSITION_FALLBACK_MS = 240;
+const RUN_EVENT_BATCH_DELAY_MS = 100;
+const RUN_EVENT_BATCH_MAX_SIZE = 50;
 const EMPTY_GIT_STATUS_BY_PATH = new Map<string, WorkspaceGitFileStatus>();
 const EMPTY_DIRTY_DIRECTORY_PATHS = new Set<string>();
 const DEFAULT_CODEX_PROFILE_KEY: CodexProfileKey = "default";
@@ -487,6 +495,11 @@ type ExplorerDragPreview = {
   x: number;
   y: number;
   overDropSurface: boolean;
+};
+
+type PendingFrameCodexNotification = {
+  message: CodexMessage;
+  profileKey: CodexProfileKey;
 };
 
 function markPerformance(name: string) {
@@ -1077,6 +1090,13 @@ function App() {
     Record<number, WorkspaceChatSession | undefined>
   >({});
   const eventSequence = useRef(0);
+  const pendingFrameCodexNotificationsRef = useRef<
+    PendingFrameCodexNotification[]
+  >([]);
+  const pendingFrameCodexNotificationIdRef = useRef<number | null>(null);
+  const pendingRunEventWritesRef = useRef<RunEventInput[]>([]);
+  const pendingRunEventFlushTimerRef = useRef<number | null>(null);
+  const runEventWriteChainRef = useRef<Promise<void>>(Promise.resolve());
   const selectedWorkspaceRef = useRef<Workspace | null>(null);
   const codexAccountsRef = useRef<CodexAccountProfile[]>([]);
   const selectedAccountIdRef = useRef<number | null>(null);
@@ -1104,6 +1124,27 @@ function App() {
   const workspaceContextMenuRef = useRef<HTMLDivElement | null>(null);
   const chatHistoryContextMenuRef = useRef<HTMLDivElement | null>(null);
   const accountMenuContainerRef = useRef<HTMLDivElement | null>(null);
+
+  useEffect(
+    () => () => {
+      if (pendingFrameCodexNotificationIdRef.current !== null) {
+        window.cancelAnimationFrame(pendingFrameCodexNotificationIdRef.current);
+        pendingFrameCodexNotificationIdRef.current = null;
+      }
+      pendingFrameCodexNotificationsRef.current = [];
+      if (pendingRunEventFlushTimerRef.current !== null) {
+        window.clearTimeout(pendingRunEventFlushTimerRef.current);
+        pendingRunEventFlushTimerRef.current = null;
+      }
+      const pendingWrites = pendingRunEventWritesRef.current.splice(0);
+      if (pendingWrites.length > 0) {
+        void runEventWriteChainRef.current
+          .catch(() => undefined)
+          .then(() => appendRunEvents(pendingWrites));
+      }
+    },
+    [],
+  );
 
   const updateHistoryDrawerPhase = useCallback((phase: HistoryDrawerPhase) => {
     historyDrawerPhaseRef.current = phase;
@@ -2380,6 +2421,7 @@ function App() {
         );
       }
       if (currentRunProfileKey.current === profileKey) {
+        flushFrameBatchedCodexNotifications();
         void persistRunEvent("process", event.payload.status, event.payload);
         if (
           event.payload.status === "exited" ||
@@ -3160,6 +3202,9 @@ function App() {
     if (!control && !runIsActive) {
       return;
     }
+
+    flushFrameBatchedCodexNotifications();
+    await flushBufferedRunEvents().catch(() => undefined);
 
     const setupStarted = control?.setupStarted ?? false;
     const persistedRunId = currentRunId.current ?? control?.runId ?? null;
@@ -5382,6 +5427,8 @@ function App() {
         await softDeleteRun(supersededRunId);
         ensureRunControlActive(runControl);
       }
+      flushFrameBatchedCodexNotifications();
+      await flushBufferedRunEvents().catch(() => undefined);
       eventSequence.current = 0;
       updateTaskChatEntryIds(runControl.clientId, {
         taskId: task.id,
@@ -6081,6 +6128,114 @@ function App() {
     }
   }
 
+  function flushFrameBatchedCodexNotifications() {
+    if (pendingFrameCodexNotificationIdRef.current !== null) {
+      window.cancelAnimationFrame(pendingFrameCodexNotificationIdRef.current);
+      pendingFrameCodexNotificationIdRef.current = null;
+    }
+
+    const pending = pendingFrameCodexNotificationsRef.current.splice(0);
+    const activeProfileKey = currentRunProfileKey.current;
+    if (pending.length === 0 || activeProfileKey === null) {
+      return runViewRef.current;
+    }
+
+    const messages = coalesceFrameBatchedCodexMessages(
+      pending
+        .filter(
+          ({ message, profileKey }) =>
+            profileKey === activeProfileKey &&
+            messageMatchesRun(
+              message,
+              runViewRef.current.threadId,
+              runViewRef.current.turnId,
+            ),
+        )
+        .map(({ message }) => message),
+    );
+    if (messages.length === 0) {
+      return runViewRef.current;
+    }
+
+    return updateActiveRunView((current) =>
+      messages.reduce(applyCodexMessage, current),
+    );
+  }
+
+  function queueFrameBatchedCodexNotification(
+    profileKey: CodexProfileKey,
+    message: CodexMessage,
+  ) {
+    pendingFrameCodexNotificationsRef.current.push({ profileKey, message });
+    if (pendingFrameCodexNotificationIdRef.current !== null) return;
+
+    pendingFrameCodexNotificationIdRef.current = window.requestAnimationFrame(
+      () => {
+        pendingFrameCodexNotificationIdRef.current = null;
+        flushFrameBatchedCodexNotifications();
+      },
+    );
+  }
+
+  function createRunEventInput(
+    eventType: RunEventInput["eventType"],
+    method: string | null,
+    payload: unknown,
+  ) {
+    const runId = currentRunId.current;
+    if (!runId) return null;
+
+    eventSequence.current += 1;
+    return {
+      runId,
+      sequence: eventSequence.current,
+      eventType,
+      method,
+      payload,
+    } satisfies RunEventInput;
+  }
+
+  function flushBufferedRunEvents() {
+    if (pendingRunEventFlushTimerRef.current !== null) {
+      window.clearTimeout(pendingRunEventFlushTimerRef.current);
+      pendingRunEventFlushTimerRef.current = null;
+    }
+
+    const batch = pendingRunEventWritesRef.current.splice(0);
+    if (batch.length === 0) return runEventWriteChainRef.current;
+
+    const write = runEventWriteChainRef.current
+      .catch(() => undefined)
+      .then(() => appendRunEvents(batch));
+    runEventWriteChainRef.current = write;
+    return write;
+  }
+
+  function queueBufferedRunEvent(
+    eventType: RunEventInput["eventType"],
+    method: string | null,
+    payload: unknown,
+  ) {
+    const input = createRunEventInput(eventType, method, payload);
+    if (!input) return;
+
+    pendingRunEventWritesRef.current.push(input);
+    if (pendingRunEventWritesRef.current.length >= RUN_EVENT_BATCH_MAX_SIZE) {
+      void flushBufferedRunEvents().catch((error) => {
+        console.error("Could not persist buffered Codex events", error);
+      });
+      return;
+    }
+    if (pendingRunEventFlushTimerRef.current !== null) return;
+
+    pendingRunEventFlushTimerRef.current = window.setTimeout(() => {
+      pendingRunEventFlushTimerRef.current = null;
+      void flushBufferedRunEvents().catch((error) => {
+        console.error("Could not persist buffered Codex events", error);
+      });
+    }, RUN_EVENT_BATCH_DELAY_MS);
+  }
+
   async function handleCodexNotification(
     accountId: number,
     profileKey: CodexProfileKey,
@@ -6123,6 +6278,14 @@ function App() {
     ) {
       return;
     }
+
+    if (shouldFrameBatchCodexMessage(message)) {
+      queueBufferedRunEvent("notification", method, message);
+      queueFrameBatchedCodexNotification(profileKey, message);
+      return;
+    }
+
+    flushFrameBatchedCodexNotifications();
 
     const nextRunView = updateActiveRunView((current) => {
       const next = applyCodexMessage(current, message);
@@ -6229,6 +6392,9 @@ function App() {
       setApprovalSafetyWarning(warning);
       return;
     }
+    if (currentRunProfileKey.current === profileKey) {
+      flushFrameBatchedCodexNotifications();
+    }
     const control = activeRunControlRef.current;
     const parsed = parseApprovalRequest({
       message: request,
@@ -6314,19 +6480,9 @@ function App() {
     method: string | null,
     payload: unknown,
   ) {
-    const runId = currentRunId.current;
-    if (!runId) {
-      return;
-    }
-
-    eventSequence.current += 1;
-    await appendRunEvent({
-      runId,
-      sequence: eventSequence.current,
-      eventType,
-      method,
-      payload,
-    });
+    await flushBufferedRunEvents();
+    const input = createRunEventInput(eventType, method, payload);
+    if (input) await appendRunEvent(input);
   }
 
   async function handleResolveRequest(

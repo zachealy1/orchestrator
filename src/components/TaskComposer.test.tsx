@@ -772,6 +772,10 @@ describe("TaskComposer", () => {
     });
 
     expect(promptInput).toHaveValue(prompt);
+    expect(
+      (document.querySelector(".prompt-autosize-mirror")?.textContent ?? "")
+        .length,
+    ).toBeLessThan(100);
     expect(requestAnimationFrameSpy).not.toHaveBeenCalled();
     requestAnimationFrameSpy.mockRestore();
   });
@@ -788,6 +792,33 @@ describe("TaskComposer", () => {
     ).toBe(true);
     expect(fireEvent.keyDown(promptInput, { key: "ArrowLeft" })).toBe(true);
     expect(fireEvent.keyDown(promptInput, { key: "ArrowRight" })).toBe(true);
+  });
+
+  it("preserves repeated and selection-based native deletion", async () => {
+    const { user } = renderControlledComposer();
+    const promptInput = screen.getByLabelText("Prompt") as HTMLTextAreaElement;
+
+    await user.type(promptInput, "abcdef");
+    await user.keyboard("{Backspace>3/}");
+    expect(promptInput).toHaveValue("abc");
+
+    promptInput.setSelectionRange(1, 3);
+    await user.keyboard("{Delete}");
+    expect(promptInput).toHaveValue("a");
+    expect(promptInput).toHaveFocus();
+  });
+
+  it("preserves repeated printable input from a held key", async () => {
+    const { user } = renderControlledComposer();
+    const promptInput = screen.getByLabelText("Prompt") as HTMLTextAreaElement;
+
+    promptInput.focus();
+    await user.keyboard("{a>24/}");
+
+    expect(promptInput).toHaveValue("a".repeat(24));
+    expect(promptInput).toHaveFocus();
+    expect(promptInput.selectionStart).toBe(24);
+    expect(promptInput.selectionEnd).toBe(24);
   });
 
   it("does not run mention searches or normalize text during IME composition", () => {
@@ -833,6 +864,7 @@ describe("TaskComposer", () => {
     expect(promptInput).toHaveAttribute("autocapitalize", "none");
     expect(promptInput).toHaveAttribute("autocomplete", "off");
     expect(promptInput).toHaveAttribute("autocorrect", "off");
+    expect(promptInput).toHaveAttribute("writingsuggestions", "false");
     expect(promptInput).toHaveAttribute("data-enable-grammarly", "false");
     expect(promptInput).toHaveAttribute("data-gramm", "false");
     expect(promptInput).toHaveAttribute("data-gramm_editor", "false");

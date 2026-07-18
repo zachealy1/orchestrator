@@ -586,25 +586,45 @@ export async function softDeleteRun(runId: number) {
   );
 }
 
-export async function appendRunEvent(input: {
+export type RunEventInput = {
   runId: number;
   sequence: number;
   eventType: "notification" | "server-request" | "process" | "client-action";
   method: string | null;
   payload: unknown;
-}) {
+};
+
+const RUN_EVENT_INSERT_BATCH_SIZE = 100;
+
+export async function appendRunEvents(inputs: RunEventInput[]) {
+  if (inputs.length === 0) return;
+
   const db = await getDatabase();
-  await db.execute(
-    `INSERT INTO run_events (run_id, sequence, event_type, method, payload_json)
-     VALUES ($1, $2, $3, $4, $5)`,
-    [
-      input.runId,
-      input.sequence,
-      input.eventType,
-      input.method,
-      JSON.stringify(input.payload),
-    ],
-  );
+  for (let start = 0; start < inputs.length; start += RUN_EVENT_INSERT_BATCH_SIZE) {
+    const batch = inputs.slice(start, start + RUN_EVENT_INSERT_BATCH_SIZE);
+    const values: unknown[] = [];
+    const placeholders = batch.map((input) => {
+      const offset = values.length;
+      values.push(
+        input.runId,
+        input.sequence,
+        input.eventType,
+        input.method,
+        JSON.stringify(input.payload),
+      );
+      return `($${offset + 1}, $${offset + 2}, $${offset + 3}, $${offset + 4}, $${offset + 5})`;
+    });
+
+    await db.execute(
+      `INSERT INTO run_events (run_id, sequence, event_type, method, payload_json)
+       VALUES ${placeholders.join(", ")}`,
+      values,
+    );
+  }
+}
+
+export async function appendRunEvent(input: RunEventInput) {
+  await appendRunEvents([input]);
 }
 
 export async function recordTokenUsage(input: {

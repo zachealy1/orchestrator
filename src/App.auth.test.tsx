@@ -70,6 +70,7 @@ const mocks = vi.hoisted(() => ({
   updateRunMock: vi.fn(),
   updateTaskStatusMock: vi.fn(),
   appendRunEventMock: vi.fn(),
+  appendRunEventsMock: vi.fn(),
   recordTokenUsageMock: vi.fn(),
   softDeleteRunMock: vi.fn(),
   upsertWorkspaceMock: vi.fn(),
@@ -191,6 +192,7 @@ vi.mock("./codexClient", () => ({
 
 vi.mock("./db", () => ({
   appendRunEvent: mocks.appendRunEventMock,
+  appendRunEvents: mocks.appendRunEventsMock,
   buildLocalChatHistoryIndex: mocks.buildLocalChatHistoryIndexMock,
   completeDuplicateProfileCleanup: mocks.completeDuplicateProfileCleanupMock,
   createChat: mocks.createChatMock,
@@ -630,6 +632,7 @@ function prepareDefaults() {
   mocks.updateRunMock.mockResolvedValue(undefined);
   mocks.updateTaskStatusMock.mockResolvedValue(undefined);
   mocks.appendRunEventMock.mockResolvedValue(undefined);
+  mocks.appendRunEventsMock.mockResolvedValue(undefined);
   mocks.recordTokenUsageMock.mockResolvedValue(undefined);
   mocks.softDeleteChatMock.mockResolvedValue(undefined);
   mocks.softDeleteRunMock.mockResolvedValue(undefined);
@@ -5554,11 +5557,86 @@ describe("App Codex auth", () => {
     expect(within(transcript).getByLabelText("Submitted prompt")).toHaveTextContent(
       "Fix the streaming output",
     );
-    expect(within(transcript).getByText("Updated the auth flow.")).toBeInTheDocument();
+    await waitFor(() =>
+      expect(
+        within(transcript).getByText("Updated the auth flow."),
+      ).toBeInTheDocument(),
+    );
     expect(screen.getByLabelText("Prompt")).toBe(promptInput);
     expect(promptInput).toHaveValue("Prepare the follow-up while Codex streams");
     expect(promptInput.selectionStart).toBe(11);
     expect(promptInput.selectionEnd).toBe(11);
+  });
+
+  it("coalesces bursty app-server deltas without disturbing active typing", async () => {
+    prepareSignedInRun();
+
+    const { user } = await renderApp();
+    await startMockRun(user, "Stream a large response");
+    const promptInput = screen.getByLabelText("Prompt") as HTMLTextAreaElement;
+    await user.type(promptInput, "Keep this follow-up responsive");
+    promptInput.focus();
+    promptInput.setSelectionRange(9, 9);
+
+    await act(async () => {
+      const listener = mocks.listeners.get("codex:notification");
+      for (let index = 0; index < 120; index += 1) {
+        listener?.({
+          payload: {
+            accountId: 7,
+            message: {
+              method: "item/agentMessage/delta",
+              params: { itemId: "commentary-1", delta: "x" },
+            },
+          },
+        });
+      }
+    });
+
+    await waitFor(() =>
+      expect(
+        within(screen.getByLabelText("Task chat transcript")).getByText(
+          "x".repeat(120),
+        ),
+      ).toBeInTheDocument(),
+    );
+    await waitFor(() =>
+      expect(
+        mocks.appendRunEventsMock.mock.calls.flatMap(([events]) => events),
+      ).toHaveLength(120),
+    );
+
+    expect(mocks.appendRunEventsMock.mock.calls.length).toBeLessThanOrEqual(3);
+    expect(screen.getByLabelText("Prompt")).toBe(promptInput);
+    expect(promptInput).toHaveValue("Keep this follow-up responsive");
+    expect(promptInput).toHaveFocus();
+    expect(promptInput.selectionStart).toBe(9);
+    expect(promptInput.selectionEnd).toBe(9);
+  });
+
+  it("keeps ordinary prompt typing off the native bridge and database path", async () => {
+    prepareSignedInRun();
+    const { user } = await renderApp();
+    const before = {
+      rpc: mocks.codexRpcMock.mock.calls.length,
+      createTask: mocks.createTaskMock.mock.calls.length,
+      createRun: mocks.createRunMock.mock.calls.length,
+      appendOne: mocks.appendRunEventMock.mock.calls.length,
+      appendBatch: mocks.appendRunEventsMock.mock.calls.length,
+      tokenWrites: mocks.recordTokenUsageMock.mock.calls.length,
+    };
+
+    await user.type(
+      screen.getByLabelText("Prompt"),
+      "Typing stays entirely inside the composer until the user submits it.",
+    );
+
+    expect(mocks.codexRpcMock).toHaveBeenCalledTimes(before.rpc);
+    expect(mocks.createTaskMock).toHaveBeenCalledTimes(before.createTask);
+    expect(mocks.createRunMock).toHaveBeenCalledTimes(before.createRun);
+    expect(mocks.appendRunEventMock).toHaveBeenCalledTimes(before.appendOne);
+    expect(mocks.appendRunEventsMock).toHaveBeenCalledTimes(before.appendBatch);
+    expect(mocks.recordTokenUsageMock).toHaveBeenCalledTimes(before.tokenWrites);
   });
 
   it("renders approval requests inline and resolves them from the chat", async () => {

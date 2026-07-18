@@ -123,6 +123,19 @@ const ACCESS_MODE_OPTIONS = [
   { value: "full-access", label: "Full access" },
 ];
 
+const PROMPT_AUTOSIZE_MIRROR_CHARACTER_LIMIT = 8_000;
+const PROMPT_AUTOSIZE_CAPPED_LINES = 12;
+const DISABLED_WEBKIT_WRITING_SUGGESTIONS = {
+  writingsuggestions: "false",
+} as const;
+
+export function promptAutosizeMirrorText(prompt: string) {
+  if (prompt.length > PROMPT_AUTOSIZE_MIRROR_CHARACTER_LIMIT) {
+    return `${"\n".repeat(PROMPT_AUTOSIZE_CAPPED_LINES)}\u200b`;
+  }
+  return `${prompt}\u200b`;
+}
+
 export const TaskComposer = memo(function TaskComposer({
   disabled,
   runActive,
@@ -621,7 +634,7 @@ export const TaskComposer = memo(function TaskComposer({
           >
             <span className="sr-only">Prompt</span>
             <span className="prompt-autosize-mirror" aria-hidden="true">
-              {draftPrompt}{"\u200b"}
+              {promptAutosizeMirrorText(draftPrompt)}
             </span>
             {inlineContextFiles.length > 0 ? (
               <PromptInlineHighlight
@@ -643,6 +656,7 @@ export const TaskComposer = memo(function TaskComposer({
               autoCapitalize="none"
               autoComplete="off"
               autoCorrect="off"
+              {...DISABLED_WEBKIT_WRITING_SUGGESTIONS}
               data-enable-grammarly="false"
               data-gramm="false"
               data-gramm_editor="false"
