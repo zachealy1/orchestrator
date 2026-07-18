@@ -199,11 +199,22 @@ export function buildNativePlanPreview(text: string): NativePlanPreview {
 
 export function nativePlanDisclosureKey(entry: TaskChatEntry) {
   const plan = entry.runView.nativePlan;
+  const text = plan.completedText || plan.previewText;
   return [
     entry.clientId,
     plan.planItemId ?? "plan",
     plan.completedTurnId ?? "draft",
+    planContentRevision(text),
   ].join(":");
+}
+
+function planContentRevision(text: string) {
+  let hash = 2_166_136_261;
+  for (let index = 0; index < text.length; index += 1) {
+    hash ^= text.charCodeAt(index);
+    hash = Math.imul(hash, 16_777_619);
+  }
+  return `${text.length}-${(hash >>> 0).toString(36)}`;
 }
 
 function scheduleAnimationFrame(callback: FrameRequestCallback) {

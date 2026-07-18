@@ -288,6 +288,44 @@ describe("VirtuosoTaskChatTranscript", () => {
     ).toHaveAttribute("aria-expanded", "true");
   });
 
+  it("collapses a revised plan even when Codex reuses its plan identifiers", () => {
+    const entry = planHistoryEntry(1);
+    const commonProps = {
+      transcriptIdentity: "chat:plan-revision",
+      transcriptVersion: "v1",
+      firstItemIndex: 999_999,
+      openAtLatestRequest: null,
+      liveFollow: false,
+      onResolveRequest: vi.fn(),
+    };
+    const { rerender } = render(
+      <VirtuosoTaskChatTranscript entries={[entry]} {...commonProps} />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Show full plan" }));
+    expect(
+      screen.getByRole("button", { name: "Hide full plan" }),
+    ).toHaveAttribute("aria-expanded", "true");
+
+    const revisedEntry = {
+      ...entry,
+      runView: {
+        ...entry.runView,
+        nativePlan: {
+          ...entry.runView.nativePlan,
+          completedText: `${entry.runView.nativePlan.completedText}\n\n## Revised scope\n\nAdd a rollback step.`,
+        },
+      },
+    };
+    rerender(
+      <VirtuosoTaskChatTranscript entries={[revisedEntry]} {...commonProps} />,
+    );
+
+    expect(
+      screen.getByRole("button", { name: "Show full plan" }),
+    ).toHaveAttribute("aria-expanded", "false");
+  });
+
   it("corrects disclosure layout movement through Virtuoso scrollBy", async () => {
     render(
       <VirtuosoTaskChatTranscript
