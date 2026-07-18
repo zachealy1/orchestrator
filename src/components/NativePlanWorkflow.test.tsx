@@ -34,6 +34,14 @@ function planEntry(): TaskChatEntry {
     runView: {
       ...emptyRunView,
       status: "completed",
+      streamEvents: [
+        {
+          id: "plan-activity-1",
+          kind: "activity",
+          text: "Prepared the implementation plan",
+          timestamp: "2026-07-14T10:00:01.000Z",
+        },
+      ],
       nativePlan: {
         ...emptyRunView.nativePlan,
         intent: "plan",
@@ -58,6 +66,11 @@ describe("native Plan transcript workflow", () => {
     const onCancelPlan = vi.fn();
     renderTurn(entry, { onImplementPlan, onRevisePlan, onCancelPlan });
 
+    const trace = screen.getByLabelText("Run trace");
+    const plan = screen.getByLabelText("Codex plan");
+    expect(
+      trace.compareDocumentPosition(plan) & Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
     expect(screen.getByRole("heading", { name: "Final plan" })).toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "Implement plan" }));
     expect(onImplementPlan).toHaveBeenCalledWith(entry);
@@ -119,6 +132,11 @@ describe("native Plan transcript workflow", () => {
     const onAnswerUserInput = vi.fn();
     renderTurn(entry, { onAnswerUserInput });
 
+    const metrics = screen.getByLabelText("Run metrics");
+    const plan = screen.getByLabelText("Codex plan");
+    expect(
+      metrics.compareDocumentPosition(plan) & Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
     await user.click(screen.getByRole("radio", { name: /Focused/ }));
     await user.type(screen.getByLabelText("Scope note"), "Prefer two files");
     const secret = screen.getByLabelText("Token");

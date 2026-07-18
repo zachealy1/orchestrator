@@ -1379,12 +1379,6 @@ const AssistantRunOutput = memo(function AssistantRunOutput({
 
     return (
       <div className="run-output-surface completed">
-        <NativePlanCard
-          entry={entry}
-          onImplementPlan={onImplementPlan}
-          onRevisePlan={onRevisePlan}
-          onCancelPlan={onCancelPlan}
-        />
         {hasTrace ? (
           <RunTraceDropdown
             entry={entry}
@@ -1394,6 +1388,12 @@ const AssistantRunOutput = memo(function AssistantRunOutput({
         ) : (
           <RunMetrics runView={runView} />
         )}
+        <NativePlanCard
+          entry={entry}
+          onImplementPlan={onImplementPlan}
+          onRevisePlan={onRevisePlan}
+          onCancelPlan={onCancelPlan}
+        />
         {runView.finalMessage.trim() ||
         runView.status === "failed" ||
         runView.status === "interrupted" ||
@@ -1424,13 +1424,13 @@ const AssistantRunOutput = memo(function AssistantRunOutput({
 
   return (
     <div className="run-output-surface running" aria-label="Live run output">
+      <RunMetrics runView={runView} />
       <NativePlanCard
         entry={entry}
         onImplementPlan={onImplementPlan}
         onRevisePlan={onRevisePlan}
         onCancelPlan={onCancelPlan}
       />
-      <RunMetrics runView={runView} />
       {hasTimeline ? (
         <RunTimeline runView={runView} />
       ) : hasPlanPreview ? null : runView.status === "connecting" ? (
