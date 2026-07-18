@@ -4890,6 +4890,17 @@ mod tests {
     }
 
     #[test]
+    fn main_window_can_start_native_dragging() {
+        let capability: Value =
+            serde_json::from_str(include_str!("../capabilities/default.json")).unwrap();
+        let permissions = capability["permissions"].as_array().unwrap();
+
+        assert!(permissions
+            .iter()
+            .any(|permission| permission == "core:window:allow-start-dragging"));
+    }
+
+    #[test]
     fn account_email_migration_enforces_active_uniqueness() {
         let migration = migrations()
             .into_iter()
