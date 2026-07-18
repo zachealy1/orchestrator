@@ -79,6 +79,20 @@ describe("native Plan transcript workflow", () => {
     expect(
       screen.queryByRole("button", { name: "Show full plan" }),
     ).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Implement plan" })).toHaveClass(
+      "small",
+    );
+    expect(screen.getByRole("button", { name: "Revise" })).toHaveClass(
+      "small",
+      "secondary",
+    );
+    expect(screen.getByRole("button", { name: "Cancel" })).toHaveClass(
+      "small",
+      "danger",
+    );
+    expect(
+      screen.getByRole("button", { name: "Implement plan" }).parentElement,
+    ).toHaveClass("confirmation-actions");
     await user.click(screen.getByRole("button", { name: "Implement plan" }));
     expect(onImplementPlan).toHaveBeenCalledWith(entry);
     await user.click(screen.getByRole("button", { name: "Revise" }));

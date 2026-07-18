@@ -64,6 +64,7 @@
 .native-plan-markdown {
   min-width: 0;
   max-width: 100%;
+  line-height: 1.55;
   overflow-wrap: anywhere;
 }
 
@@ -93,6 +94,16 @@
   white-space: pre-wrap;
   overflow-wrap: anywhere;
   word-break: break-word;
+}
+
+.native-plan-markdown li {
+  min-width: 0;
+}
+
+.native-plan-markdown.markdown-summary li > :where(p, ul, ol, blockquote, pre) +
+  :where(p, ul, ol, blockquote, pre) {
+  margin-top: 14px;
+  padding-top: 0;
 }
 
 .native-plan-markdown pre code {
@@ -136,13 +147,32 @@
 }
 
 .native-plan-actions {
-  display: flex;
   flex-wrap: wrap;
-  gap: 8px;
+  align-items: center;
 }
 
-.native-plan-disclosure {
-  justify-self: start;
+button.native-plan-disclosure {
+  justify-self: center;
+  min-height: 30px;
+  background: transparent;
+  box-shadow: none;
+  color: var(--color-text-secondary);
+  transform: none;
+  transition: color 140ms ease;
+}
+
+button.native-plan-disclosure:hover:not(:disabled),
+button.native-plan-disclosure:focus-visible {
+  background: transparent;
+  box-shadow: none;
+  color: var(--color-primary);
+  transform: none;
+}
+
+button.native-plan-disclosure:active:not(:disabled) {
+  background: transparent;
+  color: var(--color-secondary);
+  transform: none;
 }
 
 .native-plan-revision {

@@ -2368,7 +2368,7 @@ const NativePlanCard = memo(function NativePlanCard({
         </button>
       ) : null}
       {canReview && !revising ? (
-        <div className="native-plan-actions">
+        <div className="native-plan-actions confirmation-actions">
           <button
             type="button"
             className="small"
@@ -2380,7 +2380,7 @@ const NativePlanCard = memo(function NativePlanCard({
           </button>
           <button
             type="button"
-            className="small"
+            className="small secondary"
             disabled={busy || !onRevisePlan}
             onClick={() => setRevising(true)}
           >
@@ -2414,11 +2414,15 @@ const NativePlanCard = memo(function NativePlanCard({
             onChange={(event) => setRevision(event.target.value)}
             autoFocus
           />
-          <div className="native-plan-actions">
+          <div className="native-plan-actions confirmation-actions">
             <button type="submit" className="small" disabled={!revision.trim() || busy}>
               Send revision
             </button>
-            <button type="button" className="small" onClick={() => setRevising(false)}>
+            <button
+              type="button"
+              className="small secondary"
+              onClick={() => setRevising(false)}
+            >
               Back
             </button>
           </div>

@@ -39,4 +39,30 @@ describe("native plan CSS", () => {
     expect(code).toContain("overflow: visible");
     expect(table).toContain("table-layout: fixed");
   });
+
+  it("centers a text-only disclosure and aligns shared plan actions", () => {
+    const disclosure = rule("button.native-plan-disclosure");
+    const disclosureHover = rule(
+      "button.native-plan-disclosure:hover:not(:disabled),",
+    );
+    const actions = rule(".native-plan-actions");
+
+    expect(disclosure).toContain("justify-self: center");
+    expect(disclosure).toContain("background: transparent");
+    expect(disclosure).toContain("color: var(--color-text-secondary)");
+    expect(disclosureHover).toContain("background: transparent");
+    expect(disclosureHover).toContain("color: var(--color-primary)");
+    expect(actions).toContain("align-items: center");
+  });
+
+  it("separates nested plan blocks without overflow-prone padding", () => {
+    const markdown = rule(".native-plan-markdown");
+    const nestedBlocks = rule(
+      ".native-plan-markdown.markdown-summary li > :where(p, ul, ol, blockquote, pre) +",
+    );
+
+    expect(markdown).toContain("line-height: 1.55");
+    expect(nestedBlocks).toContain("margin-top: 14px");
+    expect(nestedBlocks).toContain("padding-top: 0");
+  });
 });
