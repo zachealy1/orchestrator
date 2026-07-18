@@ -7967,6 +7967,11 @@ function App() {
   return (
     <main className="app-shell">
       <aside className="app-rail">
+        <div
+          className="app-rail-titlebar-drag-region"
+          data-tauri-drag-region
+          aria-hidden="true"
+        />
         <nav className="primary-nav" aria-label="Primary">
           <button
             className={activeView === "analytics" ? "active" : ""}
