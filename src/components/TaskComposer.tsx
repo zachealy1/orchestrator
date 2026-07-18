@@ -21,13 +21,12 @@ import type {
 } from "react";
 import { ComposerSelect } from "./ComposerSelect";
 import type {
-  ApprovalMode,
   CodexAccountProfile,
+  CodexAccessMode,
   ComposerMentionSearchStatus,
   CodexModel,
   ComposerContextFile,
   RouteRecommendation,
-  SandboxAccessMode,
   SelectedComposerSkill,
   SlashCommandItem,
   SlashCommandSearchStatus,
@@ -59,8 +58,7 @@ type Props = {
   selectedReasoningEffort: string | null;
   goalMode: boolean;
   planMode: boolean;
-  approvalMode: ApprovalMode;
-  sandboxMode: SandboxAccessMode;
+  accessMode: CodexAccessMode;
   contextFiles: ComposerContextFile[];
   selectedSkills: SelectedComposerSkill[];
   mentionResults: ComposerContextFile[];
@@ -75,8 +73,7 @@ type Props = {
   onReasoningEffortChange: (effort: string) => void;
   onGoalModeChange: (value: boolean) => void;
   onPlanModeChange: (value: boolean) => void;
-  onApprovalModeChange: (approvalMode: ApprovalMode) => void;
-  onSandboxModeChange: (sandboxMode: SandboxAccessMode) => void;
+  onAccessModeChange: (accessMode: CodexAccessMode) => void;
   onAddFiles: () => void;
   onMentionSearch: (query: string) => void;
   onMentionFileSelect: (file: ComposerContextFile) => void;
@@ -128,8 +125,7 @@ export function TaskComposer({
   selectedReasoningEffort,
   goalMode,
   planMode,
-  approvalMode,
-  sandboxMode,
+  accessMode,
   contextFiles,
   selectedSkills,
   mentionResults,
@@ -144,8 +140,7 @@ export function TaskComposer({
   onReasoningEffortChange,
   onGoalModeChange,
   onPlanModeChange,
-  onApprovalModeChange,
-  onSandboxModeChange,
+  onAccessModeChange,
   onAddFiles,
   onMentionSearch,
   onMentionFileSelect,
@@ -711,33 +706,17 @@ export function TaskComposer({
           </div>
 
           <ComposerSelect
-            ariaLabel="Approvals"
-            value={approvalMode}
+            ariaLabel="Access"
+            value={accessMode}
             options={[
-              { value: "strict", label: "Strict approval" },
-              { value: "on-request", label: "On request" },
-              { value: "automatic", label: "Automatic" },
+              { value: "ask-for-approval", label: "Ask for approval" },
+              { value: "full-access", label: "Full access" },
             ]}
-            placeholder="On request"
+            placeholder="Ask for approval"
             icon={<ShieldCheck size={16} />}
             className="access-select"
             disabled={runActive}
-            onChange={(value) => onApprovalModeChange(value as ApprovalMode)}
-          />
-
-          <ComposerSelect
-            ariaLabel="Sandbox"
-            value={sandboxMode}
-            options={[
-              { value: "read-only", label: "Read only" },
-              { value: "workspace", label: "Workspace" },
-              { value: "full", label: "Full access" },
-            ]}
-            placeholder="Workspace"
-            icon={<ShieldCheck size={16} />}
-            className="access-select"
-            disabled={runActive}
-            onChange={(value) => onSandboxModeChange(value as SandboxAccessMode)}
+            onChange={(value) => onAccessModeChange(value as CodexAccessMode)}
           />
 
           <ComposerSelect

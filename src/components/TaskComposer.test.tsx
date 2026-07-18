@@ -67,8 +67,7 @@ function renderComposer(overrides: Partial<TaskComposerProps> = {}) {
     selectedReasoningEffort: "medium",
     goalMode: false,
     planMode: false,
-    approvalMode: "on-request",
-    sandboxMode: "workspace",
+    accessMode: "ask-for-approval",
     contextFiles: [],
     selectedSkills: [],
     mentionResults: [],
@@ -83,8 +82,7 @@ function renderComposer(overrides: Partial<TaskComposerProps> = {}) {
     onReasoningEffortChange: vi.fn(),
     onGoalModeChange: vi.fn(),
     onPlanModeChange: vi.fn(),
-    onApprovalModeChange: vi.fn(),
-    onSandboxModeChange: vi.fn(),
+    onAccessModeChange: vi.fn(),
     onAddFiles: vi.fn(),
     onMentionSearch: vi.fn(),
     onMentionFileSelect: vi.fn(),
@@ -128,8 +126,7 @@ function renderControlledComposer(overrides: Partial<TaskComposerProps> = {}) {
       selectedReasoningEffort: "medium",
       goalMode: false,
       planMode: false,
-      approvalMode: "on-request",
-      sandboxMode: "workspace",
+      accessMode: "ask-for-approval",
       contextFiles: [],
       selectedSkills: [],
       mentionResults: [],
@@ -143,8 +140,7 @@ function renderControlledComposer(overrides: Partial<TaskComposerProps> = {}) {
       onReasoningEffortChange: vi.fn(),
       onGoalModeChange: vi.fn(),
       onPlanModeChange: vi.fn(),
-      onApprovalModeChange: vi.fn(),
-      onSandboxModeChange: vi.fn(),
+      onAccessModeChange: vi.fn(),
       onAddFiles: vi.fn(),
       onMentionSearch: vi.fn(),
       onMentionFileSelect: vi.fn(),
@@ -336,24 +332,27 @@ describe("TaskComposer", () => {
     expect(screen.queryByLabelText(/search workspace files/i)).not.toBeInTheDocument();
   });
 
-  it("renders separate approval and sandbox dropdowns", async () => {
-    const onApprovalModeChange = vi.fn();
-    const onSandboxModeChange = vi.fn();
-    const { user } = renderComposer({
-      onApprovalModeChange,
-      onSandboxModeChange,
-    });
+  it("renders one Access dropdown with the two supported modes", async () => {
+    const onAccessModeChange = vi.fn();
+    const { user } = renderComposer({ onAccessModeChange });
 
-    await user.click(screen.getByRole("combobox", { name: "Approvals" }));
-    await user.click(screen.getByRole("option", { name: "Strict approval" }));
-    await user.click(screen.getByRole("combobox", { name: "Sandbox" }));
+    const access = screen.getByRole("combobox", { name: "Access" });
+    await user.click(access);
+    expect(screen.getAllByRole("option")).toHaveLength(2);
+    expect(
+      screen.getByRole("option", { name: "Ask for approval" }),
+    ).toBeInTheDocument();
     await user.click(screen.getByRole("option", { name: "Full access" }));
 
-    expect(onApprovalModeChange).toHaveBeenCalledWith("strict");
-    expect(onSandboxModeChange).toHaveBeenCalledWith("full");
-    expect(
-      screen.queryByText(/Full access removes filesystem and network restrictions/i),
-    ).not.toBeInTheDocument();
+    expect(onAccessModeChange).toHaveBeenCalledWith("full-access");
+    expect(screen.queryByRole("combobox", { name: "Approvals" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("combobox", { name: "Sandbox" })).not.toBeInTheDocument();
+  });
+
+  it("disables Access while a run is active", () => {
+    renderComposer({ runActive: true });
+
+    expect(screen.getByRole("combobox", { name: "Access" })).toBeDisabled();
   });
 
   it("keeps workspace and branch selection out of the composer", () => {

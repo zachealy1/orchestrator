@@ -137,11 +137,10 @@ import {
   type CodexApprovalRequest,
 } from "./lib/codexApprovals";
 import {
+  accessModeWarning,
   accessSettings,
-  approvalModeWarning,
   persistCodexAccessPreference,
   readCodexAccessPreference,
-  sandboxModeWarning,
   type CodexAccessSettings,
 } from "./lib/codexAccess";
 import {
@@ -201,7 +200,6 @@ import {
   serializePromptInlineFileReferences,
 } from "./lib/contextFiles";
 import type {
-  ApprovalMode,
   AccountLoginCompletedNotification,
   AccountUpdatedNotification,
   AdditionalContextEntry,
@@ -209,6 +207,7 @@ import type {
   ChatListItem,
   ChatOrigin,
   CodexAccount,
+  CodexAccessMode,
   CodexAccountProfile,
   CodexAccountStatus,
   CodexMessage,
@@ -223,7 +222,6 @@ import type {
   OssProvider,
   PreflightReport,
   RunInteractionMode,
-  SandboxAccessMode,
   SelectedComposerSkill,
   SlashCommandItem,
   SlashCommandSearchStatus,
@@ -964,11 +962,8 @@ function App() {
   const [goalMode, setGoalMode] = useState(false);
   const [planMode, setPlanMode] = useState(false);
   const [initialAccessPreference] = useState(readCodexAccessPreference);
-  const [approvalMode, setApprovalMode] = useState<ApprovalMode>(
-    initialAccessPreference.approvalMode,
-  );
-  const [sandboxMode, setSandboxMode] = useState<SandboxAccessMode>(
-    initialAccessPreference.sandboxMode,
+  const [accessMode, setAccessMode] = useState<CodexAccessMode>(
+    initialAccessPreference.accessMode,
   );
   const [contextFiles, setContextFiles] = useState<ComposerContextFile[]>([]);
   const [taskContextDropActive, setTaskContextDropActive] = useState(false);
@@ -5791,7 +5786,7 @@ function App() {
       selectedBranch,
       cachedPreflight: preflight,
       mode: planMode ? "plan" : "run",
-      access: accessSettings({ approvalMode, sandboxMode }),
+      access: accessSettings({ accessMode }),
       model,
       effort: model ? selectedReasoningEffort : null,
       useOss,
@@ -5888,7 +5883,7 @@ function App() {
       selectedBranch,
       cachedPreflight: null,
       mode: planMode ? "plan" : "run",
-      access: accessSettings({ approvalMode, sandboxMode }),
+      access: accessSettings({ accessMode }),
       model,
       effort: model ? selectedReasoningEffort : null,
       useOss,
@@ -6222,11 +6217,11 @@ function App() {
     ) {
       return;
     }
-    updateActiveRunView((current) =>
-      addServerRequest(current, { ...request, requestToken }),
-    );
+    const routedRequest = { ...request, requestToken };
+    updateActiveRunView((current) => addServerRequest(current, routedRequest));
     await persistRunEvent("server-request", request.method ?? null, request);
     if (isNativeUserInputRequest(request) && request.params.autoResolutionMs) {
+      const routedUserInputRequest = { ...request, requestToken };
       const timerKey = `${profileKey}:${requestKey(request)}`;
       const timer = window.setTimeout(() => {
         userInputAutoResolutionTimersRef.current.delete(timerKey);
@@ -6234,7 +6229,9 @@ function App() {
           (entry) => entry.clientId === activeChatEntryIdRef.current,
         );
         if (activeEntry) {
-          void handleAnswerUserInput(activeEntry, request, { answers: {} });
+          void handleAnswerUserInput(activeEntry, routedUserInputRequest, {
+            answers: {},
+          });
         }
       }, request.params.autoResolutionMs);
       userInputAutoResolutionTimersRef.current.set(timerKey, timer);
@@ -6520,7 +6517,7 @@ function App() {
       mode: intent === "plan-revision" ? "plan" : "run",
       intent,
       clientUserMessageId: createStableClientMessageId(),
-      access: accessSettings({ approvalMode, sandboxMode }),
+      access: accessSettings({ accessMode }),
       model,
       effort: model ? selectedReasoningEffort : null,
       useOss,
@@ -7025,30 +7022,16 @@ function App() {
     }
   }, []);
 
-  const handleApprovalModeChange = useCallback(
-    (nextApprovalMode: ApprovalMode) => {
-      const warning = approvalModeWarning(nextApprovalMode);
+  const handleAccessModeChange = useCallback(
+    (nextAccessMode: CodexAccessMode) => {
+      const warning = accessModeWarning(nextAccessMode);
       if (warning && !window.confirm(warning)) return;
-      setApprovalMode(nextApprovalMode);
+      setAccessMode(nextAccessMode);
       persistCodexAccessPreference({
-        approvalMode: nextApprovalMode,
-        sandboxMode,
+        accessMode: nextAccessMode,
       });
     },
-    [sandboxMode],
-  );
-
-  const handleSandboxModeChange = useCallback(
-    (nextSandboxMode: SandboxAccessMode) => {
-      const warning = sandboxModeWarning(nextSandboxMode);
-      if (warning && !window.confirm(warning)) return;
-      setSandboxMode(nextSandboxMode);
-      persistCodexAccessPreference({
-        approvalMode,
-        sandboxMode: nextSandboxMode,
-      });
-    },
-    [approvalMode],
+    [],
   );
 
   const growPreviewDrawerForDiff = useCallback(() => {
@@ -8305,8 +8288,7 @@ function App() {
                   selectedReasoningEffort={selectedReasoningEffort}
                   goalMode={goalMode}
                   planMode={planMode}
-                  approvalMode={approvalMode}
-                  sandboxMode={sandboxMode}
+                  accessMode={accessMode}
                   contextFiles={contextFiles}
                   selectedSkills={selectedSkills}
                   mentionResults={mentionResults}
@@ -8327,8 +8309,7 @@ function App() {
                   onReasoningEffortChange={setSelectedReasoningEffort}
                   onGoalModeChange={handleGoalModeChange}
                   onPlanModeChange={handlePlanModeChange}
-                  onApprovalModeChange={handleApprovalModeChange}
-                  onSandboxModeChange={handleSandboxModeChange}
+                  onAccessModeChange={handleAccessModeChange}
                   onAddFiles={() => void chooseContextFiles()}
                   onMentionSearch={(query) => void searchMentionFiles(query)}
                   onMentionFileSelect={addMentionFileToContext}

@@ -3021,12 +3021,23 @@ describe("App Codex auth", () => {
     await waitFor(() =>
       expect(mocks.codexDefaultProfileRpcMock).toHaveBeenCalledWith(
         "turn/start",
-        expect.objectContaining({ threadId: "external-thread-1" }),
+        expect.objectContaining({
+          threadId: "external-thread-1",
+          approvalPolicy: "untrusted",
+          approvalsReviewer: "user",
+          permissions: ":workspace",
+        }),
       ),
     );
     expect(mocks.codexDefaultProfileRpcMock).toHaveBeenCalledWith(
       "thread/resume",
-      expect.objectContaining({ threadId: "external-thread-1", cwd: workspace.path }),
+      expect.objectContaining({
+        threadId: "external-thread-1",
+        cwd: workspace.path,
+        approvalPolicy: "untrusted",
+        approvalsReviewer: "user",
+        permissions: ":workspace",
+      }),
     );
     expect(
       mocks.codexRpcMock.mock.calls.some((call) => call[1] === "turn/start"),
@@ -3494,33 +3505,38 @@ describe("App Codex auth", () => {
       expect(mocks.resolveCodexServerRequestMock).toHaveBeenCalledWith(
         7,
         "question-1",
+        "server-request-7-1-9",
         { answers: { scope: { answers: ["Focused"] } } },
       ),
     );
-    await emitCodexServerRequest({
-      id: "question-auto",
-      method: "item/tool/requestUserInput",
-      params: {
-        threadId: "thread-plan",
-        turnId: "turn-1",
-        itemId: "question-item-auto",
-        autoResolutionMs: 5,
-        questions: [
-          {
-            id: "optional",
-            header: "Optional",
-            question: "This may auto-resolve",
-            isOther: false,
-            isSecret: false,
-            options: null,
-          },
-        ],
+    await emitCodexServerRequest(
+      {
+        id: "question-auto",
+        method: "item/tool/requestUserInput",
+        params: {
+          threadId: "thread-plan",
+          turnId: "turn-1",
+          itemId: "question-item-auto",
+          autoResolutionMs: 5,
+          questions: [
+            {
+              id: "optional",
+              header: "Optional",
+              question: "This may auto-resolve",
+              isOther: false,
+              isSecret: false,
+              options: null,
+            },
+          ],
+        },
       },
-    });
+      { requestToken: "server-request-7-1-question-auto" },
+    );
     await waitFor(() =>
       expect(mocks.resolveCodexServerRequestMock).toHaveBeenCalledWith(
         7,
         "question-auto",
+        "server-request-7-1-question-auto",
         { answers: {} },
       ),
     );
@@ -5047,19 +5063,51 @@ describe("App Codex auth", () => {
     expect(screen.queryByLabelText("Codex run console")).not.toBeInTheDocument();
   });
 
-  it("sends and persists independent approval and sandbox settings on every turn", async () => {
+  it("uses Ask for approval for new threads and turns by default", async () => {
+    prepareSignedInRun();
+
+    const { user } = await renderApp();
+    expect(screen.getByRole("combobox", { name: "Access" })).toHaveTextContent(
+      "Ask for approval",
+    );
+
+    await startMockRun(user, "Run with native approvals");
+    const threadStart = mocks.codexRpcMock.mock.calls.find(
+      (call) => call[1] === "thread/start",
+    );
+    const turnStart = mocks.codexRpcMock.mock.calls.find(
+      (call) => call[1] === "turn/start",
+    );
+    expect(threadStart?.[2]).toEqual(
+      expect.objectContaining({
+        approvalPolicy: "untrusted",
+        approvalsReviewer: "user",
+        permissions: ":workspace",
+      }),
+    );
+    expect(turnStart?.[2]).toEqual(
+      expect.objectContaining({
+        approvalPolicy: "untrusted",
+        approvalsReviewer: "user",
+        permissions: ":workspace",
+      }),
+    );
+    expect(mocks.createRunMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        approvalPolicy: "untrusted",
+        sandbox: "workspace-write",
+      }),
+    );
+  });
+
+  it("sends and persists Full access on every turn", async () => {
     prepareSignedInRun();
     const confirm = vi.spyOn(window, "confirm").mockReturnValue(true);
 
     const { user } = await renderApp();
-    await user.click(screen.getByRole("combobox", { name: "Approvals" }));
-    await user.click(screen.getByRole("option", { name: "Strict approval" }));
-    await user.click(screen.getByRole("combobox", { name: "Sandbox" }));
+    await user.click(screen.getByRole("combobox", { name: "Access" }));
     await user.click(screen.getByRole("option", { name: "Full access" }));
     expect(confirm).toHaveBeenCalledWith(expect.stringMatching(/full access removes/i));
-    expect(
-      screen.queryByText(/Full access removes filesystem and network restrictions/i),
-    ).not.toBeInTheDocument();
 
     await startMockRun(user, "First guarded turn");
     const threadStart = mocks.codexRpcMock.mock.calls.find(
@@ -5070,30 +5118,28 @@ describe("App Codex auth", () => {
     );
     expect(threadStart?.[2]).toEqual(
       expect.objectContaining({
-        approvalPolicy: "untrusted",
+        approvalPolicy: "never",
         approvalsReviewer: "user",
         permissions: ":danger-full-access",
       }),
     );
     expect(firstTurnStart?.[2]).toEqual(
       expect.objectContaining({
-        approvalPolicy: "untrusted",
+        approvalPolicy: "never",
         approvalsReviewer: "user",
         permissions: ":danger-full-access",
       }),
     );
     expect(mocks.createRunMock).toHaveBeenCalledWith(
       expect.objectContaining({
-        approvalPolicy: "untrusted",
+        approvalPolicy: "never",
         sandbox: "danger-full-access",
       }),
     );
-    expect(JSON.parse(localStorage.getItem("orchestrator.codex-access.v1")!)).toEqual({
-      approvalMode: "strict",
-      sandboxMode: "full",
+    expect(JSON.parse(localStorage.getItem("orchestrator.codex-access.v2")!)).toEqual({
+      accessMode: "full-access",
     });
-    expect(screen.getByRole("combobox", { name: "Approvals" })).toBeDisabled();
-    expect(screen.getByRole("combobox", { name: "Sandbox" })).toBeDisabled();
+    expect(screen.getByRole("combobox", { name: "Access" })).toBeDisabled();
 
     await emitCodexNotification({
       method: "turn/completed",
@@ -5111,7 +5157,7 @@ describe("App Codex auth", () => {
     )[1];
     expect(secondTurnStart[2]).toEqual(
       expect.objectContaining({
-        approvalPolicy: "untrusted",
+        approvalPolicy: "never",
         approvalsReviewer: "user",
         permissions: ":danger-full-access",
       }),
@@ -5125,7 +5171,7 @@ describe("App Codex auth", () => {
         if (method === "thread/start") {
           return {
             thread: { id: "thread-1" },
-            approvalPolicy: "on-request",
+            approvalPolicy: "untrusted",
             activePermissionProfile: { id: ":danger-full-access" },
           };
         }
@@ -5148,21 +5194,21 @@ describe("App Codex auth", () => {
     ).toBe(false);
   });
 
-  it("requires confirmation before disabling native approval prompts", async () => {
+  it("requires confirmation before enabling Full access", async () => {
     prepareSignedInRun();
     const confirm = vi.spyOn(window, "confirm").mockReturnValue(false);
 
     const { user } = await renderApp();
-    await user.click(screen.getByRole("combobox", { name: "Approvals" }));
-    await user.click(screen.getByRole("option", { name: "Automatic" }));
+    await user.click(screen.getByRole("combobox", { name: "Access" }));
+    await user.click(screen.getByRole("option", { name: "Full access" }));
 
     expect(confirm).toHaveBeenCalledWith(
       expect.stringMatching(/disables native approval prompts/i),
     );
-    expect(screen.getByRole("combobox", { name: "Approvals" })).toHaveTextContent(
-      "On request",
+    expect(screen.getByRole("combobox", { name: "Access" })).toHaveTextContent(
+      "Ask for approval",
     );
-    expect(localStorage.getItem("orchestrator.codex-access.v1")).toBeNull();
+    expect(localStorage.getItem("orchestrator.codex-access.v2")).toBeNull();
   });
 
   it("reuses the same Codex thread for follow-up prompts in one chat", async () => {
@@ -5713,6 +5759,25 @@ describe("App Codex auth", () => {
 
   it("shows lifecycle file paths and the active interaction mode in approval cards", async () => {
     prepareSignedInRun();
+    mocks.codexRpcMock.mockImplementation(
+      async (_accountId: number, method: string) => {
+        if (method === "collaborationMode/list") {
+          return {
+            data: [
+              { name: "Plan", mode: "plan", reasoning_effort: "medium" },
+              { name: "Default", mode: "default", reasoning_effort: null },
+            ],
+          };
+        }
+        if (method === "thread/start") {
+          return { thread: { id: "thread-1" } };
+        }
+        if (method === "turn/start") {
+          return { turn: { id: "turn-1" } };
+        }
+        return {};
+      },
+    );
 
     const { user } = await renderApp();
     await user.click(screen.getByRole("button", { name: /plan mode/i }));

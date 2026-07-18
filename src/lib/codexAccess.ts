@@ -1,21 +1,20 @@
-import type { ApprovalMode, SandboxAccessMode } from "../types";
+import type { CodexAccessMode } from "../types";
 
-export const CODEX_ACCESS_STORAGE_KEY = "orchestrator.codex-access.v1";
+export const CODEX_ACCESS_STORAGE_KEY = "orchestrator.codex-access.v2";
+export const LEGACY_CODEX_ACCESS_STORAGE_KEY = "orchestrator.codex-access.v1";
 
 export type CodexAccessPreference = {
-  approvalMode: ApprovalMode;
-  sandboxMode: SandboxAccessMode;
+  accessMode: CodexAccessMode;
 };
 
 export type CodexAccessSettings = CodexAccessPreference & {
-  approvalPolicy: "untrusted" | "on-request" | "never";
-  permissionProfile: ":read-only" | ":workspace" | ":danger-full-access";
-  sandbox: "read-only" | "workspace-write" | "danger-full-access";
+  approvalPolicy: "untrusted" | "never";
+  permissionProfile: ":workspace" | ":danger-full-access";
+  sandbox: "workspace-write" | "danger-full-access";
 };
 
 export const DEFAULT_CODEX_ACCESS: CodexAccessPreference = {
-  approvalMode: "on-request",
-  sandboxMode: "workspace",
+  accessMode: "ask-for-approval",
 };
 
 export function accessSettings(
@@ -24,23 +23,15 @@ export function accessSettings(
   return {
     ...preference,
     approvalPolicy:
-      preference.approvalMode === "strict"
-        ? "untrusted"
-        : preference.approvalMode === "automatic"
-          ? "never"
-          : "on-request",
+      preference.accessMode === "full-access" ? "never" : "untrusted",
     permissionProfile:
-      preference.sandboxMode === "read-only"
-        ? ":read-only"
-        : preference.sandboxMode === "full"
-          ? ":danger-full-access"
-          : ":workspace",
+      preference.accessMode === "full-access"
+        ? ":danger-full-access"
+        : ":workspace",
     sandbox:
-      preference.sandboxMode === "read-only"
-        ? "read-only"
-        : preference.sandboxMode === "full"
-          ? "danger-full-access"
-          : "workspace-write",
+      preference.accessMode === "full-access"
+        ? "danger-full-access"
+        : "workspace-write",
   };
 }
 
@@ -49,17 +40,22 @@ export function readCodexAccessPreference(
 ): CodexAccessPreference {
   try {
     const raw = storage.getItem(CODEX_ACCESS_STORAGE_KEY);
-    if (!raw) return DEFAULT_CODEX_ACCESS;
-    const parsed = JSON.parse(raw) as Record<string, unknown>;
-    if (
-      isApprovalMode(parsed.approvalMode) &&
-      isSandboxAccessMode(parsed.sandboxMode)
-    ) {
-      return {
-        approvalMode: parsed.approvalMode,
-        sandboxMode: parsed.sandboxMode,
-      };
+    if (raw) {
+      const parsed = JSON.parse(raw) as Record<string, unknown>;
+      return isCodexAccessMode(parsed.accessMode)
+        ? { accessMode: parsed.accessMode }
+        : DEFAULT_CODEX_ACCESS;
     }
+
+    const legacyRaw = storage.getItem(LEGACY_CODEX_ACCESS_STORAGE_KEY);
+    if (!legacyRaw) return DEFAULT_CODEX_ACCESS;
+    const legacy = JSON.parse(legacyRaw) as Record<string, unknown>;
+    return {
+      accessMode:
+        legacy.approvalMode === "automatic" && legacy.sandboxMode === "full"
+          ? "full-access"
+          : "ask-for-approval",
+    };
   } catch {
     // Fall through to the safe application default.
   }
@@ -77,22 +73,12 @@ export function persistCodexAccessPreference(
   }
 }
 
-export function approvalModeWarning(mode: ApprovalMode) {
-  return mode === "automatic"
-    ? "Automatic execution disables native approval prompts. Commands remain constrained by the selected sandbox, and blocked actions fail instead of asking. Continue?"
+export function accessModeWarning(mode: CodexAccessMode) {
+  return mode === "full-access"
+    ? "Full access removes Codex's filesystem and network sandbox and disables native approval prompts. Continue?"
     : null;
 }
 
-export function sandboxModeWarning(mode: SandboxAccessMode) {
-  return mode === "full"
-    ? "Full access removes Codex's filesystem and network sandbox. Approval prompts may not appear because commands no longer need to cross a sandbox boundary. Continue?"
-    : null;
-}
-
-function isApprovalMode(value: unknown): value is ApprovalMode {
-  return value === "strict" || value === "on-request" || value === "automatic";
-}
-
-function isSandboxAccessMode(value: unknown): value is SandboxAccessMode {
-  return value === "read-only" || value === "workspace" || value === "full";
+function isCodexAccessMode(value: unknown): value is CodexAccessMode {
+  return value === "ask-for-approval" || value === "full-access";
 }

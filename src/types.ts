@@ -501,9 +501,7 @@ export type CodexProcessEvent = {
 
 export type OssProvider = "ollama" | "lmstudio";
 
-export type ApprovalMode = "strict" | "on-request" | "automatic";
-
-export type SandboxAccessMode = "read-only" | "workspace" | "full";
+export type CodexAccessMode = "ask-for-approval" | "full-access";
 
 export type RunInteractionMode = "chat" | "plan" | "goal" | "goal-plan";
 

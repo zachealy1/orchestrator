@@ -2,40 +2,27 @@ import { describe, expect, it } from "vitest";
 import {
   CODEX_ACCESS_STORAGE_KEY,
   DEFAULT_CODEX_ACCESS,
+  LEGACY_CODEX_ACCESS_STORAGE_KEY,
+  accessModeWarning,
   accessSettings,
-  approvalModeWarning,
   persistCodexAccessPreference,
   readCodexAccessPreference,
-  sandboxModeWarning,
 } from "./codexAccess";
 
 describe("Codex access settings", () => {
-  it("maps the three native approval policies without changing sandbox scope", () => {
-    expect(
-      accessSettings({ approvalMode: "strict", sandboxMode: "workspace" }),
-    ).toMatchObject({
+  it("maps Ask for approval to native user-reviewed workspace access", () => {
+    expect(accessSettings({ accessMode: "ask-for-approval" })).toEqual({
+      accessMode: "ask-for-approval",
       approvalPolicy: "untrusted",
       permissionProfile: ":workspace",
       sandbox: "workspace-write",
     });
-    expect(
-      accessSettings({ approvalMode: "on-request", sandboxMode: "workspace" }),
-    ).toMatchObject({ approvalPolicy: "on-request" });
-    expect(
-      accessSettings({ approvalMode: "automatic", sandboxMode: "workspace" }),
-    ).toMatchObject({
-      approvalPolicy: "never",
-      permissionProfile: ":workspace",
-    });
   });
 
-  it("maps native permission profiles independently from approval policy", () => {
-    expect(
-      accessSettings({ approvalMode: "on-request", sandboxMode: "read-only" }),
-    ).toMatchObject({ permissionProfile: ":read-only", sandbox: "read-only" });
-    expect(
-      accessSettings({ approvalMode: "on-request", sandboxMode: "full" }),
-    ).toMatchObject({
+  it("maps Full access to unsandboxed execution without approval prompts", () => {
+    expect(accessSettings({ accessMode: "full-access" })).toEqual({
+      accessMode: "full-access",
+      approvalPolicy: "never",
       permissionProfile: ":danger-full-access",
       sandbox: "danger-full-access",
     });
@@ -47,28 +34,57 @@ describe("Codex access settings", () => {
     );
     expect(
       readCodexAccessPreference({
-        getItem: () => JSON.stringify({ approvalMode: "never", sandboxMode: "all" }),
+        getItem: () => JSON.stringify({ accessMode: "automatic" }),
       }),
     ).toEqual(DEFAULT_CODEX_ACCESS);
   });
 
-  it("persists only an explicit validated preference payload", () => {
+  it("migrates only the fully permissive legacy pair to Full access", () => {
+    const readPreference = (legacy: Record<string, unknown>) =>
+      readCodexAccessPreference({
+        getItem: (key) =>
+          key === LEGACY_CODEX_ACCESS_STORAGE_KEY
+            ? JSON.stringify(legacy)
+            : null,
+      });
+
+    expect(
+      readPreference({ approvalMode: "automatic", sandboxMode: "full" }),
+    ).toEqual({ accessMode: "full-access" });
+    expect(
+      readPreference({ approvalMode: "strict", sandboxMode: "full" }),
+    ).toEqual({ accessMode: "ask-for-approval" });
+    expect(
+      readPreference({ approvalMode: "automatic", sandboxMode: "workspace" }),
+    ).toEqual({ accessMode: "ask-for-approval" });
+  });
+
+  it("prefers a valid v2 setting over the legacy preference", () => {
+    expect(
+      readCodexAccessPreference({
+        getItem: (key) =>
+          key === CODEX_ACCESS_STORAGE_KEY
+            ? JSON.stringify({ accessMode: "ask-for-approval" })
+            : JSON.stringify({ approvalMode: "automatic", sandboxMode: "full" }),
+      }),
+    ).toEqual({ accessMode: "ask-for-approval" });
+  });
+
+  it("persists only the consolidated access mode", () => {
     const values = new Map<string, string>();
     persistCodexAccessPreference(
-      { approvalMode: "strict", sandboxMode: "read-only" },
+      { accessMode: "full-access" },
       { setItem: (key, value) => void values.set(key, value) },
     );
     expect(JSON.parse(values.get(CODEX_ACCESS_STORAGE_KEY)!)).toEqual({
-      approvalMode: "strict",
-      sandboxMode: "read-only",
+      accessMode: "full-access",
     });
   });
 
-  it("warns only for settings that remove prompts or the sandbox", () => {
-    expect(approvalModeWarning("on-request")).toBeNull();
-    expect(approvalModeWarning("strict")).toBeNull();
-    expect(approvalModeWarning("automatic")).toMatch(/disables native approval/i);
-    expect(sandboxModeWarning("workspace")).toBeNull();
-    expect(sandboxModeWarning("full")).toMatch(/removes codex's filesystem/i);
+  it("warns only before enabling Full access", () => {
+    expect(accessModeWarning("ask-for-approval")).toBeNull();
+    expect(accessModeWarning("full-access")).toMatch(
+      /removes codex's filesystem.*disables native approval prompts/i,
+    );
   });
 });
