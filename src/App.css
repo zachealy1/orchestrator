@@ -16,7 +16,7 @@
   initial-value: 0px;
 }
 
-@property --history-composer-max-width {
+@property --history-chat-content-max-width {
   syntax: "<length>";
   inherits: true;
   initial-value: 1040px;
@@ -1144,7 +1144,7 @@ button.account-switcher-item:hover:not(:disabled) {
   --history-drawer-width: clamp(340px, 30vw, 460px);
   --history-active-drawer-width: 0px;
   --task-hero-inline-padding: clamp(18px, 3vw, 38px);
-  --history-composer-max-width: min(
+  --history-chat-content-max-width: min(
     1040px,
     calc(
       100cqw - var(--task-hero-inline-padding) -
@@ -1164,13 +1164,13 @@ button.account-switcher-item:hover:not(:disabled) {
   transition:
     --history-active-drawer-width var(--history-transition-duration)
       var(--history-transition-easing),
-    --history-composer-max-width var(--history-transition-duration)
+    --history-chat-content-max-width var(--history-transition-duration)
       var(--history-transition-easing);
 }
 
 .codex-workspace-body.history-space-reserved {
   --history-active-drawer-width: var(--history-drawer-width);
-  --history-composer-max-width: min(
+  --history-chat-content-max-width: min(
     1040px,
     calc(
       100cqw - var(--history-drawer-width) -
@@ -2009,7 +2009,8 @@ button.account-switcher-item:hover:not(:disabled) {
 
 .task-chat-run {
   display: grid;
-  width: min(1040px, 100%);
+  width: 100%;
+  max-width: var(--history-chat-content-max-width, 1040px);
   justify-self: center;
   gap: 14px;
 }
@@ -3344,7 +3345,7 @@ select:disabled {
   position: relative;
   display: grid;
   min-width: 0;
-  max-width: var(--history-composer-max-width, 1040px);
+  max-width: var(--history-chat-content-max-width, 1040px);
   width: 100%;
   overflow: visible;
   border: 1px solid var(--color-divider);

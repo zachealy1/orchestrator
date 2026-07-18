@@ -40,6 +40,8 @@ type SequenceResult = {
   openingMessageMaxReversePx: number;
   closingMessageWidthReversals: number;
   closingMessageMaxReversePx: number;
+  openingMaxContentWidthDelta: number;
+  closingMaxContentWidthDelta: number;
   closedComposerWidth: number;
   openComposerWidth: number;
   drawerTransition: string;
@@ -69,7 +71,7 @@ function visibleAnchorOffset(scroller: HTMLElement) {
 async function collectSamples(
   composer: HTMLElement,
   drawer: HTMLElement,
-  message: HTMLElement,
+  readMessage: () => HTMLElement | null,
   durationMs: number,
 ) {
   const samples: Sample[] = [];
@@ -78,7 +80,7 @@ async function collectSamples(
     await nextFrame();
     const composerRect = composer.getBoundingClientRect();
     const drawerRect = drawer.getBoundingClientRect();
-    const messageRect = message.getBoundingClientRect();
+    const messageRect = readMessage()?.getBoundingClientRect() ?? composerRect;
     samples.push({
       time: performance.now(),
       composerLeft: composerRect.left,
@@ -174,6 +176,14 @@ function analyzeWidthDirection(
   return { reversals, maxReversePx };
 }
 
+function maxContentWidthDelta(samples: Sample[]) {
+  return samples.reduce(
+    (maximum, sample) =>
+      Math.max(maximum, Math.abs(sample.composerWidth - sample.messageWidth)),
+    0,
+  );
+}
+
 export default function DrawerSyncDiagnostics() {
   const runGenerationRef = useRef(0);
   const bodyRef = useRef<HTMLDivElement | null>(null);
@@ -204,7 +214,7 @@ export default function DrawerSyncDiagnostics() {
       return (
         Array.from(
           transcript.querySelectorAll<HTMLElement>(
-            ".task-chat-native-row:not([hidden]) article",
+            ".task-chat-native-row:not([hidden]) .task-chat-run",
           ),
         ).find((candidate) => {
           const bounds = candidate.getBoundingClientRect();
@@ -247,7 +257,7 @@ export default function DrawerSyncDiagnostics() {
         },
       );
       setPhase("closed");
-      await delay(80);
+      await delay(240);
       transcript.scrollTop = Math.min(4_000, transcript.scrollHeight / 3);
       const message = findVisibleMessage() ?? transcript;
       const closed = asSample(
@@ -259,7 +269,12 @@ export default function DrawerSyncDiagnostics() {
       setPhase("opening");
       const drawerTransition = getComputedStyle(drawer).transition;
       const composerTransition = getComputedStyle(composer).transition;
-      const openingSamples = await collectSamples(composer, drawer, message, 230);
+      const openingSamples = await collectSamples(
+        composer,
+        drawer,
+        findVisibleMessage,
+        230,
+      );
       const openAnchor = captureTranscriptViewportAnchor(transcript);
       const openAnchorBefore = visibleAnchorOffset(transcript);
       setPhase("open");
@@ -296,7 +311,12 @@ export default function DrawerSyncDiagnostics() {
       const closeAnchor = captureTranscriptViewportAnchor(transcript);
       const closeAnchorBefore = visibleAnchorOffset(transcript);
       setPhase("closing");
-      const closingSamples = await collectSamples(composer, drawer, message, 230);
+      const closingSamples = await collectSamples(
+        composer,
+        drawer,
+        findVisibleMessage,
+        230,
+      );
       setPhase("closed");
       restoreTranscriptViewportAnchor(closeAnchor);
       const closeAnchorDelta = Math.abs(
@@ -341,6 +361,8 @@ export default function DrawerSyncDiagnostics() {
         openingMessageMaxReversePx: openingMessageDirection.maxReversePx,
         closingMessageWidthReversals: closingMessageDirection.reversals,
         closingMessageMaxReversePx: closingMessageDirection.maxReversePx,
+        openingMaxContentWidthDelta: maxContentWidthDelta(openingSamples),
+        closingMaxContentWidthDelta: maxContentWidthDelta(closingSamples),
         closedComposerWidth: closed.composerWidth,
         openComposerWidth: open.composerWidth,
         drawerTransition,
@@ -365,11 +387,26 @@ export default function DrawerSyncDiagnostics() {
       const closedWidth = composer.getBoundingClientRect().width;
 
       setPhase("opening");
-      const firstOpening = await collectSamples(composer, drawer, message, 72);
+      const firstOpening = await collectSamples(
+        composer,
+        drawer,
+        findVisibleMessage,
+        72,
+      );
       setPhase("closing");
-      const reversedClosing = await collectSamples(composer, drawer, message, 72);
+      const reversedClosing = await collectSamples(
+        composer,
+        drawer,
+        findVisibleMessage,
+        72,
+      );
       setPhase("opening");
-      const finalOpening = await collectSamples(composer, drawer, message, 230);
+      const finalOpening = await collectSamples(
+        composer,
+        drawer,
+        findVisibleMessage,
+        230,
+      );
       setPhase("open");
       const openWidth = composer.getBoundingClientRect().width;
       const samples = [...firstOpening, ...reversedClosing, ...finalOpening];
@@ -436,7 +473,7 @@ export default function DrawerSyncDiagnostics() {
       <div className="codex-workspace-body" ref={bodyRef} style={{ height: "100%" }}>
         <section className="task-hero has-chat" aria-label="Diagnostic chat">
           <section
-            className="task-chat-transcript native-transcript"
+            className="task-chat-transcript virtuoso-transcript"
             ref={transcriptRef}
           >
             <div className="task-chat-native-list">
@@ -446,15 +483,17 @@ export default function DrawerSyncDiagnostics() {
                   data-transcript-entry-id={row.id}
                   key={row.id}
                 >
-                  <article style={{ width: "min(920px, 100%)" }}>
-                    {Array.from({ length: row.paragraphs }, (_, paragraph) => (
-                      <p key={paragraph}>
-                        Turn {row.id} paragraph {paragraph + 1}. This variable-height
-                        prepared response exercises native WebKit layout while the
-                        history drawer and composer move together.
-                      </p>
-                    ))}
-                  </article>
+                  <div className="task-chat-run">
+                    <article>
+                      {Array.from({ length: row.paragraphs }, (_, paragraph) => (
+                        <p key={paragraph}>
+                          Turn {row.id} paragraph {paragraph + 1}. This variable-height
+                          prepared response exercises native WebKit layout while the
+                          history drawer and composer move together.
+                        </p>
+                      ))}
+                    </article>
+                  </div>
                 </div>
               ))}
             </div>

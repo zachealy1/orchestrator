@@ -16,15 +16,16 @@ function rule(selector: string) {
 }
 
 describe("history drawer animation CSS", () => {
-  it("uses one animated drawer width for workspace and composer geometry", () => {
+  it("uses one animated content width for transcript and composer geometry", () => {
     const workspace = rule(".codex-workspace");
     const workspaceBody = rule(".codex-workspace-body");
     const reservedBody = rule(".codex-workspace-body.history-space-reserved");
+    const chatRun = rule(".task-chat-run");
     const composer = rule(".composer-panel");
     const drawer = rule(".workspace-history-drawer");
 
     expect(css).toContain("@property --history-active-drawer-width");
-    expect(css).toContain("@property --history-composer-max-width");
+    expect(css).toContain("@property --history-chat-content-max-width");
     expect(workspace).toContain("container-type: inline-size");
     expect(workspaceBody).toContain("--history-transition-duration: 200ms");
     expect(workspaceBody).toContain(
@@ -43,14 +44,18 @@ describe("history drawer animation CSS", () => {
       "--history-active-drawer-width var(--history-transition-duration)",
     );
     expect(workspaceBody).toContain(
-      "--history-composer-max-width var(--history-transition-duration)",
+      "--history-chat-content-max-width var(--history-transition-duration)",
     );
     expect(reservedBody).toContain(
       "--history-active-drawer-width: var(--history-drawer-width)",
     );
-    expect(composer).toContain(
-      "max-width: var(--history-composer-max-width, 1040px)",
+    expect(chatRun).toContain(
+      "max-width: var(--history-chat-content-max-width, 1040px)",
     );
+    expect(composer).toContain(
+      "max-width: var(--history-chat-content-max-width, 1040px)",
+    );
+    expect(chatRun).not.toContain("width: min(1040px, 100%)");
     expect(css).not.toContain("history-input-animating");
     expect(css).not.toContain("history-input-contracted");
   });
