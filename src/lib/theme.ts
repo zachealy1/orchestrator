@@ -49,13 +49,17 @@ export function applyDocumentTheme(
   root.style.colorScheme = theme;
 }
 
-export function applyThemePreference(preference: ThemePreference) {
-  const resolvedTheme = resolveTheme(preference);
-  applyDocumentTheme(resolvedTheme);
-  void setNativeTheme(preference === "system" ? null : preference).catch(() => {
+export function applyResolvedTheme(theme: ResolvedTheme) {
+  applyDocumentTheme(theme);
+  void setNativeTheme(theme).catch(() => {
     // Browser previews do not expose the Tauri runtime.
   });
-  return resolvedTheme;
+  return theme;
+}
+
+export function applyThemePreference(preference: ThemePreference) {
+  const resolvedTheme = resolveTheme(preference);
+  return applyResolvedTheme(resolvedTheme);
 }
 
 export function watchSystemTheme(

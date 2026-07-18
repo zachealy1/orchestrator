@@ -192,7 +192,7 @@ import {
   shouldFrameBatchCodexMessage,
 } from "./lib/codexNotificationBatch";
 import {
-  applyDocumentTheme,
+  applyResolvedTheme,
   applyThemePreference,
   persistThemePreference,
   readThemePreference,
@@ -2035,7 +2035,7 @@ function App() {
     }
 
     return watchSystemTheme((theme) => {
-      applyDocumentTheme(theme);
+      applyResolvedTheme(theme);
       setResolvedTheme(theme);
     });
   }, [themePreference]);

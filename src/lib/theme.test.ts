@@ -12,6 +12,7 @@ import {
   SYSTEM_DARK_QUERY,
   THEME_STORAGE_KEY,
   applyDocumentTheme,
+  applyResolvedTheme,
   applyThemePreference,
   isThemePreference,
   persistThemePreference,
@@ -101,7 +102,15 @@ describe("theme", () => {
     expect(mocks.setNativeTheme).toHaveBeenCalledWith("light");
 
     applyThemePreference("system");
-    expect(mocks.setNativeTheme).toHaveBeenCalledWith(null);
+    expect(mocks.setNativeTheme).toHaveBeenCalledWith("light");
+  });
+
+  it("keeps the document and native chrome on the same resolved theme", () => {
+    applyResolvedTheme("dark");
+
+    expect(document.documentElement).toHaveAttribute("data-theme", "dark");
+    expect(document.documentElement.style.colorScheme).toBe("dark");
+    expect(mocks.setNativeTheme).toHaveBeenCalledWith("dark");
   });
 
   it("watches and cleans up system theme changes", () => {
