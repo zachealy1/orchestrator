@@ -3826,7 +3826,10 @@ button.composer-select-option.action:not(:first-child) {
 .send-button.stop {
   background: var(--color-button-active);
   color: var(--color-button-active-text);
-  box-shadow: 0 6px 16px rgb(var(--primary-rgb) / 0.18);
+  box-shadow: none;
+  transition:
+    background 140ms ease,
+    color 140ms ease;
 }
 
 .send-button.stop:hover:not(:disabled) {
