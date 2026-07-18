@@ -15,6 +15,14 @@ function rule(selector: string) {
   return css.slice(selectorStart, blockEnd + 1);
 }
 
+function lastRule(selector: string) {
+  const selectorStart = css.lastIndexOf(`\n${selector} {`);
+  if (selectorStart < 0) throw new Error(`Missing CSS rule: ${selector}`);
+  const blockStart = css.indexOf("{", selectorStart);
+  const blockEnd = css.indexOf("}", blockStart);
+  return css.slice(selectorStart + 1, blockEnd + 1);
+}
+
 describe("composer active-run control CSS", () => {
   it("keeps the stop control flat while Codex is running", () => {
     const stopControl = rule(".send-button.stop");
@@ -26,10 +34,20 @@ describe("composer active-run control CSS", () => {
     expect(stopControl).not.toContain("animation:");
   });
 
-  it("uses native textarea content sizing without a height transition", () => {
-    const promptTextarea = rule(".prompt-field textarea");
+  it("uses declarative mirrored textarea sizing without a height transition", () => {
+    const promptField = rule(".prompt-field");
+    const sharedPromptSizing = rule(
+      ".prompt-autosize-mirror,\n.prompt-field textarea",
+    );
+    const promptMirror = lastRule(".prompt-autosize-mirror");
+    const promptTextarea = lastRule(".prompt-field textarea");
 
-    expect(promptTextarea).toContain("field-sizing: content");
+    expect(promptField).toContain("display: grid");
+    expect(promptMirror).toContain("visibility: hidden");
+    expect(sharedPromptSizing).toContain("grid-area: 1 / 1");
+    expect(promptTextarea).toContain("height: 100%");
+    expect(promptTextarea).toContain("overflow-y: auto");
+    expect(promptTextarea).not.toContain("field-sizing:");
     expect(promptTextarea).not.toContain("transition:");
   });
 });

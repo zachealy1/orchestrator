@@ -694,6 +694,88 @@ describe("TaskComposer", () => {
     expect(onRun).toHaveBeenCalledWith(prompt);
   });
 
+  it("sizes multiline drafts through a declarative mirror without layout frames", () => {
+    const requestAnimationFrameSpy = vi.spyOn(window, "requestAnimationFrame");
+    renderComposer();
+    const promptInput = screen.getByLabelText("Prompt") as HTMLTextAreaElement;
+    const prompt = "First line\nSecond line\nThird line";
+
+    fireEvent.change(promptInput, {
+      target: { value: prompt, selectionStart: prompt.length },
+    });
+
+    expect(document.querySelector(".prompt-autosize-mirror")?.textContent).toBe(
+      `${prompt}\u200b`,
+    );
+    expect(requestAnimationFrameSpy).not.toHaveBeenCalled();
+    requestAnimationFrameSpy.mockRestore();
+  });
+
+  it("does not run command searches while typing ordinary prompt text", async () => {
+    const onMentionSearch = vi.fn();
+    const onMentionClose = vi.fn();
+    const onSlashCommandSearch = vi.fn();
+    const onSlashCommandClose = vi.fn();
+    const { user } = renderComposer({
+      onMentionSearch,
+      onMentionClose,
+      onSlashCommandSearch,
+      onSlashCommandClose,
+    });
+
+    await user.type(
+      screen.getByLabelText("Prompt"),
+      "Keep rapid typing responsive through a long ordinary sentence",
+    );
+
+    expect(onMentionSearch).not.toHaveBeenCalled();
+    expect(onMentionClose).not.toHaveBeenCalled();
+    expect(onSlashCommandSearch).not.toHaveBeenCalled();
+    expect(onSlashCommandClose).not.toHaveBeenCalled();
+  });
+
+  it("preserves focus, selection, and draft text through streaming-state updates", () => {
+    const { props, rerender } = renderComposer({
+      prompt: "A long prompt remains editable",
+      promptRevision: 0,
+    });
+    const promptInput = screen.getByLabelText("Prompt") as HTMLTextAreaElement;
+    promptInput.focus();
+    promptInput.setSelectionRange(7, 13);
+
+    rerender(
+      <TaskComposer
+        {...props}
+        prompt="stale parent prompt"
+        promptRevision={0}
+        runActive
+      />,
+    );
+
+    expect(promptInput).toHaveValue("A long prompt remains editable");
+    expect(promptInput).toHaveFocus();
+    expect(promptInput.selectionStart).toBe(7);
+    expect(promptInput.selectionEnd).toBe(13);
+  });
+
+  it("accepts a large paste-sized change without scheduling layout measurement", () => {
+    const requestAnimationFrameSpy = vi.spyOn(window, "requestAnimationFrame");
+    renderComposer();
+    const promptInput = screen.getByLabelText("Prompt") as HTMLTextAreaElement;
+    const prompt = Array.from(
+      { length: 2_000 },
+      (_, index) => `line ${index}: preserve input responsiveness`,
+    ).join("\n");
+
+    fireEvent.change(promptInput, {
+      target: { value: prompt, selectionStart: prompt.length },
+    });
+
+    expect(promptInput).toHaveValue(prompt);
+    expect(requestAnimationFrameSpy).not.toHaveBeenCalled();
+    requestAnimationFrameSpy.mockRestore();
+  });
+
   it("leaves native undo, redo, and cursor movement shortcuts to the textarea", () => {
     renderComposer();
     const promptInput = screen.getByLabelText("Prompt") as HTMLTextAreaElement;
@@ -751,6 +833,9 @@ describe("TaskComposer", () => {
     expect(promptInput).toHaveAttribute("autocapitalize", "none");
     expect(promptInput).toHaveAttribute("autocomplete", "off");
     expect(promptInput).toHaveAttribute("autocorrect", "off");
+    expect(promptInput).toHaveAttribute("data-enable-grammarly", "false");
+    expect(promptInput).toHaveAttribute("data-gramm", "false");
+    expect(promptInput).toHaveAttribute("data-gramm_editor", "false");
     expect(promptInput).toHaveAttribute("spellcheck", "false");
 
     fireEvent.change(promptInput, {

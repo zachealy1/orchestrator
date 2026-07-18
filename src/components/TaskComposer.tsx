@@ -175,10 +175,8 @@ export const TaskComposer = memo(function TaskComposer({
 }: Props) {
   const promptTextareaRef = useRef<HTMLTextAreaElement>(null);
   const compositionActiveRef = useRef(false);
-  const autosizeFrameRef = useRef<number | null>(null);
   const externalPromptRevisionRef = useRef(promptRevision);
   const [draftPrompt, setDraftPrompt] = useState(prompt);
-  const deferredDraftPrompt = useDeferredValue(draftPrompt);
   const [dragActive, setDragActive] = useState(false);
   const [activeToken, setActiveToken] = useState<ComposerToken | null>(null);
   const [activePopoverIndex, setActivePopoverIndex] = useState(0);
@@ -189,14 +187,6 @@ export const TaskComposer = memo(function TaskComposer({
   );
   const reasoningOptions = selectedModel?.supportedReasoningEfforts ?? [];
   const controlsDisabled = models.length === 0 || Boolean(modelLoadError);
-  const planRecommended = useMemo(
-    () => recommendRoute(deferredDraftPrompt) === "plan-first",
-    [deferredDraftPrompt],
-  );
-  const tokenEstimate = useMemo(
-    () => estimateTokens(deferredDraftPrompt),
-    [deferredDraftPrompt],
-  );
   const mentionOpen = activeToken?.trigger === "@";
   const slashOpen = activeToken?.trigger === "/";
   const inlineContextFiles = contextFiles.filter((file) => file.source === "search");
@@ -269,6 +259,11 @@ export const TaskComposer = memo(function TaskComposer({
   function updateSearchFromPrompt(nextPrompt: string, caret: number) {
     const previousTrigger = activeToken?.trigger ?? null;
     const token = readComposerToken(nextPrompt, caret);
+
+    if (composerTokensEqual(activeToken, token)) {
+      return;
+    }
+
     setActiveToken(token);
     setActivePopoverIndex(0);
     setSlashPanel("commands");
@@ -289,7 +284,7 @@ export const TaskComposer = memo(function TaskComposer({
   function handlePromptChange(event: ChangeEvent<HTMLTextAreaElement>) {
     const nextPrompt = compositionActiveRef.current
       ? event.currentTarget.value
-      : normalizePromptQuotes(event.currentTarget.value);
+      : normalizePromptInput(event.currentTarget.value, event.nativeEvent);
     setDraftPrompt(nextPrompt);
     onPromptChange(nextPrompt);
     if (!compositionActiveRef.current) {
@@ -544,43 +539,6 @@ export const TaskComposer = memo(function TaskComposer({
     });
   }
 
-  useEffect(() => {
-    const textarea = promptTextareaRef.current;
-
-    if (!textarea) {
-      return;
-    }
-
-    if (supportsNativeTextareaAutosizing()) {
-      return;
-    }
-
-    if (autosizeFrameRef.current !== null) {
-      window.cancelAnimationFrame(autosizeFrameRef.current);
-    }
-
-    autosizeFrameRef.current = window.requestAnimationFrame(() => {
-      autosizeFrameRef.current = null;
-      const currentTextarea = promptTextareaRef.current;
-      if (!currentTextarea) {
-        return;
-      }
-
-      const maxHeight = 220;
-      currentTextarea.style.height = "0px";
-      const contentHeight = currentTextarea.scrollHeight;
-      currentTextarea.style.height = `${Math.min(contentHeight, maxHeight)}px`;
-      currentTextarea.style.overflowY = contentHeight > maxHeight ? "auto" : "hidden";
-    });
-
-    return () => {
-      if (autosizeFrameRef.current !== null) {
-        window.cancelAnimationFrame(autosizeFrameRef.current);
-        autosizeFrameRef.current = null;
-      }
-    };
-  }, [draftPrompt]);
-
   function hasContextFileDrop(event: DragEvent<HTMLElement>) {
     return (
       hasContextFilePayload(event.dataTransfer) ||
@@ -662,6 +620,9 @@ export const TaskComposer = memo(function TaskComposer({
             }`}
           >
             <span className="sr-only">Prompt</span>
+            <span className="prompt-autosize-mirror" aria-hidden="true">
+              {draftPrompt}{"\u200b"}
+            </span>
             {inlineContextFiles.length > 0 ? (
               <PromptInlineHighlight
                 prompt={draftPrompt}
@@ -682,6 +643,9 @@ export const TaskComposer = memo(function TaskComposer({
               autoCapitalize="none"
               autoComplete="off"
               autoCorrect="off"
+              data-enable-grammarly="false"
+              data-gramm="false"
+              data-gramm_editor="false"
               placeholder="Do that thing!"
               rows={1}
               spellCheck={false}
@@ -730,9 +694,7 @@ export const TaskComposer = memo(function TaskComposer({
           ) : null}
         </div>
 
-        <div className="composer-meta-row" aria-label="Prompt metadata">
-          <span className="token-pill">{tokenEstimate.toLocaleString()} tokens</span>
-        </div>
+        <PromptTokenEstimate prompt={draftPrompt} />
       </div>
 
       <div className="composer-controls">
@@ -748,15 +710,11 @@ export const TaskComposer = memo(function TaskComposer({
               <span className="composer-button-label">Goal mode</span>
             </button>
 
-            <button
-              className={`mode-toggle ${planMode ? "active" : ""} ${planRecommended ? "recommended" : ""}`}
-              type="button"
-              aria-pressed={planMode}
+            <PlanModeToggle
+              active={planMode}
+              prompt={draftPrompt}
               onClick={handlePlanModeClick}
-            >
-              <BrainCircuit size={16} />
-              <span className="composer-button-label">Plan mode</span>
-            </button>
+            />
 
             <button className="secondary compact-action" type="button" onClick={onAddFiles}>
               <Paperclip size={16} />
@@ -822,6 +780,54 @@ export const TaskComposer = memo(function TaskComposer({
         ) : null}
       </div>
     </section>
+  );
+});
+
+const PromptTokenEstimate = memo(function PromptTokenEstimate({
+  prompt,
+}: {
+  prompt: string;
+}) {
+  const deferredPrompt = useDeferredValue(prompt);
+  const tokenEstimate = useMemo(
+    () => estimateTokens(deferredPrompt),
+    [deferredPrompt],
+  );
+
+  return (
+    <div className="composer-meta-row" aria-label="Prompt metadata">
+      <span className="token-pill">{tokenEstimate.toLocaleString()} tokens</span>
+    </div>
+  );
+});
+
+const PlanModeToggle = memo(function PlanModeToggle({
+  active,
+  prompt,
+  onClick,
+}: {
+  active: boolean;
+  prompt: string;
+  onClick: () => void;
+}) {
+  const deferredPrompt = useDeferredValue(prompt);
+  const planRecommended = useMemo(
+    () => recommendRoute(deferredPrompt) === "plan-first",
+    [deferredPrompt],
+  );
+
+  return (
+    <button
+      className={`mode-toggle ${active ? "active" : ""} ${
+        planRecommended ? "recommended" : ""
+      }`}
+      type="button"
+      aria-pressed={active}
+      onClick={onClick}
+    >
+      <BrainCircuit size={16} />
+      <span className="composer-button-label">Plan mode</span>
+    </button>
   );
 });
 
@@ -1569,11 +1575,37 @@ function normalizePromptQuotes(prompt: string) {
     .replace(/[\u2018\u2019]/g, "'");
 }
 
-function supportsNativeTextareaAutosizing() {
+function normalizePromptInput(prompt: string, nativeEvent: Event) {
+  const inputEvent = nativeEvent as Event & {
+    data?: string | null;
+    inputType?: string;
+  };
+
+  if (typeof inputEvent.data === "string") {
+    return /[\u2018\u2019\u201c\u201d]/.test(inputEvent.data)
+      ? normalizePromptQuotes(prompt)
+      : prompt;
+  }
+
+  if (inputEvent.data === null && inputEvent.inputType?.startsWith("delete")) {
+    return prompt;
+  }
+
+  return normalizePromptQuotes(prompt);
+}
+
+function composerTokensEqual(
+  first: ComposerToken | null,
+  second: ComposerToken | null,
+) {
   return (
-    typeof CSS !== "undefined" &&
-    typeof CSS.supports === "function" &&
-    CSS.supports("field-sizing", "content")
+    first === second ||
+    (first !== null &&
+      second !== null &&
+      first.trigger === second.trigger &&
+      first.start === second.start &&
+      first.end === second.end &&
+      first.query === second.query)
   );
 }
 
