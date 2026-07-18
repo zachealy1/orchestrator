@@ -23,7 +23,12 @@ import {
   estimateTranscriptRowHeight,
   getTranscriptWidthBucket,
 } from "../lib/transcriptVirtualization";
-import { TaskChatTurn, type TaskChatEntry } from "./TaskChatTranscript";
+import {
+  TaskChatTurn,
+  nativePlanDisclosureKey,
+  type NativePlanDisclosureChangeHandler,
+  type TaskChatEntry,
+} from "./TaskChatTranscript";
 
 const TRANSCRIPT_STATE_CACHE_LIMIT = 5;
 const TRANSCRIPT_BOTTOM_THRESHOLD_PX = 48;
@@ -144,6 +149,8 @@ const VirtualTranscriptRow = memo(function VirtualTranscriptRow({
   onCancelPlan,
   onOpenFileLink,
   onLoadHistoricalActivity,
+  planExpanded,
+  onPlanDisclosureChange,
 }: {
   entry: TaskChatEntry;
   editable: boolean;
@@ -160,6 +167,8 @@ const VirtualTranscriptRow = memo(function VirtualTranscriptRow({
   onCancelPlan?: VirtuosoTaskChatTranscriptProps["onCancelPlan"];
   onOpenFileLink?: (href: string) => boolean;
   onLoadHistoricalActivity?: (entry: TaskChatEntry) => void;
+  planExpanded: boolean;
+  onPlanDisclosureChange: NativePlanDisclosureChangeHandler;
 }) {
   return (
     <div
@@ -182,6 +191,8 @@ const VirtualTranscriptRow = memo(function VirtualTranscriptRow({
         onStartEdit={onStartEdit}
         onSubmitEdit={onSubmitEdit}
         onLoadHistoricalActivity={onLoadHistoricalActivity}
+        planExpanded={planExpanded}
+        onPlanDisclosureChange={onPlanDisclosureChange}
       />
     </div>
   );
@@ -218,6 +229,8 @@ export const VirtuosoTaskChatTranscript = memo(
     );
     const latestPositionFrameRef = useRef<number | null>(null);
     const latestPositionRetryTimerRef = useRef<number | null>(null);
+    const planAnchorFrameRef = useRef<number | null>(null);
+    const planAnchorSettleFrameRef = useRef<number | null>(null);
     const latestPositionAttemptCountRef = useRef(0);
     const latestTurnVisibleRef = useRef(false);
     const atBottomRef = useRef(false);
@@ -238,6 +251,9 @@ export const VirtuosoTaskChatTranscript = memo(
     const suppressRestoreOnMountRef = useRef(openAtLatestRequest !== null);
     const [editingEntryId, setEditingEntryId] = useState<string | null>(null);
     const [editingPrompt, setEditingPrompt] = useState("");
+    const [expandedPlanKeys, setExpandedPlanKeys] = useState<Set<string>>(
+      () => new Set(),
+    );
 
     const viewportWidthBucket = getTranscriptWidthBucket(viewportWidth);
     const geometryScope = `${transcriptIdentity}:${transcriptVersion}`;
@@ -284,6 +300,20 @@ export const VirtuosoTaskChatTranscript = memo(
       [cacheKey],
     );
 
+    const validPlanKeys = useMemo(
+      () => new Set(entries.map((entry) => nativePlanDisclosureKey(entry))),
+      [entries],
+    );
+
+    useEffect(() => {
+      setExpandedPlanKeys((current) => {
+        if ([...current].every((key) => validPlanKeys.has(key))) {
+          return current;
+        }
+        return new Set([...current].filter((key) => validPlanKeys.has(key)));
+      });
+    }, [validPlanKeys]);
+
     const clearLatestPositionSchedule = useCallback(() => {
       if (latestPositionFrameRef.current !== null) {
         window.cancelAnimationFrame(latestPositionFrameRef.current);
@@ -294,6 +324,49 @@ export const VirtuosoTaskChatTranscript = memo(
         latestPositionRetryTimerRef.current = null;
       }
     }, []);
+
+    const clearPlanAnchorCorrection = useCallback(() => {
+      if (planAnchorFrameRef.current !== null) {
+        window.cancelAnimationFrame(planAnchorFrameRef.current);
+        planAnchorFrameRef.current = null;
+      }
+      if (planAnchorSettleFrameRef.current !== null) {
+        window.cancelAnimationFrame(planAnchorSettleFrameRef.current);
+        planAnchorSettleFrameRef.current = null;
+      }
+    }, []);
+
+    const handlePlanDisclosureChange = useCallback<NativePlanDisclosureChangeHandler>(
+      ({ anchorElement, anchorTop, expanded, planKey }) => {
+        setExpandedPlanKeys((current) => {
+          const next = new Set(current);
+          if (expanded) next.add(planKey);
+          else next.delete(planKey);
+          return next;
+        });
+
+        clearPlanAnchorCorrection();
+        planAnchorFrameRef.current = window.requestAnimationFrame(() => {
+          planAnchorFrameRef.current = null;
+          planAnchorSettleFrameRef.current = window.requestAnimationFrame(() => {
+            planAnchorSettleFrameRef.current = null;
+            if (
+              userScrollActiveRef.current ||
+              !anchorElement.isConnected
+            ) {
+              return;
+            }
+            const offset = anchorElement.getBoundingClientRect().top - anchorTop;
+            if (Math.abs(offset) < 0.5) return;
+            virtuosoRef.current?.scrollBy({
+              top: offset,
+              behavior: "auto",
+            });
+          });
+        });
+      },
+      [clearPlanAnchorCorrection],
+    );
 
     const clearScrollIdleCheck = useCallback(() => {
       if (scrollIdleCheckRef.current !== null) {
@@ -585,6 +658,7 @@ export const VirtuosoTaskChatTranscript = memo(
         detachScrollerListenersRef.current?.();
         detachScrollerListenersRef.current = null;
         clearLatestPositionSchedule();
+        clearPlanAnchorCorrection();
         clearScrollIdleCheck();
         if (reportedActivityRef.current) onScrollActivityChange?.(false);
         handle?.getState((snapshot) => {
@@ -598,6 +672,7 @@ export const VirtuosoTaskChatTranscript = memo(
       };
     }, [
       clearLatestPositionSchedule,
+      clearPlanAnchorCorrection,
       clearScrollIdleCheck,
       onScrollActivityChange,
     ]);
@@ -674,6 +749,8 @@ export const VirtuosoTaskChatTranscript = memo(
             onStartEdit={handleStartEdit}
             onSubmitEdit={handleSubmitEdit}
             onLoadHistoricalActivity={onLoadHistoricalActivity}
+            planExpanded={expandedPlanKeys.has(nativePlanDisclosureKey(entry))}
+            onPlanDisclosureChange={handlePlanDisclosureChange}
           />
         );
       },
@@ -684,6 +761,7 @@ export const VirtuosoTaskChatTranscript = memo(
         handleCancelEdit,
         handleStartEdit,
         handleSubmitEdit,
+        handlePlanDisclosureChange,
         onAnswerUserInput,
         onCancelPlan,
         onEditPrompt,
@@ -692,6 +770,7 @@ export const VirtuosoTaskChatTranscript = memo(
         onOpenFileLink,
         onResolveRequest,
         onRevisePlan,
+        expandedPlanKeys,
       ],
     );
 

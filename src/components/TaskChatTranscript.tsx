@@ -10,6 +10,7 @@ import {
   Check,
   ChevronDown,
   ChevronRight,
+  ChevronUp,
   Clock,
   FileText,
   MessageSquare,
@@ -23,6 +24,7 @@ import {
   memo,
   useCallback,
   useEffect,
+  useId,
   useLayoutEffect,
   useMemo,
   useRef,
@@ -36,6 +38,9 @@ import type {
 } from "react";
 import ReactMarkdown from "react-markdown";
 import type { Components } from "react-markdown";
+import remarkGfm from "remark-gfm";
+import remarkParse from "remark-parse";
+import { unified } from "unified";
 import type {
   RunCommandActivity,
   RunEditedFile,
@@ -80,6 +85,126 @@ const HISTORY_SCROLL_SETTLE_DELAY_MS = 120;
 const TRANSCRIPT_SCROLL_IDLE_DELAY_MS = 120;
 const TRANSCRIPT_OVERSCAN_ROWS = 6;
 const EMPTY_CONTEXT_FILES: ComposerContextFile[] = [];
+const PLAN_PREVIEW_BLOCK_LIMIT = 5;
+const PLAN_PREVIEW_CHARACTER_LIMIT = 1_600;
+const PLAN_PREVIEW_LINE_LIMIT = 14;
+const PLAN_MARKDOWN_PLUGINS = [remarkGfm];
+
+type PositionedMarkdownNode = {
+  type: string;
+  value?: string;
+  children?: PositionedMarkdownNode[];
+  position?: {
+    start: { offset?: number };
+    end: { offset?: number };
+  };
+};
+
+export type NativePlanPreview = {
+  isLong: boolean;
+  previewIsPlainText: boolean;
+  previewText: string;
+};
+
+export type NativePlanDisclosureChange = {
+  anchorElement: HTMLElement;
+  anchorTop: number;
+  expanded: boolean;
+  planKey: string;
+};
+
+export type NativePlanDisclosureChangeHandler = (
+  change: NativePlanDisclosureChange,
+) => void;
+
+const planMarkdownParser = unified().use(remarkParse).use(remarkGfm);
+
+function markdownNodeEndOffset(node: PositionedMarkdownNode) {
+  return node.position?.end.offset ?? 0;
+}
+
+function markdownNodeSource(text: string, node: PositionedMarkdownNode) {
+  const start = node.position?.start.offset;
+  const end = node.position?.end.offset;
+  if (start === undefined || end === undefined) return "";
+  return text.slice(start, end);
+}
+
+function markdownNodePlainText(node: PositionedMarkdownNode): string {
+  if (typeof node.value === "string") return node.value;
+  return (node.children ?? [])
+    .map(markdownNodePlainText)
+    .filter(Boolean)
+    .join(" ");
+}
+
+export function buildNativePlanPreview(text: string): NativePlanPreview {
+  const lineCount = text.split(/\r?\n/).length;
+  try {
+    const tree = planMarkdownParser.parse(text) as unknown as {
+      children: PositionedMarkdownNode[];
+    };
+    const definitions = tree.children.filter(
+      (node) => node.type === "definition",
+    );
+    const content = tree.children.filter(
+      (node) => node.type !== "definition",
+    );
+    const isLong =
+      content.length > PLAN_PREVIEW_BLOCK_LIMIT ||
+      text.length > PLAN_PREVIEW_CHARACTER_LIMIT ||
+      lineCount > PLAN_PREVIEW_LINE_LIMIT;
+    if (!isLong) {
+      return { isLong: false, previewIsPlainText: false, previewText: text };
+    }
+
+    const selected = content.slice(0, PLAN_PREVIEW_BLOCK_LIMIT);
+    const boundary = selected.reduce(
+      (furthest, node) => Math.max(furthest, markdownNodeEndOffset(node)),
+      0,
+    );
+    if (boundary > PLAN_PREVIEW_CHARACTER_LIMIT) {
+      const plainText = selected
+        .map(markdownNodePlainText)
+        .filter(Boolean)
+        .join("\n\n")
+        .trim();
+      return {
+        isLong: true,
+        previewIsPlainText: true,
+        previewText: `${plainText.slice(0, PLAN_PREVIEW_CHARACTER_LIMIT).trimEnd()}…`,
+      };
+    }
+    const definitionText = definitions
+      .filter((node) => (node.position?.start.offset ?? 0) >= boundary)
+      .map((node) => markdownNodeSource(text, node))
+      .filter(Boolean)
+      .join("\n\n");
+    const preview = text.slice(0, boundary || text.length).trimEnd();
+    return {
+      isLong: true,
+      previewIsPlainText: false,
+      previewText: definitionText
+        ? `${preview}\n\n${definitionText}`
+        : preview,
+    };
+  } catch {
+    return {
+      isLong: text.length > PLAN_PREVIEW_CHARACTER_LIMIT || lineCount > PLAN_PREVIEW_LINE_LIMIT,
+      previewIsPlainText: false,
+      previewText: text,
+    };
+  }
+}
+
+export function nativePlanDisclosureKey(entry: TaskChatEntry) {
+  const plan = entry.runView.nativePlan;
+  return [
+    entry.clientId,
+    plan.planItemId ?? "plan",
+    plan.completedTurnId ?? "draft",
+  ].join(":");
+}
 
 function scheduleAnimationFrame(callback: FrameRequestCallback) {
   if (typeof requestAnimationFrame === "function") {
@@ -1182,6 +1307,8 @@ export const TaskChatTurn = memo(function TaskChatTurn({
   onCancelPlan,
   onOpenFileLink,
   onLoadHistoricalActivity,
+  planExpanded,
+  onPlanDisclosureChange,
 }: {
   entry: TaskChatEntry;
   editable: boolean;
@@ -1198,6 +1325,8 @@ export const TaskChatTurn = memo(function TaskChatTurn({
   onCancelPlan?: Props["onCancelPlan"];
   onOpenFileLink?: (href: string) => boolean;
   onLoadHistoricalActivity?: (entry: TaskChatEntry) => void;
+  planExpanded?: boolean;
+  onPlanDisclosureChange?: NativePlanDisclosureChangeHandler;
 }) {
   return (
     <div className="task-chat-run">
@@ -1283,6 +1412,8 @@ export const TaskChatTurn = memo(function TaskChatTurn({
           onCancelPlan={onCancelPlan}
           onOpenFileLink={onOpenFileLink}
           onLoadHistoricalActivity={onLoadHistoricalActivity}
+          planExpanded={planExpanded}
+          onPlanDisclosureChange={onPlanDisclosureChange}
         />
       </article>
     </div>
@@ -1356,6 +1487,8 @@ const AssistantRunOutput = memo(function AssistantRunOutput({
   onCancelPlan,
   onOpenFileLink,
   onLoadHistoricalActivity,
+  planExpanded,
+  onPlanDisclosureChange,
 }: {
   entry: TaskChatEntry;
   runView: RunViewState;
@@ -1366,6 +1499,8 @@ const AssistantRunOutput = memo(function AssistantRunOutput({
   onCancelPlan?: Props["onCancelPlan"];
   onOpenFileLink?: (href: string) => boolean;
   onLoadHistoricalActivity?: (entry: TaskChatEntry) => void;
+  planExpanded?: boolean;
+  onPlanDisclosureChange?: NativePlanDisclosureChangeHandler;
 }) {
   const completed =
     runView.status === "completed" ||
@@ -1393,6 +1528,8 @@ const AssistantRunOutput = memo(function AssistantRunOutput({
           onImplementPlan={onImplementPlan}
           onRevisePlan={onRevisePlan}
           onCancelPlan={onCancelPlan}
+          expanded={planExpanded}
+          onDisclosureChange={onPlanDisclosureChange}
         />
         {runView.finalMessage.trim() ||
         runView.status === "failed" ||
@@ -1430,6 +1567,8 @@ const AssistantRunOutput = memo(function AssistantRunOutput({
         onImplementPlan={onImplementPlan}
         onRevisePlan={onRevisePlan}
         onCancelPlan={onCancelPlan}
+        expanded={planExpanded}
+        onDisclosureChange={onPlanDisclosureChange}
       />
       {hasTimeline ? (
         <RunTimeline runView={runView} />
@@ -2092,24 +2231,53 @@ function streamEventIcon(kind: StreamEvent["kind"]) {
   }
 }
 
+const NativePlanMarkdown = memo(function NativePlanMarkdown({
+  text,
+}: {
+  text: string;
+}) {
+  return (
+    <ReactMarkdown remarkPlugins={PLAN_MARKDOWN_PLUGINS}>
+      {text}
+    </ReactMarkdown>
+  );
+});
+
 const NativePlanCard = memo(function NativePlanCard({
   entry,
   onImplementPlan,
   onRevisePlan,
   onCancelPlan,
+  expanded,
+  onDisclosureChange,
 }: {
   entry: TaskChatEntry;
   onImplementPlan?: Props["onImplementPlan"];
   onRevisePlan?: Props["onRevisePlan"];
   onCancelPlan?: Props["onCancelPlan"];
+  expanded?: boolean;
+  onDisclosureChange?: NativePlanDisclosureChangeHandler;
 }) {
   const [revising, setRevising] = useState(false);
   const [revision, setRevision] = useState("");
+  const [localDisclosure, setLocalDisclosure] = useState({
+    expanded: false,
+    planKey: "",
+  });
+  const cardRef = useRef<HTMLElement | null>(null);
+  const contentId = useId();
   const plan = entry.runView.nativePlan;
   const text = plan.completedText || plan.previewText;
+  const planKey = nativePlanDisclosureKey(entry);
+  const preview = useMemo(() => buildNativePlanPreview(text), [text]);
   if (!text) {
     return null;
   }
+
+  const locallyExpanded =
+    localDisclosure.planKey === planKey && localDisclosure.expanded;
+  const isExpanded = preview.isLong && (expanded ?? locallyExpanded);
+  const renderedText = isExpanded ? text : preview.previewText;
 
   const canReview = plan.reviewState === "available";
   const busy = plan.reviewState === "submitting";
@@ -2132,7 +2300,11 @@ const NativePlanCard = memo(function NativePlanCard({
           ? "No implementation was started"
           : "Drafting";
   return (
-    <section className="native-plan-card" aria-label="Codex plan">
+    <section
+      className="native-plan-card"
+      aria-label="Codex plan"
+      ref={cardRef}
+    >
       <header>
         <div>
           <strong>{heading}</strong>
@@ -2140,9 +2312,50 @@ const NativePlanCard = memo(function NativePlanCard({
         </div>
         {plan.mode ? <span className="native-plan-mode">{plan.mode}</span> : null}
       </header>
-      <div className="native-plan-markdown markdown-summary">
-        <ReactMarkdown>{text}</ReactMarkdown>
+      <div
+        className={`native-plan-markdown markdown-summary${
+          preview.isLong && !isExpanded ? " collapsed" : ""
+        }`}
+        id={contentId}
+      >
+        {!isExpanded && preview.previewIsPlainText ? (
+          <p>{renderedText}</p>
+        ) : (
+          <NativePlanMarkdown text={renderedText} />
+        )}
       </div>
+      {preview.isLong ? (
+        <button
+          type="button"
+          className="small native-plan-disclosure"
+          aria-controls={contentId}
+          aria-expanded={isExpanded}
+          onClick={() => {
+            const nextExpanded = !isExpanded;
+            const anchorElement = cardRef.current;
+            if (anchorElement && onDisclosureChange) {
+              onDisclosureChange({
+                anchorElement,
+                anchorTop: anchorElement.getBoundingClientRect().top,
+                expanded: nextExpanded,
+                planKey,
+              });
+              return;
+            }
+            setLocalDisclosure({
+              expanded: nextExpanded,
+              planKey,
+            });
+          }}
+        >
+          {isExpanded ? (
+            <ChevronUp size={15} aria-hidden="true" />
+          ) : (
+            <ChevronDown size={15} aria-hidden="true" />
+          )}
+          {isExpanded ? "Hide full plan" : "Show full plan"}
+        </button>
+      ) : null}
       {canReview && !revising ? (
         <div className="native-plan-actions">
           <button

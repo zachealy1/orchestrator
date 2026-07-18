@@ -17,6 +17,7 @@ import {
 const virtuosoMock = vi.hoisted(() => ({
   lastProps: null as any,
   state: { ranges: [{ startIndex: 292, endIndex: 299 }], scrollTop: 42 },
+  scrollBy: vi.fn(),
   scrollToIndex: vi.fn(),
 }));
 
@@ -29,6 +30,7 @@ vi.mock("react-virtuoso", async () => {
       React.useImperativeHandle(ref, () => ({
         getState: (callback: (state: unknown) => void) =>
           callback(virtuosoMock.state),
+        scrollBy: virtuosoMock.scrollBy,
         scrollToIndex: virtuosoMock.scrollToIndex,
       }));
       React.useEffect(() => {
@@ -88,6 +90,41 @@ function historyEntry(turnIndex: number): TaskChatEntry {
   };
 }
 
+function planHistoryEntry(turnIndex: number): TaskChatEntry {
+  const entry = historyEntry(turnIndex);
+  return {
+    ...entry,
+    runView: {
+      ...entry.runView,
+      nativePlan: {
+        ...entry.runView.nativePlan,
+        intent: "plan",
+        mode: "plan",
+        planItemId: `plan-${turnIndex}`,
+        completedTurnId: `turn-${turnIndex}`,
+        completedText: [
+          "# Plan",
+          "",
+          "Overview of the implementation.",
+          "",
+          "## Step one",
+          "",
+          "Complete the first step.",
+          "",
+          "## Step two",
+          "",
+          "Complete the second step.",
+          "",
+          "## Step three",
+          "",
+          "Complete the third step.",
+        ].join("\n"),
+        reviewState: "available",
+      },
+    },
+  };
+}
+
 function latestRequest(requestId: number, transcriptVersion = "v1") {
   return { requestId, chatId: 401, transcriptVersion };
 }
@@ -129,6 +166,7 @@ describe("VirtuosoTaskChatTranscript", () => {
     clearTranscriptStateCache();
     clearTranscriptMeasurementCache();
     virtuosoMock.lastProps = null;
+    virtuosoMock.scrollBy.mockClear();
     virtuosoMock.scrollToIndex.mockClear();
   });
 
@@ -208,6 +246,92 @@ describe("VirtuosoTaskChatTranscript", () => {
     expect(screen.getByText("Prompt 2")).toBeInTheDocument();
     expect(virtuosoMock.lastProps.scrollSeekConfiguration).toBeUndefined();
     expect(virtuosoMock.lastProps.components).toBeUndefined();
+  });
+
+  it("preserves expanded plan state when a virtualized row unmounts", () => {
+    const planEntry = planHistoryEntry(1);
+    const baseEntries = [planEntry];
+    const commonProps = {
+      transcriptIdentity: "chat:plan-disclosure",
+      transcriptVersion: "v1",
+      firstItemIndex: 999_999,
+      openAtLatestRequest: null,
+      liveFollow: false,
+      onResolveRequest: vi.fn(),
+    };
+    const { rerender } = render(
+      <VirtuosoTaskChatTranscript entries={baseEntries} {...commonProps} />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Show full plan" }));
+    expect(
+      screen.getByRole("button", { name: "Hide full plan" }),
+    ).toHaveAttribute("aria-expanded", "true");
+
+    const entriesWithNewerTurns = [
+      planEntry,
+      ...Array.from({ length: 10 }, (_, index) => historyEntry(index + 2)),
+    ];
+    rerender(
+      <VirtuosoTaskChatTranscript
+        entries={entriesWithNewerTurns}
+        {...commonProps}
+      />,
+    );
+    expect(screen.queryByLabelText("Codex plan")).not.toBeInTheDocument();
+
+    rerender(
+      <VirtuosoTaskChatTranscript entries={baseEntries} {...commonProps} />,
+    );
+    expect(
+      screen.getByRole("button", { name: "Hide full plan" }),
+    ).toHaveAttribute("aria-expanded", "true");
+  });
+
+  it("corrects disclosure layout movement through Virtuoso scrollBy", async () => {
+    render(
+      <VirtuosoTaskChatTranscript
+        entries={[planHistoryEntry(1)]}
+        transcriptIdentity="chat:plan-anchor"
+        transcriptVersion="v1"
+        firstItemIndex={999_999}
+        openAtLatestRequest={null}
+        liveFollow={false}
+        onResolveRequest={vi.fn()}
+      />,
+    );
+
+    const card = screen.getByLabelText("Codex plan");
+    const toggle = screen.getByRole("button", { name: "Show full plan" });
+    card.getBoundingClientRect = () => {
+      const top = toggle.getAttribute("aria-expanded") === "true" ? 124 : 100;
+      return {
+        x: 0,
+        y: top,
+        width: 700,
+        height: 320,
+        top,
+        right: 700,
+        bottom: top + 320,
+        left: 0,
+        toJSON: () => ({}),
+      };
+    };
+
+    fireEvent.click(toggle);
+    await act(
+      () =>
+        new Promise<void>((resolve) => {
+          window.requestAnimationFrame(() => {
+            window.requestAnimationFrame(() => resolve());
+          });
+        }),
+    );
+
+    expect(virtuosoMock.scrollBy).toHaveBeenCalledWith({
+      top: 24,
+      behavior: "auto",
+    });
   });
 
   it("provides stable content-aware geometry for every turn", () => {

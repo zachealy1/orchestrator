@@ -2,7 +2,11 @@ import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 import { emptyRunView } from "../lib/codexEventReducer";
-import { TaskChatTurn, type TaskChatEntry } from "./TaskChatTranscript";
+import {
+  TaskChatTurn,
+  buildNativePlanPreview,
+  type TaskChatEntry,
+} from "./TaskChatTranscript";
 
 function renderTurn(entry: TaskChatEntry, overrides: Record<string, unknown> = {}) {
   const props = {
@@ -72,6 +76,9 @@ describe("native Plan transcript workflow", () => {
       trace.compareDocumentPosition(plan) & Node.DOCUMENT_POSITION_FOLLOWING,
     ).toBeTruthy();
     expect(screen.getByRole("heading", { name: "Final plan" })).toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "Show full plan" }),
+    ).not.toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "Implement plan" }));
     expect(onImplementPlan).toHaveBeenCalledWith(entry);
     await user.click(screen.getByRole("button", { name: "Revise" }));
@@ -81,6 +88,72 @@ describe("native Plan transcript workflow", () => {
     await user.click(screen.getByRole("button", { name: "Back" }));
     await user.click(screen.getByRole("button", { name: "Cancel" }));
     expect(onCancelPlan).toHaveBeenCalledWith(entry);
+  });
+
+  it("collapses a long block-aware plan and expands it accessibly", async () => {
+    const user = userEvent.setup();
+    const entry = planEntry();
+    entry.runView = {
+      ...entry.runView,
+      nativePlan: {
+        ...entry.runView.nativePlan,
+        completedText: [
+          "# Overview",
+          "",
+          "This plan updates the workspace while preserving existing behavior.",
+          "",
+          "## Steps",
+          "",
+          "1. Inspect the current flow.",
+          "   - Preserve nested requirements.",
+          "   - Keep keyboard behavior.",
+          "2. Implement the focused change.",
+          "",
+          "```ts",
+          "const path = 'a/very/long/path/that/should/wrap/inside/the/plan/card';",
+          "```",
+          "",
+          "## Validation",
+          "",
+          "| Area | Check |",
+          "| --- | --- |",
+          "| Chat | Scroll position remains stable |",
+          "| Plan | Full content remains readable |",
+          "",
+          "## Risks",
+          "",
+          "Confirm very long content does not create nested scrolling.",
+        ].join("\n"),
+      },
+    };
+
+    const preview = buildNativePlanPreview(
+      entry.runView.nativePlan.completedText,
+    );
+    expect(preview.isLong).toBe(true);
+    expect(preview.previewText).toContain("```ts");
+    expect(preview.previewText).not.toContain("## Validation");
+
+    renderTurn(entry);
+    const toggle = screen.getByRole("button", { name: "Show full plan" });
+    const contentId = toggle.getAttribute("aria-controls");
+    expect(toggle).toHaveAttribute("aria-expanded", "false");
+    expect(contentId).toBeTruthy();
+    expect(document.getElementById(contentId!)).toHaveClass("collapsed");
+    expect(screen.queryByRole("table")).not.toBeInTheDocument();
+
+    await user.click(toggle);
+    expect(toggle).toHaveFocus();
+    expect(toggle).toHaveAttribute("aria-expanded", "true");
+    expect(toggle).toHaveAccessibleName("Hide full plan");
+    expect(document.getElementById(contentId!)).not.toHaveClass("collapsed");
+    expect(screen.getByRole("table")).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Risks" })).toBeInTheDocument();
+
+    await user.keyboard("{Enter}");
+    expect(toggle).toHaveFocus();
+    expect(toggle).toHaveAttribute("aria-expanded", "false");
+    expect(screen.queryByRole("table")).not.toBeInTheDocument();
   });
 
   it("renders structured choices, secret free-form input, notes, and submits all answers", async () => {
