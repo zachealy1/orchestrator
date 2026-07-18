@@ -79,28 +79,34 @@ describe("native Plan transcript workflow", () => {
     expect(
       screen.queryByRole("button", { name: "Show full plan" }),
     ).not.toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Implement plan" })).toHaveClass(
-      "small",
+    const implementButton = screen.getByRole("button", {
+      name: "Implement plan",
+    });
+    const reviseButton = screen.getByRole("button", { name: "Revise plan" });
+    const cancelButton = screen.getByRole("button", { name: "Cancel plan" });
+    expect(implementButton).toHaveClass(
+      "native-plan-icon-action",
+      "implement",
     );
-    expect(screen.getByRole("button", { name: "Revise" })).toHaveClass(
-      "small",
-      "secondary",
-    );
-    expect(screen.getByRole("button", { name: "Cancel" })).toHaveClass(
-      "small",
-      "danger",
-    );
+    expect(reviseButton).toHaveClass("native-plan-icon-action", "revise");
+    expect(cancelButton).toHaveClass("native-plan-icon-action", "cancel");
+    expect(implementButton).toHaveAttribute("title", "Implement plan");
+    expect(reviseButton).toHaveAttribute("title", "Revise plan");
+    expect(cancelButton).toHaveAttribute("title", "Cancel plan");
+    expect(implementButton).not.toHaveTextContent("Implement plan");
+    expect(reviseButton).not.toHaveTextContent("Revise");
+    expect(cancelButton).not.toHaveTextContent("Cancel");
     expect(
-      screen.getByRole("button", { name: "Implement plan" }).parentElement,
+      implementButton.parentElement,
     ).toHaveClass("confirmation-actions");
-    await user.click(screen.getByRole("button", { name: "Implement plan" }));
+    await user.click(implementButton);
     expect(onImplementPlan).toHaveBeenCalledWith(entry);
-    await user.click(screen.getByRole("button", { name: "Revise" }));
+    await user.click(reviseButton);
     await user.type(screen.getByLabelText("What should change?"), "Add rollback steps");
     await user.click(screen.getByRole("button", { name: "Send revision" }));
     expect(onRevisePlan).toHaveBeenCalledWith(entry, "Add rollback steps");
     await user.click(screen.getByRole("button", { name: "Back" }));
-    await user.click(screen.getByRole("button", { name: "Cancel" }));
+    await user.click(screen.getByRole("button", { name: "Cancel plan" }));
     expect(onCancelPlan).toHaveBeenCalledWith(entry);
   });
 

@@ -165,13 +165,53 @@ button.native-plan-disclosure:hover:not(:disabled),
 button.native-plan-disclosure:focus-visible {
   background: transparent;
   box-shadow: none;
-  color: var(--color-primary);
+  color: var(--color-text);
   transform: none;
 }
 
 button.native-plan-disclosure:active:not(:disabled) {
   background: transparent;
-  color: var(--color-secondary);
+  color: var(--color-text);
+  transform: none;
+}
+
+button.native-plan-icon-action {
+  display: inline-grid;
+  width: 30px;
+  min-width: 30px;
+  height: 30px;
+  min-height: 30px;
+  place-items: center;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  box-shadow: none;
+  color: var(--color-text-secondary);
+  padding: 0;
+  transform: none;
+  transition:
+    background-color 140ms ease,
+    color 140ms ease;
+}
+
+button.native-plan-icon-action.implement {
+  color: var(--color-primary);
+}
+
+button.native-plan-icon-action.cancel {
+  color: var(--color-error);
+}
+
+button.native-plan-icon-action:hover:not(:disabled),
+button.native-plan-icon-action:focus-visible {
+  background: var(--panel-strong);
+  box-shadow: none;
+  outline: none;
+  transform: none;
+}
+
+button.native-plan-icon-action:active:not(:disabled) {
+  background: var(--panel-strong);
   transform: none;
 }
 

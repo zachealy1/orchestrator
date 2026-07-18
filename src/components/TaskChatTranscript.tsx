@@ -2371,30 +2371,33 @@ const NativePlanCard = memo(function NativePlanCard({
         <div className="native-plan-actions confirmation-actions">
           <button
             type="button"
-            className="small"
+            className="native-plan-icon-action implement"
+            aria-label="Implement plan"
+            title="Implement plan"
             disabled={busy || !onImplementPlan}
             onClick={() => onImplementPlan?.(entry)}
           >
             <Check size={15} aria-hidden="true" />
-            Implement plan
           </button>
           <button
             type="button"
-            className="small secondary"
+            className="native-plan-icon-action revise"
+            aria-label="Revise plan"
+            title="Revise plan"
             disabled={busy || !onRevisePlan}
             onClick={() => setRevising(true)}
           >
             <Pencil size={15} aria-hidden="true" />
-            Revise
           </button>
           <button
             type="button"
-            className="small danger"
+            className="native-plan-icon-action cancel"
+            aria-label="Cancel plan"
+            title="Cancel plan"
             disabled={busy || !onCancelPlan}
             onClick={() => onCancelPlan?.(entry)}
           >
             <X size={15} aria-hidden="true" />
-            Cancel
           </button>
         </div>
       ) : null}
