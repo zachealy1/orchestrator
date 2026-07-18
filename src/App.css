@@ -3391,6 +3391,7 @@ select:disabled {
   position: relative;
   z-index: 1;
   display: block;
+  field-sizing: content;
   min-height: 50px;
   max-height: 220px;
   border: 0;

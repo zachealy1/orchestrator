@@ -183,7 +183,6 @@ import {
   buildRunPrompt,
   estimateTokens,
   improvePrompt,
-  recommendRoute,
 } from "./lib/taskAnalysis";
 import {
   applyDocumentTheme,
@@ -908,7 +907,21 @@ function App() {
     resolveTheme(readThemePreference()),
   );
   const [prompt, setPrompt] = useState("");
-  const [preflight, setPreflight] = useState<PreflightReport | null>(null);
+  const [promptRevision, setPromptRevision] = useState(0);
+  const promptRef = useRef(prompt);
+  const replaceComposerPrompt = useCallback(
+    (nextPrompt: string | ((currentPrompt: string) => string)) => {
+      const resolvedPrompt =
+        typeof nextPrompt === "function"
+          ? nextPrompt(promptRef.current)
+          : nextPrompt;
+      promptRef.current = resolvedPrompt;
+      setPrompt(resolvedPrompt);
+      setPromptRevision((current) => current + 1);
+    },
+    [],
+  );
+  const preflightRef = useRef<PreflightReport | null>(null);
   const [runView, setRunView] = useState<RunViewState>(emptyRunView);
   const [taskChatEntries, setTaskChatEntries] = useState<TaskChatEntry[]>([]);
   const [activeChatEntryId, setActiveChatEntryId] = useState<string | null>(null);
@@ -1506,9 +1519,56 @@ function App() {
   const openChatHistoryContextMenuFromDrawer = useStableEvent(
     openChatHistoryContextMenu,
   );
+  const changeComposerPrompt = useStableEvent((nextPrompt: string) => {
+    promptRef.current = nextPrompt;
+    preflightRef.current = null;
+    if (contextFiles.some((file) => file.source === "search")) {
+      setContextFiles((current) => {
+        const nextFiles = pruneMissingInlineContextFiles(current, nextPrompt);
+        return nextFiles.length === current.length ? current : nextFiles;
+      });
+    }
+  });
+  const selectComposerAccount = useStableEvent((accountId: number) => {
+    void selectCodexAccount(accountId);
+  });
+  const chooseComposerContextFiles = useStableEvent(() => {
+    void chooseContextFiles();
+  });
+  const searchComposerMentionFiles = useStableEvent((query: string) => {
+    void searchMentionFiles(query);
+  });
+  const selectComposerMentionFile = useStableEvent(addMentionFileToContext);
+  const closeComposerMentionSearch = useStableEvent(closeMentionSearch);
+  const searchComposerSlashCommands = useStableEvent((query: string) => {
+    void searchSlashCommands(query);
+  });
+  const selectComposerSlashCommand = useStableEvent(handleSlashCommandSelect);
+  const closeComposerSlashSearch = useStableEvent(closeSlashCommandSearch);
+  const dropComposerContextFiles = useStableEvent(addDroppedContextFiles);
+  const getComposerContextFileDropFallback = useStableEvent(
+    getExplorerDragContextFiles,
+  );
+  const completeComposerContextFileDrop = useStableEvent(endWorkspaceFileDrag);
+  const removeComposerContextFile = useStableEvent((path: string) => {
+    setContextFiles((current) => current.filter((file) => file.path !== path));
+  });
+  const removeComposerSkill = useStableEvent((skillId: string) => {
+    setSelectedSkills((current) =>
+      current.filter((skill) => skill.id !== skillId),
+    );
+  });
+  const runComposerPrompt = useStableEvent((nextPrompt: string) => {
+    void launchRun(nextPrompt);
+  });
+  const stopComposerRun = useStableEvent(() => {
+    void stopActiveRun();
+  });
+  const hasComposerContextFileDropFallback = useCallback(
+    () => explorerDragContextFileRef.current !== null,
+    [],
+  );
 
-  const routeRecommendation = useMemo(() => recommendRoute(prompt), [prompt]);
-  const tokenEstimate = useMemo(() => estimateTokens(prompt), [prompt]);
   const taskQuote = useMemo(
     () => TASK_QUOTES[Math.floor(Math.random() * TASK_QUOTES.length)],
     [],
@@ -1521,14 +1581,15 @@ function App() {
     models.find((model) => model.id === selectedModelId) ?? models[0] ?? null;
   const selectedModelContextWindow =
     getCodexModelContextWindow(selectedModel) ?? DEFAULT_CONTEXT_WINDOW;
-  const signedInAccounts = codexAccounts.filter(
-    (account) => account.status === "signed_in",
+  const signedInAccounts = useMemo(
+    () => codexAccounts.filter((account) => account.status === "signed_in"),
+    [codexAccounts],
   );
   const codexConnected =
     selectedAccountId !== null && connectedAccountIds.has(selectedAccountId);
   const runIsActive =
     runView.status === "connecting" || runView.status === "running";
-  const canRun = Boolean(selectedWorkspace && prompt.trim());
+  const canRun = Boolean(selectedWorkspace);
   const selectedGitStatusState = selectedWorkspace
     ? gitStatusStates[selectedWorkspace.id] ?? {
         status: "idle" as const,
@@ -2904,7 +2965,7 @@ function App() {
     setSelectedWorkspace(workspace);
     setSelectedHistoryChatId(workspaceChatSessionsRef.current[workspace.id]?.chatId ?? null);
     setActiveView("task");
-    setPreflight(null);
+    preflightRef.current = null;
     setStatusMessage(`Selected ${workspace.label}`);
     if (
       workspace.default_account_id &&
@@ -3126,7 +3187,7 @@ function App() {
       persistedRunId === null && Boolean(control?.promptFallback);
     const { completedAt, stoppedRunView } = markActiveRunInterrupted();
     if (shouldRestorePrompt && control) {
-      setPrompt(control.promptFallback);
+      replaceComposerPrompt(control.promptFallback);
     }
     await persistInterruptedRun(control, completedAt, stoppedRunView);
 
@@ -3931,7 +3992,7 @@ function App() {
     );
     setWorkspaceChatSession(selectedWorkspace.id, undefined);
     setSelectedHistoryChatId(null);
-    setPreflight(null);
+    preflightRef.current = null;
     setStatusMessage("Started a new chat.");
   }
 
@@ -4072,7 +4133,7 @@ function App() {
         clearActiveChatRun();
       }
     }
-    setPreflight(null);
+    preflightRef.current = null;
 
     if (previewState.file && belongsToWorkspace(previewState.file.path)) {
       setPreviewState({
@@ -4128,7 +4189,7 @@ function App() {
     }
 
     setSelectedBranch(branch);
-    setPreflight(null);
+    preflightRef.current = null;
     try {
       await checkoutGitBranch(selectedWorkspace.path, branch);
       await refreshBranches(selectedWorkspace);
@@ -4367,7 +4428,7 @@ function App() {
             account: selectedAccount,
             model: selectedModel,
             reasoningEffort: selectedReasoningEffort,
-            tokenEstimate,
+            tokenEstimate: estimateTokens(promptRef.current),
             contextFiles,
             selectedSkills,
             gitSummary: selectedGitSummary,
@@ -4376,7 +4437,7 @@ function App() {
         );
         return;
       case "review":
-        setPrompt((current) =>
+        replaceComposerPrompt((current) =>
           applyPromptDraft(
             current,
             buildCodeReviewDraft(
@@ -4386,17 +4447,17 @@ function App() {
             ),
           ),
         );
-        setPreflight(null);
+        preflightRef.current = null;
         setStatusMessage("Prepared a code review prompt.");
         return;
       case "mcp":
         void showMcpStatus();
         return;
       case "init":
-        setPrompt((current) =>
+        replaceComposerPrompt((current) =>
           applyPromptDraft(current, buildInitInstructionsDraft(selectedWorkspaceRef.current)),
         );
-        setPreflight(null);
+        preflightRef.current = null;
         setStatusMessage("Prepared an AGENTS.md setup prompt.");
         return;
       case "reasoning":
@@ -5173,7 +5234,7 @@ function App() {
         startTaskChatEntry(nextEntry);
       }
       if (snapshot.restorePromptOnSetupFailure !== false) {
-        setPrompt("");
+        replaceComposerPrompt("");
       }
     });
     markPerformance("orchestrator:submit:optimistic-committed");
@@ -5191,7 +5252,7 @@ function App() {
     let runId: number | null = null;
 
     setStatusMessage("Preparing run...");
-    setPreflight(null);
+    preflightRef.current = null;
 
     try {
       if (!(await ensureRunBranch(snapshot.workspace, snapshot.selectedBranch))) {
@@ -5212,7 +5273,7 @@ function App() {
           ossProvider: snapshot.ossProvider,
         }));
       ensureRunControlActive(runControl);
-      setPreflight(report);
+      preflightRef.current = report;
 
       await ensureCodexProfileConnected(snapshot.profileKey, snapshot.accountId);
       ensureRunControlActive(runControl);
@@ -5624,7 +5685,7 @@ function App() {
           ? `${runStartedMessage} ${warnings.join(" ")}`
           : runStartedMessage,
       );
-      setPreflight(null);
+      preflightRef.current = null;
     } catch (error) {
       if (error instanceof RunStoppedError || runControl.stopped) {
         await persistInterruptedRun(
@@ -5682,7 +5743,7 @@ function App() {
           restoreTaskChatEntry(runControl.clientId, snapshot.restoreEntryOnSetupFailure);
         }
         if (snapshot.restorePromptOnSetupFailure !== false) {
-          setPrompt(snapshot.promptFallback);
+          replaceComposerPrompt(snapshot.promptFallback);
         }
       } else {
         await updateRun(runId, {
@@ -5722,12 +5783,12 @@ function App() {
     });
   }
 
-  async function launchRun() {
+  async function launchRun(composerPrompt = promptRef.current) {
     markPerformance("orchestrator:submit:start");
     setApprovalSafetyWarning(null);
 
     const promptText = serializePromptInlineFileReferences(
-      prompt.trim(),
+      composerPrompt.trim(),
       contextFiles.filter((file) => file.source === "search"),
     );
     const workspace = selectedWorkspace;
@@ -5776,7 +5837,7 @@ function App() {
     const turnIndex = chatSession?.nextTurnIndex ?? 1;
     const snapshot: RunSetupSnapshot = {
       promptText,
-      promptFallback: prompt,
+      promptFallback: composerPrompt,
       workspace: { ...workspace },
       accountId: accountId ?? 0,
       account: account ? { ...account } : null,
@@ -5784,7 +5845,7 @@ function App() {
       chatOrigin: chatSession?.origin ?? "orchestrator",
       externalThreadId: chatSession?.externalThreadId ?? null,
       selectedBranch,
-      cachedPreflight: preflight,
+      cachedPreflight: preflightRef.current,
       mode: planMode ? "plan" : "run",
       access: accessSettings({ accessMode }),
       model,
@@ -8276,8 +8337,7 @@ function App() {
                   disabled={!canRun || planReviewAwaiting}
                   runActive={runIsActive}
                   prompt={prompt}
-                  routeRecommendation={preflight?.routeRecommendation ?? routeRecommendation}
-                  tokenEstimate={preflight?.tokenEstimate ?? tokenEstimate}
+                  promptRevision={promptRevision}
                   accounts={signedInAccounts}
                   selectedAccountId={selectedAccountId}
                   accountSelectionDisabled={runIsActive || planReviewAwaiting}
@@ -8297,45 +8357,31 @@ function App() {
                   slashCommandResults={slashCommandResults}
                   slashCommandSearchStatus={slashCommandSearchStatus}
                   slashCommandSearchError={slashCommandSearchError}
-                  onAccountChange={(accountId) => void selectCodexAccount(accountId)}
-                  onPromptChange={(nextPrompt) => {
-                    setPrompt(nextPrompt);
-                    setContextFiles((current) =>
-                      pruneMissingInlineContextFiles(current, nextPrompt),
-                    );
-                    setPreflight(null);
-                  }}
+                  onAccountChange={selectComposerAccount}
+                  onPromptChange={changeComposerPrompt}
                   onModelChange={setSelectedModelId}
                   onReasoningEffortChange={setSelectedReasoningEffort}
                   onGoalModeChange={handleGoalModeChange}
                   onPlanModeChange={handlePlanModeChange}
                   onAccessModeChange={handleAccessModeChange}
-                  onAddFiles={() => void chooseContextFiles()}
-                  onMentionSearch={(query) => void searchMentionFiles(query)}
-                  onMentionFileSelect={addMentionFileToContext}
-                  onMentionClose={closeMentionSearch}
-                  onSlashCommandSearch={(query) => void searchSlashCommands(query)}
-                  onSlashCommandSelect={handleSlashCommandSelect}
-                  onSlashCommandClose={closeSlashCommandSearch}
-                  onContextFilesDrop={addDroppedContextFiles}
+                  onAddFiles={chooseComposerContextFiles}
+                  onMentionSearch={searchComposerMentionFiles}
+                  onMentionFileSelect={selectComposerMentionFile}
+                  onMentionClose={closeComposerMentionSearch}
+                  onSlashCommandSearch={searchComposerSlashCommands}
+                  onSlashCommandSelect={selectComposerSlashCommand}
+                  onSlashCommandClose={closeComposerSlashSearch}
+                  onContextFilesDrop={dropComposerContextFiles}
                   onContextFilesDropError={setStatusMessage}
                   contextDropActive={taskContextDropActive}
                   onDropSurfaceElementChange={handleTaskComposerDropSurfaceElementChange}
-                  hasContextFileDropFallback={() =>
-                    explorerDragContextFileRef.current !== null
-                  }
-                  getContextFileDropFallback={getExplorerDragContextFiles}
-                  onContextFileDropHandled={endWorkspaceFileDrag}
-                  onRemoveFile={(path) =>
-                    setContextFiles((current) => current.filter((file) => file.path !== path))
-                  }
-                  onRemoveSkill={(skillId) =>
-                    setSelectedSkills((current) =>
-                      current.filter((skill) => skill.id !== skillId),
-                    )
-                  }
-                  onRun={() => void launchRun()}
-                  onStop={() => void stopActiveRun()}
+                  hasContextFileDropFallback={hasComposerContextFileDropFallback}
+                  getContextFileDropFallback={getComposerContextFileDropFallback}
+                  onContextFileDropHandled={completeComposerContextFileDrop}
+                  onRemoveFile={removeComposerContextFile}
+                  onRemoveSkill={removeComposerSkill}
+                  onRun={runComposerPrompt}
+                  onStop={stopComposerRun}
                 />
               </section>
               <WorkspaceHistoryDrawer

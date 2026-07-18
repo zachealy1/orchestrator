@@ -2339,6 +2339,11 @@ describe("App Codex auth", () => {
     expect(mocks.listChatRunsPageMock).not.toHaveBeenCalled();
     expect(screen.queryByText("Loading older messages...")).not.toBeInTheDocument();
 
+    const promptInput = screen.getByLabelText("Prompt") as HTMLTextAreaElement;
+    await user.type(promptInput, "Draft while the large chat stays mounted");
+    promptInput.setSelectionRange(12, 12);
+    expect(promptInput).toHaveValue("Draft while the large chat stays mounted");
+
     const firstTranscriptRow = transcript.querySelector(
       "[data-transcript-entry-id]",
     );
@@ -2374,6 +2379,10 @@ describe("App Codex auth", () => {
     expect(
       transcript.querySelector("[data-transcript-entry-id]"),
     ).toBe(firstTranscriptRow);
+    expect(screen.getByLabelText("Prompt")).toBe(promptInput);
+    expect(promptInput).toHaveValue("Draft while the large chat stays mounted");
+    expect(promptInput.selectionStart).toBe(12);
+    expect(promptInput.selectionEnd).toBe(12);
     expect(transcript.scrollTop).toBe(640);
 
     transcriptRowShift = -60;
@@ -5531,6 +5540,10 @@ describe("App Codex auth", () => {
     const { user } = await renderApp();
     await startMockRun(user, "Fix the streaming output");
 
+    const promptInput = screen.getByLabelText("Prompt") as HTMLTextAreaElement;
+    await user.type(promptInput, "Prepare the follow-up while Codex streams");
+    promptInput.setSelectionRange(11, 11);
+
     await emitCodexNotification({
       method: "item/agentMessage/delta",
       params: { delta: "Updated the auth flow." },
@@ -5542,6 +5555,10 @@ describe("App Codex auth", () => {
       "Fix the streaming output",
     );
     expect(within(transcript).getByText("Updated the auth flow.")).toBeInTheDocument();
+    expect(screen.getByLabelText("Prompt")).toBe(promptInput);
+    expect(promptInput).toHaveValue("Prepare the follow-up while Codex streams");
+    expect(promptInput.selectionStart).toBe(11);
+    expect(promptInput.selectionEnd).toBe(11);
   });
 
   it("renders approval requests inline and resolves them from the chat", async () => {

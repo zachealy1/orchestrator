@@ -25,4 +25,11 @@ describe("composer active-run control CSS", () => {
     );
     expect(stopControl).not.toContain("animation:");
   });
+
+  it("uses native textarea content sizing without a height transition", () => {
+    const promptTextarea = rule(".prompt-field textarea");
+
+    expect(promptTextarea).toContain("field-sizing: content");
+    expect(promptTextarea).not.toContain("transition:");
+  });
 });

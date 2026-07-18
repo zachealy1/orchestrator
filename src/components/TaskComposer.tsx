@@ -12,10 +12,20 @@ import {
   Square,
   X,
 } from "lucide-react";
-import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
+import {
+  memo,
+  useCallback,
+  useDeferredValue,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import type {
   ChangeEvent,
   ClipboardEvent as ReactClipboardEvent,
+  CompositionEvent as ReactCompositionEvent,
   DragEvent,
   KeyboardEvent,
 } from "react";
@@ -26,7 +36,6 @@ import type {
   ComposerMentionSearchStatus,
   CodexModel,
   ComposerContextFile,
-  RouteRecommendation,
   SelectedComposerSkill,
   SlashCommandItem,
   SlashCommandSearchStatus,
@@ -41,13 +50,13 @@ import {
   restorePromptInlineFileReferencesForComposer,
   serializePromptInlineFileReferences,
 } from "../lib/contextFiles";
+import { estimateTokens, recommendRoute } from "../lib/taskAnalysis";
 
 type Props = {
   disabled: boolean;
   runActive: boolean;
   prompt: string;
-  routeRecommendation: RouteRecommendation;
-  tokenEstimate: number;
+  promptRevision?: number;
   accounts: CodexAccountProfile[];
   selectedAccountId: number | null;
   accountSelectionDisabled: boolean;
@@ -90,7 +99,7 @@ type Props = {
   onContextFileDropHandled?: () => void;
   onRemoveFile: (path: string) => void;
   onRemoveSkill: (skillId: string) => void;
-  onRun: () => void;
+  onRun: (prompt: string) => void;
   onStop: () => void;
 };
 
@@ -109,12 +118,16 @@ type PromptContextClipboardPayload = {
   files: ComposerContextFile[];
 };
 
-export function TaskComposer({
+const ACCESS_MODE_OPTIONS = [
+  { value: "ask-for-approval", label: "Ask for approval" },
+  { value: "full-access", label: "Full access" },
+];
+
+export const TaskComposer = memo(function TaskComposer({
   disabled,
   runActive,
   prompt,
-  routeRecommendation,
-  tokenEstimate,
+  promptRevision = 0,
   accounts,
   selectedAccountId,
   accountSelectionDisabled,
@@ -161,15 +174,29 @@ export function TaskComposer({
   onStop,
 }: Props) {
   const promptTextareaRef = useRef<HTMLTextAreaElement>(null);
+  const compositionActiveRef = useRef(false);
+  const autosizeFrameRef = useRef<number | null>(null);
+  const externalPromptRevisionRef = useRef(promptRevision);
+  const [draftPrompt, setDraftPrompt] = useState(prompt);
+  const deferredDraftPrompt = useDeferredValue(draftPrompt);
   const [dragActive, setDragActive] = useState(false);
   const [activeToken, setActiveToken] = useState<ComposerToken | null>(null);
   const [activePopoverIndex, setActivePopoverIndex] = useState(0);
   const [slashPanel, setSlashPanel] = useState<SlashPanel>("commands");
-  const selectedModel =
-    models.find((model) => model.id === selectedModelId) ?? models[0] ?? null;
+  const selectedModel = useMemo(
+    () => models.find((model) => model.id === selectedModelId) ?? models[0] ?? null,
+    [models, selectedModelId],
+  );
   const reasoningOptions = selectedModel?.supportedReasoningEfforts ?? [];
   const controlsDisabled = models.length === 0 || Boolean(modelLoadError);
-  const planRecommended = routeRecommendation === "plan-first";
+  const planRecommended = useMemo(
+    () => recommendRoute(deferredDraftPrompt) === "plan-first",
+    [deferredDraftPrompt],
+  );
+  const tokenEstimate = useMemo(
+    () => estimateTokens(deferredDraftPrompt),
+    [deferredDraftPrompt],
+  );
   const mentionOpen = activeToken?.trigger === "@";
   const slashOpen = activeToken?.trigger === "/";
   const inlineContextFiles = contextFiles.filter((file) => file.source === "search");
@@ -181,6 +208,19 @@ export function TaskComposer({
     },
     [onDropSurfaceElementChange],
   );
+
+  useLayoutEffect(() => {
+    if (externalPromptRevisionRef.current === promptRevision) {
+      return;
+    }
+
+    externalPromptRevisionRef.current = promptRevision;
+    compositionActiveRef.current = false;
+    setDraftPrompt(prompt);
+    setActiveToken(null);
+    setActivePopoverIndex(0);
+    setSlashPanel("commands");
+  }, [prompt, promptRevision]);
 
   useEffect(() => {
     setActivePopoverIndex(0);
@@ -247,7 +287,26 @@ export function TaskComposer({
   }
 
   function handlePromptChange(event: ChangeEvent<HTMLTextAreaElement>) {
+    const nextPrompt = compositionActiveRef.current
+      ? event.currentTarget.value
+      : normalizePromptQuotes(event.currentTarget.value);
+    setDraftPrompt(nextPrompt);
+    onPromptChange(nextPrompt);
+    if (!compositionActiveRef.current) {
+      updateSearchFromPrompt(nextPrompt, event.currentTarget.selectionStart);
+    }
+  }
+
+  function handlePromptCompositionStart() {
+    compositionActiveRef.current = true;
+  }
+
+  function handlePromptCompositionEnd(
+    event: ReactCompositionEvent<HTMLTextAreaElement>,
+  ) {
+    compositionActiveRef.current = false;
     const nextPrompt = normalizePromptQuotes(event.currentTarget.value);
+    setDraftPrompt(nextPrompt);
     onPromptChange(nextPrompt);
     updateSearchFromPrompt(nextPrompt, event.currentTarget.selectionStart);
   }
@@ -286,7 +345,7 @@ export function TaskComposer({
 
     if (event.key === "Backspace" || event.key === "Delete") {
       const inlineDeletion = getInlineFileDeletion(
-        prompt,
+        draftPrompt,
         inlineContextFiles,
         event.currentTarget.selectionStart,
         event.currentTarget.selectionEnd,
@@ -296,6 +355,7 @@ export function TaskComposer({
       if (inlineDeletion) {
         event.preventDefault();
         closeActiveSearch();
+        setDraftPrompt(inlineDeletion.value);
         onPromptChange(inlineDeletion.value);
         inlineDeletion.files.forEach((file) => onRemoveFile(file.path));
         window.requestAnimationFrame(() => {
@@ -317,7 +377,7 @@ export function TaskComposer({
       event.preventDefault();
       closeActiveSearch();
       if (!disabled && !runActive) {
-        onRun();
+        onRun(draftPrompt);
       }
     }
   }
@@ -365,10 +425,11 @@ export function TaskComposer({
     }
 
     const nextPrompt = replaceComposerToken(
-      prompt,
+      draftPrompt,
       activeToken,
       inlineFilePromptToken(file),
     );
+    setDraftPrompt(nextPrompt.value);
     onPromptChange(nextPrompt.value);
     onMentionFileSelect(file);
     setActiveToken(null);
@@ -389,9 +450,9 @@ export function TaskComposer({
       return;
     }
 
-    const selectedPrompt = prompt.slice(selectionStart, selectionEnd);
+    const selectedPrompt = draftPrompt.slice(selectionStart, selectionEnd);
     const selectedFiles = getInlineFilesFullyInsideRange(
-      prompt,
+      draftPrompt,
       inlineContextFiles,
       selectionStart,
       selectionEnd,
@@ -421,9 +482,10 @@ export function TaskComposer({
     const pastedPrompt = normalizePromptQuotes(
       restorePromptInlineFileReferencesForComposer(payload.prompt, payload.files),
     );
-    const nextPrompt = `${prompt.slice(0, selectionStart)}${pastedPrompt}${prompt.slice(selectionEnd)}`;
+    const nextPrompt = `${draftPrompt.slice(0, selectionStart)}${pastedPrompt}${draftPrompt.slice(selectionEnd)}`;
     const nextCaret = selectionStart + pastedPrompt.length;
 
+    setDraftPrompt(nextPrompt);
     onPromptChange(nextPrompt);
     for (const file of payload.files) {
       onMentionFileSelect(file);
@@ -447,7 +509,8 @@ export function TaskComposer({
       return;
     }
 
-    const nextPrompt = removeComposerToken(prompt, activeToken);
+    const nextPrompt = removeComposerToken(draftPrompt, activeToken);
+    setDraftPrompt(nextPrompt.value);
     onPromptChange(nextPrompt.value);
     onSlashCommandSelect(item);
     setActiveToken(null);
@@ -466,7 +529,8 @@ export function TaskComposer({
       return;
     }
 
-    const nextPrompt = removeComposerToken(prompt, activeToken);
+    const nextPrompt = removeComposerToken(draftPrompt, activeToken);
+    setDraftPrompt(nextPrompt.value);
     onPromptChange(nextPrompt.value);
     onReasoningEffortChange(effort);
     setActiveToken(null);
@@ -480,18 +544,42 @@ export function TaskComposer({
     });
   }
 
-  useLayoutEffect(() => {
+  useEffect(() => {
     const textarea = promptTextareaRef.current;
 
     if (!textarea) {
       return;
     }
 
-    const maxHeight = 220;
-    textarea.style.height = "auto";
-    textarea.style.height = `${Math.min(textarea.scrollHeight, maxHeight)}px`;
-    textarea.style.overflowY = textarea.scrollHeight > maxHeight ? "auto" : "hidden";
-  }, [prompt]);
+    if (supportsNativeTextareaAutosizing()) {
+      return;
+    }
+
+    if (autosizeFrameRef.current !== null) {
+      window.cancelAnimationFrame(autosizeFrameRef.current);
+    }
+
+    autosizeFrameRef.current = window.requestAnimationFrame(() => {
+      autosizeFrameRef.current = null;
+      const currentTextarea = promptTextareaRef.current;
+      if (!currentTextarea) {
+        return;
+      }
+
+      const maxHeight = 220;
+      currentTextarea.style.height = "0px";
+      const contentHeight = currentTextarea.scrollHeight;
+      currentTextarea.style.height = `${Math.min(contentHeight, maxHeight)}px`;
+      currentTextarea.style.overflowY = contentHeight > maxHeight ? "auto" : "hidden";
+    });
+
+    return () => {
+      if (autosizeFrameRef.current !== null) {
+        window.cancelAnimationFrame(autosizeFrameRef.current);
+        autosizeFrameRef.current = null;
+      }
+    };
+  }, [draftPrompt]);
 
   function hasContextFileDrop(event: DragEvent<HTMLElement>) {
     return (
@@ -576,15 +664,17 @@ export function TaskComposer({
             <span className="sr-only">Prompt</span>
             {inlineContextFiles.length > 0 ? (
               <PromptInlineHighlight
-                prompt={prompt}
+                prompt={draftPrompt}
                 files={inlineContextFiles}
               />
             ) : null}
             <textarea
               ref={promptTextareaRef}
               aria-label="Prompt"
-              value={prompt}
+              value={draftPrompt}
               onChange={handlePromptChange}
+              onCompositionStart={handlePromptCompositionStart}
+              onCompositionEnd={handlePromptCompositionEnd}
               onCopy={handlePromptCopy}
               onPaste={handlePromptPaste}
               onKeyDown={handlePromptKeyDown}
@@ -678,8 +768,14 @@ export function TaskComposer({
             <button
               className={`send-button ${runActive ? "stop" : ""}`}
               type="button"
-              onClick={runActive ? onStop : onRun}
-              disabled={runActive ? false : disabled}
+              onClick={() => {
+                if (runActive) {
+                  onStop();
+                } else {
+                  onRun(draftPrompt);
+                }
+              }}
+              disabled={runActive ? false : disabled || !draftPrompt.trim()}
               aria-label={runActive ? "Stop Codex" : "Run Codex"}
             >
               {runActive ? <Square size={15} fill="currentColor" /> : <Play size={16} />}
@@ -688,67 +784,24 @@ export function TaskComposer({
           </div>
         </div>
 
-        <div className="composer-options-row">
-          <div className="account-select-group">
-            <ComposerSelect
-              ariaLabel="Run account"
-              value={selectedAccountId?.toString() ?? ""}
-              options={accounts.map((account) => ({
-                value: account.id.toString(),
-                label: account.label,
-              }))}
-              placeholder="Sign in required"
-              icon={<CircleUserRound size={16} />}
-              className="account-select"
-              disabled={accounts.length === 0 || accountSelectionDisabled}
-              onChange={(value) => onAccountChange(Number(value))}
-            />
-          </div>
-
-          <ComposerSelect
-            ariaLabel="Access"
-            value={accessMode}
-            options={[
-              { value: "ask-for-approval", label: "Ask for approval" },
-              { value: "full-access", label: "Full access" },
-            ]}
-            placeholder="Ask for approval"
-            icon={<ShieldCheck size={16} />}
-            className="access-select"
-            disabled={runActive}
-            onChange={(value) => onAccessModeChange(value as CodexAccessMode)}
-          />
-
-          <ComposerSelect
-            ariaLabel="Agent"
-            value={selectedModel?.id ?? ""}
-            options={models.map((model) => ({
-              value: model.id,
-              label: model.displayName || model.model,
-            }))}
-            placeholder={modelLoadError ? "Models unavailable" : "Connect Codex"}
-            icon={<Bot size={16} />}
-            className="agent-select"
-            disabled={controlsDisabled || modelSelectionDisabled}
-            onChange={onModelChange}
-          />
-
-          <ComposerSelect
-            ariaLabel="Reasoning"
-            value={selectedReasoningEffort ?? ""}
-            options={reasoningOptions.map((option) => ({
-              value: option.reasoningEffort,
-              label: labelReasoningEffort(option.reasoningEffort),
-            }))}
-            placeholder="Default"
-            icon={<Gauge size={16} />}
-            className="reasoning-select"
-            disabled={
-              controlsDisabled || modelSelectionDisabled || reasoningOptions.length === 0
-            }
-            onChange={onReasoningEffortChange}
-          />
-        </div>
+        <ComposerOptionsRow
+          accessMode={accessMode}
+          accountSelectionDisabled={accountSelectionDisabled}
+          accounts={accounts}
+          controlsDisabled={controlsDisabled}
+          modelLoadError={modelLoadError}
+          modelSelectionDisabled={modelSelectionDisabled}
+          models={models}
+          onAccessModeChange={onAccessModeChange}
+          onAccountChange={onAccountChange}
+          onModelChange={onModelChange}
+          onReasoningEffortChange={onReasoningEffortChange}
+          reasoningOptions={reasoningOptions}
+          runActive={runActive}
+          selectedAccountId={selectedAccountId}
+          selectedModel={selectedModel}
+          selectedReasoningEffort={selectedReasoningEffort}
+        />
 
         {selectedSkills.length > 0 ? (
           <div className="context-file-list" aria-label="Selected skills">
@@ -770,7 +823,128 @@ export function TaskComposer({
       </div>
     </section>
   );
-}
+});
+
+const ComposerOptionsRow = memo(function ComposerOptionsRow({
+  accessMode,
+  accountSelectionDisabled,
+  accounts,
+  controlsDisabled,
+  modelLoadError,
+  modelSelectionDisabled,
+  models,
+  onAccessModeChange,
+  onAccountChange,
+  onModelChange,
+  onReasoningEffortChange,
+  reasoningOptions,
+  runActive,
+  selectedAccountId,
+  selectedModel,
+  selectedReasoningEffort,
+}: {
+  accessMode: CodexAccessMode;
+  accountSelectionDisabled: boolean;
+  accounts: CodexAccountProfile[];
+  controlsDisabled: boolean;
+  modelLoadError: string | null;
+  modelSelectionDisabled: boolean;
+  models: CodexModel[];
+  onAccessModeChange: (accessMode: CodexAccessMode) => void;
+  onAccountChange: (accountId: number) => void;
+  onModelChange: (modelId: string) => void;
+  onReasoningEffortChange: (effort: string) => void;
+  reasoningOptions: NonNullable<CodexModel["supportedReasoningEfforts"]>;
+  runActive: boolean;
+  selectedAccountId: number | null;
+  selectedModel: CodexModel | null;
+  selectedReasoningEffort: string | null;
+}) {
+  const accountOptions = useMemo(
+    () =>
+      accounts.map((account) => ({
+        value: account.id.toString(),
+        label: account.label,
+      })),
+    [accounts],
+  );
+  const modelOptions = useMemo(
+    () =>
+      models.map((model) => ({
+        value: model.id,
+        label: model.displayName || model.model,
+      })),
+    [models],
+  );
+  const reasoningSelectOptions = useMemo(
+    () =>
+      reasoningOptions.map((option) => ({
+        value: option.reasoningEffort,
+        label: labelReasoningEffort(option.reasoningEffort),
+      })),
+    [reasoningOptions],
+  );
+  const handleAccountChange = useCallback(
+    (value: string) => onAccountChange(Number(value)),
+    [onAccountChange],
+  );
+  const handleAccessModeChange = useCallback(
+    (value: string) => onAccessModeChange(value as CodexAccessMode),
+    [onAccessModeChange],
+  );
+
+  return (
+    <div className="composer-options-row">
+      <div className="account-select-group">
+        <ComposerSelect
+          ariaLabel="Run account"
+          value={selectedAccountId?.toString() ?? ""}
+          options={accountOptions}
+          placeholder="Sign in required"
+          icon={<CircleUserRound size={16} />}
+          className="account-select"
+          disabled={accounts.length === 0 || accountSelectionDisabled}
+          onChange={handleAccountChange}
+        />
+      </div>
+
+      <ComposerSelect
+        ariaLabel="Access"
+        value={accessMode}
+        options={ACCESS_MODE_OPTIONS}
+        placeholder="Ask for approval"
+        icon={<ShieldCheck size={16} />}
+        className="access-select"
+        disabled={runActive}
+        onChange={handleAccessModeChange}
+      />
+
+      <ComposerSelect
+        ariaLabel="Agent"
+        value={selectedModel?.id ?? ""}
+        options={modelOptions}
+        placeholder={modelLoadError ? "Models unavailable" : "Connect Codex"}
+        icon={<Bot size={16} />}
+        className="agent-select"
+        disabled={controlsDisabled || modelSelectionDisabled}
+        onChange={onModelChange}
+      />
+
+      <ComposerSelect
+        ariaLabel="Reasoning"
+        value={selectedReasoningEffort ?? ""}
+        options={reasoningSelectOptions}
+        placeholder="Default"
+        icon={<Gauge size={16} />}
+        className="reasoning-select"
+        disabled={
+          controlsDisabled || modelSelectionDisabled || reasoningOptions.length === 0
+        }
+        onChange={onReasoningEffortChange}
+      />
+    </div>
+  );
+});
 
 function ContextFileList({
   files,
@@ -1386,9 +1560,21 @@ function inlineFilePromptToken(file: ComposerContextFile) {
 }
 
 function normalizePromptQuotes(prompt: string) {
+  if (!/[\u2018\u2019\u201c\u201d]/.test(prompt)) {
+    return prompt;
+  }
+
   return prompt
     .replace(/[\u201c\u201d]/g, "\"")
     .replace(/[\u2018\u2019]/g, "'");
+}
+
+function supportsNativeTextareaAutosizing() {
+  return (
+    typeof CSS !== "undefined" &&
+    typeof CSS.supports === "function" &&
+    CSS.supports("field-sizing", "content")
+  );
 }
 
 function writePromptContextClipboard(

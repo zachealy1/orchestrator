@@ -56,8 +56,6 @@ function renderComposer(overrides: Partial<TaskComposerProps> = {}) {
     disabled: false,
     runActive: false,
     prompt: "",
-    routeRecommendation: "direct-run",
-    tokenEstimate: 0,
     accounts,
     selectedAccountId: 7,
     accountSelectionDisabled: false,
@@ -115,8 +113,6 @@ function renderControlledComposer(overrides: Partial<TaskComposerProps> = {}) {
     const props: TaskComposerProps = {
       disabled: false,
       runActive: false,
-      routeRecommendation: "direct-run",
-      tokenEstimate: 0,
       accounts,
       selectedAccountId: 7,
       accountSelectionDisabled: false,
@@ -633,7 +629,105 @@ describe("TaskComposer", () => {
     await user.type(promptInput, "Fix the failing test{Enter}");
 
     expect(onRun).toHaveBeenCalledOnce();
+    expect(onRun).toHaveBeenCalledWith("Fix the failing test");
     expect(promptInput).toHaveValue("Fix the failing test");
+  });
+
+  it("keeps the live draft stable across unrelated parent renders", () => {
+    const { props, rerender } = renderComposer({
+      prompt: "Initial",
+      promptRevision: 0,
+    });
+    const promptInput = screen.getByLabelText("Prompt") as HTMLTextAreaElement;
+    promptInput.focus();
+    fireEvent.change(promptInput, {
+      target: { value: "Initial local draft", selectionStart: 19 },
+    });
+    promptInput.setSelectionRange(7, 7);
+
+    rerender(
+      <TaskComposer
+        {...props}
+        prompt="stale parent value"
+        promptRevision={0}
+        runActive
+      />,
+    );
+
+    expect(promptInput).toHaveValue("Initial local draft");
+    expect(promptInput).toHaveFocus();
+    expect(promptInput.selectionStart).toBe(7);
+    expect(promptInput.selectionEnd).toBe(7);
+  });
+
+  it("applies an explicit external prompt revision without remounting the input", () => {
+    const { props, rerender } = renderComposer({
+      prompt: "Draft",
+      promptRevision: 0,
+    });
+    const promptInput = screen.getByLabelText("Prompt") as HTMLTextAreaElement;
+    promptInput.focus();
+
+    rerender(
+      <TaskComposer
+        {...props}
+        prompt="Restored after setup failure"
+        promptRevision={1}
+      />,
+    );
+
+    expect(screen.getByLabelText("Prompt")).toBe(promptInput);
+    expect(promptInput).toHaveValue("Restored after setup failure");
+    expect(promptInput).toHaveFocus();
+  });
+
+  it("keeps rapid long-form input ordered and submits the latest local value", async () => {
+    const onRun = vi.fn();
+    const { user } = renderComposer({ onRun });
+    const promptInput = screen.getByLabelText("Prompt");
+    const prompt = Array.from({ length: 80 }, (_, index) => `word-${index}`).join(" ");
+
+    await user.type(promptInput, prompt);
+    await user.keyboard("{Enter}");
+
+    expect(promptInput).toHaveValue(prompt);
+    expect(onRun).toHaveBeenCalledWith(prompt);
+  });
+
+  it("leaves native undo, redo, and cursor movement shortcuts to the textarea", () => {
+    renderComposer();
+    const promptInput = screen.getByLabelText("Prompt") as HTMLTextAreaElement;
+
+    expect(
+      fireEvent.keyDown(promptInput, { key: "z", metaKey: true }),
+    ).toBe(true);
+    expect(
+      fireEvent.keyDown(promptInput, { key: "z", metaKey: true, shiftKey: true }),
+    ).toBe(true);
+    expect(fireEvent.keyDown(promptInput, { key: "ArrowLeft" })).toBe(true);
+    expect(fireEvent.keyDown(promptInput, { key: "ArrowRight" })).toBe(true);
+  });
+
+  it("does not run mention searches or normalize text during IME composition", () => {
+    const onPromptChange = vi.fn();
+    const onMentionSearch = vi.fn();
+    renderComposer({ onPromptChange, onMentionSearch });
+    const promptInput = screen.getByLabelText("Prompt") as HTMLTextAreaElement;
+
+    fireEvent.compositionStart(promptInput);
+    fireEvent.change(promptInput, {
+      target: { value: "入力@file", selectionStart: 7 },
+    });
+
+    expect(promptInput).toHaveValue("入力@file");
+    expect(onPromptChange).toHaveBeenLastCalledWith("入力@file");
+    expect(onMentionSearch).not.toHaveBeenCalled();
+
+    fireEvent.compositionEnd(promptInput, {
+      data: "入力@file",
+    });
+
+    expect(onMentionSearch).toHaveBeenLastCalledWith("file");
   });
 
   it("adds a newline when pressing Shift Enter", async () => {
