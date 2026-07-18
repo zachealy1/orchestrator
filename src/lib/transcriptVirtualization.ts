@@ -154,6 +154,23 @@ export function calculateTranscriptDefaultItemHeight(
   );
 }
 
+export function calculateTranscriptOverscanItemCount(
+  heightEstimates: number[],
+  renderAheadPx: number,
+  maximumItems: number,
+) {
+  if (heightEstimates.length === 0) return 2;
+  const sorted = [...heightEstimates].sort((left, right) => left - right);
+  const typicalHeight = sorted[Math.floor(sorted.length / 2)] ?? renderAheadPx;
+  return Math.max(
+    2,
+    Math.min(
+      maximumItems,
+      Math.ceil(renderAheadPx / Math.max(1, typicalHeight)),
+    ),
+  );
+}
+
 export function estimateHistoryPlaceholderHeight(
   hint: HistoryTurnHint | undefined,
   width: number,

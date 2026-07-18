@@ -20,6 +20,7 @@ import type {
 } from "../lib/nativePlanMode";
 import {
   calculateTranscriptDefaultItemHeight,
+  calculateTranscriptOverscanItemCount,
   estimateTranscriptRowHeight,
   getTranscriptWidthBucket,
 } from "../lib/transcriptVirtualization";
@@ -289,6 +290,15 @@ export const VirtuosoTaskChatTranscript = memo(
       };
     }
     const heightEstimates = stableHeightEstimatesRef.current.heights;
+    const overscanItemCount = useMemo(
+      () =>
+        calculateTranscriptOverscanItemCount(
+          heightEstimates,
+          TRANSCRIPT_RENDER_AHEAD_PX,
+          TRANSCRIPT_MIN_OVERSCAN_ITEMS,
+        ),
+      [heightEstimates],
+    );
 
     const restoredState = useMemo(
       () =>
@@ -790,8 +800,8 @@ export const VirtuosoTaskChatTranscript = memo(
           heightEstimates={heightEstimates}
           increaseViewportBy={transcriptIncreaseViewportBy}
           minOverscanItemCount={{
-            top: TRANSCRIPT_MIN_OVERSCAN_ITEMS,
-            bottom: TRANSCRIPT_MIN_OVERSCAN_ITEMS,
+            top: overscanItemCount,
+            bottom: overscanItemCount,
           }}
           scrollerRef={handleScrollerRef}
           initialTopMostItemIndex={

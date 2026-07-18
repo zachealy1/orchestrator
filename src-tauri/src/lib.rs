@@ -2068,8 +2068,7 @@ fn codex_delete_profile(
     Ok(())
 }
 
-#[tauri::command]
-fn list_git_branches(path: String) -> Result<GitBranchList, String> {
+fn list_git_branches_blocking(path: String) -> Result<GitBranchList, String> {
     let git_probe = run_command("git", &["-C", &path, "rev-parse", "--is-inside-work-tree"]);
     if !git_probe.ok {
         return Err(output_detail(&git_probe).unwrap_or_else(|| {
@@ -2117,12 +2116,19 @@ fn list_git_branches(path: String) -> Result<GitBranchList, String> {
 }
 
 #[tauri::command]
-fn checkout_git_branch(path: String, branch: String) -> Result<GitCheckoutResult, String> {
+async fn list_git_branches(path: String) -> Result<GitBranchList, String> {
+    run_blocking_command("list Git branches", move || list_git_branches_blocking(path)).await
+}
+
+fn checkout_git_branch_blocking(
+    path: String,
+    branch: String,
+) -> Result<GitCheckoutResult, String> {
     if branch.trim().is_empty() {
         return Err("Choose a branch before switching".to_string());
     }
 
-    let branches = list_git_branches(path.clone())?;
+    let branches = list_git_branches_blocking(path.clone())?;
     if !branches.branches.iter().any(|candidate| candidate == &branch) {
         return Err(format!("Branch `{branch}` was not found in the selected folder"));
     }
@@ -2141,7 +2147,14 @@ fn checkout_git_branch(path: String, branch: String) -> Result<GitCheckoutResult
 }
 
 #[tauri::command]
-fn commit_workspace_changes(
+async fn checkout_git_branch(path: String, branch: String) -> Result<GitCheckoutResult, String> {
+    run_blocking_command("check out Git branch", move || {
+        checkout_git_branch_blocking(path, branch)
+    })
+    .await
+}
+
+fn commit_workspace_changes_blocking(
     workspace_path: String,
     message: String,
     include_unstaged: Option<bool>,
@@ -2232,7 +2245,18 @@ fn commit_workspace_changes(
 }
 
 #[tauri::command]
-fn generate_workspace_commit_message(
+async fn commit_workspace_changes(
+    workspace_path: String,
+    message: String,
+    include_unstaged: Option<bool>,
+) -> Result<WorkspaceGitActionResult, String> {
+    run_blocking_command("commit workspace changes", move || {
+        commit_workspace_changes_blocking(workspace_path, message, include_unstaged)
+    })
+    .await
+}
+
+fn generate_workspace_commit_message_blocking(
     app: AppHandle,
     workspace_path: String,
     account_id: Option<i64>,
@@ -2369,6 +2393,28 @@ fn generate_workspace_commit_message(
         message,
         source: "codex".to_string(),
     })
+}
+
+#[tauri::command]
+async fn generate_workspace_commit_message(
+    app: AppHandle,
+    workspace_path: String,
+    account_id: Option<i64>,
+    include_unstaged: Option<bool>,
+    model: Option<String>,
+    intent: Option<String>,
+) -> Result<WorkspaceCommitMessageResult, String> {
+    run_blocking_command("generate workspace commit message", move || {
+        generate_workspace_commit_message_blocking(
+            app,
+            workspace_path,
+            account_id,
+            include_unstaged,
+            model,
+            intent,
+        )
+    })
+    .await
 }
 
 fn local_commit_subject_from_context(context: &str, intent: Option<&str>) -> String {
@@ -2915,8 +2961,9 @@ fn is_commit_count_suffix(inner: &str) -> bool {
     })
 }
 
-#[tauri::command]
-fn push_workspace_branch(workspace_path: String) -> Result<WorkspaceGitActionResult, String> {
+fn push_workspace_branch_blocking(
+    workspace_path: String,
+) -> Result<WorkspaceGitActionResult, String> {
     let workspace = canonical_workspace(&workspace_path)?;
     let git_root = resolve_git_root(&workspace)?;
     let branch = current_git_branch(&git_root)
@@ -2947,7 +2994,16 @@ fn push_workspace_branch(workspace_path: String) -> Result<WorkspaceGitActionRes
 }
 
 #[tauri::command]
-fn list_workspace_git_status(
+async fn push_workspace_branch(
+    workspace_path: String,
+) -> Result<WorkspaceGitActionResult, String> {
+    run_blocking_command("push workspace branch", move || {
+        push_workspace_branch_blocking(workspace_path)
+    })
+    .await
+}
+
+fn list_workspace_git_status_blocking(
     workspace_path: String,
 ) -> Result<WorkspaceGitStatusSnapshot, String> {
     let workspace = canonical_workspace(&workspace_path)?;
@@ -3005,7 +3061,16 @@ fn list_workspace_git_status(
 }
 
 #[tauri::command]
-fn read_workspace_git_diff(
+async fn list_workspace_git_status(
+    workspace_path: String,
+) -> Result<WorkspaceGitStatusSnapshot, String> {
+    run_blocking_command("list workspace Git status", move || {
+        list_workspace_git_status_blocking(workspace_path)
+    })
+    .await
+}
+
+fn read_workspace_git_diff_blocking(
     workspace_path: String,
     file_path: String,
 ) -> Result<WorkspaceGitDiff, String> {
@@ -3014,7 +3079,7 @@ fn read_workspace_git_diff(
     let file_path = workspace_child_path_allow_missing(&workspace, &file_path)?;
     let relative_path = relative_workspace_path(&workspace, &file_path)?;
     let git_path = git_relative_path(&git_root, &file_path)?;
-    let status = list_workspace_git_status(workspace.to_string_lossy().to_string())?
+    let status = list_workspace_git_status_blocking(workspace.to_string_lossy().to_string())?
         .files
         .into_iter()
         .find(|file| file.relative_path == relative_path);
@@ -3076,7 +3141,17 @@ fn read_workspace_git_diff(
 }
 
 #[tauri::command]
-fn list_workspace_directory(
+async fn read_workspace_git_diff(
+    workspace_path: String,
+    file_path: String,
+) -> Result<WorkspaceGitDiff, String> {
+    run_blocking_command("read workspace Git diff", move || {
+        read_workspace_git_diff_blocking(workspace_path, file_path)
+    })
+    .await
+}
+
+fn list_workspace_directory_blocking(
     workspace_path: String,
     directory_path: String,
 ) -> Result<Vec<WorkspaceTreeEntry>, String> {
@@ -3131,7 +3206,17 @@ fn list_workspace_directory(
 }
 
 #[tauri::command]
-fn read_workspace_file_preview(
+async fn list_workspace_directory(
+    workspace_path: String,
+    directory_path: String,
+) -> Result<Vec<WorkspaceTreeEntry>, String> {
+    run_blocking_command("list workspace directory", move || {
+        list_workspace_directory_blocking(workspace_path, directory_path)
+    })
+    .await
+}
+
+fn read_workspace_file_preview_blocking(
     workspace_path: String,
     file_path: String,
 ) -> Result<WorkspaceFilePreview, String> {
@@ -3163,7 +3248,17 @@ fn read_workspace_file_preview(
 }
 
 #[tauri::command]
-fn run_preflight(
+async fn read_workspace_file_preview(
+    workspace_path: String,
+    file_path: String,
+) -> Result<WorkspaceFilePreview, String> {
+    run_blocking_command("read workspace file preview", move || {
+        read_workspace_file_preview_blocking(workspace_path, file_path)
+    })
+    .await
+}
+
+fn run_preflight_blocking(
     path: String,
     prompt: String,
     use_oss: bool,
@@ -3385,6 +3480,24 @@ fn run_preflight(
     }
 }
 
+#[tauri::command]
+async fn run_preflight(
+    path: String,
+    prompt: String,
+    use_oss: bool,
+    oss_provider: Option<String>,
+) -> Result<PreflightReport, String> {
+    run_blocking_command("run preflight checks", move || {
+        Ok(run_preflight_blocking(
+            path,
+            prompt,
+            use_oss,
+            oss_provider,
+        ))
+    })
+    .await
+}
+
 fn push_check(
     checks: &mut Vec<PreflightCheck>,
     id: &str,
@@ -3546,6 +3659,16 @@ fn find_codex_on_path(path_value: Option<std::ffi::OsString>) -> Option<PathBuf>
         .flat_map(|value| env::split_paths(&value).collect::<Vec<_>>())
         .map(|directory| directory.join(executable))
         .find(|path| path.is_file())
+}
+
+async fn run_blocking_command<T, F>(operation: &'static str, task: F) -> Result<T, String>
+where
+    T: Send + 'static,
+    F: FnOnce() -> Result<T, String> + Send + 'static,
+{
+    tauri::async_runtime::spawn_blocking(task)
+        .await
+        .map_err(|error| format!("Failed to {operation}: {error}"))?
 }
 
 fn run_command(program: impl AsRef<OsStr>, args: &[&str]) -> CommandProbe {
@@ -4351,7 +4474,10 @@ fn decode_preview_text(bytes: &[u8]) -> (String, bool) {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    tauri::Builder::default()
+    let app = tauri::Builder::default()
+        .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
+            present_main_window(app);
+        }))
         .manage(CodexState::default())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
@@ -4386,8 +4512,22 @@ pub fn run() {
             read_workspace_file_preview,
             run_preflight
         ])
-        .run(tauri::generate_context!())
-        .expect("error while running tauri application");
+        .build(tauri::generate_context!())
+        .expect("error while building tauri application");
+
+    app.run(|app_handle, event| {
+        if let tauri::RunEvent::Ready = event {
+            present_main_window(app_handle);
+        }
+    });
+}
+
+fn present_main_window(app: &AppHandle) {
+    if let Some(window) = app.get_webview_window("main") {
+        let _ = window.unminimize();
+        let _ = window.show();
+        let _ = window.set_focus();
+    }
 }
 
 #[cfg(test)]
@@ -4982,7 +5122,7 @@ mod tests {
         let workspace = test_directory("workspace-list-rejects-workspace");
         let outside = test_directory("workspace-list-rejects-outside");
 
-        let result = list_workspace_directory(
+        let result = list_workspace_directory_blocking(
             workspace.to_string_lossy().to_string(),
             outside.to_string_lossy().to_string(),
         );
@@ -5001,7 +5141,7 @@ mod tests {
         fs::write(workspace.join("Cargo.toml"), b"[package]").unwrap();
         fs::write(workspace.join("README.md"), b"readme").unwrap();
 
-        let entries = list_workspace_directory(
+        let entries = list_workspace_directory_blocking(
             workspace.to_string_lossy().to_string(),
             workspace.to_string_lossy().to_string(),
         )
@@ -5022,11 +5162,11 @@ mod tests {
         let outside_file = outside.join("secret.txt");
         fs::write(&outside_file, b"secret").unwrap();
 
-        let outside_result = read_workspace_file_preview(
+        let outside_result = read_workspace_file_preview_blocking(
             workspace.to_string_lossy().to_string(),
             outside_file.to_string_lossy().to_string(),
         );
-        let missing_result = read_workspace_file_preview(
+        let missing_result = read_workspace_file_preview_blocking(
             workspace.to_string_lossy().to_string(),
             workspace.join("missing.txt").to_string_lossy().to_string(),
         );
@@ -5043,7 +5183,7 @@ mod tests {
         let file = workspace.join("large.txt");
         fs::write(&file, "a".repeat(MAX_FILE_PREVIEW_BYTES + 16)).unwrap();
 
-        let preview = read_workspace_file_preview(
+        let preview = read_workspace_file_preview_blocking(
             workspace.to_string_lossy().to_string(),
             file.to_string_lossy().to_string(),
         )
@@ -5062,7 +5202,7 @@ mod tests {
         let file = workspace.join("data.bin");
         fs::write(&file, b"hello\0world").unwrap();
 
-        let preview = read_workspace_file_preview(
+        let preview = read_workspace_file_preview_blocking(
             workspace.to_string_lossy().to_string(),
             file.to_string_lossy().to_string(),
         )
@@ -5130,7 +5270,7 @@ mod tests {
         let outside_file = outside.join("secret.txt");
         fs::write(&outside_file, b"secret").unwrap();
 
-        let result = read_workspace_git_diff(
+        let result = read_workspace_git_diff_blocking(
             workspace.to_string_lossy().to_string(),
             outside_file.to_string_lossy().to_string(),
         );
@@ -5149,7 +5289,7 @@ mod tests {
         let outside = test_directory("git-diff-symlink-outside");
         symlink(&outside, workspace.join("linked")).unwrap();
 
-        let result = read_workspace_git_diff(
+        let result = read_workspace_git_diff_blocking(
             workspace.to_string_lossy().to_string(),
             workspace
                 .join("linked/missing.txt")
@@ -5174,7 +5314,7 @@ mod tests {
         git(&workspace, &["add", "app.ts"]);
         fs::write(&file, "const value = 3;\n").unwrap();
 
-        let diff = read_workspace_git_diff(
+        let diff = read_workspace_git_diff_blocking(
             workspace.to_string_lossy().to_string(),
             file.to_string_lossy().to_string(),
         )
@@ -5197,7 +5337,7 @@ mod tests {
         let file = workspace.join("new.ts");
         fs::write(&file, "export const value = 1;\n").unwrap();
 
-        let diff = read_workspace_git_diff(
+        let diff = read_workspace_git_diff_blocking(
             workspace.to_string_lossy().to_string(),
             file.to_string_lossy().to_string(),
         )
@@ -5220,7 +5360,7 @@ mod tests {
         git(&workspace, &["commit", "-m", "initial"]);
         fs::remove_file(&file).unwrap();
 
-        let diff = read_workspace_git_diff(
+        let diff = read_workspace_git_diff_blocking(
             workspace.to_string_lossy().to_string(),
             file.to_string_lossy().to_string(),
         )
@@ -5244,7 +5384,7 @@ mod tests {
         git(&workspace, &["commit", "-m", "initial"]);
         fs::remove_dir_all(&directory).unwrap();
 
-        let diff = read_workspace_git_diff(
+        let diff = read_workspace_git_diff_blocking(
             workspace.to_string_lossy().to_string(),
             file.to_string_lossy().to_string(),
         )
@@ -5269,7 +5409,7 @@ mod tests {
         fs::write(&new_file, "export const keep = true;\nexport const value = 2;\n").unwrap();
         git(&workspace, &["add", "new.ts"]);
 
-        let diff = read_workspace_git_diff(
+        let diff = read_workspace_git_diff_blocking(
             workspace.to_string_lossy().to_string(),
             new_file.to_string_lossy().to_string(),
         )
@@ -5293,7 +5433,7 @@ mod tests {
         fs::copy(&source_file, &copy_file).unwrap();
         git(&workspace, &["add", "copy.ts"]);
 
-        let diff = read_workspace_git_diff(
+        let diff = read_workspace_git_diff_blocking(
             workspace.to_string_lossy().to_string(),
             copy_file.to_string_lossy().to_string(),
         )
@@ -5314,7 +5454,7 @@ mod tests {
         git(&workspace, &["commit", "-m", "initial"]);
         fs::write(&file, b"after\0content").unwrap();
 
-        let diff = read_workspace_git_diff(
+        let diff = read_workspace_git_diff_blocking(
             workspace.to_string_lossy().to_string(),
             file.to_string_lossy().to_string(),
         )
@@ -5330,7 +5470,7 @@ mod tests {
         let workspace = git_test_directory("git-commit-empty-message");
         fs::write(workspace.join("app.ts"), "export const value = 1;\n").unwrap();
 
-        let result = commit_workspace_changes(
+        let result = commit_workspace_changes_blocking(
             workspace.to_string_lossy().to_string(),
             "   ".to_string(),
             Some(true),
@@ -5344,7 +5484,7 @@ mod tests {
     fn commit_workspace_changes_rejects_clean_workspace() {
         let workspace = git_test_directory("git-commit-clean");
 
-        let result = commit_workspace_changes(
+        let result = commit_workspace_changes_blocking(
             workspace.to_string_lossy().to_string(),
             "Update workspace".to_string(),
             Some(true),
@@ -5359,7 +5499,7 @@ mod tests {
         let workspace = git_test_directory("git-commit-all");
         fs::write(workspace.join("app.ts"), "export const value = 1;\n").unwrap();
 
-        let result = commit_workspace_changes(
+        let result = commit_workspace_changes_blocking(
             workspace.to_string_lossy().to_string(),
             "Add app source".to_string(),
             Some(true),
@@ -5397,7 +5537,7 @@ mod tests {
         git(&workspace, &["add", "app.ts"]);
         fs::write(&app_file, "export const value = 3;\n").unwrap();
 
-        let result = commit_workspace_changes(
+        let result = commit_workspace_changes_blocking(
             workspace.to_string_lossy().to_string(),
             "Add staged app source".to_string(),
             Some(false),
@@ -5569,7 +5709,7 @@ diff --git a/src/App.tsx b/src/App.tsx
         git(&workspace, &["add", "app.ts"]);
         git(&workspace, &["commit", "-m", "initial"]);
 
-        let result = push_workspace_branch(workspace.to_string_lossy().to_string());
+        let result = push_workspace_branch_blocking(workspace.to_string_lossy().to_string());
 
         assert!(result.unwrap_err().contains("No upstream branch or origin"));
         remove_test_directory(workspace);
@@ -5585,7 +5725,8 @@ diff --git a/src/App.tsx b/src/App.tsx
         git(&workspace, &["commit", "-m", "initial"]);
         git(&workspace, &["remote", "add", "origin", origin.to_string_lossy().as_ref()]);
 
-        let result = push_workspace_branch(workspace.to_string_lossy().to_string()).unwrap();
+        let result =
+            push_workspace_branch_blocking(workspace.to_string_lossy().to_string()).unwrap();
         let upstream = Command::new("git")
             .arg("-C")
             .arg(&workspace)

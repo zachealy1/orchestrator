@@ -14,6 +14,7 @@ import {
 } from "lucide-react";
 import {
   memo,
+  startTransition,
   useCallback,
   useDeferredValue,
   useEffect,
@@ -189,6 +190,9 @@ export const TaskComposer = memo(function TaskComposer({
   const promptTextareaRef = useRef<HTMLTextAreaElement>(null);
   const compositionActiveRef = useRef(false);
   const externalPromptRevisionRef = useRef(promptRevision);
+  const draftPromptRef = useRef(prompt);
+  const pendingVisualPromptRef = useRef(prompt);
+  const visualPromptFrameRef = useRef<number | null>(null);
   const [draftPrompt, setDraftPrompt] = useState(prompt);
   const [dragActive, setDragActive] = useState(false);
   const [activeToken, setActiveToken] = useState<ComposerToken | null>(null);
@@ -202,8 +206,14 @@ export const TaskComposer = memo(function TaskComposer({
   const controlsDisabled = models.length === 0 || Boolean(modelLoadError);
   const mentionOpen = activeToken?.trigger === "@";
   const slashOpen = activeToken?.trigger === "/";
-  const inlineContextFiles = contextFiles.filter((file) => file.source === "search");
-  const attachmentContextFiles = contextFiles.filter((file) => file.source !== "search");
+  const inlineContextFiles = useMemo(
+    () => contextFiles.filter((file) => file.source === "search"),
+    [contextFiles],
+  );
+  const attachmentContextFiles = useMemo(
+    () => contextFiles.filter((file) => file.source !== "search"),
+    [contextFiles],
+  );
   const dropTargetActive = dragActive || contextDropActive;
   const setComposerPanelRef = useCallback(
     (element: HTMLElement | null) => {
@@ -212,6 +222,53 @@ export const TaskComposer = memo(function TaskComposer({
     [onDropSurfaceElementChange],
   );
 
+  const cancelVisualPromptUpdate = useCallback(() => {
+    if (visualPromptFrameRef.current !== null) {
+      window.cancelAnimationFrame(visualPromptFrameRef.current);
+      visualPromptFrameRef.current = null;
+    }
+  }, []);
+
+  const publishVisualPrompt = useCallback(
+    (nextPrompt: string, immediate = false) => {
+      pendingVisualPromptRef.current = nextPrompt;
+      if (immediate) {
+        cancelVisualPromptUpdate();
+        setDraftPrompt(nextPrompt);
+        return;
+      }
+      if (visualPromptFrameRef.current !== null) return;
+
+      visualPromptFrameRef.current = window.requestAnimationFrame(() => {
+        visualPromptFrameRef.current = null;
+        const pendingPrompt = pendingVisualPromptRef.current;
+        startTransition(() => {
+          setDraftPrompt((current) => {
+            if (pendingVisualPromptRef.current !== pendingPrompt) return current;
+            return current === pendingPrompt ? current : pendingPrompt;
+          });
+        });
+      });
+    },
+    [cancelVisualPromptUpdate],
+  );
+
+  function updateDraftPrompt(
+    nextPrompt: string,
+    options: { immediate?: boolean; syncTextarea?: boolean } = {},
+  ) {
+    draftPromptRef.current = nextPrompt;
+    if (
+      options.syncTextarea &&
+      promptTextareaRef.current &&
+      promptTextareaRef.current.value !== nextPrompt
+    ) {
+      promptTextareaRef.current.value = nextPrompt;
+    }
+    publishVisualPrompt(nextPrompt, options.immediate);
+    onPromptChange(nextPrompt);
+  }
+
   useLayoutEffect(() => {
     if (externalPromptRevisionRef.current === promptRevision) {
       return;
@@ -219,11 +276,27 @@ export const TaskComposer = memo(function TaskComposer({
 
     externalPromptRevisionRef.current = promptRevision;
     compositionActiveRef.current = false;
+    cancelVisualPromptUpdate();
+    draftPromptRef.current = prompt;
+    pendingVisualPromptRef.current = prompt;
+    if (
+      promptTextareaRef.current &&
+      promptTextareaRef.current.value !== prompt
+    ) {
+      promptTextareaRef.current.value = prompt;
+    }
     setDraftPrompt(prompt);
     setActiveToken(null);
     setActivePopoverIndex(0);
     setSlashPanel("commands");
-  }, [prompt, promptRevision]);
+  }, [cancelVisualPromptUpdate, prompt, promptRevision]);
+
+  useEffect(
+    () => () => {
+      cancelVisualPromptUpdate();
+    },
+    [cancelVisualPromptUpdate],
+  );
 
   useEffect(() => {
     setActivePopoverIndex(0);
@@ -274,7 +347,7 @@ export const TaskComposer = memo(function TaskComposer({
     const token = readComposerToken(nextPrompt, caret);
 
     if (composerTokensEqual(activeToken, token)) {
-      return;
+      return false;
     }
 
     setActiveToken(token);
@@ -292,17 +365,30 @@ export const TaskComposer = memo(function TaskComposer({
     } else if (previousTrigger === "/") {
       onSlashCommandClose();
     }
+
+    return true;
   }
 
   function handlePromptChange(event: ChangeEvent<HTMLTextAreaElement>) {
+    const textarea = event.currentTarget;
+    const selectionStart = textarea.selectionStart;
+    const selectionEnd = textarea.selectionEnd;
     const nextPrompt = compositionActiveRef.current
-      ? event.currentTarget.value
-      : normalizePromptInput(event.currentTarget.value, event.nativeEvent);
-    setDraftPrompt(nextPrompt);
-    onPromptChange(nextPrompt);
-    if (!compositionActiveRef.current) {
-      updateSearchFromPrompt(nextPrompt, event.currentTarget.selectionStart);
+      ? textarea.value
+      : normalizePromptInput(textarea.value, event.nativeEvent);
+    if (textarea.value !== nextPrompt) {
+      textarea.value = nextPrompt;
+      textarea.setSelectionRange(selectionStart, selectionEnd);
     }
+    draftPromptRef.current = nextPrompt;
+    onPromptChange(nextPrompt);
+    const searchChanged = !compositionActiveRef.current
+      ? updateSearchFromPrompt(nextPrompt, textarea.selectionStart)
+      : false;
+    publishVisualPrompt(
+      nextPrompt,
+      inlineContextFiles.length > 0 || searchChanged,
+    );
   }
 
   function handlePromptCompositionStart() {
@@ -314,9 +400,19 @@ export const TaskComposer = memo(function TaskComposer({
   ) {
     compositionActiveRef.current = false;
     const nextPrompt = normalizePromptQuotes(event.currentTarget.value);
-    setDraftPrompt(nextPrompt);
+    if (event.currentTarget.value !== nextPrompt) {
+      const selectionStart = event.currentTarget.selectionStart;
+      const selectionEnd = event.currentTarget.selectionEnd;
+      event.currentTarget.value = nextPrompt;
+      event.currentTarget.setSelectionRange(selectionStart, selectionEnd);
+    }
+    draftPromptRef.current = nextPrompt;
     onPromptChange(nextPrompt);
-    updateSearchFromPrompt(nextPrompt, event.currentTarget.selectionStart);
+    const searchChanged = updateSearchFromPrompt(
+      nextPrompt,
+      event.currentTarget.selectionStart,
+    );
+    publishVisualPrompt(nextPrompt, inlineContextFiles.length > 0 || searchChanged);
   }
 
   function handlePromptKeyDown(event: KeyboardEvent<HTMLTextAreaElement>) {
@@ -353,7 +449,7 @@ export const TaskComposer = memo(function TaskComposer({
 
     if (event.key === "Backspace" || event.key === "Delete") {
       const inlineDeletion = getInlineFileDeletion(
-        draftPrompt,
+        draftPromptRef.current,
         inlineContextFiles,
         event.currentTarget.selectionStart,
         event.currentTarget.selectionEnd,
@@ -363,8 +459,10 @@ export const TaskComposer = memo(function TaskComposer({
       if (inlineDeletion) {
         event.preventDefault();
         closeActiveSearch();
-        setDraftPrompt(inlineDeletion.value);
-        onPromptChange(inlineDeletion.value);
+        updateDraftPrompt(inlineDeletion.value, {
+          immediate: true,
+          syncTextarea: true,
+        });
         inlineDeletion.files.forEach((file) => onRemoveFile(file.path));
         window.requestAnimationFrame(() => {
           promptTextareaRef.current?.focus();
@@ -385,7 +483,7 @@ export const TaskComposer = memo(function TaskComposer({
       event.preventDefault();
       closeActiveSearch();
       if (!disabled && !runActive) {
-        onRun(draftPrompt);
+        onRun(draftPromptRef.current);
       }
     }
   }
@@ -433,12 +531,14 @@ export const TaskComposer = memo(function TaskComposer({
     }
 
     const nextPrompt = replaceComposerToken(
-      draftPrompt,
+      draftPromptRef.current,
       activeToken,
       inlineFilePromptToken(file),
     );
-    setDraftPrompt(nextPrompt.value);
-    onPromptChange(nextPrompt.value);
+    updateDraftPrompt(nextPrompt.value, {
+      immediate: true,
+      syncTextarea: true,
+    });
     onMentionFileSelect(file);
     setActiveToken(null);
     setActivePopoverIndex(0);
@@ -458,9 +558,10 @@ export const TaskComposer = memo(function TaskComposer({
       return;
     }
 
-    const selectedPrompt = draftPrompt.slice(selectionStart, selectionEnd);
+    const currentPrompt = textarea.value;
+    const selectedPrompt = currentPrompt.slice(selectionStart, selectionEnd);
     const selectedFiles = getInlineFilesFullyInsideRange(
-      draftPrompt,
+      currentPrompt,
       inlineContextFiles,
       selectionStart,
       selectionEnd,
@@ -490,11 +591,14 @@ export const TaskComposer = memo(function TaskComposer({
     const pastedPrompt = normalizePromptQuotes(
       restorePromptInlineFileReferencesForComposer(payload.prompt, payload.files),
     );
-    const nextPrompt = `${draftPrompt.slice(0, selectionStart)}${pastedPrompt}${draftPrompt.slice(selectionEnd)}`;
+    const currentPrompt = textarea.value;
+    const nextPrompt = `${currentPrompt.slice(0, selectionStart)}${pastedPrompt}${currentPrompt.slice(selectionEnd)}`;
     const nextCaret = selectionStart + pastedPrompt.length;
 
-    setDraftPrompt(nextPrompt);
-    onPromptChange(nextPrompt);
+    updateDraftPrompt(nextPrompt, {
+      immediate: true,
+      syncTextarea: true,
+    });
     for (const file of payload.files) {
       onMentionFileSelect(file);
     }
@@ -517,9 +621,11 @@ export const TaskComposer = memo(function TaskComposer({
       return;
     }
 
-    const nextPrompt = removeComposerToken(draftPrompt, activeToken);
-    setDraftPrompt(nextPrompt.value);
-    onPromptChange(nextPrompt.value);
+    const nextPrompt = removeComposerToken(draftPromptRef.current, activeToken);
+    updateDraftPrompt(nextPrompt.value, {
+      immediate: true,
+      syncTextarea: true,
+    });
     onSlashCommandSelect(item);
     setActiveToken(null);
     setActivePopoverIndex(0);
@@ -537,9 +643,11 @@ export const TaskComposer = memo(function TaskComposer({
       return;
     }
 
-    const nextPrompt = removeComposerToken(draftPrompt, activeToken);
-    setDraftPrompt(nextPrompt.value);
-    onPromptChange(nextPrompt.value);
+    const nextPrompt = removeComposerToken(draftPromptRef.current, activeToken);
+    updateDraftPrompt(nextPrompt.value, {
+      immediate: true,
+      syncTextarea: true,
+    });
     onReasoningEffortChange(effort);
     setActiveToken(null);
     setActivePopoverIndex(0);
@@ -645,7 +753,7 @@ export const TaskComposer = memo(function TaskComposer({
             <textarea
               ref={promptTextareaRef}
               aria-label="Prompt"
-              value={draftPrompt}
+              defaultValue={prompt}
               onChange={handlePromptChange}
               onCompositionStart={handlePromptCompositionStart}
               onCompositionEnd={handlePromptCompositionEnd}
@@ -744,7 +852,7 @@ export const TaskComposer = memo(function TaskComposer({
                 if (runActive) {
                   onStop();
                 } else {
-                  onRun(draftPrompt);
+                  onRun(draftPromptRef.current);
                 }
               }}
               disabled={runActive ? false : disabled || !draftPrompt.trim()}
@@ -966,7 +1074,7 @@ const ComposerOptionsRow = memo(function ComposerOptionsRow({
   );
 });
 
-function ContextFileList({
+const ContextFileList = memo(function ContextFileList({
   files,
   onRemoveFile,
 }: {
@@ -1017,9 +1125,9 @@ function ContextFileList({
       )}
     </div>
   );
-}
+});
 
-function PromptInlineHighlight({
+const PromptInlineHighlight = memo(function PromptInlineHighlight({
   prompt,
   files,
 }: {
@@ -1042,7 +1150,7 @@ function PromptInlineHighlight({
       )}
     </div>
   );
-}
+});
 
 function MentionSearchContent({
   query,

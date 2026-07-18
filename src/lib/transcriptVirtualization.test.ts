@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it } from "vitest";
 import { emptyRunView } from "./codexEventReducer";
 import {
   calculateTranscriptDefaultItemHeight,
+  calculateTranscriptOverscanItemCount,
   cacheTranscriptRowHeight,
   clearTranscriptMeasurementCache,
   estimateTranscriptRowHeight,
@@ -98,6 +99,13 @@ describe("transcript virtualization geometry", () => {
     expect(calculateTranscriptDefaultItemHeight(entries, 480)).toBeGreaterThan(
       defaultHeight,
     );
+  });
+
+  it("keeps short rows buffered while bounding rich DOM for very tall rows", () => {
+    expect(calculateTranscriptOverscanItemCount([180, 190, 200], 3_200, 8)).toBe(8);
+    expect(
+      calculateTranscriptOverscanItemCount([2_400, 2_800, 3_200], 3_200, 8),
+    ).toBe(2);
   });
 
   it("evicts old measurements after the 4,000-entry LRU limit", () => {

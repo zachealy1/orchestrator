@@ -3518,6 +3518,21 @@ select:disabled {
   resize: none;
 }
 
+@supports (field-sizing: content) {
+  .prompt-field {
+    display: block;
+  }
+
+  .prompt-autosize-mirror {
+    display: none;
+  }
+
+  .prompt-field textarea {
+    field-sizing: content;
+    height: auto;
+  }
+}
+
 .prompt-field.has-inline-context textarea {
   color: transparent;
   caret-color: var(--color-text);

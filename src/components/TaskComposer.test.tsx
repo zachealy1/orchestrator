@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, within } from "@testing-library/react";
+import { act, fireEvent, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 import { TaskComposer } from "./TaskComposer";
@@ -681,6 +681,48 @@ describe("TaskComposer", () => {
     expect(promptInput).toHaveFocus();
   });
 
+  it("does not let pending visual work overwrite an external prompt revision", () => {
+    let pendingVisualFrame: FrameRequestCallback | null = null;
+    const requestAnimationFrameSpy = vi
+      .spyOn(window, "requestAnimationFrame")
+      .mockImplementation((callback) => {
+        pendingVisualFrame = callback;
+        return 41;
+      });
+    const cancelAnimationFrameSpy = vi
+      .spyOn(window, "cancelAnimationFrame")
+      .mockImplementation(() => undefined);
+    const { props, rerender } = renderComposer({
+      prompt: "Initial draft",
+      promptRevision: 0,
+    });
+    const promptInput = screen.getByLabelText("Prompt") as HTMLTextAreaElement;
+
+    fireEvent.change(promptInput, {
+      target: { value: "Pending local draft", selectionStart: 19 },
+    });
+    expect(requestAnimationFrameSpy).toHaveBeenCalledOnce();
+
+    rerender(
+      <TaskComposer
+        {...props}
+        prompt="Restored after setup failure"
+        promptRevision={1}
+      />,
+    );
+    act(() => {
+      pendingVisualFrame?.(performance.now());
+    });
+
+    expect(cancelAnimationFrameSpy).toHaveBeenCalledWith(41);
+    expect(promptInput).toHaveValue("Restored after setup failure");
+    expect(document.querySelector(".prompt-autosize-mirror")?.textContent).toBe(
+      "Restored after setup failure\u200b",
+    );
+    requestAnimationFrameSpy.mockRestore();
+    cancelAnimationFrameSpy.mockRestore();
+  });
+
   it("keeps rapid long-form input ordered and submits the latest local value", async () => {
     const onRun = vi.fn();
     const { user } = renderComposer({ onRun });
@@ -694,8 +736,14 @@ describe("TaskComposer", () => {
     expect(onRun).toHaveBeenCalledWith(prompt);
   });
 
-  it("sizes multiline drafts through a declarative mirror without layout frames", () => {
-    const requestAnimationFrameSpy = vi.spyOn(window, "requestAnimationFrame");
+  it("coalesces multiline autosize presentation into one visual frame", () => {
+    let visualFrame: FrameRequestCallback | null = null;
+    const requestAnimationFrameSpy = vi
+      .spyOn(window, "requestAnimationFrame")
+      .mockImplementation((callback) => {
+        visualFrame = callback;
+        return 1;
+      });
     renderComposer();
     const promptInput = screen.getByLabelText("Prompt") as HTMLTextAreaElement;
     const prompt = "First line\nSecond line\nThird line";
@@ -704,10 +752,47 @@ describe("TaskComposer", () => {
       target: { value: prompt, selectionStart: prompt.length },
     });
 
+    expect(promptInput).toHaveValue(prompt);
+    expect(requestAnimationFrameSpy).toHaveBeenCalledOnce();
+    expect(document.querySelector(".prompt-autosize-mirror")?.textContent).toBe(
+      "\u200b",
+    );
+    act(() => {
+      visualFrame?.(performance.now());
+    });
     expect(document.querySelector(".prompt-autosize-mirror")?.textContent).toBe(
       `${prompt}\u200b`,
     );
-    expect(requestAnimationFrameSpy).not.toHaveBeenCalled();
+    requestAnimationFrameSpy.mockRestore();
+  });
+
+  it("keeps the native draft current while coalescing rapid visual work", () => {
+    let visualFrame: FrameRequestCallback | null = null;
+    const requestAnimationFrameSpy = vi
+      .spyOn(window, "requestAnimationFrame")
+      .mockImplementation((callback) => {
+        visualFrame = callback;
+        return 1;
+      });
+    const onPromptChange = vi.fn();
+    renderComposer({ onPromptChange });
+    const promptInput = screen.getByLabelText("Prompt") as HTMLTextAreaElement;
+
+    for (const value of ["r", "re", "res", "resp", "respo", "responsive"]) {
+      fireEvent.change(promptInput, {
+        target: { value, selectionStart: value.length },
+      });
+    }
+
+    expect(promptInput).toHaveValue("responsive");
+    expect(onPromptChange).toHaveBeenLastCalledWith("responsive");
+    expect(requestAnimationFrameSpy).toHaveBeenCalledOnce();
+    act(() => {
+      visualFrame?.(performance.now());
+    });
+    expect(document.querySelector(".prompt-autosize-mirror")?.textContent).toBe(
+      "responsive\u200b",
+    );
     requestAnimationFrameSpy.mockRestore();
   });
 
@@ -758,7 +843,7 @@ describe("TaskComposer", () => {
     expect(promptInput.selectionEnd).toBe(13);
   });
 
-  it("accepts a large paste-sized change without scheduling layout measurement", () => {
+  it("accepts a large paste-sized change with one bounded visual update", () => {
     const requestAnimationFrameSpy = vi.spyOn(window, "requestAnimationFrame");
     renderComposer();
     const promptInput = screen.getByLabelText("Prompt") as HTMLTextAreaElement;
@@ -776,7 +861,7 @@ describe("TaskComposer", () => {
       (document.querySelector(".prompt-autosize-mirror")?.textContent ?? "")
         .length,
     ).toBeLessThan(100);
-    expect(requestAnimationFrameSpy).not.toHaveBeenCalled();
+    expect(requestAnimationFrameSpy).toHaveBeenCalledOnce();
     requestAnimationFrameSpy.mockRestore();
   });
 

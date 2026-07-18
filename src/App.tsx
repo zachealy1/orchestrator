@@ -31,6 +31,7 @@ import {
 } from "lucide-react";
 import {
   memo,
+  startTransition,
   useCallback,
   useEffect,
   useMemo,
@@ -262,6 +263,8 @@ const DIFF_DRAWER_PREFERRED_WIDTH = 860;
 const DIFF_SIDE_BY_SIDE_MIN_WIDTH = 760;
 const DEFAULT_CONTEXT_WINDOW = 258_400;
 const GIT_STATUS_AUTO_REFRESH_INTERVAL_MS = 3000;
+const BACKGROUND_REFRESH_RETRY_MS = 500;
+const BACKGROUND_INTERACTION_GRACE_MS = 700;
 const HISTORY_CHAT_PAGE_SIZE = 20;
 const HISTORY_CHAT_CACHE_LIMIT = 5;
 const HISTORY_CHAT_CACHE_SOURCE_CHARACTER_BUDGET = 2_000_000;
@@ -321,6 +324,23 @@ function replaceWorkspaceChatEntries(
     ...current.filter((entry) => entry.workspaceId !== workspaceId),
     ...entries,
   ];
+}
+
+function workspaceTreeEntriesEqual(
+  left: WorkspaceTreeEntry[] | undefined,
+  right: WorkspaceTreeEntry[],
+) {
+  if (!left || left.length !== right.length) return false;
+  return left.every((entry, index) => {
+    const candidate = right[index];
+    return (
+      candidate !== undefined &&
+      entry.name === candidate.name &&
+      entry.path === candidate.path &&
+      entry.relativePath === candidate.relativePath &&
+      entry.kind === candidate.kind
+    );
+  });
 }
 
 function mergeCommandActivities(
@@ -648,6 +668,7 @@ type WorkspaceGitSummary = {
 
 type RefreshWorkspaceGitStatusOptions = {
   showLoading?: boolean;
+  background?: boolean;
 };
 
 type OpenWorkspaceFilePreviewOptions = {
@@ -1043,6 +1064,8 @@ function App() {
   const historyChatLoadIdRef = useRef(0);
   const taskChatEntriesRef = useRef<TaskChatEntry[]>([]);
   const transcriptScrollActiveRef = useRef(false);
+  const previewResizingRef = useRef(false);
+  const lastForegroundInteractionAtRef = useRef(0);
   const stableHistoryChatCacheRef = useRef(
     new Map<number, StableHistoryChatCacheEntry>(),
   );
@@ -1086,6 +1109,7 @@ function App() {
     [],
   );
   taskChatEntriesRef.current = taskChatEntries;
+  previewResizingRef.current = previewResizing;
   const workspaceChatSessionsRef = useRef<
     Record<number, WorkspaceChatSession | undefined>
   >({});
@@ -1561,6 +1585,7 @@ function App() {
     openChatHistoryContextMenu,
   );
   const changeComposerPrompt = useStableEvent((nextPrompt: string) => {
+    lastForegroundInteractionAtRef.current = Date.now();
     promptRef.current = nextPrompt;
     preflightRef.current = null;
     if (contextFiles.some((file) => file.source === "search")) {
@@ -2054,6 +2079,27 @@ function App() {
   }, [workspaces]);
 
   useEffect(() => {
+    const markForegroundInteraction = () => {
+      lastForegroundInteractionAtRef.current = Date.now();
+    };
+
+    window.addEventListener("pointerdown", markForegroundInteraction, true);
+    window.addEventListener("wheel", markForegroundInteraction, {
+      capture: true,
+      passive: true,
+    });
+    window.addEventListener("touchstart", markForegroundInteraction, {
+      capture: true,
+      passive: true,
+    });
+    return () => {
+      window.removeEventListener("pointerdown", markForegroundInteraction, true);
+      window.removeEventListener("wheel", markForegroundInteraction, true);
+      window.removeEventListener("touchstart", markForegroundInteraction, true);
+    };
+  }, []);
+
+  useEffect(() => {
     if (workspaces.length === 0) {
       return;
     }
@@ -2061,27 +2107,45 @@ function App() {
     let cancelled = false;
     let timeoutId: number | null = null;
 
-    const scheduleRefresh = () => {
+    const shouldDeferRefresh = () =>
+      document.visibilityState === "hidden" ||
+      transcriptScrollActiveRef.current ||
+      previewResizingRef.current ||
+      historyDrawerPhaseRef.current === "opening" ||
+      historyDrawerPhaseRef.current === "closing" ||
+      Date.now() - lastForegroundInteractionAtRef.current <
+        BACKGROUND_INTERACTION_GRACE_MS;
+
+    const scheduleRefresh = (delay = GIT_STATUS_AUTO_REFRESH_INTERVAL_MS) => {
       if (cancelled) {
         return;
       }
 
-      timeoutId = window.setTimeout(() => {
-        Promise.all(
-          workspaces.map((workspace) =>
-            refreshWorkspaceGitStatus(workspace, { showLoading: false }).catch(
-              () => undefined,
-            ),
-          ),
-        )
-          .catch(() => undefined)
-          .finally(() => {
-            workspaces.forEach((workspace) => {
-              refreshVisibleWorkspaceDirectories(workspace);
-            });
-            scheduleRefresh();
-          });
-      }, GIT_STATUS_AUTO_REFRESH_INTERVAL_MS);
+      timeoutId = window.setTimeout(async () => {
+        timeoutId = null;
+        if (shouldDeferRefresh()) {
+          scheduleRefresh(BACKGROUND_REFRESH_RETRY_MS);
+          return;
+        }
+
+        const selectedWorkspaceId = selectedWorkspaceRef.current?.id ?? null;
+        const orderedWorkspaces = [...workspaces].sort(
+          (left, right) =>
+            Number(right.id === selectedWorkspaceId) -
+            Number(left.id === selectedWorkspaceId),
+        );
+
+        for (const workspace of orderedWorkspaces) {
+          if (cancelled || shouldDeferRefresh()) break;
+          await refreshWorkspaceGitStatus(workspace, {
+            showLoading: false,
+            background: true,
+          }).catch(() => undefined);
+          if (cancelled || shouldDeferRefresh()) break;
+          await refreshVisibleWorkspaceDirectories(workspace);
+        }
+        scheduleRefresh();
+      }, delay);
     };
 
     scheduleRefresh();
@@ -2718,39 +2782,48 @@ function App() {
 
     const refresh = listWorkspaceGitStatus(workspace.path)
       .then((snapshot) => {
-        setGitStatusStates((current) => {
-          const previous = current[workspace.id];
-          if (
-            previous?.status === "loaded" &&
-            previous.error === null &&
-            gitStatusSnapshotKey(previous.snapshot) === gitStatusSnapshotKey(snapshot)
-          ) {
-            return current;
-          }
+        const update = () => {
+          setGitStatusStates((current) => {
+            const previous = current[workspace.id];
+            if (
+              previous?.status === "loaded" &&
+              previous.error === null &&
+              gitStatusSnapshotKey(previous.snapshot) ===
+                gitStatusSnapshotKey(snapshot)
+            ) {
+              return current;
+            }
 
-          return {
-            ...current,
-            [workspace.id]: { status: "loaded", snapshot, error: null },
-          };
-        });
+            return {
+              ...current,
+              [workspace.id]: { status: "loaded", snapshot, error: null },
+            };
+          });
+        };
+        if (options.background) startTransition(update);
+        else update();
       })
       .catch((error) => {
         const errorMessage = error instanceof Error ? error.message : String(error);
-        setGitStatusStates((current) => {
-          const previous = current[workspace.id];
-          if (previous?.status === "error" && previous.error === errorMessage) {
-            return current;
-          }
+        const update = () => {
+          setGitStatusStates((current) => {
+            const previous = current[workspace.id];
+            if (previous?.status === "error" && previous.error === errorMessage) {
+              return current;
+            }
 
-          return {
-            ...current,
-            [workspace.id]: {
-              status: "error",
-              snapshot: previous?.snapshot ?? null,
-              error: errorMessage,
-            },
-          };
-        });
+            return {
+              ...current,
+              [workspace.id]: {
+                status: "error",
+                snapshot: previous?.snapshot ?? null,
+                error: errorMessage,
+              },
+            };
+          });
+        };
+        if (options.background) startTransition(update);
+        else update();
       })
       .finally(() => {
         gitStatusRefreshCache.current.delete(workspace.id);
@@ -6941,7 +7014,50 @@ function App() {
     }
   }
 
-  function refreshVisibleWorkspaceDirectories(workspace: Workspace) {
+  async function refreshWorkspaceDirectoryInBackground(
+    workspace: Workspace,
+    directoryPath: string,
+  ) {
+    const cacheKey = workspaceCacheKey(workspace.path, directoryPath);
+    const existingRequest = directoryRequestCache.current.get(cacheKey);
+    const request =
+      existingRequest ??
+      listWorkspaceDirectory(workspace.path, directoryPath).finally(() => {
+        directoryRequestCache.current.delete(cacheKey);
+      });
+    if (!existingRequest) {
+      directoryRequestCache.current.set(cacheKey, request);
+    }
+
+    try {
+      const entries = await request;
+      const cachedEntries = directoryEntriesCache.current.get(cacheKey);
+      if (workspaceTreeEntriesEqual(cachedEntries, entries)) return;
+
+      directoryEntriesCache.current.set(cacheKey, entries);
+      startTransition(() => {
+        setDirectoryStates((current) => {
+          const existing = current[directoryPath];
+          if (
+            existing?.status === "loaded" &&
+            existing.error === null &&
+            workspaceTreeEntriesEqual(existing.entries, entries)
+          ) {
+            return current;
+          }
+          return {
+            ...current,
+            [directoryPath]: { status: "loaded", entries, error: null },
+          };
+        });
+      });
+    } catch {
+      // Background polling is intentionally quiet. Explicit expansion still
+      // exposes directory errors through loadWorkspaceDirectory().
+    }
+  }
+
+  async function refreshVisibleWorkspaceDirectories(workspace: Workspace) {
     if (!expandedWorkspaceIds.has(workspace.id)) {
       return;
     }
@@ -6958,9 +7074,9 @@ function App() {
       }
     });
 
-    visibleDirectoryPaths.forEach((directoryPath) => {
-      void loadWorkspaceDirectory(workspace, directoryPath, true);
-    });
+    for (const directoryPath of visibleDirectoryPaths) {
+      await refreshWorkspaceDirectoryInBackground(workspace, directoryPath);
+    }
   }
 
   async function openWorkspaceFilePreview(
