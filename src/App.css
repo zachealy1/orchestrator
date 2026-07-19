@@ -2077,6 +2077,12 @@ button.account-switcher-item:hover:not(:disabled) {
   margin-bottom: var(--chat-scrollbar-corner-inset);
 }
 
+.task-chat-transcript-top-spacer {
+  height: 16px;
+  min-height: 16px;
+  pointer-events: none;
+}
+
 .task-chat-virtuoso-row {
   display: grid;
   width: 100%;

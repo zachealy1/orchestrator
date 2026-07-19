@@ -95,4 +95,12 @@ describe("history drawer animation CSS", () => {
       rule(".task-chat-transcript.virtuoso-transcript::-webkit-scrollbar-track"),
     ).toContain("margin-block: var(--chat-scrollbar-corner-inset)");
   });
+
+  it("keeps the first transcript message clear of the workspace header", () => {
+    const spacer = rule(".task-chat-transcript-top-spacer");
+
+    expect(spacer).toContain("height: 16px");
+    expect(spacer).toContain("min-height: 16px");
+    expect(spacer).toContain("pointer-events: none");
+  });
 });

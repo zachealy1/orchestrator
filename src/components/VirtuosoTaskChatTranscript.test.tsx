@@ -288,7 +288,12 @@ describe("VirtuosoTaskChatTranscript", () => {
 
     expect(screen.getByText("Prompt 2")).toBeInTheDocument();
     expect(virtuosoMock.lastProps.scrollSeekConfiguration).toBeUndefined();
-    expect(virtuosoMock.lastProps.components).toBeUndefined();
+    expect(
+      virtuosoMock.lastProps.components?.ScrollSeekPlaceholder,
+    ).toBeUndefined();
+    expect(virtuosoMock.lastProps.components?.Header).toEqual(
+      expect.any(Function),
+    );
   });
 
   it("preserves expanded plan state when a virtualized row unmounts", () => {

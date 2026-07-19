@@ -46,6 +46,14 @@ const transcriptIncreaseViewportBy = {
   bottom: TRANSCRIPT_RENDER_AHEAD_PX,
 } as const;
 
+function TranscriptTopSpacer() {
+  return <div className="task-chat-transcript-top-spacer" aria-hidden="true" />;
+}
+
+const transcriptComponents = {
+  Header: TranscriptTopSpacer,
+};
+
 type StableDefaultItemHeight = {
   key: string;
   height: number;
@@ -1083,6 +1091,7 @@ export const VirtuosoTaskChatTranscript = memo(
           defaultItemHeight={defaultItemHeight}
           heightEstimates={heightEstimates}
           increaseViewportBy={transcriptIncreaseViewportBy}
+          components={transcriptComponents}
           minOverscanItemCount={{
             top: overscanItemCount,
             bottom: overscanItemCount,
