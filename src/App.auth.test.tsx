@@ -5918,6 +5918,21 @@ describe("App Codex auth", () => {
     expect(within(approval).getByText("Plan Mode")).toBeInTheDocument();
     expect(within(approval).getByText(/src\/App\.tsx/)).toBeInTheDocument();
     expect(within(approval).getByText(/src\/App\.css/)).toBeInTheDocument();
+    expect(
+      within(approval).queryByText(
+        "Codex is blocked until you choose one of the native options.",
+      ),
+    ).not.toBeInTheDocument();
+    for (const label of [
+      "Approve once",
+      "Approve files for session",
+      "Reject changes",
+      "Cancel operation",
+    ]) {
+      const action = within(approval).getByRole("button", { name: label });
+      expect(action).toHaveAttribute("title", label);
+      expect(action.querySelector("svg")).toBeInTheDocument();
+    }
   });
 
   it("keeps Goal Mode on the same native approval path", async () => {

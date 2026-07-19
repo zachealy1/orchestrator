@@ -4498,9 +4498,10 @@ pre {
 }
 
 .approval-actions {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
+  display: flex;
+  flex-wrap: wrap;
   gap: 8px;
+  justify-content: flex-end;
 }
 
 .native-approval:focus-visible {
@@ -4567,29 +4568,39 @@ pre {
 }
 
 .approval-choice {
-  display: grid;
-  gap: 3px;
-  min-width: 0;
-  border: 1px solid var(--line);
-  border-radius: 8px;
-  background: var(--color-component-background);
-  color: var(--color-text);
-  padding: 9px 10px;
-  text-align: left;
+  display: inline-grid;
+  width: 36px;
+  min-width: 36px;
+  height: 36px;
+  min-height: 36px;
+  place-items: center;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  box-shadow: none;
+  color: var(--color-primary);
+  padding: 0;
+  transform: none;
+  transition:
+    background-color 140ms ease,
+    color 140ms ease;
 }
 
-.approval-choice:hover:not(:disabled) {
-  border-color: var(--color-pastel-blue);
-  background: var(--color-button-active);
+.approval-choice:hover:not(:disabled),
+.approval-choice:focus-visible {
+  background: var(--panel-strong);
+  box-shadow: none;
+  outline: none;
+  transform: none;
 }
 
 .approval-choice-danger {
-  border-color: rgb(var(--error-rgb) / 0.35);
+  color: var(--color-error);
 }
 
-.approval-choice small {
-  color: var(--muted);
-  line-height: 1.3;
+.approval-choice:active:not(:disabled) {
+  background: var(--panel-strong);
+  transform: none;
 }
 
 .approval-error {

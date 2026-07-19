@@ -6,6 +6,7 @@ import {
 } from "@tanstack/react-virtual";
 import {
   Activity,
+  Ban,
   BrainCircuit,
   Check,
   ChevronDown,
@@ -17,6 +18,7 @@ import {
   Pencil,
   RefreshCw,
   ShieldAlert,
+  ShieldCheck,
   Terminal,
   X,
 } from "lucide-react";
@@ -48,6 +50,7 @@ import type {
   StreamEvent,
 } from "../lib/codexEventReducer";
 import type {
+  ApprovalChoice,
   ApprovalResolutionHandler,
   CodexApprovalRequest,
 } from "../lib/codexApprovals";
@@ -2647,6 +2650,7 @@ const ApprovalCard = memo(function ApprovalCard({
     approvalRecord(request.params.additionalPermissions) ??
     approvalRecord(request.params.permissions);
   const resources = approvalResources(request, itemResources);
+  const statusLabel = approvalStatusLabel(request);
 
   useEffect(() => {
     if (request.status !== "pending") return;
@@ -2731,25 +2735,42 @@ const ApprovalCard = memo(function ApprovalCard({
               type="button"
               key={choice.id}
               disabled={disabled}
+              aria-label={choice.label}
               aria-describedby={descriptionId}
+              title={choice.label}
               onClick={() => onResolveRequest(request, choice)}
             >
-              <span>{choice.label}</span>
-              <small id={descriptionId}>
+              <ApprovalChoiceIcon choice={choice} />
+              <span className="sr-only" id={descriptionId}>
                 {choice.description}
                 {choice.broadScope ? " This is broader than one operation." : ""}
-              </small>
+              </span>
             </button>
           );
         })}
       </div>
 
-      <p className="approval-status" aria-live="polite">
-        {approvalStatusLabel(request)}
-      </p>
+      {statusLabel ? (
+        <p className="approval-status" aria-live="polite">
+          {statusLabel}
+        </p>
+      ) : null}
     </article>
   );
 });
+
+function ApprovalChoiceIcon({ choice }: { choice: ApprovalChoice }) {
+  if (choice.id === "cancel" || choice.id === "abort") {
+    return <X size={17} aria-hidden="true" />;
+  }
+  if (choice.tone === "danger") {
+    return <Ban size={17} aria-hidden="true" />;
+  }
+  if (choice.broadScope) {
+    return <ShieldCheck size={17} aria-hidden="true" />;
+  }
+  return <Check size={17} aria-hidden="true" />;
+}
 
 function approvalTitle(request: CodexApprovalRequest) {
   switch (request.kind) {
@@ -2791,7 +2812,7 @@ function approvalStatusLabel(request: CodexApprovalRequest) {
       return "This request is no longer connected to the native Codex operation.";
     default:
       return request.choices.length > 0
-        ? "Codex is blocked until you choose one of the native options."
+        ? null
         : "Codex remains blocked. Stop the turn to cancel this unsupported request safely.";
   }
 }
