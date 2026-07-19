@@ -4106,16 +4106,9 @@ function App() {
     await synchronizeExternalTranscript(chat, loadId, "initial");
   }
 
-  async function selectHistoryChat(
-    chat: ChatListItem,
-    options: { allowPendingPlanSwitch?: boolean } = {},
-  ) {
-    if (runIsActive || (planReviewAwaiting && !options.allowPendingPlanSwitch)) {
-      setStatusMessage(
-        planReviewAwaiting
-          ? "Approve, revise, or cancel the current plan before opening another chat."
-          : "Finish or stop the active run before opening history.",
-      );
+  async function selectHistoryChat(chat: ChatListItem) {
+    if (runIsActive) {
+      setStatusMessage("Finish or stop the active run before opening history.");
       return;
     }
 
@@ -6790,7 +6783,7 @@ function App() {
     }
 
     focusAgentNotificationTarget(target);
-    await selectHistoryChat(chat, { allowPendingPlanSwitch: true });
+    await selectHistoryChat(chat);
   }
 
   async function handleCodexNotification(

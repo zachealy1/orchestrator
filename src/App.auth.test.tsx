@@ -2319,6 +2319,64 @@ describe("App Codex auth", () => {
     expect(within(transcript).getByText("1,280 tokens")).toBeInTheDocument();
   });
 
+  it("opens another history chat while the current plan awaits review", async () => {
+    prepareSignedInRun();
+    const historicalChat = workspaceChatFixture({
+      id: 402,
+      title: "Previously completed chat",
+      codex_thread_id: "thread-history",
+    });
+    const historicalRun = workspaceRunFixture({
+      id: 302,
+      chat_id: historicalChat.id,
+      original_prompt: "Previously completed chat",
+      final_message: "Historical response loaded.",
+    });
+    mocks.listWorkspaceChatsMock.mockResolvedValue([historicalChat]);
+    mocks.getChatWithRunsMock.mockResolvedValue(
+      workspaceChatWithRunsFixture(historicalChat, [historicalRun]),
+    );
+
+    const { user } = await renderApp();
+    await startMockRun(user, "Prepare a plan before switching chats");
+    await emitCodexNotification({
+      method: "item/completed",
+      params: {
+        threadId: "thread-1",
+        turnId: "turn-1",
+        item: {
+          type: "agentMessage",
+          id: "pending-plan-message",
+          phase: "final_answer",
+          text: "<proposed_plan>\n# Pending plan\n\n- Review this later.\n</proposed_plan>",
+        },
+      },
+    });
+    await emitCodexNotification({
+      method: "turn/completed",
+      params: {
+        threadId: "thread-1",
+        turnId: "turn-1",
+        turn: { id: "turn-1", status: "completed", durationMs: 100 },
+      },
+    });
+    expect(await screen.findByLabelText("Codex plan")).toBeInTheDocument();
+
+    const banner = screen.getByRole("region", { name: "Selected folder" });
+    await user.click(
+      within(banner).getByRole("button", { name: /open chat history/i }),
+    );
+    const drawer = await screen.findByRole("complementary", {
+      name: "Workspace chat history",
+    });
+    await user.click(
+      within(drawer).getByRole("button", { name: /previously completed chat/i }),
+    );
+
+    await waitFor(() => expect(drawer).toHaveClass("closed"));
+    expect(await screen.findByText("Historical response loaded.")).toBeInTheDocument();
+  });
+
   it("opens and focuses a historical response from a pending native notification", async () => {
     const historicalChat = workspaceChatFixture({
       id: 412,
