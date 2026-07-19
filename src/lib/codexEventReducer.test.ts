@@ -186,6 +186,76 @@ describe("codexEventReducer", () => {
     });
   });
 
+  it("promotes a proposed-plan final answer into the native plan workflow", () => {
+    const markdown = [
+      "# Add greeting text",
+      "",
+      "## Key Changes",
+      "- Update `hello-world.txt`.",
+    ].join("\n");
+    let state: RunViewState = {
+      ...emptyRunView,
+      status: "running",
+      threadId: "thread-plan",
+      turnId: "turn-plan",
+    };
+
+    state = applyCodexMessage(state, {
+      method: "item/completed",
+      params: {
+        threadId: "thread-plan",
+        turnId: "turn-plan",
+        item: {
+          type: "agentMessage",
+          id: "plan-message",
+          phase: "final_answer",
+          text: `<proposed_plan>\n${markdown}\n</proposed_plan>`,
+        },
+      },
+    });
+
+    expect(state.finalMessage).toBe("");
+    expect(state.finalMessageItemId).toBe("plan-message");
+    expect(state.latestPlan).toBe(markdown);
+    expect(state.nativePlan).toMatchObject({
+      intent: "plan",
+      mode: "plan",
+      phase: "drafting",
+      planItemId: "plan-message",
+      previewText: markdown,
+      completedText: markdown,
+      completedTurnId: "turn-plan",
+      reviewState: "none",
+    });
+
+    state = applyCodexMessage(state, {
+      method: "turn/completed",
+      params: { turn: { id: "turn-plan", status: "completed" } },
+    });
+
+    expect(state.nativePlan.phase).toBe("awaiting-approval");
+    expect(state.nativePlan.reviewState).toBe("available");
+  });
+
+  it("leaves malformed proposed-plan text in the normal summary", () => {
+    const text = "Before\n<proposed_plan>\n# Plan\n</proposed_plan>";
+    const state = applyCodexMessage(emptyRunView, {
+      method: "item/completed",
+      params: {
+        item: {
+          type: "agentMessage",
+          id: "normal-message",
+          phase: "final_answer",
+          text,
+        },
+      },
+    });
+
+    expect(state.finalMessage).toBe(text);
+    expect(state.nativePlan.completedText).toBe("");
+    expect(state.nativePlan.reviewState).toBe("none");
+  });
+
   it("keeps streamed narration out of the summary when a final answer arrives", () => {
     let state = applyCodexMessage(emptyRunView, {
       method: "item/agentMessage/delta",

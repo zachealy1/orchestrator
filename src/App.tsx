@@ -160,6 +160,7 @@ import {
   type RunIntent,
   type UserInputResponse,
 } from "./lib/nativePlanMode";
+import { parseProposedPlanEnvelope } from "./lib/proposedPlan";
 import {
   formatCodexAuthMessage,
   formatCodexPlanType,
@@ -9353,15 +9354,22 @@ function createTaskChatEntriesFromExternalTranscriptSnapshot(
   snapshot: Pick<ExternalTranscriptSnapshot, "threadId" | "turns">,
 ): TaskChatEntry[] {
   return snapshot.turns.map((turn) => {
-    const status = normalizeExternalTurnStatus(turn.status, turn.finalMessage);
+    const normalizedPlan = normalizeHistoricalProposedPlan(turn.finalMessage);
+    const status = normalizeExternalTurnStatus(
+      turn.status,
+      normalizedPlan.finalMessage || normalizedPlan.planText,
+    );
     const startedAt = normalizeExternalTranscriptTimestamp(turn.startedAt)
       ?? chat.external_created_at
       ?? chat.created_at;
     const completedAt = normalizeExternalTranscriptTimestamp(turn.completedAt)
       ?? (status === "completed" ? chat.external_updated_at ?? chat.updated_at : null);
     const stableTurnKey = turn.turnId ?? `${turn.slotIndex}-${startedAt}`;
-    const finalMessageItemId = turn.finalMessage
+    const finalMessageItemId = normalizedPlan.finalMessage
       ? `external-final-${chat.id}-${stableTurnKey}`
+      : null;
+    const planItemId = normalizedPlan.promoted
+      ? `external-proposed-plan-${chat.id}-${stableTurnKey}`
       : null;
     return {
       clientId: `external-chat-${chat.id}-turn-${stableTurnKey}`,
@@ -9381,17 +9389,30 @@ function createTaskChatEntriesFromExternalTranscriptSnapshot(
         startedAt,
         completedAt,
         elapsedMs: turn.durationMs ?? 0,
-        finalMessage: turn.finalMessage,
+        finalMessage: normalizedPlan.finalMessage,
         finalMessageItemId,
         agentMessagesById:
           finalMessageItemId === null
             ? {}
             : {
                 [finalMessageItemId]: {
-                  text: turn.finalMessage,
+                  text: normalizedPlan.finalMessage,
                   phase: "final_answer" as const,
                 },
               },
+        latestPlan: normalizedPlan.planText,
+        nativePlan: normalizedPlan.promoted
+          ? {
+              ...emptyRunView.nativePlan,
+              intent: "plan" as const,
+              mode: "plan" as const,
+              phase: "completed" as const,
+              planItemId,
+              previewText: normalizedPlan.planText,
+              completedText: normalizedPlan.planText,
+              completedTurnId: turn.turnId,
+            }
+          : emptyRunView.nativePlan,
         error: turn.error,
         tokenUsage:
           turn.totalTokens === null
@@ -9472,8 +9493,24 @@ function buildPreviousChatContext(entries: TaskChatEntry[]) {
 
 function createTaskChatEntryFromHistoryRun(run: HistoryRunSummary): TaskChatEntry {
   const status = normalizeHistoryRunStatus(run);
-  const finalMessage = run.final_message ?? "";
+  const normalizedPlan = normalizeHistoricalProposedPlan(
+    run.final_message ?? "",
+    run.completed_plan_text,
+  );
+  const finalMessage = normalizedPlan.finalMessage;
   const finalMessageItemId = finalMessage ? `history-final-${run.id}` : null;
+  const runIntent =
+    normalizedPlan.promoted && (!run.run_intent || run.run_intent === "normal")
+      ? "plan"
+      : run.run_intent ?? "normal";
+  const hasReviewablePlan =
+    Boolean(normalizedPlan.planText) && runIntent !== "plan-implementation";
+  const savedPlanReviewState = run.plan_review_state ?? "none";
+  const planReviewState = hasReviewablePlan
+    ? savedPlanReviewState === "none"
+      ? "available"
+      : savedPlanReviewState
+    : "none";
 
   return {
     clientId: `history-run-${run.id}`,
@@ -9505,32 +9542,29 @@ function createTaskChatEntryFromHistoryRun(run: HistoryRunSummary): TaskChatEntr
               },
             },
       error: run.error,
-      latestPlan: run.completed_plan_text ?? "",
+      latestPlan: normalizedPlan.planText,
       nativePlan: {
         ...emptyRunView.nativePlan,
-        intent: run.run_intent ?? "normal",
-        mode: run.collaboration_mode ?? null,
+        intent: runIntent,
+        mode: normalizedPlan.promoted ? "plan" : run.collaboration_mode ?? null,
         phase:
-          run.completed_plan_text && run.run_intent !== "plan-implementation"
-            ? run.plan_review_state === "cancelled"
+          hasReviewablePlan
+            ? planReviewState === "cancelled"
               ? "cancelled"
-              : run.plan_review_state === "approved" ||
-                  run.plan_review_state === "superseded"
+              : planReviewState === "approved" ||
+                  planReviewState === "superseded"
                 ? "completed"
                 : "awaiting-approval"
-            : run.run_intent === "plan-implementation" && status === "completed"
+            : runIntent === "plan-implementation" && status === "completed"
               ? "completed"
               : "inactive",
-        planItemId: run.completed_plan_item_id,
-        previewText: run.completed_plan_text ?? "",
-        completedText: run.completed_plan_text ?? "",
+        planItemId:
+          run.completed_plan_item_id ??
+          (normalizedPlan.promoted ? `history-proposed-plan-${run.id}` : null),
+        previewText: normalizedPlan.planText,
+        completedText: normalizedPlan.planText,
         completedTurnId: run.codex_turn_id,
-        reviewState:
-          run.completed_plan_text && run.run_intent !== "plan-implementation"
-            ? run.plan_review_state === "none"
-              ? "available"
-              : run.plan_review_state
-            : "none",
+        reviewState: planReviewState,
       },
       tokenUsage:
         run.latest_total_tokens === null
@@ -9544,6 +9578,23 @@ function createTaskChatEntryFromHistoryRun(run: HistoryRunSummary): TaskChatEntr
               modelContextWindow: run.latest_model_context_window,
             },
     },
+  };
+}
+
+function normalizeHistoricalProposedPlan(
+  finalMessage: string,
+  completedPlanText: string | null = null,
+) {
+  const envelope = parseProposedPlanEnvelope(finalMessage);
+  const planText = completedPlanText ?? envelope?.markdown ?? "";
+  const envelopeRepresentsPlan = Boolean(
+    envelope && (!completedPlanText || completedPlanText === envelope.markdown),
+  );
+
+  return {
+    finalMessage: envelopeRepresentsPlan ? "" : finalMessage,
+    planText,
+    promoted: Boolean(envelope && !completedPlanText),
   };
 }
 

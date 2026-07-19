@@ -3064,6 +3064,68 @@ describe("App Codex auth", () => {
     );
   });
 
+  it("renders an external proposed-plan envelope as a read-only native Plan", async () => {
+    const markdown = "# External plan\n\n## Steps\n- Inspect the workspace.";
+    const externalChat = {
+      ...workspaceChatFixture({
+        id: 511,
+        title: "External proposed plan",
+        codex_thread_id: "external-plan-thread",
+        origin: "codex_external",
+        profile_key: "default",
+        external_thread_id: "external-plan-thread",
+        source_kind: "vscode",
+      }),
+      account_id: null,
+      account_label: null,
+      account_email: null,
+    };
+    mocks.listWorkspaceChatsMock.mockResolvedValue([externalChat]);
+    mocks.syncDefaultProfileThreadTranscriptMock.mockResolvedValue({
+      requestId: "transcript-sync-external-plan",
+      threadId: "external-plan-thread",
+      sourceVersion: externalChat.external_updated_at ?? externalChat.updated_at,
+      totalTurns: 1,
+      turns: [
+        {
+          slotIndex: 0,
+          turnId: "external-plan-turn",
+          prompt: "Create a plan",
+          finalMessage: `<proposed_plan>\n${markdown}\n</proposed_plan>`,
+          error: null,
+          status: "completed",
+          startedAt: "2026-07-07T10:00:00Z",
+          completedAt: "2026-07-07T10:01:00Z",
+          durationMs: 60_000,
+          totalTokens: 340,
+          modelContextWindow: 128_000,
+        },
+      ],
+    });
+
+    const { user } = await renderApp();
+    const banner = screen.getByRole("region", { name: "Selected folder" });
+    await user.click(
+      within(banner).getByRole("button", { name: /open chat history/i }),
+    );
+    const drawer = await screen.findByRole("complementary", {
+      name: "Workspace chat history",
+    });
+    await user.click(
+      within(drawer).getByRole("button", { name: /external proposed plan/i }),
+    );
+
+    const plan = await screen.findByLabelText("Codex plan");
+    expect(
+      within(plan).getByRole("heading", { name: "External plan" }),
+    ).toBeInTheDocument();
+    expect(within(plan).getByText("Completed plan")).toBeInTheDocument();
+    expect(
+      within(plan).queryByRole("button", { name: "Implement plan" }),
+    ).not.toBeInTheDocument();
+    expect(screen.queryByText(/<proposed_plan>/)).not.toBeInTheDocument();
+  });
+
   it("shows upgrade guidance instead of falling back to unbounded external history", async () => {
     const externalChat = {
       ...workspaceChatFixture({
@@ -3620,6 +3682,68 @@ describe("App Codex auth", () => {
     );
   });
 
+  it("promotes and persists a proposed-plan final answer as a native Plan", async () => {
+    prepareSignedInRun();
+    const markdown = [
+      "# Add greeting text",
+      "",
+      "## Key Changes",
+      "- Update `hello-world.txt`.",
+      "",
+      "```text",
+      "Hello hello hello",
+      "```",
+    ].join("\n");
+    const { user } = await renderApp();
+    await startMockRun(user, "Make a plan for the greeting");
+
+    await emitCodexNotification({
+      method: "item/completed",
+      params: {
+        threadId: "thread-1",
+        turnId: "turn-1",
+        item: {
+          type: "agentMessage",
+          id: "proposed-plan-message",
+          phase: "final_answer",
+          text: `<proposed_plan>\n${markdown}\n</proposed_plan>`,
+        },
+      },
+    });
+    await emitCodexNotification({
+      method: "turn/completed",
+      params: {
+        threadId: "thread-1",
+        turnId: "turn-1",
+        turn: { id: "turn-1", status: "completed", durationMs: 100 },
+      },
+    });
+
+    const plan = await screen.findByLabelText("Codex plan");
+    expect(
+      within(plan).getByRole("heading", { name: "Add greeting text" }),
+    ).toBeInTheDocument();
+    expect(within(plan).getByText("Hello hello hello")).toBeInTheDocument();
+    expect(
+      within(plan).getByRole("button", { name: "Implement plan" }),
+    ).toBeInTheDocument();
+    expect(screen.queryByText(/<proposed_plan>/)).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("Run summary")).not.toBeInTheDocument();
+    await waitFor(() =>
+      expect(mocks.updateRunMock).toHaveBeenCalledWith(
+        202,
+        expect.objectContaining({
+          finalMessage: "",
+          collaborationMode: "plan",
+          runIntent: "plan",
+          completedPlanItemId: "proposed-plan-message",
+          completedPlanText: markdown,
+          planReviewState: "available",
+        }),
+      ),
+    );
+  });
+
   it("fails closed when native Plan and Default presets are unavailable", async () => {
     prepareSignedInRun();
     mocks.codexRpcMock.mockImplementation(
@@ -3753,6 +3877,69 @@ describe("App Codex auth", () => {
     expect(
       screen.queryByRole("button", { name: "Implement plan" }),
     ).not.toBeInTheDocument();
+  });
+
+  it("reconstructs a legacy proposed-plan envelope as a native Plan", async () => {
+    prepareSignedInRun();
+    const markdown = [
+      "# Add `Hello hello hello` To `hello-world.txt`",
+      "",
+      "## Summary",
+      "Add the requested line without unrelated changes.",
+      "",
+      "## Test Plan",
+      "- Run `git status --short`.",
+    ].join("\n");
+    const chat = workspaceChatFixture({
+      id: 436,
+      title: "Make a plan for adding the greeting",
+    });
+    const run = {
+      ...workspaceRunFixture({
+        id: 336,
+        chat_id: chat.id,
+        original_prompt: "Make a plan for adding the greeting",
+        final_message: `<proposed_plan>\n${markdown}\n</proposed_plan>`,
+      }),
+      collaboration_mode: "default",
+      run_intent: "normal",
+      client_user_message_id: "legacy-proposed-plan-message",
+      completed_plan_item_id: null,
+      completed_plan_text: null,
+      plan_review_state: "none",
+    };
+    mocks.listWorkspaceChatsMock.mockResolvedValue([chat]);
+    mocks.getChatWithRunsMock.mockResolvedValue(
+      workspaceChatWithRunsFixture(chat, [run]),
+    );
+    mocks.listLocalChatTranscriptMock.mockResolvedValue([run]);
+
+    const { user } = await renderApp();
+    const banner = screen.getByRole("region", { name: "Selected folder" });
+    await user.click(
+      within(banner).getByRole("button", { name: /open chat history/i }),
+    );
+    const drawer = await screen.findByRole("complementary", {
+      name: "Workspace chat history",
+    });
+    await user.click(
+      within(drawer).getByRole("button", {
+        name: /make a plan for adding the greeting/i,
+      }),
+    );
+
+    const plan = await screen.findByLabelText("Codex plan");
+    expect(
+      within(plan).getByRole("heading", {
+        name: "Add Hello hello hello To hello-world.txt",
+      }),
+    ).toBeInTheDocument();
+    expect(within(plan).getByText("Summary")).toBeInTheDocument();
+    expect(
+      within(plan).getByRole("button", { name: "Implement plan" }),
+    ).toBeInTheDocument();
+    expect(screen.queryByText(/<proposed_plan>/)).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("Run summary")).not.toBeInTheDocument();
   });
 
   it("auto-refreshes git status when files change outside Orchestrator", async () => {

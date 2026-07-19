@@ -2312,7 +2312,9 @@ const NativePlanCard = memo(function NativePlanCard({
         ? "A revised plan follows"
         : plan.reviewState === "cancelled"
           ? "No implementation was started"
-          : "Drafting";
+          : plan.phase === "completed"
+            ? "Completed plan"
+            : "Drafting";
   return (
     <section
       className="native-plan-card"

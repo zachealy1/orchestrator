@@ -8,6 +8,7 @@ import {
   requestKey,
   type NativePlanState,
 } from "./nativePlanMode";
+import { parseProposedPlanEnvelope } from "./proposedPlan";
 
 export type TokenUsage = {
   totalTokens: number;
@@ -713,7 +714,7 @@ function completeAgentMessage(
   state: RunViewState,
   params: Record<string, unknown>,
   item: Record<string, unknown>,
-) {
+): RunViewState {
   const itemId = extractAgentMessageId(params, item, state);
   const current = state.agentMessagesById[itemId] ?? {
     text: "",
@@ -734,6 +735,31 @@ function completeAgentMessage(
 
   if (!text.trim() || phase === "commentary") {
     return nextState;
+  }
+
+  const proposedPlan = parseProposedPlanEnvelope(text);
+  if (proposedPlan) {
+    const completed = state.status === "completed";
+    return {
+      ...nextState,
+      finalMessage: "",
+      finalMessageItemId: itemId,
+      latestPlan: proposedPlan.markdown,
+      nativePlan: {
+        ...nextState.nativePlan,
+        intent:
+          nextState.nativePlan.intent === "plan-revision"
+            ? "plan-revision"
+            : "plan",
+        mode: "plan",
+        phase: completed ? "awaiting-approval" : "drafting",
+        planItemId: itemId,
+        previewText: proposedPlan.markdown,
+        completedText: proposedPlan.markdown,
+        completedTurnId: readString(params.turnId) ?? nextState.turnId,
+        reviewState: completed ? "available" : "none",
+      },
+    };
   }
 
   if (phase === "final_answer") {
