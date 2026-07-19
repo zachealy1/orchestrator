@@ -867,8 +867,27 @@ export const VirtuosoTaskChatTranscript = memo(
       scrollToLatest();
     }, [enableLiveFollow, scrollToLatest]);
 
+    // Virtuoso propagates geometry and data through separate internal streams.
+    // During transcript replacement, geometry can briefly arrive first.
+    const resolveItemEntry = useCallback(
+      (index: number, entry: TaskChatEntry | undefined) =>
+        entry ??
+        entries[index] ??
+        entries[index - firstItemIndex],
+      [entries, firstItemIndex],
+    );
+
+    const computeItemKey = useCallback(
+      (index: number, entry: TaskChatEntry | undefined) =>
+        resolveItemEntry(index, entry)?.clientId ??
+        `${transcriptIdentity}:pending:${index}`,
+      [resolveItemEntry, transcriptIdentity],
+    );
+
     const itemContent = useCallback(
-      (_index: number, entry: TaskChatEntry) => {
+      (index: number, providedEntry: TaskChatEntry | undefined) => {
+        const entry = resolveItemEntry(index, providedEntry);
+        if (!entry) return null;
         const editable =
           Boolean(onEditPrompt) &&
           entry.clientId === editablePromptEntryId &&
@@ -914,6 +933,7 @@ export const VirtuosoTaskChatTranscript = memo(
         onOpenFileLink,
         onResolveRequest,
         onRevisePlan,
+        resolveItemEntry,
         expandedPlanKeys,
       ],
     );
@@ -929,7 +949,7 @@ export const VirtuosoTaskChatTranscript = memo(
           data={entries}
           firstItemIndex={firstItemIndex}
           initialItemCount={Math.min(entries.length, 20)}
-          computeItemKey={(_index, entry) => entry.clientId}
+          computeItemKey={computeItemKey}
           defaultItemHeight={defaultItemHeight}
           heightEstimates={heightEstimates}
           increaseViewportBy={transcriptIncreaseViewportBy}

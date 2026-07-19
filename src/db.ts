@@ -260,8 +260,13 @@ export async function upsertExternalCodexChats(chats: ExternalCodexChatInput[]) 
 
   const db = await getDatabase();
   for (const chat of chats) {
-    const existing = await selectOne<{ id: number; deleted_at: string | null }>(
-      `SELECT id, deleted_at
+    const existing = await selectOne<{
+      id: number;
+      deleted_at: string | null;
+      external_created_at: string | null;
+      external_updated_at: string | null;
+    }>(
+      `SELECT id, deleted_at, external_created_at, external_updated_at
        FROM chats
        WHERE origin = 'codex_external'
          AND profile_key = $1
@@ -271,8 +276,10 @@ export async function upsertExternalCodexChats(chats: ExternalCodexChatInput[]) 
     );
 
     const title = chat.title.trim() || "Untitled Codex chat";
-    const createdAt = chat.createdAt ?? new Date().toISOString();
-    const updatedAt = chat.updatedAt ?? createdAt;
+    const createdAt =
+      chat.createdAt ?? existing?.external_created_at ?? new Date().toISOString();
+    const updatedAt =
+      chat.updatedAt ?? existing?.external_updated_at ?? createdAt;
     if (existing) {
       await db.execute(
         `UPDATE chats
@@ -300,11 +307,16 @@ export async function upsertExternalCodexChats(chats: ExternalCodexChatInput[]) 
           existing.id,
         ],
       );
-      await db.execute(
-        `DELETE FROM external_chat_history_indexes
-         WHERE chat_id = $1 AND source_version <> $2`,
-        [existing.id, updatedAt],
-      );
+      if (
+        chat.updatedAt !== null &&
+        chat.updatedAt !== existing.external_updated_at
+      ) {
+        await db.execute(
+          `DELETE FROM external_chat_history_indexes
+           WHERE chat_id = $1 AND source_version <> $2`,
+          [existing.id, updatedAt],
+        );
+      }
       continue;
     }
 
@@ -704,12 +716,18 @@ export async function listWorkspaceChats(workspaceId: number) {
         chats.updated_at
       )
         AS latest_activity_at,
-      COUNT(runs.id) AS turn_count,
+      CASE
+        WHEN chats.origin = 'codex_external'
+          THEN COALESCE(MAX(external_snapshot.turn_count), 0)
+        ELSE COUNT(runs.id)
+      END AS turn_count,
       COALESCE(SUM(latest_tokens.total_tokens), 0) AS total_tokens,
       COALESCE(SUM(runs.duration_ms), 0) AS duration_ms,
       latest_run.model AS latest_model
      FROM chats
      LEFT JOIN runs ON runs.chat_id = chats.id AND runs.deleted_at IS NULL
+     LEFT JOIN external_chat_transcript_snapshots external_snapshot
+       ON external_snapshot.chat_id = chats.id
      LEFT JOIN (
        SELECT run_id, MAX(id) AS max_id
        FROM token_usage_snapshots
@@ -750,12 +768,18 @@ export async function getChatWithRuns(chatId: number): Promise<ChatWithRuns> {
         chats.updated_at
       )
         AS latest_activity_at,
-      COUNT(runs.id) AS turn_count,
+      CASE
+        WHEN chats.origin = 'codex_external'
+          THEN COALESCE(MAX(external_snapshot.turn_count), 0)
+        ELSE COUNT(runs.id)
+      END AS turn_count,
       COALESCE(SUM(latest_tokens.total_tokens), 0) AS total_tokens,
       COALESCE(SUM(runs.duration_ms), 0) AS duration_ms,
       latest_run.model AS latest_model
      FROM chats
      LEFT JOIN runs ON runs.chat_id = chats.id AND runs.deleted_at IS NULL
+     LEFT JOIN external_chat_transcript_snapshots external_snapshot
+       ON external_snapshot.chat_id = chats.id
      LEFT JOIN (
        SELECT run_id, MAX(id) AS max_id
        FROM token_usage_snapshots

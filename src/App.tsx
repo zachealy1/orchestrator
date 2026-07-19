@@ -118,6 +118,7 @@ import { ComposerSelect } from "./components/ComposerSelect";
 import { FilePreviewDrawer } from "./components/FilePreviewDrawer";
 import type { TaskChatEntry } from "./components/TaskChatTranscript";
 import { VirtuosoTaskChatTranscript } from "./components/VirtuosoTaskChatTranscript";
+import { TaskTranscriptErrorBoundary } from "./components/TaskTranscriptErrorBoundary";
 import { TaskComposer } from "./components/TaskComposer";
 import {
   addApprovalRequest,
@@ -3501,7 +3502,7 @@ function App() {
       entries,
     );
     taskChatEntriesRef.current = allEntries;
-    flushSync(() => {
+    startTransition(() => {
       setTaskChatEntries(allEntries);
       setHistoricalTranscript(publishedTranscript);
       setHistoryChatLoadState(null);
@@ -8538,50 +8539,63 @@ function App() {
                 onDrop={handleTaskContextDrop}
               >
                 {visibleTaskChatEntries.length > 0 ? (
-                  <VirtuosoTaskChatTranscript
-                    key={
+                  <TaskTranscriptErrorBoundary
+                    resetKey={
                       selectedHistoricalTranscript
                         ? `history:${selectedHistoricalTranscript.chatId}:${selectedHistoricalTranscript.sourceVersion}`
                         : `live:${selectedWorkspace?.id ?? "none"}`
                     }
-                    entries={visibleTaskChatEntries}
-                    transcriptIdentity={
-                      selectedWorkspaceChatSession?.chatId
-                        ? `chat:${selectedWorkspaceChatSession.chatId}`
-                        : `workspace:${selectedWorkspace?.id ?? "none"}:live`
-                    }
-                    transcriptVersion={
-                      selectedHistoricalTranscript?.sourceVersion ?? "live"
-                    }
-                    viewportWidth={taskViewportWidth}
-                    viewportStable={taskViewportStable}
-                    firstItemIndex={
-                      selectedHistoricalTranscript?.firstItemIndex ??
-                      HISTORY_VIRTUOSO_BASE_INDEX
-                    }
-                    openAtLatestRequest={
-                      selectedHistoricalTranscript?.openAtLatestRequest ?? null
-                    }
-                    onOpenAtLatestApplied={
-                      clearHistoricalLatestPositionRequest
-                    }
-                    onOpenAtLatestCancelled={
-                      clearHistoricalLatestPositionRequest
-                    }
-                    liveFollow={runIsActive}
-                    onResolveRequest={resolveTranscriptRequest}
-                    onAnswerUserInput={answerTranscriptUserInput}
-                    onImplementPlan={implementTranscriptPlan}
-                    onRevisePlan={reviseTranscriptPlan}
-                    onCancelPlan={cancelTranscriptPlan}
-                    onOpenFileLink={openTranscriptFileLink}
-                    editablePromptEntryId={editablePromptEntryId}
-                    onEditPrompt={editTranscriptPrompt}
-                    onScrollActivityChange={
-                      handleTranscriptScrollActivityChange
-                    }
-                    onLoadHistoricalActivity={loadTranscriptHistoricalActivity}
-                  />
+                    onError={(error) => {
+                      setStatusMessage(
+                        `Could not display chat: ${error.message}`,
+                      );
+                    }}
+                  >
+                    <VirtuosoTaskChatTranscript
+                      key={
+                        selectedHistoricalTranscript
+                          ? `history:${selectedHistoricalTranscript.chatId}:${selectedHistoricalTranscript.sourceVersion}`
+                          : `live:${selectedWorkspace?.id ?? "none"}`
+                      }
+                      entries={visibleTaskChatEntries}
+                      transcriptIdentity={
+                        selectedWorkspaceChatSession?.chatId
+                          ? `chat:${selectedWorkspaceChatSession.chatId}`
+                          : `workspace:${selectedWorkspace?.id ?? "none"}:live`
+                      }
+                      transcriptVersion={
+                        selectedHistoricalTranscript?.sourceVersion ?? "live"
+                      }
+                      viewportWidth={taskViewportWidth}
+                      viewportStable={taskViewportStable}
+                      firstItemIndex={
+                        selectedHistoricalTranscript?.firstItemIndex ??
+                        HISTORY_VIRTUOSO_BASE_INDEX
+                      }
+                      openAtLatestRequest={
+                        selectedHistoricalTranscript?.openAtLatestRequest ?? null
+                      }
+                      onOpenAtLatestApplied={
+                        clearHistoricalLatestPositionRequest
+                      }
+                      onOpenAtLatestCancelled={
+                        clearHistoricalLatestPositionRequest
+                      }
+                      liveFollow={runIsActive}
+                      onResolveRequest={resolveTranscriptRequest}
+                      onAnswerUserInput={answerTranscriptUserInput}
+                      onImplementPlan={implementTranscriptPlan}
+                      onRevisePlan={reviseTranscriptPlan}
+                      onCancelPlan={cancelTranscriptPlan}
+                      onOpenFileLink={openTranscriptFileLink}
+                      editablePromptEntryId={editablePromptEntryId}
+                      onEditPrompt={editTranscriptPrompt}
+                      onScrollActivityChange={
+                        handleTranscriptScrollActivityChange
+                      }
+                      onLoadHistoricalActivity={loadTranscriptHistoricalActivity}
+                    />
+                  </TaskTranscriptErrorBoundary>
                 ) : selectedHistoryChatLoading ? (
                   <HistoryChatLoading
                     title={selectedHistoryChatLoading.title}

@@ -217,6 +217,27 @@ describe("VirtuosoTaskChatTranscript", () => {
     expect(screen.queryByText("Prompt 1")).not.toBeInTheDocument();
   });
 
+  it("resolves rows from the stable transcript when Virtuoso data briefly lags geometry", () => {
+    const entries = [historyEntry(1), historyEntry(2), historyEntry(3)];
+    render(
+      <VirtuosoTaskChatTranscript
+        entries={entries}
+        transcriptIdentity="chat:401"
+        transcriptVersion="v1"
+        firstItemIndex={999_997}
+        openAtLatestRequest={latestRequest(1)}
+        liveFollow={false}
+        onResolveRequest={vi.fn()}
+      />,
+    );
+
+    expect(
+      virtuosoMock.lastProps.computeItemKey(999_999, undefined),
+    ).toBe(entries[2]?.clientId);
+    const recoveredRow = virtuosoMock.lastProps.itemContent(2, undefined);
+    expect(recoveredRow.props.entry).toBe(entries[2]);
+  });
+
   it("renders well ahead of a fast macOS trackpad viewport", () => {
     render(
       <VirtuosoTaskChatTranscript

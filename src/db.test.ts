@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const mocks = vi.hoisted(() => ({
   execute: vi.fn(),
   load: vi.fn(),
+  select: vi.fn(),
 }));
 
 vi.mock("@tauri-apps/plugin-sql", () => ({
@@ -11,19 +12,26 @@ vi.mock("@tauri-apps/plugin-sql", () => ({
   },
 }));
 
-import { appendRunEvents, type RunEventInput } from "./db";
+import {
+  appendRunEvents,
+  listWorkspaceChats,
+  upsertExternalCodexChats,
+  type RunEventInput,
+} from "./db";
+
+beforeEach(() => {
+  mocks.execute.mockReset();
+  mocks.execute.mockResolvedValue({ rowsAffected: 1 });
+  mocks.load.mockReset();
+  mocks.select.mockReset();
+  mocks.select.mockResolvedValue([]);
+  mocks.load.mockResolvedValue({
+    execute: mocks.execute,
+    select: mocks.select,
+  });
+});
 
 describe("run event persistence", () => {
-  beforeEach(() => {
-    mocks.execute.mockReset();
-    mocks.execute.mockResolvedValue({ rowsAffected: 1 });
-    mocks.load.mockReset();
-    mocks.load.mockResolvedValue({
-      execute: mocks.execute,
-      select: vi.fn(),
-    });
-  });
-
   it("persists high-volume run events in bounded multi-row inserts", async () => {
     const events: RunEventInput[] = Array.from({ length: 101 }, (_, index) => ({
       runId: 7,
@@ -57,5 +65,50 @@ describe("run event persistence", () => {
       "item/agentMessage/delta",
       JSON.stringify(events[100]?.payload),
     ]);
+  });
+});
+
+describe("external chat metadata", () => {
+  it("preserves the known source version when a sync omits updatedAt", async () => {
+    mocks.select.mockResolvedValueOnce([
+      {
+        id: 34,
+        deleted_at: null,
+        external_created_at: "2026-07-01T10:00:00Z",
+        external_updated_at: "2026-07-19T08:00:00Z",
+      },
+    ]);
+
+    await upsertExternalCodexChats([
+      {
+        workspaceId: 3,
+        profileKey: "default",
+        externalThreadId: "thread-large",
+        title: "Large chat",
+        status: "completed",
+        sourceKind: "vscode",
+        cwd: "/workspace",
+        createdAt: "2026-07-01T10:00:00Z",
+        updatedAt: null,
+      },
+    ]);
+
+    expect(mocks.execute).toHaveBeenCalledTimes(1);
+    expect(mocks.execute.mock.calls[0]?.[1]).toContain(
+      "2026-07-19T08:00:00Z",
+    );
+    expect(mocks.execute.mock.calls[0]?.[0]).not.toContain(
+      "DELETE FROM external_chat_history_indexes",
+    );
+  });
+
+  it("uses cached external snapshot counts in the history list", async () => {
+    await listWorkspaceChats(3);
+
+    const query = mocks.select.mock.calls[0]?.[0] as string;
+    expect(query).toContain(
+      "LEFT JOIN external_chat_transcript_snapshots external_snapshot",
+    );
+    expect(query).toContain("MAX(external_snapshot.turn_count)");
   });
 });
