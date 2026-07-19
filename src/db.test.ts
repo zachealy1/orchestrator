@@ -15,6 +15,7 @@ vi.mock("@tauri-apps/plugin-sql", () => ({
 import {
   appendRunEvents,
   listWorkspaceChats,
+  recordTokenUsage,
   upsertExternalCodexChats,
   type RunEventInput,
 } from "./db";
@@ -66,6 +67,40 @@ describe("run event persistence", () => {
       JSON.stringify(events[100]?.payload),
     ]);
   });
+
+  it("persists active context separately from cumulative token usage", async () => {
+    await recordTokenUsage({
+      runId: 7,
+      threadId: "thread-1",
+      turnId: "turn-1",
+      totalTokens: 173_959,
+      inputTokens: 171_922,
+      cachedInputTokens: 131_968,
+      outputTokens: 2_037,
+      reasoningOutputTokens: 103,
+      turnTokens: 55_573,
+      turnCachedInputTokens: 31_674,
+      contextTokens: 18_757,
+      modelContextWindow: 258_400,
+    });
+
+    const [query, values] = mocks.execute.mock.calls[0] ?? [];
+    expect(query).toContain("context_tokens, model_context_window");
+    expect(values).toEqual([
+      7,
+      "thread-1",
+      "turn-1",
+      173_959,
+      171_922,
+      131_968,
+      2_037,
+      103,
+      55_573,
+      31_674,
+      18_757,
+      258_400,
+    ]);
+  });
 });
 
 describe("external chat metadata", () => {
@@ -110,5 +145,6 @@ describe("external chat metadata", () => {
       "LEFT JOIN external_chat_transcript_snapshots external_snapshot",
     );
     expect(query).toContain("MAX(external_snapshot.turn_count)");
+    expect(query).toContain("SUM(latest_tokens.run_tokens)");
   });
 });

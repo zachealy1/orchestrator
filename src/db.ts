@@ -648,14 +648,18 @@ export async function recordTokenUsage(input: {
   cachedInputTokens: number;
   outputTokens: number;
   reasoningOutputTokens: number;
+  turnTokens: number | null;
+  turnCachedInputTokens: number | null;
+  contextTokens: number | null;
   modelContextWindow: number | null;
 }) {
   const db = await getDatabase();
   await db.execute(
     `INSERT INTO token_usage_snapshots (
       run_id, thread_id, turn_id, total_tokens, input_tokens, cached_input_tokens,
-      output_tokens, reasoning_output_tokens, model_context_window
-    ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
+      output_tokens, reasoning_output_tokens, run_tokens, run_cached_input_tokens,
+      context_tokens, model_context_window
+    ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)`,
     [
       input.runId,
       input.threadId,
@@ -665,6 +669,9 @@ export async function recordTokenUsage(input: {
       input.cachedInputTokens,
       input.outputTokens,
       input.reasoningOutputTokens,
+      input.turnTokens,
+      input.turnCachedInputTokens,
+      input.contextTokens,
       input.modelContextWindow,
     ],
   );
@@ -682,6 +689,9 @@ export async function listWorkspaceRuns(workspaceId: number) {
       runs.completed_plan_item_id, runs.completed_plan_text, runs.plan_review_state,
       tasks.original_prompt, tasks.improved_prompt, tasks.route_recommendation, tasks.budget_tokens,
       latest_tokens.total_tokens AS latest_total_tokens,
+      latest_tokens.run_tokens AS latest_run_tokens,
+      latest_tokens.run_cached_input_tokens AS latest_run_cached_input_tokens,
+      latest_tokens.context_tokens AS latest_context_tokens,
       latest_tokens.model_context_window AS latest_model_context_window
      FROM runs
      JOIN tasks ON tasks.id = runs.task_id
@@ -721,7 +731,7 @@ export async function listWorkspaceChats(workspaceId: number) {
           THEN COALESCE(MAX(external_snapshot.turn_count), 0)
         ELSE COUNT(runs.id)
       END AS turn_count,
-      COALESCE(SUM(latest_tokens.total_tokens), 0) AS total_tokens,
+      COALESCE(SUM(latest_tokens.run_tokens), 0) AS total_tokens,
       COALESCE(SUM(runs.duration_ms), 0) AS duration_ms,
       latest_run.model AS latest_model
      FROM chats
@@ -773,7 +783,7 @@ export async function getChatWithRuns(chatId: number): Promise<ChatWithRuns> {
           THEN COALESCE(MAX(external_snapshot.turn_count), 0)
         ELSE COUNT(runs.id)
       END AS turn_count,
-      COALESCE(SUM(latest_tokens.total_tokens), 0) AS total_tokens,
+      COALESCE(SUM(latest_tokens.run_tokens), 0) AS total_tokens,
       COALESCE(SUM(runs.duration_ms), 0) AS duration_ms,
       latest_run.model AS latest_model
      FROM chats
@@ -816,6 +826,9 @@ export async function getChatWithRuns(chatId: number): Promise<ChatWithRuns> {
       runs.completed_plan_item_id, runs.completed_plan_text, runs.plan_review_state,
       tasks.original_prompt, tasks.improved_prompt, tasks.route_recommendation, tasks.budget_tokens,
       latest_tokens.total_tokens AS latest_total_tokens,
+      latest_tokens.run_tokens AS latest_run_tokens,
+      latest_tokens.run_cached_input_tokens AS latest_run_cached_input_tokens,
+      latest_tokens.context_tokens AS latest_context_tokens,
       latest_tokens.model_context_window AS latest_model_context_window
      FROM runs
      JOIN tasks ON tasks.id = runs.task_id
@@ -849,6 +862,9 @@ export async function listChatRunsPage(
       runs.completed_plan_item_id, runs.completed_plan_text, runs.plan_review_state,
       tasks.original_prompt,
       latest_tokens.total_tokens AS latest_total_tokens,
+      latest_tokens.run_tokens AS latest_run_tokens,
+      latest_tokens.run_cached_input_tokens AS latest_run_cached_input_tokens,
+      latest_tokens.context_tokens AS latest_context_tokens,
       latest_tokens.model_context_window AS latest_model_context_window
      FROM runs
      JOIN tasks ON tasks.id = runs.task_id
@@ -877,6 +893,9 @@ export async function listLocalChatTranscript(chatId: number) {
       runs.completed_plan_item_id, runs.completed_plan_text, runs.plan_review_state,
       tasks.original_prompt,
       latest_tokens.total_tokens AS latest_total_tokens,
+      latest_tokens.run_tokens AS latest_run_tokens,
+      latest_tokens.run_cached_input_tokens AS latest_run_cached_input_tokens,
+      latest_tokens.context_tokens AS latest_context_tokens,
       latest_tokens.model_context_window AS latest_model_context_window
      FROM runs
      JOIN tasks ON tasks.id = runs.task_id
@@ -1253,8 +1272,8 @@ export async function getAnalyticsSummary(workspaceId: number) {
       COUNT(runs.id) AS run_count,
       SUM(CASE WHEN runs.status = 'completed' THEN 1 ELSE 0 END) AS completed_count,
       SUM(CASE WHEN runs.status = 'failed' THEN 1 ELSE 0 END) AS failed_count,
-      COALESCE(SUM(latest_tokens.total_tokens), 0) AS total_tokens,
-      COALESCE(SUM(latest_tokens.cached_input_tokens), 0) AS cached_tokens,
+      COALESCE(SUM(latest_tokens.run_tokens), 0) AS total_tokens,
+      COALESCE(SUM(latest_tokens.run_cached_input_tokens), 0) AS cached_tokens,
       AVG(runs.duration_ms) AS avg_duration_ms
      FROM runs
      LEFT JOIN (

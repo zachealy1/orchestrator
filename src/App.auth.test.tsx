@@ -335,6 +335,9 @@ function workspaceRunFixture(
     route_recommendation: "direct-run" as const,
     budget_tokens: 42,
     latest_total_tokens: 1280,
+    latest_run_tokens: 640,
+    latest_run_cached_input_tokens: 50,
+    latest_context_tokens: 640,
     latest_model_context_window: 128000,
   };
 }
@@ -1999,16 +2002,33 @@ describe("App Codex auth", () => {
             outputTokens: 200,
             reasoningOutputTokens: 80,
           },
+          last: {
+            totalTokens: 640,
+            inputTokens: 560,
+            cachedInputTokens: 100,
+            outputTokens: 80,
+            reasoningOutputTokens: 20,
+          },
           modelContextWindow: 128000,
         },
       },
     });
 
-    expect(within(banner).getByText("1,280 / 128,000")).toBeInTheDocument();
+    expect(within(banner).getByText("640 / 128,000")).toBeInTheDocument();
     expect(within(banner).getByText("1%")).toBeInTheDocument();
     const meter = within(banner).getByRole("meter", { name: "Context usage" });
     expect(meter).toHaveAttribute("aria-valuenow", "1");
-    expect(meter).toHaveAttribute("aria-valuetext", "1,280 / 128,000 (1%)");
+    expect(meter).toHaveAttribute("aria-valuetext", "640 / 128,000 (1%)");
+    await waitFor(() =>
+      expect(mocks.recordTokenUsageMock).toHaveBeenCalledWith(
+        expect.objectContaining({
+          totalTokens: 1280,
+          turnTokens: 1280,
+          contextTokens: 640,
+          modelContextWindow: 128000,
+        }),
+      ),
+    );
   });
 
   it("opens workspace chat history without extra drawer controls", async () => {
@@ -2316,7 +2336,7 @@ describe("App Codex auth", () => {
     expect(submittedPrompt).toHaveTextContent("Fix the app header");
     expect(within(transcript).getByText("Header fixed.")).toBeInTheDocument();
     expect(within(transcript).getByText("1m 0s")).toBeInTheDocument();
-    expect(within(transcript).getByText("1,280 tokens")).toBeInTheDocument();
+    expect(within(transcript).getByText("640 tokens")).toBeInTheDocument();
   });
 
   it("opens another history chat while the current plan awaits review", async () => {

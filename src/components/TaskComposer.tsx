@@ -918,7 +918,12 @@ const PromptTokenEstimate = memo(function PromptTokenEstimate({
 
   return (
     <div className="composer-meta-row" aria-label="Prompt metadata">
-      <span className="token-pill">{tokenEstimate.toLocaleString()} tokens</span>
+      <span
+        className="token-pill"
+        title="Estimated from draft text only; Codex reports actual context usage after the run starts"
+      >
+        {tokenEstimate.toLocaleString()} tokens
+      </span>
     </div>
   );
 });

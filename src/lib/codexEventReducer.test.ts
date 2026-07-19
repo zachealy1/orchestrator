@@ -97,10 +97,17 @@ describe("codexEventReducer", () => {
   });
 
   it("tracks thread, turn, and token usage notifications", () => {
-    let state = applyCodexMessage(emptyRunView, {
+    let state = applyCodexMessage(
+      {
+        ...emptyRunView,
+        tokenUsageStartTotal: 50,
+        tokenUsageStartCachedInput: 20,
+      },
+      {
       method: "thread/started",
       params: { thread: { id: "thread-1" } },
-    });
+      },
+    );
     state = applyCodexMessage(state, {
       method: "turn/started",
       params: { turn: { id: "turn-1" } },
@@ -118,6 +125,13 @@ describe("codexEventReducer", () => {
             outputTokens: 30,
             reasoningOutputTokens: 10,
           },
+          last: {
+            totalTokens: 72,
+            inputTokens: 60,
+            cachedInputTokens: 50,
+            outputTokens: 12,
+            reasoningOutputTokens: 4,
+          },
           modelContextWindow: 128000,
         },
       },
@@ -126,6 +140,9 @@ describe("codexEventReducer", () => {
     expect(state.threadId).toBe("thread-1");
     expect(state.turnId).toBe("turn-1");
     expect(state.tokenUsage?.totalTokens).toBe(120);
+    expect(state.tokenUsage?.turnTokens).toBe(70);
+    expect(state.tokenUsage?.turnCachedInputTokens).toBe(30);
+    expect(state.tokenUsage?.contextTokens).toBe(72);
     expect(state.tokenUsage?.cachedInputTokens).toBe(50);
   });
 

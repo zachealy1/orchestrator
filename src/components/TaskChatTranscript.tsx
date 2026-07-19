@@ -2893,7 +2893,9 @@ function formatDuration(milliseconds: number) {
 }
 
 function formatTokenCount(runView: RunViewState) {
-  return `${(runView.tokenUsage?.totalTokens ?? 0).toLocaleString()} tokens`;
+  return `${(
+    runView.tokenUsage?.turnTokens ?? runView.tokenUsage?.totalTokens ?? 0
+  ).toLocaleString()} tokens`;
 }
 
 function fileActionLabel(status: RunEditedFile["status"]) {

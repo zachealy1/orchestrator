@@ -9,15 +9,12 @@ import {
   type NativePlanState,
 } from "./nativePlanMode";
 import { parseProposedPlanEnvelope } from "./proposedPlan";
+import {
+  parseThreadTokenUsage,
+  type TokenUsage,
+} from "./contextUsage";
 
-export type TokenUsage = {
-  totalTokens: number;
-  inputTokens: number;
-  cachedInputTokens: number;
-  outputTokens: number;
-  reasoningOutputTokens: number;
-  modelContextWindow: number | null;
-};
+export type { TokenUsage } from "./contextUsage";
 
 export type ConsoleLine = {
   id: string;
@@ -79,6 +76,8 @@ export type RunViewState = {
   latestDiff: string;
   finalMessage: string;
   error: string | null;
+  tokenUsageStartTotal: number | null;
+  tokenUsageStartCachedInput: number | null;
   tokenUsage: TokenUsage | null;
   approvalRequests: CodexApprovalRequest[];
   approvalResourcesByItemId: Record<string, string[]>;
@@ -103,6 +102,8 @@ export const emptyRunView: RunViewState = {
   latestDiff: "",
   finalMessage: "",
   error: null,
+  tokenUsageStartTotal: 0,
+  tokenUsageStartCachedInput: 0,
   tokenUsage: null,
   approvalRequests: [],
   approvalResourcesByItemId: {},
@@ -175,20 +176,25 @@ export function applyCodexMessage(
       };
     }
     case "thread/tokenUsage/updated": {
-      const usage = readObject(params.tokenUsage);
-      const total = readObject(usage.total);
+      const parsedTokenUsage = parseThreadTokenUsage(params.tokenUsage);
+      const tokenUsage = parsedTokenUsage
+        ? {
+            ...parsedTokenUsage,
+            turnTokens: calculateUsageDelta(
+              parsedTokenUsage.totalTokens,
+              state.tokenUsageStartTotal,
+            ),
+            turnCachedInputTokens: calculateUsageDelta(
+              parsedTokenUsage.cachedInputTokens,
+              state.tokenUsageStartCachedInput,
+            ),
+          }
+        : null;
       return {
         ...state,
         threadId: readString(params.threadId) ?? state.threadId,
         turnId: readString(params.turnId) ?? state.turnId,
-        tokenUsage: {
-          totalTokens: readNumber(total.totalTokens),
-          inputTokens: readNumber(total.inputTokens),
-          cachedInputTokens: readNumber(total.cachedInputTokens),
-          outputTokens: readNumber(total.outputTokens),
-          reasoningOutputTokens: readNumber(total.reasoningOutputTokens),
-          modelContextWindow: readNullableNumber(usage.modelContextWindow),
-        },
+        tokenUsage: tokenUsage ?? state.tokenUsage,
       };
     }
     case "turn/plan/updated": {
@@ -1320,14 +1326,14 @@ function readString(value: unknown) {
   return typeof value === "string" ? value : null;
 }
 
-function readNumber(value: unknown) {
-  return typeof value === "number" ? value : 0;
-}
-
 function readOptionalNumber(value: unknown) {
   return typeof value === "number" ? value : null;
 }
 
 function readNullableNumber(value: unknown) {
   return typeof value === "number" ? value : null;
+}
+
+function calculateUsageDelta(current: number, baseline: number | null) {
+  return baseline === null ? null : Math.max(0, current - baseline);
 }

@@ -173,6 +173,10 @@ import {
 } from "./lib/nativePlanMode";
 import { parseProposedPlanEnvelope } from "./lib/proposedPlan";
 import {
+  getContextUsageDisplay,
+  parseThreadTokenUsage,
+} from "./lib/contextUsage";
+import {
   formatCodexAuthMessage,
   formatCodexPlanType,
   getCodexAccountSummary,
@@ -5588,10 +5592,30 @@ function App() {
     snapshot.intent = intent;
     snapshot.clientUserMessageId = clientUserMessageId;
     const submittedAt = new Date().toISOString();
+    const previousThreadUsage =
+      snapshot.chatOrigin === "orchestrator" &&
+      snapshot.threadId !== null &&
+      !snapshot.forceFreshThread
+        ? [...selectedWorkspaceChatEntries]
+            .reverse()
+            .find(
+              (entry) =>
+                entry.chatId === snapshot.chatId &&
+                entry.runView.threadId === snapshot.threadId &&
+                entry.runView.tokenUsage !== null,
+            )?.runView.tokenUsage ?? null
+        : null;
+    const startsFreshThread = snapshot.threadId === null || snapshot.forceFreshThread;
     const initialRunView = {
       ...emptyRunView,
       status: "connecting" as const,
       startedAt: submittedAt,
+      tokenUsageStartTotal: startsFreshThread
+        ? 0
+        : previousThreadUsage?.totalTokens ?? null,
+      tokenUsageStartCachedInput: startsFreshThread
+        ? 0
+        : previousThreadUsage?.cachedInputTokens ?? null,
       nativePlan: {
         ...emptyRunView.nativePlan,
         intent,
@@ -6040,6 +6064,11 @@ function App() {
         threadId = thread.threadId;
         threadModel = thread.model;
         threadModelProvider = thread.modelProvider;
+        updateActiveRunView((current) => ({
+          ...current,
+          tokenUsageStartTotal: 0,
+          tokenUsageStartCachedInput: 0,
+        }));
         await updateRun(run.id, {
           codexThreadId: threadId,
           model: threadModel ?? snapshot.model,
@@ -6890,7 +6919,8 @@ function App() {
     }
 
     if (method === "thread/tokenUsage/updated") {
-      const tokenUsage = readTokenUsage(params);
+      const reportedTokenUsage = readTokenUsage(params);
+      const tokenUsage = reportedTokenUsage ? nextRunView.tokenUsage : null;
       if (tokenUsage) {
         await recordTokenUsage({
           runId,
@@ -10042,7 +10072,11 @@ function WorkspaceContextMeter({
   tokenUsage: RunViewState["tokenUsage"];
   contextWindow: number;
 }) {
-  const usage = getLiveContextUsage(tokenUsage, contextWindow);
+  const usage = getContextUsageDisplay(
+    tokenUsage,
+    contextWindow,
+    DEFAULT_CONTEXT_WINDOW,
+  );
 
   const meterStyle =
     usage.percentage === null
@@ -10237,6 +10271,9 @@ function createTaskChatEntriesFromExternalTranscriptSnapshot(
                 cachedInputTokens: 0,
                 outputTokens: 0,
                 reasoningOutputTokens: 0,
+                turnTokens: turn.totalTokens,
+                turnCachedInputTokens: null,
+                contextTokens: null,
                 modelContextWindow: turn.modelContextWindow,
               },
       },
@@ -10389,6 +10426,9 @@ function createTaskChatEntryFromHistoryRun(run: HistoryRunSummary): TaskChatEntr
               cachedInputTokens: 0,
               outputTokens: 0,
               reasoningOutputTokens: 0,
+              turnTokens: run.latest_run_tokens,
+              turnCachedInputTokens: run.latest_run_cached_input_tokens,
+              contextTokens: run.latest_context_tokens,
               modelContextWindow: run.latest_model_context_window,
             },
     },
@@ -10891,47 +10931,6 @@ function getCodexModelContextWindow(model: CodexModel | null) {
   );
 }
 
-function getLiveContextUsage(
-  tokenUsage: RunViewState["tokenUsage"],
-  fallbackContextWindow = DEFAULT_CONTEXT_WINDOW,
-) {
-  if (!tokenUsage) {
-    const windowSize =
-      fallbackContextWindow > 0 ? fallbackContextWindow : DEFAULT_CONTEXT_WINDOW;
-    return {
-      label: `0 / ${windowSize.toLocaleString()} (0%)`,
-      usedLabel: "0",
-      windowLabel: windowSize.toLocaleString(),
-      title: `0 of ${windowSize.toLocaleString()} context tokens used`,
-      percentage: 0,
-    };
-  }
-
-  const total = tokenUsage.totalTokens.toLocaleString();
-  const windowSize = tokenUsage.modelContextWindow;
-  if (!windowSize || windowSize <= 0) {
-    return {
-      label: `${total} tokens`,
-      usedLabel: total,
-      windowLabel: null,
-      title: `${total} tokens used`,
-      percentage: null,
-    };
-  }
-
-  const percentage = Math.min(
-    100,
-    Math.round((tokenUsage.totalTokens / windowSize) * 100),
-  );
-  return {
-    label: `${total} / ${windowSize.toLocaleString()} (${percentage}%)`,
-    usedLabel: total,
-    windowLabel: windowSize.toLocaleString(),
-    title: `${total} of ${windowSize.toLocaleString()} context tokens used`,
-    percentage,
-  };
-}
-
 function formatHistoryChatMeta(chat: ChatListItem) {
   return [
     formatChatSourceLabel(chat),
@@ -11330,21 +11329,7 @@ function basename(path: string) {
 }
 
 function readTokenUsage(params: Record<string, unknown>) {
-  const usage = readObject(params.tokenUsage);
-  const total = readObject(usage.total);
-
-  if (!Object.keys(total).length) {
-    return null;
-  }
-
-  return {
-    totalTokens: readNumber(total.totalTokens) ?? 0,
-    inputTokens: readNumber(total.inputTokens) ?? 0,
-    cachedInputTokens: readNumber(total.cachedInputTokens) ?? 0,
-    outputTokens: readNumber(total.outputTokens) ?? 0,
-    reasoningOutputTokens: readNumber(total.reasoningOutputTokens) ?? 0,
-    modelContextWindow: readNumber(usage.modelContextWindow),
-  };
+  return parseThreadTokenUsage(params.tokenUsage);
 }
 
 function readObject(value: unknown): Record<string, unknown> {

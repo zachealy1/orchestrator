@@ -577,6 +577,9 @@ describe("TaskChatTranscript", () => {
                 cachedInputTokens: 400,
                 outputTokens: 200,
                 reasoningOutputTokens: 34,
+                turnTokens: 734,
+                turnCachedInputTokens: 200,
+                contextTokens: 900,
                 modelContextWindow: 128000,
               },
               streamEvents: [
@@ -608,7 +611,7 @@ describe("TaskChatTranscript", () => {
     expect(submittedPrompt).toHaveTextContent("Objective:");
     expect(submittedPrompt).toHaveTextContent("Fix the failing auth tests");
     expect(within(liveOutput).getByText("1m 5s")).toBeInTheDocument();
-    expect(within(liveOutput).getByText("1,234 tokens")).toBeInTheDocument();
+    expect(within(liveOutput).getByText("734 tokens")).toBeInTheDocument();
     expect(within(liveOutput).getByText("I am updating the auth flow.")).toBeInTheDocument();
     expect(within(liveOutput).getByText("Ran npm test")).toBeInTheDocument();
   });
@@ -1146,6 +1149,9 @@ describe("TaskChatTranscript", () => {
                 cachedInputTokens: 0,
                 outputTokens: 800,
                 reasoningOutputTokens: 39,
+                turnTokens: 69839,
+                turnCachedInputTokens: 0,
+                contextTokens: 68000,
                 modelContextWindow: 128000,
               },
               finalMessage:

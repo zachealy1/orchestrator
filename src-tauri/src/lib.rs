@@ -763,6 +763,86 @@ fn migrations() -> Vec<Migration> {
             ",
             kind: MigrationKind::Up,
         },
+        // Migration 14 has shipped. Keep its SQL stable and use a new version
+        // for subsequent token-usage schema changes.
+        Migration {
+            version: 14,
+            description: "separate_active_context_usage",
+            sql: "
+                ALTER TABLE token_usage_snapshots ADD COLUMN context_tokens INTEGER;
+
+                UPDATE token_usage_snapshots
+                SET context_tokens = (
+                    SELECT CAST(json_extract(run_events.payload_json, '$.params.tokenUsage.last.totalTokens') AS INTEGER)
+                    FROM run_events
+                    WHERE run_events.run_id = token_usage_snapshots.run_id
+                      AND run_events.method = 'thread/tokenUsage/updated'
+                      AND json_valid(run_events.payload_json)
+                      AND json_extract(run_events.payload_json, '$.params.tokenUsage.last.totalTokens') IS NOT NULL
+                    ORDER BY run_events.sequence DESC, run_events.id DESC
+                    LIMIT 1
+                )
+                WHERE token_usage_snapshots.id IN (
+                    SELECT MAX(id)
+                    FROM token_usage_snapshots
+                    GROUP BY run_id
+                );
+            ",
+            kind: MigrationKind::Up,
+        },
+        // Migration 15 has shipped. Keep its SQL stable and use a new version
+        // for subsequent per-run token accounting changes.
+        Migration {
+            version: 15,
+            description: "store_per_run_token_usage",
+            sql: "
+                ALTER TABLE token_usage_snapshots ADD COLUMN run_tokens INTEGER;
+                ALTER TABLE token_usage_snapshots ADD COLUMN run_cached_input_tokens INTEGER;
+
+                UPDATE token_usage_snapshots
+                SET
+                    run_tokens = MAX(
+                        total_tokens - COALESCE((
+                            SELECT previous_tokens.total_tokens
+                            FROM runs previous_runs
+                            JOIN token_usage_snapshots previous_tokens
+                              ON previous_tokens.id = (
+                                  SELECT MAX(previous_snapshot.id)
+                                  FROM token_usage_snapshots previous_snapshot
+                                  WHERE previous_snapshot.run_id = previous_runs.id
+                              )
+                            WHERE previous_runs.codex_thread_id = token_usage_snapshots.thread_id
+                              AND previous_runs.id < token_usage_snapshots.run_id
+                            ORDER BY previous_runs.id DESC
+                            LIMIT 1
+                        ), 0),
+                        0
+                    ),
+                    run_cached_input_tokens = MAX(
+                        cached_input_tokens - COALESCE((
+                            SELECT previous_tokens.cached_input_tokens
+                            FROM runs previous_runs
+                            JOIN token_usage_snapshots previous_tokens
+                              ON previous_tokens.id = (
+                                  SELECT MAX(previous_snapshot.id)
+                                  FROM token_usage_snapshots previous_snapshot
+                                  WHERE previous_snapshot.run_id = previous_runs.id
+                              )
+                            WHERE previous_runs.codex_thread_id = token_usage_snapshots.thread_id
+                              AND previous_runs.id < token_usage_snapshots.run_id
+                            ORDER BY previous_runs.id DESC
+                            LIMIT 1
+                        ), 0),
+                        0
+                    )
+                WHERE token_usage_snapshots.id IN (
+                    SELECT MAX(id)
+                    FROM token_usage_snapshots
+                    GROUP BY run_id
+                );
+            ",
+            kind: MigrationKind::Up,
+        },
     ]
 }
 
@@ -5116,6 +5196,43 @@ mod tests {
         assert!(native_plan
             .sql
             .contains("CREATE UNIQUE INDEX IF NOT EXISTS idx_runs_client_user_message_id"));
+    }
+
+    #[test]
+    fn active_context_usage_migration_uses_a_new_slot() {
+        let all_migrations = migrations();
+        let native_plan = all_migrations
+            .iter()
+            .find(|migration| migration.version == 13)
+            .expect("migration 13");
+        let active_context = all_migrations
+            .iter()
+            .find(|migration| migration.version == 14)
+            .expect("migration 14");
+
+        assert_eq!(native_plan.description, "persist_native_plan_mode_workflows");
+        assert_eq!(active_context.description, "separate_active_context_usage");
+        assert!(active_context
+            .sql
+            .contains("ADD COLUMN context_tokens INTEGER"));
+        assert!(active_context
+            .sql
+            .contains("$.params.tokenUsage.last.totalTokens"));
+    }
+
+    #[test]
+    fn per_run_token_usage_migration_uses_a_new_slot() {
+        let migration = migrations()
+            .into_iter()
+            .find(|migration| migration.version == 15)
+            .expect("migration 15");
+
+        assert_eq!(migration.description, "store_per_run_token_usage");
+        assert!(migration.sql.contains("ADD COLUMN run_tokens INTEGER"));
+        assert!(migration
+            .sql
+            .contains("ADD COLUMN run_cached_input_tokens INTEGER"));
+        assert!(migration.sql.contains("previous_runs.codex_thread_id"));
     }
 
     #[test]
