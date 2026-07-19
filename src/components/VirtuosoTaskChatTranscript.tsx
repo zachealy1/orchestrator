@@ -40,6 +40,7 @@ export const TRANSCRIPT_MIN_OVERSCAN_ITEMS = 8;
 export const TRANSCRIPT_SCROLL_IDLE_MS = 280;
 export const LATEST_TURN_POSITION_RETRY_MS = 80;
 export const LATEST_TURN_POSITION_MAX_ATTEMPTS = 8;
+export const COMPLETION_FOLLOW_MAX_ATTEMPTS = 4;
 
 const transcriptIncreaseViewportBy = {
   top: TRANSCRIPT_RENDER_AHEAD_PX,
@@ -257,6 +258,8 @@ export const VirtuosoTaskChatTranscript = memo(
     const latestPositionFrameRef = useRef<number | null>(null);
     const latestPositionRetryTimerRef = useRef<number | null>(null);
     const liveFollowFrameRef = useRef<number | null>(null);
+    const completionFollowFrameRef = useRef<number | null>(null);
+    const completionFollowRetryTimerRef = useRef<number | null>(null);
     const planAnchorFrameRef = useRef<number | null>(null);
     const planAnchorSettleFrameRef = useRef<number | null>(null);
     const notificationFocusTimerRef = useRef<number | null>(null);
@@ -267,6 +270,9 @@ export const VirtuosoTaskChatTranscript = memo(
     const liveFollowEnabledRef = useRef(liveFollow);
     const liveFollowIntentRef = useRef(liveFollow);
     const previousLiveFollowRef = useRef(liveFollow);
+    const completionFollowPendingRef = useRef(false);
+    const completionFollowAttemptCountRef = useRef(0);
+    const viewportStableRef = useRef(viewportStable);
     const virtuosoScrollingRef = useRef(false);
     const userScrollActiveRef = useRef(false);
     const scrollbarPointerActiveRef = useRef(false);
@@ -290,6 +296,7 @@ export const VirtuosoTaskChatTranscript = memo(
       () => new Set(),
     );
     liveFollowEnabledRef.current = liveFollow;
+    viewportStableRef.current = viewportStable;
 
     const viewportWidthBucket = getTranscriptWidthBucket(viewportWidth);
     const geometryScope = `${transcriptIdentity}:${transcriptVersion}`;
@@ -377,6 +384,21 @@ export const VirtuosoTaskChatTranscript = memo(
       liveFollowFrameRef.current = null;
     }, []);
 
+    const clearCompletionFollowSchedule = useCallback((cancelPending = true) => {
+      if (completionFollowFrameRef.current !== null) {
+        window.cancelAnimationFrame(completionFollowFrameRef.current);
+        completionFollowFrameRef.current = null;
+      }
+      if (completionFollowRetryTimerRef.current !== null) {
+        window.clearTimeout(completionFollowRetryTimerRef.current);
+        completionFollowRetryTimerRef.current = null;
+      }
+      if (cancelPending) {
+        completionFollowPendingRef.current = false;
+        completionFollowAttemptCountRef.current = 0;
+      }
+    }, []);
+
     const scrollToLatest = useCallback(() => {
       if (entries.length === 0) return;
       virtuosoRef.current?.scrollToIndex({
@@ -401,13 +423,58 @@ export const VirtuosoTaskChatTranscript = memo(
       });
     }, [scrollToLatest]);
 
+    const queueCompletionFollow = useCallback(() => {
+      if (
+        !completionFollowPendingRef.current ||
+        completionFollowFrameRef.current !== null ||
+        completionFollowRetryTimerRef.current !== null
+      ) {
+        return;
+      }
+
+      const followCompletedTail = () => {
+        completionFollowFrameRef.current = null;
+        if (
+          !completionFollowPendingRef.current ||
+          !liveFollowIntentRef.current
+        ) {
+          clearCompletionFollowSchedule();
+          return;
+        }
+        if (userScrollActiveRef.current) return;
+        if (!viewportStableRef.current) return;
+
+        scrollToLatest();
+        completionFollowAttemptCountRef.current += 1;
+        if (
+          completionFollowAttemptCountRef.current >=
+          COMPLETION_FOLLOW_MAX_ATTEMPTS
+        ) {
+          completionFollowPendingRef.current = false;
+          return;
+        }
+
+        completionFollowRetryTimerRef.current = window.setTimeout(() => {
+          completionFollowRetryTimerRef.current = null;
+          completionFollowFrameRef.current = window.requestAnimationFrame(
+            followCompletedTail,
+          );
+        }, LATEST_TURN_POSITION_RETRY_MS);
+      };
+
+      completionFollowFrameRef.current = window.requestAnimationFrame(
+        followCompletedTail,
+      );
+    }, [clearCompletionFollowSchedule, scrollToLatest]);
+
     const disableLiveFollow = useCallback(() => {
       bottomStateKnownRef.current = true;
       atBottomRef.current = false;
       liveFollowIntentRef.current = false;
       clearLiveFollowSchedule();
+      clearCompletionFollowSchedule();
       if (liveFollowEnabledRef.current) setShowJumpToLatest(true);
-    }, [clearLiveFollowSchedule]);
+    }, [clearCompletionFollowSchedule, clearLiveFollowSchedule]);
 
     const enableLiveFollow = useCallback(() => {
       liveFollowIntentRef.current = true;
@@ -484,12 +551,23 @@ export const VirtuosoTaskChatTranscript = memo(
       userScrollActiveRef.current = false;
       reportScrollActivity();
       if (
+        completionFollowPendingRef.current &&
+        liveFollowIntentRef.current
+      ) {
+        queueCompletionFollow();
+      }
+      if (
         liveFollowEnabledRef.current &&
         liveFollowIntentRef.current
       ) {
         queueLiveFollow();
       }
-    }, [clearScrollIdleCheck, queueLiveFollow, reportScrollActivity]);
+    }, [
+      clearScrollIdleCheck,
+      queueCompletionFollow,
+      queueLiveFollow,
+      reportScrollActivity,
+    ]);
 
     const scheduleScrollIdleCheck = useCallback(() => {
       if (scrollIdleCheckRef.current !== null) return;
@@ -706,12 +784,24 @@ export const VirtuosoTaskChatTranscript = memo(
 
     useEffect(() => {
       if (!liveFollow) {
+        if (
+          previousLiveFollowRef.current &&
+          liveFollowIntentRef.current
+        ) {
+          clearCompletionFollowSchedule(false);
+          completionFollowPendingRef.current = true;
+          completionFollowAttemptCountRef.current = 0;
+        }
         previousLiveFollowRef.current = false;
         clearLiveFollowSchedule();
-        setShowJumpToLatest(false);
+        setShowJumpToLatest(!liveFollowIntentRef.current);
+        if (completionFollowPendingRef.current && viewportStable) {
+          queueCompletionFollow();
+        }
         return;
       }
 
+      clearCompletionFollowSchedule();
       if (!previousLiveFollowRef.current) {
         const shouldFollow =
           !bottomStateKnownRef.current || atBottomRef.current;
@@ -724,9 +814,11 @@ export const VirtuosoTaskChatTranscript = memo(
         queueLiveFollow();
       }
     }, [
+      clearCompletionFollowSchedule,
       clearLiveFollowSchedule,
       liveTailEntry,
       liveFollow,
+      queueCompletionFollow,
       queueLiveFollow,
       viewportStable,
     ]);
@@ -921,6 +1013,7 @@ export const VirtuosoTaskChatTranscript = memo(
         detachScrollerListenersRef.current = null;
         clearLatestPositionSchedule();
         clearLiveFollowSchedule();
+        clearCompletionFollowSchedule();
         clearPlanAnchorCorrection();
         clearScrollIdleCheck();
         if (notificationFocusTimerRef.current !== null) {
@@ -940,6 +1033,7 @@ export const VirtuosoTaskChatTranscript = memo(
     }, [
       clearLatestPositionSchedule,
       clearLiveFollowSchedule,
+      clearCompletionFollowSchedule,
       clearPlanAnchorCorrection,
       clearScrollIdleCheck,
       onScrollActivityChange,
@@ -1113,7 +1207,7 @@ export const VirtuosoTaskChatTranscript = memo(
           isScrolling={handleIsScrolling}
           itemContent={itemContent}
         />
-        {showJumpToLatest && liveFollow ? (
+        {showJumpToLatest ? (
           <button
             aria-label="Jump to latest message"
             className="task-chat-jump-latest"

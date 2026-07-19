@@ -921,6 +921,81 @@ describe("VirtuosoTaskChatTranscript", () => {
     );
   });
 
+  it("reaffirms the bottom after a followed response completes", async () => {
+    const { rerender } = render(
+      <VirtuosoTaskChatTranscript
+        entries={[runningEntry(1, "Finalizing...")]}
+        transcriptIdentity="chat:completion-follow"
+        transcriptVersion="live"
+        firstItemIndex={1_000_000}
+        openAtLatestRequest={null}
+        liveFollow
+        onResolveRequest={vi.fn()}
+      />,
+    );
+    act(() => virtuosoMock.lastProps.atBottomStateChange(true));
+    await vi.waitFor(() => expect(virtuosoMock.scrollToIndex).toHaveBeenCalled());
+    virtuosoMock.scrollToIndex.mockClear();
+
+    rerender(
+      <VirtuosoTaskChatTranscript
+        entries={[historyEntry(1)]}
+        transcriptIdentity="chat:completion-follow"
+        transcriptVersion="live"
+        firstItemIndex={1_000_000}
+        openAtLatestRequest={null}
+        liveFollow={false}
+        onResolveRequest={vi.fn()}
+      />,
+    );
+
+    await vi.waitFor(() =>
+      expect(virtuosoMock.scrollToIndex).toHaveBeenCalledWith({
+        index: "LAST",
+        align: "end",
+        behavior: "auto",
+      }),
+    );
+  });
+
+  it("keeps a completed response stationary when the user scrolled upward", async () => {
+    const { rerender } = render(
+      <VirtuosoTaskChatTranscript
+        entries={[runningEntry(1, "Finalizing...")]}
+        transcriptIdentity="chat:manual-completion"
+        transcriptVersion="live"
+        firstItemIndex={1_000_000}
+        openAtLatestRequest={null}
+        liveFollow
+        onResolveRequest={vi.fn()}
+      />,
+    );
+    act(() => virtuosoMock.lastProps.atBottomStateChange(true));
+    await vi.waitFor(() => expect(virtuosoMock.scrollToIndex).toHaveBeenCalled());
+    fireEvent.wheel(transcript(), { deltaY: -500 });
+    virtuosoMock.scrollToIndex.mockClear();
+
+    rerender(
+      <VirtuosoTaskChatTranscript
+        entries={[historyEntry(1)]}
+        transcriptIdentity="chat:manual-completion"
+        transcriptVersion="live"
+        firstItemIndex={1_000_000}
+        openAtLatestRequest={null}
+        liveFollow={false}
+        onResolveRequest={vi.fn()}
+      />,
+    );
+    await act(async () => {
+      await new Promise((resolve) => window.setTimeout(resolve, 30));
+    });
+
+    expect(virtuosoMock.scrollToIndex).not.toHaveBeenCalled();
+    expect(
+      screen.getByRole("button", { name: "Jump to latest message" }),
+    ).toBeInTheDocument();
+  });
+
   it("does not pull a manual reader down when the live tail changes", async () => {
     const { rerender } = render(
       <VirtuosoTaskChatTranscript
