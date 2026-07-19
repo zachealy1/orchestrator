@@ -5930,7 +5930,10 @@ describe("App Codex auth", () => {
       "Cancel operation",
     ]) {
       const action = within(approval).getByRole("button", { name: label });
-      expect(action).toHaveAttribute("title", label);
+      expect(action).toHaveAttribute(
+        "data-tooltip",
+        expect.stringContaining(`${label}:`),
+      );
       expect(action.querySelector("svg")).toBeInTheDocument();
     }
   });

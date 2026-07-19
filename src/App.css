@@ -4569,6 +4569,8 @@ pre {
 }
 
 .approval-choice {
+  position: relative;
+  z-index: 1;
   display: inline-grid;
   width: 36px;
   min-width: 36px;
@@ -4587,12 +4589,48 @@ pre {
     color 140ms ease;
 }
 
+.approval-choice::after {
+  position: absolute;
+  right: 0;
+  bottom: calc(100% + 8px);
+  z-index: 20;
+  width: max-content;
+  max-width: min(300px, 72vw);
+  border: 0;
+  border-radius: 7px;
+  background: var(--color-component-background);
+  box-shadow: 0 12px 32px rgb(var(--shadow-rgb) / 0.24);
+  color: var(--color-text);
+  content: attr(data-tooltip);
+  font-size: 0.76rem;
+  font-weight: 500;
+  line-height: 1.35;
+  opacity: 0;
+  padding: 7px 9px;
+  pointer-events: none;
+  text-align: left;
+  transform: translateY(3px);
+  transition:
+    opacity 120ms ease,
+    transform 120ms ease,
+    visibility 120ms ease;
+  visibility: hidden;
+  white-space: normal;
+}
+
 .approval-choice:hover:not(:disabled),
 .approval-choice:focus-visible {
-  background: var(--panel-strong);
+  background: var(--color-button-active);
   box-shadow: none;
   outline: none;
   transform: none;
+}
+
+.approval-choice:hover:not(:disabled)::after,
+.approval-choice:focus-visible::after {
+  opacity: 1;
+  transform: translateY(0);
+  visibility: visible;
 }
 
 .approval-choice-danger {
@@ -4600,8 +4638,15 @@ pre {
 }
 
 .approval-choice:active:not(:disabled) {
-  background: var(--panel-strong);
+  background: var(--color-button-active);
   transform: none;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .approval-choice,
+  .approval-choice::after {
+    transition: none;
+  }
 }
 
 .approval-error {

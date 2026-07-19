@@ -2729,6 +2729,9 @@ const ApprovalCard = memo(function ApprovalCard({
       <div className="approval-actions" role="group" aria-label="Approval choices">
         {request.choices.map((choice, index) => {
           const descriptionId = `${request.key}-choice-${index}-description`;
+          const description = `${choice.description}${
+            choice.broadScope ? " This is broader than one operation." : ""
+          }`;
           return (
             <button
               className={`approval-choice approval-choice-${choice.tone}`}
@@ -2737,13 +2740,12 @@ const ApprovalCard = memo(function ApprovalCard({
               disabled={disabled}
               aria-label={choice.label}
               aria-describedby={descriptionId}
-              title={choice.label}
+              data-tooltip={`${choice.label}: ${description}`}
               onClick={() => onResolveRequest(request, choice)}
             >
               <ApprovalChoiceIcon choice={choice} />
               <span className="sr-only" id={descriptionId}>
-                {choice.description}
-                {choice.broadScope ? " This is broader than one operation." : ""}
+                {description}
               </span>
             </button>
           );
