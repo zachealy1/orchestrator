@@ -18,6 +18,12 @@ const mocks = vi.hoisted(() => ({
   startCodexLoginMock: vi.fn(),
   stopCodexMock: vi.fn(),
   stopDefaultCodexProfileMock: vi.fn(),
+  readAgentNotificationPermissionStatusMock: vi.fn(),
+  requestAgentNotificationPermissionMock: vi.fn(),
+  sendAgentNotificationMock: vi.fn(),
+  removeAgentNotificationMock: vi.fn(),
+  takePendingAgentNotificationActivationMock: vi.fn(),
+  openAgentNotificationSettingsMock: vi.fn(),
   cancelCodexLoginMock: vi.fn(),
   logoutCodexAccountMock: vi.fn(),
   listCodexModelsMock: vi.fn(),
@@ -188,6 +194,14 @@ vi.mock("./codexClient", () => ({
   startCodexLogin: mocks.startCodexLoginMock,
   stopDefaultCodexProfile: mocks.stopDefaultCodexProfileMock,
   stopCodex: mocks.stopCodexMock,
+  readAgentNotificationPermissionStatus:
+    mocks.readAgentNotificationPermissionStatusMock,
+  requestAgentNotificationPermission: mocks.requestAgentNotificationPermissionMock,
+  sendAgentNotification: mocks.sendAgentNotificationMock,
+  removeAgentNotification: mocks.removeAgentNotificationMock,
+  takePendingAgentNotificationActivation:
+    mocks.takePendingAgentNotificationActivationMock,
+  openAgentNotificationSettings: mocks.openAgentNotificationSettingsMock,
 }));
 
 vi.mock("./db", () => ({
@@ -445,6 +459,16 @@ function prepareDefaults() {
   });
   mocks.stopCodexMock.mockResolvedValue(undefined);
   mocks.stopDefaultCodexProfileMock.mockResolvedValue(undefined);
+  mocks.readAgentNotificationPermissionStatusMock.mockResolvedValue("unavailable");
+  mocks.requestAgentNotificationPermissionMock.mockResolvedValue("allowed");
+  mocks.sendAgentNotificationMock.mockResolvedValue({
+    delivered: true,
+    notificationId: "notification-1",
+    permissionStatus: "allowed",
+  });
+  mocks.removeAgentNotificationMock.mockResolvedValue(undefined);
+  mocks.takePendingAgentNotificationActivationMock.mockResolvedValue(null);
+  mocks.openAgentNotificationSettingsMock.mockResolvedValue(undefined);
   mocks.cancelCodexLoginMock.mockResolvedValue(undefined);
   mocks.logoutCodexAccountMock.mockResolvedValue(undefined);
   mocks.listCodexModelsMock.mockResolvedValue([]);
@@ -2295,6 +2319,50 @@ describe("App Codex auth", () => {
     expect(within(transcript).getByText("1,280 tokens")).toBeInTheDocument();
   });
 
+  it("opens and focuses a historical response from a pending native notification", async () => {
+    const historicalChat = workspaceChatFixture({
+      id: 412,
+      title: "Notification target chat",
+    });
+    const historicalRun = workspaceRunFixture({
+      id: 312,
+      chat_id: historicalChat.id,
+      original_prompt: "Notification target chat",
+      final_message: "Opened from a native notification.",
+    });
+    mocks.listWorkspaceChatsMock.mockResolvedValue([historicalChat]);
+    mocks.getChatWithRunsMock.mockResolvedValue(
+      workspaceChatWithRunsFixture(historicalChat, [historicalRun]),
+    );
+    mocks.takePendingAgentNotificationActivationMock.mockResolvedValue({
+      eventKey: "response-completed:account:7:thread-1:turn-1:312",
+      kind: "response-completed",
+      workspaceId: workspace.id,
+      chatId: historicalChat.id,
+      runId: historicalRun.id,
+      entryClientId: null,
+      requestId: null,
+      planItemId: null,
+      accountId: 7,
+      profileKey: "account:7",
+      threadId: "thread-1",
+      turnId: "turn-1",
+    });
+
+    await renderApp();
+
+    expect(
+      await screen.findByText("Opened from a native notification."),
+    ).toBeInTheDocument();
+    await waitFor(() =>
+      expect(
+        document.querySelector<HTMLElement>(
+          '[data-agent-notification-target="response"]',
+        ),
+      ).toHaveFocus(),
+    );
+  });
+
   it("loads a complete local transcript once and performs no history reads while scrolling", async () => {
     const historicalChat = workspaceChatFixture({
       id: 451,
@@ -3684,6 +3752,7 @@ describe("App Codex auth", () => {
 
   it("promotes and persists a proposed-plan final answer as a native Plan", async () => {
     prepareSignedInRun();
+    mocks.readAgentNotificationPermissionStatusMock.mockResolvedValue("allowed");
     const markdown = [
       "# Add greeting text",
       "",
@@ -3696,6 +3765,7 @@ describe("App Codex auth", () => {
     ].join("\n");
     const { user } = await renderApp();
     await startMockRun(user, "Make a plan for the greeting");
+    window.dispatchEvent(new Event("blur"));
 
     await emitCodexNotification({
       method: "item/completed",
@@ -3742,6 +3812,24 @@ describe("App Codex auth", () => {
         }),
       ),
     );
+    await waitFor(() =>
+      expect(mocks.sendAgentNotificationMock).toHaveBeenCalledWith(
+        expect.objectContaining({
+          title: "Plan ready",
+          body: "Make a plan for the greeting has a plan ready to review.",
+          target: expect.objectContaining({
+            kind: "plan-ready",
+            planItemId: "proposed-plan-message",
+            runId: 202,
+          }),
+        }),
+      ),
+    );
+    expect(
+      mocks.sendAgentNotificationMock.mock.calls.some(
+        ([request]) => request.title === "Response complete",
+      ),
+    ).toBe(false);
   });
 
   it("fails closed when native Plan and Default presets are unavailable", async () => {
@@ -4789,7 +4877,9 @@ describe("App Codex auth", () => {
     );
     expect(document.querySelector("select")).not.toBeInTheDocument();
 
-    await user.click(screen.getByRole("checkbox"));
+    await user.click(
+      screen.getByRole("checkbox", { name: /Use local OSS provider/ }),
+    );
     expect(providerSelect).toBeEnabled();
     await user.click(providerSelect);
     await user.click(screen.getByRole("option", { name: "LM Studio" }));
@@ -4818,6 +4908,58 @@ describe("App Codex auth", () => {
     expect(lightTheme).toHaveAttribute("aria-checked", "true");
     expect(document.documentElement).toHaveAttribute("data-theme", "light");
     expect(localStorage.getItem("orchestrator.theme")).toBe("light");
+  });
+
+  it("requests notification permission only from Settings and persists each category", async () => {
+    mocks.readAgentNotificationPermissionStatusMock.mockResolvedValue(
+      "not-enabled",
+    );
+    const { user } = await renderApp();
+
+    expect(mocks.requestAgentNotificationPermissionMock).not.toHaveBeenCalled();
+    await user.click(screen.getByRole("button", { name: "Settings" }));
+    expect(screen.getByText("Not enabled")).toBeInTheDocument();
+
+    await user.click(
+      screen.getByRole("checkbox", { name: /Completed responses/ }),
+    );
+    await waitFor(() =>
+      expect(
+        JSON.parse(
+          localStorage.getItem("orchestrator.agent-notifications.v1") ?? "{}",
+        ),
+      ).toEqual(
+        expect.objectContaining({
+          responseCompleted: false,
+          approvalRequired: true,
+          planReady: true,
+          externalAction: true,
+        }),
+      ),
+    );
+
+    await user.click(
+      screen.getByRole("button", { name: "Enable notifications" }),
+    );
+    await waitFor(() =>
+      expect(mocks.requestAgentNotificationPermissionMock).toHaveBeenCalledTimes(
+        1,
+      ),
+    );
+    expect(await screen.findByText("Allowed")).toBeInTheDocument();
+  });
+
+  it("opens macOS notification settings after permission is denied", async () => {
+    mocks.readAgentNotificationPermissionStatusMock.mockResolvedValue("denied");
+    const { user } = await renderApp();
+
+    await user.click(screen.getByRole("button", { name: "Settings" }));
+    expect(await screen.findByText("Denied")).toBeInTheDocument();
+    await user.click(
+      screen.getByRole("button", { name: "Open macOS settings" }),
+    );
+
+    expect(mocks.openAgentNotificationSettingsMock).toHaveBeenCalledTimes(1);
   });
 
   it("removes consolidated duplicate profile directories during startup", async () => {
@@ -4851,9 +4993,11 @@ describe("App Codex auth", () => {
   });
 
   it("starts browser login and shows waiting status", async () => {
+    mocks.readAgentNotificationPermissionStatusMock.mockResolvedValue("allowed");
     const { user } = await renderApp();
 
     expect(await screen.findByText("Sign in to Codex")).toBeInTheDocument();
+    window.dispatchEvent(new Event("blur"));
     await user.click(screen.getByLabelText("Sign in to Codex"));
 
     await waitFor(() =>
@@ -4864,6 +5008,19 @@ describe("App Codex auth", () => {
     expect(screen.getByText("Click to cancel")).toBeInTheDocument();
     expect(screen.getByLabelText("Cancel Codex sign-in")).toBeInTheDocument();
     expect(screen.queryByLabelText("Codex account")).not.toBeInTheDocument();
+    await waitFor(() =>
+      expect(mocks.sendAgentNotificationMock).toHaveBeenCalledWith(
+        expect.objectContaining({
+          title: "Action required",
+          body: expect.not.stringContaining("https://example.com/auth"),
+          target: expect.objectContaining({
+            kind: "external-action",
+            accountId: 7,
+            requestId: "login-1",
+          }),
+        }),
+      ),
+    );
   });
 
   it("surfaces account profile creation failures instead of leaving sign-in inert", async () => {
@@ -5839,9 +5996,11 @@ describe("App Codex auth", () => {
 
   it("renders approval requests inline and resolves them from the chat", async () => {
     prepareSignedInRun();
+    mocks.readAgentNotificationPermissionStatusMock.mockResolvedValue("allowed");
 
     const { user } = await renderApp();
     await startMockRun(user, "Run the tests");
+    window.dispatchEvent(new Event("blur"));
 
     await emitCodexServerRequest({
       id: 9,
@@ -5863,6 +6022,23 @@ describe("App Codex auth", () => {
     expect(approval).toBeInTheDocument();
     expect(within(approval).getByText(/npm test/)).toBeInTheDocument();
     expect(within(approval).getByText("/repo/orchestrator")).toBeInTheDocument();
+    await waitFor(() =>
+      expect(mocks.sendAgentNotificationMock).toHaveBeenCalledWith(
+        expect.objectContaining({
+          title: "Approval required",
+          body: expect.not.stringContaining("npm test"),
+          target: expect.objectContaining({
+            kind: "approval-required",
+            workspaceId: workspace.id,
+            chatId: 401,
+            runId: 202,
+            requestId: expect.any(String),
+          }),
+        }),
+      ),
+    );
+    const approvalEventKey = mocks.sendAgentNotificationMock.mock.calls[0][0]
+      .target.eventKey;
 
     await user.click(screen.getByRole("button", { name: /approve once/i }));
     await waitFor(() =>
@@ -5871,6 +6047,11 @@ describe("App Codex auth", () => {
         9,
         "server-request-7-1-9",
         { decision: "accept" },
+      ),
+    );
+    await waitFor(() =>
+      expect(mocks.removeAgentNotificationMock).toHaveBeenCalledWith(
+        approvalEventKey,
       ),
     );
     expect(screen.getByText(/waiting for codex to resolve/i)).toBeInTheDocument();
@@ -6011,9 +6192,22 @@ describe("App Codex auth", () => {
 
   it("deduplicates approval replays and leaves mismatched or untracked requests blocked", async () => {
     prepareSignedInRun();
+    mocks.readAgentNotificationPermissionStatusMock.mockResolvedValue("allowed");
+    let finishNotificationDelivery!: () => void;
+    mocks.sendAgentNotificationMock.mockReturnValueOnce(
+      new Promise((resolve) => {
+        finishNotificationDelivery = () =>
+          resolve({
+            delivered: true,
+            notificationId: "notification-approval-9",
+            permissionStatus: "allowed",
+          });
+      }),
+    );
 
     const { user } = await renderApp();
     await startMockRun(user, "Run guarded commands");
+    window.dispatchEvent(new Event("blur"));
     const request = {
       id: 9,
       method: "item/commandExecution/requestApproval",
@@ -6029,6 +6223,8 @@ describe("App Codex auth", () => {
     expect(
       screen.getAllByText("Codex needs approval to run a command"),
     ).toHaveLength(1);
+    expect(mocks.sendAgentNotificationMock).toHaveBeenCalledTimes(1);
+    await act(async () => finishNotificationDelivery());
 
     await emitCodexServerRequest(
       {
@@ -6189,13 +6385,18 @@ describe("App Codex auth", () => {
       screen.queryByText("Codex needs approval to run a command"),
     ).not.toBeInTheDocument();
     expect(mocks.resolveCodexServerRequestMock).not.toHaveBeenCalled();
+    expect(mocks.removeAgentNotificationMock).toHaveBeenCalledWith(
+      expect.stringContaining("approval-required:account:7"),
+    );
   });
 
   it("marks completed chat runs and persists the final assistant message", async () => {
     prepareSignedInRun();
+    mocks.readAgentNotificationPermissionStatusMock.mockResolvedValue("allowed");
 
     const { user } = await renderApp();
     await startMockRun(user, "Finish the task");
+    window.dispatchEvent(new Event("blur"));
 
     await emitCodexNotification({
       method: "item/agentMessage/delta",
@@ -6249,6 +6450,21 @@ describe("App Codex auth", () => {
       ),
     ).not.toBeInTheDocument();
     expect(screen.queryByText("completed")).not.toBeInTheDocument();
+    await waitFor(() =>
+      expect(mocks.sendAgentNotificationMock).toHaveBeenCalledWith(
+        expect.objectContaining({
+          title: "Response complete",
+          body: "Finish the task is ready to review.",
+          target: expect.objectContaining({
+            kind: "response-completed",
+            workspaceId: workspace.id,
+            chatId: 401,
+            runId: 202,
+            turnId: "turn-1",
+          }),
+        }),
+      ),
+    );
   });
 
   it("opens completed summary file links in the app preview drawer", async () => {

@@ -4,6 +4,8 @@ import { listen } from "@tauri-apps/api/event";
 import {
   AlertCircle,
   BarChart3,
+  Bell,
+  BellOff,
   Check,
   ChevronDown,
   ChevronRight,
@@ -102,22 +104,31 @@ import {
   readDefaultCodexFile,
   readCodexFile,
   readCodexAccount,
+  readAgentNotificationPermissionStatus,
   readWorkspaceGitDiff,
   readWorkspaceFilePreview,
   resolveCodexServerRequest,
   resolveDefaultCodexServerRequest,
+  removeAgentNotification,
+  requestAgentNotificationPermission,
   runPreflight,
   setThreadGoal,
   startCodexLogin,
   stopDefaultCodexProfile,
   stopCodex,
+  sendAgentNotification,
   syncDefaultProfileThreadTranscript,
+  takePendingAgentNotificationActivation,
+  openAgentNotificationSettings,
 } from "./codexClient";
 import { AnalyticsSummary } from "./components/AnalyticsSummary";
 import { ComposerSelect } from "./components/ComposerSelect";
 import { FilePreviewDrawer } from "./components/FilePreviewDrawer";
 import type { TaskChatEntry } from "./components/TaskChatTranscript";
-import { VirtuosoTaskChatTranscript } from "./components/VirtuosoTaskChatTranscript";
+import {
+  VirtuosoTaskChatTranscript,
+  type TranscriptNotificationFocusRequest,
+} from "./components/VirtuosoTaskChatTranscript";
 import { TaskTranscriptErrorBoundary } from "./components/TaskTranscriptErrorBoundary";
 import { TaskComposer } from "./components/TaskComposer";
 import {
@@ -207,6 +218,20 @@ import {
   restorePromptInlineFileReferencesForComposer,
   serializePromptInlineFileReferences,
 } from "./lib/contextFiles";
+import {
+  buildSafeAgentNotificationCopy,
+  createAgentNotificationEventKey,
+  isAgentNotificationTargetNavigable,
+  persistAgentNotificationPreferences,
+  readAgentNotificationPreferences,
+  recordAgentNotificationDelivered,
+  shouldSendAgentNotification,
+  wasAgentNotificationDelivered,
+  type AgentNotificationKind,
+  type AgentNotificationPermissionStatus,
+  type AgentNotificationPreferences,
+  type AgentNotificationTarget,
+} from "./lib/agentNotifications";
 import type {
   AccountLoginCompletedNotification,
   AccountUpdatedNotification,
@@ -285,6 +310,50 @@ const DEFAULT_CODEX_PROFILE_KEY: CodexProfileKey = "default";
 const EXTERNAL_CODEX_SOURCE_KINDS = ["vscode", "appServer", "cli"];
 
 type AppView = "task" | "analytics" | "settings";
+
+function approvalNotificationEventKey(request: CodexApprovalRequest) {
+  return createAgentNotificationEventKey(
+    "approval-required",
+    request.profileKey,
+    request.key,
+  );
+}
+
+function planNotificationEventKey(
+  profileKey: CodexProfileKey | null,
+  entry: Pick<TaskChatEntry, "runId" | "runView">,
+) {
+  return createAgentNotificationEventKey(
+    "plan-ready",
+    profileKey,
+    entry.runView.threadId,
+    entry.runView.turnId,
+    entry.runView.nativePlan.planItemId,
+    entry.runId,
+  );
+}
+
+function externalActionNotificationEventKey(
+  accountId: number,
+  loginId: string,
+) {
+  return createAgentNotificationEventKey("external-action", accountId, loginId);
+}
+
+function agentNotificationPermissionLabel(
+  permission: AgentNotificationPermissionStatus,
+) {
+  switch (permission) {
+    case "allowed":
+      return "Allowed";
+    case "not-enabled":
+      return "Not enabled";
+    case "denied":
+      return "Denied";
+    case "unavailable":
+      return "Unavailable";
+  }
+}
 
 function createTaskChatClientId() {
   return `chat-${Date.now().toString(36)}-${Math.random()
@@ -942,6 +1011,12 @@ function App() {
   const [resolvedTheme, setResolvedTheme] = useState(() =>
     resolveTheme(readThemePreference()),
   );
+  const [agentNotificationPreferences, setAgentNotificationPreferences] =
+    useState<AgentNotificationPreferences>(readAgentNotificationPreferences);
+  const [agentNotificationPermission, setAgentNotificationPermission] =
+    useState<AgentNotificationPermissionStatus>("unavailable");
+  const [transcriptNotificationFocusRequest, setTranscriptNotificationFocusRequest] =
+    useState<TranscriptNotificationFocusRequest | null>(null);
   const [prompt, setPrompt] = useState("");
   const [promptRevision, setPromptRevision] = useState(0);
   const promptRef = useRef(prompt);
@@ -1051,9 +1126,32 @@ function App() {
   const runViewRef = useRef<RunViewState>(emptyRunView);
   const activeChatEntryIdRef = useRef<string | null>(null);
   const activeRunControlRef = useRef<ActiveRunControl | null>(null);
+  const workspacesRef = useRef<Workspace[]>([]);
+  const activeViewRef = useRef<AppView>("task");
+  const accountMenuOpenRef = useRef(false);
+  const appFocusedRef = useRef(
+    typeof document === "undefined" ? true : document.hasFocus(),
+  );
+  const appVisibleRef = useRef(
+    typeof document === "undefined" ? true : document.visibilityState !== "hidden",
+  );
+  const agentNotificationPreferencesRef = useRef(agentNotificationPreferences);
+  const agentNotificationPermissionRef = useRef(agentNotificationPermission);
+  const historyStateRef = useRef<WorkspaceHistoryState>({
+    status: "idle",
+    chats: [],
+    error: null,
+  });
+  const handledNotificationActivationKeysRef = useRef(new Set<string>());
+  const pendingNotificationDeliveryKeysRef = useRef(new Set<string>());
+  const bootstrapCompleteRef = useRef(false);
+  const pendingNotificationActivationRef =
+    useRef<AgentNotificationTarget | null>(null);
+  const notificationFocusSequenceRef = useRef(0);
   const [unroutedApprovals, setUnroutedApprovals] = useState<
     CodexApprovalRequest[]
   >([]);
+  const unroutedApprovalsRef = useRef<CodexApprovalRequest[]>([]);
   const [approvalSafetyWarning, setApprovalSafetyWarning] = useState<
     string | null
   >(null);
@@ -1111,6 +1209,13 @@ function App() {
     [],
   );
   taskChatEntriesRef.current = taskChatEntries;
+  workspacesRef.current = workspaces;
+  activeViewRef.current = activeView;
+  accountMenuOpenRef.current = accountMenuOpen;
+  agentNotificationPreferencesRef.current = agentNotificationPreferences;
+  agentNotificationPermissionRef.current = agentNotificationPermission;
+  historyStateRef.current = historyState;
+  unroutedApprovalsRef.current = unroutedApprovals;
   previewResizingRef.current = previewResizing;
   const workspaceChatSessionsRef = useRef<
     Record<number, WorkspaceChatSession | undefined>
@@ -1580,6 +1685,24 @@ function App() {
   const openTranscriptFileLink = useStableEvent(openTaskResponseFileLink);
   const editTranscriptPrompt = useStableEvent(handleEditLatestPrompt);
   const loadTranscriptHistoricalActivity = useStableEvent(loadHistoricalActivity);
+  const activateAgentNotification = useStableEvent(
+    handleAgentNotificationActivation,
+  );
+  const completeAgentNotificationFocus = useStableEvent(
+    (
+      request: TranscriptNotificationFocusRequest,
+      found: boolean,
+    ) => {
+      setTranscriptNotificationFocusRequest((current) =>
+        current?.requestId === request.requestId ? null : current,
+      );
+      if (!found) {
+        setStatusMessage(
+          "That notification target is no longer available in this chat.",
+        );
+      }
+    },
+  );
   const selectHistoryChatFromDrawer = useStableEvent((chat: ChatListItem) => {
     void selectHistoryChat(chat);
   });
@@ -2043,6 +2166,87 @@ function App() {
   }, [themePreference]);
 
   useEffect(() => {
+    persistAgentNotificationPreferences(agentNotificationPreferences);
+  }, [agentNotificationPreferences]);
+
+  useEffect(() => {
+    let disposed = false;
+
+    const refreshPermission = async () => {
+      try {
+        const permission = await readAgentNotificationPermissionStatus();
+        if (!disposed) {
+          agentNotificationPermissionRef.current = permission;
+          setAgentNotificationPermission(permission);
+        }
+      } catch {
+        if (!disposed) {
+          agentNotificationPermissionRef.current = "unavailable";
+          setAgentNotificationPermission("unavailable");
+        }
+      }
+    };
+    const handleFocus = () => {
+      appFocusedRef.current = true;
+      void refreshPermission();
+    };
+    const handleBlur = () => {
+      appFocusedRef.current = false;
+    };
+    const handleVisibilityChange = () => {
+      appVisibleRef.current = document.visibilityState !== "hidden";
+      if (appVisibleRef.current) void refreshPermission();
+    };
+
+    appFocusedRef.current = document.hasFocus();
+    appVisibleRef.current = document.visibilityState !== "hidden";
+    void refreshPermission();
+    window.addEventListener("focus", handleFocus);
+    window.addEventListener("blur", handleBlur);
+    document.addEventListener("visibilitychange", handleVisibilityChange);
+    return () => {
+      disposed = true;
+      window.removeEventListener("focus", handleFocus);
+      window.removeEventListener("blur", handleBlur);
+      document.removeEventListener("visibilitychange", handleVisibilityChange);
+    };
+  }, []);
+
+  useEffect(() => {
+    let disposed = false;
+    let unlisten: (() => void) | null = null;
+
+    const dispatchActivation = (target: AgentNotificationTarget | null) => {
+      if (!target || disposed) return;
+      if (!bootstrapCompleteRef.current) {
+        pendingNotificationActivationRef.current = target;
+        return;
+      }
+      if (handledNotificationActivationKeysRef.current.has(target.eventKey)) {
+        return;
+      }
+      handledNotificationActivationKeysRef.current.add(target.eventKey);
+      void activateAgentNotification(target);
+    };
+
+    void listen<AgentNotificationTarget>(
+      "orchestrator:agent-notification-activated",
+      (event) => dispatchActivation(event.payload),
+    ).then((dispose) => {
+      if (disposed) dispose();
+      else unlisten = dispose;
+    });
+    void takePendingAgentNotificationActivation()
+      .then(dispatchActivation)
+      .catch(() => undefined);
+
+    return () => {
+      disposed = true;
+      unlisten?.();
+    };
+  }, [activateAgentNotification]);
+
+  useEffect(() => {
     if (!selectedWorkspace) {
       return;
     }
@@ -2481,6 +2685,16 @@ function App() {
         event.payload.status === "exited" ||
         event.payload.status === "stopped"
       ) {
+        [
+          ...runViewRef.current.approvalRequests,
+          ...unroutedApprovalsRef.current,
+        ]
+          .filter((request) => request.profileKey === profileKey)
+          .forEach((request) => {
+            void removeAgentNotification(
+              approvalNotificationEventKey(request),
+            ).catch(() => undefined);
+          });
         setApprovalSafetyWarning(null);
         setUnroutedApprovals((current) =>
           current.filter((request) => request.profileKey !== profileKey),
@@ -2516,6 +2730,10 @@ function App() {
           setRequiresOpenaiAuth(true);
         }
         if (pendingLoginAccountIdRef.current === event.payload.accountId) {
+          dismissExternalLoginNotification(
+            event.payload.accountId,
+            pendingLoginIdRef.current,
+          );
           resetLoginFlow();
         }
       }
@@ -2553,6 +2771,7 @@ function App() {
       try {
         const response = await refreshAccountState(pendingLoginAccountId, true);
         if (response.account) {
+          dismissExternalLoginNotification(pendingLoginAccountId, pendingLoginId);
           if (selectedAccountIdRef.current === pendingLoginAccountId) {
             await refreshCodexModels(pendingLoginAccountId);
           }
@@ -2571,6 +2790,7 @@ function App() {
       }
 
       if (attempts >= maxAttempts) {
+        dismissExternalLoginNotification(pendingLoginAccountId, pendingLoginId);
         resetLoginFlow("failed");
         setLoginError("Codex sign-in timed out. Try again.");
         setStatusMessage("Sign-in timed out. Try again.");
@@ -2620,7 +2840,9 @@ function App() {
       null;
 
     setWorkspaces(workspaceRows);
+    workspacesRef.current = workspaceRows;
     setSelectedWorkspace(workspace);
+    selectedWorkspaceRef.current = workspace;
     setCodexAccounts(accountRows);
     codexAccountsRef.current = accountRows;
     setSelectedAccountId(preferredAccount?.id ?? null);
@@ -2637,6 +2859,21 @@ function App() {
 
     if (preferredAccount) {
       await refreshCodexModels(preferredAccount.id);
+    }
+
+    bootstrapCompleteRef.current = true;
+    const pendingActivation = pendingNotificationActivationRef.current;
+    pendingNotificationActivationRef.current = null;
+    if (
+      pendingActivation &&
+      !handledNotificationActivationKeysRef.current.has(
+        pendingActivation.eventKey,
+      )
+    ) {
+      handledNotificationActivationKeysRef.current.add(
+        pendingActivation.eventKey,
+      );
+      void activateAgentNotification(pendingActivation);
     }
   }
 
@@ -3079,6 +3316,7 @@ function App() {
       setHistoricalTranscript(null);
     }
     setWorkspaceContextMenu(null);
+    selectedWorkspaceRef.current = workspace;
     setSelectedWorkspace(workspace);
     setSelectedHistoryChatId(workspaceChatSessionsRef.current[workspace.id]?.chatId ?? null);
     setActiveView("task");
@@ -3855,8 +4093,11 @@ function App() {
     await synchronizeExternalTranscript(chat, loadId, "initial");
   }
 
-  async function selectHistoryChat(chat: ChatListItem) {
-    if (runIsActive || planReviewAwaiting) {
+  async function selectHistoryChat(
+    chat: ChatListItem,
+    options: { allowPendingPlanSwitch?: boolean } = {},
+  ) {
+    if (runIsActive || (planReviewAwaiting && !options.allowPendingPlanSwitch)) {
       setStatusMessage(
         planReviewAwaiting
           ? "Approve, revise, or cancel the current plan before opening another chat."
@@ -4797,6 +5038,41 @@ function App() {
     }
   }
 
+  function notifyExternalLoginAction(accountId: number, loginId: string) {
+    const account = codexAccountsRef.current.find(
+      (candidate) => candidate.id === accountId,
+    );
+    const eventKey = externalActionNotificationEventKey(accountId, loginId);
+    void deliverAgentNotification({
+      kind: "external-action",
+      target: {
+        eventKey,
+        kind: "external-action",
+        workspaceId: null,
+        chatId: null,
+        runId: null,
+        entryClientId: null,
+        requestId: loginId,
+        planItemId: null,
+        accountId,
+        profileKey: `account:${accountId}`,
+        threadId: null,
+        turnId: null,
+      },
+      accountLabel: account?.label ?? account?.email,
+    });
+  }
+
+  function dismissExternalLoginNotification(
+    accountId: number,
+    loginId: string | null,
+  ) {
+    if (!loginId) return;
+    void removeAgentNotification(
+      externalActionNotificationEventKey(accountId, loginId),
+    ).catch(() => undefined);
+  }
+
   async function handleLogin() {
     if (loginState === "starting" || loginState === "waiting") {
       setStatusMessage("A Codex sign-in is already in progress.");
@@ -4838,12 +5114,14 @@ function App() {
         pendingLoginIdRef.current = response.loginId;
         setLoginState("waiting");
         await openUrl(response.authUrl);
+        notifyExternalLoginAction(loginAccountId, response.loginId);
       } else if (response.type === "chatgptDeviceCode") {
         setPendingLoginId(response.loginId);
         pendingLoginIdRef.current = response.loginId;
         setLoginUserCode(response.userCode);
         setLoginState("waiting");
         await openUrl(response.verificationUrl);
+        notifyExternalLoginAction(loginAccountId, response.loginId);
       } else {
         resetLoginFlow("failed");
         setLoginError(formatLoginStartStatus(response));
@@ -4851,6 +5129,12 @@ function App() {
 
       setStatusMessage(formatLoginStartStatus(response));
     } catch (error) {
+      if (loginAccountId !== null) {
+        dismissExternalLoginNotification(
+          loginAccountId,
+          pendingLoginIdRef.current,
+        );
+      }
       resetLoginFlow("failed");
       const message = error instanceof Error ? error.message : String(error);
       if (loginAccountId !== null) {
@@ -4906,18 +5190,21 @@ function App() {
         pendingLoginIdRef.current = response.loginId;
         setLoginState("waiting");
         await openUrl(response.authUrl);
+        notifyExternalLoginAction(account.id, response.loginId);
       } else if (response.type === "chatgptDeviceCode") {
         setPendingLoginId(response.loginId);
         pendingLoginIdRef.current = response.loginId;
         setLoginUserCode(response.userCode);
         setLoginState("waiting");
         await openUrl(response.verificationUrl);
+        notifyExternalLoginAction(account.id, response.loginId);
       } else {
         resetLoginFlow("failed");
         setLoginError(formatLoginStartStatus(response));
       }
       setStatusMessage(formatLoginStartStatus(response));
     } catch (error) {
+      dismissExternalLoginNotification(account.id, pendingLoginIdRef.current);
       resetLoginFlow("failed");
       const message = error instanceof Error ? error.message : String(error);
       await updateCodexAccount(account.id, {
@@ -4936,6 +5223,7 @@ function App() {
 
     try {
       await cancelCodexLogin(pendingLoginAccountId, pendingLoginId);
+      dismissExternalLoginNotification(pendingLoginAccountId, pendingLoginId);
       const profile = codexAccountsRef.current.find(
         (account) => account.id === pendingLoginAccountId,
       );
@@ -6143,6 +6431,7 @@ function App() {
     if (!loginIdMatches) {
       return;
     }
+    dismissExternalLoginNotification(accountId, activeLoginId);
 
     if (params.success) {
       resetLoginFlow();
@@ -6307,6 +6596,190 @@ function App() {
     }, RUN_EVENT_BATCH_DELAY_MS);
   }
 
+  function agentNotificationTargetVisible(target: AgentNotificationTarget) {
+    if (target.kind === "external-action") {
+      return target.accountId === selectedAccountIdRef.current;
+    }
+
+    if (
+      activeViewRef.current !== "task" ||
+      target.workspaceId !== selectedWorkspaceRef.current?.id
+    ) {
+      return false;
+    }
+    const session = target.workspaceId
+      ? workspaceChatSessionsRef.current[target.workspaceId]
+      : null;
+    if (target.chatId !== null && target.chatId !== undefined) {
+      return session?.chatId === target.chatId;
+    }
+    return taskChatEntriesRef.current.some(
+      (entry) => entry.clientId === target.entryClientId,
+    );
+  }
+
+  async function deliverAgentNotification(input: {
+    kind: AgentNotificationKind;
+    target: AgentNotificationTarget;
+    chatTitle?: string | null;
+    workspaceLabel?: string | null;
+    accountLabel?: string | null;
+    targetVisible?: boolean;
+  }) {
+    if (
+      pendingNotificationDeliveryKeysRef.current.has(input.target.eventKey) ||
+      wasAgentNotificationDelivered(input.target.eventKey)
+    ) {
+      return;
+    }
+    if (
+      !shouldSendAgentNotification({
+        kind: input.kind,
+        preferences: agentNotificationPreferencesRef.current,
+        permissionStatus: agentNotificationPermissionRef.current,
+        appFocused: appFocusedRef.current,
+        appVisible: appVisibleRef.current,
+        targetVisible:
+          input.targetVisible ?? agentNotificationTargetVisible(input.target),
+      })
+    ) {
+      return;
+    }
+
+    pendingNotificationDeliveryKeysRef.current.add(input.target.eventKey);
+    const copy = buildSafeAgentNotificationCopy(input);
+    try {
+      const result = await sendAgentNotification({
+        ...copy,
+        groupKey:
+          input.target.chatId !== null && input.target.chatId !== undefined
+            ? `chat:${input.target.chatId}`
+            : input.target.workspaceId !== null &&
+                input.target.workspaceId !== undefined
+              ? `workspace:${input.target.workspaceId}`
+              : input.target.accountId !== null &&
+                  input.target.accountId !== undefined
+                ? `account:${input.target.accountId}`
+                : null,
+        target: input.target,
+      });
+      agentNotificationPermissionRef.current = result.permissionStatus;
+      setAgentNotificationPermission(result.permissionStatus);
+      if (result.delivered) {
+        recordAgentNotificationDelivered(input.target.eventKey);
+      }
+    } catch {
+      // Notifications are supplementary; native delivery failures must not affect a run.
+    } finally {
+      pendingNotificationDeliveryKeysRef.current.delete(input.target.eventKey);
+    }
+  }
+
+  function focusAgentNotificationTarget(target: AgentNotificationTarget) {
+    notificationFocusSequenceRef.current += 1;
+    setTranscriptNotificationFocusRequest({
+      requestId: notificationFocusSequenceRef.current,
+      kind:
+        target.kind === "approval-required"
+          ? "approval"
+          : target.kind === "plan-ready"
+            ? "plan"
+            : "response",
+      entryClientId: target.entryClientId ?? null,
+      runId: target.runId ?? null,
+      turnId: target.turnId ?? null,
+      targetId: target.requestId ?? target.planItemId ?? null,
+    });
+  }
+
+  async function handleAgentNotificationActivation(
+    target: AgentNotificationTarget,
+  ) {
+    if (!isAgentNotificationTargetNavigable(target)) {
+      setStatusMessage("That notification target is no longer available.");
+      return;
+    }
+
+    if (target.kind === "external-action") {
+      const account = codexAccountsRef.current.find(
+        (candidate) => candidate.id === target.accountId,
+      );
+      if (!account || account.status === "signed_in") {
+        setStatusMessage("That sign-in action is no longer pending.");
+        return;
+      }
+      setSelectedAccountId(account.id);
+      selectedAccountIdRef.current = account.id;
+      setActiveView("settings");
+      window.requestAnimationFrame(() => {
+        document
+          .querySelector<HTMLElement>(`[data-managed-account-id="${account.id}"]`)
+          ?.focus({ preventScroll: true });
+      });
+      return;
+    }
+
+    const workspace = workspacesRef.current.find(
+      (candidate) => candidate.id === target.workspaceId,
+    );
+    if (!workspace) {
+      setStatusMessage("The workspace for that notification is no longer available.");
+      return;
+    }
+    if (
+      activeRunControlRef.current &&
+      activeRunControlRef.current.chatId !== target.chatId
+    ) {
+      setStatusMessage(
+        "Finish or stop the active run before opening another notification.",
+      );
+      return;
+    }
+
+    if (selectedWorkspaceRef.current?.id !== workspace.id) {
+      selectWorkspace(workspace.id);
+    } else {
+      setActiveView("task");
+    }
+
+    const visibleEntry = taskChatEntriesRef.current.find(
+      (entry) =>
+        entry.workspaceId === workspace.id &&
+        ((target.entryClientId && entry.clientId === target.entryClientId) ||
+          (target.runId !== null &&
+            target.runId !== undefined &&
+            entry.runId === target.runId) ||
+          (target.turnId && entry.runView.turnId === target.turnId)),
+    );
+    const session = workspaceChatSessionsRef.current[workspace.id];
+    if (visibleEntry && (!target.chatId || session?.chatId === target.chatId)) {
+      focusAgentNotificationTarget(target);
+      return;
+    }
+
+    let chats: ChatListItem[];
+    try {
+      chats = await listWorkspaceChats(workspace.id);
+    } catch {
+      setStatusMessage("Could not load the chat for that notification.");
+      return;
+    }
+    const chat = chats.find(
+      (candidate) =>
+        candidate.id === target.chatId ||
+        (target.threadId &&
+          (candidate.codex_thread_id === target.threadId ||
+            candidate.external_thread_id === target.threadId)),
+    );
+    if (!chat || chat.deleted_at) {
+      setStatusMessage("That notification belongs to a deleted or unavailable chat.");
+      return;
+    }
+
+    focusAgentNotificationTarget(target);
+    await selectHistoryChat(chat, { allowPendingPlanSwitch: true });
+  }
+
   async function handleCodexNotification(
     accountId: number,
     profileKey: CodexProfileKey,
@@ -6327,6 +6800,20 @@ function App() {
     if (method === "serverRequest/resolved") {
       const requestId = params.requestId;
       const threadId = readString(params.threadId);
+      const resolvedApprovals = [
+        ...runViewRef.current.approvalRequests,
+        ...unroutedApprovalsRef.current,
+      ].filter(
+        (request) =>
+          request.profileKey === profileKey &&
+          String(request.id) === String(requestId) &&
+          (!threadId || request.threadId === threadId),
+      );
+      resolvedApprovals.forEach((request) => {
+        void removeAgentNotification(
+          approvalNotificationEventKey(request),
+        ).catch(() => undefined);
+      });
       setUnroutedApprovals((current) =>
         current.filter(
           (request) =>
@@ -6411,6 +6898,55 @@ function App() {
     if (method === "turn/completed") {
       const turn = readObject(params.turn);
       const status = readString(turn.status) === "failed" ? "failed" : "completed";
+      const completedControl = activeRunControlRef.current;
+      const completedEntry = completedControl
+        ? taskChatEntriesRef.current.find(
+            (entry) => entry.clientId === completedControl.clientId,
+          ) ?? null
+        : null;
+      if (status === "completed" && completedControl) {
+        const planReady = nextRunView.nativePlan.reviewState === "available";
+        const kind: AgentNotificationKind = planReady
+          ? "plan-ready"
+          : "response-completed";
+        const eventKey = planReady
+          ? planNotificationEventKey(completedControl.profileKey, {
+              runId,
+              runView: nextRunView,
+            })
+          : createAgentNotificationEventKey(
+              kind,
+              completedControl.profileKey,
+              nextRunView.threadId,
+              nextRunView.turnId,
+              runId,
+            );
+        const workspace = workspacesRef.current.find(
+          (candidate) => candidate.id === completedEntry?.workspaceId,
+        );
+        void deliverAgentNotification({
+          kind,
+          target: {
+            eventKey,
+            kind,
+            workspaceId: completedEntry?.workspaceId ?? null,
+            chatId: completedControl.chatId,
+            runId,
+            entryClientId: completedControl.clientId,
+            requestId: null,
+            planItemId: nextRunView.nativePlan.planItemId,
+            accountId:
+              completedControl.profileKey === DEFAULT_CODEX_PROFILE_KEY
+                ? null
+                : completedControl.accountId,
+            profileKey: completedControl.profileKey,
+            threadId: nextRunView.threadId,
+            turnId: nextRunView.turnId,
+          },
+          chatTitle: completedEntry?.prompt,
+          workspaceLabel: workspace?.label,
+        });
+      }
       await updateRun(runId, {
         status,
         completedAt: new Date().toISOString(),
@@ -6451,7 +6987,7 @@ function App() {
   }
 
   async function handleCodexServerRequest(
-    _accountId: number,
+    accountId: number,
     profileKey: CodexProfileKey,
     request: CodexMessage,
     requestToken: string | null,
@@ -6480,6 +7016,55 @@ function App() {
         currentRunProfileKey.current === profileKey &&
         (!parsed.threadId || parsed.threadId === activeThreadId) &&
         (!parsed.turnId || parsed.turnId === activeTurnId);
+      const shouldNotify = [
+        "command",
+        "file-change",
+        "legacy-command",
+        "legacy-file-change",
+      ].includes(parsed.kind);
+      const historyChat = !belongsToActiveRun
+        ? historyStateRef.current.chats.find(
+            (chat) =>
+              chat.profile_key === profileKey &&
+              Boolean(parsed.threadId) &&
+              (chat.codex_thread_id === parsed.threadId ||
+                chat.external_thread_id === parsed.threadId),
+          ) ?? null
+        : null;
+      const activeEntry = belongsToActiveRun
+        ? taskChatEntriesRef.current.find(
+            (entry) => entry.clientId === control?.clientId,
+          ) ?? null
+        : null;
+      const workspaceId =
+        activeEntry?.workspaceId ?? historyChat?.workspace_id ?? null;
+      const workspace = workspacesRef.current.find(
+        (candidate) => candidate.id === workspaceId,
+      );
+      const eventKey = approvalNotificationEventKey(parsed);
+      const notifyApproval = () => {
+        if (!shouldNotify) return;
+        void deliverAgentNotification({
+          kind: "approval-required",
+          target: {
+            eventKey,
+            kind: "approval-required",
+            workspaceId,
+            chatId: control?.chatId ?? historyChat?.id ?? null,
+            runId: control?.runId ?? null,
+            entryClientId: control?.clientId ?? null,
+            requestId: parsed.key,
+            planItemId: null,
+            accountId:
+              profileKey === DEFAULT_CODEX_PROFILE_KEY ? null : accountId,
+            profileKey,
+            threadId: parsed.threadId,
+            turnId: parsed.turnId,
+          },
+          chatTitle: activeEntry?.prompt ?? historyChat?.title,
+          workspaceLabel: workspace?.label,
+        });
+      };
 
       if (!belongsToActiveRun) {
         setUnroutedApprovals((current) =>
@@ -6490,10 +7075,12 @@ function App() {
         setStatusMessage(
           "Codex is waiting for approval in another conversation. The request remains blocked and was not approved.",
         );
+        notifyApproval();
         return;
       }
 
       updateActiveRunView((current) => addApprovalRequest(current, parsed));
+      notifyApproval();
       await persistRunEvent("server-request", request.method ?? null, request);
       return;
     }
@@ -6627,6 +7214,9 @@ function App() {
           selectedChoice.response,
         );
       }
+      void removeAgentNotification(
+        approvalNotificationEventKey(currentRequest),
+      ).catch(() => undefined);
       updateActiveRunView((current) =>
         markApprovalAwaitingResolution(current, currentRequest.key),
       );
@@ -6774,6 +7364,9 @@ function App() {
     const profileKey: CodexProfileKey = external
       ? DEFAULT_CODEX_PROFILE_KEY
       : sessionProfileKey ?? (`account:${accountId}` as CodexProfileKey);
+    void removeAgentNotification(
+      planNotificationEventKey(profileKey, entry),
+    ).catch(() => undefined);
 
     updateTaskChatEntryRunView(entry.clientId, (current) =>
       updateNativePlanReview(
@@ -6881,6 +7474,9 @@ function App() {
       updateTaskChatEntryRunView(entry.clientId, (current) =>
         updateNativePlanReview(current, "cancelled", "cancelled"),
       );
+      void removeAgentNotification(
+        planNotificationEventKey(profileKey, entry),
+      ).catch(() => undefined);
       if (entry.runId !== null) {
         await updateRun(entry.runId, { planReviewState: "cancelled" });
       }
@@ -7364,6 +7960,49 @@ function App() {
     },
     [],
   );
+
+  const handleAgentNotificationPreferenceChange = useCallback(
+    (key: keyof AgentNotificationPreferences, enabled: boolean) => {
+      setAgentNotificationPreferences((current) => ({
+        ...current,
+        [key]: enabled,
+      }));
+    },
+    [],
+  );
+
+  const handleEnableAgentNotifications = useCallback(async () => {
+    try {
+      const permission = await requestAgentNotificationPermission();
+      agentNotificationPermissionRef.current = permission;
+      setAgentNotificationPermission(permission);
+      setStatusMessage(
+        permission === "allowed"
+          ? "macOS notifications enabled."
+          : permission === "denied"
+            ? "macOS notification permission was denied."
+            : "Notifications are unavailable in this build.",
+      );
+    } catch (error) {
+      setStatusMessage(
+        `Could not enable notifications: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+      );
+    }
+  }, []);
+
+  const handleOpenAgentNotificationSettings = useCallback(async () => {
+    try {
+      await openAgentNotificationSettings();
+    } catch (error) {
+      setStatusMessage(
+        `Could not open notification settings: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+      );
+    }
+  }, []);
 
   const growPreviewDrawerForDiff = useCallback(() => {
     setPreviewDrawerWidth((current) =>
@@ -8595,6 +9234,8 @@ function App() {
                         handleTranscriptScrollActivityChange
                       }
                       onLoadHistoricalActivity={loadTranscriptHistoricalActivity}
+                      notificationFocusRequest={transcriptNotificationFocusRequest}
+                      onNotificationFocusApplied={completeAgentNotificationFocus}
                     />
                   </TaskTranscriptErrorBoundary>
                 ) : selectedHistoryChatLoading ? (
@@ -8802,6 +9443,116 @@ function App() {
               </div>
             </section>
 
+            <section
+              className="surface settings-panel notification-settings-panel"
+              aria-label="Notification settings"
+            >
+              <div className="surface-header">
+                <div>
+                  <p className="eyebrow">Notifications</p>
+                  <h2>Agent alerts</h2>
+                </div>
+                <span
+                  className={`notification-permission-status permission-${agentNotificationPermission}`}
+                >
+                  {agentNotificationPermission === "allowed" ? (
+                    <Bell size={14} aria-hidden="true" />
+                  ) : (
+                    <BellOff size={14} aria-hidden="true" />
+                  )}
+                  {agentNotificationPermissionLabel(agentNotificationPermission)}
+                </span>
+              </div>
+              <div className="setting-list">
+                <label className="setting-row checkbox-setting">
+                  <div>
+                    <strong>Completed responses</strong>
+                    <span>Notify when a response finishes while Orchestrator is not focused.</span>
+                  </div>
+                  <input
+                    type="checkbox"
+                    checked={agentNotificationPreferences.responseCompleted}
+                    onChange={(event) =>
+                      handleAgentNotificationPreferenceChange(
+                        "responseCompleted",
+                        event.currentTarget.checked,
+                      )
+                    }
+                  />
+                </label>
+                <label className="setting-row checkbox-setting">
+                  <div>
+                    <strong>Approval requests</strong>
+                    <span>Notify when Codex needs permission to continue.</span>
+                  </div>
+                  <input
+                    type="checkbox"
+                    checked={agentNotificationPreferences.approvalRequired}
+                    onChange={(event) =>
+                      handleAgentNotificationPreferenceChange(
+                        "approvalRequired",
+                        event.currentTarget.checked,
+                      )
+                    }
+                  />
+                </label>
+                <label className="setting-row checkbox-setting">
+                  <div>
+                    <strong>Plans ready</strong>
+                    <span>Notify when a plan is ready to implement or revise.</span>
+                  </div>
+                  <input
+                    type="checkbox"
+                    checked={agentNotificationPreferences.planReady}
+                    onChange={(event) =>
+                      handleAgentNotificationPreferenceChange(
+                        "planReady",
+                        event.currentTarget.checked,
+                      )
+                    }
+                  />
+                </label>
+                <label className="setting-row checkbox-setting">
+                  <div>
+                    <strong>External actions</strong>
+                    <span>Notify when browser sign-in or another external step is required.</span>
+                  </div>
+                  <input
+                    type="checkbox"
+                    checked={agentNotificationPreferences.externalAction}
+                    onChange={(event) =>
+                      handleAgentNotificationPreferenceChange(
+                        "externalAction",
+                        event.currentTarget.checked,
+                      )
+                    }
+                  />
+                </label>
+              </div>
+              <div className="notification-settings-actions">
+                {agentNotificationPermission === "denied" ? (
+                  <button
+                    className="secondary"
+                    type="button"
+                    onClick={() => void handleOpenAgentNotificationSettings()}
+                  >
+                    <Settings size={16} aria-hidden="true" />
+                    Open macOS settings
+                  </button>
+                ) : agentNotificationPermission !== "allowed" ? (
+                  <button
+                    className="secondary"
+                    type="button"
+                    onClick={() => void handleEnableAgentNotifications()}
+                    disabled={agentNotificationPermission === "unavailable"}
+                  >
+                    <Bell size={16} aria-hidden="true" />
+                    Enable notifications
+                  </button>
+                ) : null}
+              </div>
+            </section>
+
             <section className="surface settings-panel" aria-label="Codex settings">
               <div className="surface-header">
                 <div>
@@ -8818,7 +9569,12 @@ function App() {
                     <p className="muted">No Codex accounts added.</p>
                   ) : (
                     codexAccounts.map((account) => (
-                      <article className="managed-account-row" key={account.id}>
+                      <article
+                        className="managed-account-row"
+                        key={account.id}
+                        data-managed-account-id={account.id}
+                        tabIndex={-1}
+                      >
                         <span className="account-mini-avatar" aria-hidden="true">
                           {(account.email ?? account.label).charAt(0).toUpperCase()}
                         </span>

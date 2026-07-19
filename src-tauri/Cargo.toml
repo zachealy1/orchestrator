@@ -26,3 +26,6 @@ tauri-plugin-sql = { version = "2", features = ["sqlite"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 tokio = { version = "1", features = ["sync", "time"] }
+
+[target.'cfg(target_os = "macos")'.dependencies]
+mac-usernotifications = "0.3.1"

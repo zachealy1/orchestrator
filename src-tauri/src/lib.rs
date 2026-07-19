@@ -18,6 +18,10 @@ use tauri::{AppHandle, Emitter, Manager, State};
 use tauri_plugin_sql::{Migration, MigrationKind};
 use tokio::{sync::oneshot, time::timeout};
 
+mod agent_notifications;
+
+use agent_notifications::AgentNotificationState;
+
 const DATABASE_URL: &str = "sqlite:app.db";
 const MAX_FILE_PREVIEW_BYTES: usize = 512 * 1024;
 const MAX_COMMIT_MESSAGE_CONTEXT_CHARS: usize = 24_000;
@@ -4479,6 +4483,7 @@ pub fn run() {
             present_main_window(app);
         }))
         .manage(CodexState::default())
+        .manage(AgentNotificationState::default())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
         .plugin(
@@ -4510,7 +4515,13 @@ pub fn run() {
             read_workspace_git_diff,
             list_workspace_directory,
             read_workspace_file_preview,
-            run_preflight
+            run_preflight,
+            agent_notifications::agent_notification_permission_status,
+            agent_notifications::agent_notification_request_permission,
+            agent_notifications::agent_notification_send,
+            agent_notifications::agent_notification_remove,
+            agent_notifications::agent_notification_take_pending_activation,
+            agent_notifications::agent_notification_open_settings
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application");

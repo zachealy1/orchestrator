@@ -4,6 +4,12 @@ import type {
   RunEditedFile,
 } from "./lib/codexEventReducer";
 import type {
+  AgentNotificationPermissionStatus,
+  AgentNotificationRequest,
+  AgentNotificationSendResult,
+  AgentNotificationTarget,
+} from "./lib/agentNotifications";
+import type {
   CodexAccountResponse,
   CodexConnectResult,
   CodexLoginResponse,
@@ -38,6 +44,38 @@ export function stopCodex(accountId: number) {
 
 export function stopDefaultCodexProfile() {
   return invoke<void>("codex_default_profile_stop");
+}
+
+export function readAgentNotificationPermissionStatus() {
+  return invoke<AgentNotificationPermissionStatus>(
+    "agent_notification_permission_status",
+  );
+}
+
+export function requestAgentNotificationPermission() {
+  return invoke<AgentNotificationPermissionStatus>(
+    "agent_notification_request_permission",
+  );
+}
+
+export function sendAgentNotification(request: AgentNotificationRequest) {
+  return invoke<AgentNotificationSendResult>("agent_notification_send", {
+    request,
+  });
+}
+
+export function removeAgentNotification(eventKey: string) {
+  return invoke<void>("agent_notification_remove", { eventKey });
+}
+
+export function takePendingAgentNotificationActivation() {
+  return invoke<AgentNotificationTarget | null>(
+    "agent_notification_take_pending_activation",
+  );
+}
+
+export function openAgentNotificationSettings() {
+  return invoke<void>("agent_notification_open_settings");
 }
 
 export function deleteCodexProfile(accountId: number) {

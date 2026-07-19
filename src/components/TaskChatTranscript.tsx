@@ -1415,7 +1415,11 @@ export const TaskChatTurn = memo(function TaskChatTurn({
           </>
         )}
       </div>
-      <article className={`chat-message assistant-message status-${entry.status}`}>
+      <article
+        className={`chat-message assistant-message status-${entry.status}`}
+        data-agent-notification-target="response"
+        tabIndex={-1}
+      >
         <AssistantRunOutput
           entry={entry}
           runView={entry.runView}
@@ -2320,6 +2324,9 @@ const NativePlanCard = memo(function NativePlanCard({
       className="native-plan-card"
       aria-label="Codex plan"
       ref={cardRef}
+      data-agent-notification-target="plan"
+      data-agent-notification-id={plan.planItemId ?? ""}
+      tabIndex={-1}
     >
       <header>
         <div>
@@ -2667,6 +2674,8 @@ const ApprovalCard = memo(function ApprovalCard({
       className={`approval native-approval approval-${request.status}`}
       ref={cardRef}
       tabIndex={-1}
+      data-agent-notification-target="approval"
+      data-agent-notification-id={request.key}
       aria-labelledby={`${request.key}-title`}
       aria-busy={busy}
     >

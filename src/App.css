@@ -4926,6 +4926,39 @@ pre {
   height: 20px;
 }
 
+.notification-permission-status {
+  display: inline-flex;
+  flex: 0 0 auto;
+  gap: 7px;
+  align-items: center;
+  border-radius: 6px;
+  background: var(--color-surface-soft);
+  color: var(--color-text-secondary);
+  font-size: 0.8rem;
+  font-weight: 700;
+  padding: 7px 10px;
+  white-space: nowrap;
+}
+
+.notification-permission-status.permission-allowed {
+  color: var(--color-primary);
+}
+
+.notification-permission-status.permission-denied {
+  color: var(--color-error);
+}
+
+.notification-settings-actions {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: 12px;
+}
+
+.managed-account-row:focus-visible {
+  outline: 2px solid rgb(var(--primary-rgb) / 0.7);
+  outline-offset: 2px;
+}
+
 .brand-panel {
   display: grid;
   gap: 14px;

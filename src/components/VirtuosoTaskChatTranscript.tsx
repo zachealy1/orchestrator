@@ -133,6 +133,20 @@ export type VirtuosoTaskChatTranscriptProps = {
   onEditPrompt?: (entry: TaskChatEntry, prompt: string) => void;
   onLoadHistoricalActivity?: (entry: TaskChatEntry) => void;
   onScrollActivityChange?: (active: boolean) => void;
+  notificationFocusRequest?: TranscriptNotificationFocusRequest | null;
+  onNotificationFocusApplied?: (
+    request: TranscriptNotificationFocusRequest,
+    found: boolean,
+  ) => void;
+};
+
+export type TranscriptNotificationFocusRequest = {
+  requestId: number;
+  kind: "response" | "approval" | "plan";
+  entryClientId?: string | null;
+  runId?: number | null;
+  turnId?: string | null;
+  targetId?: string | null;
 };
 
 const VirtualTranscriptRow = memo(function VirtualTranscriptRow({
@@ -176,6 +190,7 @@ const VirtualTranscriptRow = memo(function VirtualTranscriptRow({
     <div
       className="task-chat-virtuoso-row"
       data-transcript-entry-id={entry.clientId}
+      tabIndex={-1}
     >
       <TaskChatTurn
         editable={editable}
@@ -222,6 +237,8 @@ export const VirtuosoTaskChatTranscript = memo(
     onEditPrompt,
     onLoadHistoricalActivity,
     onScrollActivityChange,
+    notificationFocusRequest = null,
+    onNotificationFocusApplied,
   }: VirtuosoTaskChatTranscriptProps) {
     const virtuosoRef = useRef<VirtuosoHandle | null>(null);
     const scrollerRef = useRef<HTMLElement | null>(null);
@@ -234,6 +251,7 @@ export const VirtuosoTaskChatTranscript = memo(
     const liveFollowFrameRef = useRef<number | null>(null);
     const planAnchorFrameRef = useRef<number | null>(null);
     const planAnchorSettleFrameRef = useRef<number | null>(null);
+    const notificationFocusTimerRef = useRef<number | null>(null);
     const latestPositionAttemptCountRef = useRef(0);
     const latestTurnVisibleRef = useRef(false);
     const atBottomRef = useRef(false);
@@ -706,6 +724,114 @@ export const VirtuosoTaskChatTranscript = memo(
     ]);
 
     useEffect(() => {
+      if (notificationFocusTimerRef.current !== null) {
+        window.clearTimeout(notificationFocusTimerRef.current);
+        notificationFocusTimerRef.current = null;
+      }
+      if (!notificationFocusRequest || openAtLatestRequest || entries.length === 0) {
+        return;
+      }
+
+      const entryIndex = entries.findIndex((entry) => {
+        if (
+          notificationFocusRequest.entryClientId &&
+          entry.clientId === notificationFocusRequest.entryClientId
+        ) {
+          return true;
+        }
+        if (
+          notificationFocusRequest.runId !== null &&
+          notificationFocusRequest.runId !== undefined &&
+          entry.runId === notificationFocusRequest.runId
+        ) {
+          return true;
+        }
+        return Boolean(
+          notificationFocusRequest.turnId &&
+            entry.runView.turnId === notificationFocusRequest.turnId,
+        );
+      });
+      if (entryIndex < 0) {
+        onNotificationFocusApplied?.(notificationFocusRequest, false);
+        return;
+      }
+
+      let disposed = false;
+      let attempts = 0;
+      const focusTarget = () => {
+        if (disposed) return;
+        attempts += 1;
+        virtuosoRef.current?.scrollToIndex({
+          index: firstItemIndex + entryIndex,
+          align: "center",
+          behavior: "auto",
+        });
+
+        window.requestAnimationFrame(() => {
+          if (disposed) return;
+          const rows = Array.from(
+            scrollerRef.current?.querySelectorAll<HTMLElement>(
+              "[data-transcript-entry-id]",
+            ) ?? [],
+          );
+          const row = rows.find(
+            (candidate) =>
+              candidate.dataset.transcriptEntryId === entries[entryIndex]?.clientId,
+          );
+          let target: HTMLElement | null = row ?? null;
+          if (row && notificationFocusRequest.kind !== "response") {
+            const candidates = Array.from(
+              row.querySelectorAll<HTMLElement>(
+                `[data-agent-notification-target="${notificationFocusRequest.kind}"]`,
+              ),
+            );
+            target =
+              candidates.find(
+                (candidate) =>
+                  !notificationFocusRequest.targetId ||
+                  candidate.dataset.agentNotificationId ===
+                    notificationFocusRequest.targetId,
+              ) ?? null;
+          } else if (row) {
+            target =
+              row.querySelector<HTMLElement>(
+                '[data-agent-notification-target="response"]',
+              ) ?? row;
+          }
+
+          if (target) {
+            target.focus({ preventScroll: true });
+            onNotificationFocusApplied?.(notificationFocusRequest, true);
+            return;
+          }
+          if (attempts >= 8) {
+            onNotificationFocusApplied?.(notificationFocusRequest, false);
+            return;
+          }
+          notificationFocusTimerRef.current = window.setTimeout(
+            focusTarget,
+            LATEST_TURN_POSITION_RETRY_MS,
+          );
+        });
+      };
+      focusTarget();
+
+      return () => {
+        disposed = true;
+        if (notificationFocusTimerRef.current !== null) {
+          window.clearTimeout(notificationFocusTimerRef.current);
+          notificationFocusTimerRef.current = null;
+        }
+      };
+    }, [
+      entries,
+      firstItemIndex,
+      notificationFocusRequest,
+      onNotificationFocusApplied,
+      openAtLatestRequest,
+    ]);
+
+    useEffect(() => {
       clearLatestPositionSchedule();
       activeLatestRequestRef.current = openAtLatestRequest;
       latestPositionAttemptCountRef.current = 0;
@@ -789,6 +915,10 @@ export const VirtuosoTaskChatTranscript = memo(
         clearLiveFollowSchedule();
         clearPlanAnchorCorrection();
         clearScrollIdleCheck();
+        if (notificationFocusTimerRef.current !== null) {
+          window.clearTimeout(notificationFocusTimerRef.current);
+          notificationFocusTimerRef.current = null;
+        }
         if (reportedActivityRef.current) onScrollActivityChange?.(false);
         handle?.getState((snapshot) => {
           const metadata = cacheMetadataRef.current;
