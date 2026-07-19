@@ -4486,8 +4486,9 @@ pre {
   display: grid;
   gap: 12px;
   align-items: start;
-  border-color: var(--color-warning, #c88b2d);
-  background: color-mix(in srgb, var(--color-surface-soft) 86%, #f3a632 14%);
+  border-color: var(--color-divider);
+  background: var(--color-selected-background);
+  box-shadow: 0 12px 40px rgb(var(--shadow-rgb) / 0.1);
   padding: 14px;
   outline: none;
 }
@@ -4516,7 +4517,7 @@ pre {
 
 .approval-header svg {
   flex: 0 0 auto;
-  color: var(--color-warning, #c88b2d);
+  color: var(--color-icon);
 }
 
 .approval-header div {
