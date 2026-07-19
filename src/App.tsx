@@ -219,6 +219,10 @@ import {
   serializePromptInlineFileReferences,
 } from "./lib/contextFiles";
 import {
+  useMacOsWindowDragRegionsEnabled,
+  windowDragRegionValue,
+} from "./lib/windowDragging";
+import {
   buildSafeAgentNotificationCopy,
   createAgentNotificationEventKey,
   isAgentNotificationTargetNavigable,
@@ -949,6 +953,15 @@ const TASK_QUOTES = [
 ];
 
 function App() {
+  const macOsWindowDragRegionsEnabled = useMacOsWindowDragRegionsEnabled();
+  const selfWindowDragRegion = windowDragRegionValue(
+    macOsWindowDragRegionsEnabled,
+    "true",
+  );
+  const deepWindowDragRegion = windowDragRegionValue(
+    macOsWindowDragRegionsEnabled,
+    "deep",
+  );
   const [workspaces, setWorkspaces] = useState<Workspace[]>([]);
   const [selectedWorkspace, setSelectedWorkspace] = useState<Workspace | null>(null);
   const [workspaceContextMenu, setWorkspaceContextMenu] =
@@ -8602,14 +8615,18 @@ function App() {
   }
 
   return (
-    <main className="app-shell">
-      <aside className="app-rail">
+    <main className="app-shell" data-tauri-drag-region={selfWindowDragRegion}>
+      <aside className="app-rail" data-tauri-drag-region={deepWindowDragRegion}>
         <div
           className="app-rail-titlebar-drag-region"
-          data-tauri-drag-region
+          data-tauri-drag-region={selfWindowDragRegion}
           aria-hidden="true"
         />
-        <nav className="primary-nav" aria-label="Primary">
+        <nav
+          className="primary-nav"
+          aria-label="Primary"
+          data-tauri-drag-region={selfWindowDragRegion}
+        >
           <button
             className={activeView === "analytics" ? "active" : ""}
             type="button"
@@ -8629,7 +8646,10 @@ function App() {
         </nav>
 
         <div className="rail-section">
-          <div className="rail-section-header">
+          <div
+            className="rail-section-header"
+            data-tauri-drag-region={selfWindowDragRegion}
+          >
             <span id="workspaces-heading">Workspaces</span>
             <button
               className="workspace-add"
@@ -8642,7 +8662,11 @@ function App() {
             </button>
           </div>
 
-          <nav className="workspace-list" aria-labelledby="workspaces-heading">
+          <nav
+            className="workspace-list"
+            aria-labelledby="workspaces-heading"
+            data-tauri-drag-region="false"
+          >
             {workspaces.length === 0 ? (
               <p className="muted">No workspaces yet.</p>
             ) : (
@@ -8714,6 +8738,7 @@ function App() {
           {workspaceContextMenu ? (
             <div
               className="workspace-context-menu"
+              data-tauri-drag-region="false"
               ref={workspaceContextMenuRef}
               role="menu"
               aria-label={`${workspaceContextMenu.workspace.label} workspace actions`}
@@ -8741,6 +8766,7 @@ function App() {
 
         <div
           className={`codex-card account-card auth-${authRow.tone}`}
+          data-tauri-drag-region="false"
           ref={accountMenuContainerRef}
         >
           {codexSignedIn ? (
@@ -9107,15 +9133,23 @@ function App() {
         </div>
       ) : null}
 
-      <section className={`main ${activeView === "task" ? "task-main" : ""}`}>
+      <section
+        className={`main ${activeView === "task" ? "task-main" : ""}`}
+        data-tauri-drag-region={
+          activeView === "task" ? selfWindowDragRegion : "false"
+        }
+      >
         {activeView !== "task" ? (
           <>
-            <header className="topbar">
-              <div>
+            <header
+              className="topbar"
+              data-tauri-drag-region={deepWindowDragRegion}
+            >
+              <div data-tauri-drag-region="false">
                 <p className="eyebrow">{selectedWorkspacePath}</p>
                 <h2>{selectedWorkspaceName}</h2>
               </div>
-              <div className="topbar-actions">
+              <div className="topbar-actions" data-tauri-drag-region="false">
                 <span>{authMessage}</span>
                 <button
                   className="icon-button"
@@ -9137,7 +9171,10 @@ function App() {
               </div>
             </header>
 
-            <div className="status-strip">
+            <div
+              className="status-strip"
+              data-tauri-drag-region={selfWindowDragRegion}
+            >
               <span>Status</span>
               <p>{statusMessage}</p>
             </div>
@@ -9163,6 +9200,7 @@ function App() {
               onNewChat={startNewWorkspaceChat}
               historyOpen={historyDrawerOpen}
               onToggleHistory={toggleHistoryDrawer}
+              windowDragRegionsEnabled={macOsWindowDragRegionsEnabled}
             />
             <div
               className={`codex-workspace-body${
@@ -9173,6 +9211,7 @@ function App() {
               <section
                 className={`task-hero ${hasTaskChat ? "has-chat" : ""}`}
                 aria-label="Task chat"
+                data-tauri-drag-region={selfWindowDragRegion}
                 ref={setTaskViewportElement}
                 onDragOver={handleTaskContextDragOver}
                 onDragLeave={handleTaskContextDragLeave}
@@ -9371,7 +9410,10 @@ function App() {
         ) : null}
 
         {activeView === "analytics" ? (
-          <div className="view-stack">
+          <div
+            className="view-stack"
+            data-tauri-drag-region={selfWindowDragRegion}
+          >
             <AnalyticsSummary summary={analytics} />
             <section className="surface analytics-detail" aria-label="Analytics detail">
               <div className="surface-header">
@@ -9403,7 +9445,10 @@ function App() {
         ) : null}
 
         {activeView === "settings" ? (
-          <div className="settings-grid">
+          <div
+            className="settings-grid"
+            data-tauri-drag-region={selfWindowDragRegion}
+          >
             <section className="surface settings-panel appearance-panel" aria-label="Appearance settings">
               <div className="surface-header">
                 <div>
@@ -9765,6 +9810,7 @@ function WorkspaceContextBanner({
   onNewChat,
   historyOpen,
   onToggleHistory,
+  windowDragRegionsEnabled,
 }: {
   workspace: Workspace | null;
   branch: string | null;
@@ -9782,23 +9828,33 @@ function WorkspaceContextBanner({
   onNewChat: () => void;
   historyOpen: boolean;
   onToggleHistory: () => void;
+  windowDragRegionsEnabled: boolean;
 }) {
+  const deepWindowDragRegion = windowDragRegionValue(
+    windowDragRegionsEnabled,
+    "deep",
+  );
+
   if (!workspace) {
     return (
-      <section className="workspace-context-banner empty" aria-label="Selected folder">
+      <section
+        className="workspace-context-banner empty"
+        aria-label="Selected folder"
+        data-tauri-drag-region={deepWindowDragRegion}
+      >
         <div className="workspace-context-left">
           <div className="workspace-context-main">
             <span className="workspace-context-icon" aria-hidden="true">
               <Folder size={17} />
             </span>
-            <div>
+            <div data-tauri-drag-region="false">
               <strong>No folder selected</strong>
               <span>Add or choose a workspace to start a task.</span>
             </div>
           </div>
           <WorkspaceContextMeter tokenUsage={null} contextWindow={contextWindow} />
         </div>
-        <div className="workspace-context-actions">
+        <div className="workspace-context-actions" data-tauri-drag-region="false">
           <button className="workspace-header-button" type="button" disabled>
             <GitCommitHorizontal size={15} />
             Git
@@ -9831,18 +9887,26 @@ function WorkspaceContextBanner({
   const gitClean = !gitLoading && !gitError && gitSummary.total === 0;
 
   return (
-    <section className="workspace-context-banner" aria-label="Selected folder">
+    <section
+      className="workspace-context-banner"
+      aria-label="Selected folder"
+      data-tauri-drag-region={deepWindowDragRegion}
+    >
       <div className="workspace-context-left">
         <div className="workspace-context-main">
           <span className="workspace-context-icon" aria-hidden="true">
             <Folder size={17} />
           </span>
-          <div>
+          <div data-tauri-drag-region="false">
             <strong>{workspace.label}</strong>
             <span title={workspace.path}>{workspace.path}</span>
           </div>
         </div>
-        <div className="workspace-context-chips" aria-label="Selected folder status">
+        <div
+          className="workspace-context-chips"
+          aria-label="Selected folder status"
+          data-tauri-drag-region="false"
+        >
           {gitLoading ? (
             <span className="workspace-context-chip">Checking git</span>
           ) : null}
@@ -9859,7 +9923,7 @@ function WorkspaceContextBanner({
         </div>
       </div>
 
-      <div className="workspace-context-actions">
+      <div className="workspace-context-actions" data-tauri-drag-region="false">
         <ComposerSelect
           ariaLabel="Branch"
           value={branch ?? ""}
@@ -9995,6 +10059,7 @@ function WorkspaceContextMeter({
   return (
     <span
       className={`workspace-context-meter ${usage.percentage === null ? "unknown" : ""}`}
+      data-tauri-drag-region="false"
       role={usage.percentage === null ? "status" : "meter"}
       aria-label="Context usage"
       aria-valuemin={usage.percentage === null ? undefined : 0}
