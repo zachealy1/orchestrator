@@ -4092,10 +4092,6 @@ function App() {
       setStatusMessage("Finish or stop the active run before starting a new chat.");
       return;
     }
-    if (planReviewAwaiting) {
-      setStatusMessage("Approve, revise, or cancel the current plan first.");
-      return;
-    }
 
     historyChatLoadIdRef.current += 1;
     cancelActiveExternalTranscriptSync();
@@ -8522,7 +8518,7 @@ function App() {
               contextWindow={selectedModelContextWindow}
               onGitAction={() => void handleHeaderGitAction()}
               onBranchChange={(branch) => void selectBranch(branch)}
-              newChatDisabled={runIsActive || planReviewAwaiting}
+              newChatDisabled={runIsActive}
               onNewChat={startNewWorkspaceChat}
               historyOpen={historyDrawerOpen}
               onToggleHistory={toggleHistoryDrawer}

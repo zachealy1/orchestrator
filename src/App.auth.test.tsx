@@ -3742,6 +3742,17 @@ describe("App Codex auth", () => {
       "thread/resume",
       { threadId: "thread-1", cwd: workspace.path },
     );
+
+    const newChatButton = within(banner).getByRole("button", {
+      name: /new chat/i,
+    });
+    expect(newChatButton).toBeEnabled();
+    await user.click(newChatButton);
+
+    expect(screen.queryByLabelText("Task chat transcript")).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "Implement plan" }),
+    ).not.toBeInTheDocument();
   });
 
   it("auto-refreshes git status when files change outside Orchestrator", async () => {
