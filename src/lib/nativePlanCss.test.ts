@@ -51,7 +51,7 @@ describe("native plan CSS", () => {
     expect(disclosure).toContain("background: transparent");
     expect(disclosure).toContain("color: var(--color-text-secondary)");
     expect(disclosureHover).toContain("background: transparent");
-    expect(disclosureHover).toContain("color: var(--color-primary)");
+    expect(disclosureHover).toContain("color: var(--color-text)");
     expect(actions).toContain("align-items: center");
   });
 

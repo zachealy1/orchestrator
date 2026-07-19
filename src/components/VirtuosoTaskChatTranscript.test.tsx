@@ -90,6 +90,28 @@ function historyEntry(turnIndex: number): TaskChatEntry {
   };
 }
 
+function runningEntry(turnIndex: number, text = "Working..."): TaskChatEntry {
+  const entry = historyEntry(turnIndex);
+  return {
+    ...entry,
+    status: "running",
+    runView: {
+      ...entry.runView,
+      status: "running",
+      finalMessage: "",
+      streamEvents: [
+        {
+          id: `stream-${turnIndex}`,
+          kind: "message",
+          text,
+          timestamp: "2026-07-19T10:00:00Z",
+        },
+      ],
+    },
+    preparedSummary: undefined,
+  };
+}
+
 function planHistoryEntry(turnIndex: number): TaskChatEntry {
   const entry = historyEntry(turnIndex);
   return {
@@ -752,10 +774,10 @@ describe("VirtuosoTaskChatTranscript", () => {
     });
   });
 
-  it("follows live output only while the viewport remains at the bottom", () => {
+  it("keeps following through transient bottom-state changes while streaming", () => {
     const { rerender } = render(
       <VirtuosoTaskChatTranscript
-        entries={[historyEntry(1)]}
+        entries={[runningEntry(1)]}
         transcriptIdentity="chat:live"
         transcriptVersion="live"
         firstItemIndex={1_000_000}
@@ -767,11 +789,11 @@ describe("VirtuosoTaskChatTranscript", () => {
 
     expect(virtuosoMock.lastProps.atBottomThreshold).toBe(48);
     expect(virtuosoMock.lastProps.followOutput(true)).toBe("auto");
-    expect(virtuosoMock.lastProps.followOutput(false)).toBe(false);
+    expect(virtuosoMock.lastProps.followOutput(false)).toBe("auto");
 
     rerender(
       <VirtuosoTaskChatTranscript
-        entries={[historyEntry(1)]}
+        entries={[runningEntry(1)]}
         transcriptIdentity="chat:live"
         transcriptVersion="live"
         firstItemIndex={1_000_000}
@@ -781,6 +803,182 @@ describe("VirtuosoTaskChatTranscript", () => {
       />,
     );
     expect(virtuosoMock.lastProps.followOutput(true)).toBe(false);
+  });
+
+  it("releases live follow on upward input and resumes at the bottom", () => {
+    render(
+      <VirtuosoTaskChatTranscript
+        entries={[runningEntry(1)]}
+        transcriptIdentity="chat:manual-live"
+        transcriptVersion="live"
+        firstItemIndex={1_000_000}
+        openAtLatestRequest={null}
+        liveFollow
+        onResolveRequest={vi.fn()}
+      />,
+    );
+
+    act(() => virtuosoMock.lastProps.atBottomStateChange(true));
+    fireEvent.wheel(transcript(), { deltaY: -400 });
+
+    expect(virtuosoMock.lastProps.followOutput(false)).toBe(false);
+    expect(
+      screen.getByRole("button", { name: "Jump to latest message" }),
+    ).toBeInTheDocument();
+
+    act(() => virtuosoMock.lastProps.atBottomStateChange(true));
+    expect(virtuosoMock.lastProps.followOutput(false)).toBe("auto");
+    expect(
+      screen.queryByRole("button", { name: "Jump to latest message" }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("lets the jump control restore live following through Virtuoso", () => {
+    render(
+      <VirtuosoTaskChatTranscript
+        entries={[runningEntry(1)]}
+        transcriptIdentity="chat:jump-live"
+        transcriptVersion="live"
+        firstItemIndex={1_000_000}
+        openAtLatestRequest={null}
+        liveFollow
+        onResolveRequest={vi.fn()}
+      />,
+    );
+
+    fireEvent.wheel(transcript(), { deltaY: -400 });
+    fireEvent.click(
+      screen.getByRole("button", { name: "Jump to latest message" }),
+    );
+
+    expect(virtuosoMock.scrollToIndex).toHaveBeenCalledWith({
+      index: "LAST",
+      align: "end",
+      behavior: "auto",
+    });
+    expect(virtuosoMock.lastProps.followOutput(false)).toBe("auto");
+  });
+
+  it("coalesces live tail updates through Virtuoso while pinned", async () => {
+    const { rerender } = render(
+      <VirtuosoTaskChatTranscript
+        entries={[runningEntry(1, "First chunk")]}
+        transcriptIdentity="chat:streaming-tail"
+        transcriptVersion="live"
+        firstItemIndex={1_000_000}
+        openAtLatestRequest={null}
+        liveFollow
+        onResolveRequest={vi.fn()}
+      />,
+    );
+    act(() => virtuosoMock.lastProps.atBottomStateChange(true));
+    virtuosoMock.scrollToIndex.mockClear();
+
+    rerender(
+      <VirtuosoTaskChatTranscript
+        entries={[runningEntry(1, "First chunk\nSecond chunk")]}
+        transcriptIdentity="chat:streaming-tail"
+        transcriptVersion="live"
+        firstItemIndex={1_000_000}
+        openAtLatestRequest={null}
+        liveFollow
+        onResolveRequest={vi.fn()}
+      />,
+    );
+
+    await vi.waitFor(() =>
+      expect(virtuosoMock.scrollToIndex).toHaveBeenCalledWith({
+        index: "LAST",
+        align: "end",
+        behavior: "auto",
+      }),
+    );
+  });
+
+  it("does not pull a manual reader down when the live tail changes", async () => {
+    const { rerender } = render(
+      <VirtuosoTaskChatTranscript
+        entries={[runningEntry(1, "First chunk")]}
+        transcriptIdentity="chat:manual-streaming-tail"
+        transcriptVersion="live"
+        firstItemIndex={1_000_000}
+        openAtLatestRequest={null}
+        liveFollow
+        onResolveRequest={vi.fn()}
+      />,
+    );
+    await vi.waitFor(() => expect(virtuosoMock.scrollToIndex).toHaveBeenCalled());
+    virtuosoMock.scrollToIndex.mockClear();
+    fireEvent.wheel(transcript(), { deltaY: -500 });
+
+    rerender(
+      <VirtuosoTaskChatTranscript
+        entries={[runningEntry(1, "First chunk\nSecond chunk")]}
+        transcriptIdentity="chat:manual-streaming-tail"
+        transcriptVersion="live"
+        firstItemIndex={1_000_000}
+        openAtLatestRequest={null}
+        liveFollow
+        onResolveRequest={vi.fn()}
+      />,
+    );
+    await act(async () => {
+      await new Promise((resolve) => window.setTimeout(resolve, 30));
+    });
+
+    expect(virtuosoMock.scrollToIndex).not.toHaveBeenCalled();
+    expect(
+      screen.getByRole("button", { name: "Jump to latest message" }),
+    ).toBeInTheDocument();
+  });
+
+  it("waits for viewport resizing to settle before reaffirming the bottom", async () => {
+    const entry = runningEntry(1);
+    const commonProps = {
+      entries: [entry],
+      transcriptIdentity: "chat:live-resize",
+      transcriptVersion: "live",
+      firstItemIndex: 1_000_000,
+      openAtLatestRequest: null,
+      liveFollow: true,
+      onResolveRequest: vi.fn(),
+    };
+    const { rerender } = render(
+      <VirtuosoTaskChatTranscript
+        {...commonProps}
+        viewportStable
+        viewportWidth={1_000}
+      />,
+    );
+    await vi.waitFor(() => expect(virtuosoMock.scrollToIndex).toHaveBeenCalled());
+    virtuosoMock.scrollToIndex.mockClear();
+
+    rerender(
+      <VirtuosoTaskChatTranscript
+        {...commonProps}
+        viewportStable={false}
+        viewportWidth={760}
+      />,
+    );
+    await act(async () => {
+      await new Promise((resolve) => window.setTimeout(resolve, 30));
+    });
+    expect(virtuosoMock.scrollToIndex).not.toHaveBeenCalled();
+
+    rerender(
+      <VirtuosoTaskChatTranscript
+        {...commonProps}
+        viewportStable
+        viewportWidth={760}
+      />,
+    );
+    await vi.waitFor(() =>
+      expect(virtuosoMock.scrollToIndex).toHaveBeenCalledWith({
+        index: "LAST",
+        align: "end",
+        behavior: "auto",
+      }),
+    );
   });
 
   it("keeps latest-prompt editing available in virtual rows", () => {

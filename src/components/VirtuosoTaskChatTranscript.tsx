@@ -6,6 +6,7 @@ import {
   useRef,
   useState,
 } from "react";
+import { ArrowDown } from "lucide-react";
 import {
   Virtuoso,
   type ListRange,
@@ -230,16 +231,22 @@ export const VirtuosoTaskChatTranscript = memo(
     );
     const latestPositionFrameRef = useRef<number | null>(null);
     const latestPositionRetryTimerRef = useRef<number | null>(null);
+    const liveFollowFrameRef = useRef<number | null>(null);
     const planAnchorFrameRef = useRef<number | null>(null);
     const planAnchorSettleFrameRef = useRef<number | null>(null);
     const latestPositionAttemptCountRef = useRef(0);
     const latestTurnVisibleRef = useRef(false);
     const atBottomRef = useRef(false);
+    const bottomStateKnownRef = useRef(false);
+    const liveFollowEnabledRef = useRef(liveFollow);
+    const liveFollowIntentRef = useRef(liveFollow);
+    const previousLiveFollowRef = useRef(liveFollow);
     const virtuosoScrollingRef = useRef(false);
     const userScrollActiveRef = useRef(false);
     const scrollbarPointerActiveRef = useRef(false);
     const scrollIdleCheckRef = useRef<number | null>(null);
     const lastUserScrollEventAtRef = useRef(0);
+    const lastTouchYRef = useRef<number | null>(null);
     const reportedActivityRef = useRef(false);
     const stableDefaultItemHeightRef = useRef<StableDefaultItemHeight | null>(
       null,
@@ -252,9 +259,11 @@ export const VirtuosoTaskChatTranscript = memo(
     const suppressRestoreOnMountRef = useRef(openAtLatestRequest !== null);
     const [editingEntryId, setEditingEntryId] = useState<string | null>(null);
     const [editingPrompt, setEditingPrompt] = useState("");
+    const [showJumpToLatest, setShowJumpToLatest] = useState(false);
     const [expandedPlanKeys, setExpandedPlanKeys] = useState<Set<string>>(
       () => new Set(),
     );
+    liveFollowEnabledRef.current = liveFollow;
 
     const viewportWidthBucket = getTranscriptWidthBucket(viewportWidth);
     const geometryScope = `${transcriptIdentity}:${transcriptVersion}`;
@@ -299,6 +308,7 @@ export const VirtuosoTaskChatTranscript = memo(
         ),
       [heightEstimates],
     );
+    const liveTailEntry = entries[entries.length - 1];
 
     const restoredState = useMemo(
       () =>
@@ -333,6 +343,49 @@ export const VirtuosoTaskChatTranscript = memo(
         window.clearTimeout(latestPositionRetryTimerRef.current);
         latestPositionRetryTimerRef.current = null;
       }
+    }, []);
+
+    const clearLiveFollowSchedule = useCallback(() => {
+      if (liveFollowFrameRef.current === null) return;
+      window.cancelAnimationFrame(liveFollowFrameRef.current);
+      liveFollowFrameRef.current = null;
+    }, []);
+
+    const scrollToLatest = useCallback(() => {
+      if (entries.length === 0) return;
+      virtuosoRef.current?.scrollToIndex({
+        index: "LAST",
+        align: "end",
+        behavior: "auto",
+      });
+    }, [entries.length]);
+
+    const queueLiveFollow = useCallback(() => {
+      if (liveFollowFrameRef.current !== null) return;
+      liveFollowFrameRef.current = window.requestAnimationFrame(() => {
+        liveFollowFrameRef.current = null;
+        if (
+          !liveFollowEnabledRef.current ||
+          !liveFollowIntentRef.current ||
+          userScrollActiveRef.current
+        ) {
+          return;
+        }
+        scrollToLatest();
+      });
+    }, [scrollToLatest]);
+
+    const disableLiveFollow = useCallback(() => {
+      bottomStateKnownRef.current = true;
+      atBottomRef.current = false;
+      liveFollowIntentRef.current = false;
+      clearLiveFollowSchedule();
+      if (liveFollowEnabledRef.current) setShowJumpToLatest(true);
+    }, [clearLiveFollowSchedule]);
+
+    const enableLiveFollow = useCallback(() => {
+      liveFollowIntentRef.current = true;
+      setShowJumpToLatest(false);
     }, []);
 
     const clearPlanAnchorCorrection = useCallback(() => {
@@ -404,7 +457,13 @@ export const VirtuosoTaskChatTranscript = memo(
       clearScrollIdleCheck();
       userScrollActiveRef.current = false;
       reportScrollActivity();
-    }, [clearScrollIdleCheck, reportScrollActivity]);
+      if (
+        liveFollowEnabledRef.current &&
+        liveFollowIntentRef.current
+      ) {
+        queueLiveFollow();
+      }
+    }, [clearScrollIdleCheck, queueLiveFollow, reportScrollActivity]);
 
     const scheduleScrollIdleCheck = useCallback(() => {
       if (scrollIdleCheckRef.current !== null) return;
@@ -455,15 +514,24 @@ export const VirtuosoTaskChatTranscript = memo(
       onOpenAtLatestCancelled?.(request);
     }, [clearLatestPositionSchedule, onOpenAtLatestCancelled]);
 
-    const markUserScrollActivity = useCallback(() => {
-      lastUserScrollEventAtRef.current = monotonicNow();
-      if (!userScrollActiveRef.current) {
-        userScrollActiveRef.current = true;
-        cancelLatestPosition();
-      }
-      reportScrollActivity();
-      scheduleScrollIdleCheck();
-    }, [cancelLatestPosition, reportScrollActivity, scheduleScrollIdleCheck]);
+    const markUserScrollActivity = useCallback(
+      (movesAwayFromLatest = false) => {
+        if (movesAwayFromLatest) disableLiveFollow();
+        lastUserScrollEventAtRef.current = monotonicNow();
+        if (!userScrollActiveRef.current) {
+          userScrollActiveRef.current = true;
+          cancelLatestPosition();
+        }
+        reportScrollActivity();
+        scheduleScrollIdleCheck();
+      },
+      [
+        cancelLatestPosition,
+        disableLiveFollow,
+        reportScrollActivity,
+        scheduleScrollIdleCheck,
+      ],
+    );
 
     const handleScrollerRef = useCallback(
       (element: HTMLElement | Window | null) => {
@@ -477,9 +545,26 @@ export const VirtuosoTaskChatTranscript = memo(
           reportedActivityRef.current,
         );
 
-        const handleWheel = () => markUserScrollActivity();
-        const handleTouch = () => markUserScrollActivity();
+        const handleWheel = (event: WheelEvent) =>
+          markUserScrollActivity(event.deltaY < 0);
+        const handleTouchStart = (event: TouchEvent) => {
+          lastTouchYRef.current = event.touches[0]?.clientY ?? null;
+          markUserScrollActivity();
+        };
+        const handleTouchMove = (event: TouchEvent) => {
+          const nextY = event.touches[0]?.clientY ?? null;
+          const previousY = lastTouchYRef.current;
+          lastTouchYRef.current = nextY;
+          markUserScrollActivity(
+            previousY !== null && nextY !== null && nextY > previousY,
+          );
+        };
+        const handleTouchEnd = () => {
+          lastTouchYRef.current = null;
+          markUserScrollActivity();
+        };
         const handleTouchCancel = () => {
+          lastTouchYRef.current = null;
           lastUserScrollEventAtRef.current = monotonicNow();
           scheduleScrollIdleCheck();
         };
@@ -488,7 +573,12 @@ export const VirtuosoTaskChatTranscript = memo(
             isTranscriptScrollKey(event.key) &&
             !isEditableScrollTarget(event.target)
           ) {
-            markUserScrollActivity();
+            const movesAwayFromLatest =
+              event.key === "ArrowUp" ||
+              event.key === "PageUp" ||
+              event.key === "Home" ||
+              (event.key === " " && event.shiftKey);
+            markUserScrollActivity(movesAwayFromLatest);
           }
         };
         const handlePointerDown = (event: PointerEvent) => {
@@ -511,11 +601,11 @@ export const VirtuosoTaskChatTranscript = memo(
             event.clientY <= bounds.bottom - effectiveCornerInset
           ) {
             scrollbarPointerActiveRef.current = true;
-            markUserScrollActivity();
+            markUserScrollActivity(true);
           }
         };
         const handlePointerMove = () => {
-          if (scrollbarPointerActiveRef.current) markUserScrollActivity();
+          if (scrollbarPointerActiveRef.current) markUserScrollActivity(true);
         };
         const handlePointerRelease = () => {
           if (!scrollbarPointerActiveRef.current) return;
@@ -542,13 +632,13 @@ export const VirtuosoTaskChatTranscript = memo(
         };
 
         nextScroller.addEventListener("wheel", handleWheel, { passive: true });
-        nextScroller.addEventListener("touchstart", handleTouch, {
+        nextScroller.addEventListener("touchstart", handleTouchStart, {
           passive: true,
         });
-        nextScroller.addEventListener("touchmove", handleTouch, {
+        nextScroller.addEventListener("touchmove", handleTouchMove, {
           passive: true,
         });
-        nextScroller.addEventListener("touchend", handleTouch, {
+        nextScroller.addEventListener("touchend", handleTouchEnd, {
           passive: true,
         });
         nextScroller.addEventListener("touchcancel", handleTouchCancel, {
@@ -571,9 +661,9 @@ export const VirtuosoTaskChatTranscript = memo(
 
         detachScrollerListenersRef.current = () => {
           nextScroller.removeEventListener("wheel", handleWheel);
-          nextScroller.removeEventListener("touchstart", handleTouch);
-          nextScroller.removeEventListener("touchmove", handleTouch);
-          nextScroller.removeEventListener("touchend", handleTouch);
+          nextScroller.removeEventListener("touchstart", handleTouchStart);
+          nextScroller.removeEventListener("touchmove", handleTouchMove);
+          nextScroller.removeEventListener("touchend", handleTouchEnd);
           nextScroller.removeEventListener("touchcancel", handleTouchCancel);
           nextScroller.removeEventListener("keydown", handleKeyDown);
           nextScroller.removeEventListener("pointerdown", handlePointerDown);
@@ -589,11 +679,37 @@ export const VirtuosoTaskChatTranscript = memo(
     );
 
     useEffect(() => {
+      if (!liveFollow) {
+        previousLiveFollowRef.current = false;
+        clearLiveFollowSchedule();
+        setShowJumpToLatest(false);
+        return;
+      }
+
+      if (!previousLiveFollowRef.current) {
+        const shouldFollow =
+          !bottomStateKnownRef.current || atBottomRef.current;
+        liveFollowIntentRef.current = shouldFollow;
+        setShowJumpToLatest(!shouldFollow);
+      }
+      previousLiveFollowRef.current = true;
+
+      if (liveFollowIntentRef.current && viewportStable) {
+        queueLiveFollow();
+      }
+    }, [
+      clearLiveFollowSchedule,
+      liveTailEntry,
+      liveFollow,
+      queueLiveFollow,
+      viewportStable,
+    ]);
+
+    useEffect(() => {
       clearLatestPositionSchedule();
       activeLatestRequestRef.current = openAtLatestRequest;
       latestPositionAttemptCountRef.current = 0;
       latestTurnVisibleRef.current = false;
-      atBottomRef.current = false;
 
       if (
         !openAtLatestRequest ||
@@ -603,6 +719,8 @@ export const VirtuosoTaskChatTranscript = memo(
       ) {
         return;
       }
+      atBottomRef.current = false;
+      bottomStateKnownRef.current = false;
 
       let disposed = false;
       const attemptPositioning = () => {
@@ -668,6 +786,7 @@ export const VirtuosoTaskChatTranscript = memo(
         detachScrollerListenersRef.current?.();
         detachScrollerListenersRef.current = null;
         clearLatestPositionSchedule();
+        clearLiveFollowSchedule();
         clearPlanAnchorCorrection();
         clearScrollIdleCheck();
         if (reportedActivityRef.current) onScrollActivityChange?.(false);
@@ -682,6 +801,7 @@ export const VirtuosoTaskChatTranscript = memo(
       };
     }, [
       clearLatestPositionSchedule,
+      clearLiveFollowSchedule,
       clearPlanAnchorCorrection,
       clearScrollIdleCheck,
       onScrollActivityChange,
@@ -719,10 +839,19 @@ export const VirtuosoTaskChatTranscript = memo(
 
     const handleAtBottomStateChange = useCallback(
       (atBottom: boolean) => {
+        bottomStateKnownRef.current = true;
         atBottomRef.current = atBottom;
+        if (atBottom) {
+          enableLiveFollow();
+        } else if (
+          liveFollowEnabledRef.current &&
+          !liveFollowIntentRef.current
+        ) {
+          setShowJumpToLatest(true);
+        }
         confirmLatestPosition();
       },
-      [confirmLatestPosition],
+      [confirmLatestPosition, enableLiveFollow],
     );
 
     const handleIsScrolling = useCallback(
@@ -732,6 +861,11 @@ export const VirtuosoTaskChatTranscript = memo(
       },
       [reportScrollActivity],
     );
+
+    const handleJumpToLatest = useCallback(() => {
+      enableLiveFollow();
+      scrollToLatest();
+    }, [enableLiveFollow, scrollToLatest]);
 
     const itemContent = useCallback(
       (_index: number, entry: TaskChatEntry) => {
@@ -812,14 +946,25 @@ export const VirtuosoTaskChatTranscript = memo(
           restoreStateFrom={restoredState}
           alignToBottom
           atBottomThreshold={TRANSCRIPT_BOTTOM_THRESHOLD_PX}
-          followOutput={(isAtBottom) =>
-            liveFollow && isAtBottom ? "auto" : false
+          followOutput={() =>
+            liveFollow && liveFollowIntentRef.current ? "auto" : false
           }
           atBottomStateChange={handleAtBottomStateChange}
           rangeChanged={handleRangeChanged}
           isScrolling={handleIsScrolling}
           itemContent={itemContent}
         />
+        {showJumpToLatest && liveFollow ? (
+          <button
+            aria-label="Jump to latest message"
+            className="task-chat-jump-latest"
+            onClick={handleJumpToLatest}
+            title="Jump to latest message"
+            type="button"
+          >
+            <ArrowDown size={17} aria-hidden="true" />
+          </button>
+        ) : null}
       </div>
     );
   },

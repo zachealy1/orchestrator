@@ -1974,6 +1974,34 @@ button.account-switcher-item:hover:not(:disabled) {
   isolation: isolate;
 }
 
+.task-chat-jump-latest {
+  position: absolute;
+  z-index: 4;
+  bottom: 16px;
+  left: 50%;
+  width: 34px;
+  min-width: 34px;
+  min-height: 34px;
+  border: 0;
+  border-radius: 7px;
+  background: var(--color-button-secondary);
+  color: var(--color-button-secondary-text);
+  box-shadow: 0 8px 24px rgb(var(--shadow-rgb) / 0.2);
+  padding: 0;
+  transform: translateX(-50%);
+}
+
+.task-chat-jump-latest:hover:not(:disabled),
+.task-chat-jump-latest:focus-visible:not(:disabled) {
+  background: var(--color-button-active);
+  color: var(--color-button-secondary-text);
+  transform: translateX(-50%);
+}
+
+.task-chat-jump-latest:active:not(:disabled) {
+  transform: translate(-50%, 1px);
+}
+
 .task-chat-transcript {
   position: relative;
   display: block;
