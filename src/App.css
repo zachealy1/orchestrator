@@ -4500,9 +4500,22 @@ pre {
 
 .approval-actions {
   display: flex;
-  flex-wrap: wrap;
+  flex: 0 0 auto;
+  flex-wrap: nowrap;
   gap: 8px;
   justify-content: flex-end;
+}
+
+.approval-decision-row {
+  display: grid;
+  min-width: 0;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 12px;
+  align-items: center;
+}
+
+.approval-decision-row > .approval-actions:only-child {
+  grid-column: 2;
 }
 
 .native-approval:focus-visible {

@@ -5918,6 +5918,13 @@ describe("App Codex auth", () => {
     expect(within(approval).getByText("Plan Mode")).toBeInTheDocument();
     expect(within(approval).getByText(/src\/App\.tsx/)).toBeInTheDocument();
     expect(within(approval).getByText(/src\/App\.css/)).toBeInTheDocument();
+    const decisionRow = approval.querySelector(".approval-decision-row")!;
+    expect(decisionRow).toContainElement(
+      within(approval).getByText("Affected resources").closest("dl"),
+    );
+    expect(decisionRow).toContainElement(
+      within(approval).getByRole("group", { name: "Approval choices" }),
+    );
     expect(
       within(approval).queryByText(
         "Codex is blocked until you choose one of the native options.",

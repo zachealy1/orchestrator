@@ -2650,6 +2650,9 @@ const ApprovalCard = memo(function ApprovalCard({
     approvalRecord(request.params.additionalPermissions) ??
     approvalRecord(request.params.permissions);
   const resources = approvalResources(request, itemResources);
+  const hasContext = Boolean(
+    cwd || environmentId || reason || network || resources.length > 0,
+  );
   const statusLabel = approvalStatusLabel(request);
 
   useEffect(() => {
@@ -2680,39 +2683,6 @@ const ApprovalCard = memo(function ApprovalCard({
         </div>
       ) : null}
 
-      <dl className="approval-context">
-        {cwd ? (
-          <>
-            <dt>Working directory</dt>
-            <dd>{cwd}</dd>
-          </>
-        ) : null}
-        {environmentId ? (
-          <>
-            <dt>Environment</dt>
-            <dd>{environmentId}</dd>
-          </>
-        ) : null}
-        {reason ? (
-          <>
-            <dt>Why approval is required</dt>
-            <dd>{reason}</dd>
-          </>
-        ) : null}
-        {network ? (
-          <>
-            <dt>Network access</dt>
-            <dd>{approvalNetworkLabel(network)}</dd>
-          </>
-        ) : null}
-        {resources.length > 0 ? (
-          <>
-            <dt>Affected resources</dt>
-            <dd>{resources.join(", ")}</dd>
-          </>
-        ) : null}
-      </dl>
-
       {permissions ? (
         <details className="approval-permissions" open>
           <summary>Requested permission scope</summary>
@@ -2726,30 +2696,67 @@ const ApprovalCard = memo(function ApprovalCard({
         </p>
       ) : null}
 
-      <div className="approval-actions" role="group" aria-label="Approval choices">
-        {request.choices.map((choice, index) => {
-          const descriptionId = `${request.key}-choice-${index}-description`;
-          const description = `${choice.description}${
-            choice.broadScope ? " This is broader than one operation." : ""
-          }`;
-          return (
-            <button
-              className={`approval-choice approval-choice-${choice.tone}`}
-              type="button"
-              key={choice.id}
-              disabled={disabled}
-              aria-label={choice.label}
-              aria-describedby={descriptionId}
-              data-tooltip={`${choice.label}: ${description}`}
-              onClick={() => onResolveRequest(request, choice)}
-            >
-              <ApprovalChoiceIcon choice={choice} />
-              <span className="sr-only" id={descriptionId}>
-                {description}
-              </span>
-            </button>
-          );
-        })}
+      <div className="approval-decision-row">
+        {hasContext ? (
+          <dl className="approval-context">
+            {cwd ? (
+              <>
+                <dt>Working directory</dt>
+                <dd>{cwd}</dd>
+              </>
+            ) : null}
+            {environmentId ? (
+              <>
+                <dt>Environment</dt>
+                <dd>{environmentId}</dd>
+              </>
+            ) : null}
+            {reason ? (
+              <>
+                <dt>Why approval is required</dt>
+                <dd>{reason}</dd>
+              </>
+            ) : null}
+            {network ? (
+              <>
+                <dt>Network access</dt>
+                <dd>{approvalNetworkLabel(network)}</dd>
+              </>
+            ) : null}
+            {resources.length > 0 ? (
+              <>
+                <dt>Affected resources</dt>
+                <dd>{resources.join(", ")}</dd>
+              </>
+            ) : null}
+          </dl>
+        ) : null}
+
+        <div className="approval-actions" role="group" aria-label="Approval choices">
+          {request.choices.map((choice, index) => {
+            const descriptionId = `${request.key}-choice-${index}-description`;
+            const description = `${choice.description}${
+              choice.broadScope ? " This is broader than one operation." : ""
+            }`;
+            return (
+              <button
+                className={`approval-choice approval-choice-${choice.tone}`}
+                type="button"
+                key={choice.id}
+                disabled={disabled}
+                aria-label={choice.label}
+                aria-describedby={descriptionId}
+                data-tooltip={`${choice.label}: ${description}`}
+                onClick={() => onResolveRequest(request, choice)}
+              >
+                <ApprovalChoiceIcon choice={choice} />
+                <span className="sr-only" id={descriptionId}>
+                  {description}
+                </span>
+              </button>
+            );
+          })}
+        </div>
       </div>
 
       {statusLabel ? (
