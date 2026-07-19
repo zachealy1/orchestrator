@@ -105,7 +105,19 @@ fn permission_status_label(status: mac_usernotifications::AuthorizationStatus) -
 }
 
 #[cfg(target_os = "macos")]
+fn native_notifications_available() -> bool {
+    // UNUserNotificationCenter raises an Objective-C exception when the current
+    // process is not running from a valid app bundle. Tauri dev binaries run
+    // directly from target/{debug,release}, so guard every native-center call.
+    mac_usernotifications::check_bundle().is_ok()
+}
+
+#[cfg(target_os = "macos")]
 async fn permission_status() -> String {
+    if !native_notifications_available() {
+        return "unavailable".to_string();
+    }
+
     match mac_usernotifications::get_notification_settings().await {
         Ok(settings) => permission_status_label(settings.authorization_status),
         Err(_) => "unavailable",
@@ -127,6 +139,10 @@ pub async fn agent_notification_permission_status() -> String {
 pub async fn agent_notification_request_permission() -> String {
     #[cfg(target_os = "macos")]
     {
+        if !native_notifications_available() {
+            return "unavailable".to_string();
+        }
+
         return match mac_usernotifications::request_auth().await {
             Ok(true) => "allowed".to_string(),
             Ok(false) => "denied".to_string(),
@@ -228,7 +244,9 @@ pub async fn agent_notification_remove(
     }
 
     #[cfg(target_os = "macos")]
-    mac_usernotifications::close_delivered(&stable_notification_id(&event_key)).await;
+    if native_notifications_available() {
+        mac_usernotifications::close_delivered(&stable_notification_id(&event_key)).await;
+    }
 
     Ok(())
 }
@@ -346,5 +364,11 @@ mod tests {
             permission_status_label(AuthorizationStatus::Unknown),
             "unavailable"
         );
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn unbundled_test_process_disables_native_notifications() {
+        assert!(!native_notifications_available());
     }
 }
