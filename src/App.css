@@ -2649,7 +2649,7 @@ summary.run-live-metrics::-webkit-details-marker {
 }
 
 .activity-additions {
-  color: var(--color-secondary);
+  color: var(--color-diff-addition);
 }
 
 .activity-deletions {
