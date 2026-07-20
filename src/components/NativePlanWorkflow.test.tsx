@@ -176,7 +176,7 @@ describe("native Plan transcript workflow", () => {
     expect(screen.queryByRole("table")).not.toBeInTheDocument();
   });
 
-  it("renders structured choices, secret free-form input, notes, and submits all answers", async () => {
+  it("renders streamlined structured choices and submits selected answers", async () => {
     const user = userEvent.setup();
     const entry = planEntry();
     entry.status = "running";
@@ -196,7 +196,7 @@ describe("native Plan transcript workflow", () => {
             threadId: "thread-1",
             turnId: "turn-1",
             itemId: "item-1",
-            autoResolutionMs: null,
+            autoResolutionMs: 60_000,
             questions: [
               {
                 id: "scope",
@@ -230,19 +230,47 @@ describe("native Plan transcript workflow", () => {
     expect(
       metrics.compareDocumentPosition(plan) & Node.DOCUMENT_POSITION_FOLLOWING,
     ).toBeTruthy();
-    await user.click(screen.getByRole("radio", { name: /Focused/ }));
-    await user.type(screen.getByLabelText("Scope note"), "Prefer two files");
-    const secret = screen.getByLabelText("Token");
+    expect(screen.queryByText("Codex needs your input")).not.toBeInTheDocument();
+    expect(
+      screen.queryByText("Auto-continues if unanswered"),
+    ).not.toBeInTheDocument();
+    expect(screen.queryByText("Scope")).not.toBeInTheDocument();
+    const question = screen.getByText("Which scope?");
+    expect(question.tagName).toBe("LEGEND");
+    const focusedOption = screen.getByRole("radio", { name: "Focused" });
+    const focusedLabel = focusedOption.closest("label");
+    expect(focusedLabel).toHaveAttribute(
+      "data-tooltip",
+      "Smallest useful change",
+    );
+    expect(screen.getByText("Smallest useful change")).toHaveClass("sr-only");
+    await user.click(
+      screen.getByRole("radio", { name: "None of the above" }),
+    );
+    const customInstructions = screen.getByRole("textbox", {
+      name: "Instructions for Codex: Which scope?",
+    });
+    expect(customInstructions.tagName).toBe("TEXTAREA");
+    expect(customInstructions).toHaveAttribute(
+      "placeholder",
+      "Tell Codex what you want instead",
+    );
+    await user.type(customInstructions, "Use a canvas-based implementation");
+    expect(screen.queryByPlaceholderText("Add a note (optional)")).not.toBeInTheDocument();
+    const secret = screen.getByLabelText("Provide the token");
     expect(secret).toHaveAttribute("type", "password");
     await user.type(secret, "secret-value");
-    await user.click(screen.getByRole("button", { name: "Continue" }));
+    const continueButton = screen.getByRole("button", { name: "Continue" });
+    expect(continueButton).toHaveTextContent("");
+    expect(continueButton.querySelector("svg")).toBeInTheDocument();
+    await user.click(continueButton);
 
     expect(onAnswerUserInput).toHaveBeenCalledWith(
       entry,
       entry.runView.serverRequests[0],
       {
         answers: {
-          scope: { answers: ["Focused", "Prefer two files"] },
+          scope: { answers: ["Use a canvas-based implementation"] },
           token: { answers: ["secret-value"] },
         },
       },

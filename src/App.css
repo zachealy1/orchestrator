@@ -33,23 +33,20 @@
   box-shadow: 0 12px 40px rgb(var(--shadow-rgb) / 0.1);
 }
 
-.native-plan-card > header,
-.native-user-input-heading {
+.native-plan-card > header {
   display: flex;
   align-items: flex-start;
   justify-content: space-between;
   gap: 12px;
 }
 
-.native-plan-card > header > div,
-.native-user-input-heading {
+.native-plan-card > header > div {
   display: flex;
   flex-direction: column;
   gap: 2px;
 }
 
-.native-plan-card header span,
-.native-user-input-heading span {
+.native-plan-card header span {
   color: var(--color-text-secondary);
   font-size: 12px;
 }
@@ -230,17 +227,26 @@ button.native-plan-icon-action:active:not(:disabled) {
   gap: 14px;
 }
 
+.approval.native-user-input {
+  border-color: var(--color-divider);
+  background: var(--color-component-background);
+}
+
 .native-user-input fieldset {
   display: grid;
-  gap: 8px;
+  gap: 12px;
   min-width: 0;
   margin: 0;
   padding: 0;
   border: 0;
 }
 
-.native-user-input fieldset > p {
-  margin: 0;
+.native-user-input legend {
+  color: var(--color-text);
+  font-size: 1rem;
+  font-weight: 700;
+  line-height: 1.35;
+  padding: 0;
 }
 
 .native-user-input-options {
@@ -249,13 +255,17 @@ button.native-plan-icon-action:active:not(:disabled) {
 }
 
 .native-user-input-options > label {
+  position: relative;
+  z-index: 1;
   display: flex;
   align-items: flex-start;
   gap: 8px;
   padding: 8px;
   border: 1px solid var(--color-divider);
   border-radius: 8px;
+  background: transparent;
   cursor: pointer;
+  transition: background-color 140ms ease;
 }
 
 .native-user-input-options label span {
@@ -263,12 +273,14 @@ button.native-plan-icon-action:active:not(:disabled) {
   gap: 2px;
 }
 
-.native-user-input-options small {
-  color: var(--color-text-secondary);
+.native-user-input-options > label:hover,
+.native-user-input-options > label:focus-within {
+  background: var(--color-button-active);
 }
 
 .native-user-input input[type="text"],
 .native-user-input input[type="password"],
+.native-user-input textarea,
 .native-plan-revision textarea {
   box-sizing: border-box;
   width: 100%;
@@ -278,6 +290,11 @@ button.native-plan-icon-action:active:not(:disabled) {
   color: inherit;
   background: var(--color-component-background);
   font: inherit;
+}
+
+.native-user-input-other {
+  min-height: 76px;
+  resize: vertical;
 }
 
 .native-user-input-error {
@@ -4687,7 +4704,8 @@ pre {
     color 140ms ease;
 }
 
-.approval-choice::after {
+.approval-choice::after,
+.native-user-input-option[data-tooltip]::after {
   position: absolute;
   right: 0;
   bottom: calc(100% + 8px);
@@ -4725,7 +4743,9 @@ pre {
 }
 
 .approval-choice:hover:not(:disabled)::after,
-.approval-choice:focus-visible::after {
+.approval-choice:focus-visible::after,
+.native-user-input-option[data-tooltip]:hover::after,
+.native-user-input-option[data-tooltip]:focus-within::after {
   opacity: 1;
   transform: translateY(0);
   visibility: visible;
@@ -4742,7 +4762,9 @@ pre {
 
 @media (prefers-reduced-motion: reduce) {
   .approval-choice,
-  .approval-choice::after {
+  .approval-choice::after,
+  .native-user-input-option,
+  .native-user-input-option[data-tooltip]::after {
     transition: none;
   }
 }

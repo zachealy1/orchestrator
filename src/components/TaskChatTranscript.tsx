@@ -2457,7 +2457,6 @@ const UserInputRequestCard = memo(function UserInputRequestCard({
   onAnswerUserInput?: Props["onAnswerUserInput"];
 }) {
   const [values, setValues] = useState<Record<string, string>>({});
-  const [notes, setNotes] = useState<Record<string, string>>({});
   const [otherValues, setOtherValues] = useState<Record<string, string>>({});
   const state = entry.runView.nativePlan.requestStates[requestKey(request)];
   const busy = state === "submitting";
@@ -2473,50 +2472,53 @@ const UserInputRequestCard = memo(function UserInputRequestCard({
           const primary = selected === "__other__"
             ? otherValues[question.id]?.trim() ?? ""
             : selected.trim();
-          const note = notes[question.id]?.trim() ?? "";
           answers[question.id] = {
-            answers: [primary, note].filter(Boolean),
+            answers: [primary].filter(Boolean),
           };
         });
         onAnswerUserInput?.(entry, request, { answers });
       }}
     >
-      <div className="native-user-input-heading">
-        <strong>Codex needs your input</strong>
-        {request.params.autoResolutionMs ? (
-          <span>Auto-continues if unanswered</span>
-        ) : null}
-      </div>
       {request.params.questions.map((question) => {
         const selected = values[question.id] ?? "";
         return (
           <fieldset key={question.id} disabled={busy}>
-            <legend>{question.header}</legend>
-            <p>{question.question}</p>
+            <legend>{question.question}</legend>
             {question.options ? (
               <div className="native-user-input-options">
-                {question.options.map((option) => (
-                  <label key={option.label}>
-                    <input
-                      type="radio"
-                      name={`${request.id}-${question.id}`}
-                      value={option.label}
-                      checked={selected === option.label}
-                      onChange={(event) =>
-                        setValues((current) => ({
-                          ...current,
-                          [question.id]: event.target.value,
-                        }))
-                      }
-                    />
-                    <span>
-                      <strong>{option.label}</strong>
-                      <small>{option.description}</small>
-                    </span>
-                  </label>
-                ))}
+                {question.options.map((option, optionIndex) => {
+                  const descriptionId = `${requestKey(request)}-${question.id}-${optionIndex}-description`;
+                  return (
+                    <label
+                      className="native-user-input-option"
+                      data-tooltip={option.description}
+                      key={option.label}
+                    >
+                      <input
+                        type="radio"
+                        name={`${request.id}-${question.id}`}
+                        value={option.label}
+                        checked={selected === option.label}
+                        aria-label={option.label}
+                        aria-describedby={descriptionId}
+                        onChange={(event) =>
+                          setValues((current) => ({
+                            ...current,
+                            [question.id]: event.target.value,
+                          }))
+                        }
+                      />
+                      <span>
+                        <strong>{option.label}</strong>
+                      </span>
+                      <div className="sr-only" id={descriptionId}>
+                        {option.description}
+                      </div>
+                    </label>
+                  );
+                })}
                 {question.isOther ? (
-                  <label>
+                  <label className="native-user-input-option">
                     <input
                       type="radio"
                       name={`${request.id}-${question.id}`}
@@ -2529,14 +2531,16 @@ const UserInputRequestCard = memo(function UserInputRequestCard({
                         }))
                       }
                     />
-                    <span><strong>None of the above</strong></span>
+                    <span>
+                      <strong>None of the above</strong>
+                    </span>
                   </label>
                 ) : null}
               </div>
             ) : (
               <input
                 type={question.isSecret ? "password" : "text"}
-                aria-label={question.header}
+                aria-label={question.question}
                 value={selected}
                 onChange={(event) =>
                   setValues((current) => ({
@@ -2547,39 +2551,53 @@ const UserInputRequestCard = memo(function UserInputRequestCard({
               />
             )}
             {selected === "__other__" ? (
-              <input
-                type={question.isSecret ? "password" : "text"}
-                aria-label={`${question.header} other answer`}
-                placeholder="Enter another answer"
-                value={otherValues[question.id] ?? ""}
-                onChange={(event) =>
-                  setOtherValues((current) => ({
-                    ...current,
-                    [question.id]: event.target.value,
-                  }))
-                }
-              />
+              question.isSecret ? (
+                <input
+                  type="password"
+                  aria-label={`Instructions for Codex: ${question.question}`}
+                  placeholder="Enter another answer"
+                  value={otherValues[question.id] ?? ""}
+                  onChange={(event) =>
+                    setOtherValues((current) => ({
+                      ...current,
+                      [question.id]: event.target.value,
+                    }))
+                  }
+                  autoFocus
+                />
+              ) : (
+                <textarea
+                  className="native-user-input-other"
+                  aria-label={`Instructions for Codex: ${question.question}`}
+                  placeholder="Tell Codex what you want instead"
+                  value={otherValues[question.id] ?? ""}
+                  onChange={(event) =>
+                    setOtherValues((current) => ({
+                      ...current,
+                      [question.id]: event.target.value,
+                    }))
+                  }
+                  autoFocus
+                />
+              )
             ) : null}
-            <input
-              type="text"
-              aria-label={`${question.header} note`}
-              placeholder="Add a note (optional)"
-              value={notes[question.id] ?? ""}
-              onChange={(event) =>
-                setNotes((current) => ({
-                  ...current,
-                  [question.id]: event.target.value,
-                }))
-              }
-            />
           </fieldset>
         );
       })}
-      {state === "failed" ? <p className="native-user-input-error">Could not send that answer. Try again.</p> : null}
+      {state === "failed" ? (
+        <p className="native-user-input-error">
+          Could not send that answer. Try again.
+        </p>
+      ) : null}
       <div className="approval-actions">
-        <button className="small" type="submit" disabled={busy || !onAnswerUserInput}>
+        <button
+          className="native-plan-icon-action implement"
+          type="submit"
+          aria-label="Continue"
+          title="Continue"
+          disabled={busy || !onAnswerUserInput}
+        >
           <Check size={15} aria-hidden="true" />
-          {busy ? "Sending…" : "Continue"}
         </button>
       </div>
     </form>
