@@ -2461,22 +2461,32 @@ const UserInputRequestCard = memo(function UserInputRequestCard({
   const state = entry.runView.nativePlan.requestStates[requestKey(request)];
   const busy = state === "submitting";
 
+  function submitAnswers(
+    nextValues = values,
+    nextOtherValues = otherValues,
+  ) {
+    if (busy || !onAnswerUserInput) return;
+    const answers: UserInputResponse["answers"] = {};
+    let complete = true;
+    request.params.questions.forEach((question) => {
+      const selected = nextValues[question.id] ?? "";
+      const primary = selected === "__other__"
+        ? nextOtherValues[question.id]?.trim() ?? ""
+        : selected.trim();
+      if (!primary) complete = false;
+      answers[question.id] = {
+        answers: [primary].filter(Boolean),
+      };
+    });
+    if (complete) onAnswerUserInput(entry, request, { answers });
+  }
+
   return (
     <form
       className="approval native-user-input"
       onSubmit={(event) => {
         event.preventDefault();
-        const answers: UserInputResponse["answers"] = {};
-        request.params.questions.forEach((question) => {
-          const selected = values[question.id] ?? "";
-          const primary = selected === "__other__"
-            ? otherValues[question.id]?.trim() ?? ""
-            : selected.trim();
-          answers[question.id] = {
-            answers: [primary].filter(Boolean),
-          };
-        });
-        onAnswerUserInput?.(entry, request, { answers });
+        submitAnswers();
       }}
     >
       {request.params.questions.map((question) => {
@@ -2501,12 +2511,14 @@ const UserInputRequestCard = memo(function UserInputRequestCard({
                         checked={selected === option.label}
                         aria-label={option.label}
                         aria-describedby={descriptionId}
-                        onChange={(event) =>
-                          setValues((current) => ({
-                            ...current,
+                        onChange={(event) => {
+                          const nextValues = {
+                            ...values,
                             [question.id]: event.target.value,
-                          }))
-                        }
+                          };
+                          setValues(nextValues);
+                          submitAnswers(nextValues, otherValues);
+                        }}
                       />
                       <span>
                         <strong>{option.label}</strong>
@@ -2518,22 +2530,86 @@ const UserInputRequestCard = memo(function UserInputRequestCard({
                   );
                 })}
                 {question.isOther ? (
-                  <label className="native-user-input-option">
-                    <input
-                      type="radio"
-                      name={`${request.id}-${question.id}`}
-                      value="__other__"
-                      checked={selected === "__other__"}
-                      onChange={(event) =>
-                        setValues((current) => ({
-                          ...current,
-                          [question.id]: event.target.value,
-                        }))
-                      }
+                  <label
+                    className={`native-user-input-option native-user-input-other-option${
+                      selected === "__other__" ? " selected" : ""
+                    }`}
+                  >
+                    <span
+                      className="native-user-input-other-indicator"
+                      aria-hidden="true"
                     />
-                    <span>
-                      <strong>None of the above</strong>
-                    </span>
+                    {question.isSecret ? (
+                      <input
+                        className="native-user-input-other"
+                        type="password"
+                        aria-label={`None of the above: ${question.question}`}
+                        placeholder="None of the above - type another answer"
+                        value={otherValues[question.id] ?? ""}
+                        onFocus={() =>
+                          setValues((current) => ({
+                            ...current,
+                            [question.id]: "__other__",
+                          }))
+                        }
+                        onChange={(event) => {
+                          setValues((current) => ({
+                            ...current,
+                            [question.id]: "__other__",
+                          }));
+                          setOtherValues((current) => ({
+                            ...current,
+                            [question.id]: event.target.value,
+                          }));
+                        }}
+                        onKeyDown={(event) => {
+                          if (event.key !== "Enter") return;
+                          event.preventDefault();
+                          submitAnswers(
+                            { ...values, [question.id]: "__other__" },
+                            {
+                              ...otherValues,
+                              [question.id]: event.currentTarget.value,
+                            },
+                          );
+                        }}
+                      />
+                    ) : (
+                      <textarea
+                        className="native-user-input-other"
+                        aria-label={`None of the above: ${question.question}`}
+                        placeholder="None of the above - type your instructions"
+                        rows={1}
+                        value={otherValues[question.id] ?? ""}
+                        onFocus={() =>
+                          setValues((current) => ({
+                            ...current,
+                            [question.id]: "__other__",
+                          }))
+                        }
+                        onChange={(event) => {
+                          setValues((current) => ({
+                            ...current,
+                            [question.id]: "__other__",
+                          }));
+                          setOtherValues((current) => ({
+                            ...current,
+                            [question.id]: event.target.value,
+                          }));
+                        }}
+                        onKeyDown={(event) => {
+                          if (event.key !== "Enter" || event.shiftKey) return;
+                          event.preventDefault();
+                          submitAnswers(
+                            { ...values, [question.id]: "__other__" },
+                            {
+                              ...otherValues,
+                              [question.id]: event.currentTarget.value,
+                            },
+                          );
+                        }}
+                      />
+                    )}
                   </label>
                 ) : null}
               </div>
@@ -2548,39 +2624,16 @@ const UserInputRequestCard = memo(function UserInputRequestCard({
                     [question.id]: event.target.value,
                   }))
                 }
+                onKeyDown={(event) => {
+                  if (event.key !== "Enter") return;
+                  event.preventDefault();
+                  submitAnswers(
+                    { ...values, [question.id]: event.currentTarget.value },
+                    otherValues,
+                  );
+                }}
               />
             )}
-            {selected === "__other__" ? (
-              question.isSecret ? (
-                <input
-                  type="password"
-                  aria-label={`Instructions for Codex: ${question.question}`}
-                  placeholder="Enter another answer"
-                  value={otherValues[question.id] ?? ""}
-                  onChange={(event) =>
-                    setOtherValues((current) => ({
-                      ...current,
-                      [question.id]: event.target.value,
-                    }))
-                  }
-                  autoFocus
-                />
-              ) : (
-                <textarea
-                  className="native-user-input-other"
-                  aria-label={`Instructions for Codex: ${question.question}`}
-                  placeholder="Tell Codex what you want instead"
-                  value={otherValues[question.id] ?? ""}
-                  onChange={(event) =>
-                    setOtherValues((current) => ({
-                      ...current,
-                      [question.id]: event.target.value,
-                    }))
-                  }
-                  autoFocus
-                />
-              )
-            ) : null}
           </fieldset>
         );
       })}
@@ -2589,17 +2642,6 @@ const UserInputRequestCard = memo(function UserInputRequestCard({
           Could not send that answer. Try again.
         </p>
       ) : null}
-      <div className="approval-actions">
-        <button
-          className="native-plan-icon-action implement"
-          type="submit"
-          aria-label="Continue"
-          title="Continue"
-          disabled={busy || !onAnswerUserInput}
-        >
-          <Check size={15} aria-hidden="true" />
-        </button>
-      </div>
     </form>
   );
 });

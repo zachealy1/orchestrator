@@ -252,14 +252,17 @@ button.native-plan-icon-action:active:not(:disabled) {
 .native-user-input-options {
   display: grid;
   gap: 6px;
+  margin-top: 12px;
 }
 
-.native-user-input-options > label {
+.native-user-input-options > .native-user-input-option {
   position: relative;
   z-index: 1;
   display: flex;
-  align-items: flex-start;
+  align-items: center;
   gap: 8px;
+  min-height: 42px;
+  box-sizing: border-box;
   padding: 8px;
   border: 1px solid var(--color-divider);
   border-radius: 8px;
@@ -268,13 +271,13 @@ button.native-plan-icon-action:active:not(:disabled) {
   transition: background-color 140ms ease;
 }
 
-.native-user-input-options label span {
+.native-user-input-options .native-user-input-option > span:not(.native-user-input-other-indicator) {
   display: grid;
   gap: 2px;
 }
 
-.native-user-input-options > label:hover,
-.native-user-input-options > label:focus-within {
+.native-user-input-options > .native-user-input-option:hover,
+.native-user-input-options > .native-user-input-option:focus-within {
   background: var(--color-button-active);
 }
 
@@ -293,8 +296,52 @@ button.native-plan-icon-action:active:not(:disabled) {
 }
 
 .native-user-input-other {
-  min-height: 76px;
-  resize: vertical;
+  min-width: 0;
+  min-height: 24px;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  outline: 0;
+  background: transparent;
+  font-weight: 700;
+  line-height: 1.35;
+  resize: none;
+}
+
+.native-user-input-other::placeholder {
+  color: var(--color-text-secondary);
+  opacity: 1;
+}
+
+.native-user-input-other-option .native-user-input-other,
+.native-user-input-other-option .native-user-input-other:hover,
+.native-user-input-other-option .native-user-input-other:focus {
+  padding: 0;
+  border: 0;
+  background: transparent;
+  box-shadow: none;
+}
+
+.native-user-input-other-indicator {
+  position: relative;
+  flex: 0 0 16px;
+  width: 16px;
+  height: 16px;
+  box-sizing: border-box;
+  border: 2px solid var(--color-icon-muted);
+  border-radius: 50%;
+}
+
+.native-user-input-other-option.selected .native-user-input-other-indicator {
+  border-color: var(--color-primary);
+}
+
+.native-user-input-other-option.selected .native-user-input-other-indicator::after {
+  position: absolute;
+  inset: 3px;
+  border-radius: 50%;
+  background: var(--color-primary);
+  content: "";
 }
 
 .native-user-input-error {

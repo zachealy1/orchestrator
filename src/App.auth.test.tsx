@@ -3720,7 +3720,6 @@ describe("App Codex auth", () => {
       },
     });
     await user.click(screen.getByRole("radio", { name: /Focused/ }));
-    await user.click(screen.getByRole("button", { name: "Continue" }));
     await waitFor(() =>
       expect(mocks.resolveCodexServerRequestMock).toHaveBeenCalledWith(
         7,

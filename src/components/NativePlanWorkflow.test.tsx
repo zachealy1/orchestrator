@@ -244,26 +244,26 @@ describe("native Plan transcript workflow", () => {
       "Smallest useful change",
     );
     expect(screen.getByText("Smallest useful change")).toHaveClass("sr-only");
-    await user.click(
-      screen.getByRole("radio", { name: "None of the above" }),
-    );
+    expect(
+      screen.queryByRole("radio", { name: "None of the above" }),
+    ).not.toBeInTheDocument();
     const customInstructions = screen.getByRole("textbox", {
-      name: "Instructions for Codex: Which scope?",
+      name: "None of the above: Which scope?",
     });
     expect(customInstructions.tagName).toBe("TEXTAREA");
     expect(customInstructions).toHaveAttribute(
       "placeholder",
-      "Tell Codex what you want instead",
+      "None of the above - type your instructions",
+    );
+    expect(customInstructions.closest(".native-user-input-option")).toHaveClass(
+      "native-user-input-other-option",
     );
     await user.type(customInstructions, "Use a canvas-based implementation");
     expect(screen.queryByPlaceholderText("Add a note (optional)")).not.toBeInTheDocument();
     const secret = screen.getByLabelText("Provide the token");
     expect(secret).toHaveAttribute("type", "password");
-    await user.type(secret, "secret-value");
-    const continueButton = screen.getByRole("button", { name: "Continue" });
-    expect(continueButton).toHaveTextContent("");
-    expect(continueButton.querySelector("svg")).toBeInTheDocument();
-    await user.click(continueButton);
+    expect(screen.queryByRole("button", { name: "Continue" })).not.toBeInTheDocument();
+    await user.type(secret, "secret-value{Enter}");
 
     expect(onAnswerUserInput).toHaveBeenCalledWith(
       entry,
