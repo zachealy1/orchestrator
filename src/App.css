@@ -281,6 +281,10 @@ button.native-plan-icon-action:active:not(:disabled) {
   background: var(--color-button-active);
 }
 
+.native-user-input-options > .native-user-input-option.selected {
+  background: var(--color-button-secondary);
+}
+
 .native-user-input input[type="text"],
 .native-user-input input[type="password"],
 .native-user-input textarea,

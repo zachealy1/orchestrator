@@ -227,8 +227,13 @@ describe("native Plan transcript workflow", () => {
 
     const metrics = screen.getByLabelText("Run metrics");
     const plan = screen.getByLabelText("Codex plan");
+    const streamedOutput = screen.getByText("Prepared the implementation plan");
     expect(
       metrics.compareDocumentPosition(plan) & Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
+    expect(
+      streamedOutput.compareDocumentPosition(plan) &
+        Node.DOCUMENT_POSITION_FOLLOWING,
     ).toBeTruthy();
     expect(screen.queryByText("Codex needs your input")).not.toBeInTheDocument();
     expect(
@@ -259,6 +264,9 @@ describe("native Plan transcript workflow", () => {
       "native-user-input-other-option",
     );
     await user.type(customInstructions, "Use a canvas-based implementation");
+    expect(customInstructions.closest(".native-user-input-option")).toHaveClass(
+      "selected",
+    );
     expect(screen.queryByPlaceholderText("Add a note (optional)")).not.toBeInTheDocument();
     const secret = screen.getByLabelText("Provide the token");
     expect(secret).toHaveAttribute("type", "password");

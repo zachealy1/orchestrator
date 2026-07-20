@@ -1580,14 +1580,6 @@ const AssistantRunOutput = memo(function AssistantRunOutput({
   return (
     <div className="run-output-surface running" aria-label="Live run output">
       <RunMetrics runView={runView} />
-      <NativePlanCard
-        entry={entry}
-        onImplementPlan={onImplementPlan}
-        onRevisePlan={onRevisePlan}
-        onCancelPlan={onCancelPlan}
-        expanded={planExpanded}
-        onDisclosureChange={onPlanDisclosureChange}
-      />
       {hasTimeline ? (
         <RunTimeline runView={runView} />
       ) : hasPlanPreview ? null : runView.status === "connecting" ? (
@@ -1598,6 +1590,14 @@ const AssistantRunOutput = memo(function AssistantRunOutput({
           Waiting for app-server output...
         </p>
       )}
+      <NativePlanCard
+        entry={entry}
+        onImplementPlan={onImplementPlan}
+        onRevisePlan={onRevisePlan}
+        onCancelPlan={onCancelPlan}
+        expanded={planExpanded}
+        onDisclosureChange={onPlanDisclosureChange}
+      />
       <RunApprovalRequests
         entry={entry}
         runView={runView}
@@ -2500,7 +2500,9 @@ const UserInputRequestCard = memo(function UserInputRequestCard({
                   const descriptionId = `${requestKey(request)}-${question.id}-${optionIndex}-description`;
                   return (
                     <label
-                      className="native-user-input-option"
+                      className={`native-user-input-option${
+                        selected === option.label ? " selected" : ""
+                      }`}
                       data-tooltip={option.description}
                       key={option.label}
                     >
