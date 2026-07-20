@@ -1,7 +1,11 @@
 import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
-import { emptyRunView } from "../lib/codexEventReducer";
+import {
+  addApprovalRequest,
+  emptyRunView,
+} from "../lib/codexEventReducer";
+import { parseApprovalRequest } from "../lib/codexApprovals";
 import {
   TaskChatTurn,
   buildNativePlanPreview,
@@ -242,6 +246,14 @@ describe("native Plan transcript workflow", () => {
     expect(screen.queryByText("Scope")).not.toBeInTheDocument();
     const question = screen.getByText("Which scope?");
     expect(question.tagName).toBe("LEGEND");
+    expect(screen.getByRole("status")).toHaveTextContent("1 of 2");
+    expect(
+      screen.getByRole("button", { name: "Previous pending interaction" }),
+    ).toBeDisabled();
+    expect(
+      screen.getByRole("button", { name: "Next pending interaction" }),
+    ).toBeEnabled();
+    expect(screen.queryByLabelText("Provide the token")).not.toBeInTheDocument();
     const focusedOption = screen.getByRole("radio", { name: "Focused" });
     const focusedLabel = focusedOption.closest("label");
     expect(focusedLabel).toHaveAttribute(
@@ -249,6 +261,12 @@ describe("native Plan transcript workflow", () => {
       "Smallest useful change",
     );
     expect(screen.getByText("Smallest useful change")).toHaveClass("sr-only");
+    await user.click(focusedOption);
+    expect(screen.getByRole("status")).toHaveTextContent("2 of 2");
+    await user.click(
+      screen.getByRole("button", { name: "Previous pending interaction" }),
+    );
+    expect(screen.getByRole("radio", { name: "Focused" })).toBeChecked();
     expect(
       screen.queryByRole("radio", { name: "None of the above" }),
     ).not.toBeInTheDocument();
@@ -263,15 +281,35 @@ describe("native Plan transcript workflow", () => {
     expect(customInstructions.closest(".native-user-input-option")).toHaveClass(
       "native-user-input-other-option",
     );
+    await user.click(customInstructions);
+    await user.keyboard("{Enter}");
+    expect(screen.getByRole("status")).toHaveTextContent("1 of 2");
     await user.type(customInstructions, "Use a canvas-based implementation");
     expect(customInstructions.closest(".native-user-input-option")).toHaveClass(
       "selected",
     );
     expect(screen.queryByPlaceholderText("Add a note (optional)")).not.toBeInTheDocument();
+    await user.keyboard("{Enter}");
+    expect(screen.getByRole("status")).toHaveTextContent("2 of 2");
     const secret = screen.getByLabelText("Provide the token");
     expect(secret).toHaveAttribute("type", "password");
     expect(screen.queryByRole("button", { name: "Continue" })).not.toBeInTheDocument();
-    await user.type(secret, "secret-value{Enter}");
+
+    await user.click(
+      screen.getByRole("button", { name: "Previous pending interaction" }),
+    );
+    expect(
+      screen.getByRole("textbox", {
+        name: "None of the above: Which scope?",
+      }),
+    ).toHaveValue("Use a canvas-based implementation");
+    await user.click(
+      screen.getByRole("button", { name: "Next pending interaction" }),
+    );
+    await user.type(
+      screen.getByLabelText("Provide the token"),
+      "secret-value{Enter}",
+    );
 
     expect(onAnswerUserInput).toHaveBeenCalledWith(
       entry,
@@ -282,6 +320,68 @@ describe("native Plan transcript workflow", () => {
           token: { answers: ["secret-value"] },
         },
       },
+    );
+  });
+
+  it("shows one approval at a time and navigates pending commands", async () => {
+    const user = userEvent.setup();
+    const first = parseApprovalRequest({
+      message: {
+        id: 11,
+        method: "item/commandExecution/requestApproval",
+        params: {
+          threadId: "thread-1",
+          turnId: "turn-1",
+          command: "npm test",
+          availableDecisions: ["accept", "cancel"],
+        },
+      },
+      profileKey: "account:7",
+      requestToken: "request-11",
+      interactionMode: "chat",
+    })!;
+    const second = parseApprovalRequest({
+      message: {
+        id: 12,
+        method: "item/commandExecution/requestApproval",
+        params: {
+          threadId: "thread-1",
+          turnId: "turn-1",
+          command: "git status --short",
+          availableDecisions: ["accept", "cancel"],
+        },
+      },
+      profileKey: "account:7",
+      requestToken: "request-12",
+      interactionMode: "chat",
+    })!;
+    const entry = planEntry();
+    entry.status = "running";
+    entry.runView = addApprovalRequest(
+      addApprovalRequest(
+        { ...entry.runView, status: "running" },
+        first,
+      ),
+      second,
+    );
+    const onResolveRequest = vi.fn();
+    renderTurn(entry, { onResolveRequest });
+
+    expect(screen.getByText("npm test")).toBeInTheDocument();
+    expect(screen.queryByText("git status --short")).not.toBeInTheDocument();
+    expect(screen.getByRole("status")).toHaveTextContent("1 of 2");
+
+    await user.click(
+      screen.getByRole("button", { name: "Next pending interaction" }),
+    );
+    expect(screen.queryByText("npm test")).not.toBeInTheDocument();
+    expect(screen.getByText("git status --short")).toBeInTheDocument();
+    expect(screen.getByRole("status")).toHaveTextContent("2 of 2");
+
+    await user.click(screen.getByRole("button", { name: "Approve once" }));
+    expect(onResolveRequest).toHaveBeenCalledWith(
+      second,
+      expect.objectContaining({ id: "accept" }),
     );
   });
 });

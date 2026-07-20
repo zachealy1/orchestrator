@@ -42,4 +42,23 @@ describe("native user input CSS", () => {
     expect(selectedIndicator).not.toContain("var(--color-primary)");
     expect(selectedDot).not.toContain("var(--color-primary)");
   });
+
+  it("anchors a borderless neutral interaction navigator in the card header", () => {
+    const position = rule(
+      ".native-user-input > .pending-interaction-navigator",
+    );
+    const button = rule("button.pending-interaction-nav");
+    const hover = rule(
+      "button.pending-interaction-nav:hover:not(:disabled),\nbutton.pending-interaction-nav:focus-visible",
+    );
+
+    expect(position).toContain("position: absolute");
+    expect(position).toContain("top: 12px");
+    expect(position).toContain("right: 12px");
+    expect(button).toContain("border: 0");
+    expect(button).toContain("background: transparent");
+    expect(hover).toContain("background: var(--color-button-active)");
+    expect(hover).toContain("color: var(--color-icon-muted)");
+    expect(hover).not.toContain("var(--color-primary)");
+  });
 });

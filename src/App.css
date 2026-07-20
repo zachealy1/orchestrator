@@ -227,6 +227,10 @@ button.native-plan-icon-action:active:not(:disabled) {
   gap: 14px;
 }
 
+.native-user-input.has-navigator {
+  position: relative;
+}
+
 .approval.native-user-input {
   border-color: var(--color-divider);
   background: var(--color-component-background);
@@ -242,11 +246,23 @@ button.native-plan-icon-action:active:not(:disabled) {
 }
 
 .native-user-input legend {
+  box-sizing: border-box;
+  width: 100%;
   color: var(--color-text);
   font-size: 1rem;
   font-weight: 700;
   line-height: 1.35;
   padding: 0;
+}
+
+.native-user-input.has-navigator legend {
+  padding-right: 112px;
+}
+
+.native-user-input > .pending-interaction-navigator {
+  position: absolute;
+  top: 12px;
+  right: 12px;
 }
 
 .native-user-input-options {
@@ -4674,6 +4690,64 @@ pre {
   gap: 9px;
 }
 
+.approval-header > div {
+  min-width: 0;
+}
+
+.pending-interaction-navigator {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 3px;
+  margin-left: auto;
+}
+
+.pending-interaction-count {
+  min-width: 48px;
+  color: var(--color-text-secondary);
+  font-size: 0.76rem;
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+  line-height: 28px;
+  text-align: center;
+  white-space: nowrap;
+}
+
+button.pending-interaction-nav {
+  display: inline-grid;
+  width: 28px;
+  min-width: 28px;
+  height: 28px;
+  min-height: 28px;
+  place-items: center;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  box-shadow: none;
+  color: var(--color-icon-muted);
+  padding: 0;
+  transform: none;
+  transition: background-color 140ms ease;
+}
+
+button.pending-interaction-nav:hover:not(:disabled),
+button.pending-interaction-nav:focus-visible {
+  border: 0;
+  background: var(--color-button-active);
+  box-shadow: none;
+  color: var(--color-icon-muted);
+  outline: none;
+  transform: none;
+}
+
+button.pending-interaction-nav:focus-visible {
+  box-shadow: 0 0 0 2px rgb(var(--accent-rgb) / 0.28);
+}
+
+button.pending-interaction-nav:disabled {
+  opacity: 0.35;
+}
+
 .approval-header svg {
   flex: 0 0 auto;
   color: var(--color-icon);
@@ -4815,6 +4889,7 @@ pre {
 @media (prefers-reduced-motion: reduce) {
   .approval-choice,
   .approval-choice::after,
+  button.pending-interaction-nav,
   .native-user-input-option,
   .native-user-input-option[data-tooltip]::after {
     transition: none;

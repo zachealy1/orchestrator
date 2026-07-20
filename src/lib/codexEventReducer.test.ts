@@ -9,6 +9,7 @@ import {
   markApprovalError,
   markApprovalSubmitting,
   resolveApprovalRequest,
+  resolveServerRequest,
   updateRunElapsed,
 } from "./codexEventReducer";
 import type { RunViewState } from "./codexEventReducer";
@@ -94,6 +95,44 @@ describe("codexEventReducer", () => {
     });
     expect(state.serverRequests).toHaveLength(0);
     expect(state.nativePlan.phase).toBe("drafting");
+  });
+
+  it("preserves mixed pending-interaction arrival order and prunes resolved items", () => {
+    const approval = parseApprovalRequest({
+      message: {
+        id: 9,
+        method: "item/commandExecution/requestApproval",
+        params: { command: "npm test", threadId: "thread-1" },
+      },
+      profileKey: "account:7",
+      requestToken: "approval-9",
+      interactionMode: "chat",
+    })!;
+    const question = {
+      id: "question-1",
+      method: "item/tool/requestUserInput",
+      params: {
+        threadId: "thread-1",
+        turnId: "turn-1",
+        itemId: "tool-1",
+        questions: [],
+        autoResolutionMs: null,
+      },
+    };
+
+    let state = addApprovalRequest(emptyRunView, approval);
+    state = addServerRequest(state, question);
+    expect(state.pendingInteractionOrder).toEqual([
+      { kind: "approval", key: approval.key },
+      { kind: "server-request", key: "question-1" },
+    ]);
+
+    state = resolveApprovalRequest(state, approval.id, approval.threadId);
+    expect(state.pendingInteractionOrder).toEqual([
+      { kind: "server-request", key: "question-1" },
+    ]);
+    state = resolveServerRequest(state, "question-1");
+    expect(state.pendingInteractionOrder).toEqual([]);
   });
 
   it("tracks thread, turn, and token usage notifications", () => {

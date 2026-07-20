@@ -10,6 +10,7 @@ import {
   BrainCircuit,
   Check,
   ChevronDown,
+  ChevronLeft,
   ChevronRight,
   ChevronUp,
   Clock,
@@ -58,6 +59,7 @@ import {
   isNativeUserInputRequest,
   requestKey,
   type NativeUserInputRequest,
+  type UserInputQuestion,
   type UserInputResponse,
 } from "../lib/nativePlanMode";
 import {
@@ -75,6 +77,7 @@ import {
 } from "../lib/transcriptVirtualization";
 import {
   ORCHESTRATOR_PROMPT_CONTEXT_MIME,
+  type CodexMessage,
   type ComposerContextFile,
   type HistoryPageLoadState,
   type HistoryPageDescriptor,
@@ -2447,198 +2450,302 @@ const NativePlanCard = memo(function NativePlanCard({
   );
 });
 
-const UserInputRequestCard = memo(function UserInputRequestCard({
+type UserInputDraft = {
+  values: Record<string, string>;
+  otherValues: Record<string, string>;
+};
+
+type PendingInteractionPage =
+  | {
+      kind: "approval";
+      key: string;
+      request: CodexApprovalRequest;
+    }
+  | {
+      kind: "user-input";
+      key: string;
+      request: NativeUserInputRequest;
+      question: UserInputQuestion;
+    }
+  | {
+      kind: "unsupported";
+      key: string;
+      request: CodexMessage;
+    };
+
+const EMPTY_USER_INPUT_DRAFT: UserInputDraft = {
+  values: {},
+  otherValues: {},
+};
+
+function buildPendingInteractionPages(runView: RunViewState) {
+  const approvalByKey = new Map(
+    runView.approvalRequests.map((request) => [request.key, request]),
+  );
+  const serverRequestByKey = new Map(
+    runView.serverRequests.map((request) => [requestKey(request), request]),
+  );
+  const seenApprovals = new Set<string>();
+  const seenServerRequests = new Set<string>();
+  const pages: PendingInteractionPage[] = [];
+
+  function appendApproval(request: CodexApprovalRequest) {
+    if (seenApprovals.has(request.key)) return;
+    seenApprovals.add(request.key);
+    pages.push({
+      kind: "approval",
+      key: `approval:${request.key}`,
+      request,
+    });
+  }
+
+  function appendServerRequest(request: CodexMessage) {
+    const key = requestKey(request);
+    if (seenServerRequests.has(key)) return;
+    seenServerRequests.add(key);
+    if (isNativeUserInputRequest(request) && request.params.questions.length > 0) {
+      request.params.questions.forEach((question, index) => {
+        pages.push({
+          kind: "user-input",
+          key: `question:${key}:${question.id}:${index}`,
+          request,
+          question,
+        });
+      });
+      return;
+    }
+    pages.push({
+      kind: "unsupported",
+      key: `server-request:${key}`,
+      request,
+    });
+  }
+
+  for (const interaction of runView.pendingInteractionOrder ?? []) {
+    if (interaction.kind === "approval") {
+      const request = approvalByKey.get(interaction.key);
+      if (request) appendApproval(request);
+      continue;
+    }
+    const request = serverRequestByKey.get(interaction.key);
+    if (request) appendServerRequest(request);
+  }
+  runView.approvalRequests.forEach(appendApproval);
+  runView.serverRequests.forEach(appendServerRequest);
+  return pages;
+}
+
+function buildUserInputResponse(
+  request: NativeUserInputRequest,
+  draft: UserInputDraft,
+) {
+  const answers: UserInputResponse["answers"] = {};
+  const unansweredQuestionIds: string[] = [];
+  for (const question of request.params.questions) {
+    const selected = draft.values[question.id] ?? "";
+    const primary =
+      selected === "__other__"
+        ? draft.otherValues[question.id]?.trim() ?? ""
+        : selected.trim();
+    if (!primary) unansweredQuestionIds.push(question.id);
+    answers[question.id] = { answers: [primary].filter(Boolean) };
+  }
+  return {
+    complete: unansweredQuestionIds.length === 0,
+    response: { answers },
+    unansweredQuestionIds,
+  };
+}
+
+const PendingInteractionNavigator = memo(function PendingInteractionNavigator({
+  index,
+  total,
+  onPrevious,
+  onNext,
+}: {
+  index: number;
+  total: number;
+  onPrevious: () => void;
+  onNext: () => void;
+}) {
+  if (total <= 1) return null;
+  return (
+    <nav
+      className="pending-interaction-navigator"
+      aria-label="Pending interactions"
+    >
+      <button
+        type="button"
+        className="pending-interaction-nav"
+        aria-label="Previous pending interaction"
+        title="Previous"
+        disabled={index === 0}
+        onClick={onPrevious}
+      >
+        <ChevronLeft size={15} aria-hidden="true" />
+      </button>
+      <span
+        className="pending-interaction-count"
+        role="status"
+        aria-live="polite"
+        aria-atomic="true"
+      >
+        {index + 1} of {total}
+      </span>
+      <button
+        type="button"
+        className="pending-interaction-nav"
+        aria-label="Next pending interaction"
+        title="Next"
+        disabled={index === total - 1}
+        onClick={onNext}
+      >
+        <ChevronRight size={15} aria-hidden="true" />
+      </button>
+    </nav>
+  );
+});
+
+const UserInputQuestionCard = memo(function UserInputQuestionCard({
   entry,
   request,
-  onAnswerUserInput,
+  question,
+  draft,
+  navigator,
+  onDraftChange,
+  onCommitAnswer,
 }: {
   entry: TaskChatEntry;
   request: NativeUserInputRequest;
-  onAnswerUserInput?: Props["onAnswerUserInput"];
+  question: UserInputQuestion;
+  draft: UserInputDraft;
+  navigator: ReactNode;
+  onDraftChange: (draft: UserInputDraft) => void;
+  onCommitAnswer: (draft: UserInputDraft) => void;
 }) {
-  const [values, setValues] = useState<Record<string, string>>({});
-  const [otherValues, setOtherValues] = useState<Record<string, string>>({});
   const state = entry.runView.nativePlan.requestStates[requestKey(request)];
   const busy = state === "submitting";
+  const selected = draft.values[question.id] ?? "";
 
-  function submitAnswers(
-    nextValues = values,
-    nextOtherValues = otherValues,
-  ) {
-    if (busy || !onAnswerUserInput) return;
-    const answers: UserInputResponse["answers"] = {};
-    let complete = true;
-    request.params.questions.forEach((question) => {
-      const selected = nextValues[question.id] ?? "";
-      const primary = selected === "__other__"
-        ? nextOtherValues[question.id]?.trim() ?? ""
-        : selected.trim();
-      if (!primary) complete = false;
-      answers[question.id] = {
-        answers: [primary].filter(Boolean),
-      };
-    });
-    if (complete) onAnswerUserInput(entry, request, { answers });
+  function updateAnswer(value: string, otherValue?: string) {
+    const nextDraft = {
+      values: { ...draft.values, [question.id]: value },
+      otherValues:
+        otherValue === undefined
+          ? draft.otherValues
+          : { ...draft.otherValues, [question.id]: otherValue },
+    };
+    onDraftChange(nextDraft);
+    return nextDraft;
   }
 
   return (
     <form
-      className="approval native-user-input"
-      onSubmit={(event) => {
-        event.preventDefault();
-        submitAnswers();
-      }}
+      className={`approval native-user-input${navigator ? " has-navigator" : ""}`}
+      onSubmit={(event) => event.preventDefault()}
     >
-      {request.params.questions.map((question) => {
-        const selected = values[question.id] ?? "";
-        return (
-          <fieldset key={question.id} disabled={busy}>
-            <legend>{question.question}</legend>
-            {question.options ? (
-              <div className="native-user-input-options">
-                {question.options.map((option, optionIndex) => {
-                  const descriptionId = `${requestKey(request)}-${question.id}-${optionIndex}-description`;
-                  return (
-                    <label
-                      className={`native-user-input-option${
-                        selected === option.label ? " selected" : ""
-                      }`}
-                      data-tooltip={option.description}
-                      key={option.label}
-                    >
-                      <input
-                        type="radio"
-                        name={`${request.id}-${question.id}`}
-                        value={option.label}
-                        checked={selected === option.label}
-                        aria-label={option.label}
-                        aria-describedby={descriptionId}
-                        onChange={(event) => {
-                          const nextValues = {
-                            ...values,
-                            [question.id]: event.target.value,
-                          };
-                          setValues(nextValues);
-                          submitAnswers(nextValues, otherValues);
-                        }}
-                      />
-                      <span>
-                        <strong>{option.label}</strong>
-                      </span>
-                      <div className="sr-only" id={descriptionId}>
-                        {option.description}
-                      </div>
-                    </label>
-                  );
-                })}
-                {question.isOther ? (
-                  <label
-                    className={`native-user-input-option native-user-input-other-option${
-                      selected === "__other__" ? " selected" : ""
-                    }`}
-                  >
-                    <span
-                      className="native-user-input-other-indicator"
-                      aria-hidden="true"
-                    />
-                    {question.isSecret ? (
-                      <input
-                        className="native-user-input-other"
-                        type="password"
-                        aria-label={`None of the above: ${question.question}`}
-                        placeholder="None of the above - type another answer"
-                        value={otherValues[question.id] ?? ""}
-                        onFocus={() =>
-                          setValues((current) => ({
-                            ...current,
-                            [question.id]: "__other__",
-                          }))
-                        }
-                        onChange={(event) => {
-                          setValues((current) => ({
-                            ...current,
-                            [question.id]: "__other__",
-                          }));
-                          setOtherValues((current) => ({
-                            ...current,
-                            [question.id]: event.target.value,
-                          }));
-                        }}
-                        onKeyDown={(event) => {
-                          if (event.key !== "Enter") return;
-                          event.preventDefault();
-                          submitAnswers(
-                            { ...values, [question.id]: "__other__" },
-                            {
-                              ...otherValues,
-                              [question.id]: event.currentTarget.value,
-                            },
-                          );
-                        }}
-                      />
-                    ) : (
-                      <textarea
-                        className="native-user-input-other"
-                        aria-label={`None of the above: ${question.question}`}
-                        placeholder="None of the above - type your instructions"
-                        rows={1}
-                        value={otherValues[question.id] ?? ""}
-                        onFocus={() =>
-                          setValues((current) => ({
-                            ...current,
-                            [question.id]: "__other__",
-                          }))
-                        }
-                        onChange={(event) => {
-                          setValues((current) => ({
-                            ...current,
-                            [question.id]: "__other__",
-                          }));
-                          setOtherValues((current) => ({
-                            ...current,
-                            [question.id]: event.target.value,
-                          }));
-                        }}
-                        onKeyDown={(event) => {
-                          if (event.key !== "Enter" || event.shiftKey) return;
-                          event.preventDefault();
-                          submitAnswers(
-                            { ...values, [question.id]: "__other__" },
-                            {
-                              ...otherValues,
-                              [question.id]: event.currentTarget.value,
-                            },
-                          );
-                        }}
-                      />
-                    )}
-                  </label>
-                ) : null}
-              </div>
-            ) : (
-              <input
-                type={question.isSecret ? "password" : "text"}
-                aria-label={question.question}
-                value={selected}
-                onChange={(event) =>
-                  setValues((current) => ({
-                    ...current,
-                    [question.id]: event.target.value,
-                  }))
-                }
-                onKeyDown={(event) => {
-                  if (event.key !== "Enter") return;
-                  event.preventDefault();
-                  submitAnswers(
-                    { ...values, [question.id]: event.currentTarget.value },
-                    otherValues,
-                  );
-                }}
-              />
-            )}
-          </fieldset>
-        );
-      })}
+      {navigator}
+      <fieldset disabled={busy}>
+        <legend>{question.question}</legend>
+        {question.options ? (
+          <div className="native-user-input-options">
+            {question.options.map((option, optionIndex) => {
+              const descriptionId = `${requestKey(request)}-${question.id}-${optionIndex}-description`;
+              return (
+                <label
+                  className={`native-user-input-option${
+                    selected === option.label ? " selected" : ""
+                  }`}
+                  data-tooltip={option.description}
+                  key={option.label}
+                >
+                  <input
+                    type="radio"
+                    name={`${request.id}-${question.id}`}
+                    value={option.label}
+                    checked={selected === option.label}
+                    aria-label={option.label}
+                    aria-describedby={descriptionId}
+                    onChange={(event) => {
+                      const nextDraft = updateAnswer(event.target.value);
+                      onCommitAnswer(nextDraft);
+                    }}
+                  />
+                  <span>
+                    <strong>{option.label}</strong>
+                  </span>
+                  <div className="sr-only" id={descriptionId}>
+                    {option.description}
+                  </div>
+                </label>
+              );
+            })}
+            {question.isOther ? (
+              <label
+                className={`native-user-input-option native-user-input-other-option${
+                  selected === "__other__" ? " selected" : ""
+                }`}
+              >
+                <span
+                  className="native-user-input-other-indicator"
+                  aria-hidden="true"
+                />
+                {question.isSecret ? (
+                  <input
+                    className="native-user-input-other"
+                    type="password"
+                    aria-label={`None of the above: ${question.question}`}
+                    placeholder="None of the above - type another answer"
+                    value={draft.otherValues[question.id] ?? ""}
+                    onFocus={() => updateAnswer("__other__")}
+                    onChange={(event) =>
+                      updateAnswer("__other__", event.target.value)
+                    }
+                    onKeyDown={(event) => {
+                      if (event.key !== "Enter") return;
+                      event.preventDefault();
+                      onCommitAnswer(
+                        updateAnswer("__other__", event.currentTarget.value),
+                      );
+                    }}
+                  />
+                ) : (
+                  <textarea
+                    className="native-user-input-other"
+                    aria-label={`None of the above: ${question.question}`}
+                    placeholder="None of the above - type your instructions"
+                    rows={1}
+                    value={draft.otherValues[question.id] ?? ""}
+                    onFocus={() => updateAnswer("__other__")}
+                    onChange={(event) =>
+                      updateAnswer("__other__", event.target.value)
+                    }
+                    onKeyDown={(event) => {
+                      if (event.key !== "Enter" || event.shiftKey) return;
+                      event.preventDefault();
+                      onCommitAnswer(
+                        updateAnswer("__other__", event.currentTarget.value),
+                      );
+                    }}
+                  />
+                )}
+              </label>
+            ) : null}
+          </div>
+        ) : (
+          <input
+            type={question.isSecret ? "password" : "text"}
+            aria-label={question.question}
+            value={selected}
+            onChange={(event) => updateAnswer(event.target.value)}
+            onKeyDown={(event) => {
+              if (event.key !== "Enter") return;
+              event.preventDefault();
+              onCommitAnswer(updateAnswer(event.currentTarget.value));
+            }}
+          />
+        )}
+      </fieldset>
       {state === "failed" ? (
         <p className="native-user-input-error">
           Could not send that answer. Try again.
@@ -2659,42 +2766,167 @@ const RunApprovalRequests = memo(function RunApprovalRequests({
   onResolveRequest: ApprovalResolutionHandler;
   onAnswerUserInput?: Props["onAnswerUserInput"];
 }) {
-  if (runView.approvalRequests.length === 0 && runView.serverRequests.length === 0) {
-    return null;
+  const pages = useMemo(
+    () => buildPendingInteractionPages(runView),
+    [
+      runView.approvalRequests,
+      runView.pendingInteractionOrder,
+      runView.serverRequests,
+    ],
+  );
+  const [activePageKey, setActivePageKey] = useState<string | null>(null);
+  const [drafts, setDrafts] = useState<Record<string, UserInputDraft>>({});
+  const lastPageIndexRef = useRef(0);
+  const keyedPageIndex = activePageKey
+    ? pages.findIndex((page) => page.key === activePageKey)
+    : -1;
+  const activePageIndex =
+    pages.length === 0
+      ? -1
+      : keyedPageIndex >= 0
+        ? keyedPageIndex
+        : Math.min(lastPageIndexRef.current, pages.length - 1);
+  const activePage = activePageIndex >= 0 ? pages[activePageIndex] : null;
+
+  useEffect(() => {
+    if (!activePage) {
+      if (activePageKey !== null) setActivePageKey(null);
+      lastPageIndexRef.current = 0;
+      return;
+    }
+    lastPageIndexRef.current = activePageIndex;
+    if (activePage.key !== activePageKey) setActivePageKey(activePage.key);
+  }, [activePage, activePageIndex, activePageKey]);
+
+  useEffect(() => {
+    const activeRequestKeys = new Set(
+      runView.serverRequests.map((request) => requestKey(request)),
+    );
+    setDrafts((current) => {
+      const next = Object.fromEntries(
+        Object.entries(current).filter(([key]) => activeRequestKeys.has(key)),
+      );
+      return Object.keys(next).length === Object.keys(current).length
+        ? current
+        : next;
+    });
+  }, [runView.serverRequests]);
+
+  const selectPage = useCallback(
+    (index: number) => {
+      const nextIndex = Math.max(0, Math.min(index, pages.length - 1));
+      const nextPage = pages[nextIndex];
+      if (!nextPage) return;
+      lastPageIndexRef.current = nextIndex;
+      setActivePageKey(nextPage.key);
+    },
+    [pages],
+  );
+
+  if (!activePage) return null;
+
+  const navigator =
+    pages.length > 1 ? (
+      <PendingInteractionNavigator
+        index={activePageIndex}
+        total={pages.length}
+        onPrevious={() => selectPage(activePageIndex - 1)}
+        onNext={() => selectPage(activePageIndex + 1)}
+      />
+    ) : null;
+
+  let content: ReactNode;
+  if (activePage.kind === "approval") {
+    const request = activePage.request;
+    content = (
+      <ApprovalCard
+        key={activePage.key}
+        request={request}
+        itemResources={
+          request.itemId
+            ? (runView.approvalResourcesByItemId[request.itemId] ?? [])
+            : []
+        }
+        navigator={navigator}
+        onResolveRequest={(pendingRequest, choice) => {
+          if (activePageIndex < pages.length - 1) {
+            selectPage(activePageIndex + 1);
+          }
+          onResolveRequest(pendingRequest, choice);
+        }}
+      />
+    );
+  } else if (activePage.kind === "user-input") {
+    const serverRequestKey = requestKey(activePage.request);
+    const draft = drafts[serverRequestKey] ?? EMPTY_USER_INPUT_DRAFT;
+    content = (
+      <UserInputQuestionCard
+        key={activePage.key}
+        entry={entry}
+        request={activePage.request}
+        question={activePage.question}
+        draft={draft}
+        navigator={navigator}
+        onDraftChange={(nextDraft) =>
+          setDrafts((current) => ({
+            ...current,
+            [serverRequestKey]: nextDraft,
+          }))
+        }
+        onCommitAnswer={(nextDraft) => {
+          const result = buildUserInputResponse(activePage.request, nextDraft);
+          if (result.complete && onAnswerUserInput) {
+            if (activePageIndex < pages.length - 1) {
+              selectPage(activePageIndex + 1);
+            }
+            onAnswerUserInput(entry, activePage.request, result.response);
+            return;
+          }
+          if (
+            result.unansweredQuestionIds.includes(activePage.question.id)
+          ) {
+            return;
+          }
+          let nextQuestionIndex = pages.findIndex(
+            (page, index) =>
+              index > activePageIndex &&
+              page.kind === "user-input" &&
+              requestKey(page.request) === serverRequestKey &&
+              result.unansweredQuestionIds.includes(page.question.id),
+          );
+          if (nextQuestionIndex < 0) {
+            nextQuestionIndex = pages.findIndex(
+              (page) =>
+                page.kind === "user-input" &&
+                requestKey(page.request) === serverRequestKey &&
+                result.unansweredQuestionIds.includes(page.question.id),
+            );
+          }
+          if (nextQuestionIndex >= 0) selectPage(nextQuestionIndex);
+        }}
+      />
+    );
+  } else {
+    content = (
+      <article className="approval" key={activePage.key}>
+        <header className="approval-header">
+          <div>
+            <strong>Unsupported native Codex request</strong>
+          </div>
+          {navigator}
+        </header>
+        <pre>{JSON.stringify(activePage.request.params ?? {}, null, 2)}</pre>
+        <p>Stop the turn to cancel this request safely.</p>
+      </article>
+    );
   }
 
   return (
-    <div className="approval-stack chat-approval-stack" aria-label="Pending Codex approvals">
-      {runView.approvalRequests.map((request) => (
-        <ApprovalCard
-          key={request.key}
-          request={request}
-          itemResources={
-            request.itemId
-              ? (runView.approvalResourcesByItemId[request.itemId] ?? [])
-              : []
-          }
-          onResolveRequest={onResolveRequest}
-        />
-      ))}
-      {runView.serverRequests.map((request) =>
-        isNativeUserInputRequest(request) ? (
-          <UserInputRequestCard
-            entry={entry}
-            request={request}
-            onAnswerUserInput={onAnswerUserInput}
-            key={String(request.id)}
-          />
-        ) : (
-          <article className="approval" key={String(request.id)}>
-            <div>
-              <strong>Unsupported native Codex request</strong>
-              <pre>{JSON.stringify(request.params ?? {}, null, 2)}</pre>
-            </div>
-            <p>Stop the turn to cancel this request safely.</p>
-          </article>
-        ),
-      )}
+    <div
+      className="approval-stack chat-approval-stack"
+      aria-label="Pending Codex interactions"
+    >
+      {content}
     </div>
   );
 });
@@ -2702,10 +2934,12 @@ const RunApprovalRequests = memo(function RunApprovalRequests({
 const ApprovalCard = memo(function ApprovalCard({
   request,
   itemResources,
+  navigator,
   onResolveRequest,
 }: {
   request: CodexApprovalRequest;
   itemResources: string[];
+  navigator?: ReactNode;
   onResolveRequest: ApprovalResolutionHandler;
 }) {
   const cardRef = useRef<HTMLElement>(null);
@@ -2745,6 +2979,7 @@ const ApprovalCard = memo(function ApprovalCard({
         <div>
           <strong id={`${request.key}-title`}>{approvalTitle(request)}</strong>
         </div>
+        {navigator}
       </header>
 
       {command ? (

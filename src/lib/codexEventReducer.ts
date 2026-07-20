@@ -59,6 +59,11 @@ type AgentMessageState = {
   phase: AgentMessagePhase;
 };
 
+export type PendingInteractionRef = {
+  kind: "approval" | "server-request";
+  key: string;
+};
+
 export type RunViewState = {
   status: "idle" | "connecting" | "running" | "completed" | "failed" | "interrupted";
   threadId: string | null;
@@ -82,6 +87,7 @@ export type RunViewState = {
   approvalRequests: CodexApprovalRequest[];
   approvalResourcesByItemId: Record<string, string[]>;
   serverRequests: CodexMessage[];
+  pendingInteractionOrder: PendingInteractionRef[];
   nativePlan: NativePlanState;
 };
 
@@ -108,6 +114,7 @@ export const emptyRunView: RunViewState = {
   approvalRequests: [],
   approvalResourcesByItemId: {},
   serverRequests: [],
+  pendingInteractionOrder: [],
   nativePlan: emptyNativePlanState,
 };
 
@@ -406,6 +413,9 @@ export function applyCodexMessage(
         error: failed ? JSON.stringify(turn.error ?? "Turn failed") : null,
         approvalRequests: [],
         approvalResourcesByItemId: {},
+        pendingInteractionOrder: state.pendingInteractionOrder.filter(
+          (interaction) => interaction.kind !== "approval",
+        ),
         nativePlan: {
           ...state.nativePlan,
           phase: failed
@@ -442,6 +452,9 @@ export function applyCodexMessage(
         error: JSON.stringify(params.error ?? message),
         approvalRequests: [],
         approvalResourcesByItemId: {},
+        pendingInteractionOrder: state.pendingInteractionOrder.filter(
+          (interaction) => interaction.kind !== "approval",
+        ),
         nativePlan: { ...state.nativePlan, phase: "failed" },
       };
     }
@@ -490,6 +503,10 @@ export function addApprovalRequest(
     ...state,
     commands,
     approvalRequests: [...state.approvalRequests, request],
+    pendingInteractionOrder: appendPendingInteraction(
+      state.pendingInteractionOrder,
+      { kind: "approval", key: request.key },
+    ),
   };
 }
 
@@ -535,12 +552,18 @@ export function resolveApprovalRequest(
   requestId: string | number,
   threadId?: string | null,
 ) {
+  const approvalRequests = state.approvalRequests.filter(
+    (request) =>
+      request.id !== requestId ||
+      (threadId !== undefined && request.threadId !== threadId),
+  );
+  const remainingKeys = new Set(approvalRequests.map((request) => request.key));
   return {
     ...state,
-    approvalRequests: state.approvalRequests.filter(
-      (request) =>
-        request.id !== requestId ||
-        (threadId !== undefined && request.threadId !== threadId),
+    approvalRequests,
+    pendingInteractionOrder: state.pendingInteractionOrder.filter(
+      (interaction) =>
+        interaction.kind !== "approval" || remainingKeys.has(interaction.key),
     ),
   };
 }
@@ -557,6 +580,10 @@ export function addServerRequest(state: RunViewState, request: CodexMessage) {
   return {
     ...state,
     serverRequests: [...state.serverRequests, request],
+    pendingInteractionOrder: appendPendingInteraction(
+      state.pendingInteractionOrder,
+      { kind: "server-request", key: requestKey(request) },
+    ),
     nativePlan: isNativeUserInputRequest(request)
       ? { ...state.nativePlan, phase: "awaiting-clarification" as const }
       : state.nativePlan,
@@ -572,6 +599,13 @@ export function resolveServerRequest(state: RunViewState, requestId: string | nu
   return {
     ...state,
     serverRequests: nextRequests,
+    pendingInteractionOrder: state.pendingInteractionOrder.filter(
+      (interaction) =>
+        interaction.kind !== "server-request" ||
+        nextRequests.some(
+          (request) => requestKey(request) === interaction.key,
+        ),
+    ),
     nativePlan: {
       ...state.nativePlan,
       phase:
@@ -582,6 +616,18 @@ export function resolveServerRequest(state: RunViewState, requestId: string | nu
       requestStates: nextRequestStates,
     },
   };
+}
+
+function appendPendingInteraction(
+  current: PendingInteractionRef[],
+  interaction: PendingInteractionRef,
+) {
+  return current.some(
+    (candidate) =>
+      candidate.kind === interaction.kind && candidate.key === interaction.key,
+  )
+    ? current
+    : [...current, interaction];
 }
 
 export function setServerRequestSubmissionState(
