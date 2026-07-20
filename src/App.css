@@ -282,7 +282,7 @@ button.native-plan-icon-action:active:not(:disabled) {
 }
 
 .native-user-input-options > .native-user-input-option.selected {
-  background: var(--color-button-secondary);
+  background: var(--color-component-background);
 }
 
 .native-user-input input[type="text"],
@@ -313,7 +313,7 @@ button.native-plan-icon-action:active:not(:disabled) {
 }
 
 .native-user-input-other::placeholder {
-  color: var(--color-text-secondary);
+  color: var(--color-text);
   opacity: 1;
 }
 
@@ -328,23 +328,24 @@ button.native-plan-icon-action:active:not(:disabled) {
 
 .native-user-input-other-indicator {
   position: relative;
-  flex: 0 0 16px;
-  width: 16px;
-  height: 16px;
+  flex: 0 0 13px;
+  width: 13px;
+  height: 13px;
   box-sizing: border-box;
   border: 2px solid var(--color-icon-muted);
   border-radius: 50%;
+  margin: 3px;
 }
 
 .native-user-input-other-option.selected .native-user-input-other-indicator {
-  border-color: var(--color-primary);
+  border-color: var(--color-icon-muted);
 }
 
 .native-user-input-other-option.selected .native-user-input-other-indicator::after {
   position: absolute;
-  inset: 3px;
+  inset: 2px;
   border-radius: 50%;
-  background: var(--color-primary);
+  background: var(--color-icon-muted);
   content: "";
 }
 

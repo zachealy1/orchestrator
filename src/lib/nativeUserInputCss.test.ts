@@ -7,7 +7,8 @@ declare const process: { cwd(): string };
 const css = readFileSync(`${process.cwd()}/src/App.css`, "utf8");
 
 function rule(selector: string) {
-  const selectorStart = css.indexOf(selector);
+  const exactStart = css.indexOf(`\n${selector} {`);
+  const selectorStart = exactStart >= 0 ? exactStart + 1 : css.indexOf(selector);
   if (selectorStart < 0) throw new Error(`Missing CSS rule: ${selector}`);
   const blockStart = css.indexOf("{", selectorStart);
   const blockEnd = css.indexOf("}", blockStart);
@@ -15,13 +16,30 @@ function rule(selector: string) {
 }
 
 describe("native user input CSS", () => {
-  it("uses the shared secondary button surface for selected answers", () => {
+  it("uses the shared composer-button surface for selected answers", () => {
     const selected = rule(
       ".native-user-input-options > .native-user-input-option.selected",
     );
 
-    expect(selected).toContain("background: var(--color-button-secondary)");
+    expect(selected).toContain("background: var(--color-component-background)");
     expect(selected).not.toContain("var(--color-button-active)");
     expect(selected).not.toContain("var(--color-primary)");
+  });
+
+  it("keeps the custom answer indicator aligned and theme-neutral", () => {
+    const indicator = rule(".native-user-input-other-indicator");
+    const selectedIndicator = rule(
+      ".native-user-input-other-option.selected .native-user-input-other-indicator",
+    );
+    const selectedDot = rule(
+      ".native-user-input-other-option.selected .native-user-input-other-indicator::after",
+    );
+
+    expect(indicator).toContain("width: 13px");
+    expect(indicator).toContain("height: 13px");
+    expect(selectedIndicator).toContain("border-color: var(--color-icon-muted)");
+    expect(selectedDot).toContain("background: var(--color-icon-muted)");
+    expect(selectedIndicator).not.toContain("var(--color-primary)");
+    expect(selectedDot).not.toContain("var(--color-primary)");
   });
 });
