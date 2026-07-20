@@ -24,6 +24,15 @@ function nthRule(selector: string, occurrence: number) {
 }
 
 describe("composer active-run control CSS", () => {
+  it("keeps the send control flat without a glow", () => {
+    const sendControl = rule(".send-button");
+
+    expect(sendControl).toContain("box-shadow: none");
+    expect(sendControl.match(/transition:[\s\S]*?;/)?.[0]).not.toContain(
+      "box-shadow",
+    );
+  });
+
   it("keeps the stop control flat while Codex is running", () => {
     const stopControl = rule(".send-button.stop");
 

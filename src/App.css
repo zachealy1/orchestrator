@@ -4192,13 +4192,12 @@ button.composer-select-option.action:not(:first-child) {
   border-radius: 50%;
   background: var(--color-button-primary);
   color: var(--color-button-primary-text);
-  box-shadow: 0 6px 16px rgb(var(--primary-rgb) / 0.24);
+  box-shadow: none;
   padding: 0;
   transform: none;
   transition:
     background 140ms ease,
-    color 140ms ease,
-    box-shadow 140ms ease;
+    color 140ms ease;
 }
 
 .send-button:hover:not(:disabled),
