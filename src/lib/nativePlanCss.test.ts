@@ -65,4 +65,21 @@ describe("native plan CSS", () => {
     expect(nestedBlocks).toContain("margin-top: 14px");
     expect(nestedBlocks).toContain("padding-top: 0");
   });
+
+  it("keeps revision focus neutral and uses borderless icon tooltips", () => {
+    const revisionFocus = rule(".native-plan-revision textarea:focus,");
+    const icon = rule("button.native-plan-icon-action");
+    const tooltip = rule(
+      "button.native-plan-icon-action[data-tooltip]::after",
+    );
+
+    expect(revisionFocus).toContain("border-color: var(--color-divider)");
+    expect(revisionFocus).toContain("box-shadow: none");
+    expect(revisionFocus).not.toContain("var(--color-primary)");
+    expect(icon).toContain("width: 30px");
+    expect(icon).toContain("height: 30px");
+    expect(icon).toContain("border: 0");
+    expect(tooltip).toContain("border: 0");
+    expect(tooltip).toContain("content: attr(data-tooltip)");
+  });
 });

@@ -107,9 +107,23 @@ describe("native Plan transcript workflow", () => {
     expect(onImplementPlan).toHaveBeenCalledWith(entry);
     await user.click(reviseButton);
     await user.type(screen.getByLabelText("What should change?"), "Add rollback steps");
-    await user.click(screen.getByRole("button", { name: "Send revision" }));
+    const sendRevision = screen.getByRole("button", { name: "Send revision" });
+    const cancelRevision = screen.getByRole("button", {
+      name: "Cancel revision",
+    });
+    expect(sendRevision).toHaveClass("native-plan-icon-action", "implement");
+    expect(cancelRevision).toHaveClass("native-plan-icon-action", "cancel");
+    expect(sendRevision).toHaveAttribute("title", "Send revision");
+    expect(cancelRevision).toHaveAttribute("title", "Cancel revision");
+    expect(sendRevision).toHaveAttribute("data-tooltip", "Send revision");
+    expect(cancelRevision).toHaveAttribute("data-tooltip", "Cancel revision");
+    expect(sendRevision.querySelector("svg")).toBeInTheDocument();
+    expect(cancelRevision.querySelector("svg")).toBeInTheDocument();
+    expect(sendRevision).not.toHaveTextContent("Send revision");
+    expect(cancelRevision).not.toHaveTextContent("Cancel revision");
+    await user.click(sendRevision);
     expect(onRevisePlan).toHaveBeenCalledWith(entry, "Add rollback steps");
-    await user.click(screen.getByRole("button", { name: "Back" }));
+    await user.click(cancelRevision);
     await user.click(screen.getByRole("button", { name: "Cancel plan" }));
     expect(onCancelPlan).toHaveBeenCalledWith(entry);
   });

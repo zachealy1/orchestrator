@@ -2433,15 +2433,25 @@ const NativePlanCard = memo(function NativePlanCard({
             autoFocus
           />
           <div className="native-plan-actions confirmation-actions">
-            <button type="submit" className="small" disabled={!revision.trim() || busy}>
-              Send revision
+            <button
+              type="submit"
+              className="native-plan-icon-action implement"
+              aria-label="Send revision"
+              title="Send revision"
+              data-tooltip="Send revision"
+              disabled={!revision.trim() || busy}
+            >
+              <Check size={15} aria-hidden="true" />
             </button>
             <button
               type="button"
-              className="small secondary"
+              className="native-plan-icon-action cancel"
+              aria-label="Cancel revision"
+              title="Cancel revision"
+              data-tooltip="Cancel revision"
               onClick={() => setRevising(false)}
             >
-              Back
+              <X size={15} aria-hidden="true" />
             </button>
           </div>
         </form>
