@@ -2653,14 +2653,13 @@ const ApprovalCard = memo(function ApprovalCard({
   const command = approvalCommand(request);
   const cwd = approvalString(request.params.cwd);
   const reason = approvalString(request.params.reason);
-  const environmentId = approvalString(request.params.environmentId);
   const network = approvalRecord(request.params.networkApprovalContext);
   const permissions =
     approvalRecord(request.params.additionalPermissions) ??
     approvalRecord(request.params.permissions);
   const resources = approvalResources(request, itemResources);
   const hasContext = Boolean(
-    cwd || environmentId || reason || network || resources.length > 0,
+    cwd || reason || network || resources.length > 0,
   );
   const statusLabel = approvalStatusLabel(request);
 
@@ -2683,14 +2682,13 @@ const ApprovalCard = memo(function ApprovalCard({
         <ShieldAlert size={19} aria-hidden="true" />
         <div>
           <strong id={`${request.key}-title`}>{approvalTitle(request)}</strong>
-          <span>{interactionModeLabel(request.interactionMode)}</span>
         </div>
       </header>
 
       {command ? (
         <div className="approval-command">
           <span>Command</span>
-          <pre>{command}</pre>
+          <pre className="approval-code-surface">{command}</pre>
         </div>
       ) : null}
 
@@ -2713,13 +2711,9 @@ const ApprovalCard = memo(function ApprovalCard({
             {cwd ? (
               <>
                 <dt>Working directory</dt>
-                <dd>{cwd}</dd>
-              </>
-            ) : null}
-            {environmentId ? (
-              <>
-                <dt>Environment</dt>
-                <dd>{environmentId}</dd>
+                <dd className="approval-context-code-row">
+                  <pre className="approval-code-surface">{cwd}</pre>
+                </dd>
               </>
             ) : null}
             {reason ? (
@@ -2804,19 +2798,6 @@ function approvalTitle(request: CodexApprovalRequest) {
       return "Codex is requesting additional permissions";
     default:
       return "Unsupported native Codex request";
-  }
-}
-
-function interactionModeLabel(mode: CodexApprovalRequest["interactionMode"]) {
-  switch (mode) {
-    case "plan":
-      return "Plan Mode";
-    case "goal":
-      return "Goal Mode";
-    case "goal-plan":
-      return "Goal and Plan Mode";
-    default:
-      return "Normal chat";
   }
 }
 

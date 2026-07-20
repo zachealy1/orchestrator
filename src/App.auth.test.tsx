@@ -6089,6 +6089,7 @@ describe("App Codex auth", () => {
         itemId: "command-1",
         command: "npm test",
         cwd: "/repo/orchestrator",
+        environmentId: "local",
         reason: "Tests require access outside the current sandbox.",
         availableDecisions: ["accept", "decline", "cancel"],
       },
@@ -6099,7 +6100,14 @@ describe("App Codex auth", () => {
       .closest("article")!;
     expect(approval).toBeInTheDocument();
     expect(within(approval).getByText(/npm test/)).toBeInTheDocument();
-    expect(within(approval).getByText("/repo/orchestrator")).toBeInTheDocument();
+    const workingDirectory = within(approval).getByText("/repo/orchestrator");
+    expect(workingDirectory.tagName).toBe("PRE");
+    expect(workingDirectory).toHaveClass("approval-code-surface");
+    expect(workingDirectory.parentElement).toHaveClass(
+      "approval-context-code-row",
+    );
+    expect(within(approval).queryByText("Environment")).not.toBeInTheDocument();
+    expect(within(approval).queryByText("local")).not.toBeInTheDocument();
     await waitFor(() =>
       expect(mocks.sendAgentNotificationMock).toHaveBeenCalledWith(
         expect.objectContaining({
@@ -6324,7 +6332,7 @@ describe("App Codex auth", () => {
     expect(mocks.resolveCodexServerRequestMock).not.toHaveBeenCalled();
   });
 
-  it("shows lifecycle file paths and the active interaction mode in approval cards", async () => {
+  it("shows lifecycle file paths without interaction mode metadata", async () => {
     prepareSignedInRun();
     mocks.codexRpcMock.mockImplementation(
       async (_accountId: number, method: string) => {
@@ -6376,7 +6384,7 @@ describe("App Codex auth", () => {
     const approval = screen
       .getByText("Codex needs approval to change files")
       .closest("article")!;
-    expect(within(approval).getByText("Plan Mode")).toBeInTheDocument();
+    expect(within(approval).queryByText("Plan Mode")).not.toBeInTheDocument();
     expect(within(approval).getByText(/src\/App\.tsx/)).toBeInTheDocument();
     expect(within(approval).getByText(/src\/App\.css/)).toBeInTheDocument();
     const decisionRow = approval.querySelector(".approval-decision-row")!;
@@ -6426,7 +6434,7 @@ describe("App Codex auth", () => {
     const approval = screen
       .getByText("Codex needs approval to run a command")
       .closest("article")!;
-    expect(within(approval).getByText("Goal Mode")).toBeInTheDocument();
+    expect(within(approval).queryByText("Goal Mode")).not.toBeInTheDocument();
   });
 
   it("removes pending approval controls when the App Server disconnects", async () => {

@@ -4586,13 +4586,13 @@ pre {
 .approval-decision-row {
   display: grid;
   min-width: 0;
-  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-columns: minmax(0, 1fr);
   gap: 12px;
-  align-items: center;
+  align-items: start;
 }
 
-.approval-decision-row > .approval-actions:only-child {
-  grid-column: 2;
+.approval-decision-row > .approval-actions {
+  justify-self: end;
 }
 
 .native-approval:focus-visible {
@@ -4626,12 +4626,16 @@ pre {
   min-width: 0;
 }
 
-.approval-command pre,
+.approval-code-surface,
 .approval-permissions pre {
   border: 1px solid var(--line);
   border-radius: 8px;
   background: var(--color-component-background);
   padding: 9px;
+}
+
+.approval-context .approval-code-surface {
+  margin-top: 0;
 }
 
 .approval-context {
@@ -4650,6 +4654,10 @@ pre {
   min-width: 0;
   margin: 0;
   overflow-wrap: anywhere;
+}
+
+.approval-context .approval-context-code-row {
+  grid-column: 1 / -1;
 }
 
 .approval-permissions summary {
