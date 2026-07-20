@@ -4768,7 +4768,7 @@ button.pending-interaction-nav {
   border-radius: 7px;
   background: transparent;
   box-shadow: none;
-  color: var(--color-icon-muted);
+  color: var(--color-primary);
   padding: 0;
   transform: none;
   transition: background-color 140ms ease;
@@ -4779,7 +4779,7 @@ button.pending-interaction-nav:focus-visible {
   border: 0;
   background: var(--color-button-active);
   box-shadow: none;
-  color: var(--color-icon-muted);
+  color: var(--color-primary);
   outline: none;
   transform: none;
 }
