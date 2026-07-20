@@ -3038,7 +3038,13 @@ const ApprovalCard = memo(function ApprovalCard({
             {resources.length > 0 ? (
               <>
                 <dt>Affected resources</dt>
-                <dd>{resources.join(", ")}</dd>
+                <dd className="approval-context-code-row approval-resource-list">
+                  {resources.map((resource) => (
+                    <pre className="approval-code-surface" key={resource}>
+                      {resource}
+                    </pre>
+                  ))}
+                </dd>
               </>
             ) : null}
           </dl>

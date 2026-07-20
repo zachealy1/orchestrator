@@ -6384,8 +6384,17 @@ describe("App Codex auth", () => {
       .getByText("Codex needs approval to change files")
       .closest("article")!;
     expect(within(approval).queryByText("Plan Mode")).not.toBeInTheDocument();
-    expect(within(approval).getByText(/src\/App\.tsx/)).toBeInTheDocument();
-    expect(within(approval).getByText(/src\/App\.css/)).toBeInTheDocument();
+    for (const resource of [
+      "/repo/orchestrator/src/App.tsx",
+      "/repo/orchestrator/src/App.css",
+    ]) {
+      const resourceSurface = within(approval).getByText(resource);
+      expect(resourceSurface.tagName).toBe("PRE");
+      expect(resourceSurface).toHaveClass("approval-code-surface");
+      expect(resourceSurface.parentElement).toHaveClass(
+        "approval-resource-list",
+      );
+    }
     const decisionRow = approval.querySelector(".approval-decision-row")!;
     expect(decisionRow).toContainElement(
       within(approval).getByText("Affected resources").closest("dl"),

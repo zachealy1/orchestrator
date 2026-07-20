@@ -4847,6 +4847,17 @@ button.pending-interaction-nav:disabled {
   grid-column: 1 / -1;
 }
 
+.approval-resource-list {
+  display: grid;
+  gap: 6px;
+}
+
+.approval-resource-list .approval-code-surface {
+  margin: 0;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
 .approval-permissions summary {
   cursor: pointer;
   color: var(--muted);
