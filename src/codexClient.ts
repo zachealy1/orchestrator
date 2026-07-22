@@ -243,6 +243,13 @@ export function readWorkspaceGitDiff(workspacePath: string, filePath: string) {
   });
 }
 
+export function undoWorkspaceGitDiff(workspacePath: string, diff: string) {
+  return invoke<WorkspaceGitActionResult>("undo_workspace_git_diff", {
+    workspacePath,
+    diff,
+  });
+}
+
 export function listWorkspaceDirectory(
   workspacePath: string,
   directoryPath: string,

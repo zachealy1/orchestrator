@@ -15,6 +15,7 @@ import {
 } from "react-virtuoso";
 import type { HistoricalChatOpenRequest } from "../types";
 import type { ApprovalResolutionHandler } from "../lib/codexApprovals";
+import type { RunEditedFile } from "../lib/codexEventReducer";
 import {
   requestKey,
   type NativeUserInputRequest,
@@ -28,6 +29,7 @@ import {
 } from "../lib/transcriptVirtualization";
 import {
   TaskChatTurn,
+  editedFilesDisclosureKey,
   nativePlanDisclosureKey,
   type NativePlanDisclosureChangeHandler,
   type TaskChatEntry,
@@ -148,6 +150,12 @@ export type VirtuosoTaskChatTranscriptProps = {
   ) => boolean | void;
   onCancelPlan?: (entry: TaskChatEntry) => void;
   onOpenFileLink?: (href: string) => boolean;
+  onReviewEditedFile?: (
+    entry: TaskChatEntry,
+    file: RunEditedFile,
+  ) => Promise<void> | void;
+  onUndoEditedFiles?: (entry: TaskChatEntry) => Promise<void> | void;
+  fileUndoDisabled?: boolean;
   editablePromptEntryId?: string | null;
   onEditPrompt?: (entry: TaskChatEntry, prompt: string) => void;
   onLoadHistoricalActivity?: (entry: TaskChatEntry) => void;
@@ -183,8 +191,12 @@ const VirtualTranscriptRow = memo(function VirtualTranscriptRow({
   onRevisePlan,
   onCancelPlan,
   onOpenFileLink,
+  onReviewEditedFile,
+  onUndoEditedFiles,
+  fileUndoDisabled,
   onLoadHistoricalActivity,
   planExpanded,
+  editedFilesExpanded,
   onPlanDisclosureChange,
 }: {
   entry: TaskChatEntry;
@@ -201,8 +213,12 @@ const VirtualTranscriptRow = memo(function VirtualTranscriptRow({
   onRevisePlan?: VirtuosoTaskChatTranscriptProps["onRevisePlan"];
   onCancelPlan?: VirtuosoTaskChatTranscriptProps["onCancelPlan"];
   onOpenFileLink?: (href: string) => boolean;
+  onReviewEditedFile?: VirtuosoTaskChatTranscriptProps["onReviewEditedFile"];
+  onUndoEditedFiles?: VirtuosoTaskChatTranscriptProps["onUndoEditedFiles"];
+  fileUndoDisabled: boolean;
   onLoadHistoricalActivity?: (entry: TaskChatEntry) => void;
   planExpanded: boolean;
+  editedFilesExpanded: boolean;
   onPlanDisclosureChange: NativePlanDisclosureChangeHandler;
 }) {
   return (
@@ -224,10 +240,14 @@ const VirtualTranscriptRow = memo(function VirtualTranscriptRow({
         onImplementPlan={onImplementPlan}
         onRevisePlan={onRevisePlan}
         onCancelPlan={onCancelPlan}
+        onReviewEditedFile={onReviewEditedFile}
+        onUndoEditedFiles={onUndoEditedFiles}
+        fileUndoDisabled={fileUndoDisabled}
         onStartEdit={onStartEdit}
         onSubmitEdit={onSubmitEdit}
         onLoadHistoricalActivity={onLoadHistoricalActivity}
         planExpanded={planExpanded}
+        editedFilesExpanded={editedFilesExpanded}
         onPlanDisclosureChange={onPlanDisclosureChange}
       />
     </div>
@@ -252,6 +272,9 @@ export const VirtuosoTaskChatTranscript = memo(
     onRevisePlan,
     onCancelPlan,
     onOpenFileLink,
+    onReviewEditedFile,
+    onUndoEditedFiles,
+    fileUndoDisabled = false,
     editablePromptEntryId = null,
     onEditPrompt,
     onLoadHistoricalActivity,
@@ -1221,10 +1244,16 @@ export const VirtuosoTaskChatTranscript = memo(
             onImplementPlan={onImplementPlan}
             onRevisePlan={onRevisePlan}
             onCancelPlan={onCancelPlan}
+            onReviewEditedFile={onReviewEditedFile}
+            onUndoEditedFiles={onUndoEditedFiles}
+            fileUndoDisabled={fileUndoDisabled}
             onStartEdit={handleStartEdit}
             onSubmitEdit={handleSubmitEdit}
             onLoadHistoricalActivity={onLoadHistoricalActivity}
             planExpanded={expandedPlanKeys.has(nativePlanDisclosureKey(entry))}
+            editedFilesExpanded={expandedPlanKeys.has(
+              editedFilesDisclosureKey(entry),
+            )}
             onPlanDisclosureChange={handlePlanDisclosureChange}
           />
         );
@@ -1239,6 +1268,9 @@ export const VirtuosoTaskChatTranscript = memo(
         handlePlanDisclosureChange,
         onAnswerUserInput,
         onCancelPlan,
+        onReviewEditedFile,
+        onUndoEditedFiles,
+        fileUndoDisabled,
         onEditPrompt,
         onImplementPlan,
         onLoadHistoricalActivity,

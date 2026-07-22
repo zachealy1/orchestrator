@@ -861,6 +861,14 @@ export async function listChatRunsPage(
       runs.collaboration_mode, runs.run_intent, runs.client_user_message_id,
       runs.completed_plan_item_id, runs.completed_plan_text, runs.plan_review_state,
       tasks.original_prompt,
+      (
+        SELECT json_extract(diff_events.payload_json, '$.params.diff')
+        FROM run_events diff_events
+        WHERE diff_events.run_id = runs.id
+          AND diff_events.method = 'turn/diff/updated'
+        ORDER BY diff_events.sequence DESC
+        LIMIT 1
+      ) AS latest_diff,
       latest_tokens.total_tokens AS latest_total_tokens,
       latest_tokens.run_tokens AS latest_run_tokens,
       latest_tokens.run_cached_input_tokens AS latest_run_cached_input_tokens,
@@ -892,6 +900,14 @@ export async function listLocalChatTranscript(chatId: number) {
       runs.collaboration_mode, runs.run_intent, runs.client_user_message_id,
       runs.completed_plan_item_id, runs.completed_plan_text, runs.plan_review_state,
       tasks.original_prompt,
+      (
+        SELECT json_extract(diff_events.payload_json, '$.params.diff')
+        FROM run_events diff_events
+        WHERE diff_events.run_id = runs.id
+          AND diff_events.method = 'turn/diff/updated'
+        ORDER BY diff_events.sequence DESC
+        LIMIT 1
+      ) AS latest_diff,
       latest_tokens.total_tokens AS latest_total_tokens,
       latest_tokens.run_tokens AS latest_run_tokens,
       latest_tokens.run_cached_input_tokens AS latest_run_cached_input_tokens,

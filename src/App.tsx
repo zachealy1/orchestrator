@@ -117,6 +117,7 @@ import {
   sendAgentNotification,
   syncDefaultProfileThreadTranscript,
   takePendingAgentNotificationActivation,
+  undoWorkspaceGitDiff,
   openAgentNotificationSettings,
 } from "./codexClient";
 import { AnalyticsSummary } from "./components/AnalyticsSummary";
@@ -137,11 +138,13 @@ import {
   markApprovalAwaitingResolution,
   markApprovalError,
   markApprovalSubmitting,
+  parseUnifiedDiffFiles,
   resolveApprovalRequest,
   resolveServerRequest,
   setServerRequestSubmissionState,
   updateNativePlanReview,
   updateRunElapsed,
+  type RunEditedFile,
   type RunViewState,
 } from "./lib/codexEventReducer";
 import {
@@ -756,6 +759,7 @@ type RefreshWorkspaceGitStatusOptions = {
 
 type OpenWorkspaceFilePreviewOptions = {
   forceRefresh?: boolean;
+  mode?: "preview" | "diff";
 };
 
 function workspaceCacheKey(workspacePath: string, childPath: string) {
@@ -1713,6 +1717,8 @@ function App() {
   const reviseTranscriptPlan = useStableEvent(handleRevisePlan);
   const cancelTranscriptPlan = useStableEvent(handleCancelPlan);
   const openTranscriptFileLink = useStableEvent(openTaskResponseFileLink);
+  const reviewTranscriptEditedFile = useStableEvent(handleReviewEditedFile);
+  const undoTranscriptEditedFiles = useStableEvent(handleUndoEditedFiles);
   const editTranscriptPrompt = useStableEvent(handleEditLatestPrompt);
   const loadTranscriptHistoricalActivity = useStableEvent(loadHistoricalActivity);
   const activateAgentNotification = useStableEvent(
@@ -8029,7 +8035,9 @@ function App() {
     const requestId = previewRequestId.current + 1;
     previewRequestId.current = requestId;
     const gitStatus = gitStatusByRelativePath.get(file.relativePath) ?? null;
-    const mode = gitStatus?.statusKind === "deleted" || file.gitGhost ? "diff" : "preview";
+    const mode =
+      options.mode ??
+      (gitStatus?.statusKind === "deleted" || file.gitGhost ? "diff" : "preview");
     const cacheKey = workspaceCacheKey(workspace.path, file.path);
     if (options.forceRefresh) {
       invalidateWorkspacePreviewCaches(workspace, file.path);
@@ -8087,6 +8095,66 @@ function App() {
 
     void openWorkspaceFilePreview(workspace, file, { forceRefresh: true });
     return true;
+  }
+
+  async function handleReviewEditedFile(
+    entry: TaskChatEntry,
+    editedFile: RunEditedFile,
+  ) {
+    const workspace = selectedWorkspaceRef.current;
+    if (!workspace || workspace.id !== entry.workspaceId) {
+      throw new Error("Open the workspace for this edit before reviewing it");
+    }
+
+    const file = workspaceFileEntryFromResponseLink(editedFile.path, workspace);
+    if (!file) {
+      throw new Error("That edited file is outside the selected workspace");
+    }
+
+    await openWorkspaceFilePreview(workspace, file, {
+      forceRefresh: true,
+      mode: "diff",
+    });
+  }
+
+  async function handleUndoEditedFiles(entry: TaskChatEntry) {
+    const workspace = selectedWorkspaceRef.current;
+    if (!workspace || workspace.id !== entry.workspaceId) {
+      throw new Error("Open the workspace for this edit before undoing it");
+    }
+    if (entry.runView.fileChangesReverted) {
+      return;
+    }
+    if (!entry.runView.latestDiff.trim()) {
+      throw new Error("The exact edit diff is unavailable for this run");
+    }
+    if (
+      [...activeRunControlsRef.current.values()].some(
+        (control) => control.workspaceId === workspace.id,
+      )
+    ) {
+      throw new Error("Stop the active agent in this workspace before undoing changes");
+    }
+
+    const result = await undoWorkspaceGitDiff(
+      workspace.path,
+      entry.runView.latestDiff,
+    );
+    updateTaskChatEntryRunView(entry.clientId, (current) => ({
+      ...current,
+      fileChangesReverted: true,
+    }));
+    invalidateWorkspacePreviewCaches(workspace, undefined, {
+      reloadOpenPreview: true,
+    });
+    await Promise.all([
+      refreshWorkspaceGitStatus(workspace, {
+        showLoading: false,
+        force: true,
+      }),
+      refreshWorkspaceDirectoriesAfterRun(workspace),
+    ]);
+    setStatusMessage(result.message);
   }
 
   function invalidateWorkspacePreviewCaches(
@@ -9603,6 +9671,9 @@ function App() {
                       onRevisePlan={reviseTranscriptPlan}
                       onCancelPlan={cancelTranscriptPlan}
                       onOpenFileLink={openTranscriptFileLink}
+                      onReviewEditedFile={reviewTranscriptEditedFile}
+                      onUndoEditedFiles={undoTranscriptEditedFiles}
+                      fileUndoDisabled={selectedWorkspaceRunningChatIds.size > 0}
                       editablePromptEntryId={editablePromptEntryId}
                       onEditPrompt={editTranscriptPrompt}
                       onScrollActivityChange={
@@ -10691,6 +10762,7 @@ function createTaskChatEntryFromHistoryRun(run: HistoryRunSummary): TaskChatEntr
       ? "available"
       : savedPlanReviewState
     : "none";
+  const latestDiff = run.latest_diff ?? "";
 
   return {
     clientId: `history-run-${run.id}`,
@@ -10722,6 +10794,8 @@ function createTaskChatEntryFromHistoryRun(run: HistoryRunSummary): TaskChatEntr
               },
             },
       error: run.error,
+      editedFiles: parseUnifiedDiffFiles(latestDiff),
+      latestDiff,
       latestPlan: normalizedPlan.planText,
       nativePlan: {
         ...emptyRunView.nativePlan,

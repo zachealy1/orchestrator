@@ -74,6 +74,7 @@ export type RunViewState = {
   console: ConsoleLine[];
   streamEvents: StreamEvent[];
   editedFiles: RunEditedFile[];
+  fileChangesReverted: boolean;
   commands: RunCommandActivity[];
   agentMessagesById: Record<string, AgentMessageState>;
   finalMessageItemId: string | null;
@@ -101,6 +102,7 @@ export const emptyRunView: RunViewState = {
   console: [],
   streamEvents: [],
   editedFiles: [],
+  fileChangesReverted: false,
   commands: [],
   agentMessagesById: {},
   finalMessageItemId: null,
@@ -1011,7 +1013,7 @@ function normalizeEditedFile(file: Record<string, unknown>) {
   } satisfies RunEditedFile;
 }
 
-function parseUnifiedDiffFiles(diff: string): RunEditedFile[] {
+export function parseUnifiedDiffFiles(diff: string): RunEditedFile[] {
   if (!diff.trim()) {
     return [];
   }

@@ -25,6 +25,7 @@ use agent_notifications::AgentNotificationState;
 const DATABASE_URL: &str = "sqlite:app.db";
 const MAX_FILE_PREVIEW_BYTES: usize = 512 * 1024;
 const MAX_COMMIT_MESSAGE_CONTEXT_CHARS: usize = 24_000;
+const MAX_WORKSPACE_UNDO_DIFF_BYTES: usize = 8 * 1024 * 1024;
 const DEFAULT_CODEX_PROFILE_ID: i64 = 0;
 const DEFAULT_CODEX_PROFILE_KEY: &str = "default";
 const IGNORED_EXPLORER_DIRECTORIES: &[&str] =
@@ -3235,6 +3236,154 @@ async fn read_workspace_git_diff(
     .await
 }
 
+fn parse_git_apply_numstat_paths(output: &str) -> Result<Vec<String>, String> {
+    let fields = output.split('\0').collect::<Vec<_>>();
+    let mut paths = Vec::new();
+    let mut index = 0;
+
+    while index < fields.len() {
+        let record = fields[index];
+        index += 1;
+        if record.is_empty() {
+            continue;
+        }
+
+        let mut columns = record.splitn(3, '\t');
+        let additions = columns.next();
+        let deletions = columns.next();
+        let path = columns.next();
+        if additions.is_none() || deletions.is_none() || path.is_none() {
+            return Err("The saved edit diff has invalid file metadata".to_string());
+        }
+
+        let path = path.unwrap_or_default();
+        if path.is_empty() {
+            if index + 1 >= fields.len() {
+                return Err("The saved edit diff has invalid rename metadata".to_string());
+            }
+            paths.push(fields[index].to_string());
+            paths.push(fields[index + 1].to_string());
+            index += 2;
+        } else {
+            paths.push(path.to_string());
+        }
+    }
+
+    paths.sort();
+    paths.dedup();
+    if paths.is_empty() {
+        return Err("The saved edit diff does not contain any files".to_string());
+    }
+    Ok(paths)
+}
+
+fn staged_changes_for_paths(git_root: &Path, paths: &[String]) -> Result<bool, String> {
+    let mut command = Command::new("git");
+    command
+        .arg("--literal-pathspecs")
+        .arg("-C")
+        .arg(git_root)
+        .args(["diff", "--cached", "--quiet", "--"])
+        .args(paths);
+    let status = command
+        .status()
+        .map_err(|error| format!("Unable to inspect staged changes: {error}"))?;
+    match status.code() {
+        Some(0) => Ok(false),
+        Some(1) => Ok(true),
+        _ => Err("Unable to inspect staged changes for the edited files".to_string()),
+    }
+}
+
+fn undo_workspace_git_diff_blocking(
+    workspace_path: String,
+    diff: String,
+) -> Result<WorkspaceGitActionResult, String> {
+    let workspace = canonical_workspace(&workspace_path)?;
+    let git_root = resolve_git_root(&workspace)?;
+    if diff.trim().is_empty() {
+        return Err("No saved edit diff is available to undo".to_string());
+    }
+    if diff.len() > MAX_WORKSPACE_UNDO_DIFF_BYTES {
+        return Err("The saved edit diff is too large to undo safely".to_string());
+    }
+    if diff.contains('\0')
+        || diff.contains("GIT binary patch")
+        || diff.lines().any(|line| line.starts_with("Binary files "))
+    {
+        return Err("Binary file changes cannot be undone from this summary".to_string());
+    }
+
+    let root_arg = git_root.to_string_lossy().to_string();
+    let numstat = run_command_with_stdin(
+        "git",
+        &[
+            "-C".to_string(),
+            root_arg.clone(),
+            "apply".to_string(),
+            "--numstat".to_string(),
+            "-z".to_string(),
+            "-".to_string(),
+        ],
+        &diff,
+    )?;
+    if !numstat.ok {
+        return Err(output_detail(&numstat)
+            .unwrap_or_else(|| "The saved edit diff could not be inspected".to_string()));
+    }
+
+    let paths = parse_git_apply_numstat_paths(&numstat.stdout)?;
+    for path in &paths {
+        git_path_to_workspace_child(&git_root, &workspace, path)?;
+    }
+    if staged_changes_for_paths(&git_root, &paths)? {
+        return Err("Unstage the affected files before undoing this edit summary".to_string());
+    }
+
+    let reverse_args = [
+        "-C".to_string(),
+        root_arg,
+        "apply".to_string(),
+        "--reverse".to_string(),
+        "--whitespace=nowarn".to_string(),
+        "-".to_string(),
+    ];
+    let mut check_args = reverse_args.to_vec();
+    check_args.insert(4, "--check".to_string());
+    let check = run_command_with_stdin("git", &check_args, &diff)?;
+    if !check.ok {
+        return Err(output_detail(&check).unwrap_or_else(|| {
+            "These files have changed since this edit and cannot be undone safely".to_string()
+        }));
+    }
+
+    let applied = run_command_with_stdin("git", &reverse_args, &diff)?;
+    if !applied.ok {
+        return Err(output_detail(&applied)
+            .unwrap_or_else(|| "Unable to undo the saved file changes".to_string()));
+    }
+
+    Ok(WorkspaceGitActionResult {
+        message: format!(
+            "Undid changes to {} {}",
+            paths.len(),
+            if paths.len() == 1 { "file" } else { "files" }
+        ),
+        branch: current_git_branch(&git_root),
+    })
+}
+
+#[tauri::command]
+async fn undo_workspace_git_diff(
+    workspace_path: String,
+    diff: String,
+) -> Result<WorkspaceGitActionResult, String> {
+    run_blocking_command("undo workspace file changes", move || {
+        undo_workspace_git_diff_blocking(workspace_path, diff)
+    })
+    .await
+}
+
 fn list_workspace_directory_blocking(
     workspace_path: String,
     directory_path: String,
@@ -3783,6 +3932,33 @@ fn run_command_raw(program: impl AsRef<OsStr>, args: &[&str]) -> CommandProbe {
             stderr: err.to_string(),
         },
     }
+}
+
+fn run_command_with_stdin(
+    program: impl AsRef<OsStr>,
+    args: &[String],
+    stdin_text: &str,
+) -> Result<CommandProbe, String> {
+    let mut child = Command::new(program)
+        .args(args)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .map_err(|error| format!("Unable to start Git: {error}"))?;
+    if let Some(mut stdin) = child.stdin.take() {
+        stdin
+            .write_all(stdin_text.as_bytes())
+            .map_err(|error| format!("Unable to send the saved diff to Git: {error}"))?;
+    }
+    let output = child
+        .wait_with_output()
+        .map_err(|error| format!("Unable to read Git output: {error}"))?;
+    Ok(CommandProbe {
+        ok: output.status.success(),
+        stdout: String::from_utf8_lossy(&output.stdout).to_string(),
+        stderr: String::from_utf8_lossy(&output.stderr).trim().to_string(),
+    })
 }
 
 fn run_command_with_stdin_timeout(
@@ -4593,6 +4769,7 @@ pub fn run() {
             push_workspace_branch,
             list_workspace_git_status,
             read_workspace_git_diff,
+            undo_workspace_git_diff,
             list_workspace_directory,
             read_workspace_file_preview,
             run_preflight,
@@ -5635,6 +5812,104 @@ mod tests {
     }
 
     #[test]
+    fn undo_workspace_git_diff_reverses_the_exact_unstaged_patch() {
+        let workspace = git_test_directory("git-undo-exact-patch");
+        let file = workspace.join("app.ts");
+        fs::write(&file, "export const value = 1;\n").unwrap();
+        git(&workspace, &["add", "app.ts"]);
+        git(&workspace, &["commit", "-m", "initial"]);
+        fs::write(
+            &file,
+            "export const value = 2;\nexport const ready = true;\n",
+        )
+        .unwrap();
+        let diff = git_stdout(&workspace, &["diff", "--", "app.ts"]);
+
+        let result =
+            undo_workspace_git_diff_blocking(workspace.to_string_lossy().to_string(), diff)
+                .unwrap();
+
+        assert_eq!(fs::read_to_string(&file).unwrap(), "export const value = 1;\n");
+        assert!(git_stdout(&workspace, &["status", "--porcelain"])
+            .trim()
+            .is_empty());
+        assert_eq!(result.message, "Undid changes to 1 file");
+        remove_test_directory(workspace);
+    }
+
+    #[test]
+    fn undo_workspace_git_diff_removes_an_exact_untracked_file() {
+        let workspace = git_test_directory("git-undo-untracked-file");
+        let file = workspace.join("new.ts");
+        fs::write(&file, "export const created = true;\n").unwrap();
+        let saved_diff = read_workspace_git_diff_blocking(
+            workspace.to_string_lossy().to_string(),
+            file.to_string_lossy().to_string(),
+        )
+        .unwrap()
+        .sections
+        .remove(0)
+        .content;
+
+        undo_workspace_git_diff_blocking(workspace.to_string_lossy().to_string(), saved_diff)
+            .unwrap();
+
+        assert!(!file.exists());
+        remove_test_directory(workspace);
+    }
+
+    #[test]
+    fn undo_workspace_git_diff_rejects_files_changed_after_the_saved_edit() {
+        let workspace = git_test_directory("git-undo-diverged-file");
+        let file = workspace.join("app.ts");
+        fs::write(&file, "export const value = 1;\n").unwrap();
+        git(&workspace, &["add", "app.ts"]);
+        git(&workspace, &["commit", "-m", "initial"]);
+        fs::write(&file, "export const value = 2;\n").unwrap();
+        let diff = git_stdout(&workspace, &["diff", "--", "app.ts"]);
+        fs::write(&file, "export const value = 3;\n").unwrap();
+
+        let result =
+            undo_workspace_git_diff_blocking(workspace.to_string_lossy().to_string(), diff);
+
+        assert!(result.is_err());
+        assert_eq!(fs::read_to_string(&file).unwrap(), "export const value = 3;\n");
+        remove_test_directory(workspace);
+    }
+
+    #[test]
+    fn undo_workspace_git_diff_rejects_staged_or_outside_workspace_files() {
+        let repository = git_test_directory("git-undo-confined");
+        let workspace = repository.join("workspace");
+        fs::create_dir_all(&workspace).unwrap();
+        let inside_file = workspace.join("inside.ts");
+        let outside_file = repository.join("outside.ts");
+        fs::write(&inside_file, "export const inside = 1;\n").unwrap();
+        fs::write(&outside_file, "export const outside = 1;\n").unwrap();
+        git(&repository, &["add", "."]);
+        git(&repository, &["commit", "-m", "initial"]);
+
+        fs::write(&inside_file, "export const inside = 2;\n").unwrap();
+        let staged_diff = git_stdout(&repository, &["diff", "--", "workspace/inside.ts"]);
+        git(&repository, &["add", "workspace/inside.ts"]);
+        let staged_result =
+            undo_workspace_git_diff_blocking(workspace.to_string_lossy().to_string(), staged_diff);
+        assert!(staged_result.unwrap_err().contains("Unstage"));
+
+        git(&repository, &["reset", "HEAD", "workspace/inside.ts"]);
+        fs::write(&outside_file, "export const outside = 2;\n").unwrap();
+        let outside_diff = git_stdout(&repository, &["diff", "--", "outside.ts"]);
+        let outside_result =
+            undo_workspace_git_diff_blocking(workspace.to_string_lossy().to_string(), outside_diff);
+        assert!(outside_result.unwrap_err().contains("outside"));
+        assert_eq!(
+            fs::read_to_string(&outside_file).unwrap(),
+            "export const outside = 2;\n"
+        );
+        remove_test_directory(repository);
+    }
+
+    #[test]
     fn commit_workspace_changes_rejects_empty_message() {
         let workspace = git_test_directory("git-commit-empty-message");
         fs::write(workspace.join("app.ts"), "export const value = 1;\n").unwrap();
@@ -5932,6 +6207,23 @@ diff --git a/src/App.tsx b/src/App.tsx
             String::from_utf8_lossy(&output.stdout),
             String::from_utf8_lossy(&output.stderr)
         );
+    }
+
+    fn git_stdout(workspace: &Path, args: &[&str]) -> String {
+        let output = Command::new("git")
+            .arg("-C")
+            .arg(workspace)
+            .args(args)
+            .output()
+            .expect("run git");
+        assert!(
+            output.status.success(),
+            "git {:?} failed: {}{}",
+            args,
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        String::from_utf8_lossy(&output.stdout).to_string()
     }
 
     fn test_directory(name: &str) -> PathBuf {

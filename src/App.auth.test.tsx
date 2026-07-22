@@ -31,6 +31,7 @@ const mocks = vi.hoisted(() => ({
   listGitBranchesMock: vi.fn(),
   listWorkspaceGitStatusMock: vi.fn(),
   readWorkspaceGitDiffMock: vi.fn(),
+  undoWorkspaceGitDiffMock: vi.fn(),
   listWorkspaceDirectoryMock: vi.fn(),
   readWorkspaceFilePreviewMock: vi.fn(),
   checkoutGitBranchMock: vi.fn(),
@@ -171,6 +172,7 @@ vi.mock("./codexClient", () => ({
   listGitBranches: mocks.listGitBranchesMock,
   listWorkspaceGitStatus: mocks.listWorkspaceGitStatusMock,
   readWorkspaceGitDiff: mocks.readWorkspaceGitDiffMock,
+  undoWorkspaceGitDiff: mocks.undoWorkspaceGitDiffMock,
   listCodexModels: mocks.listCodexModelsMock,
   listCodexSkills: mocks.listCodexSkillsMock,
   listWorkspaceDirectory: mocks.listWorkspaceDirectoryMock,
@@ -502,6 +504,10 @@ function prepareDefaults() {
     content: "preview",
     truncated: false,
     isBinary: false,
+  });
+  mocks.undoWorkspaceGitDiffMock.mockResolvedValue({
+    message: "Undid changes to 1 file",
+    branch: "main",
   });
   mocks.checkoutGitBranchMock.mockResolvedValue({ branch: "main" });
   mocks.runPreflightMock.mockResolvedValue(preflight);
@@ -6156,6 +6162,71 @@ describe("App Codex auth", () => {
     expect(promptInput).toHaveValue("Prepare the follow-up while Codex streams");
     expect(promptInput.selectionStart).toBe(11);
     expect(promptInput.selectionEnd).toBe(11);
+  });
+
+  it("opens edited files in the diff drawer and undoes their exact saved patch", async () => {
+    prepareSignedInRun();
+    mocks.readWorkspaceGitDiffMock.mockResolvedValue({
+      path: "/repo/orchestrator/README.md",
+      relativePath: "README.md",
+      sections: [],
+    });
+
+    const { user } = await renderApp();
+    await startMockRun(user, "Update the readme");
+    const diff = [
+      "diff --git a/README.md b/README.md",
+      "--- a/README.md",
+      "+++ b/README.md",
+      "@@ -1 +1 @@",
+      "-Old",
+      "+New",
+    ].join("\n");
+
+    await emitCodexNotification({
+      method: "turn/diff/updated",
+      params: { diff },
+    });
+
+    const summary = await screen.findByLabelText("Edited 1 file");
+    await user.click(within(summary).getByRole("button", { name: "Review" }));
+
+    await waitFor(() =>
+      expect(mocks.readWorkspaceGitDiffMock).toHaveBeenCalledWith(
+        workspace.path,
+        "/repo/orchestrator/README.md",
+      ),
+    );
+    expect(
+      within(screen.getByRole("complementary", { name: "File preview" })).getByText(
+        "Git diff",
+      ),
+    ).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Close file preview" }));
+
+    await emitCodexNotification({
+      method: "turn/completed",
+      params: { turn: { status: "completed", durationMs: 1234 } },
+    });
+    await waitFor(() =>
+      expect(within(screen.getByLabelText("Edited 1 file")).getByRole("button", {
+        name: "Undo",
+      })).toBeEnabled(),
+    );
+
+    const completedSummary = screen.getByLabelText("Edited 1 file");
+    await user.click(within(completedSummary).getByRole("button", { name: "Undo" }));
+    await user.click(
+      within(completedSummary).getByRole("button", { name: "Undo changes" }),
+    );
+
+    await waitFor(() =>
+      expect(mocks.undoWorkspaceGitDiffMock).toHaveBeenCalledWith(
+        workspace.path,
+        diff,
+      ),
+    );
+    expect(within(completedSummary).getByText("Changes undone.")).toBeInTheDocument();
   });
 
   it("coalesces bursty app-server deltas without disturbing active typing", async () => {

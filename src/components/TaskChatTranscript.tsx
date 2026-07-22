@@ -14,10 +14,14 @@ import {
   ChevronRight,
   ChevronUp,
   Clock,
+  Eye,
+  FileDiff,
   FileText,
+  Loader2,
   MessageSquare,
   Pencil,
   RefreshCw,
+  RotateCcw,
   ShieldAlert,
   ShieldCheck,
   Terminal,
@@ -189,6 +193,16 @@ export function nativePlanDisclosureKey(entry: TaskChatEntry) {
     plan.completedTurnId ?? "draft",
     planContentRevision(text),
   ].join(":");
+}
+
+export function editedFilesDisclosureKey(entry: TaskChatEntry) {
+  const revision = entry.runView.editedFiles
+    .map(
+      (file) =>
+        `${file.path}:${file.status}:${file.additions}:${file.deletions}`,
+    )
+    .join("|");
+  return `${entry.clientId}:edited-files:${planContentRevision(revision)}`;
 }
 
 function planContentRevision(text: string) {
@@ -568,6 +582,12 @@ type Props = {
   ) => boolean | void;
   onCancelPlan?: (entry: TaskChatEntry) => void;
   onOpenFileLink?: (href: string) => boolean;
+  onReviewEditedFile?: (
+    entry: TaskChatEntry,
+    file: RunEditedFile,
+  ) => Promise<void> | void;
+  onUndoEditedFiles?: (entry: TaskChatEntry) => Promise<void> | void;
+  fileUndoDisabled?: boolean;
   editablePromptEntryId?: string | null;
   onEditPrompt?: (entry: TaskChatEntry, prompt: string) => void;
   historyOpenRequest?: TranscriptHistoryOpenRequest | null;
@@ -591,6 +611,9 @@ export function TaskChatTranscript({
   onRevisePlan,
   onCancelPlan,
   onOpenFileLink,
+  onReviewEditedFile,
+  onUndoEditedFiles,
+  fileUndoDisabled = false,
   editablePromptEntryId = null,
   onEditPrompt,
   historyOpenRequest = null,
@@ -609,6 +632,8 @@ export function TaskChatTranscript({
     onRevisePlan,
     onCancelPlan,
     onOpenFileLink,
+    onReviewEditedFile,
+    onUndoEditedFiles,
     onEditPrompt,
     onHistoryPositionSettled,
     onVisibleHistoryRangeChange,
@@ -623,6 +648,8 @@ export function TaskChatTranscript({
     onRevisePlan,
     onCancelPlan,
     onOpenFileLink,
+    onReviewEditedFile,
+    onUndoEditedFiles,
     onEditPrompt,
     onHistoryPositionSettled,
     onVisibleHistoryRangeChange,
@@ -638,6 +665,16 @@ export function TaskChatTranscript({
   );
   const stableOpenFileLink = useCallback(
     (href: string) => callbacksRef.current.onOpenFileLink?.(href) ?? false,
+    [],
+  );
+  const stableReviewEditedFile = useCallback(
+    (entry: TaskChatEntry, file: RunEditedFile) =>
+      callbacksRef.current.onReviewEditedFile?.(entry, file),
+    [],
+  );
+  const stableUndoEditedFiles = useCallback(
+    (entry: TaskChatEntry) =>
+      callbacksRef.current.onUndoEditedFiles?.(entry),
     [],
   );
   const stableEditPrompt = useCallback(
@@ -679,6 +716,13 @@ export function TaskChatTranscript({
       onRevisePlan={onRevisePlan}
       onCancelPlan={onCancelPlan}
       onOpenFileLink={onOpenFileLink ? stableOpenFileLink : undefined}
+      onReviewEditedFile={
+        onReviewEditedFile ? stableReviewEditedFile : undefined
+      }
+      onUndoEditedFiles={
+        onUndoEditedFiles ? stableUndoEditedFiles : undefined
+      }
+      fileUndoDisabled={fileUndoDisabled}
       editablePromptEntryId={editablePromptEntryId}
       onEditPrompt={onEditPrompt ? stableEditPrompt : undefined}
       historyOpenRequest={historyOpenRequest}
@@ -713,6 +757,9 @@ const VirtualizedTaskChatTranscript = /* @__PURE__ */ memo(function VirtualizedT
   onRevisePlan,
   onCancelPlan,
   onOpenFileLink,
+  onReviewEditedFile,
+  onUndoEditedFiles,
+  fileUndoDisabled = false,
   editablePromptEntryId = null,
   onEditPrompt,
   historyOpenRequest = null,
@@ -1186,6 +1233,9 @@ const VirtualizedTaskChatTranscript = /* @__PURE__ */ memo(function VirtualizedT
                 onImplementPlan={onImplementPlan}
                 onRevisePlan={onRevisePlan}
                 onCancelPlan={onCancelPlan}
+                onReviewEditedFile={onReviewEditedFile}
+                onUndoEditedFiles={onUndoEditedFiles}
+                fileUndoDisabled={fileUndoDisabled}
                 onStartEdit={handleStartEdit}
                 onSubmitEdit={handleSubmitEdit}
                 onLoadHistoricalActivity={onLoadHistoricalActivity}
@@ -1303,8 +1353,12 @@ export const TaskChatTurn = memo(function TaskChatTurn({
   onRevisePlan,
   onCancelPlan,
   onOpenFileLink,
+  onReviewEditedFile,
+  onUndoEditedFiles,
+  fileUndoDisabled = false,
   onLoadHistoricalActivity,
   planExpanded,
+  editedFilesExpanded,
   onPlanDisclosureChange,
 }: {
   entry: TaskChatEntry;
@@ -1321,8 +1375,12 @@ export const TaskChatTurn = memo(function TaskChatTurn({
   onRevisePlan?: Props["onRevisePlan"];
   onCancelPlan?: Props["onCancelPlan"];
   onOpenFileLink?: (href: string) => boolean;
+  onReviewEditedFile?: Props["onReviewEditedFile"];
+  onUndoEditedFiles?: Props["onUndoEditedFiles"];
+  fileUndoDisabled?: boolean;
   onLoadHistoricalActivity?: (entry: TaskChatEntry) => void;
   planExpanded?: boolean;
+  editedFilesExpanded?: boolean;
   onPlanDisclosureChange?: NativePlanDisclosureChangeHandler;
 }) {
   return (
@@ -1412,8 +1470,12 @@ export const TaskChatTurn = memo(function TaskChatTurn({
           onRevisePlan={onRevisePlan}
           onCancelPlan={onCancelPlan}
           onOpenFileLink={onOpenFileLink}
+          onReviewEditedFile={onReviewEditedFile}
+          onUndoEditedFiles={onUndoEditedFiles}
+          fileUndoDisabled={fileUndoDisabled}
           onLoadHistoricalActivity={onLoadHistoricalActivity}
           planExpanded={planExpanded}
+          editedFilesExpanded={editedFilesExpanded}
           onPlanDisclosureChange={onPlanDisclosureChange}
         />
       </article>
@@ -1487,8 +1549,12 @@ const AssistantRunOutput = memo(function AssistantRunOutput({
   onRevisePlan,
   onCancelPlan,
   onOpenFileLink,
+  onReviewEditedFile,
+  onUndoEditedFiles,
+  fileUndoDisabled = false,
   onLoadHistoricalActivity,
   planExpanded,
+  editedFilesExpanded,
   onPlanDisclosureChange,
 }: {
   entry: TaskChatEntry;
@@ -1499,8 +1565,12 @@ const AssistantRunOutput = memo(function AssistantRunOutput({
   onRevisePlan?: Props["onRevisePlan"];
   onCancelPlan?: Props["onCancelPlan"];
   onOpenFileLink?: (href: string) => boolean;
+  onReviewEditedFile?: Props["onReviewEditedFile"];
+  onUndoEditedFiles?: Props["onUndoEditedFiles"];
+  fileUndoDisabled?: boolean;
   onLoadHistoricalActivity?: (entry: TaskChatEntry) => void;
   planExpanded?: boolean;
+  editedFilesExpanded?: boolean;
   onPlanDisclosureChange?: NativePlanDisclosureChangeHandler;
 }) {
   const completed =
@@ -1542,6 +1612,14 @@ const AssistantRunOutput = memo(function AssistantRunOutput({
             onOpenFileLink={onOpenFileLink}
           />
         ) : null}
+        <EditedFilesSummary
+          entry={entry}
+          expanded={editedFilesExpanded}
+          undoDisabled={fileUndoDisabled}
+          onDisclosureChange={onPlanDisclosureChange}
+          onReviewFile={onReviewEditedFile}
+          onUndo={onUndoEditedFiles}
+        />
         <RunApprovalRequests
           entry={entry}
           runView={runView}
@@ -1573,6 +1651,14 @@ const AssistantRunOutput = memo(function AssistantRunOutput({
           Waiting for app-server output...
         </p>
       )}
+      <EditedFilesSummary
+        entry={entry}
+        expanded={editedFilesExpanded}
+        undoDisabled={fileUndoDisabled}
+        onDisclosureChange={onPlanDisclosureChange}
+        onReviewFile={onReviewEditedFile}
+        onUndo={onUndoEditedFiles}
+      />
       <NativePlanCard
         entry={entry}
         onImplementPlan={onImplementPlan}
@@ -1603,6 +1689,261 @@ function PreparingRunStatus() {
     </p>
   );
 }
+
+const EDITED_FILES_COLLAPSED_LIMIT = 3;
+
+type EditedFilesActionState = "idle" | "confirming" | "loading" | "success";
+
+const EditedFilesSummary = memo(function EditedFilesSummary({
+  entry,
+  expanded,
+  undoDisabled,
+  onDisclosureChange,
+  onReviewFile,
+  onUndo,
+}: {
+  entry: TaskChatEntry;
+  expanded?: boolean;
+  undoDisabled: boolean;
+  onDisclosureChange?: NativePlanDisclosureChangeHandler;
+  onReviewFile?: Props["onReviewEditedFile"];
+  onUndo?: Props["onUndoEditedFiles"];
+}) {
+  const files = entry.runView.editedFiles;
+  const listId = useId();
+  const cardRef = useRef<HTMLElement | null>(null);
+  const [localExpanded, setLocalExpanded] = useState(false);
+  const [undoState, setUndoState] = useState<EditedFilesActionState>(
+    entry.runView.fileChangesReverted ? "success" : "idle",
+  );
+  const [reviewing, setReviewing] = useState(false);
+  const [actionError, setActionError] = useState<string | null>(null);
+  const isExpanded = expanded ?? localExpanded;
+  const totals = useMemo(
+    () =>
+      files.reduce(
+        (current, file) => ({
+          additions: current.additions + file.additions,
+          deletions: current.deletions + file.deletions,
+        }),
+        { additions: 0, deletions: 0 },
+      ),
+    [files],
+  );
+
+  useEffect(() => {
+    if (entry.runView.fileChangesReverted) {
+      setUndoState("success");
+      setActionError(null);
+    }
+  }, [entry.runView.fileChangesReverted]);
+
+  if (files.length === 0) {
+    return null;
+  }
+
+  const visibleFiles = isExpanded
+    ? files
+    : files.slice(0, EDITED_FILES_COLLAPSED_LIMIT);
+  const hiddenFileCount = files.length - visibleFiles.length;
+  const runActive = isRunActiveStatus(entry.status);
+  const changesReverted =
+    entry.runView.fileChangesReverted || undoState === "success";
+  const exactUndoUnavailable = !entry.runView.latestDiff.trim();
+  const undoUnavailable =
+    undoDisabled ||
+    runActive ||
+    exactUndoUnavailable ||
+    changesReverted ||
+    !onUndo;
+  const actionsBusy = undoState === "loading" || reviewing;
+
+  const setExpanded = (nextExpanded: boolean) => {
+    const card = cardRef.current;
+    if (card && onDisclosureChange) {
+      onDisclosureChange({
+        anchorElement: card,
+        anchorTop: card.getBoundingClientRect().top,
+        expanded: nextExpanded,
+        planKey: editedFilesDisclosureKey(entry),
+      });
+      return;
+    }
+    setLocalExpanded(nextExpanded);
+  };
+
+  const reviewFile = async (file: RunEditedFile) => {
+    if (!onReviewFile || actionsBusy || changesReverted) {
+      return;
+    }
+    setReviewing(true);
+    setActionError(null);
+    try {
+      await onReviewFile(entry, file);
+    } catch (error) {
+      setActionError(error instanceof Error ? error.message : String(error));
+    } finally {
+      setReviewing(false);
+    }
+  };
+
+  const confirmUndo = async () => {
+    if (undoUnavailable || actionsBusy || !onUndo) {
+      return;
+    }
+    setUndoState("loading");
+    setActionError(null);
+    try {
+      await onUndo(entry);
+      setUndoState("success");
+    } catch (error) {
+      setUndoState("idle");
+      setActionError(error instanceof Error ? error.message : String(error));
+    }
+  };
+
+  const undoTitle = changesReverted
+    ? "These changes have been undone"
+    : runActive || undoDisabled
+      ? "Wait for the active agent to finish before undoing changes"
+      : exactUndoUnavailable
+        ? "The exact turn diff is unavailable for this chat"
+        : "Undo these file changes";
+
+  return (
+    <section
+      className={`edited-files-summary ${
+        changesReverted
+          ? "is-undone"
+          : ""
+      }`}
+      aria-label={`Edited ${files.length} ${files.length === 1 ? "file" : "files"}`}
+      aria-busy={actionsBusy}
+      ref={cardRef}
+    >
+      <header className="edited-files-summary-header">
+        <span className="edited-files-summary-icon" aria-hidden="true">
+          <FileDiff size={20} />
+        </span>
+        <span className="edited-files-summary-heading">
+          <strong>
+            Edited {files.length} {files.length === 1 ? "file" : "files"}
+          </strong>
+          <span className="edited-files-summary-totals">
+            <span className="activity-additions">+{totals.additions}</span>
+            <span className="activity-deletions">-{totals.deletions}</span>
+          </span>
+        </span>
+        <span className="edited-files-summary-actions">
+          <button
+            className="small secondary edited-files-action"
+            type="button"
+            title={undoTitle}
+            disabled={undoUnavailable || actionsBusy}
+            onClick={() => {
+              setActionError(null);
+              setUndoState("confirming");
+            }}
+          >
+            {undoState === "loading" ? (
+              <Loader2 className="spin" size={15} aria-hidden="true" />
+            ) : (
+              <RotateCcw size={15} aria-hidden="true" />
+            )}
+            {undoState === "success" ? "Undone" : "Undo"}
+          </button>
+          <button
+            className="small secondary edited-files-action"
+            type="button"
+            disabled={actionsBusy || changesReverted || !onReviewFile}
+            onClick={() => void reviewFile(files[0])}
+          >
+            {reviewing ? (
+              <Loader2 className="spin" size={15} aria-hidden="true" />
+            ) : (
+              <Eye size={15} aria-hidden="true" />
+            )}
+            Review
+          </button>
+        </span>
+      </header>
+
+      {undoState === "confirming" ? (
+        <div className="edited-files-undo-confirmation" role="alert">
+          <span>Undo the changes represented by this summary?</span>
+          <span className="edited-files-confirmation-actions">
+            <button
+              className="small secondary"
+              type="button"
+              onClick={() => setUndoState("idle")}
+            >
+              Keep changes
+            </button>
+            <button
+              className="small danger"
+              type="button"
+              onClick={() => void confirmUndo()}
+            >
+              Undo changes
+            </button>
+          </span>
+        </div>
+      ) : null}
+
+      <div className="edited-files-summary-list" id={listId}>
+        {visibleFiles.map((file) => (
+          <div className="edited-files-summary-row" key={file.path}>
+            <button
+              className="edited-files-path"
+              type="button"
+              title={file.path}
+              aria-label={`Review ${file.path}`}
+              disabled={reviewing || changesReverted || !onReviewFile}
+              onClick={() => void reviewFile(file)}
+            >
+              {file.path}
+            </button>
+            <span className="edited-files-row-stats" aria-label={`${file.additions} additions, ${file.deletions} deletions`}>
+              <span className="activity-additions">+{file.additions}</span>
+              <span className="activity-deletions">-{file.deletions}</span>
+            </span>
+          </div>
+        ))}
+      </div>
+
+      {files.length > EDITED_FILES_COLLAPSED_LIMIT ? (
+        <button
+          className="edited-files-disclosure"
+          type="button"
+          aria-controls={listId}
+          aria-expanded={isExpanded}
+          onClick={() => setExpanded(!isExpanded)}
+        >
+          {isExpanded ? (
+            <>
+              Show fewer files <ChevronUp size={15} aria-hidden="true" />
+            </>
+          ) : (
+            <>
+              Show {hiddenFileCount} more {hiddenFileCount === 1 ? "file" : "files"}{" "}
+              <ChevronDown size={15} aria-hidden="true" />
+            </>
+          )}
+        </button>
+      ) : null}
+
+      {actionError ? (
+        <p className="edited-files-action-status error" role="alert">
+          {actionError}
+        </p>
+      ) : undoState === "success" ? (
+        <p className="edited-files-action-status" role="status">
+          Changes undone.
+        </p>
+      ) : null}
+    </section>
+  );
+});
 
 const RunTraceDropdown = memo(function RunTraceDropdown({
   entry,
@@ -1969,14 +2310,6 @@ const RunTimeline = memo(function RunTimeline({
   return (
     <div className="stream-event-list" aria-label="App-server stream">
       {items.map((item) => {
-        if (item.kind === "files") {
-          return (
-            <RunActivityGroups key={item.id}>
-              <EditedFilesGroup files={item.files} />
-            </RunActivityGroups>
-          );
-        }
-
         if (item.kind === "commands") {
           return (
             <RunActivityGroups key={item.id}>
@@ -2001,12 +2334,10 @@ function RunActivityGroups({ children }: { children: ReactNode }) {
 
 type TimelineItem =
   | { kind: "event"; event: StreamEvent }
-  | { kind: "files"; id: string; files: RunEditedFile[] }
   | { kind: "commands"; id: string; commands: RunCommandActivity[] };
 
 function buildTimelineItems(runView: RunViewState): TimelineItem[] {
   const items: TimelineItem[] = [];
-  const renderedFilePaths = new Set<string>();
   const renderedCommandIds = new Set<string>();
 
   for (const event of runView.streamEvents) {
@@ -2015,16 +2346,7 @@ function buildTimelineItems(runView: RunViewState): TimelineItem[] {
     }
 
     if (event.kind === "file") {
-      const files = selectFilesForEvent(
-        runView.editedFiles,
-        event.activityIds,
-        renderedFilePaths,
-      );
-
-      if (files.length > 0) {
-        items.push({ kind: "files", id: `files-${event.id}`, files });
-        files.forEach((file) => renderedFilePaths.add(file.path));
-      } else if (runView.editedFiles.length === 0) {
+      if (runView.editedFiles.length === 0) {
         items.push({ kind: "event", event });
       }
       continue;
@@ -2047,13 +2369,6 @@ function buildTimelineItems(runView: RunViewState): TimelineItem[] {
     }
 
     items.push({ kind: "event", event });
-  }
-
-  const remainingFiles = runView.editedFiles.filter(
-    (file) => !renderedFilePaths.has(file.path),
-  );
-  if (remainingFiles.length > 0) {
-    items.push({ kind: "files", id: "files-remaining", files: remainingFiles });
   }
 
   const remainingCommands = runView.commands.filter(
@@ -2102,25 +2417,6 @@ function shouldHideCompletedFinalMessageEvent(
   );
 }
 
-function selectFilesForEvent(
-  files: RunEditedFile[],
-  activityIds: string[] | undefined,
-  renderedFilePaths: Set<string>,
-) {
-  if (files.length === 0) {
-    return [];
-  }
-
-  if (!activityIds || activityIds.length === 0) {
-    return renderedFilePaths.size === 0 ? files : [];
-  }
-
-  const activityIdSet = new Set(activityIds);
-  return files.filter(
-    (file) => activityIdSet.has(file.path) && !renderedFilePaths.has(file.path),
-  );
-}
-
 function selectCommandsForEvent(
   commands: RunCommandActivity[],
   activityIds: string[] | undefined,
@@ -2140,36 +2436,6 @@ function selectCommandsForEvent(
       activityIdSet.has(command.id) && !renderedCommandIds.has(command.id),
   );
 }
-
-const EditedFilesGroup = memo(function EditedFilesGroup({
-  files,
-}: {
-  files: RunEditedFile[];
-}) {
-  return (
-    <details className="run-activity-group edited-files">
-      <summary>
-        <span className="run-activity-title">
-          <Pencil size={15} aria-hidden="true" />
-          Edited {files.length} {files.length === 1 ? "file" : "files"}
-        </span>
-        <ChevronDown size={15} aria-hidden="true" />
-      </summary>
-      <div className="run-activity-items">
-        {files.map((file) => (
-          <div className="run-activity-item edited-file-row" key={file.path}>
-            <span>{fileActionLabel(file.status)}</span>
-            <span className="activity-file-name" title={file.path}>
-              {file.name}
-            </span>
-            <span className="activity-additions">+{file.additions}</span>
-            <span className="activity-deletions">-{file.deletions}</span>
-          </div>
-        ))}
-      </div>
-    </details>
-  );
-});
 
 const CommandsGroup = memo(function CommandsGroup({
   commands,
@@ -3213,21 +3479,6 @@ function formatTokenCount(runView: RunViewState) {
   return `${(
     runView.tokenUsage?.turnTokens ?? runView.tokenUsage?.totalTokens ?? 0
   ).toLocaleString()} tokens`;
-}
-
-function fileActionLabel(status: RunEditedFile["status"]) {
-  switch (status) {
-    case "added":
-      return "Added";
-    case "deleted":
-      return "Deleted";
-    case "renamed":
-      return "Renamed";
-    case "copied":
-      return "Copied";
-    default:
-      return "Edited";
-  }
 }
 
 function commandActionLabel(status: RunCommandActivity["status"]) {

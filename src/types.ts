@@ -225,6 +225,7 @@ export type HistoryRunSummary = Pick<
   | "plan_review_state"
 > & {
   original_prompt: string;
+  latest_diff?: string | null;
   latest_total_tokens: number | null;
   latest_run_tokens: number | null;
   latest_run_cached_input_tokens: number | null;

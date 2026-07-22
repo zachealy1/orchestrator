@@ -1303,7 +1303,7 @@ describe("TaskChatTranscript", () => {
     expect(within(screen.getByLabelText("Run summary")).getByText("Done.")).toBeInTheDocument();
   });
 
-  it("renders grouped edited files and commands in stream order", () => {
+  it("renders one consolidated edited-files summary alongside command activity", () => {
     const { container } = render(
       <TaskChatTranscript
         entries={[
@@ -1390,21 +1390,20 @@ describe("TaskChatTranscript", () => {
       />,
     );
 
+    const editedSummary = screen.getByLabelText("Edited 2 files");
     const activityGroups = screen.getAllByLabelText("Run activity groups");
-    const editedGroup = activityGroups[0];
-    const commandGroup = activityGroups[1];
-    const editedDetails = editedGroup.querySelector("details.edited-files");
+    const commandGroup = activityGroups[0];
     const commandDetails = commandGroup.querySelector("details.command-runs");
 
-    expect(within(editedGroup).getByText("Edited 2 files")).toBeInTheDocument();
+    expect(within(editedSummary).getByText("Edited 2 files")).toBeInTheDocument();
     expect(within(commandGroup).getByText("Ran 2 commands")).toBeInTheDocument();
-    expect(editedDetails).toBeInstanceOf(HTMLDetailsElement);
     expect(commandDetails).toBeInstanceOf(HTMLDetailsElement);
-    expect((editedDetails as HTMLDetailsElement).open).toBe(false);
     expect((commandDetails as HTMLDetailsElement).open).toBe(false);
-    expect(within(editedGroup).getByText("App.css")).toBeInTheDocument();
-    expect(within(editedGroup).getByText("+11")).toBeInTheDocument();
-    expect(within(editedGroup).getByText("-2")).toBeInTheDocument();
+    expect(within(editedSummary).getByText("src/App.css")).toBeInTheDocument();
+    const totals = editedSummary.querySelector(".edited-files-summary-totals");
+    expect(totals).not.toBeNull();
+    expect(within(totals as HTMLElement).getByText("+14")).toBeInTheDocument();
+    expect(within(totals as HTMLElement).getByText("-2")).toBeInTheDocument();
     expect(
       within(commandGroup).getByText(
         "npm test -- --run src/components/TaskChatTranscript.test.tsx",
@@ -1414,20 +1413,157 @@ describe("TaskChatTranscript", () => {
     const firstMessage = screen.getByText("I will inspect the files first.");
     const secondMessage = screen.getByText("The transcript view is updated.");
     expect(
-      firstMessage.compareDocumentPosition(editedGroup) &
-        Node.DOCUMENT_POSITION_FOLLOWING,
-    ).toBeTruthy();
-    expect(
-      editedGroup.compareDocumentPosition(secondMessage) &
+      firstMessage.compareDocumentPosition(secondMessage) &
         Node.DOCUMENT_POSITION_FOLLOWING,
     ).toBeTruthy();
     expect(
       secondMessage.compareDocumentPosition(commandGroup) &
         Node.DOCUMENT_POSITION_FOLLOWING,
     ).toBeTruthy();
+    expect(
+      commandGroup.compareDocumentPosition(editedSummary) &
+        Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
     expect(screen.queryByText("npm test output")).not.toBeInTheDocument();
-    expect(container.querySelector(".activity-file-name")).not.toBeNull();
+    expect(container.querySelector("details.edited-files")).toBeNull();
     expect(container.querySelector(".activity-additions")).not.toBeNull();
     expect(container.querySelector(".activity-deletions")).not.toBeNull();
+  });
+
+  it("reviews files, expands long lists, and confirms an exact edit undo", async () => {
+    const onReviewEditedFile = vi.fn();
+    const onUndoEditedFiles = vi.fn().mockResolvedValue(undefined);
+    const files = [
+      {
+        path: "src/App.tsx",
+        name: "App.tsx",
+        additions: 4,
+        deletions: 1,
+        status: "modified" as const,
+      },
+      {
+        path: "src/components/TaskChatTranscript.tsx",
+        name: "TaskChatTranscript.tsx",
+        additions: 20,
+        deletions: 3,
+        status: "modified" as const,
+      },
+      {
+        path: "src/components/a-very-long-directory-name/EditedFilesSummary.tsx",
+        name: "EditedFilesSummary.tsx",
+        additions: 40,
+        deletions: 0,
+        status: "added" as const,
+      },
+      {
+        path: "src/App.css",
+        name: "App.css",
+        additions: 12,
+        deletions: 2,
+        status: "modified" as const,
+      },
+    ];
+    const entry: TaskChatEntry = {
+      ...historyEntry(1),
+      runView: {
+        ...historyEntry(1).runView,
+        editedFiles: files,
+        latestDiff: "diff --git a/src/App.tsx b/src/App.tsx\n",
+      },
+    };
+
+    render(
+      <TaskChatTurn
+        entry={entry}
+        editable={false}
+        editing={false}
+        editingPrompt=""
+        onEditingPromptChange={vi.fn()}
+        onSubmitEdit={vi.fn()}
+        onCancelEdit={vi.fn()}
+        onStartEdit={vi.fn()}
+        onResolveRequest={vi.fn()}
+        onReviewEditedFile={onReviewEditedFile}
+        onUndoEditedFiles={onUndoEditedFiles}
+      />,
+    );
+
+    const summary = screen.getByLabelText("Edited 4 files");
+    expect(within(summary).getByText("+76")).toBeInTheDocument();
+    expect(within(summary).getByText("-6")).toBeInTheDocument();
+    expect(within(summary).queryByText("src/App.css")).toBeNull();
+    expect(
+      within(summary).getByRole("button", {
+        name: "Review src/components/a-very-long-directory-name/EditedFilesSummary.tsx",
+      }),
+    ).toHaveAttribute(
+      "title",
+      "src/components/a-very-long-directory-name/EditedFilesSummary.tsx",
+    );
+
+    fireEvent.click(within(summary).getByRole("button", { name: "Show 1 more file" }));
+    expect(within(summary).getByText("src/App.css")).toBeInTheDocument();
+    expect(within(summary).getByRole("button", { name: "Show fewer files" })).toHaveAttribute(
+      "aria-expanded",
+      "true",
+    );
+
+    fireEvent.click(within(summary).getByRole("button", { name: "Review" }));
+    await waitFor(() => expect(onReviewEditedFile).toHaveBeenCalledWith(entry, files[0]));
+
+    fireEvent.click(within(summary).getByRole("button", { name: "Undo" }));
+    expect(within(summary).getByText("Undo the changes represented by this summary?")).toBeInTheDocument();
+    fireEvent.click(within(summary).getByRole("button", { name: "Undo changes" }));
+
+    await waitFor(() => expect(onUndoEditedFiles).toHaveBeenCalledTimes(1));
+    expect(within(summary).getByText("Changes undone.")).toBeInTheDocument();
+    expect(within(summary).getByRole("button", { name: "Undone" })).toBeDisabled();
+  });
+
+  it("keeps an edit summary actionable when its guarded undo fails", async () => {
+    const onUndoEditedFiles = vi
+      .fn()
+      .mockRejectedValue(new Error("These files changed after the saved edit"));
+    const entry: TaskChatEntry = {
+      ...historyEntry(1),
+      runView: {
+        ...historyEntry(1).runView,
+        editedFiles: [
+          {
+            path: "src/App.tsx",
+            name: "App.tsx",
+            additions: 1,
+            deletions: 1,
+            status: "modified",
+          },
+        ],
+        latestDiff: "diff --git a/src/App.tsx b/src/App.tsx\n",
+      },
+    };
+
+    render(
+      <TaskChatTurn
+        entry={entry}
+        editable={false}
+        editing={false}
+        editingPrompt=""
+        onEditingPromptChange={vi.fn()}
+        onSubmitEdit={vi.fn()}
+        onCancelEdit={vi.fn()}
+        onStartEdit={vi.fn()}
+        onResolveRequest={vi.fn()}
+        onUndoEditedFiles={onUndoEditedFiles}
+      />,
+    );
+
+    const summary = screen.getByLabelText("Edited 1 file");
+    fireEvent.click(within(summary).getByRole("button", { name: "Undo" }));
+    fireEvent.click(within(summary).getByRole("button", { name: "Undo changes" }));
+
+    expect(
+      await within(summary).findByText("These files changed after the saved edit"),
+    ).toHaveAttribute("role", "alert");
+    expect(onUndoEditedFiles).toHaveBeenCalledTimes(1);
+    expect(within(summary).getByRole("button", { name: "Undo" })).toBeEnabled();
   });
 });
