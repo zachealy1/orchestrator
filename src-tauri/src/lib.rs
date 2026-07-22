@@ -4050,7 +4050,7 @@ fn git_status_for_pathspec(git_root: &Path, pathspec: &str) -> CommandProbe {
             "status",
             "--porcelain=v1",
             "-z",
-            "--untracked-files=normal",
+            "--untracked-files=all",
             "--",
             pathspec,
         ],
@@ -4141,10 +4141,6 @@ fn git_path_to_workspace_child(
     workspace: &Path,
     git_path: &str,
 ) -> Result<PathBuf, String> {
-    // With --untracked-files=normal, porcelain v1 marks an untracked directory
-    // with a trailing slash (for example, "src/"). The slash is status
-    // metadata rather than an empty path component.
-    let git_path = git_path.trim_end_matches('/');
     if git_path.trim().is_empty()
         || Path::new(git_path).is_absolute()
         || git_path
@@ -5396,12 +5392,16 @@ mod tests {
     }
 
     #[test]
-    fn workspace_git_status_accepts_untracked_directories_in_an_unborn_repository() {
-        let workspace = git_test_directory("git-status-untracked-directories");
+    fn workspace_git_status_counts_untracked_files_in_an_unborn_repository() {
+        let workspace = git_test_directory("git-status-untracked-files");
         fs::create_dir_all(workspace.join("src")).unwrap();
         fs::create_dir_all(workspace.join("dist")).unwrap();
         fs::write(workspace.join("src/main.ts"), "console.log('snake');\n").unwrap();
-        fs::write(workspace.join("dist/index.js"), "console.log('built');\n").unwrap();
+        fs::write(
+            workspace.join("dist/index.js"),
+            "console.log('built');\nconsole.log('ready');\n",
+        )
+        .unwrap();
 
         let snapshot =
             list_workspace_git_status_blocking(workspace.to_string_lossy().to_string()).unwrap();
@@ -5411,7 +5411,9 @@ mod tests {
             .map(|file| file.relative_path.as_str())
             .collect::<Vec<_>>();
 
-        assert_eq!(paths, vec!["dist", "src"]);
+        assert_eq!(paths, vec!["dist/index.js", "src/main.ts"]);
+        assert_eq!(snapshot.additions, 3);
+        assert_eq!(snapshot.deletions, 0);
         assert!(snapshot
             .files
             .iter()
