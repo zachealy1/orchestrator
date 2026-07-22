@@ -562,7 +562,10 @@ type Props = {
     response: UserInputResponse,
   ) => void;
   onImplementPlan?: (entry: TaskChatEntry) => void;
-  onRevisePlan?: (entry: TaskChatEntry, revision: string) => void;
+  onRevisePlan?: (
+    entry: TaskChatEntry,
+    revision: string,
+  ) => boolean | void;
   onCancelPlan?: (entry: TaskChatEntry) => void;
   onOpenFileLink?: (href: string) => boolean;
   editablePromptEntryId?: string | null;
@@ -2258,6 +2261,8 @@ const NativePlanCard = memo(function NativePlanCard({
 }) {
   const [revising, setRevising] = useState(false);
   const [revision, setRevision] = useState("");
+  const [revisionSubmitting, setRevisionSubmitting] = useState(false);
+  const revisionSubmissionLockRef = useRef(false);
   const [localDisclosure, setLocalDisclosure] = useState({
     expanded: false,
     planKey: "",
@@ -2268,6 +2273,11 @@ const NativePlanCard = memo(function NativePlanCard({
   const text = plan.completedText || plan.previewText;
   const planKey = nativePlanDisclosureKey(entry);
   const preview = useMemo(() => buildNativePlanPreview(text), [text]);
+  useEffect(() => {
+    if (plan.reviewState !== "available") return;
+    revisionSubmissionLockRef.current = false;
+    setRevisionSubmitting(false);
+  }, [plan.reviewState, planKey]);
   if (!text) {
     return null;
   }
@@ -2278,7 +2288,25 @@ const NativePlanCard = memo(function NativePlanCard({
   const renderedText = isExpanded ? text : preview.previewText;
 
   const canReview = plan.reviewState === "available";
-  const busy = plan.reviewState === "submitting";
+  const busy = plan.reviewState === "submitting" || revisionSubmitting;
+  const submitRevision = () => {
+    const value = revision.trim();
+    if (
+      !value ||
+      busy ||
+      revisionSubmissionLockRef.current ||
+      !onRevisePlan
+    ) {
+      return;
+    }
+    revisionSubmissionLockRef.current = true;
+    const accepted = onRevisePlan(entry, value);
+    if (accepted === false) {
+      revisionSubmissionLockRef.current = false;
+      return;
+    }
+    setRevisionSubmitting(true);
+  };
   const heading = canReview
     ? "Plan ready"
     : plan.reviewState === "approved"
@@ -2392,10 +2420,10 @@ const NativePlanCard = memo(function NativePlanCard({
       {canReview && revising ? (
         <form
           className="native-plan-revision"
+          aria-busy={busy}
           onSubmit={(event) => {
             event.preventDefault();
-            const value = revision.trim();
-            if (value) onRevisePlan?.(entry, value);
+            submitRevision();
           }}
         >
           <label htmlFor={`plan-revision-${entry.clientId}`}>What should change?</label>
@@ -2403,6 +2431,18 @@ const NativePlanCard = memo(function NativePlanCard({
             id={`plan-revision-${entry.clientId}`}
             value={revision}
             onChange={(event) => setRevision(event.target.value)}
+            onKeyDown={(event) => {
+              if (
+                event.key !== "Enter" ||
+                event.shiftKey ||
+                event.nativeEvent.isComposing
+              ) {
+                return;
+              }
+              event.preventDefault();
+              event.currentTarget.form?.requestSubmit();
+            }}
+            disabled={busy}
             autoFocus
           />
           <div className="native-plan-actions confirmation-actions">
@@ -2422,6 +2462,7 @@ const NativePlanCard = memo(function NativePlanCard({
               aria-label="Cancel revision"
               title="Cancel revision"
               data-tooltip="Cancel revision"
+              disabled={busy}
               onClick={() => setRevising(false)}
             >
               <X size={15} aria-hidden="true" />

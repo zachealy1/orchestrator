@@ -142,7 +142,10 @@ export type VirtuosoTaskChatTranscriptProps = {
     response: UserInputResponse,
   ) => void;
   onImplementPlan?: (entry: TaskChatEntry) => void;
-  onRevisePlan?: (entry: TaskChatEntry, revision: string) => void;
+  onRevisePlan?: (
+    entry: TaskChatEntry,
+    revision: string,
+  ) => boolean | void;
   onCancelPlan?: (entry: TaskChatEntry) => void;
   onOpenFileLink?: (href: string) => boolean;
   editablePromptEntryId?: string | null;

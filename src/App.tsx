@@ -7604,7 +7604,7 @@ function App() {
     entry: TaskChatEntry,
     promptText: string,
     intent: "plan-revision" | "plan-implementation",
-  ) {
+  ): boolean {
     const workspace = selectedWorkspaceRef.current;
     const chatSession = workspace
       ? workspaceChatSessionsRef.current[workspace.id] ?? null
@@ -7617,15 +7617,15 @@ function App() {
       !chatSession.threadId
     ) {
       setStatusMessage("Reopen the plan's chat before continuing this workflow.");
-      return;
+      return false;
     }
     if (runIsActive || activeChatEntryIdRef.current !== null) {
       setStatusMessage("Wait for the active turn to finish first.");
-      return;
+      return false;
     }
     if (entry.runView.nativePlan.reviewState !== "available") {
       setStatusMessage("That plan is no longer awaiting review.");
-      return;
+      return false;
     }
     const external = chatSession.origin === "codex_external";
     const sessionProfileKey = chatSession.profileKey;
@@ -7643,9 +7643,9 @@ function App() {
       : codexAccountsRef.current.find((candidate) => candidate.id === accountId) ?? null;
     if (!external && (!accountId || !account)) {
       setStatusMessage("Sign in to the plan's Codex account before continuing.");
-      return;
+      return false;
     }
-    if (planActionLocksRef.current.has(entry.clientId)) return;
+    if (planActionLocksRef.current.has(entry.clientId)) return false;
     planActionLocksRef.current.add(entry.clientId);
     const selectedModel =
       models.find((option) => option.id === selectedModelId) ?? models[0] ?? null;
@@ -7706,6 +7706,7 @@ function App() {
     };
     const runControl = beginOptimisticRun(snapshot);
     scheduleRunSetup(runControl, snapshot);
+    return true;
   }
 
   function handleImplementPlan(entry: TaskChatEntry) {
@@ -7713,7 +7714,7 @@ function App() {
   }
 
   function handleRevisePlan(entry: TaskChatEntry, revision: string) {
-    launchPlanFollowUp(entry, revision, "plan-revision");
+    return launchPlanFollowUp(entry, revision, "plan-revision");
   }
 
   async function handleCancelPlan(entry: TaskChatEntry) {

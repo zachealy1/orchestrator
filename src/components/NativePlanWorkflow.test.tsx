@@ -1,4 +1,4 @@
-import { render, screen } from "@testing-library/react";
+import { fireEvent, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 import {
@@ -70,7 +70,7 @@ describe("native Plan transcript workflow", () => {
     const user = userEvent.setup();
     const entry = planEntry();
     const onImplementPlan = vi.fn();
-    const onRevisePlan = vi.fn();
+    const onRevisePlan = vi.fn(() => false);
     const onCancelPlan = vi.fn();
     renderTurn(entry, { onImplementPlan, onRevisePlan, onCancelPlan });
 
@@ -126,6 +126,64 @@ describe("native Plan transcript workflow", () => {
     await user.click(cancelRevision);
     await user.click(screen.getByRole("button", { name: "Cancel plan" }));
     expect(onCancelPlan).toHaveBeenCalledWith(entry);
+  });
+
+  it("submits a revision with Enter and blocks rapid duplicate submissions", async () => {
+    const user = userEvent.setup();
+    const entry = planEntry();
+    const onRevisePlan = vi.fn(() => true);
+    renderTurn(entry, { onRevisePlan });
+
+    await user.click(screen.getByRole("button", { name: "Revise plan" }));
+    const input = screen.getByLabelText("What should change?");
+    await user.type(input, "Tighten the validation scope");
+
+    fireEvent.keyDown(input, { key: "Enter" });
+    fireEvent.keyDown(input, { key: "Enter" });
+
+    expect(onRevisePlan).toHaveBeenCalledTimes(1);
+    expect(onRevisePlan).toHaveBeenCalledWith(
+      entry,
+      "Tighten the validation scope",
+    );
+    expect(input).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Send revision" })).toBeDisabled();
+  });
+
+  it("keeps Shift+Enter as a newline and submits multiline feedback through the button", async () => {
+    const user = userEvent.setup();
+    const entry = planEntry();
+    const onRevisePlan = vi.fn(() => false);
+    renderTurn(entry, { onRevisePlan });
+
+    await user.click(screen.getByRole("button", { name: "Revise plan" }));
+    const input = screen.getByLabelText("What should change?");
+    await user.type(input, "Keep the API stable");
+    await user.keyboard("{Shift>}{Enter}{/Shift}Add rollback coverage");
+
+    expect(input).toHaveValue("Keep the API stable\nAdd rollback coverage");
+    expect(onRevisePlan).not.toHaveBeenCalled();
+
+    await user.click(screen.getByRole("button", { name: "Send revision" }));
+    expect(onRevisePlan).toHaveBeenCalledWith(
+      entry,
+      "Keep the API stable\nAdd rollback coverage",
+    );
+  });
+
+  it("does not submit an empty or whitespace-only revision", async () => {
+    const user = userEvent.setup();
+    const entry = planEntry();
+    const onRevisePlan = vi.fn();
+    renderTurn(entry, { onRevisePlan });
+
+    await user.click(screen.getByRole("button", { name: "Revise plan" }));
+    const input = screen.getByLabelText("What should change?");
+    await user.type(input, "   ");
+    fireEvent.keyDown(input, { key: "Enter" });
+
+    expect(onRevisePlan).not.toHaveBeenCalled();
+    expect(screen.getByRole("button", { name: "Send revision" })).toBeDisabled();
   });
 
   it("collapses a long block-aware plan and expands it accessibly", async () => {
