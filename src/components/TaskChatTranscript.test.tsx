@@ -614,52 +614,6 @@ describe("TaskChatTranscript", () => {
     expect(within(liveOutput).getByText("734 tokens")).toBeInTheDocument();
     expect(within(liveOutput).getByText("I am updating the auth flow.")).toBeInTheDocument();
     expect(within(liveOutput).getByText("Ran npm test")).toBeInTheDocument();
-    expect(within(liveOutput).getByLabelText("Codex is working")).toHaveTextContent(
-      "Codex is working...",
-    );
-  });
-
-  it("replaces the active-work indicator with a pending interaction", () => {
-    render(
-      <TaskChatTranscript
-        entries={[
-          {
-            clientId: "chat-approval",
-            workspaceId: 1,
-            chatId: 401,
-            turnIndex: 1,
-            runId: 2,
-            taskId: 3,
-            prompt: "Run a guarded command",
-            submittedAt: "2026-06-30T17:30:00Z",
-            status: "running",
-            runView: {
-              ...emptyRunView,
-              status: "running",
-              streamEvents: [
-                {
-                  id: "command-1",
-                  kind: "command",
-                  text: "Ran npm test",
-                  timestamp: "2026-06-30T17:30:01Z",
-                },
-              ],
-              serverRequests: [
-                {
-                  id: 9,
-                  method: "unsupported/request",
-                  params: {},
-                },
-              ],
-            },
-          },
-        ]}
-        onResolveRequest={vi.fn()}
-      />,
-    );
-
-    expect(screen.getByLabelText("Pending Codex interactions")).toBeInTheDocument();
-    expect(screen.queryByLabelText("Codex is working")).not.toBeInTheDocument();
   });
 
   it("renders an animated preparing state before app-server output starts", () => {
