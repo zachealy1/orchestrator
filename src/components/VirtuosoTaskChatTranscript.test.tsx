@@ -1005,6 +1005,106 @@ describe("VirtuosoTaskChatTranscript", () => {
     expect(virtuosoMock.scrollToIndex).not.toHaveBeenCalled();
   });
 
+  it("does not follow the tail when a selected answer resolves its question", async () => {
+    const entry = runningQuestionEntry();
+    const onAnswerUserInput = vi.fn();
+    const commonProps = {
+      transcriptIdentity: "chat:question-resolution",
+      transcriptVersion: "live",
+      firstItemIndex: 1_000_000,
+      openAtLatestRequest: null,
+      liveFollow: true,
+      onResolveRequest: vi.fn(),
+      onAnswerUserInput,
+    };
+    const { rerender } = render(
+      <VirtuosoTaskChatTranscript entries={[entry]} {...commonProps} />,
+    );
+    act(() => virtuosoMock.lastProps.atBottomStateChange(true));
+    await vi.waitFor(() => expect(virtuosoMock.scrollToIndex).toHaveBeenCalled());
+    virtuosoMock.scrollToIndex.mockClear();
+
+    const option = screen.getByRole("radio", { name: "Focused" });
+    fireEvent.click(option);
+    expect(option).toBeChecked();
+    expect(onAnswerUserInput).toHaveBeenCalledTimes(1);
+
+    rerender(
+      <VirtuosoTaskChatTranscript
+        entries={[
+          {
+            ...entry,
+            runView: {
+              ...entry.runView,
+              nativePlan: {
+                ...entry.runView.nativePlan,
+                requestStates: { "request-1": "submitting" },
+              },
+            },
+          },
+        ]}
+        {...commonProps}
+      />,
+    );
+    rerender(
+      <VirtuosoTaskChatTranscript
+        entries={[
+          {
+            ...entry,
+            runView: {
+              ...entry.runView,
+              serverRequests: [],
+              nativePlan: {
+                ...entry.runView.nativePlan,
+                phase: "drafting",
+                requestStates: {},
+              },
+            },
+          },
+        ]}
+        {...commonProps}
+      />,
+    );
+    await act(async () => {
+      await new Promise((resolve) => window.setTimeout(resolve, 30));
+    });
+
+    expect(virtuosoMock.scrollToIndex).not.toHaveBeenCalled();
+  });
+
+  it("follows the tail when a new agent question arrives", async () => {
+    const entry = runningEntry(1, "Reviewing the available options.");
+    const commonProps = {
+      transcriptIdentity: "chat:new-question",
+      transcriptVersion: "live",
+      firstItemIndex: 1_000_000,
+      openAtLatestRequest: null,
+      liveFollow: true,
+      onResolveRequest: vi.fn(),
+    };
+    const { rerender } = render(
+      <VirtuosoTaskChatTranscript entries={[entry]} {...commonProps} />,
+    );
+    act(() => virtuosoMock.lastProps.atBottomStateChange(true));
+    await vi.waitFor(() => expect(virtuosoMock.scrollToIndex).toHaveBeenCalled());
+    virtuosoMock.scrollToIndex.mockClear();
+
+    rerender(
+      <VirtuosoTaskChatTranscript
+        entries={[runningQuestionEntry()]}
+        {...commonProps}
+      />,
+    );
+
+    await vi.waitFor(() =>
+      expect(virtuosoMock.scrollToIndex).toHaveBeenCalledWith({
+        index: "LAST",
+        align: "end",
+        behavior: "auto",
+      }),
+    );
+  });
+
   it("reaffirms the bottom after a followed response completes", async () => {
     const { rerender } = render(
       <VirtuosoTaskChatTranscript

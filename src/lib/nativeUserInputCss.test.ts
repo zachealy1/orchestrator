@@ -52,6 +52,16 @@ describe("native user input CSS", () => {
     expect(selectedDot).not.toContain("var(--color-primary)");
   });
 
+  it("keeps the native radio focus target within its visible option", () => {
+    const control = rule(".native-user-input-control");
+
+    expect(control).toContain("position: absolute");
+    expect(control).toContain("inset: 0");
+    expect(control).toContain("width: 100%");
+    expect(control).toContain("height: 100%");
+    expect(control).toContain("opacity: 0");
+  });
+
   it("anchors a borderless primary interaction navigator in the card header", () => {
     const position = rule(
       ".native-user-input > .pending-interaction-navigator",

@@ -15,9 +15,10 @@ import {
 } from "react-virtuoso";
 import type { HistoricalChatOpenRequest } from "../types";
 import type { ApprovalResolutionHandler } from "../lib/codexApprovals";
-import type {
-  NativeUserInputRequest,
-  UserInputResponse,
+import {
+  requestKey,
+  type NativeUserInputRequest,
+  type UserInputResponse,
 } from "../lib/nativePlanMode";
 import {
   calculateTranscriptDefaultItemHeight,
@@ -63,6 +64,12 @@ type StableDefaultItemHeight = {
 type StableHeightEstimates = {
   key: string;
   heights: number[];
+};
+
+type LiveTailInteractionRevision = {
+  entryId: string | null;
+  revision: number;
+  seenKeys: Set<string>;
 };
 
 type CachedTranscriptState = {
@@ -284,6 +291,12 @@ export const VirtuosoTaskChatTranscript = memo(
       null,
     );
     const stableHeightEstimatesRef = useRef<StableHeightEstimates | null>(null);
+    const liveTailInteractionRevisionRef =
+      useRef<LiveTailInteractionRevision>({
+        entryId: null,
+        revision: 0,
+        seenKeys: new Set(),
+      });
     const cacheMetadataRef = useRef({
       cacheKey: "",
       entryCount: entries.length,
@@ -343,16 +356,54 @@ export const VirtuosoTaskChatTranscript = memo(
     );
     const liveTailEntry = entries[entries.length - 1];
     const liveTailRunView = liveTailEntry?.runView;
-    const failedRequestStateRevision = liveTailRunView
-      ? Object.entries(liveTailRunView.nativePlan.requestStates)
-          .filter(([, state]) => state === "failed")
-          .map(([key]) => key)
-          .sort()
-          .join(":")
-      : "";
-    // Local interaction state, including a question entering `submitting`, must
-    // not be mistaken for new transcript output and pull the card under the
-    // composer. Only state that changes visible content advances this revision.
+    const liveTailInteractionRevision = useMemo(() => {
+      const entryId = liveTailEntry?.clientId ?? null;
+      const interactionKeys = liveTailRunView
+        ? [
+            ...liveTailRunView.approvalRequests.map(
+              (request) => `approval:${request.key}`,
+            ),
+            ...liveTailRunView.serverRequests.map(
+              (request) => `server-request:${requestKey(request)}`,
+            ),
+            ...Object.entries(
+              liveTailRunView.approvalResourcesByItemId,
+            ).flatMap(([itemId, resources]) =>
+              resources.map(
+                (_resource, index) => `approval-resource:${itemId}:${index}`,
+              ),
+            ),
+          ]
+        : [];
+      let revision = liveTailInteractionRevisionRef.current;
+      if (revision.entryId !== entryId) {
+        revision = {
+          entryId,
+          revision: revision.revision + 1,
+          seenKeys: new Set(interactionKeys),
+        };
+        liveTailInteractionRevisionRef.current = revision;
+        return revision.revision;
+      }
+
+      const hasNewInteraction = interactionKeys.some(
+        (key) => !revision.seenKeys.has(key),
+      );
+      if (hasNewInteraction) {
+        interactionKeys.forEach((key) => revision.seenKeys.add(key));
+        revision = { ...revision, revision: revision.revision + 1 };
+        liveTailInteractionRevisionRef.current = revision;
+      }
+      return revision.revision;
+    }, [
+      liveTailEntry?.clientId,
+      liveTailRunView?.approvalRequests,
+      liveTailRunView?.approvalResourcesByItemId,
+      liveTailRunView?.serverRequests,
+    ]);
+    // Local interaction state and resolved questions must not be mistaken for
+    // new transcript output. Interaction revision advances only when Codex adds
+    // a request or resource, never when the user selects or resolves one.
     const liveTailContentRevision = useMemo(
       () => Symbol("live-tail-content"),
       [
@@ -362,15 +413,10 @@ export const VirtuosoTaskChatTranscript = memo(
         liveTailRunView?.commands,
         liveTailRunView?.finalMessage,
         liveTailRunView?.error,
-        liveTailRunView?.approvalRequests,
-        liveTailRunView?.approvalResourcesByItemId,
-        liveTailRunView?.serverRequests,
-        liveTailRunView?.pendingInteractionOrder,
-        liveTailRunView?.nativePlan.phase,
+        liveTailInteractionRevision,
         liveTailRunView?.nativePlan.previewText,
         liveTailRunView?.nativePlan.completedText,
         liveTailRunView?.nativePlan.reviewState,
-        failedRequestStateRevision,
       ],
     );
 

@@ -2643,7 +2643,7 @@ const UserInputQuestionCard = memo(function UserInputQuestionCard({
                   key={option.label}
                 >
                   <input
-                    className="sr-only"
+                    className="native-user-input-control"
                     type="radio"
                     name={`${request.id}-${question.id}`}
                     value={option.label}
