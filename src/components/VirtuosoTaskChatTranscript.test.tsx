@@ -112,6 +112,46 @@ function runningEntry(turnIndex: number, text = "Working..."): TaskChatEntry {
   };
 }
 
+function runningQuestionEntry(): TaskChatEntry {
+  const entry = runningEntry(1, "Choose an implementation scope.");
+  return {
+    ...entry,
+    runView: {
+      ...entry.runView,
+      serverRequests: [
+        {
+          id: "request-1",
+          method: "item/tool/requestUserInput",
+          params: {
+            threadId: "thread-1",
+            turnId: "turn-1",
+            itemId: "item-1",
+            questions: [
+              {
+                id: "scope",
+                header: "Scope",
+                question: "Which scope?",
+                isOther: false,
+                isSecret: false,
+                options: [
+                  {
+                    label: "Focused",
+                    description: "Make the smallest useful change.",
+                  },
+                ],
+              },
+            ],
+          },
+        },
+      ],
+      nativePlan: {
+        ...entry.runView.nativePlan,
+        phase: "awaiting-clarification",
+      },
+    },
+  };
+}
+
 function planHistoryEntry(turnIndex: number): TaskChatEntry {
   const entry = historyEntry(turnIndex);
   return {
@@ -919,6 +959,50 @@ describe("VirtuosoTaskChatTranscript", () => {
         behavior: "auto",
       }),
     );
+  });
+
+  it("keeps a pending question stationary while its answer is submitted", async () => {
+    const entry = runningQuestionEntry();
+    const commonProps = {
+      transcriptIdentity: "chat:question-submission",
+      transcriptVersion: "live",
+      firstItemIndex: 1_000_000,
+      openAtLatestRequest: null,
+      liveFollow: true,
+      onResolveRequest: vi.fn(),
+    };
+    const { rerender } = render(
+      <VirtuosoTaskChatTranscript entries={[entry]} {...commonProps} />,
+    );
+    act(() => virtuosoMock.lastProps.atBottomStateChange(true));
+    await vi.waitFor(() => expect(virtuosoMock.scrollToIndex).toHaveBeenCalled());
+    virtuosoMock.scrollToIndex.mockClear();
+    const questionCard = screen.getByText("Which scope?").closest("form");
+
+    rerender(
+      <VirtuosoTaskChatTranscript
+        entries={[
+          {
+            ...entry,
+            runView: {
+              ...entry.runView,
+              nativePlan: {
+                ...entry.runView.nativePlan,
+                requestStates: { "request-1": "submitting" },
+              },
+            },
+          },
+        ]}
+        {...commonProps}
+      />,
+    );
+    await act(async () => {
+      await new Promise((resolve) => window.setTimeout(resolve, 30));
+    });
+
+    expect(screen.getByText("Which scope?").closest("form")).toBe(questionCard);
+    expect(screen.getByRole("group")).toBeDisabled();
+    expect(virtuosoMock.scrollToIndex).not.toHaveBeenCalled();
   });
 
   it("reaffirms the bottom after a followed response completes", async () => {

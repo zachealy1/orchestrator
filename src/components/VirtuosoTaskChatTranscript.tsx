@@ -342,6 +342,37 @@ export const VirtuosoTaskChatTranscript = memo(
       [heightEstimates],
     );
     const liveTailEntry = entries[entries.length - 1];
+    const liveTailRunView = liveTailEntry?.runView;
+    const failedRequestStateRevision = liveTailRunView
+      ? Object.entries(liveTailRunView.nativePlan.requestStates)
+          .filter(([, state]) => state === "failed")
+          .map(([key]) => key)
+          .sort()
+          .join(":")
+      : "";
+    // Local interaction state, including a question entering `submitting`, must
+    // not be mistaken for new transcript output and pull the card under the
+    // composer. Only state that changes visible content advances this revision.
+    const liveTailContentRevision = useMemo(
+      () => Symbol("live-tail-content"),
+      [
+        liveTailEntry?.clientId,
+        liveTailRunView?.streamEvents,
+        liveTailRunView?.editedFiles,
+        liveTailRunView?.commands,
+        liveTailRunView?.finalMessage,
+        liveTailRunView?.error,
+        liveTailRunView?.approvalRequests,
+        liveTailRunView?.approvalResourcesByItemId,
+        liveTailRunView?.serverRequests,
+        liveTailRunView?.pendingInteractionOrder,
+        liveTailRunView?.nativePlan.phase,
+        liveTailRunView?.nativePlan.previewText,
+        liveTailRunView?.nativePlan.completedText,
+        liveTailRunView?.nativePlan.reviewState,
+        failedRequestStateRevision,
+      ],
+    );
 
     const restoredState = useMemo(
       () =>
@@ -816,7 +847,7 @@ export const VirtuosoTaskChatTranscript = memo(
     }, [
       clearCompletionFollowSchedule,
       clearLiveFollowSchedule,
-      liveTailEntry,
+      liveTailContentRevision,
       liveFollow,
       queueCompletionFollow,
       queueLiveFollow,

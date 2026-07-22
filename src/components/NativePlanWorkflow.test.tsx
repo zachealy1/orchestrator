@@ -320,8 +320,12 @@ describe("native Plan transcript workflow", () => {
       "Smallest useful change",
     );
     expect(screen.getByText("Smallest useful change")).toHaveClass("sr-only");
+    const questionCard = question.closest("form");
     await user.click(focusedOption);
     expect(screen.getByRole("status")).toHaveTextContent("2 of 2");
+    expect(screen.getByLabelText("Provide the token").closest("form")).toBe(
+      questionCard,
+    );
     await user.click(
       screen.getByRole("button", { name: "Previous pending interaction" }),
     );

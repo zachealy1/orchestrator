@@ -2849,7 +2849,6 @@ const RunApprovalRequests = memo(function RunApprovalRequests({
     const draft = drafts[serverRequestKey] ?? EMPTY_USER_INPUT_DRAFT;
     content = (
       <UserInputQuestionCard
-        key={activePage.key}
         entry={entry}
         request={activePage.request}
         question={activePage.question}
