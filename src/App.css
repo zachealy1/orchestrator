@@ -3207,7 +3207,8 @@ button.history-run-item.disabled {
     transition: none;
   }
 
-  .file-preview-spinner {
+  .file-preview-spinner,
+  .stream-loading-dots span {
     animation: none;
   }
 }

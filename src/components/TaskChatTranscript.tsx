@@ -1579,6 +1579,8 @@ const AssistantRunOutput = memo(function AssistantRunOutput({
   const hasPlanPreview = Boolean(
     runView.nativePlan.completedText || runView.nativePlan.previewText,
   );
+  const hasPendingInteraction =
+    runView.approvalRequests.length > 0 || runView.serverRequests.length > 0;
 
   return (
     <div className="run-output-surface running" aria-label="Live run output">
@@ -1587,12 +1589,10 @@ const AssistantRunOutput = memo(function AssistantRunOutput({
         <RunTimeline runView={runView} />
       ) : hasPlanPreview ? null : runView.status === "connecting" ? (
         <PreparingRunStatus />
-      ) : (
-        <p className="stream-placeholder">
-          <Clock size={15} aria-hidden="true" />
-          Waiting for app-server output...
-        </p>
-      )}
+      ) : null}
+      {runView.status === "running" && !hasPendingInteraction ? (
+        <ActiveRunStatus />
+      ) : null}
       <NativePlanCard
         entry={entry}
         onImplementPlan={onImplementPlan}
@@ -1620,6 +1620,23 @@ function PreparingRunStatus() {
         <span />
       </span>
       Preparing run...
+    </p>
+  );
+}
+
+function ActiveRunStatus() {
+  return (
+    <p
+      className="stream-placeholder stream-preparing"
+      role="status"
+      aria-label="Codex is working"
+    >
+      <span className="stream-loading-dots" aria-hidden="true">
+        <span />
+        <span />
+        <span />
+      </span>
+      Codex is working...
     </p>
   );
 }
