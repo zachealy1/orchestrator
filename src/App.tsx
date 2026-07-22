@@ -3272,8 +3272,9 @@ function App() {
         return next;
       });
       if (selectedAccountIdRef.current === accountId) {
-        setCodexAccount(null);
-        setRequiresOpenaiAuth(true);
+        // A failed account/read request is transport state, not evidence that
+        // the user signed out. Preserve the last confirmed account so a
+        // transient timeout can be retried after connectivity returns.
         setLoginError(message);
       }
       throw error;
@@ -6278,7 +6279,11 @@ function App() {
       setStatusMessage("Approve, revise, or cancel the current plan first.");
       return;
     }
-    if (!isExternalChat && shouldBlockRunForAuth(requiresOpenaiAuth, codexAccount)) {
+    if (
+      !isExternalChat &&
+      account?.status !== "error" &&
+      shouldBlockRunForAuth(requiresOpenaiAuth, codexAccount)
+    ) {
       setStatusMessage(
         loginState === "waiting"
           ? "Finish Codex sign-in before starting a run."
@@ -6353,7 +6358,10 @@ function App() {
       setStatusMessage("Wait for the active run to finish before editing a prompt.");
       return;
     }
-    if (shouldBlockRunForAuth(requiresOpenaiAuth, codexAccount)) {
+    if (
+      account.status !== "error" &&
+      shouldBlockRunForAuth(requiresOpenaiAuth, codexAccount)
+    ) {
       setStatusMessage(
         loginState === "waiting"
           ? "Finish Codex sign-in before rerunning a prompt."
@@ -6363,10 +6371,6 @@ function App() {
     }
 
     const chatId = entry.chatId ?? selectedWorkspaceChatSession?.chatId ?? null;
-    if (chatId === null) {
-      setStatusMessage("This prompt is not attached to a chat yet.");
-      return;
-    }
 
     const selectedModel =
       models.find((modelOption) => modelOption.id === selectedModelId) ??
