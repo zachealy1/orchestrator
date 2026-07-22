@@ -3662,9 +3662,12 @@ describe("App Codex auth", () => {
     );
 
     const { user } = await renderApp();
-    await user.click(screen.getByRole("button", { name: /plan mode/i }));
+    const planModeButton = screen.getByRole("button", { name: /plan mode/i });
+    await user.click(planModeButton);
+    expect(planModeButton).toHaveAttribute("aria-pressed", "true");
     await user.type(screen.getByLabelText("Prompt"), "Design native planning");
     await user.click(screen.getByRole("button", { name: /run codex/i }));
+    expect(planModeButton).toHaveAttribute("aria-pressed", "false");
 
     await waitFor(() =>
       expect(mocks.codexRpcMock).toHaveBeenCalledWith(

@@ -6324,6 +6324,9 @@ function App() {
     };
 
     const runControl = beginOptimisticRun(snapshot);
+    if (snapshot.mode === "plan") {
+      setPlanMode(false);
+    }
     scheduleRunSetup(runControl, snapshot);
   }
 
