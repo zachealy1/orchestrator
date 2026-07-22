@@ -4141,6 +4141,10 @@ fn git_path_to_workspace_child(
     workspace: &Path,
     git_path: &str,
 ) -> Result<PathBuf, String> {
+    // With --untracked-files=normal, porcelain v1 marks an untracked directory
+    // with a trailing slash (for example, "src/"). The slash is status
+    // metadata rather than an empty path component.
+    let git_path = git_path.trim_end_matches('/');
     if git_path.trim().is_empty()
         || Path::new(git_path).is_absolute()
         || git_path
@@ -5389,6 +5393,30 @@ mod tests {
                 ("src/conflict.ts", "conflicted", "U", None),
             ]
         );
+    }
+
+    #[test]
+    fn workspace_git_status_accepts_untracked_directories_in_an_unborn_repository() {
+        let workspace = git_test_directory("git-status-untracked-directories");
+        fs::create_dir_all(workspace.join("src")).unwrap();
+        fs::create_dir_all(workspace.join("dist")).unwrap();
+        fs::write(workspace.join("src/main.ts"), "console.log('snake');\n").unwrap();
+        fs::write(workspace.join("dist/index.js"), "console.log('built');\n").unwrap();
+
+        let snapshot =
+            list_workspace_git_status_blocking(workspace.to_string_lossy().to_string()).unwrap();
+        let paths = snapshot
+            .files
+            .iter()
+            .map(|file| file.relative_path.as_str())
+            .collect::<Vec<_>>();
+
+        assert_eq!(paths, vec!["dist", "src"]);
+        assert!(snapshot
+            .files
+            .iter()
+            .all(|file| file.status_kind == "untracked" && file.badge == "U"));
+        remove_test_directory(workspace);
     }
 
     #[test]
