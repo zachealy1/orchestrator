@@ -39,6 +39,7 @@ describe("native user input CSS", () => {
 
     expect(label).toContain("font-weight: 400");
     expect(other).toContain("font-weight: 400");
+    expect(other).toContain("padding: 2px 0 0");
     expect(indicator).toContain("width: 13px");
     expect(indicator).toContain("height: 13px");
     expect(indicator).toContain("border: 2px solid var(--color-icon-muted)");

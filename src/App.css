@@ -364,7 +364,7 @@ button.native-plan-icon-action[data-tooltip]:focus-visible::after {
 .native-user-input-other {
   min-width: 0;
   min-height: 24px;
-  padding: 0;
+  padding: 2px 0 0;
   border: 0;
   border-radius: 0;
   outline: 0;
@@ -382,7 +382,7 @@ button.native-plan-icon-action[data-tooltip]:focus-visible::after {
 .native-user-input-other-option .native-user-input-other,
 .native-user-input-other-option .native-user-input-other:hover,
 .native-user-input-other-option .native-user-input-other:focus {
-  padding: 0;
+  padding: 2px 0 0;
   border: 0;
   background: transparent;
   box-shadow: none;

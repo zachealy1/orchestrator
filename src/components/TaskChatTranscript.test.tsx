@@ -1188,7 +1188,7 @@ describe("TaskChatTranscript", () => {
             runView: {
               ...emptyRunView,
               status: "completed",
-              elapsedMs: 123_000,
+              elapsedMs: 6_726_000,
               tokenUsage: {
                 totalTokens: 69839,
                 inputTokens: 69000,
@@ -1249,9 +1249,11 @@ describe("TaskChatTranscript", () => {
     expect(traceTrigger.querySelector(".run-trace-chevron")).toHaveClass(
       "lucide-chevron-right",
     );
-    expect(within(traceTrigger).getByText("2m 3s")).toBeInTheDocument();
+    expect(within(traceTrigger).getByText("1hr 52m 6s")).toBeInTheDocument();
     expect(within(traceTrigger).getByText("69,839 tokens")).toBeInTheDocument();
-    expect(screen.queryByText("2m 3s • 69,839 tokens")).not.toBeInTheDocument();
+    expect(
+      screen.queryByText("1hr 52m 6s • 69,839 tokens"),
+    ).not.toBeInTheDocument();
     fireEvent.click(traceTrigger);
     const stream = await screen.findByLabelText("App-server stream");
     expect(
