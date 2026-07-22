@@ -332,9 +332,10 @@ button.native-plan-icon-action[data-tooltip]:focus-visible::after {
   transition: background-color 140ms ease;
 }
 
-.native-user-input-options .native-user-input-option > span:not(.native-user-input-other-indicator) {
-  display: grid;
-  gap: 2px;
+.native-user-input-option-label {
+  min-width: 0;
+  font-weight: 400;
+  line-height: 1.35;
 }
 
 .native-user-input-options > .native-user-input-option:hover,
@@ -368,7 +369,7 @@ button.native-plan-icon-action[data-tooltip]:focus-visible::after {
   border-radius: 0;
   outline: 0;
   background: transparent;
-  font-weight: 700;
+  font-weight: 400;
   line-height: 1.35;
   resize: none;
 }
@@ -387,7 +388,7 @@ button.native-plan-icon-action[data-tooltip]:focus-visible::after {
   box-shadow: none;
 }
 
-.native-user-input-other-indicator {
+.native-user-input-radio {
   position: relative;
   flex: 0 0 13px;
   width: 13px;
@@ -395,14 +396,15 @@ button.native-plan-icon-action[data-tooltip]:focus-visible::after {
   box-sizing: border-box;
   border: 2px solid var(--color-icon-muted);
   border-radius: 50%;
+  background: var(--color-component-background);
   margin: 3px;
 }
 
-.native-user-input-other-option.selected .native-user-input-other-indicator {
+.native-user-input-option.selected .native-user-input-radio {
   border-color: var(--color-icon-muted);
 }
 
-.native-user-input-other-option.selected .native-user-input-other-indicator::after {
+.native-user-input-option.selected .native-user-input-radio::after {
   position: absolute;
   inset: 2px;
   border-radius: 50%;

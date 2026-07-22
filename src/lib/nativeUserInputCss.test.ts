@@ -26,17 +26,25 @@ describe("native user input CSS", () => {
     expect(selected).not.toContain("var(--color-primary)");
   });
 
-  it("keeps the custom answer indicator aligned and theme-neutral", () => {
-    const indicator = rule(".native-user-input-other-indicator");
+  it("uses one regular-weight visual contract for every answer", () => {
+    const label = rule(".native-user-input-option-label");
+    const other = rule(".native-user-input-other");
+    const indicator = rule(".native-user-input-radio");
     const selectedIndicator = rule(
-      ".native-user-input-other-option.selected .native-user-input-other-indicator",
+      ".native-user-input-option.selected .native-user-input-radio",
     );
     const selectedDot = rule(
-      ".native-user-input-other-option.selected .native-user-input-other-indicator::after",
+      ".native-user-input-option.selected .native-user-input-radio::after",
     );
 
+    expect(label).toContain("font-weight: 400");
+    expect(other).toContain("font-weight: 400");
     expect(indicator).toContain("width: 13px");
     expect(indicator).toContain("height: 13px");
+    expect(indicator).toContain("border: 2px solid var(--color-icon-muted)");
+    expect(indicator).toContain(
+      "background: var(--color-component-background)",
+    );
     expect(selectedIndicator).toContain("border-color: var(--color-icon-muted)");
     expect(selectedDot).toContain("background: var(--color-icon-muted)");
     expect(selectedIndicator).not.toContain("var(--color-primary)");

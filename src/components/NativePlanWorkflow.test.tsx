@@ -270,6 +270,8 @@ describe("native Plan transcript workflow", () => {
     expect(screen.queryByLabelText("Provide the token")).not.toBeInTheDocument();
     const focusedOption = screen.getByRole("radio", { name: "Focused" });
     const focusedLabel = focusedOption.closest("label");
+    expect(focusedLabel?.querySelector("strong")).not.toBeInTheDocument();
+    expect(focusedLabel?.querySelector(".native-user-input-radio")).toBeInTheDocument();
     expect(focusedLabel).toHaveAttribute(
       "data-tooltip",
       "Smallest useful change",
@@ -295,6 +297,11 @@ describe("native Plan transcript workflow", () => {
     expect(customInstructions.closest(".native-user-input-option")).toHaveClass(
       "native-user-input-other-option",
     );
+    expect(
+      customInstructions
+        .closest(".native-user-input-option")
+        ?.querySelector(".native-user-input-radio"),
+    ).toBeInTheDocument();
     await user.click(customInstructions);
     await user.keyboard("{Enter}");
     expect(screen.getByRole("status")).toHaveTextContent("1 of 2");

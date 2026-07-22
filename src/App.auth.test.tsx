@@ -6561,6 +6561,178 @@ describe("App Codex auth", () => {
     );
   });
 
+  it("refreshes git status and the empty workspace explorer after a run creates the first file", async () => {
+    prepareSignedInRun();
+    const generatedEntry = {
+      name: "index.html",
+      path: "/repo/orchestrator/index.html",
+      relativePath: "index.html",
+      kind: "file" as const,
+    };
+    let fileCreated = false;
+    mocks.listWorkspaceDirectoryMock.mockImplementation(async () =>
+      fileCreated ? [generatedEntry] : [],
+    );
+    mocks.listWorkspaceGitStatusMock.mockImplementation(async () => ({
+      workspacePath: workspace.path,
+      gitRoot: workspace.path,
+      currentBranch: "main",
+      aheadCount: 0,
+      hasUpstream: true,
+      hasOrigin: true,
+      canPush: false,
+      files: fileCreated
+        ? [
+            {
+              path: generatedEntry.path,
+              relativePath: generatedEntry.relativePath,
+              oldRelativePath: null,
+              indexStatus: "?",
+              worktreeStatus: "?",
+              statusKind: "untracked",
+              badge: "U",
+            },
+          ]
+        : [],
+    }));
+
+    const { user } = await renderApp();
+    const workspaceNav = screen.getByRole("navigation", { name: "Workspaces" });
+    await user.click(
+      within(workspaceNav).getByRole("button", { name: "Expand orchestrator" }),
+    );
+    expect(await within(workspaceNav).findByText("Empty folder")).toBeInTheDocument();
+    const directoryCallsBeforeCompletion =
+      mocks.listWorkspaceDirectoryMock.mock.calls.length;
+    const gitCallsBeforeCompletion = mocks.listWorkspaceGitStatusMock.mock.calls.length;
+
+    await startMockRun(user, "Create the starter app");
+    fileCreated = true;
+    await emitCodexNotification({
+      method: "turn/completed",
+      params: { turn: { status: "completed", durationMs: 1234 } },
+    });
+
+    await waitFor(() =>
+      expect(mocks.listWorkspaceDirectoryMock.mock.calls.length).toBeGreaterThan(
+        directoryCallsBeforeCompletion,
+      ),
+    );
+    await waitFor(() =>
+      expect(mocks.listWorkspaceGitStatusMock.mock.calls.length).toBeGreaterThan(
+        gitCallsBeforeCompletion,
+      ),
+    );
+    expect(await within(workspaceNav).findByTitle("index.html")).toBeInTheDocument();
+    expect(within(workspaceNav).getByLabelText("untracked file")).toHaveTextContent(
+      "U",
+    );
+    expect(
+      within(
+        screen.getByRole("region", { name: "Selected folder" }),
+      ).getByLabelText(/1 changed \(1 untracked\)/i),
+    ).toBeInTheDocument();
+  });
+
+  it("keeps a fresh post-run directory listing when an older empty request resolves later", async () => {
+    prepareSignedInRun();
+    const generatedEntry = {
+      name: "main.ts",
+      path: "/repo/orchestrator/main.ts",
+      relativePath: "main.ts",
+      kind: "file" as const,
+    };
+    let resolveStaleDirectory: ((entries: typeof generatedEntry[]) => void) | null =
+      null;
+    mocks.listWorkspaceDirectoryMock
+      .mockImplementationOnce(
+        () =>
+          new Promise((resolve) => {
+            resolveStaleDirectory = resolve;
+          }),
+      )
+      .mockResolvedValue([generatedEntry]);
+
+    const { user } = await renderApp();
+    const workspaceNav = screen.getByRole("navigation", { name: "Workspaces" });
+    await user.click(
+      within(workspaceNav).getByRole("button", { name: "Expand orchestrator" }),
+    );
+    await waitFor(() => expect(mocks.listWorkspaceDirectoryMock).toHaveBeenCalledTimes(1));
+
+    await startMockRun(user, "Create main.ts");
+    await emitCodexNotification({
+      method: "turn/completed",
+      params: { turn: { status: "completed", durationMs: 1234 } },
+    });
+
+    await waitFor(() => expect(mocks.listWorkspaceDirectoryMock).toHaveBeenCalledTimes(2));
+    expect(await within(workspaceNav).findByTitle("main.ts")).toBeInTheDocument();
+
+    await act(async () => {
+      resolveStaleDirectory?.([]);
+      await Promise.resolve();
+    });
+    expect(within(workspaceNav).getByTitle("main.ts")).toBeInTheDocument();
+  });
+
+  it("runs a fresh git status request after an in-flight pre-completion snapshot", async () => {
+    prepareSignedInRun();
+    let resolveStaleGitStatus: ((snapshot: unknown) => void) | null = null;
+    const cleanStatus = {
+      workspacePath: workspace.path,
+      gitRoot: workspace.path,
+      currentBranch: "main",
+      aheadCount: 0,
+      hasUpstream: true,
+      hasOrigin: true,
+      canPush: false,
+      files: [],
+    };
+    const changedStatus = {
+      ...cleanStatus,
+      files: [
+        {
+          path: "/repo/orchestrator/app.js",
+          relativePath: "app.js",
+          oldRelativePath: null,
+          indexStatus: "?",
+          worktreeStatus: "?",
+          statusKind: "untracked",
+          badge: "U",
+        },
+      ],
+    };
+    mocks.listWorkspaceGitStatusMock
+      .mockImplementationOnce(
+        () =>
+          new Promise((resolve) => {
+            resolveStaleGitStatus = resolve;
+          }),
+      )
+      .mockResolvedValue(changedStatus);
+
+    const { user } = await renderApp();
+    await waitFor(() => expect(mocks.listWorkspaceGitStatusMock).toHaveBeenCalledTimes(1));
+    await startMockRun(user, "Create app.js");
+    await emitCodexNotification({
+      method: "turn/completed",
+      params: { turn: { status: "completed", durationMs: 1234 } },
+    });
+
+    await act(async () => {
+      resolveStaleGitStatus?.(cleanStatus);
+      await Promise.resolve();
+    });
+
+    await waitFor(() => expect(mocks.listWorkspaceGitStatusMock).toHaveBeenCalledTimes(2));
+    expect(
+      await within(
+        screen.getByRole("region", { name: "Selected folder" }),
+      ).findByLabelText(/1 changed \(1 untracked\)/i),
+    ).toBeInTheDocument();
+  });
+
   it("opens completed summary file links in the app preview drawer", async () => {
     prepareSignedInRun();
     mocks.readWorkspaceFilePreviewMock.mockResolvedValue({

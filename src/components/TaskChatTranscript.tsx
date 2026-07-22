@@ -2670,6 +2670,7 @@ const UserInputQuestionCard = memo(function UserInputQuestionCard({
                   key={option.label}
                 >
                   <input
+                    className="sr-only"
                     type="radio"
                     name={`${request.id}-${question.id}`}
                     value={option.label}
@@ -2681,8 +2682,12 @@ const UserInputQuestionCard = memo(function UserInputQuestionCard({
                       onCommitAnswer(nextDraft);
                     }}
                   />
-                  <span>
-                    <strong>{option.label}</strong>
+                  <span
+                    className="native-user-input-radio"
+                    aria-hidden="true"
+                  />
+                  <span className="native-user-input-option-label">
+                    {option.label}
                   </span>
                   <div className="sr-only" id={descriptionId}>
                     {option.description}
@@ -2697,7 +2702,7 @@ const UserInputQuestionCard = memo(function UserInputQuestionCard({
                 }`}
               >
                 <span
-                  className="native-user-input-other-indicator"
+                  className="native-user-input-radio native-user-input-other-indicator"
                   aria-hidden="true"
                 />
                 {question.isSecret ? (

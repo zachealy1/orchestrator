@@ -459,6 +459,7 @@ class RunStoppedError extends Error {
 type ActiveRunControl = {
   accountId: number;
   profileKey: CodexProfileKey;
+  workspaceId: number;
   clientId: string;
   promptFallback: string;
   chatId: number | null;
@@ -748,6 +749,7 @@ type WorkspaceGitSummary = {
 type RefreshWorkspaceGitStatusOptions = {
   showLoading?: boolean;
   background?: boolean;
+  force?: boolean;
 };
 
 type OpenWorkspaceFilePreviewOptions = {
@@ -989,6 +991,7 @@ function App() {
   const directoryRequestCache = useRef(
     new Map<string, Promise<WorkspaceTreeEntry[]>>(),
   );
+  const directoryRequestGenerations = useRef(new Map<string, number>());
   const [previewState, setPreviewState] = useState<WorkspacePreviewState>({
     status: "idle",
     mode: "preview",
@@ -3021,7 +3024,18 @@ function App() {
   ) {
     const existingRefresh = gitStatusRefreshCache.current.get(workspace.id);
     if (existingRefresh) {
-      return existingRefresh;
+      if (!options.force) {
+        return existingRefresh;
+      }
+
+      // A completion refresh must observe the filesystem after the turn. An
+      // in-flight poll may have captured the pre-run state, so wait for it and
+      // issue one new request instead of reusing its potentially stale result.
+      await existingRefresh.catch(() => undefined);
+      return refreshWorkspaceGitStatus(workspace, {
+        ...options,
+        force: false,
+      });
     }
 
     const showLoading = options.showLoading ?? true;
@@ -5632,6 +5646,7 @@ function App() {
     const runControl: ActiveRunControl = {
       accountId: snapshot.accountId,
       profileKey: snapshot.profileKey,
+      workspaceId: snapshot.workspace.id,
       clientId,
       promptFallback: snapshot.promptFallback,
       chatId: snapshot.chatId,
@@ -7005,12 +7020,25 @@ function App() {
       if (activeChatId !== null) {
         await updateChat(activeChatId, { status }).catch(() => undefined);
       }
-      if (selectedWorkspaceRef.current) {
-        invalidateWorkspacePreviewCaches(selectedWorkspaceRef.current, undefined, {
+      const completedWorkspace = completedControl
+        ? workspacesRef.current.find(
+            (workspace) => workspace.id === completedControl.workspaceId,
+          ) ?? null
+        : null;
+      if (completedWorkspace) {
+        invalidateWorkspacePreviewCaches(completedWorkspace, undefined, {
           reloadOpenPreview: true,
         });
-        await refreshWorkspaceData(selectedWorkspaceRef.current.id);
-        await refreshWorkspaceGitStatus(selectedWorkspaceRef.current);
+        await Promise.all([
+          refreshWorkspaceGitStatus(completedWorkspace, {
+            showLoading: false,
+            force: true,
+          }),
+          refreshWorkspaceDirectoriesAfterRun(completedWorkspace),
+          selectedWorkspaceRef.current?.id === completedWorkspace.id
+            ? refreshWorkspaceData(completedWorkspace.id)
+            : Promise.resolve(),
+        ]);
       }
       await refreshSelectedWorkspaceHistory();
       currentRunId.current = null;
@@ -7534,6 +7562,43 @@ function App() {
     }
   }
 
+  function requestWorkspaceDirectoryEntries(
+    workspace: Workspace,
+    directoryPath: string,
+    force = false,
+  ) {
+    const cacheKey = workspaceCacheKey(workspace.path, directoryPath);
+    const existingRequest = directoryRequestCache.current.get(cacheKey);
+    if (existingRequest && !force) {
+      return {
+        cacheKey,
+        generation: directoryRequestGenerations.current.get(cacheKey) ?? 0,
+        request: existingRequest,
+      };
+    }
+
+    const generation =
+      (directoryRequestGenerations.current.get(cacheKey) ?? 0) + 1;
+    directoryRequestGenerations.current.set(cacheKey, generation);
+
+    let request: Promise<WorkspaceTreeEntry[]>;
+    request = listWorkspaceDirectory(workspace.path, directoryPath).finally(() => {
+      if (directoryRequestCache.current.get(cacheKey) === request) {
+        directoryRequestCache.current.delete(cacheKey);
+      }
+    });
+    directoryRequestCache.current.set(cacheKey, request);
+
+    return { cacheKey, generation, request };
+  }
+
+  function workspaceDirectoryRequestIsCurrent(
+    cacheKey: string,
+    generation: number,
+  ) {
+    return directoryRequestGenerations.current.get(cacheKey) === generation;
+  }
+
   async function loadWorkspaceDirectory(
     workspace: Workspace,
     directoryPath: string,
@@ -7565,18 +7630,11 @@ function App() {
       return;
     }
 
-    const existingRequest = !force
-      ? directoryRequestCache.current.get(cacheKey)
-      : null;
-    const request =
-      existingRequest ??
-      listWorkspaceDirectory(workspace.path, directoryPath).finally(() => {
-        directoryRequestCache.current.delete(cacheKey);
-      });
-
-    if (!existingRequest) {
-      directoryRequestCache.current.set(cacheKey, request);
-    }
+    const { generation, request } = requestWorkspaceDirectoryEntries(
+      workspace,
+      directoryPath,
+      force,
+    );
 
     setDirectoryStates((current) => ({
       ...current,
@@ -7589,12 +7647,18 @@ function App() {
 
     try {
       const entries = await request;
+      if (!workspaceDirectoryRequestIsCurrent(cacheKey, generation)) {
+        return;
+      }
       directoryEntriesCache.current.set(cacheKey, entries);
       setDirectoryStates((current) => ({
         ...current,
         [directoryPath]: { status: "loaded", entries, error: null },
       }));
     } catch (error) {
+      if (!workspaceDirectoryRequestIsCurrent(cacheKey, generation)) {
+        return;
+      }
       setDirectoryStates((current) => ({
         ...current,
         [directoryPath]: {
@@ -7647,20 +7711,20 @@ function App() {
   async function refreshWorkspaceDirectoryInBackground(
     workspace: Workspace,
     directoryPath: string,
+    force = false,
   ) {
     const cacheKey = workspaceCacheKey(workspace.path, directoryPath);
-    const existingRequest = directoryRequestCache.current.get(cacheKey);
-    const request =
-      existingRequest ??
-      listWorkspaceDirectory(workspace.path, directoryPath).finally(() => {
-        directoryRequestCache.current.delete(cacheKey);
-      });
-    if (!existingRequest) {
-      directoryRequestCache.current.set(cacheKey, request);
-    }
+    const { generation, request } = requestWorkspaceDirectoryEntries(
+      workspace,
+      directoryPath,
+      force,
+    );
 
     try {
       const entries = await request;
+      if (!workspaceDirectoryRequestIsCurrent(cacheKey, generation)) {
+        return;
+      }
       const cachedEntries = directoryEntriesCache.current.get(cacheKey);
       if (workspaceTreeEntriesEqual(cachedEntries, entries)) return;
 
@@ -7685,6 +7749,28 @@ function App() {
       // Background polling is intentionally quiet. Explicit expansion still
       // exposes directory errors through loadWorkspaceDirectory().
     }
+  }
+
+  async function refreshWorkspaceDirectoriesAfterRun(workspace: Workspace) {
+    const cachePrefix = `${workspace.path}\u0000`;
+    const directoryPaths = new Set<string>([workspace.path]);
+
+    for (const cacheKey of directoryEntriesCache.current.keys()) {
+      if (cacheKey.startsWith(cachePrefix)) {
+        directoryPaths.add(cacheKey.slice(cachePrefix.length));
+      }
+    }
+    for (const cacheKey of directoryRequestCache.current.keys()) {
+      if (cacheKey.startsWith(cachePrefix)) {
+        directoryPaths.add(cacheKey.slice(cachePrefix.length));
+      }
+    }
+
+    await Promise.all(
+      [...directoryPaths].map((directoryPath) =>
+        refreshWorkspaceDirectoryInBackground(workspace, directoryPath, true),
+      ),
+    );
   }
 
   async function refreshVisibleWorkspaceDirectories(workspace: Workspace) {
