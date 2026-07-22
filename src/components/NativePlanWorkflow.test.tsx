@@ -194,6 +194,49 @@ describe("native Plan transcript workflow", () => {
     expect(screen.queryByRole("table")).not.toBeInTheDocument();
   });
 
+  it("preserves Markdown structure when collapsed preview blocks exceed the character limit", () => {
+    const entry = planEntry();
+    entry.runView = {
+      ...entry.runView,
+      nativePlan: {
+        ...entry.runView.nativePlan,
+        completedText: [
+          "# Snake Web App",
+          "",
+          "## Summary",
+          "",
+          `Build a focused browser game. ${"Keep the implementation reviewable. ".repeat(55)}`,
+          "",
+          "## Key Changes",
+          "",
+          "- Add deterministic movement.",
+          "- Add collision handling.",
+          "",
+          "## Validation",
+          "",
+          "Run the focused checks.",
+        ].join("\n"),
+      },
+    };
+
+    const preview = buildNativePlanPreview(
+      entry.runView.nativePlan.completedText,
+    );
+    expect(preview.isLong).toBe(true);
+    expect(preview.previewText).toContain("# Snake Web App");
+    expect(preview.previewText).toContain("## Summary");
+
+    renderTurn(entry);
+
+    expect(
+      screen.getByRole("heading", { name: "Snake Web App" }),
+    ).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Summary" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Key Changes" })).toBeInTheDocument();
+    expect(screen.getByText("Add deterministic movement.")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Show full plan" })).toBeInTheDocument();
+  });
+
   it("renders streamlined structured choices and submits selected answers", async () => {
     const user = userEvent.setup();
     const entry = planEntry();

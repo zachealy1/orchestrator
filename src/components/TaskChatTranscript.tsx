@@ -108,7 +108,6 @@ type PositionedMarkdownNode = {
 
 export type NativePlanPreview = {
   isLong: boolean;
-  previewIsPlainText: boolean;
   previewText: string;
 };
 
@@ -136,14 +135,6 @@ function markdownNodeSource(text: string, node: PositionedMarkdownNode) {
   return text.slice(start, end);
 }
 
-function markdownNodePlainText(node: PositionedMarkdownNode): string {
-  if (typeof node.value === "string") return node.value;
-  return (node.children ?? [])
-    .map(markdownNodePlainText)
-    .filter(Boolean)
-    .join(" ");
-}
-
 export function buildNativePlanPreview(text: string): NativePlanPreview {
   const lineCount = text.split(/\r?\n/).length;
   try {
@@ -161,7 +152,7 @@ export function buildNativePlanPreview(text: string): NativePlanPreview {
       text.length > PLAN_PREVIEW_CHARACTER_LIMIT ||
       lineCount > PLAN_PREVIEW_LINE_LIMIT;
     if (!isLong) {
-      return { isLong: false, previewIsPlainText: false, previewText: text };
+      return { isLong: false, previewText: text };
     }
 
     const selected = content.slice(0, PLAN_PREVIEW_BLOCK_LIMIT);
@@ -169,18 +160,6 @@ export function buildNativePlanPreview(text: string): NativePlanPreview {
       (furthest, node) => Math.max(furthest, markdownNodeEndOffset(node)),
       0,
     );
-    if (boundary > PLAN_PREVIEW_CHARACTER_LIMIT) {
-      const plainText = selected
-        .map(markdownNodePlainText)
-        .filter(Boolean)
-        .join("\n\n")
-        .trim();
-      return {
-        isLong: true,
-        previewIsPlainText: true,
-        previewText: `${plainText.slice(0, PLAN_PREVIEW_CHARACTER_LIMIT).trimEnd()}…`,
-      };
-    }
     const definitionText = definitions
       .filter((node) => (node.position?.start.offset ?? 0) >= boundary)
       .map((node) => markdownNodeSource(text, node))
@@ -189,7 +168,6 @@ export function buildNativePlanPreview(text: string): NativePlanPreview {
     const preview = text.slice(0, boundary || text.length).trimEnd();
     return {
       isLong: true,
-      previewIsPlainText: false,
       previewText: definitionText
         ? `${preview}\n\n${definitionText}`
         : preview,
@@ -197,7 +175,6 @@ export function buildNativePlanPreview(text: string): NativePlanPreview {
   } catch {
     return {
       isLong: text.length > PLAN_PREVIEW_CHARACTER_LIMIT || lineCount > PLAN_PREVIEW_LINE_LIMIT,
-      previewIsPlainText: false,
       previewText: text,
     };
   }
@@ -2344,11 +2321,7 @@ const NativePlanCard = memo(function NativePlanCard({
         }`}
         id={contentId}
       >
-        {!isExpanded && preview.previewIsPlainText ? (
-          <p>{renderedText}</p>
-        ) : (
-          <NativePlanMarkdown text={renderedText} />
-        )}
+        <NativePlanMarkdown text={renderedText} />
       </div>
       {preview.isLong ? (
         <button
