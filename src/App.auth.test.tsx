@@ -3428,7 +3428,7 @@ describe("App Codex auth", () => {
     );
   });
 
-  it("does not switch to a history chat while a run is active", async () => {
+  it("switches to another history chat while a run remains active", async () => {
     prepareSignedInRun();
     const historicalChat = workspaceChatFixture({
       id: 403,
@@ -3446,33 +3446,130 @@ describe("App Codex auth", () => {
     );
 
     const { user } = await renderApp();
-    const animationFrames = holdNextAnimationFrames();
-    try {
-      await user.type(screen.getByLabelText("Prompt"), "Current active run");
-      await user.keyboard("{Enter}");
+    await user.type(screen.getByLabelText("Prompt"), "Current active run");
+    await user.keyboard("{Enter}");
 
-      const transcript = await screen.findByLabelText("Task chat transcript");
-      expect(within(transcript).getByLabelText("Submitted prompt")).toHaveTextContent(
-        "Current active run",
-      );
-      const banner = screen.getByRole("region", { name: "Selected folder" });
-      await user.click(
-        within(banner).getByRole("button", { name: /open chat history/i }),
-      );
-      const drawer = await screen.findByRole("complementary", {
-        name: "Workspace chat history",
-      });
-      const row = within(drawer).getByRole("button", { name: /old chat/i });
-      expect(row).toHaveAttribute("aria-disabled", "true");
+    const transcript = await screen.findByLabelText("Task chat transcript");
+    expect(within(transcript).getByLabelText("Submitted prompt")).toHaveTextContent(
+      "Current active run",
+    );
+    const banner = screen.getByRole("region", { name: "Selected folder" });
+    await user.click(
+      within(banner).getByRole("button", { name: /open chat history/i }),
+    );
+    const drawer = await screen.findByRole("complementary", {
+      name: "Workspace chat history",
+    });
+    const row = within(drawer).getByRole("button", { name: /old chat/i });
+    expect(row).not.toHaveAttribute("aria-disabled");
 
-      await user.click(row);
+    await user.click(row);
 
-      expect(drawer).not.toHaveClass("closing", "closed");
-      expect(transcript).toHaveTextContent("Current active run");
-      expect(screen.queryByText("Old result.")).not.toBeInTheDocument();
-    } finally {
-      animationFrames.restore();
-    }
+    expect(await screen.findByText("Old result.")).toBeInTheDocument();
+    expect(screen.queryByText("Current active run")).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /run codex/i })).toBeInTheDocument();
+  });
+
+  it("scopes active agents to their chats across workspace switches", async () => {
+    const mobileWorkspace = {
+      ...workspace,
+      id: 2,
+      path: "/repo/mobile-client",
+      label: "mobile-client",
+    };
+    const chatsByWorkspace = new Map<
+      number,
+      Omit<ReturnType<typeof workspaceChatFixture>, "codex_thread_id"> & {
+        codex_thread_id: string | null;
+      }
+    >();
+    let threadSequence = 0;
+    let taskSequence = 100;
+    let runSequence = 200;
+
+    prepareSignedInRun();
+    mocks.listWorkspacesMock.mockResolvedValue([workspace, mobileWorkspace]);
+    mocks.createChatMock.mockImplementation(async (input: { workspaceId: number; title: string }) => {
+      const id = 400 + input.workspaceId;
+      const chat = {
+        ...workspaceChatFixture({
+          id,
+          title: input.title,
+          status: "running",
+          turn_count: 1,
+        }),
+        workspace_id: input.workspaceId,
+        codex_thread_id: null,
+      };
+      chatsByWorkspace.set(input.workspaceId, chat);
+      return chat;
+    });
+    mocks.listWorkspaceChatsMock.mockImplementation(async (workspaceId: number) => {
+      const chat = chatsByWorkspace.get(workspaceId);
+      return chat ? [chat] : [];
+    });
+    mocks.createTaskMock.mockImplementation(async () => ({ id: ++taskSequence }));
+    mocks.createRunMock.mockImplementation(async () => ({ id: ++runSequence }));
+    mocks.codexRpcMock.mockImplementation(
+      async (_accountId: number, method: string, params: Record<string, unknown>) => {
+        if (method === "thread/start") {
+          threadSequence += 1;
+          return { thread: { id: `thread-${threadSequence}` } };
+        }
+        if (method === "turn/start") {
+          return { turn: { id: `turn-${String(params.threadId)}` } };
+        }
+        return {};
+      },
+    );
+
+    const { user } = await renderApp();
+    await startMockRun(user, "Run in orchestrator");
+
+    const firstBanner = screen.getByRole("region", { name: "Selected folder" });
+    await user.click(
+      within(firstBanner).getByRole("button", { name: /open chat history/i }),
+    );
+    const firstDrawer = await screen.findByRole("complementary", {
+      name: "Workspace chat history",
+    });
+    expect(within(firstDrawer).getByLabelText("Agent running")).toBeInTheDocument();
+    await user.click(
+      within(firstBanner).getByRole("button", { name: /close chat history/i }),
+    );
+
+    const workspaceNav = screen.getByRole("navigation", { name: "Workspaces" });
+    await user.click(
+      within(workspaceNav).getByRole("button", { name: "mobile-client" }),
+    );
+
+    expect(screen.getByRole("button", { name: /run codex/i })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /stop codex/i })).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("article", { name: "Submitted prompt" }),
+    ).not.toBeInTheDocument();
+
+    await startMockRun(user, "Run in mobile client");
+    await waitFor(() =>
+      expect(
+        mocks.codexRpcMock.mock.calls.filter(([, method]) => method === "thread/start"),
+      ).toHaveLength(2),
+    );
+
+    await emitCodexNotification({
+      method: "turn/completed",
+      params: {
+        threadId: "thread-1",
+        turnId: "turn-thread-1",
+        turn: { id: "turn-thread-1", status: "completed", durationMs: 1_000 },
+      },
+    });
+
+    await user.click(
+      within(workspaceNav).getByRole("button", { name: "orchestrator" }),
+    );
+    expect(await screen.findByLabelText("1 completed chat")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /run codex/i })).toBeInTheDocument();
   });
 
   it("keeps a selected history chat visible when submitting a follow-up prompt", async () => {

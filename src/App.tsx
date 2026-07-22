@@ -114,8 +114,6 @@ import {
   runPreflight,
   setThreadGoal,
   startCodexLogin,
-  stopDefaultCodexProfile,
-  stopCodex,
   sendAgentNotification,
   syncDefaultProfileThreadTranscript,
   takePendingAgentNotificationActivation,
@@ -162,7 +160,6 @@ import {
   createStableClientMessageId,
   isCollaborationModeMask,
   isNativeUserInputRequest,
-  messageMatchesRun,
   requestKey,
   selectNativePlanModes,
   type CollaborationMode,
@@ -394,13 +391,16 @@ function useStableEvent<T extends (...args: never[]) => unknown>(callback: T): T
   );
 }
 
-function replaceWorkspaceChatEntries(
+function replaceChatEntries(
   current: TaskChatEntry[],
   workspaceId: number,
+  chatId: number,
   entries: TaskChatEntry[],
 ) {
   return [
-    ...current.filter((entry) => entry.workspaceId !== workspaceId),
+    ...current.filter(
+      (entry) => entry.workspaceId !== workspaceId || entry.chatId !== chatId,
+    ),
     ...entries,
   ];
 }
@@ -473,6 +473,8 @@ type ActiveRunControl = {
   turnId: string | null;
   intent: RunIntent;
   clientUserMessageId: string;
+  runView: RunViewState;
+  eventSequence: number;
 };
 
 type RunAccessSettings = CodexAccessSettings;
@@ -1056,6 +1058,14 @@ function App() {
   const [runView, setRunView] = useState<RunViewState>(emptyRunView);
   const [taskChatEntries, setTaskChatEntries] = useState<TaskChatEntry[]>([]);
   const [activeChatEntryId, setActiveChatEntryId] = useState<string | null>(null);
+  const [selectedDraftChatEntryId, setSelectedDraftChatEntryId] = useState<
+    string | null
+  >(null);
+  const selectedDraftChatEntryIdRef = useRef<string | null>(null);
+  const [activeRunRegistryVersion, setActiveRunRegistryVersion] = useState(0);
+  const [unreadCompletedChats, setUnreadCompletedChats] = useState<
+    Record<number, number[]>
+  >({});
   const [historyDrawerPhase, setHistoryDrawerPhase] =
     useState<HistoryDrawerPhase>("closed");
   const historyDrawerOpen = historyDrawerTargetsOpen(historyDrawerPhase);
@@ -1146,6 +1156,7 @@ function App() {
   const runViewRef = useRef<RunViewState>(emptyRunView);
   const activeChatEntryIdRef = useRef<string | null>(null);
   const activeRunControlRef = useRef<ActiveRunControl | null>(null);
+  const activeRunControlsRef = useRef(new Map<string, ActiveRunControl>());
   const workspacesRef = useRef<Workspace[]>([]);
   const activeViewRef = useRef<AppView>("task");
   const accountMenuOpenRef = useRef(false);
@@ -1240,7 +1251,6 @@ function App() {
   const workspaceChatSessionsRef = useRef<
     Record<number, WorkspaceChatSession | undefined>
   >({});
-  const eventSequence = useRef(0);
   const pendingFrameCodexNotificationsRef = useRef<
     PendingFrameCodexNotification[]
   >([]);
@@ -1798,8 +1808,60 @@ function App() {
   );
   const codexConnected =
     selectedAccountId !== null && connectedAccountIds.has(selectedAccountId);
-  const runIsActive =
-    runView.status === "connecting" || runView.status === "running";
+  const selectedWorkspaceChatSession = selectedWorkspace
+    ? (workspaceChatSessions[selectedWorkspace.id] ?? null)
+    : null;
+  const selectedActiveRunControl = useMemo(() => {
+    if (!selectedWorkspace) return null;
+    const controls = [...activeRunControlsRef.current.values()];
+    if (selectedDraftChatEntryId) {
+      return (
+        controls.find(
+          (control) =>
+            control.workspaceId === selectedWorkspace.id &&
+            control.clientId === selectedDraftChatEntryId,
+        ) ?? null
+      );
+    }
+    if (selectedWorkspaceChatSession?.chatId !== undefined) {
+      return (
+        controls.find(
+          (control) =>
+            control.workspaceId === selectedWorkspace.id &&
+            control.chatId === selectedWorkspaceChatSession.chatId,
+        ) ?? null
+      );
+    }
+    return null;
+  }, [
+    activeRunRegistryVersion,
+    selectedDraftChatEntryId,
+    selectedWorkspace,
+    selectedWorkspaceChatSession?.chatId,
+  ]);
+  const runIsActive = Boolean(
+    selectedActiveRunControl &&
+      (selectedActiveRunControl.runView.status === "connecting" ||
+        selectedActiveRunControl.runView.status === "running"),
+  );
+  const selectedWorkspaceRunningChatIds = (() => {
+    const chatIds = new Set<number>();
+    if (!selectedWorkspace) return chatIds;
+    activeRunControlsRef.current.forEach((control) => {
+      if (
+        control.workspaceId === selectedWorkspace.id &&
+        control.chatId !== null &&
+        (control.runView.status === "connecting" ||
+          control.runView.status === "running")
+      ) {
+        chatIds.add(control.chatId);
+      }
+    });
+    return chatIds;
+  })();
+  const selectedWorkspaceUnreadChatCount = selectedWorkspace
+    ? (unreadCompletedChats[selectedWorkspace.id]?.length ?? 0)
+    : 0;
   const canRun = Boolean(selectedWorkspace);
   const selectedGitStatusState = selectedWorkspace
     ? gitStatusStates[selectedWorkspace.id] ?? {
@@ -1969,15 +2031,31 @@ function App() {
     headerGitAction.canCommit &&
     (includeUnstagedChanges || selectedHasStagedGitChanges);
   const selectedWorkspaceChatEntries = useMemo(
-    () =>
-      selectedWorkspace
-        ? taskChatEntries.filter((entry) => entry.workspaceId === selectedWorkspace.id)
-        : [],
-    [selectedWorkspace, taskChatEntries],
+    () => {
+      if (!selectedWorkspace) return [];
+      if (selectedWorkspaceChatSession) {
+        return taskChatEntries.filter(
+          (entry) =>
+            entry.workspaceId === selectedWorkspace.id &&
+            entry.chatId === selectedWorkspaceChatSession.chatId,
+        );
+      }
+      if (selectedDraftChatEntryId) {
+        return taskChatEntries.filter(
+          (entry) =>
+            entry.workspaceId === selectedWorkspace.id &&
+            entry.clientId === selectedDraftChatEntryId,
+        );
+      }
+      return [];
+    },
+    [
+      selectedDraftChatEntryId,
+      selectedWorkspace,
+      selectedWorkspaceChatSession,
+      taskChatEntries,
+    ],
   );
-  const selectedWorkspaceChatSession = selectedWorkspace
-    ? (workspaceChatSessions[selectedWorkspace.id] ?? null)
-    : null;
   const visibleTaskChatEntries = selectedWorkspaceChatEntries;
   const planReviewAwaiting = visibleTaskChatEntries.some(
     (entry) => entry.runView.nativePlan.reviewState === "available",
@@ -2389,25 +2467,38 @@ function App() {
   }, [selectedWorkspace]);
 
   useEffect(() => {
+    setSelectedRunAliases(selectedActiveRunControl);
+  }, [selectedActiveRunControl]);
+
+  useEffect(() => {
     previewStateRef.current = previewState;
   }, [previewState]);
 
   useEffect(() => {
-    if (
-      activeChatEntryId === null ||
-      (runView.status !== "connecting" && runView.status !== "running")
-    ) {
+    const hasActiveRuns = [...activeRunControlsRef.current.values()].some(
+      (control) =>
+        control.runView.status === "connecting" ||
+        control.runView.status === "running",
+    );
+    if (!hasActiveRuns) {
       return;
     }
 
     const tick = () => {
-      updateActiveRunView((current) => updateRunElapsed(current));
+      activeRunControlsRef.current.forEach((control) => {
+        if (
+          control.runView.status === "connecting" ||
+          control.runView.status === "running"
+        ) {
+          updateRunControlView(control, (current) => updateRunElapsed(current));
+        }
+      });
     };
 
     tick();
     const intervalId = window.setInterval(tick, 1000);
     return () => window.clearInterval(intervalId);
-  }, [activeChatEntryId, runView.status]);
+  }, [activeRunRegistryVersion]);
 
   useEffect(() => {
     mentionSearchRequestId.current += 1;
@@ -2695,9 +2786,12 @@ function App() {
       const profileKey =
         event.payload.profileKey ??
         (`account:${event.payload.accountId}` as CodexProfileKey);
+      const profileControls = [...activeRunControlsRef.current.values()].filter(
+        (control) => control.profileKey === profileKey,
+      );
       if (
         selectedAccountIdRef.current === event.payload.accountId ||
-        currentRunProfileKey.current === profileKey
+        profileControls.length > 0
       ) {
         setStatusMessage(event.payload.message);
       }
@@ -2706,7 +2800,9 @@ function App() {
         event.payload.status === "stopped"
       ) {
         [
-          ...runViewRef.current.approvalRequests,
+          ...profileControls.flatMap(
+            (control) => control.runView.approvalRequests,
+          ),
           ...unroutedApprovalsRef.current,
         ]
           .filter((request) => request.profileKey === profileKey)
@@ -2720,18 +2816,27 @@ function App() {
           current.filter((request) => request.profileKey !== profileKey),
         );
       }
-      if (currentRunProfileKey.current === profileKey) {
+      if (profileControls.length > 0) {
         flushFrameBatchedCodexNotifications();
-        void persistRunEvent("process", event.payload.status, event.payload);
+        profileControls.forEach((control) => {
+          void persistRunEvent(
+            control,
+            "process",
+            event.payload.status,
+            event.payload,
+          );
+        });
         if (
           event.payload.status === "exited" ||
           event.payload.status === "stopped"
         ) {
-          updateActiveRunView((current) => ({
-            ...current,
-            approvalRequests: [],
-            approvalResourcesByItemId: {},
-          }));
+          profileControls.forEach((control) => {
+            updateRunControlView(control, (current) => ({
+              ...current,
+              approvalRequests: [],
+              approvalResourcesByItemId: {},
+            }));
+          });
         }
       }
       setConnectedAccountIds((current) => {
@@ -3350,7 +3455,11 @@ function App() {
     setWorkspaceContextMenu(null);
     selectedWorkspaceRef.current = workspace;
     setSelectedWorkspace(workspace);
-    setSelectedHistoryChatId(workspaceChatSessionsRef.current[workspace.id]?.chatId ?? null);
+    setWorkspaceChatSession(workspace.id, undefined);
+    selectedDraftChatEntryIdRef.current = null;
+    setSelectedDraftChatEntryId(null);
+    setSelectedHistoryChatId(null);
+    setSelectedRunAliases(null);
     setActiveView("task");
     preflightRef.current = null;
     setStatusMessage(`Selected ${workspace.label}`);
@@ -3378,21 +3487,103 @@ function App() {
     });
   }
 
+  function setSelectedDraftChat(clientId: string | null) {
+    selectedDraftChatEntryIdRef.current = clientId;
+    setSelectedDraftChatEntryId(clientId);
+  }
+
+  function setSelectedRunAliases(control: ActiveRunControl | null) {
+    activeRunControlRef.current = control;
+    activeChatEntryIdRef.current = control?.clientId ?? null;
+    currentRunId.current = control?.runId ?? null;
+    currentTaskId.current = control?.taskId ?? null;
+    currentRunAccountId.current = control?.accountId ?? null;
+    currentRunProfileKey.current = control?.profileKey ?? null;
+    runViewRef.current = control?.runView ?? emptyRunView;
+    setActiveChatEntryId(control?.clientId ?? null);
+    setRunView(control?.runView ?? emptyRunView);
+  }
+
+  function runControlIsSelected(control: ActiveRunControl) {
+    if (selectedWorkspaceRef.current?.id !== control.workspaceId) return false;
+    if (selectedDraftChatEntryIdRef.current === control.clientId) return true;
+    const session = workspaceChatSessionsRef.current[control.workspaceId];
+    return control.chatId !== null && session?.chatId === control.chatId;
+  }
+
+  function registerRunControl(control: ActiveRunControl) {
+    activeRunControlsRef.current.set(control.clientId, control);
+    setActiveRunRegistryVersion((current) => current + 1);
+    if (runControlIsSelected(control)) {
+      setSelectedRunAliases(control);
+    }
+  }
+
+  function removeRunControl(control: ActiveRunControl) {
+    if (activeRunControlsRef.current.get(control.clientId) !== control) return;
+    activeRunControlsRef.current.delete(control.clientId);
+    setActiveRunRegistryVersion((current) => current + 1);
+    if (activeRunControlRef.current === control) {
+      setSelectedRunAliases(null);
+    }
+  }
+
+  function findRunControlByChat(workspaceId: number, chatId: number) {
+    return (
+      [...activeRunControlsRef.current.values()].find(
+        (control) =>
+          control.workspaceId === workspaceId && control.chatId === chatId,
+      ) ?? null
+    );
+  }
+
+  function findRunControlForMessage(
+    profileKey: CodexProfileKey,
+    message: CodexMessage,
+  ) {
+    const params = readObject(message.params);
+    const messageThreadId = readString(params.threadId);
+    const messageTurnId =
+      readString(params.turnId) ?? readString(readObject(params.turn).id);
+    const candidates = [...activeRunControlsRef.current.values()].filter(
+      (control) => !control.stopped && control.profileKey === profileKey,
+    );
+    const exact = candidates.filter(
+      (control) =>
+        (!messageThreadId || control.threadId === messageThreadId) &&
+        (!messageTurnId || control.turnId === messageTurnId),
+    );
+    if (exact.length === 1) return exact[0];
+    if (!messageThreadId && !messageTurnId && candidates.length === 1) {
+      return candidates[0];
+    }
+    return null;
+  }
+
+  function findRunControlForIds(
+    profileKey: CodexProfileKey,
+    threadId: string | null,
+    turnId: string | null,
+  ) {
+    const candidates = [...activeRunControlsRef.current.values()].filter(
+      (control) =>
+        !control.stopped &&
+        control.profileKey === profileKey &&
+        (!threadId || control.threadId === threadId) &&
+        (!turnId || control.turnId === turnId),
+    );
+    return candidates.length === 1 ? candidates[0] : null;
+  }
+
   function startTaskChatEntry(entry: TaskChatEntry) {
     setSelectedHistoryChatId(entry.chatId ?? null);
-    activeChatEntryIdRef.current = entry.clientId;
-    runViewRef.current = entry.runView;
-    setActiveChatEntryId(entry.clientId);
-    setRunView(entry.runView);
+    if (entry.chatId === null) setSelectedDraftChat(entry.clientId);
     setTaskChatEntries((current) => [...current, entry]);
   }
 
   function replaceTaskChatEntry(targetClientId: string, entry: TaskChatEntry) {
     setSelectedHistoryChatId(entry.chatId ?? null);
-    activeChatEntryIdRef.current = entry.clientId;
-    runViewRef.current = entry.runView;
-    setActiveChatEntryId(entry.clientId);
-    setRunView(entry.runView);
+    if (entry.chatId === null) setSelectedDraftChat(entry.clientId);
     setTaskChatEntries((current) =>
       current.map((currentEntry) =>
         currentEntry.clientId === targetClientId ? entry : currentEntry,
@@ -3437,24 +3628,23 @@ function App() {
     );
   }
 
-  function updateActiveRunView(
+  function updateRunControlView(
+    control: ActiveRunControl,
     updater: (current: RunViewState) => RunViewState,
   ) {
-    const nextRunView = updater(runViewRef.current);
-    runViewRef.current = nextRunView;
-    setRunView(nextRunView);
-
-    const activeEntryId = activeChatEntryIdRef.current;
-    if (activeEntryId !== null) {
-      setTaskChatEntries((current) =>
-        current.map((entry) =>
-          entry.clientId === activeEntryId
-            ? { ...entry, status: nextRunView.status, runView: nextRunView }
-            : entry,
-        ),
-      );
+    const nextRunView = updater(control.runView);
+    control.runView = nextRunView;
+    if (activeRunControlRef.current === control) {
+      runViewRef.current = nextRunView;
+      setRunView(nextRunView);
     }
-
+    setTaskChatEntries((current) =>
+      current.map((entry) =>
+        entry.clientId === control.clientId
+          ? { ...entry, status: nextRunView.status, runView: nextRunView }
+          : entry,
+      ),
+    );
     return nextRunView;
   }
 
@@ -3464,14 +3654,20 @@ function App() {
   }
 
   function ensureRunControlActive(control: ActiveRunControl) {
-    if (control.stopped || activeRunControlRef.current !== control) {
+    if (
+      control.stopped ||
+      activeRunControlsRef.current.get(control.clientId) !== control
+    ) {
       throw new RunStoppedError();
     }
   }
 
-  function markActiveRunInterrupted(message = "Stopped by user.") {
+  function markRunInterrupted(
+    control: ActiveRunControl,
+    message = "Stopped by user.",
+  ) {
     const completedAt = new Date().toISOString();
-    const stoppedRunView = updateActiveRunView((current) => {
+    const stoppedRunView = updateRunControlView(control, (current) => {
       const elapsedRunView = updateRunElapsed(current);
       return {
         ...elapsedRunView,
@@ -3510,8 +3706,8 @@ function App() {
     completedAt: string,
     stoppedRunView: RunViewState,
   ) {
-    const runId = currentRunId.current ?? control?.runId ?? null;
-    const taskId = currentTaskId.current ?? control?.taskId ?? null;
+    const runId = control?.runId ?? null;
+    const taskId = control?.taskId ?? null;
 
     if (runId !== null) {
       await updateRun(runId, {
@@ -3534,7 +3730,7 @@ function App() {
   }
 
   async function stopActiveRun() {
-    const control = activeRunControlRef.current;
+    const control = selectedActiveRunControl ?? activeRunControlRef.current;
     const accountId =
       control?.accountId ?? currentRunAccountId.current ?? selectedAccountIdRef.current;
     const profileKey =
@@ -3551,21 +3747,19 @@ function App() {
     flushFrameBatchedCodexNotifications();
     await flushBufferedRunEvents().catch(() => undefined);
 
-    const setupStarted = control?.setupStarted ?? false;
-    const persistedRunId = currentRunId.current ?? control?.runId ?? null;
-    const planningThreadId = runViewRef.current.threadId;
-    const planningTurnId = runViewRef.current.turnId;
+    const persistedRunId = control?.runId ?? null;
+    const planningThreadId = control?.runView.threadId ?? null;
+    const planningTurnId = control?.runView.turnId ?? null;
     const interruptNativePlan =
-      runViewRef.current.nativePlan.mode === "plan" &&
+      control?.runView.nativePlan.mode === "plan" &&
       planningThreadId !== null &&
       planningTurnId !== null &&
       profileKey !== null;
     const shouldStopCodex =
       !interruptNativePlan &&
       profileKey !== null &&
-      (setupStarted ||
-        persistedRunId !== null ||
-        currentRunProfileKey.current !== null);
+      threadId !== null &&
+      turnId !== null;
 
     if (control) {
       control.stopped = true;
@@ -3575,7 +3769,8 @@ function App() {
 
     const shouldRestorePrompt =
       persistedRunId === null && Boolean(control?.promptFallback);
-    const { completedAt, stoppedRunView } = markActiveRunInterrupted();
+    if (!control) return;
+    const { completedAt, stoppedRunView } = markRunInterrupted(control);
     if (shouldRestorePrompt && control) {
       replaceComposerPrompt(control.promptFallback);
     }
@@ -3610,40 +3805,21 @@ function App() {
       }
     }
 
-    currentRunId.current = null;
-    currentTaskId.current = null;
-    currentRunAccountId.current = null;
-    currentRunProfileKey.current = null;
-    activeRunControlRef.current = null;
-    clearActiveChatRun();
+    removeRunControl(control);
     setStatusMessage("Codex run stopped.");
 
     if (shouldStopCodex) {
       try {
-        if (threadId && turnId && profileKey) {
-          await codexRpcForProfile(profileKey, accountId ?? 0, "turn/interrupt", {
-            threadId,
-            turnId,
-          });
-        } else if (profileKey === DEFAULT_CODEX_PROFILE_KEY) {
-          await stopDefaultCodexProfile();
-        } else if (accountId !== null) {
-          await stopCodex(accountId);
-        }
+        await codexRpcForProfile(profileKey, accountId ?? 0, "turn/interrupt", {
+          threadId,
+          turnId,
+        });
       } catch (error) {
-        try {
-          if (profileKey === DEFAULT_CODEX_PROFILE_KEY) {
-            await stopDefaultCodexProfile();
-          } else if (accountId !== null) {
-            await stopCodex(accountId);
-          }
-        } catch (stopError) {
-          setStatusMessage(
-            `Run stopped locally, but Codex could not be interrupted safely: ${
-              stopError instanceof Error ? stopError.message : String(stopError)
-            }`,
-          );
-        }
+        setStatusMessage(
+          `Run stopped locally, but Codex could not be interrupted safely: ${
+            error instanceof Error ? error.message : String(error)
+          }`,
+        );
       }
     }
   }
@@ -3674,7 +3850,11 @@ function App() {
 
   function requestWorkspaceDelete(workspace: Workspace) {
     setWorkspaceContextMenu(null);
-    if (runIsActive && workspace.id === selectedWorkspaceRef.current?.id) {
+    if (
+      [...activeRunControlsRef.current.values()].some(
+        (control) => control.workspaceId === workspace.id,
+      )
+    ) {
       setStatusMessage("Wait for the active run to finish before removing this workspace.");
       return;
     }
@@ -3698,7 +3878,7 @@ function App() {
 
   function requestChatHistoryDelete(chat: ChatListItem) {
     setChatHistoryContextMenu(null);
-    if (runIsActive && activeRunControlRef.current?.chatId === chat.id) {
+    if (findRunControlByChat(chat.workspace_id, chat.id)) {
       setStatusMessage("Wait for the active run to finish before removing this chat.");
       return;
     }
@@ -3767,9 +3947,10 @@ function App() {
             }
           : null,
     };
-    const allEntries = replaceWorkspaceChatEntries(
+    const allEntries = replaceChatEntries(
       taskChatEntriesRef.current,
       chat.workspace_id,
+      chat.id,
       entries,
     );
     taskChatEntriesRef.current = allEntries;
@@ -4126,11 +4307,6 @@ function App() {
   }
 
   async function selectHistoryChat(chat: ChatListItem) {
-    if (runIsActive) {
-      setStatusMessage("Finish or stop the active run before opening history.");
-      return;
-    }
-
     const loadId = historyChatLoadIdRef.current + 1;
     historyChatLoadIdRef.current = loadId;
     cancelActiveExternalTranscriptSync();
@@ -4148,9 +4324,41 @@ function App() {
         chat.saved_default_collaboration_mode_json,
       ),
     };
+    const runningControl = findRunControlByChat(chat.workspace_id, chat.id);
+
+    setUnreadCompletedChats((current) => {
+      const remaining = (current[chat.workspace_id] ?? []).filter(
+        (chatId) => chatId !== chat.id,
+      );
+      if (remaining.length === (current[chat.workspace_id] ?? []).length) {
+        return current;
+      }
+      const next = { ...current };
+      if (remaining.length > 0) next[chat.workspace_id] = remaining;
+      else delete next[chat.workspace_id];
+      return next;
+    });
+
+    if (runningControl) {
+      flushSync(() => {
+        setChatHistoryContextMenu(null);
+        setSelectedDraftChat(null);
+        setSelectedHistoryChatId(chat.id);
+        setWorkspaceChatSession(chat.workspace_id, session);
+        setHistoryChatLoadState(null);
+        setHistoryOpenRequest(null);
+        setHistoricalTranscript(null);
+        closeHistoryDrawer();
+        setActiveView("task");
+      });
+      setSelectedRunAliases(runningControl);
+      setStatusMessage("Opened running chat.");
+      return;
+    }
 
     flushSync(() => {
       setChatHistoryContextMenu(null);
+      setSelectedDraftChat(null);
       setSelectedHistoryChatId(chat.id);
       setWorkspaceChatSession(chat.workspace_id, session);
       setHistoryChatLoadState({
@@ -4167,7 +4375,7 @@ function App() {
       });
       setHistoricalTranscript(null);
       setTaskChatEntries((current) =>
-        replaceWorkspaceChatEntries(current, chat.workspace_id, []),
+        replaceChatEntries(current, chat.workspace_id, chat.id, []),
       );
       closeHistoryDrawer();
       setActiveView("task");
@@ -4356,11 +4564,6 @@ function App() {
       setStatusMessage("Choose a workspace before starting a new chat.");
       return;
     }
-    if (runIsActive || activeChatEntryIdRef.current !== null) {
-      setStatusMessage("Finish or stop the active run before starting a new chat.");
-      return;
-    }
-
     historyChatLoadIdRef.current += 1;
     cancelActiveExternalTranscriptSync();
     cancelActiveHistoricalTranscriptPreparation();
@@ -4369,11 +4572,10 @@ function App() {
     setHistoryChatLoadState(null);
     setHistoryOpenRequest(null);
     setHistoricalTranscript(null);
-    setTaskChatEntries((current) =>
-      current.filter((entry) => entry.workspaceId !== selectedWorkspace.id),
-    );
     setWorkspaceChatSession(selectedWorkspace.id, undefined);
+    setSelectedDraftChat(null);
     setSelectedHistoryChatId(null);
+    setSelectedRunAliases(null);
     preflightRef.current = null;
     setStatusMessage("Started a new chat.");
   }
@@ -5661,9 +5863,9 @@ function App() {
       turnId: null,
       intent,
       clientUserMessageId,
+      runView: initialRunView,
+      eventSequence: 0,
     };
-
-    activeRunControlRef.current = runControl;
     const nextEntry: TaskChatEntry = {
       clientId,
       workspaceId: snapshot.workspace.id,
@@ -5687,6 +5889,7 @@ function App() {
         replaceComposerPrompt("");
       }
     });
+    registerRunControl(runControl);
     markPerformance("orchestrator:submit:optimistic-committed");
 
     return runControl;
@@ -5772,15 +5975,21 @@ function App() {
         chatId = chat.id;
         threadId = chat.codex_thread_id;
         runControl.chatId = chat.id;
-        setWorkspaceChatSession(snapshot.workspace.id, {
-          chatId: chat.id,
-          threadId,
-          origin: snapshot.chatOrigin,
-          profileKey: snapshot.profileKey,
-          externalThreadId: snapshot.externalThreadId,
-          nextTurnIndex: snapshot.turnIndex + 1,
-        });
-        setSelectedHistoryChatId(chat.id);
+        if (
+          selectedWorkspaceRef.current?.id === snapshot.workspace.id &&
+          selectedDraftChatEntryIdRef.current === runControl.clientId
+        ) {
+          setWorkspaceChatSession(snapshot.workspace.id, {
+            chatId: chat.id,
+            threadId,
+            origin: snapshot.chatOrigin,
+            profileKey: snapshot.profileKey,
+            externalThreadId: snapshot.externalThreadId,
+            nextTurnIndex: snapshot.turnIndex + 1,
+          });
+          setSelectedDraftChat(null);
+          setSelectedHistoryChatId(chat.id);
+        }
         updateTaskChatEntryIds(runControl.clientId, {
           chatId: chat.id,
           turnIndex: snapshot.turnIndex,
@@ -5799,7 +6008,9 @@ function App() {
       });
       taskId = task.id;
       runControl.taskId = task.id;
-      currentTaskId.current = task.id;
+      if (activeRunControlRef.current === runControl) {
+        currentTaskId.current = task.id;
+      }
       ensureRunControlActive(runControl);
 
       await savePreflightReport(snapshot.workspace.id, task.id, report);
@@ -5824,9 +6035,11 @@ function App() {
       });
       runId = run.id;
       runControl.runId = run.id;
-      currentRunId.current = run.id;
-      currentRunAccountId.current = snapshot.accountId;
-      currentRunProfileKey.current = snapshot.profileKey;
+      if (activeRunControlRef.current === runControl) {
+        currentRunId.current = run.id;
+        currentRunAccountId.current = snapshot.accountId;
+        currentRunProfileKey.current = snapshot.profileKey;
+      }
       ensureRunControlActive(runControl);
       for (const supersededRunId of snapshot.supersededRunIds ?? []) {
         await softDeleteRun(supersededRunId);
@@ -5834,7 +6047,7 @@ function App() {
       }
       flushFrameBatchedCodexNotifications();
       await flushBufferedRunEvents().catch(() => undefined);
-      eventSequence.current = 0;
+      runControl.eventSequence = 0;
       updateTaskChatEntryIds(runControl.clientId, {
         taskId: task.id,
         runId: run.id,
@@ -5897,14 +6110,16 @@ function App() {
               }
             : {}),
         });
-        setWorkspaceChatSession(snapshot.workspace.id, {
-          chatId: activeChatId,
-          threadId: nextThreadId,
-          origin: snapshot.chatOrigin,
-          profileKey: snapshot.profileKey,
-          externalThreadId: snapshot.externalThreadId,
-          nextTurnIndex: snapshot.turnIndex + 1,
-        });
+        if (activeRunControlRef.current === runControl) {
+          setWorkspaceChatSession(snapshot.workspace.id, {
+            chatId: activeChatId,
+            threadId: nextThreadId,
+            origin: snapshot.chatOrigin,
+            profileKey: snapshot.profileKey,
+            externalThreadId: snapshot.externalThreadId,
+            nextTurnIndex: snapshot.turnIndex + 1,
+          });
+        }
         return {
           threadId: nextThreadId,
           model: nextThreadModel,
@@ -5965,18 +6180,20 @@ function App() {
               )
             : null,
       });
-      setWorkspaceChatSession(snapshot.workspace.id, {
-        chatId,
-        threadId,
-        origin: snapshot.chatOrigin,
-        profileKey: snapshot.profileKey,
-        externalThreadId: snapshot.externalThreadId,
-        nextTurnIndex: snapshot.turnIndex + 1,
-        savedDefaultCollaborationMode:
-          snapshot.mode === "plan"
-            ? snapshot.defaultCollaborationMode ?? collaborationModes.default
-            : null,
-      });
+      if (activeRunControlRef.current === runControl) {
+        setWorkspaceChatSession(snapshot.workspace.id, {
+          chatId,
+          threadId,
+          origin: snapshot.chatOrigin,
+          profileKey: snapshot.profileKey,
+          externalThreadId: snapshot.externalThreadId,
+          nextTurnIndex: snapshot.turnIndex + 1,
+          savedDefaultCollaborationMode:
+            snapshot.mode === "plan"
+              ? snapshot.defaultCollaborationMode ?? collaborationModes.default
+              : null,
+        });
+      }
       ensureRunControlActive(runControl);
 
       await updateRun(run.id, {
@@ -6080,7 +6297,7 @@ function App() {
         threadId = thread.threadId;
         threadModel = thread.model;
         threadModelProvider = thread.modelProvider;
-        updateActiveRunView((current) => ({
+        updateRunControlView(runControl, (current) => ({
           ...current,
           tokenUsageStartTotal: 0,
           tokenUsageStartCachedInput: 0,
@@ -6120,7 +6337,7 @@ function App() {
       runControl.threadId = threadId;
       runControl.turnId = turn.turn.id;
 
-      updateActiveRunView((current) => ({
+      updateRunControlView(runControl, (current) => ({
         ...current,
         status: "running",
         threadId,
@@ -6135,6 +6352,9 @@ function App() {
       ensureRunControlActive(runControl);
       await refreshWorkspaceData(snapshot.workspace.id);
       ensureRunControlActive(runControl);
+      if (selectedWorkspaceRef.current?.id === snapshot.workspace.id) {
+        void refreshSelectedWorkspaceHistory();
+      }
       const runStartedMessage =
         snapshot.mode === "plan" ? "Plan mode turn started." : "Codex run started.";
       setStatusMessage(
@@ -6148,16 +6368,9 @@ function App() {
         await persistInterruptedRun(
           runControl,
           new Date().toISOString(),
-          runViewRef.current,
+          runControl.runView,
         );
-        currentRunId.current = null;
-        currentTaskId.current = null;
-        currentRunAccountId.current = null;
-        currentRunProfileKey.current = null;
-        if (activeRunControlRef.current === runControl) {
-          activeRunControlRef.current = null;
-        }
-        clearActiveChatRun();
+        removeRunControl(runControl);
         return;
       }
 
@@ -6175,7 +6388,7 @@ function App() {
         }
       }
       const completedAt = new Date().toISOString();
-      const failedRunView = updateActiveRunView((current) => {
+      const failedRunView = updateRunControlView(runControl, (current) => {
         const elapsedRunView = updateRunElapsed(current);
         return {
           ...elapsedRunView,
@@ -6216,14 +6429,7 @@ function App() {
       if (chatId !== null) {
         await updateChat(chatId, { status: "failed" }).catch(() => undefined);
       }
-      currentRunId.current = null;
-      currentTaskId.current = null;
-      currentRunAccountId.current = null;
-      currentRunProfileKey.current = null;
-      if (activeRunControlRef.current === runControl) {
-        activeRunControlRef.current = null;
-      }
-      clearActiveChatRun();
+      removeRunControl(runControl);
       setStatusMessage(`Run setup failed: ${message}`);
     }
   }
@@ -6231,7 +6437,10 @@ function App() {
   function scheduleRunSetup(runControl: ActiveRunControl, snapshot: RunSetupSnapshot) {
     runControl.cancelScheduledSetup = scheduleAfterNextPaint(() => {
       runControl.cancelScheduledSetup = null;
-      if (runControl.stopped || activeRunControlRef.current !== runControl) {
+      if (
+        runControl.stopped ||
+        activeRunControlsRef.current.get(runControl.clientId) !== runControl
+      ) {
         return;
       }
       runControl.setupStarted = true;
@@ -6552,31 +6761,24 @@ function App() {
     }
 
     const pending = pendingFrameCodexNotificationsRef.current.splice(0);
-    const activeProfileKey = currentRunProfileKey.current;
-    if (pending.length === 0 || activeProfileKey === null) {
+    if (pending.length === 0) {
       return runViewRef.current;
     }
-
-    const messages = coalesceFrameBatchedCodexMessages(
-      pending
-        .filter(
-          ({ message, profileKey }) =>
-            profileKey === activeProfileKey &&
-            messageMatchesRun(
-              message,
-              runViewRef.current.threadId,
-              runViewRef.current.turnId,
-            ),
-        )
-        .map(({ message }) => message),
-    );
-    if (messages.length === 0) {
-      return runViewRef.current;
-    }
-
-    return updateActiveRunView((current) =>
-      messages.reduce(applyCodexMessage, current),
-    );
+    const messagesByControl = new Map<ActiveRunControl, CodexMessage[]>();
+    pending.forEach(({ profileKey, message }) => {
+      const control = findRunControlForMessage(profileKey, message);
+      if (!control) return;
+      const messages = messagesByControl.get(control) ?? [];
+      messages.push(message);
+      messagesByControl.set(control, messages);
+    });
+    messagesByControl.forEach((messages, control) => {
+      const coalesced = coalesceFrameBatchedCodexMessages(messages);
+      updateRunControlView(control, (current) =>
+        coalesced.reduce(applyCodexMessage, current),
+      );
+    });
+    return runViewRef.current;
   }
 
   function queueFrameBatchedCodexNotification(
@@ -6595,17 +6797,18 @@ function App() {
   }
 
   function createRunEventInput(
+    control: ActiveRunControl,
     eventType: RunEventInput["eventType"],
     method: string | null,
     payload: unknown,
   ) {
-    const runId = currentRunId.current;
+    const runId = control.runId;
     if (!runId) return null;
 
-    eventSequence.current += 1;
+    control.eventSequence += 1;
     return {
       runId,
-      sequence: eventSequence.current,
+      sequence: control.eventSequence,
       eventType,
       method,
       payload,
@@ -6629,11 +6832,12 @@ function App() {
   }
 
   function queueBufferedRunEvent(
+    control: ActiveRunControl,
     eventType: RunEventInput["eventType"],
     method: string | null,
     payload: unknown,
   ) {
-    const input = createRunEventInput(eventType, method, payload);
+    const input = createRunEventInput(control, eventType, method, payload);
     if (!input) return;
 
     pendingRunEventWritesRef.current.push(input);
@@ -6783,16 +6987,6 @@ function App() {
       setStatusMessage("The workspace for that notification is no longer available.");
       return;
     }
-    if (
-      activeRunControlRef.current &&
-      activeRunControlRef.current.chatId !== target.chatId
-    ) {
-      setStatusMessage(
-        "Finish or stop the active run before opening another notification.",
-      );
-      return;
-    }
-
     if (selectedWorkspaceRef.current?.id !== workspace.id) {
       selectWorkspace(workspace.id);
     } else {
@@ -6858,7 +7052,9 @@ function App() {
       const requestId = params.requestId;
       const threadId = readString(params.threadId);
       const resolvedApprovals = [
-        ...runViewRef.current.approvalRequests,
+        ...[...activeRunControlsRef.current.values()].flatMap(
+          (control) => control.runView.approvalRequests,
+        ),
         ...unroutedApprovalsRef.current,
       ].filter(
         (request) =>
@@ -6879,30 +7075,28 @@ function App() {
             request.threadId !== threadId,
         ),
       );
+      if (typeof requestId === "string" || typeof requestId === "number") {
+        activeRunControlsRef.current.forEach((control) => {
+          if (control.profileKey !== profileKey) return;
+          updateRunControlView(control, (current) =>
+            resolveApprovalRequest(current, requestId, threadId),
+          );
+        });
+      }
     }
 
-    if (currentRunProfileKey.current !== profileKey) {
-      return;
-    }
-    if (
-      !messageMatchesRun(
-        message,
-        runViewRef.current.threadId,
-        runViewRef.current.turnId,
-      )
-    ) {
-      return;
-    }
+    const control = findRunControlForMessage(profileKey, message);
+    if (!control) return;
 
     if (shouldFrameBatchCodexMessage(message)) {
-      queueBufferedRunEvent("notification", method, message);
+      queueBufferedRunEvent(control, "notification", method, message);
       queueFrameBatchedCodexNotification(profileKey, message);
       return;
     }
 
     flushFrameBatchedCodexNotifications();
 
-    const nextRunView = updateActiveRunView((current) => {
+    const nextRunView = updateRunControlView(control, (current) => {
       const next = applyCodexMessage(current, message);
       if (method !== "serverRequest/resolved") return next;
       const requestId = params.requestId;
@@ -6915,7 +7109,7 @@ function App() {
         readString(params.threadId),
       );
     });
-    await persistRunEvent("notification", method, message);
+    await persistRunEvent(control, "notification", method, message);
 
     if (method === "serverRequest/resolved") {
       const requestId = params.requestId;
@@ -6929,13 +7123,13 @@ function App() {
         readObject(params.threadSettings).collaborationMode,
       );
       const mode = readString(collaborationMode.mode);
-      const chatId = activeRunControlRef.current?.chatId ?? null;
+      const chatId = control.chatId;
       if (chatId !== null && (mode === "plan" || mode === "default")) {
         await updateChat(chatId, { collaborationMode: mode });
       }
     }
 
-    const runId = currentRunId.current;
+    const runId = control.runId;
     if (!runId) {
       return;
     }
@@ -6956,13 +7150,12 @@ function App() {
     if (method === "turn/completed") {
       const turn = readObject(params.turn);
       const status = readString(turn.status) === "failed" ? "failed" : "completed";
-      const completedControl = activeRunControlRef.current;
-      const completedEntry = completedControl
-        ? taskChatEntriesRef.current.find(
-            (entry) => entry.clientId === completedControl.clientId,
-          ) ?? null
-        : null;
-      if (status === "completed" && completedControl) {
+      const completedControl = control;
+      const completedEntry =
+        taskChatEntriesRef.current.find(
+          (entry) => entry.clientId === completedControl.clientId,
+        ) ?? null;
+      if (status === "completed") {
         const planReady = nextRunView.nativePlan.reviewState === "available";
         const kind: AgentNotificationKind = planReady
           ? "plan-ready"
@@ -7020,10 +7213,10 @@ function App() {
             ? "available"
             : nextRunView.nativePlan.reviewState,
       });
-      if (currentTaskId.current) {
-        await updateTaskStatus(currentTaskId.current, status);
+      if (completedControl.taskId) {
+        await updateTaskStatus(completedControl.taskId, status);
       }
-      const activeChatId = activeRunControlRef.current?.chatId ?? null;
+      const activeChatId = completedControl.chatId;
       if (activeChatId !== null) {
         await updateChat(activeChatId, { status }).catch(() => undefined);
       }
@@ -7047,13 +7240,26 @@ function App() {
             : Promise.resolve(),
         ]);
       }
-      await refreshSelectedWorkspaceHistory();
-      currentRunId.current = null;
-      currentTaskId.current = null;
-      currentRunAccountId.current = null;
-      currentRunProfileKey.current = null;
-      activeRunControlRef.current = null;
-      clearActiveChatRun();
+      if (
+        activeChatId !== null &&
+        !(
+          activeViewRef.current === "task" &&
+          runControlIsSelected(completedControl)
+        )
+      ) {
+        setUnreadCompletedChats((current) => {
+          const workspaceChats = current[completedControl.workspaceId] ?? [];
+          if (workspaceChats.includes(activeChatId)) return current;
+          return {
+            ...current,
+            [completedControl.workspaceId]: [...workspaceChats, activeChatId],
+          };
+        });
+      }
+      if (selectedWorkspaceRef.current?.id === completedControl.workspaceId) {
+        await refreshSelectedWorkspaceHistory();
+      }
+      removeRunControl(completedControl);
     }
   }
 
@@ -7070,10 +7276,15 @@ function App() {
       setApprovalSafetyWarning(warning);
       return;
     }
-    if (currentRunProfileKey.current === profileKey) {
-      flushFrameBatchedCodexNotifications();
-    }
-    const control = activeRunControlRef.current;
+    flushFrameBatchedCodexNotifications();
+    const requestParams = readObject(request.params);
+    const requestThreadId = readString(requestParams.threadId);
+    const requestTurnId = readString(requestParams.turnId);
+    const control = findRunControlForIds(
+      profileKey,
+      requestThreadId,
+      requestTurnId,
+    );
     const parsed = parseApprovalRequest({
       message: request,
       profileKey,
@@ -7081,12 +7292,7 @@ function App() {
       interactionMode: control?.interactionMode ?? "chat",
     });
     if (parsed && !isNativeUserInputRequest(request)) {
-      const activeThreadId = control?.threadId ?? runViewRef.current.threadId;
-      const activeTurnId = control?.turnId ?? runViewRef.current.turnId;
-      const belongsToActiveRun =
-        currentRunProfileKey.current === profileKey &&
-        (!parsed.threadId || parsed.threadId === activeThreadId) &&
-        (!parsed.turnId || parsed.turnId === activeTurnId);
+      const belongsToActiveRun = control !== null;
       const shouldNotify = [
         "command",
         "file-change",
@@ -7150,39 +7356,43 @@ function App() {
         return;
       }
 
-      updateActiveRunView((current) => addApprovalRequest(current, parsed));
+      updateRunControlView(control, (current) => addApprovalRequest(current, parsed));
       notifyApproval();
-      await persistRunEvent("server-request", request.method ?? null, request);
+      await persistRunEvent(
+        control,
+        "server-request",
+        request.method ?? null,
+        request,
+      );
       return;
     }
 
-    if (
-      !messageMatchesRun(
-        request,
-        runViewRef.current.threadId,
-        runViewRef.current.turnId,
-      )
-    ) {
-      return;
-    }
+    if (!control) return;
     if (
       request.id !== undefined &&
-      runViewRef.current.serverRequests.some(
+      control.runView.serverRequests.some(
         (existing) => String(existing.id) === String(request.id),
       )
     ) {
       return;
     }
     const routedRequest = { ...request, requestToken };
-    updateActiveRunView((current) => addServerRequest(current, routedRequest));
-    await persistRunEvent("server-request", request.method ?? null, request);
+    updateRunControlView(control, (current) =>
+      addServerRequest(current, routedRequest),
+    );
+    await persistRunEvent(
+      control,
+      "server-request",
+      request.method ?? null,
+      request,
+    );
     if (isNativeUserInputRequest(request) && request.params.autoResolutionMs) {
       const routedUserInputRequest = { ...request, requestToken };
       const timerKey = `${profileKey}:${requestKey(request)}`;
       const timer = window.setTimeout(() => {
         userInputAutoResolutionTimersRef.current.delete(timerKey);
         const activeEntry = taskChatEntriesRef.current.find(
-          (entry) => entry.clientId === activeChatEntryIdRef.current,
+          (entry) => entry.clientId === control.clientId,
         );
         if (activeEntry) {
           void handleAnswerUserInput(activeEntry, routedUserInputRequest, {
@@ -7205,12 +7415,13 @@ function App() {
   }
 
   async function persistRunEvent(
+    control: ActiveRunControl,
     eventType: "notification" | "server-request" | "process" | "client-action",
     method: string | null,
     payload: unknown,
   ) {
     await flushBufferedRunEvents();
-    const input = createRunEventInput(eventType, method, payload);
+    const input = createRunEventInput(control, eventType, method, payload);
     if (input) await appendRunEvent(input);
   }
 
@@ -7218,12 +7429,15 @@ function App() {
     request: CodexApprovalRequest,
     choice: ApprovalChoice,
   ) {
-    const accountId = currentRunAccountId.current;
-    const profileKey = currentRunProfileKey.current;
-    if (accountId === null || profileKey === null) {
-      return;
-    }
-    const currentRequest = runViewRef.current.approvalRequests.find(
+    const control = findRunControlForIds(
+      request.profileKey,
+      request.threadId,
+      request.turnId,
+    );
+    if (!control) return;
+    const accountId = control.accountId;
+    const profileKey = control.profileKey;
+    const currentRequest = control.runView.approvalRequests.find(
       (candidate) => candidate.key === request.key,
     );
     const selectedChoice = currentRequest?.choices.find(
@@ -7237,13 +7451,12 @@ function App() {
     ) {
       return;
     }
-    const control = activeRunControlRef.current;
     if (
       currentRequest.threadId &&
       control?.threadId &&
       currentRequest.threadId !== control.threadId
     ) {
-      updateActiveRunView((current) =>
+      updateRunControlView(control, (current) =>
         markApprovalError(
           current,
           request.key,
@@ -7257,7 +7470,7 @@ function App() {
       control?.turnId &&
       currentRequest.turnId !== control.turnId
     ) {
-      updateActiveRunView((current) =>
+      updateRunControlView(control, (current) =>
         markApprovalError(
           current,
           currentRequest.key,
@@ -7267,7 +7480,7 @@ function App() {
       return;
     }
 
-    updateActiveRunView((current) =>
+    updateRunControlView(control, (current) =>
       markApprovalSubmitting(current, currentRequest.key, selectedChoice.id),
     );
     try {
@@ -7288,11 +7501,11 @@ function App() {
       void removeAgentNotification(
         approvalNotificationEventKey(currentRequest),
       ).catch(() => undefined);
-      updateActiveRunView((current) =>
+      updateRunControlView(control, (current) =>
         markApprovalAwaitingResolution(current, currentRequest.key),
       );
     } catch (error) {
-      updateActiveRunView((current) =>
+      updateRunControlView(control, (current) =>
         markApprovalError(
           current,
           currentRequest.key,
@@ -7309,13 +7522,16 @@ function App() {
   ) {
     const actionKey = `${request.params.threadId}:${request.params.turnId}:${requestKey(request)}`;
     if (requestActionLocksRef.current.has(actionKey)) return;
-    const activeEntryId = activeChatEntryIdRef.current;
-    const accountId = currentRunAccountId.current;
-    const profileKey = currentRunProfileKey.current;
+    const control = activeRunControlsRef.current.get(entry.clientId) ?? null;
+    if (!control) {
+      setStatusMessage("That Codex question is no longer active.");
+      return;
+    }
+    const activeEntryId = control.clientId;
+    const accountId = control.accountId;
+    const profileKey = control.profileKey;
     if (
       activeEntryId !== entry.clientId ||
-      accountId === null ||
-      profileKey === null ||
       entry.runView.threadId !== request.params.threadId ||
       entry.runView.turnId !== request.params.turnId ||
       !entry.runView.serverRequests.some(
@@ -7334,7 +7550,7 @@ function App() {
       return;
     }
 
-    updateActiveRunView((current) =>
+    updateRunControlView(control, (current) =>
       setServerRequestSubmissionState(current, request, "submitting"),
     );
     clearUserInputAutoResolutionTimer(profileKey, request.id);
@@ -7346,7 +7562,7 @@ function App() {
       }
     } catch (error) {
       requestActionLocksRef.current.delete(actionKey);
-      updateActiveRunView((current) =>
+      updateRunControlView(control, (current) =>
         setServerRequestSubmissionState(current, request, "failed"),
       );
       setStatusMessage(
@@ -7356,7 +7572,7 @@ function App() {
     }
 
     try {
-      await persistRunEvent("client-action", request.method, {
+      await persistRunEvent(control, "client-action", request.method, {
         requestId: request.id,
         threadId: request.params.threadId,
         turnId: request.params.turnId,
@@ -7378,7 +7594,9 @@ function App() {
         }`,
       );
     }
-    updateActiveRunView((current) => resolveServerRequest(current, request.id));
+    updateRunControlView(control, (current) =>
+      resolveServerRequest(current, request.id),
+    );
     requestActionLocksRef.current.delete(actionKey);
   }
 
@@ -9312,9 +9530,10 @@ function App() {
               contextWindow={selectedModelContextWindow}
               onGitAction={() => void handleHeaderGitAction()}
               onBranchChange={(branch) => void selectBranch(branch)}
-              newChatDisabled={runIsActive}
+              newChatDisabled={false}
               onNewChat={startNewWorkspaceChat}
               historyOpen={historyDrawerOpen}
+              historyNotificationCount={selectedWorkspaceUnreadChatCount}
               onToggleHistory={toggleHistoryDrawer}
               windowDragRegionsEnabled={macOsWindowDragRegionsEnabled}
             />
@@ -9473,7 +9692,7 @@ function App() {
                 workspace={selectedWorkspace}
                 historyState={historyState}
                 selectedChatId={selectedHistoryChatId ?? selectedWorkspaceChatSession?.chatId ?? null}
-                runSelectionDisabled={runIsActive}
+                runningChatIds={selectedWorkspaceRunningChatIds}
                 onSelectChat={selectHistoryChatFromDrawer}
                 onOpenChatContextMenu={openChatHistoryContextMenuFromDrawer}
                 onTransitionEnd={handleHistoryDrawerTransitionEnd}
@@ -9495,8 +9714,10 @@ function App() {
                     role="menuitem"
                     onClick={() => requestChatHistoryDelete(chatHistoryContextMenu.chat)}
                     disabled={
-                      runIsActive &&
-                      activeRunControlRef.current?.chatId === chatHistoryContextMenu.chat.id
+                      findRunControlByChat(
+                        chatHistoryContextMenu.chat.workspace_id,
+                        chatHistoryContextMenu.chat.id,
+                      ) !== null
                     }
                   >
                     <Trash2 size={15} aria-hidden="true" />
@@ -9925,6 +10146,7 @@ function WorkspaceContextBanner({
   newChatDisabled,
   onNewChat,
   historyOpen,
+  historyNotificationCount,
   onToggleHistory,
   windowDragRegionsEnabled,
 }: {
@@ -9943,6 +10165,7 @@ function WorkspaceContextBanner({
   newChatDisabled: boolean;
   onNewChat: () => void;
   historyOpen: boolean;
+  historyNotificationCount: number;
   onToggleHistory: () => void;
   windowDragRegionsEnabled: boolean;
 }) {
@@ -10093,6 +10316,16 @@ function WorkspaceContextBanner({
           aria-pressed={historyOpen}
         >
           <PanelRight size={15} />
+          {historyNotificationCount > 0 ? (
+            <span
+              className="history-notification-badge"
+              aria-label={`${historyNotificationCount} completed chat${
+                historyNotificationCount === 1 ? "" : "s"
+              }`}
+            >
+              {historyNotificationCount > 9 ? "9+" : historyNotificationCount}
+            </span>
+          ) : null}
         </button>
       </div>
     </section>
@@ -10210,7 +10443,7 @@ const WorkspaceHistoryDrawer = memo(function WorkspaceHistoryDrawer({
   workspace,
   historyState,
   selectedChatId,
-  runSelectionDisabled,
+  runningChatIds,
   onSelectChat,
   onOpenChatContextMenu,
   onTransitionEnd,
@@ -10219,7 +10452,7 @@ const WorkspaceHistoryDrawer = memo(function WorkspaceHistoryDrawer({
   workspace: Workspace | null;
   historyState: WorkspaceHistoryState;
   selectedChatId: number | null;
-  runSelectionDisabled: boolean;
+  runningChatIds: ReadonlySet<number>;
   onSelectChat: (chat: ChatListItem) => void;
   onOpenChatContextMenu: (
     chat: ChatListItem,
@@ -10261,17 +10494,10 @@ const WorkspaceHistoryDrawer = memo(function WorkspaceHistoryDrawer({
           {historyState.chats.map((chat) => (
             <button
               key={chat.id}
-              className={`history-run-item ${selectedChatId === chat.id ? "selected" : ""} ${
-                runSelectionDisabled ? "disabled" : ""
-              }`}
+              className={`history-run-item ${selectedChatId === chat.id ? "selected" : ""}`}
               type="button"
               aria-pressed={selectedChatId === chat.id}
-              aria-disabled={runSelectionDisabled}
-              title={
-                runSelectionDisabled
-                  ? "Finish or stop the active run before opening history"
-                  : chat.title
-              }
+              title={chat.title}
               onClick={() => onSelectChat(chat)}
               onContextMenu={(event) => onOpenChatContextMenu(chat, event)}
               onKeyDown={(event) => {
@@ -10280,7 +10506,16 @@ const WorkspaceHistoryDrawer = memo(function WorkspaceHistoryDrawer({
                 }
               }}
             >
-              <strong>{chat.title}</strong>
+              <span className="history-run-title-row">
+                <strong>{chat.title}</strong>
+                {runningChatIds.has(chat.id) ? (
+                  <Loader2
+                    className="history-run-spinner spin"
+                    size={15}
+                    aria-label="Agent running"
+                  />
+                ) : null}
+              </span>
               <span>{formatHistoryChatMeta(chat)}</span>
             </button>
           ))}

@@ -1699,8 +1699,27 @@ button.account-switcher-item:hover:not(:disabled) {
 }
 
 .history-panel-button {
+  position: relative;
   color: var(--color-button-primary-text);
   box-shadow: none;
+}
+
+.history-notification-badge {
+  position: absolute;
+  top: -5px;
+  right: -5px;
+  display: grid;
+  min-width: 16px;
+  height: 16px;
+  place-items: center;
+  border-radius: 999px;
+  background: var(--color-primary);
+  color: var(--color-button-primary-text);
+  font-size: 0.62rem;
+  font-weight: 700;
+  line-height: 1;
+  padding: 0 4px;
+  pointer-events: none;
 }
 
 .history-panel-button svg {
@@ -3014,6 +3033,27 @@ button.history-run-item.disabled {
   color: var(--muted);
   font-size: 0.76rem;
   font-weight: 560;
+}
+
+.history-run-title-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  color: var(--text) !important;
+  font-size: inherit !important;
+}
+
+.history-run-title-row strong {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.history-run-spinner {
+  flex: 0 0 auto;
+  color: var(--color-primary);
 }
 
 .file-preview-drawer.resizing {
