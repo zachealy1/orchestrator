@@ -242,5 +242,8 @@ describe("external chat metadata", () => {
     );
     expect(query).toContain("MAX(external_snapshot.turn_count)");
     expect(query).toContain("SUM(latest_tokens.run_tokens)");
+    expect(query).toContain("strftime(");
+    expect(query).toContain("COALESCE(runs.completed_at, runs.started_at)");
+    expect(query).toContain("ORDER BY julianday(latest_activity_at) DESC");
   });
 });

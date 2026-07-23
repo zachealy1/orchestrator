@@ -820,7 +820,15 @@ export async function listWorkspaceChats(workspaceId: number) {
       latest_run.account_email,
       COALESCE(
         chats.external_updated_at,
-        MAX(COALESCE(runs.completed_at, runs.started_at)),
+        MAX(
+          CASE
+            WHEN runs.id IS NULL THEN NULL
+            ELSE strftime(
+              '%Y-%m-%dT%H:%M:%fZ',
+              COALESCE(runs.completed_at, runs.started_at)
+            )
+          END
+        ),
         chats.updated_at
       )
         AS latest_activity_at,
@@ -854,7 +862,7 @@ export async function listWorkspaceChats(workspaceId: number) {
      WHERE chats.workspace_id = $1
        AND chats.deleted_at IS NULL
      GROUP BY chats.id
-     ORDER BY latest_activity_at DESC
+     ORDER BY julianday(latest_activity_at) DESC, chats.id DESC
      LIMIT 50`,
     [workspaceId],
   );
@@ -874,7 +882,15 @@ export async function getChatWithRuns(chatId: number): Promise<ChatWithRuns> {
       latest_run.account_email,
       COALESCE(
         chats.external_updated_at,
-        MAX(COALESCE(runs.completed_at, runs.started_at)),
+        MAX(
+          CASE
+            WHEN runs.id IS NULL THEN NULL
+            ELSE strftime(
+              '%Y-%m-%dT%H:%M:%fZ',
+              COALESCE(runs.completed_at, runs.started_at)
+            )
+          END
+        ),
         chats.updated_at
       )
         AS latest_activity_at,

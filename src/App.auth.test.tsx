@@ -2145,6 +2145,48 @@ describe("App Codex auth", () => {
     expect(closedDrawer?.parentElement).not.toHaveClass("history-space-reserved");
   });
 
+  it("moves the most recently started running chat to the top of history", async () => {
+    prepareSignedInRun();
+    const completedChat = workspaceChatFixture({
+      id: 401,
+      title: "Earlier completed chat",
+      status: "completed",
+      latest_activity_at: "2020-07-23T08:21:00.000Z",
+    });
+    const runningChat = workspaceChatFixture({
+      id: 402,
+      title: "Build Snake Web App",
+      status: "running",
+      latest_activity_at: "2019-07-23 11:01:00",
+    });
+    mocks.createChatMock.mockResolvedValue({
+      ...runningChat,
+      codex_thread_id: null,
+    });
+    mocks.listWorkspaceChatsMock.mockResolvedValue([
+      completedChat,
+      runningChat,
+    ]);
+
+    const { user } = await renderApp();
+    await startMockRun(user, "Build Snake Web App");
+
+    const banner = screen.getByRole("region", { name: "Selected folder" });
+    await user.click(
+      within(banner).getByRole("button", { name: /open chat history/i }),
+    );
+    const drawer = await screen.findByRole("complementary", {
+      name: "Workspace chat history",
+    });
+    const rows = drawer.querySelectorAll<HTMLElement>(".history-run-item");
+
+    expect(rows).toHaveLength(2);
+    expect(rows[0]).toHaveTextContent("Build Snake Web App");
+    expect(within(rows[0] as HTMLElement).getByLabelText("Agent running"))
+      .toBeInTheDocument();
+    expect(rows[1]).toHaveTextContent("Earlier completed chat");
+  });
+
   it("coordinates drawer and composer phases without remounting the prompt", async () => {
     mocks.listWorkspaceChatsMock.mockResolvedValue([]);
     const { user } = await renderApp();

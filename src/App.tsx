@@ -475,6 +475,40 @@ function historyChatVersion(chat: ChatListItem) {
   ].join(":");
 }
 
+function historyActivityTime(value: string | null | undefined) {
+  if (!value) return Number.NEGATIVE_INFINITY;
+  const sqliteTimestamp =
+    /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}(?:\.\d+)?$/.test(value)
+      ? `${value.replace(" ", "T")}Z`
+      : value;
+  const timestamp = Date.parse(sqliteTimestamp);
+  return Number.isFinite(timestamp) ? timestamp : Number.NEGATIVE_INFINITY;
+}
+
+function sortHistoryChatsByActivity(
+  chats: ChatListItem[],
+  liveActivityByChatId: ReadonlyMap<number, string>,
+) {
+  return chats
+    .map((chat, index) => ({ chat, index }))
+    .sort((left, right) => {
+      const leftActivity = Math.max(
+        historyActivityTime(left.chat.latest_activity_at),
+        historyActivityTime(liveActivityByChatId.get(left.chat.id)),
+      );
+      const rightActivity = Math.max(
+        historyActivityTime(right.chat.latest_activity_at),
+        historyActivityTime(liveActivityByChatId.get(right.chat.id)),
+      );
+      return (
+        rightActivity - leftActivity ||
+        right.chat.id - left.chat.id ||
+        left.index - right.index
+      );
+    })
+    .map(({ chat }) => chat);
+}
+
 class RunStoppedError extends Error {
   constructor() {
     super("Run stopped by user.");
@@ -1907,9 +1941,9 @@ function App() {
       derivePlanProgressIndicator(selectedActiveRunControl?.runView ?? null),
     [selectedActiveRunControl?.runView],
   );
-  const selectedWorkspaceRunningChatIds = (() => {
-    const chatIds = new Set<number>();
-    if (!selectedWorkspace) return chatIds;
+  const selectedWorkspaceRunningChatActivity = (() => {
+    const activityByChatId = new Map<number, string>();
+    if (!selectedWorkspace) return activityByChatId;
     activeRunControlsRef.current.forEach((control) => {
       if (
         control.workspaceId === selectedWorkspace.id &&
@@ -1917,10 +1951,17 @@ function App() {
         (control.runView.status === "connecting" ||
           control.runView.status === "running")
       ) {
-        chatIds.add(control.chatId);
+        const startedAt = control.runView.startedAt;
+        if (
+          startedAt &&
+          historyActivityTime(startedAt) >
+            historyActivityTime(activityByChatId.get(control.chatId))
+        ) {
+          activityByChatId.set(control.chatId, startedAt);
+        }
       }
     });
-    return chatIds;
+    return activityByChatId;
   })();
   const selectedWorkspaceUnreadChatCount = selectedWorkspace
     ? (unreadCompletedChats[selectedWorkspace.id]?.length ?? 0)
@@ -9920,7 +9961,7 @@ function App() {
                       onOpenFileLink={openTranscriptFileLink}
                       onReviewEditedFile={reviewTranscriptEditedFile}
                       onUndoEditedFiles={undoTranscriptEditedFiles}
-                      fileUndoDisabled={selectedWorkspaceRunningChatIds.size > 0}
+                      fileUndoDisabled={selectedWorkspaceRunningChatActivity.size > 0}
                       editablePromptEntryId={editablePromptEntryId}
                       onEditPrompt={editTranscriptPrompt}
                       onScrollActivityChange={
@@ -10012,7 +10053,7 @@ function App() {
                 workspace={selectedWorkspace}
                 historyState={historyState}
                 selectedChatId={selectedHistoryChatId ?? selectedWorkspaceChatSession?.chatId ?? null}
-                runningChatIds={selectedWorkspaceRunningChatIds}
+                runningChatActivity={selectedWorkspaceRunningChatActivity}
                 onSelectChat={selectHistoryChatFromDrawer}
                 onOpenChatContextMenu={openChatHistoryContextMenuFromDrawer}
                 onTransitionEnd={handleHistoryDrawerTransitionEnd}
@@ -10763,7 +10804,7 @@ const WorkspaceHistoryDrawer = memo(function WorkspaceHistoryDrawer({
   workspace,
   historyState,
   selectedChatId,
-  runningChatIds,
+  runningChatActivity,
   onSelectChat,
   onOpenChatContextMenu,
   onTransitionEnd,
@@ -10772,7 +10813,7 @@ const WorkspaceHistoryDrawer = memo(function WorkspaceHistoryDrawer({
   workspace: Workspace | null;
   historyState: WorkspaceHistoryState;
   selectedChatId: number | null;
-  runningChatIds: ReadonlySet<number>;
+  runningChatActivity: ReadonlyMap<number, string>;
   onSelectChat: (chat: ChatListItem) => void;
   onOpenChatContextMenu: (
     chat: ChatListItem,
@@ -10781,6 +10822,10 @@ const WorkspaceHistoryDrawer = memo(function WorkspaceHistoryDrawer({
   onTransitionEnd: (event: ReactTransitionEvent<HTMLElement>) => void;
 }) {
   const open = phase === "opening" || phase === "open";
+  const orderedChats = sortHistoryChatsByActivity(
+    historyState.chats,
+    runningChatActivity,
+  );
   return (
     <aside
       className={`workspace-history-drawer ${phase}`}
@@ -10811,12 +10856,12 @@ const WorkspaceHistoryDrawer = memo(function WorkspaceHistoryDrawer({
 
       <div className="history-drawer-body">
         <div className="history-run-list" aria-label="Workspace chats">
-          {historyState.chats.map((chat) => (
+          {orderedChats.map((chat) => (
             <WorkspaceHistoryRow
               key={chat.id}
               chat={chat}
               selected={selectedChatId === chat.id}
-              running={runningChatIds.has(chat.id)}
+              running={runningChatActivity.has(chat.id)}
               onSelect={onSelectChat}
               onOpenContextMenu={onOpenChatContextMenu}
             />
