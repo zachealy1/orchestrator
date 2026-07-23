@@ -162,6 +162,7 @@ import {
   type CodexApprovalRequest,
 } from "./lib/codexApprovals";
 import {
+  ASK_FOR_APPROVAL_PERMISSION_PROFILE,
   accessModeWarning,
   accessSettings,
   persistCodexAccessPreference,
@@ -11589,8 +11590,12 @@ function assertRuntimeAccessMatches(
   }
   const activeProfile = runtime.activePermissionProfile?.id;
   if (activeProfile && activeProfile !== expected.permissionProfile) {
+    const compatibilityHint =
+      expected.permissionProfile === ASK_FOR_APPROVAL_PERMISSION_PROFILE
+        ? " Ask for approval requires a Codex version with custom permission-profile support. Update Codex and retry."
+        : "";
     throw new Error(
-      `Codex activated permission profile ${activeProfile}, but the application requested ${expected.permissionProfile}. The run was stopped to avoid a sandbox mismatch.`,
+      `Codex activated permission profile ${activeProfile}, but the application requested ${expected.permissionProfile}. The run was stopped to avoid a sandbox mismatch.${compatibilityHint}`,
     );
   }
 }

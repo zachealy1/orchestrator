@@ -2,6 +2,7 @@ import { act, fireEvent, render, screen, waitFor, within } from "@testing-librar
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import App from "./App";
+import { ASK_FOR_APPROVAL_PERMISSION_PROFILE } from "./lib/codexAccess";
 import { ORCHESTRATOR_CONTEXT_FILE_MIME } from "./types";
 
 const mocks = vi.hoisted(() => ({
@@ -3260,7 +3261,7 @@ describe("App Codex auth", () => {
           threadId: "external-thread-1",
           approvalPolicy: "untrusted",
           approvalsReviewer: "user",
-          permissions: ":workspace",
+          permissions: ASK_FOR_APPROVAL_PERMISSION_PROFILE,
         }),
       ),
     );
@@ -3271,7 +3272,7 @@ describe("App Codex auth", () => {
         cwd: workspace.path,
         approvalPolicy: "untrusted",
         approvalsReviewer: "user",
-        permissions: ":workspace",
+        permissions: ASK_FOR_APPROVAL_PERMISSION_PROFILE,
       }),
     );
     expect(
@@ -5816,14 +5817,14 @@ describe("App Codex auth", () => {
       expect.objectContaining({
         approvalPolicy: "untrusted",
         approvalsReviewer: "user",
-        permissions: ":workspace",
+        permissions: ASK_FOR_APPROVAL_PERMISSION_PROFILE,
       }),
     );
     expect(turnStart?.[2]).toEqual(
       expect.objectContaining({
         approvalPolicy: "untrusted",
         approvalsReviewer: "user",
-        permissions: ":workspace",
+        permissions: ASK_FOR_APPROVAL_PERMISSION_PROFILE,
       }),
     );
     expect(mocks.createRunMock).toHaveBeenCalledWith(
@@ -5923,6 +5924,7 @@ describe("App Codex auth", () => {
     expect(
       await screen.findByText(/stopped to avoid a sandbox mismatch/i),
     ).toBeInTheDocument();
+    expect(screen.getByText(/update codex and retry/i)).toBeInTheDocument();
     expect(
       mocks.codexRpcMock.mock.calls.some((call) => call[1] === "turn/start"),
     ).toBe(false);

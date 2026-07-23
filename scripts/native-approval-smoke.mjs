@@ -10,7 +10,10 @@ const workspace = await mkdtemp(join(tmpdir(), "orchestrator-native-approval-"))
 const approvedSentinel = join(workspace, "approved.txt");
 const rejectedSentinel = join(workspace, "rejected.txt");
 const canceledSentinel = join(workspace, "canceled.txt");
+const networkSentinel = join(workspace, "network.txt");
+const listenerSentinel = join(workspace, "listener.txt");
 const codexHome = join(workspace, ".codex-home");
+const permissionProfile = "orchestrator_workspace_network_v1";
 
 function responseEvent(id) {
   return { type: "response.created", response: { id } };
@@ -74,24 +77,7 @@ function toSse(events) {
     .join("");
 }
 
-const toolResponseBodies = [
-  toolCallResponse(
-    "response-approved-call",
-    "call-approved",
-    `/bin/sh -c 'printf approved > "${approvedSentinel}"'`,
-  ),
-  toolCallResponse(
-    "response-rejected-call",
-    "call-rejected",
-    `/bin/sh -c 'printf rejected > "${rejectedSentinel}"'`,
-  ),
-  toolCallResponse(
-    "response-canceled-call",
-    "call-canceled",
-    `/bin/sh -c 'printf canceled > "${canceledSentinel}"'`,
-  ),
-  toolCallResponse("response-safe-call", "call-safe", "pwd"),
-];
+let toolResponseBodies = [];
 const assistantResponseBodies = new Map([
   [
     "call-approved",
@@ -125,9 +111,30 @@ const assistantResponseBodies = new Map([
       "Safe command handled.",
     ),
   ],
+  [
+    "call-network",
+    assistantResponse(
+      "response-network-done",
+      "message-network",
+      "Approved network command handled.",
+    ),
+  ],
+  [
+    "call-listener",
+    assistantResponse(
+      "response-listener-done",
+      "message-listener",
+      "Approved TCP listener command handled.",
+    ),
+  ],
 ]);
 let toolResponseIndex = 0;
 const mockResponsesServer = createServer((request, response) => {
+  if (request.method === "GET" && request.url === "/network-smoke") {
+    response.writeHead(200, { "content-type": "text/plain" });
+    response.end("network-ok");
+    return;
+  }
   if (request.method !== "POST" || !request.url?.endsWith("/responses")) {
     response.writeHead(404).end();
     return;
@@ -178,6 +185,34 @@ const mockAddress = mockResponsesServer.address();
 if (!mockAddress || typeof mockAddress === "string") {
   throw new Error("Could not determine the local Responses endpoint");
 }
+toolResponseBodies = [
+  toolCallResponse(
+    "response-approved-call",
+    "call-approved",
+    `/bin/sh -c 'printf approved > "${approvedSentinel}"'`,
+  ),
+  toolCallResponse(
+    "response-rejected-call",
+    "call-rejected",
+    `/bin/sh -c 'printf rejected > "${rejectedSentinel}"'`,
+  ),
+  toolCallResponse(
+    "response-canceled-call",
+    "call-canceled",
+    `/bin/sh -c 'printf canceled > "${canceledSentinel}"'`,
+  ),
+  toolCallResponse(
+    "response-network-call",
+    "call-network",
+    `python3 -c 'import pathlib, urllib.request; pathlib.Path("${networkSentinel}").write_text(urllib.request.urlopen("http://127.0.0.1:${mockAddress.port}/network-smoke").read().decode())'`,
+  ),
+  toolCallResponse(
+    "response-listener-call",
+    "call-listener",
+    `python3 -c 'import pathlib, socket; sock = socket.socket(); sock.bind(("127.0.0.1", 0)); pathlib.Path("${listenerSentinel}").write_text(str(sock.getsockname()[1])); sock.close()'`,
+  ),
+  toolCallResponse("response-safe-call", "call-safe", "pwd"),
+];
 await mkdir(codexHome, { recursive: true });
 await writeFile(
   join(codexHome, "config.toml"),
@@ -185,7 +220,15 @@ await writeFile(
     'model = "mock-model"',
     'model_provider = "orchestrator_native_approval_test"',
     'approval_policy = "untrusted"',
-    'sandbox_mode = "read-only"',
+    `default_permissions = "${permissionProfile}"`,
+    "",
+    `[permissions.${permissionProfile}]`,
+    'description = "Workspace access with internet and TCP listeners for Orchestrator Ask for approval"',
+    'extends = ":workspace"',
+    "",
+    `[permissions.${permissionProfile}.network]`,
+    "enabled = true",
+    'mode = "full"',
     "",
     "[model_providers.orchestrator_native_approval_test]",
     'name = "Orchestrator native approval test"',
@@ -384,14 +427,14 @@ try {
     cwd: workspace,
     approvalPolicy: "untrusted",
     approvalsReviewer: "user",
-    permissions: ":read-only",
+    permissions: permissionProfile,
     serviceName: "orchestrator-native-approval-smoke",
     threadSource: "orchestrator",
   });
   if (started.approvalPolicy !== "untrusted") {
     throw new Error(`Unexpected active approval policy: ${started.approvalPolicy}`);
   }
-  if (started.activePermissionProfile?.id !== ":read-only") {
+  if (started.activePermissionProfile?.id !== permissionProfile) {
     throw new Error(
       `Unexpected active permission profile: ${JSON.stringify(started.activePermissionProfile)}`,
     );
@@ -403,7 +446,7 @@ try {
     cwd: workspace,
     approvalPolicy: "untrusted",
     approvalsReviewer: "user",
-    permissions: ":read-only",
+    permissions: permissionProfile,
     input: [
       {
         type: "text",
@@ -441,7 +484,7 @@ try {
     cwd: workspace,
     approvalPolicy: "untrusted",
     approvalsReviewer: "user",
-    permissions: ":read-only",
+    permissions: permissionProfile,
     input: [
       {
         type: "text",
@@ -483,7 +526,7 @@ try {
     cwd: workspace,
     approvalPolicy: "untrusted",
     approvalsReviewer: "user",
-    permissions: ":read-only",
+    permissions: permissionProfile,
     input: [
       {
         type: "text",
@@ -516,12 +559,100 @@ try {
     throw new Error("The canceled command ran after Codex received a cancel decision");
   }
 
+  const networkTurn = await request("turn/start", {
+    threadId,
+    cwd: workspace,
+    approvalPolicy: "untrusted",
+    approvalsReviewer: "user",
+    permissions: permissionProfile,
+    input: [
+      {
+        type: "text",
+        text: "Run the supplied HTTP connectivity command exactly once.",
+        text_elements: [],
+      },
+    ],
+  });
+  const networkApproval = await waitForApproval(
+    networkTurn.turn.id,
+    "the HTTP connectivity command approval",
+  );
+  await delay(250);
+  if (await exists(networkSentinel)) {
+    throw new Error("The network command ran before its approval was answered");
+  }
+  send({
+    id: networkApproval.id,
+    result: {
+      decision: selectOfferedCommandDecision(networkApproval, ["accept"]),
+    },
+  });
+  await waitForMessage(
+    (message) =>
+      message.method === "serverRequest/resolved" &&
+      message.params?.requestId === networkApproval.id,
+    "serverRequest/resolved after network approval",
+  );
+  await waitForMessage(
+    isTurnCompleted(networkTurn.turn.id),
+    "the approved network turn to complete",
+  );
+  if ((await readFile(networkSentinel, "utf8")) !== "network-ok") {
+    throw new Error("The approved command could not reach the test HTTP endpoint");
+  }
+
+  const listenerTurn = await request("turn/start", {
+    threadId,
+    cwd: workspace,
+    approvalPolicy: "untrusted",
+    approvalsReviewer: "user",
+    permissions: permissionProfile,
+    input: [
+      {
+        type: "text",
+        text: "Run the supplied TCP listener command exactly once.",
+        text_elements: [],
+      },
+    ],
+  });
+  const listenerApproval = await waitForApproval(
+    listenerTurn.turn.id,
+    "the TCP listener command approval",
+  );
+  await delay(250);
+  if (await exists(listenerSentinel)) {
+    throw new Error("The listener command ran before its approval was answered");
+  }
+  send({
+    id: listenerApproval.id,
+    result: {
+      decision: selectOfferedCommandDecision(listenerApproval, ["accept"]),
+    },
+  });
+  await waitForMessage(
+    (message) =>
+      message.method === "serverRequest/resolved" &&
+      message.params?.requestId === listenerApproval.id,
+    "serverRequest/resolved after listener approval",
+  );
+  await waitForMessage(
+    isTurnCompleted(listenerTurn.turn.id),
+    "the approved listener turn to complete",
+  );
+  const listenerPort = Number.parseInt(
+    await readFile(listenerSentinel, "utf8"),
+    10,
+  );
+  if (!Number.isInteger(listenerPort) || listenerPort <= 0) {
+    throw new Error("The approved command did not bind a TCP listener");
+  }
+
   const safeTurn = await request("turn/start", {
     threadId,
     cwd: workspace,
     approvalPolicy: "untrusted",
     approvalsReviewer: "user",
-    permissions: ":read-only",
+    permissions: permissionProfile,
     input: [
       {
         type: "text",
@@ -552,7 +683,8 @@ try {
       `Thread: ${threadId}`,
       `Approval method: ${approval.method}`,
       `Runtime-offered decisions exercised: ${acceptedDecision}, ${rejectedDecision}, ${canceledDecision}`,
-      "Verified: unanswered command stayed blocked; the accepted command ran; commands receiving negative choices did not run; a safe read-only command completed without prompting.",
+      `Approved listener port: ${listenerPort}`,
+      "Verified: unanswered commands stayed blocked; approved commands wrote workspace files, reached HTTP, and bound TCP; rejected and canceled commands did not run; a safe read-only command completed without prompting.",
     ].join("\n") + "\n",
   );
 } finally {

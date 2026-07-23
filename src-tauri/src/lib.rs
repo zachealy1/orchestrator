@@ -29,6 +29,7 @@ const MAX_CHAT_TITLE_PROMPT_CHARS: usize = 12_000;
 const MAX_WORKSPACE_UNDO_DIFF_BYTES: usize = 8 * 1024 * 1024;
 const DEFAULT_CODEX_PROFILE_ID: i64 = 0;
 const DEFAULT_CODEX_PROFILE_KEY: &str = "default";
+const ASK_FOR_APPROVAL_PERMISSION_PROFILE: &str = "orchestrator_workspace_network_v1";
 const IGNORED_EXPLORER_DIRECTORIES: &[&str] =
     &[".git", "node_modules", "target", "dist", "build", ".next"];
 
@@ -1763,10 +1764,7 @@ async fn connect_codex_profile(
 
         let codex_binary = resolve_codex_binary()?;
         let mut command = Command::new(&codex_binary);
-        command.args(["app-server", "--listen", "stdio://"]);
-        if isolated_file_store {
-            command.args(["-c", "cli_auth_credentials_store=\"file\""]);
-        }
+        command.args(codex_app_server_args(isolated_file_store));
         let mut child = command
             .env("CODEX_HOME", &codex_home)
             .stdin(Stdio::piped())
@@ -1843,6 +1841,33 @@ async fn connect_codex_profile(
         account_id,
         json!({ "method": "initialized", "params": {} }),
     )?;
+
+    let permission_profiles = match send_request(
+        state,
+        account_id,
+        "permissionProfile/list",
+        json!({ "limit": 100 }),
+    )
+    .await
+    {
+        Ok(response) => response,
+        Err(error) => {
+            let _ = stop_codex_account(account_id, app, state);
+            return Err(format!(
+                "Ask for approval requires a Codex version with custom permission-profile support. Update Codex and retry. Profile check failed: {error}"
+            ));
+        }
+    };
+    if !permission_profile_is_available(
+        &permission_profiles,
+        ASK_FOR_APPROVAL_PERMISSION_PROFILE,
+    ) {
+        let _ = stop_codex_account(account_id, app, state);
+        return Err(
+            "Ask for approval requires the Orchestrator workspace-and-network permission profile, but Codex did not make it available. Update Codex and retry."
+                .to_string(),
+        );
+    }
 
     let pid = state
         .processes
@@ -3948,6 +3973,46 @@ fn ensure_default_codex_home() -> Result<PathBuf, String> {
     Ok(codex_home)
 }
 
+fn codex_app_server_args(isolated_file_store: bool) -> Vec<String> {
+    let profile_key = format!("permissions.{ASK_FOR_APPROVAL_PERMISSION_PROFILE}");
+    let mut args = vec![
+        "app-server".to_string(),
+        "--listen".to_string(),
+        "stdio://".to_string(),
+        "-c".to_string(),
+        format!("default_permissions=\"{ASK_FOR_APPROVAL_PERMISSION_PROFILE}\""),
+        "-c".to_string(),
+        format!(
+            "{profile_key}.description=\"Workspace access with internet and TCP listeners for Orchestrator Ask for approval\""
+        ),
+        "-c".to_string(),
+        format!("{profile_key}.extends=\":workspace\""),
+        "-c".to_string(),
+        format!("{profile_key}.network.enabled=true"),
+        "-c".to_string(),
+        format!("{profile_key}.network.mode=\"full\""),
+    ];
+    if isolated_file_store {
+        args.extend([
+            "-c".to_string(),
+            "cli_auth_credentials_store=\"file\"".to_string(),
+        ]);
+    }
+    args
+}
+
+fn permission_profile_is_available(response: &Value, profile_id: &str) -> bool {
+    response
+        .get("data")
+        .and_then(Value::as_array)
+        .is_some_and(|profiles| {
+            profiles.iter().any(|profile| {
+                profile.get("id").and_then(Value::as_str) == Some(profile_id)
+                    && profile.get("allowed").and_then(Value::as_bool) == Some(true)
+            })
+        })
+}
+
 fn resolve_codex_binary() -> Result<PathBuf, String> {
     if let Some(configured) = env::var_os("ORCHESTRATOR_CODEX_BIN") {
         let path = PathBuf::from(configured);
@@ -4981,6 +5046,52 @@ mod tests {
         );
         assert_eq!(profile_key_for_account(0), "default");
         assert_eq!(profile_key_for_account(12), "account:12");
+    }
+
+    #[test]
+    fn app_server_profiles_enable_network_without_full_access() {
+        let shared_args = codex_app_server_args(false);
+        let isolated_args = codex_app_server_args(true);
+        let profile_key = format!("permissions.{ASK_FOR_APPROVAL_PERMISSION_PROFILE}");
+
+        assert_eq!(&shared_args[..3], ["app-server", "--listen", "stdio://"]);
+        assert!(shared_args.contains(&format!(
+            "default_permissions=\"{ASK_FOR_APPROVAL_PERMISSION_PROFILE}\""
+        )));
+        assert!(shared_args.contains(&format!("{profile_key}.extends=\":workspace\"")));
+        assert!(shared_args.contains(&format!("{profile_key}.network.enabled=true")));
+        assert!(shared_args.contains(&format!("{profile_key}.network.mode=\"full\"")));
+        assert!(!shared_args
+            .iter()
+            .any(|arg| arg.contains("danger-full-access")));
+        assert!(!shared_args
+            .iter()
+            .any(|arg| arg.contains("cli_auth_credentials_store")));
+        assert!(isolated_args
+            .iter()
+            .any(|arg| arg == "cli_auth_credentials_store=\"file\""));
+    }
+
+    #[test]
+    fn permission_profile_check_requires_the_allowed_custom_profile() {
+        let profile = ASK_FOR_APPROVAL_PERMISSION_PROFILE;
+        assert!(permission_profile_is_available(
+            &json!({
+                "data": [
+                    { "id": ":workspace", "allowed": true },
+                    { "id": profile, "allowed": true }
+                ]
+            }),
+            profile
+        ));
+        assert!(!permission_profile_is_available(
+            &json!({ "data": [{ "id": profile, "allowed": false }] }),
+            profile
+        ));
+        assert!(!permission_profile_is_available(
+            &json!({ "data": [{ "id": ":workspace", "allowed": true }] }),
+            profile
+        ));
     }
 
     #[test]

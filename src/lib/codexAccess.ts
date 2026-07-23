@@ -2,6 +2,8 @@ import type { CodexAccessMode } from "../types";
 
 export const CODEX_ACCESS_STORAGE_KEY = "orchestrator.codex-access.v2";
 export const LEGACY_CODEX_ACCESS_STORAGE_KEY = "orchestrator.codex-access.v1";
+export const ASK_FOR_APPROVAL_PERMISSION_PROFILE =
+  "orchestrator_workspace_network_v1";
 
 export type CodexAccessPreference = {
   accessMode: CodexAccessMode;
@@ -9,7 +11,9 @@ export type CodexAccessPreference = {
 
 export type CodexAccessSettings = CodexAccessPreference & {
   approvalPolicy: "untrusted" | "never";
-  permissionProfile: ":workspace" | ":danger-full-access";
+  permissionProfile:
+    | typeof ASK_FOR_APPROVAL_PERMISSION_PROFILE
+    | ":danger-full-access";
   sandbox: "workspace-write" | "danger-full-access";
 };
 
@@ -27,7 +31,7 @@ export function accessSettings(
     permissionProfile:
       preference.accessMode === "full-access"
         ? ":danger-full-access"
-        : ":workspace",
+        : ASK_FOR_APPROVAL_PERMISSION_PROFILE,
     sandbox:
       preference.accessMode === "full-access"
         ? "danger-full-access"

@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  ASK_FOR_APPROVAL_PERMISSION_PROFILE,
   CODEX_ACCESS_STORAGE_KEY,
   DEFAULT_CODEX_ACCESS,
   LEGACY_CODEX_ACCESS_STORAGE_KEY,
@@ -14,7 +15,7 @@ describe("Codex access settings", () => {
     expect(accessSettings({ accessMode: "ask-for-approval" })).toEqual({
       accessMode: "ask-for-approval",
       approvalPolicy: "untrusted",
-      permissionProfile: ":workspace",
+      permissionProfile: ASK_FOR_APPROVAL_PERMISSION_PROFILE,
       sandbox: "workspace-write",
     });
   });
