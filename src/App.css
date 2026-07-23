@@ -3962,6 +3962,143 @@ select:disabled {
   box-shadow: 0 18px 56px rgb(var(--shadow-rgb) / 0.16);
 }
 
+.plan-progress-indicator {
+  position: relative;
+  display: flex;
+  width: 100%;
+  min-width: 0;
+  min-height: 32px;
+  align-items: center;
+  gap: 8px;
+  border: 0;
+  border-bottom: 1px solid var(--color-divider);
+  border-radius: calc(var(--radius) - 1px) calc(var(--radius) - 1px) 0 0;
+  background: var(--color-surface-soft);
+  box-shadow: none;
+  color: var(--color-text-secondary);
+  padding: 6px 10px;
+  pointer-events: none;
+}
+
+.composer-panel.has-plan-progress .composer-input-zone,
+.composer-panel.has-plan-progress .prompt-field {
+  border-radius: 0;
+}
+
+.plan-progress-indicator > svg {
+  flex: 0 0 auto;
+  color: var(--color-primary);
+}
+
+.plan-progress-indicator strong {
+  flex: 0 0 auto;
+  color: var(--color-text);
+  font-size: 0.78rem;
+  font-weight: 700;
+}
+
+.plan-progress-label {
+  min-width: 0;
+  flex: 1 1 auto;
+  overflow: hidden;
+  color: var(--color-text-secondary);
+  font-size: 0.76rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.plan-progress-state {
+  flex: 0 0 auto;
+  color: var(--color-text-secondary);
+  font-size: 0.72rem;
+  font-weight: 650;
+  white-space: nowrap;
+}
+
+.plan-progress-track {
+  position: relative;
+  display: block;
+  width: 72px;
+  height: 3px;
+  flex: 0 0 auto;
+  border-radius: 999px;
+  background: var(--color-surface-muted);
+}
+
+.plan-progress-fill {
+  position: absolute;
+  inset: 0 auto 0 0;
+  border-radius: inherit;
+  background: var(--color-primary);
+  transition: width 180ms ease;
+}
+
+.plan-progress-pulse {
+  position: absolute;
+  top: 50%;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--color-primary);
+  animation: plan-progress-pulse 1.15s ease-in-out infinite;
+  transform: translate(-50%, -50%);
+}
+
+.plan-progress-spinner {
+  animation: file-preview-spinner-rotate 0.9s linear infinite;
+}
+
+.plan-progress-indicator[data-state="paused"] > svg,
+.plan-progress-indicator[data-state="paused"] .plan-progress-state {
+  color: var(--color-icon-muted);
+}
+
+.plan-progress-indicator[data-state="waiting-approval"] > svg,
+.plan-progress-indicator[data-state="waiting-approval"] .plan-progress-state,
+.plan-progress-indicator[data-state="blocked"] > svg,
+.plan-progress-indicator[data-state="blocked"] .plan-progress-state {
+  color: var(--color-accent);
+}
+
+.plan-progress-indicator[data-state="failed"] > svg,
+.plan-progress-indicator[data-state="failed"] .plan-progress-state {
+  color: var(--color-error);
+}
+
+@keyframes plan-progress-pulse {
+  0%,
+  100% {
+    opacity: 0.5;
+    transform: translate(-50%, -50%) scale(0.78);
+  }
+
+  50% {
+    opacity: 1;
+    transform: translate(-50%, -50%) scale(1.12);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .plan-progress-fill {
+    transition: none;
+  }
+
+  .plan-progress-pulse,
+  .plan-progress-spinner {
+    animation: none;
+  }
+}
+
+@media (max-width: 720px) {
+  .plan-progress-label {
+    display: none;
+  }
+
+  .plan-progress-track {
+    width: 48px;
+  }
+}
+
 .composer-input-zone {
   position: relative;
   min-width: 0;

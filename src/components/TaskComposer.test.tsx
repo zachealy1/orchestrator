@@ -239,6 +239,47 @@ function createPromptContextClipboardData(payload?: unknown) {
 }
 
 describe("TaskComposer", () => {
+  it("shows plan progress above the input without replacing focused text", () => {
+    const initialProgress = {
+      currentStep: 1,
+      totalSteps: 3,
+      completedSteps: 0,
+      progressPercent: 0,
+      stepLabel: "Inspect the repository",
+      state: "in-progress" as const,
+    };
+    const { props, rerender } = renderComposer({
+      prompt: "Keep this draft",
+      planProgress: initialProgress,
+    });
+    const prompt = screen.getByLabelText("Prompt");
+    prompt.focus();
+
+    const indicator = screen.getByRole("status");
+    expect(
+      indicator.compareDocumentPosition(prompt) & Node.DOCUMENT_POSITION_FOLLOWING,
+    ).not.toBe(0);
+    expect(prompt).toHaveFocus();
+    expect(prompt).toHaveValue("Keep this draft");
+
+    rerender(
+      <TaskComposer
+        {...props}
+        planProgress={{
+          ...initialProgress,
+          currentStep: 2,
+          completedSteps: 1,
+          progressPercent: 33,
+          stepLabel: "Implement the change",
+        }}
+      />,
+    );
+
+    expect(screen.getByRole("status")).toHaveTextContent("Step 2 / 3");
+    expect(prompt).toHaveFocus();
+    expect(prompt).toHaveValue("Keep this draft");
+  });
+
   it("updates the prompt and exposes composer actions", async () => {
     const onPromptChange = vi.fn();
     const { user } = renderComposer({ onPromptChange });

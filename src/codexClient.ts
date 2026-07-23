@@ -224,6 +224,20 @@ export function generateWorkspaceCommitMessage(input: {
   );
 }
 
+export function generateChatTitle(input: {
+  workspacePath: string;
+  accountId: number;
+  model: string | null;
+  initialPrompt: string;
+}) {
+  return invoke<{ title: string }>("generate_chat_title", {
+    workspacePath: input.workspacePath,
+    accountId: input.accountId,
+    model: input.model,
+    initialPrompt: input.initialPrompt,
+  });
+}
+
 export function pushWorkspaceBranch(workspacePath: string) {
   return invoke<WorkspaceGitActionResult>("push_workspace_branch", {
     workspacePath,

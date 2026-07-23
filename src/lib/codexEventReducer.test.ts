@@ -16,6 +16,43 @@ import type { RunViewState } from "./codexEventReducer";
 import { parseApprovalRequest } from "./codexApprovals";
 
 describe("codexEventReducer", () => {
+  it("tracks structured multi-step progress from native plan updates", () => {
+    let state = applyCodexMessage(
+      { ...emptyRunView, status: "running" },
+      {
+        method: "turn/plan/updated",
+        params: {
+          plan: [
+            { step: "Inspect the repository", status: "completed" },
+            { step: "Implement the change", status: "in_progress" },
+            { step: "Run tests", status: "pending" },
+          ],
+        },
+      },
+    );
+
+    expect(state.planProgress?.steps).toEqual([
+      { step: "Inspect the repository", status: "completed" },
+      { step: "Implement the change", status: "in_progress" },
+      { step: "Run tests", status: "pending" },
+    ]);
+
+    state = applyCodexMessage(state, {
+      method: "turn/plan/updated",
+      params: {
+        plan: [
+          { step: "Inspect the repository", status: "completed" },
+          { step: "Implement the change", status: "completed" },
+          { step: "Run tests", status: "in_progress" },
+        ],
+      },
+    });
+    expect(state.planProgress?.steps[2]).toEqual({
+      step: "Run tests",
+      status: "in_progress",
+    });
+  });
+
   it("keeps Plan deltas as preview text and gates only the completed plan item", () => {
     let state: RunViewState = {
       ...emptyRunView,

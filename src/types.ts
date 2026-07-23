@@ -375,6 +375,10 @@ export type ChatRecord = {
   last_synced_at: string | null;
   collaboration_mode?: "plan" | "default" | null;
   saved_default_collaboration_mode_json?: string | null;
+  title_generation_state?: "pending" | "generating" | "complete" | "failed";
+  title_fallback?: string | null;
+  title_manually_edited?: number;
+  title_generation_started_at?: string | null;
   created_at: string;
   updated_at: string;
   deleted_at: string | null;

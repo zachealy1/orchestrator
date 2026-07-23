@@ -31,6 +31,8 @@ import type {
   KeyboardEvent,
 } from "react";
 import { ComposerSelect } from "./ComposerSelect";
+import { PlanProgressIndicator } from "./PlanProgressIndicator";
+import type { PlanProgressIndicatorModel } from "../lib/planProgress";
 import type {
   CodexAccountProfile,
   CodexAccessMode,
@@ -68,6 +70,7 @@ type Props = {
   selectedReasoningEffort: string | null;
   goalMode: boolean;
   planMode: boolean;
+  planProgress?: PlanProgressIndicatorModel | null;
   accessMode: CodexAccessMode;
   contextFiles: ComposerContextFile[];
   selectedSkills: SelectedComposerSkill[];
@@ -152,6 +155,7 @@ export const TaskComposer = memo(function TaskComposer({
   selectedReasoningEffort,
   goalMode,
   planMode,
+  planProgress = null,
   accessMode,
   contextFiles,
   selectedSkills,
@@ -723,12 +727,17 @@ export const TaskComposer = memo(function TaskComposer({
   return (
     <section
       ref={setComposerPanelRef}
-      className={`composer-panel ${dropTargetActive ? "drop-target-active" : ""}`}
+      className={`composer-panel ${dropTargetActive ? "drop-target-active" : ""} ${
+        planProgress ? "has-plan-progress" : ""
+      }`}
       aria-label="Task composer"
       onDragOver={handleDragOver}
       onDragLeave={handleDragLeave}
       onDrop={handleDrop}
     >
+      {planProgress ? (
+        <PlanProgressIndicator progress={planProgress} />
+      ) : null}
       <div className="composer-input-zone">
         <div className={`prompt-shell ${attachmentContextFiles.length > 0 ? "has-context-files" : ""}`}>
           {attachmentContextFiles.length > 0 ? (

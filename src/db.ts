@@ -210,18 +210,26 @@ export async function createChat(input: {
   accountId: number | null;
   title: string;
   status: string;
+  generateTitle?: boolean;
 }) {
   const db = await getDatabase();
   const profileKey = input.accountId === null ? null : `account:${input.accountId}`;
+  const fallbackTitle = input.title.trim() || "Untitled conversation";
+  const title = input.generateTitle ? "Generating title..." : fallbackTitle;
   const result = await db.execute(
-    `INSERT INTO chats (workspace_id, account_id, title, status, origin, profile_key)
-     VALUES ($1, $2, $3, $4, 'orchestrator', $5)`,
+    `INSERT INTO chats (
+       workspace_id, account_id, title, status, origin, profile_key,
+       title_generation_state, title_fallback
+     )
+     VALUES ($1, $2, $3, $4, 'orchestrator', $5, $6, $7)`,
     [
       input.workspaceId,
       input.accountId,
-      input.title.trim() || "Untitled chat",
+      title,
       input.status,
       profileKey,
+      input.generateTitle ? "pending" : "complete",
+      input.generateTitle ? fallbackTitle : null,
     ],
   );
 
@@ -229,6 +237,8 @@ export async function createChat(input: {
     `SELECT id, workspace_id, account_id, title, codex_thread_id, status,
       origin, profile_key, external_thread_id, source_kind, sync_status,
       external_cwd, external_created_at, external_updated_at, last_synced_at,
+      title_generation_state, title_fallback, title_manually_edited,
+      title_generation_started_at,
       created_at, updated_at, deleted_at
      FROM chats WHERE id = $1`,
     [result.lastInsertId],
@@ -239,6 +249,92 @@ export async function createChat(input: {
   }
 
   return chat;
+}
+
+export async function recoverInterruptedChatTitleGenerations() {
+  const db = await getDatabase();
+  await db.execute(
+    `UPDATE chats
+     SET title = COALESCE(NULLIF(TRIM(title_fallback), ''), title),
+         title_generation_state = 'failed',
+         title_generation_started_at = NULL
+     WHERE origin = 'orchestrator'
+       AND deleted_at IS NULL
+       AND title_manually_edited = 0
+       AND title_generation_state IN ('pending', 'generating')`,
+  );
+}
+
+export async function claimChatTitleGeneration(chatId: number) {
+  const db = await getDatabase();
+  const result = await db.execute(
+    `UPDATE chats
+     SET title_generation_state = 'generating',
+         title_generation_started_at = CURRENT_TIMESTAMP
+     WHERE id = $1
+       AND deleted_at IS NULL
+       AND origin = 'orchestrator'
+       AND title_manually_edited = 0
+       AND title_generation_state = 'pending'`,
+    [chatId],
+  );
+  return result.rowsAffected === 1;
+}
+
+export async function completeChatTitleGeneration(
+  chatId: number,
+  title: string,
+) {
+  const trimmedTitle = title.trim();
+  if (!trimmedTitle) return false;
+
+  const db = await getDatabase();
+  const result = await db.execute(
+    `UPDATE chats
+     SET title = $1,
+         title_generation_state = 'complete',
+         title_generation_started_at = NULL
+     WHERE id = $2
+       AND deleted_at IS NULL
+       AND title_manually_edited = 0
+       AND title_generation_state = 'generating'`,
+    [trimmedTitle, chatId],
+  );
+  return result.rowsAffected === 1;
+}
+
+export async function failChatTitleGeneration(chatId: number) {
+  const db = await getDatabase();
+  const result = await db.execute(
+    `UPDATE chats
+     SET title = COALESCE(NULLIF(TRIM(title_fallback), ''), title),
+         title_generation_state = 'failed',
+         title_generation_started_at = NULL
+     WHERE id = $1
+       AND deleted_at IS NULL
+       AND title_manually_edited = 0
+       AND title_generation_state IN ('pending', 'generating')`,
+    [chatId],
+  );
+  return result.rowsAffected === 1;
+}
+
+export async function renameChat(chatId: number, title: string) {
+  const trimmedTitle = title.trim();
+  if (!trimmedTitle) {
+    throw new Error("Chat title cannot be empty");
+  }
+  const db = await getDatabase();
+  await db.execute(
+    `UPDATE chats
+     SET title = $1,
+         title_manually_edited = 1,
+         title_generation_state = 'complete',
+         title_generation_started_at = NULL,
+         updated_at = CURRENT_TIMESTAMP
+     WHERE id = $2 AND deleted_at IS NULL`,
+    [trimmedTitle, chatId],
+  );
 }
 
 export type ExternalCodexChatInput = {
@@ -718,6 +814,8 @@ export async function listWorkspaceChats(workspaceId: number) {
       chats.source_kind, chats.sync_status, chats.external_cwd,
       chats.external_created_at, chats.external_updated_at, chats.last_synced_at,
       chats.collaboration_mode, chats.saved_default_collaboration_mode_json,
+      chats.title_generation_state, chats.title_fallback,
+      chats.title_manually_edited, chats.title_generation_started_at,
       latest_run.account_label,
       latest_run.account_email,
       COALESCE(
@@ -770,6 +868,8 @@ export async function getChatWithRuns(chatId: number): Promise<ChatWithRuns> {
       chats.source_kind, chats.sync_status, chats.external_cwd,
       chats.external_created_at, chats.external_updated_at, chats.last_synced_at,
       chats.collaboration_mode, chats.saved_default_collaboration_mode_json,
+      chats.title_generation_state, chats.title_fallback,
+      chats.title_manually_edited, chats.title_generation_started_at,
       latest_run.account_label,
       latest_run.account_email,
       COALESCE(

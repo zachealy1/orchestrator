@@ -10,6 +10,10 @@ import {
 } from "./nativePlanMode";
 import { parseProposedPlanEnvelope } from "./proposedPlan";
 import {
+  parseRunPlanProgress,
+  type RunPlanProgress,
+} from "./planProgress";
+import {
   parseThreadTokenUsage,
   type TokenUsage,
 } from "./contextUsage";
@@ -79,6 +83,7 @@ export type RunViewState = {
   agentMessagesById: Record<string, AgentMessageState>;
   finalMessageItemId: string | null;
   latestPlan: string;
+  planProgress: RunPlanProgress | null;
   latestDiff: string;
   finalMessage: string;
   error: string | null;
@@ -107,6 +112,7 @@ export const emptyRunView: RunViewState = {
   agentMessagesById: {},
   finalMessageItemId: null,
   latestPlan: "",
+  planProgress: null,
   latestDiff: "",
   finalMessage: "",
   error: null,
@@ -219,6 +225,7 @@ export function applyCodexMessage(
       return {
         ...appendStreamEvent(state, "activity", "Updated plan"),
         latestPlan,
+        planProgress: parseRunPlanProgress(params.plan),
       };
     }
     case "item/plan/delta": {

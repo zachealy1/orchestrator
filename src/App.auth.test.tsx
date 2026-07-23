@@ -11,6 +11,7 @@ const mocks = vi.hoisted(() => ({
   connectCodexMock: vi.fn(),
   connectDefaultCodexProfileMock: vi.fn(),
   commitWorkspaceChangesMock: vi.fn(),
+  generateChatTitleMock: vi.fn(),
   generateWorkspaceCommitMessageMock: vi.fn(),
   pushWorkspaceBranchMock: vi.fn(),
   deleteCodexProfileMock: vi.fn(),
@@ -53,6 +54,10 @@ const mocks = vi.hoisted(() => ({
   listDuplicateProfilesPendingCleanupMock: vi.fn(),
   completeDuplicateProfileCleanupMock: vi.fn(),
   createChatMock: vi.fn(),
+  claimChatTitleGenerationMock: vi.fn(),
+  completeChatTitleGenerationMock: vi.fn(),
+  failChatTitleGenerationMock: vi.fn(),
+  recoverInterruptedChatTitleGenerationsMock: vi.fn(),
   updateChatMock: vi.fn(),
   listWorkspaceChatsMock: vi.fn(),
   getChatWithRunsMock: vi.fn(),
@@ -168,6 +173,7 @@ vi.mock("./codexClient", () => ({
   connectCodex: mocks.connectCodexMock,
   checkoutGitBranch: mocks.checkoutGitBranchMock,
   deleteCodexProfile: mocks.deleteCodexProfileMock,
+  generateChatTitle: mocks.generateChatTitleMock,
   generateWorkspaceCommitMessage: mocks.generateWorkspaceCommitMessageMock,
   listGitBranches: mocks.listGitBranchesMock,
   listWorkspaceGitStatus: mocks.listWorkspaceGitStatusMock,
@@ -210,7 +216,9 @@ vi.mock("./db", () => ({
   appendRunEvent: mocks.appendRunEventMock,
   appendRunEvents: mocks.appendRunEventsMock,
   buildLocalChatHistoryIndex: mocks.buildLocalChatHistoryIndexMock,
+  claimChatTitleGeneration: mocks.claimChatTitleGenerationMock,
   completeDuplicateProfileCleanup: mocks.completeDuplicateProfileCleanupMock,
+  completeChatTitleGeneration: mocks.completeChatTitleGenerationMock,
   createChat: mocks.createChatMock,
   createCodexAccount: mocks.createCodexAccountMock,
   createRun: mocks.createRunMock,
@@ -227,6 +235,8 @@ vi.mock("./db", () => ({
   recordTokenUsage: mocks.recordTokenUsageMock,
   readExternalChatHistoryIndex: mocks.readExternalChatHistoryIndexMock,
   readExternalTranscriptSnapshot: mocks.readExternalTranscriptSnapshotMock,
+  recoverInterruptedChatTitleGenerations:
+    mocks.recoverInterruptedChatTitleGenerationsMock,
   renameCodexAccount: mocks.renameCodexAccountMock,
   softDeleteWorkspace: mocks.softDeleteWorkspaceMock,
   savePreflightReport: mocks.savePreflightReportMock,
@@ -237,6 +247,7 @@ vi.mock("./db", () => ({
   softDeleteChat: mocks.softDeleteChatMock,
   softDeleteCodexAccount: mocks.softDeleteCodexAccountMock,
   softDeleteRun: mocks.softDeleteRunMock,
+  failChatTitleGeneration: mocks.failChatTitleGenerationMock,
   updateCodexAccount: mocks.updateCodexAccountMock,
   updateChat: mocks.updateChatMock,
   updateRun: mocks.updateRunMock,
@@ -448,6 +459,9 @@ function prepareDefaults() {
   mocks.generateWorkspaceCommitMessageMock.mockRejectedValue(
     new Error("Codex unavailable"),
   );
+  mocks.generateChatTitleMock.mockResolvedValue({
+    title: "Fix Authentication Flow",
+  });
   mocks.pushWorkspaceBranchMock.mockResolvedValue({
     message: "Pushed main",
     branch: "main",
@@ -582,6 +596,10 @@ function prepareDefaults() {
   mocks.listCodexAccountsMock.mockResolvedValue([]);
   mocks.listDuplicateProfilesPendingCleanupMock.mockResolvedValue([]);
   mocks.completeDuplicateProfileCleanupMock.mockResolvedValue(undefined);
+  mocks.recoverInterruptedChatTitleGenerationsMock.mockResolvedValue(undefined);
+  mocks.claimChatTitleGenerationMock.mockResolvedValue(true);
+  mocks.completeChatTitleGenerationMock.mockResolvedValue(true);
+  mocks.failChatTitleGenerationMock.mockResolvedValue(true);
   mocks.createChatMock.mockResolvedValue({
     id: 401,
     workspace_id: workspace.id,
@@ -5613,6 +5631,100 @@ describe("App Codex auth", () => {
     expect(screen.queryByLabelText("Codex run console")).not.toBeInTheDocument();
   });
 
+  it("generates a concise chat title without delaying the initial turn", async () => {
+    prepareSignedInRun();
+    let resolveTitle!: (value: { title: string }) => void;
+    mocks.generateChatTitleMock.mockReturnValueOnce(
+      new Promise((resolve) => {
+        resolveTitle = resolve;
+      }),
+    );
+    const pendingChat = {
+      ...workspaceChatFixture({
+        id: 401,
+        title: "Generating title...",
+        status: "running",
+      }),
+      title_generation_state: "generating" as const,
+    };
+    mocks.createChatMock.mockResolvedValueOnce(pendingChat);
+    mocks.listWorkspaceChatsMock.mockResolvedValue([pendingChat]);
+
+    const { user } = await renderApp();
+    await startMockRun(
+      user,
+      "Investigate and fix OAuth callback failures in the desktop app",
+    );
+
+    expect(mocks.createChatMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        title: "Investigate and fix OAuth callback failures in",
+        generateTitle: true,
+      }),
+    );
+    await waitFor(() =>
+      expect(mocks.generateChatTitleMock).toHaveBeenCalledWith({
+        workspacePath: workspace.path,
+        accountId: 7,
+        model: null,
+        initialPrompt:
+          "Investigate and fix OAuth callback failures in the desktop app",
+      }),
+    );
+    expect(mocks.codexRpcMock).toHaveBeenCalledWith(
+      7,
+      "turn/start",
+      expect.any(Object),
+    );
+
+    const banner = screen.getByRole("region", { name: "Selected folder" });
+    await user.click(
+      within(banner).getByRole("button", { name: /open chat history/i }),
+    );
+    const drawer = await screen.findByRole("complementary", {
+      name: "Workspace chat history",
+    });
+    expect(within(drawer).getByText("Generating title...")).toBeInTheDocument();
+
+    await act(async () => {
+      resolveTitle({ title: "**Repair OAuth Callback Handling.**" });
+    });
+    await waitFor(() =>
+      expect(mocks.completeChatTitleGenerationMock).toHaveBeenCalledWith(
+        401,
+        "Repair OAuth Callback Handling",
+      ),
+    );
+    expect(
+      within(drawer).getByText("Repair OAuth Callback Handling"),
+    ).toBeInTheDocument();
+  });
+
+  it("recovers interrupted title generation once during startup", async () => {
+    await renderApp();
+
+    expect(
+      mocks.recoverInterruptedChatTitleGenerationsMock,
+    ).toHaveBeenCalledTimes(1);
+    expect(mocks.generateChatTitleMock).not.toHaveBeenCalled();
+  });
+
+  it("falls back once when AI title generation fails", async () => {
+    prepareSignedInRun();
+    mocks.generateChatTitleMock.mockRejectedValueOnce(
+      new Error("Title generation unavailable"),
+    );
+
+    const { user } = await renderApp();
+    await startMockRun(user, "Repair the desktop OAuth callback flow");
+
+    await waitFor(() =>
+      expect(mocks.failChatTitleGenerationMock).toHaveBeenCalledWith(401),
+    );
+    expect(mocks.generateChatTitleMock).toHaveBeenCalledTimes(1);
+    expect(mocks.completeChatTitleGenerationMock).not.toHaveBeenCalled();
+  });
+
   it("uses Ask for approval for new threads and turns by default", async () => {
     prepareSignedInRun();
 
@@ -6162,6 +6274,66 @@ describe("App Codex auth", () => {
     expect(promptInput).toHaveValue("Prepare the follow-up while Codex streams");
     expect(promptInput.selectionStart).toBe(11);
     expect(promptInput.selectionEnd).toBe(11);
+  });
+
+  it("shows native multi-step progress without disturbing composer focus", async () => {
+    prepareSignedInRun();
+
+    const { user } = await renderApp();
+    await startMockRun(user, "Implement the planned workspace changes");
+    const promptInput = screen.getByLabelText("Prompt") as HTMLTextAreaElement;
+    await user.type(promptInput, "Keep this follow-up draft");
+    promptInput.setSelectionRange(9, 9);
+
+    await emitCodexNotification({
+      method: "turn/plan/updated",
+      params: {
+        threadId: "thread-1",
+        turnId: "turn-1",
+        plan: [
+          { step: "Inspect the repository", status: "completed" },
+          { step: "Implement the change", status: "in_progress" },
+          { step: "Run verification", status: "pending" },
+        ],
+      },
+    });
+
+    const composer = screen.getByLabelText("Task composer");
+    const progress = await within(composer).findByRole("status");
+    expect(progress).toHaveTextContent("Step 2 / 3");
+    expect(progress).toHaveTextContent("Implement the change");
+    expect(promptInput).toHaveFocus();
+    expect(promptInput.selectionStart).toBe(9);
+
+    await emitCodexNotification({
+      method: "thread/status/changed",
+      params: {
+        threadId: "thread-1",
+        status: {
+          type: "active",
+          activeFlags: ["waitingOnApproval"],
+        },
+      },
+    });
+    expect(within(composer).getByRole("status")).toHaveTextContent(
+      "Waiting for approval",
+    );
+
+    await emitCodexNotification({
+      method: "turn/plan/updated",
+      params: {
+        threadId: "thread-1",
+        turnId: "turn-1",
+        plan: [
+          { step: "Inspect the repository", status: "completed" },
+          { step: "Implement the change", status: "completed" },
+          { step: "Run verification", status: "completed" },
+        ],
+      },
+    });
+    expect(within(composer).queryByRole("status")).not.toBeInTheDocument();
+    expect(promptInput).toHaveFocus();
+    expect(promptInput).toHaveValue("Keep this follow-up draft");
   });
 
   it("opens edited files in the diff drawer and undoes their exact saved patch", async () => {

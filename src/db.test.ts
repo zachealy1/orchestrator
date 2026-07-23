@@ -14,8 +14,14 @@ vi.mock("@tauri-apps/plugin-sql", () => ({
 
 import {
   appendRunEvents,
+  claimChatTitleGeneration,
+  completeChatTitleGeneration,
+  createChat,
+  failChatTitleGeneration,
   listWorkspaceChats,
   recordTokenUsage,
+  recoverInterruptedChatTitleGenerations,
+  renameChat,
   upsertExternalCodexChats,
   type RunEventInput,
 } from "./db";
@@ -29,6 +35,96 @@ beforeEach(() => {
   mocks.load.mockResolvedValue({
     execute: mocks.execute,
     select: mocks.select,
+  });
+});
+
+describe("chat title generation persistence", () => {
+  it("creates new chats with a durable temporary title and fallback", async () => {
+    mocks.execute.mockResolvedValueOnce({ lastInsertId: 42, rowsAffected: 1 });
+    mocks.select.mockResolvedValueOnce([
+      {
+        id: 42,
+        workspace_id: 3,
+        account_id: 7,
+        title: "Generating title...",
+        codex_thread_id: null,
+        status: "starting",
+        origin: "orchestrator",
+        profile_key: "account:7",
+        external_thread_id: null,
+        source_kind: null,
+        sync_status: null,
+        external_cwd: null,
+        external_created_at: null,
+        external_updated_at: null,
+        last_synced_at: null,
+        title_generation_state: "pending",
+        title_fallback: "Fix OAuth callback failures",
+        title_manually_edited: 0,
+        title_generation_started_at: null,
+        created_at: "2026-07-22T10:00:00Z",
+        updated_at: "2026-07-22T10:00:00Z",
+        deleted_at: null,
+      },
+    ]);
+
+    await createChat({
+      workspaceId: 3,
+      accountId: 7,
+      title: "Fix OAuth callback failures",
+      status: "starting",
+      generateTitle: true,
+    });
+
+    const [query, values] = mocks.execute.mock.calls[0] ?? [];
+    expect(query).toContain("title_generation_state, title_fallback");
+    expect(values).toEqual([
+      3,
+      7,
+      "Generating title...",
+      "starting",
+      "account:7",
+      "pending",
+      "Fix OAuth callback failures",
+    ]);
+  });
+
+  it("claims and completes a title generation only through guarded states", async () => {
+    expect(await claimChatTitleGeneration(42)).toBe(true);
+    expect(await completeChatTitleGeneration(42, "Repair OAuth Callback Flow")).toBe(
+      true,
+    );
+
+    expect(mocks.execute.mock.calls[0]?.[0]).toContain(
+      "title_generation_state = 'pending'",
+    );
+    expect(mocks.execute.mock.calls[1]?.[0]).toContain(
+      "title_manually_edited = 0",
+    );
+    expect(mocks.execute.mock.calls[1]?.[1]).toEqual([
+      "Repair OAuth Callback Flow",
+      42,
+    ]);
+  });
+
+  it("falls back interrupted generations without issuing another request", async () => {
+    await recoverInterruptedChatTitleGenerations();
+    await failChatTitleGeneration(42);
+
+    expect(mocks.execute.mock.calls[0]?.[0]).toContain(
+      "title_generation_state IN ('pending', 'generating')",
+    );
+    expect(mocks.execute.mock.calls[0]?.[0]).toContain("title_fallback");
+    expect(mocks.execute.mock.calls[1]?.[0]).toContain("title_fallback");
+  });
+
+  it("marks explicit title edits so background generation cannot overwrite them", async () => {
+    await renameChat(42, "Manual OAuth Investigation");
+
+    const [query, values] = mocks.execute.mock.calls[0] ?? [];
+    expect(query).toContain("title_manually_edited = 1");
+    expect(query).toContain("title_generation_state = 'complete'");
+    expect(values).toEqual(["Manual OAuth Investigation", 42]);
   });
 });
 

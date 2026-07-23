@@ -55,7 +55,9 @@ import {
   appendRunEvent,
   appendRunEvents,
   activateExternalTranscriptSnapshot,
+  claimChatTitleGeneration,
   completeDuplicateProfileCleanup,
+  completeChatTitleGeneration,
   createChat,
   createCodexAccount,
   createRun,
@@ -68,12 +70,14 @@ import {
   listWorkspaces,
   recordTokenUsage,
   readExternalTranscriptSnapshot,
+  recoverInterruptedChatTitleGenerations,
   renameCodexAccount,
   savePreflightReport,
   softDeleteChat,
   softDeleteRun,
   softDeleteWorkspace,
   softDeleteCodexAccount,
+  failChatTitleGeneration,
   updateChat,
   updateCodexAccount,
   updateRun,
@@ -93,6 +97,7 @@ import {
   checkoutGitBranch,
   deleteCodexProfile,
   generateWorkspaceCommitMessage,
+  generateChatTitle,
   listGitBranches,
   listCodexModels,
   listCodexSkills,
@@ -120,6 +125,10 @@ import {
   undoWorkspaceGitDiff,
   openAgentNotificationSettings,
 } from "./codexClient";
+import {
+  fallbackChatTitle,
+  sanitizeGeneratedChatTitle,
+} from "./lib/chatTitles";
 import { AnalyticsSummary } from "./components/AnalyticsSummary";
 import { ComposerSelect } from "./components/ComposerSelect";
 import { FilePreviewDrawer } from "./components/FilePreviewDrawer";
@@ -171,6 +180,7 @@ import {
   type RunIntent,
   type UserInputResponse,
 } from "./lib/nativePlanMode";
+import { derivePlanProgressIndicator } from "./lib/planProgress";
 import { parseProposedPlanEnvelope } from "./lib/proposedPlan";
 import {
   getContextUsageDisplay,
@@ -512,7 +522,6 @@ type RunSetupSnapshot = {
   forceFreshThread?: boolean;
   previousChatContext?: string | null;
   supersededRunIds?: number[];
-  updateChatTitle?: boolean;
   replacementClientId?: string | null;
   restoreEntryOnSetupFailure?: TaskChatEntry | null;
   restorePromptOnSetupFailure?: boolean;
@@ -536,6 +545,15 @@ type HistoryChatLoadState = {
   workspaceId: number;
   title: string;
   error: string | null;
+};
+
+type ChatTitleGenerationRequest = {
+  chatId: number;
+  workspacePath: string;
+  accountId: number;
+  model: string | null;
+  initialPrompt: string;
+  fallbackTitle: string;
 };
 
 type HistoryOpenPhase = "loading" | "hydrating" | "complete";
@@ -1177,6 +1195,7 @@ function App() {
     chats: [],
     error: null,
   });
+  const chatTitleGenerationsInFlightRef = useRef(new Set<number>());
   const handledNotificationActivationKeysRef = useRef(new Set<string>());
   const pendingNotificationDeliveryKeysRef = useRef(new Set<string>());
   const bootstrapCompleteRef = useRef(false);
@@ -1849,6 +1868,11 @@ function App() {
     selectedActiveRunControl &&
       (selectedActiveRunControl.runView.status === "connecting" ||
         selectedActiveRunControl.runView.status === "running"),
+  );
+  const selectedPlanProgress = useMemo(
+    () =>
+      derivePlanProgressIndicator(selectedActiveRunControl?.runView ?? null),
+    [selectedActiveRunControl?.runView],
   );
   const selectedWorkspaceRunningChatIds = (() => {
     const chatIds = new Set<number>();
@@ -2947,6 +2971,7 @@ function App() {
   ]);
 
   async function bootstrap() {
+    await recoverInterruptedChatTitleGenerations();
     const duplicateProfileIds = await listDuplicateProfilesPendingCleanup();
     await Promise.allSettled(
       duplicateProfileIds.map(async (accountId) => {
@@ -3077,6 +3102,66 @@ function App() {
     }
   }
 
+  function updateHistoryChatTitle(
+    chatId: number,
+    title: string,
+    generationState: "complete" | "failed",
+  ) {
+    setHistoryState((current) => {
+      const index = current.chats.findIndex((chat) => chat.id === chatId);
+      if (index < 0) return current;
+      const existing = current.chats[index];
+      if (
+        existing?.title === title &&
+        existing.title_generation_state === generationState
+      ) {
+        return current;
+      }
+      const chats = current.chats.slice();
+      chats[index] = {
+        ...existing,
+        title,
+        title_generation_state: generationState,
+        title_generation_started_at: null,
+      };
+      return { ...current, chats };
+    });
+  }
+
+  function startChatTitleGeneration(request: ChatTitleGenerationRequest) {
+    if (chatTitleGenerationsInFlightRef.current.has(request.chatId)) return;
+    chatTitleGenerationsInFlightRef.current.add(request.chatId);
+
+    void (async () => {
+      try {
+        if (!(await claimChatTitleGeneration(request.chatId))) return;
+        const result = await generateChatTitle({
+          workspacePath: request.workspacePath,
+          accountId: request.accountId,
+          model: request.model,
+          initialPrompt: request.initialPrompt,
+        });
+        const title = sanitizeGeneratedChatTitle(result.title);
+        if (!title) {
+          throw new Error("Codex returned an invalid conversation title");
+        }
+        if (await completeChatTitleGeneration(request.chatId, title)) {
+          updateHistoryChatTitle(request.chatId, title, "complete");
+        }
+      } catch {
+        if (await failChatTitleGeneration(request.chatId).catch(() => false)) {
+          updateHistoryChatTitle(
+            request.chatId,
+            request.fallbackTitle,
+            "failed",
+          );
+        }
+      } finally {
+        chatTitleGenerationsInFlightRef.current.delete(request.chatId);
+      }
+    })();
+  }
+
   async function loadWorkspaceRunHistory(
     workspaceOrId: Workspace | number,
     options: LoadWorkspaceHistoryOptions = {},
@@ -3104,7 +3189,27 @@ function App() {
         await syncExternalCodexChats(workspace);
       }
       const chats = await listWorkspaceChats(workspaceId);
-      setHistoryState({ status: "loaded", chats, error: null });
+      setHistoryState((current) => {
+        const currentById = new Map(current.chats.map((chat) => [chat.id, chat]));
+        const mergedChats = chats.map((chat) => {
+          const existing = currentById.get(chat.id);
+          const incomingIsPending =
+            chat.title_generation_state === "pending" ||
+            chat.title_generation_state === "generating";
+          const existingIsSettled =
+            existing?.title_generation_state === "complete" ||
+            existing?.title_generation_state === "failed";
+          return incomingIsPending && existingIsSettled
+            ? {
+                ...chat,
+                title: existing.title,
+                title_generation_state: existing.title_generation_state,
+                title_generation_started_at: null,
+              }
+            : chat;
+        });
+        return { status: "loaded", chats: mergedChats, error: null };
+      });
     } catch (error) {
       if (showLoading) {
         setHistoryState({
@@ -5909,6 +6014,7 @@ function App() {
     let threadId = snapshot.forceFreshThread ? null : snapshot.threadId;
     let taskId: number | null = null;
     let runId: number | null = null;
+    let pendingChatTitleGeneration: ChatTitleGenerationRequest | null = null;
 
     setStatusMessage("Preparing run...");
     preflightRef.current = null;
@@ -5967,19 +6073,28 @@ function App() {
         if (snapshot.chatOrigin !== "orchestrator") {
           throw new Error("External Codex chats must be opened from history before continuing.");
         }
+        const initialTitlePrompt = restorePromptInlineFileReferencesForComposer(
+          snapshot.promptText,
+          snapshot.contextFiles.filter((file) => file.source === "search"),
+        );
+        const fallbackTitle = fallbackChatTitle(initialTitlePrompt);
         const chat = await createChat({
           workspaceId: snapshot.workspace.id,
           accountId: snapshot.accountId,
-          title: createChatTitle(
-            restorePromptInlineFileReferencesForComposer(
-              snapshot.promptText,
-              snapshot.contextFiles.filter((file) => file.source === "search"),
-            ),
-          ),
+          title: fallbackTitle,
           status: "starting",
+          generateTitle: true,
         });
         chatId = chat.id;
         threadId = chat.codex_thread_id;
+        pendingChatTitleGeneration = {
+          chatId: chat.id,
+          workspacePath: snapshot.workspace.path,
+          accountId: snapshot.accountId,
+          model: snapshot.model,
+          initialPrompt: initialTitlePrompt,
+          fallbackTitle,
+        };
         runControl.chatId = chat.id;
         if (
           selectedWorkspaceRef.current?.id === snapshot.workspace.id &&
@@ -6103,18 +6218,6 @@ function App() {
         await updateChat(activeChatId, {
           codexThreadId: nextThreadId,
           status: "running",
-          ...(snapshot.updateChatTitle
-            ? {
-                title: createChatTitle(
-                  restorePromptInlineFileReferencesForComposer(
-                    snapshot.promptText,
-                    snapshot.contextFiles.filter(
-                      (file) => file.source === "search",
-                    ),
-                  ),
-                ),
-              }
-            : {}),
         });
         if (activeRunControlRef.current === runControl) {
           setWorkspaceChatSession(snapshot.workspace.id, {
@@ -6356,6 +6459,11 @@ function App() {
       ensureRunControlActive(runControl);
       await updateTaskStatus(task.id, "running");
       ensureRunControlActive(runControl);
+      if (pendingChatTitleGeneration) {
+        const titleRequest = pendingChatTitleGeneration;
+        pendingChatTitleGeneration = null;
+        startChatTitleGeneration(titleRequest);
+      }
       await refreshWorkspaceData(snapshot.workspace.id);
       ensureRunControlActive(runControl);
       if (selectedWorkspaceRef.current?.id === snapshot.workspace.id) {
@@ -6370,6 +6478,17 @@ function App() {
       );
       preflightRef.current = null;
     } catch (error) {
+      if (pendingChatTitleGeneration) {
+        const titleRequest = pendingChatTitleGeneration;
+        pendingChatTitleGeneration = null;
+        if (await failChatTitleGeneration(titleRequest.chatId).catch(() => false)) {
+          updateHistoryChatTitle(
+            titleRequest.chatId,
+            titleRequest.fallbackTitle,
+            "failed",
+          );
+        }
+      }
       if (error instanceof RunStoppedError || runControl.stopped) {
         await persistInterruptedRun(
           runControl,
@@ -6638,7 +6757,6 @@ function App() {
       forceFreshThread: true,
       previousChatContext: buildPreviousChatContext(previousEntries),
       supersededRunIds: entry.runId !== null ? [entry.runId] : [],
-      updateChatTitle: editedTurnIndex === 1,
       replacementClientId: entry.clientId,
       restoreEntryOnSetupFailure: entry,
       restorePromptOnSetupFailure: false,
@@ -9723,6 +9841,7 @@ function App() {
                   selectedReasoningEffort={selectedReasoningEffort}
                   goalMode={goalMode}
                   planMode={planMode}
+                  planProgress={selectedPlanProgress}
                   accessMode={accessMode}
                   contextFiles={contextFiles}
                   selectedSkills={selectedSkills}
@@ -10564,36 +10683,66 @@ const WorkspaceHistoryDrawer = memo(function WorkspaceHistoryDrawer({
       <div className="history-drawer-body">
         <div className="history-run-list" aria-label="Workspace chats">
           {historyState.chats.map((chat) => (
-            <button
+            <WorkspaceHistoryRow
               key={chat.id}
-              className={`history-run-item ${selectedChatId === chat.id ? "selected" : ""}`}
-              type="button"
-              aria-pressed={selectedChatId === chat.id}
-              title={chat.title}
-              onClick={() => onSelectChat(chat)}
-              onContextMenu={(event) => onOpenChatContextMenu(chat, event)}
-              onKeyDown={(event) => {
-                if (event.key === "ContextMenu" || (event.key === "F10" && event.shiftKey)) {
-                  onOpenChatContextMenu(chat, event);
-                }
-              }}
-            >
-              <span className="history-run-title-row">
-                <strong>{chat.title}</strong>
-                {runningChatIds.has(chat.id) ? (
-                  <Loader2
-                    className="history-run-spinner spin"
-                    size={15}
-                    aria-label="Agent running"
-                  />
-                ) : null}
-              </span>
-              <span>{formatHistoryChatMeta(chat)}</span>
-            </button>
+              chat={chat}
+              selected={selectedChatId === chat.id}
+              running={runningChatIds.has(chat.id)}
+              onSelect={onSelectChat}
+              onOpenContextMenu={onOpenChatContextMenu}
+            />
           ))}
         </div>
       </div>
     </aside>
+  );
+});
+
+const WorkspaceHistoryRow = memo(function WorkspaceHistoryRow({
+  chat,
+  selected,
+  running,
+  onSelect,
+  onOpenContextMenu,
+}: {
+  chat: ChatListItem;
+  selected: boolean;
+  running: boolean;
+  onSelect: (chat: ChatListItem) => void;
+  onOpenContextMenu: (
+    chat: ChatListItem,
+    event: ReactMouseEvent<HTMLElement> | ReactKeyboardEvent<HTMLElement>,
+  ) => void;
+}) {
+  return (
+    <button
+      className={`history-run-item ${selected ? "selected" : ""}`}
+      type="button"
+      aria-pressed={selected}
+      title={chat.title}
+      onClick={() => onSelect(chat)}
+      onContextMenu={(event) => onOpenContextMenu(chat, event)}
+      onKeyDown={(event) => {
+        if (
+          event.key === "ContextMenu" ||
+          (event.key === "F10" && event.shiftKey)
+        ) {
+          onOpenContextMenu(chat, event);
+        }
+      }}
+    >
+      <span className="history-run-title-row">
+        <strong>{chat.title}</strong>
+        {running ? (
+          <Loader2
+            className="history-run-spinner spin"
+            size={15}
+            aria-label="Agent running"
+          />
+        ) : null}
+      </span>
+      <span>{formatHistoryChatMeta(chat)}</span>
+    </button>
   );
 });
 
@@ -11130,14 +11279,6 @@ function contextFileFromPath(path: string): ComposerContextFile {
     source: "picker",
     status: "ready",
   };
-}
-
-function createChatTitle(prompt: string) {
-  const normalized = prompt.replace(/\s+/g, " ").trim();
-  if (!normalized) {
-    return "Untitled chat";
-  }
-  return normalized.length > 120 ? `${normalized.slice(0, 117)}...` : normalized;
 }
 
 function buildCommitIntentFromChatEntry(latestEntry: TaskChatEntry | null) {
