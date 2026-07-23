@@ -14,7 +14,6 @@ import {
   ChevronRight,
   ChevronUp,
   Clock,
-  Eye,
   FileDiff,
   FileText,
   Loader2,
@@ -1666,14 +1665,6 @@ const AssistantRunOutput = memo(function AssistantRunOutput({
           Waiting for app-server output...
         </p>
       )}
-      <EditedFilesSummary
-        entry={entry}
-        expanded={editedFilesExpanded}
-        undoDisabled={fileUndoDisabled}
-        onDisclosureChange={onPlanDisclosureChange}
-        onReviewFile={onReviewEditedFile}
-        onUndo={onUndoEditedFiles}
-      />
       <NativePlanCard
         entry={entry}
         onImplementPlan={onImplementPlan}
@@ -1842,9 +1833,9 @@ const EditedFilesSummary = memo(function EditedFilesSummary({
           <FileDiff size={20} />
         </span>
         <span className="edited-files-summary-heading">
-          <strong>
+          <span className="edited-files-summary-title">
             Edited {files.length} {files.length === 1 ? "file" : "files"}
-          </strong>
+          </span>
           <span className="edited-files-summary-totals">
             <span className="activity-additions">+{totals.additions}</span>
             <span className="activity-deletions">-{totals.deletions}</span>
@@ -1852,9 +1843,13 @@ const EditedFilesSummary = memo(function EditedFilesSummary({
         </span>
         <span className="edited-files-summary-actions">
           <button
-            className="small secondary edited-files-action"
+            className="native-plan-icon-action edited-files-action"
             type="button"
+            aria-label={
+              undoState === "success" ? "File changes undone" : "Undo file changes"
+            }
             title={undoTitle}
+            data-tooltip={undoTitle}
             disabled={undoUnavailable || actionsBusy}
             onClick={() => {
               setActionError(null);
@@ -1866,20 +1861,6 @@ const EditedFilesSummary = memo(function EditedFilesSummary({
             ) : (
               <RotateCcw size={15} aria-hidden="true" />
             )}
-            {undoState === "success" ? "Undone" : "Undo"}
-          </button>
-          <button
-            className="small secondary edited-files-action"
-            type="button"
-            disabled={actionsBusy || changesReverted || !onReviewFile}
-            onClick={() => void reviewFile(files[0])}
-          >
-            {reviewing ? (
-              <Loader2 className="spin" size={15} aria-hidden="true" />
-            ) : (
-              <Eye size={15} aria-hidden="true" />
-            )}
-            Review
           </button>
         </span>
       </header>

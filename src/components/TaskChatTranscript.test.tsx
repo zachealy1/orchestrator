@@ -1303,7 +1303,7 @@ describe("TaskChatTranscript", () => {
     expect(within(screen.getByLabelText("Run summary")).getByText("Done.")).toBeInTheDocument();
   });
 
-  it("renders one consolidated edited-files summary alongside command activity", () => {
+  it("keeps the edited-files summary hidden while command activity is running", () => {
     const { container } = render(
       <TaskChatTranscript
         entries={[
@@ -1390,20 +1390,14 @@ describe("TaskChatTranscript", () => {
       />,
     );
 
-    const editedSummary = screen.getByLabelText("Edited 2 files");
     const activityGroups = screen.getAllByLabelText("Run activity groups");
     const commandGroup = activityGroups[0];
     const commandDetails = commandGroup.querySelector("details.command-runs");
 
-    expect(within(editedSummary).getByText("Edited 2 files")).toBeInTheDocument();
+    expect(screen.queryByLabelText("Edited 2 files")).not.toBeInTheDocument();
     expect(within(commandGroup).getByText("Ran 2 commands")).toBeInTheDocument();
     expect(commandDetails).toBeInstanceOf(HTMLDetailsElement);
     expect((commandDetails as HTMLDetailsElement).open).toBe(false);
-    expect(within(editedSummary).getByText("src/App.css")).toBeInTheDocument();
-    const totals = editedSummary.querySelector(".edited-files-summary-totals");
-    expect(totals).not.toBeNull();
-    expect(within(totals as HTMLElement).getByText("+14")).toBeInTheDocument();
-    expect(within(totals as HTMLElement).getByText("-2")).toBeInTheDocument();
     expect(
       within(commandGroup).getByText(
         "npm test -- --run src/components/TaskChatTranscript.test.tsx",
@@ -1420,14 +1414,8 @@ describe("TaskChatTranscript", () => {
       secondMessage.compareDocumentPosition(commandGroup) &
         Node.DOCUMENT_POSITION_FOLLOWING,
     ).toBeTruthy();
-    expect(
-      commandGroup.compareDocumentPosition(editedSummary) &
-        Node.DOCUMENT_POSITION_FOLLOWING,
-    ).toBeTruthy();
     expect(screen.queryByText("npm test output")).not.toBeInTheDocument();
     expect(container.querySelector("details.edited-files")).toBeNull();
-    expect(container.querySelector(".activity-additions")).not.toBeNull();
-    expect(container.querySelector(".activity-deletions")).not.toBeNull();
   });
 
   it("reviews files, expands long lists, and confirms an exact edit undo", async () => {
@@ -1489,8 +1477,12 @@ describe("TaskChatTranscript", () => {
     );
 
     const summary = screen.getByLabelText("Edited 4 files");
+    const summaryTitle = within(summary).getByText("Edited 4 files");
+    expect(summaryTitle.tagName).toBe("SPAN");
+    expect(summaryTitle.closest("strong")).toBeNull();
     expect(within(summary).getByText("+76")).toBeInTheDocument();
     expect(within(summary).getByText("-6")).toBeInTheDocument();
+    expect(within(summary).queryByRole("button", { name: "Review" })).toBeNull();
     expect(within(summary).queryByText("src/App.css")).toBeNull();
     expect(
       within(summary).getByRole("button", {
@@ -1508,16 +1500,25 @@ describe("TaskChatTranscript", () => {
       "true",
     );
 
-    fireEvent.click(within(summary).getByRole("button", { name: "Review" }));
+    fireEvent.click(
+      within(summary).getByRole("button", { name: "Review src/App.tsx" }),
+    );
     await waitFor(() => expect(onReviewEditedFile).toHaveBeenCalledWith(entry, files[0]));
 
-    fireEvent.click(within(summary).getByRole("button", { name: "Undo" }));
+    const undoButton = within(summary).getByRole("button", {
+      name: "Undo file changes",
+    });
+    expect(undoButton).toHaveTextContent("");
+    expect(undoButton).toHaveAttribute("data-tooltip", "Undo these file changes");
+    fireEvent.click(undoButton);
     expect(within(summary).getByText("Undo the changes represented by this summary?")).toBeInTheDocument();
     fireEvent.click(within(summary).getByRole("button", { name: "Undo changes" }));
 
     await waitFor(() => expect(onUndoEditedFiles).toHaveBeenCalledTimes(1));
     expect(within(summary).getByText("Changes undone.")).toBeInTheDocument();
-    expect(within(summary).getByRole("button", { name: "Undone" })).toBeDisabled();
+    expect(
+      within(summary).getByRole("button", { name: "File changes undone" }),
+    ).toBeDisabled();
   });
 
   it("keeps an edit summary actionable when its guarded undo fails", async () => {
@@ -1557,13 +1558,17 @@ describe("TaskChatTranscript", () => {
     );
 
     const summary = screen.getByLabelText("Edited 1 file");
-    fireEvent.click(within(summary).getByRole("button", { name: "Undo" }));
+    fireEvent.click(
+      within(summary).getByRole("button", { name: "Undo file changes" }),
+    );
     fireEvent.click(within(summary).getByRole("button", { name: "Undo changes" }));
 
     expect(
       await within(summary).findByText("These files changed after the saved edit"),
     ).toHaveAttribute("role", "alert");
     expect(onUndoEditedFiles).toHaveBeenCalledTimes(1);
-    expect(within(summary).getByRole("button", { name: "Undo" })).toBeEnabled();
+    expect(
+      within(summary).getByRole("button", { name: "Undo file changes" }),
+    ).toBeEnabled();
   });
 });

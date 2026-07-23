@@ -72,6 +72,9 @@ describe("native plan CSS", () => {
     const tooltip = rule(
       "button.native-plan-icon-action[data-tooltip]::after",
     );
+    const editedFilesTooltip = rule(
+      "button.edited-files-action[data-tooltip]::after",
+    );
 
     expect(revisionFocus).toContain("border-color: var(--color-divider)");
     expect(revisionFocus).toContain("box-shadow: none");
@@ -81,5 +84,7 @@ describe("native plan CSS", () => {
     expect(icon).toContain("border: 0");
     expect(tooltip).toContain("border: 0");
     expect(tooltip).toContain("content: attr(data-tooltip)");
+    expect(editedFilesTooltip).toContain("top: calc(100% + 8px)");
+    expect(editedFilesTooltip).toContain("bottom: auto");
   });
 });

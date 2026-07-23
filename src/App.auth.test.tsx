@@ -6360,8 +6360,17 @@ describe("App Codex auth", () => {
       params: { diff },
     });
 
+    expect(screen.queryByLabelText("Edited 1 file")).not.toBeInTheDocument();
+
+    await emitCodexNotification({
+      method: "turn/completed",
+      params: { turn: { status: "completed", durationMs: 1234 } },
+    });
+
     const summary = await screen.findByLabelText("Edited 1 file");
-    await user.click(within(summary).getByRole("button", { name: "Review" }));
+    await user.click(
+      within(summary).getByRole("button", { name: "Review README.md" }),
+    );
 
     await waitFor(() =>
       expect(mocks.readWorkspaceGitDiffMock).toHaveBeenCalledWith(
@@ -6376,18 +6385,18 @@ describe("App Codex auth", () => {
     ).toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "Close file preview" }));
 
-    await emitCodexNotification({
-      method: "turn/completed",
-      params: { turn: { status: "completed", durationMs: 1234 } },
-    });
     await waitFor(() =>
       expect(within(screen.getByLabelText("Edited 1 file")).getByRole("button", {
-        name: "Undo",
+        name: "Undo file changes",
       })).toBeEnabled(),
     );
 
     const completedSummary = screen.getByLabelText("Edited 1 file");
-    await user.click(within(completedSummary).getByRole("button", { name: "Undo" }));
+    await user.click(
+      within(completedSummary).getByRole("button", {
+        name: "Undo file changes",
+      }),
+    );
     await user.click(
       within(completedSummary).getByRole("button", { name: "Undo changes" }),
     );

@@ -2695,7 +2695,7 @@ summary.run-live-metrics::-webkit-details-marker {
 .edited-files-summary {
   display: grid;
   width: 100%;
-  max-width: 980px;
+  max-width: 100%;
   min-width: 0;
   overflow: hidden;
   border: 1px solid var(--color-divider);
@@ -2730,11 +2730,11 @@ summary.run-live-metrics::-webkit-details-marker {
   gap: 2px;
 }
 
-.edited-files-summary-heading strong {
+.edited-files-summary-title {
   overflow: hidden;
   color: var(--color-text);
   font-size: 0.98rem;
-  font-weight: 600;
+  font-weight: 400;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -2755,17 +2755,19 @@ summary.run-live-metrics::-webkit-details-marker {
 }
 
 button.edited-files-action {
-  display: inline-flex;
-  gap: 6px;
-  align-items: center;
-  justify-content: center;
-  box-shadow: none;
+  color: var(--color-text-secondary);
 }
 
 button.edited-files-action:hover:not(:disabled),
 button.edited-files-action:focus-visible:not(:disabled) {
+  background: var(--panel-strong);
   box-shadow: none;
   transform: none;
+}
+
+button.edited-files-action[data-tooltip]::after {
+  top: calc(100% + 8px);
+  bottom: auto;
 }
 
 .edited-files-undo-confirmation {
@@ -2811,6 +2813,7 @@ button.edited-files-path {
   border-radius: 4px;
   background: transparent;
   color: var(--color-text-secondary);
+  font-weight: 400;
   box-shadow: none;
   padding: 2px 0;
   text-align: left;
