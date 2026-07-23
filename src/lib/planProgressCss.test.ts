@@ -16,13 +16,8 @@ function rule(selector: string) {
 }
 
 describe("plan progress CSS", () => {
-  it("keeps the active progress marker at a constant size", () => {
-    const marker = rule(".plan-progress-marker");
-
-    expect(marker).toContain("width: 7px");
-    expect(marker).toContain("height: 7px");
-    expect(marker).not.toContain("animation:");
-    expect(marker).not.toContain("scale(");
+  it("uses only the filled track without an active progress marker", () => {
+    expect(css).not.toContain(".plan-progress-marker");
     expect(css).not.toContain("@keyframes plan-progress-pulse");
   });
 

@@ -4032,17 +4032,6 @@ select:disabled {
   transition: width 180ms ease;
 }
 
-.plan-progress-marker {
-  position: absolute;
-  top: 50%;
-  width: 7px;
-  height: 7px;
-  flex: 0 0 7px;
-  border-radius: 50%;
-  background: var(--color-primary);
-  transform: translate(-50%, -50%);
-}
-
 .plan-progress-spinner {
   animation: file-preview-spinner-rotate 0.9s linear infinite;
 }

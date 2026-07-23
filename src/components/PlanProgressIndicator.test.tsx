@@ -30,7 +30,7 @@ describe("PlanProgressIndicator", () => {
     expect(indicator).toHaveTextContent("Run focused tests");
     expect(indicator).toHaveTextContent("In progress");
     expect(indicatorShell).toHaveAttribute("data-state", "in-progress");
-    expect(container.querySelector(".plan-progress-marker")).toBeInTheDocument();
+    expect(container.querySelector(".plan-progress-marker")).toBeNull();
     expect(container.querySelector(".plan-progress-pulse")).toBeNull();
     expect(container.querySelector(".plan-progress-fill")).toHaveStyle({
       width: "25%",

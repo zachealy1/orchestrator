@@ -66,12 +66,6 @@ export const PlanProgressIndicator = memo(function PlanProgressIndicator({
             className="plan-progress-fill"
             style={{ width: `${progress.progressPercent}%` }}
           />
-          {progress.state === "in-progress" ? (
-            <span
-              className="plan-progress-marker"
-              style={{ left: `${progress.progressPercent}%` }}
-            />
-          ) : null}
         </span>
       </div>
       <div
