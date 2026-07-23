@@ -1023,7 +1023,15 @@ describe("App Codex auth", () => {
     expect(
       within(dialog).getByText(/The folder on disk will not be deleted/i),
     ).toBeInTheDocument();
-    await user.click(within(dialog).getByRole("button", { name: "Cancel" }));
+    const keepWorkspaceButton = within(dialog).getByRole("button", {
+      name: "Keep workspace",
+    });
+    expect(keepWorkspaceButton).toHaveTextContent("");
+    expect(keepWorkspaceButton).toHaveAttribute(
+      "data-tooltip",
+      "Keep workspace",
+    );
+    await user.click(keepWorkspaceButton);
 
     expect(mocks.softDeleteWorkspaceMock).not.toHaveBeenCalled();
     expect(
@@ -1053,12 +1061,15 @@ describe("App Codex auth", () => {
     await user.click(
       screen.getByRole("menuitem", { name: "Remove from Orchestrator" }),
     );
-    await user.click(
-      within(screen.getByRole("dialog", { name: "Remove workspace?" })).getByRole(
-        "button",
-        { name: "Remove" },
-      ),
+    const removeWorkspaceButton = within(
+      screen.getByRole("dialog", { name: "Remove workspace?" }),
+    ).getByRole("button", { name: "Remove workspace" });
+    expect(removeWorkspaceButton).toHaveTextContent("");
+    expect(removeWorkspaceButton).toHaveAttribute(
+      "data-tooltip",
+      "Remove workspace",
     );
+    await user.click(removeWorkspaceButton);
 
     await waitFor(() => expect(mocks.softDeleteWorkspaceMock).toHaveBeenCalledWith(1));
     expect(

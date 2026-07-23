@@ -9626,18 +9626,22 @@ function App() {
             </div>
             <div className="confirmation-actions">
               <button
-                className="secondary"
+                className="native-plan-icon-action"
                 type="button"
+                aria-label="Keep workspace"
+                data-tooltip="Keep workspace"
                 onClick={() => setWorkspaceDeleteCandidate(null)}
               >
-                Cancel
+                <X size={15} aria-hidden="true" />
               </button>
               <button
-                className="danger"
+                className="native-plan-icon-action cancel"
                 type="button"
+                aria-label="Remove workspace"
+                data-tooltip="Remove workspace"
                 onClick={() => void confirmWorkspaceDelete()}
               >
-                Remove
+                <Trash2 size={15} aria-hidden="true" />
               </button>
             </div>
           </section>

@@ -1988,21 +1988,29 @@ function UndoEditedFilesDialog({
         </div>
         <div className="confirmation-actions">
           <button
-            className="secondary"
+            className="native-plan-icon-action"
             ref={cancelButtonRef}
             type="button"
+            aria-label="Keep changes"
+            data-tooltip="Keep changes"
             disabled={busy}
             onClick={onCancel}
           >
-            Keep changes
+            <X size={15} aria-hidden="true" />
           </button>
           <button
-            className="danger"
+            className="native-plan-icon-action cancel"
             type="button"
+            aria-label={busy ? "Undoing changes" : "Undo changes"}
+            data-tooltip={busy ? "Undoing changes" : "Undo changes"}
             disabled={busy}
             onClick={onConfirm}
           >
-            {busy ? "Undoing..." : "Undo changes"}
+            {busy ? (
+              <Loader2 className="spin" size={15} aria-hidden="true" />
+            ) : (
+              <RotateCcw size={15} aria-hidden="true" />
+            )}
           </button>
         </div>
       </section>

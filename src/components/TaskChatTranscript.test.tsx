@@ -1525,9 +1525,17 @@ describe("TaskChatTranscript", () => {
         "Undo the changes represented by this summary?",
       ),
     ).toBeInTheDocument();
-    fireEvent.click(
-      within(undoDialog).getByRole("button", { name: "Keep changes" }),
-    );
+    const keepChangesButton = within(undoDialog).getByRole("button", {
+      name: "Keep changes",
+    });
+    expect(keepChangesButton).toHaveTextContent("");
+    expect(keepChangesButton).toHaveAttribute("data-tooltip", "Keep changes");
+    const confirmUndoButton = within(undoDialog).getByRole("button", {
+      name: "Undo changes",
+    });
+    expect(confirmUndoButton).toHaveTextContent("");
+    expect(confirmUndoButton).toHaveAttribute("data-tooltip", "Undo changes");
+    fireEvent.click(keepChangesButton);
     expect(
       screen.queryByRole("dialog", { name: "Undo changes?" }),
     ).not.toBeInTheDocument();
