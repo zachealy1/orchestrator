@@ -35,6 +35,12 @@ describe("plan progress", () => {
       progressPercent: 25,
       stepLabel: "Plan step 2",
       state: "in-progress",
+      steps: [
+        { step: "Plan step 1", status: "completed" },
+        { step: "Plan step 2", status: "in_progress" },
+        { step: "Plan step 3", status: "pending" },
+        { step: "Plan step 4", status: "pending" },
+      ],
     });
   });
 

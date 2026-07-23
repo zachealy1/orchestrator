@@ -3967,12 +3967,9 @@ select:disabled {
 
 .plan-progress-indicator {
   position: relative;
-  display: flex;
   width: 100%;
   min-width: 0;
   min-height: 32px;
-  align-items: center;
-  gap: 8px;
   border: 0;
   border-bottom: 1px solid var(--color-divider);
   border-radius: calc(var(--radius) - 1px) calc(var(--radius) - 1px) 0 0;
@@ -3980,7 +3977,19 @@ select:disabled {
   box-shadow: none;
   color: var(--color-text-secondary);
   padding: 6px 10px;
-  pointer-events: none;
+}
+
+.plan-progress-indicator:focus-visible {
+  outline: 2px solid var(--color-primary);
+  outline-offset: -2px;
+}
+
+.plan-progress-content {
+  display: flex;
+  width: 100%;
+  min-width: 0;
+  align-items: center;
+  gap: 8px;
 }
 
 .composer-panel.has-plan-progress .composer-input-zone,
@@ -3988,7 +3997,7 @@ select:disabled {
   border-radius: 0;
 }
 
-.plan-progress-indicator > svg {
+.plan-progress-content > svg {
   flex: 0 0 auto;
   color: var(--color-primary);
 }
@@ -4036,14 +4045,14 @@ select:disabled {
   transition: width 180ms ease;
 }
 
-.plan-progress-pulse {
+.plan-progress-marker {
   position: absolute;
   top: 50%;
   width: 7px;
   height: 7px;
+  flex: 0 0 7px;
   border-radius: 50%;
   background: var(--color-primary);
-  animation: plan-progress-pulse 1.15s ease-in-out infinite;
   transform: translate(-50%, -50%);
 }
 
@@ -4051,34 +4060,90 @@ select:disabled {
   animation: file-preview-spinner-rotate 0.9s linear infinite;
 }
 
-.plan-progress-indicator[data-state="paused"] > svg,
+.plan-progress-tooltip {
+  position: absolute;
+  left: 10px;
+  bottom: calc(100% + 8px);
+  z-index: 40;
+  width: max-content;
+  max-width: min(420px, calc(100vw - 32px));
+  border: 0;
+  border-radius: 7px;
+  background: var(--color-component-background);
+  box-shadow: 0 12px 32px rgb(var(--shadow-rgb) / 0.24);
+  color: var(--color-text);
+  opacity: 0;
+  padding: 10px 12px;
+  pointer-events: none;
+  transform: translateY(3px);
+  transition:
+    opacity 120ms ease,
+    transform 120ms ease,
+    visibility 120ms ease;
+  visibility: hidden;
+}
+
+.plan-progress-indicator[data-tooltip-visible="true"]
+  .plan-progress-tooltip {
+  opacity: 1;
+  transform: translateY(0);
+  visibility: visible;
+}
+
+.plan-progress-tooltip-list {
+  display: grid;
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.plan-progress-tooltip-step {
+  display: grid;
+  grid-template-columns: 16px minmax(0, 1fr);
+  align-items: start;
+  gap: 8px;
+  color: var(--color-text-secondary);
+  font-size: 0.76rem;
+  font-weight: 500;
+  line-height: 1.35;
+}
+
+.plan-progress-tooltip-step > svg {
+  margin-top: 1px;
+  color: var(--color-icon-muted);
+}
+
+.plan-progress-tooltip-step[data-status="in_progress"] > svg {
+  color: var(--color-primary);
+}
+
+.plan-progress-tooltip-step[data-status="failed"] > svg,
+.plan-progress-tooltip-step[data-status="cancelled"] > svg {
+  color: var(--color-error);
+}
+
+.plan-progress-tooltip-spinner {
+  animation: file-preview-spinner-rotate 0.9s linear infinite;
+}
+
+.plan-progress-indicator[data-state="paused"] .plan-progress-content > svg,
 .plan-progress-indicator[data-state="paused"] .plan-progress-state {
   color: var(--color-icon-muted);
 }
 
-.plan-progress-indicator[data-state="waiting-approval"] > svg,
+.plan-progress-indicator[data-state="waiting-approval"]
+  .plan-progress-content
+  > svg,
 .plan-progress-indicator[data-state="waiting-approval"] .plan-progress-state,
-.plan-progress-indicator[data-state="blocked"] > svg,
+.plan-progress-indicator[data-state="blocked"] .plan-progress-content > svg,
 .plan-progress-indicator[data-state="blocked"] .plan-progress-state {
   color: var(--color-accent);
 }
 
-.plan-progress-indicator[data-state="failed"] > svg,
+.plan-progress-indicator[data-state="failed"] .plan-progress-content > svg,
 .plan-progress-indicator[data-state="failed"] .plan-progress-state {
   color: var(--color-error);
-}
-
-@keyframes plan-progress-pulse {
-  0%,
-  100% {
-    opacity: 0.5;
-    transform: translate(-50%, -50%) scale(0.78);
-  }
-
-  50% {
-    opacity: 1;
-    transform: translate(-50%, -50%) scale(1.12);
-  }
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -4086,8 +4151,12 @@ select:disabled {
     transition: none;
   }
 
-  .plan-progress-pulse,
-  .plan-progress-spinner {
+  .plan-progress-tooltip {
+    transition: none;
+  }
+
+  .plan-progress-spinner,
+  .plan-progress-tooltip-spinner {
     animation: none;
   }
 }

@@ -33,6 +33,7 @@ export type PlanProgressIndicatorModel = {
   progressPercent: number;
   stepLabel: string;
   state: PlanProgressIndicatorState;
+  steps: RunPlanStep[];
 };
 
 export function parseRunPlanProgress(value: unknown): RunPlanProgress | null {
@@ -85,6 +86,7 @@ export function derivePlanProgressIndicator(
     progressPercent: Math.round((completedSteps / steps.length) * 100),
     stepLabel: steps[currentIndex]?.step ?? "",
     state,
+    steps,
   };
 }
 

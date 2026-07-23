@@ -247,6 +247,11 @@ describe("TaskComposer", () => {
       progressPercent: 0,
       stepLabel: "Inspect the repository",
       state: "in-progress" as const,
+      steps: [
+        { step: "Inspect the repository", status: "in_progress" as const },
+        { step: "Implement the change", status: "pending" as const },
+        { step: "Run verification", status: "pending" as const },
+      ],
     };
     const { props, rerender } = renderComposer({
       prompt: "Keep this draft",
