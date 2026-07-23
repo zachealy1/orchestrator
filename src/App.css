@@ -2844,6 +2844,8 @@ button.edited-files-disclosure {
   border-radius: 0;
   background: transparent;
   color: var(--color-text-secondary);
+  font-size: inherit;
+  font-weight: 400;
   box-shadow: none;
   padding: 9px 16px;
   text-align: left;
