@@ -1510,6 +1510,7 @@ describe("TaskChatTranscript", () => {
     });
     expect(undoButton).toHaveTextContent("");
     expect(undoButton).toHaveAttribute("data-tooltip", "Undo these file changes");
+    expect(undoButton).not.toHaveAttribute("title");
     fireEvent.click(undoButton);
     expect(within(summary).getByText("Undo the changes represented by this summary?")).toBeInTheDocument();
     fireEvent.click(within(summary).getByRole("button", { name: "Undo changes" }));

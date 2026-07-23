@@ -113,8 +113,8 @@ describe("native Plan transcript workflow", () => {
     });
     expect(sendRevision).toHaveClass("native-plan-icon-action", "implement");
     expect(cancelRevision).toHaveClass("native-plan-icon-action", "cancel");
-    expect(sendRevision).toHaveAttribute("title", "Send revision");
-    expect(cancelRevision).toHaveAttribute("title", "Cancel revision");
+    expect(sendRevision).not.toHaveAttribute("title");
+    expect(cancelRevision).not.toHaveAttribute("title");
     expect(sendRevision).toHaveAttribute("data-tooltip", "Send revision");
     expect(cancelRevision).toHaveAttribute("data-tooltip", "Cancel revision");
     expect(sendRevision.querySelector("svg")).toBeInTheDocument();

@@ -1848,7 +1848,6 @@ const EditedFilesSummary = memo(function EditedFilesSummary({
             aria-label={
               undoState === "success" ? "File changes undone" : "Undo file changes"
             }
-            title={undoTitle}
             data-tooltip={undoTitle}
             disabled={undoUnavailable || actionsBusy}
             onClick={() => {
@@ -2713,7 +2712,6 @@ const NativePlanCard = memo(function NativePlanCard({
               type="submit"
               className="native-plan-icon-action implement"
               aria-label="Send revision"
-              title="Send revision"
               data-tooltip="Send revision"
               disabled={!revision.trim() || busy}
             >
@@ -2723,7 +2721,6 @@ const NativePlanCard = memo(function NativePlanCard({
               type="button"
               className="native-plan-icon-action cancel"
               aria-label="Cancel revision"
-              title="Cancel revision"
               data-tooltip="Cancel revision"
               disabled={busy}
               onClick={() => setRevising(false)}
