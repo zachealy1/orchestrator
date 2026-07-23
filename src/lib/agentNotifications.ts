@@ -8,6 +8,7 @@ const AGENT_NOTIFICATION_LEDGER_LIMIT = 400;
 export type AgentNotificationKind =
   | "response-completed"
   | "approval-required"
+  | "user-input-required"
   | "plan-ready"
   | "external-action";
 
@@ -20,6 +21,7 @@ export type AgentNotificationPermissionStatus =
 export type AgentNotificationPreferences = {
   responseCompleted: boolean;
   approvalRequired: boolean;
+  userInputRequired: boolean;
   planReady: boolean;
   externalAction: boolean;
 };
@@ -55,6 +57,7 @@ export type AgentNotificationSendResult = {
 export const DEFAULT_AGENT_NOTIFICATION_PREFERENCES: AgentNotificationPreferences = {
   responseCompleted: true,
   approvalRequired: true,
+  userInputRequired: true,
   planReady: true,
   externalAction: true,
 };
@@ -91,6 +94,9 @@ export function validateAgentNotificationPreferences(
       : true,
     approvalRequired: isBoolean(record.approvalRequired)
       ? record.approvalRequired
+      : true,
+    userInputRequired: isBoolean(record.userInputRequired)
+      ? record.userInputRequired
       : true,
     planReady: isBoolean(record.planReady) ? record.planReady : true,
     externalAction: isBoolean(record.externalAction)
@@ -132,6 +138,8 @@ export function notificationPreferenceEnabled(
       return preferences.responseCompleted;
     case "approval-required":
       return preferences.approvalRequired;
+    case "user-input-required":
+      return preferences.userInputRequired;
     case "plan-ready":
       return preferences.planReady;
     case "external-action":
@@ -184,6 +192,11 @@ export function buildSafeAgentNotificationCopy(input: {
       return {
         title: "Approval required",
         body: `${conversation} needs approval before Codex can continue.`,
+      };
+    case "user-input-required":
+      return {
+        title: "Input required",
+        body: `${conversation} needs your answer before Codex can continue.`,
       };
     case "plan-ready":
       return {

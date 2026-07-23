@@ -3004,6 +3004,9 @@ const UserInputQuestionCard = memo(function UserInputQuestionCard({
   return (
     <form
       className={`approval native-user-input${navigator ? " has-navigator" : ""}`}
+      data-agent-notification-target="user-input"
+      data-agent-notification-id={requestKey(request)}
+      tabIndex={-1}
       onSubmit={(event) => event.preventDefault()}
     >
       {navigator}

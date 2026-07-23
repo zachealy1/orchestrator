@@ -26,6 +26,7 @@ describe("agent notifications", () => {
     expect(validateAgentNotificationPreferences(null)).toEqual({
       responseCompleted: true,
       approvalRequired: true,
+      userInputRequired: true,
       planReady: true,
       externalAction: true,
     });
@@ -36,6 +37,7 @@ describe("agent notifications", () => {
     ).toEqual({
       responseCompleted: true,
       approvalRequired: true,
+      userInputRequired: true,
       planReady: true,
       externalAction: true,
     });
@@ -46,12 +48,14 @@ describe("agent notifications", () => {
       validateAgentNotificationPreferences({
         responseCompleted: false,
         approvalRequired: true,
+        userInputRequired: false,
         planReady: false,
         externalAction: true,
       }),
     ).toEqual({
       responseCompleted: false,
       approvalRequired: true,
+      userInputRequired: false,
       planReady: false,
       externalAction: true,
     });
@@ -90,6 +94,31 @@ describe("agent notifications", () => {
     expect(
       shouldSendAgentNotification({
         ...base,
+        kind: "user-input-required",
+        appFocused: true,
+        targetVisible: true,
+      }),
+    ).toBe(false);
+    expect(
+      shouldSendAgentNotification({
+        ...base,
+        kind: "user-input-required",
+        appFocused: true,
+        targetVisible: false,
+      }),
+    ).toBe(true);
+    expect(
+      shouldSendAgentNotification({
+        ...base,
+        kind: "user-input-required",
+        appFocused: true,
+        appVisible: false,
+        targetVisible: true,
+      }),
+    ).toBe(true);
+    expect(
+      shouldSendAgentNotification({
+        ...base,
         kind: "plan-ready",
         appFocused: true,
         targetVisible: false,
@@ -104,6 +133,7 @@ describe("agent notifications", () => {
         preferences: {
           responseCompleted: true,
           approvalRequired: true,
+          userInputRequired: true,
           planReady: true,
           externalAction: false,
         },
@@ -118,6 +148,19 @@ describe("agent notifications", () => {
         kind: "plan-ready",
         preferences: validateAgentNotificationPreferences(null),
         permissionStatus: "denied",
+        appFocused: false,
+        appVisible: false,
+        targetVisible: false,
+      }),
+    ).toBe(false);
+    expect(
+      shouldSendAgentNotification({
+        kind: "user-input-required",
+        preferences: {
+          ...validateAgentNotificationPreferences(null),
+          userInputRequired: false,
+        },
+        permissionStatus: "allowed",
         appFocused: false,
         appVisible: false,
         targetVisible: false,
@@ -142,6 +185,15 @@ describe("agent notifications", () => {
         accountLabel: "Work",
       }).body,
     ).toBe("Finish signing in to Codex for Work. Open Orchestrator to continue.");
+    expect(
+      buildSafeAgentNotificationCopy({
+        kind: "user-input-required",
+        chatTitle: "Choose the Snake game shape",
+      }),
+    ).toEqual({
+      title: "Input required",
+      body: "Choose the Snake game shape needs your answer before Codex can continue.",
+    });
   });
 
   it("records only delivered event keys and expires old ledger entries", () => {
@@ -176,6 +228,15 @@ describe("agent notifications", () => {
         eventKey: "external:1",
         kind: "external-action",
         accountId: 4,
+      }),
+    ).toBe(true);
+    expect(
+      isAgentNotificationTargetNavigable({
+        eventKey: "question:1",
+        kind: "user-input-required",
+        workspaceId: 1,
+        chatId: 2,
+        requestId: "question-1",
       }),
     ).toBe(true);
   });

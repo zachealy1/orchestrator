@@ -5181,6 +5181,9 @@ describe("App Codex auth", () => {
     await user.click(
       screen.getByRole("checkbox", { name: /Completed responses/ }),
     );
+    await user.click(
+      screen.getByRole("checkbox", { name: /Agent questions/ }),
+    );
     await waitFor(() =>
       expect(
         JSON.parse(
@@ -5190,6 +5193,7 @@ describe("App Codex auth", () => {
         expect.objectContaining({
           responseCompleted: false,
           approvalRequired: true,
+          userInputRequired: false,
           planReady: true,
           externalAction: true,
         }),
@@ -6672,6 +6676,224 @@ describe("App Codex auth", () => {
     });
     expect(
       screen.queryByText("Codex needs approval to run a command"),
+    ).not.toBeInTheDocument();
+  });
+
+  it("notifies for a Codex question outside the visible chat and focuses it on activation", async () => {
+    prepareSignedInRun();
+    mocks.readAgentNotificationPermissionStatusMock.mockResolvedValue("allowed");
+
+    const { user } = await renderApp();
+    await startMockRun(user, "Design the Snake controls");
+    window.dispatchEvent(new Event("focus"));
+    await user.click(screen.getByRole("button", { name: "Analytics" }));
+
+    await emitCodexServerRequest({
+      id: "question-notification-1",
+      method: "item/tool/requestUserInput",
+      params: {
+        threadId: "thread-1",
+        turnId: "turn-1",
+        itemId: "question-item-1",
+        autoResolutionMs: null,
+        questions: [
+          {
+            id: "controls",
+            header: "Controls",
+            question: "Which controls should the game support?",
+            isOther: false,
+            isSecret: false,
+            options: [
+              {
+                label: "Keyboard",
+                description: "Support keyboard controls.",
+              },
+              {
+                label: "Keyboard and touch",
+                description: "Support keyboard and touch controls.",
+              },
+            ],
+          },
+        ],
+      },
+    });
+
+    await waitFor(() =>
+      expect(mocks.sendAgentNotificationMock).toHaveBeenCalledWith(
+        expect.objectContaining({
+          title: "Input required",
+          body: "Design the Snake controls needs your answer before Codex can continue.",
+          target: expect.objectContaining({
+            kind: "user-input-required",
+            workspaceId: workspace.id,
+            chatId: 401,
+            runId: 202,
+            requestId: "question-notification-1",
+          }),
+        }),
+      ),
+    );
+    await emitCodexServerRequest({
+      id: "question-notification-1",
+      method: "item/tool/requestUserInput",
+      params: {
+        threadId: "thread-1",
+        turnId: "turn-1",
+        itemId: "question-item-1",
+        autoResolutionMs: null,
+        questions: [
+          {
+            id: "controls",
+            header: "Controls",
+            question: "Which controls should the game support?",
+            isOther: false,
+            isSecret: false,
+            options: [
+              {
+                label: "Keyboard",
+                description: "Support keyboard controls.",
+              },
+            ],
+          },
+        ],
+      },
+    });
+    expect(
+      mocks.sendAgentNotificationMock.mock.calls.filter(
+        ([request]) => request.target.kind === "user-input-required",
+      ),
+    ).toHaveLength(1);
+    const notification = mocks.sendAgentNotificationMock.mock.calls.find(
+      ([request]) => request.target.kind === "user-input-required",
+    )?.[0];
+    expect(notification).toBeDefined();
+
+    await act(async () => {
+      mocks.listeners.get("orchestrator:agent-notification-activated")?.({
+        payload: notification.target,
+      });
+      await Promise.resolve();
+    });
+
+    const question = await screen.findByText(
+      "Which controls should the game support?",
+    );
+    const questionCard = question.closest(
+      '[data-agent-notification-target="user-input"]',
+    );
+    expect(questionCard).toHaveAttribute(
+      "data-agent-notification-id",
+      "question-notification-1",
+    );
+    await waitFor(() => expect(questionCard).toHaveFocus());
+
+    await user.click(screen.getByRole("radio", { name: "Keyboard" }));
+    await waitFor(() =>
+      expect(mocks.removeAgentNotificationMock).toHaveBeenCalledWith(
+        notification.target.eventKey,
+      ),
+    );
+  });
+
+  it("suppresses a Codex question notification when the question is already visible", async () => {
+    prepareSignedInRun();
+    mocks.readAgentNotificationPermissionStatusMock.mockResolvedValue("allowed");
+
+    const { user } = await renderApp();
+    await startMockRun(user, "Choose an implementation");
+    window.dispatchEvent(new Event("focus"));
+
+    await emitCodexServerRequest({
+      id: "visible-question",
+      method: "item/tool/requestUserInput",
+      params: {
+        threadId: "thread-1",
+        turnId: "turn-1",
+        itemId: "visible-question-item",
+        autoResolutionMs: null,
+        questions: [
+          {
+            id: "shape",
+            header: "Shape",
+            question: "Which implementation should Codex use?",
+            isOther: false,
+            isSecret: false,
+            options: [
+              {
+                label: "Static",
+                description: "Use static HTML and JavaScript.",
+              },
+            ],
+          },
+        ],
+      },
+    });
+
+    expect(
+      await screen.findByText("Which implementation should Codex use?"),
+    ).toBeInTheDocument();
+    await act(async () => {
+      await new Promise((resolve) => window.setTimeout(resolve, 40));
+    });
+    expect(
+      mocks.sendAgentNotificationMock.mock.calls.some(
+        ([request]) => request.target.kind === "user-input-required",
+      ),
+    ).toBe(false);
+  });
+
+  it("removes a question notification when Codex resolves the request", async () => {
+    prepareSignedInRun();
+    mocks.readAgentNotificationPermissionStatusMock.mockResolvedValue("allowed");
+
+    const { user } = await renderApp();
+    await startMockRun(user, "Collect project requirements");
+    window.dispatchEvent(new Event("blur"));
+    await emitCodexServerRequest({
+      id: "resolved-question",
+      method: "item/tool/requestUserInput",
+      params: {
+        threadId: "thread-1",
+        turnId: "turn-1",
+        itemId: "resolved-question-item",
+        autoResolutionMs: null,
+        questions: [
+          {
+            id: "scope",
+            header: "Scope",
+            question: "Which scope should Codex use?",
+            isOther: false,
+            isSecret: false,
+            options: null,
+          },
+        ],
+      },
+    });
+
+    await waitFor(() =>
+      expect(mocks.sendAgentNotificationMock).toHaveBeenCalledWith(
+        expect.objectContaining({
+          target: expect.objectContaining({
+            kind: "user-input-required",
+            requestId: "resolved-question",
+          }),
+        }),
+      ),
+    );
+    const eventKey = mocks.sendAgentNotificationMock.mock.calls.find(
+      ([request]) => request.target.kind === "user-input-required",
+    )?.[0].target.eventKey;
+
+    await emitCodexNotification({
+      method: "serverRequest/resolved",
+      params: { threadId: "thread-1", requestId: "resolved-question" },
+    });
+
+    await waitFor(() =>
+      expect(mocks.removeAgentNotificationMock).toHaveBeenCalledWith(eventKey),
+    );
+    expect(
+      screen.queryByText("Which scope should Codex use?"),
     ).not.toBeInTheDocument();
   });
 

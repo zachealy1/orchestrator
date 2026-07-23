@@ -66,7 +66,11 @@ fn validate_request(request: &AgentNotificationRequest) -> Result<(), String> {
     }
     if !matches!(
         request.target.kind.as_str(),
-        "response-completed" | "approval-required" | "plan-ready" | "external-action"
+        "response-completed"
+            | "approval-required"
+            | "user-input-required"
+            | "plan-ready"
+            | "external-action"
     ) {
         return Err("Notification kind is invalid.".to_string());
     }
@@ -323,6 +327,13 @@ mod tests {
         let mut invalid = request("event");
         invalid.target.kind = "unknown".to_string();
         assert!(validate_request(&invalid).is_err());
+    }
+
+    #[test]
+    fn request_validation_accepts_user_input_notifications() {
+        let mut input_required = request("question");
+        input_required.target.kind = "user-input-required".to_string();
+        assert!(validate_request(&input_required).is_ok());
     }
 
     #[test]

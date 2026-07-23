@@ -350,6 +350,19 @@ function approvalNotificationEventKey(request: CodexApprovalRequest) {
   );
 }
 
+function userInputNotificationEventKey(
+  profileKey: CodexProfileKey,
+  request: NativeUserInputRequest,
+) {
+  return createAgentNotificationEventKey(
+    "user-input-required",
+    profileKey,
+    request.params.threadId,
+    request.params.turnId,
+    requestKey(request),
+  );
+}
+
 function planNotificationEventKey(
   profileKey: CodexProfileKey | null,
   entry: Pick<TaskChatEntry, "runId" | "runView">,
@@ -2915,6 +2928,17 @@ function App() {
               approvalNotificationEventKey(request),
             ).catch(() => undefined);
           });
+        profileControls
+          .flatMap((control) =>
+            control.runView.serverRequests
+              .filter(isNativeUserInputRequest)
+              .map((request) => ({ control, request })),
+          )
+          .forEach(({ control, request }) => {
+            void removeAgentNotification(
+              userInputNotificationEventKey(control.profileKey, request),
+            ).catch(() => undefined);
+          });
         setApprovalSafetyWarning(null);
         setUnroutedApprovals((current) =>
           current.filter((request) => request.profileKey !== profileKey),
@@ -2939,6 +2963,7 @@ function App() {
               ...current,
               approvalRequests: [],
               approvalResourcesByItemId: {},
+              serverRequests: [],
             }));
           });
         }
@@ -3713,6 +3738,13 @@ function App() {
 
   function removeRunControl(control: ActiveRunControl) {
     if (activeRunControlsRef.current.get(control.clientId) !== control) return;
+    control.runView.serverRequests
+      .filter(isNativeUserInputRequest)
+      .forEach((request) => {
+        void removeAgentNotification(
+          userInputNotificationEventKey(control.profileKey, request),
+        ).catch(() => undefined);
+      });
     activeRunControlsRef.current.delete(control.clientId);
     pendingRunBindingNotificationsRef.current =
       pendingRunBindingNotificationsRef.current.filter((pending) => {
@@ -7162,11 +7194,33 @@ function App() {
     const session = target.workspaceId
       ? workspaceChatSessionsRef.current[target.workspaceId]
       : null;
-    if (target.chatId !== null && target.chatId !== undefined) {
-      return session?.chatId === target.chatId;
+    const targetChatVisible =
+      target.chatId !== null && target.chatId !== undefined
+        ? session?.chatId === target.chatId
+        : taskChatEntriesRef.current.some(
+            (entry) => entry.clientId === target.entryClientId,
+          );
+    if (!targetChatVisible || target.kind !== "user-input-required") {
+      return targetChatVisible;
     }
-    return taskChatEntriesRef.current.some(
-      (entry) => entry.clientId === target.entryClientId,
+
+    const question = Array.from(
+      document.querySelectorAll<HTMLElement>(
+        '[data-agent-notification-target="user-input"]',
+      ),
+    ).find(
+      (candidate) =>
+        !target.requestId ||
+        candidate.dataset.agentNotificationId === target.requestId,
+    );
+    if (!question) return false;
+    const bounds = question.getBoundingClientRect();
+    if (bounds.width === 0 && bounds.height === 0) return true;
+    return (
+      bounds.bottom > 0 &&
+      bounds.right > 0 &&
+      bounds.top < window.innerHeight &&
+      bounds.left < window.innerWidth
     );
   }
 
@@ -7234,6 +7288,8 @@ function App() {
       kind:
         target.kind === "approval-required"
           ? "approval"
+          : target.kind === "user-input-required"
+            ? "user-input"
           : target.kind === "plan-ready"
             ? "plan"
             : "response",
@@ -7342,6 +7398,20 @@ function App() {
     if (method === "serverRequest/resolved") {
       const requestId = params.requestId;
       const threadId = readString(params.threadId);
+      const resolvedUserInputRequests = [
+        ...activeRunControlsRef.current.values(),
+      ].flatMap((control) =>
+        control.profileKey === profileKey
+          ? control.runView.serverRequests
+              .filter(isNativeUserInputRequest)
+              .filter(
+                (request) =>
+                  String(request.id) === String(requestId) &&
+                  (!threadId || request.params.threadId === threadId),
+              )
+              .map((request) => ({ control, request }))
+          : [],
+      );
       const resolvedApprovals = [
         ...[...activeRunControlsRef.current.values()].flatMap(
           (control) => control.runView.approvalRequests,
@@ -7356,6 +7426,11 @@ function App() {
       resolvedApprovals.forEach((request) => {
         void removeAgentNotification(
           approvalNotificationEventKey(request),
+        ).catch(() => undefined);
+      });
+      resolvedUserInputRequests.forEach(({ control, request }) => {
+        void removeAgentNotification(
+          userInputNotificationEventKey(control.profileKey, request),
         ).catch(() => undefined);
       });
       setUnroutedApprovals((current) =>
@@ -7680,6 +7755,53 @@ function App() {
       request.method ?? null,
       request,
     );
+    if (isNativeUserInputRequest(routedRequest)) {
+      const activeEntry =
+        taskChatEntriesRef.current.find(
+          (entry) => entry.clientId === control.clientId,
+        ) ?? null;
+      const workspace =
+        workspacesRef.current.find(
+          (candidate) => candidate.id === control.workspaceId,
+        ) ?? null;
+      const eventKey = userInputNotificationEventKey(
+        profileKey,
+        routedRequest,
+      );
+      const target: AgentNotificationTarget = {
+        eventKey,
+        kind: "user-input-required",
+        workspaceId: control.workspaceId,
+        chatId: control.chatId,
+        runId: control.runId,
+        entryClientId: control.clientId,
+        requestId: requestKey(routedRequest),
+        planItemId: null,
+        accountId:
+          profileKey === DEFAULT_CODEX_PROFILE_KEY ? null : accountId,
+        profileKey,
+        threadId: routedRequest.params.threadId,
+        turnId: routedRequest.params.turnId,
+      };
+      window.requestAnimationFrame(() => {
+        if (
+          activeRunControlsRef.current.get(control.clientId) !== control ||
+          !control.runView.serverRequests.some(
+            (candidate) =>
+              isNativeUserInputRequest(candidate) &&
+              requestKey(candidate) === requestKey(routedRequest),
+          )
+        ) {
+          return;
+        }
+        void deliverAgentNotification({
+          kind: "user-input-required",
+          target,
+          chatTitle: activeEntry?.prompt ?? control.promptFallback,
+          workspaceLabel: workspace?.label,
+        });
+      });
+    }
     if (isNativeUserInputRequest(request) && request.params.autoResolutionMs) {
       const routedUserInputRequest = { ...request, requestToken };
       const timerKey = `${profileKey}:${requestKey(request)}`;
@@ -7854,6 +7976,9 @@ function App() {
       } else {
         await resolveCodexServerRequest(accountId, request.id, requestToken, response);
       }
+      void removeAgentNotification(
+        userInputNotificationEventKey(profileKey, request),
+      ).catch(() => undefined);
     } catch (error) {
       requestActionLocksRef.current.delete(actionKey);
       updateRunControlView(control, (current) =>
@@ -10238,6 +10363,22 @@ function App() {
                     onChange={(event) =>
                       handleAgentNotificationPreferenceChange(
                         "approvalRequired",
+                        event.currentTarget.checked,
+                      )
+                    }
+                  />
+                </label>
+                <label className="setting-row checkbox-setting">
+                  <div>
+                    <strong>Agent questions</strong>
+                    <span>Notify when Codex needs your answer to continue.</span>
+                  </div>
+                  <input
+                    type="checkbox"
+                    checked={agentNotificationPreferences.userInputRequired}
+                    onChange={(event) =>
+                      handleAgentNotificationPreferenceChange(
+                        "userInputRequired",
                         event.currentTarget.checked,
                       )
                     }
