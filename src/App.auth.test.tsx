@@ -6500,7 +6500,9 @@ describe("App Codex auth", () => {
       }),
     );
     await user.click(
-      within(completedSummary).getByRole("button", { name: "Undo changes" }),
+      within(
+        screen.getByRole("dialog", { name: "Undo changes?" }),
+      ).getByRole("button", { name: "Undo changes" }),
     );
 
     await waitFor(() =>

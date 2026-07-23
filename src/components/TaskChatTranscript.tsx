@@ -36,6 +36,7 @@ import {
   useRef,
   useState,
 } from "react";
+import { createPortal } from "react-dom";
 import type {
   ClipboardEvent as ReactClipboardEvent,
   MouseEvent as ReactMouseEvent,
@@ -1719,6 +1720,7 @@ const EditedFilesSummary = memo(function EditedFilesSummary({
   const files = entry.runView.editedFiles;
   const listId = useId();
   const cardRef = useRef<HTMLElement | null>(null);
+  const undoButtonRef = useRef<HTMLButtonElement | null>(null);
   const [localExpanded, setLocalExpanded] = useState(false);
   const [undoState, setUndoState] = useState<EditedFilesActionState>(
     entry.runView.fileChangesReverted ? "success" : "idle",
@@ -1844,6 +1846,7 @@ const EditedFilesSummary = memo(function EditedFilesSummary({
         <span className="edited-files-summary-actions">
           <button
             className="native-plan-icon-action edited-files-action"
+            ref={undoButtonRef}
             type="button"
             aria-label={
               undoState === "success" ? "File changes undone" : "Undo file changes"
@@ -1864,26 +1867,15 @@ const EditedFilesSummary = memo(function EditedFilesSummary({
         </span>
       </header>
 
-      {undoState === "confirming" ? (
-        <div className="edited-files-undo-confirmation" role="alert">
-          <span>Undo the changes represented by this summary?</span>
-          <span className="edited-files-confirmation-actions">
-            <button
-              className="small secondary"
-              type="button"
-              onClick={() => setUndoState("idle")}
-            >
-              Keep changes
-            </button>
-            <button
-              className="small danger"
-              type="button"
-              onClick={() => void confirmUndo()}
-            >
-              Undo changes
-            </button>
-          </span>
-        </div>
+      {undoState === "confirming" || undoState === "loading" ? (
+        <UndoEditedFilesDialog
+          busy={undoState === "loading"}
+          onCancel={() => {
+            setUndoState("idle");
+            requestAnimationFrame(() => undoButtonRef.current?.focus());
+          }}
+          onConfirm={() => void confirmUndo()}
+        />
       ) : null}
 
       <div className="edited-files-summary-list" id={listId}>
@@ -1940,6 +1932,84 @@ const EditedFilesSummary = memo(function EditedFilesSummary({
     </section>
   );
 });
+
+function UndoEditedFilesDialog({
+  busy,
+  onCancel,
+  onConfirm,
+}: {
+  busy: boolean;
+  onCancel: () => void;
+  onConfirm: () => void;
+}) {
+  const titleId = useId();
+  const descriptionId = useId();
+  const cancelButtonRef = useRef<HTMLButtonElement | null>(null);
+
+  useEffect(() => {
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape" && !busy) {
+        event.preventDefault();
+        onCancel();
+      }
+    };
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [busy, onCancel]);
+
+  useEffect(() => {
+    cancelButtonRef.current?.focus({ preventScroll: true });
+  }, []);
+
+  return createPortal(
+    <div
+      className="modal-backdrop"
+      role="presentation"
+      onMouseDown={(event) => {
+        if (event.target === event.currentTarget && !busy) {
+          onCancel();
+        }
+      }}
+    >
+      <section
+        className="confirmation-dialog"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby={titleId}
+        aria-describedby={descriptionId}
+        aria-busy={busy}
+      >
+        <div>
+          <p className="eyebrow">File changes</p>
+          <h2 id={titleId}>Undo changes?</h2>
+          <p id={descriptionId}>
+            Undo the changes represented by this summary?
+          </p>
+        </div>
+        <div className="confirmation-actions">
+          <button
+            className="secondary"
+            ref={cancelButtonRef}
+            type="button"
+            disabled={busy}
+            onClick={onCancel}
+          >
+            Keep changes
+          </button>
+          <button
+            className="danger"
+            type="button"
+            disabled={busy}
+            onClick={onConfirm}
+          >
+            {busy ? "Undoing..." : "Undo changes"}
+          </button>
+        </div>
+      </section>
+    </div>,
+    document.body,
+  );
+}
 
 const RunTraceDropdown = memo(function RunTraceDropdown({
   entry,

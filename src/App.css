@@ -2747,8 +2747,7 @@ summary.run-live-metrics::-webkit-details-marker {
   font-variant-numeric: tabular-nums;
 }
 
-.edited-files-summary-actions,
-.edited-files-confirmation-actions {
+.edited-files-summary-actions {
   display: flex;
   gap: 8px;
   align-items: center;
@@ -2768,18 +2767,6 @@ button.edited-files-action:focus-visible:not(:disabled) {
 button.edited-files-action[data-tooltip]::after {
   top: calc(100% + 8px);
   bottom: auto;
-}
-
-.edited-files-undo-confirmation {
-  display: flex;
-  gap: 14px;
-  align-items: center;
-  justify-content: space-between;
-  border-top: 1px solid var(--color-divider);
-  background: var(--color-surface-soft);
-  color: var(--color-text-secondary);
-  padding: 10px 16px;
-  font-size: 0.88rem;
 }
 
 .edited-files-summary-list {
@@ -2880,15 +2867,6 @@ button.edited-files-disclosure:focus-visible:not(:disabled) {
 
   .edited-files-summary-actions {
     grid-column: 1 / -1;
-    justify-content: flex-end;
-  }
-
-  .edited-files-undo-confirmation {
-    align-items: stretch;
-    flex-direction: column;
-  }
-
-  .edited-files-confirmation-actions {
     justify-content: flex-end;
   }
 }

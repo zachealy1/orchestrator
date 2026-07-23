@@ -1512,10 +1512,53 @@ describe("TaskChatTranscript", () => {
     expect(undoButton).toHaveAttribute("data-tooltip", "Undo these file changes");
     expect(undoButton).not.toHaveAttribute("title");
     fireEvent.click(undoButton);
-    expect(within(summary).getByText("Undo the changes represented by this summary?")).toBeInTheDocument();
-    fireEvent.click(within(summary).getByRole("button", { name: "Undo changes" }));
+    expect(
+      within(summary).queryByText(
+        "Undo the changes represented by this summary?",
+      ),
+    ).toBeNull();
+    const undoDialog = screen.getByRole("dialog", { name: "Undo changes?" });
+    expect(undoDialog).toHaveClass("confirmation-dialog");
+    expect(undoDialog.parentElement).toHaveClass("modal-backdrop");
+    expect(
+      within(undoDialog).getByText(
+        "Undo the changes represented by this summary?",
+      ),
+    ).toBeInTheDocument();
+    fireEvent.click(
+      within(undoDialog).getByRole("button", { name: "Keep changes" }),
+    );
+    expect(
+      screen.queryByRole("dialog", { name: "Undo changes?" }),
+    ).not.toBeInTheDocument();
+    expect(onUndoEditedFiles).not.toHaveBeenCalled();
+
+    fireEvent.click(undoButton);
+    const backdropDialog = screen.getByRole("dialog", {
+      name: "Undo changes?",
+    });
+    fireEvent.mouseDown(backdropDialog.parentElement as HTMLElement);
+    expect(
+      screen.queryByRole("dialog", { name: "Undo changes?" }),
+    ).not.toBeInTheDocument();
+
+    fireEvent.click(undoButton);
+    fireEvent.keyDown(window, { key: "Escape" });
+    expect(
+      screen.queryByRole("dialog", { name: "Undo changes?" }),
+    ).not.toBeInTheDocument();
+
+    fireEvent.click(undoButton);
+    fireEvent.click(
+      within(
+        screen.getByRole("dialog", { name: "Undo changes?" }),
+      ).getByRole("button", { name: "Undo changes" }),
+    );
 
     await waitFor(() => expect(onUndoEditedFiles).toHaveBeenCalledTimes(1));
+    expect(
+      screen.queryByRole("dialog", { name: "Undo changes?" }),
+    ).not.toBeInTheDocument();
     expect(within(summary).getByText("Changes undone.")).toBeInTheDocument();
     expect(
       within(summary).getByRole("button", { name: "File changes undone" }),
@@ -1562,7 +1605,11 @@ describe("TaskChatTranscript", () => {
     fireEvent.click(
       within(summary).getByRole("button", { name: "Undo file changes" }),
     );
-    fireEvent.click(within(summary).getByRole("button", { name: "Undo changes" }));
+    fireEvent.click(
+      within(
+        screen.getByRole("dialog", { name: "Undo changes?" }),
+      ).getByRole("button", { name: "Undo changes" }),
+    );
 
     expect(
       await within(summary).findByText("These files changed after the saved edit"),
