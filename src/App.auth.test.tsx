@@ -1559,9 +1559,12 @@ describe("App Codex auth", () => {
     const dialog = screen.getByRole("dialog", { name: "Commit or push" });
     await user.click(within(dialog).getByRole("button", { name: /^commit$/i }));
 
-    expect(
-      await within(dialog).findByRole("alert"),
-    ).toHaveTextContent(/could not generate an intent-driven commit message/i);
+    const alert = await within(dialog).findByRole("alert");
+    expect(alert).toHaveTextContent(
+      "Could not generate a commit message. Enter a message manually or try again.",
+    );
+    expect(alert.querySelector("svg")).toBeInTheDocument();
+    expect(alert.parentElement).toHaveClass("git-action-feedback-slot");
     expect(mocks.commitWorkspaceChangesMock).not.toHaveBeenCalled();
   });
 
@@ -1732,11 +1735,177 @@ describe("App Codex auth", () => {
         }),
       ),
     );
-    expect(
-      await within(dialog).findByRole("alert"),
-    ).toHaveTextContent(/sign in to codex/i);
+    expect(await within(dialog).findByRole("alert")).toHaveTextContent(
+      "Could not generate a commit message. Enter a message manually or try again.",
+    );
     expect(mocks.commitWorkspaceChangesMock).not.toHaveBeenCalled();
     expect(mocks.pushWorkspaceBranchMock).not.toHaveBeenCalled();
+
+    await user.type(
+      within(dialog).getByLabelText(/commit message/i),
+      "Fix manual commit fallback",
+    );
+    await user.click(
+      within(dialog).getByRole("button", { name: /^commit and push$/i }),
+    );
+    await waitFor(() =>
+      expect(mocks.commitWorkspaceChangesMock).toHaveBeenCalledWith(
+        workspace.path,
+        "Fix manual commit fallback",
+        true,
+      ),
+    );
+    await waitFor(() =>
+      expect(mocks.pushWorkspaceBranchMock).toHaveBeenCalledWith(workspace.path),
+    );
+  });
+
+  it("retries commit-message generation without duplicating the commit", async () => {
+    prepareSignedInRun();
+    mocks.generateWorkspaceCommitMessageMock
+      .mockRejectedValueOnce(new Error("request timed out"))
+      .mockResolvedValueOnce({
+        message: "Keep Snake controls responsive",
+        source: "codex",
+      });
+    mocks.listWorkspaceGitStatusMock.mockResolvedValue({
+      workspacePath: workspace.path,
+      gitRoot: workspace.path,
+      currentBranch: "main",
+      aheadCount: 0,
+      hasUpstream: true,
+      hasOrigin: true,
+      canPush: true,
+      additions: 410,
+      deletions: 0,
+      files: [
+        {
+          path: "/repo/orchestrator/src/app.js",
+          relativePath: "src/app.js",
+          oldRelativePath: null,
+          indexStatus: "M",
+          worktreeStatus: " ",
+          statusKind: "modified",
+          badge: "M",
+        },
+      ],
+    });
+
+    const { user } = await renderApp();
+    const banner = screen.getByRole("region", { name: "Selected folder" });
+    await user.click(
+      await within(banner).findByRole("button", { name: /commit or push/i }),
+    );
+    const dialog = screen.getByRole("dialog", { name: "Commit or push" });
+    const commit = within(dialog).getByRole("button", { name: /^commit$/i });
+
+    await user.click(commit);
+    expect(await within(dialog).findByRole("alert")).toHaveTextContent(
+      "Could not generate a commit message. Enter a message manually or try again.",
+    );
+    await user.click(commit);
+
+    await waitFor(() =>
+      expect(mocks.generateWorkspaceCommitMessageMock).toHaveBeenCalledTimes(2),
+    );
+    await waitFor(() =>
+      expect(mocks.commitWorkspaceChangesMock).toHaveBeenCalledWith(
+        workspace.path,
+        "Keep Snake controls responsive",
+        true,
+      ),
+    );
+    expect(mocks.commitWorkspaceChangesMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("ignores duplicate commit-and-push actions while generation is pending", async () => {
+    prepareSignedInRun();
+    let resolveGeneration:
+      | ((value: { message: string; source: "codex" }) => void)
+      | null = null;
+    let resolveCommit:
+      | ((value: { message: string; branch: string }) => void)
+      | null = null;
+    mocks.generateWorkspaceCommitMessageMock.mockImplementation(
+      () =>
+        new Promise<{ message: string; source: "codex" }>((resolve) => {
+          resolveGeneration = resolve;
+        }),
+    );
+    mocks.commitWorkspaceChangesMock.mockImplementation(
+      () =>
+        new Promise<{ message: string; branch: string }>((resolve) => {
+          resolveCommit = resolve;
+        }),
+    );
+    mocks.listWorkspaceGitStatusMock.mockResolvedValue({
+      workspacePath: workspace.path,
+      gitRoot: workspace.path,
+      currentBranch: "main",
+      aheadCount: 0,
+      hasUpstream: true,
+      hasOrigin: true,
+      canPush: true,
+      additions: 24,
+      deletions: 2,
+      files: [
+        {
+          path: "/repo/orchestrator/src/app.js",
+          relativePath: "src/app.js",
+          oldRelativePath: null,
+          indexStatus: "M",
+          worktreeStatus: " ",
+          statusKind: "modified",
+          badge: "M",
+        },
+      ],
+    });
+
+    const { user } = await renderApp();
+    const banner = screen.getByRole("region", { name: "Selected folder" });
+    await user.click(
+      await within(banner).findByRole("button", { name: /commit or push/i }),
+    );
+    const dialog = screen.getByRole("dialog", { name: "Commit or push" });
+    const commitAndPush = within(dialog).getByRole("button", {
+      name: /^commit and push$/i,
+    });
+
+    act(() => {
+      commitAndPush.click();
+      commitAndPush.click();
+    });
+    expect(mocks.generateWorkspaceCommitMessageMock).toHaveBeenCalledTimes(1);
+    expect(
+      within(dialog).queryByText(/generating an intent-driven commit message/i),
+    ).not.toBeInTheDocument();
+
+    await act(async () => {
+      resolveGeneration?.({
+        message: "Keep Snake controls responsive",
+        source: "codex",
+      });
+      await Promise.resolve();
+    });
+
+    await waitFor(() =>
+      expect(mocks.commitWorkspaceChangesMock).toHaveBeenCalledTimes(1),
+    );
+    expect(within(dialog).getByLabelText(/commit message/i)).toHaveValue(
+      "Keep Snake controls responsive",
+    );
+    expect(within(dialog).queryByText(/^Generated:/i)).not.toBeInTheDocument();
+
+    await act(async () => {
+      resolveCommit?.({
+        message: "Committed workspace changes",
+        branch: "main",
+      });
+      await Promise.resolve();
+    });
+    await waitFor(() =>
+      expect(mocks.pushWorkspaceBranchMock).toHaveBeenCalledTimes(1),
+    );
   });
 
   it("rejects broad AI commit messages that only describe changed areas", async () => {
@@ -1790,23 +1959,17 @@ describe("App Codex auth", () => {
       expect(mocks.generateWorkspaceCommitMessageMock).toHaveBeenCalled(),
     );
     expect(mocks.commitWorkspaceChangesMock).not.toHaveBeenCalled();
-    expect(
-      within(dialog).getByRole("alert"),
-    ).toHaveTextContent(/file-focused or generic subject/i);
+    expect(within(dialog).getByRole("alert")).toHaveTextContent(
+      "Could not generate a commit message. Enter a message manually or try again.",
+    );
   });
 
   it.each([
-    [
-      "Implement the plan",
-      /orchestration instruction instead of the change intent/i,
-    ],
-    [
-      "Scaffold minimal Express health service (5 added)",
-      /subject containing change counts/i,
-    ],
+    "Implement the plan",
+    "Scaffold minimal Express health service (5 added)",
   ])(
     "fails closed when Codex returns %s",
-    async (generatedMessage, expectedError) => {
+    async (generatedMessage) => {
       prepareSignedInRun();
       mocks.generateWorkspaceCommitMessageMock.mockResolvedValue({
         message: generatedMessage,
@@ -1849,7 +2012,7 @@ describe("App Codex auth", () => {
       );
 
       expect(await within(dialog).findByRole("alert")).toHaveTextContent(
-        expectedError,
+        "Could not generate a commit message. Enter a message manually or try again.",
       );
       expect(mocks.commitWorkspaceChangesMock).not.toHaveBeenCalled();
       expect(dialog).toBeInTheDocument();

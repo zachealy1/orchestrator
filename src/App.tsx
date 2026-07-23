@@ -331,6 +331,8 @@ const RUN_EVENT_BATCH_DELAY_MS = 100;
 const RUN_EVENT_BATCH_MAX_SIZE = 50;
 const RUN_NOTIFICATION_BINDING_TTL_MS = 30_000;
 const RUN_NOTIFICATION_BINDING_BUFFER_LIMIT = 100;
+const COMMIT_MESSAGE_GENERATION_ERROR =
+  "Could not generate a commit message. Enter a message manually or try again.";
 const BUFFERABLE_RUN_NOTIFICATION_METHODS = new Set([
   "item/completed",
   "item/started",
@@ -1451,6 +1453,7 @@ function App() {
     subject: string;
     changeKey: string;
   } | null>(null);
+  const gitActionInFlightRef = useRef(false);
   const workspaceContextMenuRef = useRef<HTMLDivElement | null>(null);
   const chatHistoryContextMenuRef = useRef<HTMLDivElement | null>(null);
   const accountMenuContainerRef = useRef<HTMLDivElement | null>(null);
@@ -6524,7 +6527,11 @@ function App() {
   }
 
   function handleHeaderGitAction() {
-    if (!selectedWorkspace || gitActionStatus !== "idle") {
+    if (
+      !selectedWorkspace ||
+      gitActionStatus !== "idle" ||
+      gitActionInFlightRef.current
+    ) {
       return;
     }
 
@@ -6535,37 +6542,43 @@ function App() {
     }
   }
 
-  async function pushSelectedWorkspaceBranch() {
-    if (!selectedWorkspace) {
-      return false;
-    }
-
+  async function pushSelectedWorkspaceBranch(workspace: Workspace) {
     setGitActionStatus("pushing");
     setStatusMessage("Pushing current branch...");
     try {
-      const result = await pushWorkspaceBranch(selectedWorkspace.path);
+      const result = await pushWorkspaceBranch(workspace.path);
       setStatusMessage(result.message || "Branch pushed.");
-      await refreshBranches(selectedWorkspace);
-      await refreshWorkspaceGitStatus(selectedWorkspace);
+      await refreshBranches(workspace);
+      await refreshWorkspaceGitStatus(workspace);
       return true;
     } catch (error) {
       setStatusMessage(
         `Push failed: ${error instanceof Error ? error.message : String(error)}`,
       );
       return false;
-    } finally {
-      setGitActionStatus("idle");
     }
   }
 
   async function handlePushOnly() {
-    if (!selectedWorkspace || !headerGitAction.canPush || gitActionStatus !== "idle") {
+    const workspace = selectedWorkspace;
+    if (
+      !workspace ||
+      !headerGitAction.canPush ||
+      gitActionStatus !== "idle" ||
+      gitActionInFlightRef.current
+    ) {
       return;
     }
 
-    const pushed = await pushSelectedWorkspaceBranch();
-    if (pushed) {
-      setCommitDialogOpen(false);
+    gitActionInFlightRef.current = true;
+    try {
+      const pushed = await pushSelectedWorkspaceBranch(workspace);
+      if (pushed) {
+        setCommitDialogOpen(false);
+      }
+    } finally {
+      gitActionInFlightRef.current = false;
+      setGitActionStatus("idle");
     }
   }
 
@@ -6574,19 +6587,16 @@ function App() {
       return null;
     }
 
-    const failGeneration = (reason: string) => {
-      const message = `Could not generate an intent-driven commit message. ${reason}`;
-      setCommitDialogMessage(message);
+    const failGeneration = () => {
+      setCommitDialogMessage(COMMIT_MESSAGE_GENERATION_ERROR);
       setCommitDialogError(true);
-      setStatusMessage(message);
-      setGitActionStatus("idle");
+      setStatusMessage(COMMIT_MESSAGE_GENERATION_ERROR);
       return null;
     };
 
     setGitActionStatus("generating");
-    setCommitDialogMessage("Generating an intent-driven commit message...");
+    setCommitDialogMessage("");
     setCommitDialogError(false);
-    setStatusMessage("Generating commit message...");
     try {
       const result = await generateWorkspaceCommitMessage({
         workspacePath: selectedWorkspace.path,
@@ -6600,7 +6610,7 @@ function App() {
         commitMessageFiles,
       );
       if (rejection) {
-        return failGeneration(`${rejection} Enter a message manually or try again.`);
+        return failGeneration();
       }
       const generated = cleanGeneratedCommitSubject(result.message);
       const previous = lastCommitSubjectRef.current;
@@ -6609,40 +6619,40 @@ function App() {
         previous.changeKey !== commitMessageChangeKey &&
         previous.subject.toLowerCase() === generated.toLowerCase()
       ) {
-        return failGeneration(
-          "Codex repeated a subject generated for different changes. Enter a message manually or try again.",
-        );
+        return failGeneration();
       }
       setCommitMessage(generated);
-      setCommitDialogMessage(`Generated: ${generated}`);
+      setCommitDialogMessage("");
       setCommitDialogError(false);
       return generated;
-    } catch (error) {
-      return failGeneration(
-        `${
-          error instanceof Error ? error.message : String(error)
-        } Enter a message manually or try again.`,
-      );
+    } catch {
+      return failGeneration();
     }
   }
 
   async function handleCommitAll(options: { pushAfter?: boolean } = {}) {
-    if (!selectedWorkspace || !canCommitFromDialog || gitActionStatus !== "idle") {
+    const workspace = selectedWorkspace;
+    if (
+      !workspace ||
+      !canCommitFromDialog ||
+      gitActionStatus !== "idle" ||
+      gitActionInFlightRef.current
+    ) {
       return;
     }
 
-    const authoredMessage = commitMessage.trim();
-    const message = authoredMessage || (await resolveCommitMessage());
-    if (!message) {
-      setGitActionStatus("idle");
-      return;
-    }
-
-    setGitActionStatus("committing");
-    setStatusMessage("Committing workspace changes...");
+    gitActionInFlightRef.current = true;
     try {
+      const authoredMessage = commitMessage.trim();
+      const message = authoredMessage || (await resolveCommitMessage());
+      if (!message) {
+        return;
+      }
+
+      setGitActionStatus("committing");
+      setStatusMessage("Committing workspace changes...");
       const result = await commitWorkspaceChanges(
-        selectedWorkspace.path,
+        workspace.path,
         message,
         includeUnstagedChanges,
       );
@@ -6651,10 +6661,10 @@ function App() {
         changeKey: commitMessageChangeKey,
       };
       setStatusMessage(result.message || "Workspace changes committed.");
-      await refreshBranches(selectedWorkspace);
-      await refreshWorkspaceGitStatus(selectedWorkspace);
+      await refreshBranches(workspace);
+      await refreshWorkspaceGitStatus(workspace);
       if (options.pushAfter) {
-        const pushed = await pushSelectedWorkspaceBranch();
+        const pushed = await pushSelectedWorkspaceBranch(workspace);
         if (!pushed) {
           return;
         }
@@ -6669,6 +6679,7 @@ function App() {
         `Commit failed: ${error instanceof Error ? error.message : String(error)}`,
       );
     } finally {
+      gitActionInFlightRef.current = false;
       setGitActionStatus("idle");
     }
   }
@@ -10761,16 +10772,25 @@ function App() {
               />
             </label>
 
-            {commitDialogMessage ? (
-              <p
-                className={`git-action-feedback ${
-                  commitDialogError ? "error" : ""
-                }`}
-                role={commitDialogError ? "alert" : "status"}
-              >
-                {commitDialogMessage}
-              </p>
-            ) : null}
+            <div className="git-action-feedback-slot">
+              {commitDialogMessage ? (
+                <p
+                  className={`git-action-feedback ${
+                    commitDialogError ? "error" : ""
+                  }`}
+                  role={commitDialogError ? "alert" : "status"}
+                >
+                  {commitDialogError ? (
+                    <AlertCircle
+                      className="git-action-feedback-icon"
+                      size={16}
+                      aria-hidden="true"
+                    />
+                  ) : null}
+                  <span>{commitDialogMessage}</span>
+                </p>
+              ) : null}
+            </div>
 
             <label
               className={`git-action-include-row ${
