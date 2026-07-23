@@ -126,6 +126,15 @@ export type NativePlanDisclosureChangeHandler = (
   change: NativePlanDisclosureChange,
 ) => void;
 
+export type PendingInteractionPageChange = {
+  anchorElement: HTMLElement;
+  anchorTop: number;
+};
+
+export type PendingInteractionPageChangeHandler = (
+  change: PendingInteractionPageChange,
+) => void;
+
 const planMarkdownParser = unified().use(remarkParse).use(remarkGfm);
 
 function markdownNodeEndOffset(node: PositionedMarkdownNode) {
@@ -1360,6 +1369,7 @@ export const TaskChatTurn = memo(function TaskChatTurn({
   planExpanded,
   editedFilesExpanded,
   onPlanDisclosureChange,
+  onPendingInteractionPageChange,
 }: {
   entry: TaskChatEntry;
   editable: boolean;
@@ -1382,6 +1392,7 @@ export const TaskChatTurn = memo(function TaskChatTurn({
   planExpanded?: boolean;
   editedFilesExpanded?: boolean;
   onPlanDisclosureChange?: NativePlanDisclosureChangeHandler;
+  onPendingInteractionPageChange?: PendingInteractionPageChangeHandler;
 }) {
   return (
     <div className="task-chat-run">
@@ -1477,6 +1488,7 @@ export const TaskChatTurn = memo(function TaskChatTurn({
           planExpanded={planExpanded}
           editedFilesExpanded={editedFilesExpanded}
           onPlanDisclosureChange={onPlanDisclosureChange}
+          onPendingInteractionPageChange={onPendingInteractionPageChange}
         />
       </article>
     </div>
@@ -1556,6 +1568,7 @@ const AssistantRunOutput = memo(function AssistantRunOutput({
   planExpanded,
   editedFilesExpanded,
   onPlanDisclosureChange,
+  onPendingInteractionPageChange,
 }: {
   entry: TaskChatEntry;
   runView: RunViewState;
@@ -1572,6 +1585,7 @@ const AssistantRunOutput = memo(function AssistantRunOutput({
   planExpanded?: boolean;
   editedFilesExpanded?: boolean;
   onPlanDisclosureChange?: NativePlanDisclosureChangeHandler;
+  onPendingInteractionPageChange?: PendingInteractionPageChangeHandler;
 }) {
   const completed =
     runView.status === "completed" ||
@@ -1625,6 +1639,7 @@ const AssistantRunOutput = memo(function AssistantRunOutput({
           runView={runView}
           onResolveRequest={onResolveRequest}
           onAnswerUserInput={onAnswerUserInput}
+          onPendingInteractionPageChange={onPendingInteractionPageChange}
         />
       </div>
     );
@@ -1672,6 +1687,7 @@ const AssistantRunOutput = memo(function AssistantRunOutput({
         runView={runView}
         onResolveRequest={onResolveRequest}
         onAnswerUserInput={onAnswerUserInput}
+        onPendingInteractionPageChange={onPendingInteractionPageChange}
       />
     </div>
   );
@@ -3055,11 +3071,13 @@ const RunApprovalRequests = memo(function RunApprovalRequests({
   runView,
   onResolveRequest,
   onAnswerUserInput,
+  onPendingInteractionPageChange,
 }: {
   entry: TaskChatEntry;
   runView: RunViewState;
   onResolveRequest: ApprovalResolutionHandler;
   onAnswerUserInput?: Props["onAnswerUserInput"];
+  onPendingInteractionPageChange?: PendingInteractionPageChangeHandler;
 }) {
   const pages = useMemo(
     () => buildPendingInteractionPages(runView),
@@ -3072,6 +3090,7 @@ const RunApprovalRequests = memo(function RunApprovalRequests({
   const [activePageKey, setActivePageKey] = useState<string | null>(null);
   const [drafts, setDrafts] = useState<Record<string, UserInputDraft>>({});
   const lastPageIndexRef = useRef(0);
+  const stackRef = useRef<HTMLDivElement | null>(null);
   const keyedPageIndex = activePageKey
     ? pages.findIndex((page) => page.key === activePageKey)
     : -1;
@@ -3111,11 +3130,18 @@ const RunApprovalRequests = memo(function RunApprovalRequests({
     (index: number) => {
       const nextIndex = Math.max(0, Math.min(index, pages.length - 1));
       const nextPage = pages[nextIndex];
-      if (!nextPage) return;
+      if (!nextPage || nextPage.key === activePage?.key) return;
+      const anchorElement = stackRef.current;
+      if (anchorElement && onPendingInteractionPageChange) {
+        onPendingInteractionPageChange({
+          anchorElement,
+          anchorTop: anchorElement.getBoundingClientRect().top,
+        });
+      }
       lastPageIndexRef.current = nextIndex;
       setActivePageKey(nextPage.key);
     },
-    [pages],
+    [activePage?.key, onPendingInteractionPageChange, pages],
   );
 
   if (!activePage) return null;
@@ -3219,6 +3245,7 @@ const RunApprovalRequests = memo(function RunApprovalRequests({
     <div
       className="approval-stack chat-approval-stack"
       aria-label="Pending Codex interactions"
+      ref={stackRef}
     >
       {content}
     </div>

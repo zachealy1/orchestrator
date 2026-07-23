@@ -32,6 +32,7 @@ import {
   editedFilesDisclosureKey,
   nativePlanDisclosureKey,
   type NativePlanDisclosureChangeHandler,
+  type PendingInteractionPageChangeHandler,
   type TaskChatEntry,
 } from "./TaskChatTranscript";
 
@@ -198,6 +199,7 @@ const VirtualTranscriptRow = memo(function VirtualTranscriptRow({
   planExpanded,
   editedFilesExpanded,
   onPlanDisclosureChange,
+  onPendingInteractionPageChange,
 }: {
   entry: TaskChatEntry;
   editable: boolean;
@@ -220,6 +222,7 @@ const VirtualTranscriptRow = memo(function VirtualTranscriptRow({
   planExpanded: boolean;
   editedFilesExpanded: boolean;
   onPlanDisclosureChange: NativePlanDisclosureChangeHandler;
+  onPendingInteractionPageChange: PendingInteractionPageChangeHandler;
 }) {
   return (
     <div
@@ -249,6 +252,7 @@ const VirtualTranscriptRow = memo(function VirtualTranscriptRow({
         planExpanded={planExpanded}
         editedFilesExpanded={editedFilesExpanded}
         onPlanDisclosureChange={onPlanDisclosureChange}
+        onPendingInteractionPageChange={onPendingInteractionPageChange}
       />
     </div>
   );
@@ -295,6 +299,8 @@ export const VirtuosoTaskChatTranscript = memo(
     const completionFollowRetryTimerRef = useRef<number | null>(null);
     const planAnchorFrameRef = useRef<number | null>(null);
     const planAnchorSettleFrameRef = useRef<number | null>(null);
+    const interactionAnchorFrameRef = useRef<number | null>(null);
+    const suppressInteractionFollowRef = useRef(false);
     const notificationFocusTimerRef = useRef<number | null>(null);
     const latestPositionAttemptCountRef = useRef(0);
     const latestTurnVisibleRef = useRef(false);
@@ -595,6 +601,52 @@ export const VirtuosoTaskChatTranscript = memo(
       }
     }, []);
 
+    const clearInteractionAnchorCorrection = useCallback(() => {
+      if (interactionAnchorFrameRef.current !== null) {
+        window.cancelAnimationFrame(interactionAnchorFrameRef.current);
+        interactionAnchorFrameRef.current = null;
+      }
+      suppressInteractionFollowRef.current = false;
+    }, []);
+
+    const handlePendingInteractionPageChange =
+      useCallback<PendingInteractionPageChangeHandler>(
+        ({ anchorElement, anchorTop }) => {
+          clearInteractionAnchorCorrection();
+          suppressInteractionFollowRef.current = true;
+
+          let remainingFrames = 3;
+          const preserveAnchor = () => {
+            interactionAnchorFrameRef.current = null;
+            if (!anchorElement.isConnected) {
+              suppressInteractionFollowRef.current = false;
+              return;
+            }
+
+            const offset =
+              anchorElement.getBoundingClientRect().top - anchorTop;
+            if (Math.abs(offset) >= 0.5) {
+              virtuosoRef.current?.scrollBy({
+                top: offset,
+                behavior: "auto",
+              });
+            }
+
+            remainingFrames -= 1;
+            if (remainingFrames > 0) {
+              interactionAnchorFrameRef.current =
+                window.requestAnimationFrame(preserveAnchor);
+              return;
+            }
+            suppressInteractionFollowRef.current = false;
+          };
+
+          interactionAnchorFrameRef.current =
+            window.requestAnimationFrame(preserveAnchor);
+        },
+        [clearInteractionAnchorCorrection],
+      );
+
     const handlePlanDisclosureChange = useCallback<NativePlanDisclosureChangeHandler>(
       ({ anchorElement, anchorTop, expanded, planKey }) => {
         setExpandedPlanKeys((current) => {
@@ -723,6 +775,7 @@ export const VirtuosoTaskChatTranscript = memo(
 
     const markUserScrollActivity = useCallback(
       (movesAwayFromLatest = false) => {
+        clearInteractionAnchorCorrection();
         if (movesAwayFromLatest) disableLiveFollow();
         lastUserScrollEventAtRef.current = monotonicNow();
         if (!userScrollActiveRef.current) {
@@ -734,6 +787,7 @@ export const VirtuosoTaskChatTranscript = memo(
       },
       [
         cancelLatestPosition,
+        clearInteractionAnchorCorrection,
         disableLiveFollow,
         reportScrollActivity,
         scheduleScrollIdleCheck,
@@ -1118,6 +1172,7 @@ export const VirtuosoTaskChatTranscript = memo(
         clearLiveFollowSchedule();
         clearCompletionFollowSchedule();
         clearPlanAnchorCorrection();
+        clearInteractionAnchorCorrection();
         clearScrollIdleCheck();
         if (notificationFocusTimerRef.current !== null) {
           window.clearTimeout(notificationFocusTimerRef.current);
@@ -1137,6 +1192,7 @@ export const VirtuosoTaskChatTranscript = memo(
       clearLatestPositionSchedule,
       clearLiveFollowSchedule,
       clearCompletionFollowSchedule,
+      clearInteractionAnchorCorrection,
       clearPlanAnchorCorrection,
       clearScrollIdleCheck,
       onScrollActivityChange,
@@ -1255,6 +1311,9 @@ export const VirtuosoTaskChatTranscript = memo(
               editedFilesDisclosureKey(entry),
             )}
             onPlanDisclosureChange={handlePlanDisclosureChange}
+            onPendingInteractionPageChange={
+              handlePendingInteractionPageChange
+            }
           />
         );
       },
@@ -1266,6 +1325,7 @@ export const VirtuosoTaskChatTranscript = memo(
         handleStartEdit,
         handleSubmitEdit,
         handlePlanDisclosureChange,
+        handlePendingInteractionPageChange,
         onAnswerUserInput,
         onCancelPlan,
         onReviewEditedFile,
@@ -1312,7 +1372,11 @@ export const VirtuosoTaskChatTranscript = memo(
           alignToBottom
           atBottomThreshold={TRANSCRIPT_BOTTOM_THRESHOLD_PX}
           followOutput={() =>
-            liveFollow && liveFollowIntentRef.current ? "auto" : false
+            liveFollow &&
+            liveFollowIntentRef.current &&
+            !suppressInteractionFollowRef.current
+              ? "auto"
+              : false
           }
           atBottomStateChange={handleAtBottomStateChange}
           rangeChanged={handleRangeChanged}

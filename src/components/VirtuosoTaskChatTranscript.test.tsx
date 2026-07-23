@@ -1,6 +1,7 @@
 import { act, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { emptyRunView } from "../lib/codexEventReducer";
+import { isNativeUserInputRequest } from "../lib/nativePlanMode";
 import {
   clearTranscriptMeasurementCache,
   getCachedTranscriptRowHeight,
@@ -148,6 +149,44 @@ function runningQuestionEntry(): TaskChatEntry {
         ...entry.runView.nativePlan,
         phase: "awaiting-clarification",
       },
+    },
+  };
+}
+
+function runningMultiQuestionEntry(): TaskChatEntry {
+  const entry = runningQuestionEntry();
+  const request = entry.runView.serverRequests[0];
+  if (!request || !isNativeUserInputRequest(request)) {
+    throw new Error("Expected a native user-input request");
+  }
+  return {
+    ...entry,
+    runView: {
+      ...entry.runView,
+      serverRequests: [
+        {
+          ...request,
+          params: {
+            ...request.params,
+            questions: [
+              ...request.params.questions,
+              {
+                id: "input-support",
+                header: "Input support",
+                question: "Which input support?",
+                isOther: false,
+                isSecret: false,
+                options: [
+                  {
+                    label: "Desktop first",
+                    description: "Support keyboard input first.",
+                  },
+                ],
+              },
+            ],
+          },
+        },
+      ],
     },
   };
 }
@@ -1070,6 +1109,64 @@ describe("VirtuosoTaskChatTranscript", () => {
     });
 
     expect(virtuosoMock.scrollToIndex).not.toHaveBeenCalled();
+  });
+
+  it("preserves the interaction position when a radio answer advances to another question", async () => {
+    const entry = runningMultiQuestionEntry();
+    render(
+      <VirtuosoTaskChatTranscript
+        entries={[entry]}
+        transcriptIdentity="chat:multi-question-anchor"
+        transcriptVersion="live"
+        firstItemIndex={1_000_000}
+        openAtLatestRequest={null}
+        liveFollow
+        onResolveRequest={vi.fn()}
+        onAnswerUserInput={vi.fn()}
+      />,
+    );
+    act(() => virtuosoMock.lastProps.atBottomStateChange(true));
+    await vi.waitFor(() => expect(virtuosoMock.scrollToIndex).toHaveBeenCalled());
+    virtuosoMock.scrollBy.mockClear();
+    virtuosoMock.scrollToIndex.mockClear();
+
+    const stack = screen.getByLabelText("Pending Codex interactions");
+    stack.getBoundingClientRect = () => {
+      const top = screen.queryByText("Which input support?") ? 160 : 220;
+      return {
+        x: 0,
+        y: top,
+        width: 800,
+        height: 360,
+        top,
+        right: 800,
+        bottom: top + 360,
+        left: 0,
+        toJSON: () => ({}),
+      };
+    };
+
+    fireEvent.click(screen.getByRole("radio", { name: "Focused" }));
+
+    expect(screen.getByText("Which input support?")).toBeInTheDocument();
+    expect(virtuosoMock.lastProps.followOutput(false)).toBe(false);
+    await act(
+      () =>
+        new Promise<void>((resolve) => {
+          window.requestAnimationFrame(() => {
+            window.requestAnimationFrame(() => {
+              window.requestAnimationFrame(() => resolve());
+            });
+          });
+        }),
+    );
+
+    expect(virtuosoMock.scrollToIndex).not.toHaveBeenCalled();
+    expect(virtuosoMock.scrollBy).toHaveBeenCalledWith({
+      top: -60,
+      behavior: "auto",
+    });
+    expect(virtuosoMock.lastProps.followOutput(false)).toBe("auto");
   });
 
   it("follows the tail when a new agent question arrives", async () => {
