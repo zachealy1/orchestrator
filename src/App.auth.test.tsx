@@ -6809,6 +6809,112 @@ describe("App Codex auth", () => {
     ).not.toBeInTheDocument();
   });
 
+  it("renders exact outside-workspace permissions and grants them for one turn only", async () => {
+    prepareSignedInRun();
+    const { user } = await renderApp();
+    await startMockRun(user, "Install the project dependencies");
+
+    await emitCodexServerRequest({
+      id: 9,
+      method: "item/permissions/requestApproval",
+      params: {
+        threadId: "thread-1",
+        turnId: "turn-1",
+        itemId: "permissions-1",
+        permissions: {
+          fileSystem: {
+            entries: [
+              {
+                access: "write",
+                path: { type: "path", path: "/Users/example/.npm" },
+              },
+            ],
+          },
+        },
+      },
+    });
+
+    const approval = screen
+      .getByText("Codex needs approval to write outside the workspace")
+      .closest("article")!;
+    expect(within(approval).getByText("Write")).toBeInTheDocument();
+    expect(within(approval).getByText("/Users/example/.npm")).toHaveClass(
+      "approval-code-surface",
+    );
+    expect(
+      within(approval).queryByText("Requested permission scope"),
+    ).not.toBeInTheDocument();
+    expect(
+      within(approval).queryByRole("button", { name: /session/i }),
+    ).not.toBeInTheDocument();
+
+    await user.click(
+      within(approval).getByRole("button", {
+        name: "Allow for this turn",
+      }),
+    );
+    expect(mocks.resolveCodexServerRequestMock).toHaveBeenCalledWith(
+      7,
+      9,
+      "server-request-7-1-9",
+      {
+        permissions: {
+          fileSystem: {
+            entries: [
+              {
+                access: "write",
+                path: { type: "path", path: "/Users/example/.npm" },
+              },
+            ],
+          },
+        },
+        scope: "turn",
+      },
+    );
+  });
+
+  it("fails closed when Codex requests a broad filesystem permission", async () => {
+    prepareSignedInRun();
+    const { user } = await renderApp();
+    await startMockRun(user, "Install the project dependencies");
+
+    await emitCodexServerRequest({
+      id: 9,
+      method: "item/permissions/requestApproval",
+      params: {
+        threadId: "thread-1",
+        turnId: "turn-1",
+        permissions: {
+          fileSystem: {
+            entries: [
+              {
+                access: "write",
+                path: {
+                  type: "glob_pattern",
+                  pattern: "/Users/example/**",
+                },
+              },
+            ],
+          },
+        },
+      },
+    });
+
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      /exact, absolute, non-root paths/i,
+    );
+    expect(
+      screen.queryByRole("button", { name: "Allow for this turn" }),
+    ).not.toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Deny access" }));
+    expect(mocks.resolveCodexServerRequestMock).toHaveBeenCalledWith(
+      7,
+      9,
+      "server-request-7-1-9",
+      { permissions: {}, scope: "turn" },
+    );
+  });
+
   it("notifies for a Codex question outside the visible chat and focuses it on activation", async () => {
     prepareSignedInRun();
     mocks.readAgentNotificationPermissionStatusMock.mockResolvedValue("allowed");

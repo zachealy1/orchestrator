@@ -30,6 +30,7 @@ const MAX_WORKSPACE_UNDO_DIFF_BYTES: usize = 8 * 1024 * 1024;
 const DEFAULT_CODEX_PROFILE_ID: i64 = 0;
 const DEFAULT_CODEX_PROFILE_KEY: &str = "default";
 const ASK_FOR_APPROVAL_PERMISSION_PROFILE: &str = "orchestrator_workspace_network_v1";
+const REQUEST_PERMISSIONS_FEATURE: &str = "request_permissions_tool";
 const IGNORED_EXPLORER_DIRECTORIES: &[&str] =
     &[".git", "node_modules", "target", "dist", "build", ".next"];
 
@@ -1819,7 +1820,7 @@ async fn connect_codex_profile(
         });
     }
 
-    let initialize = send_request(
+    let initialize = match send_request(
         &state,
         account_id,
         "initialize",
@@ -1834,13 +1835,49 @@ async fn connect_codex_profile(
             }
         }),
     )
-    .await?;
+    .await
+    {
+        Ok(response) => response,
+        Err(error) => {
+            let _ = stop_codex_account(account_id, app, state);
+            return Err(format!(
+                "Ask for approval requires a Codex version with dynamic filesystem permission support. Update Codex and retry. App-server initialization failed: {error}"
+            ));
+        }
+    };
 
     send_notification(
         &state,
         account_id,
         json!({ "method": "initialized", "params": {} }),
     )?;
+
+    let experimental_features = match send_request(
+        state,
+        account_id,
+        "experimentalFeature/list",
+        json!({ "limit": 100 }),
+    )
+    .await
+    {
+        Ok(response) => response,
+        Err(error) => {
+            let _ = stop_codex_account(account_id, app, state);
+            return Err(format!(
+                "Ask for approval requires a Codex version with dynamic filesystem permission support. Update Codex and retry. Feature check failed: {error}"
+            ));
+        }
+    };
+    if !experimental_feature_is_enabled(
+        &experimental_features,
+        REQUEST_PERMISSIONS_FEATURE,
+    ) {
+        let _ = stop_codex_account(account_id, app, state);
+        return Err(
+            "Ask for approval requires Codex dynamic filesystem permissions, but request_permissions_tool is unavailable or disabled. Update Codex and retry."
+                .to_string(),
+        );
+    }
 
     let permission_profiles = match send_request(
         state,
@@ -3977,6 +4014,8 @@ fn codex_app_server_args(isolated_file_store: bool) -> Vec<String> {
     let profile_key = format!("permissions.{ASK_FOR_APPROVAL_PERMISSION_PROFILE}");
     let mut args = vec![
         "app-server".to_string(),
+        "--enable".to_string(),
+        REQUEST_PERMISSIONS_FEATURE.to_string(),
         "--listen".to_string(),
         "stdio://".to_string(),
         "-c".to_string(),
@@ -3999,6 +4038,18 @@ fn codex_app_server_args(isolated_file_store: bool) -> Vec<String> {
         ]);
     }
     args
+}
+
+fn experimental_feature_is_enabled(response: &Value, feature_name: &str) -> bool {
+    response
+        .get("data")
+        .and_then(Value::as_array)
+        .is_some_and(|features| {
+            features.iter().any(|feature| {
+                feature.get("name").and_then(Value::as_str) == Some(feature_name)
+                    && feature.get("enabled").and_then(Value::as_bool) == Some(true)
+            })
+        })
 }
 
 fn permission_profile_is_available(response: &Value, profile_id: &str) -> bool {
@@ -5054,7 +5105,16 @@ mod tests {
         let isolated_args = codex_app_server_args(true);
         let profile_key = format!("permissions.{ASK_FOR_APPROVAL_PERMISSION_PROFILE}");
 
-        assert_eq!(&shared_args[..3], ["app-server", "--listen", "stdio://"]);
+        assert_eq!(
+            &shared_args[..5],
+            [
+                "app-server",
+                "--enable",
+                REQUEST_PERMISSIONS_FEATURE,
+                "--listen",
+                "stdio://"
+            ]
+        );
         assert!(shared_args.contains(&format!(
             "default_permissions=\"{ASK_FOR_APPROVAL_PERMISSION_PROFILE}\""
         )));
@@ -5070,6 +5130,36 @@ mod tests {
         assert!(isolated_args
             .iter()
             .any(|arg| arg == "cli_auth_credentials_store=\"file\""));
+    }
+
+    #[test]
+    fn permission_request_feature_check_requires_the_enabled_native_feature() {
+        assert!(experimental_feature_is_enabled(
+            &json!({
+                "data": [
+                    {
+                        "name": REQUEST_PERMISSIONS_FEATURE,
+                        "enabled": true
+                    }
+                ]
+            }),
+            REQUEST_PERMISSIONS_FEATURE
+        ));
+        assert!(!experimental_feature_is_enabled(
+            &json!({
+                "data": [
+                    {
+                        "name": REQUEST_PERMISSIONS_FEATURE,
+                        "enabled": false
+                    }
+                ]
+            }),
+            REQUEST_PERMISSIONS_FEATURE
+        ));
+        assert!(!experimental_feature_is_enabled(
+            &json!({ "data": [] }),
+            REQUEST_PERMISSIONS_FEATURE
+        ));
     }
 
     #[test]

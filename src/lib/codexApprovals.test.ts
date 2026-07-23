@@ -100,31 +100,159 @@ describe("native Codex approval protocol", () => {
     ]);
   });
 
-  it("grants only the requested permission profile with native turn/session scope", () => {
+  it("grants only validated exact filesystem entries for the current turn", () => {
     const requested = {
-      network: { enabled: true },
-      fileSystem: { write: ["/repo/shared"], read: null },
+      fileSystem: {
+        entries: [
+          {
+            access: "write",
+            path: { type: "path", path: "/Users/example/.npm" },
+            ignoredField: "not echoed",
+          },
+          {
+            access: "read",
+            path: {
+              type: "path",
+              path: "/Users/example/.config/tool/config.json",
+            },
+          },
+        ],
+        globScanMaxDepth: 12,
+      },
     };
     const request = parse("item/permissions/requestApproval", {
       permissions: requested,
     });
     expect(request.choices[0].response).toEqual({
-      permissions: requested,
+      permissions: {
+        fileSystem: {
+          entries: [
+            {
+              access: "write",
+              path: { type: "path", path: "/Users/example/.npm" },
+            },
+            {
+              access: "read",
+              path: {
+                type: "path",
+                path: "/Users/example/.config/tool/config.json",
+              },
+            },
+          ],
+        },
+      },
       scope: "turn",
     });
     expect(request.choices[1].response).toEqual({
-      permissions: requested,
-      scope: "turn",
-      strictAutoReview: true,
-    });
-    expect(request.choices[2].response).toEqual({
-      permissions: requested,
-      scope: "session",
-    });
-    expect(request.choices[3].response).toEqual({
       permissions: {},
       scope: "turn",
     });
+    expect(request.choices.map((choice) => choice.label)).toEqual([
+      "Allow for this turn",
+      "Deny access",
+    ]);
+    expect(
+      request.choices.some((choice) => choice.broadScope),
+    ).toBe(false);
+  });
+
+  it.each([
+    {
+      label: "a filesystem root",
+      entry: { access: "write", path: { type: "path", path: "/" } },
+    },
+    {
+      label: "a path with parent traversal",
+      entry: {
+        access: "write",
+        path: { type: "path", path: "/Users/example/../shared" },
+      },
+    },
+    {
+      label: "a glob pattern",
+      entry: {
+        access: "write",
+        path: { type: "glob_pattern", pattern: "/Users/example/**" },
+      },
+    },
+    {
+      label: "a special root",
+      entry: {
+        access: "write",
+        path: { type: "special", value: "root" },
+      },
+    },
+  ])("fails closed for $label", ({ entry }) => {
+    const request = parse("item/permissions/requestApproval", {
+      permissions: {
+        fileSystem: { entries: [entry] },
+      },
+    });
+
+    expect(request.error).toMatch(/exact|malformed/i);
+    expect(request.choices.map((choice) => choice.label)).toEqual([
+      "Deny access",
+    ]);
+    expect(request.choices[0].response).toEqual({
+      permissions: {},
+      scope: "turn",
+    });
+  });
+
+  it("removes persistent command decisions when exact extra filesystem access is requested", () => {
+    const request = parse("item/commandExecution/requestApproval", {
+      command: "npm install",
+      additionalPermissions: {
+        fileSystem: {
+          entries: [
+            {
+              access: "write",
+              path: { type: "path", path: "/Users/example/.npm" },
+            },
+          ],
+        },
+      },
+      availableDecisions: [
+        "accept",
+        "acceptForSession",
+        {
+          acceptWithExecpolicyAmendment: {
+            execpolicy_amendment: ["npm", "install"],
+          },
+        },
+        "decline",
+        "cancel",
+      ],
+    });
+
+    expect(request.error).toBeNull();
+    expect(request.choices.map((choice) => choice.label)).toEqual([
+      "Approve once",
+      "Reject",
+      "Cancel operation",
+    ]);
+  });
+
+  it("does not offer command approval for malformed extra filesystem access", () => {
+    const request = parse("item/commandExecution/requestApproval", {
+      command: "npm install",
+      additionalPermissions: {
+        fileSystem: {
+          entries: [
+            {
+              access: "write",
+              path: { type: "glob_pattern", pattern: "/Users/example/**" },
+            },
+          ],
+        },
+      },
+      availableDecisions: ["accept", "acceptForSession", "cancel"],
+    });
+
+    expect(request.error).toMatch(/broad|malformed/i);
+    expect(request.choices.map((choice) => choice.label)).toEqual([
+      "Cancel operation",
+    ]);
   });
 
   it("fails closed for unsupported server requests", () => {

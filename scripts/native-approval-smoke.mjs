@@ -12,6 +12,10 @@ const rejectedSentinel = join(workspace, "rejected.txt");
 const canceledSentinel = join(workspace, "canceled.txt");
 const networkSentinel = join(workspace, "network.txt");
 const listenerSentinel = join(workspace, "listener.txt");
+const outsideSentinel = join(
+  tmpdir(),
+  `orchestrator-native-permission-${process.pid}-${Date.now()}.txt`,
+);
 const codexHome = join(workspace, ".codex-home");
 const permissionProfile = "orchestrator_workspace_network_v1";
 
@@ -35,7 +39,7 @@ function completedEvent(id) {
   };
 }
 
-function toolCallResponse(id, callId, command) {
+function functionCallResponse(id, callId, name, args) {
   return toSse([
     responseEvent(id),
     {
@@ -43,16 +47,20 @@ function toolCallResponse(id, callId, command) {
       item: {
         type: "function_call",
         call_id: callId,
-        name: "shell_command",
-        arguments: JSON.stringify({
-          command,
-          workdir: workspace,
-          timeout_ms: 10_000,
-        }),
+        name,
+        arguments: JSON.stringify(args),
       },
     },
     completedEvent(id),
   ]);
+}
+
+function toolCallResponse(id, callId, command) {
+  return functionCallResponse(id, callId, "shell_command", {
+    command,
+    workdir: workspace,
+    timeout_ms: 10_000,
+  });
 }
 
 function assistantResponse(id, messageId, text) {
@@ -125,6 +133,30 @@ const assistantResponseBodies = new Map([
       "response-listener-done",
       "message-listener",
       "Approved TCP listener command handled.",
+    ),
+  ],
+  [
+    "call-permission-approved",
+    toolCallResponse(
+      "response-outside-write-call",
+      "call-outside-write",
+      `/bin/sh -c 'printf outside-approved > "${outsideSentinel}"'`,
+    ),
+  ],
+  [
+    "call-outside-write",
+    assistantResponse(
+      "response-outside-write-done",
+      "message-outside-write",
+      "Approved outside-workspace write handled.",
+    ),
+  ],
+  [
+    "call-permission-repeated",
+    assistantResponse(
+      "response-outside-denied-done",
+      "message-outside-denied",
+      "Repeated outside-workspace permission was denied.",
     ),
   ],
 ]);
@@ -211,6 +243,42 @@ toolResponseBodies = [
     "call-listener",
     `python3 -c 'import pathlib, socket; sock = socket.socket(); sock.bind(("127.0.0.1", 0)); pathlib.Path("${listenerSentinel}").write_text(str(sock.getsockname()[1])); sock.close()'`,
   ),
+  functionCallResponse(
+    "response-permission-approved-call",
+    "call-permission-approved",
+    "request_permissions",
+    {
+      permissions: {
+        file_system: {
+          entries: [
+            {
+              access: "write",
+              path: { type: "path", path: outsideSentinel },
+            },
+          ],
+        },
+      },
+      reason: "Write a controlled native approval test file outside the workspace.",
+    },
+  ),
+  functionCallResponse(
+    "response-permission-repeated-call",
+    "call-permission-repeated",
+    "request_permissions",
+    {
+      permissions: {
+        file_system: {
+          entries: [
+            {
+              access: "write",
+              path: { type: "path", path: outsideSentinel },
+            },
+          ],
+        },
+      },
+      reason: "Verify the earlier turn-scoped permission did not persist.",
+    },
+  ),
   toolCallResponse("response-safe-call", "call-safe", "pwd"),
 ];
 await mkdir(codexHome, { recursive: true });
@@ -240,11 +308,15 @@ await writeFile(
     "",
   ].join("\n"),
 );
-const child = spawn(codexBinary, ["app-server", "--stdio"], {
-  cwd: workspace,
-  env: { ...process.env, CODEX_HOME: codexHome },
-  stdio: ["pipe", "pipe", "pipe"],
-});
+const child = spawn(
+  codexBinary,
+  ["app-server", "--enable", "request_permissions_tool", "--stdio"],
+  {
+    cwd: workspace,
+    env: { ...process.env, CODEX_HOME: codexHome },
+    stdio: ["pipe", "pipe", "pipe"],
+  },
+);
 const stderr = [];
 child.stderr.setEncoding("utf8");
 child.stderr.on("data", (chunk) => stderr.push(chunk));
@@ -396,6 +468,16 @@ async function waitForApproval(turnId, label) {
   return message;
 }
 
+async function waitForPermissionApproval(turnId, label) {
+  const message = await waitForApproval(turnId, label);
+  if (message.method !== "item/permissions/requestApproval") {
+    throw new Error(
+      `Expected a filesystem permission approval request, received ${message.method}`,
+    );
+  }
+  return message;
+}
+
 async function exists(path) {
   try {
     await access(path);
@@ -422,6 +504,16 @@ try {
     },
   });
   send({ method: "notifications/initialized" });
+
+  const featureList = await request("experimentalFeature/list", { limit: 100 });
+  const permissionFeature = featureList.data?.find(
+    (feature) => feature.name === "request_permissions_tool",
+  );
+  if (!permissionFeature?.enabled) {
+    throw new Error(
+      `request_permissions_tool was not enabled: ${JSON.stringify(permissionFeature)}`,
+    );
+  }
 
   const started = await request("thread/start", {
     cwd: workspace,
@@ -647,6 +739,118 @@ try {
     throw new Error("The approved command did not bind a TCP listener");
   }
 
+  const outsideWriteTurn = await request("turn/start", {
+    threadId,
+    cwd: workspace,
+    approvalPolicy: "untrusted",
+    approvalsReviewer: "user",
+    permissions: permissionProfile,
+    input: [
+      {
+        type: "text",
+        text: "Request the supplied exact outside-workspace permission, then run the supplied write command.",
+        text_elements: [],
+      },
+    ],
+  });
+  const outsidePermission = await waitForPermissionApproval(
+    outsideWriteTurn.turn.id,
+    "the outside-workspace filesystem permission request",
+  );
+  await delay(250);
+  if (await exists(outsideSentinel)) {
+    throw new Error(
+      "The outside-workspace file was created before path access was approved",
+    );
+  }
+  send({
+    id: outsidePermission.id,
+    result: {
+      permissions: outsidePermission.params.permissions,
+      scope: "turn",
+    },
+  });
+  await waitForMessage(
+    (message) =>
+      message.method === "serverRequest/resolved" &&
+      message.params?.requestId === outsidePermission.id,
+    "serverRequest/resolved after outside path approval",
+  );
+  const outsideCommandApproval = await waitForApproval(
+    outsideWriteTurn.turn.id,
+    "the separately approval-gated outside write command",
+  );
+  if (outsideCommandApproval.method !== "item/commandExecution/requestApproval") {
+    throw new Error(
+      `Expected a separate command approval after granting the path, received ${outsideCommandApproval.method}`,
+    );
+  }
+  if (await exists(outsideSentinel)) {
+    throw new Error(
+      "Approving the path unexpectedly approved the write command as well",
+    );
+  }
+  send({
+    id: outsideCommandApproval.id,
+    result: {
+      decision: selectOfferedCommandDecision(outsideCommandApproval, ["accept"]),
+    },
+  });
+  await waitForMessage(
+    (message) =>
+      message.method === "serverRequest/resolved" &&
+      message.params?.requestId === outsideCommandApproval.id,
+    "serverRequest/resolved after outside write command approval",
+  );
+  await waitForMessage(
+    isTurnCompleted(outsideWriteTurn.turn.id),
+    "the approved outside-workspace write turn to complete",
+  );
+  if ((await readFile(outsideSentinel, "utf8")) !== "outside-approved") {
+    throw new Error(
+      "The turn-scoped exact path grant did not permit the approved outside write",
+    );
+  }
+  await rm(outsideSentinel, { force: true });
+
+  const repeatedPermissionTurn = await request("turn/start", {
+    threadId,
+    cwd: workspace,
+    approvalPolicy: "untrusted",
+    approvalsReviewer: "user",
+    permissions: permissionProfile,
+    input: [
+      {
+        type: "text",
+        text: "Request the same supplied outside-workspace permission again.",
+        text_elements: [],
+      },
+    ],
+  });
+  const repeatedPermission = await waitForPermissionApproval(
+    repeatedPermissionTurn.turn.id,
+    "the repeated outside-workspace filesystem permission request",
+  );
+  send({
+    id: repeatedPermission.id,
+    result: { permissions: {}, scope: "turn" },
+  });
+  await waitForMessage(
+    (message) =>
+      message.method === "serverRequest/resolved" &&
+      message.params?.requestId === repeatedPermission.id,
+    "serverRequest/resolved after repeated path denial",
+  );
+  await waitForMessage(
+    isTurnCompleted(repeatedPermissionTurn.turn.id),
+    "the denied repeated permission turn to complete",
+  );
+  if (await exists(outsideSentinel)) {
+    throw new Error(
+      "The earlier turn-scoped grant remained active in a later turn",
+    );
+  }
+
   const safeTurn = await request("turn/start", {
     threadId,
     cwd: workspace,
@@ -684,7 +888,7 @@ try {
       `Approval method: ${approval.method}`,
       `Runtime-offered decisions exercised: ${acceptedDecision}, ${rejectedDecision}, ${canceledDecision}`,
       `Approved listener port: ${listenerPort}`,
-      "Verified: unanswered commands stayed blocked; approved commands wrote workspace files, reached HTTP, and bound TCP; rejected and canceled commands did not run; a safe read-only command completed without prompting.",
+      "Verified: unanswered commands stayed blocked; approved commands wrote workspace files, reached HTTP, and bound TCP; exact outside-workspace writes required turn-scoped path approval plus separate command approval; the path required approval again on the next turn; rejected and canceled commands did not run; a safe read-only command completed without prompting.",
     ].join("\n") + "\n",
   );
 } finally {
@@ -698,6 +902,7 @@ try {
   if (child.exitCode === null && child.signalCode === null) {
     child.kill("SIGKILL");
   }
+  await rm(outsideSentinel, { force: true });
   await new Promise((resolve) => mockResponsesServer.close(resolve));
   await rm(workspace, {
     recursive: true,

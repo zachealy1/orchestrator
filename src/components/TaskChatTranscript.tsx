@@ -54,10 +54,11 @@ import type {
   RunViewState,
   StreamEvent,
 } from "../lib/codexEventReducer";
-import type {
-  ApprovalChoice,
-  ApprovalResolutionHandler,
-  CodexApprovalRequest,
+import {
+  validateRequestedFileSystemPermissions,
+  type ApprovalChoice,
+  type ApprovalResolutionHandler,
+  type CodexApprovalRequest,
 } from "../lib/codexApprovals";
 import {
   isNativeUserInputRequest,
@@ -3326,10 +3327,18 @@ const ApprovalCard = memo(function ApprovalCard({
   const cwd = approvalString(request.params.cwd);
   const reason = approvalString(request.params.reason);
   const network = approvalRecord(request.params.networkApprovalContext);
-  const permissions =
+  const permissionProfile =
     approvalRecord(request.params.additionalPermissions) ??
     approvalRecord(request.params.permissions);
-  const resources = approvalResources(request, itemResources);
+  const fileSystemRequest =
+    validateRequestedFileSystemPermissions(permissionProfile);
+  const permissionPaths =
+    fileSystemRequest.status === "valid"
+      ? new Set(fileSystemRequest.entries.map((entry) => entry.path.path))
+      : new Set<string>();
+  const resources = approvalResources(request, itemResources).filter(
+    (resource) => !permissionPaths.has(resource),
+  );
   const hasContext = Boolean(
     cwd || reason || network || resources.length > 0,
   );
@@ -3353,7 +3362,9 @@ const ApprovalCard = memo(function ApprovalCard({
       <header className="approval-header">
         <ShieldAlert size={19} aria-hidden="true" />
         <div>
-          <strong id={`${request.key}-title`}>{approvalTitle(request)}</strong>
+          <strong id={`${request.key}-title`}>
+            {approvalTitle(request, fileSystemRequest)}
+          </strong>
         </div>
         {navigator}
       </header>
@@ -3365,11 +3376,23 @@ const ApprovalCard = memo(function ApprovalCard({
         </div>
       ) : null}
 
-      {permissions ? (
-        <details className="approval-permissions" open>
-          <summary>Requested permission scope</summary>
-          <pre>{JSON.stringify(permissions, null, 2)}</pre>
-        </details>
+      {fileSystemRequest.status === "valid" ? (
+        <div className="approval-command approval-filesystem-permissions">
+          <span>Requested filesystem access</span>
+          <div className="approval-permission-list">
+            {fileSystemRequest.entries.map((entry) => (
+              <div
+                className="approval-permission-entry"
+                key={`${entry.access}:${entry.path.path}`}
+              >
+                <span className="approval-permission-access">
+                  {approvalPermissionAccessLabel(entry.access)}
+                </span>
+                <pre className="approval-code-surface">{entry.path.path}</pre>
+              </div>
+            ))}
+          </div>
+        </div>
       ) : null}
 
       {request.error ? (
@@ -3465,7 +3488,21 @@ function ApprovalChoiceIcon({ choice }: { choice: ApprovalChoice }) {
   return <Check size={17} aria-hidden="true" />;
 }
 
-function approvalTitle(request: CodexApprovalRequest) {
+function approvalTitle(
+  request: CodexApprovalRequest,
+  fileSystemRequest: ReturnType<
+    typeof validateRequestedFileSystemPermissions
+  >,
+) {
+  if (
+    fileSystemRequest.status === "valid" &&
+    fileSystemRequest.entries.some((entry) => entry.access === "write")
+  ) {
+    return "Codex needs approval to write outside the workspace";
+  }
+  if (fileSystemRequest.status === "valid") {
+    return "Codex needs approval to access files outside the workspace";
+  }
   switch (request.kind) {
     case "command":
     case "legacy-command":
@@ -3521,7 +3558,30 @@ function approvalResources(
     const path = approvalString(record?.path);
     if (path) resources.push(path);
   }
+  const permissionProfile =
+    approvalRecord(request.params.additionalPermissions) ??
+    approvalRecord(request.params.permissions);
+  const fileSystemRequest =
+    validateRequestedFileSystemPermissions(permissionProfile);
+  if (fileSystemRequest.status === "valid") {
+    resources.push(
+      ...fileSystemRequest.entries.map((entry) => entry.path.path),
+    );
+  }
   return Array.from(new Set(resources));
+}
+
+function approvalPermissionAccessLabel(
+  access: "read" | "write" | "deny",
+) {
+  switch (access) {
+    case "read":
+      return "Read";
+    case "write":
+      return "Write";
+    case "deny":
+      return "Deny";
+  }
 }
 
 function approvalNetworkLabel(network: Record<string, unknown>) {

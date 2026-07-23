@@ -8054,6 +8054,7 @@ function App() {
       const shouldNotify = [
         "command",
         "file-change",
+        "permissions",
         "legacy-command",
         "legacy-file-change",
       ].includes(parsed.kind);

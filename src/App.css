@@ -5256,8 +5256,7 @@ button.pending-interaction-nav:disabled {
   min-width: 0;
 }
 
-.approval-code-surface,
-.approval-permissions pre {
+.approval-code-surface {
   border: 1px solid var(--line);
   border-radius: 8px;
   background: var(--color-component-background);
@@ -5301,10 +5300,35 @@ button.pending-interaction-nav:disabled {
   overflow-wrap: anywhere;
 }
 
-.approval-permissions summary {
-  cursor: pointer;
-  color: var(--muted);
-  font-size: 0.8rem;
+.approval-filesystem-permissions {
+  display: grid;
+  gap: 6px;
+}
+
+.approval-permission-list {
+  display: grid;
+  gap: 6px;
+}
+
+.approval-permission-entry {
+  display: grid;
+  min-width: 0;
+  grid-template-columns: max-content minmax(0, 1fr);
+  gap: 8px;
+  align-items: center;
+}
+
+.approval-permission-entry .approval-code-surface {
+  min-width: 0;
+  margin: 0;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+
+.approval-permission-access {
+  color: var(--color-text-secondary);
+  font-size: 0.76rem;
+  font-weight: 500;
 }
 
 .approval-choice {

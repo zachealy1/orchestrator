@@ -87,6 +87,40 @@ export type ApprovalResolutionHandler = (
   choice: ApprovalChoice,
 ) => void;
 
+export type CodexFileSystemAccess = "read" | "write" | "deny";
+
+export type CodexFileSystemPermissionEntry = {
+  access: CodexFileSystemAccess;
+  path: {
+    type: "path";
+    path: string;
+  };
+};
+
+export type FileSystemPermissionValidation =
+  | {
+      status: "none";
+      entries: [];
+      permissions: null;
+      error: null;
+    }
+  | {
+      status: "valid";
+      entries: CodexFileSystemPermissionEntry[];
+      permissions: {
+        fileSystem: {
+          entries: CodexFileSystemPermissionEntry[];
+        };
+      };
+      error: null;
+    }
+  | {
+      status: "invalid";
+      entries: [];
+      permissions: null;
+      error: string;
+    };
+
 type ParseApprovalInput = {
   message: CodexMessage;
   profileKey: CodexProfileKey;
@@ -129,24 +163,42 @@ export function parseApprovalRequest({
   };
 
   switch (message.method) {
-    case COMMAND_METHOD:
+    case COMMAND_METHOD: {
+      const fileSystemRequest = validateRequestedFileSystemPermissions(
+        params.additionalPermissions,
+      );
       return {
         ...common,
         kind: "command",
-        choices: commandApprovalChoices(params),
+        choices: commandApprovalChoices(params, fileSystemRequest),
+        error:
+          fileSystemRequest.status === "invalid"
+            ? fileSystemRequest.error
+            : null,
       };
+    }
     case FILE_CHANGE_METHOD:
       return {
         ...common,
         kind: "file-change",
         choices: fileChangeApprovalChoices(),
       };
-    case PERMISSIONS_METHOD:
+    case PERMISSIONS_METHOD: {
+      const fileSystemRequest = validateRequestedFileSystemPermissions(
+        params.permissions,
+      );
       return {
         ...common,
         kind: "permissions",
-        choices: permissionsApprovalChoices(params),
+        choices: permissionsApprovalChoices(fileSystemRequest),
+        error:
+          fileSystemRequest.status === "invalid"
+            ? fileSystemRequest.error
+            : fileSystemRequest.status === "none"
+              ? unsupportedPermissionRequestError()
+              : null,
       };
+    }
     case "execCommandApproval":
       return {
         ...common,
@@ -176,7 +228,10 @@ export function approvalRequestKey(
   return `${profileKey}:${requestToken}`;
 }
 
-function commandApprovalChoices(params: Record<string, unknown>) {
+function commandApprovalChoices(
+  params: Record<string, unknown>,
+  fileSystemRequest: FileSystemPermissionValidation,
+) {
   const supplied = params.availableDecisions;
   let decisions: CommandApprovalDecision[];
 
@@ -184,6 +239,13 @@ function commandApprovalChoices(params: Record<string, unknown>) {
     decisions = supplied.filter(isCommandApprovalDecision);
   } else {
     decisions = fallbackCommandDecisions(params);
+  }
+
+  if (fileSystemRequest.status !== "none") {
+    decisions =
+      fileSystemRequest.status === "valid"
+        ? decisions.filter(isTurnScopedCommandDecision)
+        : decisions.filter(isCommandDenialDecision);
   }
 
   return decisions.map((decision) => commandDecisionChoice(decision, params));
@@ -364,42 +426,33 @@ function fileChangeApprovalChoices(): ApprovalChoice[] {
   });
 }
 
-function permissionsApprovalChoices(params: Record<string, unknown>) {
-  const requested = grantedPermissions(params.permissions);
-  return [
-    choice(
-      "permissions-turn",
-      "Grant for turn",
-      "Grant exactly these permissions until this turn ends.",
-      { permissions: requested, scope: "turn" },
-      "approve",
-      false,
-    ),
-    choice(
-      "permissions-turn-review",
-      "Grant with strict review",
-      "Grant for this turn and review each later command before normal sandboxed execution.",
-      { permissions: requested, scope: "turn", strictAutoReview: true },
-      "approve",
-      false,
-    ),
-    choice(
-      "permissions-session",
-      "Grant for session",
-      "Grant exactly these permissions for the native Codex session.",
-      { permissions: requested, scope: "session" },
-      "approve",
-      true,
-    ),
+function permissionsApprovalChoices(
+  fileSystemRequest: FileSystemPermissionValidation,
+) {
+  const choices: ApprovalChoice[] = [];
+  if (fileSystemRequest.status === "valid") {
+    choices.push(
+      choice(
+        "permissions-turn",
+        "Allow for this turn",
+        "Allow only the displayed paths until this Codex turn ends.",
+        { permissions: fileSystemRequest.permissions, scope: "turn" },
+        "approve",
+        false,
+      ),
+    );
+  }
+  choices.push(
     choice(
       "permissions-deny",
-      "Deny permissions",
-      "Continue without granting any requested permissions.",
+      "Deny access",
+      "Continue without granting access outside the workspace.",
       { permissions: {}, scope: "turn" },
       "danger",
       false,
     ),
-  ];
+  );
+  return choices;
 }
 
 function legacyApprovalChoices(includeSession: boolean) {
@@ -476,14 +529,123 @@ function isCommandApprovalDecision(value: unknown): value is CommandApprovalDeci
   return Boolean(readNetworkAmendment(network?.network_policy_amendment));
 }
 
-function grantedPermissions(value: unknown) {
-  const requested = readObject(value);
-  const granted: Record<string, unknown> = {};
-  const network = readObjectOrNull(requested.network);
-  const fileSystem = readObjectOrNull(requested.fileSystem);
-  if (network) granted.network = network;
-  if (fileSystem) granted.fileSystem = fileSystem;
-  return granted;
+function isTurnScopedCommandDecision(decision: CommandApprovalDecision) {
+  return (
+    decision === "accept" ||
+    decision === "decline" ||
+    decision === "cancel"
+  );
+}
+
+function isCommandDenialDecision(decision: CommandApprovalDecision) {
+  return decision === "decline" || decision === "cancel";
+}
+
+export function validateRequestedFileSystemPermissions(
+  value: unknown,
+): FileSystemPermissionValidation {
+  const profile = readObjectOrNull(value);
+  if (!profile || profile.fileSystem === null || profile.fileSystem === undefined) {
+    return {
+      status: "none",
+      entries: [],
+      permissions: null,
+      error: null,
+    };
+  }
+
+  const fileSystem = readObjectOrNull(profile.fileSystem);
+  const rawEntries = fileSystem?.entries;
+  if (!fileSystem || !Array.isArray(rawEntries) || rawEntries.length === 0) {
+    return invalidFileSystemPermissionRequest(
+      "Codex requested filesystem access in an unsupported format. Update Codex before granting access outside the workspace.",
+    );
+  }
+
+  const entries: CodexFileSystemPermissionEntry[] = [];
+  const seen = new Set<string>();
+  for (const rawEntry of rawEntries) {
+    const entry = readObjectOrNull(rawEntry);
+    const access = entry?.access;
+    const path = readObjectOrNull(entry?.path);
+    const rawPath = readString(path?.path);
+    if (
+      (access !== "read" && access !== "write" && access !== "deny") ||
+      path?.type !== "path" ||
+      !rawPath ||
+      !isSafeExactAbsolutePath(rawPath)
+    ) {
+      return invalidFileSystemPermissionRequest(
+        "Codex requested a broad or malformed filesystem permission. Orchestrator only allows exact, absolute, non-root paths for the current turn.",
+      );
+    }
+
+    const key = `${access}:${rawPath}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    entries.push({
+      access,
+      path: {
+        type: "path",
+        path: rawPath,
+      },
+    });
+  }
+
+  if (!entries.some((entry) => entry.access === "read" || entry.access === "write")) {
+    return invalidFileSystemPermissionRequest(
+      "Codex did not request any grantable filesystem access.",
+    );
+  }
+
+  return {
+    status: "valid",
+    entries,
+    permissions: {
+      fileSystem: {
+        entries,
+      },
+    },
+    error: null,
+  };
+}
+
+function invalidFileSystemPermissionRequest(
+  error: string,
+): FileSystemPermissionValidation {
+  return {
+    status: "invalid",
+    entries: [],
+    permissions: null,
+    error,
+  };
+}
+
+function unsupportedPermissionRequestError() {
+  return "Codex requested permissions that Orchestrator cannot safely grant. Update Codex for turn-scoped filesystem permission support.";
+}
+
+function isSafeExactAbsolutePath(value: string) {
+  if (value.includes("\0") || hasParentTraversal(value)) return false;
+
+  if (value.startsWith("/")) {
+    return value.replace(/\/+$/u, "") !== "";
+  }
+
+  if (/^[A-Za-z]:[\\/]/u.test(value)) {
+    return !/^[A-Za-z]:[\\/]*$/u.test(value);
+  }
+
+  if (value.startsWith("\\\\")) {
+    const parts = value.split(/[\\/]+/u).filter(Boolean);
+    return parts.length > 2;
+  }
+
+  return false;
+}
+
+function hasParentTraversal(value: string) {
+  return value.split(/[\\/]+/u).some((part) => part === "..");
 }
 
 function readNetworkAmendment(value: unknown) {
