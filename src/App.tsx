@@ -320,6 +320,7 @@ const HISTORY_VIRTUOSO_BASE_INDEX = 1_000_000;
 const HISTORY_TRANSCRIPT_COMMIT_IDLE_MS = 150;
 const HISTORY_TRANSCRIPT_RESIZE_IDLE_MS = 120;
 const HISTORY_TRANSCRIPT_RESIZE_WAIT_LIMIT_MS = 500;
+const AGENT_NOTIFICATION_FOCUS_TIMEOUT_MS = 5_000;
 const HISTORY_DRAWER_TRANSITION_FALLBACK_MS = 240;
 const RUN_EVENT_BATCH_DELAY_MS = 100;
 const RUN_EVENT_BATCH_MAX_SIZE = 50;
@@ -624,6 +625,34 @@ type HistoryOpenRequest = {
   workspaceId: number;
   chatId: number;
   phase: HistoryOpenPhase;
+};
+
+type AgentNotificationNavigationPhase =
+  | "resolving"
+  | "opening-chat"
+  | "focusing"
+  | "complete";
+
+type AgentNotificationNavigationState = {
+  requestId: number;
+  target: AgentNotificationTarget;
+  phase: AgentNotificationNavigationPhase;
+};
+
+type AgentNotificationNavigationResult =
+  | "complete"
+  | "terminal"
+  | "retryable";
+
+type PendingAgentNotificationFocus = {
+  requestId: number;
+  timeoutId: number;
+  resolve: (found: boolean) => void;
+};
+
+type SelectHistoryChatOptions = {
+  source?: "drawer" | "notification";
+  workspace?: Workspace;
 };
 
 type StableHistoryChatCacheEntry = {
@@ -1139,6 +1168,8 @@ function App() {
     useState<AgentNotificationPermissionStatus>("unavailable");
   const [transcriptNotificationFocusRequest, setTranscriptNotificationFocusRequest] =
     useState<TranscriptNotificationFocusRequest | null>(null);
+  const [, setAgentNotificationNavigation] =
+    useState<AgentNotificationNavigationState | null>(null);
   const [prompt, setPrompt] = useState("");
   const [promptRevision, setPromptRevision] = useState(0);
   const promptRef = useRef(prompt);
@@ -1275,11 +1306,15 @@ function App() {
   });
   const chatTitleGenerationsInFlightRef = useRef(new Set<number>());
   const handledNotificationActivationKeysRef = useRef(new Set<string>());
+  const notificationActivationsInFlightRef = useRef(new Set<string>());
   const pendingNotificationDeliveryKeysRef = useRef(new Set<string>());
   const bootstrapCompleteRef = useRef(false);
   const pendingNotificationActivationRef =
     useRef<AgentNotificationTarget | null>(null);
   const notificationFocusSequenceRef = useRef(0);
+  const notificationNavigationSequenceRef = useRef(0);
+  const pendingAgentNotificationFocusRef =
+    useRef<PendingAgentNotificationFocus | null>(null);
   const [unroutedApprovals, setUnroutedApprovals] = useState<
     CodexApprovalRequest[]
   >([]);
@@ -1832,11 +1867,41 @@ function App() {
       setTranscriptNotificationFocusRequest((current) =>
         current?.requestId === request.requestId ? null : current,
       );
-      if (!found) {
-        setStatusMessage(
-          "That notification target is no longer available in this chat.",
-        );
+      const pendingFocus = pendingAgentNotificationFocusRef.current;
+      if (pendingFocus?.requestId === request.requestId) {
+        pendingAgentNotificationFocusRef.current = null;
+        window.clearTimeout(pendingFocus.timeoutId);
+        pendingFocus.resolve(found);
       }
+    },
+  );
+  const dispatchAgentNotificationActivation = useStableEvent(
+    (target: AgentNotificationTarget | null) => {
+      if (!target) return;
+      if (!bootstrapCompleteRef.current) {
+        pendingNotificationActivationRef.current = target;
+        return;
+      }
+      if (
+        handledNotificationActivationKeysRef.current.has(target.eventKey) ||
+        notificationActivationsInFlightRef.current.has(target.eventKey)
+      ) {
+        return;
+      }
+
+      notificationActivationsInFlightRef.current.add(target.eventKey);
+      void activateAgentNotification(target)
+        .then((result) => {
+          if (result === "complete" || result === "terminal") {
+            handledNotificationActivationKeysRef.current.add(target.eventKey);
+          }
+        })
+        .catch(() => {
+          setStatusMessage("Could not open the chat for that notification.");
+        })
+        .finally(() => {
+          notificationActivationsInFlightRef.current.delete(target.eventKey);
+        });
     },
   );
   const selectHistoryChatFromDrawer = useStableEvent((chat: ChatListItem) => {
@@ -2432,35 +2497,30 @@ function App() {
     let disposed = false;
     let unlisten: (() => void) | null = null;
 
-    const dispatchActivation = (target: AgentNotificationTarget | null) => {
-      if (!target || disposed) return;
-      if (!bootstrapCompleteRef.current) {
-        pendingNotificationActivationRef.current = target;
-        return;
-      }
-      if (handledNotificationActivationKeysRef.current.has(target.eventKey)) {
-        return;
-      }
-      handledNotificationActivationKeysRef.current.add(target.eventKey);
-      void activateAgentNotification(target);
-    };
-
     void listen<AgentNotificationTarget>(
       "orchestrator:agent-notification-activated",
-      (event) => dispatchActivation(event.payload),
+      (event) => {
+        if (!disposed) {
+          dispatchAgentNotificationActivation(event.payload);
+        }
+      },
     ).then((dispose) => {
       if (disposed) dispose();
       else unlisten = dispose;
     });
     void takePendingAgentNotificationActivation()
-      .then(dispatchActivation)
+      .then((target) => {
+        if (!disposed) {
+          dispatchAgentNotificationActivation(target);
+        }
+      })
       .catch(() => undefined);
 
     return () => {
       disposed = true;
       unlisten?.();
     };
-  }, [activateAgentNotification]);
+  }, [dispatchAgentNotificationActivation]);
 
   useEffect(() => {
     if (!selectedWorkspace) {
@@ -3120,17 +3180,7 @@ function App() {
     bootstrapCompleteRef.current = true;
     const pendingActivation = pendingNotificationActivationRef.current;
     pendingNotificationActivationRef.current = null;
-    if (
-      pendingActivation &&
-      !handledNotificationActivationKeysRef.current.has(
-        pendingActivation.eventKey,
-      )
-    ) {
-      handledNotificationActivationKeysRef.current.add(
-        pendingActivation.eventKey,
-      );
-      void activateAgentNotification(pendingActivation);
-    }
+    dispatchAgentNotificationActivation(pendingActivation);
   }
 
   async function refreshWorkspaceData(workspaceId: number) {
@@ -3639,6 +3689,7 @@ function App() {
       return;
     }
 
+    cancelAgentNotificationNavigation();
     const workspace = await upsertWorkspace(selected);
     historyChatLoadIdRef.current += 1;
     cancelActiveExternalTranscriptSync();
@@ -3660,6 +3711,7 @@ function App() {
       return;
     }
 
+    cancelAgentNotificationNavigation();
     if (selectedWorkspaceRef.current?.id !== workspace.id) {
       historyChatLoadIdRef.current += 1;
       cancelActiveExternalTranscriptSync();
@@ -4604,7 +4656,58 @@ function App() {
     await synchronizeExternalTranscript(chat, loadId, "initial");
   }
 
-  async function selectHistoryChat(chat: ChatListItem) {
+  function markWorkspaceChatRead(workspaceId: number, chatId: number) {
+    setUnreadCompletedChats((current) => {
+      const currentWorkspaceChats = current[workspaceId] ?? [];
+      const remaining = currentWorkspaceChats.filter(
+        (candidateChatId) => candidateChatId !== chatId,
+      );
+      if (remaining.length === currentWorkspaceChats.length) {
+        return current;
+      }
+      const next = { ...current };
+      if (remaining.length > 0) next[workspaceId] = remaining;
+      else delete next[workspaceId];
+      return next;
+    });
+  }
+
+  function applyWorkspaceForChatNavigation(workspace: Workspace) {
+    setWorkspaceContextMenu(null);
+    selectedWorkspaceRef.current = workspace;
+    setSelectedWorkspace(workspace);
+    activeViewRef.current = "task";
+    setActiveView("task");
+    preflightRef.current = null;
+  }
+
+  function selectWorkspaceDefaultAccount(workspace: Workspace) {
+    if (
+      workspace.default_account_id &&
+      workspace.default_account_id !== selectedAccountIdRef.current
+    ) {
+      void selectCodexAccount(workspace.default_account_id);
+    }
+  }
+
+  async function selectHistoryChat(
+    chat: ChatListItem,
+    options: SelectHistoryChatOptions = {},
+  ): Promise<boolean> {
+    if (options.source !== "notification") {
+      cancelAgentNotificationNavigation();
+    }
+    const targetWorkspace =
+      options.workspace ??
+      workspacesRef.current.find(
+        (candidate) => candidate.id === chat.workspace_id,
+      ) ??
+      null;
+    if (!targetWorkspace) {
+      setStatusMessage("The workspace for that chat is no longer available.");
+      return false;
+    }
+
     const loadId = historyChatLoadIdRef.current + 1;
     historyChatLoadIdRef.current = loadId;
     cancelActiveExternalTranscriptSync();
@@ -4624,21 +4727,11 @@ function App() {
     };
     const runningControl = findRunControlByChat(chat.workspace_id, chat.id);
 
-    setUnreadCompletedChats((current) => {
-      const remaining = (current[chat.workspace_id] ?? []).filter(
-        (chatId) => chatId !== chat.id,
-      );
-      if (remaining.length === (current[chat.workspace_id] ?? []).length) {
-        return current;
-      }
-      const next = { ...current };
-      if (remaining.length > 0) next[chat.workspace_id] = remaining;
-      else delete next[chat.workspace_id];
-      return next;
-    });
+    markWorkspaceChatRead(chat.workspace_id, chat.id);
 
     if (runningControl) {
       flushSync(() => {
+        applyWorkspaceForChatNavigation(targetWorkspace);
         setChatHistoryContextMenu(null);
         setSelectedDraftChat(null);
         setSelectedHistoryChatId(chat.id);
@@ -4647,14 +4740,15 @@ function App() {
         setHistoryOpenRequest(null);
         setHistoricalTranscript(null);
         closeHistoryDrawer();
-        setActiveView("task");
+        setSelectedRunAliases(runningControl);
       });
-      setSelectedRunAliases(runningControl);
+      selectWorkspaceDefaultAccount(targetWorkspace);
       setStatusMessage("Opened running chat.");
-      return;
+      return true;
     }
 
     flushSync(() => {
+      applyWorkspaceForChatNavigation(targetWorkspace);
       setChatHistoryContextMenu(null);
       setSelectedDraftChat(null);
       setSelectedHistoryChatId(chat.id);
@@ -4676,8 +4770,9 @@ function App() {
         replaceChatEntries(current, chat.workspace_id, chat.id, []),
       );
       closeHistoryDrawer();
-      setActiveView("task");
+      setSelectedRunAliases(null);
     });
+    selectWorkspaceDefaultAccount(targetWorkspace);
 
     setStatusMessage(`Opening chat from ${formatHistoryTimestamp(chat.latest_activity_at)}.`);
     try {
@@ -4687,7 +4782,7 @@ function App() {
       await waitForNextPaint();
       await waitForTranscriptViewportStable();
       if (historyChatLoadIdRef.current !== loadId) {
-        return;
+        return false;
       }
 
       const cached = stableHistoryChatCacheRef.current.get(chat.id);
@@ -4699,18 +4794,25 @@ function App() {
         setStatusMessage(
           `Opened chat from ${formatHistoryTimestamp(chat.latest_activity_at)}.`,
         );
-        return;
+        return true;
       }
 
       if (chat.origin === "codex_external") {
         await loadExternalCodexChat(chat, loadId);
-        return;
+        return (
+          historyChatLoadIdRef.current === loadId &&
+          selectedWorkspaceRef.current?.id === chat.workspace_id
+        );
       }
 
       await loadLocalHistoryChatProgressively(chat, loadId);
+      return (
+        historyChatLoadIdRef.current === loadId &&
+        selectedWorkspaceRef.current?.id === chat.workspace_id
+      );
     } catch (error) {
       if (historyChatLoadIdRef.current !== loadId) {
-        return;
+        return false;
       }
       const message = error instanceof Error ? error.message : String(error);
       setHistoryChatLoadState((current) =>
@@ -4723,6 +4825,7 @@ function App() {
       setStatusMessage(
         `Could not open chat: ${message}`,
       );
+      return false;
     }
   }
 
@@ -4862,6 +4965,7 @@ function App() {
       setStatusMessage("Choose a workspace before starting a new chat.");
       return;
     }
+    cancelAgentNotificationNavigation();
     historyChatLoadIdRef.current += 1;
     cancelActiveExternalTranscriptSync();
     cancelActiveHistoricalTranscriptPreparation();
@@ -7282,32 +7386,272 @@ function App() {
     }
   }
 
-  function focusAgentNotificationTarget(target: AgentNotificationTarget) {
+  function setAgentNotificationNavigationPhase(
+    requestId: number,
+    target: AgentNotificationTarget,
+    phase: AgentNotificationNavigationPhase,
+  ) {
+    if (notificationNavigationSequenceRef.current !== requestId) return;
+    setAgentNotificationNavigation({ requestId, target, phase });
+  }
+
+  function cancelPendingAgentNotificationFocus() {
+    const pendingFocus = pendingAgentNotificationFocusRef.current;
+    pendingAgentNotificationFocusRef.current = null;
+    if (pendingFocus) {
+      window.clearTimeout(pendingFocus.timeoutId);
+      pendingFocus.resolve(false);
+    }
+    setTranscriptNotificationFocusRequest(null);
+  }
+
+  function cancelAgentNotificationNavigation() {
+    notificationNavigationSequenceRef.current += 1;
+    cancelPendingAgentNotificationFocus();
+    setAgentNotificationNavigation(null);
+  }
+
+  function agentNotificationNavigationIsCurrent(requestId: number) {
+    return notificationNavigationSequenceRef.current === requestId;
+  }
+
+  function findRunControlForAgentNotification(
+    target: AgentNotificationTarget,
+  ) {
+    return (
+      [...activeRunControlsRef.current.values()].find(
+        (control) =>
+          control.workspaceId === target.workspaceId &&
+          ((target.entryClientId &&
+            control.clientId === target.entryClientId) ||
+            (target.runId !== null &&
+              target.runId !== undefined &&
+              control.runId === target.runId) ||
+            (target.turnId && control.turnId === target.turnId) ||
+            (target.chatId !== null &&
+              target.chatId !== undefined &&
+              control.chatId === target.chatId)),
+      ) ?? null
+    );
+  }
+
+  function findEntryForAgentNotification(
+    target: AgentNotificationTarget,
+    workspaceId: number,
+  ) {
+    const workspaceEntries = taskChatEntriesRef.current.filter(
+      (entry) =>
+        entry.workspaceId === workspaceId &&
+        (target.chatId === null ||
+          target.chatId === undefined ||
+          entry.chatId === target.chatId),
+    );
+    return (
+      workspaceEntries.find(
+        (entry) =>
+          (target.entryClientId &&
+            entry.clientId === target.entryClientId) ||
+          (target.runId !== null &&
+            target.runId !== undefined &&
+            entry.runId === target.runId) ||
+          (target.turnId && entry.runView.turnId === target.turnId),
+      ) ??
+      (target.entryClientId || target.runId !== null || target.turnId
+        ? null
+        : workspaceEntries[workspaceEntries.length - 1] ?? null)
+    );
+  }
+
+  function openInMemoryAgentNotificationChat(
+    workspace: Workspace,
+    target: AgentNotificationTarget,
+    runningControl: ActiveRunControl | null,
+  ) {
+    const entry = findEntryForAgentNotification(target, workspace.id);
+    if (!entry) return false;
+
+    const chatId = target.chatId ?? runningControl?.chatId ?? entry.chatId;
+    const existingSession = workspaceChatSessionsRef.current[workspace.id];
+    let session: WorkspaceChatSession | undefined;
+    if (chatId !== null && chatId !== undefined) {
+      if (existingSession?.chatId === chatId) {
+        session = existingSession;
+      } else if (runningControl && runningControl.chatId === chatId) {
+        const chatEntries = taskChatEntriesRef.current.filter(
+          (candidate) =>
+            candidate.workspaceId === workspace.id &&
+            candidate.chatId === chatId,
+        );
+        const latestTurnIndex = chatEntries.reduce(
+          (latest, candidate) =>
+            Math.max(latest, candidate.turnIndex ?? 0),
+          0,
+        );
+        session = {
+          chatId,
+          threadId: runningControl.threadId,
+          origin:
+            runningControl.profileKey === DEFAULT_CODEX_PROFILE_KEY
+              ? "codex_external"
+              : "orchestrator",
+          profileKey: runningControl.profileKey,
+          externalThreadId:
+            runningControl.profileKey === DEFAULT_CODEX_PROFILE_KEY
+              ? runningControl.threadId
+              : null,
+          nextTurnIndex: Math.max(1, latestTurnIndex + 1),
+        };
+      } else {
+        return false;
+      }
+    }
+
+    const selectedSession =
+      selectedWorkspaceRef.current?.id === workspace.id
+        ? workspaceChatSessionsRef.current[workspace.id]
+        : null;
+    const sameVisibleChat =
+      selectedWorkspaceRef.current?.id === workspace.id &&
+      ((chatId !== null &&
+        chatId !== undefined &&
+        selectedSession?.chatId === chatId) ||
+        (chatId === null &&
+          selectedDraftChatEntryIdRef.current === entry.clientId));
+
+    if (!sameVisibleChat) {
+      historyChatLoadIdRef.current += 1;
+      cancelActiveExternalTranscriptSync();
+      cancelActiveHistoricalTranscriptPreparation();
+      pendingTranscriptCommitRef.current = null;
+      transcriptScrollActiveRef.current = false;
+    }
+
+    flushSync(() => {
+      applyWorkspaceForChatNavigation(workspace);
+      setChatHistoryContextMenu(null);
+      if (session) {
+        setWorkspaceChatSession(workspace.id, session);
+        setSelectedDraftChat(null);
+        setSelectedHistoryChatId(session.chatId);
+      } else {
+        setWorkspaceChatSession(workspace.id, undefined);
+        setSelectedDraftChat(entry.clientId);
+        setSelectedHistoryChatId(null);
+      }
+      if (!sameVisibleChat) {
+        setHistoryChatLoadState(null);
+        setHistoryOpenRequest(null);
+        setHistoricalTranscript(null);
+      }
+      closeHistoryDrawer();
+      setSelectedRunAliases(runningControl);
+    });
+    if (chatId !== null && chatId !== undefined) {
+      markWorkspaceChatRead(workspace.id, chatId);
+    }
+    selectWorkspaceDefaultAccount(workspace);
+    return true;
+  }
+
+  function focusAgentNotificationTarget(
+    target: AgentNotificationTarget,
+    navigationRequestId: number,
+  ) {
+    if (!agentNotificationNavigationIsCurrent(navigationRequestId)) {
+      return Promise.resolve(false);
+    }
+
     notificationFocusSequenceRef.current += 1;
-    setTranscriptNotificationFocusRequest({
+    const focusRequest: TranscriptNotificationFocusRequest = {
       requestId: notificationFocusSequenceRef.current,
       kind:
         target.kind === "approval-required"
           ? "approval"
           : target.kind === "user-input-required"
             ? "user-input"
-          : target.kind === "plan-ready"
-            ? "plan"
-            : "response",
+            : target.kind === "plan-ready"
+              ? "plan"
+              : "response",
       entryClientId: target.entryClientId ?? null,
       runId: target.runId ?? null,
       turnId: target.turnId ?? null,
       targetId: target.requestId ?? target.planItemId ?? null,
+    };
+    cancelPendingAgentNotificationFocus();
+    setAgentNotificationNavigationPhase(
+      navigationRequestId,
+      target,
+      "focusing",
+    );
+    return new Promise<boolean>((resolve) => {
+      const timeoutId = window.setTimeout(() => {
+        const pendingFocus = pendingAgentNotificationFocusRef.current;
+        if (pendingFocus?.requestId !== focusRequest.requestId) return;
+        pendingAgentNotificationFocusRef.current = null;
+        setTranscriptNotificationFocusRequest((current) =>
+          current?.requestId === focusRequest.requestId ? null : current,
+        );
+        resolve(false);
+      }, AGENT_NOTIFICATION_FOCUS_TIMEOUT_MS);
+      pendingAgentNotificationFocusRef.current = {
+        requestId: focusRequest.requestId,
+        timeoutId,
+        resolve,
+      };
+      setTranscriptNotificationFocusRequest(focusRequest);
     });
+  }
+
+  async function completeAgentNotificationChatNavigation(
+    target: AgentNotificationTarget,
+    navigationRequestId: number,
+  ): Promise<AgentNotificationNavigationResult> {
+    await waitForHistoryDrawerClosed();
+    await waitForNextPaint();
+    if (!agentNotificationNavigationIsCurrent(navigationRequestId)) {
+      return "retryable";
+    }
+
+    const focused = await focusAgentNotificationTarget(
+      target,
+      navigationRequestId,
+    );
+    if (!agentNotificationNavigationIsCurrent(navigationRequestId)) {
+      return "retryable";
+    }
+    if (!focused) {
+      setStatusMessage(
+        "That notification target is no longer available in this chat.",
+      );
+      setAgentNotificationNavigation(null);
+      return "retryable";
+    }
+
+    setAgentNotificationNavigationPhase(
+      navigationRequestId,
+      target,
+      "complete",
+    );
+    return "complete";
   }
 
   async function handleAgentNotificationActivation(
     target: AgentNotificationTarget,
-  ) {
+  ): Promise<AgentNotificationNavigationResult> {
     if (!isAgentNotificationTargetNavigable(target)) {
       setStatusMessage("That notification target is no longer available.");
-      return;
+      return "terminal";
     }
+
+    cancelPendingAgentNotificationFocus();
+    const navigationRequestId =
+      notificationNavigationSequenceRef.current + 1;
+    notificationNavigationSequenceRef.current = navigationRequestId;
+    setAgentNotificationNavigation({
+      requestId: navigationRequestId,
+      target,
+      phase: "resolving",
+    });
 
     if (target.kind === "external-action") {
       const account = codexAccountsRef.current.find(
@@ -7315,17 +7659,24 @@ function App() {
       );
       if (!account || account.status === "signed_in") {
         setStatusMessage("That sign-in action is no longer pending.");
-        return;
+        setAgentNotificationNavigation(null);
+        return "terminal";
       }
       setSelectedAccountId(account.id);
       selectedAccountIdRef.current = account.id;
+      activeViewRef.current = "settings";
       setActiveView("settings");
       window.requestAnimationFrame(() => {
         document
           .querySelector<HTMLElement>(`[data-managed-account-id="${account.id}"]`)
           ?.focus({ preventScroll: true });
       });
-      return;
+      setAgentNotificationNavigationPhase(
+        navigationRequestId,
+        target,
+        "complete",
+      );
+      return "complete";
     }
 
     const workspace = workspacesRef.current.find(
@@ -7333,35 +7684,57 @@ function App() {
     );
     if (!workspace) {
       setStatusMessage("The workspace for that notification is no longer available.");
-      return;
-    }
-    if (selectedWorkspaceRef.current?.id !== workspace.id) {
-      selectWorkspace(workspace.id);
-    } else {
-      setActiveView("task");
+      setAgentNotificationNavigation(null);
+      return "terminal";
     }
 
-    const visibleEntry = taskChatEntriesRef.current.find(
-      (entry) =>
-        entry.workspaceId === workspace.id &&
-        ((target.entryClientId && entry.clientId === target.entryClientId) ||
-          (target.runId !== null &&
-            target.runId !== undefined &&
-            entry.runId === target.runId) ||
-          (target.turnId && entry.runView.turnId === target.turnId)),
-    );
-    const session = workspaceChatSessionsRef.current[workspace.id];
-    if (visibleEntry && (!target.chatId || session?.chatId === target.chatId)) {
-      focusAgentNotificationTarget(target);
-      return;
+    const runningControl = findRunControlForAgentNotification(target);
+    if (
+      runningControl &&
+      openInMemoryAgentNotificationChat(
+        workspace,
+        target,
+        runningControl,
+      )
+    ) {
+      return completeAgentNotificationChatNavigation(
+        target,
+        navigationRequestId,
+      );
     }
+
+    if (
+      openInMemoryAgentNotificationChat(
+        workspace,
+        target,
+        null,
+      )
+    ) {
+      return completeAgentNotificationChatNavigation(
+        target,
+        navigationRequestId,
+      );
+    }
+
+    if (!agentNotificationNavigationIsCurrent(navigationRequestId)) {
+      return "retryable";
+    }
+    setAgentNotificationNavigationPhase(
+      navigationRequestId,
+      target,
+      "opening-chat",
+    );
 
     let chats: ChatListItem[];
     try {
       chats = await listWorkspaceChats(workspace.id);
     } catch {
       setStatusMessage("Could not load the chat for that notification.");
-      return;
+      setAgentNotificationNavigation(null);
+      return "retryable";
+    }
+    if (!agentNotificationNavigationIsCurrent(navigationRequestId)) {
+      return "retryable";
     }
     const chat = chats.find(
       (candidate) =>
@@ -7372,11 +7745,26 @@ function App() {
     );
     if (!chat || chat.deleted_at) {
       setStatusMessage("That notification belongs to a deleted or unavailable chat.");
-      return;
+      setAgentNotificationNavigation(null);
+      return "terminal";
     }
 
-    focusAgentNotificationTarget(target);
-    await selectHistoryChat(chat);
+    const opened = await selectHistoryChat(chat, {
+      source: "notification",
+      workspace,
+    });
+    if (
+      !opened ||
+      !agentNotificationNavigationIsCurrent(navigationRequestId)
+    ) {
+      setAgentNotificationNavigation(null);
+      return "retryable";
+    }
+
+    return completeAgentNotificationChatNavigation(
+      target,
+      navigationRequestId,
+    );
   }
 
   async function handleCodexNotification(

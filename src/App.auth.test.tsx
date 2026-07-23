@@ -2519,6 +2519,129 @@ describe("App Codex auth", () => {
     );
   });
 
+  it("atomically switches workspaces and opens the chat targeted by a notification", async () => {
+    const otherWorkspace = {
+      ...workspace,
+      id: 2,
+      path: "/repo/mobile-client",
+      label: "mobile-client",
+    };
+    const historicalChat = {
+      ...workspaceChatFixture({
+        id: 413,
+        title: "Mobile notification target",
+        codex_thread_id: "thread-mobile",
+      }),
+      workspace_id: otherWorkspace.id,
+    };
+    const historicalRun = {
+      ...workspaceRunFixture({
+        id: 313,
+        chat_id: historicalChat.id,
+        original_prompt: "Mobile notification target",
+        final_message: "Opened in the other workspace.",
+      }),
+      workspace_id: otherWorkspace.id,
+      codex_thread_id: "thread-mobile",
+      codex_turn_id: "turn-mobile",
+    };
+    mocks.listWorkspacesMock.mockResolvedValue([workspace, otherWorkspace]);
+    mocks.listWorkspaceChatsMock.mockImplementation(async (workspaceId: number) =>
+      workspaceId === otherWorkspace.id ? [historicalChat] : [],
+    );
+    mocks.listLocalChatTranscriptMock.mockResolvedValue([historicalRun]);
+    mocks.takePendingAgentNotificationActivationMock.mockResolvedValue({
+      eventKey: "response-completed:account:7:thread-mobile:turn-mobile:313",
+      kind: "response-completed",
+      workspaceId: otherWorkspace.id,
+      chatId: historicalChat.id,
+      runId: historicalRun.id,
+      entryClientId: null,
+      requestId: null,
+      planItemId: null,
+      accountId: 7,
+      profileKey: "account:7",
+      threadId: "thread-mobile",
+      turnId: "turn-mobile",
+    });
+
+    await renderApp();
+
+    expect(
+      await screen.findByText("Opened in the other workspace."),
+    ).toBeInTheDocument();
+    const banner = screen.getByRole("region", { name: "Selected folder" });
+    expect(within(banner).getByText("mobile-client")).toBeInTheDocument();
+    await waitFor(() =>
+      expect(
+        document.querySelector<HTMLElement>(
+          '[data-agent-notification-target="response"]',
+        ),
+      ).toHaveFocus(),
+    );
+  });
+
+  it("allows a notification activation to retry after history loading fails", async () => {
+    const historicalChat = workspaceChatFixture({
+      id: 414,
+      title: "Retry notification target",
+    });
+    const historicalRun = workspaceRunFixture({
+      id: 314,
+      chat_id: historicalChat.id,
+      original_prompt: "Retry notification target",
+      final_message: "Opened after retrying the notification.",
+    });
+    const target = {
+      eventKey: "response-completed:account:7:thread-1:turn-1:314",
+      kind: "response-completed" as const,
+      workspaceId: workspace.id,
+      chatId: historicalChat.id,
+      runId: historicalRun.id,
+      entryClientId: null,
+      requestId: null,
+      planItemId: null,
+      accountId: 7,
+      profileKey: "account:7" as const,
+      threadId: "thread-1",
+      turnId: "turn-1",
+    };
+    mocks.listWorkspaceChatsMock
+      .mockRejectedValueOnce(new Error("Database temporarily unavailable"))
+      .mockResolvedValue([historicalChat]);
+    mocks.listLocalChatTranscriptMock.mockResolvedValue([historicalRun]);
+
+    await renderApp();
+    await act(async () => {
+      mocks.listeners.get("orchestrator:agent-notification-activated")?.({
+        payload: target,
+      });
+      await Promise.resolve();
+    });
+    await waitFor(() =>
+      expect(mocks.listWorkspaceChatsMock).toHaveBeenCalledTimes(1),
+    );
+    await act(async () => {
+      await new Promise((resolve) => window.setTimeout(resolve, 0));
+      mocks.listeners.get("orchestrator:agent-notification-activated")?.({
+        payload: target,
+      });
+      await Promise.resolve();
+    });
+
+    expect(
+      await screen.findByText("Opened after retrying the notification."),
+    ).toBeInTheDocument();
+    expect(mocks.listWorkspaceChatsMock).toHaveBeenCalledTimes(2);
+    await waitFor(() =>
+      expect(
+        document.querySelector<HTMLElement>(
+          '[data-agent-notification-target="response"]',
+        ),
+      ).toHaveFocus(),
+    );
+  });
+
   it("loads a complete local transcript once and performs no history reads while scrolling", async () => {
     const historicalChat = workspaceChatFixture({
       id: 451,
@@ -6795,6 +6918,101 @@ describe("App Codex auth", () => {
         notification.target.eventKey,
       ),
     );
+  });
+
+  it("returns to a running chat in another workspace when its notification is activated", async () => {
+    const otherWorkspace = {
+      ...workspace,
+      id: 2,
+      path: "/repo/mobile-client",
+      label: "mobile-client",
+    };
+    prepareSignedInRun();
+    mocks.listWorkspacesMock.mockResolvedValue([workspace, otherWorkspace]);
+    mocks.readAgentNotificationPermissionStatusMock.mockResolvedValue("allowed");
+
+    const { user } = await renderApp();
+    await startMockRun(user, "Wait for project input");
+    const workspaceNav = screen.getByRole("navigation", { name: "Workspaces" });
+    await user.click(
+      within(workspaceNav).getByRole("button", { name: "mobile-client" }),
+    );
+    const otherWorkspaceBanner = screen.getByRole("region", {
+      name: "Selected folder",
+    });
+    await user.click(
+      within(otherWorkspaceBanner).getByRole("button", {
+        name: /open chat history/i,
+      }),
+    );
+    const drawer = await screen.findByRole("complementary", {
+      name: "Workspace chat history",
+    });
+
+    await emitCodexServerRequest({
+      id: "cross-workspace-question",
+      method: "item/tool/requestUserInput",
+      params: {
+        threadId: "thread-1",
+        turnId: "turn-1",
+        itemId: "cross-workspace-question-item",
+        autoResolutionMs: null,
+        questions: [
+          {
+            id: "framework",
+            header: "Framework",
+            question: "Which framework should Codex use?",
+            isOther: false,
+            isSecret: false,
+            options: [
+              {
+                label: "React",
+                description: "Use React.",
+              },
+            ],
+          },
+        ],
+      },
+    });
+    await waitFor(() =>
+      expect(mocks.sendAgentNotificationMock).toHaveBeenCalledWith(
+        expect.objectContaining({
+          target: expect.objectContaining({
+            kind: "user-input-required",
+            workspaceId: workspace.id,
+            chatId: 401,
+          }),
+        }),
+      ),
+    );
+    const target = mocks.sendAgentNotificationMock.mock.calls.find(
+      ([request]) => request.target.kind === "user-input-required",
+    )?.[0].target;
+    expect(target).toBeDefined();
+    if (!target) {
+      throw new Error("Expected a user-input notification target.");
+    }
+
+    await act(async () => {
+      mocks.listeners.get("orchestrator:agent-notification-activated")?.({
+        payload: target,
+      });
+      await Promise.resolve();
+    });
+
+    const banner = screen.getByRole("region", { name: "Selected folder" });
+    await waitFor(() =>
+      expect(within(banner).getByText("orchestrator")).toBeInTheDocument(),
+    );
+    await waitFor(() => expect(drawer).toHaveClass("closed"));
+    const question = await screen.findByText(
+      "Which framework should Codex use?",
+    );
+    const questionCard = question.closest(
+      '[data-agent-notification-target="user-input"]',
+    );
+    await waitFor(() => expect(questionCard).toHaveFocus());
+    expect(screen.getByRole("button", { name: /stop codex/i })).toBeInTheDocument();
   });
 
   it("suppresses a Codex question notification when the question is already visible", async () => {
