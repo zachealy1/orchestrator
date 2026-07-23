@@ -103,4 +103,19 @@ describe("history drawer animation CSS", () => {
     expect(spacer).toContain("min-height: 16px");
     expect(spacer).toContain("pointer-events: none");
   });
+
+  it("balances completed-response spacing above and below the review card", () => {
+    const chatLayout = rule(".task-hero.has-chat");
+    const composer = rule(".task-hero.has-chat .composer-panel");
+    const response = rule(".run-output-surface");
+    const row = rule(".task-chat-virtuoso-row");
+    const spacer = rule(".task-chat-transcript-bottom-spacer");
+
+    expect(chatLayout).toContain("--task-chat-section-gap: 18px");
+    expect(response).toContain("gap: var(--task-chat-section-gap, 18px)");
+    expect(row).toContain("var(--task-chat-section-gap, 18px)");
+    expect(composer).toContain("margin-top: calc(-1 * var(--radius))");
+    expect(spacer).toContain("height: var(--radius)");
+    expect(spacer).toContain("min-height: var(--radius)");
+  });
 });

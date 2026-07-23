@@ -2109,6 +2109,8 @@ button.account-switcher-item:hover:not(:disabled) {
 }
 
 .task-hero.has-chat {
+  --task-chat-section-gap: 18px;
+
   align-items: stretch;
   justify-content: flex-end;
   gap: 0;
@@ -2249,13 +2251,20 @@ button.account-switcher-item:hover:not(:disabled) {
   pointer-events: none;
 }
 
+.task-chat-transcript-bottom-spacer {
+  height: var(--radius);
+  min-height: var(--radius);
+  pointer-events: none;
+}
+
 .task-chat-virtuoso-row {
   display: grid;
   width: 100%;
   justify-items: center;
   box-sizing: border-box;
   overflow-anchor: none;
-  padding: 4px var(--task-hero-inline-padding) 18px;
+  padding: 4px var(--task-hero-inline-padding)
+    var(--task-chat-section-gap, 18px);
   contain: layout style;
   background: var(--color-background);
 }
@@ -2574,7 +2583,7 @@ button.submitted-prompt-edit-button:focus-visible {
 .run-output-surface {
   display: grid;
   min-width: 0;
-  gap: 18px;
+  gap: var(--task-chat-section-gap, 18px);
   color: var(--color-text);
 }
 

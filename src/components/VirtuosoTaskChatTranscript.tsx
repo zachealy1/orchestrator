@@ -55,8 +55,15 @@ function TranscriptTopSpacer() {
   return <div className="task-chat-transcript-top-spacer" aria-hidden="true" />;
 }
 
+function TranscriptBottomSpacer() {
+  return (
+    <div className="task-chat-transcript-bottom-spacer" aria-hidden="true" />
+  );
+}
+
 const transcriptComponents = {
   Header: TranscriptTopSpacer,
+  Footer: TranscriptBottomSpacer,
 };
 
 type StableDefaultItemHeight = {
