@@ -322,6 +322,19 @@ const HISTORY_TRANSCRIPT_RESIZE_WAIT_LIMIT_MS = 500;
 const HISTORY_DRAWER_TRANSITION_FALLBACK_MS = 240;
 const RUN_EVENT_BATCH_DELAY_MS = 100;
 const RUN_EVENT_BATCH_MAX_SIZE = 50;
+const RUN_NOTIFICATION_BINDING_TTL_MS = 30_000;
+const RUN_NOTIFICATION_BINDING_BUFFER_LIMIT = 100;
+const BUFFERABLE_RUN_NOTIFICATION_METHODS = new Set([
+  "item/completed",
+  "item/started",
+  "thread/started",
+  "thread/status/changed",
+  "thread/tokenUsage/updated",
+  "turn/completed",
+  "turn/diff/updated",
+  "turn/plan/updated",
+  "turn/started",
+]);
 const EMPTY_GIT_STATUS_BY_PATH = new Map<string, WorkspaceGitFileStatus>();
 const EMPTY_DIRTY_DIRECTORY_PATHS = new Set<string>();
 const DEFAULT_CODEX_PROFILE_KEY: CodexProfileKey = "default";
@@ -624,6 +637,23 @@ type PendingFrameCodexNotification = {
   message: CodexMessage;
   profileKey: CodexProfileKey;
 };
+
+type PendingRunBindingNotification = {
+  accountId: number;
+  profileKey: CodexProfileKey;
+  message: CodexMessage;
+  receivedAt: number;
+};
+
+function readCodexMessageRunIdentity(message: CodexMessage) {
+  const params = readObject(message.params);
+  return {
+    threadId:
+      readString(params.threadId) ?? readString(readObject(params.thread).id),
+    turnId:
+      readString(params.turnId) ?? readString(readObject(params.turn).id),
+  };
+}
 
 function markPerformance(name: string) {
   if (
@@ -1278,6 +1308,9 @@ function App() {
     PendingFrameCodexNotification[]
   >([]);
   const pendingFrameCodexNotificationIdRef = useRef<number | null>(null);
+  const pendingRunBindingNotificationsRef = useRef<
+    PendingRunBindingNotification[]
+  >([]);
   const pendingRunEventWritesRef = useRef<RunEventInput[]>([]);
   const pendingRunEventFlushTimerRef = useRef<number | null>(null);
   const runEventWriteChainRef = useRef<Promise<void>>(Promise.resolve());
@@ -3640,6 +3673,17 @@ function App() {
   function removeRunControl(control: ActiveRunControl) {
     if (activeRunControlsRef.current.get(control.clientId) !== control) return;
     activeRunControlsRef.current.delete(control.clientId);
+    pendingRunBindingNotificationsRef.current =
+      pendingRunBindingNotificationsRef.current.filter((pending) => {
+        if (pending.profileKey !== control.profileKey) return true;
+        const identity = readCodexMessageRunIdentity(pending.message);
+        if (control.turnId && identity.turnId === control.turnId) return false;
+        return !(
+          control.threadId &&
+          identity.threadId === control.threadId &&
+          (!identity.turnId || !control.turnId)
+        );
+      });
     setActiveRunRegistryVersion((current) => current + 1);
     if (activeRunControlRef.current === control) {
       setSelectedRunAliases(null);
@@ -3659,10 +3703,10 @@ function App() {
     profileKey: CodexProfileKey,
     message: CodexMessage,
   ) {
-    const params = readObject(message.params);
-    const messageThreadId = readString(params.threadId);
-    const messageTurnId =
-      readString(params.turnId) ?? readString(readObject(params.turn).id);
+    const {
+      threadId: messageThreadId,
+      turnId: messageTurnId,
+    } = readCodexMessageRunIdentity(message);
     const candidates = [...activeRunControlsRef.current.values()].filter(
       (control) => !control.stopped && control.profileKey === profileKey,
     );
@@ -3676,6 +3720,68 @@ function App() {
       return candidates[0];
     }
     return null;
+  }
+
+  function prunePendingRunBindingNotifications(now = Date.now()) {
+    pendingRunBindingNotificationsRef.current =
+      pendingRunBindingNotificationsRef.current.filter(
+        (pending) => now - pending.receivedAt <= RUN_NOTIFICATION_BINDING_TTL_MS,
+      );
+  }
+
+  function bufferPendingRunBindingNotification(
+    accountId: number,
+    profileKey: CodexProfileKey,
+    message: CodexMessage,
+  ) {
+    const method = message.method ?? "";
+    if (!BUFFERABLE_RUN_NOTIFICATION_METHODS.has(method)) return;
+
+    const identity = readCodexMessageRunIdentity(message);
+    if (!identity.threadId && !identity.turnId) return;
+    const hasProfileRun = [...activeRunControlsRef.current.values()].some(
+      (control) => !control.stopped && control.profileKey === profileKey,
+    );
+    if (!hasProfileRun) return;
+
+    prunePendingRunBindingNotifications();
+    pendingRunBindingNotificationsRef.current.push({
+      accountId,
+      profileKey,
+      message,
+      receivedAt: Date.now(),
+    });
+    const overflow =
+      pendingRunBindingNotificationsRef.current.length -
+      RUN_NOTIFICATION_BINDING_BUFFER_LIMIT;
+    if (overflow > 0) {
+      pendingRunBindingNotificationsRef.current.splice(0, overflow);
+    }
+  }
+
+  async function flushPendingRunBindingNotifications(
+    control: ActiveRunControl,
+  ) {
+    prunePendingRunBindingNotifications();
+    const replay: PendingRunBindingNotification[] = [];
+    pendingRunBindingNotificationsRef.current =
+      pendingRunBindingNotificationsRef.current.filter((pending) => {
+        const match = findRunControlForMessage(
+          pending.profileKey,
+          pending.message,
+        );
+        if (match !== control) return true;
+        replay.push(pending);
+        return false;
+      });
+
+    for (const pending of replay) {
+      await handleCodexNotification(
+        pending.accountId,
+        pending.profileKey,
+        pending.message,
+      );
+    }
   }
 
   function findRunControlForIds(
@@ -6219,6 +6325,9 @@ function App() {
         assertRuntimeAccessMatches(thread, snapshot.access);
         const nextThreadId = thread.thread.id;
         runControl.threadId = nextThreadId;
+        void flushPendingRunBindingNotifications(runControl).catch((error) => {
+          console.error("Could not replay buffered Codex notifications", error);
+        });
         const nextThreadModel = thread.model ?? snapshot.model;
         const nextThreadModelProvider =
           thread.modelProvider ?? (snapshot.useOss ? "oss" : null);
@@ -6250,6 +6359,9 @@ function App() {
         threadModelProvider = thread.modelProvider;
       } else {
         runControl.threadId = threadId;
+        void flushPendingRunBindingNotifications(runControl).catch((error) => {
+          console.error("Could not replay buffered Codex notifications", error);
+        });
         if (snapshot.chatOrigin === "codex_external") {
           try {
             const resumed = await codexRpcForProfile<{
@@ -6354,8 +6466,12 @@ function App() {
               report.improvedPrompt || snapshot.improvedPrompt,
               report.recommendations,
             );
+      const progressAwareTurnText =
+        runControl.intent === "plan-implementation"
+          ? addPlanImplementationProgressInstructions(baseTurnText)
+          : baseTurnText;
       const text = applySelectedSkillsToPrompt(
-        baseTurnText,
+        progressAwareTurnText,
         snapshot.selectedSkills,
       );
       let { additionalContext, skippedFiles } = await buildAdditionalContext(
@@ -6466,6 +6582,9 @@ function App() {
       ensureRunControlActive(runControl);
       await updateTaskStatus(task.id, "running");
       ensureRunControlActive(runControl);
+      void flushPendingRunBindingNotifications(runControl).catch((error) => {
+        console.error("Could not replay buffered Codex notifications", error);
+      });
       if (pendingChatTitleGeneration) {
         const titleRequest = pendingChatTitleGeneration;
         pendingChatTitleGeneration = null;
@@ -7217,7 +7336,10 @@ function App() {
     }
 
     const control = findRunControlForMessage(profileKey, message);
-    if (!control) return;
+    if (!control) {
+      bufferPendingRunBindingNotification(accountId, profileKey, message);
+      return;
+    }
 
     if (shouldFrameBatchCodexMessage(message)) {
       queueBufferedRunEvent(control, "notification", method, message);
@@ -11184,6 +11306,18 @@ function formatGitSummaryForStatus(summary: WorkspaceGitSummary) {
   ].filter(Boolean);
 
   return `${summary.total} changed${details.length > 0 ? ` (${details.join(", ")})` : ""}`;
+}
+
+function addPlanImplementationProgressInstructions(prompt: string) {
+  return [
+    prompt.trimEnd(),
+    "",
+    "Track this implementation with Codex's structured plan tool:",
+    "- Before changing files, call `update_plan` with a concise checklist derived from the approved plan.",
+    "- Keep exactly one step in progress while work is underway and update the checklist whenever execution advances.",
+    "- Mark every completed step before sending the final response.",
+    "- If the implementation genuinely has only one step, keep a single step rather than inventing extra work.",
+  ].join("\n");
 }
 
 function applySelectedSkillsToPrompt(

@@ -3936,7 +3936,11 @@ describe("App Codex auth", () => {
           threadId: "thread-plan",
           collaborationMode: expect.objectContaining({ mode: "default" }),
           input: [
-            expect.objectContaining({ text: "Implement the plan." }),
+            expect.objectContaining({
+              text: expect.stringContaining(
+                "Before changing files, call `update_plan`",
+              ),
+            }),
           ],
         }),
       );
@@ -6345,6 +6349,51 @@ describe("App Codex auth", () => {
     expect(within(composer).queryByRole("status")).not.toBeInTheDocument();
     expect(promptInput).toHaveFocus();
     expect(promptInput).toHaveValue("Keep this follow-up draft");
+  });
+
+  it("replays plan progress received before the turn identity is bound", async () => {
+    prepareSignedInRun();
+    let resolveTurnStart!: (value: { turn: { id: string } }) => void;
+    const turnStart = new Promise<{ turn: { id: string } }>((resolve) => {
+      resolveTurnStart = resolve;
+    });
+    mocks.codexRpcMock.mockImplementation(
+      async (_accountId: number, method: string) => {
+        if (method === "thread/start") {
+          return { thread: { id: "thread-early-progress" } };
+        }
+        if (method === "turn/start") {
+          return turnStart;
+        }
+        return {};
+      },
+    );
+
+    const { user } = await renderApp();
+    await startMockRun(user, "Implement the approved plan");
+
+    await emitCodexNotification({
+      method: "turn/plan/updated",
+      params: {
+        threadId: "thread-early-progress",
+        turnId: "turn-early-progress",
+        plan: [
+          { step: "Inspect the repository", status: "completed" },
+          { step: "Implement the change", status: "inProgress" },
+          { step: "Run verification", status: "pending" },
+        ],
+      },
+    });
+
+    await act(async () => {
+      resolveTurnStart({ turn: { id: "turn-early-progress" } });
+      await turnStart;
+    });
+
+    const composer = screen.getByLabelText("Task composer");
+    const progress = await within(composer).findByRole("status");
+    expect(progress).toHaveTextContent("Step 2 / 3");
+    expect(progress).toHaveTextContent("Implement the change");
   });
 
   it("opens edited files in the diff drawer and undoes their exact saved patch", async () => {
