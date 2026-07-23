@@ -6651,7 +6651,12 @@ describe("App Codex auth", () => {
         diff,
       ),
     );
-    expect(within(completedSummary).getByText("Changes undone.")).toBeInTheDocument();
+    expect(within(completedSummary).queryByText("Changes undone.")).toBeNull();
+    expect(
+      within(completedSummary).getByRole("button", {
+        name: "File changes undone",
+      }),
+    ).toBeDisabled();
   });
 
   it("coalesces bursty app-server deltas without disturbing active typing", async () => {

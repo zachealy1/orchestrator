@@ -1567,7 +1567,7 @@ describe("TaskChatTranscript", () => {
     expect(
       screen.queryByRole("dialog", { name: "Undo changes?" }),
     ).not.toBeInTheDocument();
-    expect(within(summary).getByText("Changes undone.")).toBeInTheDocument();
+    expect(within(summary).queryByText("Changes undone.")).toBeNull();
     expect(
       within(summary).getByRole("button", { name: "File changes undone" }),
     ).toBeDisabled();

@@ -1924,10 +1924,6 @@ const EditedFilesSummary = memo(function EditedFilesSummary({
         <p className="edited-files-action-status error" role="alert">
           {actionError}
         </p>
-      ) : undoState === "success" ? (
-        <p className="edited-files-action-status" role="status">
-          Changes undone.
-        </p>
       ) : null}
     </section>
   );
