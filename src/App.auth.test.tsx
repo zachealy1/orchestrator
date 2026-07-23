@@ -1550,24 +1550,16 @@ describe("App Codex auth", () => {
     const dialog = screen.getByRole("dialog", { name: "Commit or push" });
     await user.click(within(dialog).getByRole("button", { name: /^commit$/i }));
 
-    await waitFor(() =>
-      expect(mocks.commitWorkspaceChangesMock).toHaveBeenCalledWith(
-        workspace.path,
-        "Apply requested workspace changes",
-        true,
-      ),
-    );
-    expect(mocks.commitWorkspaceChangesMock).not.toHaveBeenCalledWith(
-      workspace.path,
-      "Refine task chat transcript layout",
-      true,
-    );
+    expect(
+      await within(dialog).findByRole("alert"),
+    ).toHaveTextContent(/could not generate an intent-driven commit message/i);
+    expect(mocks.commitWorkspaceChangesMock).not.toHaveBeenCalled();
   });
 
   it("uses an AI-generated commit message when the commit message is blank", async () => {
     prepareSignedInRun();
     mocks.generateWorkspaceCommitMessageMock.mockResolvedValue({
-      message: "Improve commit dialog staging controls (2 modified)",
+      message: "Make staged-only commits respect the checkbox",
       source: "codex",
     });
     mocks.listWorkspaceGitStatusMock.mockResolvedValue({
@@ -1623,7 +1615,7 @@ describe("App Codex auth", () => {
     await waitFor(() =>
       expect(mocks.commitWorkspaceChangesMock).toHaveBeenCalledWith(
         workspace.path,
-        "Improve commit dialog staging controls",
+        "Make staged-only commits respect the checkbox",
         true,
       ),
     );
@@ -1684,11 +1676,10 @@ describe("App Codex auth", () => {
     );
   });
 
-  it("uses the local commit-message fallback when no account is selected", async () => {
-    mocks.generateWorkspaceCommitMessageMock.mockResolvedValue({
-      message: "Generate intent-driven messages before commit and push",
-      source: "local",
-    });
+  it("fails closed when no account is available for message generation", async () => {
+    mocks.generateWorkspaceCommitMessageMock.mockRejectedValue(
+      new Error("Sign in to Codex or enter a commit message manually"),
+    );
     mocks.listWorkspaceGitStatusMock.mockResolvedValue({
       workspacePath: workspace.path,
       gitRoot: workspace.path,
@@ -1732,16 +1723,11 @@ describe("App Codex auth", () => {
         }),
       ),
     );
-    await waitFor(() =>
-      expect(mocks.commitWorkspaceChangesMock).toHaveBeenCalledWith(
-        workspace.path,
-        "Generate intent-driven messages before commit and push",
-        true,
-      ),
-    );
-    await waitFor(() =>
-      expect(mocks.pushWorkspaceBranchMock).toHaveBeenCalledWith(workspace.path),
-    );
+    expect(
+      await within(dialog).findByRole("alert"),
+    ).toHaveTextContent(/sign in to codex/i);
+    expect(mocks.commitWorkspaceChangesMock).not.toHaveBeenCalled();
+    expect(mocks.pushWorkspaceBranchMock).not.toHaveBeenCalled();
   });
 
   it("rejects broad AI commit messages that only describe changed areas", async () => {
@@ -1796,11 +1782,72 @@ describe("App Codex auth", () => {
     );
     expect(mocks.commitWorkspaceChangesMock).not.toHaveBeenCalled();
     expect(
-      within(dialog).getByText(/file-focused subject/i),
-    ).toBeInTheDocument();
+      within(dialog).getByRole("alert"),
+    ).toHaveTextContent(/file-focused or generic subject/i);
   });
 
-  it("falls back when Codex repeats a commit message for different changes", async () => {
+  it.each([
+    [
+      "Implement the plan",
+      /orchestration instruction instead of the change intent/i,
+    ],
+    [
+      "Scaffold minimal Express health service (5 added)",
+      /subject containing change counts/i,
+    ],
+  ])(
+    "fails closed when Codex returns %s",
+    async (generatedMessage, expectedError) => {
+      prepareSignedInRun();
+      mocks.generateWorkspaceCommitMessageMock.mockResolvedValue({
+        message: generatedMessage,
+        source: "codex",
+      });
+      mocks.listWorkspaceGitStatusMock.mockResolvedValue({
+        workspacePath: workspace.path,
+        gitRoot: workspace.path,
+        currentBranch: "main",
+        aheadCount: 0,
+        hasUpstream: true,
+        hasOrigin: true,
+        canPush: true,
+        additions: 5,
+        deletions: 0,
+        files: [
+          {
+            path: "/repo/orchestrator/src/app.js",
+            relativePath: "src/app.js",
+            oldRelativePath: null,
+            indexStatus: "A",
+            worktreeStatus: " ",
+            statusKind: "added",
+            badge: "A",
+          },
+        ],
+      });
+
+      const { user } = await renderApp();
+      const banner = screen.getByRole("region", { name: "Selected folder" });
+      await user.click(
+        await within(banner).findByRole("button", {
+          name: /commit or push/i,
+        }),
+      );
+
+      const dialog = screen.getByRole("dialog", { name: "Commit or push" });
+      await user.click(
+        within(dialog).getByRole("button", { name: /^commit$/i }),
+      );
+
+      expect(await within(dialog).findByRole("alert")).toHaveTextContent(
+        expectedError,
+      );
+      expect(mocks.commitWorkspaceChangesMock).not.toHaveBeenCalled();
+      expect(dialog).toBeInTheDocument();
+    },
+  );
+
+  it("fails closed when Codex repeats a commit message for different changes", async () => {
     prepareSignedInRun();
     mocks.generateWorkspaceCommitMessageMock.mockResolvedValue({
       message: "Improve commit dialog staging controls",

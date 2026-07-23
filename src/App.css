@@ -1975,6 +1975,10 @@ button.account-switcher-item:hover:not(:disabled) {
   line-height: 1.35;
 }
 
+.git-action-feedback.error {
+  color: var(--color-error);
+}
+
 .git-action-include-row {
   display: inline-flex;
   position: relative;

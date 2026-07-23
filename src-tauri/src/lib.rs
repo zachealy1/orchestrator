@@ -1,4 +1,4 @@
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::{
     collections::{HashMap, HashSet},
@@ -274,6 +274,14 @@ struct WorkspaceGitActionResult {
 struct WorkspaceCommitMessageResult {
     message: String,
     source: String,
+}
+
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct WorkspaceCommitIntentContext {
+    objective: Option<String>,
+    approved_plan: Option<String>,
+    implementation_outcome: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -2431,7 +2439,7 @@ fn generate_workspace_commit_message_blocking(
     account_id: Option<i64>,
     include_unstaged: Option<bool>,
     model: Option<String>,
-    intent: Option<String>,
+    intent_context: Option<WorkspaceCommitIntentContext>,
 ) -> Result<WorkspaceCommitMessageResult, String> {
     let workspace = canonical_workspace(&workspace_path)?;
     let git_root = resolve_git_root(&workspace)?;
@@ -2442,37 +2450,18 @@ fn generate_workspace_commit_message_blocking(
         return Err("No Git changes were found for commit message generation".to_string());
     }
 
-    let intent = intent
-        .as_deref()
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .map(str::to_string);
-    let fallback_message = local_commit_subject_from_context(&context, intent.as_deref());
-
-    let Some(account_id) = account_id else {
-        return Ok(WorkspaceCommitMessageResult {
-            message: fallback_message,
-            source: "local".to_string(),
-        });
-    };
-    if validate_account_id(account_id).is_err() {
-        return Ok(WorkspaceCommitMessageResult {
-            message: fallback_message,
-            source: "local".to_string(),
-        });
-    }
-    let Ok(codex_binary) = resolve_codex_binary() else {
-        return Ok(WorkspaceCommitMessageResult {
-            message: fallback_message,
-            source: "local".to_string(),
-        });
-    };
-    let Ok(codex_home) = ensure_codex_home(&app, account_id) else {
-        return Ok(WorkspaceCommitMessageResult {
-            message: fallback_message,
-            source: "local".to_string(),
-        });
-    };
+    let intent_context = intent_context.filter(has_commit_intent_context);
+    let account_id = account_id.ok_or_else(|| {
+        "Sign in to Codex or enter a commit message manually".to_string()
+    })?;
+    validate_account_id(account_id)
+        .map_err(|_| "The selected Codex account is unavailable".to_string())?;
+    let codex_binary = resolve_codex_binary().map_err(|_| {
+        "Codex is unavailable; enter a commit message manually or try again".to_string()
+    })?;
+    let codex_home = ensure_codex_home(&app, account_id).map_err(|_| {
+        "The selected Codex profile is unavailable; enter a commit message manually".to_string()
+    })?;
     let mut args = vec![
         "exec".to_string(),
         "--ephemeral".to_string(),
@@ -2497,71 +2486,59 @@ fn generate_workspace_commit_message_blocking(
     }
     args.push("-".to_string());
 
-    let prompt = commit_message_generation_prompt(&context, intent.as_deref(), None);
-    let Ok(output) = run_command_with_stdin_timeout(
-        &codex_binary,
-        &args,
-        &prompt,
-        Some(("CODEX_HOME", codex_home.as_os_str())),
-        Duration::from_secs(30),
-        "commit message generation",
-    ) else {
-        return Ok(WorkspaceCommitMessageResult {
-            message: fallback_message,
-            source: "local".to_string(),
-        });
-    };
-    if !output.ok {
-        return Ok(WorkspaceCommitMessageResult {
-            message: fallback_message,
-            source: "local".to_string(),
-        });
-    }
-
-    let Some(first_message) = sanitize_commit_subject(&output.stdout) else {
-        return Ok(WorkspaceCommitMessageResult {
-            message: fallback_message,
-            source: "local".to_string(),
-        });
-    };
-    let message = if is_generic_commit_subject(&first_message)
-        || commit_subject_ignores_intent(&first_message, intent.as_deref())
-    {
-        let retry_prompt =
-            commit_message_generation_prompt(&context, intent.as_deref(), Some(&first_message));
-        let Ok(retry_output) = run_command_with_stdin_timeout(
+    let generate = |prompt: &str| -> Result<String, String> {
+        let output = run_command_with_stdin_timeout(
             &codex_binary,
             &args,
-            &retry_prompt,
+            prompt,
             Some(("CODEX_HOME", codex_home.as_os_str())),
             Duration::from_secs(30),
             "commit message generation",
-        ) else {
-            return Ok(WorkspaceCommitMessageResult {
-                message: fallback_message,
-                source: "local".to_string(),
-            });
-        };
-        if retry_output.ok {
-            if let Some(subject) = sanitize_commit_subject(&retry_output.stdout)
-                .filter(|subject| !is_generic_commit_subject(subject))
-                .filter(|subject| !commit_subject_ignores_intent(subject, intent.as_deref()))
-            {
-                subject
-            } else {
-                return Ok(WorkspaceCommitMessageResult {
-                    message: fallback_message,
-                    source: "local".to_string(),
-                });
-            }
-        } else {
-            return Ok(WorkspaceCommitMessageResult {
-                message: fallback_message,
-                source: "local".to_string(),
-            });
+        )
+        .map_err(|_| {
+            "Codex could not be started for commit message generation".to_string()
+        })?;
+        if !output.ok {
+            return Err(
+                "Codex could not generate a commit message before the request timed out"
+                    .to_string(),
+            );
         }
-    } else {
-        first_message
+        Ok(output.stdout)
+    };
+
+    let prompt = commit_message_generation_prompt(
+        &context,
+        intent_context.as_ref(),
+        None,
+    );
+    let first_output = generate(&prompt)?;
+    let message = match validate_generated_commit_subject(
+        &first_output,
+        intent_context.as_ref(),
+        &context,
+    ) {
+        Ok(message) => message,
+        Err(reason) => {
+            let rejected_subject = sanitize_commit_subject(&first_output)
+                .unwrap_or_else(|| "Malformed response".to_string());
+            let retry_prompt = commit_message_generation_prompt(
+                &context,
+                intent_context.as_ref(),
+                Some((&rejected_subject, &reason)),
+            );
+            let retry_output = generate(&retry_prompt)?;
+            validate_generated_commit_subject(
+                &retry_output,
+                intent_context.as_ref(),
+                &context,
+            )
+            .map_err(|retry_reason| {
+                format!(
+                    "Codex could not produce an intent-driven commit message after retrying: {retry_reason}"
+                )
+            })?
+        }
     };
 
     Ok(WorkspaceCommitMessageResult {
@@ -2577,7 +2554,7 @@ async fn generate_workspace_commit_message(
     account_id: Option<i64>,
     include_unstaged: Option<bool>,
     model: Option<String>,
-    intent: Option<String>,
+    intent_context: Option<WorkspaceCommitIntentContext>,
 ) -> Result<WorkspaceCommitMessageResult, String> {
     run_blocking_command("generate workspace commit message", move || {
         generate_workspace_commit_message_blocking(
@@ -2586,7 +2563,7 @@ async fn generate_workspace_commit_message(
             account_id,
             include_unstaged,
             model,
-            intent,
+            intent_context,
         )
     })
     .await
@@ -2686,200 +2663,66 @@ async fn generate_chat_title(
     .await
 }
 
-fn local_commit_subject_from_context(context: &str, intent: Option<&str>) -> String {
-    if let Some(subject) = intent.and_then(commit_subject_from_intent) {
-        return subject;
-    }
-
-    let lower = context.to_ascii_lowercase();
-    if lower.contains("intent-driven commit message")
-        && (lower.contains("commit and push") || lower.contains("git-action-feedback"))
-    {
-        return "Generate intent-driven messages before commit and push".to_string();
-    }
-    if lower.contains("git-action-feedback") || lower.contains("commitdialogmessage") {
-        return "Show commit message generation feedback".to_string();
-    }
-    if lower.contains("file-focused subject") || lower.contains("file-focused commit") {
-        return "Reject file-focused generated commit subjects".to_string();
-    }
-    if lower.contains("includeunstagedchanges") || lower.contains("include unstaged changes") {
-        return "Respect unstaged changes in commit actions".to_string();
-    }
-    if lower.contains("thread not found") || lower.contains("thread/resume") {
-        return "Recover unavailable Codex threads gracefully".to_string();
-    }
-    if lower.contains("history drawer") {
-        return "Keep chat history visible beside the composer".to_string();
-    }
-    if lower.contains("workspace-context") && lower.contains("color") {
-        return "Use primary text colors in workspace controls".to_string();
-    }
-    if let Some(subject) = subject_from_added_test(context) {
-        return subject;
-    }
-    if lower.contains("border") && lower.contains("chat") {
-        return "Remove distracting chat bubble borders".to_string();
-    }
-    if lower.contains("drag") && lower.contains("drop") {
-        return "Make file drops clear in the chat composer".to_string();
-    }
-    if lower.contains("color") || lower.contains("--color") {
-        return "Align workspace UI colors with the app theme".to_string();
-    }
-    if lower.contains("min-width")
-        || lower.contains("overflow")
-        || lower.contains("grid-template")
-        || lower.contains("display: flex")
-    {
-        return "Keep workspace layout responsive".to_string();
-    }
-    if lower.contains("\n?? ") || lower.contains("\na  ") {
-        return "Add requested workspace files".to_string();
-    }
-    if lower.contains("\nd  ") || lower.contains("\n d ") {
-        return "Remove requested workspace files".to_string();
-    }
-
-    "Apply requested workspace changes".to_string()
+fn has_commit_intent_context(context: &WorkspaceCommitIntentContext) -> bool {
+    [
+        context.objective.as_deref(),
+        context.approved_plan.as_deref(),
+        context.implementation_outcome.as_deref(),
+    ]
+    .into_iter()
+    .flatten()
+    .any(|value| !value.trim().is_empty())
 }
 
-fn commit_subject_from_intent(intent: &str) -> Option<String> {
-    let preferred = intent
-        .lines()
-        .map(str::trim)
-        .filter(|line| !line.is_empty())
-        .find(|line| line.to_ascii_lowercase().starts_with("goal:"))
-        .or_else(|| {
-            intent
-                .lines()
-                .map(str::trim)
-                .filter(|line| !line.is_empty())
-                .find(|line| line.to_ascii_lowercase().starts_with("prompt:"))
-        })
-        .or_else(|| intent.lines().map(str::trim).find(|line| !line.is_empty()))?;
-
-    let mut subject = preferred
-        .trim_start_matches(|ch: char| ch == '-' || ch == '*')
-        .trim()
-        .to_string();
-    for prefix in ["Goal:", "goal:", "Prompt:", "prompt:", "Intent:", "intent:", "Summary:", "summary:"] {
-        if let Some(rest) = subject.strip_prefix(prefix) {
-            subject = rest.trim().to_string();
-            break;
-        }
-    }
-    for prefix in [
-        "please ",
-        "can you ",
-        "could you ",
-        "i want you to ",
-        "i want to ",
-    ] {
-        if subject.to_ascii_lowercase().starts_with(prefix) {
-            subject = subject[prefix.len()..].trim().to_string();
-            break;
-        }
-    }
-    if subject.to_ascii_lowercase().starts_with("make sure ") {
-        subject = format!("Ensure {}", subject[10..].trim());
-    }
-    clean_local_commit_subject(&subject)
-}
-
-fn subject_from_added_test(context: &str) -> Option<String> {
-    for line in context.lines() {
-        let trimmed = line.trim_start();
-        let Some(added) = trimmed.strip_prefix('+') else {
+fn format_commit_intent_context(context: Option<&WorkspaceCommitIntentContext>) -> String {
+    let Some(context) = context else {
+        return String::new();
+    };
+    let sections = [
+        ("User objective", context.objective.as_deref()),
+        ("Approved plan", context.approved_plan.as_deref()),
+        (
+            "Implementation outcome",
+            context.implementation_outcome.as_deref(),
+        ),
+    ];
+    let mut formatted = String::new();
+    for (title, value) in sections {
+        let Some(value) = value.map(str::trim).filter(|value| !value.is_empty()) else {
             continue;
         };
-        let added = added.trim_start();
-        let description = added
-            .strip_prefix("it(\"")
-            .or_else(|| added.strip_prefix("it('"))
-            .or_else(|| added.strip_prefix("test(\""))
-            .or_else(|| added.strip_prefix("test('"));
-        let Some(description) = description else {
-            continue;
-        };
-        let description = description
-            .split(['"', '\''])
-            .next()
-            .unwrap_or_default()
-            .trim();
-        let lower = description.to_ascii_lowercase();
-        if lower.contains("generates a message")
-            && lower.contains("commit")
-            && lower.contains("push")
-        {
-            return Some("Generate messages before blank commit and push".to_string());
-        }
-        if lower.contains("rejects broad")
-            && lower.contains("commit")
-            && lower.contains("message")
-        {
-            return Some("Reject broad generated commit subjects".to_string());
-        }
-        if lower.contains("does not commit")
-            && lower.contains("diff-topic fallback")
-        {
-            return Some("Require intent-driven commit messages".to_string());
-        }
+        formatted.push_str(title);
+        formatted.push_str(":\n");
+        formatted.push_str(value);
+        formatted.push_str("\n\n");
     }
-    None
-}
-
-fn clean_local_commit_subject(subject: &str) -> Option<String> {
-    let mut subject = subject
-        .split_whitespace()
-        .collect::<Vec<_>>()
-        .join(" ")
-        .trim()
-        .trim_matches(['.', '!', '?'])
-        .to_string();
-    if subject.is_empty() {
-        return None;
-    }
-    let mut chars = subject.chars();
-    let first = chars.next()?;
-    subject = format!("{}{}", first.to_uppercase(), chars.as_str());
-    if subject.len() > 72 {
-        subject.truncate(72);
-        subject = subject.trim_end().to_string();
-    }
-    Some(subject)
+    formatted
 }
 
 fn commit_message_generation_prompt(
     context: &str,
-    intent: Option<&str>,
-    rejected_subject: Option<&str>,
+    intent_context: Option<&WorkspaceCommitIntentContext>,
+    rejection: Option<(&str, &str)>,
 ) -> String {
-    let retry_guidance = rejected_subject
-        .map(|subject| {
+    let retry_guidance = rejection
+        .map(|(subject, reason)| {
             format!(
-                "\nThe previous subject `{subject}` was rejected because it described changed files, \
-                 layers, or broad areas instead of the underlying intent. Generate a subject that \
-                 names the exact user-facing behavior, workflow outcome, or bug fixed.\n"
+                "\nThe previous subject `{subject}` was rejected: {reason}. Generate a materially \
+                 different subject that names the exact user-facing behavior, workflow outcome, \
+                 service capability, or bug fixed.\n"
             )
         })
         .unwrap_or_default();
-    let intent_section = intent
-        .map(|value| {
-            format!(
-                "Intent:\n{}\n\n",
-                value.trim()
-            )
-        })
-        .unwrap_or_default();
+    let intent_section = format_commit_intent_context(intent_context);
 
     format!(
         "Generate one concise Git commit subject line for these changes.\n\
          Rules:\n\
          - Return only the commit subject, no markdown, no quotes, no explanation.\n\
          - Use imperative mood.\n\
-         - If Intent is present, treat it as the source of truth for why the change exists.\n\
-         - If Intent is absent, infer the user's intent from the actual diff hunks.\n\
+         - Treat the User objective, Approved plan, and Implementation outcome as the source of truth when present.\n\
+         - Never use an orchestration instruction such as `Implement the plan`, `Apply requested changes`, or `Complete the task` as the subject.\n\
+         - If conversation context is absent, infer the underlying intent from the actual diff hunks.\n\
          - Prefer the behavioral outcome over file names, changed layers, or implementation details.\n\
          - Be specific about the behavior, UI, or logic changed.\n\
          - Name the concrete feature or failure fixed, not just the broad changed area.\n\
@@ -2909,6 +2752,8 @@ fn commit_message_generation_prompt(
          - Update Git workflow\n\
          - Update App.css\n\
          - Update files\n\
+         - Implement the plan\n\
+         - Apply requested workspace changes\n\
          {retry_guidance}\n\
          {intent_section}Git context:\n{context}"
     )
@@ -3030,36 +2875,23 @@ fn git_context_output(git_root: &Path, git_args: &[&str]) -> Result<String, Stri
 }
 
 fn sanitize_commit_subject(output: &str) -> Option<String> {
-    let line = output
+    let lines = output
         .lines()
-        .rev()
         .map(str::trim)
-        .find(|line| !line.is_empty())?;
-    let mut subject = line
-        .trim_start_matches(|ch: char| ch == '-' || ch == '*' || ch.is_ascii_digit() || ch == '.')
-        .trim()
-        .trim_matches('"')
-        .trim_matches('\'')
-        .trim_matches('`')
-        .trim()
-        .to_string();
-    for prefix in ["Commit message:", "commit message:", "Subject:", "subject:"] {
-        if let Some(rest) = subject.strip_prefix(prefix) {
-            subject = rest.trim().to_string();
-        }
+        .filter(|line| !line.is_empty())
+        .collect::<Vec<_>>();
+    let [subject] = lines.as_slice() else {
+        return None;
+    };
+    if subject.starts_with(['-', '*', '#', '`', '"', '\''])
+        || subject.ends_with(['`', '"', '\''])
+        || ["commit message:", "subject:"]
+            .iter()
+            .any(|prefix| subject.to_ascii_lowercase().starts_with(prefix))
+    {
+        return None;
     }
-    subject = subject
-        .trim_matches('"')
-        .trim_matches('\'')
-        .trim_matches('`')
-        .trim()
-        .to_string();
-    subject = strip_commit_count_suffix(&subject);
-    if subject.len() > 100 {
-        subject.truncate(100);
-        subject = subject.trim_end().to_string();
-    }
-    (!subject.is_empty()).then_some(subject)
+    Some((*subject).to_string())
 }
 
 fn is_generic_commit_subject(subject: &str) -> bool {
@@ -3161,33 +2993,151 @@ fn is_generic_commit_subject(subject: &str) -> bool {
             .all(|word| broad_terms.contains(word))
 }
 
-fn commit_subject_ignores_intent(subject: &str, intent: Option<&str>) -> bool {
-    if intent.map(str::trim).unwrap_or_default().is_empty() {
-        return false;
-    }
-
-    let normalized = subject
+fn normalized_commit_subject(subject: &str) -> String {
+    subject
         .trim()
-        .trim_end_matches('.')
+        .trim_end_matches(['.', '!', '?'])
         .to_ascii_lowercase()
-        .replace(['-', '_', '.', '/'], " ");
-    let normalized = normalized
+        .replace(['-', '_', '.', '/'], " ")
         .split_whitespace()
         .collect::<Vec<_>>()
-        .join(" ");
-    let generic_exact = [
-        "update app css",
-        "refine app css",
-        "improve app css",
-        "update app styling",
-        "refine app styling",
-        "improve app styling",
-        "update react app",
-        "refine react app",
-        "update files",
-        "update code",
+        .join(" ")
+}
+
+fn is_procedural_commit_subject(subject: &str) -> bool {
+    let normalized = normalized_commit_subject(subject);
+    let procedural_exact = [
+        "implement plan",
+        "implement the plan",
+        "apply plan",
+        "apply the plan",
+        "execute plan",
+        "execute the plan",
+        "follow plan",
+        "follow the plan",
+        "complete plan",
+        "complete the plan",
+        "continue plan",
+        "continue the plan",
+        "apply requested changes",
+        "apply requested workspace changes",
+        "implement requested changes",
+        "make requested changes",
+        "address requested changes",
+        "complete task",
+        "finish task",
     ];
-    generic_exact.contains(&normalized.as_str())
+    procedural_exact.contains(&normalized.as_str())
+}
+
+fn meaningful_commit_terms(text: &str) -> HashSet<String> {
+    let ignored = [
+        "about",
+        "added",
+        "after",
+        "against",
+        "also",
+        "application",
+        "apply",
+        "approved",
+        "before",
+        "build",
+        "change",
+        "changed",
+        "changes",
+        "code",
+        "commit",
+        "complete",
+        "completed",
+        "create",
+        "current",
+        "file",
+        "files",
+        "finish",
+        "follow",
+        "implement",
+        "implemented",
+        "implementation",
+        "improve",
+        "latest",
+        "make",
+        "plan",
+        "project",
+        "refine",
+        "requested",
+        "result",
+        "summary",
+        "task",
+        "update",
+        "updated",
+        "user",
+        "workspace",
+    ];
+    text.to_ascii_lowercase()
+        .split(|character: char| !character.is_ascii_alphanumeric())
+        .filter(|word| word.len() >= 4 && !ignored.contains(word))
+        .map(str::to_string)
+        .collect()
+}
+
+fn commit_subject_rejection_reason(
+    subject: &str,
+    intent_context: Option<&WorkspaceCommitIntentContext>,
+    git_context: &str,
+) -> Option<String> {
+    let trimmed = subject.trim();
+    if trimmed.is_empty() {
+        return Some("the subject was empty".to_string());
+    }
+    if trimmed.contains('\n') || trimmed.contains(['`', '#', '*']) {
+        return Some("the subject contained Markdown or multiple lines".to_string());
+    }
+    if strip_commit_count_suffix(trimmed) != trimmed {
+        return Some("the subject included a change-count suffix".to_string());
+    }
+    if trimmed.chars().count() > 72 {
+        return Some("the subject exceeded 72 characters".to_string());
+    }
+    if trimmed.ends_with(['.', '!', '?']) {
+        return Some("the subject ended with punctuation".to_string());
+    }
+    if is_procedural_commit_subject(trimmed) {
+        return Some(
+            "the subject described an orchestration action instead of the change".to_string(),
+        );
+    }
+    if is_generic_commit_subject(trimmed) {
+        return Some("the subject described only a broad area or changed file".to_string());
+    }
+
+    let subject_terms = meaningful_commit_terms(trimmed);
+    let source = format!(
+        "{}{}",
+        format_commit_intent_context(intent_context),
+        git_context
+    );
+    let source_terms = meaningful_commit_terms(&source);
+    if subject_terms.is_empty() || subject_terms.is_disjoint(&source_terms) {
+        return Some(
+            "the subject could not be tied to the conversation intent or Git changes".to_string(),
+        );
+    }
+    None
+}
+
+fn validate_generated_commit_subject(
+    output: &str,
+    intent_context: Option<&WorkspaceCommitIntentContext>,
+    git_context: &str,
+) -> Result<String, String> {
+    let subject = sanitize_commit_subject(output)
+        .ok_or_else(|| "the response was not exactly one plain subject line".to_string())?;
+    if let Some(reason) =
+        commit_subject_rejection_reason(&subject, intent_context, git_context)
+    {
+        return Err(reason);
+    }
+    Ok(subject)
 }
 
 fn strip_commit_count_suffix(subject: &str) -> String {
@@ -6392,17 +6342,31 @@ mod tests {
     #[test]
     fn sanitize_commit_subject_returns_single_clean_line() {
         assert_eq!(
-            sanitize_commit_subject("thinking...\nCommit message: `Improve commit dialog controls`\n")
-                .as_deref(),
+            sanitize_commit_subject("Improve commit dialog controls").as_deref(),
             Some("Improve commit dialog controls")
+        );
+        assert_eq!(
+            sanitize_commit_subject(
+                "thinking...\nCommit message: `Improve commit dialog controls`\n"
+            )
+            .as_deref(),
+            None
+        );
+        assert_eq!(
+            sanitize_commit_subject("Commit message: Improve commit dialog controls").as_deref(),
+            None
+        );
+        assert_eq!(
+            sanitize_commit_subject("\"Improve commit dialog controls\"").as_deref(),
+            None
         );
         assert_eq!(
             sanitize_commit_subject("Improve commit dialog controls (5 modified)").as_deref(),
-            Some("Improve commit dialog controls")
+            Some("Improve commit dialog controls (5 modified)")
         );
         assert_eq!(
             sanitize_commit_subject("Update app workflow (2 modified, 1 added)").as_deref(),
-            Some("Update app workflow")
+            Some("Update app workflow (2 modified, 1 added)")
         );
         assert_eq!(sanitize_commit_subject("   ").as_deref(), None);
     }
@@ -6437,78 +6401,112 @@ mod tests {
 
     #[test]
     fn commit_message_prompt_names_rejected_generic_subject() {
+        let intent = WorkspaceCommitIntentContext {
+            objective: Some("Keep header controls on one row".to_string()),
+            approved_plan: None,
+            implementation_outcome: None,
+        };
         let prompt = commit_message_generation_prompt(
             "M src/App.tsx\nM src-tauri/src/lib.rs",
-            None,
-            Some("Update desktop app workflow"),
+            Some(&intent),
+            Some((
+                "Update desktop app workflow",
+                "the subject described only a broad area",
+            )),
         );
 
         assert!(prompt.contains("Update desktop app workflow"));
+        assert!(prompt.contains("described only a broad area"));
         assert!(prompt.contains("names the exact user-facing behavior"));
         assert!(prompt.contains("Fix inline context file label spacing"));
     }
 
     #[test]
     fn commit_message_prompt_prioritizes_intent_before_git_context() {
+        let intent = WorkspaceCommitIntentContext {
+            objective: Some(
+                "Keep header controls on one row at smaller widths".to_string(),
+            ),
+            approved_plan: Some(
+                "Remove the responsive stacking rule from the header.".to_string(),
+            ),
+            implementation_outcome: None,
+        };
         let prompt = commit_message_generation_prompt(
             "M src/App.css",
-            Some("Keep header controls on one row at smaller widths"),
+            Some(&intent),
             None,
         );
 
-        assert!(prompt.contains("Intent:\nKeep header controls on one row"));
+        assert!(prompt.contains(
+            "User objective:\nKeep header controls on one row"
+        ));
+        assert!(prompt.contains("Approved plan:\nRemove the responsive stacking rule"));
         assert!(prompt.contains("source of truth"));
-        assert!(prompt.contains("infer the user's intent from the actual diff hunks"));
+        assert!(prompt.contains("infer the underlying intent from the actual diff hunks"));
         assert!(prompt.contains("Prefer the behavioral outcome"));
         assert!(prompt.contains("Refine Tauri bridge and app styling"));
         assert!(
-            prompt.find("Intent:").unwrap() < prompt.find("Git context:").unwrap()
+            prompt.find("User objective:").unwrap() < prompt.find("Git context:").unwrap()
         );
     }
 
     #[test]
-    fn local_commit_subject_uses_intent_when_available() {
-        assert_eq!(
-            local_commit_subject_from_context(
-                "M src/App.css",
-                Some("Goal: keep header controls on one row at smaller widths"),
+    fn commit_subject_validation_rejects_procedural_and_unrelated_subjects() {
+        let intent = WorkspaceCommitIntentContext {
+            objective: Some("Create an expressJS app in this directory".to_string()),
+            approved_plan: Some(
+                "Create a minimal Express scaffold with a GET /health endpoint.".to_string(),
             ),
-            "Keep header controls on one row at smaller widths"
-        );
-    }
+            implementation_outcome: Some(
+                "Implemented a CommonJS Express app and health endpoint.".to_string(),
+            ),
+        };
+        let git_context = "?? package.json\n?? src/app.js\n?? src/server.js";
 
-    #[test]
-    fn local_commit_subject_infers_commit_push_feedback_from_diff() {
-        let context = r#"## Working tree diff
-diff --git a/src/App.tsx b/src/App.tsx
-+    setCommitDialogMessage("Generating an intent-driven commit message...");
-+  it("generates a message before committing and pushing when the message is blank", async () => {
-+    expect(mocks.pushWorkspaceBranchMock).toHaveBeenCalledWith(workspace.path);
-+  });
-+  <p className="git-action-feedback" role="status">
-"#;
-
+        assert!(commit_subject_rejection_reason(
+            "Implement the plan",
+            Some(&intent),
+            git_context,
+        )
+        .unwrap()
+        .contains("orchestration"));
+        assert!(commit_subject_rejection_reason(
+            "Improve notification routing",
+            Some(&intent),
+            git_context,
+        )
+        .unwrap()
+        .contains("could not be tied"));
+        assert!(commit_subject_rejection_reason(
+            "Scaffold minimal Express health service",
+            Some(&intent),
+            git_context,
+        )
+        .is_none());
+        assert!(commit_subject_rejection_reason(
+            "Scaffold minimal Express health service (5 added)",
+            Some(&intent),
+            git_context,
+        )
+        .unwrap()
+        .contains("change-count"));
         assert_eq!(
-            local_commit_subject_from_context(context, None),
-            "Generate intent-driven messages before commit and push"
+            validate_generated_commit_subject(
+                "Scaffold minimal Express health service",
+                Some(&intent),
+                git_context,
+            )
+            .as_deref(),
+            Ok("Scaffold minimal Express health service"),
         );
-    }
-
-    #[test]
-    fn commit_subject_with_intent_rejects_file_only_subjects() {
-        assert!(commit_subject_ignores_intent(
-            "Update App.css",
-            Some("Keep header controls on one row")
-        ));
-        assert!(commit_subject_ignores_intent(
-            "Update app styling",
-            Some("Keep header controls on one row")
-        ));
-        assert!(!commit_subject_ignores_intent("Update App.css", None));
-        assert!(!commit_subject_ignores_intent(
-            "Keep header controls on one row",
-            Some("Keep header controls on one row")
-        ));
+        assert!(validate_generated_commit_subject(
+            "Subject: Scaffold minimal Express health service",
+            Some(&intent),
+            git_context,
+        )
+        .unwrap_err()
+        .contains("exactly one plain subject line"));
     }
 
     #[test]

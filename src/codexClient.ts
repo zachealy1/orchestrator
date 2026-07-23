@@ -9,6 +9,7 @@ import type {
   AgentNotificationSendResult,
   AgentNotificationTarget,
 } from "./lib/agentNotifications";
+import type { WorkspaceCommitIntentContext } from "./lib/commitMessage";
 import type {
   CodexAccountResponse,
   CodexConnectResult,
@@ -210,16 +211,16 @@ export function generateWorkspaceCommitMessage(input: {
   accountId: number | null;
   includeUnstaged: boolean;
   model: string | null;
-  intent?: string | null;
+  intentContext?: WorkspaceCommitIntentContext | null;
 }) {
-  return invoke<{ message: string; source: "codex" | "local" }>(
+  return invoke<{ message: string; source: "codex" }>(
     "generate_workspace_commit_message",
     {
       workspacePath: input.workspacePath,
       accountId: input.accountId,
       includeUnstaged: input.includeUnstaged,
       model: input.model,
-      intent: input.intent ?? null,
+      intentContext: input.intentContext ?? null,
     },
   );
 }

@@ -52,6 +52,10 @@ import type {
 import "./App.css";
 import orchestratorMark from "./assets/brand/orchestrator-mark.png";
 import {
+  buildCommitIntentContext,
+  type WorkspaceCommitIntentContext,
+} from "./lib/commitMessage";
+import {
   appendRunEvent,
   appendRunEvents,
   activateExternalTranscriptSnapshot,
@@ -1222,9 +1226,11 @@ function App() {
     Record<number, WorkspaceChatSession | undefined>
   >({});
   const [commitDialogOpen, setCommitDialogOpen] = useState(false);
-  const [commitIntent, setCommitIntent] = useState("");
+  const [commitIntentContext, setCommitIntentContext] =
+    useState<WorkspaceCommitIntentContext | null>(null);
   const [commitMessage, setCommitMessage] = useState("");
   const [commitDialogMessage, setCommitDialogMessage] = useState("");
+  const [commitDialogError, setCommitDialogError] = useState(false);
   const [includeUnstagedChanges, setIncludeUnstagedChanges] = useState(true);
   const [gitActionStatus, setGitActionStatus] = useState<
     "idle" | "generating" | "committing" | "pushing"
@@ -2274,9 +2280,9 @@ function App() {
     historicalTranscript?.chatId === selectedWorkspaceChatSession?.chatId
       ? historicalTranscript
       : null;
-  const suggestedCommitIntent = useMemo(
-    () => buildCommitIntentFromChatEntry(selectedWorkspaceChatMeta.latestPromptEntry),
-    [selectedWorkspaceChatMeta.latestPromptEntry],
+  const suggestedCommitIntentContext = useMemo(
+    () => buildCommitIntentContext(selectedWorkspaceChatEntries),
+    [selectedWorkspaceChatEntries],
   );
   const editablePromptEntryId = useMemo(() => {
     if (runIsActive || activeChatEntryId !== null) {
@@ -6026,9 +6032,10 @@ function App() {
     if (!selectedWorkspace) {
       return;
     }
-    setCommitIntent(suggestedCommitIntent ?? "");
+    setCommitIntentContext(suggestedCommitIntentContext);
     setCommitMessage("");
     setCommitDialogMessage("");
+    setCommitDialogError(false);
     setIncludeUnstagedChanges(true);
     setCommitDialogOpen(true);
   }
@@ -6079,16 +6086,23 @@ function App() {
     }
   }
 
-  async function resolveCommitMessage() {
+  async function resolveCommitMessage(): Promise<string | null> {
     if (!selectedWorkspace) {
-      return "";
+      return null;
     }
 
-    const intent = commitIntent.trim();
-    const fallback = intent ? generateCommitMessageFromIntent(intent) : "";
+    const failGeneration = (reason: string) => {
+      const message = `Could not generate an intent-driven commit message. ${reason}`;
+      setCommitDialogMessage(message);
+      setCommitDialogError(true);
+      setStatusMessage(message);
+      setGitActionStatus("idle");
+      return null;
+    };
 
     setGitActionStatus("generating");
     setCommitDialogMessage("Generating an intent-driven commit message...");
+    setCommitDialogError(false);
     setStatusMessage("Generating commit message...");
     try {
       const result = await generateWorkspaceCommitMessage({
@@ -6096,58 +6110,37 @@ function App() {
         accountId: selectedAccountId,
         includeUnstaged: includeUnstagedChanges,
         model: selectedModel?.model ?? selectedModel?.id ?? null,
-        intent,
+        intentContext: commitIntentContext,
       });
-      const generated = cleanGeneratedCommitSubject(result.message);
-      if (generated) {
-        if (isDiffDrivenCommitSubject(generated, commitMessageFiles)) {
-          setStatusMessage(
-            fallback
-              ? "Codex returned a file-focused commit message, using the chat intent instead."
-              : "Codex returned a file-focused commit message. Write a specific commit message or try again.",
-          );
-          setCommitDialogMessage(
-            fallback
-              ? "Codex returned a file-focused subject, so Orchestrator used the current chat intent."
-              : "Codex returned a file-focused subject. Write a specific message or try again.",
-          );
-          setGitActionStatus("idle");
-          return fallback;
-        }
-        const previous = lastCommitSubjectRef.current;
-        if (
-          previous &&
-          previous.changeKey !== commitMessageChangeKey &&
-          previous.subject.toLowerCase() === generated.toLowerCase()
-        ) {
-          setStatusMessage(
-            fallback
-              ? "Codex returned the same commit message for different changes, using the chat intent instead."
-              : "Codex returned the same commit message for different changes. Write a specific commit message or try again.",
-          );
-          setCommitDialogMessage(
-            fallback
-              ? "Codex repeated an earlier subject, so Orchestrator used the current chat intent."
-              : "Codex repeated an earlier subject. Write a specific message or try again.",
-          );
-          setGitActionStatus("idle");
-          return fallback;
-        }
-        setCommitMessage(generated);
-        setCommitDialogMessage(`Generated: ${generated}`);
-        return generated;
+      const rejection = generatedCommitSubjectRejectionReason(
+        result.message,
+        commitMessageFiles,
+      );
+      if (rejection) {
+        return failGeneration(`${rejection} Enter a message manually or try again.`);
       }
+      const generated = cleanGeneratedCommitSubject(result.message);
+      const previous = lastCommitSubjectRef.current;
+      if (
+        previous &&
+        previous.changeKey !== commitMessageChangeKey &&
+        previous.subject.toLowerCase() === generated.toLowerCase()
+      ) {
+        return failGeneration(
+          "Codex repeated a subject generated for different changes. Enter a message manually or try again.",
+        );
+      }
+      setCommitMessage(generated);
+      setCommitDialogMessage(`Generated: ${generated}`);
+      setCommitDialogError(false);
+      return generated;
     } catch (error) {
-      const localFallback = fallback || "Apply requested workspace changes";
-      const message = `Using a local commit message because generation failed: ${
-        error instanceof Error ? error.message : String(error)
-      }`;
-      setCommitDialogMessage(message);
-      setStatusMessage(message);
-      return localFallback;
+      return failGeneration(
+        `${
+          error instanceof Error ? error.message : String(error)
+        } Enter a message manually or try again.`,
+      );
     }
-
-    return fallback || "Apply requested workspace changes";
   }
 
   async function handleCommitAll(options: { pushAfter?: boolean } = {}) {
@@ -6155,8 +6148,9 @@ function App() {
       return;
     }
 
-    const message = commitMessage.trim() || (await resolveCommitMessage());
-    if (!message.trim()) {
+    const authoredMessage = commitMessage.trim();
+    const message = authoredMessage || (await resolveCommitMessage());
+    if (!message) {
       setGitActionStatus("idle");
       return;
     }
@@ -6183,9 +6177,10 @@ function App() {
         }
       }
       setCommitDialogOpen(false);
-      setCommitIntent("");
+      setCommitIntentContext(null);
       setCommitMessage("");
       setCommitDialogMessage("");
+      setCommitDialogError(false);
     } catch (error) {
       setStatusMessage(
         `Commit failed: ${error instanceof Error ? error.message : String(error)}`,
@@ -10253,13 +10248,19 @@ function App() {
                 onChange={(event) => {
                   setCommitMessage(event.target.value);
                   setCommitDialogMessage("");
+                  setCommitDialogError(false);
                 }}
                 disabled={gitActionStatus !== "idle"}
               />
             </label>
 
             {commitDialogMessage ? (
-              <p className="git-action-feedback" role="status">
+              <p
+                className={`git-action-feedback ${
+                  commitDialogError ? "error" : ""
+                }`}
+                role={commitDialogError ? "alert" : "status"}
+              >
                 {commitDialogMessage}
               </p>
             ) : null}
@@ -12006,59 +12007,6 @@ function contextFileFromPath(path: string): ComposerContextFile {
   };
 }
 
-function buildCommitIntentFromChatEntry(latestEntry: TaskChatEntry | null) {
-  if (!latestEntry) {
-    return "";
-  }
-
-  const parts = [`Goal: ${latestEntry.prompt.trim()}`];
-  const finalSummary = latestEntry.runView.finalMessage.trim();
-  if (finalSummary) {
-    parts.push(`Summary: ${finalSummary}`);
-  }
-  return truncateCommitIntent(parts.join("\n\n"));
-}
-
-function truncateCommitIntent(intent: string) {
-  const normalized = intent.trim();
-  return normalized.length > 1600 ? `${normalized.slice(0, 1597).trimEnd()}...` : normalized;
-}
-
-function generateCommitMessageFromIntent(intent: string) {
-  const subject = extractCommitIntentSubject(intent);
-  return cleanGeneratedCommitSubject(subject) || "Describe workspace change";
-}
-
-function extractCommitIntentSubject(intent: string) {
-  const lines = intent
-    .split(/\n+/)
-    .map((line) => line.trim())
-    .filter(Boolean);
-  const preferredLine =
-    lines.find((line) => /^goal\s*:/i.test(line)) ??
-    lines.find((line) => /^prompt\s*:/i.test(line)) ??
-    lines[0] ??
-    "";
-  let subject = preferredLine
-    .replace(/^(goal|prompt|intent|summary)\s*:\s*/i, "")
-    .replace(/^please\s+/i, "")
-    .replace(/^can you\s+/i, "")
-    .replace(/^could you\s+/i, "")
-    .replace(/^i want you to\s+/i, "")
-    .replace(/^i want to\s+/i, "")
-    .replace(/^make sure\s+/i, "Ensure ")
-    .replace(/\s+/g, " ")
-    .trim();
-
-  if (!subject) {
-    return "Describe workspace change";
-  }
-
-  subject = subject.replace(/[.!?]+$/g, "").trim();
-  subject = subject.charAt(0).toUpperCase() + subject.slice(1);
-  return subject.length > 72 ? `${subject.slice(0, 69).trimEnd()}...` : subject;
-}
-
 function cleanGeneratedCommitSubject(subject: string) {
   return subject
     .replace(
@@ -12066,6 +12014,65 @@ function cleanGeneratedCommitSubject(subject: string) {
       "",
     )
     .trim();
+}
+
+function generatedCommitSubjectRejectionReason(
+  subject: string,
+  files: WorkspaceGitFileStatus[],
+) {
+  const raw = subject.trim();
+  if (!raw) {
+    return "Codex returned an empty subject.";
+  }
+  if (raw.includes("\n") || /[`*#]/.test(raw)) {
+    return "Codex returned a malformed or Markdown-formatted subject.";
+  }
+  if (
+    /\s+\((?:\d+\s+(?:modified|added|deleted|untracked|renamed|copied|changed)(?:,\s*)?)+\)$/i.test(
+      raw,
+    )
+  ) {
+    return "Codex returned a subject containing change counts.";
+  }
+
+  const cleaned = cleanGeneratedCommitSubject(raw);
+  if (cleaned.length > 72) {
+    return "Codex returned a subject longer than 72 characters.";
+  }
+  const normalized = cleaned
+    .toLowerCase()
+    .replace(/[._/-]+/g, " ")
+    .replace(/\s+/g, " ")
+    .replace(/[.!?]+$/g, "")
+    .trim();
+  const proceduralSubjects = new Set([
+    "implement plan",
+    "implement the plan",
+    "apply plan",
+    "apply the plan",
+    "execute plan",
+    "execute the plan",
+    "follow plan",
+    "follow the plan",
+    "complete plan",
+    "complete the plan",
+    "continue plan",
+    "continue the plan",
+    "apply requested changes",
+    "apply requested workspace changes",
+    "implement requested changes",
+    "make requested changes",
+    "address requested changes",
+    "complete task",
+    "finish task",
+  ]);
+  if (proceduralSubjects.has(normalized)) {
+    return "Codex returned an orchestration instruction instead of the change intent.";
+  }
+  if (isDiffDrivenCommitSubject(cleaned, files)) {
+    return "Codex returned a file-focused or generic subject.";
+  }
+  return null;
 }
 
 function isDiffDrivenCommitSubject(
