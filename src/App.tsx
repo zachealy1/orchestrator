@@ -67,6 +67,7 @@ import {
   createRun,
   createTask,
   getAnalyticsSummary,
+  getChatWithRuns,
   listLocalChatTranscript,
   listWorkspaceChats,
   listCodexAccounts,
@@ -655,8 +656,9 @@ type PendingAgentNotificationFocus = {
 };
 
 type SelectHistoryChatOptions = {
-  source?: "drawer" | "notification";
+  source?: "drawer" | "notification" | "workspace";
   workspace?: Workspace;
+  positionIntent?: HistoricalTranscriptState["positionIntent"];
 };
 
 type StableHistoryChatCacheEntry = {
@@ -675,6 +677,19 @@ type WorkspaceChatSession = {
   externalThreadId: string | null;
   nextTurnIndex: number;
   savedDefaultCollaborationMode?: CollaborationMode | null;
+};
+
+type WorkspaceTaskSelection =
+  | { kind: "new" }
+  | { kind: "draft"; clientId: string }
+  | { kind: "chat"; session: WorkspaceChatSession };
+
+type WorkspaceTaskMemory = {
+  selection: WorkspaceTaskSelection;
+  prompt: string;
+  contextFiles: ComposerContextFile[];
+  selectedSkills: SelectedComposerSkill[];
+  historicalTranscript: HistoricalTranscriptState | null;
 };
 
 type HeaderGitAction =
@@ -1336,6 +1351,12 @@ function App() {
   const planActionLocksRef = useRef(new Set<string>());
   const historyChatLoadIdRef = useRef(0);
   const taskChatEntriesRef = useRef<TaskChatEntry[]>([]);
+  const contextFilesRef = useRef<ComposerContextFile[]>([]);
+  const selectedSkillsRef = useRef<SelectedComposerSkill[]>([]);
+  const historicalTranscriptRef = useRef<HistoricalTranscriptState | null>(null);
+  const workspaceTaskMemoriesRef = useRef<
+    Record<number, WorkspaceTaskMemory | undefined>
+  >({});
   const transcriptScrollActiveRef = useRef(false);
   const previewResizingRef = useRef(false);
   const lastForegroundInteractionAtRef = useRef(0);
@@ -1382,6 +1403,9 @@ function App() {
     [],
   );
   taskChatEntriesRef.current = taskChatEntries;
+  contextFilesRef.current = contextFiles;
+  selectedSkillsRef.current = selectedSkills;
+  historicalTranscriptRef.current = historicalTranscript;
   workspacesRef.current = workspaces;
   activeViewRef.current = activeView;
   accountMenuOpenRef.current = accountMenuOpen;
@@ -1840,17 +1864,36 @@ function App() {
   const clearHistoricalLatestPositionRequest = useCallback((
     request: HistoricalChatOpenRequest,
   ) => {
-    setHistoricalTranscript((current) =>
-      current?.openAtLatestRequest?.requestId === request.requestId &&
-      current.openAtLatestRequest.chatId === request.chatId &&
-      current.openAtLatestRequest.transcriptVersion === request.transcriptVersion
-        ? {
-            ...current,
-            positionIntent: "preserve",
-            openAtLatestRequest: null,
-          }
-        : current,
-    );
+    setHistoricalTranscript((current) => {
+      if (
+        current?.openAtLatestRequest?.requestId !== request.requestId ||
+        current.openAtLatestRequest.chatId !== request.chatId ||
+        current.openAtLatestRequest.transcriptVersion !==
+          request.transcriptVersion
+      ) {
+        return current;
+      }
+      const next: HistoricalTranscriptState = {
+        ...current,
+        positionIntent: "preserve",
+        openAtLatestRequest: null,
+      };
+      historicalTranscriptRef.current = next;
+      const workspaceId = selectedWorkspaceRef.current?.id;
+      if (workspaceId !== undefined) {
+        const remembered = workspaceTaskMemoriesRef.current[workspaceId];
+        if (
+          remembered?.selection.kind === "chat" &&
+          remembered.selection.session.chatId === next.chatId
+        ) {
+          workspaceTaskMemoriesRef.current[workspaceId] = {
+            ...remembered,
+            historicalTranscript: next,
+          };
+        }
+      }
+      return next;
+    });
   }, []);
   const resolveTranscriptRequest = useStableEvent(handleResolveRequest);
   const answerTranscriptUserInput = useStableEvent(handleAnswerUserInput);
@@ -3711,6 +3754,254 @@ function App() {
     setStatusMessage(`Selected ${workspace.label}`);
   }
 
+  function createEmptyWorkspaceTaskMemory(): WorkspaceTaskMemory {
+    return {
+      selection: { kind: "new" },
+      prompt: "",
+      contextFiles: [],
+      selectedSkills: [],
+      historicalTranscript: null,
+    };
+  }
+
+  function sanitizeRememberedHistoricalTranscript(
+    transcript: HistoricalTranscriptState | null,
+  ) {
+    return transcript
+      ? {
+          ...transcript,
+          positionIntent: "preserve" as const,
+          openAtLatestRequest: null,
+        }
+      : null;
+  }
+
+  function rememberCurrentWorkspaceTaskMemory() {
+    const workspace = selectedWorkspaceRef.current;
+    if (!workspace) return;
+
+    const session = workspaceChatSessionsRef.current[workspace.id];
+    const selection: WorkspaceTaskSelection = selectedDraftChatEntryIdRef.current
+      ? { kind: "draft", clientId: selectedDraftChatEntryIdRef.current }
+      : session
+        ? { kind: "chat", session: { ...session } }
+        : { kind: "new" };
+    const transcript =
+      session && historicalTranscriptRef.current?.chatId === session.chatId
+        ? sanitizeRememberedHistoricalTranscript(
+            historicalTranscriptRef.current,
+          )
+        : null;
+
+    workspaceTaskMemoriesRef.current[workspace.id] = {
+      selection,
+      prompt: promptRef.current,
+      contextFiles: [...contextFilesRef.current],
+      selectedSkills: [...selectedSkillsRef.current],
+      historicalTranscript: transcript,
+    };
+  }
+
+  function rememberWorkspaceTaskSelection(
+    workspaceId: number,
+    selection: WorkspaceTaskSelection,
+    transcript: HistoricalTranscriptState | null = null,
+  ) {
+    const existing =
+      workspaceTaskMemoriesRef.current[workspaceId] ??
+      createEmptyWorkspaceTaskMemory();
+    const useVisibleComposer =
+      selectedWorkspaceRef.current?.id === workspaceId;
+    workspaceTaskMemoriesRef.current[workspaceId] = {
+      selection,
+      prompt: useVisibleComposer ? promptRef.current : existing.prompt,
+      contextFiles: useVisibleComposer
+        ? [...contextFilesRef.current]
+        : [...existing.contextFiles],
+      selectedSkills: useVisibleComposer
+        ? [...selectedSkillsRef.current]
+        : [...existing.selectedSkills],
+      historicalTranscript: sanitizeRememberedHistoricalTranscript(transcript),
+    };
+  }
+
+  function updateRememberedWorkspaceChatSession(
+    workspaceId: number,
+    chatId: number,
+    session: WorkspaceChatSession,
+  ) {
+    const memory = workspaceTaskMemoriesRef.current[workspaceId];
+    if (
+      memory?.selection.kind !== "chat" ||
+      memory.selection.session.chatId !== chatId
+    ) {
+      return false;
+    }
+
+    workspaceTaskMemoriesRef.current[workspaceId] = {
+      ...memory,
+      selection: { kind: "chat", session: { ...session } },
+    };
+    setWorkspaceChatSession(workspaceId, session);
+    return true;
+  }
+
+  function promoteRememberedWorkspaceDraft(
+    workspaceId: number,
+    clientId: string,
+    session: WorkspaceChatSession,
+  ) {
+    const memory = workspaceTaskMemoriesRef.current[workspaceId];
+    const selectedDraftMatches =
+      selectedWorkspaceRef.current?.id === workspaceId &&
+      selectedDraftChatEntryIdRef.current === clientId;
+    const rememberedDraftMatches =
+      memory?.selection.kind === "draft" &&
+      memory.selection.clientId === clientId;
+    if (!selectedDraftMatches && !rememberedDraftMatches) {
+      return false;
+    }
+
+    rememberWorkspaceTaskSelection(
+      workspaceId,
+      { kind: "chat", session },
+      null,
+    );
+    setWorkspaceChatSession(workspaceId, session);
+    if (selectedDraftMatches) {
+      setSelectedDraftChat(null);
+      setSelectedHistoryChatId(session.chatId);
+    }
+    return true;
+  }
+
+  function restoreWorkspaceComposer(memory: WorkspaceTaskMemory) {
+    replaceComposerPrompt(memory.prompt);
+    contextFilesRef.current = [...memory.contextFiles];
+    selectedSkillsRef.current = [...memory.selectedSkills];
+    setContextFiles([...memory.contextFiles]);
+    setSelectedSkills([...memory.selectedSkills]);
+  }
+
+  function updateRememberedWorkspaceComposer(
+    workspaceId: number,
+    update: Partial<
+      Pick<
+        WorkspaceTaskMemory,
+        "prompt" | "contextFiles" | "selectedSkills"
+      >
+    >,
+  ) {
+    const existing =
+      workspaceTaskMemoriesRef.current[workspaceId] ??
+      createEmptyWorkspaceTaskMemory();
+    const next: WorkspaceTaskMemory = {
+      ...existing,
+      ...update,
+      contextFiles: update.contextFiles
+        ? [...update.contextFiles]
+        : existing.contextFiles,
+      selectedSkills: update.selectedSkills
+        ? [...update.selectedSkills]
+        : existing.selectedSkills,
+    };
+    workspaceTaskMemoriesRef.current[workspaceId] = next;
+    if (selectedWorkspaceRef.current?.id !== workspaceId) return;
+    if (update.prompt !== undefined) {
+      replaceComposerPrompt(update.prompt);
+    }
+    if (update.contextFiles) {
+      contextFilesRef.current = [...update.contextFiles];
+      setContextFiles([...update.contextFiles]);
+    }
+    if (update.selectedSkills) {
+      selectedSkillsRef.current = [...update.selectedSkills];
+      setSelectedSkills([...update.selectedSkills]);
+    }
+  }
+
+  function rememberedWorkspaceSelectionStillMatches(
+    workspaceId: number,
+    selection: WorkspaceTaskSelection,
+  ) {
+    const current = workspaceTaskMemoriesRef.current[workspaceId]?.selection;
+    if (!current || current.kind !== selection.kind) return false;
+    if (selection.kind === "new") return true;
+    if (selection.kind === "draft") {
+      return current.kind === "draft" && current.clientId === selection.clientId;
+    }
+    return (
+      current.kind === "chat" &&
+      current.session.chatId === selection.session.chatId
+    );
+  }
+
+  function fallBackToNewWorkspaceChat(workspace: Workspace, message: string) {
+    const existing =
+      workspaceTaskMemoriesRef.current[workspace.id] ??
+      createEmptyWorkspaceTaskMemory();
+    workspaceTaskMemoriesRef.current[workspace.id] = {
+      ...existing,
+      selection: { kind: "new" },
+      historicalTranscript: null,
+    };
+    if (selectedWorkspaceRef.current?.id !== workspace.id) return;
+
+    flushSync(() => {
+      setWorkspaceChatSession(workspace.id, undefined);
+      setSelectedDraftChat(null);
+      setSelectedHistoryChatId(null);
+      setHistoryChatLoadState(null);
+      setHistoryOpenRequest(null);
+      historicalTranscriptRef.current = null;
+      setHistoricalTranscript(null);
+      setSelectedRunAliases(null);
+    });
+    setStatusMessage(message);
+  }
+
+  async function reloadRememberedWorkspaceChat(
+    workspace: Workspace,
+    selection: Extract<WorkspaceTaskSelection, { kind: "chat" }>,
+  ) {
+    try {
+      const chatWithRuns = await getChatWithRuns(selection.session.chatId);
+      if (
+        selectedWorkspaceRef.current?.id !== workspace.id ||
+        !rememberedWorkspaceSelectionStillMatches(workspace.id, selection)
+      ) {
+        return;
+      }
+      await selectHistoryChat(chatWithRuns.chat, {
+        source: "workspace",
+        workspace,
+        positionIntent: "preserve",
+      });
+    } catch (error) {
+      if (
+        selectedWorkspaceRef.current?.id !== workspace.id ||
+        !rememberedWorkspaceSelectionStillMatches(workspace.id, selection)
+      ) {
+        return;
+      }
+      const message = error instanceof Error ? error.message : String(error);
+      if (/chat (?:was )?not found/i.test(message)) {
+        fallBackToNewWorkspaceChat(
+          workspace,
+          "The previous chat is no longer available. Started a new chat.",
+        );
+        return;
+      }
+      setHistoryChatLoadState((current) =>
+        current?.workspaceId === workspace.id &&
+        current.chatId === selection.session.chatId
+          ? { ...current, error: message }
+          : current,
+      );
+      setStatusMessage(`Could not restore the previous chat: ${message}`);
+    }
+  }
+
   function selectWorkspace(workspaceId: number) {
     const workspace = workspaces.find((candidate) => candidate.id === workspaceId);
     if (!workspace) {
@@ -3718,32 +4009,135 @@ function App() {
     }
 
     cancelAgentNotificationNavigation();
-    if (selectedWorkspaceRef.current?.id !== workspace.id) {
-      historyChatLoadIdRef.current += 1;
-      cancelActiveExternalTranscriptSync();
-      cancelActiveHistoricalTranscriptPreparation();
-      pendingTranscriptCommitRef.current = null;
-      transcriptScrollActiveRef.current = false;
-      setHistoryChatLoadState(null);
-      setHistoryOpenRequest(null);
-      setHistoricalTranscript(null);
+    const previousWorkspaceId = selectedWorkspaceRef.current?.id ?? null;
+    if (previousWorkspaceId === workspace.id) {
+      setWorkspaceContextMenu(null);
+      setActiveView("task");
+      setStatusMessage(`Selected ${workspace.label}`);
+      return;
     }
-    setWorkspaceContextMenu(null);
-    selectedWorkspaceRef.current = workspace;
-    setSelectedWorkspace(workspace);
-    setWorkspaceChatSession(workspace.id, undefined);
-    selectedDraftChatEntryIdRef.current = null;
-    setSelectedDraftChatEntryId(null);
-    setSelectedHistoryChatId(null);
-    setSelectedRunAliases(null);
-    setActiveView("task");
+
+    rememberCurrentWorkspaceTaskMemory();
+    historyChatLoadIdRef.current += 1;
+    cancelActiveExternalTranscriptSync();
+    cancelActiveHistoricalTranscriptPreparation();
+    pendingTranscriptCommitRef.current = null;
+    transcriptScrollActiveRef.current = false;
+
+    const memory =
+      workspaceTaskMemoriesRef.current[workspace.id] ??
+      createEmptyWorkspaceTaskMemory();
+    workspaceTaskMemoriesRef.current[workspace.id] = memory;
+    let selection = memory.selection;
+    let restoredTranscript = memory.historicalTranscript;
+    let restoredEntries: TaskChatEntry[] | null = null;
+    let selectedRunControl: ActiveRunControl | null = null;
+    let needsHistoryReload = false;
+
+    if (selection.kind === "draft") {
+      const draftSelection = selection;
+      const draftExists = taskChatEntriesRef.current.some(
+        (entry) =>
+          entry.workspaceId === workspace.id &&
+          entry.clientId === draftSelection.clientId,
+      );
+      selectedRunControl =
+        activeRunControlsRef.current.get(draftSelection.clientId) ?? null;
+      if (!draftExists && !selectedRunControl) {
+        selection = { kind: "new" };
+        workspaceTaskMemoriesRef.current[workspace.id] = {
+          ...memory,
+          selection,
+          historicalTranscript: null,
+        };
+      }
+    } else if (selection.kind === "chat") {
+      const chatSelection = selection;
+      selectedRunControl = findRunControlByChat(
+        workspace.id,
+        chatSelection.session.chatId,
+      );
+      const chatEntriesExist = taskChatEntriesRef.current.some(
+        (entry) =>
+          entry.workspaceId === workspace.id &&
+          entry.chatId === chatSelection.session.chatId,
+      );
+      if (!chatEntriesExist) {
+        const cached = stableHistoryChatCacheRef.current.get(
+          chatSelection.session.chatId,
+        );
+        if (cached) {
+          restoredEntries = replaceChatEntries(
+            taskChatEntriesRef.current,
+            workspace.id,
+            chatSelection.session.chatId,
+            cached.entries,
+          );
+          restoredTranscript =
+            restoredTranscript ??
+            sanitizeRememberedHistoricalTranscript(cached.transcript);
+        } else if (!selectedRunControl) {
+          needsHistoryReload = true;
+        }
+      }
+    }
+
+    const selectedChatSession =
+      selection.kind === "chat" ? selection.session : undefined;
+    const selectedDraftId =
+      selection.kind === "draft" ? selection.clientId : null;
+    const selectedChatId =
+      selection.kind === "chat" ? selection.session.chatId : null;
+
+    flushSync(() => {
+      setWorkspaceContextMenu(null);
+      selectedWorkspaceRef.current = workspace;
+      setSelectedWorkspace(workspace);
+      restoreWorkspaceComposer(
+        workspaceTaskMemoriesRef.current[workspace.id] ?? memory,
+      );
+      setWorkspaceChatSession(workspace.id, selectedChatSession);
+      setSelectedDraftChat(selectedDraftId);
+      setSelectedHistoryChatId(selectedChatId);
+      setHistoryOpenRequest(null);
+      const nextTranscript =
+        selection.kind === "chat"
+          ? sanitizeRememberedHistoricalTranscript(restoredTranscript)
+          : null;
+      historicalTranscriptRef.current = nextTranscript;
+      setHistoricalTranscript(nextTranscript);
+      setHistoryChatLoadState(
+        needsHistoryReload && selection.kind === "chat"
+          ? {
+              chatId: selection.session.chatId,
+              workspaceId: workspace.id,
+              title: "Previous chat",
+              error: null,
+            }
+          : null,
+      );
+      if (restoredEntries) {
+        taskChatEntriesRef.current = restoredEntries;
+        setTaskChatEntries(restoredEntries);
+      }
+      setSelectedRunAliases(selectedRunControl);
+      setActiveView("task");
+    });
+
     preflightRef.current = null;
-    setStatusMessage(`Selected ${workspace.label}`);
+    setStatusMessage(
+      selection.kind === "new"
+        ? `Selected ${workspace.label}. Started a new chat.`
+        : `Selected ${workspace.label}. Restored the previous chat.`,
+    );
     if (
       workspace.default_account_id &&
       workspace.default_account_id !== selectedAccountIdRef.current
     ) {
       void selectCodexAccount(workspace.default_account_id);
+    }
+    if (needsHistoryReload && selection.kind === "chat") {
+      void reloadRememberedWorkspaceChat(workspace, selection);
     }
   }
 
@@ -4310,6 +4704,18 @@ function App() {
       entries,
     );
     taskChatEntriesRef.current = allEntries;
+    historicalTranscriptRef.current = publishedTranscript;
+    const remembered = workspaceTaskMemoriesRef.current[chat.workspace_id];
+    if (
+      remembered?.selection.kind === "chat" &&
+      remembered.selection.session.chatId === chat.id
+    ) {
+      workspaceTaskMemoriesRef.current[chat.workspace_id] = {
+        ...remembered,
+        historicalTranscript:
+          sanitizeRememberedHistoricalTranscript(publishedTranscript),
+      };
+    }
     startTransition(() => {
       setTaskChatEntries(allEntries);
       setHistoricalTranscript(publishedTranscript);
@@ -4487,6 +4893,7 @@ function App() {
     chat: ChatListItem,
     loadId: number,
     publication: "none" | "initial",
+    positionIntent: HistoricalTranscriptState["positionIntent"] = "latest",
   ) {
     const threadId = chat.external_thread_id ?? chat.codex_thread_id;
     if (!threadId) return;
@@ -4514,7 +4921,8 @@ function App() {
         sourceVersion,
         complete: true,
         firstItemIndex: HISTORY_VIRTUOSO_BASE_INDEX,
-        positionIntent: publication === "initial" ? "latest" : "preserve",
+        positionIntent:
+          publication === "initial" ? positionIntent : "preserve",
         openAtLatestRequest: null,
         syncStatus: "complete",
       };
@@ -4540,7 +4948,7 @@ function App() {
             preparedEntries,
             transcript,
             loadId,
-            publication === "initial" ? "latest" : "preserve",
+            publication === "initial" ? positionIntent : "preserve",
           );
           setStatusMessage(
             `Opened chat from ${formatHistoryTimestamp(chat.latest_activity_at)}.`,
@@ -4590,6 +4998,7 @@ function App() {
   async function loadExternalCodexChat(
     chat: ChatListItem,
     loadId: number,
+    positionIntent: HistoricalTranscriptState["positionIntent"],
   ) {
     const threadId = chat.external_thread_id ?? chat.codex_thread_id;
     if (!threadId) {
@@ -4608,7 +5017,7 @@ function App() {
         sourceVersion,
         complete: true,
         firstItemIndex: HISTORY_VIRTUOSO_BASE_INDEX,
-        positionIntent: "latest",
+        positionIntent,
         openAtLatestRequest: null,
         syncStatus: "complete",
       };
@@ -4624,6 +5033,7 @@ function App() {
         preparedEntries,
         transcript,
         loadId,
+        positionIntent,
       );
       setStatusMessage(`Opened chat from ${formatHistoryTimestamp(chat.latest_activity_at)}.`);
       return;
@@ -4638,7 +5048,7 @@ function App() {
         sourceVersion: staleSnapshot.sourceVersion,
         complete: true,
         firstItemIndex: HISTORY_VIRTUOSO_BASE_INDEX,
-        positionIntent: "latest",
+        positionIntent,
         openAtLatestRequest: null,
         syncStatus: "syncing",
       };
@@ -4654,12 +5064,18 @@ function App() {
         preparedEntries,
         transcript,
         loadId,
+        positionIntent,
       );
-      void synchronizeExternalTranscript(chat, loadId, "none");
+      void synchronizeExternalTranscript(chat, loadId, "none", positionIntent);
       return;
     }
 
-    await synchronizeExternalTranscript(chat, loadId, "initial");
+    await synchronizeExternalTranscript(
+      chat,
+      loadId,
+      "initial",
+      positionIntent,
+    );
   }
 
   function markWorkspaceChatRead(workspaceId: number, chatId: number) {
@@ -4679,9 +5095,17 @@ function App() {
   }
 
   function applyWorkspaceForChatNavigation(workspace: Workspace) {
+    if (selectedWorkspaceRef.current?.id !== workspace.id) {
+      rememberCurrentWorkspaceTaskMemory();
+    }
+    const memory =
+      workspaceTaskMemoriesRef.current[workspace.id] ??
+      createEmptyWorkspaceTaskMemory();
+    workspaceTaskMemoriesRef.current[workspace.id] = memory;
     setWorkspaceContextMenu(null);
     selectedWorkspaceRef.current = workspace;
     setSelectedWorkspace(workspace);
+    restoreWorkspaceComposer(memory);
     activeViewRef.current = "task";
     setActiveView("task");
     preflightRef.current = null;
@@ -4732,8 +5156,14 @@ function App() {
       ),
     };
     const runningControl = findRunControlByChat(chat.workspace_id, chat.id);
+    const positionIntent = options.positionIntent ?? "latest";
 
     markWorkspaceChatRead(chat.workspace_id, chat.id);
+    rememberWorkspaceTaskSelection(
+      chat.workspace_id,
+      { kind: "chat", session },
+      null,
+    );
 
     if (runningControl) {
       flushSync(() => {
@@ -4744,6 +5174,7 @@ function App() {
         setWorkspaceChatSession(chat.workspace_id, session);
         setHistoryChatLoadState(null);
         setHistoryOpenRequest(null);
+        historicalTranscriptRef.current = null;
         setHistoricalTranscript(null);
         closeHistoryDrawer();
         setSelectedRunAliases(runningControl);
@@ -4771,6 +5202,7 @@ function App() {
         requestId: loadId,
         phase: "loading",
       });
+      historicalTranscriptRef.current = null;
       setHistoricalTranscript(null);
       setTaskChatEntries((current) =>
         replaceChatEntries(current, chat.workspace_id, chat.id, []),
@@ -4796,7 +5228,13 @@ function App() {
         cached?.version === historyChatVersion(chat) &&
         cached.renderVersion === HISTORICAL_RENDER_PIPELINE_VERSION
       ) {
-        publishStableHistoryChat(chat, cached.entries, cached.transcript, loadId);
+        publishStableHistoryChat(
+          chat,
+          cached.entries,
+          cached.transcript,
+          loadId,
+          positionIntent,
+        );
         setStatusMessage(
           `Opened chat from ${formatHistoryTimestamp(chat.latest_activity_at)}.`,
         );
@@ -4804,14 +5242,18 @@ function App() {
       }
 
       if (chat.origin === "codex_external") {
-        await loadExternalCodexChat(chat, loadId);
+        await loadExternalCodexChat(chat, loadId, positionIntent);
         return (
           historyChatLoadIdRef.current === loadId &&
           selectedWorkspaceRef.current?.id === chat.workspace_id
         );
       }
 
-      await loadLocalHistoryChatProgressively(chat, loadId);
+      await loadLocalHistoryChatProgressively(
+        chat,
+        loadId,
+        positionIntent,
+      );
       return (
         historyChatLoadIdRef.current === loadId &&
         selectedWorkspaceRef.current?.id === chat.workspace_id
@@ -4824,6 +5266,7 @@ function App() {
       setHistoryChatLoadState((current) =>
         current?.chatId === chat.id ? { ...current, error: message } : current,
       );
+      historicalTranscriptRef.current = null;
       setHistoricalTranscript(null);
       setHistoryOpenRequest((current) =>
         current?.requestId === loadId ? null : current,
@@ -4838,6 +5281,7 @@ function App() {
   async function loadLocalHistoryChatProgressively(
     chat: ChatListItem,
     loadId: number,
+    positionIntent: HistoricalTranscriptState["positionIntent"],
   ) {
     const runs = await listLocalChatTranscript(chat.id);
     if (historyChatLoadIdRef.current !== loadId) {
@@ -4849,7 +5293,7 @@ function App() {
       sourceVersion: historyChatVersion(chat),
       complete: true,
       firstItemIndex: HISTORY_VIRTUOSO_BASE_INDEX,
-      positionIntent: "latest",
+      positionIntent,
       openAtLatestRequest: null,
       syncStatus: "complete",
     };
@@ -4860,7 +5304,13 @@ function App() {
       loadId,
     );
     if (!preparedEntries) return;
-    publishStableHistoryChat(chat, preparedEntries, transcript, loadId);
+    publishStableHistoryChat(
+      chat,
+      preparedEntries,
+      transcript,
+      loadId,
+      positionIntent,
+    );
     setStatusMessage(`Opened chat from ${formatHistoryTimestamp(chat.latest_activity_at)}.`);
   }
 
@@ -4979,7 +5429,13 @@ function App() {
     transcriptScrollActiveRef.current = false;
     setHistoryChatLoadState(null);
     setHistoryOpenRequest(null);
+    historicalTranscriptRef.current = null;
     setHistoricalTranscript(null);
+    rememberWorkspaceTaskSelection(
+      selectedWorkspace.id,
+      { kind: "new" },
+      null,
+    );
     setWorkspaceChatSession(selectedWorkspace.id, undefined);
     setSelectedDraftChat(null);
     setSelectedHistoryChatId(null);
@@ -4996,6 +5452,17 @@ function App() {
 
     await softDeleteChat(chat.id);
     stableHistoryChatCacheRef.current.delete(chat.id);
+    const remembered = workspaceTaskMemoriesRef.current[chat.workspace_id];
+    if (
+      remembered?.selection.kind === "chat" &&
+      remembered.selection.session.chatId === chat.id
+    ) {
+      workspaceTaskMemoriesRef.current[chat.workspace_id] = {
+        ...remembered,
+        selection: { kind: "new" },
+        historicalTranscript: null,
+      };
+    }
     if (
       historyChatLoadState?.chatId === chat.id ||
       historyOpenRequest?.chatId === chat.id ||
@@ -5016,9 +5483,15 @@ function App() {
     setHistoricalTranscript((current) =>
       current?.chatId === chat.id ? null : current,
     );
-    if (selectedHistoryChatId === chat.id) {
+    if (
+      selectedHistoryChatId === chat.id ||
+      workspaceChatSessionsRef.current[chat.workspace_id]?.chatId === chat.id
+    ) {
+      historicalTranscriptRef.current = null;
       setSelectedHistoryChatId(null);
       setWorkspaceChatSession(chat.workspace_id, undefined);
+      setSelectedDraftChat(null);
+      setSelectedRunAliases(null);
       setTaskChatEntries((current) =>
         current.filter((entry) => entry.chatId !== chat.id),
       );
@@ -5035,26 +5508,35 @@ function App() {
       return;
     }
 
+    const wasSelected = selectedWorkspaceRef.current?.id === workspace.id;
     await softDeleteWorkspace(workspace.id);
     setWorkspaceDeleteCandidate(null);
     clearWorkspaceRuntimeState(workspace);
 
-    setWorkspaces((current) => {
-      const remaining = current.filter((candidate) => candidate.id !== workspace.id);
-      if (selectedWorkspaceRef.current?.id === workspace.id) {
-        const nextWorkspace = remaining[0] ?? null;
-        setSelectedWorkspace(nextWorkspace);
+    const remaining = workspacesRef.current.filter(
+      (candidate) => candidate.id !== workspace.id,
+    );
+    workspacesRef.current = remaining;
+    setWorkspaces(remaining);
+
+    if (wasSelected) {
+      const nextWorkspace = remaining[0] ?? null;
+      selectedWorkspaceRef.current = null;
+      setSelectedWorkspace(null);
+      if (nextWorkspace) {
+        selectWorkspace(nextWorkspace.id);
         setStatusMessage(
-          nextWorkspace
-            ? `Removed ${workspace.label}. Selected ${nextWorkspace.label}.`
-            : `Removed ${workspace.label}. Add or choose a workspace to continue.`,
+          `Removed ${workspace.label}. Restored ${nextWorkspace.label}.`,
         );
       } else {
-        setStatusMessage(`Removed ${workspace.label} from Orchestrator.`);
+        setStatusMessage(
+          `Removed ${workspace.label}. Add or choose a workspace to continue.`,
+        );
       }
+      return;
+    }
 
-      return remaining;
-    });
+    setStatusMessage(`Removed ${workspace.label} from Orchestrator.`);
   }
 
   function clearWorkspaceRuntimeState(workspace: Workspace) {
@@ -5107,6 +5589,7 @@ function App() {
     setTaskChatEntries((current) =>
       current.filter((entry) => entry.workspaceId !== workspace.id),
     );
+    delete workspaceTaskMemoriesRef.current[workspace.id];
     setWorkspaceChatSession(workspace.id, undefined);
     setHistoryChatLoadState((current) =>
       current?.workspaceId === workspace.id ? null : current,
@@ -6197,6 +6680,7 @@ function App() {
     pendingTranscriptCommitRef.current = null;
     setHistoryChatLoadState(null);
     setHistoryOpenRequest(null);
+    historicalTranscriptRef.current = null;
     setHistoricalTranscript(null);
     const clientId = createTaskChatClientId();
     const intent: RunIntent =
@@ -6287,6 +6771,7 @@ function App() {
       }
     });
     registerRunControl(runControl);
+    rememberCurrentWorkspaceTaskMemory();
     markPerformance("orchestrator:submit:optimistic-committed");
 
     return runControl;
@@ -6382,21 +6867,18 @@ function App() {
           fallbackTitle,
         };
         runControl.chatId = chat.id;
-        if (
-          selectedWorkspaceRef.current?.id === snapshot.workspace.id &&
-          selectedDraftChatEntryIdRef.current === runControl.clientId
-        ) {
-          setWorkspaceChatSession(snapshot.workspace.id, {
+        promoteRememberedWorkspaceDraft(
+          snapshot.workspace.id,
+          runControl.clientId,
+          {
             chatId: chat.id,
             threadId,
             origin: snapshot.chatOrigin,
             profileKey: snapshot.profileKey,
             externalThreadId: snapshot.externalThreadId,
             nextTurnIndex: snapshot.turnIndex + 1,
-          });
-          setSelectedDraftChat(null);
-          setSelectedHistoryChatId(chat.id);
-        }
+          },
+        );
         updateTaskChatEntryIds(runControl.clientId, {
           chatId: chat.id,
           turnIndex: snapshot.turnIndex,
@@ -6508,16 +6990,18 @@ function App() {
           codexThreadId: nextThreadId,
           status: "running",
         });
-        if (activeRunControlRef.current === runControl) {
-          setWorkspaceChatSession(snapshot.workspace.id, {
+        updateRememberedWorkspaceChatSession(
+          snapshot.workspace.id,
+          activeChatId,
+          {
             chatId: activeChatId,
             threadId: nextThreadId,
             origin: snapshot.chatOrigin,
             profileKey: snapshot.profileKey,
             externalThreadId: snapshot.externalThreadId,
             nextTurnIndex: snapshot.turnIndex + 1,
-          });
-        }
+          },
+        );
         return {
           threadId: nextThreadId,
           model: nextThreadModel,
@@ -6581,8 +7065,10 @@ function App() {
               )
             : null,
       });
-      if (activeRunControlRef.current === runControl) {
-        setWorkspaceChatSession(snapshot.workspace.id, {
+      updateRememberedWorkspaceChatSession(
+        snapshot.workspace.id,
+        chatId,
+        {
           chatId,
           threadId,
           origin: snapshot.chatOrigin,
@@ -6593,8 +7079,8 @@ function App() {
             snapshot.mode === "plan"
               ? snapshot.defaultCollaborationMode ?? collaborationModes.default
               : null,
-        });
-      }
+        },
+      );
       ensureRunControlActive(runControl);
 
       await updateRun(run.id, {
@@ -6651,6 +7137,7 @@ function App() {
         snapshot.profileKey,
         snapshot.accountId,
         snapshot.contextFiles,
+        snapshot.workspace.id,
       );
       if (snapshot.previousChatContext) {
         additionalContext = {
@@ -6837,7 +7324,9 @@ function App() {
           restoreTaskChatEntry(runControl.clientId, snapshot.restoreEntryOnSetupFailure);
         }
         if (snapshot.restorePromptOnSetupFailure !== false) {
-          replaceComposerPrompt(snapshot.promptFallback);
+          updateRememberedWorkspaceComposer(snapshot.workspace.id, {
+            prompt: snapshot.promptFallback,
+          });
         }
       } else {
         await updateRun(runId, {
@@ -7069,6 +7558,7 @@ function App() {
     profileKey: CodexProfileKey,
     accountId: number,
     files: ComposerContextFile[],
+    workspaceId: number,
   ) {
     const additionalContext: Record<string, AdditionalContextEntry> = {};
     const errors = new Map<string, string>();
@@ -7092,13 +7582,15 @@ function App() {
       }
     }
 
-    setContextFiles((current) =>
-      current.map((file) =>
+    const rememberedFiles =
+      workspaceTaskMemoriesRef.current[workspaceId]?.contextFiles ?? files;
+    updateRememberedWorkspaceComposer(workspaceId, {
+      contextFiles: rememberedFiles.map((file) =>
         errors.has(file.path)
           ? { ...file, status: "error", error: errors.get(file.path) }
           : { ...file, status: "ready", error: null },
       ),
-    );
+    });
 
     return {
       additionalContext:
@@ -7513,6 +8005,20 @@ function App() {
         (chatId === null &&
           selectedDraftChatEntryIdRef.current === entry.clientId));
 
+    if (session) {
+      rememberWorkspaceTaskSelection(
+        workspace.id,
+        { kind: "chat", session },
+        null,
+      );
+    } else {
+      rememberWorkspaceTaskSelection(
+        workspace.id,
+        { kind: "draft", clientId: entry.clientId },
+        null,
+      );
+    }
+
     if (!sameVisibleChat) {
       historyChatLoadIdRef.current += 1;
       cancelActiveExternalTranscriptSync();
@@ -7536,6 +8042,7 @@ function App() {
       if (!sameVisibleChat) {
         setHistoryChatLoadState(null);
         setHistoryOpenRequest(null);
+        historicalTranscriptRef.current = null;
         setHistoricalTranscript(null);
       }
       closeHistoryDrawer();

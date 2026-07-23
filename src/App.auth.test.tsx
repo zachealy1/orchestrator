@@ -1055,6 +1055,14 @@ describe("App Codex auth", () => {
       name: "Workspaces",
     });
 
+    await user.click(
+      within(workspaceNav).getByRole("button", { name: "mobile-client" }),
+    );
+    await user.type(screen.getByLabelText("Prompt"), "Remember this draft");
+    await user.click(
+      within(workspaceNav).getByRole("button", { name: "orchestrator" }),
+    );
+
     fireEvent.contextMenu(
       within(workspaceNav).getByRole("button", { name: "orchestrator" }),
       { clientX: 60, clientY: 140 },
@@ -1081,6 +1089,7 @@ describe("App Codex auth", () => {
     });
     expect(fallbackWorkspace).toHaveAttribute("aria-current", "page");
     expect(screen.getByLabelText("Selected folder")).toHaveTextContent("mobile-client");
+    expect(screen.getByLabelText("Prompt")).toHaveValue("Remember this draft");
   });
 
   it("opens and closes the workspace context menu from the keyboard", async () => {
@@ -3817,7 +3826,209 @@ describe("App Codex auth", () => {
       within(workspaceNav).getByRole("button", { name: "orchestrator" }),
     );
     expect(await screen.findByLabelText("1 completed chat")).toBeInTheDocument();
+    expect(
+      within(screen.getByLabelText("Task chat transcript")).getByLabelText(
+        "Submitted prompt",
+      ),
+    ).toHaveTextContent("Run in orchestrator");
+    expect(screen.queryByText("Run in mobile client")).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: /run codex/i })).toBeInTheDocument();
+
+    await user.click(
+      within(workspaceNav).getByRole("button", { name: "mobile-client" }),
+    );
+    expect(
+      within(screen.getByLabelText("Task chat transcript")).getByLabelText(
+        "Submitted prompt",
+      ),
+    ).toHaveTextContent("Run in mobile client");
+    expect(screen.getByRole("button", { name: /stop codex/i })).toBeInTheDocument();
+  });
+
+  it("restores composer drafts, context files, and skills per workspace", async () => {
+    const mobileWorkspace = {
+      ...workspace,
+      id: 2,
+      path: "/repo/mobile-client",
+      label: "mobile-client",
+    };
+    prepareSignedInRun();
+    mocks.listWorkspacesMock.mockResolvedValue([workspace, mobileWorkspace]);
+    mocks.listCodexSkillsMock.mockResolvedValue([
+      {
+        id: "docs",
+        name: "Docs",
+        description: "Use repository documentation",
+      },
+    ]);
+
+    const { user } = await renderApp();
+    const workspaceNav = screen.getByRole("navigation", { name: "Workspaces" });
+    const prompt = screen.getByLabelText("Prompt");
+    await user.type(prompt, "Draft for orchestrator");
+    const composer = screen.getByLabelText("Task composer");
+    const dataTransfer = createContextFileDataTransfer([
+      {
+        path: "/repo/orchestrator/README.md",
+        name: "README.md",
+        source: "explorer",
+        status: "ready",
+      },
+    ]);
+    fireEvent.drop(composer, { dataTransfer });
+    await user.type(prompt, " /docs");
+    await user.click(await screen.findByRole("option", { name: /docs/i }));
+
+    await user.click(
+      within(workspaceNav).getByRole("button", { name: "mobile-client" }),
+    );
+    expect(screen.getByLabelText("Prompt")).toHaveValue("");
+    expect(screen.queryByLabelText("Selected context files")).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("Selected skills")).not.toBeInTheDocument();
+
+    await user.type(screen.getByLabelText("Prompt"), "Draft for mobile");
+    await user.click(
+      within(workspaceNav).getByRole("button", { name: "orchestrator" }),
+    );
+
+    expect(
+      (screen.getByLabelText("Prompt") as HTMLTextAreaElement).value,
+    ).toContain("Draft for orchestrator");
+    expect(
+      within(screen.getByLabelText("Selected context files")).getByText(
+        "README.md",
+      ),
+    ).toBeInTheDocument();
+    expect(
+      within(screen.getByLabelText("Selected skills")).getByText("Docs"),
+    ).toBeInTheDocument();
+
+    await user.click(
+      within(workspaceNav).getByRole("button", { name: "mobile-client" }),
+    );
+    expect(screen.getByLabelText("Prompt")).toHaveValue("Draft for mobile");
+  });
+
+  it("promotes an optimistic chat while its workspace is in the background", async () => {
+    const mobileWorkspace = {
+      ...workspace,
+      id: 2,
+      path: "/repo/mobile-client",
+      label: "mobile-client",
+    };
+    let resolveCreateChat:
+      | ((chat: ReturnType<typeof workspaceChatFixture>) => void)
+      | null = null;
+    prepareSignedInRun();
+    mocks.listWorkspacesMock.mockResolvedValue([workspace, mobileWorkspace]);
+    mocks.createChatMock.mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          resolveCreateChat = resolve;
+        }),
+    );
+
+    const { user } = await renderApp();
+    await user.type(screen.getByLabelText("Prompt"), "Background setup");
+    await user.keyboard("{Enter}");
+    await waitFor(() => expect(mocks.createChatMock).toHaveBeenCalledTimes(1));
+
+    const workspaceNav = screen.getByRole("navigation", { name: "Workspaces" });
+    await user.click(
+      within(workspaceNav).getByRole("button", { name: "mobile-client" }),
+    );
+    expect(screen.queryByText("Background setup")).not.toBeInTheDocument();
+
+    await act(async () => {
+      resolveCreateChat?.(
+        workspaceChatFixture({
+          id: 407,
+          title: "Background setup",
+          status: "starting",
+        }),
+      );
+      await Promise.resolve();
+    });
+    await waitFor(() =>
+      expect(mocks.codexRpcMock).toHaveBeenCalledWith(
+        7,
+        "turn/start",
+        expect.any(Object),
+      ),
+    );
+
+    await user.click(
+      within(workspaceNav).getByRole("button", { name: "orchestrator" }),
+    );
+    expect(
+      within(screen.getByLabelText("Task chat transcript")).getByLabelText(
+        "Submitted prompt",
+      ),
+    ).toHaveTextContent("Background setup");
+    expect(screen.getByRole("button", { name: /stop codex/i })).toBeInTheDocument();
+    expect(mocks.getChatWithRunsMock).not.toHaveBeenCalledWith(407);
+  });
+
+  it("restores a historical chat and keeps an explicit new chat empty", async () => {
+    const mobileWorkspace = {
+      ...workspace,
+      id: 2,
+      path: "/repo/mobile-client",
+      label: "mobile-client",
+    };
+    const historicalChat = workspaceChatFixture({
+      id: 406,
+      title: "Remembered history",
+    });
+    const historicalRun = workspaceRunFixture({
+      id: 306,
+      chat_id: historicalChat.id,
+      original_prompt: "Remember this prompt",
+      final_message: "Remembered result.",
+    });
+    mocks.listWorkspacesMock.mockResolvedValue([workspace, mobileWorkspace]);
+    mocks.listWorkspaceChatsMock.mockImplementation(async (workspaceId: number) =>
+      workspaceId === workspace.id ? [historicalChat] : [],
+    );
+    mocks.getChatWithRunsMock.mockResolvedValue(
+      workspaceChatWithRunsFixture(historicalChat, [historicalRun]),
+    );
+    mocks.listLocalChatTranscriptMock.mockResolvedValue([historicalRun]);
+
+    const { user } = await renderApp();
+    const banner = screen.getByRole("region", { name: "Selected folder" });
+    await user.click(
+      within(banner).getByRole("button", { name: /open chat history/i }),
+    );
+    const drawer = await screen.findByRole("complementary", {
+      name: "Workspace chat history",
+    });
+    await user.click(
+      within(drawer).getByRole("button", { name: /remembered history/i }),
+    );
+    expect(await screen.findByText("Remembered result.")).toBeInTheDocument();
+
+    const workspaceNav = screen.getByRole("navigation", { name: "Workspaces" });
+    await user.click(
+      within(workspaceNav).getByRole("button", { name: "mobile-client" }),
+    );
+    await user.click(
+      within(workspaceNav).getByRole("button", { name: "orchestrator" }),
+    );
+    expect(screen.getByText("Remembered result.")).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: /new chat/i }));
+    expect(screen.queryByText("Remembered result.")).not.toBeInTheDocument();
+    await user.click(
+      within(workspaceNav).getByRole("button", { name: "mobile-client" }),
+    );
+    await user.click(
+      within(workspaceNav).getByRole("button", { name: "orchestrator" }),
+    );
+    expect(screen.queryByText("Remembered result.")).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("article", { name: "Submitted prompt" }),
+    ).not.toBeInTheDocument();
   });
 
   it("keeps a selected history chat visible when submitting a follow-up prompt", async () => {
