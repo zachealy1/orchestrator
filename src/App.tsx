@@ -3148,12 +3148,19 @@ function App() {
         if (await completeChatTitleGeneration(request.chatId, title)) {
           updateHistoryChatTitle(request.chatId, title, "complete");
         }
-      } catch {
+      } catch (error) {
+        console.warn(
+          `AI chat title generation failed for chat ${request.chatId}; using the prompt-based fallback.`,
+          error,
+        );
         if (await failChatTitleGeneration(request.chatId).catch(() => false)) {
           updateHistoryChatTitle(
             request.chatId,
             request.fallbackTitle,
             "failed",
+          );
+          setStatusMessage(
+            "AI title generation failed; using the prompt-based title.",
           );
         }
       } finally {

@@ -5710,19 +5710,30 @@ describe("App Codex auth", () => {
   });
 
   it("falls back once when AI title generation fails", async () => {
+    const warning = vi
+      .spyOn(console, "warn")
+      .mockImplementation(() => undefined);
     prepareSignedInRun();
     mocks.generateChatTitleMock.mockRejectedValueOnce(
       new Error("Title generation unavailable"),
     );
 
-    const { user } = await renderApp();
-    await startMockRun(user, "Repair the desktop OAuth callback flow");
+    try {
+      const { user } = await renderApp();
+      await startMockRun(user, "Repair the desktop OAuth callback flow");
 
-    await waitFor(() =>
-      expect(mocks.failChatTitleGenerationMock).toHaveBeenCalledWith(401),
-    );
-    expect(mocks.generateChatTitleMock).toHaveBeenCalledTimes(1);
-    expect(mocks.completeChatTitleGenerationMock).not.toHaveBeenCalled();
+      await waitFor(() =>
+        expect(mocks.failChatTitleGenerationMock).toHaveBeenCalledWith(401),
+      );
+      expect(mocks.generateChatTitleMock).toHaveBeenCalledTimes(1);
+      expect(mocks.completeChatTitleGenerationMock).not.toHaveBeenCalled();
+      expect(warning).toHaveBeenCalledWith(
+        "AI chat title generation failed for chat 401; using the prompt-based fallback.",
+        expect.any(Error),
+      );
+    } finally {
+      warning.mockRestore();
+    }
   });
 
   it("uses Ask for approval for new threads and turns by default", async () => {
