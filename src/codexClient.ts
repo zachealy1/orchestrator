@@ -35,6 +35,7 @@ import type {
   WorkspaceGitStatusSnapshot,
   WorkspaceTreeEntry,
 } from "./types";
+import type { LocalWebPreviewProbeResult } from "./lib/webPreview";
 
 export function readBrowserRuntimeStatus() {
   return invoke<BrowserRuntimeStatus>("browser_runtime_status");
@@ -64,6 +65,10 @@ export function updateBrowserSessionTarget(
 
 export function stopBrowserSession(token: string) {
   return invoke<BrowserSessionState>("browser_session_stop", { token });
+}
+
+export function probeLocalWebPreview(url: string) {
+  return invoke<LocalWebPreviewProbeResult>("probe_local_web_preview", { url });
 }
 
 export function connectCodex(accountId: number) {

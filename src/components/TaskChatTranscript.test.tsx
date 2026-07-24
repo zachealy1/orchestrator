@@ -108,6 +108,115 @@ describe("TaskChatTranscript", () => {
     expect(onOpenFileLink).toHaveBeenCalledWith("/repo/App.tsx");
   });
 
+  it("renders a completed web preview between the summary and edited files", async () => {
+    const onOpenWebPreview = vi.fn().mockResolvedValue(undefined);
+    const entry: TaskChatEntry = {
+      ...historyEntry(1),
+      runView: {
+        ...historyEntry(1).runView,
+        webPreview: {
+          version: 1,
+          url: "http://localhost:5173/",
+          origin: "http://localhost:5173",
+          detectedAt: "2026-07-24T12:00:00.000Z",
+          sourceCommandId: "command-1",
+          availability: "available",
+        },
+        editedFiles: [
+          {
+            path: "/repo/src/App.tsx",
+            name: "App.tsx",
+            status: "modified",
+            additions: 4,
+            deletions: 1,
+          },
+        ],
+      },
+    };
+
+    const { container } = render(
+      <TaskChatTurn
+        entry={entry}
+        editable={false}
+        editing={false}
+        editingPrompt=""
+        onEditingPromptChange={vi.fn()}
+        onSubmitEdit={vi.fn()}
+        onCancelEdit={vi.fn()}
+        onStartEdit={vi.fn()}
+        onResolveRequest={vi.fn()}
+        onOpenWebPreview={onOpenWebPreview}
+      />,
+    );
+
+    expect(screen.getByText("Web preview")).toBeInTheDocument();
+    expect(screen.getByText("Website")).toBeInTheDocument();
+    const summary = container.querySelector(".run-summary");
+    const preview = container.querySelector(".web-preview-card");
+    const edits = container.querySelector(".edited-files-summary");
+    expect(summary).not.toBeNull();
+    expect(preview).not.toBeNull();
+    expect(edits).not.toBeNull();
+    expect(
+      summary!.compareDocumentPosition(preview!) &
+        Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
+    expect(
+      preview!.compareDocumentPosition(edits!) &
+        Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
+
+    fireEvent.click(
+      screen.getByRole("button", { name: "Open in browser" }),
+    );
+    await waitFor(() =>
+      expect(onOpenWebPreview).toHaveBeenCalledWith(
+        entry,
+        entry.runView.webPreview,
+      ),
+    );
+  });
+
+  it("keeps an unavailable web preview retryable without changing its geometry", async () => {
+    const onOpenWebPreview = vi
+      .fn()
+      .mockRejectedValue(new Error("listener closed"));
+    const entry: TaskChatEntry = {
+      ...historyEntry(1),
+      runView: {
+        ...historyEntry(1).runView,
+        webPreview: {
+          version: 1,
+          url: "http://localhost:3000/",
+          origin: "http://localhost:3000",
+          detectedAt: "2026-07-24T12:00:00.000Z",
+          sourceCommandId: "command-2",
+          availability: "unchecked",
+        },
+      },
+    };
+
+    render(
+      <TaskChatTurn
+        entry={entry}
+        editable={false}
+        editing={false}
+        editingPrompt=""
+        onEditingPromptChange={vi.fn()}
+        onSubmitEdit={vi.fn()}
+        onCancelEdit={vi.fn()}
+        onStartEdit={vi.fn()}
+        onResolveRequest={vi.fn()}
+        onOpenWebPreview={onOpenWebPreview}
+      />,
+    );
+
+    const button = screen.getByRole("button", { name: "Open in browser" });
+    fireEvent.click(button);
+    await screen.findByText("Preview unavailable");
+    expect(button).toBeEnabled();
+  });
+
   it("renders only a bounded window of turns for a large historical chat", async () => {
     const entries: TaskChatEntry[] = Array.from({ length: 500 }, (_, index) => ({
       clientId: `chat-${index + 1}`,

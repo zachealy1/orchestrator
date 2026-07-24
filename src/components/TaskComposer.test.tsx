@@ -679,6 +679,32 @@ describe("TaskComposer", () => {
     expect(promptInput).toHaveValue("Fix the failing test");
   });
 
+  it("submits a Plan Mode prompt with an image when pressing Enter", async () => {
+    const onRun = vi.fn();
+    const { user } = renderControlledComposer({
+      planMode: true,
+      contextFiles: [
+        {
+          path: "/repo/snake-game-header.webp",
+          name: "snake-game-header.webp",
+          source: "picker",
+          status: "ready",
+          mediaKind: "image",
+          mimeType: "image/webp",
+          width: 1280,
+          height: 720,
+        },
+      ],
+      onRun,
+    });
+    const promptInput = screen.getByLabelText("Prompt");
+
+    await user.type(promptInput, "Plan a more realistic snake game{Enter}");
+
+    expect(onRun).toHaveBeenCalledOnce();
+    expect(onRun).toHaveBeenCalledWith("Plan a more realistic snake game");
+  });
+
   it("keeps the live draft stable across unrelated parent renders", () => {
     const { props, rerender } = renderComposer({
       prompt: "Initial",

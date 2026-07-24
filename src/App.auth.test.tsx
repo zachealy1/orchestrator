@@ -46,6 +46,7 @@ const mocks = vi.hoisted(() => ({
   listWorkspaceDirectoryMock: vi.fn(),
   readWorkspaceFilePreviewMock: vi.fn(),
   prepareImageAttachmentMock: vi.fn(),
+  probeLocalWebPreviewMock: vi.fn(),
   checkoutGitBranchMock: vi.fn(),
   runPreflightMock: vi.fn(),
   readCodexFileMock: vi.fn(),
@@ -207,6 +208,7 @@ vi.mock("./codexClient", () => ({
   readDefaultCodexFile: mocks.readDefaultCodexFileMock,
   readWorkspaceFilePreview: mocks.readWorkspaceFilePreviewMock,
   prepareImageAttachment: mocks.prepareImageAttachmentMock,
+  probeLocalWebPreview: mocks.probeLocalWebPreviewMock,
   resolveDefaultCodexServerRequest: mocks.resolveDefaultCodexServerRequestMock,
   resolveCodexServerRequest: mocks.resolveCodexServerRequestMock,
   runPreflight: mocks.runPreflightMock,
@@ -375,6 +377,7 @@ function workspaceRunFixture(
     completed_plan_text: null,
     plan_review_state: "none" as const,
     execution_settings_json: null,
+    web_preview_json: null,
     ...overrides,
   };
 }
@@ -611,6 +614,10 @@ function prepareDefaults() {
         }
       : null,
   );
+  mocks.probeLocalWebPreviewMock.mockImplementation(async (url: string) => ({
+    normalizedUrl: url,
+    reachable: true,
+  }));
   mocks.undoWorkspaceGitDiffMock.mockResolvedValue({
     message: "Undid changes to 1 file",
     branch: "main",
@@ -5001,13 +5008,16 @@ describe("App Codex auth", () => {
     expect(await within(banner).findByText("Clean")).toBeInTheDocument();
 
     await waitFor(
-      () =>
+      () => {
         expect(mocks.listWorkspaceGitStatusMock.mock.calls.length).toBeGreaterThanOrEqual(
           2,
-        ),
+        );
+        expect(
+          within(workspaceNav).getByLabelText("modified file"),
+        ).toHaveTextContent("M");
+      },
       { timeout: 4500 },
     );
-    expect(within(workspaceNav).getByLabelText("modified file")).toHaveTextContent("M");
     expect(within(workspaceNav).getByTitle("external.md")).toBeInTheDocument();
     expect(within(workspaceNav).getByLabelText("untracked file")).toHaveTextContent("U");
     const changeSummary = within(banner).getByLabelText(
@@ -7877,6 +7887,68 @@ describe("App Codex auth", () => {
     );
   });
 
+  it("accepts an Enter retry while a terminal run is still persisting", async () => {
+    prepareSignedInRun();
+    let resolveFailedRunPersistence!: () => void;
+    let failedPersistenceCalls = 0;
+    let turnStartCalls = 0;
+    mocks.createTaskMock
+      .mockResolvedValueOnce({ id: 101 })
+      .mockResolvedValueOnce({ id: 102 });
+    mocks.createRunMock
+      .mockResolvedValueOnce({ id: 202 })
+      .mockResolvedValueOnce({ id: 203 });
+    mocks.updateRunMock.mockImplementation(async (_runId, updates) => {
+      if (updates.status === "failed" && failedPersistenceCalls === 0) {
+        failedPersistenceCalls += 1;
+        await new Promise<void>((resolve) => {
+          resolveFailedRunPersistence = resolve;
+        });
+      }
+    });
+    mocks.codexRpcMock.mockImplementation(
+      async (_accountId: number, method: string) => {
+        if (method === "thread/start") {
+          return { thread: { id: "thread-1" } };
+        }
+        if (method === "turn/start") {
+          turnStartCalls += 1;
+          if (turnStartCalls === 1) {
+            throw new Error("First turn failed");
+          }
+          return { turn: { id: "turn-2" } };
+        }
+        return {};
+      },
+    );
+
+    const { user } = await renderApp();
+    await user.type(screen.getByLabelText("Prompt"), "Run the first attempt");
+    await user.keyboard("{Enter}");
+
+    await waitFor(() =>
+      expect(mocks.updateRunMock).toHaveBeenCalledWith(
+        202,
+        expect.objectContaining({ status: "failed" }),
+      ),
+    );
+
+    await user.type(screen.getByLabelText("Prompt"), "Run the retry");
+    expect(screen.getByRole("button", { name: /run codex/i })).toBeEnabled();
+    await user.keyboard("{Enter}");
+
+    expect(screen.getByLabelText("Prompt")).toHaveValue("");
+    expect(screen.getAllByLabelText("Submitted prompt")).toHaveLength(2);
+    expect(screen.getByText("Run the retry")).toBeInTheDocument();
+
+    await act(async () => {
+      resolveFailedRunPersistence();
+      await Promise.resolve();
+    });
+    await waitFor(() => expect(turnStartCalls).toBe(2));
+    await user.click(screen.getByRole("button", { name: /stop codex/i }));
+  });
+
   it("stops an active Codex run from the composer stop button", async () => {
     prepareSignedInRun();
 
@@ -9584,6 +9656,95 @@ describe("App Codex auth", () => {
         ],
       }),
     );
+  });
+
+  it("detects a reachable structured command preview and opens it in the default browser", async () => {
+    prepareSignedInRun();
+    const { user } = await renderApp();
+    await startMockRun(user, "Start the local preview");
+
+    await emitCodexNotification({
+      method: "item/started",
+      params: {
+        threadId: "thread-1",
+        turnId: "turn-1",
+        item: {
+          id: "command-preview",
+          type: "commandExecution",
+          command: "npm run dev",
+        },
+      },
+    });
+    await emitCodexNotification({
+      method: "item/commandExecution/outputDelta",
+      params: {
+        threadId: "thread-1",
+        turnId: "turn-1",
+        itemId: "command-preview",
+        delta: "  Local: http://localhost:5173/\n",
+      },
+    });
+
+    const openPreview = await screen.findByRole("button", {
+      name: "Open in browser",
+    });
+    await waitFor(() =>
+      expect(mocks.updateRunMock).toHaveBeenCalledWith(202, {
+        webPreviewJson: expect.stringContaining("http://localhost:5173/"),
+      }),
+    );
+
+    await user.click(openPreview);
+    await waitFor(() =>
+      expect(mocks.openUrlMock).toHaveBeenCalledWith(
+        "http://localhost:5173/",
+      ),
+    );
+    expect(mocks.openUrlMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps probing the latest server candidate after the turn completes", async () => {
+    prepareSignedInRun();
+    mocks.probeLocalWebPreviewMock
+      .mockResolvedValueOnce({
+        normalizedUrl: "http://localhost:4173/",
+        reachable: false,
+      })
+      .mockResolvedValue({
+        normalizedUrl: "http://localhost:4173/",
+        reachable: true,
+      });
+    const { user } = await renderApp();
+    await startMockRun(user, "Start a slower preview");
+
+    await emitCodexNotification({
+      method: "item/started",
+      params: {
+        threadId: "thread-1",
+        turnId: "turn-1",
+        item: {
+          id: "command-slow-preview",
+          type: "commandExecution",
+          command: "vite --port 4173",
+        },
+      },
+    });
+    await waitFor(() =>
+      expect(mocks.probeLocalWebPreviewMock).toHaveBeenCalledTimes(1),
+    );
+    await emitCodexNotification({
+      method: "turn/completed",
+      params: {
+        threadId: "thread-1",
+        turnId: "turn-1",
+        turn: { id: "turn-1", status: "completed", durationMs: 100 },
+      },
+    });
+
+    expect(
+      await screen.findByRole("button", { name: "Open in browser" }),
+    ).toBeInTheDocument();
+    expect(mocks.probeLocalWebPreviewMock).toHaveBeenCalledTimes(2);
   });
 
   it("blocks unauthenticated runs before thread/start", async () => {

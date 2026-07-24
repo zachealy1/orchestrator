@@ -189,6 +189,7 @@ export type RunRecord = {
   completed_plan_text: string | null;
   plan_review_state: "none" | "available" | "superseded" | "approved" | "cancelled";
   execution_settings_json: string | null;
+  web_preview_json: string | null;
 };
 
 export type RunListItem = RunRecord & {
@@ -230,6 +231,7 @@ export type HistoryRunSummary = Pick<
   | "sandbox"
   | "approval_policy"
   | "execution_settings_json"
+  | "web_preview_json"
 > & {
   original_prompt: string;
   latest_diff?: string | null;

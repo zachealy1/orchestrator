@@ -16,9 +16,11 @@ import {
   Clock,
   FileDiff,
   FileText,
+  Globe2,
   Image as ImageIcon,
   Loader2,
   MessageSquare,
+  ExternalLink,
   Pencil,
   RefreshCw,
   RotateCcw,
@@ -78,6 +80,7 @@ import {
   isImageContextFile,
   loadImageAttachmentPreview,
 } from "../lib/imageAttachments";
+import type { RunWebPreview } from "../lib/webPreview";
 import { isPreviewableSummaryLink } from "../lib/summaryLinks";
 import {
   cacheTranscriptRowHeight,
@@ -604,6 +607,10 @@ type Props = {
   ) => boolean | void;
   onCancelPlan?: (entry: TaskChatEntry) => void;
   onOpenFileLink?: (href: string) => boolean;
+  onOpenWebPreview?: (
+    entry: TaskChatEntry,
+    preview: RunWebPreview,
+  ) => Promise<void> | void;
   onReviewEditedFile?: (
     entry: TaskChatEntry,
     file: RunEditedFile,
@@ -633,6 +640,7 @@ export function TaskChatTranscript({
   onRevisePlan,
   onCancelPlan,
   onOpenFileLink,
+  onOpenWebPreview,
   onReviewEditedFile,
   onUndoEditedFiles,
   fileUndoDisabled = false,
@@ -654,6 +662,7 @@ export function TaskChatTranscript({
     onRevisePlan,
     onCancelPlan,
     onOpenFileLink,
+    onOpenWebPreview,
     onReviewEditedFile,
     onUndoEditedFiles,
     onEditPrompt,
@@ -670,6 +679,7 @@ export function TaskChatTranscript({
     onRevisePlan,
     onCancelPlan,
     onOpenFileLink,
+    onOpenWebPreview,
     onReviewEditedFile,
     onUndoEditedFiles,
     onEditPrompt,
@@ -687,6 +697,11 @@ export function TaskChatTranscript({
   );
   const stableOpenFileLink = useCallback(
     (href: string) => callbacksRef.current.onOpenFileLink?.(href) ?? false,
+    [],
+  );
+  const stableOpenWebPreview = useCallback(
+    (entry: TaskChatEntry, preview: RunWebPreview) =>
+      callbacksRef.current.onOpenWebPreview?.(entry, preview),
     [],
   );
   const stableReviewEditedFile = useCallback(
@@ -738,6 +753,9 @@ export function TaskChatTranscript({
       onRevisePlan={onRevisePlan}
       onCancelPlan={onCancelPlan}
       onOpenFileLink={onOpenFileLink ? stableOpenFileLink : undefined}
+      onOpenWebPreview={
+        onOpenWebPreview ? stableOpenWebPreview : undefined
+      }
       onReviewEditedFile={
         onReviewEditedFile ? stableReviewEditedFile : undefined
       }
@@ -779,6 +797,7 @@ const VirtualizedTaskChatTranscript = /* @__PURE__ */ memo(function VirtualizedT
   onRevisePlan,
   onCancelPlan,
   onOpenFileLink,
+  onOpenWebPreview,
   onReviewEditedFile,
   onUndoEditedFiles,
   fileUndoDisabled = false,
@@ -1250,6 +1269,7 @@ const VirtualizedTaskChatTranscript = /* @__PURE__ */ memo(function VirtualizedT
                 onCancelEdit={handleCancelEdit}
                 onEditingPromptChange={setEditingPrompt}
                 onOpenFileLink={onOpenFileLink}
+                onOpenWebPreview={onOpenWebPreview}
                 onResolveRequest={onResolveRequest}
                 onAnswerUserInput={onAnswerUserInput}
                 onImplementPlan={onImplementPlan}
@@ -1375,6 +1395,7 @@ export const TaskChatTurn = memo(function TaskChatTurn({
   onRevisePlan,
   onCancelPlan,
   onOpenFileLink,
+  onOpenWebPreview,
   onReviewEditedFile,
   onUndoEditedFiles,
   fileUndoDisabled = false,
@@ -1398,6 +1419,7 @@ export const TaskChatTurn = memo(function TaskChatTurn({
   onRevisePlan?: Props["onRevisePlan"];
   onCancelPlan?: Props["onCancelPlan"];
   onOpenFileLink?: (href: string) => boolean;
+  onOpenWebPreview?: Props["onOpenWebPreview"];
   onReviewEditedFile?: Props["onReviewEditedFile"];
   onUndoEditedFiles?: Props["onUndoEditedFiles"];
   fileUndoDisabled?: boolean;
@@ -1498,6 +1520,7 @@ export const TaskChatTurn = memo(function TaskChatTurn({
           onRevisePlan={onRevisePlan}
           onCancelPlan={onCancelPlan}
           onOpenFileLink={onOpenFileLink}
+          onOpenWebPreview={onOpenWebPreview}
           onReviewEditedFile={onReviewEditedFile}
           onUndoEditedFiles={onUndoEditedFiles}
           fileUndoDisabled={fileUndoDisabled}
@@ -1674,6 +1697,7 @@ const AssistantRunOutput = memo(function AssistantRunOutput({
   onRevisePlan,
   onCancelPlan,
   onOpenFileLink,
+  onOpenWebPreview,
   onReviewEditedFile,
   onUndoEditedFiles,
   fileUndoDisabled = false,
@@ -1691,6 +1715,7 @@ const AssistantRunOutput = memo(function AssistantRunOutput({
   onRevisePlan?: Props["onRevisePlan"];
   onCancelPlan?: Props["onCancelPlan"];
   onOpenFileLink?: (href: string) => boolean;
+  onOpenWebPreview?: Props["onOpenWebPreview"];
   onReviewEditedFile?: Props["onReviewEditedFile"];
   onUndoEditedFiles?: Props["onUndoEditedFiles"];
   fileUndoDisabled?: boolean;
@@ -1739,6 +1764,11 @@ const AssistantRunOutput = memo(function AssistantRunOutput({
             onOpenFileLink={onOpenFileLink}
           />
         ) : null}
+        <WebPreviewCard
+          entry={entry}
+          preview={runView.webPreview}
+          onOpen={onOpenWebPreview}
+        />
         <EditedFilesSummary
           entry={entry}
           expanded={editedFilesExpanded}
@@ -1787,6 +1817,11 @@ const AssistantRunOutput = memo(function AssistantRunOutput({
         expanded={planExpanded}
         onDisclosureChange={onPlanDisclosureChange}
       />
+      <WebPreviewCard
+        entry={entry}
+        preview={runView.webPreview}
+        onOpen={onOpenWebPreview}
+      />
       <RunApprovalRequests
         entry={entry}
         runView={runView}
@@ -1795,6 +1830,62 @@ const AssistantRunOutput = memo(function AssistantRunOutput({
         onPendingInteractionPageChange={onPendingInteractionPageChange}
       />
     </div>
+  );
+});
+
+const WebPreviewCard = memo(function WebPreviewCard({
+  entry,
+  preview,
+  onOpen,
+}: {
+  entry: TaskChatEntry;
+  preview: RunWebPreview | null;
+  onOpen?: Props["onOpenWebPreview"];
+}) {
+  const [opening, setOpening] = useState(false);
+  const [unavailable, setUnavailable] = useState(
+    preview?.availability === "unavailable",
+  );
+
+  useEffect(() => {
+    setUnavailable(preview?.availability === "unavailable");
+  }, [preview?.availability, preview?.url]);
+
+  if (!preview) return null;
+
+  const handleOpen = async () => {
+    if (opening || !onOpen) return;
+    setOpening(true);
+    setUnavailable(false);
+    try {
+      await onOpen(entry, preview);
+    } catch {
+      setUnavailable(true);
+    } finally {
+      setOpening(false);
+    }
+  };
+
+  return (
+    <section className="web-preview-card" aria-label="Web preview">
+      <span className="web-preview-icon" aria-hidden="true">
+        <Globe2 size={20} />
+      </span>
+      <span className="web-preview-copy">
+        <strong>Web preview</strong>
+        <span>{unavailable ? "Preview unavailable" : "Website"}</span>
+      </span>
+      <button
+        className="web-preview-open"
+        type="button"
+        disabled={opening || !onOpen}
+        aria-busy={opening}
+        onClick={() => void handleOpen()}
+      >
+        <span>{opening ? "Checking..." : "Open in browser"}</span>
+        <ExternalLink size={15} aria-hidden="true" />
+      </button>
+    </section>
   );
 });
 

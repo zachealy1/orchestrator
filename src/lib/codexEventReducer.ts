@@ -17,6 +17,7 @@ import {
   parseThreadTokenUsage,
   type TokenUsage,
 } from "./contextUsage";
+import type { RunWebPreview } from "./webPreview";
 
 export type { TokenUsage } from "./contextUsage";
 
@@ -80,6 +81,7 @@ export type RunViewState = {
   editedFiles: RunEditedFile[];
   fileChangesReverted: boolean;
   commands: RunCommandActivity[];
+  webPreview: RunWebPreview | null;
   agentMessagesById: Record<string, AgentMessageState>;
   finalMessageItemId: string | null;
   latestPlan: string;
@@ -109,6 +111,7 @@ export const emptyRunView: RunViewState = {
   editedFiles: [],
   fileChangesReverted: false,
   commands: [],
+  webPreview: null,
   agentMessagesById: {},
   finalMessageItemId: null,
   latestPlan: "",

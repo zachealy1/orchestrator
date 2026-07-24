@@ -22,6 +22,7 @@ use tokio::{sync::oneshot, time::timeout};
 
 mod agent_notifications;
 mod browser_sessions;
+mod web_preview;
 
 use agent_notifications::AgentNotificationState;
 use browser_sessions::{BrowserSessionRegistry, PlaywrightRuntime};
@@ -906,6 +907,14 @@ fn migrations() -> Vec<Migration> {
             description: "persist_run_execution_settings",
             sql: "
                 ALTER TABLE runs ADD COLUMN execution_settings_json TEXT;
+            ",
+            kind: MigrationKind::Up,
+        },
+        Migration {
+            version: 18,
+            description: "persist_run_web_previews",
+            sql: "
+                ALTER TABLE runs ADD COLUMN web_preview_json TEXT;
             ",
             kind: MigrationKind::Up,
         },
@@ -5284,6 +5293,7 @@ pub fn run() {
             read_workspace_file_preview,
             prepare_image_attachment,
             run_preflight,
+            web_preview::probe_local_web_preview,
             browser_sessions::browser_runtime_status,
             browser_sessions::browser_session_prepare,
             browser_sessions::browser_session_status,
@@ -5814,6 +5824,20 @@ mod tests {
         assert!(execution_settings
             .sql
             .contains("ADD COLUMN execution_settings_json TEXT"));
+    }
+
+    #[test]
+    fn run_web_previews_use_a_new_immutable_migration_slot() {
+        let all_migrations = migrations();
+        let web_previews = all_migrations
+            .iter()
+            .find(|migration| migration.version == 18)
+            .expect("migration 18");
+
+        assert_eq!(web_previews.description, "persist_run_web_previews");
+        assert!(web_previews
+            .sql
+            .contains("ADD COLUMN web_preview_json TEXT"));
     }
 
     #[test]

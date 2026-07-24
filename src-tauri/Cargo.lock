@@ -2721,6 +2721,7 @@ dependencies = [
  "tauri-plugin-single-instance",
  "tauri-plugin-sql",
  "tokio",
+ "url",
  "uuid",
 ]
 

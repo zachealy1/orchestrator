@@ -125,6 +125,7 @@ import {
   removeAgentNotification,
   requestAgentNotificationPermission,
   prepareBrowserSession,
+  probeLocalWebPreview,
   runPreflight,
   setThreadGoal,
   startCodexLogin,
@@ -247,6 +248,14 @@ import {
   shouldFrameBatchCodexMessage,
 } from "./lib/codexNotificationBatch";
 import {
+  commandOutputTail,
+  extractLocalWebPreviewCandidates,
+  parsePersistedRunWebPreview,
+  readWebPreviewCommandSignal,
+  serializeRunWebPreview,
+  type RunWebPreview,
+} from "./lib/webPreview";
+import {
   applyResolvedTheme,
   applyThemePreference,
   persistThemePreference,
@@ -355,6 +364,7 @@ const AGENT_NOTIFICATION_FOCUS_TIMEOUT_MS = 5_000;
 const HISTORY_DRAWER_TRANSITION_FALLBACK_MS = 240;
 const RUN_EVENT_BATCH_DELAY_MS = 100;
 const RUN_EVENT_BATCH_MAX_SIZE = 50;
+const WEB_PREVIEW_PROBE_RETRY_DELAYS_MS = [0, 250, 750, 1_500, 2_500] as const;
 const RUN_NOTIFICATION_BINDING_TTL_MS = 30_000;
 const RUN_NOTIFICATION_BINDING_BUFFER_LIMIT = 100;
 const COMMIT_MESSAGE_GENERATION_ERROR =
@@ -586,6 +596,26 @@ type ActiveRunControl = {
   eventSequence: number;
   browserSession: PreparedBrowserSession | null;
   activePlaywrightToolCalls: Map<string, ActivePlaywrightToolCall>;
+  webPreviewDetection: WebPreviewDetectionState;
+};
+
+type WebPreviewCommandBuffer = {
+  command: string;
+  output: string;
+};
+
+type WebPreviewProbeAttempt = {
+  sequence: number;
+  sourceCommandId: string;
+  timers: Set<number>;
+};
+
+type WebPreviewDetectionState = {
+  commands: Map<string, WebPreviewCommandBuffer>;
+  probes: Map<string, WebPreviewProbeAttempt>;
+  nextSequence: number;
+  confirmedSequence: number;
+  disposed: boolean;
 };
 
 function isActiveRunControl(control: ActiveRunControl) {
@@ -1954,6 +1984,7 @@ function App() {
   const reviseTranscriptPlan = useStableEvent(handleRevisePlan);
   const cancelTranscriptPlan = useStableEvent(handleCancelPlan);
   const openTranscriptFileLink = useStableEvent(openTaskResponseFileLink);
+  const openTranscriptWebPreview = useStableEvent(handleOpenWebPreview);
   const reviewTranscriptEditedFile = useStableEvent(handleReviewEditedFile);
   const undoTranscriptEditedFiles = useStableEvent(handleUndoEditedFiles);
   const editTranscriptPrompt = useStableEvent(handleEditLatestPrompt);
@@ -4310,6 +4341,13 @@ function App() {
     return control.chatId !== null && session?.chatId === control.chatId;
   }
 
+  function selectedRunIsActiveNow() {
+    return [...activeRunControlsRef.current.values()].some(
+      (control) =>
+        runControlIsSelected(control) && isActiveRunControl(control),
+    );
+  }
+
   function registerRunControl(control: ActiveRunControl) {
     activeRunControlsRef.current.set(control.clientId, control);
     setActiveRunRegistryVersion((current) => current + 1);
@@ -4460,6 +4498,7 @@ function App() {
   ) {
     if (activeRunControlsRef.current.get(control.clientId) !== control) return;
     control.activePlaywrightToolCalls.clear();
+    cancelWebPreviewDetection(control);
     if (options.cleanupBrowser !== false && control.browserSession) {
       void cleanupRunBrowserSession(control);
     }
@@ -4681,6 +4720,228 @@ function App() {
       ),
     );
     return nextRunView;
+  }
+
+  function inspectCodexMessageForWebPreview(
+    control: ActiveRunControl,
+    message: CodexMessage,
+  ) {
+    const signal = readWebPreviewCommandSignal(message);
+    if (!signal || control.webPreviewDetection.disposed) return;
+
+    const current = control.webPreviewDetection.commands.get(signal.commandId) ?? {
+      command: "",
+      output: "",
+    };
+    const next = {
+      command: signal.command || current.command,
+      output: commandOutputTail(current.output, signal.outputDelta),
+    };
+    control.webPreviewDetection.commands.set(signal.commandId, next);
+
+    extractLocalWebPreviewCandidates(next).forEach((url) => {
+      scheduleWebPreviewProbe(control, url, signal.commandId);
+    });
+
+    if (
+      signal.completed &&
+      control.runView.webPreview?.sourceCommandId === signal.commandId
+    ) {
+      void recheckWebPreview(control.runView.webPreview, {
+        control,
+        entryClientId: control.clientId,
+        runId: control.runId,
+      });
+    }
+  }
+
+  function scheduleWebPreviewProbe(
+    control: ActiveRunControl,
+    url: string,
+    sourceCommandId: string,
+  ) {
+    const detection = control.webPreviewDetection;
+    if (
+      detection.disposed ||
+      detection.probes.has(url) ||
+      control.runView.webPreview?.url === url
+    ) {
+      return;
+    }
+
+    const sequence = detection.nextSequence + 1;
+    detection.nextSequence = sequence;
+    const probe: WebPreviewProbeAttempt = {
+      sequence,
+      sourceCommandId,
+      timers: new Set(),
+    };
+    detection.probes.set(url, probe);
+
+    const attempt = (attemptIndex: number) => {
+      if (
+        detection.disposed ||
+        detection.probes.get(url) !== probe
+      ) {
+        return;
+      }
+      const delay = WEB_PREVIEW_PROBE_RETRY_DELAYS_MS[attemptIndex];
+      const timer = window.setTimeout(() => {
+        probe.timers.delete(timer);
+        void probeLocalWebPreview(url)
+          .then((result) => {
+            if (
+              detection.disposed ||
+              detection.probes.get(url) !== probe
+            ) {
+              return;
+            }
+            if (!result.reachable) {
+              if (attemptIndex + 1 < WEB_PREVIEW_PROBE_RETRY_DELAYS_MS.length) {
+                attempt(attemptIndex + 1);
+              } else {
+                detection.probes.delete(url);
+              }
+              return;
+            }
+
+            detection.probes.delete(url);
+            if (probe.sequence < detection.confirmedSequence) return;
+            detection.confirmedSequence = probe.sequence;
+            const preview: RunWebPreview = {
+              version: 1,
+              url: result.normalizedUrl,
+              origin: new URL(result.normalizedUrl).origin,
+              detectedAt: new Date().toISOString(),
+              sourceCommandId,
+              availability: "available",
+            };
+            updateRunControlView(control, (currentRunView) => ({
+              ...currentRunView,
+              webPreview: preview,
+            }));
+            if (control.runId !== null) {
+              void updateRun(control.runId, {
+                webPreviewJson: serializeRunWebPreview(preview),
+              }).catch((error) => {
+                console.error("Could not persist the web preview", error);
+              });
+            }
+          })
+          .catch(() => {
+            if (attemptIndex + 1 < WEB_PREVIEW_PROBE_RETRY_DELAYS_MS.length) {
+              attempt(attemptIndex + 1);
+            } else {
+              detection.probes.delete(url);
+            }
+          });
+      }, delay);
+      probe.timers.add(timer);
+    };
+
+    attempt(0);
+  }
+
+  async function recheckWebPreview(
+    preview: RunWebPreview,
+    target: {
+      control?: ActiveRunControl;
+      entryClientId: string;
+      runId: number | null;
+    },
+  ) {
+    let result;
+    try {
+      result = await probeLocalWebPreview(preview.url);
+    } catch {
+      result = { normalizedUrl: preview.url, reachable: false };
+    }
+    const nextPreview: RunWebPreview = {
+      ...preview,
+      url: result.normalizedUrl,
+      origin: new URL(result.normalizedUrl).origin,
+      availability: result.reachable ? "available" : "unavailable",
+    };
+    if (
+      target.control &&
+      !target.control.webPreviewDetection.disposed &&
+      target.control.runView.webPreview?.url === preview.url
+    ) {
+      updateRunControlView(target.control, (current) => ({
+        ...current,
+        webPreview: nextPreview,
+      }));
+    } else {
+      updateTaskChatEntryRunView(target.entryClientId, (current) =>
+        current.webPreview?.url === preview.url
+          ? { ...current, webPreview: nextPreview }
+          : current,
+      );
+    }
+    if (target.runId !== null) {
+      await updateRun(target.runId, {
+        webPreviewJson: serializeRunWebPreview(nextPreview),
+      }).catch(() => undefined);
+    }
+    return nextPreview;
+  }
+
+  function probeTerminalWebPreview(
+    url: string,
+    sourceCommandId: string,
+    target: {
+      entryClientId: string;
+      runId: number | null;
+    },
+  ) {
+    const attempt = (attemptIndex: number) => {
+      window.setTimeout(() => {
+        void probeLocalWebPreview(url)
+          .then((result) => {
+            if (!result.reachable) {
+              if (attemptIndex + 1 < WEB_PREVIEW_PROBE_RETRY_DELAYS_MS.length) {
+                attempt(attemptIndex + 1);
+              }
+              return;
+            }
+            const preview: RunWebPreview = {
+              version: 1,
+              url: result.normalizedUrl,
+              origin: new URL(result.normalizedUrl).origin,
+              detectedAt: new Date().toISOString(),
+              sourceCommandId,
+              availability: "available",
+            };
+            updateTaskChatEntryRunView(target.entryClientId, (current) => ({
+              ...current,
+              webPreview: preview,
+            }));
+            if (target.runId !== null) {
+              void updateRun(target.runId, {
+                webPreviewJson: serializeRunWebPreview(preview),
+              }).catch(() => undefined);
+            }
+          })
+          .catch(() => {
+            if (attemptIndex + 1 < WEB_PREVIEW_PROBE_RETRY_DELAYS_MS.length) {
+              attempt(attemptIndex + 1);
+            }
+          });
+      }, WEB_PREVIEW_PROBE_RETRY_DELAYS_MS[attemptIndex]);
+    };
+
+    attempt(0);
+  }
+
+  function cancelWebPreviewDetection(control: ActiveRunControl) {
+    const detection = control.webPreviewDetection;
+    detection.disposed = true;
+    detection.probes.forEach((probe) => {
+      probe.timers.forEach((timer) => window.clearTimeout(timer));
+      probe.timers.clear();
+    });
+    detection.probes.clear();
+    detection.commands.clear();
   }
 
   function clearActiveChatRun() {
@@ -7088,6 +7349,13 @@ function App() {
       eventSequence: 0,
       browserSession: null,
       activePlaywrightToolCalls: new Map(),
+      webPreviewDetection: {
+        commands: new Map(),
+        probes: new Map(),
+        nextSequence: 0,
+        confirmedSequence: 0,
+        disposed: false,
+      },
     };
     const nextEntry: TaskChatEntry = {
       clientId,
@@ -7863,7 +8131,7 @@ function App() {
       setStatusMessage("This external Codex chat is missing its original thread id.");
       return;
     }
-    if (runIsActive || activeChatEntryIdRef.current !== null) {
+    if (selectedRunIsActiveNow()) {
       setStatusMessage("Wait for the active run to finish before starting another.");
       return;
     }
@@ -7987,7 +8255,7 @@ function App() {
       showRerunIssue("Only the latest prompt can be edited.");
       return;
     }
-    if (runIsActive || activeChatEntryIdRef.current !== null) {
+    if (selectedRunIsActiveNow()) {
       showRerunIssue("Wait for the active run to finish before editing a prompt.");
       return;
     }
@@ -8930,6 +9198,7 @@ function App() {
       bufferPendingRunBindingNotification(accountId, profileKey, message);
       return;
     }
+    inspectCodexMessageForWebPreview(control, message);
     applyBrowserLifecycleNotification(control, method, params);
 
     if (shouldFrameBatchCodexMessage(message)) {
@@ -8956,6 +9225,27 @@ function App() {
     if (method === "turn/completed") {
       // Terminal UI state is authoritative immediately. Post-run persistence and
       // workspace refreshes must not leave this control registered as active.
+      const terminalPreview = nextRunView.webPreview;
+      if (terminalPreview) {
+        void recheckWebPreview(terminalPreview, {
+          entryClientId: control.clientId,
+          runId: control.runId,
+        });
+      } else {
+        const pendingCandidate = [
+          ...control.webPreviewDetection.probes.entries(),
+        ].sort((left, right) => right[1].sequence - left[1].sequence)[0];
+        if (pendingCandidate) {
+          probeTerminalWebPreview(
+            pendingCandidate[0],
+            pendingCandidate[1].sourceCommandId,
+            {
+              entryClientId: control.clientId,
+              runId: control.runId,
+            },
+          );
+        }
+      }
       removeRunControl(control);
     }
     await persistRunEvent(control, "notification", method, message);
@@ -9563,7 +9853,7 @@ function App() {
       setStatusMessage("Reopen the plan's chat before continuing this workflow.");
       return false;
     }
-    if (runIsActive || activeChatEntryIdRef.current !== null) {
+    if (selectedRunIsActiveNow()) {
       setStatusMessage("Wait for the active turn to finish first.");
       return false;
     }
@@ -10052,6 +10342,22 @@ function App() {
 
     void openWorkspaceFilePreview(workspace, file, { forceRefresh: true });
     return true;
+  }
+
+  async function handleOpenWebPreview(
+    entry: TaskChatEntry,
+    preview: RunWebPreview,
+  ) {
+    const control = activeRunControlsRef.current.get(entry.clientId);
+    const nextPreview = await recheckWebPreview(preview, {
+      control,
+      entryClientId: entry.clientId,
+      runId: entry.runId,
+    });
+    if (nextPreview.availability !== "available") {
+      throw new Error("This web preview is no longer running.");
+    }
+    await openUrl(nextPreview.url);
   }
 
   async function handleReviewEditedFile(
@@ -11653,6 +11959,7 @@ function App() {
                       onRevisePlan={reviseTranscriptPlan}
                       onCancelPlan={cancelTranscriptPlan}
                       onOpenFileLink={openTranscriptFileLink}
+                      onOpenWebPreview={openTranscriptWebPreview}
                       onReviewEditedFile={reviewTranscriptEditedFile}
                       onUndoEditedFiles={undoTranscriptEditedFiles}
                       fileUndoDisabled={selectedWorkspaceRunningChatActivity.size > 0}
@@ -13023,6 +13330,7 @@ function createTaskChatEntryFromHistoryRun(run: HistoryRunSummary): TaskChatEntr
       error: run.error,
       editedFiles: parseUnifiedDiffFiles(latestDiff),
       latestDiff,
+      webPreview: parsePersistedRunWebPreview(run.web_preview_json),
       latestPlan: normalizedPlan.planText,
       nativePlan: {
         ...emptyRunView.nativePlan,

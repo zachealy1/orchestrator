@@ -24,6 +24,7 @@ import {
   recordTokenUsage,
   recoverInterruptedChatTitleGenerations,
   renameChat,
+  updateRun,
   upsertExternalCodexChats,
   type RunEventInput,
 } from "./db";
@@ -241,6 +242,29 @@ describe("run execution settings persistence", () => {
     expect(query).toContain("runs.execution_settings_json");
     expect(query).toContain("runs.account_id");
     expect(query).toContain("runs.model");
+  });
+});
+
+describe("run web preview persistence", () => {
+  it("updates and loads the latest preview metadata", async () => {
+    const webPreviewJson = JSON.stringify({
+      version: 1,
+      url: "http://localhost:5173/",
+      origin: "http://localhost:5173",
+      detectedAt: "2026-07-24T12:00:00.000Z",
+      sourceCommandId: "command-1",
+      availability: "available",
+    });
+
+    await updateRun(81, { webPreviewJson });
+    const [updateQuery, updateValues] = mocks.execute.mock.calls[0] ?? [];
+    expect(updateQuery).toContain("web_preview_json = $1");
+    expect(updateValues).toEqual([webPreviewJson, 81]);
+
+    mocks.select.mockClear();
+    await listLocalChatTranscript(42);
+    const transcriptQuery = mocks.select.mock.calls[0]?.[0] as string;
+    expect(transcriptQuery).toContain("runs.web_preview_json");
   });
 });
 

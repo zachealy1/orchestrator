@@ -623,7 +623,7 @@ export async function createRun(input: {
       sandbox, approval_policy, status, started_at, completed_at, duration_ms,
       final_message, error, collaboration_mode, run_intent,
       client_user_message_id, completed_plan_item_id, completed_plan_text,
-      plan_review_state, execution_settings_json
+      plan_review_state, execution_settings_json, web_preview_json
      FROM runs WHERE id = $1`,
     [result.lastInsertId],
   );
@@ -652,6 +652,7 @@ export async function updateRun(
     completedPlanItemId: string | null;
     completedPlanText: string | null;
     planReviewState: "none" | "available" | "superseded" | "approved" | "cancelled";
+    webPreviewJson: string | null;
   }>,
 ) {
   const db = await getDatabase();
@@ -679,6 +680,7 @@ export async function updateRun(
   }
   if ("completedPlanText" in fields) add("completed_plan_text", fields.completedPlanText);
   if ("planReviewState" in fields) add("plan_review_state", fields.planReviewState);
+  if ("webPreviewJson" in fields) add("web_preview_json", fields.webPreviewJson);
 
   if (assignments.length === 0) {
     return;
@@ -788,7 +790,7 @@ export async function listWorkspaceRuns(workspaceId: number) {
       runs.started_at, runs.completed_at, runs.duration_ms, runs.final_message, runs.error,
       runs.collaboration_mode, runs.run_intent, runs.client_user_message_id,
       runs.completed_plan_item_id, runs.completed_plan_text, runs.plan_review_state,
-      runs.execution_settings_json,
+      runs.execution_settings_json, runs.web_preview_json,
       tasks.original_prompt, tasks.improved_prompt, tasks.route_recommendation, tasks.budget_tokens,
       latest_tokens.total_tokens AS latest_total_tokens,
       latest_tokens.run_tokens AS latest_run_tokens,
@@ -946,7 +948,7 @@ export async function getChatWithRuns(chatId: number): Promise<ChatWithRuns> {
       runs.started_at, runs.completed_at, runs.duration_ms, runs.final_message, runs.error,
       runs.collaboration_mode, runs.run_intent, runs.client_user_message_id,
       runs.completed_plan_item_id, runs.completed_plan_text, runs.plan_review_state,
-      runs.execution_settings_json,
+      runs.execution_settings_json, runs.web_preview_json,
       tasks.original_prompt, tasks.improved_prompt, tasks.route_recommendation, tasks.budget_tokens,
       latest_tokens.total_tokens AS latest_total_tokens,
       latest_tokens.run_tokens AS latest_run_tokens,
@@ -984,7 +986,7 @@ export async function listChatRunsPage(
       runs.started_at, runs.completed_at, runs.duration_ms, runs.final_message, runs.error,
       runs.collaboration_mode, runs.run_intent, runs.client_user_message_id,
       runs.completed_plan_item_id, runs.completed_plan_text, runs.plan_review_state,
-      runs.execution_settings_json,
+      runs.execution_settings_json, runs.web_preview_json,
       tasks.original_prompt,
       (
         SELECT json_extract(diff_events.payload_json, '$.params.diff')
@@ -1025,7 +1027,7 @@ export async function listLocalChatTranscript(chatId: number) {
       runs.started_at, runs.completed_at, runs.duration_ms, runs.final_message, runs.error,
       runs.collaboration_mode, runs.run_intent, runs.client_user_message_id,
       runs.completed_plan_item_id, runs.completed_plan_text, runs.plan_review_state,
-      runs.execution_settings_json,
+      runs.execution_settings_json, runs.web_preview_json,
       tasks.original_prompt,
       (
         SELECT json_extract(diff_events.payload_json, '$.params.diff')

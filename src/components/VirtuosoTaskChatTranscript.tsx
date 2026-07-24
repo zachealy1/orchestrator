@@ -16,6 +16,7 @@ import {
 import type { HistoricalChatOpenRequest } from "../types";
 import type { ApprovalResolutionHandler } from "../lib/codexApprovals";
 import type { RunEditedFile } from "../lib/codexEventReducer";
+import type { RunWebPreview } from "../lib/webPreview";
 import {
   requestKey,
   type NativeUserInputRequest,
@@ -158,6 +159,10 @@ export type VirtuosoTaskChatTranscriptProps = {
   ) => boolean | void;
   onCancelPlan?: (entry: TaskChatEntry) => void;
   onOpenFileLink?: (href: string) => boolean;
+  onOpenWebPreview?: (
+    entry: TaskChatEntry,
+    preview: RunWebPreview,
+  ) => Promise<void> | void;
   onReviewEditedFile?: (
     entry: TaskChatEntry,
     file: RunEditedFile,
@@ -199,6 +204,7 @@ const VirtualTranscriptRow = memo(function VirtualTranscriptRow({
   onRevisePlan,
   onCancelPlan,
   onOpenFileLink,
+  onOpenWebPreview,
   onReviewEditedFile,
   onUndoEditedFiles,
   fileUndoDisabled,
@@ -222,6 +228,7 @@ const VirtualTranscriptRow = memo(function VirtualTranscriptRow({
   onRevisePlan?: VirtuosoTaskChatTranscriptProps["onRevisePlan"];
   onCancelPlan?: VirtuosoTaskChatTranscriptProps["onCancelPlan"];
   onOpenFileLink?: (href: string) => boolean;
+  onOpenWebPreview?: VirtuosoTaskChatTranscriptProps["onOpenWebPreview"];
   onReviewEditedFile?: VirtuosoTaskChatTranscriptProps["onReviewEditedFile"];
   onUndoEditedFiles?: VirtuosoTaskChatTranscriptProps["onUndoEditedFiles"];
   fileUndoDisabled: boolean;
@@ -245,6 +252,7 @@ const VirtualTranscriptRow = memo(function VirtualTranscriptRow({
         onCancelEdit={onCancelEdit}
         onEditingPromptChange={onEditingPromptChange}
         onOpenFileLink={onOpenFileLink}
+        onOpenWebPreview={onOpenWebPreview}
         onResolveRequest={onResolveRequest}
         onAnswerUserInput={onAnswerUserInput}
         onImplementPlan={onImplementPlan}
@@ -283,6 +291,7 @@ export const VirtuosoTaskChatTranscript = memo(
     onRevisePlan,
     onCancelPlan,
     onOpenFileLink,
+    onOpenWebPreview,
     onReviewEditedFile,
     onUndoEditedFiles,
     fileUndoDisabled = false,
@@ -1302,6 +1311,7 @@ export const VirtuosoTaskChatTranscript = memo(
             onCancelEdit={handleCancelEdit}
             onEditingPromptChange={setEditingPrompt}
             onOpenFileLink={onOpenFileLink}
+            onOpenWebPreview={onOpenWebPreview}
             onResolveRequest={onResolveRequest}
             onAnswerUserInput={onAnswerUserInput}
             onImplementPlan={onImplementPlan}
@@ -1342,6 +1352,7 @@ export const VirtuosoTaskChatTranscript = memo(
         onImplementPlan,
         onLoadHistoricalActivity,
         onOpenFileLink,
+        onOpenWebPreview,
         onResolveRequest,
         onRevisePlan,
         resolveItemEntry,
