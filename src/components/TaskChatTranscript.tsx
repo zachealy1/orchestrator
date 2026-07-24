@@ -1608,11 +1608,6 @@ const SubmittedImageAttachment = memo(function SubmittedImageAttachment({
       ) : (
         <ImageIcon size={24} aria-hidden="true" />
       )}
-      {state === "preparing" ? (
-        <span className="submitted-image-preparing-spinner" aria-hidden="true">
-          <Loader2 size={14} />
-        </span>
-      ) : null}
       {statusText ? (
         <figcaption>
           <span>{statusText}</span>
