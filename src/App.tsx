@@ -588,6 +588,14 @@ type ActiveRunControl = {
   activePlaywrightToolCalls: Map<string, ActivePlaywrightToolCall>;
 };
 
+function isActiveRunControl(control: ActiveRunControl) {
+  return (
+    !control.stopped &&
+    (control.runView.status === "connecting" ||
+      control.runView.status === "running")
+  );
+}
+
 type RunAccessSettings = CodexAccessSettings;
 
 type RunSetupSnapshot = {
@@ -2105,9 +2113,7 @@ function App() {
     selectedWorkspaceChatSession?.chatId,
   ]);
   const runIsActive = Boolean(
-    selectedActiveRunControl &&
-      (selectedActiveRunControl.runView.status === "connecting" ||
-        selectedActiveRunControl.runView.status === "running"),
+    selectedActiveRunControl && isActiveRunControl(selectedActiveRunControl),
   );
   const selectedPlanProgress = useMemo(
     () =>
@@ -2121,8 +2127,7 @@ function App() {
       if (
         control.workspaceId === selectedWorkspace.id &&
         control.chatId !== null &&
-        (control.runView.status === "connecting" ||
-          control.runView.status === "running")
+        isActiveRunControl(control)
       ) {
         const startedAt = control.runView.startedAt;
         if (
@@ -2773,9 +2778,7 @@ function App() {
 
   useEffect(() => {
     const hasActiveRuns = [...activeRunControlsRef.current.values()].some(
-      (control) =>
-        control.runView.status === "connecting" ||
-        control.runView.status === "running",
+      isActiveRunControl,
     );
     if (!hasActiveRuns) {
       return;
@@ -2783,10 +2786,7 @@ function App() {
 
     const tick = () => {
       activeRunControlsRef.current.forEach((control) => {
-        if (
-          control.runView.status === "connecting" ||
-          control.runView.status === "running"
-        ) {
+        if (isActiveRunControl(control)) {
           updateRunControlView(control, (current) => updateRunElapsed(current));
         }
       });
@@ -4492,7 +4492,9 @@ function App() {
     return (
       [...activeRunControlsRef.current.values()].find(
         (control) =>
-          control.workspaceId === workspaceId && control.chatId === chatId,
+          isActiveRunControl(control) &&
+          control.workspaceId === workspaceId &&
+          control.chatId === chatId,
       ) ?? null
     );
   }
@@ -4928,7 +4930,8 @@ function App() {
     setWorkspaceContextMenu(null);
     if (
       [...activeRunControlsRef.current.values()].some(
-        (control) => control.workspaceId === workspace.id,
+        (control) =>
+          isActiveRunControl(control) && control.workspaceId === workspace.id,
       )
     ) {
       setStatusMessage("Wait for the active run to finish before removing this workspace.");
@@ -8950,6 +8953,11 @@ function App() {
         readString(params.threadId),
       );
     });
+    if (method === "turn/completed") {
+      // Terminal UI state is authoritative immediately. Post-run persistence and
+      // workspace refreshes must not leave this control registered as active.
+      removeRunControl(control);
+    }
     await persistRunEvent(control, "notification", method, message);
 
     if (method === "serverRequest/resolved") {
@@ -9061,7 +9069,6 @@ function App() {
       if (activeChatId !== null) {
         await updateChat(activeChatId, { status }).catch(() => undefined);
       }
-      void cleanupRunBrowserSession(completedControl);
       const completedWorkspace = completedControl
         ? workspacesRef.current.find(
             (workspace) => workspace.id === completedControl.workspaceId,
@@ -9101,7 +9108,6 @@ function App() {
       if (selectedWorkspaceRef.current?.id === completedControl.workspaceId) {
         await refreshSelectedWorkspaceHistory();
       }
-      removeRunControl(completedControl);
     }
   }
 
@@ -10081,7 +10087,8 @@ function App() {
     }
     if (
       [...activeRunControlsRef.current.values()].some(
-        (control) => control.workspaceId === workspace.id,
+        (control) =>
+          isActiveRunControl(control) && control.workspaceId === workspace.id,
       )
     ) {
       throw new Error("Stop the active agent in this workspace before undoing changes");

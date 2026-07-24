@@ -8123,6 +8123,66 @@ describe("App Codex auth", () => {
     ).toBeDisabled();
   });
 
+  it("allows undo after completion while terminal run housekeeping is pending", async () => {
+    prepareSignedInRun();
+    let releaseCompletionEvent!: () => void;
+    const pendingCompletionEvent = new Promise<void>((resolve) => {
+      releaseCompletionEvent = resolve;
+    });
+    mocks.appendRunEventMock.mockImplementation(
+      async (input: { method?: string }) => {
+        if (input.method === "turn/completed") {
+          await pendingCompletionEvent;
+        }
+      },
+    );
+
+    const { user } = await renderApp();
+    await startMockRun(user, "Update the readme");
+    const diff = [
+      "diff --git a/README.md b/README.md",
+      "--- a/README.md",
+      "+++ b/README.md",
+      "@@ -1 +1 @@",
+      "-Old",
+      "+New",
+    ].join("\n");
+
+    await emitCodexNotification({
+      method: "turn/diff/updated",
+      params: { diff },
+    });
+    await emitCodexNotification({
+      method: "turn/completed",
+      params: { turn: { status: "completed", durationMs: 1234 } },
+    });
+
+    const summary = await screen.findByLabelText("Edited 1 file");
+    const undoButton = within(summary).getByRole("button", {
+      name: "Undo file changes",
+    });
+    expect(undoButton).toBeEnabled();
+    await user.click(undoButton);
+    await user.click(
+      within(screen.getByRole("dialog", { name: "Undo changes?" })).getByRole(
+        "button",
+        { name: "Undo changes" },
+      ),
+    );
+
+    await waitFor(() =>
+      expect(mocks.undoWorkspaceGitDiffMock).toHaveBeenCalledWith(
+        workspace.path,
+        diff,
+      ),
+    );
+
+    await act(async () => {
+      releaseCompletionEvent();
+      await pendingCompletionEvent;
+    });
+  });
+
   it("coalesces bursty app-server deltas without disturbing active typing", async () => {
     prepareSignedInRun();
 
