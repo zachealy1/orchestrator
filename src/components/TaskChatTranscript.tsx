@@ -28,6 +28,7 @@ import {
   X,
 } from "lucide-react";
 import {
+  Fragment,
   memo,
   useCallback,
   useEffect,
@@ -3451,8 +3452,14 @@ const ApprovalCard = memo(function ApprovalCard({
     (resource) => !permissionPaths.has(resource),
   );
   const browserRequest = request.browserRequest;
+  const browserToolRequest = request.browserToolRequest;
   const hasContext = Boolean(
-    cwd || reason || network || browserRequest || resources.length > 0,
+    cwd ||
+      reason ||
+      network ||
+      browserRequest ||
+      browserToolRequest ||
+      resources.length > 0,
   );
   const statusLabel = approvalStatusLabel(request);
 
@@ -3548,6 +3555,24 @@ const ApprovalCard = memo(function ApprovalCard({
                 <dd>{browserRequest.action}</dd>
               </>
             ) : null}
+            {browserToolRequest ? (
+              <>
+                <dt>Browser tool</dt>
+                <dd>{browserToolRequest.displayName}</dd>
+                <dt>Purpose</dt>
+                <dd>{browserToolRequest.description}</dd>
+                {browserToolRequest.parameters.map((parameter) => (
+                  <Fragment key={parameter.name}>
+                    <dt>{parameter.label}</dt>
+                    <dd className="approval-context-code-row">
+                      <pre className="approval-code-surface">
+                        {parameter.value}
+                      </pre>
+                    </dd>
+                  </Fragment>
+                ))}
+              </>
+            ) : null}
             {resources.length > 0 ? (
               <>
                 <dt>Affected resources</dt>
@@ -3640,6 +3665,8 @@ function approvalTitle(
       return request.browserRequest?.kind === "origin"
         ? "Codex needs approval to open an external website"
         : "Codex needs approval for a browser action";
+    case "browser-tool":
+      return "Codex needs approval to use the browser";
     default:
       return "Unsupported native Codex request";
   }

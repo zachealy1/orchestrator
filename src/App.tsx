@@ -169,6 +169,7 @@ import {
 } from "./lib/codexEventReducer";
 import {
   parseApprovalRequest,
+  type ActivePlaywrightToolCall,
   type ApprovalChoice,
   type CodexApprovalRequest,
 } from "./lib/codexApprovals";
@@ -584,6 +585,7 @@ type ActiveRunControl = {
   runView: RunViewState;
   eventSequence: number;
   browserSession: PreparedBrowserSession | null;
+  activePlaywrightToolCalls: Map<string, ActivePlaywrightToolCall>;
 };
 
 type RunAccessSettings = CodexAccessSettings;
@@ -4365,6 +4367,13 @@ function App() {
     method: string | null,
     params: Record<string, unknown>,
   ) {
+    if (
+      method === "turn/completed" ||
+      method === "turn/interrupted" ||
+      method === "error"
+    ) {
+      control.activePlaywrightToolCalls.clear();
+    }
     if (!control.browserSession) return;
     if (
       method === "mcpServer/startupStatus/updated" &&
@@ -4393,6 +4402,25 @@ function App() {
         readString(item.server) !== "playwright"
       ) {
         return;
+      }
+      const itemId = readString(item.id);
+      if (itemId) {
+        if (method === "item/started") {
+          const threadId = readString(params.threadId) ?? control.threadId;
+          const turnId = readString(params.turnId) ?? control.turnId;
+          const tool = readString(item.tool);
+          if (threadId && turnId && tool) {
+            control.activePlaywrightToolCalls.set(itemId, {
+              itemId,
+              threadId,
+              turnId,
+              tool,
+              arguments: item.arguments ?? {},
+            });
+          }
+        } else {
+          control.activePlaywrightToolCalls.delete(itemId);
+        }
       }
       setRunControlBrowserLifecycle(
         control,
@@ -4431,6 +4459,7 @@ function App() {
     options: { cleanupBrowser?: boolean } = {},
   ) {
     if (activeRunControlsRef.current.get(control.clientId) !== control) return;
+    control.activePlaywrightToolCalls.clear();
     if (options.cleanupBrowser !== false && control.browserSession) {
       void cleanupRunBrowserSession(control);
     }
@@ -7055,6 +7084,7 @@ function App() {
       runView: initialRunView,
       eventSequence: 0,
       browserSession: null,
+      activePlaywrightToolCalls: new Map(),
     };
     const nextEntry: TaskChatEntry = {
       clientId,
@@ -9102,6 +9132,11 @@ function App() {
       profileKey,
       requestToken,
       interactionMode: control?.interactionMode ?? "chat",
+      activePlaywrightToolCalls:
+        control?.browserSession?.state.target.accessMode ===
+        "ask-for-approval"
+          ? [...control.activePlaywrightToolCalls.values()]
+          : [],
     });
     if (parsed && !isNativeUserInputRequest(request)) {
       if (
@@ -9116,6 +9151,22 @@ function App() {
         parsed.error =
           "This browser approval did not match the active isolated browser session.";
       }
+      if (
+        parsed.kind === "browser-tool" &&
+        (!control?.browserSession ||
+          control.browserSession.state.target.accessMode !==
+            "ask-for-approval" ||
+          !parsed.browserToolRequest ||
+          !control.activePlaywrightToolCalls.has(
+            parsed.browserToolRequest.itemId,
+          ))
+      ) {
+        parsed.kind = "unsupported";
+        parsed.browserToolRequest = null;
+        parsed.choices = [];
+        parsed.error =
+          "This browser tool approval did not match the active isolated browser session.";
+      }
       const belongsToActiveRun = control !== null;
       const shouldNotify = [
         "command",
@@ -9124,6 +9175,7 @@ function App() {
         "legacy-command",
         "legacy-file-change",
         "browser",
+        "browser-tool",
       ].includes(parsed.kind);
       const historyChat = !belongsToActiveRun
         ? historyStateRef.current.chats.find(
@@ -9183,7 +9235,7 @@ function App() {
       }
 
       updateRunControlView(control, (current) => addApprovalRequest(current, parsed));
-      if (parsed.kind === "browser") {
+      if (parsed.kind === "browser" || parsed.kind === "browser-tool") {
         setRunControlBrowserLifecycle(control, "awaiting-approval");
       }
       notifyApproval();
@@ -9380,7 +9432,10 @@ function App() {
       updateRunControlView(control, (current) =>
         markApprovalAwaitingResolution(current, currentRequest.key),
       );
-      if (currentRequest.kind === "browser") {
+      if (
+        currentRequest.kind === "browser" ||
+        currentRequest.kind === "browser-tool"
+      ) {
         setRunControlBrowserLifecycle(control, "running");
         void refreshRunControlBrowserState(control);
       }

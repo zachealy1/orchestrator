@@ -6638,6 +6638,146 @@ describe("App Codex auth", () => {
     );
   });
 
+  it("resolves a correlated native Playwright tool approval without exposing sensitive parameters", async () => {
+    prepareSignedInRun();
+
+    const { user } = await renderApp();
+    await startMockRun(user, "Open the local app in a browser");
+
+    await emitCodexNotification({
+      method: "item/started",
+      params: {
+        threadId: "thread-1",
+        turnId: "turn-1",
+        item: {
+          type: "mcpToolCall",
+          id: "browser-call-1",
+          server: "playwright",
+          tool: "browser_tabs",
+          status: "inProgress",
+          arguments: {
+            action: "new",
+            url: "http://127.0.0.1:3001/?token=secret",
+            text: "private input",
+          },
+        },
+      },
+    });
+    await emitCodexServerRequest({
+      id: 78,
+      method: "mcpServer/elicitation/request",
+      params: {
+        threadId: "thread-1",
+        turnId: "turn-1",
+        serverName: "playwright",
+        mode: "form",
+        message: 'Allow the playwright MCP server to run tool "browser_tabs"?',
+        requestedSchema: { type: "object", properties: {} },
+        _meta: {
+          codex_approval_kind: "mcp_tool_call",
+          persist: ["session", "always"],
+          tool_description: "List, create, close, or select a browser tab.",
+          tool_params: {
+            text: "private input",
+            url: "http://127.0.0.1:3001/?token=secret",
+            action: "new",
+          },
+          tool_params_display: [
+            { display_name: "Action", name: "action", value: "new" },
+            {
+              display_name: "URL",
+              name: "url",
+              value: "http://127.0.0.1:3001/?token=secret",
+            },
+            {
+              display_name: "Text",
+              name: "text",
+              value: "private input",
+            },
+          ],
+        },
+      },
+    });
+
+    expect(
+      await screen.findByText("Codex needs approval to use the browser"),
+    ).toBeInTheDocument();
+    expect(screen.getByText("Browser Tabs")).toBeInTheDocument();
+    expect(
+      screen.getByText("List, create, close, or select a browser tab."),
+    ).toBeInTheDocument();
+    expect(screen.getByText("http://127.0.0.1:3001/")).toBeInTheDocument();
+    expect(screen.queryByText("private input")).not.toBeInTheDocument();
+    expect(screen.queryByText(/token=secret/u)).not.toBeInTheDocument();
+    expect(
+      screen.queryByText("Unsupported native Codex request"),
+    ).not.toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "Allow once" }));
+    expect(mocks.resolveCodexServerRequestMock).toHaveBeenCalledWith(
+      7,
+      78,
+      expect.any(String),
+      {
+        action: "accept",
+        content: {},
+        _meta: null,
+      },
+    );
+
+    await emitCodexNotification({
+      method: "serverRequest/resolved",
+      params: {
+        threadId: "thread-1",
+        turnId: "turn-1",
+        requestId: 78,
+      },
+    });
+    await emitCodexNotification({
+      method: "item/completed",
+      params: {
+        threadId: "thread-1",
+        turnId: "turn-1",
+        item: {
+          type: "mcpToolCall",
+          id: "browser-call-1",
+          server: "playwright",
+          tool: "browser_tabs",
+          status: "completed",
+          arguments: {
+            action: "new",
+            url: "http://127.0.0.1:3001/?token=secret",
+            text: "private input",
+          },
+        },
+      },
+    });
+    await emitCodexServerRequest({
+      id: 79,
+      method: "mcpServer/elicitation/request",
+      params: {
+        threadId: "thread-1",
+        turnId: "turn-1",
+        serverName: "playwright",
+        mode: "form",
+        requestedSchema: { type: "object", properties: {} },
+        _meta: {
+          codex_approval_kind: "mcp_tool_call",
+          tool_description: "List, create, close, or select a browser tab.",
+          tool_params: {
+            action: "new",
+            url: "http://127.0.0.1:3001/?token=secret",
+            text: "private input",
+          },
+          tool_params_display: [],
+        },
+      },
+    });
+    expect(
+      await screen.findByText("Unsupported native Codex request"),
+    ).toBeInTheDocument();
+  });
+
   it("generates a concise chat title without delaying the initial turn", async () => {
     prepareSignedInRun();
     let resolveTitle!: (value: { title: string }) => void;

@@ -39,7 +39,7 @@ export type ApprovalResponse =
     }
   | {
       action: "accept" | "decline" | "cancel";
-      content: { decision: "allow" } | null;
+      content: { decision: "allow" } | Record<string, never> | null;
       _meta: null;
     };
 
@@ -59,6 +59,7 @@ export type ApprovalRequestKind =
   | "legacy-command"
   | "legacy-file-change"
   | "browser"
+  | "browser-tool"
   | "unsupported";
 
 export type BrowserApprovalRequest = {
@@ -66,6 +67,28 @@ export type BrowserApprovalRequest = {
   kind: "origin" | "sensitive-action";
   origin: string;
   action: string;
+};
+
+export type ActivePlaywrightToolCall = {
+  itemId: string;
+  threadId: string;
+  turnId: string;
+  tool: string;
+  arguments: unknown;
+};
+
+export type BrowserToolApprovalParameter = {
+  name: string;
+  label: string;
+  value: string;
+};
+
+export type BrowserToolApprovalRequest = {
+  itemId: string;
+  tool: string;
+  displayName: string;
+  description: string;
+  parameters: BrowserToolApprovalParameter[];
 };
 
 export type ApprovalRequestStatus =
@@ -89,6 +112,7 @@ export type CodexApprovalRequest = {
   interactionMode: RunInteractionMode;
   params: Record<string, unknown>;
   browserRequest?: BrowserApprovalRequest | null;
+  browserToolRequest?: BrowserToolApprovalRequest | null;
   choices: ApprovalChoice[];
   status: ApprovalRequestStatus;
   selectedChoiceId: string | null;
@@ -140,6 +164,7 @@ type ParseApprovalInput = {
   profileKey: CodexProfileKey;
   requestToken: string;
   interactionMode: RunInteractionMode;
+  activePlaywrightToolCalls?: readonly ActivePlaywrightToolCall[];
 };
 
 const COMMAND_METHOD = "item/commandExecution/requestApproval";
@@ -151,6 +176,7 @@ export function parseApprovalRequest({
   profileKey,
   requestToken,
   interactionMode,
+  activePlaywrightToolCalls = [],
 }: ParseApprovalInput): CodexApprovalRequest | null {
   if (message.id === undefined || !message.method) {
     return null;
@@ -227,20 +253,33 @@ export function parseApprovalRequest({
       };
     case "mcpServer/elicitation/request": {
       const browserRequest = parseBrowserApprovalRequest(params);
-      if (!browserRequest) {
+      if (browserRequest) {
         return {
           ...common,
-          kind: "unsupported",
-          choices: [],
-          error:
-            "This MCP elicitation was not a valid Orchestrator browser approval request.",
+          kind: "browser",
+          browserRequest,
+          choices: browserApprovalChoices(),
+        };
+      }
+      const browserToolRequest = parseNativeBrowserToolApprovalRequest(
+        params,
+        activePlaywrightToolCalls,
+      );
+      if (browserToolRequest) {
+        return {
+          ...common,
+          itemId: browserToolRequest.itemId,
+          kind: "browser-tool",
+          browserToolRequest,
+          choices: browserToolApprovalChoices(),
         };
       }
       return {
         ...common,
-        kind: "browser",
-        browserRequest,
-        choices: browserApprovalChoices(),
+        kind: "unsupported",
+        choices: [],
+        error:
+          "This MCP elicitation did not match a validated active Playwright approval request.",
       };
     }
     default:
@@ -251,6 +290,35 @@ export function parseApprovalRequest({
         error: `This Codex request type is not supported by this client: ${message.method}`,
       };
   }
+}
+
+function browserToolApprovalChoices(): ApprovalChoice[] {
+  return [
+    choice(
+      "browser-tool-allow",
+      "Allow once",
+      "Allow this Playwright browser tool call once.",
+      {
+        action: "accept",
+        content: {},
+        _meta: null,
+      },
+      "approve",
+      false,
+    ),
+    choice(
+      "browser-tool-deny",
+      "Deny",
+      "Block this browser tool call and let Codex choose another action.",
+      {
+        action: "decline",
+        content: null,
+        _meta: null,
+      },
+      "danger",
+      false,
+    ),
+  ];
 }
 
 function browserApprovalChoices(): ApprovalChoice[] {
@@ -280,6 +348,72 @@ function browserApprovalChoices(): ApprovalChoice[] {
       false,
     ),
   ];
+}
+
+function parseNativeBrowserToolApprovalRequest(
+  params: Record<string, unknown>,
+  activeToolCalls: readonly ActivePlaywrightToolCall[],
+): BrowserToolApprovalRequest | null {
+  if (params.serverName !== "playwright" || params.mode !== "form") {
+    return null;
+  }
+  const meta = readObjectOrNull(params._meta);
+  if (meta?.codex_approval_kind !== "mcp_tool_call") {
+    return null;
+  }
+  if (!isEmptyObjectElicitationSchema(params.requestedSchema)) {
+    return null;
+  }
+  if (!isSupportedApprovalPersistence(meta.persist)) {
+    return null;
+  }
+
+  const threadId = readString(params.threadId);
+  const turnId = readString(params.turnId);
+  const toolParams = readObjectOrNull(meta.tool_params);
+  if (!threadId || !turnId || !toolParams) {
+    return null;
+  }
+  const canonicalParams = canonicalJson(toolParams);
+  if (!canonicalParams) {
+    return null;
+  }
+
+  const matchingCalls = activeToolCalls.filter(
+    (call) =>
+      call.threadId === threadId &&
+      call.turnId === turnId &&
+      canonicalJson(call.arguments) === canonicalParams,
+  );
+  if (matchingCalls.length !== 1) {
+    return null;
+  }
+  const call = matchingCalls[0];
+  if (
+    !/^[a-zA-Z0-9_.:/-]{1,200}$/u.test(call.itemId) ||
+    !/^[a-zA-Z0-9_.:/-]{1,160}$/u.test(call.tool)
+  ) {
+    return null;
+  }
+
+  const displayLabels = parseToolParameterDisplayLabels(
+    meta.tool_params_display,
+    toolParams,
+  );
+  if (displayLabels === null) {
+    return null;
+  }
+  const description =
+    readSafeDisplayText(meta.tool_description, 500) ??
+    `Use the ${formatBrowserToolName(call.tool)} browser tool.`;
+
+  return {
+    itemId: call.itemId,
+    tool: call.tool,
+    displayName: formatBrowserToolName(call.tool),
+    description,
+    parameters: projectSafeBrowserToolParameters(toolParams, displayLabels),
+  };
 }
 
 function parseBrowserApprovalRequest(
@@ -331,6 +465,187 @@ function parseBrowserApprovalRequest(
     origin,
     action,
   };
+}
+
+function isEmptyObjectElicitationSchema(value: unknown) {
+  const schema = readObjectOrNull(value);
+  if (!schema || schema.type !== "object") return false;
+  const properties = readObjectOrNull(schema.properties);
+  if (!properties || Object.keys(properties).length > 0) return false;
+  const required = schema.required;
+  return (
+    required === undefined ||
+    (Array.isArray(required) && required.length === 0)
+  );
+}
+
+function isSupportedApprovalPersistence(value: unknown) {
+  return (
+    value === undefined ||
+    (Array.isArray(value) &&
+      value.every((entry) => entry === "session" || entry === "always"))
+  );
+}
+
+function canonicalJson(value: unknown): string | null {
+  try {
+    const normalized = normalizeJson(value, 0);
+    if (normalized === INVALID_JSON) return null;
+    const serialized = JSON.stringify(normalized);
+    return serialized.length <= 32_768 ? serialized : null;
+  } catch {
+    return null;
+  }
+}
+
+const INVALID_JSON = Symbol("invalid-json");
+
+function normalizeJson(
+  value: unknown,
+  depth: number,
+): unknown | typeof INVALID_JSON {
+  if (depth > 20) return INVALID_JSON;
+  if (
+    value === null ||
+    typeof value === "string" ||
+    typeof value === "boolean"
+  ) {
+    return value;
+  }
+  if (typeof value === "number") {
+    return Number.isFinite(value) ? value : INVALID_JSON;
+  }
+  if (Array.isArray(value)) {
+    const normalized = value.map((entry) => normalizeJson(entry, depth + 1));
+    return normalized.includes(INVALID_JSON) ? INVALID_JSON : normalized;
+  }
+  const record = readObjectOrNull(value);
+  if (!record) return INVALID_JSON;
+  const normalized: Record<string, unknown> = {};
+  for (const key of Object.keys(record).sort()) {
+    const entry = normalizeJson(record[key], depth + 1);
+    if (entry === INVALID_JSON) return INVALID_JSON;
+    normalized[key] = entry;
+  }
+  return normalized;
+}
+
+function parseToolParameterDisplayLabels(
+  value: unknown,
+  toolParams: Record<string, unknown>,
+): Map<string, string> | null {
+  if (value === undefined) return new Map();
+  if (!Array.isArray(value) || value.length > 24) return null;
+  const labels = new Map<string, string>();
+  for (const entry of value) {
+    const record = readObjectOrNull(entry);
+    const name = readSafeDisplayText(record?.name, 80);
+    const label = readSafeDisplayText(record?.display_name, 120);
+    if (
+      !record ||
+      !name ||
+      !label ||
+      !Object.prototype.hasOwnProperty.call(toolParams, name)
+    ) {
+      return null;
+    }
+    labels.set(name, label);
+  }
+  return labels;
+}
+
+const SAFE_BROWSER_TOOL_PARAMETERS = new Set([
+  "action",
+  "button",
+  "index",
+  "key",
+  "modifiers",
+  "origin",
+  "tabId",
+  "timeout",
+  "url",
+]);
+
+function projectSafeBrowserToolParameters(
+  toolParams: Record<string, unknown>,
+  labels: Map<string, string>,
+): BrowserToolApprovalParameter[] {
+  const parameters: BrowserToolApprovalParameter[] = [];
+  for (const [name, rawValue] of Object.entries(toolParams)) {
+    if (!SAFE_BROWSER_TOOL_PARAMETERS.has(name)) continue;
+    const value =
+      name === "url" || name === "origin"
+        ? sanitizeBrowserUrl(rawValue)
+        : formatSafeBrowserParameterValue(rawValue);
+    if (!value) continue;
+    parameters.push({
+      name,
+      label: labels.get(name) ?? formatBrowserToolName(name),
+      value,
+    });
+  }
+  return parameters;
+}
+
+function sanitizeBrowserUrl(value: unknown) {
+  if (typeof value !== "string") return null;
+  try {
+    const url = new URL(value);
+    if (!["http:", "https:", "ws:", "wss:"].includes(url.protocol)) {
+      return null;
+    }
+    url.username = "";
+    url.password = "";
+    url.search = "";
+    url.hash = "";
+    return readSafeDisplayText(url.toString(), 500);
+  } catch {
+    return null;
+  }
+}
+
+function formatSafeBrowserParameterValue(value: unknown): string | null {
+  if (
+    typeof value === "string" ||
+    typeof value === "number" ||
+    typeof value === "boolean"
+  ) {
+    return readSafeDisplayText(String(value), 240);
+  }
+  if (
+    Array.isArray(value) &&
+    value.length <= 12 &&
+    value.every(
+      (entry) =>
+        typeof entry === "string" ||
+        typeof entry === "number" ||
+        typeof entry === "boolean",
+    )
+  ) {
+    return readSafeDisplayText(value.map(String).join(", "), 240);
+  }
+  return null;
+}
+
+function readSafeDisplayText(value: unknown, maxLength: number) {
+  if (
+    typeof value !== "string" ||
+    value.length === 0 ||
+    value.length > maxLength ||
+    /[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/u.test(value)
+  ) {
+    return null;
+  }
+  return value;
+}
+
+function formatBrowserToolName(value: string) {
+  return value
+    .replace(/^browser[_-]?/u, "Browser ")
+    .replace(/([a-z0-9])([A-Z])/gu, "$1 $2")
+    .replace(/[_-]+/gu, " ")
+    .replace(/\b\w/gu, (character) => character.toUpperCase())
+    .trim();
 }
 
 export function approvalRequestKey(
