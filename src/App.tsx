@@ -116,6 +116,7 @@ import {
   readCodexFile,
   readCodexAccount,
   readAgentNotificationPermissionStatus,
+  readBrowserRuntimeStatus,
   readBrowserSessionStatus,
   readWorkspaceGitDiff,
   readWorkspaceFilePreview,
@@ -179,6 +180,10 @@ import {
   readCodexAccessPreference,
   type CodexAccessSettings,
 } from "./lib/codexAccess";
+import {
+  persistComputerUsePreference,
+  readComputerUsePreference,
+} from "./lib/computerUse";
 import {
   createStableClientMessageId,
   isCollaborationModeMask,
@@ -268,6 +273,7 @@ import type {
   AnalyticsSummary as AnalyticsSummaryType,
   ChatListItem,
   ChatOrigin,
+  BrowserRuntimeStatus,
   BrowserSessionState,
   PreparedBrowserSession,
   CodexAccount,
@@ -584,6 +590,7 @@ type RunSetupSnapshot = {
   intent?: RunIntent;
   clientUserMessageId?: string;
   access: RunAccessSettings;
+  computerUseEnabled: boolean;
   model: string | null;
   effort: string | null;
   useOss: boolean;
@@ -1195,6 +1202,11 @@ function App() {
     useState<AgentNotificationPreferences>(readAgentNotificationPreferences);
   const [agentNotificationPermission, setAgentNotificationPermission] =
     useState<AgentNotificationPermissionStatus>("unavailable");
+  const [computerUseEnabled, setComputerUseEnabled] = useState(
+    () => readComputerUsePreference().enabled,
+  );
+  const [browserRuntimeStatus, setBrowserRuntimeStatus] =
+    useState<BrowserRuntimeStatus | null>(null);
   const [transcriptNotificationFocusRequest, setTranscriptNotificationFocusRequest] =
     useState<TranscriptNotificationFocusRequest | null>(null);
   const [, setAgentNotificationNavigation] =
@@ -2509,6 +2521,31 @@ function App() {
   useEffect(() => {
     persistAgentNotificationPreferences(agentNotificationPreferences);
   }, [agentNotificationPreferences]);
+
+  useEffect(() => {
+    persistComputerUsePreference({ enabled: computerUseEnabled });
+  }, [computerUseEnabled]);
+
+  useEffect(() => {
+    let disposed = false;
+    void readBrowserRuntimeStatus()
+      .then((status) => {
+        if (!disposed) setBrowserRuntimeStatus(status);
+      })
+      .catch((error) => {
+        if (disposed) return;
+        setBrowserRuntimeStatus({
+          available: false,
+          message:
+            error instanceof Error
+              ? error.message
+              : "The bundled browser runtime is unavailable.",
+        });
+      });
+    return () => {
+      disposed = true;
+    };
+  }, []);
 
   useEffect(() => {
     let disposed = false;
@@ -7131,18 +7168,22 @@ function App() {
         chatId,
         turnIndex: snapshot.turnIndex,
       });
-      const browserSession = await prepareBrowserSession({
-        profileKey: snapshot.profileKey,
-        workspaceId: snapshot.workspace.id,
-        chatId,
-        runId: run.id,
-        entryId: runControl.clientId,
-        threadId,
-        turnId: null,
-        accessMode: snapshot.access.accessMode,
-      });
+      const browserSession = snapshot.computerUseEnabled
+        ? await prepareBrowserSession({
+            profileKey: snapshot.profileKey,
+            workspaceId: snapshot.workspace.id,
+            chatId,
+            runId: run.id,
+            entryId: runControl.clientId,
+            threadId,
+            turnId: null,
+            accessMode: snapshot.access.accessMode,
+          })
+        : null;
       runControl.browserSession = browserSession;
-      setActiveRunRegistryVersion((current) => current + 1);
+      if (browserSession) {
+        setActiveRunRegistryVersion((current) => current + 1);
+      }
       const threadConfig = {
         ...(snapshot.useOss
           ? {
@@ -7150,7 +7191,7 @@ function App() {
               oss_provider: snapshot.ossProvider,
             }
           : {}),
-        ...browserSession.config,
+        ...(browserSession?.config ?? {}),
       };
 
       let threadModel: string | null | undefined = snapshot.model;
@@ -7306,16 +7347,18 @@ function App() {
         },
       );
       ensureRunControlActive(runControl);
-      updateRunControlBrowserState(
-        runControl,
-        await updateBrowserSessionTarget(browserSession.token, {
-          ...browserSession.state.target,
-          chatId,
-          runId: run.id,
-          threadId,
-          turnId: null,
-        }),
-      );
+      if (browserSession) {
+        updateRunControlBrowserState(
+          runControl,
+          await updateBrowserSessionTarget(browserSession.token, {
+            ...browserSession.state.target,
+            chatId,
+            runId: run.id,
+            threadId,
+            turnId: null,
+          }),
+        );
+      }
 
       await updateRun(run.id, {
         codexThreadId: threadId,
@@ -7462,16 +7505,18 @@ function App() {
       ensureRunControlActive(runControl);
       runControl.threadId = threadId;
       runControl.turnId = turn.turn.id;
-      updateRunControlBrowserState(
-        runControl,
-        await updateBrowserSessionTarget(browserSession.token, {
-          ...browserSession.state.target,
-          chatId,
-          runId: run.id,
-          threadId,
-          turnId: turn.turn.id,
-        }),
-      );
+      if (browserSession) {
+        updateRunControlBrowserState(
+          runControl,
+          await updateBrowserSessionTarget(browserSession.token, {
+            ...browserSession.state.target,
+            chatId,
+            runId: run.id,
+            threadId,
+            turnId: turn.turn.id,
+          }),
+        );
+      }
 
       updateRunControlView(runControl, (current) => ({
         ...current,
@@ -7675,6 +7720,7 @@ function App() {
       cachedPreflight: preflightRef.current,
       mode: planMode ? "plan" : "run",
       access: accessSettings({ accessMode }),
+      computerUseEnabled,
       model,
       effort: model ? selectedReasoningEffort : null,
       useOss,
@@ -7774,6 +7820,7 @@ function App() {
       cachedPreflight: null,
       mode: planMode ? "plan" : "run",
       access: accessSettings({ accessMode }),
+      computerUseEnabled,
       model,
       effort: model ? selectedReasoningEffort : null,
       useOss,
@@ -9265,6 +9312,7 @@ function App() {
       intent,
       clientUserMessageId: createStableClientMessageId(),
       access: accessSettings({ accessMode }),
+      computerUseEnabled,
       model,
       effort: model ? selectedReasoningEffort : null,
       useOss,
@@ -11491,6 +11539,62 @@ function App() {
                   })}
                 </div>
               </div>
+            </section>
+
+            <section
+              className="surface settings-panel computer-use-settings-panel"
+              aria-label="Computer use settings"
+            >
+              <div className="surface-header">
+                <div>
+                  <p className="eyebrow">Agent capabilities</p>
+                  <h2>Computer use</h2>
+                </div>
+                <span
+                  className={`notification-permission-status ${
+                    browserRuntimeStatus === null
+                      ? ""
+                      : browserRuntimeStatus.available
+                        ? "permission-allowed"
+                        : "permission-denied"
+                  }`}
+                >
+                  {browserRuntimeStatus?.available === false ? (
+                    <AlertCircle size={14} aria-hidden="true" />
+                  ) : (
+                    <Monitor size={14} aria-hidden="true" />
+                  )}
+                  {browserRuntimeStatus === null
+                    ? "Checking"
+                    : browserRuntimeStatus.available
+                      ? "Available"
+                      : "Unavailable"}
+                </span>
+              </div>
+              <div className="setting-list">
+                <label className="setting-row checkbox-setting">
+                  <div>
+                    <strong>Enable browser computer use</strong>
+                    <span>
+                      Give future agent turns an isolated browser that opens only
+                      when Codex uses it.
+                    </span>
+                  </div>
+                  <input
+                    type="checkbox"
+                    checked={computerUseEnabled}
+                    onChange={(event) =>
+                      setComputerUseEnabled(event.currentTarget.checked)
+                    }
+                  />
+                </label>
+              </div>
+              {browserRuntimeStatus?.available === false ? (
+                <p className="computer-use-runtime-error" role="alert">
+                  {browserRuntimeStatus.message ??
+                    "The bundled browser runtime is unavailable."}
+                </p>
+              ) : null}
             </section>
 
             <section

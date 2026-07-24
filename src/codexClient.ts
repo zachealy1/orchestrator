@@ -12,6 +12,7 @@ import type {
 import type { WorkspaceCommitIntentContext } from "./lib/commitMessage";
 import type {
   CodexAccountResponse,
+  BrowserRuntimeStatus,
   BrowserSessionState,
   BrowserSessionTarget,
   CodexConnectResult,
@@ -33,6 +34,10 @@ import type {
   WorkspaceGitStatusSnapshot,
   WorkspaceTreeEntry,
 } from "./types";
+
+export function readBrowserRuntimeStatus() {
+  return invoke<BrowserRuntimeStatus>("browser_runtime_status");
+}
 
 export function prepareBrowserSession(target: BrowserSessionTarget) {
   return invoke<PreparedBrowserSession>("browser_session_prepare", { target });

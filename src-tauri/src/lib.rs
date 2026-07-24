@@ -1756,7 +1756,7 @@ async fn connect_codex_profile(
     codex_home: PathBuf,
     isolated_file_store: bool,
 ) -> Result<CodexConnectResult, String> {
-    let playwright_runtime = browser_sessions::resolve_playwright_runtime(app)?;
+    let playwright_runtime = browser_sessions::resolve_playwright_runtime(app).ok();
     let connection_generation =
         state.next_connection_generation.fetch_add(1, Ordering::SeqCst) + 1;
     {
@@ -1785,7 +1785,7 @@ async fn connect_codex_profile(
         let mut command = Command::new(&codex_binary);
         command.args(codex_app_server_args(
             isolated_file_store,
-            Some(&playwright_runtime),
+            playwright_runtime.as_ref(),
         ));
         let mut child = command
             .env("CODEX_HOME", &codex_home)
@@ -5125,11 +5125,6 @@ pub fn run() {
         .manage(CodexState::default())
         .manage(AgentNotificationState::default())
         .manage(BrowserSessionRegistry::default())
-        .setup(|app| {
-            browser_sessions::resolve_playwright_runtime(app.handle())
-                .map(|_| ())
-                .map_err(|error| std::io::Error::other(error).into())
-        })
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
         .plugin(
@@ -5164,6 +5159,7 @@ pub fn run() {
             list_workspace_directory,
             read_workspace_file_preview,
             run_preflight,
+            browser_sessions::browser_runtime_status,
             browser_sessions::browser_session_prepare,
             browser_sessions::browser_session_status,
             browser_sessions::browser_session_focus,

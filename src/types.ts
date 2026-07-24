@@ -367,6 +367,11 @@ export type BrowserSessionLifecycleStatus =
   | "stopped"
   | "error";
 
+export type BrowserRuntimeStatus = {
+  available: boolean;
+  message: string | null;
+};
+
 export type BrowserSessionTarget = {
   profileKey: CodexProfileKey;
   workspaceId: number;

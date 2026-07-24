@@ -73,6 +73,13 @@ pub(crate) struct BrowserSessionStatus {
     pub error: Option<String>,
 }
 
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct BrowserRuntimeStatus {
+    pub available: bool,
+    pub message: Option<String>,
+}
+
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct PreparedBrowserSession {
@@ -184,6 +191,20 @@ pub(crate) fn append_playwright_app_server_args(
         "-c".to_string(),
         format!("mcp_servers.{PLAYWRIGHT_SERVER_NAME}.tool_timeout_sec=120"),
     ]);
+}
+
+#[tauri::command]
+pub(crate) async fn browser_runtime_status(app: AppHandle) -> BrowserRuntimeStatus {
+    match resolve_playwright_runtime(&app) {
+        Ok(_) => BrowserRuntimeStatus {
+            available: true,
+            message: None,
+        },
+        Err(error) => BrowserRuntimeStatus {
+            available: false,
+            message: Some(error),
+        },
+    }
 }
 
 #[tauri::command]

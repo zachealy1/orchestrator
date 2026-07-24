@@ -5558,6 +5558,10 @@ button.pending-interaction-nav:disabled {
   grid-column: 1 / -1;
 }
 
+.computer-use-settings-panel {
+  grid-column: 1 / -1;
+}
+
 .appearance-setting {
   min-height: 72px;
 }
@@ -5683,6 +5687,13 @@ button.pending-interaction-nav:disabled {
   display: flex;
   justify-content: flex-end;
   margin-top: 12px;
+}
+
+.computer-use-runtime-error {
+  margin: 10px 12px 0;
+  color: var(--color-error);
+  font-size: 0.82rem;
+  line-height: 1.45;
 }
 
 .managed-account-row:focus-visible {

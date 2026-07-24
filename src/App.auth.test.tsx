@@ -20,6 +20,7 @@ const mocks = vi.hoisted(() => ({
   startCodexLoginMock: vi.fn(),
   stopCodexMock: vi.fn(),
   stopDefaultCodexProfileMock: vi.fn(),
+  readBrowserRuntimeStatusMock: vi.fn(),
   prepareBrowserSessionMock: vi.fn(),
   readBrowserSessionStatusMock: vi.fn(),
   focusBrowserSessionMock: vi.fn(),
@@ -208,6 +209,7 @@ vi.mock("./codexClient", () => ({
   startCodexLogin: mocks.startCodexLoginMock,
   stopDefaultCodexProfile: mocks.stopDefaultCodexProfileMock,
   stopCodex: mocks.stopCodexMock,
+  readBrowserRuntimeStatus: mocks.readBrowserRuntimeStatusMock,
   prepareBrowserSession: mocks.prepareBrowserSessionMock,
   readBrowserSessionStatus: mocks.readBrowserSessionStatusMock,
   focusBrowserSession: mocks.focusBrowserSessionMock,
@@ -489,6 +491,10 @@ function prepareDefaults() {
   });
   mocks.stopCodexMock.mockResolvedValue(undefined);
   mocks.stopDefaultCodexProfileMock.mockResolvedValue(undefined);
+  mocks.readBrowserRuntimeStatusMock.mockResolvedValue({
+    available: true,
+    message: null,
+  });
   mocks.prepareBrowserSessionMock.mockImplementation(async (target) => ({
     token: "0123456789abcdef0123456789abcdef",
     config: {
@@ -4627,6 +4633,7 @@ describe("App Codex auth", () => {
         collaborationMode: expect.objectContaining({ mode: "default" }),
       }),
     );
+    expect(mocks.prepareBrowserSessionMock).toHaveBeenCalledTimes(2);
   });
 
   it("promotes and persists a proposed-plan final answer as a native Plan", async () => {
@@ -6311,6 +6318,67 @@ describe("App Codex auth", () => {
     );
     expect(screen.queryByLabelText("Run history")).not.toBeInTheDocument();
     expect(screen.queryByLabelText("Codex run console")).not.toBeInTheDocument();
+  });
+
+  it("enables computer use by default and persists Settings changes", async () => {
+    const { user } = await renderApp();
+    await user.click(screen.getByRole("button", { name: "Settings" }));
+
+    const computerUse = screen.getByRole("checkbox", {
+      name: /enable browser computer use/i,
+    });
+    expect(computerUse).toBeChecked();
+    expect(
+      screen.getByRole("region", { name: "Computer use settings" }),
+    ).toHaveTextContent("Available");
+
+    await user.click(computerUse);
+    expect(computerUse).not.toBeChecked();
+    expect(
+      JSON.parse(localStorage.getItem("orchestrator.computer-use.v1")!),
+    ).toEqual({ enabled: false });
+  });
+
+  it("omits the scoped Playwright server when computer use is disabled", async () => {
+    localStorage.setItem(
+      "orchestrator.computer-use.v1",
+      JSON.stringify({ enabled: false }),
+    );
+    prepareSignedInRun();
+
+    const { user } = await renderApp();
+    await startMockRun(user, "Make this change without a browser");
+
+    expect(mocks.prepareBrowserSessionMock).not.toHaveBeenCalled();
+    const threadStart = mocks.codexRpcMock.mock.calls.find(
+      ([, method]) => method === "thread/start",
+    );
+    expect(threadStart?.[2]).toEqual(
+      expect.objectContaining({
+        config: expect.not.objectContaining({
+          mcp_servers: expect.anything(),
+        }),
+      }),
+    );
+    expect(mocks.updateBrowserSessionTargetMock).not.toHaveBeenCalled();
+  });
+
+  it("reports an unavailable bundled browser without preventing Settings", async () => {
+    mocks.readBrowserRuntimeStatusMock.mockResolvedValueOnce({
+      available: false,
+      message: "The pinned Chromium executable is unavailable.",
+    });
+
+    const { user } = await renderApp();
+    await user.click(screen.getByRole("button", { name: "Settings" }));
+
+    const settings = screen.getByRole("region", {
+      name: "Computer use settings",
+    });
+    expect(await within(settings).findByText("Unavailable")).toBeInTheDocument();
+    expect(within(settings).getByRole("alert")).toHaveTextContent(
+      "The pinned Chromium executable is unavailable.",
+    );
   });
 
   it("scopes the Playwright MCP browser to one turn and cleans it up", async () => {
@@ -8130,6 +8198,7 @@ describe("App Codex auth", () => {
     const { user } = await renderApp();
     await user.click(screen.getByRole("button", { name: /goal mode/i }));
     await startMockRun(user, "Run a goal command");
+    expect(mocks.prepareBrowserSessionMock).toHaveBeenCalledTimes(1);
     await emitCodexServerRequest({
       id: 9,
       method: "item/commandExecution/requestApproval",
