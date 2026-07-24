@@ -150,7 +150,9 @@ pub(crate) fn resolve_playwright_runtime(app: &AppHandle) -> Result<PlaywrightRu
         }
     }
 
-    if cfg!(debug_assertions) {
+    // `tauri dev --release` is still a development process even though Rust
+    // debug assertions are disabled, so use Tauri's build-mode signal here.
+    if tauri::is_dev() {
         let development_bundle = Path::new(env!("CARGO_MANIFEST_DIR"))
             .join("resources")
             .join("playwright")
