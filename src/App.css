@@ -2514,14 +2514,6 @@ button.account-switcher-item:hover:not(:disabled) {
   padding: 4px 6px;
 }
 
-.submitted-image-attachment figcaption.filename {
-  display: block;
-  overflow: hidden;
-  text-align: center;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
 .submitted-image-attachment.state-failed {
   color: var(--color-error);
 }

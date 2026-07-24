@@ -5496,6 +5496,8 @@ describe("App Codex auth", () => {
     const submittedImages = screen.getByLabelText("Submitted image");
     expect(within(submittedImages).getByRole("img", { name: "screenshot.png" }))
       .toBeInTheDocument();
+    expect(within(submittedImages).queryByText("screenshot.png"))
+      .not.toBeInTheDocument();
     await waitFor(() => expect(mocks.runPreflightMock).toHaveBeenCalledTimes(1));
     expect(
       mocks.codexRpcMock.mock.calls.some(([, method]) => method === "turn/start"),

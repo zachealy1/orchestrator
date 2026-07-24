@@ -1616,9 +1616,7 @@ const SubmittedImageAttachment = memo(function SubmittedImageAttachment({
           ) : null}
           <span>{statusText}</span>
         </figcaption>
-      ) : (
-        <figcaption className="filename">{file.name}</figcaption>
-      )}
+      ) : null}
     </figure>
   );
 });
