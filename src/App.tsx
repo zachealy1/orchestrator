@@ -7631,13 +7631,6 @@ function App() {
       if (chatId !== null) {
         await updateChat(chatId, { status: "failed" }).catch(() => undefined);
       }
-      if (
-        runControl.intent === "plan" &&
-        runControl.turnId === null &&
-        selectedWorkspaceRef.current?.id === snapshot.workspace.id
-      ) {
-        setPlanMode(true);
-      }
       removeRunControl(runControl);
       setStatusMessage(`Run setup failed: ${message}`);
     }
@@ -7814,8 +7807,6 @@ function App() {
       const currentTurnIndex = chatEntry.turnIndex ?? 0;
       return currentTurnIndex > 0 && currentTurnIndex < editedTurnIndex;
     });
-    const retryPlan =
-      planMode || entry.runView.nativePlan.intent === "plan";
     const snapshot: RunSetupSnapshot = {
       promptText,
       promptFallback: nextPrompt,
@@ -7827,7 +7818,7 @@ function App() {
       externalThreadId: null,
       selectedBranch,
       cachedPreflight: null,
-      mode: retryPlan ? "plan" : "run",
+      mode: planMode ? "plan" : "run",
       access: accessSettings({ accessMode }),
       computerUseEnabled,
       model,
@@ -7851,9 +7842,6 @@ function App() {
     };
 
     const runControl = beginOptimisticRun(snapshot);
-    if (snapshot.mode === "plan") {
-      setPlanMode(false);
-    }
     scheduleRunSetup(runControl, snapshot);
   }
 
