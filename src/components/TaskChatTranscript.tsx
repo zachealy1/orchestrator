@@ -16,6 +16,7 @@ import {
   Clock,
   FileDiff,
   FileText,
+  Image as ImageIcon,
   Loader2,
   MessageSquare,
   Pencil,
@@ -72,6 +73,10 @@ import {
   contextFileInlineReferenceTokens,
   contextFileLineReference,
 } from "../lib/contextFiles";
+import {
+  isImageContextFile,
+  loadImageAttachmentPreview,
+} from "../lib/imageAttachments";
 import { isPreviewableSummaryLink } from "../lib/summaryLinks";
 import {
   cacheTranscriptRowHeight,
@@ -252,6 +257,10 @@ export type TaskChatEntry = {
   taskId: number | null;
   prompt: string;
   contextFiles?: ComposerContextFile[];
+  imageAttachmentDelivery?: {
+    status: "preparing" | "sent" | "failed";
+    error: string | null;
+  };
   executionSettings?: ResolvedRunExecutionSettings;
   submittedAt: string;
   status: RunViewState["status"];
@@ -1439,6 +1448,10 @@ export const TaskChatTurn = memo(function TaskChatTurn({
           </form>
         ) : (
           <>
+            <SubmittedImageAttachments
+              files={entry.contextFiles ?? EMPTY_CONTEXT_FILES}
+              delivery={entry.imageAttachmentDelivery}
+            />
             <article
               className="submitted-prompt"
               aria-label="Submitted prompt"
@@ -1507,6 +1520,108 @@ function isScrolledNearBottom(element: HTMLElement) {
     element.scrollHeight - element.clientHeight - element.scrollTop;
   return remainingScroll <= AUTO_SCROLL_BOTTOM_THRESHOLD_PX;
 }
+
+const SubmittedImageAttachments = memo(function SubmittedImageAttachments({
+  files,
+  delivery,
+}: {
+  files: ComposerContextFile[];
+  delivery: TaskChatEntry["imageAttachmentDelivery"];
+}) {
+  const imageFiles = files.filter(isImageContextFile);
+  if (imageFiles.length === 0) return null;
+
+  return (
+    <div
+      className="submitted-image-attachments"
+      aria-label={`Submitted image${imageFiles.length === 1 ? "" : "s"}`}
+    >
+      {imageFiles.map((file) => (
+        <SubmittedImageAttachment
+          key={file.path}
+          file={file}
+          delivery={delivery}
+        />
+      ))}
+    </div>
+  );
+});
+
+const SubmittedImageAttachment = memo(function SubmittedImageAttachment({
+  file,
+  delivery,
+}: {
+  file: ComposerContextFile;
+  delivery: TaskChatEntry["imageAttachmentDelivery"];
+}) {
+  const [preview, setPreview] = useState<{
+    status: "loading" | "ready" | "unavailable";
+    dataUrl: string | null;
+  }>({ status: "loading", dataUrl: null });
+
+  useEffect(() => {
+    let active = true;
+    setPreview({ status: "loading", dataUrl: null });
+    void loadImageAttachmentPreview(file.canonicalPath ?? file.path)
+      .then((result) => {
+        if (!active) return;
+        setPreview(
+          result
+            ? { status: "ready", dataUrl: result.thumbnailDataUrl }
+            : { status: "unavailable", dataUrl: null },
+        );
+      })
+      .catch(() => {
+        if (active) {
+          setPreview({ status: "unavailable", dataUrl: null });
+        }
+      });
+    return () => {
+      active = false;
+    };
+  }, [file.canonicalPath, file.path]);
+
+  const state =
+    delivery?.status === "failed"
+      ? "failed"
+      : delivery?.status === "preparing" || preview.status === "loading"
+        ? "preparing"
+        : preview.status;
+  const statusText =
+    state === "failed"
+      ? "Image not sent"
+      : state === "preparing"
+        ? "Preparing image"
+        : state === "unavailable"
+          ? "Image unavailable"
+          : null;
+  return (
+    <figure
+      className={`submitted-image-attachment state-${state}`}
+      title={
+        delivery?.status === "failed" && delivery.error
+          ? `${file.name}: ${delivery.error}`
+          : file.path
+      }
+    >
+      {preview.dataUrl ? (
+        <img src={preview.dataUrl} alt={file.name} draggable={false} />
+      ) : (
+        <ImageIcon size={24} aria-hidden="true" />
+      )}
+      {statusText ? (
+        <figcaption>
+          {state === "preparing" ? (
+            <Loader2 size={13} aria-hidden="true" />
+          ) : null}
+          <span>{statusText}</span>
+        </figcaption>
+      ) : (
+        <figcaption className="filename">{file.name}</figcaption>
+      )}
+    </figure>
+  );
+});
 
 const SubmittedPrompt = memo(function SubmittedPrompt({
   prompt,

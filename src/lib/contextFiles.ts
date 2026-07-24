@@ -2,6 +2,7 @@ import {
   ORCHESTRATOR_CONTEXT_FILE_MIME,
   type ComposerContextFile,
 } from "../types";
+import { normalizeContextFileMedia } from "./imageAttachments";
 
 type ContextDataTransfer = Pick<DataTransfer, "getData" | "types"> & {
   files?: ArrayLike<File> | null;
@@ -169,12 +170,12 @@ function readContextFile(value: unknown): ComposerContextFile | null {
     return null;
   }
 
-  return {
+  return normalizeContextFileMedia({
     path: file.path,
     name: file.name,
     source: "explorer",
     status: "ready",
-  };
+  });
 }
 
 function readNativeDroppedFile(file: File): ComposerContextFile | null {
@@ -183,12 +184,12 @@ function readNativeDroppedFile(file: File): ComposerContextFile | null {
     return null;
   }
 
-  return {
+  return normalizeContextFileMedia({
     path,
     name: file.name || basename(path),
     source: "explorer",
     status: "ready",
-  };
+  });
 }
 
 function readNativeFilePath(file: File) {

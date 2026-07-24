@@ -45,6 +45,7 @@ const mocks = vi.hoisted(() => ({
   undoWorkspaceGitDiffMock: vi.fn(),
   listWorkspaceDirectoryMock: vi.fn(),
   readWorkspaceFilePreviewMock: vi.fn(),
+  prepareImageAttachmentMock: vi.fn(),
   checkoutGitBranchMock: vi.fn(),
   runPreflightMock: vi.fn(),
   readCodexFileMock: vi.fn(),
@@ -205,6 +206,7 @@ vi.mock("./codexClient", () => ({
   readCodexFile: mocks.readCodexFileMock,
   readDefaultCodexFile: mocks.readDefaultCodexFileMock,
   readWorkspaceFilePreview: mocks.readWorkspaceFilePreviewMock,
+  prepareImageAttachment: mocks.prepareImageAttachmentMock,
   resolveDefaultCodexServerRequest: mocks.resolveDefaultCodexServerRequestMock,
   resolveCodexServerRequest: mocks.resolveCodexServerRequestMock,
   runPreflight: mocks.runPreflightMock,
@@ -597,6 +599,18 @@ function prepareDefaults() {
     truncated: false,
     isBinary: false,
   });
+  mocks.prepareImageAttachmentMock.mockImplementation(async (path: string) =>
+    /\.(?:gif|jpe?g|png|webp)$/i.test(path)
+      ? {
+          path,
+          mimeType: "image/png",
+          width: 640,
+          height: 480,
+          thumbnailDataUrl:
+            "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAAB",
+        }
+      : null,
+  );
   mocks.undoWorkspaceGitDiffMock.mockResolvedValue({
     message: "Undid changes to 1 file",
     branch: "main",
@@ -5458,6 +5472,106 @@ describe("App Codex auth", () => {
     expect(within(contextList).getAllByText("README.md")).toHaveLength(1);
   });
 
+  it("moves submitted images into the message and sends them as native image input", async () => {
+    prepareSignedInRun();
+    const imagePath = `${workspace.path}/screenshot.png`;
+    let resolvePreflight!: (value: typeof preflight) => void;
+    mocks.runPreflightMock.mockReturnValue(
+      new Promise((resolve) => {
+        resolvePreflight = resolve;
+      }),
+    );
+    mocks.openDialogMock.mockResolvedValue(imagePath);
+
+    const { user } = await renderApp();
+    await user.click(screen.getByRole("button", { name: "Add files" }));
+    await waitFor(() =>
+      expect(mocks.prepareImageAttachmentMock).toHaveBeenCalledWith(imagePath),
+    );
+    await user.type(screen.getByLabelText("Prompt"), "Review this screenshot");
+    await user.click(screen.getByRole("button", { name: /run codex/i }));
+
+    expect(screen.getByLabelText("Prompt")).toHaveValue("");
+    expect(screen.queryByLabelText("Selected context files")).not.toBeInTheDocument();
+    const submittedImages = screen.getByLabelText("Submitted image");
+    expect(within(submittedImages).getByRole("img", { name: "screenshot.png" }))
+      .toBeInTheDocument();
+    await waitFor(() => expect(mocks.runPreflightMock).toHaveBeenCalledTimes(1));
+    expect(
+      mocks.codexRpcMock.mock.calls.some(([, method]) => method === "turn/start"),
+    ).toBe(false);
+
+    await act(async () => {
+      resolvePreflight(preflight);
+      await Promise.resolve();
+    });
+
+    await waitFor(() =>
+      expect(
+        mocks.codexRpcMock.mock.calls.some(([, method]) => method === "turn/start"),
+      ).toBe(true),
+    );
+    const turnStart = mocks.codexRpcMock.mock.calls.find(
+      ([, method]) => method === "turn/start",
+    )?.[2];
+    expect(turnStart).toEqual(
+      expect.objectContaining({
+        input: [
+          expect.objectContaining({
+            type: "text",
+          }),
+          {
+            type: "localImage",
+            path: imagePath,
+            detail: "auto",
+          },
+        ],
+        additionalContext: null,
+      }),
+    );
+    expect(mocks.readCodexFileMock).not.toHaveBeenCalledWith(7, imagePath);
+    expect(
+      JSON.parse(mocks.createRunMock.mock.calls[0]?.[0].executionSettingsJson),
+    ).toEqual(
+      expect.objectContaining({
+        contextFiles: [
+          expect.objectContaining({
+            path: imagePath,
+            mediaKind: "image",
+            mimeType: "image/png",
+            width: 640,
+            height: 480,
+          }),
+        ],
+      }),
+    );
+  });
+
+  it("restores images and prompt when image preparation fails before turn start", async () => {
+    prepareSignedInRun();
+    const imagePath = `${workspace.path}/broken.png`;
+    mocks.openDialogMock.mockResolvedValue(imagePath);
+    mocks.prepareImageAttachmentMock.mockRejectedValue(
+      new Error("Selected image could not be decoded"),
+    );
+
+    const { user } = await renderApp();
+    await user.click(screen.getByRole("button", { name: "Add files" }));
+    await user.type(screen.getByLabelText("Prompt"), "Inspect this image");
+    await user.click(screen.getByRole("button", { name: /run codex/i }));
+
+    await waitFor(() =>
+      expect(screen.getByLabelText("Prompt")).toHaveValue("Inspect this image"),
+    );
+    const contextList = screen.getByLabelText("Selected context files");
+    expect(within(contextList).getByText("broken.png")).toBeInTheDocument();
+    expect(screen.getByText("Image not sent")).toBeInTheDocument();
+    expect(mocks.createTaskMock).not.toHaveBeenCalled();
+    expect(
+      mocks.codexRpcMock.mock.calls.some(([, method]) => method === "turn/start"),
+    ).toBe(false);
+  });
+
   it("adds files dragged from the workspace explorer into the task chat surface", async () => {
     mocks.listWorkspaceDirectoryMock.mockResolvedValue([
       {
@@ -6904,7 +7018,11 @@ describe("App Codex auth", () => {
         description: "Use repository documentation",
       },
     ]);
-    mocks.openDialogMock.mockResolvedValue(`${workspace.path}/README.md`);
+    const imagePath = `${workspace.path}/reference.png`;
+    mocks.openDialogMock.mockResolvedValue([
+      `${workspace.path}/README.md`,
+      imagePath,
+    ]);
     const confirm = vi.spyOn(window, "confirm").mockReturnValue(true);
 
     const { user } = await renderApp();
@@ -6940,6 +7058,12 @@ describe("App Codex auth", () => {
           expect.objectContaining({
             path: `${workspace.path}/README.md`,
             source: "picker",
+          }),
+          expect.objectContaining({
+            path: imagePath,
+            source: "picker",
+            mediaKind: "image",
+            mimeType: "image/png",
           }),
         ],
         selectedSkills: [
@@ -7005,9 +7129,15 @@ describe("App Codex auth", () => {
               "Docs: Use repository documentation",
             ),
           }),
+          {
+            type: "localImage",
+            path: imagePath,
+            detail: "auto",
+          },
         ],
       }),
     );
+    expect(mocks.readCodexFileMock).not.toHaveBeenCalledWith(7, imagePath);
     expect(mocks.prepareBrowserSessionMock).toHaveBeenCalledTimes(2);
     expect(screen.getByRole("combobox", { name: "Agent" })).toHaveTextContent(
       "Current model",
@@ -7134,6 +7264,7 @@ describe("App Codex auth", () => {
       id: 408,
       title: "Persist original settings",
     });
+    const historicalImagePath = `${workspace.path}/reference.png`;
     const persistedSettings = {
       version: 1,
       accountId: 7,
@@ -7154,6 +7285,18 @@ describe("App Codex auth", () => {
           relativePath: "README.md",
           source: "picker",
           status: "ready",
+        },
+        {
+          path: historicalImagePath,
+          canonicalPath: historicalImagePath,
+          name: "reference.png",
+          source: "picker",
+          mediaKind: "image",
+          mimeType: "image/png",
+          width: 640,
+          height: 480,
+          status: "ready",
+          error: null,
         },
       ],
       selectedSkills: [
@@ -7196,6 +7339,9 @@ describe("App Codex auth", () => {
     await user.click(
       within(drawer).getByRole("button", { name: /persist original settings/i }),
     );
+    expect(
+      await screen.findByRole("img", { name: "reference.png" }),
+    ).toBeInTheDocument();
     await user.click(await screen.findByRole("button", { name: "Edit prompt" }));
     await user.click(screen.getByRole("button", { name: "Run edited prompt" }));
 
@@ -7208,6 +7354,10 @@ describe("App Codex auth", () => {
       7,
       `${workspace.path}/README.md`,
     );
+    expect(mocks.readCodexFileMock).not.toHaveBeenCalledWith(
+      7,
+      historicalImagePath,
+    );
     expect(
       mocks.codexRpcMock.mock.calls.find(([, method]) => method === "turn/start")
         ?.[2],
@@ -7219,6 +7369,11 @@ describe("App Codex auth", () => {
           expect.objectContaining({
             text: expect.stringContaining("Docs: Use repository documentation"),
           }),
+          {
+            type: "localImage",
+            path: historicalImagePath,
+            detail: "auto",
+          },
         ],
       }),
     );

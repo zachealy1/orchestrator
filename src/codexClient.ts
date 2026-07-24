@@ -23,6 +23,7 @@ import type {
   ExternalTranscriptSnapshot,
   ExternalThreadHistoryIndex,
   GitBranchList,
+  ImageAttachmentPreview,
   ModelListResponse,
   OssProvider,
   PreflightReport,
@@ -313,6 +314,12 @@ export function readWorkspaceFilePreview(workspacePath: string, filePath: string
   return invoke<WorkspaceFilePreview>("read_workspace_file_preview", {
     workspacePath,
     filePath,
+  });
+}
+
+export function prepareImageAttachment(path: string) {
+  return invoke<ImageAttachmentPreview | null>("prepare_image_attachment", {
+    path,
   });
 }
 

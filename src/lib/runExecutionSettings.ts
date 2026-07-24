@@ -172,7 +172,12 @@ function readContextFile(value: unknown): ComposerContextFile | null {
     typeof value.name !== "string" ||
     value.name.trim().length === 0 ||
     !isContextFileSource(value.source) ||
+    !isOptionalString(value.canonicalPath) ||
     !isOptionalString(value.relativePath) ||
+    !isContextFileMediaKind(value.mediaKind) ||
+    !isOptionalString(value.mimeType) ||
+    !isOptionalPositiveInteger(value.width) ||
+    !isOptionalPositiveInteger(value.height) ||
     !isContextFileStatus(value.status) ||
     !isOptionalString(value.error)
   ) {
@@ -183,9 +188,18 @@ function readContextFile(value: unknown): ComposerContextFile | null {
     path: value.path,
     name: value.name,
     source: value.source,
+    ...(typeof value.canonicalPath === "string"
+      ? { canonicalPath: value.canonicalPath }
+      : {}),
     ...(typeof value.relativePath === "string"
       ? { relativePath: value.relativePath }
       : {}),
+    ...(value.mediaKind === "file" || value.mediaKind === "image"
+      ? { mediaKind: value.mediaKind }
+      : {}),
+    ...(typeof value.mimeType === "string" ? { mimeType: value.mimeType } : {}),
+    ...(typeof value.width === "number" ? { width: value.width } : {}),
+    ...(typeof value.height === "number" ? { height: value.height } : {}),
     ...(value.status ? { status: value.status } : {}),
     ...(typeof value.error === "string" || value.error === null
       ? { error: value.error }
@@ -267,5 +281,23 @@ function isContextFileSource(
 function isContextFileStatus(
   value: unknown,
 ): value is ComposerContextFile["status"] | undefined {
-  return value === undefined || value === "ready" || value === "error";
+  return (
+    value === undefined ||
+    value === "loading" ||
+    value === "ready" ||
+    value === "error"
+  );
+}
+
+function isContextFileMediaKind(
+  value: unknown,
+): value is ComposerContextFile["mediaKind"] | undefined {
+  return value === undefined || value === "file" || value === "image";
+}
+
+function isOptionalPositiveInteger(value: unknown) {
+  return (
+    value === undefined ||
+    (typeof value === "number" && Number.isSafeInteger(value) && value > 0)
+  );
 }

@@ -1,3 +1,5 @@
+use base64::{engine::general_purpose::STANDARD as BASE64_STANDARD, Engine as _};
+use image::{ImageFormat, ImageReader};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::{
@@ -5,7 +7,7 @@ use std::{
     env,
     ffi::OsStr,
     fs,
-    io::{BufRead, BufReader, Read, Write},
+    io::{BufRead, BufReader, Cursor, Read, Write},
     path::{Path, PathBuf},
     process::{Child, ChildStdin, Command, Stdio},
     sync::{
@@ -26,6 +28,10 @@ use browser_sessions::{BrowserSessionRegistry, PlaywrightRuntime};
 
 const DATABASE_URL: &str = "sqlite:app.db";
 const MAX_FILE_PREVIEW_BYTES: usize = 512 * 1024;
+const MAX_IMAGE_ATTACHMENT_BYTES: u64 = 25 * 1024 * 1024;
+const MAX_IMAGE_ATTACHMENT_PIXELS: u64 = 80_000_000;
+const IMAGE_ATTACHMENT_THUMBNAIL_EDGE: u32 = 512;
+const MAX_IMAGE_ATTACHMENT_THUMBNAIL_BYTES: usize = 1_500_000;
 const MAX_COMMIT_MESSAGE_CONTEXT_CHARS: usize = 24_000;
 const MAX_COMMIT_STATUS_CHARS: usize = 2_500;
 const MAX_COMMIT_DIFFSTAT_CHARS: usize = 1_500;
@@ -366,6 +372,16 @@ struct WorkspaceFilePreview {
     content: String,
     truncated: bool,
     is_binary: bool,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ImageAttachmentPreview {
+    path: String,
+    mime_type: String,
+    width: u32,
+    height: u32,
+    thumbnail_data_url: String,
 }
 
 fn migrations() -> Vec<Migration> {
@@ -3795,6 +3811,106 @@ async fn read_workspace_file_preview(
     .await
 }
 
+fn prepare_image_attachment_blocking(path: String) -> Result<Option<ImageAttachmentPreview>, String> {
+    let path = fs::canonicalize(&path)
+        .map_err(|error| format!("Unable to resolve image attachment: {error}"))?;
+    if !path.is_file() {
+        return Err("Selected image attachment is not a file".to_string());
+    }
+
+    let metadata = fs::metadata(&path)
+        .map_err(|error| format!("Unable to inspect {}: {error}", path.display()))?;
+    let mut source =
+        fs::File::open(&path).map_err(|error| format!("Unable to open {}: {error}", path.display()))?;
+    let mut header = [0_u8; 32];
+    let header_length = source
+        .read(&mut header)
+        .map_err(|error| format!("Unable to inspect {}: {error}", path.display()))?;
+    let format = match image::guess_format(&header[..header_length]) {
+        Ok(format) => format,
+        Err(_) if is_image_extension(&path) => {
+            return Err("Selected image could not be decoded".to_string())
+        }
+        Err(_) => return Ok(None),
+    };
+    if metadata.len() > MAX_IMAGE_ATTACHMENT_BYTES {
+        return Err("Image attachment exceeds the 25 MB limit".to_string());
+    }
+
+    let bytes =
+        fs::read(&path).map_err(|error| format!("Unable to read {}: {error}", path.display()))?;
+    let mime_type = match format {
+        ImageFormat::Png => "image/png",
+        ImageFormat::Jpeg => "image/jpeg",
+        ImageFormat::WebP => "image/webp",
+        ImageFormat::Gif => "image/gif",
+        _ => {
+            return Err(
+                "Image attachment format is unsupported; use PNG, JPEG, WebP, or GIF"
+                    .to_string(),
+            )
+        }
+    };
+
+    let reader = ImageReader::new(Cursor::new(&bytes))
+        .with_guessed_format()
+        .map_err(|error| format!("Image attachment could not be inspected: {error}"))?;
+    let (width, height) = reader
+        .into_dimensions()
+        .map_err(|error| format!("Image attachment dimensions could not be read: {error}"))?;
+    if width == 0
+        || height == 0
+        || u64::from(width).saturating_mul(u64::from(height)) > MAX_IMAGE_ATTACHMENT_PIXELS
+    {
+        return Err("Image attachment dimensions exceed the supported limit".to_string());
+    }
+
+    let image = image::load_from_memory_with_format(&bytes, format)
+        .map_err(|error| format!("Image attachment could not be decoded: {error}"))?;
+    let thumbnail = image.thumbnail(
+        IMAGE_ATTACHMENT_THUMBNAIL_EDGE,
+        IMAGE_ATTACHMENT_THUMBNAIL_EDGE,
+    );
+    let mut thumbnail_bytes = Vec::new();
+    thumbnail
+        .write_to(&mut Cursor::new(&mut thumbnail_bytes), ImageFormat::Png)
+        .map_err(|error| format!("Image attachment thumbnail could not be created: {error}"))?;
+    if thumbnail_bytes.len() > MAX_IMAGE_ATTACHMENT_THUMBNAIL_BYTES {
+        return Err("Image attachment thumbnail exceeds the supported limit".to_string());
+    }
+
+    Ok(Some(ImageAttachmentPreview {
+        path: path.to_string_lossy().to_string(),
+        mime_type: mime_type.to_string(),
+        width,
+        height,
+        thumbnail_data_url: format!(
+            "data:image/png;base64,{}",
+            BASE64_STANDARD.encode(thumbnail_bytes)
+        ),
+    }))
+}
+
+#[tauri::command]
+async fn prepare_image_attachment(path: String) -> Result<Option<ImageAttachmentPreview>, String> {
+    run_blocking_command("prepare image attachment", move || {
+        prepare_image_attachment_blocking(path)
+    })
+    .await
+}
+
+fn is_image_extension(path: &Path) -> bool {
+    path.extension()
+        .and_then(OsStr::to_str)
+        .map(|extension| {
+            matches!(
+                extension.to_ascii_lowercase().as_str(),
+                "png" | "jpg" | "jpeg" | "webp" | "gif"
+            )
+        })
+        .unwrap_or(false)
+}
+
 fn run_preflight_blocking(
     path: String,
     prompt: String,
@@ -5166,6 +5282,7 @@ pub fn run() {
             undo_workspace_git_diff,
             list_workspace_directory,
             read_workspace_file_preview,
+            prepare_image_attachment,
             run_preflight,
             browser_sessions::browser_runtime_status,
             browser_sessions::browser_session_prepare,
@@ -6069,6 +6186,82 @@ mod tests {
         assert!(preview.is_binary);
         assert_eq!(preview.content, "");
         remove_test_directory(workspace);
+    }
+
+    #[test]
+    fn image_attachment_preparation_validates_content_and_bounds_thumbnail() {
+        let directory = test_directory("image-attachment-preview");
+        let file = directory.join("reference.data");
+        image::RgbaImage::from_pixel(4, 3, image::Rgba([20, 40, 60, 255]))
+            .save_with_format(&file, ImageFormat::Png)
+            .unwrap();
+
+        let preview = prepare_image_attachment_blocking(
+            file.to_string_lossy().to_string(),
+        )
+        .unwrap()
+        .expect("image preview");
+
+        assert_eq!(preview.mime_type, "image/png");
+        assert_eq!((preview.width, preview.height), (4, 3));
+        assert!(preview.thumbnail_data_url.starts_with("data:image/png;base64,"));
+        assert_eq!(
+            preview.path,
+            fs::canonicalize(&file).unwrap().to_string_lossy()
+        );
+        remove_test_directory(directory);
+    }
+
+    #[test]
+    fn image_attachment_preparation_ignores_text_and_rejects_broken_images() {
+        let directory = test_directory("image-attachment-validation");
+        let text_file = directory.join("notes.txt");
+        let broken_image = directory.join("broken.png");
+        fs::write(&text_file, b"plain text").unwrap();
+        fs::write(&broken_image, b"not really a png").unwrap();
+
+        assert!(prepare_image_attachment_blocking(
+            text_file.to_string_lossy().to_string(),
+        )
+        .unwrap()
+        .is_none());
+        assert!(prepare_image_attachment_blocking(
+            broken_image.to_string_lossy().to_string(),
+        )
+        .unwrap_err()
+        .contains("could not be decoded"));
+        remove_test_directory(directory);
+    }
+
+    #[test]
+    fn image_attachment_preparation_rejects_unsupported_and_oversized_images() {
+        let directory = test_directory("image-attachment-limits");
+        let unsupported = directory.join("reference.bmp");
+        fs::write(&unsupported, b"BMunsupported").unwrap();
+        let oversized = directory.join("oversized.png");
+        fs::write(
+            &oversized,
+            [137_u8, 80, 78, 71, 13, 10, 26, 10],
+        )
+        .unwrap();
+        fs::OpenOptions::new()
+            .write(true)
+            .open(&oversized)
+            .unwrap()
+            .set_len(MAX_IMAGE_ATTACHMENT_BYTES + 1)
+            .unwrap();
+
+        assert!(prepare_image_attachment_blocking(
+            unsupported.to_string_lossy().to_string(),
+        )
+        .unwrap_err()
+        .contains("format is unsupported"));
+        assert!(prepare_image_attachment_blocking(
+            oversized.to_string_lossy().to_string(),
+        )
+        .unwrap_err()
+        .contains("25 MB limit"));
+        remove_test_directory(directory);
     }
 
     #[test]

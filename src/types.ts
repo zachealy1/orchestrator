@@ -592,11 +592,24 @@ export type ModelListResponse = {
 
 export type ComposerContextFile = {
   path: string;
+  canonicalPath?: string;
   name: string;
   source: "picker" | "search" | "explorer";
   relativePath?: string;
-  status?: "ready" | "error";
+  mediaKind?: "file" | "image";
+  mimeType?: string;
+  width?: number;
+  height?: number;
+  status?: "loading" | "ready" | "error";
   error?: string | null;
+};
+
+export type ImageAttachmentPreview = {
+  path: string;
+  mimeType: string;
+  width: number;
+  height: number;
+  thumbnailDataUrl: string;
 };
 
 export type ComposerMentionSearchStatus =

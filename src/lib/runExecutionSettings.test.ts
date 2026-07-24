@@ -23,9 +23,14 @@ describe("run execution settings", () => {
       contextFiles: [
         {
           path: "/workspace/src/App.tsx",
+          canonicalPath: "/private/workspace/src/App.tsx",
           name: "App.tsx",
           relativePath: "src/App.tsx",
           source: "search",
+          mediaKind: "image",
+          mimeType: "image/png",
+          width: 1280,
+          height: 720,
           status: "ready",
         },
       ],

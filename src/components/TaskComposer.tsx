@@ -4,6 +4,7 @@ import {
   CircleUserRound,
   Flag,
   FileText,
+  Image as ImageIcon,
   Bot,
   Gauge,
   Paperclip,
@@ -53,6 +54,10 @@ import {
   restorePromptInlineFileReferencesForComposer,
   serializePromptInlineFileReferences,
 } from "../lib/contextFiles";
+import {
+  isImageContextFile,
+  loadImageAttachmentPreview,
+} from "../lib/imageAttachments";
 import { estimateTokens, recommendRoute } from "../lib/taskAnalysis";
 
 type Props = {
@@ -1120,9 +1125,13 @@ const ContextFileList = memo(function ContextFileList({
             key={file.path}
             title={file.path}
           >
-            <span className="context-attachment-icon" aria-hidden="true">
-              <FileText size={23} />
-            </span>
+            {isImageContextFile(file) ? (
+              <ComposerImageAttachmentPreview file={file} />
+            ) : (
+              <span className="context-attachment-icon" aria-hidden="true">
+                <FileText size={23} />
+              </span>
+            )}
             <span className="context-attachment-copy">
               <strong>{file.name}</strong>
               <small>{contextFileExtensionLabel(file.name)}</small>
@@ -1140,6 +1149,42 @@ const ContextFileList = memo(function ContextFileList({
     </div>
   );
 });
+
+const ComposerImageAttachmentPreview = memo(
+  function ComposerImageAttachmentPreview({
+    file,
+  }: {
+    file: ComposerContextFile;
+  }) {
+    const [thumbnailDataUrl, setThumbnailDataUrl] = useState<string | null>(null);
+
+    useEffect(() => {
+      let active = true;
+      void loadImageAttachmentPreview(file.canonicalPath ?? file.path)
+        .then((preview) => {
+          if (active) {
+            setThumbnailDataUrl(preview?.thumbnailDataUrl ?? null);
+          }
+        })
+        .catch(() => {
+          if (active) setThumbnailDataUrl(null);
+        });
+      return () => {
+        active = false;
+      };
+    }, [file.canonicalPath, file.path]);
+
+    return (
+      <span className="context-attachment-icon image" aria-hidden="true">
+        {thumbnailDataUrl ? (
+          <img src={thumbnailDataUrl} alt="" draggable={false} />
+        ) : (
+          <ImageIcon size={18} />
+        )}
+      </span>
+    );
+  },
+);
 
 const PromptInlineHighlight = memo(function PromptInlineHighlight({
   prompt,

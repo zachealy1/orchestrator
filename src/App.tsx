@@ -190,6 +190,12 @@ import {
   serializeRunExecutionSettings,
 } from "./lib/runExecutionSettings";
 import {
+  buildCodexTurnInput,
+  isImageContextFile,
+  normalizeContextFileMedia,
+  prepareContextImageFiles,
+} from "./lib/imageAttachments";
+import {
   createStableClientMessageId,
   isCollaborationModeMask,
   isNativeUserInputRequest,
@@ -563,6 +569,7 @@ type ActiveRunControl = {
   workspaceId: number;
   clientId: string;
   promptFallback: string;
+  imageContextFilesFallback: ComposerContextFile[];
   chatId: number | null;
   stopped: boolean;
   taskId: number | null;
@@ -3999,6 +4006,47 @@ function App() {
     }
   }
 
+  function removeSubmittedImagesFromWorkspaceComposer(
+    workspaceId: number,
+    submittedFiles: ComposerContextFile[],
+  ) {
+    const submittedImagePaths = new Set(
+      submittedFiles
+        .filter(isImageContextFile)
+        .flatMap((file) => [file.path, file.canonicalPath])
+        .filter((path): path is string => Boolean(path)),
+    );
+    if (submittedImagePaths.size === 0) return;
+
+    const currentFiles =
+      selectedWorkspaceRef.current?.id === workspaceId
+        ? contextFilesRef.current
+        : workspaceTaskMemoriesRef.current[workspaceId]?.contextFiles ?? [];
+    updateRememberedWorkspaceComposer(workspaceId, {
+      contextFiles: currentFiles.filter(
+        (file) =>
+          !submittedImagePaths.has(file.path) &&
+          (!file.canonicalPath ||
+            !submittedImagePaths.has(file.canonicalPath)),
+      ),
+    });
+  }
+
+  function restoreRunComposerForRetry(
+    workspaceId: number,
+    prompt: string,
+    imageFiles: ComposerContextFile[],
+  ) {
+    const currentFiles =
+      selectedWorkspaceRef.current?.id === workspaceId
+        ? contextFilesRef.current
+        : workspaceTaskMemoriesRef.current[workspaceId]?.contextFiles ?? [];
+    updateRememberedWorkspaceComposer(workspaceId, {
+      prompt,
+      contextFiles: mergeContextFiles(currentFiles, imageFiles),
+    });
+  }
+
   function rememberedWorkspaceSelectionStillMatches(
     workspaceId: number,
     selection: WorkspaceTaskSelection,
@@ -4560,6 +4608,17 @@ function App() {
     );
   }
 
+  function updateTaskChatEntry(
+    clientId: string,
+    updater: (entry: TaskChatEntry) => TaskChatEntry,
+  ) {
+    setTaskChatEntries((current) =>
+      current.map((entry) =>
+        entry.clientId === clientId ? updater(entry) : entry,
+      ),
+    );
+  }
+
   function updateTaskChatEntryRunView(
     clientId: string,
     updater: (runView: RunViewState) => RunViewState,
@@ -4692,7 +4751,6 @@ function App() {
     flushFrameBatchedCodexNotifications();
     await flushBufferedRunEvents().catch(() => undefined);
 
-    const persistedRunId = control?.runId ?? null;
     const planningThreadId = control?.runView.threadId ?? null;
     const planningTurnId = control?.runView.turnId ?? null;
     const interruptNativePlan =
@@ -4713,11 +4771,21 @@ function App() {
     }
 
     const shouldRestorePrompt =
-      persistedRunId === null && Boolean(control?.promptFallback);
+      control?.turnId === null && Boolean(control?.promptFallback);
     if (!control) return;
     const { completedAt, stoppedRunView } = markRunInterrupted(control);
     if (shouldRestorePrompt && control) {
-      replaceComposerPrompt(control.promptFallback);
+      updateTaskChatEntry(control.clientId, (entry) => ({
+        ...entry,
+        imageAttachmentDelivery: entry.imageAttachmentDelivery
+          ? { status: "failed", error: "Stopped before the image was sent." }
+          : undefined,
+      }));
+      restoreRunComposerForRetry(
+        control.workspaceId,
+        control.promptFallback,
+        control.imageContextFilesFallback,
+      );
     }
     await persistInterruptedRun(control, completedAt, stoppedRunView);
 
@@ -6970,6 +7038,9 @@ function App() {
       workspaceId: snapshot.workspace.id,
       clientId,
       promptFallback: snapshot.promptFallback,
+      imageContextFilesFallback: snapshot.contextFiles
+        .filter(isImageContextFile)
+        .map((file) => ({ ...file })),
       chatId: snapshot.chatId,
       stopped: false,
       taskId: null,
@@ -7001,6 +7072,10 @@ function App() {
       submittedAt,
       status: initialRunView.status,
       runView: initialRunView,
+      imageAttachmentDelivery:
+        snapshot.contextFiles.some(isImageContextFile)
+          ? { status: "preparing", error: null }
+          : undefined,
     };
     flushSync(() => {
       if (snapshot.replacementClientId) {
@@ -7010,6 +7085,10 @@ function App() {
       }
       if (snapshot.restorePromptOnSetupFailure !== false) {
         replaceComposerPrompt("");
+        removeSubmittedImagesFromWorkspaceComposer(
+          snapshot.workspace.id,
+          snapshot.contextFiles,
+        );
       }
     });
     registerRunControl(runControl);
@@ -7038,6 +7117,35 @@ function App() {
           snapshot.selectedBranch
             ? `Could not switch to ${snapshot.selectedBranch}.`
             : "Could not prepare the selected branch.",
+        );
+      }
+      ensureRunControlActive(runControl);
+
+      snapshot.contextFiles = await prepareContextImageFiles(
+        snapshot.contextFiles,
+      );
+      snapshot.executionSettings = createRunExecutionSettings({
+        ...snapshot.executionSettings,
+        contextFiles: snapshot.contextFiles,
+      });
+      runControl.imageContextFilesFallback = snapshot.contextFiles
+        .filter(isImageContextFile)
+        .map((file) => ({ ...file }));
+      updateTaskChatEntry(runControl.clientId, (entry) => ({
+        ...entry,
+        contextFiles: snapshot.contextFiles.map((file) => ({ ...file })),
+        executionSettings: {
+          settings: snapshot.executionSettings,
+          source: "captured",
+        },
+        imageAttachmentDelivery: snapshot.contextFiles.some(isImageContextFile)
+          ? { status: "preparing", error: null }
+          : undefined,
+      }));
+      if (snapshot.restorePromptOnSetupFailure !== false) {
+        removeSubmittedImagesFromWorkspaceComposer(
+          snapshot.workspace.id,
+          snapshot.contextFiles,
         );
       }
       ensureRunControlActive(runControl);
@@ -7459,7 +7567,7 @@ function App() {
           "turn/start",
           {
             threadId: nextThreadId,
-            input: [{ type: "text", text, text_elements: [] }],
+            input: buildCodexTurnInput(text, snapshot.contextFiles),
             additionalContext,
             cwd: snapshot.workspace.path,
             approvalPolicy: snapshot.access.approvalPolicy,
@@ -7544,6 +7652,12 @@ function App() {
         threadId,
         turnId: turn.turn.id,
       }));
+      updateTaskChatEntry(runControl.clientId, (entry) => ({
+        ...entry,
+        imageAttachmentDelivery: entry.imageAttachmentDelivery
+          ? { status: "sent", error: null }
+          : undefined,
+      }));
       await updateRun(run.id, {
         codexTurnId: turn.turn.id,
         status: "running",
@@ -7595,6 +7709,14 @@ function App() {
       }
 
       const message = error instanceof Error ? error.message : String(error);
+      if (runControl.turnId === null) {
+        updateTaskChatEntry(runControl.clientId, (entry) => ({
+          ...entry,
+          imageAttachmentDelivery: entry.imageAttachmentDelivery
+            ? { status: "failed", error: message }
+            : undefined,
+        }));
+      }
       if (snapshot.sourcePlanEntry) {
         restoreTaskChatEntry(
           snapshot.sourcePlanEntry.clientId,
@@ -7632,11 +7754,6 @@ function App() {
         if (snapshot.restoreEntryOnSetupFailure) {
           restoreTaskChatEntry(runControl.clientId, snapshot.restoreEntryOnSetupFailure);
         }
-        if (snapshot.restorePromptOnSetupFailure !== false) {
-          updateRememberedWorkspaceComposer(snapshot.workspace.id, {
-            prompt: snapshot.promptFallback,
-          });
-        }
       } else {
         await updateRun(runId, {
           status: "failed",
@@ -7644,6 +7761,16 @@ function App() {
           durationMs: failedRunView.elapsedMs,
           error: message,
         }).catch(() => undefined);
+      }
+      if (
+        runControl.turnId === null &&
+        snapshot.restorePromptOnSetupFailure !== false
+      ) {
+        restoreRunComposerForRetry(
+          snapshot.workspace.id,
+          snapshot.promptFallback,
+          runControl.imageContextFilesFallback,
+        );
       }
       if (taskId !== null) {
         await updateTaskStatus(taskId, "failed").catch(() => undefined);
@@ -7985,7 +8112,7 @@ function App() {
     const errors = new Map<string, string>();
     const skippedFiles: string[] = [];
 
-    for (const file of files) {
+    for (const file of files.filter((file) => !isImageContextFile(file))) {
       try {
         const content = await readCodexFileForProfile(
           profileKey,
@@ -8007,9 +8134,11 @@ function App() {
       workspaceTaskMemoriesRef.current[workspaceId]?.contextFiles ?? files;
     updateRememberedWorkspaceComposer(workspaceId, {
       contextFiles: rememberedFiles.map((file) =>
-        errors.has(file.path)
-          ? { ...file, status: "error", error: errors.get(file.path) }
-          : { ...file, status: "ready", error: null },
+        isImageContextFile(file)
+          ? { ...file, status: "ready", error: null }
+          : errors.has(file.path)
+            ? { ...file, status: "error", error: errors.get(file.path) }
+            : { ...file, status: "ready", error: null },
       ),
     });
 
@@ -10509,12 +10638,12 @@ function App() {
   }
 
   function contextFileFromWorkspaceEntry(file: WorkspaceTreeEntry): ComposerContextFile {
-    return {
+    return normalizeContextFileMedia({
       path: file.path,
       name: file.name,
       source: "explorer",
       status: "ready",
-    };
+    });
   }
 
   function addDroppedContextFiles(files: ComposerContextFile[]) {
@@ -12790,6 +12919,8 @@ function createTaskChatEntryFromHistoryRun(run: HistoryRunSummary): TaskChatEntr
       : savedPlanReviewState
     : "none";
   const latestDiff = run.latest_diff ?? "";
+  const hasSubmittedImages =
+    executionSettings.settings.contextFiles.some(isImageContextFile);
 
   return {
     clientId: `history-run-${run.id}`,
@@ -12800,6 +12931,11 @@ function createTaskChatEntryFromHistoryRun(run: HistoryRunSummary): TaskChatEntr
     taskId: run.task_id,
     prompt: run.original_prompt,
     contextFiles: executionSettings.settings.contextFiles,
+    imageAttachmentDelivery: hasSubmittedImages
+      ? run.codex_turn_id || status === "completed"
+        ? { status: "sent", error: null }
+        : { status: "failed", error: run.error ?? "Image was not sent." }
+      : undefined,
     executionSettings,
     submittedAt: run.started_at,
     status,
@@ -13169,12 +13305,12 @@ function normalizeDialogSelection(selection: unknown) {
 }
 
 function contextFileFromPath(path: string): ComposerContextFile {
-  return {
+  return normalizeContextFileMedia({
     path,
     name: basename(path),
     source: "picker",
     status: "ready",
-  };
+  });
 }
 
 function cleanGeneratedCommitSubject(subject: string) {
@@ -13724,13 +13860,28 @@ function mergeContextFiles(
   current: ComposerContextFile[],
   additions: ComposerContextFile[],
 ) {
-  const existing = new Set(current.map((file) => file.path));
+  const existing = new Set(
+    current.flatMap((file) =>
+      file.canonicalPath ? [file.path, file.canonicalPath] : [file.path],
+    ),
+  );
   const merged = [...current];
 
   for (const file of additions) {
-    if (!existing.has(file.path)) {
+    if (
+      !existing.has(file.path) &&
+      (!file.canonicalPath || !existing.has(file.canonicalPath))
+    ) {
       existing.add(file.path);
-      merged.push({ ...file, status: file.status ?? "ready" });
+      if (file.canonicalPath) {
+        existing.add(file.canonicalPath);
+      }
+      merged.push(
+        normalizeContextFileMedia({
+          ...file,
+          status: file.status ?? "ready",
+        }),
+      );
     }
   }
 

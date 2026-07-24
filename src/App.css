@@ -2465,6 +2465,75 @@ button.account-switcher-item:hover:not(:disabled) {
   max-width: min(760px, 86%);
 }
 
+.submitted-image-attachments {
+  display: flex;
+  max-width: 100%;
+  justify-content: flex-end;
+  gap: 7px;
+  flex-wrap: wrap;
+}
+
+.submitted-image-attachment {
+  position: relative;
+  display: grid;
+  width: min(156px, 42vw);
+  aspect-ratio: 4 / 3;
+  max-height: 180px;
+  place-items: center;
+  overflow: hidden;
+  margin: 0;
+  border: 1px solid var(--color-divider);
+  border-radius: 8px;
+  background: var(--color-component-background);
+  color: var(--color-icon-muted);
+}
+
+.submitted-image-attachment img {
+  width: 100%;
+  height: 100%;
+  min-height: 0;
+  object-fit: contain;
+}
+
+.submitted-image-attachment figcaption {
+  position: absolute;
+  right: 5px;
+  bottom: 5px;
+  left: 5px;
+  display: inline-flex;
+  min-width: 0;
+  min-height: 24px;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  border-radius: 6px;
+  background: var(--color-component-background);
+  color: var(--color-text-secondary);
+  font-size: 0.68rem;
+  line-height: 1.2;
+  padding: 4px 6px;
+}
+
+.submitted-image-attachment figcaption.filename {
+  display: block;
+  overflow: hidden;
+  text-align: center;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.submitted-image-attachment.state-failed {
+  color: var(--color-error);
+}
+
+.submitted-image-attachment.state-failed figcaption {
+  color: var(--color-error);
+}
+
+.submitted-image-attachment.state-preparing figcaption svg {
+  animation: spin 900ms linear infinite;
+}
+
 .submitted-prompt {
   max-width: 100%;
   overflow-wrap: anywhere;
@@ -4814,6 +4883,16 @@ button.composer-select-option.action:not(:first-child) {
 .context-attachment-icon svg {
   width: 17px;
   height: 17px;
+}
+
+.context-attachment-icon.image {
+  overflow: hidden;
+}
+
+.context-attachment-icon.image img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
 }
 
 .context-attachment-copy {
