@@ -5507,14 +5507,7 @@ button.pending-interaction-nav:disabled {
 
 .edited-prompt-notice > svg {
   flex: 0 0 auto;
-}
-
-.edited-prompt-notice.error > svg {
   color: var(--color-error);
-}
-
-.edited-prompt-notice.warning > svg {
-  color: var(--color-warning, #c88b2d);
 }
 
 .run-details {

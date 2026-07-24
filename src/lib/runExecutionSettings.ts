@@ -10,9 +10,6 @@ import type {
 
 export const RUN_EXECUTION_SETTINGS_VERSION = 1;
 
-export const LEGACY_EXECUTION_SETTINGS_MESSAGE =
-  "This run predates saved execution settings. Orchestrator reconstructed the available settings and used conservative defaults for options that were not recorded.";
-
 type RunExecutionSettingsInput = Omit<RunExecutionSettings, "version">;
 
 type LegacyRunSettingsRecord = {
@@ -73,7 +70,6 @@ export function resolveStoredRunExecutionSettings(
     return {
       settings: captured,
       source: "captured",
-      compatibilityMessage: null,
     };
   }
 
@@ -111,7 +107,6 @@ export function resolveStoredRunExecutionSettings(
       goalMode: false,
     }),
     source: "legacy",
-    compatibilityMessage: LEGACY_EXECUTION_SETTINGS_MESSAGE,
   };
 }
 

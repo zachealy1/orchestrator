@@ -7305,10 +7305,10 @@ describe("App Codex auth", () => {
     await user.click(await screen.findByRole("button", { name: "Edit prompt" }));
     await user.click(screen.getByRole("button", { name: "Run edited prompt" }));
 
-    expect(
-      await screen.findByText(/predates saved execution settings/i),
-    ).toBeInTheDocument();
     await waitFor(() => expect(mocks.createRunMock).toHaveBeenCalledTimes(1));
+    expect(
+      screen.queryByText(/predates saved execution settings/i),
+    ).not.toBeInTheDocument();
     expect(
       JSON.parse(mocks.createRunMock.mock.calls[0]?.[0].executionSettingsJson),
     ).toEqual(

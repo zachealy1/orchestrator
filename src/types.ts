@@ -668,7 +668,6 @@ export type RunExecutionSettingsSource = "captured" | "legacy";
 export type ResolvedRunExecutionSettings = {
   settings: RunExecutionSettings;
   source: RunExecutionSettingsSource;
-  compatibilityMessage: string | null;
 };
 
 export type ComposerModeState = {

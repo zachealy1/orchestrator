@@ -1,6 +1,5 @@
 import { describe, expect, it } from "vitest";
 import {
-  LEGACY_EXECUTION_SETTINGS_MESSAGE,
   createRunExecutionSettings,
   parseRunExecutionSettings,
   resolveStoredRunExecutionSettings,
@@ -81,7 +80,6 @@ describe("run execution settings", () => {
 
     expect(resolved).toEqual({
       source: "legacy",
-      compatibilityMessage: LEGACY_EXECUTION_SETTINGS_MESSAGE,
       settings: expect.objectContaining({
         version: 1,
         accountId: 7,

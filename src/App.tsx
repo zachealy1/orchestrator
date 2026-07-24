@@ -618,7 +618,6 @@ type RunSetupSnapshot = {
   sourcePlanEntry?: TaskChatEntry;
   defaultCollaborationMode?: CollaborationMode | null;
   executionSettings: RunExecutionSettings;
-  compatibilityMessage?: string | null;
 };
 
 type WorkspaceHistoryState = {
@@ -1374,9 +1373,9 @@ function App() {
     string | null
   >(null);
   const [editedPromptNotice, setEditedPromptNotice] = useState<{
+    kind: "rerun-error";
     workspaceId: number;
     entryId: string;
-    tone: "error" | "warning";
     message: string;
   } | null>(null);
   const collaborationModeMasksRef = useRef(
@@ -6998,7 +6997,6 @@ function App() {
       executionSettings: {
         settings: snapshot.executionSettings,
         source: "captured",
-        compatibilityMessage: snapshot.compatibilityMessage ?? null,
       },
       submittedAt,
       status: initialRunView.status,
@@ -7392,9 +7390,7 @@ function App() {
       });
       ensureRunControlActive(runControl);
 
-      const warnings: string[] = snapshot.compatibilityMessage
-        ? [snapshot.compatibilityMessage]
-        : [];
+      const warnings: string[] = [];
       if (snapshot.goalMode) {
         try {
           await setThreadGoalForProfile(
@@ -7806,9 +7802,9 @@ function App() {
     const showRerunIssue = (message: string) => {
       setStatusMessage(message);
       setEditedPromptNotice({
+        kind: "rerun-error",
         workspaceId: entry.workspaceId,
         entryId: entry.clientId,
-        tone: "error",
         message,
       });
     };
@@ -7973,19 +7969,9 @@ function App() {
         ...originalSettings,
         contextFiles: originalContextFiles,
       }),
-      compatibilityMessage:
-        resolvedExecutionSettings.compatibilityMessage,
     };
 
     const runControl = beginOptimisticRun(snapshot);
-    if (resolvedExecutionSettings.compatibilityMessage) {
-      setEditedPromptNotice({
-        workspaceId: workspace.id,
-        entryId: runControl.clientId,
-        tone: "warning",
-        message: resolvedExecutionSettings.compatibilityMessage,
-      });
-    }
     scheduleRunSetup(runControl, snapshot);
   }
 
@@ -11514,13 +11500,14 @@ function App() {
                   </div>
                 ) : null}
                 {editedPromptNotice &&
+                editedPromptNotice.kind === "rerun-error" &&
                 editedPromptNotice.workspaceId === selectedWorkspace?.id &&
                 visibleTaskChatEntries.some(
                   (entry) => entry.clientId === editedPromptNotice.entryId,
                 ) ? (
                   <div
-                    className={`edited-prompt-notice ${editedPromptNotice.tone}`}
-                    role={editedPromptNotice.tone === "error" ? "alert" : "status"}
+                    className="edited-prompt-notice"
+                    role="alert"
                   >
                     <AlertCircle size={16} aria-hidden="true" />
                     <span>{editedPromptNotice.message}</span>
