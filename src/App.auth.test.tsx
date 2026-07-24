@@ -5498,6 +5498,8 @@ describe("App Codex auth", () => {
       .toBeInTheDocument();
     expect(within(submittedImages).queryByText("screenshot.png"))
       .not.toBeInTheDocument();
+    expect(within(submittedImages).queryByText("Preparing image"))
+      .not.toBeInTheDocument();
     await waitFor(() => expect(mocks.runPreflightMock).toHaveBeenCalledTimes(1));
     expect(
       mocks.codexRpcMock.mock.calls.some(([, method]) => method === "turn/start"),

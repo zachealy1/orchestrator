@@ -1590,14 +1590,13 @@ const SubmittedImageAttachment = memo(function SubmittedImageAttachment({
   const statusText =
     state === "failed"
       ? "Image not sent"
-      : state === "preparing"
-        ? "Preparing image"
-        : state === "unavailable"
-          ? "Image unavailable"
-          : null;
+      : state === "unavailable"
+        ? "Image unavailable"
+        : null;
   return (
     <figure
       className={`submitted-image-attachment state-${state}`}
+      aria-busy={state === "preparing"}
       title={
         delivery?.status === "failed" && delivery.error
           ? `${file.name}: ${delivery.error}`
@@ -1609,11 +1608,13 @@ const SubmittedImageAttachment = memo(function SubmittedImageAttachment({
       ) : (
         <ImageIcon size={24} aria-hidden="true" />
       )}
+      {state === "preparing" ? (
+        <span className="submitted-image-preparing-spinner" aria-hidden="true">
+          <Loader2 size={14} />
+        </span>
+      ) : null}
       {statusText ? (
         <figcaption>
-          {state === "preparing" ? (
-            <Loader2 size={13} aria-hidden="true" />
-          ) : null}
           <span>{statusText}</span>
         </figcaption>
       ) : null}
