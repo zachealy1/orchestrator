@@ -89,6 +89,7 @@ import {
   type HistoryTranscriptIndex,
   type HistoryTurnHint,
   type PreparedHistoricalSummary,
+  type ResolvedRunExecutionSettings,
 } from "../types";
 
 const AUTO_SCROLL_BOTTOM_THRESHOLD_PX = 48;
@@ -251,6 +252,7 @@ export type TaskChatEntry = {
   taskId: number | null;
   prompt: string;
   contextFiles?: ComposerContextFile[];
+  executionSettings?: ResolvedRunExecutionSettings;
   submittedAt: string;
   status: RunViewState["status"];
   runView: RunViewState;

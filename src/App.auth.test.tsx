@@ -3,7 +3,10 @@ import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import App from "./App";
 import { ASK_FOR_APPROVAL_PERMISSION_PROFILE } from "./lib/codexAccess";
-import { ORCHESTRATOR_CONTEXT_FILE_MIME } from "./types";
+import {
+  ORCHESTRATOR_CONTEXT_FILE_MIME,
+  type RunListItem,
+} from "./types";
 
 const mocks = vi.hoisted(() => ({
   listeners: new Map<string, (event: { payload: unknown }) => void>(),
@@ -326,21 +329,19 @@ const preflight = {
   recommendations: [],
 };
 
+type WorkspaceRunFixture = RunListItem & {
+  latest_diff?: string | null;
+};
+
 function workspaceRunFixture(
-  overrides: Partial<{
-    id: number;
-    chat_id: number | null;
-    turn_index: number | null;
-    original_prompt: string;
-    final_message: string | null;
-  }> = {},
-) {
+  overrides: Partial<WorkspaceRunFixture> = {},
+): WorkspaceRunFixture {
   return {
-    id: overrides.id ?? 301,
+    id: 301,
     task_id: 101,
     workspace_id: workspace.id,
-    chat_id: overrides.chat_id ?? 401,
-    turn_index: overrides.turn_index ?? 1,
+    chat_id: 401,
+    turn_index: 1,
     account_id: 7,
     account_label: "dev@example.com",
     account_email: "dev@example.com",
@@ -354,9 +355,9 @@ function workspaceRunFixture(
     started_at: "2026-06-30T09:00:00Z",
     completed_at: "2026-06-30T09:01:00Z",
     duration_ms: 60000,
-    final_message: overrides.final_message ?? "Done.",
+    final_message: "Done.",
     error: null,
-    original_prompt: overrides.original_prompt ?? "Fix the app",
+    original_prompt: "Fix the app",
     improved_prompt: "Objective\nFix the app",
     route_recommendation: "direct-run" as const,
     budget_tokens: 42,
@@ -365,6 +366,14 @@ function workspaceRunFixture(
     latest_run_cached_input_tokens: 50,
     latest_context_tokens: 640,
     latest_model_context_window: 128000,
+    collaboration_mode: "default" as const,
+    run_intent: "normal" as const,
+    client_user_message_id: null,
+    completed_plan_item_id: null,
+    completed_plan_text: null,
+    plan_review_state: "none" as const,
+    execution_settings_json: null,
+    ...overrides,
   };
 }
 
@@ -4770,7 +4779,7 @@ describe("App Codex auth", () => {
       completed_plan_item_id: "plan-item-1",
       completed_plan_text: "# Persisted plan\n\n1. Reconcile it",
       plan_review_state: "available",
-    };
+    } satisfies WorkspaceRunFixture;
     mocks.listWorkspaceChatsMock.mockResolvedValue([chat]);
     mocks.getChatWithRunsMock.mockResolvedValue(
       workspaceChatWithRunsFixture(chat, [run]),
@@ -4881,7 +4890,7 @@ describe("App Codex auth", () => {
       completed_plan_item_id: null,
       completed_plan_text: null,
       plan_review_state: "none",
-    };
+    } satisfies WorkspaceRunFixture;
     mocks.listWorkspaceChatsMock.mockResolvedValue([chat]);
     mocks.getChatWithRunsMock.mockResolvedValue(
       workspaceChatWithRunsFixture(chat, [run]),
@@ -6858,6 +6867,467 @@ describe("App Codex auth", () => {
     expect(
       within(transcript).queryByText("Original prompt"),
     ).not.toBeInTheDocument();
+  });
+
+  it("reruns an edited prompt with its original execution settings", async () => {
+    prepareSignedInRun();
+    const originalModel = {
+      id: "gpt-original",
+      model: "gpt-original",
+      displayName: "Original model",
+      description: "Original model",
+      hidden: false,
+      supportedReasoningEfforts: [
+        { reasoningEffort: "low", description: "Low" },
+        { reasoningEffort: "high", description: "High" },
+      ],
+      defaultReasoningEffort: "high",
+      isDefault: true,
+    };
+    const currentModel = {
+      id: "gpt-current",
+      model: "gpt-current",
+      displayName: "Current model",
+      description: "Current model",
+      hidden: false,
+      supportedReasoningEfforts: [
+        { reasoningEffort: "medium", description: "Medium" },
+      ],
+      defaultReasoningEffort: "medium",
+      isDefault: false,
+    };
+    mocks.listCodexModelsMock.mockResolvedValue([originalModel, currentModel]);
+    mocks.listCodexSkillsMock.mockResolvedValue([
+      {
+        id: "docs",
+        name: "Docs",
+        description: "Use repository documentation",
+      },
+    ]);
+    mocks.openDialogMock.mockResolvedValue(`${workspace.path}/README.md`);
+    const confirm = vi.spyOn(window, "confirm").mockReturnValue(true);
+
+    const { user } = await renderApp();
+    await user.click(await screen.findByRole("combobox", { name: "Reasoning" }));
+    await user.click(screen.getByRole("option", { name: "Low" }));
+    await user.click(screen.getByRole("button", { name: "Add files" }));
+    await user.click(screen.getByRole("button", { name: "Goal mode" }));
+    const promptInput = screen.getByLabelText("Prompt");
+    await user.type(promptInput, "Fix docs /docs");
+    await user.click(await screen.findByRole("option", { name: /docs/i }));
+    await user.click(screen.getByRole("button", { name: /run codex/i }));
+
+    await waitFor(() => expect(mocks.createRunMock).toHaveBeenCalledTimes(1));
+    const firstSettings = JSON.parse(
+      mocks.createRunMock.mock.calls[0]?.[0].executionSettingsJson,
+    );
+    expect(firstSettings).toEqual(
+      expect.objectContaining({
+        version: 1,
+        accountId: 7,
+        profileKey: "account:7",
+        selectedBranch: "main",
+        mode: "run",
+        intent: "normal",
+        accessMode: "ask-for-approval",
+        computerUseEnabled: true,
+        model: "gpt-original",
+        reasoningEffort: "low",
+        useOss: false,
+        ossProvider: "ollama",
+        goalMode: true,
+        contextFiles: [
+          expect.objectContaining({
+            path: `${workspace.path}/README.md`,
+            source: "picker",
+          }),
+        ],
+        selectedSkills: [
+          expect.objectContaining({ id: "docs", name: "Docs" }),
+        ],
+      }),
+    );
+
+    await emitCodexNotification({
+      method: "turn/completed",
+      params: { turn: { status: "completed", durationMs: 1000 } },
+    });
+    mocks.readCodexFileMock.mockResolvedValue("updated file contents");
+    await user.click(screen.getByRole("button", { name: "Goal mode" }));
+    await user.click(screen.getByRole("combobox", { name: "Agent" }));
+    await user.click(screen.getByRole("option", { name: "Current model" }));
+    await user.click(screen.getByRole("combobox", { name: "Access" }));
+    await user.click(screen.getByRole("option", { name: "Full access" }));
+
+    await user.click(await screen.findByRole("button", { name: "Edit prompt" }));
+    await user.clear(screen.getByLabelText("Edit submitted prompt"));
+    await user.type(
+      screen.getByLabelText("Edit submitted prompt"),
+      "Fix docs more carefully",
+    );
+    await user.click(screen.getByRole("button", { name: "Run edited prompt" }));
+
+    await waitFor(() => expect(mocks.createRunMock).toHaveBeenCalledTimes(2));
+    const secondSettings = JSON.parse(
+      mocks.createRunMock.mock.calls[1]?.[0].executionSettingsJson,
+    );
+    expect(secondSettings).toEqual(firstSettings);
+    expect(mocks.createRunMock).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        sandbox: "workspace-write",
+        approvalPolicy: "untrusted",
+        model: "gpt-original",
+      }),
+    );
+    expect(mocks.setThreadGoalMock).toHaveBeenCalledTimes(2);
+    expect(mocks.readCodexFileMock).toHaveBeenCalledWith(
+      7,
+      `${workspace.path}/README.md`,
+    );
+    const turnStarts = mocks.codexRpcMock.mock.calls.filter(
+      ([, method]) => method === "turn/start",
+    );
+    expect(turnStarts[1]?.[2]).toEqual(
+      expect.objectContaining({
+        model: "gpt-original",
+        effort: "low",
+        approvalPolicy: "untrusted",
+        permissions: ASK_FOR_APPROVAL_PERMISSION_PROFILE,
+        additionalContext: {
+          [`file:${workspace.path}/README.md`]: {
+            kind: "untrusted",
+            value: expect.stringContaining("updated file contents"),
+          },
+        },
+        input: [
+          expect.objectContaining({
+            text: expect.stringContaining(
+              "Docs: Use repository documentation",
+            ),
+          }),
+        ],
+      }),
+    );
+    expect(mocks.prepareBrowserSessionMock).toHaveBeenCalledTimes(2);
+    expect(screen.getByRole("combobox", { name: "Agent" })).toHaveTextContent(
+      "Current model",
+    );
+    expect(screen.getByRole("combobox", { name: "Access" })).toHaveTextContent(
+      "Full access",
+    );
+    expect(screen.getByRole("button", { name: "Goal mode" })).toHaveAttribute(
+      "aria-pressed",
+      "false",
+    );
+    expect(confirm).toHaveBeenCalledTimes(1);
+  });
+
+  it("requires Full access confirmation again before replacing an edited turn", async () => {
+    prepareSignedInRun();
+    const confirm = vi.spyOn(window, "confirm").mockReturnValue(true);
+
+    const { user } = await renderApp();
+    await user.click(screen.getByRole("combobox", { name: "Access" }));
+    await user.click(screen.getByRole("option", { name: "Full access" }));
+    await startMockRun(user, "Original full-access prompt");
+    await emitCodexNotification({
+      method: "turn/completed",
+      params: { turn: { status: "completed", durationMs: 1000 } },
+    });
+
+    confirm.mockReturnValue(false);
+    await user.click(await screen.findByRole("button", { name: "Edit prompt" }));
+    await user.clear(screen.getByLabelText("Edit submitted prompt"));
+    await user.type(screen.getByLabelText("Edit submitted prompt"), "Edited prompt");
+    await user.click(screen.getByRole("button", { name: "Run edited prompt" }));
+
+    await waitFor(() => expect(confirm).toHaveBeenCalledTimes(2));
+    expect(mocks.createRunMock).toHaveBeenCalledTimes(1);
+    expect(screen.getByLabelText("Submitted prompt")).toHaveTextContent(
+      "Original full-access prompt",
+    );
+  });
+
+  it("preserves Plan Mode when rerunning an edited prompt after the toggle resets", async () => {
+    prepareSignedInRun();
+    mocks.codexRpcMock.mockImplementation(
+      async (_accountId: number, method: string) => {
+        if (method === "collaborationMode/list") {
+          return {
+            data: [
+              { name: "Plan", mode: "plan", reasoning_effort: "medium" },
+              { name: "Default", mode: "default", reasoning_effort: null },
+            ],
+          };
+        }
+        if (method === "thread/start") {
+          return { thread: { id: "thread-1" } };
+        }
+        if (method === "turn/start") {
+          return { turn: { id: "turn-1" } };
+        }
+        return {};
+      },
+    );
+
+    const { user } = await renderApp();
+    await user.click(screen.getByRole("button", { name: "Plan mode" }));
+    await startMockRun(user, "Plan the original change");
+    expect(screen.getByRole("button", { name: "Plan mode" })).toHaveAttribute(
+      "aria-pressed",
+      "false",
+    );
+    await emitCodexNotification({
+      method: "turn/completed",
+      params: { turn: { status: "completed", durationMs: 1000 } },
+    });
+
+    await user.click(await screen.findByRole("button", { name: "Edit prompt" }));
+    await user.clear(screen.getByLabelText("Edit submitted prompt"));
+    await user.type(
+      screen.getByLabelText("Edit submitted prompt"),
+      "Plan the corrected change",
+    );
+    await user.click(screen.getByRole("button", { name: "Run edited prompt" }));
+
+    await waitFor(() => expect(mocks.createRunMock).toHaveBeenCalledTimes(2));
+    const settings = JSON.parse(
+      mocks.createRunMock.mock.calls[1]?.[0].executionSettingsJson,
+    );
+    expect(settings).toEqual(
+      expect.objectContaining({
+        mode: "plan",
+        intent: "plan",
+        goalMode: false,
+      }),
+    );
+    const turnStarts = mocks.codexRpcMock.mock.calls.filter(
+      ([, method]) => method === "turn/start",
+    );
+    expect(turnStarts[1]?.[2]).toEqual(
+      expect.objectContaining({
+        collaborationMode: expect.objectContaining({ mode: "plan" }),
+      }),
+    );
+    expect(screen.getByRole("button", { name: "Plan mode" })).toHaveAttribute(
+      "aria-pressed",
+      "false",
+    );
+  });
+
+  it("loads persisted execution settings before editing a historical prompt", async () => {
+    prepareSignedInRun();
+    const originalModel = {
+      id: "gpt-original",
+      model: "gpt-original",
+      displayName: "Original model",
+      description: "Original model",
+      hidden: false,
+      supportedReasoningEfforts: [
+        { reasoningEffort: "high", description: "High" },
+      ],
+      defaultReasoningEffort: "high",
+      isDefault: true,
+    };
+    mocks.listCodexModelsMock.mockResolvedValue([originalModel]);
+    const historicalChat = workspaceChatFixture({
+      id: 408,
+      title: "Persist original settings",
+    });
+    const persistedSettings = {
+      version: 1,
+      accountId: 7,
+      profileKey: "account:7",
+      selectedBranch: "main",
+      mode: "run",
+      intent: "normal",
+      accessMode: "ask-for-approval",
+      computerUseEnabled: false,
+      model: "gpt-original",
+      reasoningEffort: "high",
+      useOss: false,
+      ossProvider: "lmstudio",
+      contextFiles: [
+        {
+          path: `${workspace.path}/README.md`,
+          name: "README.md",
+          relativePath: "README.md",
+          source: "picker",
+          status: "ready",
+        },
+      ],
+      selectedSkills: [
+        {
+          id: "docs",
+          name: "Docs",
+          description: "Use repository documentation",
+        },
+      ],
+      goalMode: false,
+    };
+    const historicalRun = {
+      ...workspaceRunFixture({
+        id: 308,
+        chat_id: historicalChat.id,
+        original_prompt: "Persist original settings",
+        final_message: "Original response.",
+      }),
+      run_intent: "normal",
+      collaboration_mode: "default",
+      completed_plan_item_id: null,
+      completed_plan_text: null,
+      plan_review_state: "none",
+      execution_settings_json: JSON.stringify(persistedSettings),
+    } satisfies WorkspaceRunFixture;
+    mocks.listWorkspaceChatsMock.mockResolvedValue([historicalChat]);
+    mocks.getChatWithRunsMock.mockResolvedValue(
+      workspaceChatWithRunsFixture(historicalChat, [historicalRun]),
+    );
+    mocks.listLocalChatTranscriptMock.mockResolvedValue([historicalRun]);
+
+    const { user } = await renderApp();
+    const banner = screen.getByRole("region", { name: "Selected folder" });
+    await user.click(
+      within(banner).getByRole("button", { name: /open chat history/i }),
+    );
+    const drawer = await screen.findByRole("complementary", {
+      name: "Workspace chat history",
+    });
+    await user.click(
+      within(drawer).getByRole("button", { name: /persist original settings/i }),
+    );
+    await user.click(await screen.findByRole("button", { name: "Edit prompt" }));
+    await user.click(screen.getByRole("button", { name: "Run edited prompt" }));
+
+    await waitFor(() => expect(mocks.createRunMock).toHaveBeenCalledTimes(1));
+    expect(
+      JSON.parse(mocks.createRunMock.mock.calls[0]?.[0].executionSettingsJson),
+    ).toEqual(persistedSettings);
+    expect(mocks.prepareBrowserSessionMock).not.toHaveBeenCalled();
+    expect(mocks.readCodexFileMock).toHaveBeenCalledWith(
+      7,
+      `${workspace.path}/README.md`,
+    );
+    expect(
+      mocks.codexRpcMock.mock.calls.find(([, method]) => method === "turn/start")
+        ?.[2],
+    ).toEqual(
+      expect.objectContaining({
+        model: "gpt-original",
+        effort: "high",
+        input: [
+          expect.objectContaining({
+            text: expect.stringContaining("Docs: Use repository documentation"),
+          }),
+        ],
+      }),
+    );
+  });
+
+  it("keeps the original turn visible when its saved model is unavailable", async () => {
+    prepareSignedInRun();
+    const unavailableModel = {
+      id: "removed-model",
+      model: "removed-model",
+      displayName: "Removed model",
+      description: "Removed model",
+      hidden: false,
+      supportedReasoningEfforts: [
+        { reasoningEffort: "high", description: "High" },
+      ],
+      defaultReasoningEffort: "high",
+      isDefault: true,
+    };
+    mocks.listCodexModelsMock.mockResolvedValueOnce([unavailableModel]);
+
+    const { user } = await renderApp();
+    expect(
+      await screen.findByRole("combobox", { name: "Agent" }),
+    ).toHaveTextContent("Removed model");
+    await startMockRun(user, "Keep this prompt visible");
+    await emitCodexNotification({
+      method: "turn/completed",
+      params: { turn: { status: "completed", durationMs: 1000 } },
+    });
+    mocks.listCodexModelsMock.mockResolvedValue([]);
+
+    await user.click(await screen.findByRole("button", { name: "Edit prompt" }));
+    await user.clear(screen.getByLabelText("Edit submitted prompt"));
+    await user.type(screen.getByLabelText("Edit submitted prompt"), "Do not replace");
+    await user.click(screen.getByRole("button", { name: "Run edited prompt" }));
+
+    expect(
+      await screen.findByText(
+        "The original model removed-model is no longer available.",
+      ),
+    ).toBeInTheDocument();
+    expect(mocks.createRunMock).toHaveBeenCalledTimes(1);
+    expect(screen.getByLabelText("Submitted prompt")).toHaveTextContent(
+      "Keep this prompt visible",
+    );
+  });
+
+  it("reconstructs malformed legacy settings without changing composer defaults", async () => {
+    prepareSignedInRun();
+    const historicalChat = workspaceChatFixture({
+      id: 409,
+      title: "Legacy settings",
+      turn_count: 1,
+    });
+    const historicalRun = {
+      ...workspaceRunFixture({
+        id: 309,
+        chat_id: historicalChat.id,
+        original_prompt: "Legacy prompt",
+        final_message: "Legacy response.",
+      }),
+      model: null,
+      model_provider: null,
+      execution_settings_json: "{invalid",
+    };
+    mocks.listWorkspaceChatsMock.mockResolvedValue([historicalChat]);
+    mocks.getChatWithRunsMock.mockResolvedValue(
+      workspaceChatWithRunsFixture(historicalChat, [historicalRun]),
+    );
+    mocks.listLocalChatTranscriptMock.mockResolvedValue([historicalRun]);
+
+    const { user } = await renderApp();
+    const banner = screen.getByRole("region", { name: "Selected folder" });
+    await user.click(
+      within(banner).getByRole("button", { name: /open chat history/i }),
+    );
+    const drawer = await screen.findByRole("complementary", {
+      name: "Workspace chat history",
+    });
+    await user.click(
+      within(drawer).getByRole("button", { name: /legacy settings/i }),
+    );
+    await user.click(await screen.findByRole("button", { name: "Edit prompt" }));
+    await user.click(screen.getByRole("button", { name: "Run edited prompt" }));
+
+    expect(
+      await screen.findByText(/predates saved execution settings/i),
+    ).toBeInTheDocument();
+    await waitFor(() => expect(mocks.createRunMock).toHaveBeenCalledTimes(1));
+    expect(
+      JSON.parse(mocks.createRunMock.mock.calls[0]?.[0].executionSettingsJson),
+    ).toEqual(
+      expect.objectContaining({
+        accountId: 7,
+        profileKey: "account:7",
+        mode: "run",
+        accessMode: "ask-for-approval",
+        computerUseEnabled: false,
+        model: null,
+        reasoningEffort: null,
+        contextFiles: [],
+        selectedSkills: [],
+        goalMode: false,
+      }),
+    );
+    expect(screen.getByRole("combobox", { name: "Access" })).toHaveTextContent(
+      "Ask for approval",
+    );
   });
 
   it("retries an edited prompt after account/read times out before chat creation", async () => {

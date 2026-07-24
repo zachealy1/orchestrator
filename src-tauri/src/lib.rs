@@ -885,6 +885,14 @@ fn migrations() -> Vec<Migration> {
             ",
             kind: MigrationKind::Up,
         },
+        Migration {
+            version: 17,
+            description: "persist_run_execution_settings",
+            sql: "
+                ALTER TABLE runs ADD COLUMN execution_settings_json TEXT;
+            ",
+            kind: MigrationKind::Up,
+        },
     ]
 }
 
@@ -5672,6 +5680,23 @@ mod tests {
         for pair in versions.windows(2) {
             assert_ne!(pair[0], pair[1], "duplicate migration version {}", pair[0]);
         }
+    }
+
+    #[test]
+    fn run_execution_settings_use_a_new_immutable_migration_slot() {
+        let all_migrations = migrations();
+        let execution_settings = all_migrations
+            .iter()
+            .find(|migration| migration.version == 17)
+            .expect("migration 17");
+
+        assert_eq!(
+            execution_settings.description,
+            "persist_run_execution_settings"
+        );
+        assert!(execution_settings
+            .sql
+            .contains("ADD COLUMN execution_settings_json TEXT"));
     }
 
     #[test]

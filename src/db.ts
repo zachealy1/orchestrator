@@ -583,6 +583,7 @@ export async function createRun(input: {
   collaborationMode?: "plan" | "default" | null;
   runIntent?: "normal" | "plan" | "plan-revision" | "plan-implementation";
   clientUserMessageId?: string | null;
+  executionSettingsJson?: string | null;
 }) {
   const db = await getDatabase();
   const result = await db.execute(
@@ -590,8 +591,11 @@ export async function createRun(input: {
       task_id, workspace_id, chat_id, turn_index,
       account_id, account_label, account_email,
       status, sandbox, approval_policy, model, model_provider,
-      collaboration_mode, run_intent, client_user_message_id
-    ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)`,
+      collaboration_mode, run_intent, client_user_message_id,
+      execution_settings_json
+    ) VALUES (
+      $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16
+    )`,
     [
       input.taskId,
       input.workspaceId,
@@ -608,6 +612,7 @@ export async function createRun(input: {
       input.collaborationMode ?? null,
       input.runIntent ?? "normal",
       input.clientUserMessageId ?? null,
+      input.executionSettingsJson ?? null,
     ],
   );
 
@@ -618,7 +623,7 @@ export async function createRun(input: {
       sandbox, approval_policy, status, started_at, completed_at, duration_ms,
       final_message, error, collaboration_mode, run_intent,
       client_user_message_id, completed_plan_item_id, completed_plan_text,
-      plan_review_state
+      plan_review_state, execution_settings_json
      FROM runs WHERE id = $1`,
     [result.lastInsertId],
   );
@@ -783,6 +788,7 @@ export async function listWorkspaceRuns(workspaceId: number) {
       runs.started_at, runs.completed_at, runs.duration_ms, runs.final_message, runs.error,
       runs.collaboration_mode, runs.run_intent, runs.client_user_message_id,
       runs.completed_plan_item_id, runs.completed_plan_text, runs.plan_review_state,
+      runs.execution_settings_json,
       tasks.original_prompt, tasks.improved_prompt, tasks.route_recommendation, tasks.budget_tokens,
       latest_tokens.total_tokens AS latest_total_tokens,
       latest_tokens.run_tokens AS latest_run_tokens,
@@ -940,6 +946,7 @@ export async function getChatWithRuns(chatId: number): Promise<ChatWithRuns> {
       runs.started_at, runs.completed_at, runs.duration_ms, runs.final_message, runs.error,
       runs.collaboration_mode, runs.run_intent, runs.client_user_message_id,
       runs.completed_plan_item_id, runs.completed_plan_text, runs.plan_review_state,
+      runs.execution_settings_json,
       tasks.original_prompt, tasks.improved_prompt, tasks.route_recommendation, tasks.budget_tokens,
       latest_tokens.total_tokens AS latest_total_tokens,
       latest_tokens.run_tokens AS latest_run_tokens,
@@ -972,10 +979,12 @@ export async function listChatRunsPage(
   return db.select<HistoryRunSummary[]>(
     `SELECT runs.id, runs.task_id, runs.workspace_id, runs.chat_id, runs.turn_index,
       runs.codex_thread_id, runs.codex_turn_id,
-      runs.status,
+      runs.account_id, runs.model, runs.model_provider,
+      runs.sandbox, runs.approval_policy, runs.status,
       runs.started_at, runs.completed_at, runs.duration_ms, runs.final_message, runs.error,
       runs.collaboration_mode, runs.run_intent, runs.client_user_message_id,
       runs.completed_plan_item_id, runs.completed_plan_text, runs.plan_review_state,
+      runs.execution_settings_json,
       tasks.original_prompt,
       (
         SELECT json_extract(diff_events.payload_json, '$.params.diff')
@@ -1011,10 +1020,12 @@ export async function listLocalChatTranscript(chatId: number) {
   return db.select<HistoryRunSummary[]>(
     `SELECT runs.id, runs.task_id, runs.workspace_id, runs.chat_id, runs.turn_index,
       runs.codex_thread_id, runs.codex_turn_id,
-      runs.status,
+      runs.account_id, runs.model, runs.model_provider,
+      runs.sandbox, runs.approval_policy, runs.status,
       runs.started_at, runs.completed_at, runs.duration_ms, runs.final_message, runs.error,
       runs.collaboration_mode, runs.run_intent, runs.client_user_message_id,
       runs.completed_plan_item_id, runs.completed_plan_text, runs.plan_review_state,
+      runs.execution_settings_json,
       tasks.original_prompt,
       (
         SELECT json_extract(diff_events.payload_json, '$.params.diff')

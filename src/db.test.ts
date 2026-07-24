@@ -17,7 +17,9 @@ import {
   claimChatTitleGeneration,
   completeChatTitleGeneration,
   createChat,
+  createRun,
   failChatTitleGeneration,
+  listLocalChatTranscript,
   listWorkspaceChats,
   recordTokenUsage,
   recoverInterruptedChatTitleGenerations,
@@ -196,6 +198,49 @@ describe("run event persistence", () => {
       18_757,
       258_400,
     ]);
+  });
+});
+
+describe("run execution settings persistence", () => {
+  it("stores the immutable settings JSON when creating a run", async () => {
+    const executionSettingsJson = JSON.stringify({
+      version: 1,
+      accountId: 7,
+      profileKey: "account:7",
+    });
+    mocks.execute.mockResolvedValueOnce({ lastInsertId: 81, rowsAffected: 1 });
+    mocks.select.mockResolvedValueOnce([
+      {
+        id: 81,
+        execution_settings_json: executionSettingsJson,
+      },
+    ]);
+
+    await createRun({
+      taskId: 10,
+      workspaceId: 3,
+      accountId: 7,
+      accountLabel: "Work",
+      status: "starting",
+      sandbox: "workspace-write",
+      approvalPolicy: "untrusted",
+      executionSettingsJson,
+    });
+
+    const [insert, values] = mocks.execute.mock.calls[0] ?? [];
+    const [select] = mocks.select.mock.calls[0] ?? [];
+    expect(insert).toContain("execution_settings_json");
+    expect(values?.at(-1)).toBe(executionSettingsJson);
+    expect(select).toContain("execution_settings_json");
+  });
+
+  it("loads execution settings with local historical transcript rows", async () => {
+    await listLocalChatTranscript(42);
+
+    const query = mocks.select.mock.calls[0]?.[0] as string;
+    expect(query).toContain("runs.execution_settings_json");
+    expect(query).toContain("runs.account_id");
+    expect(query).toContain("runs.model");
   });
 });
 

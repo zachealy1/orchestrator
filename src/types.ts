@@ -188,6 +188,7 @@ export type RunRecord = {
   completed_plan_item_id: string | null;
   completed_plan_text: string | null;
   plan_review_state: "none" | "available" | "superseded" | "approved" | "cancelled";
+  execution_settings_json: string | null;
 };
 
 export type RunListItem = RunRecord & {
@@ -223,6 +224,12 @@ export type HistoryRunSummary = Pick<
   | "completed_plan_item_id"
   | "completed_plan_text"
   | "plan_review_state"
+  | "account_id"
+  | "model"
+  | "model_provider"
+  | "sandbox"
+  | "approval_policy"
+  | "execution_settings_json"
 > & {
   original_prompt: string;
   latest_diff?: string | null;
@@ -637,6 +644,32 @@ export type SlashCommandSearchStatus =
   | "disabled";
 
 export type SelectedComposerSkill = CodexSkillSummary;
+
+export type RunExecutionSettings = {
+  version: 1;
+  accountId: number;
+  profileKey: CodexProfileKey;
+  selectedBranch: string | null;
+  mode: "plan" | "run";
+  intent: "normal" | "plan" | "plan-revision" | "plan-implementation";
+  accessMode: CodexAccessMode;
+  computerUseEnabled: boolean;
+  model: string | null;
+  reasoningEffort: string | null;
+  useOss: boolean;
+  ossProvider: OssProvider;
+  contextFiles: ComposerContextFile[];
+  selectedSkills: SelectedComposerSkill[];
+  goalMode: boolean;
+};
+
+export type RunExecutionSettingsSource = "captured" | "legacy";
+
+export type ResolvedRunExecutionSettings = {
+  settings: RunExecutionSettings;
+  source: RunExecutionSettingsSource;
+  compatibilityMessage: string | null;
+};
 
 export type ComposerModeState = {
   goalMode: boolean;

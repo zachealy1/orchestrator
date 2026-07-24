@@ -185,6 +185,11 @@ import {
   readComputerUsePreference,
 } from "./lib/computerUse";
 import {
+  createRunExecutionSettings,
+  resolveStoredRunExecutionSettings,
+  serializeRunExecutionSettings,
+} from "./lib/runExecutionSettings";
+import {
   createStableClientMessageId,
   isCollaborationModeMask,
   isNativeUserInputRequest,
@@ -291,6 +296,7 @@ import type {
   ComposerContextFile,
   OssProvider,
   PreflightReport,
+  RunExecutionSettings,
   RunInteractionMode,
   SelectedComposerSkill,
   SlashCommandItem,
@@ -611,6 +617,8 @@ type RunSetupSnapshot = {
   restorePromptOnSetupFailure?: boolean;
   sourcePlanEntry?: TaskChatEntry;
   defaultCollaborationMode?: CollaborationMode | null;
+  executionSettings: RunExecutionSettings;
+  compatibilityMessage?: string | null;
 };
 
 type WorkspaceHistoryState = {
@@ -1365,6 +1373,12 @@ function App() {
   const [approvalSafetyWarning, setApprovalSafetyWarning] = useState<
     string | null
   >(null);
+  const [editedPromptNotice, setEditedPromptNotice] = useState<{
+    workspaceId: number;
+    entryId: string;
+    tone: "error" | "warning";
+    message: string;
+  } | null>(null);
   const collaborationModeMasksRef = useRef(
     new Map<CodexProfileKey, Promise<CollaborationModeMask[]>>(),
   );
@@ -6981,6 +6995,11 @@ function App() {
       taskId: null,
       prompt: snapshot.promptText,
       contextFiles: snapshot.contextFiles,
+      executionSettings: {
+        settings: snapshot.executionSettings,
+        source: "captured",
+        compatibilityMessage: snapshot.compatibilityMessage ?? null,
+      },
       submittedAt,
       status: initialRunView.status,
       runView: initialRunView,
@@ -7146,6 +7165,9 @@ function App() {
         collaborationMode: collaborationMode.mode,
         runIntent: runControl.intent,
         clientUserMessageId: runControl.clientUserMessageId,
+        executionSettingsJson: serializeRunExecutionSettings(
+          snapshot.executionSettings,
+        ),
       });
       runId = run.id;
       runControl.runId = run.id;
@@ -7370,7 +7392,9 @@ function App() {
       });
       ensureRunControlActive(runControl);
 
-      const warnings: string[] = [];
+      const warnings: string[] = snapshot.compatibilityMessage
+        ? [snapshot.compatibilityMessage]
+        : [];
       if (snapshot.goalMode) {
         try {
           await setThreadGoalForProfile(
@@ -7654,6 +7678,7 @@ function App() {
   async function launchRun(composerPrompt = promptRef.current) {
     markPerformance("orchestrator:submit:start");
     setApprovalSafetyWarning(null);
+    setEditedPromptNotice(null);
 
     const promptText = serializePromptInlineFileReferences(
       composerPrompt.trim(),
@@ -7707,6 +7732,24 @@ function App() {
       models.find((model) => model.id === selectedModelId) ?? models[0] ?? null;
     const model = useOss || modelLoadError ? null : (selectedModel?.model ?? null);
     const turnIndex = chatSession?.nextTurnIndex ?? 1;
+    const mode = planMode ? "plan" : "run";
+    const intent: RunIntent = planMode ? "plan" : "normal";
+    const executionSettings = createRunExecutionSettings({
+      accountId: accountId ?? 0,
+      profileKey,
+      selectedBranch,
+      mode,
+      intent,
+      accessMode,
+      computerUseEnabled,
+      model,
+      reasoningEffort: model ? selectedReasoningEffort : null,
+      useOss,
+      ossProvider,
+      contextFiles,
+      selectedSkills,
+      goalMode,
+    });
     const snapshot: RunSetupSnapshot = {
       promptText,
       promptFallback: composerPrompt,
@@ -7718,7 +7761,8 @@ function App() {
       externalThreadId: chatSession?.externalThreadId ?? null,
       selectedBranch,
       cachedPreflight: preflightRef.current,
-      mode: planMode ? "plan" : "run",
+      mode,
+      intent,
       access: accessSettings({ accessMode }),
       computerUseEnabled,
       model,
@@ -7733,6 +7777,7 @@ function App() {
       chatId: chatSession?.chatId ?? null,
       threadId: chatSession?.threadId ?? null,
       turnIndex,
+      executionSettings,
     };
 
     const runControl = beginOptimisticRun(snapshot);
@@ -7742,56 +7787,138 @@ function App() {
     scheduleRunSetup(runControl, snapshot);
   }
 
-  function handleEditLatestPrompt(entry: TaskChatEntry, nextPrompt: string) {
+  async function handleEditLatestPrompt(
+    entry: TaskChatEntry,
+    nextPrompt: string,
+  ) {
     markPerformance("orchestrator:submit:start");
+    setEditedPromptNotice(null);
 
+    const resolvedExecutionSettings = entry.executionSettings;
+    const originalSettings = resolvedExecutionSettings?.settings;
+    const originalContextFiles =
+      originalSettings?.contextFiles ?? entry.contextFiles ?? [];
     const promptText = serializePromptInlineFileReferences(
       nextPrompt.trim(),
-      (entry.contextFiles ?? []).filter((file) => file.source === "search"),
+      originalContextFiles.filter((file) => file.source === "search"),
     );
     const workspace = selectedWorkspace;
-    const accountId = selectedAccountId;
-    const account = selectedAccount;
+    const showRerunIssue = (message: string) => {
+      setStatusMessage(message);
+      setEditedPromptNotice({
+        workspaceId: entry.workspaceId,
+        entryId: entry.clientId,
+        tone: "error",
+        message,
+      });
+    };
 
     if (!workspace || !promptText) {
-      setStatusMessage("Select a workspace and provide a prompt before rerunning.");
+      showRerunIssue("Select a workspace and provide a prompt before rerunning.");
       return;
     }
-    if (!accountId || !account) {
-      setStatusMessage("Sign in to a Codex account before rerunning a prompt.");
+    if (!originalSettings) {
+      showRerunIssue(
+        "The original execution settings are unavailable, so this prompt cannot be rerun safely.",
+      );
       return;
     }
     if (selectedWorkspaceChatSession?.origin === "codex_external") {
-      setStatusMessage("External Codex chats can be continued, but edited prompts require an Orchestrator chat.");
+      showRerunIssue("External Codex chats can be continued, but edited prompts require an Orchestrator chat.");
       return;
     }
     if (entry.clientId !== editablePromptEntryId) {
-      setStatusMessage("Only the latest prompt can be edited.");
+      showRerunIssue("Only the latest prompt can be edited.");
       return;
     }
     if (runIsActive || activeChatEntryIdRef.current !== null) {
-      setStatusMessage("Wait for the active run to finish before editing a prompt.");
+      showRerunIssue("Wait for the active run to finish before editing a prompt.");
+      return;
+    }
+    if (originalSettings.profileKey === DEFAULT_CODEX_PROFILE_KEY) {
+      showRerunIssue(
+        "Edited prompts are unavailable for runs from the default external Codex profile.",
+      );
+      return;
+    }
+
+    const account = codexAccountsRef.current.find(
+      (candidate) => candidate.id === originalSettings.accountId,
+    );
+    if (!account) {
+      showRerunIssue(
+        "The Codex account used by the original prompt is no longer available.",
+      );
+      return;
+    }
+    if (account.status === "signed_out") {
+      showRerunIssue(
+        "Sign in to the Codex account used by the original prompt before rerunning it.",
+      );
       return;
     }
     if (
-      account.status !== "error" &&
-      shouldBlockRunForAuth(requiresOpenaiAuth, codexAccount)
+      originalSettings.accessMode === "full-access" &&
+      !window.confirm(accessModeWarning("full-access") ?? "")
     ) {
-      setStatusMessage(
-        loginState === "waiting"
-          ? "Finish Codex sign-in before rerunning a prompt."
-          : "Sign in to Codex before rerunning a prompt.",
+      return;
+    }
+
+    try {
+      const branchList = await listGitBranches(workspace.path);
+      if (
+        originalSettings.selectedBranch &&
+        !branchList.branches.includes(originalSettings.selectedBranch)
+      ) {
+        showRerunIssue(
+          `The original branch ${originalSettings.selectedBranch} is no longer available.`,
+        );
+        return;
+      }
+
+      if (!originalSettings.useOss && originalSettings.model) {
+        await ensureCodexProfileConnected(
+          originalSettings.profileKey,
+          originalSettings.accountId,
+        );
+        const availableModels = await listCodexModels(originalSettings.accountId);
+        const originalModel = availableModels.find(
+          (candidate) =>
+            candidate.model === originalSettings.model ||
+            candidate.id === originalSettings.model,
+        );
+        if (!originalModel) {
+          showRerunIssue(
+            `The original model ${originalSettings.model} is no longer available.`,
+          );
+          return;
+        }
+        if (
+          originalSettings.reasoningEffort &&
+          !originalModel.supportedReasoningEfforts.some(
+            (option) =>
+              option.reasoningEffort === originalSettings.reasoningEffort,
+          )
+        ) {
+          showRerunIssue(
+            `The original reasoning option ${formatReasoningEffort(
+              originalSettings.reasoningEffort,
+            )} is no longer available for ${originalModel.displayName}.`,
+          );
+          return;
+        }
+      }
+    } catch (error) {
+      showRerunIssue(
+        `Could not validate the original run settings: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
       );
       return;
     }
 
     const chatId = entry.chatId ?? selectedWorkspaceChatSession?.chatId ?? null;
 
-    const selectedModel =
-      models.find((modelOption) => modelOption.id === selectedModelId) ??
-      models[0] ??
-      null;
-    const model = useOss || modelLoadError ? null : (selectedModel?.model ?? null);
     const editedTurnIndex =
       entry.turnIndex ??
       Math.max(
@@ -7811,24 +7938,27 @@ function App() {
       promptText,
       promptFallback: nextPrompt,
       workspace: { ...workspace },
-      accountId,
+      accountId: originalSettings.accountId,
       account: { ...account },
-      profileKey: `account:${accountId}` as CodexProfileKey,
+      profileKey: originalSettings.profileKey,
       chatOrigin: "orchestrator",
       externalThreadId: null,
-      selectedBranch,
+      selectedBranch: originalSettings.selectedBranch,
       cachedPreflight: null,
-      mode: planMode ? "plan" : "run",
-      access: accessSettings({ accessMode }),
-      computerUseEnabled,
-      model,
-      effort: model ? selectedReasoningEffort : null,
-      useOss,
-      ossProvider,
+      mode: originalSettings.mode,
+      intent: originalSettings.intent,
+      access: accessSettings({ accessMode: originalSettings.accessMode }),
+      computerUseEnabled: originalSettings.computerUseEnabled,
+      model: originalSettings.model,
+      effort: originalSettings.reasoningEffort,
+      useOss: originalSettings.useOss,
+      ossProvider: originalSettings.ossProvider,
       improvedPrompt: improvePrompt(promptText),
-      contextFiles: [...(entry.contextFiles ?? [])],
-      selectedSkills: [...selectedSkills],
-      goalMode,
+      contextFiles: originalContextFiles.map((file) => ({ ...file })),
+      selectedSkills: originalSettings.selectedSkills.map((skill) => ({
+        ...skill,
+      })),
+      goalMode: originalSettings.goalMode,
       loginState,
       chatId,
       threadId: null,
@@ -7839,9 +7969,23 @@ function App() {
       replacementClientId: entry.clientId,
       restoreEntryOnSetupFailure: entry,
       restorePromptOnSetupFailure: false,
+      executionSettings: createRunExecutionSettings({
+        ...originalSettings,
+        contextFiles: originalContextFiles,
+      }),
+      compatibilityMessage:
+        resolvedExecutionSettings.compatibilityMessage,
     };
 
     const runControl = beginOptimisticRun(snapshot);
+    if (resolvedExecutionSettings.compatibilityMessage) {
+      setEditedPromptNotice({
+        workspaceId: workspace.id,
+        entryId: runControl.clientId,
+        tone: "warning",
+        message: resolvedExecutionSettings.compatibilityMessage,
+      });
+    }
     scheduleRunSetup(runControl, snapshot);
   }
 
@@ -9297,6 +9441,23 @@ function App() {
     setPlanMode(intent === "plan-revision");
     setGoalMode(false);
 
+    const mode = intent === "plan-revision" ? "plan" : "run";
+    const executionSettings = createRunExecutionSettings({
+      accountId: accountId ?? 0,
+      profileKey,
+      selectedBranch,
+      mode,
+      intent,
+      accessMode,
+      computerUseEnabled,
+      model,
+      reasoningEffort: model ? selectedReasoningEffort : null,
+      useOss,
+      ossProvider,
+      contextFiles: [],
+      selectedSkills: [],
+      goalMode: false,
+    });
     const snapshot: RunSetupSnapshot = {
       promptText,
       promptFallback: promptText,
@@ -9308,7 +9469,7 @@ function App() {
       externalThreadId: chatSession.externalThreadId,
       selectedBranch,
       cachedPreflight: null,
-      mode: intent === "plan-revision" ? "plan" : "run",
+      mode,
       intent,
       clientUserMessageId: createStableClientMessageId(),
       access: accessSettings({ accessMode }),
@@ -9328,6 +9489,7 @@ function App() {
       restorePromptOnSetupFailure: false,
       sourcePlanEntry: entry,
       defaultCollaborationMode: chatSession.savedDefaultCollaborationMode,
+      executionSettings,
     };
     const runControl = beginOptimisticRun(snapshot);
     scheduleRunSetup(runControl, snapshot);
@@ -11351,6 +11513,19 @@ function App() {
                     <span>{approvalSafetyWarning}</span>
                   </div>
                 ) : null}
+                {editedPromptNotice &&
+                editedPromptNotice.workspaceId === selectedWorkspace?.id &&
+                visibleTaskChatEntries.some(
+                  (entry) => entry.clientId === editedPromptNotice.entryId,
+                ) ? (
+                  <div
+                    className={`edited-prompt-notice ${editedPromptNotice.tone}`}
+                    role={editedPromptNotice.tone === "error" ? "alert" : "status"}
+                  >
+                    <AlertCircle size={16} aria-hidden="true" />
+                    <span>{editedPromptNotice.message}</span>
+                  </div>
+                ) : null}
                 <TaskComposer
                   disabled={!canRun || planReviewAwaiting}
                   runActive={runIsActive}
@@ -12605,6 +12780,10 @@ function buildPreviousChatContext(entries: TaskChatEntry[]) {
 
 function createTaskChatEntryFromHistoryRun(run: HistoryRunSummary): TaskChatEntry {
   const status = normalizeHistoryRunStatus(run);
+  const executionSettings = resolveStoredRunExecutionSettings(
+    run.execution_settings_json,
+    run,
+  );
   const normalizedPlan = normalizeHistoricalProposedPlan(
     run.final_message ?? "",
     run.completed_plan_text,
@@ -12633,6 +12812,8 @@ function createTaskChatEntryFromHistoryRun(run: HistoryRunSummary): TaskChatEntr
     runId: run.id,
     taskId: run.task_id,
     prompt: run.original_prompt,
+    contextFiles: executionSettings.settings.contextFiles,
+    executionSettings,
     submittedAt: run.started_at,
     status,
     runView: {
