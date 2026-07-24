@@ -14,13 +14,13 @@ import {
   ChevronRight,
   ChevronUp,
   Clock,
+  ExternalLink,
   FileDiff,
   FileText,
   Globe2,
   Image as ImageIcon,
   Loader2,
   MessageSquare,
-  ExternalLink,
   Pencil,
   RefreshCw,
   RotateCcw,
@@ -1817,11 +1817,6 @@ const AssistantRunOutput = memo(function AssistantRunOutput({
         expanded={planExpanded}
         onDisclosureChange={onPlanDisclosureChange}
       />
-      <WebPreviewCard
-        entry={entry}
-        preview={runView.webPreview}
-        onOpen={onOpenWebPreview}
-      />
       <RunApprovalRequests
         entry={entry}
         runView={runView}
@@ -1867,25 +1862,33 @@ const WebPreviewCard = memo(function WebPreviewCard({
   };
 
   return (
-    <section className="web-preview-card" aria-label="Web preview">
+    <button
+      className="web-preview-card"
+      type="button"
+      disabled={opening || !onOpen}
+      aria-label="Open web preview in browser"
+      aria-busy={opening}
+      onClick={() => void handleOpen()}
+    >
       <span className="web-preview-icon" aria-hidden="true">
         <Globe2 size={20} />
       </span>
       <span className="web-preview-copy">
         <strong>Web preview</strong>
-        <span>{unavailable ? "Preview unavailable" : "Website"}</span>
+        <span>
+          {opening
+            ? "Checking..."
+            : unavailable
+              ? "Preview unavailable"
+              : "Website"}
+        </span>
       </span>
-      <button
-        className="web-preview-open"
-        type="button"
-        disabled={opening || !onOpen}
-        aria-busy={opening}
-        onClick={() => void handleOpen()}
-      >
-        <span>{opening ? "Checking..." : "Open in browser"}</span>
-        <ExternalLink size={15} aria-hidden="true" />
-      </button>
-    </section>
+      <ExternalLink
+        className="web-preview-action-icon"
+        size={16}
+        aria-hidden="true"
+      />
+    </button>
   );
 });
 

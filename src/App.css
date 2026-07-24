@@ -2803,7 +2803,7 @@ summary.run-live-metrics::-webkit-details-marker {
   color: var(--color-error);
 }
 
-.web-preview-card {
+button.web-preview-card {
   display: grid;
   width: 100%;
   min-width: 0;
@@ -2816,7 +2816,27 @@ summary.run-live-metrics::-webkit-details-marker {
   background: var(--color-component-background);
   color: var(--color-text);
   box-shadow: 0 12px 40px rgb(var(--shadow-rgb) / 0.1);
+  cursor: pointer;
+  font-weight: 400;
   padding: 13px 16px;
+  text-align: left;
+  transform: none;
+  transition:
+    background-color 140ms ease,
+    border-color 140ms ease;
+}
+
+button.web-preview-card:hover:not(:disabled),
+button.web-preview-card:focus-visible:not(:disabled) {
+  border-color: var(--color-divider);
+  background: var(--dropdown-bg-hover);
+  box-shadow: 0 12px 40px rgb(var(--shadow-rgb) / 0.1);
+  transform: none;
+}
+
+button.web-preview-card:active:not(:disabled) {
+  background: var(--dropdown-bg-hover);
+  transform: none;
 }
 
 .web-preview-icon {
@@ -2849,37 +2869,9 @@ summary.run-live-metrics::-webkit-details-marker {
   font-size: 0.88rem;
 }
 
-button.web-preview-open {
-  display: inline-flex;
-  width: auto;
-  min-height: 36px;
-  gap: 7px;
-  align-items: center;
-  justify-content: center;
-  border: 0;
-  background: var(--color-surface-soft);
-  color: var(--color-text);
-  box-shadow: none;
-  padding: 8px 12px;
-  white-space: nowrap;
-}
-
-button.web-preview-open:hover:not(:disabled),
-button.web-preview-open:focus-visible:not(:disabled) {
-  background: var(--dropdown-bg-hover);
-  box-shadow: none;
-  transform: none;
-}
-
-@media (max-width: 620px) {
-  .web-preview-card {
-    grid-template-columns: auto minmax(0, 1fr);
-  }
-
-  button.web-preview-open {
-    grid-column: 1 / -1;
-    justify-self: end;
-  }
+.web-preview-action-icon {
+  justify-self: end;
+  color: var(--color-text-secondary);
 }
 
 .edited-files-summary {

@@ -9685,14 +9685,29 @@ describe("App Codex auth", () => {
       },
     });
 
-    const openPreview = await screen.findByRole("button", {
-      name: "Open in browser",
-    });
     await waitFor(() =>
       expect(mocks.updateRunMock).toHaveBeenCalledWith(202, {
         webPreviewJson: expect.stringContaining("http://localhost:5173/"),
       }),
     );
+    expect(
+      screen.queryByRole("button", {
+        name: "Open web preview in browser",
+      }),
+    ).not.toBeInTheDocument();
+
+    await emitCodexNotification({
+      method: "turn/completed",
+      params: {
+        threadId: "thread-1",
+        turnId: "turn-1",
+        turn: { id: "turn-1", status: "completed", durationMs: 100 },
+      },
+    });
+
+    const openPreview = await screen.findByRole("button", {
+      name: "Open web preview in browser",
+    });
 
     await user.click(openPreview);
     await waitFor(() =>
@@ -9701,6 +9716,75 @@ describe("App Codex auth", () => {
       ),
     );
     expect(mocks.openUrlMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("detects a port-only ready message from npm start output", async () => {
+    prepareSignedInRun();
+    const { user } = await renderApp();
+    await startMockRun(user, "Start the app");
+
+    await emitCodexNotification({
+      method: "item/started",
+      params: {
+        threadId: "thread-1",
+        turnId: "turn-1",
+        item: {
+          id: "command-npm-start",
+          type: "commandExecution",
+          command: "/bin/zsh -lc 'npm start'",
+        },
+      },
+    });
+    await emitCodexNotification({
+      method: "item/commandExecution/outputDelta",
+      params: {
+        threadId: "thread-1",
+        turnId: "turn-1",
+        itemId: "command-npm-start",
+        delta:
+          "\r\n> snake-test@1.0.0 start\r\n> node src/server.js\r\n\r\n",
+      },
+    });
+    await emitCodexNotification({
+      method: "item/commandExecution/outputDelta",
+      params: {
+        threadId: "thread-1",
+        turnId: "turn-1",
+        itemId: "command-npm-start",
+        delta: "Server listening on port 3000\r\n",
+      },
+    });
+
+    await waitFor(() =>
+      expect(mocks.probeLocalWebPreviewMock).toHaveBeenCalledWith(
+        "http://localhost:3000/",
+      ),
+    );
+    await waitFor(() =>
+      expect(mocks.updateRunMock).toHaveBeenCalledWith(202, {
+        webPreviewJson: expect.stringContaining("http://localhost:3000/"),
+      }),
+    );
+    expect(
+      screen.queryByRole("button", {
+        name: "Open web preview in browser",
+      }),
+    ).not.toBeInTheDocument();
+
+    await emitCodexNotification({
+      method: "turn/completed",
+      params: {
+        threadId: "thread-1",
+        turnId: "turn-1",
+        turn: { id: "turn-1", status: "completed", durationMs: 100 },
+      },
+    });
+
+    expect(
+      await screen.findByRole("button", {
+        name: "Open web preview in browser",
+      }),
+    ).toBeInTheDocument();
   });
 
   it("keeps probing the latest server candidate after the turn completes", async () => {
@@ -9742,7 +9826,9 @@ describe("App Codex auth", () => {
     });
 
     expect(
-      await screen.findByRole("button", { name: "Open in browser" }),
+      await screen.findByRole("button", {
+        name: "Open web preview in browser",
+      }),
     ).toBeInTheDocument();
     expect(mocks.probeLocalWebPreviewMock).toHaveBeenCalledTimes(2);
   });

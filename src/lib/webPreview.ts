@@ -110,6 +110,10 @@ export function extractLocalWebPreviewCandidates(input: {
     const matches = line.match(LOCAL_URL_PATTERN) ?? [];
     if (READY_LINE_PATTERN.test(line)) {
       matches.forEach(add);
+      const readyPort = extractPortFromReadyLine(line);
+      if (readyPort) {
+        add(`http://localhost:${readyPort}/`);
+      }
     }
     const servingMatch = line.match(
       /Serving HTTP on\s+(?:(?:0\.0\.0\.0|::|\[::\]|localhost|127(?:\.\d{1,3}){3})\s+)?port\s+(\d{1,5})/i,
@@ -121,6 +125,16 @@ export function extractLocalWebPreviewCandidates(input: {
 
   extractCandidateFromKnownServerCommand(input.command).forEach(add);
   return candidates;
+}
+
+function extractPortFromReadyLine(line: string) {
+  const explicitPort = line.match(/\bport\s*(?:=|:)?\s*(\d{2,5})\b/i);
+  if (explicitPort) return explicitPort[1];
+
+  const listenerPort = line.match(
+    /\b(?:listening|serving|running|available|started|ready)\b[^0-9\r\n]{0,48}\b(?:on|at)\s+(?:(?:localhost|127(?:\.\d{1,3}){3}|0\.0\.0\.0|\[?::1?\]?)\s*:\s*)?(\d{2,5})\b/i,
+  );
+  return listenerPort?.[1] ?? null;
 }
 
 export function normalizeLocalWebPreviewUrl(value: string) {

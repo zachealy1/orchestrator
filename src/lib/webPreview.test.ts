@@ -24,6 +24,14 @@ describe("web preview detection", () => {
         output: "Serving HTTP on :: port 8123 (http://[::]:8123/) ...\n",
       }),
     ).toEqual(["http://localhost:8123/"]);
+
+    expect(
+      extractLocalWebPreviewCandidates({
+        command: "/bin/zsh -lc 'npm start'",
+        output:
+          "\r\n> snake-test@1.0.0 start\r\n> node src/server.js\r\n\r\nServer listening on port 3000\r\n",
+      }),
+    ).toEqual(["http://localhost:3000/"]);
   });
 
   it("derives candidates from known server commands", () => {
@@ -65,6 +73,12 @@ describe("web preview detection", () => {
       normalizeLocalWebPreviewUrl("http://user:secret@localhost:3000/"),
     ).toBeNull();
     expect(normalizeLocalWebPreviewUrl("file:///tmp/index.html")).toBeNull();
+    expect(
+      extractLocalWebPreviewCandidates({
+        command: "printf 'port 3000'",
+        output: "The configured port is 3000\n",
+      }),
+    ).toEqual([]);
   });
 
   it("normalizes wildcard and loopback URLs without retaining secrets", () => {

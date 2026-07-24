@@ -156,7 +156,9 @@ describe("TaskChatTranscript", () => {
     const edits = container.querySelector(".edited-files-summary");
     expect(summary).not.toBeNull();
     expect(preview).not.toBeNull();
+    expect(preview?.tagName).toBe("BUTTON");
     expect(edits).not.toBeNull();
+    expect(screen.queryByText("Open in browser")).not.toBeInTheDocument();
     expect(
       summary!.compareDocumentPosition(preview!) &
         Node.DOCUMENT_POSITION_FOLLOWING,
@@ -167,7 +169,7 @@ describe("TaskChatTranscript", () => {
     ).toBeTruthy();
 
     fireEvent.click(
-      screen.getByRole("button", { name: "Open in browser" }),
+      screen.getByRole("button", { name: "Open web preview in browser" }),
     );
     await waitFor(() =>
       expect(onOpenWebPreview).toHaveBeenCalledWith(
@@ -176,6 +178,94 @@ describe("TaskChatTranscript", () => {
       ),
     );
   });
+
+  it.each(["connecting", "running"] as const)(
+    "keeps a detected web preview hidden while the run is %s",
+    (status) => {
+      const entry: TaskChatEntry = {
+        ...historyEntry(1),
+        status,
+        runView: {
+          ...historyEntry(1).runView,
+          status,
+          webPreview: {
+            version: 1,
+            url: "http://localhost:5173/",
+            origin: "http://localhost:5173",
+            detectedAt: "2026-07-24T12:00:00.000Z",
+            sourceCommandId: "command-running-preview",
+            availability: "available",
+          },
+        },
+      };
+
+      render(
+        <TaskChatTurn
+          entry={entry}
+          editable={false}
+          editing={false}
+          editingPrompt=""
+          onEditingPromptChange={vi.fn()}
+          onSubmitEdit={vi.fn()}
+          onCancelEdit={vi.fn()}
+          onStartEdit={vi.fn()}
+          onResolveRequest={vi.fn()}
+          onOpenWebPreview={vi.fn()}
+        />,
+      );
+
+      expect(screen.queryByText("Web preview")).not.toBeInTheDocument();
+      expect(
+        screen.queryByRole("button", {
+          name: "Open web preview in browser",
+        }),
+      ).not.toBeInTheDocument();
+    },
+  );
+
+  it.each(["failed", "interrupted"] as const)(
+    "shows a detected web preview after the run is %s",
+    (status) => {
+      const entry: TaskChatEntry = {
+        ...historyEntry(1),
+        status,
+        runView: {
+          ...historyEntry(1).runView,
+          status,
+          webPreview: {
+            version: 1,
+            url: "http://localhost:5173/",
+            origin: "http://localhost:5173",
+            detectedAt: "2026-07-24T12:00:00.000Z",
+            sourceCommandId: "command-stopped-preview",
+            availability: "available",
+          },
+        },
+      };
+
+      render(
+        <TaskChatTurn
+          entry={entry}
+          editable={false}
+          editing={false}
+          editingPrompt=""
+          onEditingPromptChange={vi.fn()}
+          onSubmitEdit={vi.fn()}
+          onCancelEdit={vi.fn()}
+          onStartEdit={vi.fn()}
+          onResolveRequest={vi.fn()}
+          onOpenWebPreview={vi.fn()}
+        />,
+      );
+
+      expect(screen.getByText("Web preview")).toBeInTheDocument();
+      expect(
+        screen.getByRole("button", {
+          name: "Open web preview in browser",
+        }),
+      ).toBeInTheDocument();
+    },
+  );
 
   it("keeps an unavailable web preview retryable without changing its geometry", async () => {
     const onOpenWebPreview = vi
@@ -211,7 +301,9 @@ describe("TaskChatTranscript", () => {
       />,
     );
 
-    const button = screen.getByRole("button", { name: "Open in browser" });
+    const button = screen.getByRole("button", {
+      name: "Open web preview in browser",
+    });
     fireEvent.click(button);
     await screen.findByText("Preview unavailable");
     expect(button).toBeEnabled();

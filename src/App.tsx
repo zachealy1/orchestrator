@@ -4828,12 +4828,12 @@ function App() {
               });
             }
           })
-          .catch(() => {
-            if (attemptIndex + 1 < WEB_PREVIEW_PROBE_RETRY_DELAYS_MS.length) {
-              attempt(attemptIndex + 1);
-            } else {
-              detection.probes.delete(url);
-            }
+          .catch((error) => {
+            detection.probes.delete(url);
+            console.error("Could not probe the local web preview", error);
+            setStatusMessage(
+              "Web preview detection is unavailable. Restart Orchestrator and try again.",
+            );
           });
       }, delay);
       probe.timers.add(timer);
@@ -4922,10 +4922,11 @@ function App() {
               }).catch(() => undefined);
             }
           })
-          .catch(() => {
-            if (attemptIndex + 1 < WEB_PREVIEW_PROBE_RETRY_DELAYS_MS.length) {
-              attempt(attemptIndex + 1);
-            }
+          .catch((error) => {
+            console.error("Could not probe the local web preview", error);
+            setStatusMessage(
+              "Web preview detection is unavailable. Restart Orchestrator and try again.",
+            );
           });
       }, WEB_PREVIEW_PROBE_RETRY_DELAYS_MS[attemptIndex]);
     };

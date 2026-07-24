@@ -17,18 +17,25 @@ pub(crate) async fn probe_local_web_preview(
     url: String,
 ) -> Result<LocalWebPreviewProbeResult, String> {
     let (normalized_url, host, port) = normalize_local_web_preview_url(&url)?;
-    let probe_host = if host == "localhost" || host.ends_with(".localhost") {
-        "127.0.0.1".to_string()
+    let probe_hosts = if host == "localhost" || host.ends_with(".localhost") {
+        vec!["127.0.0.1".to_string(), "::1".to_string()]
     } else {
-        host
+        vec![host]
     };
-    let reachable = timeout(
-        WEB_PREVIEW_PROBE_TIMEOUT,
-        TcpStream::connect((probe_host.as_str(), port)),
-    )
-    .await
-    .map(|result| result.is_ok())
-    .unwrap_or(false);
+    let mut reachable = false;
+    for probe_host in probe_hosts {
+        let connected = timeout(
+            WEB_PREVIEW_PROBE_TIMEOUT,
+            TcpStream::connect((probe_host.as_str(), port)),
+        )
+        .await
+        .map(|result| result.is_ok())
+        .unwrap_or(false);
+        if connected {
+            reachable = true;
+            break;
+        }
+    }
 
     Ok(LocalWebPreviewProbeResult {
         normalized_url,
