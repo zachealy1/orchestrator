@@ -4,9 +4,9 @@
   "version": "0.1.0",
   "identifier": "com.zachealy.orchestrator",
   "build": {
-    "beforeDevCommand": "npm run dev",
+    "beforeDevCommand": "npm run prepare:playwright-runtime && npm run dev",
     "devUrl": "http://localhost:1420",
-    "beforeBuildCommand": "npm run build",
+    "beforeBuildCommand": "npm run build:tauri",
     "frontendDist": "../dist"
   },
   "plugins": {
@@ -32,6 +32,9 @@
   "bundle": {
     "active": true,
     "targets": "all",
+    "resources": [
+      "resources/playwright/**/*"
+    ],
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",

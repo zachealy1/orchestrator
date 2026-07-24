@@ -265,6 +265,111 @@ describe("native Codex approval protocol", () => {
     expect(request.error).toMatch(/not supported/i);
   });
 
+  it("accepts only signed Orchestrator Playwright elicitations", () => {
+    const request = parse("mcpServer/elicitation/request", {
+      serverName: "playwright",
+      mode: "form",
+      _meta: {
+        "orchestrator/browser-approval": {
+          version: 1,
+          nonce: "nonce",
+          sessionToken: "0123456789abcdef0123456789abcdef",
+          kind: "origin",
+          origin: "https://example.com",
+          action: "navigate",
+        },
+      },
+    });
+
+    expect(request.kind).toBe("browser");
+    expect(request.browserRequest).toEqual({
+      sessionToken: "0123456789abcdef0123456789abcdef",
+      kind: "origin",
+      origin: "https://example.com",
+      action: "navigate",
+    });
+    expect(request.choices.map((choice) => choice.response)).toEqual([
+      {
+        action: "accept",
+        content: { decision: "allow" },
+        _meta: null,
+      },
+      {
+        action: "decline",
+        content: null,
+        _meta: null,
+      },
+    ]);
+  });
+
+  it("accepts external WebSocket origins from the Playwright policy wrapper", () => {
+    const request = parse("mcpServer/elicitation/request", {
+      serverName: "playwright",
+      mode: "form",
+      _meta: {
+        "orchestrator/browser-approval": {
+          version: 1,
+          nonce: "nonce",
+          sessionToken: "0123456789abcdef0123456789abcdef",
+          kind: "origin",
+          origin: "wss://example.com",
+          action: "open a WebSocket to this origin",
+        },
+      },
+    });
+
+    expect(request.kind).toBe("browser");
+    expect(request.browserRequest?.origin).toBe("wss://example.com");
+  });
+
+  it.each([
+    {
+      label: "another MCP server",
+      params: {
+        serverName: "other",
+        mode: "form",
+        _meta: {},
+      },
+    },
+    {
+      label: "credentials in an origin",
+      params: {
+        serverName: "playwright",
+        mode: "form",
+        _meta: {
+          "orchestrator/browser-approval": {
+            version: 1,
+            sessionToken: "0123456789abcdef0123456789abcdef",
+            kind: "origin",
+            origin: "https://user:secret@example.com",
+            action: "navigate",
+          },
+        },
+      },
+    },
+    {
+      label: "a malformed session token",
+      params: {
+        serverName: "playwright",
+        mode: "form",
+        _meta: {
+          "orchestrator/browser-approval": {
+            version: 1,
+            sessionToken: "not-a-session",
+            kind: "sensitive-action",
+            origin: "https://example.com",
+            action: "type into the requested field",
+          },
+        },
+      },
+    },
+  ])("rejects $label", ({ params }) => {
+    const request = parse("mcpServer/elicitation/request", params);
+    expect(request.kind).toBe("unsupported");
+    expect(request.choices).toEqual([]);
+    expect(request.error).toMatch(/valid Orchestrator browser approval/i);
+  });
+
   it("uses the installed legacy response vocabulary without converting denial", () => {
     const request = parse("execCommandApproval", {
       conversationId: "thread-1",

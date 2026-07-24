@@ -3339,8 +3339,9 @@ const ApprovalCard = memo(function ApprovalCard({
   const resources = approvalResources(request, itemResources).filter(
     (resource) => !permissionPaths.has(resource),
   );
+  const browserRequest = request.browserRequest;
   const hasContext = Boolean(
-    cwd || reason || network || resources.length > 0,
+    cwd || reason || network || browserRequest || resources.length > 0,
   );
   const statusLabel = approvalStatusLabel(request);
 
@@ -3422,6 +3423,18 @@ const ApprovalCard = memo(function ApprovalCard({
               <>
                 <dt>Network access</dt>
                 <dd>{approvalNetworkLabel(network)}</dd>
+              </>
+            ) : null}
+            {browserRequest ? (
+              <>
+                <dt>Origin</dt>
+                <dd className="approval-context-code-row">
+                  <pre className="approval-code-surface">
+                    {browserRequest.origin}
+                  </pre>
+                </dd>
+                <dt>Browser action</dt>
+                <dd>{browserRequest.action}</dd>
               </>
             ) : null}
             {resources.length > 0 ? (
@@ -3512,6 +3525,10 @@ function approvalTitle(
       return "Codex needs approval to change files";
     case "permissions":
       return "Codex is requesting additional permissions";
+    case "browser":
+      return request.browserRequest?.kind === "origin"
+        ? "Codex needs approval to open an external website"
+        : "Codex needs approval for a browser action";
     default:
       return "Unsupported native Codex request";
   }

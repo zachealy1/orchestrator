@@ -103,6 +103,7 @@ import {
   deleteCodexProfile,
   generateWorkspaceCommitMessage,
   generateChatTitle,
+  focusBrowserSession,
   listGitBranches,
   listCodexModels,
   listCodexSkills,
@@ -115,18 +116,22 @@ import {
   readCodexFile,
   readCodexAccount,
   readAgentNotificationPermissionStatus,
+  readBrowserSessionStatus,
   readWorkspaceGitDiff,
   readWorkspaceFilePreview,
   resolveCodexServerRequest,
   resolveDefaultCodexServerRequest,
   removeAgentNotification,
   requestAgentNotificationPermission,
+  prepareBrowserSession,
   runPreflight,
   setThreadGoal,
   startCodexLogin,
+  stopBrowserSession,
   sendAgentNotification,
   syncDefaultProfileThreadTranscript,
   takePendingAgentNotificationActivation,
+  updateBrowserSessionTarget,
   undoWorkspaceGitDiff,
   openAgentNotificationSettings,
 } from "./codexClient";
@@ -263,6 +268,8 @@ import type {
   AnalyticsSummary as AnalyticsSummaryType,
   ChatListItem,
   ChatOrigin,
+  BrowserSessionState,
+  PreparedBrowserSession,
   CodexAccount,
   CodexAccessMode,
   CodexAccountProfile,
@@ -557,6 +564,7 @@ type ActiveRunControl = {
   clientUserMessageId: string;
   runView: RunViewState;
   eventSequence: number;
+  browserSession: PreparedBrowserSession | null;
 };
 
 type RunAccessSettings = CodexAccessSettings;
@@ -2981,7 +2989,24 @@ function App() {
     let notificationUnlisten: (() => void) | null = null;
     let requestUnlisten: (() => void) | null = null;
     let processUnlisten: (() => void) | null = null;
+    let browserSessionUnlisten: (() => void) | null = null;
     let disposed = false;
+
+    void listen<BrowserSessionState>(
+      "orchestrator:browser-session",
+      (event) => {
+        const control = [...activeRunControlsRef.current.values()].find(
+          (candidate) =>
+            candidate.browserSession?.token === event.payload.token,
+        );
+        if (control) {
+          updateRunControlBrowserState(control, event.payload);
+        }
+      },
+    ).then((unlisten) => {
+      if (disposed) unlisten();
+      else browserSessionUnlisten = unlisten;
+    });
 
     void listen<CodexMessageEvent>("codex:notification", (event) => {
       const profileKey =
@@ -3114,6 +3139,7 @@ function App() {
       notificationUnlisten?.();
       requestUnlisten?.();
       processUnlisten?.();
+      browserSessionUnlisten?.();
     };
   }, []);
 
@@ -4192,8 +4218,124 @@ function App() {
     }
   }
 
-  function removeRunControl(control: ActiveRunControl) {
+  function updateRunControlBrowserState(
+    control: ActiveRunControl,
+    state: BrowserSessionState,
+  ) {
+    if (
+      !control.browserSession ||
+      control.browserSession.token !== state.token
+    ) {
+      return;
+    }
+    control.browserSession = {
+      ...control.browserSession,
+      state,
+    };
+    setActiveRunRegistryVersion((current) => current + 1);
+  }
+
+  async function refreshRunControlBrowserState(control: ActiveRunControl) {
+    const token = control.browserSession?.token;
+    if (!token) return;
+    try {
+      updateRunControlBrowserState(
+        control,
+        await readBrowserSessionStatus(token),
+      );
+    } catch {
+      // MCP startup events remain the primary source; status refresh is supplementary.
+    }
+  }
+
+  function setRunControlBrowserLifecycle(
+    control: ActiveRunControl,
+    status: BrowserSessionState["status"],
+    error: string | null = null,
+  ) {
+    const session = control.browserSession;
+    if (!session) return;
+    updateRunControlBrowserState(control, {
+      ...session.state,
+      status,
+      error,
+    });
+  }
+
+  function applyBrowserLifecycleNotification(
+    control: ActiveRunControl,
+    method: string | null,
+    params: Record<string, unknown>,
+  ) {
+    if (!control.browserSession) return;
+    if (
+      method === "mcpServer/startupStatus/updated" &&
+      readString(params.name) === "playwright"
+    ) {
+      const status = readString(params.status);
+      if (status === "starting" || status === "ready") {
+        setRunControlBrowserLifecycle(control, status);
+      } else if (status === "failed") {
+        setRunControlBrowserLifecycle(
+          control,
+          "error",
+          readString(params.error) ?? "The browser service could not start.",
+        );
+      } else if (status === "cancelled") {
+        setRunControlBrowserLifecycle(control, "stopped");
+      }
+      void refreshRunControlBrowserState(control);
+      return;
+    }
+
+    if (method === "item/started" || method === "item/completed") {
+      const item = readObject(params.item);
+      if (
+        readString(item.type) !== "mcpToolCall" ||
+        readString(item.server) !== "playwright"
+      ) {
+        return;
+      }
+      setRunControlBrowserLifecycle(
+        control,
+        method === "item/started" &&
+          control.browserSession.state.browserPid === null
+          ? "starting"
+          : "running",
+        readString(readObject(item.error).message),
+      );
+      void refreshRunControlBrowserState(control);
+    }
+  }
+
+  async function cleanupRunBrowserSession(
+    control: ActiveRunControl,
+    options: { unsubscribe?: boolean } = {},
+  ) {
+    const session = control.browserSession;
+    if (!session) return;
+    control.browserSession = null;
+    setActiveRunRegistryVersion((current) => current + 1);
+
+    if (options.unsubscribe !== false && control.threadId) {
+      await codexRpcForProfile(
+        control.profileKey,
+        control.accountId,
+        "thread/unsubscribe",
+        { threadId: control.threadId },
+      ).catch(() => undefined);
+    }
+    await stopBrowserSession(session.token).catch(() => undefined);
+  }
+
+  function removeRunControl(
+    control: ActiveRunControl,
+    options: { cleanupBrowser?: boolean } = {},
+  ) {
     if (activeRunControlsRef.current.get(control.clientId) !== control) return;
+    if (options.cleanupBrowser !== false && control.browserSession) {
+      void cleanupRunBrowserSession(control);
+    }
     control.runView.serverRequests
       .filter(isNativeUserInputRequest)
       .forEach((request) => {
@@ -4558,7 +4700,7 @@ function App() {
       }
     }
 
-    removeRunControl(control);
+    removeRunControl(control, { cleanupBrowser: false });
     setStatusMessage("Codex run stopped.");
 
     if (shouldStopCodex) {
@@ -4574,6 +4716,40 @@ function App() {
           }`,
         );
       }
+    }
+    void cleanupRunBrowserSession(control);
+  }
+
+  async function focusSelectedBrowserSession() {
+    const control = selectedActiveRunControl;
+    const token = control?.browserSession?.token;
+    if (!control || !token) return;
+    try {
+      updateRunControlBrowserState(
+        control,
+        await focusBrowserSession(token),
+      );
+    } catch (error) {
+      setStatusMessage(
+        error instanceof Error ? error.message : String(error),
+      );
+    }
+  }
+
+  async function stopSelectedBrowserSession() {
+    const control = selectedActiveRunControl;
+    const token = control?.browserSession?.token;
+    if (!control || !token) return;
+    try {
+      updateRunControlBrowserState(
+        control,
+        await stopBrowserSession(token),
+      );
+      setStatusMessage("Browser session stopped.");
+    } catch (error) {
+      setStatusMessage(
+        error instanceof Error ? error.message : String(error),
+      );
     }
   }
 
@@ -6757,6 +6933,7 @@ function App() {
       clientUserMessageId,
       runView: initialRunView,
       eventSequence: 0,
+      browserSession: null,
     };
     const nextEntry: TaskChatEntry = {
       clientId,
@@ -6954,6 +7131,27 @@ function App() {
         chatId,
         turnIndex: snapshot.turnIndex,
       });
+      const browserSession = await prepareBrowserSession({
+        profileKey: snapshot.profileKey,
+        workspaceId: snapshot.workspace.id,
+        chatId,
+        runId: run.id,
+        entryId: runControl.clientId,
+        threadId,
+        turnId: null,
+        accessMode: snapshot.access.accessMode,
+      });
+      runControl.browserSession = browserSession;
+      setActiveRunRegistryVersion((current) => current + 1);
+      const threadConfig = {
+        ...(snapshot.useOss
+          ? {
+              model_provider: "oss",
+              oss_provider: snapshot.ossProvider,
+            }
+          : {}),
+        ...browserSession.config,
+      };
 
       let threadModel: string | null | undefined = snapshot.model;
       let threadModelProvider: string | null | undefined = snapshot.useOss ? "oss" : null;
@@ -6980,12 +7178,7 @@ function App() {
           permissions: snapshot.access.permissionProfile,
           serviceName: "orchestrator",
           threadSource: "orchestrator",
-          config: snapshot.useOss
-            ? {
-                model_provider: "oss",
-                oss_provider: snapshot.ossProvider,
-              }
-            : null,
+          config: threadConfig,
         });
         ensureRunControlActive(runControl);
         assertRuntimeAccessMatches(thread, snapshot.access);
@@ -7030,25 +7223,45 @@ function App() {
         void flushPendingRunBindingNotifications(runControl).catch((error) => {
           console.error("Could not replay buffered Codex notifications", error);
         });
-        if (snapshot.chatOrigin === "codex_external") {
-          try {
-            const resumed = await codexRpcForProfile<{
-              approvalPolicy?: string;
-              activePermissionProfile?: { id?: string | null } | null;
-            }>(snapshot.profileKey, snapshot.accountId, "thread/resume", {
-              threadId,
-              cwd: snapshot.workspace.path,
-              approvalPolicy: snapshot.access.approvalPolicy,
-              approvalsReviewer: "user",
-              permissions: snapshot.access.permissionProfile,
-            });
-            assertRuntimeAccessMatches(resumed, snapshot.access);
-          } catch (error) {
+        try {
+          const resumed = await codexRpcForProfile<{
+            model?: string;
+            modelProvider?: string;
+            approvalPolicy?: string;
+            activePermissionProfile?: { id?: string | null } | null;
+          }>(snapshot.profileKey, snapshot.accountId, "thread/resume", {
+            threadId,
+            cwd: snapshot.workspace.path,
+            approvalPolicy: snapshot.access.approvalPolicy,
+            approvalsReviewer: "user",
+            permissions: snapshot.access.permissionProfile,
+            config: threadConfig,
+          });
+          assertRuntimeAccessMatches(resumed, snapshot.access);
+          threadModel = resumed.model ?? threadModel;
+          threadModelProvider = resumed.modelProvider ?? threadModelProvider;
+        } catch (error) {
+          if (
+            snapshot.chatOrigin === "orchestrator" &&
+            isCodexThreadNotFoundError(error)
+          ) {
+            const thread = await startThread();
+            threadId = thread.threadId;
+            threadModel = thread.model;
+            threadModelProvider = thread.modelProvider;
+            updateRunControlView(runControl, (current) => ({
+              ...current,
+              tokenUsageStartTotal: 0,
+              tokenUsageStartCachedInput: 0,
+            }));
+          } else if (snapshot.chatOrigin === "codex_external") {
             throw new Error(
               `Could not resume the external Codex thread: ${
                 error instanceof Error ? error.message : String(error)
               }`,
             );
+          } else {
+            throw error;
           }
         }
         try {
@@ -7093,6 +7306,16 @@ function App() {
         },
       );
       ensureRunControlActive(runControl);
+      updateRunControlBrowserState(
+        runControl,
+        await updateBrowserSessionTarget(browserSession.token, {
+          ...browserSession.state.target,
+          chatId,
+          runId: run.id,
+          threadId,
+          turnId: null,
+        }),
+      );
 
       await updateRun(run.id, {
         codexThreadId: threadId,
@@ -7239,6 +7462,16 @@ function App() {
       ensureRunControlActive(runControl);
       runControl.threadId = threadId;
       runControl.turnId = turn.turn.id;
+      updateRunControlBrowserState(
+        runControl,
+        await updateBrowserSessionTarget(browserSession.token, {
+          ...browserSession.state.target,
+          chatId,
+          runId: run.id,
+          threadId,
+          turnId: turn.turn.id,
+        }),
+      );
 
       updateRunControlView(runControl, (current) => ({
         ...current,
@@ -8358,6 +8591,7 @@ function App() {
       bufferPendingRunBindingNotification(accountId, profileKey, message);
       return;
     }
+    applyBrowserLifecycleNotification(control, method, params);
 
     if (shouldFrameBatchCodexMessage(message)) {
       queueBufferedRunEvent(control, "notification", method, message);
@@ -8491,6 +8725,7 @@ function App() {
       if (activeChatId !== null) {
         await updateChat(activeChatId, { status }).catch(() => undefined);
       }
+      void cleanupRunBrowserSession(completedControl);
       const completedWorkspace = completedControl
         ? workspacesRef.current.find(
             (workspace) => workspace.id === completedControl.workspaceId,
@@ -8563,6 +8798,18 @@ function App() {
       interactionMode: control?.interactionMode ?? "chat",
     });
     if (parsed && !isNativeUserInputRequest(request)) {
+      if (
+        parsed.kind === "browser" &&
+        (!control?.browserSession ||
+          control.browserSession.token !==
+            parsed.browserRequest?.sessionToken)
+      ) {
+        parsed.kind = "unsupported";
+        parsed.browserRequest = null;
+        parsed.choices = [];
+        parsed.error =
+          "This browser approval did not match the active isolated browser session.";
+      }
       const belongsToActiveRun = control !== null;
       const shouldNotify = [
         "command",
@@ -8570,6 +8817,7 @@ function App() {
         "permissions",
         "legacy-command",
         "legacy-file-change",
+        "browser",
       ].includes(parsed.kind);
       const historyChat = !belongsToActiveRun
         ? historyStateRef.current.chats.find(
@@ -8629,6 +8877,9 @@ function App() {
       }
 
       updateRunControlView(control, (current) => addApprovalRequest(current, parsed));
+      if (parsed.kind === "browser") {
+        setRunControlBrowserLifecycle(control, "awaiting-approval");
+      }
       notifyApproval();
       await persistRunEvent(
         control,
@@ -8823,6 +9074,10 @@ function App() {
       updateRunControlView(control, (current) =>
         markApprovalAwaitingResolution(current, currentRequest.key),
       );
+      if (currentRequest.kind === "browser") {
+        setRunControlBrowserLifecycle(control, "running");
+        void refreshRunControlBrowserState(control);
+      }
     } catch (error) {
       updateRunControlView(control, (current) =>
         markApprovalError(
@@ -10939,6 +11194,11 @@ function App() {
               historyOpen={historyDrawerOpen}
               historyNotificationCount={selectedWorkspaceUnreadChatCount}
               onToggleHistory={toggleHistoryDrawer}
+              browserSession={
+                selectedActiveRunControl?.browserSession?.state ?? null
+              }
+              onFocusBrowser={() => void focusSelectedBrowserSession()}
+              onStopBrowser={() => void stopSelectedBrowserSession()}
               windowDragRegionsEnabled={macOsWindowDragRegionsEnabled}
             />
             <div
@@ -11572,6 +11832,9 @@ function WorkspaceContextBanner({
   historyOpen,
   historyNotificationCount,
   onToggleHistory,
+  browserSession,
+  onFocusBrowser,
+  onStopBrowser,
   windowDragRegionsEnabled,
 }: {
   workspace: Workspace | null;
@@ -11591,12 +11854,47 @@ function WorkspaceContextBanner({
   historyOpen: boolean;
   historyNotificationCount: number;
   onToggleHistory: () => void;
+  browserSession: BrowserSessionState | null;
+  onFocusBrowser: () => void;
+  onStopBrowser: () => void;
   windowDragRegionsEnabled: boolean;
 }) {
+  const [browserMenuOpen, setBrowserMenuOpen] = useState(false);
+  const browserMenuRef = useRef<HTMLDivElement>(null);
   const deepWindowDragRegion = windowDragRegionValue(
     windowDragRegionsEnabled,
     "deep",
   );
+  const browserVisible =
+    browserSession !== null &&
+    ["starting", "running", "awaiting-approval", "error"].includes(
+      browserSession.status,
+    );
+
+  useEffect(() => {
+    if (!browserMenuOpen) return;
+    const closeForPointer = (event: PointerEvent) => {
+      if (
+        event.target instanceof Node &&
+        !browserMenuRef.current?.contains(event.target)
+      ) {
+        setBrowserMenuOpen(false);
+      }
+    };
+    const closeForEscape = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setBrowserMenuOpen(false);
+    };
+    window.addEventListener("pointerdown", closeForPointer);
+    window.addEventListener("keydown", closeForEscape);
+    return () => {
+      window.removeEventListener("pointerdown", closeForPointer);
+      window.removeEventListener("keydown", closeForEscape);
+    };
+  }, [browserMenuOpen]);
+
+  useEffect(() => {
+    if (!browserVisible) setBrowserMenuOpen(false);
+  }, [browserVisible]);
 
   if (!workspace) {
     return (
@@ -11700,6 +11998,79 @@ function WorkspaceContextBanner({
           disabled={branches.length === 0}
           onChange={onBranchChange}
         />
+        {browserVisible ? (
+          <div className="workspace-browser-action" ref={browserMenuRef}>
+            <button
+              className={`workspace-header-button icon-only browser-session-button browser-${browserSession.status}`}
+              type="button"
+              aria-label="Browser session"
+              title={
+                browserSession.status === "awaiting-approval"
+                  ? "Browser needs approval"
+                  : browserSession.status === "starting"
+                    ? "Browser is starting"
+                    : browserSession.status === "error"
+                      ? "Browser session failed"
+                      : "Focus browser"
+              }
+              aria-expanded={browserMenuOpen}
+              onClick={() => {
+                if (
+                  browserSession.status === "running" ||
+                  browserSession.status === "awaiting-approval"
+                ) {
+                  onFocusBrowser();
+                }
+                setBrowserMenuOpen((current) => !current);
+              }}
+            >
+              {browserSession.status === "starting" ? (
+                <Loader2 className="spin" size={15} aria-hidden="true" />
+              ) : browserSession.status === "awaiting-approval" ||
+                browserSession.status === "error" ? (
+                <AlertCircle size={15} aria-hidden="true" />
+              ) : (
+                <Monitor size={15} aria-hidden="true" />
+              )}
+            </button>
+            {browserMenuOpen ? (
+              <div
+                className="workspace-browser-popover"
+                role="group"
+                aria-label="Browser session controls"
+              >
+                <button
+                  className="native-plan-icon-action"
+                  type="button"
+                  aria-label="Focus browser"
+                  data-tooltip="Focus browser"
+                  disabled={
+                    browserSession.status !== "running" &&
+                    browserSession.status !== "awaiting-approval"
+                  }
+                  onClick={() => {
+                    onFocusBrowser();
+                    setBrowserMenuOpen(false);
+                  }}
+                >
+                  <Monitor size={15} aria-hidden="true" />
+                </button>
+                <button
+                  className="native-plan-icon-action cancel"
+                  type="button"
+                  aria-label="Stop browser"
+                  data-tooltip="Stop browser"
+                  onClick={() => {
+                    onStopBrowser();
+                    setBrowserMenuOpen(false);
+                  }}
+                >
+                  <X size={15} aria-hidden="true" />
+                </button>
+              </div>
+            ) : null}
+          </div>
+        ) : null}
         <div className="workspace-git-action">
           <button
             className="workspace-header-button icon-only primary"

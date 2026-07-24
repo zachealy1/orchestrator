@@ -19,8 +19,10 @@ use tauri_plugin_sql::{Migration, MigrationKind};
 use tokio::{sync::oneshot, time::timeout};
 
 mod agent_notifications;
+mod browser_sessions;
 
 use agent_notifications::AgentNotificationState;
+use browser_sessions::{BrowserSessionRegistry, PlaywrightRuntime};
 
 const DATABASE_URL: &str = "sqlite:app.db";
 const MAX_FILE_PREVIEW_BYTES: usize = 512 * 1024;
@@ -1754,6 +1756,7 @@ async fn connect_codex_profile(
     codex_home: PathBuf,
     isolated_file_store: bool,
 ) -> Result<CodexConnectResult, String> {
+    let playwright_runtime = browser_sessions::resolve_playwright_runtime(app)?;
     let connection_generation =
         state.next_connection_generation.fetch_add(1, Ordering::SeqCst) + 1;
     {
@@ -1780,7 +1783,10 @@ async fn connect_codex_profile(
 
         let codex_binary = resolve_codex_binary()?;
         let mut command = Command::new(&codex_binary);
-        command.args(codex_app_server_args(isolated_file_store));
+        command.args(codex_app_server_args(
+            isolated_file_store,
+            Some(&playwright_runtime),
+        ));
         let mut child = command
             .env("CODEX_HOME", &codex_home)
             .stdin(Stdio::piped())
@@ -4116,7 +4122,10 @@ fn ensure_default_codex_home() -> Result<PathBuf, String> {
     Ok(codex_home)
 }
 
-fn codex_app_server_args(isolated_file_store: bool) -> Vec<String> {
+fn codex_app_server_args(
+    isolated_file_store: bool,
+    playwright_runtime: Option<&PlaywrightRuntime>,
+) -> Vec<String> {
     let profile_key = format!("permissions.{ASK_FOR_APPROVAL_PERMISSION_PROFILE}");
     let mut args = vec![
         "app-server".to_string(),
@@ -4142,6 +4151,9 @@ fn codex_app_server_args(isolated_file_store: bool) -> Vec<String> {
             "-c".to_string(),
             "cli_auth_credentials_store=\"file\"".to_string(),
         ]);
+    }
+    if let Some(runtime) = playwright_runtime {
+        browser_sessions::append_playwright_app_server_args(&mut args, runtime);
     }
     args
 }
@@ -5112,6 +5124,12 @@ pub fn run() {
         }))
         .manage(CodexState::default())
         .manage(AgentNotificationState::default())
+        .manage(BrowserSessionRegistry::default())
+        .setup(|app| {
+            browser_sessions::resolve_playwright_runtime(app.handle())
+                .map(|_| ())
+                .map_err(|error| std::io::Error::other(error).into())
+        })
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
         .plugin(
@@ -5146,6 +5164,11 @@ pub fn run() {
             list_workspace_directory,
             read_workspace_file_preview,
             run_preflight,
+            browser_sessions::browser_session_prepare,
+            browser_sessions::browser_session_status,
+            browser_sessions::browser_session_focus,
+            browser_sessions::browser_session_update_target,
+            browser_sessions::browser_session_stop,
             agent_notifications::agent_notification_permission_status,
             agent_notifications::agent_notification_request_permission,
             agent_notifications::agent_notification_send,
@@ -5234,8 +5257,8 @@ mod tests {
 
     #[test]
     fn app_server_profiles_enable_network_without_full_access() {
-        let shared_args = codex_app_server_args(false);
-        let isolated_args = codex_app_server_args(true);
+        let shared_args = codex_app_server_args(false, None);
+        let isolated_args = codex_app_server_args(true, None);
         let profile_key = format!("permissions.{ASK_FOR_APPROVAL_PERMISSION_PROFILE}");
 
         assert_eq!(

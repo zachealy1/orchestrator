@@ -7,8 +7,11 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc && vite build",
+    "build:tauri": "npm run prepare:playwright-runtime && npm run build",
+    "prepare:playwright-runtime": "node scripts/prepare-playwright-runtime.mjs",
     "test": "vitest run",
     "test:native-approval": "node scripts/native-approval-smoke.mjs",
+    "test:playwright-runtime": "npm run prepare:playwright-runtime && node scripts/test-playwright-runtime.mjs",
     "test:live-plan": "RUN_CODEX_LIVE_PLAN_TEST=1 node scripts/live-native-plan-mode.mjs",
     "test:watch": "vitest",
     "preview": "vite preview",

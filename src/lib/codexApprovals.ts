@@ -36,6 +36,11 @@ export type ApprovalResponse =
       permissions: Record<string, unknown>;
       scope: "turn" | "session";
       strictAutoReview?: boolean;
+    }
+  | {
+      action: "accept" | "decline" | "cancel";
+      content: { decision: "allow" } | null;
+      _meta: null;
     };
 
 export type ApprovalChoice = {
@@ -53,7 +58,15 @@ export type ApprovalRequestKind =
   | "permissions"
   | "legacy-command"
   | "legacy-file-change"
+  | "browser"
   | "unsupported";
+
+export type BrowserApprovalRequest = {
+  sessionToken: string;
+  kind: "origin" | "sensitive-action";
+  origin: string;
+  action: string;
+};
 
 export type ApprovalRequestStatus =
   | "pending"
@@ -75,6 +88,7 @@ export type CodexApprovalRequest = {
   approvalId: string | null;
   interactionMode: RunInteractionMode;
   params: Record<string, unknown>;
+  browserRequest?: BrowserApprovalRequest | null;
   choices: ApprovalChoice[];
   status: ApprovalRequestStatus;
   selectedChoiceId: string | null;
@@ -211,6 +225,24 @@ export function parseApprovalRequest({
         kind: "legacy-file-change",
         choices: legacyApprovalChoices(true),
       };
+    case "mcpServer/elicitation/request": {
+      const browserRequest = parseBrowserApprovalRequest(params);
+      if (!browserRequest) {
+        return {
+          ...common,
+          kind: "unsupported",
+          choices: [],
+          error:
+            "This MCP elicitation was not a valid Orchestrator browser approval request.",
+        };
+      }
+      return {
+        ...common,
+        kind: "browser",
+        browserRequest,
+        choices: browserApprovalChoices(),
+      };
+    }
     default:
       return {
         ...common,
@@ -219,6 +251,86 @@ export function parseApprovalRequest({
         error: `This Codex request type is not supported by this client: ${message.method}`,
       };
   }
+}
+
+function browserApprovalChoices(): ApprovalChoice[] {
+  return [
+    choice(
+      "browser-allow",
+      "Allow for this turn",
+      "Allow this browser request for the current agent turn.",
+      {
+        action: "accept",
+        content: { decision: "allow" },
+        _meta: null,
+      },
+      "approve",
+      false,
+    ),
+    choice(
+      "browser-deny",
+      "Deny",
+      "Block this browser request and let Codex choose another action.",
+      {
+        action: "decline",
+        content: null,
+        _meta: null,
+      },
+      "danger",
+      false,
+    ),
+  ];
+}
+
+function parseBrowserApprovalRequest(
+  params: Record<string, unknown>,
+): BrowserApprovalRequest | null {
+  if (
+    params.serverName !== "playwright" ||
+    params.mode !== "form"
+  ) {
+    return null;
+  }
+  const meta = readObjectOrNull(params._meta);
+  const browser = readObjectOrNull(meta?.["orchestrator/browser-approval"]);
+  if (
+    browser?.version !== 1 ||
+    (browser.kind !== "origin" && browser.kind !== "sensitive-action")
+  ) {
+    return null;
+  }
+  const sessionToken = readString(browser.sessionToken);
+  const origin = readString(browser.origin);
+  const action = readString(browser.action);
+  if (
+    !sessionToken ||
+    !/^[a-f0-9]{32}$/u.test(sessionToken) ||
+    !origin ||
+    !action ||
+    action.length > 160 ||
+    /[\u0000-\u001f\u007f]/u.test(action)
+  ) {
+    return null;
+  }
+  try {
+    const url = new URL(origin);
+    if (
+      !["http:", "https:", "ws:", "wss:"].includes(url.protocol) ||
+      url.username ||
+      url.password ||
+      url.origin !== origin
+    ) {
+      return null;
+    }
+  } catch {
+    return null;
+  }
+  return {
+    sessionToken,
+    kind: browser.kind,
+    origin,
+    action,
+  };
 }
 
 export function approvalRequestKey(

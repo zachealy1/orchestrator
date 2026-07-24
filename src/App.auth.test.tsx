@@ -20,6 +20,11 @@ const mocks = vi.hoisted(() => ({
   startCodexLoginMock: vi.fn(),
   stopCodexMock: vi.fn(),
   stopDefaultCodexProfileMock: vi.fn(),
+  prepareBrowserSessionMock: vi.fn(),
+  readBrowserSessionStatusMock: vi.fn(),
+  focusBrowserSessionMock: vi.fn(),
+  updateBrowserSessionTargetMock: vi.fn(),
+  stopBrowserSessionMock: vi.fn(),
   readAgentNotificationPermissionStatusMock: vi.fn(),
   requestAgentNotificationPermissionMock: vi.fn(),
   sendAgentNotificationMock: vi.fn(),
@@ -203,6 +208,11 @@ vi.mock("./codexClient", () => ({
   startCodexLogin: mocks.startCodexLoginMock,
   stopDefaultCodexProfile: mocks.stopDefaultCodexProfileMock,
   stopCodex: mocks.stopCodexMock,
+  prepareBrowserSession: mocks.prepareBrowserSessionMock,
+  readBrowserSessionStatus: mocks.readBrowserSessionStatusMock,
+  focusBrowserSession: mocks.focusBrowserSessionMock,
+  updateBrowserSessionTarget: mocks.updateBrowserSessionTargetMock,
+  stopBrowserSession: mocks.stopBrowserSessionMock,
   readAgentNotificationPermissionStatus:
     mocks.readAgentNotificationPermissionStatusMock,
   requestAgentNotificationPermission: mocks.requestAgentNotificationPermissionMock,
@@ -479,6 +489,58 @@ function prepareDefaults() {
   });
   mocks.stopCodexMock.mockResolvedValue(undefined);
   mocks.stopDefaultCodexProfileMock.mockResolvedValue(undefined);
+  mocks.prepareBrowserSessionMock.mockImplementation(async (target) => ({
+    token: "0123456789abcdef0123456789abcdef",
+    config: {
+      mcp_servers: {
+        playwright: {
+          enabled: true,
+        },
+      },
+    },
+    state: {
+      token: "0123456789abcdef0123456789abcdef",
+      status: "prepared",
+      target,
+      browserPid: null,
+      error: null,
+    },
+  }));
+  mocks.readBrowserSessionStatusMock.mockImplementation(async (token) => ({
+    token,
+    status: "ready",
+    target: {
+      profileKey: "account:1",
+      workspaceId: 1,
+      chatId: null,
+      runId: null,
+      entryId: "entry",
+      threadId: null,
+      turnId: null,
+      accessMode: "ask-for-approval",
+    },
+    browserPid: null,
+    error: null,
+  }));
+  mocks.focusBrowserSessionMock.mockImplementation(
+    async (token) => ({
+      ...(await mocks.readBrowserSessionStatusMock(token)),
+      status: "running",
+    }),
+  );
+  mocks.updateBrowserSessionTargetMock.mockImplementation(
+    async (token, target) => ({
+      token,
+      status: "ready",
+      target,
+      browserPid: null,
+      error: null,
+    }),
+  );
+  mocks.stopBrowserSessionMock.mockImplementation(async (token) => ({
+    ...(await mocks.readBrowserSessionStatusMock(token)),
+    status: "stopped",
+  }));
   mocks.readAgentNotificationPermissionStatusMock.mockResolvedValue("unavailable");
   mocks.requestAgentNotificationPermissionMock.mockResolvedValue("allowed");
   mocks.sendAgentNotificationMock.mockResolvedValue({
@@ -3615,6 +3677,20 @@ describe("App Codex auth", () => {
         approvalPolicy: "untrusted",
         approvalsReviewer: "user",
         permissions: ASK_FOR_APPROVAL_PERMISSION_PROFILE,
+        config: expect.objectContaining({
+          mcp_servers: {
+            playwright: {
+              enabled: true,
+            },
+          },
+        }),
+      }),
+    );
+    expect(mocks.prepareBrowserSessionMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        profileKey: "default",
+        workspaceId: workspace.id,
+        chatId: 501,
       }),
     );
     expect(
@@ -6235,6 +6311,133 @@ describe("App Codex auth", () => {
     );
     expect(screen.queryByLabelText("Run history")).not.toBeInTheDocument();
     expect(screen.queryByLabelText("Codex run console")).not.toBeInTheDocument();
+  });
+
+  it("scopes the Playwright MCP browser to one turn and cleans it up", async () => {
+    prepareSignedInRun();
+    mocks.readBrowserSessionStatusMock.mockImplementationOnce(
+      async (token) => ({
+        token,
+        status: "running",
+        target: {
+          profileKey: "account:7",
+          workspaceId: workspace.id,
+          chatId: 44,
+          runId: 60,
+          entryId: "entry",
+          threadId: "thread-1",
+          turnId: "turn-1",
+          accessMode: "ask-for-approval",
+        },
+        browserPid: 4321,
+        error: null,
+      }),
+    );
+
+    const { user } = await renderApp();
+    await startMockRun(user, "Check the app in a browser");
+
+    expect(mocks.prepareBrowserSessionMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        profileKey: "account:7",
+        workspaceId: workspace.id,
+        accessMode: "ask-for-approval",
+      }),
+    );
+    const threadStart = mocks.codexRpcMock.mock.calls.find(
+      ([, method]) => method === "thread/start",
+    );
+    expect(threadStart?.[2]).toEqual(
+      expect.objectContaining({
+        config: expect.objectContaining({
+          mcp_servers: {
+            playwright: {
+              enabled: true,
+            },
+          },
+        }),
+      }),
+    );
+
+    await emitCodexNotification({
+      method: "item/started",
+      params: {
+        threadId: "thread-1",
+        turnId: "turn-1",
+        item: {
+          type: "mcpToolCall",
+          id: "browser-call-1",
+          server: "playwright",
+          tool: "browser_navigate",
+          status: "inProgress",
+        },
+      },
+    });
+    const browserButton = await screen.findByRole("button", {
+      name: "Browser session",
+    });
+    await user.click(browserButton);
+    expect(mocks.focusBrowserSessionMock).toHaveBeenCalledWith(
+      "0123456789abcdef0123456789abcdef",
+    );
+
+    await emitCodexServerRequest({
+      id: 77,
+      method: "mcpServer/elicitation/request",
+      params: {
+        threadId: "thread-1",
+        turnId: "turn-1",
+        serverName: "playwright",
+        mode: "form",
+        _meta: {
+          "orchestrator/browser-approval": {
+            version: 1,
+            nonce: "approval-1",
+            sessionToken: "0123456789abcdef0123456789abcdef",
+            kind: "origin",
+            origin: "https://example.com",
+            action: "navigate",
+          },
+        },
+      },
+    });
+    expect(
+      await screen.findByText(
+        "Codex needs approval to open an external website",
+      ),
+    ).toBeInTheDocument();
+    await user.click(
+      screen.getByRole("button", { name: "Allow for this turn" }),
+    );
+    expect(mocks.resolveCodexServerRequestMock).toHaveBeenCalledWith(
+      7,
+      77,
+      expect.any(String),
+      {
+        action: "accept",
+        content: { decision: "allow" },
+        _meta: null,
+      },
+    );
+
+    await emitCodexNotification({
+      method: "turn/completed",
+      params: {
+        threadId: "thread-1",
+        turnId: "turn-1",
+        turn: { id: "turn-1", status: "completed", durationMs: 100 },
+      },
+    });
+    await waitFor(() =>
+      expect(mocks.stopBrowserSessionMock).toHaveBeenCalledWith(
+        "0123456789abcdef0123456789abcdef",
+      ),
+    );
+    expect(mocks.codexRpcMock).toHaveBeenCalledWith(
+      7,
+      "thread/unsubscribe",
+      { threadId: "thread-1" },
+    );
   });
 
   it("generates a concise chat title without delaying the initial turn", async () => {

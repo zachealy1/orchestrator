@@ -12,6 +12,8 @@ import type {
 import type { WorkspaceCommitIntentContext } from "./lib/commitMessage";
 import type {
   CodexAccountResponse,
+  BrowserSessionState,
+  BrowserSessionTarget,
   CodexConnectResult,
   CodexLoginResponse,
   CodexModel,
@@ -23,6 +25,7 @@ import type {
   ModelListResponse,
   OssProvider,
   PreflightReport,
+  PreparedBrowserSession,
   Workspace,
   WorkspaceFilePreview,
   WorkspaceGitActionResult,
@@ -30,6 +33,32 @@ import type {
   WorkspaceGitStatusSnapshot,
   WorkspaceTreeEntry,
 } from "./types";
+
+export function prepareBrowserSession(target: BrowserSessionTarget) {
+  return invoke<PreparedBrowserSession>("browser_session_prepare", { target });
+}
+
+export function readBrowserSessionStatus(token: string) {
+  return invoke<BrowserSessionState>("browser_session_status", { token });
+}
+
+export function focusBrowserSession(token: string) {
+  return invoke<BrowserSessionState>("browser_session_focus", { token });
+}
+
+export function updateBrowserSessionTarget(
+  token: string,
+  target: BrowserSessionTarget,
+) {
+  return invoke<BrowserSessionState>("browser_session_update_target", {
+    token,
+    target,
+  });
+}
+
+export function stopBrowserSession(token: string) {
+  return invoke<BrowserSessionState>("browser_session_stop", { token });
+}
 
 export function connectCodex(accountId: number) {
   return invoke<CodexConnectResult>("codex_connect", { accountId });
