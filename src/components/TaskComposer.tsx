@@ -67,6 +67,7 @@ type Props = {
   promptRevision?: number;
   accounts: CodexAccountProfile[];
   selectedAccountId: number | null;
+  accountPlaceholder?: string;
   accountSelectionDisabled: boolean;
   modelSelectionDisabled?: boolean;
   models: CodexModel[];
@@ -153,6 +154,7 @@ export const TaskComposer = memo(function TaskComposer({
   promptRevision = 0,
   accounts,
   selectedAccountId,
+  accountPlaceholder = "Sign in required",
   accountSelectionDisabled,
   modelSelectionDisabled = false,
   models,
@@ -904,6 +906,7 @@ export const TaskComposer = memo(function TaskComposer({
           reasoningOptions={reasoningOptions}
           runActive={runActive}
           selectedAccountId={selectedAccountId}
+          accountPlaceholder={accountPlaceholder}
           selectedModel={selectedModel}
           selectedReasoningEffort={selectedReasoningEffort}
         />
@@ -998,6 +1001,7 @@ const ComposerOptionsRow = memo(function ComposerOptionsRow({
   reasoningOptions,
   runActive,
   selectedAccountId,
+  accountPlaceholder,
   selectedModel,
   selectedReasoningEffort,
 }: {
@@ -1015,6 +1019,7 @@ const ComposerOptionsRow = memo(function ComposerOptionsRow({
   reasoningOptions: NonNullable<CodexModel["supportedReasoningEfforts"]>;
   runActive: boolean;
   selectedAccountId: number | null;
+  accountPlaceholder: string;
   selectedModel: CodexModel | null;
   selectedReasoningEffort: string | null;
 }) {
@@ -1058,7 +1063,7 @@ const ComposerOptionsRow = memo(function ComposerOptionsRow({
           ariaLabel="Run account"
           value={selectedAccountId?.toString() ?? ""}
           options={accountOptions}
-          placeholder="Sign in required"
+          placeholder={accountPlaceholder}
           icon={<CircleUserRound size={16} />}
           className="account-select"
           disabled={accounts.length === 0 || accountSelectionDisabled}

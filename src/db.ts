@@ -358,17 +358,20 @@ export async function upsertExternalCodexChats(chats: ExternalCodexChatInput[]) 
   for (const chat of chats) {
     const existing = await selectOne<{
       id: number;
+      account_id: number | null;
+      profile_key: string | null;
+      sync_status: string | null;
       deleted_at: string | null;
       external_created_at: string | null;
       external_updated_at: string | null;
     }>(
-      `SELECT id, deleted_at, external_created_at, external_updated_at
+      `SELECT id, account_id, profile_key, sync_status, deleted_at,
+        external_created_at, external_updated_at
        FROM chats
        WHERE origin = 'codex_external'
-         AND profile_key = $1
-         AND external_thread_id = $2
+         AND external_thread_id = $1
        LIMIT 1`,
-      [chat.profileKey, chat.externalThreadId],
+      [chat.externalThreadId],
     );
 
     const title = chat.title.trim() || "Untitled Codex chat";
@@ -377,6 +380,13 @@ export async function upsertExternalCodexChats(chats: ExternalCodexChatInput[]) 
     const updatedAt =
       chat.updatedAt ?? existing?.external_updated_at ?? createdAt;
     if (existing) {
+      const adopted =
+        existing.sync_status === "adopted" ||
+        existing.account_id !== null ||
+        existing.profile_key !== chat.profileKey;
+      if (adopted) {
+        continue;
+      }
       await db.execute(
         `UPDATE chats
          SET workspace_id = $1,
@@ -475,6 +485,44 @@ export async function updateChat(
      WHERE id = $${values.length} AND deleted_at IS NULL`,
     values,
   );
+}
+
+export async function activateChatAccountHandoff(input: {
+  chatId: number;
+  expectedProfileKey: string | null;
+  expectedThreadId: string | null;
+  accountId: number;
+  profileKey: string;
+  codexThreadId: string;
+  status: string;
+}) {
+  const db = await getDatabase();
+  const result = await db.execute(
+    `UPDATE chats
+     SET account_id = $1,
+         profile_key = $2,
+         codex_thread_id = $3,
+         status = $4,
+         sync_status = CASE
+           WHEN origin = 'codex_external' THEN 'adopted'
+           ELSE sync_status
+         END,
+         updated_at = CURRENT_TIMESTAMP
+     WHERE id = $5
+       AND profile_key IS $6
+       AND codex_thread_id IS $7
+       AND deleted_at IS NULL`,
+    [
+      input.accountId,
+      input.profileKey,
+      input.codexThreadId,
+      input.status,
+      input.chatId,
+      input.expectedProfileKey,
+      input.expectedThreadId,
+    ],
+  );
+  return result.rowsAffected === 1;
 }
 
 export async function createTask(input: {
@@ -826,23 +874,24 @@ export async function listWorkspaceChats(workspaceId: number) {
       chats.title_manually_edited, chats.title_generation_started_at,
       latest_run.account_label,
       latest_run.account_email,
-      COALESCE(
-        chats.external_updated_at,
-        MAX(
-          CASE
-            WHEN runs.id IS NULL THEN NULL
-            ELSE strftime(
-              '%Y-%m-%dT%H:%M:%fZ',
-              COALESCE(runs.completed_at, runs.started_at)
-            )
-          END
+      MAX(
+        COALESCE(
+          MAX(
+            CASE
+              WHEN runs.id IS NULL THEN NULL
+              ELSE strftime(
+                '%Y-%m-%dT%H:%M:%fZ',
+                COALESCE(runs.completed_at, runs.started_at)
+              )
+            END
+          ),
+          chats.updated_at
         ),
-        chats.updated_at
-      )
-        AS latest_activity_at,
+        COALESCE(chats.external_updated_at, chats.updated_at)
+      ) AS latest_activity_at,
       CASE
         WHEN chats.origin = 'codex_external'
-          THEN COALESCE(MAX(external_snapshot.turn_count), 0)
+          THEN COALESCE(MAX(external_snapshot.turn_count), 0) + COUNT(runs.id)
         ELSE COUNT(runs.id)
       END AS turn_count,
       COALESCE(SUM(latest_tokens.run_tokens), 0) AS total_tokens,
@@ -888,23 +937,24 @@ export async function getChatWithRuns(chatId: number): Promise<ChatWithRuns> {
       chats.title_manually_edited, chats.title_generation_started_at,
       latest_run.account_label,
       latest_run.account_email,
-      COALESCE(
-        chats.external_updated_at,
-        MAX(
-          CASE
-            WHEN runs.id IS NULL THEN NULL
-            ELSE strftime(
-              '%Y-%m-%dT%H:%M:%fZ',
-              COALESCE(runs.completed_at, runs.started_at)
-            )
-          END
+      MAX(
+        COALESCE(
+          MAX(
+            CASE
+              WHEN runs.id IS NULL THEN NULL
+              ELSE strftime(
+                '%Y-%m-%dT%H:%M:%fZ',
+                COALESCE(runs.completed_at, runs.started_at)
+              )
+            END
+          ),
+          chats.updated_at
         ),
-        chats.updated_at
-      )
-        AS latest_activity_at,
+        COALESCE(chats.external_updated_at, chats.updated_at)
+      ) AS latest_activity_at,
       CASE
         WHEN chats.origin = 'codex_external'
-          THEN COALESCE(MAX(external_snapshot.turn_count), 0)
+          THEN COALESCE(MAX(external_snapshot.turn_count), 0) + COUNT(runs.id)
         ELSE COUNT(runs.id)
       END AS turn_count,
       COALESCE(SUM(latest_tokens.run_tokens), 0) AS total_tokens,

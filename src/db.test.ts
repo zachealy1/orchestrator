@@ -13,6 +13,7 @@ vi.mock("@tauri-apps/plugin-sql", () => ({
 }));
 
 import {
+  activateChatAccountHandoff,
   appendRunEvents,
   claimChatTitleGeneration,
   completeChatTitleGeneration,
@@ -273,6 +274,9 @@ describe("external chat metadata", () => {
     mocks.select.mockResolvedValueOnce([
       {
         id: 34,
+        account_id: null,
+        profile_key: "default",
+        sync_status: "synced",
         deleted_at: null,
         external_created_at: "2026-07-01T10:00:00Z",
         external_updated_at: "2026-07-19T08:00:00Z",
@@ -302,6 +306,64 @@ describe("external chat metadata", () => {
     );
   });
 
+  it("does not overwrite an external chat after it is adopted", async () => {
+    mocks.select.mockResolvedValueOnce([
+      {
+        id: 34,
+        account_id: 8,
+        profile_key: "account:8",
+        sync_status: "adopted",
+        deleted_at: null,
+        external_created_at: "2026-07-01T10:00:00Z",
+        external_updated_at: "2026-07-19T08:00:00Z",
+      },
+    ]);
+
+    await upsertExternalCodexChats([
+      {
+        workspaceId: 3,
+        profileKey: "default",
+        externalThreadId: "thread-large",
+        title: "Changed source title",
+        status: "completed",
+        sourceKind: "vscode",
+        cwd: "/workspace",
+        createdAt: "2026-07-01T10:00:00Z",
+        updatedAt: "2026-07-20T08:00:00Z",
+      },
+    ]);
+
+    expect(mocks.execute).not.toHaveBeenCalled();
+  });
+
+  it("atomically activates a chat account handoff", async () => {
+    expect(
+      await activateChatAccountHandoff({
+        chatId: 34,
+        expectedProfileKey: "default",
+        expectedThreadId: "external-thread",
+        accountId: 8,
+        profileKey: "account:8",
+        codexThreadId: "managed-thread",
+        status: "running",
+      }),
+    ).toBe(true);
+
+    const [query, values] = mocks.execute.mock.calls[0] ?? [];
+    expect(query).toContain("sync_status = CASE");
+    expect(query).toContain("profile_key IS $6");
+    expect(query).toContain("codex_thread_id IS $7");
+    expect(values).toEqual([
+      8,
+      "account:8",
+      "managed-thread",
+      "running",
+      34,
+      "default",
+      "external-thread",
+    ]);
+  });
+
   it("uses cached external snapshot counts in the history list", async () => {
     await listWorkspaceChats(3);
 
@@ -310,6 +372,7 @@ describe("external chat metadata", () => {
       "LEFT JOIN external_chat_transcript_snapshots external_snapshot",
     );
     expect(query).toContain("MAX(external_snapshot.turn_count)");
+    expect(query).toContain("+ COUNT(runs.id)");
     expect(query).toContain("SUM(latest_tokens.run_tokens)");
     expect(query).toContain("strftime(");
     expect(query).toContain("COALESCE(runs.completed_at, runs.started_at)");

@@ -679,6 +679,46 @@ button.danger:hover:not(:disabled) {
   justify-content: flex-end;
 }
 
+.account-handoff-dialog {
+  width: min(480px, 100%);
+}
+
+.plan-implementation-dialog {
+  width: min(620px, 100%);
+}
+
+.plan-implementation-copy {
+  min-width: 0;
+}
+
+.plan-implementation-fields {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.plan-implementation-fields .composer-select {
+  width: 100%;
+}
+
+.confirmation-dialog p.account-handoff-error {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  color: var(--color-error);
+}
+
+.account-handoff-error svg {
+  flex: 0 0 auto;
+  margin-top: 2px;
+}
+
+@media (max-width: 620px) {
+  .plan-implementation-fields {
+    grid-template-columns: 1fr;
+  }
+}
+
 button.small {
   min-height: 30px;
   padding: 6px 10px;

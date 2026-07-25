@@ -940,6 +940,19 @@ fn migrations() -> Vec<Migration> {
             ",
             kind: MigrationKind::Up,
         },
+        Migration {
+            version: 19,
+            description: "preserve_adopted_external_chat_identity",
+            sql: "
+                DROP INDEX IF EXISTS idx_chats_external_thread;
+                CREATE UNIQUE INDEX IF NOT EXISTS idx_chats_external_thread
+                    ON chats(external_thread_id)
+                    WHERE origin = 'codex_external'
+                      AND deleted_at IS NULL
+                      AND external_thread_id IS NOT NULL;
+            ",
+            kind: MigrationKind::Up,
+        },
     ]
 }
 
@@ -5938,6 +5951,26 @@ mod tests {
         assert!(web_previews
             .sql
             .contains("ADD COLUMN web_preview_json TEXT"));
+    }
+
+    #[test]
+    fn adopted_external_chats_use_a_new_identity_migration_slot() {
+        let all_migrations = migrations();
+        let adoption = all_migrations
+            .iter()
+            .find(|migration| migration.version == 19)
+            .expect("migration 19");
+
+        assert_eq!(
+            adoption.description,
+            "preserve_adopted_external_chat_identity"
+        );
+        assert!(adoption
+            .sql
+            .contains("DROP INDEX IF EXISTS idx_chats_external_thread"));
+        assert!(adoption
+            .sql
+            .contains("ON chats(external_thread_id)"));
     }
 
     #[test]

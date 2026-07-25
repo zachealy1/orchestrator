@@ -1,7 +1,7 @@
 import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import App from "./App";
+import App, { buildBoundedAccountHandoffContext } from "./App";
 import { ASK_FOR_APPROVAL_PERMISSION_PROFILE } from "./lib/codexAccess";
 import {
   ORCHESTRATOR_CONTEXT_FILE_MIME,
@@ -81,6 +81,7 @@ const mocks = vi.hoisted(() => ({
   listLocalChatTranscriptMock: vi.fn(),
   readExternalTranscriptSnapshotMock: vi.fn(),
   activateExternalTranscriptSnapshotMock: vi.fn(),
+  activateChatAccountHandoffMock: vi.fn(),
   softDeleteChatMock: vi.fn(),
   listWorkspaceRunsMock: vi.fn(),
   createCodexAccountMock: vi.fn(),
@@ -254,6 +255,7 @@ vi.mock("./codexClient", () => ({
 }));
 
 vi.mock("./db", () => ({
+  activateChatAccountHandoff: mocks.activateChatAccountHandoffMock,
   appendRunEvent: mocks.appendRunEventMock,
   appendRunEvents: mocks.appendRunEventsMock,
   buildLocalChatHistoryIndex: mocks.buildLocalChatHistoryIndexMock,
@@ -333,6 +335,21 @@ const signedInAccount2 = {
   label: "personal@example.com",
   email: "personal@example.com",
   plan_type: "plus" as const,
+};
+
+const defaultCodexModel = {
+  id: "gpt-5.5",
+  model: "gpt-5.5",
+  displayName: "GPT-5.5",
+  description: "General purpose model",
+  hidden: false,
+  contextWindow: 128_000,
+  supportedReasoningEfforts: [
+    { reasoningEffort: "medium", description: "Balanced reasoning" },
+    { reasoningEffort: "high", description: "Deeper reasoning" },
+  ],
+  defaultReasoningEffort: "medium",
+  isDefault: true,
 };
 
 const analytics = {
@@ -767,6 +784,7 @@ function prepareDefaults() {
   });
   mocks.readExternalTranscriptSnapshotMock.mockResolvedValue(null);
   mocks.activateExternalTranscriptSnapshotMock.mockResolvedValue(undefined);
+  mocks.activateChatAccountHandoffMock.mockResolvedValue(true);
   mocks.buildLocalChatHistoryIndexMock.mockImplementation(async (chat: any) => {
     const totalTurns = Math.max(0, Number(chat.turn_count) || 0);
     const pages = [];
@@ -1061,6 +1079,58 @@ function setWindowWidth(width: number) {
   });
   window.dispatchEvent(new Event("resize"));
 }
+
+describe("buildBoundedAccountHandoffContext", () => {
+  it("keeps the objective and approved plan while omitting synthetic implementation prompts", () => {
+    const context = buildBoundedAccountHandoffContext(
+      [
+        {
+          turnIndex: 1,
+          prompt: "Build a responsive Snake game",
+          finalMessage: "Prepared the implementation plan.",
+          completedPlan: "# Snake plan\n\nImplement keyboard and touch controls.",
+          intent: "plan",
+          planReviewState: "approved",
+        },
+        {
+          turnIndex: 2,
+          prompt: "Implement the plan.",
+          finalMessage: "Implemented the game and verified its controls.",
+          completedPlan: "",
+          intent: "plan-implementation",
+          planReviewState: null,
+        },
+      ],
+      "",
+      2_000,
+    );
+
+    expect(context).toContain("Build a responsive Snake game");
+    expect(context).toContain("Implement keyboard and touch controls");
+    expect(context).toContain("Implemented the game");
+    expect(context).not.toContain("User: Implement the plan.");
+  });
+
+  it("honours the transfer budget while retaining the original objective", () => {
+    const context = buildBoundedAccountHandoffContext(
+      [
+        {
+          turnIndex: 1,
+          prompt: "Preserve this objective",
+          finalMessage: "x".repeat(20_000),
+          completedPlan: "",
+          intent: "normal",
+          planReviewState: null,
+        },
+      ],
+      "",
+      80,
+    );
+
+    expect(context).toContain("Preserve this objective");
+    expect(context.length).toBeLessThan(1_000);
+  });
+});
 
 describe("App Codex auth", () => {
   beforeEach(() => {
@@ -3807,6 +3877,133 @@ describe("App Codex auth", () => {
     );
   });
 
+  it("adopts an external chat into a managed account without losing imported turns", async () => {
+    prepareSignedInRun();
+    mocks.listCodexAccountsMock.mockResolvedValue([
+      signedInAccount,
+      signedInAccount2,
+    ]);
+    mocks.readCodexAccountMock.mockImplementation(async (accountId: number) => ({
+      account: {
+        type: "chatgpt",
+        email:
+          accountId === signedInAccount2.id
+            ? signedInAccount2.email
+            : signedInAccount.email,
+        planType:
+          accountId === signedInAccount2.id
+            ? signedInAccount2.plan_type
+            : signedInAccount.plan_type,
+      },
+      requiresOpenaiAuth: true,
+    }));
+    mocks.listCodexModelsMock.mockResolvedValue([defaultCodexModel]);
+    const sourceVersion = "2026-07-07T10:02:00Z";
+    const externalChat = {
+      ...workspaceChatFixture({
+        id: 502,
+        title: "Imported browser task",
+        codex_thread_id: "external-thread-2",
+        origin: "codex_external",
+        profile_key: "default",
+        external_thread_id: "external-thread-2",
+        source_kind: "vscode",
+        turn_count: 1,
+      }),
+      account_id: null,
+      account_label: null,
+      account_email: null,
+      sync_status: "synced",
+      external_updated_at: sourceVersion,
+    };
+    const externalSnapshot = {
+      ...externalTranscriptSnapshotFixture(1),
+      threadId: "external-thread-2",
+      sourceVersion,
+      turns: [
+        {
+          ...externalTranscriptSnapshotFixture(1).turns[0],
+          prompt: "Build the imported browser shell",
+          finalMessage: "Created the imported browser shell.",
+        },
+      ],
+    };
+    mocks.listWorkspaceChatsMock.mockResolvedValue([externalChat]);
+    mocks.getChatWithRunsMock.mockResolvedValue({
+      chat: externalChat,
+      runs: [],
+    });
+    mocks.readExternalTranscriptSnapshotMock.mockResolvedValue(
+      externalSnapshot,
+    );
+    mocks.codexRpcMock.mockImplementation(
+      async (accountId: number, method: string) => {
+        if (method === "thread/start") {
+          expect(accountId).toBe(8);
+          return { thread: { id: "managed-thread-2" } };
+        }
+        if (method === "turn/start") {
+          return { turn: { id: "managed-turn-1" } };
+        }
+        return {};
+      },
+    );
+
+    const { user } = await renderApp();
+    const banner = screen.getByRole("region", { name: "Selected folder" });
+    await user.click(
+      within(banner).getByRole("button", { name: /open chat history/i }),
+    );
+    const drawer = await screen.findByRole("complementary", {
+      name: "Workspace chat history",
+    });
+    await user.click(
+      within(drawer).getByRole("button", { name: /imported browser task/i }),
+    );
+    await screen.findByText("Created the imported browser shell.");
+
+    await user.click(screen.getByRole("combobox", { name: "Run account" }));
+    await user.click(
+      screen.getByRole("option", { name: "personal@example.com" }),
+    );
+    const handoffDialog = await screen.findByRole("dialog", {
+      name: "Switch account for this chat?",
+    });
+    await user.click(
+      within(handoffDialog).getByRole("button", { name: "Switch account" }),
+    );
+    await user.type(screen.getByLabelText("Prompt"), "Add session restore");
+    await user.keyboard("{Enter}");
+
+    await waitFor(() =>
+      expect(mocks.activateChatAccountHandoffMock).toHaveBeenCalledWith({
+        chatId: 502,
+        expectedProfileKey: "default",
+        expectedThreadId: "external-thread-2",
+        accountId: 8,
+        profileKey: "account:8",
+        codexThreadId: "managed-thread-2",
+        status: "running",
+      }),
+    );
+    expect(mocks.syncDefaultProfileThreadTranscriptMock).not.toHaveBeenCalled();
+    expect(
+      mocks.codexDefaultProfileRpcMock.mock.calls.some(
+        ([method]) => method === "thread/resume" || method === "turn/start",
+      ),
+    ).toBe(false);
+    const handoffTurn = mocks.codexRpcMock.mock.calls.find(
+      ([accountId, method]) => accountId === 8 && method === "turn/start",
+    );
+    expect(
+      (
+        handoffTurn?.[2] as {
+          additionalContext?: Record<string, { value?: string }>;
+        }
+      )?.additionalContext?.["chat:previous-turns"]?.value,
+    ).toContain("Created the imported browser shell.");
+  });
+
   it("renders an external proposed-plan envelope as a read-only native Plan", async () => {
     const markdown = "# External plan\n\n## Steps\n- Inspect the workspace.";
     const externalChat = {
@@ -4525,6 +4722,7 @@ describe("App Codex auth", () => {
 
   it("uses native Plan collaboration mode and implements the completed plan on the same thread", async () => {
     prepareSignedInRun();
+    mocks.listCodexModelsMock.mockResolvedValue([defaultCodexModel]);
     let turnNumber = 0;
     mocks.codexRpcMock.mockImplementation(
       async (_accountId: number, method: string) => {
@@ -4696,10 +4894,27 @@ describe("App Codex auth", () => {
     const implement = await screen.findByRole("button", {
       name: "Implement plan",
     });
-    expect(screen.getByRole("combobox", { name: "Run account" })).toBeDisabled();
+    expect(screen.getByRole("combobox", { name: "Run account" })).toBeEnabled();
     expect(screen.getByRole("combobox", { name: "Agent" })).toBeDisabled();
-    fireEvent.click(implement);
-    fireEvent.click(implement);
+    await user.click(implement);
+    const implementationDialog = await screen.findByRole("dialog", {
+      name: "Confirm implementation settings",
+    });
+    expect(
+      within(implementationDialog).getByRole("combobox", {
+        name: "Implementation account",
+      }),
+    ).toHaveTextContent("dev@example.com");
+    expect(
+      within(implementationDialog).getByRole("combobox", {
+        name: "Implementation model",
+      }),
+    ).toHaveTextContent("GPT-5.5");
+    await user.click(
+      within(implementationDialog).getByRole("button", {
+        name: "Implement plan",
+      }),
+    );
 
     await waitFor(() => {
       const turnCalls = mocks.codexRpcMock.mock.calls.filter(
@@ -6535,6 +6750,20 @@ describe("App Codex auth", () => {
       },
       requiresOpenaiAuth: true,
     }));
+    mocks.readCodexAccountMock.mockImplementation(async (accountId: number) => ({
+      account: {
+        type: "chatgpt",
+        email:
+          accountId === signedInAccount2.id
+            ? signedInAccount2.email
+            : signedInAccount.email,
+        planType:
+          accountId === signedInAccount2.id
+            ? signedInAccount2.plan_type
+            : signedInAccount.plan_type,
+      },
+      requiresOpenaiAuth: true,
+    }));
 
     const { user } = await renderApp();
     await user.click(await screen.findByLabelText("Codex account"));
@@ -7314,6 +7543,240 @@ describe("App Codex auth", () => {
     );
     expect(mocks.createRunMock).toHaveBeenLastCalledWith(
       expect.objectContaining({ chatId: 401, turnIndex: 2 }),
+    );
+  });
+
+  it("hands an idle chat to another account on a fresh thread", async () => {
+    prepareSignedInRun();
+    mocks.listCodexAccountsMock.mockResolvedValue([
+      signedInAccount,
+      signedInAccount2,
+    ]);
+    mocks.readCodexAccountMock.mockImplementation(async (accountId: number) => ({
+      account: {
+        type: "chatgpt",
+        email:
+          accountId === signedInAccount2.id
+            ? signedInAccount2.email
+            : signedInAccount.email,
+        planType:
+          accountId === signedInAccount2.id
+            ? signedInAccount2.plan_type
+            : signedInAccount.plan_type,
+      },
+      requiresOpenaiAuth: true,
+    }));
+    mocks.listCodexModelsMock.mockResolvedValue([defaultCodexModel]);
+    const historicalChat = workspaceChatFixture({
+      id: 451,
+      title: "Build Snake controls",
+      codex_thread_id: "thread-account-7",
+      turn_count: 2,
+    });
+    const historicalRuns = [
+      workspaceRunFixture({
+        id: 351,
+        chat_id: historicalChat.id,
+        turn_index: 1,
+        original_prompt: "Build responsive Snake controls",
+        final_message: "Prepared a focused implementation plan.",
+        completed_plan_text: "# Plan\n\nAdd keyboard and touch controls.",
+        plan_review_state: "approved",
+        run_intent: "plan",
+      }),
+      workspaceRunFixture({
+        id: 352,
+        chat_id: historicalChat.id,
+        turn_index: 2,
+        original_prompt: "Implement the plan.",
+        final_message: "Implemented the control system.",
+        run_intent: "plan-implementation",
+      }),
+    ];
+    mocks.listWorkspaceChatsMock.mockResolvedValue([historicalChat]);
+    mocks.getChatWithRunsMock.mockResolvedValue(
+      workspaceChatWithRunsFixture(historicalChat, historicalRuns),
+    );
+    mocks.codexRpcMock.mockImplementation(
+      async (accountId: number, method: string) => {
+        if (method === "thread/start") {
+          expect(accountId).toBe(8);
+          return { thread: { id: "thread-account-8" } };
+        }
+        if (method === "turn/start") {
+          expect(accountId).toBe(8);
+          return { turn: { id: "turn-account-8" } };
+        }
+        return {};
+      },
+    );
+
+    const { user } = await renderApp();
+    const banner = screen.getByRole("region", { name: "Selected folder" });
+    await user.click(
+      within(banner).getByRole("button", { name: /open chat history/i }),
+    );
+    const drawer = await screen.findByRole("complementary", {
+      name: "Workspace chat history",
+    });
+    await user.click(
+      within(drawer).getByRole("button", { name: /build snake controls/i }),
+    );
+    await screen.findByText("Build responsive Snake controls");
+
+    await user.click(screen.getByRole("combobox", { name: "Run account" }));
+    await user.click(
+      screen.getByRole("option", { name: "personal@example.com" }),
+    );
+    const handoffDialog = await screen.findByRole("dialog", {
+      name: "Switch account for this chat?",
+    });
+    expect(handoffDialog).toHaveTextContent(/fresh Codex thread/i);
+    await user.click(
+      within(handoffDialog).getByRole("button", { name: "Switch account" }),
+    );
+    await waitFor(() =>
+      expect(
+        screen.getByRole("combobox", { name: "Run account" }),
+      ).toHaveTextContent("personal@example.com"),
+    );
+
+    await user.type(screen.getByLabelText("Prompt"), "Polish gamepad input");
+    await user.keyboard("{Enter}");
+
+    await waitFor(() =>
+      expect(mocks.activateChatAccountHandoffMock).toHaveBeenCalledWith({
+        chatId: 451,
+        expectedProfileKey: "account:7",
+        expectedThreadId: "thread-account-7",
+        accountId: 8,
+        profileKey: "account:8",
+        codexThreadId: "thread-account-8",
+        status: "running",
+      }),
+    );
+    expect(mocks.codexRpcMock).toHaveBeenCalledWith(
+      8,
+      "thread/start",
+      expect.any(Object),
+    );
+    expect(mocks.codexRpcMock).not.toHaveBeenCalledWith(
+      8,
+      "thread/resume",
+      expect.objectContaining({ threadId: "thread-account-7" }),
+    );
+    const handoffTurn = mocks.codexRpcMock.mock.calls.find(
+      (call) =>
+        call[0] === 8 &&
+        call[1] === "turn/start" &&
+        (call[2] as { threadId?: string })?.threadId === "thread-account-8",
+    );
+    const handoffContext = (
+      handoffTurn?.[2] as {
+        additionalContext?: Record<string, { value?: string }>;
+      }
+    )?.additionalContext?.["chat:previous-turns"]?.value;
+    expect(handoffContext).toContain("Build responsive Snake controls");
+    expect(handoffContext).toContain("Add keyboard and touch controls");
+    expect(handoffContext).toContain("Implemented the control system");
+    expect(handoffContext).not.toContain("User: Implement the plan.");
+  });
+
+  it("rolls back the visible handoff when chat activation fails", async () => {
+    prepareSignedInRun();
+    mocks.listCodexAccountsMock.mockResolvedValue([
+      signedInAccount,
+      signedInAccount2,
+    ]);
+    mocks.readCodexAccountMock.mockImplementation(async (accountId: number) => ({
+      account: {
+        type: "chatgpt",
+        email:
+          accountId === signedInAccount2.id
+            ? signedInAccount2.email
+            : signedInAccount.email,
+        planType:
+          accountId === signedInAccount2.id
+            ? signedInAccount2.plan_type
+            : signedInAccount.plan_type,
+      },
+      requiresOpenaiAuth: true,
+    }));
+    mocks.listCodexModelsMock.mockResolvedValue([defaultCodexModel]);
+    mocks.activateChatAccountHandoffMock.mockResolvedValue(false);
+    const historicalChat = workspaceChatFixture({
+      id: 452,
+      title: "Keep original ownership",
+      codex_thread_id: "thread-account-7",
+    });
+    const historicalRun = workspaceRunFixture({
+      id: 353,
+      chat_id: historicalChat.id,
+      turn_index: 1,
+      original_prompt: "Create the initial implementation",
+      final_message: "Created the initial implementation.",
+    });
+    mocks.listWorkspaceChatsMock.mockResolvedValue([historicalChat]);
+    mocks.getChatWithRunsMock.mockResolvedValue(
+      workspaceChatWithRunsFixture(historicalChat, [historicalRun]),
+    );
+    mocks.codexRpcMock.mockImplementation(
+      async (accountId: number, method: string) => {
+        if (method === "thread/start") {
+          expect(accountId).toBe(8);
+          return { thread: { id: "thread-account-8" } };
+        }
+        if (method === "turn/start") {
+          return { turn: { id: "turn-account-8" } };
+        }
+        return {};
+      },
+    );
+
+    const { user } = await renderApp();
+    const banner = screen.getByRole("region", { name: "Selected folder" });
+    await user.click(
+      within(banner).getByRole("button", { name: /open chat history/i }),
+    );
+    const drawer = await screen.findByRole("complementary", {
+      name: "Workspace chat history",
+    });
+    await user.click(
+      within(drawer).getByRole("button", {
+        name: /keep original ownership/i,
+      }),
+    );
+    await screen.findByText("Create the initial implementation");
+
+    await user.click(screen.getByRole("combobox", { name: "Run account" }));
+    await user.click(
+      screen.getByRole("option", { name: "personal@example.com" }),
+    );
+    const handoffDialog = await screen.findByRole("dialog", {
+      name: "Switch account for this chat?",
+    });
+    await user.click(
+      within(handoffDialog).getByRole("button", { name: "Switch account" }),
+    );
+
+    const prompt = screen.getByLabelText("Prompt");
+    await user.type(prompt, "Retry this handoff");
+    await user.keyboard("{Enter}");
+
+    await waitFor(() =>
+      expect(mocks.codexRpcMock).toHaveBeenCalledWith(
+        8,
+        "turn/interrupt",
+        {
+          threadId: "thread-account-8",
+          turnId: "turn-account-8",
+        },
+      ),
+    );
+    expect(prompt).toHaveValue("Retry this handoff");
+    expect(mocks.updateChatMock).not.toHaveBeenCalledWith(
+      452,
+      expect.objectContaining({ status: "failed" }),
     );
   });
 

@@ -6,12 +6,15 @@ import {
   BarChart3,
   Bell,
   BellOff,
+  Bot,
   Check,
   ChevronDown,
   ChevronRight,
+  CircleUserRound,
   FileText,
   Folder,
   FolderOpen,
+  Gauge,
   GitBranch,
   GitCommitHorizontal,
   Loader2,
@@ -57,6 +60,7 @@ import {
 import {
   appendRunEvent,
   appendRunEvents,
+  activateChatAccountHandoff,
   activateExternalTranscriptSnapshot,
   claimChatTitleGeneration,
   completeDuplicateProfileCleanup,
@@ -299,6 +303,7 @@ import type {
   BrowserRuntimeStatus,
   BrowserSessionState,
   PreparedBrowserSession,
+  ChatRecord,
   CodexAccount,
   CodexAccessMode,
   CodexAccountProfile,
@@ -658,8 +663,9 @@ type RunSetupSnapshot = {
   chatId: number | null;
   threadId: string | null;
   turnIndex: number;
-  forceFreshThread?: boolean;
+  threadStrategy: RunThreadStrategy;
   previousChatContext?: string | null;
+  handoffContextBudgetTokens?: number;
   supersededRunIds?: number[];
   replacementClientId?: string | null;
   restoreEntryOnSetupFailure?: TaskChatEntry | null;
@@ -750,6 +756,62 @@ type WorkspaceChatSession = {
   externalThreadId: string | null;
   nextTurnIndex: number;
   savedDefaultCollaborationMode?: CollaborationMode | null;
+};
+
+type PendingAccountHandoff = {
+  workspaceId: number;
+  chatId: number;
+  fromProfileKey: CodexProfileKey | null;
+  fromThreadId: string | null;
+  targetAccountId: number;
+  targetProfileKey: CodexProfileKey;
+};
+
+type AccountHandoffRunStrategy = PendingAccountHandoff & {
+  adoptingExternalChat: boolean;
+};
+
+type RunThreadStrategy =
+  | { kind: "resume" }
+  | { kind: "fresh" }
+  | { kind: "handoff"; handoff: AccountHandoffRunStrategy };
+
+type AccountHandoffCandidate = PendingAccountHandoff & {
+  fromLabel: string;
+  targetLabel: string;
+  status: "idle" | "selecting";
+  error: string | null;
+};
+
+type PlanImplementationDialogState = {
+  requestId: number;
+  workspaceId: number;
+  chatId: number;
+  entry: TaskChatEntry;
+  allowDefaultProfile: boolean;
+  accountId: number;
+  profileKey: CodexProfileKey;
+  models: CodexModel[];
+  selectedModelId: string | null;
+  reasoningEffort: string | null;
+  status: "loading" | "idle" | "starting";
+  error: string | null;
+};
+
+type PlanFollowUpExecutionSelection = {
+  accountId: number;
+  profileKey: CodexProfileKey;
+  model: CodexModel | null;
+  reasoningEffort: string | null;
+};
+
+export type AccountHandoffContextTurn = {
+  turnIndex: number;
+  prompt: string;
+  finalMessage: string;
+  completedPlan: string;
+  intent: RunIntent | null;
+  planReviewState: string | null;
 };
 
 type WorkspaceTaskSelection =
@@ -1318,6 +1380,14 @@ function App() {
   const [workspaceChatSessions, setWorkspaceChatSessions] = useState<
     Record<number, WorkspaceChatSession | undefined>
   >({});
+  const [pendingAccountHandoffs, setPendingAccountHandoffs] = useState<
+    Record<number, PendingAccountHandoff | undefined>
+  >({});
+  const [accountHandoffCandidate, setAccountHandoffCandidate] =
+    useState<AccountHandoffCandidate | null>(null);
+  const [planImplementationDialog, setPlanImplementationDialog] =
+    useState<PlanImplementationDialogState | null>(null);
+  const planImplementationDialogRequestRef = useRef(0);
   const [commitDialogOpen, setCommitDialogOpen] = useState(false);
   const [commitIntentContext, setCommitIntentContext] =
     useState<WorkspaceCommitIntentContext | null>(null);
@@ -1449,6 +1519,9 @@ function App() {
   const workspaceTaskMemoriesRef = useRef<
     Record<number, WorkspaceTaskMemory | undefined>
   >({});
+  const pendingAccountHandoffsRef = useRef<
+    Record<number, PendingAccountHandoff | undefined>
+  >({});
   const transcriptScrollActiveRef = useRef(false);
   const previewResizingRef = useRef(false);
   const lastForegroundInteractionAtRef = useRef(0);
@@ -1498,6 +1571,7 @@ function App() {
   contextFilesRef.current = contextFiles;
   selectedSkillsRef.current = selectedSkills;
   historicalTranscriptRef.current = historicalTranscript;
+  pendingAccountHandoffsRef.current = pendingAccountHandoffs;
   workspacesRef.current = workspaces;
   activeViewRef.current = activeView;
   accountMenuOpenRef.current = accountMenuOpen;
@@ -2065,7 +2139,7 @@ function App() {
     }
   });
   const selectComposerAccount = useStableEvent((accountId: number) => {
-    void selectCodexAccount(accountId);
+    requestCodexAccountSelection(accountId);
   });
   const chooseComposerContextFiles = useStableEvent(() => {
     void chooseContextFiles();
@@ -2164,6 +2238,43 @@ function App() {
   const selectedWorkspaceChatSession = selectedWorkspace
     ? (workspaceChatSessions[selectedWorkspace.id] ?? null)
     : null;
+  const selectedPendingAccountHandoff = selectedWorkspaceChatSession
+    ? pendingAccountHandoffs[selectedWorkspaceChatSession.chatId] ?? null
+    : null;
+  const selectedComposerAccountId =
+    selectedPendingAccountHandoff?.targetAccountId ??
+    accountIdFromProfileKey(selectedWorkspaceChatSession?.profileKey) ??
+    (selectedWorkspaceChatSession ? null : selectedAccountId);
+  const selectedComposerAccountPlaceholder =
+    selectedWorkspaceChatSession?.profileKey === DEFAULT_CODEX_PROFILE_KEY &&
+    !selectedPendingAccountHandoff
+      ? "Codex default profile"
+      : "Sign in required";
+  const planImplementationSelectedModel =
+    planImplementationDialog?.models.find(
+      (model) => model.id === planImplementationDialog.selectedModelId,
+    ) ?? null;
+  const planImplementationAccountOptions = [
+    ...(planImplementationDialog?.allowDefaultProfile
+      ? [{ value: "default", label: "Codex default profile" }]
+      : []),
+    ...signedInAccounts.map((account) => ({
+      value: account.id.toString(),
+      label: account.label,
+    })),
+  ];
+  const planImplementationModelOptions =
+    planImplementationDialog?.models.map((model) => ({
+      value: model.id,
+      label: model.displayName || model.model,
+    })) ?? [];
+  const planImplementationReasoningOptions =
+    planImplementationSelectedModel?.supportedReasoningEfforts.map(
+      (option) => ({
+        value: option.reasoningEffort,
+        label: formatReasoningEffort(option.reasoningEffort),
+      }),
+    ) ?? [];
   const selectedActiveRunControl = useMemo(() => {
     if (!selectedWorkspace) return null;
     const controls = [...activeRunControlsRef.current.values()];
@@ -2461,7 +2572,10 @@ function App() {
     if (runIsActive || activeChatEntryId !== null) {
       return null;
     }
-    if (selectedWorkspaceChatSession?.origin === "codex_external") {
+    if (
+      selectedWorkspaceChatSession?.origin === "codex_external" &&
+      selectedWorkspaceChatSession.profileKey === DEFAULT_CODEX_PROFILE_KEY
+    ) {
       return null;
     }
     const latestEntry = selectedWorkspaceChatMeta.latestPromptEntry;
@@ -2477,6 +2591,7 @@ function App() {
     activeChatEntryId,
     runIsActive,
     selectedWorkspaceChatSession?.origin,
+    selectedWorkspaceChatSession?.profileKey,
     selectedWorkspaceChatMeta.latestPromptEntry,
   ]);
   const selectedWorkspaceContextUsage = selectedWorkspaceChatMeta.latestTokenUsage;
@@ -2998,6 +3113,39 @@ function App() {
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
   }, [chatHistoryDeleteCandidate]);
+
+  useEffect(() => {
+    if (!accountHandoffCandidate) {
+      return;
+    }
+    const candidateStatus = accountHandoffCandidate.status;
+
+    function handleKeyDown(event: KeyboardEvent) {
+      if (event.key === "Escape" && candidateStatus === "idle") {
+        setAccountHandoffCandidate(null);
+      }
+    }
+
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [accountHandoffCandidate]);
+
+  useEffect(() => {
+    if (!planImplementationDialog) {
+      return;
+    }
+    const canClose = planImplementationDialog.status === "idle";
+
+    function handleKeyDown(event: KeyboardEvent) {
+      if (event.key === "Escape" && canClose) {
+        planImplementationDialogRequestRef.current += 1;
+        setPlanImplementationDialog(null);
+      }
+    }
+
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [planImplementationDialog]);
 
   useEffect(() => {
     if (!accountMenuOpen) {
@@ -3895,6 +4043,34 @@ function App() {
     }
   }
 
+  async function listCodexModelsForProfile(
+    profileKey: CodexProfileKey,
+    accountId: number,
+  ) {
+    await ensureCodexProfileConnected(profileKey, accountId);
+    if (profileKey !== DEFAULT_CODEX_PROFILE_KEY) {
+      return listCodexModels(accountId);
+    }
+
+    const visibleModels: CodexModel[] = [];
+    let cursor: string | null = null;
+    do {
+      const response: {
+        data?: CodexModel[];
+        nextCursor?: string | null;
+      } = await codexDefaultProfileRpc("model/list", {
+        includeHidden: false,
+        limit: 100,
+        cursor,
+      });
+      visibleModels.push(
+        ...(response.data ?? []).filter((model: CodexModel) => !model.hidden),
+      );
+      cursor = response.nextCursor ?? null;
+    } while (cursor);
+    return visibleModels;
+  }
+
   async function chooseWorkspace() {
     const selected = await open({
       directory: true,
@@ -4146,6 +4322,10 @@ function App() {
   }
 
   function fallBackToNewWorkspaceChat(workspace: Workspace, message: string) {
+    const previousSession = workspaceChatSessionsRef.current[workspace.id];
+    if (previousSession) {
+      clearPendingAccountHandoff(previousSession.chatId);
+    }
     const existing =
       workspaceTaskMemoriesRef.current[workspace.id] ??
       createEmptyWorkspaceTaskMemory();
@@ -4339,12 +4519,7 @@ function App() {
         ? `Selected ${workspace.label}. Started a new chat.`
         : `Selected ${workspace.label}. Restored the previous chat.`,
     );
-    if (
-      workspace.default_account_id &&
-      workspace.default_account_id !== selectedAccountIdRef.current
-    ) {
-      void selectCodexAccount(workspace.default_account_id);
-    }
+    selectWorkspaceExecutionAccount(workspace, selectedChatSession ?? null);
     if (needsHistoryReload && selection.kind === "chat") {
       void reloadRememberedWorkspaceChat(workspace, selection);
     }
@@ -5364,7 +5539,7 @@ function App() {
     });
     cacheStableHistoryChat(chat, entries, publishedTranscript);
     if (
-      chat.origin === "orchestrator" &&
+      (chat.origin === "orchestrator" || isAdoptedExternalChat(chat)) &&
       entries.some((entry) => entry.runView.nativePlan.reviewState === "available")
     ) {
       void reconcileReopenedPlanWorkflow(chat, entries, loadId);
@@ -5535,6 +5710,9 @@ function App() {
     publication: "none" | "initial",
     positionIntent: HistoricalTranscriptState["positionIntent"] = "latest",
   ) {
+    if (isAdoptedExternalChat(chat)) {
+      return;
+    }
     const threadId = chat.external_thread_id ?? chat.codex_thread_id;
     if (!threadId) return;
     const sourceVersion = chat.external_updated_at ?? chat.updated_at;
@@ -5640,6 +5818,52 @@ function App() {
     loadId: number,
     positionIntent: HistoricalTranscriptState["positionIntent"],
   ) {
+    if (isAdoptedExternalChat(chat)) {
+      const snapshot = await readExternalTranscriptSnapshot(chat.id);
+      if (!snapshot) {
+        throw new Error(
+          "The frozen imported transcript is unavailable for this adopted chat.",
+        );
+      }
+      const localRuns = await listLocalChatTranscript(chat.id);
+      if (historyChatLoadIdRef.current !== loadId) return;
+      const entries = [
+        ...createTaskChatEntriesFromExternalTranscriptSnapshot(chat, snapshot),
+        ...localRuns.map(createTaskChatEntryFromHistoryRun),
+      ].sort(
+        (left, right) =>
+          (left.turnIndex ?? Number.MAX_SAFE_INTEGER) -
+          (right.turnIndex ?? Number.MAX_SAFE_INTEGER),
+      );
+      const transcript: HistoricalTranscriptState = {
+        chatId: chat.id,
+        sourceVersion: historyChatVersion(chat),
+        complete: true,
+        firstItemIndex: HISTORY_VIRTUOSO_BASE_INDEX,
+        positionIntent,
+        openAtLatestRequest: null,
+        syncStatus: "complete",
+      };
+      const preparedEntries = await prepareHistoryChatEntries(
+        chat,
+        entries,
+        transcript,
+        loadId,
+      );
+      if (!preparedEntries) return;
+      publishStableHistoryChat(
+        chat,
+        preparedEntries,
+        transcript,
+        loadId,
+        positionIntent,
+      );
+      setStatusMessage(
+        `Opened chat from ${formatHistoryTimestamp(chat.latest_activity_at)}.`,
+      );
+      return;
+    }
+
     const threadId = chat.external_thread_id ?? chat.codex_thread_id;
     if (!threadId) {
       throw new Error("External Codex chat is missing its thread id.");
@@ -5751,12 +5975,15 @@ function App() {
     preflightRef.current = null;
   }
 
-  function selectWorkspaceDefaultAccount(workspace: Workspace) {
-    if (
-      workspace.default_account_id &&
-      workspace.default_account_id !== selectedAccountIdRef.current
-    ) {
-      void selectCodexAccount(workspace.default_account_id);
+  function selectWorkspaceExecutionAccount(
+    workspace: Workspace,
+    session: WorkspaceChatSession | null,
+  ) {
+    const accountId =
+      accountIdFromProfileKey(session?.profileKey) ??
+      (!session ? workspace.default_account_id : null);
+    if (accountId && accountId !== selectedAccountIdRef.current) {
+      void selectCodexAccount(accountId);
     }
   }
 
@@ -5786,7 +6013,9 @@ function App() {
     transcriptScrollActiveRef.current = false;
     const session: WorkspaceChatSession = {
       chatId: chat.id,
-      threadId: chat.external_thread_id ?? chat.codex_thread_id,
+      threadId: isAdoptedExternalChat(chat)
+        ? chat.codex_thread_id
+        : chat.external_thread_id ?? chat.codex_thread_id,
       origin: chat.origin,
       profileKey: chat.profile_key,
       externalThreadId: chat.external_thread_id,
@@ -5819,7 +6048,7 @@ function App() {
         closeHistoryDrawer();
         setSelectedRunAliases(runningControl);
       });
-      selectWorkspaceDefaultAccount(targetWorkspace);
+      selectWorkspaceExecutionAccount(targetWorkspace, session);
       setStatusMessage("Opened running chat.");
       return true;
     }
@@ -5850,7 +6079,7 @@ function App() {
       closeHistoryDrawer();
       setSelectedRunAliases(null);
     });
-    selectWorkspaceDefaultAccount(targetWorkspace);
+    selectWorkspaceExecutionAccount(targetWorkspace, session);
 
     setStatusMessage(`Opening chat from ${formatHistoryTimestamp(chat.latest_activity_at)}.`);
     try {
@@ -6062,6 +6291,11 @@ function App() {
       return;
     }
     cancelAgentNotificationNavigation();
+    const previousSession =
+      workspaceChatSessionsRef.current[selectedWorkspace.id];
+    if (previousSession) {
+      clearPendingAccountHandoff(previousSession.chatId);
+    }
     historyChatLoadIdRef.current += 1;
     cancelActiveExternalTranscriptSync();
     cancelActiveHistoricalTranscriptPreparation();
@@ -6091,6 +6325,7 @@ function App() {
     }
 
     await softDeleteChat(chat.id);
+    clearPendingAccountHandoff(chat.id);
     stableHistoryChatCacheRef.current.delete(chat.id);
     const remembered = workspaceTaskMemoriesRef.current[chat.workspace_id];
     if (
@@ -6230,6 +6465,13 @@ function App() {
       current.filter((entry) => entry.workspaceId !== workspace.id),
     );
     delete workspaceTaskMemoriesRef.current[workspace.id];
+    const remainingHandoffs = Object.fromEntries(
+      Object.entries(pendingAccountHandoffsRef.current).filter(
+        ([, handoff]) => handoff?.workspaceId !== workspace.id,
+      ),
+    );
+    pendingAccountHandoffsRef.current = remainingHandoffs;
+    setPendingAccountHandoffs(remainingHandoffs);
     setWorkspaceChatSession(workspace.id, undefined);
     setHistoryChatLoadState((current) =>
       current?.workspaceId === workspace.id ? null : current,
@@ -6756,15 +6998,15 @@ function App() {
   }
 
   async function selectCodexAccount(accountId: number) {
-    if (runIsActive || selectedAccountIdRef.current === accountId) {
-      return;
+    if (runIsActive) {
+      return false;
     }
 
     const profile = codexAccountsRef.current.find(
       (account) => account.id === accountId,
     );
     if (!profile) {
-      return;
+      return false;
     }
 
     setSelectedAccountId(accountId);
@@ -6787,13 +7029,204 @@ function App() {
       await refreshAccountState(accountId, true);
       await refreshCodexModels(accountId);
       await updateCodexAccount(accountId, { touchLastUsed: true });
+      return true;
     } catch (error) {
       setStatusMessage(
         `Could not select ${profile.label}: ${
           error instanceof Error ? error.message : String(error)
         }`,
       );
+      return false;
     }
+  }
+
+  function setPendingAccountHandoff(handoff: PendingAccountHandoff) {
+    const next = {
+      ...pendingAccountHandoffsRef.current,
+      [handoff.chatId]: handoff,
+    };
+    pendingAccountHandoffsRef.current = next;
+    setPendingAccountHandoffs(next);
+  }
+
+  function clearPendingAccountHandoff(chatId: number) {
+    if (!pendingAccountHandoffsRef.current[chatId]) return;
+    const next = { ...pendingAccountHandoffsRef.current };
+    delete next[chatId];
+    pendingAccountHandoffsRef.current = next;
+    setPendingAccountHandoffs(next);
+  }
+
+  function requestCodexAccountSelection(accountId: number) {
+    const account = codexAccountsRef.current.find(
+      (candidate) => candidate.id === accountId && candidate.status === "signed_in",
+    );
+    if (!account) {
+      setStatusMessage("Sign in to that Codex account before selecting it.");
+      return;
+    }
+
+    const workspace = selectedWorkspaceRef.current;
+    const session = workspace
+      ? workspaceChatSessionsRef.current[workspace.id] ?? null
+      : null;
+    if (!workspace || !session) {
+      void selectCodexAccount(accountId);
+      return;
+    }
+    if (selectedRunIsActiveNow()) {
+      setStatusMessage("Wait for the active turn to finish before switching accounts.");
+      return;
+    }
+
+    const targetProfileKey = `account:${accountId}` as CodexProfileKey;
+    if (session.profileKey === targetProfileKey) {
+      clearPendingAccountHandoff(session.chatId);
+      void selectCodexAccount(accountId);
+      return;
+    }
+
+    const currentAccountId = accountIdFromProfileKey(session.profileKey);
+    const currentAccount =
+      currentAccountId === null
+        ? null
+        : codexAccountsRef.current.find(
+            (candidate) => candidate.id === currentAccountId,
+          ) ?? null;
+    setAccountHandoffCandidate({
+      workspaceId: workspace.id,
+      chatId: session.chatId,
+      fromProfileKey: session.profileKey,
+      fromThreadId: session.threadId,
+      targetAccountId: accountId,
+      targetProfileKey,
+      fromLabel:
+        session.profileKey === DEFAULT_CODEX_PROFILE_KEY
+          ? "Codex default profile"
+          : currentAccount?.label ?? "Current Codex account",
+      targetLabel: account.label,
+      status: "idle",
+      error: null,
+    });
+  }
+
+  async function confirmAccountHandoff() {
+    const candidate = accountHandoffCandidate;
+    const workspace = selectedWorkspaceRef.current;
+    const session = workspace
+      ? workspaceChatSessionsRef.current[workspace.id] ?? null
+      : null;
+    if (
+      !candidate ||
+      !workspace ||
+      workspace.id !== candidate.workspaceId ||
+      !session ||
+      session.chatId !== candidate.chatId ||
+      session.profileKey !== candidate.fromProfileKey ||
+      session.threadId !== candidate.fromThreadId ||
+      selectedRunIsActiveNow()
+    ) {
+      setAccountHandoffCandidate(null);
+      setStatusMessage("The chat changed before the account handoff could be confirmed.");
+      return;
+    }
+
+    setAccountHandoffCandidate({ ...candidate, status: "selecting", error: null });
+    try {
+      await ensureCodexProfileConnected(
+        candidate.targetProfileKey,
+        candidate.targetAccountId,
+      );
+      const authState = await refreshAccountState(
+        candidate.targetAccountId,
+        true,
+      );
+      if (shouldBlockRunForAuth(authState.requiresOpenaiAuth, authState.account)) {
+        throw new Error("Sign in to the selected Codex account first.");
+      }
+
+      if (!useOss && !modelLoadError) {
+        const currentModel =
+          models.find((model) => model.id === selectedModelId) ??
+          models[0] ??
+          null;
+        if (!currentModel) {
+          throw new Error("Choose an available model before switching accounts.");
+        }
+        const targetModels = await listCodexModels(candidate.targetAccountId);
+        const targetModel =
+          targetModels.find(
+            (model) =>
+              model.id === currentModel.id ||
+              model.model === currentModel.model,
+          ) ?? null;
+        if (!targetModel) {
+          throw new Error(
+            `${currentModel.displayName || currentModel.model} is unavailable for the selected account.`,
+          );
+        }
+        if (
+          selectedReasoningEffort &&
+          !targetModel.supportedReasoningEfforts.some(
+            (option) =>
+              option.reasoningEffort === selectedReasoningEffort,
+          )
+        ) {
+          throw new Error(
+            `${formatReasoningEffort(
+              selectedReasoningEffort,
+            )} reasoning is unavailable for the selected account.`,
+          );
+        }
+      }
+      await updateCodexAccount(candidate.targetAccountId, {
+        touchLastUsed: true,
+      });
+    } catch (error) {
+      setAccountHandoffCandidate((current) =>
+        current?.chatId === candidate.chatId
+          ? {
+              ...current,
+              status: "idle",
+              error:
+                error instanceof Error
+                  ? error.message
+                  : "Could not prepare the selected Codex account.",
+            }
+          : current,
+      );
+      return;
+    }
+
+    const latestSession =
+      workspaceChatSessionsRef.current[candidate.workspaceId] ?? null;
+    if (
+      selectedWorkspaceRef.current?.id !== candidate.workspaceId ||
+      !latestSession ||
+      latestSession.chatId !== candidate.chatId ||
+      latestSession.profileKey !== candidate.fromProfileKey ||
+      latestSession.threadId !== candidate.fromThreadId ||
+      selectedRunIsActiveNow()
+    ) {
+      setAccountHandoffCandidate(null);
+      setStatusMessage(
+        "The chat changed before the account handoff could be confirmed.",
+      );
+      return;
+    }
+
+    setPendingAccountHandoff({
+      workspaceId: candidate.workspaceId,
+      chatId: candidate.chatId,
+      fromProfileKey: candidate.fromProfileKey,
+      fromThreadId: candidate.fromThreadId,
+      targetAccountId: candidate.targetAccountId,
+      targetProfileKey: candidate.targetProfileKey,
+    });
+    setAccountHandoffCandidate(null);
+    setStatusMessage(
+      `The next turn will continue with ${candidate.targetLabel} in a fresh Codex thread.`,
+    );
   }
 
   function notifyExternalLoginAction(accountId: number, loginId: string) {
@@ -7338,10 +7771,11 @@ function App() {
     snapshot.intent = intent;
     snapshot.clientUserMessageId = clientUserMessageId;
     const submittedAt = new Date().toISOString();
+    const resumesExistingThread = snapshot.threadStrategy.kind === "resume";
     const previousThreadUsage =
-      snapshot.chatOrigin === "orchestrator" &&
+      snapshot.profileKey !== DEFAULT_CODEX_PROFILE_KEY &&
       snapshot.threadId !== null &&
-      !snapshot.forceFreshThread
+      resumesExistingThread
         ? [...selectedWorkspaceChatEntries]
             .reverse()
             .find(
@@ -7351,7 +7785,7 @@ function App() {
                 entry.runView.tokenUsage !== null,
             )?.runView.tokenUsage ?? null
         : null;
-    const startsFreshThread = snapshot.threadId === null || snapshot.forceFreshThread;
+    const startsFreshThread = !resumesExistingThread;
     const initialRunView = {
       ...emptyRunView,
       status: "connecting" as const,
@@ -7454,10 +7888,17 @@ function App() {
     snapshot: RunSetupSnapshot,
   ) {
     let chatId = snapshot.chatId;
-    let threadId = snapshot.forceFreshThread ? null : snapshot.threadId;
+    const accountHandoff =
+      snapshot.threadStrategy.kind === "handoff"
+        ? snapshot.threadStrategy.handoff
+        : null;
+    let threadId =
+      snapshot.threadStrategy.kind === "resume" ? snapshot.threadId : null;
     let taskId: number | null = null;
     let runId: number | null = null;
+    let accountHandoffActivated = false;
     let pendingChatTitleGeneration: ChatTitleGenerationRequest | null = null;
+    const warnings: string[] = [];
 
     setStatusMessage("Preparing run...");
     preflightRef.current = null;
@@ -7529,7 +7970,7 @@ function App() {
         throw new Error("Codex did not return a native Plan collaboration mode.");
       }
       ensureRunControlActive(runControl);
-      if (snapshot.chatOrigin === "orchestrator") {
+      if (snapshot.profileKey !== DEFAULT_CODEX_PROFILE_KEY) {
         const authState = await refreshAccountState(snapshot.accountId, true);
         ensureRunControlActive(runControl);
         if (shouldBlockRunForAuth(authState.requiresOpenaiAuth, authState.account)) {
@@ -7539,6 +7980,13 @@ function App() {
               : "Sign in to Codex before starting a run.",
           );
         }
+      }
+      if (accountHandoff) {
+        snapshot.previousChatContext = await buildAccountHandoffContext(
+          snapshot,
+          runControl,
+        );
+        ensureRunControlActive(runControl);
       }
 
       if (chatId === null) {
@@ -7611,7 +8059,10 @@ function App() {
         workspaceId: snapshot.workspace.id,
         chatId,
         turnIndex: snapshot.turnIndex,
-        accountId: snapshot.chatOrigin === "orchestrator" ? snapshot.accountId : null,
+        accountId:
+          snapshot.profileKey === DEFAULT_CODEX_PROFILE_KEY
+            ? null
+            : snapshot.accountId,
         accountLabel: snapshot.account?.label ?? "Codex default profile",
         accountEmail: snapshot.account?.email ?? null,
         status: "starting",
@@ -7679,7 +8130,10 @@ function App() {
         if (chatId === null) {
           throw new Error("Chat was not prepared before starting a Codex thread.");
         }
-        if (snapshot.chatOrigin !== "orchestrator") {
+        if (
+          snapshot.profileKey === DEFAULT_CODEX_PROFILE_KEY &&
+          !accountHandoff
+        ) {
           throw new Error("External Codex chats cannot be restarted as Orchestrator threads.");
         }
         const activeChatId = chatId;
@@ -7710,22 +8164,24 @@ function App() {
         const nextThreadModel = thread.model ?? snapshot.model;
         const nextThreadModelProvider =
           thread.modelProvider ?? (snapshot.useOss ? "oss" : null);
-        await updateChat(activeChatId, {
-          codexThreadId: nextThreadId,
-          status: "running",
-        });
-        updateRememberedWorkspaceChatSession(
-          snapshot.workspace.id,
-          activeChatId,
-          {
-            chatId: activeChatId,
-            threadId: nextThreadId,
-            origin: snapshot.chatOrigin,
-            profileKey: snapshot.profileKey,
-            externalThreadId: snapshot.externalThreadId,
-            nextTurnIndex: snapshot.turnIndex + 1,
-          },
-        );
+        if (!accountHandoff) {
+          await updateChat(activeChatId, {
+            codexThreadId: nextThreadId,
+            status: "running",
+          });
+          updateRememberedWorkspaceChatSession(
+            snapshot.workspace.id,
+            activeChatId,
+            {
+              chatId: activeChatId,
+              threadId: nextThreadId,
+              origin: snapshot.chatOrigin,
+              profileKey: snapshot.profileKey,
+              externalThreadId: snapshot.externalThreadId,
+              nextTurnIndex: snapshot.turnIndex + 1,
+            },
+          );
+        }
         return {
           threadId: nextThreadId,
           model: nextThreadModel,
@@ -7762,7 +8218,7 @@ function App() {
           threadModelProvider = resumed.modelProvider ?? threadModelProvider;
         } catch (error) {
           if (
-            snapshot.chatOrigin === "orchestrator" &&
+            snapshot.profileKey !== DEFAULT_CODEX_PROFILE_KEY &&
             isCodexThreadNotFoundError(error)
           ) {
             const thread = await startThread();
@@ -7774,7 +8230,7 @@ function App() {
               tokenUsageStartTotal: 0,
               tokenUsageStartCachedInput: 0,
             }));
-          } else if (snapshot.chatOrigin === "codex_external") {
+          } else if (snapshot.profileKey === DEFAULT_CODEX_PROFILE_KEY) {
             throw new Error(
               `Could not resume the external Codex thread: ${
                 error instanceof Error ? error.message : String(error)
@@ -7800,31 +8256,36 @@ function App() {
         ensureRunControlActive(runControl);
         await updateChat(chatId, { status: "running" });
       }
-      await updateChat(chatId, {
-        collaborationMode: collaborationMode.mode,
-        savedDefaultCollaborationModeJson:
-          snapshot.mode === "plan"
-            ? JSON.stringify(
-                snapshot.defaultCollaborationMode ?? collaborationModes.default,
-              )
-            : null,
-      });
-      updateRememberedWorkspaceChatSession(
-        snapshot.workspace.id,
-        chatId,
-        {
-          chatId,
-          threadId,
-          origin: snapshot.chatOrigin,
-          profileKey: snapshot.profileKey,
-          externalThreadId: snapshot.externalThreadId,
-          nextTurnIndex: snapshot.turnIndex + 1,
-          savedDefaultCollaborationMode:
+      if (!accountHandoff) {
+        await updateChat(chatId, {
+          collaborationMode: collaborationMode.mode,
+          savedDefaultCollaborationModeJson:
             snapshot.mode === "plan"
-              ? snapshot.defaultCollaborationMode ?? collaborationModes.default
+              ? JSON.stringify(
+                  snapshot.defaultCollaborationMode ??
+                    collaborationModes.default,
+                )
               : null,
-        },
-      );
+        });
+      }
+      if (!accountHandoff) {
+        updateRememberedWorkspaceChatSession(
+          snapshot.workspace.id,
+          chatId,
+          {
+            chatId,
+            threadId,
+            origin: snapshot.chatOrigin,
+            profileKey: snapshot.profileKey,
+            externalThreadId: snapshot.externalThreadId,
+            nextTurnIndex: snapshot.turnIndex + 1,
+            savedDefaultCollaborationMode:
+              snapshot.mode === "plan"
+                ? snapshot.defaultCollaborationMode ?? collaborationModes.default
+                : null,
+          },
+        );
+      }
       ensureRunControlActive(runControl);
       if (browserSession) {
         updateRunControlBrowserState(
@@ -7849,7 +8310,6 @@ function App() {
       });
       ensureRunControlActive(runControl);
 
-      const warnings: string[] = [];
       if (snapshot.goalMode) {
         try {
           await setThreadGoalForProfile(
@@ -7935,7 +8395,10 @@ function App() {
       try {
         turn = await startTurn(threadId);
       } catch (error) {
-        if (!isCodexThreadNotFoundError(error) || snapshot.chatOrigin !== "orchestrator") {
+        if (
+          !isCodexThreadNotFoundError(error) ||
+          snapshot.profileKey === DEFAULT_CODEX_PROFILE_KEY
+        ) {
           throw error;
         }
         warnings.push(
@@ -7984,6 +8447,71 @@ function App() {
       ensureRunControlActive(runControl);
       runControl.threadId = threadId;
       runControl.turnId = turn.turn.id;
+      if (accountHandoff) {
+        let activated = false;
+        try {
+          activated = await activateChatAccountHandoff({
+            chatId,
+            expectedProfileKey: accountHandoff.fromProfileKey,
+            expectedThreadId: accountHandoff.fromThreadId,
+            accountId: accountHandoff.targetAccountId,
+            profileKey: accountHandoff.targetProfileKey,
+            codexThreadId: threadId,
+            status: "running",
+          });
+        } catch (error) {
+          await codexRpcForProfile(
+            snapshot.profileKey,
+            snapshot.accountId,
+            "turn/interrupt",
+            { threadId, turnId: turn.turn.id },
+          ).catch(() => undefined);
+          throw error;
+        }
+        if (!activated) {
+          await codexRpcForProfile(
+            snapshot.profileKey,
+            snapshot.accountId,
+            "turn/interrupt",
+            { threadId, turnId: turn.turn.id },
+          ).catch(() => undefined);
+          throw new Error(
+            "The chat changed before the account handoff could be activated.",
+          );
+        }
+        accountHandoffActivated = true;
+        await updateChat(chatId, {
+          collaborationMode: collaborationMode.mode,
+          savedDefaultCollaborationModeJson:
+            snapshot.mode === "plan"
+              ? JSON.stringify(
+                  snapshot.defaultCollaborationMode ??
+                    collaborationModes.default,
+                )
+              : null,
+        }).catch(() => {
+          warnings.push(
+            "The account handoff succeeded, but its collaboration-mode metadata could not be saved.",
+          );
+        });
+        updateRememberedWorkspaceChatSession(
+          snapshot.workspace.id,
+          chatId,
+          {
+            chatId,
+            threadId,
+            origin: snapshot.chatOrigin,
+            profileKey: snapshot.profileKey,
+            externalThreadId: snapshot.externalThreadId,
+            nextTurnIndex: snapshot.turnIndex + 1,
+            savedDefaultCollaborationMode:
+              snapshot.mode === "plan"
+                ? snapshot.defaultCollaborationMode ?? collaborationModes.default
+                : null,
+          },
+        );
+        clearPendingAccountHandoff(chatId);
+      }
       if (browserSession) {
         updateRunControlBrowserState(
           runControl,
@@ -8060,6 +8588,9 @@ function App() {
       }
 
       const message = error instanceof Error ? error.message : String(error);
+      const handoffDidNotActivate = Boolean(
+        accountHandoff && !accountHandoffActivated,
+      );
       if (runControl.turnId === null) {
         updateTaskChatEntry(runControl.clientId, (entry) => ({
           ...entry,
@@ -8114,7 +8645,7 @@ function App() {
         }).catch(() => undefined);
       }
       if (
-        runControl.turnId === null &&
+        (runControl.turnId === null || handoffDidNotActivate) &&
         snapshot.restorePromptOnSetupFailure !== false
       ) {
         restoreRunComposerForRetry(
@@ -8126,7 +8657,7 @@ function App() {
       if (taskId !== null) {
         await updateTaskStatus(taskId, "failed").catch(() => undefined);
       }
-      if (chatId !== null) {
+      if (chatId !== null && !handoffDidNotActivate) {
         await updateChat(chatId, { status: "failed" }).catch(() => undefined);
       }
       removeRunControl(runControl);
@@ -8162,22 +8693,57 @@ function App() {
     const chatSession = workspace
       ? (workspaceChatSessionsRef.current[workspace.id] ?? null)
       : null;
-    const isExternalChat = chatSession?.origin === "codex_external";
-    const accountId = isExternalChat ? 0 : selectedAccountId;
-    const account = isExternalChat ? null : selectedAccount;
-    const profileKey: CodexProfileKey = isExternalChat
-      ? DEFAULT_CODEX_PROFILE_KEY
-      : (`account:${accountId}` as CodexProfileKey);
+    const pendingHandoff = chatSession
+      ? pendingAccountHandoffsRef.current[chatSession.chatId] ?? null
+      : null;
+    if (
+      pendingHandoff &&
+      (pendingHandoff.workspaceId !== workspace?.id ||
+        pendingHandoff.fromProfileKey !== chatSession?.profileKey ||
+        pendingHandoff.fromThreadId !== chatSession?.threadId)
+    ) {
+      clearPendingAccountHandoff(pendingHandoff.chatId);
+      setStatusMessage(
+        "The chat changed after the account switch was confirmed. Select the account again.",
+      );
+      return;
+    }
+    const profileKey: CodexProfileKey =
+      pendingHandoff?.targetProfileKey ??
+      chatSession?.profileKey ??
+      (chatSession?.origin === "codex_external"
+        ? DEFAULT_CODEX_PROFILE_KEY
+        : (`account:${selectedAccountId}` as CodexProfileKey));
+    const accountId =
+      profileKey === DEFAULT_CODEX_PROFILE_KEY
+        ? 0
+        : accountIdFromProfileKey(profileKey);
+    const account =
+      accountId === null || accountId === 0
+        ? null
+        : codexAccountsRef.current.find(
+            (candidate) => candidate.id === accountId,
+          ) ?? null;
+    const accountHandoff: AccountHandoffRunStrategy | null =
+      pendingHandoff && pendingHandoff.targetProfileKey !== chatSession?.profileKey
+        ? {
+            ...pendingHandoff,
+            adoptingExternalChat:
+              chatSession?.origin === "codex_external" &&
+              chatSession.profileKey === DEFAULT_CODEX_PROFILE_KEY,
+          }
+        : null;
+    const usesDefaultProfile = profileKey === DEFAULT_CODEX_PROFILE_KEY;
 
     if (!workspace || !promptText) {
       setStatusMessage("Select a workspace and write a prompt first.");
       return;
     }
-    if (!isExternalChat && (!accountId || !account)) {
+    if (!usesDefaultProfile && (!accountId || !account)) {
       setStatusMessage("Sign in to a Codex account before starting a run.");
       return;
     }
-    if (isExternalChat && !chatSession?.threadId) {
+    if (usesDefaultProfile && !chatSession?.threadId) {
       setStatusMessage("This external Codex chat is missing its original thread id.");
       return;
     }
@@ -8190,9 +8756,11 @@ function App() {
       return;
     }
     if (
-      !isExternalChat &&
+      !usesDefaultProfile &&
       account?.status !== "error" &&
-      shouldBlockRunForAuth(requiresOpenaiAuth, codexAccount)
+      (selectedAccountIdRef.current === accountId
+        ? shouldBlockRunForAuth(requiresOpenaiAuth, codexAccount)
+        : account?.status !== "signed_in")
     ) {
       setStatusMessage(
         loginState === "waiting"
@@ -8249,8 +8817,20 @@ function App() {
       goalMode,
       loginState,
       chatId: chatSession?.chatId ?? null,
-      threadId: chatSession?.threadId ?? null,
+      threadId: accountHandoff ? null : chatSession?.threadId ?? null,
       turnIndex,
+      threadStrategy: accountHandoff
+        ? { kind: "handoff", handoff: accountHandoff }
+        : chatSession?.threadId
+          ? { kind: "resume" }
+          : { kind: "fresh" },
+      handoffContextBudgetTokens: Math.max(
+        1,
+        Math.floor(
+          (getCodexModelContextWindow(selectedModel) ?? DEFAULT_CONTEXT_WINDOW) *
+            0.25,
+        ),
+      ),
       executionSettings,
     };
 
@@ -8297,7 +8877,10 @@ function App() {
       );
       return;
     }
-    if (selectedWorkspaceChatSession?.origin === "codex_external") {
+    if (
+      selectedWorkspaceChatSession?.origin === "codex_external" &&
+      selectedWorkspaceChatSession.profileKey === DEFAULT_CODEX_PROFILE_KEY
+    ) {
       showRerunIssue("External Codex chats can be continued, but edited prompts require an Orchestrator chat.");
       return;
     }
@@ -8437,7 +9020,7 @@ function App() {
       chatId,
       threadId: null,
       turnIndex: editedTurnIndex,
-      forceFreshThread: true,
+      threadStrategy: { kind: "fresh" },
       previousChatContext: buildPreviousChatContext(previousEntries),
       supersededRunIds: entry.runId !== null ? [entry.runId] : [],
       replacementClientId: entry.clientId,
@@ -8451,6 +9034,99 @@ function App() {
 
     const runControl = beginOptimisticRun(snapshot);
     scheduleRunSetup(runControl, snapshot);
+  }
+
+  async function buildAccountHandoffContext(
+    snapshot: RunSetupSnapshot,
+    runControl: ActiveRunControl,
+  ) {
+    if (
+      snapshot.threadStrategy.kind !== "handoff" ||
+      snapshot.chatId === null
+    ) {
+      return null;
+    }
+
+    const chatWithRuns = await getChatWithRuns(snapshot.chatId);
+    ensureRunControlActive(runControl);
+    const turns: AccountHandoffContextTurn[] = [];
+
+    if (chatWithRuns.chat.origin === "codex_external") {
+      const sourceVersion =
+        chatWithRuns.chat.external_updated_at ?? chatWithRuns.chat.updated_at;
+      let externalSnapshot =
+        (await readExternalTranscriptSnapshot(snapshot.chatId, sourceVersion)) ??
+        (await readExternalTranscriptSnapshot(snapshot.chatId));
+      ensureRunControlActive(runControl);
+
+      if (
+        chatWithRuns.chat.sync_status !== "adopted" &&
+        (!externalSnapshot || externalSnapshot.sourceVersion !== sourceVersion)
+      ) {
+        const externalThreadId = chatWithRuns.chat.external_thread_id;
+        if (!externalThreadId) {
+          throw new Error("The imported chat is missing its source thread.");
+        }
+        try {
+          await ensureCodexProfileConnected(DEFAULT_CODEX_PROFILE_KEY, 0);
+          ensureRunControlActive(runControl);
+          const synced = await syncDefaultProfileThreadTranscript({
+            threadId: externalThreadId,
+            sourceVersion,
+            pageSize: HISTORY_CHAT_PAGE_SIZE,
+            requestId: `handoff-${snapshot.chatId}-${runControl.clientId}`,
+          });
+          ensureRunControlActive(runControl);
+          await activateExternalTranscriptSnapshot(snapshot.chatId, synced);
+          externalSnapshot = await readExternalTranscriptSnapshot(
+            snapshot.chatId,
+            sourceVersion,
+          );
+        } catch (error) {
+          if (!externalSnapshot) {
+            throw new Error(
+              `Could not prepare the imported chat for account handoff: ${
+                error instanceof Error ? error.message : String(error)
+              }`,
+            );
+          }
+        }
+      }
+
+      externalSnapshot?.turns.forEach((turn) => {
+        const normalizedPlan = normalizeHistoricalProposedPlan(turn.finalMessage);
+        turns.push({
+          turnIndex: turn.slotIndex + 1,
+          prompt: turn.prompt,
+          finalMessage:
+            normalizedPlan.finalMessage || turn.error || "",
+          completedPlan: normalizedPlan.planText,
+          intent: normalizedPlan.planText ? "plan" : "normal",
+          planReviewState: normalizedPlan.planText ? "available" : null,
+        });
+      });
+    }
+
+    chatWithRuns.runs.forEach((run, index) => {
+      const normalizedPlan = normalizeHistoricalProposedPlan(
+        run.final_message ?? "",
+        run.completed_plan_text,
+      );
+      turns.push({
+        turnIndex: run.turn_index ?? index + 1,
+        prompt: run.original_prompt,
+        finalMessage: normalizedPlan.finalMessage || run.error || "",
+        completedPlan: normalizedPlan.planText,
+        intent: run.run_intent,
+        planReviewState: run.plan_review_state,
+      });
+    });
+
+    return buildBoundedAccountHandoffContext(
+      turns,
+      snapshot.sourcePlanEntry?.runView.nativePlan.completedText ?? "",
+      snapshot.handoffContextBudgetTokens ?? 16_000,
+    );
   }
 
   async function buildAdditionalContext(
@@ -8952,7 +9628,7 @@ function App() {
     if (chatId !== null && chatId !== undefined) {
       markWorkspaceChatRead(workspace.id, chatId);
     }
-    selectWorkspaceDefaultAccount(workspace);
+    selectWorkspaceExecutionAccount(workspace, session ?? null);
     return true;
   }
 
@@ -9884,10 +10560,308 @@ function App() {
     requestActionLocksRef.current.delete(actionKey);
   }
 
+  function choosePlanImplementationModel(
+    availableModels: CodexModel[],
+    preferredModel: string | null | undefined,
+  ) {
+    return (
+      availableModels.find(
+        (model) =>
+          model.id === preferredModel || model.model === preferredModel,
+      ) ??
+      availableModels.find((model) => model.isDefault) ??
+      availableModels[0] ??
+      null
+    );
+  }
+
+  function choosePlanImplementationReasoning(
+    model: CodexModel | null,
+    preferredEffort: string | null | undefined,
+  ) {
+    if (!model) return null;
+    const supported = model.supportedReasoningEfforts.map(
+      (option) => option.reasoningEffort,
+    );
+    if (preferredEffort && supported.includes(preferredEffort)) {
+      return preferredEffort;
+    }
+    if (supported.includes(model.defaultReasoningEffort)) {
+      return model.defaultReasoningEffort;
+    }
+    return supported[0] ?? null;
+  }
+
+  async function openPlanImplementationDialog(entry: TaskChatEntry) {
+    const workspace = selectedWorkspaceRef.current;
+    const session = workspace
+      ? workspaceChatSessionsRef.current[workspace.id] ?? null
+      : null;
+    if (
+      !workspace ||
+      !session ||
+      entry.chatId === null ||
+      session.chatId !== entry.chatId ||
+      !session.threadId
+    ) {
+      setStatusMessage("Reopen the plan's chat before implementing it.");
+      return;
+    }
+    if (selectedRunIsActiveNow()) {
+      setStatusMessage("Wait for the active turn to finish first.");
+      return;
+    }
+
+    const pendingHandoff =
+      pendingAccountHandoffsRef.current[session.chatId] ?? null;
+    const profileKey =
+      pendingHandoff?.targetProfileKey ??
+      session.profileKey ??
+      DEFAULT_CODEX_PROFILE_KEY;
+    const accountId =
+      profileKey === DEFAULT_CODEX_PROFILE_KEY
+        ? 0
+        : accountIdFromProfileKey(profileKey);
+    if (accountId === null) {
+      setStatusMessage("The plan's Codex account is unavailable.");
+      return;
+    }
+
+    const requestId = planImplementationDialogRequestRef.current + 1;
+    planImplementationDialogRequestRef.current = requestId;
+    const preferredSettings = entry.executionSettings?.settings;
+    setPlanImplementationDialog({
+      requestId,
+      workspaceId: workspace.id,
+      chatId: session.chatId,
+      entry,
+      allowDefaultProfile:
+        session.profileKey === DEFAULT_CODEX_PROFILE_KEY,
+      accountId,
+      profileKey,
+      models: [],
+      selectedModelId: null,
+      reasoningEffort: preferredSettings?.reasoningEffort ?? null,
+      status: "loading",
+      error: null,
+    });
+
+    try {
+      const availableModels = await listCodexModelsForProfile(
+        profileKey,
+        accountId,
+      );
+      if (planImplementationDialogRequestRef.current !== requestId) return;
+      const selectedModel = choosePlanImplementationModel(
+        availableModels,
+        preferredSettings?.model ??
+          (models.find((model) => model.id === selectedModelId)?.model ?? null),
+      );
+      setPlanImplementationDialog((current) =>
+        current?.requestId === requestId
+          ? {
+              ...current,
+              models: availableModels,
+              selectedModelId: selectedModel?.id ?? null,
+              reasoningEffort: choosePlanImplementationReasoning(
+                selectedModel,
+                current.reasoningEffort,
+              ),
+              status: "idle",
+              error:
+                selectedModel === null
+                  ? "No compatible Codex models are available for this account."
+                  : null,
+            }
+          : current,
+      );
+    } catch (error) {
+      if (planImplementationDialogRequestRef.current !== requestId) return;
+      setPlanImplementationDialog((current) =>
+        current?.requestId === requestId
+          ? {
+              ...current,
+              status: "idle",
+              error:
+                error instanceof Error
+                  ? error.message
+                  : "Could not load models for this account.",
+            }
+          : current,
+      );
+    }
+  }
+
+  async function changePlanImplementationAccount(value: string) {
+    const current = planImplementationDialog;
+    if (!current || current.status !== "idle") return;
+    const accountId = value === "default" ? 0 : Number(value);
+    const profileKey: CodexProfileKey =
+      value === "default"
+        ? DEFAULT_CODEX_PROFILE_KEY
+        : (`account:${accountId}` as CodexProfileKey);
+    if (
+      (value === "default" && !current.allowDefaultProfile) ||
+      (value !== "default" &&
+        !codexAccountsRef.current.some(
+          (account) =>
+            account.id === accountId && account.status === "signed_in",
+        ))
+    ) {
+      return;
+    }
+
+    const requestId = planImplementationDialogRequestRef.current + 1;
+    planImplementationDialogRequestRef.current = requestId;
+    setPlanImplementationDialog({
+      ...current,
+      requestId,
+      accountId,
+      profileKey,
+      models: [],
+      selectedModelId: null,
+      status: "loading",
+      error: null,
+    });
+    try {
+      const availableModels = await listCodexModelsForProfile(
+        profileKey,
+        accountId,
+      );
+      if (planImplementationDialogRequestRef.current !== requestId) return;
+      const previousModel = current.models.find(
+        (model) => model.id === current.selectedModelId,
+      );
+      const selectedModel = choosePlanImplementationModel(
+        availableModels,
+        previousModel?.model,
+      );
+      setPlanImplementationDialog((latest) =>
+        latest?.requestId === requestId
+          ? {
+              ...latest,
+              models: availableModels,
+              selectedModelId: selectedModel?.id ?? null,
+              reasoningEffort: choosePlanImplementationReasoning(
+                selectedModel,
+                current.reasoningEffort,
+              ),
+              status: "idle",
+              error:
+                selectedModel === null
+                  ? "No compatible Codex models are available for this account."
+                  : null,
+            }
+          : latest,
+      );
+    } catch (error) {
+      if (planImplementationDialogRequestRef.current !== requestId) return;
+      setPlanImplementationDialog((latest) =>
+        latest?.requestId === requestId
+          ? {
+              ...latest,
+              status: "idle",
+              error:
+                error instanceof Error
+                  ? error.message
+                  : "Could not load models for this account.",
+            }
+          : latest,
+      );
+    }
+  }
+
+  function changePlanImplementationModel(modelId: string) {
+    setPlanImplementationDialog((current) => {
+      if (!current || current.status !== "idle") return current;
+      const model =
+        current.models.find((candidate) => candidate.id === modelId) ?? null;
+      return {
+        ...current,
+        selectedModelId: model?.id ?? null,
+        reasoningEffort: choosePlanImplementationReasoning(
+          model,
+          current.reasoningEffort,
+        ),
+      };
+    });
+  }
+
+  function confirmPlanImplementation() {
+    const dialog = planImplementationDialog;
+    const workspace = selectedWorkspaceRef.current;
+    const session = workspace
+      ? workspaceChatSessionsRef.current[workspace.id] ?? null
+      : null;
+    if (
+      !dialog ||
+      dialog.status !== "idle" ||
+      !workspace ||
+      workspace.id !== dialog.workspaceId ||
+      !session ||
+      session.chatId !== dialog.chatId ||
+      selectedRunIsActiveNow()
+    ) {
+      return;
+    }
+    const model =
+      dialog.models.find(
+        (candidate) => candidate.id === dialog.selectedModelId,
+      ) ?? null;
+    if (!model) {
+      setPlanImplementationDialog({
+        ...dialog,
+        error: "Choose an available model before implementing the plan.",
+      });
+      return;
+    }
+
+    if (dialog.profileKey !== session.profileKey) {
+      setPendingAccountHandoff({
+        workspaceId: workspace.id,
+        chatId: session.chatId,
+        fromProfileKey: session.profileKey,
+        fromThreadId: session.threadId,
+        targetAccountId: dialog.accountId,
+        targetProfileKey: dialog.profileKey,
+      });
+    } else {
+      clearPendingAccountHandoff(session.chatId);
+    }
+
+    setPlanImplementationDialog({ ...dialog, status: "starting", error: null });
+    const started = launchPlanFollowUp(
+      dialog.entry,
+      "Implement the plan.",
+      "plan-implementation",
+      {
+        accountId: dialog.accountId,
+        profileKey: dialog.profileKey,
+        model,
+        reasoningEffort: dialog.reasoningEffort,
+      },
+    );
+    if (started) {
+      planImplementationDialogRequestRef.current += 1;
+      setPlanImplementationDialog(null);
+    } else {
+      setPlanImplementationDialog((current) =>
+        current?.requestId === dialog.requestId
+          ? {
+              ...current,
+              status: "idle",
+              error: "The implementation could not be started.",
+            }
+          : current,
+      );
+    }
+  }
+
   function launchPlanFollowUp(
     entry: TaskChatEntry,
     promptText: string,
     intent: "plan-revision" | "plan-implementation",
+    executionSelection?: PlanFollowUpExecutionSelection,
   ): boolean {
     const workspace = selectedWorkspaceRef.current;
     const chatSession = workspace
@@ -9911,32 +10885,68 @@ function App() {
       setStatusMessage("That plan is no longer awaiting review.");
       return false;
     }
-    const external = chatSession.origin === "codex_external";
+    const pendingHandoff =
+      pendingAccountHandoffsRef.current[chatSession.chatId] ?? null;
+    if (
+      pendingHandoff &&
+      (pendingHandoff.workspaceId !== workspace.id ||
+        pendingHandoff.fromProfileKey !== chatSession.profileKey ||
+        pendingHandoff.fromThreadId !== chatSession.threadId)
+    ) {
+      clearPendingAccountHandoff(pendingHandoff.chatId);
+      setStatusMessage(
+        "The chat changed after the account switch was confirmed. Select the account again.",
+      );
+      return false;
+    }
     const sessionProfileKey = chatSession.profileKey;
+    const profileKey: CodexProfileKey =
+      executionSelection?.profileKey ??
+      pendingHandoff?.targetProfileKey ??
+      sessionProfileKey ??
+      DEFAULT_CODEX_PROFILE_KEY;
+    const usesDefaultProfile = profileKey === DEFAULT_CODEX_PROFILE_KEY;
     const sessionAccountId =
-      sessionProfileKey?.startsWith("account:")
-        ? Number(sessionProfileKey.slice("account:".length))
+      profileKey?.startsWith("account:")
+        ? Number(profileKey.slice("account:".length))
         : null;
-    const accountId = external
+    const accountId = executionSelection?.accountId ?? (usesDefaultProfile
       ? 0
       : Number.isFinite(sessionAccountId)
         ? sessionAccountId
-        : selectedAccountIdRef.current;
-    const account = external
+        : selectedAccountIdRef.current);
+    const account = usesDefaultProfile
       ? null
       : codexAccountsRef.current.find((candidate) => candidate.id === accountId) ?? null;
-    if (!external && (!accountId || !account)) {
+    if (!usesDefaultProfile && (!accountId || !account)) {
       setStatusMessage("Sign in to the plan's Codex account before continuing.");
       return false;
     }
+    const accountHandoff: AccountHandoffRunStrategy | null =
+      pendingHandoff && pendingHandoff.targetProfileKey !== chatSession.profileKey
+        ? {
+            ...pendingHandoff,
+            adoptingExternalChat:
+              chatSession.origin === "codex_external" &&
+              chatSession.profileKey === DEFAULT_CODEX_PROFILE_KEY,
+          }
+        : null;
     if (planActionLocksRef.current.has(entry.clientId)) return false;
     planActionLocksRef.current.add(entry.clientId);
     const selectedModel =
-      models.find((option) => option.id === selectedModelId) ?? models[0] ?? null;
-    const model = useOss || modelLoadError ? null : selectedModel?.model ?? null;
-    const profileKey: CodexProfileKey = external
-      ? DEFAULT_CODEX_PROFILE_KEY
-      : sessionProfileKey ?? (`account:${accountId}` as CodexProfileKey);
+      executionSelection?.model ??
+      models.find((option) => option.id === selectedModelId) ??
+      models[0] ??
+      null;
+    const followUpUseOss = executionSelection ? false : useOss;
+    const model = executionSelection
+      ? selectedModel?.model ?? null
+      : useOss || modelLoadError
+        ? null
+        : selectedModel?.model ?? null;
+    const reasoningEffort = executionSelection
+      ? executionSelection.reasoningEffort
+      : selectedReasoningEffort;
     void removeAgentNotification(
       planNotificationEventKey(profileKey, entry),
     ).catch(() => undefined);
@@ -9967,8 +10977,8 @@ function App() {
       accessMode,
       computerUseEnabled,
       model,
-      reasoningEffort: model ? selectedReasoningEffort : null,
-      useOss,
+      reasoningEffort: model ? reasoningEffort : null,
+      useOss: followUpUseOss,
       ossProvider,
       contextFiles: [],
       selectedSkills: [],
@@ -9991,8 +11001,8 @@ function App() {
       access: accessSettings({ accessMode }),
       computerUseEnabled,
       model,
-      effort: model ? selectedReasoningEffort : null,
-      useOss,
+      effort: model ? reasoningEffort : null,
+      useOss: followUpUseOss,
       ossProvider,
       improvedPrompt: promptText,
       contextFiles: [],
@@ -10000,12 +11010,23 @@ function App() {
       goalMode: false,
       loginState,
       chatId: entry.chatId,
-      threadId: chatSession.threadId,
+      threadId: accountHandoff ? null : chatSession.threadId,
       turnIndex: chatSession.nextTurnIndex,
       restorePromptOnSetupFailure: false,
       sourcePlanEntry: entry,
       defaultCollaborationMode: chatSession.savedDefaultCollaborationMode,
       executionSettings,
+      threadStrategy: accountHandoff
+        ? { kind: "handoff", handoff: accountHandoff }
+        : { kind: "resume" },
+      handoffContextBudgetTokens: accountHandoff
+        ? Math.max(
+            1_024,
+            Math.floor(
+              (getCodexModelContextWindow(selectedModel) ?? 128_000) * 0.25,
+            ),
+          )
+        : undefined,
     };
     const runControl = beginOptimisticRun(snapshot);
     scheduleRunSetup(runControl, snapshot);
@@ -10013,7 +11034,7 @@ function App() {
   }
 
   function handleImplementPlan(entry: TaskChatEntry) {
-    launchPlanFollowUp(entry, "Implement the plan.", "plan-implementation");
+    void openPlanImplementationDialog(entry);
   }
 
   function handleRevisePlan(entry: TaskChatEntry, revision: string) {
@@ -10033,24 +11054,23 @@ function App() {
       setStatusMessage("Reopen the plan's chat before cancelling it.");
       return;
     }
-    const external = session.origin === "codex_external";
-    const sessionAccountId = session.profileKey?.startsWith("account:")
-      ? Number(session.profileKey.slice("account:".length))
-      : null;
-    const accountId = external
+    const usesDefaultProfile =
+      session.profileKey === DEFAULT_CODEX_PROFILE_KEY;
+    const sessionAccountId = accountIdFromProfileKey(session.profileKey);
+    const accountId = usesDefaultProfile
       ? 0
       : Number.isFinite(sessionAccountId)
         ? sessionAccountId
         : selectedAccountIdRef.current;
-    if (!external && !accountId) return;
+    if (!usesDefaultProfile && !accountId) return;
     if (planActionLocksRef.current.has(entry.clientId)) return;
     planActionLocksRef.current.add(entry.clientId);
     updateTaskChatEntryRunView(entry.clientId, (current) =>
       updateNativePlanReview(current, "submitting", "cancelling"),
     );
-    const profileKey: CodexProfileKey = external
-      ? DEFAULT_CODEX_PROFILE_KEY
-      : session.profileKey ?? (`account:${accountId}` as CodexProfileKey);
+    const profileKey: CodexProfileKey =
+      session.profileKey ??
+      (`account:${accountId}` as CodexProfileKey);
     try {
       await ensureCodexProfileConnected(profileKey, accountId ?? 0);
       const modes = await collaborationModesForRun(
@@ -11716,6 +12736,202 @@ function App() {
         </div>
       </aside>
 
+      {accountHandoffCandidate ? (
+        <div
+          className="modal-backdrop"
+          role="presentation"
+          onMouseDown={(event) => {
+            if (
+              event.target === event.currentTarget &&
+              accountHandoffCandidate.status === "idle"
+            ) {
+              setAccountHandoffCandidate(null);
+            }
+          }}
+        >
+          <section
+            className="confirmation-dialog account-handoff-dialog"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="account-handoff-title"
+            aria-describedby="account-handoff-description"
+          >
+            <div>
+              <p className="eyebrow">Codex account</p>
+              <h2 id="account-handoff-title">Switch account for this chat?</h2>
+              <p id="account-handoff-description">
+                Continue from {accountHandoffCandidate.fromLabel} with{" "}
+                {accountHandoffCandidate.targetLabel}. The next turn starts a
+                fresh Codex thread. Visible messages remain, but token usage
+                resets and hidden reasoning or tool state cannot be transferred.
+              </p>
+              {accountHandoffCandidate.error ? (
+                <p className="account-handoff-error" role="alert">
+                  <AlertCircle size={15} aria-hidden="true" />
+                  <span>{accountHandoffCandidate.error}</span>
+                </p>
+              ) : null}
+            </div>
+            <div className="confirmation-actions">
+              <button
+                className="native-plan-icon-action"
+                type="button"
+                aria-label="Keep current account"
+                data-tooltip="Keep current account"
+                disabled={accountHandoffCandidate.status !== "idle"}
+                onClick={() => setAccountHandoffCandidate(null)}
+              >
+                <X size={15} aria-hidden="true" />
+              </button>
+              <button
+                className="native-plan-icon-action implement"
+                type="button"
+                aria-label="Switch account"
+                data-tooltip="Switch account"
+                disabled={accountHandoffCandidate.status !== "idle"}
+                onClick={() => void confirmAccountHandoff()}
+              >
+                {accountHandoffCandidate.status === "selecting" ? (
+                  <Loader2 className="spin" size={15} aria-hidden="true" />
+                ) : (
+                  <Check size={15} aria-hidden="true" />
+                )}
+              </button>
+            </div>
+          </section>
+        </div>
+      ) : null}
+
+      {planImplementationDialog ? (
+        <div
+          className="modal-backdrop"
+          role="presentation"
+          onMouseDown={(event) => {
+            if (
+              event.target === event.currentTarget &&
+              planImplementationDialog.status === "idle"
+            ) {
+              planImplementationDialogRequestRef.current += 1;
+              setPlanImplementationDialog(null);
+            }
+          }}
+        >
+          <section
+            className="confirmation-dialog plan-implementation-dialog"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="plan-implementation-title"
+            aria-describedby="plan-implementation-description"
+          >
+            <div className="plan-implementation-copy">
+              <p className="eyebrow">Plan implementation</p>
+              <h2 id="plan-implementation-title">
+                Confirm implementation settings
+              </h2>
+              <p id="plan-implementation-description">
+                Choose the account, model, and reasoning level for the
+                implementation. Switching accounts starts a fresh Codex thread
+                while keeping this conversation visible; token usage resets and
+                hidden reasoning or tool state is not transferred.
+              </p>
+            </div>
+            <div
+              className="plan-implementation-fields"
+              aria-busy={planImplementationDialog.status === "loading"}
+            >
+              <ComposerSelect
+                ariaLabel="Implementation account"
+                value={
+                  planImplementationDialog.profileKey ===
+                  DEFAULT_CODEX_PROFILE_KEY
+                    ? "default"
+                    : planImplementationDialog.accountId.toString()
+                }
+                options={planImplementationAccountOptions}
+                placeholder="Choose account"
+                icon={<CircleUserRound size={16} />}
+                disabled={planImplementationDialog.status !== "idle"}
+                onChange={(value) =>
+                  void changePlanImplementationAccount(value)
+                }
+              />
+              <ComposerSelect
+                ariaLabel="Implementation model"
+                value={planImplementationDialog.selectedModelId ?? ""}
+                options={planImplementationModelOptions}
+                placeholder={
+                  planImplementationDialog.status === "loading"
+                    ? "Loading models"
+                    : "Choose model"
+                }
+                icon={<Bot size={16} />}
+                disabled={
+                  planImplementationDialog.status !== "idle" ||
+                  planImplementationModelOptions.length === 0
+                }
+                onChange={changePlanImplementationModel}
+              />
+              <ComposerSelect
+                ariaLabel="Implementation reasoning"
+                value={planImplementationDialog.reasoningEffort ?? ""}
+                options={planImplementationReasoningOptions}
+                placeholder="Default"
+                icon={<Gauge size={16} />}
+                disabled={
+                  planImplementationDialog.status !== "idle" ||
+                  planImplementationReasoningOptions.length === 0
+                }
+                onChange={(value) =>
+                  setPlanImplementationDialog((current) =>
+                    current
+                      ? { ...current, reasoningEffort: value }
+                      : current,
+                  )
+                }
+              />
+            </div>
+            {planImplementationDialog.error ? (
+              <p className="account-handoff-error" role="alert">
+                <AlertCircle size={15} aria-hidden="true" />
+                <span>{planImplementationDialog.error}</span>
+              </p>
+            ) : null}
+            <div className="confirmation-actions">
+              <button
+                className="native-plan-icon-action"
+                type="button"
+                aria-label="Cancel implementation"
+                data-tooltip="Cancel implementation"
+                disabled={planImplementationDialog.status !== "idle"}
+                onClick={() => {
+                  planImplementationDialogRequestRef.current += 1;
+                  setPlanImplementationDialog(null);
+                }}
+              >
+                <X size={15} aria-hidden="true" />
+              </button>
+              <button
+                className="native-plan-icon-action implement"
+                type="button"
+                aria-label="Implement plan"
+                data-tooltip="Implement plan"
+                disabled={
+                  planImplementationDialog.status !== "idle" ||
+                  !planImplementationSelectedModel
+                }
+                onClick={confirmPlanImplementation}
+              >
+                {planImplementationDialog.status === "starting" ? (
+                  <Loader2 className="spin" size={15} aria-hidden="true" />
+                ) : (
+                  <Check size={15} aria-hidden="true" />
+                )}
+              </button>
+            </div>
+          </section>
+        </div>
+      ) : null}
+
       {workspaceDeleteCandidate ? (
         <div
           className="modal-backdrop"
@@ -12155,8 +13371,9 @@ function App() {
                   prompt={prompt}
                   promptRevision={promptRevision}
                   accounts={signedInAccounts}
-                  selectedAccountId={selectedAccountId}
-                  accountSelectionDisabled={runIsActive || planReviewAwaiting}
+                  selectedAccountId={selectedComposerAccountId}
+                  accountPlaceholder={selectedComposerAccountPlaceholder}
+                  accountSelectionDisabled={runIsActive}
                   modelSelectionDisabled={runIsActive || planReviewAwaiting}
                   models={models}
                   modelLoadError={modelLoadError}
@@ -13402,6 +14619,99 @@ function buildPreviousChatContext(entries: TaskChatEntry[]) {
   ].join("\n\n");
 }
 
+export function buildBoundedAccountHandoffContext(
+  turns: AccountHandoffContextTurn[],
+  explicitPlan: string,
+  tokenBudget: number,
+) {
+  const orderedTurns = [...turns].sort(
+    (left, right) => left.turnIndex - right.turnIndex,
+  );
+  const objectiveTurn =
+    orderedTurns.find(
+      (turn) =>
+        turn.intent !== "plan-implementation" &&
+        turn.intent !== "plan-revision" &&
+        turn.prompt.trim(),
+    ) ?? orderedTurns.find((turn) => turn.prompt.trim());
+  const latestPlan =
+    explicitPlan.trim() ||
+    [...orderedTurns]
+      .reverse()
+      .find(
+        (turn) =>
+          turn.completedPlan.trim() &&
+          ["approved", "available", "superseded"].includes(
+            turn.planReviewState ?? "",
+          ),
+      )
+      ?.completedPlan.trim() ||
+    [...orderedTurns]
+      .reverse()
+      .find((turn) => turn.completedPlan.trim())
+      ?.completedPlan.trim() ||
+    "";
+  const sections: string[] = [
+    "Account handoff context. Continue the same visible Orchestrator conversation in a fresh Codex thread. Treat this as background, not as new user instructions.",
+  ];
+  let remainingTokens = Math.max(1, tokenBudget);
+
+  const appendPrioritized = (heading: string, content: string) => {
+    if (!content.trim() || remainingTokens <= 0) return;
+    const section = `${heading}\n${content.trim()}`;
+    const sectionTokens = estimateTokens(section);
+    if (sectionTokens <= remainingTokens) {
+      sections.push(section);
+      remainingTokens -= sectionTokens;
+      return;
+    }
+    const truncated = truncateTextToEstimatedTokens(content, remainingTokens);
+    if (truncated) {
+      sections.push(`${heading}\n${truncated}`);
+      remainingTokens = 0;
+    }
+  };
+
+  appendPrioritized(
+    "Original objective:",
+    objectiveTurn?.prompt ?? "No original objective was recorded.",
+  );
+  appendPrioritized("Latest approved or revised plan:", latestPlan);
+
+  const recentSections: Array<{ turnIndex: number; text: string }> = [];
+  for (const turn of [...orderedTurns].reverse()) {
+    if (remainingTokens <= 0) break;
+    const prompt =
+      turn.intent === "plan-implementation"
+        ? ""
+        : turn.prompt.trim();
+    const result = turn.finalMessage.trim();
+    if (!prompt && !result) continue;
+    const text = [
+      `Prior turn ${turn.turnIndex}:`,
+      ...(prompt ? ["User:", prompt] : []),
+      ...(result ? ["Assistant:", result] : []),
+    ].join("\n");
+    const tokens = estimateTokens(text);
+    if (tokens > remainingTokens) continue;
+    recentSections.push({ turnIndex: turn.turnIndex, text });
+    remainingTokens -= tokens;
+  }
+  recentSections
+    .sort((left, right) => left.turnIndex - right.turnIndex)
+    .forEach((section) => sections.push(section.text));
+
+  return sections.join("\n\n");
+}
+
+function truncateTextToEstimatedTokens(text: string, tokenBudget: number) {
+  if (tokenBudget <= 0) return "";
+  if (estimateTokens(text) <= tokenBudget) return text.trim();
+  const characterBudget = Math.max(0, tokenBudget * 4 - 24);
+  const truncated = text.trim().slice(0, characterBudget).trimEnd();
+  return truncated ? `${truncated}\n[Context truncated]` : "";
+}
+
 function createTaskChatEntryFromHistoryRun(run: HistoryRunSummary): TaskChatEntry {
   const status = normalizeHistoryRunStatus(run);
   const executionSettings = resolveStoredRunExecutionSettings(
@@ -14038,16 +15348,39 @@ function formatChatSourceLabel(chat: ChatListItem) {
     return "Orchestrator";
   }
 
+  const suffix = isAdoptedExternalChat(chat)
+    ? " · Continued in Orchestrator"
+    : "";
   if (chat.source_kind === "vscode") {
-    return "VS Code";
+    return `VS Code${suffix}`;
   }
   if (chat.source_kind === "cli") {
-    return "CLI";
+    return `CLI${suffix}`;
   }
   if (chat.source_kind === "appServer") {
-    return "Codex App";
+    return `Codex App${suffix}`;
   }
-  return "Codex";
+  return `Codex${suffix}`;
+}
+
+function isAdoptedExternalChat(
+  chat: Pick<ChatRecord, "origin" | "sync_status" | "account_id" | "profile_key">,
+) {
+  return (
+    chat.origin === "codex_external" &&
+    (chat.sync_status === "adopted" ||
+      chat.account_id !== null ||
+      (chat.profile_key !== null &&
+        chat.profile_key !== DEFAULT_CODEX_PROFILE_KEY))
+  );
+}
+
+function accountIdFromProfileKey(
+  profileKey: CodexProfileKey | null | undefined,
+) {
+  if (!profileKey?.startsWith("account:")) return null;
+  const accountId = Number(profileKey.slice("account:".length));
+  return Number.isFinite(accountId) && accountId > 0 ? accountId : null;
 }
 
 function formatHistoryTimestamp(value: string) {
