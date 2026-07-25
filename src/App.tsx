@@ -146,7 +146,10 @@ import {
   sanitizeGeneratedChatTitle,
 } from "./lib/chatTitles";
 import { AnalyticsSummary } from "./components/AnalyticsSummary";
-import { ComposerSelect } from "./components/ComposerSelect";
+import {
+  ComposerSelect,
+  type ComposerSelectOption,
+} from "./components/ComposerSelect";
 import { FilePreviewDrawer } from "./components/FilePreviewDrawer";
 import type { TaskChatEntry } from "./components/TaskChatTranscript";
 import {
@@ -1388,6 +1391,8 @@ function App() {
   const [planImplementationDialog, setPlanImplementationDialog] =
     useState<PlanImplementationDialogState | null>(null);
   const planImplementationDialogRequestRef = useRef(0);
+  const planImplementationDialogRef = useRef<HTMLElement | null>(null);
+  const planImplementationReturnFocusRef = useRef<HTMLElement | null>(null);
   const [commitDialogOpen, setCommitDialogOpen] = useState(false);
   const [commitIntentContext, setCommitIntentContext] =
     useState<WorkspaceCommitIntentContext | null>(null);
@@ -2254,15 +2259,41 @@ function App() {
     planImplementationDialog?.models.find(
       (model) => model.id === planImplementationDialog.selectedModelId,
     ) ?? null;
-  const planImplementationAccountOptions = [
-    ...(planImplementationDialog?.allowDefaultProfile
-      ? [{ value: "default", label: "Codex default profile" }]
-      : []),
-    ...signedInAccounts.map((account) => ({
-      value: account.id.toString(),
-      label: account.label,
-    })),
-  ];
+  const planImplementationAccountOptions = useMemo(() => {
+    const options: ComposerSelectOption[] = [
+      ...(planImplementationDialog?.allowDefaultProfile
+        ? [{ value: "default", label: "Codex default profile" }]
+        : []),
+      ...signedInAccounts.map((account) => ({
+        value: account.id.toString(),
+        label: account.label,
+      })),
+    ];
+    if (
+      planImplementationDialog &&
+      planImplementationDialog.profileKey !== DEFAULT_CODEX_PROFILE_KEY &&
+      !options.some(
+        (option) =>
+          option.value === planImplementationDialog.accountId.toString(),
+      )
+    ) {
+      const unavailableAccount = codexAccounts.find(
+        (account) => account.id === planImplementationDialog.accountId,
+      );
+      options.push({
+        value: planImplementationDialog.accountId.toString(),
+        label: `${
+          unavailableAccount?.label ?? "Original Codex account"
+        } (sign in required)`,
+        disabled: true,
+      });
+    }
+    return options;
+  }, [
+    codexAccounts,
+    planImplementationDialog,
+    signedInAccounts,
+  ]);
   const planImplementationModelOptions =
     planImplementationDialog?.models.map((model) => ({
       value: model.id,
@@ -3134,18 +3165,34 @@ function App() {
     if (!planImplementationDialog) {
       return;
     }
-    const canClose = planImplementationDialog.status === "idle";
+    const canClose = planImplementationDialog.status !== "starting";
 
     function handleKeyDown(event: KeyboardEvent) {
       if (event.key === "Escape" && canClose) {
-        planImplementationDialogRequestRef.current += 1;
-        setPlanImplementationDialog(null);
+        closePlanImplementationDialog();
       }
     }
 
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
   }, [planImplementationDialog]);
+
+  useEffect(() => {
+    if (!planImplementationDialog) return;
+    const frame = window.requestAnimationFrame(() => {
+      const dialog = planImplementationDialogRef.current;
+      if (!dialog || dialog.contains(document.activeElement)) return;
+      const target =
+        dialog.querySelector<HTMLElement>(
+          '[role="combobox"]:not([disabled]), button:not([disabled])',
+        ) ?? dialog;
+      target.focus({ preventScroll: true });
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, [
+    planImplementationDialog?.entry.clientId,
+    planImplementationDialog?.status,
+  ]);
 
   useEffect(() => {
     if (!accountMenuOpen) {
@@ -10592,6 +10639,68 @@ function App() {
     return supported[0] ?? null;
   }
 
+  async function listValidatedPlanImplementationModels(
+    profileKey: CodexProfileKey,
+    accountId: number,
+  ) {
+    await ensureCodexProfileConnected(profileKey, accountId);
+    if (profileKey !== DEFAULT_CODEX_PROFILE_KEY) {
+      const authState = await refreshAccountState(accountId, true);
+      if (
+        shouldBlockRunForAuth(
+          authState.requiresOpenaiAuth,
+          authState.account,
+        )
+      ) {
+        throw new Error("Sign in to the selected Codex account first.");
+      }
+    }
+    return listCodexModelsForProfile(profileKey, accountId);
+  }
+
+  function closePlanImplementationDialog() {
+    planImplementationDialogRequestRef.current += 1;
+    setPlanImplementationDialog(null);
+    const returnTarget = planImplementationReturnFocusRef.current;
+    planImplementationReturnFocusRef.current = null;
+    window.requestAnimationFrame(() => {
+      if (returnTarget?.isConnected) {
+        returnTarget.focus({ preventScroll: true });
+      }
+    });
+  }
+
+  function trapPlanImplementationDialogFocus(
+    event: ReactKeyboardEvent<HTMLElement>,
+  ) {
+    if (event.key !== "Tab") return;
+    const dialog = planImplementationDialogRef.current;
+    if (!dialog || !dialog.contains(event.target as Node)) return;
+    const focusable = Array.from(
+      dialog.querySelectorAll<HTMLElement>(
+        'button:not([disabled]), [role="combobox"]:not([aria-disabled="true"]), [href], input:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])',
+      ),
+    ).filter(
+      (element) =>
+        element.getAttribute("aria-hidden") !== "true" && !element.hidden,
+    );
+    if (focusable.length === 0) {
+      event.preventDefault();
+      dialog.focus({ preventScroll: true });
+      return;
+    }
+
+    const first = focusable[0];
+    const last = focusable[focusable.length - 1];
+    if (event.shiftKey && document.activeElement === first) {
+      event.preventDefault();
+      last.focus({ preventScroll: true });
+    } else if (!event.shiftKey && document.activeElement === last) {
+      event.preventDefault();
+      first.focus({ preventScroll: true });
+    }
+  }
+
   async function openPlanImplementationDialog(entry: TaskChatEntry) {
     const workspace = selectedWorkspaceRef.current;
     const session = workspace
@@ -10612,12 +10721,18 @@ function App() {
       return;
     }
 
-    const pendingHandoff =
-      pendingAccountHandoffsRef.current[session.chatId] ?? null;
-    const profileKey =
-      pendingHandoff?.targetProfileKey ??
-      session.profileKey ??
-      DEFAULT_CODEX_PROFILE_KEY;
+    const preferredSettings =
+      entry.executionSettings?.source === "captured"
+        ? entry.executionSettings.settings
+        : null;
+    const preferredProfileKey = preferredSettings?.profileKey ?? null;
+    const profileKey: CodexProfileKey =
+      preferredProfileKey === DEFAULT_CODEX_PROFILE_KEY &&
+      session.profileKey !== DEFAULT_CODEX_PROFILE_KEY
+        ? session.profileKey ?? DEFAULT_CODEX_PROFILE_KEY
+        : preferredProfileKey ??
+          session.profileKey ??
+          DEFAULT_CODEX_PROFILE_KEY;
     const accountId =
       profileKey === DEFAULT_CODEX_PROFILE_KEY
         ? 0
@@ -10629,7 +10744,9 @@ function App() {
 
     const requestId = planImplementationDialogRequestRef.current + 1;
     planImplementationDialogRequestRef.current = requestId;
-    const preferredSettings = entry.executionSettings?.settings;
+    if (document.activeElement instanceof HTMLElement) {
+      planImplementationReturnFocusRef.current = document.activeElement;
+    }
     setPlanImplementationDialog({
       requestId,
       workspaceId: workspace.id,
@@ -10647,7 +10764,7 @@ function App() {
     });
 
     try {
-      const availableModels = await listCodexModelsForProfile(
+      const availableModels = await listValidatedPlanImplementationModels(
         profileKey,
         accountId,
       );
@@ -10724,7 +10841,7 @@ function App() {
       error: null,
     });
     try {
-      const availableModels = await listCodexModelsForProfile(
+      const availableModels = await listValidatedPlanImplementationModels(
         profileKey,
         accountId,
       );
@@ -10815,6 +10932,19 @@ function App() {
       });
       return;
     }
+    if (
+      dialog.reasoningEffort &&
+      !model.supportedReasoningEfforts.some(
+        (option) => option.reasoningEffort === dialog.reasoningEffort,
+      )
+    ) {
+      setPlanImplementationDialog({
+        ...dialog,
+        error:
+          "Choose a reasoning level supported by the selected model.",
+      });
+      return;
+    }
 
     if (dialog.profileKey !== session.profileKey) {
       setPendingAccountHandoff({
@@ -10842,8 +10972,7 @@ function App() {
       },
     );
     if (started) {
-      planImplementationDialogRequestRef.current += 1;
-      setPlanImplementationDialog(null);
+      closePlanImplementationDialog();
     } else {
       setPlanImplementationDialog((current) =>
         current?.requestId === dialog.requestId
@@ -12809,19 +12938,21 @@ function App() {
           onMouseDown={(event) => {
             if (
               event.target === event.currentTarget &&
-              planImplementationDialog.status === "idle"
+              planImplementationDialog.status !== "starting"
             ) {
-              planImplementationDialogRequestRef.current += 1;
-              setPlanImplementationDialog(null);
+              closePlanImplementationDialog();
             }
           }}
         >
           <section
             className="confirmation-dialog plan-implementation-dialog"
+            ref={planImplementationDialogRef}
             role="dialog"
             aria-modal="true"
             aria-labelledby="plan-implementation-title"
             aria-describedby="plan-implementation-description"
+            tabIndex={-1}
+            onKeyDown={trapPlanImplementationDialogFocus}
           >
             <div className="plan-implementation-copy">
               <p className="eyebrow">Plan implementation</p>
@@ -12902,11 +13033,8 @@ function App() {
                 type="button"
                 aria-label="Cancel implementation"
                 data-tooltip="Cancel implementation"
-                disabled={planImplementationDialog.status !== "idle"}
-                onClick={() => {
-                  planImplementationDialogRequestRef.current += 1;
-                  setPlanImplementationDialog(null);
-                }}
+                disabled={planImplementationDialog.status === "starting"}
+                onClick={closePlanImplementationDialog}
               >
                 <X size={15} aria-hidden="true" />
               </button>

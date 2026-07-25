@@ -4946,6 +4946,336 @@ describe("App Codex auth", () => {
     expect(mocks.prepareBrowserSessionMock).toHaveBeenCalledTimes(2);
   });
 
+  it("confirms captured Plan settings and applies changes only to implementation", async () => {
+    prepareSignedInRun();
+    mocks.listCodexAccountsMock.mockResolvedValue([
+      signedInAccount,
+      signedInAccount2,
+    ]);
+    mocks.readCodexAccountMock.mockImplementation(async (accountId: number) => ({
+      account: {
+        type: "chatgpt",
+        email:
+          accountId === signedInAccount2.id
+            ? signedInAccount2.email
+            : signedInAccount.email,
+        planType:
+          accountId === signedInAccount2.id
+            ? signedInAccount2.plan_type
+            : signedInAccount.plan_type,
+      },
+      requiresOpenaiAuth: true,
+    }));
+    const equivalentTargetModel = {
+      ...defaultCodexModel,
+      id: "target-gpt-5.5",
+      displayName: "GPT-5.5 Target",
+      isDefault: true,
+    };
+    const implementationModel = {
+      ...defaultCodexModel,
+      id: "o4-implementation",
+      model: "o4-implementation",
+      displayName: "O4 Implementation",
+      supportedReasoningEfforts: [
+        { reasoningEffort: "low", description: "Faster reasoning" },
+        { reasoningEffort: "high", description: "Deeper reasoning" },
+      ],
+      defaultReasoningEffort: "high",
+      isDefault: false,
+    };
+    mocks.listCodexModelsMock.mockImplementation(async (accountId: number) =>
+      accountId === signedInAccount2.id
+        ? [equivalentTargetModel, implementationModel]
+        : [defaultCodexModel],
+    );
+    const planChat = workspaceChatFixture({
+      id: 430,
+      title: "Implement configurable plan",
+      codex_thread_id: "thread-plan-account-7",
+    });
+    const planRun = workspaceRunFixture({
+      id: 330,
+      chat_id: planChat.id,
+      codex_thread_id: "thread-plan-account-7",
+      collaboration_mode: "plan",
+      run_intent: "plan",
+      original_prompt: "Plan the configurable implementation",
+      final_message: "",
+      completed_plan_item_id: "plan-settings-item",
+      completed_plan_text: "# Plan\n\nImplement the selected approach.",
+      plan_review_state: "available",
+      execution_settings_json: JSON.stringify({
+        version: 1,
+        accountId: signedInAccount.id,
+        profileKey: "account:7",
+        selectedBranch: "main",
+        mode: "plan",
+        intent: "plan",
+        accessMode: "ask-for-approval",
+        computerUseEnabled: true,
+        model: defaultCodexModel.model,
+        reasoningEffort: "medium",
+        useOss: false,
+        ossProvider: "ollama",
+        contextFiles: [],
+        selectedSkills: [],
+        goalMode: false,
+      }),
+    });
+    mocks.listWorkspaceChatsMock.mockResolvedValue([planChat]);
+    mocks.getChatWithRunsMock.mockResolvedValue(
+      workspaceChatWithRunsFixture(planChat, [planRun]),
+    );
+    mocks.codexRpcMock.mockImplementation(
+      async (accountId: number, method: string) => {
+        if (method === "collaborationMode/list") {
+          return {
+            data: [
+              {
+                name: "Plan",
+                mode: "plan",
+                model: null,
+                reasoning_effort: "medium",
+              },
+              {
+                name: "Default",
+                mode: "default",
+                model: null,
+                reasoning_effort: null,
+              },
+            ],
+          };
+        }
+        if (method === "thread/start") {
+          expect(accountId).toBe(signedInAccount2.id);
+          return { thread: { id: "thread-plan-account-8" } };
+        }
+        if (method === "turn/start") {
+          expect(accountId).toBe(signedInAccount2.id);
+          return { turn: { id: "turn-plan-account-8" } };
+        }
+        return {};
+      },
+    );
+
+    const { user } = await renderApp();
+    const banner = screen.getByRole("region", { name: "Selected folder" });
+    await user.click(
+      within(banner).getByRole("button", { name: /open chat history/i }),
+    );
+    const drawer = await screen.findByRole("complementary", {
+      name: "Workspace chat history",
+    });
+    await user.click(
+      within(drawer).getByRole("button", {
+        name: /implement configurable plan/i,
+      }),
+    );
+
+    await user.click(screen.getByRole("combobox", { name: "Run account" }));
+    await user.click(
+      screen.getByRole("option", { name: "personal@example.com" }),
+    );
+    const handoffDialog = await screen.findByRole("dialog", {
+      name: "Switch account for this chat?",
+    });
+    await user.click(
+      within(handoffDialog).getByRole("button", { name: "Switch account" }),
+    );
+    await waitFor(() =>
+      expect(
+        screen.getByRole("combobox", { name: "Run account" }),
+      ).toHaveTextContent("personal@example.com"),
+    );
+
+    await user.click(
+      await screen.findByRole("button", { name: "Implement plan" }),
+    );
+    const dialog = await screen.findByRole("dialog", {
+      name: "Confirm implementation settings",
+    });
+    expect(
+      within(dialog).getByRole("combobox", {
+        name: "Implementation account",
+      }),
+    ).toHaveTextContent("dev@example.com");
+    expect(
+      within(dialog).getByRole("combobox", {
+        name: "Implementation model",
+      }),
+    ).toHaveTextContent("GPT-5.5");
+    expect(
+      within(dialog).getByRole("combobox", {
+        name: "Implementation reasoning",
+      }),
+    ).toHaveTextContent("Medium");
+
+    await user.click(
+      within(dialog).getByRole("combobox", {
+        name: "Implementation account",
+      }),
+    );
+    await user.click(
+      screen.getByRole("option", { name: "personal@example.com" }),
+    );
+    await waitFor(() =>
+      expect(
+        within(dialog).getByRole("combobox", {
+          name: "Implementation model",
+        }),
+      ).toHaveTextContent("GPT-5.5 Target"),
+    );
+    expect(mocks.readCodexAccountMock).toHaveBeenCalledWith(
+      signedInAccount2.id,
+      { refreshToken: true },
+    );
+
+    await user.click(
+      within(dialog).getByRole("combobox", {
+        name: "Implementation model",
+      }),
+    );
+    await user.click(
+      screen.getByRole("option", { name: "O4 Implementation" }),
+    );
+    expect(
+      within(dialog).getByRole("combobox", {
+        name: "Implementation reasoning",
+      }),
+    ).toHaveTextContent("High");
+    await user.click(
+      within(dialog).getByRole("combobox", {
+        name: "Implementation reasoning",
+      }),
+    );
+    await user.click(screen.getByRole("option", { name: "Low" }));
+    await user.click(
+      within(dialog).getByRole("button", { name: "Implement plan" }),
+    );
+
+    await waitFor(() =>
+      expect(mocks.codexRpcMock).toHaveBeenCalledWith(
+        signedInAccount2.id,
+        "turn/start",
+        expect.objectContaining({
+          threadId: "thread-plan-account-8",
+          model: "o4-implementation",
+          effort: "low",
+        }),
+      ),
+    );
+    expect(mocks.activateChatAccountHandoffMock).toHaveBeenCalledWith({
+      chatId: planChat.id,
+      expectedProfileKey: "account:7",
+      expectedThreadId: "thread-plan-account-7",
+      accountId: signedInAccount2.id,
+      profileKey: "account:8",
+      codexThreadId: "thread-plan-account-8",
+      status: "running",
+    });
+    expect(screen.getByRole("combobox", { name: "Agent" })).toHaveTextContent(
+      "GPT-5.5",
+    );
+    expect(
+      screen.getByRole("combobox", { name: "Reasoning" }),
+    ).toHaveTextContent("Medium");
+    expect(mocks.createRunMock).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        accountId: signedInAccount2.id,
+        model: "o4-implementation",
+        executionSettingsJson: expect.stringContaining(
+          '"reasoningEffort":"low"',
+        ),
+      }),
+    );
+  });
+
+  it("cancels Plan implementation settings while models load and ignores stale results", async () => {
+    prepareSignedInRun();
+    let resolveImplementationModels!: (models: typeof defaultCodexModel[]) => void;
+    mocks.listCodexModelsMock
+      .mockResolvedValueOnce([defaultCodexModel])
+      .mockImplementationOnce(
+        () =>
+          new Promise((resolve) => {
+            resolveImplementationModels = resolve;
+          }),
+      );
+    const planChat = workspaceChatFixture({
+      id: 431,
+      title: "Cancel implementation settings",
+      codex_thread_id: "thread-plan-cancel",
+    });
+    const planRun = workspaceRunFixture({
+      id: 331,
+      chat_id: planChat.id,
+      codex_thread_id: "thread-plan-cancel",
+      collaboration_mode: "plan",
+      run_intent: "plan",
+      original_prompt: "Plan a cancellable implementation",
+      final_message: "",
+      completed_plan_item_id: "plan-cancel-item",
+      completed_plan_text: "# Plan\n\nKeep the review state available.",
+      plan_review_state: "available",
+    });
+    mocks.listWorkspaceChatsMock.mockResolvedValue([planChat]);
+    mocks.getChatWithRunsMock.mockResolvedValue(
+      workspaceChatWithRunsFixture(planChat, [planRun]),
+    );
+
+    const { user } = await renderApp();
+    const banner = screen.getByRole("region", { name: "Selected folder" });
+    await user.click(
+      within(banner).getByRole("button", { name: /open chat history/i }),
+    );
+    const drawer = await screen.findByRole("complementary", {
+      name: "Workspace chat history",
+    });
+    await user.click(
+      within(drawer).getByRole("button", {
+        name: /cancel implementation settings/i,
+      }),
+    );
+
+    const implement = await screen.findByRole("button", {
+      name: "Implement plan",
+    });
+    await user.click(implement);
+    const dialog = await screen.findByRole("dialog", {
+      name: "Confirm implementation settings",
+    });
+    const cancel = within(dialog).getByRole("button", {
+      name: "Cancel implementation",
+    });
+    expect(cancel).toBeEnabled();
+    await waitFor(() => expect(cancel).toHaveFocus());
+    await user.tab();
+    expect(cancel).toHaveFocus();
+    await user.click(cancel);
+    expect(
+      screen.queryByRole("dialog", {
+        name: "Confirm implementation settings",
+      }),
+    ).not.toBeInTheDocument();
+
+    await act(async () => {
+      resolveImplementationModels([defaultCodexModel]);
+      await Promise.resolve();
+    });
+    expect(
+      screen.queryByRole("dialog", {
+        name: "Confirm implementation settings",
+      }),
+    ).not.toBeInTheDocument();
+    await waitFor(() => expect(implement).toHaveFocus());
+    expect(mocks.codexRpcMock).not.toHaveBeenCalledWith(
+      7,
+      "turn/start",
+      expect.any(Object),
+    );
+  });
+
   it("promotes and persists a proposed-plan final answer as a native Plan", async () => {
     prepareSignedInRun();
     mocks.readAgentNotificationPermissionStatusMock.mockResolvedValue("allowed");
