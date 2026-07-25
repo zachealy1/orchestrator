@@ -1883,11 +1883,12 @@ const WebPreviewCard = memo(function WebPreviewCard({
               : "Website"}
         </span>
       </span>
-      <ExternalLink
-        className="web-preview-action-icon"
-        size={16}
+      <span
+        className="transcript-summary-action-slot web-preview-action-icon"
         aria-hidden="true"
-      />
+      >
+        <ExternalLink size={16} />
+      </span>
     </button>
   );
 });
@@ -2052,7 +2053,7 @@ const EditedFilesSummary = memo(function EditedFilesSummary({
         </span>
         <span className="edited-files-summary-actions">
           <button
-            className="native-plan-icon-action edited-files-action"
+            className="native-plan-icon-action transcript-summary-action-slot edited-files-action"
             ref={undoButtonRef}
             type="button"
             aria-label={

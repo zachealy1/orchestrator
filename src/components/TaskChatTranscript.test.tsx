@@ -160,6 +160,12 @@ describe("TaskChatTranscript", () => {
     expect(edits).not.toBeNull();
     expect(screen.queryByText("Open in browser")).not.toBeInTheDocument();
     expect(
+      preview?.querySelector(".web-preview-action-icon"),
+    ).toHaveClass("transcript-summary-action-slot");
+    expect(edits?.querySelector(".edited-files-action")).toHaveClass(
+      "transcript-summary-action-slot",
+    );
+    expect(
       summary!.compareDocumentPosition(preview!) &
         Node.DOCUMENT_POSITION_FOLLOWING,
     ).toBeTruthy();

@@ -2869,6 +2869,15 @@ button.web-preview-card:active:not(:disabled) {
   font-size: 0.88rem;
 }
 
+.transcript-summary-action-slot {
+  display: inline-grid;
+  width: 30px;
+  height: 30px;
+  flex: 0 0 30px;
+  place-items: center;
+  justify-self: end;
+}
+
 .web-preview-action-icon {
   justify-self: end;
   color: var(--color-text-secondary);
