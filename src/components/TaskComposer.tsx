@@ -103,6 +103,7 @@ type Props = {
   onContextFilesDropError?: (message: string) => void;
   contextDropActive?: boolean;
   onDropSurfaceElementChange?: (element: HTMLElement | null) => void;
+  onPromptElementChange?: (element: HTMLTextAreaElement | null) => void;
   hasContextFileDropFallback?: () => boolean;
   getContextFileDropFallback?: () => ComposerContextFile[];
   onContextFileDropHandled?: () => void;
@@ -188,6 +189,7 @@ export const TaskComposer = memo(function TaskComposer({
   onContextFilesDropError,
   contextDropActive = false,
   onDropSurfaceElementChange,
+  onPromptElementChange,
   hasContextFileDropFallback,
   getContextFileDropFallback,
   onContextFileDropHandled,
@@ -224,11 +226,18 @@ export const TaskComposer = memo(function TaskComposer({
     [contextFiles],
   );
   const dropTargetActive = dragActive || contextDropActive;
-  const setComposerPanelRef = useCallback(
+  const setDropSurfaceRef = useCallback(
     (element: HTMLElement | null) => {
       onDropSurfaceElementChange?.(element);
     },
     [onDropSurfaceElementChange],
+  );
+  const setPromptTextareaElement = useCallback(
+    (element: HTMLTextAreaElement | null) => {
+      promptTextareaRef.current = element;
+      onPromptElementChange?.(element);
+    },
+    [onPromptElementChange],
   );
 
   const cancelVisualPromptUpdate = useCallback(() => {
@@ -731,19 +740,21 @@ export const TaskComposer = memo(function TaskComposer({
 
   return (
     <section
-      ref={setComposerPanelRef}
       className={`composer-panel ${dropTargetActive ? "drop-target-active" : ""} ${
         planProgress ? "has-plan-progress" : ""
       }`}
       aria-label="Task composer"
-      onDragOver={handleDragOver}
-      onDragLeave={handleDragLeave}
-      onDrop={handleDrop}
     >
       {planProgress ? (
         <PlanProgressIndicator progress={planProgress} />
       ) : null}
-      <div className="composer-input-zone">
+      <div
+        className="composer-input-zone"
+        ref={setDropSurfaceRef}
+        onDragOver={handleDragOver}
+        onDragLeave={handleDragLeave}
+        onDrop={handleDrop}
+      >
         <div className={`prompt-shell ${attachmentContextFiles.length > 0 ? "has-context-files" : ""}`}>
           {attachmentContextFiles.length > 0 ? (
             <ContextFileList files={attachmentContextFiles} onRemoveFile={onRemoveFile} />
@@ -765,7 +776,7 @@ export const TaskComposer = memo(function TaskComposer({
               />
             ) : null}
             <textarea
-              ref={promptTextareaRef}
+              ref={setPromptTextareaElement}
               aria-label="Prompt"
               defaultValue={prompt}
               onChange={handlePromptChange}

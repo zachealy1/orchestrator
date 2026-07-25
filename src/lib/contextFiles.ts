@@ -187,7 +187,7 @@ function readNativeDroppedFile(file: File): ComposerContextFile | null {
   return normalizeContextFileMedia({
     path,
     name: file.name || basename(path),
-    source: "explorer",
+    source: "picker",
     status: "ready",
   });
 }

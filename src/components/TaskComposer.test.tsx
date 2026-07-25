@@ -167,6 +167,14 @@ function renderControlledComposer(overrides: Partial<TaskComposerProps> = {}) {
   };
 }
 
+function getComposerInputZone() {
+  const zone = screen.getByLabelText("Prompt").closest(".composer-input-zone");
+  if (!(zone instanceof HTMLElement)) {
+    throw new Error("Composer input zone was not rendered");
+  }
+  return zone;
+}
+
 function createContextFileDataTransfer(files: unknown[]) {
   let dropEffect = "none";
 
@@ -551,6 +559,7 @@ describe("TaskComposer", () => {
     renderComposer({ onContextFilesDrop });
 
     const composer = screen.getByLabelText("Task composer");
+    const inputZone = getComposerInputZone();
     const dataTransfer = createContextFileDataTransfer([
       {
         path: "/repo/README.md",
@@ -560,9 +569,9 @@ describe("TaskComposer", () => {
       },
     ]);
 
-    fireEvent.dragOver(composer, { dataTransfer });
+    fireEvent.dragOver(inputZone, { dataTransfer });
     expect(composer).toHaveClass("drop-target-active");
-    fireEvent.drop(composer, { dataTransfer });
+    fireEvent.drop(inputZone, { dataTransfer });
 
     expect(onContextFilesDrop).toHaveBeenCalledWith([
       {
@@ -572,6 +581,23 @@ describe("TaskComposer", () => {
         status: "ready",
       },
     ]);
+  });
+
+  it("ignores context file drops outside the prompt input zone", () => {
+    const onContextFilesDrop = vi.fn();
+    renderComposer({ onContextFilesDrop });
+    const dataTransfer = createContextFileDataTransfer([
+      {
+        path: "/repo/README.md",
+        name: "README.md",
+        source: "explorer",
+        status: "ready",
+      },
+    ]);
+
+    fireEvent.drop(screen.getByLabelText("Task composer"), { dataTransfer });
+
+    expect(onContextFilesDrop).not.toHaveBeenCalled();
   });
 
   it("uses the fallback explorer drag file when the drop payload is empty", () => {
@@ -591,11 +617,12 @@ describe("TaskComposer", () => {
     });
 
     const composer = screen.getByLabelText("Task composer");
+    const inputZone = getComposerInputZone();
     const dataTransfer = createEmptyDataTransfer();
 
-    fireEvent.dragOver(composer, { dataTransfer });
+    fireEvent.dragOver(inputZone, { dataTransfer });
     expect(composer).toHaveClass("drop-target-active");
-    fireEvent.drop(composer, { dataTransfer });
+    fireEvent.drop(inputZone, { dataTransfer });
 
     expect(onContextFilesDrop).toHaveBeenCalledWith([fallbackFile]);
     expect(onContextFileDropHandled).toHaveBeenCalledOnce();
@@ -613,13 +640,13 @@ describe("TaskComposer", () => {
     });
     const dataTransfer = createNativeFileDataTransfer([droppedFile]);
 
-    fireEvent.drop(screen.getByLabelText("Task composer"), { dataTransfer });
+    fireEvent.drop(getComposerInputZone(), { dataTransfer });
 
     expect(onContextFilesDrop).toHaveBeenCalledWith([
       {
         path: "/repo/AGENTS.md",
         name: "AGENTS.md",
-        source: "explorer",
+        source: "picker",
         status: "ready",
       },
     ]);
@@ -634,7 +661,7 @@ describe("TaskComposer", () => {
       new File(["content"], "local-only.txt"),
     ]);
 
-    fireEvent.drop(screen.getByLabelText("Task composer"), { dataTransfer });
+    fireEvent.drop(getComposerInputZone(), { dataTransfer });
 
     expect(onContextFilesDrop).not.toHaveBeenCalled();
     expect(onContextFilesDropError).toHaveBeenCalledWith(

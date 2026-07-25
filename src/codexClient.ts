@@ -20,6 +20,7 @@ import type {
   CodexModel,
   CodexSkillSummary,
   ComposerContextFile,
+  DroppedContextPathInspection,
   ExternalTranscriptSnapshot,
   ExternalThreadHistoryIndex,
   GitBranchList,
@@ -325,6 +326,12 @@ export function readWorkspaceFilePreview(workspacePath: string, filePath: string
 export function prepareImageAttachment(path: string) {
   return invoke<ImageAttachmentPreview | null>("prepare_image_attachment", {
     path,
+  });
+}
+
+export function inspectDroppedContextPaths(paths: string[]) {
+  return invoke<DroppedContextPathInspection>("inspect_dropped_context_paths", {
+    paths,
   });
 }
 

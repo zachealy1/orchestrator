@@ -43,7 +43,6 @@ import {
 import { flushSync } from "react-dom";
 import type {
   CSSProperties,
-  DragEvent,
   KeyboardEvent as ReactKeyboardEvent,
   MouseEvent as ReactMouseEvent,
   PointerEvent as ReactPointerEvent,
@@ -104,6 +103,7 @@ import {
   generateWorkspaceCommitMessage,
   generateChatTitle,
   focusBrowserSession,
+  inspectDroppedContextPaths,
   listGitBranches,
   listCodexModels,
   listCodexSkills,
@@ -264,11 +264,13 @@ import {
   watchSystemTheme,
 } from "./lib/theme";
 import {
-  hasContextFilePayload,
-  readDroppedContextFiles,
   restorePromptInlineFileReferencesForComposer,
   serializePromptInlineFileReferences,
 } from "./lib/contextFiles";
+import {
+  registerNativeContextFileDrop,
+  type NativeContextFileDropEvent,
+} from "./lib/nativeContextFileDrop";
 import {
   useMacOsWindowDragRegionsEnabled,
   windowDragRegionValue,
@@ -1352,7 +1354,9 @@ function App() {
   const [explorerDragPreview, setExplorerDragPreview] =
     useState<ExplorerDragPreview | null>(null);
   const taskContextDropSurfaceRef = useRef<HTMLElement | null>(null);
+  const taskComposerPromptRef = useRef<HTMLTextAreaElement | null>(null);
   const taskContextDropActiveRef = useRef(false);
+  const nativeContextDropPathsRef = useRef<string[]>([]);
   const explorerDragContextFileRef = useRef<ComposerContextFile | null>(null);
   const explorerPointerDragRef = useRef<ExplorerPointerDrag | null>(null);
   const explorerPointerDragCleanupRef = useRef<(() => void) | null>(null);
@@ -1360,6 +1364,12 @@ function App() {
   const handleTaskComposerDropSurfaceElementChange = useCallback(
     (element: HTMLElement | null) => {
       taskContextDropSurfaceRef.current = element;
+    },
+    [],
+  );
+  const handleTaskComposerPromptElementChange = useCallback(
+    (element: HTMLTextAreaElement | null) => {
+      taskComposerPromptRef.current = element;
     },
     [],
   );
@@ -2071,6 +2081,9 @@ function App() {
   const selectComposerSlashCommand = useStableEvent(handleSlashCommandSelect);
   const closeComposerSlashSearch = useStableEvent(closeSlashCommandSearch);
   const dropComposerContextFiles = useStableEvent(addDroppedContextFiles);
+  const receiveNativeContextFileDrop = useStableEvent(
+    handleNativeContextFileDrop,
+  );
   const getComposerContextFileDropFallback = useStableEvent(
     getExplorerDragContextFiles,
   );
@@ -2089,6 +2102,42 @@ function App() {
   const stopComposerRun = useStableEvent(() => {
     void stopActiveRun();
   });
+  useEffect(() => {
+    if (activeView !== "task") return;
+
+    let disposed = false;
+    let unregister: () => void = () => undefined;
+    void registerNativeContextFileDrop(receiveNativeContextFileDrop)
+      .then((cleanup) => {
+        if (disposed) {
+          cleanup();
+        } else {
+          unregister = cleanup;
+        }
+      })
+      .catch((error) => {
+        if (disposed) return;
+        nativeContextDropPathsRef.current = [];
+        setTaskContextDropActiveValue(false);
+        setStatusMessage(
+          `Native file dropping is unavailable: ${
+            error instanceof Error ? error.message : String(error)
+          }`,
+        );
+      });
+
+    return () => {
+      disposed = true;
+      unregister();
+      nativeContextDropPathsRef.current = [];
+      taskContextDropActiveRef.current = false;
+    };
+  }, [activeView, receiveNativeContextFileDrop]);
+
+  useEffect(() => {
+    nativeContextDropPathsRef.current = [];
+    setTaskContextDropActiveValue(false);
+  }, [activeView, selectedWorkspace?.id]);
   const hasComposerContextFileDropFallback = useCallback(
     () => explorerDragContextFileRef.current !== null,
     [],
@@ -10981,25 +11030,6 @@ function App() {
     setTaskContextDropActive(value);
   }
 
-  function hasContextFileDrop(dataTransfer: DataTransfer) {
-    return (
-      hasContextFilePayload(dataTransfer) ||
-      explorerDragContextFileRef.current !== null
-    );
-  }
-
-  function readContextFileDrop(dataTransfer: DataTransfer) {
-    const result = readDroppedContextFiles(dataTransfer);
-    if (result.files.length > 0 || explorerDragContextFileRef.current === null) {
-      return result;
-    }
-
-    return {
-      ...result,
-      files: [explorerDragContextFileRef.current],
-    };
-  }
-
   function getExplorerDragContextFiles() {
     return explorerDragContextFileRef.current
       ? [explorerDragContextFileRef.current]
@@ -11016,54 +11046,164 @@ function App() {
   }
 
   function addDroppedContextFiles(files: ComposerContextFile[]) {
-    if (files.length === 0) {
+    const workspaceId = selectedWorkspaceRef.current?.id;
+    if (workspaceId === undefined || files.length === 0) return;
+
+    const added = addDroppedContextFilesToWorkspace(workspaceId, files);
+    if (added > 0) {
+      setStatusMessage(
+        `Added ${added === 1 ? "1 file" : `${added} files`} to context.`,
+      );
+    }
+  }
+
+  function addDroppedContextFilesToWorkspace(
+    workspaceId: number,
+    files: ComposerContextFile[],
+  ) {
+    const current =
+      selectedWorkspaceRef.current?.id === workspaceId
+        ? contextFilesRef.current
+        : workspaceTaskMemoriesRef.current[workspaceId]?.contextFiles ?? [];
+    const next = mergeContextFiles(current, files);
+    const added = next.length - current.length;
+    if (added > 0) {
+      updateRememberedWorkspaceComposer(workspaceId, {
+        contextFiles: next,
+      });
+    }
+    return added;
+  }
+
+  function handleNativeContextFileDrop(event: NativeContextFileDropEvent) {
+    if (event.type === "leave") {
+      nativeContextDropPathsRef.current = [];
+      setTaskContextDropActiveValue(false);
       return;
     }
 
-    setContextFiles((current) => mergeContextFiles(current, files));
-    setStatusMessage(
-      `Added ${files.length === 1 ? files[0].name : `${files.length} files`} to context.`,
+    if (event.type === "enter") {
+      nativeContextDropPathsRef.current = [...event.paths];
+    }
+
+    const paths =
+      event.type === "drop"
+        ? event.paths
+        : nativeContextDropPathsRef.current;
+    const overInput =
+      activeViewRef.current === "task" &&
+      selectedWorkspaceRef.current !== null &&
+      paths.length > 0 &&
+      isPointInTaskContextDropSurface(event.clientX, event.clientY);
+
+    if (event.type !== "drop") {
+      setTaskContextDropActiveValue(overInput);
+      return;
+    }
+
+    nativeContextDropPathsRef.current = [];
+    setTaskContextDropActiveValue(false);
+    const workspaceId = selectedWorkspaceRef.current?.id;
+    if (!overInput || workspaceId === undefined || paths.length === 0) return;
+
+    const textarea = taskComposerPromptRef.current;
+    const selection = textarea
+      ? {
+          start: textarea.selectionStart,
+          end: textarea.selectionEnd,
+          direction: textarea.selectionDirection,
+        }
+      : null;
+    void inspectAndAttachNativeContextFiles(
+      workspaceId,
+      paths,
+      textarea,
+      selection,
     );
   }
 
-  function handleTaskContextDragOver(event: DragEvent<HTMLElement>) {
-    if (!hasContextFileDrop(event.dataTransfer)) {
-      return;
-    }
-
-    event.preventDefault();
-    event.dataTransfer.dropEffect = "copy";
-    setTaskContextDropActive(true);
-  }
-
-  function handleTaskContextDragLeave(event: DragEvent<HTMLElement>) {
-    const relatedTarget = event.relatedTarget;
-    if (
-      !(relatedTarget instanceof Node) ||
-      !event.currentTarget.contains(relatedTarget)
-    ) {
-      setTaskContextDropActive(false);
-    }
-  }
-
-  function handleTaskContextDrop(event: DragEvent<HTMLElement>) {
-    if (!hasContextFileDrop(event.dataTransfer)) {
-      return;
-    }
-
-    event.preventDefault();
-    setTaskContextDropActive(false);
-
-    const { files, skipped } = readContextFileDrop(event.dataTransfer);
-    if (files.length > 0) {
-      addDroppedContextFiles(files);
-    }
-    if (skipped > 0) {
-      setStatusMessage(
-        `Skipped ${skipped} dropped file${skipped === 1 ? "" : "s"} because the file path was unavailable.`,
+  async function inspectAndAttachNativeContextFiles(
+    workspaceId: number,
+    paths: string[],
+    textarea: HTMLTextAreaElement | null,
+    selection: {
+      start: number;
+      end: number;
+      direction: "forward" | "backward" | "none" | null;
+    } | null,
+  ) {
+    try {
+      const inspection = await inspectDroppedContextPaths(paths);
+      const files = inspection.files.map((file) =>
+        normalizeContextFileMedia({
+          path: file.path,
+          canonicalPath: file.canonicalPath,
+          name: file.name,
+          source: "picker",
+          status: "ready",
+        }),
       );
+      const added = addDroppedContextFilesToWorkspace(workspaceId, files);
+      if (selectedWorkspaceRef.current?.id === workspaceId) {
+        if (added > 0) {
+          setStatusMessage(
+            `Added ${added === 1 ? "1 file" : `${added} files`} to context.${
+              inspection.rejected.length > 0
+                ? ` Skipped ${inspection.rejected.length} unsupported item${
+                    inspection.rejected.length === 1 ? "" : "s"
+                  }.`
+                : ""
+            }`,
+          );
+        } else if (inspection.rejected.length > 0) {
+          setStatusMessage(
+            `Skipped ${inspection.rejected.length} dropped item${
+              inspection.rejected.length === 1 ? "" : "s"
+            } because only readable files can be attached.`,
+          );
+        }
+      }
+    } catch (error) {
+      if (selectedWorkspaceRef.current?.id === workspaceId) {
+        setStatusMessage(
+          `Could not inspect dropped files: ${
+            error instanceof Error ? error.message : String(error)
+          }`,
+        );
+      }
+    } finally {
+      restorePromptFocusAfterNativeDrop(workspaceId, textarea, selection);
     }
-    endWorkspaceFileDrag();
+  }
+
+  function restorePromptFocusAfterNativeDrop(
+    workspaceId: number,
+    textarea: HTMLTextAreaElement | null,
+    selection: {
+      start: number;
+      end: number;
+      direction: "forward" | "backward" | "none" | null;
+    } | null,
+  ) {
+    if (!textarea) return;
+    window.requestAnimationFrame(() => {
+      if (
+        selectedWorkspaceRef.current?.id !== workspaceId ||
+        taskComposerPromptRef.current !== textarea
+      ) {
+        return;
+      }
+
+      textarea.focus({ preventScroll: true });
+      if (selection) {
+        const end = textarea.value.length;
+        textarea.setSelectionRange(
+          Math.min(selection.start, end),
+          Math.min(selection.end, end),
+          selection.direction ?? undefined,
+        );
+      }
+    });
   }
 
   function workspaceDirectoryEntries(
@@ -11906,9 +12046,6 @@ function App() {
                 aria-label="Task chat"
                 data-tauri-drag-region={selfWindowDragRegion}
                 ref={setTaskViewportElement}
-                onDragOver={handleTaskContextDragOver}
-                onDragLeave={handleTaskContextDragLeave}
-                onDrop={handleTaskContextDrop}
               >
                 {visibleTaskChatEntries.length > 0 ? (
                   <TaskTranscriptErrorBoundary
@@ -12055,6 +12192,7 @@ function App() {
                   onContextFilesDropError={setStatusMessage}
                   contextDropActive={taskContextDropActive}
                   onDropSurfaceElementChange={handleTaskComposerDropSurfaceElementChange}
+                  onPromptElementChange={handleTaskComposerPromptElementChange}
                   hasContextFileDropFallback={hasComposerContextFileDropFallback}
                   getContextFileDropFallback={getComposerContextFileDropFallback}
                   onContextFileDropHandled={completeComposerContextFileDrop}

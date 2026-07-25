@@ -46,6 +46,7 @@ const mocks = vi.hoisted(() => ({
   listWorkspaceDirectoryMock: vi.fn(),
   readWorkspaceFilePreviewMock: vi.fn(),
   prepareImageAttachmentMock: vi.fn(),
+  inspectDroppedContextPathsMock: vi.fn(),
   probeLocalWebPreviewMock: vi.fn(),
   checkoutGitBranchMock: vi.fn(),
   runPreflightMock: vi.fn(),
@@ -99,6 +100,21 @@ const mocks = vi.hoisted(() => ({
   softDeleteRunMock: vi.fn(),
   upsertWorkspaceMock: vi.fn(),
   upsertExternalCodexChatsMock: vi.fn(),
+  registerNativeContextFileDropMock: vi.fn(),
+  nativeContextFileDropHandler: null as
+    | ((event: {
+        type: "enter" | "drop";
+        paths: string[];
+        clientX: number;
+        clientY: number;
+      } | {
+        type: "over";
+        clientX: number;
+        clientY: number;
+      } | {
+        type: "leave";
+      }) => void)
+    | null,
 }));
 
 vi.mock("@tauri-apps/api/event", () => ({
@@ -116,6 +132,10 @@ vi.mock("@tauri-apps/plugin-dialog", () => ({
 
 vi.mock("@tauri-apps/plugin-opener", () => ({
   openUrl: mocks.openUrlMock,
+}));
+
+vi.mock("./lib/nativeContextFileDrop", () => ({
+  registerNativeContextFileDrop: mocks.registerNativeContextFileDropMock,
 }));
 
 vi.mock("./assets/brand/orchestrator-mark.png", () => ({
@@ -208,6 +228,7 @@ vi.mock("./codexClient", () => ({
   readDefaultCodexFile: mocks.readDefaultCodexFileMock,
   readWorkspaceFilePreview: mocks.readWorkspaceFilePreviewMock,
   prepareImageAttachment: mocks.prepareImageAttachmentMock,
+  inspectDroppedContextPaths: mocks.inspectDroppedContextPathsMock,
   probeLocalWebPreview: mocks.probeLocalWebPreviewMock,
   resolveDefaultCodexServerRequest: mocks.resolveDefaultCodexServerRequestMock,
   resolveCodexServerRequest: mocks.resolveCodexServerRequestMock,
@@ -614,6 +635,16 @@ function prepareDefaults() {
         }
       : null,
   );
+  mocks.inspectDroppedContextPathsMock.mockImplementation(
+    async (paths: string[]) => ({
+      files: paths.map((path) => ({
+        path,
+        canonicalPath: path,
+        name: path.split("/").filter(Boolean).pop() ?? path,
+      })),
+      rejected: [],
+    }),
+  );
   mocks.probeLocalWebPreviewMock.mockImplementation(async (url: string) => ({
     normalizedUrl: url,
     reachable: true,
@@ -789,6 +820,17 @@ function prepareDefaults() {
   mocks.upsertExternalCodexChatsMock.mockResolvedValue(undefined);
   mocks.upsertWorkspaceMock.mockResolvedValue(workspace);
   mocks.openDialogMock.mockResolvedValue(null);
+  mocks.nativeContextFileDropHandler = null;
+  mocks.registerNativeContextFileDropMock.mockImplementation(
+    async (handler: NonNullable<typeof mocks.nativeContextFileDropHandler>) => {
+      mocks.nativeContextFileDropHandler = handler;
+      return () => {
+        if (mocks.nativeContextFileDropHandler === handler) {
+          mocks.nativeContextFileDropHandler = null;
+        }
+      };
+    },
+  );
 }
 
 async function renderApp() {
@@ -829,6 +871,29 @@ function mockElementRect(element: Element, rect: Partial<DOMRect> = {}) {
     toJSON: () => ({}),
     ...rect,
   } as DOMRect);
+}
+
+function composerInputZone() {
+  const zone = screen.getByLabelText("Prompt").closest(".composer-input-zone");
+  if (!(zone instanceof HTMLElement)) {
+    throw new Error("Composer input zone was not rendered");
+  }
+  return zone;
+}
+
+async function emitNativeContextFileDrop(
+  event: Parameters<
+    NonNullable<typeof mocks.nativeContextFileDropHandler>
+  >[0],
+) {
+  await waitFor(() =>
+    expect(mocks.nativeContextFileDropHandler).not.toBeNull(),
+  );
+  await act(async () => {
+    mocks.nativeContextFileDropHandler?.(event);
+    await Promise.resolve();
+    await Promise.resolve();
+  });
 }
 
 function startPointerDragFileIntoTaskSurface(
@@ -4141,7 +4206,7 @@ describe("App Codex auth", () => {
     const workspaceNav = screen.getByRole("navigation", { name: "Workspaces" });
     const prompt = screen.getByLabelText("Prompt");
     await user.type(prompt, "Draft for orchestrator");
-    const composer = screen.getByLabelText("Task composer");
+    const composer = composerInputZone();
     const dataTransfer = createContextFileDataTransfer([
       {
         path: "/repo/orchestrator/README.md",
@@ -5464,7 +5529,7 @@ describe("App Codex auth", () => {
 
   it("adds explorer files to context through composer drop and dedupes repeats", async () => {
     await renderApp();
-    const composer = screen.getByLabelText("Task composer");
+    const composer = composerInputZone();
     const dataTransfer = createContextFileDataTransfer([
       {
         path: "/repo/orchestrator/README.md",
@@ -5480,6 +5545,179 @@ describe("App Codex auth", () => {
 
     const contextList = await screen.findByLabelText("Selected context files");
     expect(within(contextList).getAllByText("README.md")).toHaveLength(1);
+  });
+
+  it("accepts native Finder drops only inside the input and restores prompt focus", async () => {
+    const { user } = await renderApp();
+    const zone = composerInputZone();
+    const composer = screen.getByLabelText("Task composer");
+    const prompt = screen.getByLabelText("Prompt") as HTMLTextAreaElement;
+    mockElementRect(zone, {
+      left: 100,
+      right: 700,
+      top: 200,
+      bottom: 500,
+      width: 600,
+      height: 300,
+    });
+    await user.type(prompt, "Draft prompt");
+    prompt.setSelectionRange(2, 7, "forward");
+
+    await emitNativeContextFileDrop({
+      type: "drop",
+      paths: ["/Users/example/Desktop/outside.txt"],
+      clientX: 20,
+      clientY: 20,
+    });
+    expect(mocks.inspectDroppedContextPathsMock).not.toHaveBeenCalled();
+
+    await emitNativeContextFileDrop({
+      type: "enter",
+      paths: ["/Users/example/Desktop/reference.png"],
+      clientX: 400,
+      clientY: 300,
+    });
+    expect(composer).toHaveClass("drop-target-active");
+
+    await emitNativeContextFileDrop({
+      type: "drop",
+      paths: ["/Users/example/Desktop/reference.png"],
+      clientX: 400,
+      clientY: 300,
+    });
+
+    await waitFor(() =>
+      expect(mocks.inspectDroppedContextPathsMock).toHaveBeenCalledWith([
+        "/Users/example/Desktop/reference.png",
+      ]),
+    );
+    const contextList = await screen.findByLabelText("Selected context files");
+    expect(within(contextList).getByTitle("/Users/example/Desktop/reference.png"))
+      .toBeInTheDocument();
+    await waitFor(() => expect(prompt).toHaveFocus());
+    expect(prompt.selectionStart).toBe(2);
+    expect(prompt.selectionEnd).toBe(7);
+    expect(composer).not.toHaveClass("drop-target-active");
+  });
+
+  it("deduplicates native and HTML drops by canonical path", async () => {
+    await renderApp();
+    const zone = composerInputZone();
+    mockElementRect(zone, {
+      left: 100,
+      right: 700,
+      top: 200,
+      bottom: 500,
+      width: 600,
+      height: 300,
+    });
+    fireEvent.drop(zone, {
+      dataTransfer: createContextFileDataTransfer([
+        {
+          path: "/Users/example/Desktop/notes.txt",
+          name: "notes.txt",
+          source: "explorer",
+          status: "ready",
+        },
+      ]),
+    });
+    mocks.inspectDroppedContextPathsMock.mockResolvedValueOnce({
+      files: [
+        {
+          path: "/Users/example/Desktop/notes-link.txt",
+          canonicalPath: "/Users/example/Desktop/notes.txt",
+          name: "notes-link.txt",
+        },
+      ],
+      rejected: [],
+    });
+
+    await emitNativeContextFileDrop({
+      type: "drop",
+      paths: ["/Users/example/Desktop/notes-link.txt"],
+      clientX: 400,
+      clientY: 300,
+    });
+
+    await waitFor(() =>
+      expect(mocks.inspectDroppedContextPathsMock).toHaveBeenCalledWith([
+        "/Users/example/Desktop/notes-link.txt",
+      ]),
+    );
+    const contextList = screen.getByLabelText("Selected context files");
+    expect(within(contextList).getAllByText("notes.txt")).toHaveLength(1);
+    expect(within(contextList).queryByText("notes-link.txt")).not.toBeInTheDocument();
+  });
+
+  it("routes an inspected native drop back to its originating workspace", async () => {
+    const mobileWorkspace = {
+      ...workspace,
+      id: 2,
+      path: "/repo/mobile-client",
+      label: "mobile-client",
+    };
+    mocks.listWorkspacesMock.mockResolvedValue([workspace, mobileWorkspace]);
+    let resolveInspection!: (value: {
+      files: Array<{
+        path: string;
+        canonicalPath: string;
+        name: string;
+      }>;
+      rejected: [];
+    }) => void;
+    mocks.inspectDroppedContextPathsMock.mockReturnValue(
+      new Promise((resolve) => {
+        resolveInspection = resolve;
+      }),
+    );
+
+    const { user } = await renderApp();
+    const zone = composerInputZone();
+    mockElementRect(zone, {
+      left: 100,
+      right: 700,
+      top: 200,
+      bottom: 500,
+      width: 600,
+      height: 300,
+    });
+    await emitNativeContextFileDrop({
+      type: "drop",
+      paths: ["/Users/example/Desktop/notes.txt"],
+      clientX: 400,
+      clientY: 300,
+    });
+    await waitFor(() =>
+      expect(mocks.inspectDroppedContextPathsMock).toHaveBeenCalledOnce(),
+    );
+
+    const workspaceNav = screen.getByRole("navigation", { name: "Workspaces" });
+    await user.click(
+      within(workspaceNav).getByRole("button", { name: "mobile-client" }),
+    );
+    await act(async () => {
+      resolveInspection({
+        files: [
+          {
+            path: "/Users/example/Desktop/notes.txt",
+            canonicalPath: "/Users/example/Desktop/notes.txt",
+            name: "notes.txt",
+          },
+        ],
+        rejected: [],
+      });
+      await Promise.resolve();
+    });
+    expect(screen.queryByLabelText("Selected context files")).not.toBeInTheDocument();
+
+    await user.click(
+      within(workspaceNav).getByRole("button", { name: "orchestrator" }),
+    );
+    expect(
+      within(await screen.findByLabelText("Selected context files")).getByText(
+        "notes.txt",
+      ),
+    ).toBeInTheDocument();
   });
 
   it("moves submitted images into the message and sends them as native image input", async () => {
@@ -5611,7 +5849,7 @@ describe("App Codex auth", () => {
       name: "README.md",
     });
     const composer = screen.getByLabelText("Task composer");
-    mockElementRect(composer);
+    mockElementRect(composerInputZone());
     startPointerDragFileIntoTaskSurface(readmeButton);
 
     const dragPreview = screen.getByLabelText("Dragging README.md");
@@ -5648,7 +5886,7 @@ describe("App Codex auth", () => {
     const fileButton = await within(workspaceNav).findByRole("button", {
       name: "hello.txt",
     });
-    mockElementRect(screen.getByLabelText("Task composer"));
+    mockElementRect(composerInputZone());
 
     pointerDragFileIntoTaskSurface(fileButton);
     pointerDragFileIntoTaskSurface(fileButton);

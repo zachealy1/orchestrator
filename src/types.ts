@@ -614,6 +614,22 @@ export type ImageAttachmentPreview = {
   thumbnailDataUrl: string;
 };
 
+export type DroppedContextPath = {
+  path: string;
+  canonicalPath: string;
+  name: string;
+};
+
+export type RejectedDroppedContextPath = {
+  path: string;
+  reason: "unavailable" | "directory" | "not-file" | "unreadable";
+};
+
+export type DroppedContextPathInspection = {
+  files: DroppedContextPath[];
+  rejected: RejectedDroppedContextPath[];
+};
+
 export type ComposerMentionSearchStatus =
   | "idle"
   | "loading"

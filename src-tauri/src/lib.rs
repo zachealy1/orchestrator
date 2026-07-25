@@ -385,6 +385,28 @@ struct ImageAttachmentPreview {
     thumbnail_data_url: String,
 }
 
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct DroppedContextPath {
+    path: String,
+    canonical_path: String,
+    name: String,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct RejectedDroppedContextPath {
+    path: String,
+    reason: String,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct DroppedContextPathInspection {
+    files: Vec<DroppedContextPath>,
+    rejected: Vec<RejectedDroppedContextPath>,
+}
+
 fn migrations() -> Vec<Migration> {
     vec![
         Migration {
@@ -3908,6 +3930,83 @@ async fn prepare_image_attachment(path: String) -> Result<Option<ImageAttachment
     .await
 }
 
+fn inspect_dropped_context_paths_blocking(paths: Vec<String>) -> DroppedContextPathInspection {
+    let mut files = Vec::new();
+    let mut rejected = Vec::new();
+    let mut canonical_paths = HashSet::new();
+
+    for original_path in paths {
+        let source_path = PathBuf::from(&original_path);
+        let canonical_path = match fs::canonicalize(&source_path) {
+            Ok(path) => path,
+            Err(_) => {
+                rejected.push(RejectedDroppedContextPath {
+                    path: original_path,
+                    reason: "unavailable".to_string(),
+                });
+                continue;
+            }
+        };
+        let metadata = match fs::metadata(&canonical_path) {
+            Ok(metadata) => metadata,
+            Err(_) => {
+                rejected.push(RejectedDroppedContextPath {
+                    path: original_path,
+                    reason: "unavailable".to_string(),
+                });
+                continue;
+            }
+        };
+        if metadata.is_dir() {
+            rejected.push(RejectedDroppedContextPath {
+                path: original_path,
+                reason: "directory".to_string(),
+            });
+            continue;
+        }
+        if !metadata.is_file() {
+            rejected.push(RejectedDroppedContextPath {
+                path: original_path,
+                reason: "not-file".to_string(),
+            });
+            continue;
+        }
+        if fs::File::open(&canonical_path).is_err() {
+            rejected.push(RejectedDroppedContextPath {
+                path: original_path,
+                reason: "unreadable".to_string(),
+            });
+            continue;
+        }
+        if !canonical_paths.insert(canonical_path.clone()) {
+            continue;
+        }
+
+        let name = source_path
+            .file_name()
+            .or_else(|| canonical_path.file_name())
+            .map(|name| name.to_string_lossy().to_string())
+            .unwrap_or_else(|| original_path.clone());
+        files.push(DroppedContextPath {
+            path: original_path,
+            canonical_path: canonical_path.to_string_lossy().to_string(),
+            name,
+        });
+    }
+
+    DroppedContextPathInspection { files, rejected }
+}
+
+#[tauri::command]
+async fn inspect_dropped_context_paths(
+    paths: Vec<String>,
+) -> Result<DroppedContextPathInspection, String> {
+    run_blocking_command("inspect dropped context paths", move || {
+        Ok(inspect_dropped_context_paths_blocking(paths))
+    })
+    .await
+}
+
 fn is_image_extension(path: &Path) -> bool {
     path.extension()
         .and_then(OsStr::to_str)
@@ -5292,6 +5391,7 @@ pub fn run() {
             list_workspace_directory,
             read_workspace_file_preview,
             prepare_image_attachment,
+            inspect_dropped_context_paths,
             run_preflight,
             web_preview::probe_local_web_preview,
             browser_sessions::browser_runtime_status,
@@ -6254,6 +6354,62 @@ mod tests {
         )
         .unwrap_err()
         .contains("could not be decoded"));
+        remove_test_directory(directory);
+    }
+
+    #[test]
+    fn dropped_context_path_inspection_accepts_files_and_rejects_other_items() {
+        let directory = test_directory("dropped-context-paths");
+        let file = directory.join("notes.txt");
+        let child_directory = directory.join("folder");
+        let missing = directory.join("missing.txt");
+        fs::write(&file, b"notes").unwrap();
+        fs::create_dir_all(&child_directory).unwrap();
+
+        let inspection = inspect_dropped_context_paths_blocking(vec![
+            file.to_string_lossy().to_string(),
+            child_directory.to_string_lossy().to_string(),
+            missing.to_string_lossy().to_string(),
+        ]);
+
+        assert_eq!(inspection.files.len(), 1);
+        assert_eq!(inspection.files[0].name, "notes.txt");
+        assert_eq!(
+            inspection.files[0].canonical_path,
+            fs::canonicalize(&file).unwrap().to_string_lossy()
+        );
+        assert_eq!(inspection.rejected.len(), 2);
+        assert_eq!(inspection.rejected[0].reason, "directory");
+        assert_eq!(inspection.rejected[1].reason, "unavailable");
+        remove_test_directory(directory);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn dropped_context_path_inspection_follows_symlinks_and_deduplicates_targets() {
+        use std::os::unix::fs::symlink;
+
+        let directory = test_directory("dropped-context-symlink");
+        let file = directory.join("notes.txt");
+        let link = directory.join("notes-link.txt");
+        fs::write(&file, b"notes").unwrap();
+        symlink(&file, &link).unwrap();
+
+        let inspection = inspect_dropped_context_paths_blocking(vec![
+            link.to_string_lossy().to_string(),
+            file.to_string_lossy().to_string(),
+        ]);
+
+        assert_eq!(inspection.files.len(), 1);
+        assert_eq!(
+            inspection.files[0].path,
+            link.to_string_lossy().to_string()
+        );
+        assert_eq!(
+            inspection.files[0].canonical_path,
+            fs::canonicalize(&file).unwrap().to_string_lossy()
+        );
+        assert!(inspection.rejected.is_empty());
         remove_test_directory(directory);
     }
 
