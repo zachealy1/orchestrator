@@ -1,11 +1,14 @@
 import { describe, expect, it, vi } from "vitest";
 import {
+  nativeDropPositionToClient,
   physicalDropPositionToClient,
   registerNativeContextFileDrop,
   type NativeContextFileDropAdapter,
 } from "./nativeContextFileDrop";
 
-function createAdapter() {
+function createAdapter(
+  coordinateSpace: NativeContextFileDropAdapter["coordinateSpace"] = "physical",
+) {
   let scaleHandler: ((scaleFactor: number) => void) | null = null;
   let dropHandler:
     | ((event:
@@ -24,6 +27,7 @@ function createAdapter() {
   const unlistenDrop = vi.fn();
   const adapter: NativeContextFileDropAdapter = {
     isAvailable: () => true,
+    coordinateSpace,
     readScaleFactor: vi.fn(async () => 2),
     onScaleFactorChange: vi.fn(async (handler) => {
       scaleHandler = handler;
@@ -59,6 +63,21 @@ describe("native context file drops", () => {
     expect(physicalDropPositionToClient({ x: 20, y: 10 }, 0)).toEqual({
       clientX: 20,
       clientY: 10,
+    });
+  });
+
+  it("preserves logical AppKit drag positions on Retina displays", () => {
+    expect(
+      nativeDropPositionToClient({ x: 600, y: 300 }, 2, "logical"),
+    ).toEqual({
+      clientX: 600,
+      clientY: 300,
+    });
+    expect(
+      nativeDropPositionToClient({ x: 600, y: 300 }, 2, "physical"),
+    ).toEqual({
+      clientX: 300,
+      clientY: 150,
     });
   });
 
@@ -113,5 +132,28 @@ describe("native context file drops", () => {
     expect(adapter.readScaleFactor).not.toHaveBeenCalled();
     expect(adapter.onDragDropEvent).not.toHaveBeenCalled();
     expect(handler).not.toHaveBeenCalled();
+  });
+
+  it("uses unscaled macOS points for emitted drag events", async () => {
+    const fixture = createAdapter("logical");
+    const handler = vi.fn();
+    const unregister = await registerNativeContextFileDrop(
+      handler,
+      fixture.adapter,
+    );
+
+    fixture.emitDrop({
+      type: "drop",
+      paths: ["/Users/example/Desktop/readme.txt"],
+      position: { x: 900, y: 650 },
+    });
+
+    expect(handler).toHaveBeenCalledWith({
+      type: "drop",
+      paths: ["/Users/example/Desktop/readme.txt"],
+      clientX: 900,
+      clientY: 650,
+    });
+    unregister();
   });
 });

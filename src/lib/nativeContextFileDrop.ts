@@ -1,5 +1,4 @@
 import { isTauri } from "@tauri-apps/api/core";
-import { getCurrentWebview } from "@tauri-apps/api/webview";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 
 type PhysicalDropPosition = {
@@ -50,6 +49,7 @@ export type NativeContextFileDropEvent =
 
 export type NativeContextFileDropAdapter = {
   isAvailable: () => boolean;
+  coordinateSpace: "logical" | "physical";
   readScaleFactor: () => Promise<number>;
   onScaleFactorChange: (
     handler: (scaleFactor: number) => void,
@@ -59,15 +59,24 @@ export type NativeContextFileDropAdapter = {
   ) => Promise<() => void>;
 };
 
+function isMacOsWebView() {
+  const platform = globalThis.navigator?.platform ?? "";
+  const userAgent = globalThis.navigator?.userAgent ?? "";
+  return /Mac/i.test(platform) || /Macintosh/i.test(userAgent);
+}
+
 const defaultAdapter: NativeContextFileDropAdapter = {
   isAvailable: isTauri,
+  // Wry's macOS drag handler reports NSView coordinates in logical AppKit
+  // points, despite Tauri exposing the payload as PhysicalPosition.
+  coordinateSpace: isMacOsWebView() ? "logical" : "physical",
   readScaleFactor: () => getCurrentWindow().scaleFactor(),
   onScaleFactorChange: (handler) =>
     getCurrentWindow().onScaleChanged(({ payload }) => {
       handler(payload.scaleFactor);
     }),
   onDragDropEvent: (handler) =>
-    getCurrentWebview().onDragDropEvent(({ payload }) => {
+    getCurrentWindow().onDragDropEvent(({ payload }) => {
       handler(payload);
     }),
 };
@@ -82,6 +91,19 @@ export function physicalDropPositionToClient(
     clientX: position.x / scale,
     clientY: position.y / scale,
   };
+}
+
+export function nativeDropPositionToClient(
+  position: PhysicalDropPosition,
+  scaleFactor: number,
+  coordinateSpace: NativeContextFileDropAdapter["coordinateSpace"],
+) {
+  return coordinateSpace === "logical"
+    ? {
+        clientX: position.x,
+        clientY: position.y,
+      }
+    : physicalDropPositionToClient(position, scaleFactor);
 }
 
 export async function registerNativeContextFileDrop(
@@ -104,9 +126,10 @@ export async function registerNativeContextFileDrop(
         return;
       }
 
-      const position = physicalDropPositionToClient(
+      const position = nativeDropPositionToClient(
         event.position,
         scaleFactor,
+        adapter.coordinateSpace,
       );
       if (event.type === "over") {
         handler({

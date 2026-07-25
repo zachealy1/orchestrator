@@ -19,6 +19,7 @@
       {
         "title": "Orchestrator",
         "titleBarStyle": "Overlay",
+        "dragDropEnabled": true,
         "width": 1180,
         "height": 780,
         "minWidth": 960,
