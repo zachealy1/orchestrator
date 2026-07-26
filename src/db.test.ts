@@ -2,8 +2,13 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
   execute: vi.fn(),
+  invoke: vi.fn(),
   load: vi.fn(),
   select: vi.fn(),
+}));
+
+vi.mock("@tauri-apps/api/core", () => ({
+  invoke: mocks.invoke,
 }));
 
 vi.mock("@tauri-apps/plugin-sql", () => ({
@@ -15,31 +20,232 @@ vi.mock("@tauri-apps/plugin-sql", () => ({
 import {
   activateChatAccountHandoff,
   appendRunEvents,
+  chatHasPendingPlanReview,
   claimChatTitleGeneration,
   completeChatTitleGeneration,
   createChat,
+  createChatWithQueuedPrompt,
   createRun,
   failChatTitleGeneration,
   listLocalChatTranscript,
   listWorkspaceChats,
   recordTokenUsage,
   recoverAbandonedRuns,
+  recoverInterruptedPromptQueueItems,
   recoverInterruptedChatTitleGenerations,
   renameChat,
+  softDeleteChat,
+  softDeleteWorkspace,
   updateRun,
   upsertExternalCodexChats,
   type RunEventInput,
 } from "./db";
+import { createQueuedPromptSnapshot } from "./lib/promptQueue";
+import { createRunExecutionSettings } from "./lib/runExecutionSettings";
 
 beforeEach(() => {
   mocks.execute.mockReset();
   mocks.execute.mockResolvedValue({ rowsAffected: 1 });
+  mocks.invoke.mockReset();
   mocks.load.mockReset();
   mocks.select.mockReset();
   mocks.select.mockResolvedValue([]);
   mocks.load.mockResolvedValue({
     execute: mocks.execute,
     select: mocks.select,
+  });
+});
+
+function queuedPromptSnapshot() {
+  const executionSettings = createRunExecutionSettings({
+    accountId: 7,
+    profileKey: "account:7",
+    selectedBranch: "main",
+    mode: "run",
+    intent: "normal",
+    accessMode: "ask-for-approval",
+    computerUseEnabled: true,
+    model: "gpt-5.6",
+    reasoningEffort: "medium",
+    useOss: false,
+    ossProvider: "ollama",
+    contextFiles: [],
+    selectedSkills: [],
+    goalMode: false,
+  });
+  return createQueuedPromptSnapshot({
+    prompt: "Implement durable queuing",
+    executionSettings,
+    contextFingerprint: {
+      version: 1,
+      workspacePath: "/workspace/project",
+      branch: "main",
+      headCommit: "abc",
+      worktreeFingerprint: "clean",
+      profileKey: "account:7",
+      threadId: null,
+      conversationRevision: 0,
+      files: [],
+    },
+  });
+}
+
+describe("prompt queue persistence", () => {
+  it("creates a first chat and its queued prompt in one transaction", async () => {
+    const snapshot = queuedPromptSnapshot();
+    const now = "2026-07-26T10:00:00Z";
+    mocks.invoke.mockResolvedValueOnce({ chatId: 42 });
+    mocks.select
+      .mockResolvedValueOnce([
+        {
+          id: 42,
+          workspace_id: 3,
+          account_id: 7,
+          title: "Generating title...",
+          codex_thread_id: null,
+          status: "queued",
+          origin: "orchestrator",
+          profile_key: "account:7",
+          external_thread_id: null,
+          source_kind: null,
+          sync_status: null,
+          external_cwd: null,
+          external_created_at: null,
+          external_updated_at: null,
+          last_synced_at: null,
+          title_generation_state: "pending",
+          title_fallback: "Implement durable queuing",
+          title_manually_edited: 0,
+          title_generation_started_at: null,
+          conversation_revision: 0,
+          created_at: now,
+          updated_at: now,
+          deleted_at: null,
+        },
+      ])
+      .mockResolvedValueOnce([
+        {
+          id: "queue-1",
+          client_message_id: "message-1",
+          workspace_id: 3,
+          chat_id: 42,
+          position: 0,
+          send_now_priority: null,
+          prompt_text: snapshot.prompt,
+          execution_snapshot_json: JSON.stringify(snapshot),
+          context_fingerprint_json: JSON.stringify(
+            snapshot.contextFingerprint,
+          ),
+          conversation_revision: 0,
+          status: "queued",
+          linked_run_id: null,
+          linked_turn_id: null,
+          error: null,
+          stale_reasons_json: null,
+          created_at: now,
+          updated_at: now,
+          accepted_at: null,
+          completed_at: null,
+        },
+      ]);
+
+    await expect(
+      createChatWithQueuedPrompt({
+        workspaceId: 3,
+        accountId: 7,
+        title: "Implement durable queuing",
+        status: "queued",
+        generateTitle: true,
+        itemId: "queue-1",
+        clientMessageId: "message-1",
+        prompt: snapshot.prompt,
+        snapshot,
+      }),
+    ).resolves.toEqual({
+      chat: expect.objectContaining({ id: 42 }),
+      item: expect.objectContaining({ id: "queue-1", chatId: 42 }),
+    });
+
+    expect(mocks.invoke).toHaveBeenCalledWith(
+      "create_chat_with_queued_prompt",
+      {
+        request: expect.objectContaining({
+          workspaceId: 3,
+          accountId: 7,
+          itemId: "queue-1",
+          clientMessageId: "message-1",
+          conversationRevision: 0,
+        }),
+      },
+    );
+    expect(mocks.execute).not.toHaveBeenCalled();
+  });
+
+  it("rolls back a newly created chat when durable enqueue fails", async () => {
+    const snapshot = queuedPromptSnapshot();
+    mocks.invoke.mockRejectedValueOnce(
+      new Error("Prompt was not added to the queue."),
+    );
+
+    await expect(
+      createChatWithQueuedPrompt({
+        workspaceId: 3,
+        accountId: 7,
+        title: "Implement durable queuing",
+        status: "queued",
+        generateTitle: true,
+        itemId: "queue-1",
+        clientMessageId: "message-1",
+        prompt: snapshot.prompt,
+        snapshot,
+      }),
+    ).rejects.toThrow("Prompt was not added to the queue");
+
+    expect(mocks.invoke).toHaveBeenCalledTimes(1);
+    expect(mocks.execute).not.toHaveBeenCalled();
+    expect(mocks.select).not.toHaveBeenCalled();
+  });
+
+  it("recovers uncertain delivery states as retryable failures", async () => {
+    mocks.execute.mockResolvedValueOnce({ rowsAffected: 3 });
+
+    await expect(recoverInterruptedPromptQueueItems()).resolves.toBe(3);
+
+    const [query] = mocks.execute.mock.calls[0] ?? [];
+    expect(query).toContain("WHERE status IN ('starting', 'steering', 'active')");
+    expect(query).toContain("status = 'failed'");
+    expect(query).toContain("delivery could be confirmed");
+    expect(query).toContain("send_now_priority = NULL");
+  });
+
+  it("removes durable queue items when a chat is soft-deleted", async () => {
+    await softDeleteChat(42);
+
+    expect(mocks.execute.mock.calls[0]?.[0]).toContain(
+      "DELETE FROM prompt_queue_items",
+    );
+    expect(mocks.execute.mock.calls[0]?.[1]).toEqual([42]);
+  });
+
+  it("removes durable queue items when a workspace is soft-deleted", async () => {
+    await softDeleteWorkspace(7);
+
+    expect(mocks.execute.mock.calls[0]?.[0]).toContain(
+      "DELETE FROM prompt_queue_items",
+    );
+    expect(mocks.execute.mock.calls[0]?.[1]).toEqual([7]);
+    expect(mocks.execute.mock.calls[1]?.[0]).toContain("UPDATE workspaces");
+  });
+
+  it("checks plan-review blocking without loading the chat transcript", async () => {
+    mocks.select.mockResolvedValueOnce([{ has_pending_review: 1 }]);
+
+    await expect(chatHasPendingPlanReview(42)).resolves.toBe(true);
+
+    expect(mocks.select).toHaveBeenCalledWith(
+      expect.stringContaining("plan_review_state = 'available'"),
+      [42],
+    );
   });
 });
 

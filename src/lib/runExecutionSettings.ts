@@ -61,6 +61,12 @@ export function parseRunExecutionSettings(
   }
 }
 
+export function parseRunExecutionSettingsValue(
+  value: unknown,
+): RunExecutionSettings | null {
+  return readRunExecutionSettings(value);
+}
+
 export function resolveStoredRunExecutionSettings(
   value: string | null | undefined,
   legacy: LegacyRunSettingsRecord,

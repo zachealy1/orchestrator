@@ -4,7 +4,14 @@ import { describe, expect, it, vi } from "vitest";
 import { TaskComposer } from "./TaskComposer";
 import { useState } from "react";
 import type { ComponentProps } from "react";
-import { ORCHESTRATOR_PROMPT_CONTEXT_MIME } from "../types";
+import {
+  createQueuedPromptSnapshot,
+} from "../lib/promptQueue";
+import { createRunExecutionSettings } from "../lib/runExecutionSettings";
+import {
+  ORCHESTRATOR_PROMPT_CONTEXT_MIME,
+  type PromptQueueItem,
+} from "../types";
 
 type TaskComposerProps = ComponentProps<typeof TaskComposer>;
 
@@ -50,6 +57,59 @@ const accounts: TaskComposerProps["accounts"] = [
     deleted_at: null,
   },
 ];
+
+function queuedPrompt(): PromptQueueItem {
+  const executionSettings = createRunExecutionSettings({
+    accountId: 7,
+    profileKey: "account:7",
+    selectedBranch: "main",
+    mode: "run",
+    intent: "normal",
+    accessMode: "ask-for-approval",
+    computerUseEnabled: true,
+    model: "gpt-5.1-codex",
+    reasoningEffort: "medium",
+    useOss: false,
+    ossProvider: "ollama",
+    contextFiles: [],
+    selectedSkills: [],
+    goalMode: false,
+  });
+  const contextFingerprint = {
+    version: 1 as const,
+    workspacePath: "/workspace",
+    branch: "main",
+    headCommit: "abc",
+    worktreeFingerprint: "clean",
+    profileKey: "account:7" as const,
+    threadId: "thread-1",
+    conversationRevision: 1,
+    files: [],
+  };
+  return {
+    id: "queue-1",
+    clientMessageId: "message-queue-1",
+    workspaceId: 1,
+    chatId: 2,
+    position: 0,
+    sendNowPriority: null,
+    prompt: "Queued follow-up",
+    snapshot: createQueuedPromptSnapshot({
+      prompt: "Queued follow-up",
+      executionSettings,
+      contextFingerprint,
+    }),
+    status: "queued",
+    linkedRunId: null,
+    linkedTurnId: null,
+    error: null,
+    staleReasons: [],
+    createdAt: "2026-07-26T10:00:00Z",
+    updatedAt: "2026-07-26T10:00:00Z",
+    acceptedAt: null,
+    completedAt: null,
+  };
+}
 
 function renderComposer(overrides: Partial<TaskComposerProps> = {}) {
   const props: TaskComposerProps = {
@@ -330,10 +390,12 @@ describe("TaskComposer", () => {
       observedAtMs: Date.now(),
       actionPending: null,
     };
+    const queueItems = [queuedPrompt()];
     const { user, container, props, rerender } = renderComposer({
       prompt: "Keep this draft",
       goalProgress,
       planProgress,
+      queueItems,
       onStatusNoticeActivate,
     });
 
@@ -345,6 +407,7 @@ describe("TaskComposer", () => {
         statusNotices={[notice]}
         goalProgress={goalProgress}
         planProgress={planProgress}
+        queueItems={queueItems}
       />,
     );
 
@@ -363,6 +426,7 @@ describe("TaskComposer", () => {
       approvalAction.closest(".composer-status-notice"),
       screen.getByLabelText("Goal progress"),
       screen.getByRole("status").closest(".plan-progress-indicator"),
+      stack!.querySelector(".prompt-queue-status-row"),
     ]);
     expect(
       stack!.compareDocumentPosition(prompt) &
@@ -507,10 +571,10 @@ describe("TaskComposer", () => {
     expect(screen.queryByRole("combobox", { name: "Sandbox" })).not.toBeInTheDocument();
   });
 
-  it("disables Access while a run is active", () => {
+  it("keeps Access available for prompts queued behind an active run", () => {
     renderComposer({ runActive: true });
 
-    expect(screen.getByRole("combobox", { name: "Access" })).toBeDisabled();
+    expect(screen.getByRole("combobox", { name: "Access" })).toBeEnabled();
   });
 
   it("keeps workspace and branch selection out of the composer", () => {
@@ -812,6 +876,55 @@ describe("TaskComposer", () => {
     expect(onRun).toHaveBeenCalledOnce();
     expect(onRun).toHaveBeenCalledWith("Fix the failing test");
     expect(promptInput).toHaveValue("Fix the failing test");
+  });
+
+  it("dispatches the first queued prompt when Enter is pressed on an empty composer", async () => {
+    const onDispatchQueued = vi.fn();
+    const onRun = vi.fn();
+    const { user } = renderControlledComposer({
+      queueItems: [queuedPrompt()],
+      onDispatchQueued,
+      onRun,
+    });
+    const promptInput = screen.getByLabelText("Prompt");
+
+    await user.click(promptInput);
+    await user.keyboard("{Enter}");
+
+    expect(onDispatchQueued).toHaveBeenCalledOnce();
+    expect(onRun).not.toHaveBeenCalled();
+  });
+
+  it("requires an explicit resume before dispatching a paused queue", async () => {
+    const onDispatchQueued = vi.fn();
+    const { user } = renderControlledComposer({
+      queueItems: [queuedPrompt()],
+      queuePaused: true,
+      onDispatchQueued,
+    });
+    const promptInput = screen.getByLabelText("Prompt");
+
+    await user.click(promptInput);
+    await user.keyboard("{Enter}");
+
+    expect(onDispatchQueued).not.toHaveBeenCalled();
+    expect(
+      screen.getByRole("button", { name: "Run next queued prompt" }),
+    ).toBeDisabled();
+  });
+
+  it("queues a future prompt while the current run is active", async () => {
+    const onRun = vi.fn();
+    const { user } = renderControlledComposer({
+      runActive: true,
+      onRun,
+    });
+    const promptInput = screen.getByLabelText("Prompt");
+
+    await user.type(promptInput, "Run this after the current turn{Enter}");
+
+    expect(onRun).toHaveBeenCalledOnce();
+    expect(onRun).toHaveBeenCalledWith("Run this after the current turn");
   });
 
   it("submits a Plan Mode prompt with an image when pressing Enter", async () => {

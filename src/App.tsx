@@ -64,23 +64,47 @@ import {
   activateChatAccountHandoff,
   activateExternalTranscriptSnapshot,
   claimChatTitleGeneration,
+  chatHasPendingPlanReview,
   completeDuplicateProfileCleanup,
   completeChatTitleGeneration,
   createChat,
+  createChatWithQueuedPrompt,
   createCodexAccount,
   createRun,
   createTask,
+  enqueuePromptQueueItem,
+  failPromptQueueItem,
   getAnalyticsSummary,
+  getChatRecord,
   getChatWithRuns,
+  getNextChatTurnIndex,
+  listPromptQueueItems,
+  listRestoredPromptQueueItems,
   listLocalChatTranscript,
   listWorkspaceChats,
   listCodexAccounts,
   listDuplicateProfilesPendingCleanup,
   listWorkspaces,
   recordTokenUsage,
+  readPromptQueueItem,
   readExternalTranscriptSnapshot,
   recoverAbandonedRuns,
+  recoverInterruptedPromptQueueItems,
   recoverInterruptedChatTitleGenerations,
+  removePromptQueueItem,
+  reorderPromptQueueItems,
+  reschedulePromptQueueItemAfterSteeringRace,
+  retryPromptQueueItem,
+  skipPromptQueueItem,
+  prioritizePromptQueueItem,
+  claimPromptQueueItem,
+  markPromptQueueItemStale,
+  markPromptQueueItemSteering,
+  acceptPromptQueueItem,
+  completePromptQueueItem,
+  updatePromptQueueItemSnapshot,
+  updatePromptQueueItemContextFingerprint,
+  advanceChatConversationRevision,
   renameCodexAccount,
   savePreflightReport,
   softDeleteChat,
@@ -109,6 +133,7 @@ import {
   generateWorkspaceCommitMessage,
   generateChatTitle,
   focusBrowserSession,
+  inspectPromptQueueContext,
   inspectDroppedContextPaths,
   listGitBranches,
   listCodexModels,
@@ -207,6 +232,16 @@ import {
   resolveStoredRunExecutionSettings,
   serializeRunExecutionSettings,
 } from "./lib/runExecutionSettings";
+import {
+  comparePromptQueueDisplayOrder,
+  comparePromptQueueDispatchOrder,
+  createPromptQueueItemId,
+  createQueuedPromptSnapshot,
+  isPromptQueueItemMutable,
+  isPromptQueueItemPending,
+  rebaselinePromptQueueContextFingerprint,
+  validatePromptQueueDraft,
+} from "./lib/promptQueue";
 import {
   buildCodexTurnInput,
   isImageContextFile,
@@ -340,6 +375,8 @@ import type {
   ComposerContextFile,
   OssProvider,
   PreflightReport,
+  PromptQueueContextFingerprint,
+  PromptQueueItem,
   RunExecutionSettings,
   RunInteractionMode,
   SelectedComposerSkill,
@@ -625,8 +662,12 @@ type ActiveRunControl = {
   turnId: string | null;
   intent: RunIntent;
   clientUserMessageId: string;
+  executionSettings: RunExecutionSettings;
+  entry: TaskChatEntry | null;
   runView: RunViewState;
   eventSequence: number;
+  queueItemId: string | null;
+  queueAdvanceBlocked: boolean;
   browserSession: PreparedBrowserSession | null;
   activePlaywrightToolCalls: Map<string, ActivePlaywrightToolCall>;
   webPreviewDetection: WebPreviewDetectionState;
@@ -699,7 +740,43 @@ type RunSetupSnapshot = {
   sourcePlanEntry?: TaskChatEntry;
   defaultCollaborationMode?: CollaborationMode | null;
   executionSettings: RunExecutionSettings;
+  queueItemId?: string | null;
+  fromQueue?: boolean;
 };
+
+type PromptQueueEditorState = {
+  item: PromptQueueItem;
+  prompt: string;
+  accountId: number;
+  models: CodexModel[];
+  modelsStatus: "idle" | "loading" | "error";
+  branch: string | null;
+  model: string | null;
+  reasoningEffort: string | null;
+  mode: "run" | "plan";
+  goalMode: boolean;
+  accessMode: CodexAccessMode;
+  computerUseEnabled: boolean;
+  useOss: boolean;
+  ossProvider: OssProvider;
+  contextFiles: ComposerContextFile[];
+  selectedSkills: SelectedComposerSkill[];
+  status: "idle" | "saving";
+  error: string | null;
+};
+
+type PromptQueueStaleReviewState = {
+  item: PromptQueueItem;
+  reasons: string[];
+  status: "idle" | "updating";
+};
+
+type PromptQueuePauseReason =
+  | "restart"
+  | "failure"
+  | "stale"
+  | "workflow"
+  | "manual";
 
 type WorkspaceHistoryState = {
   status: "idle" | "loading" | "loaded" | "error";
@@ -1571,6 +1648,18 @@ function App() {
     useState<GoalEditCandidate | null>(null);
   const [goalTermination, setGoalTermination] =
     useState<GoalTerminationState | null>(null);
+  const [promptQueuesByChat, setPromptQueuesByChat] = useState<
+    Record<number, PromptQueueItem[] | undefined>
+  >({});
+  const [pausedPromptQueueChatIds, setPausedPromptQueueChatIds] = useState<
+    Set<number>
+  >(() => new Set());
+  const [promptQueueActionPendingItemId, setPromptQueueActionPendingItemId] =
+    useState<string | null>(null);
+  const [promptQueueEditor, setPromptQueueEditor] =
+    useState<PromptQueueEditorState | null>(null);
+  const [promptQueueStaleReview, setPromptQueueStaleReview] =
+    useState<PromptQueueStaleReviewState | null>(null);
   const planImplementationDialogRequestRef = useRef(0);
   const planImplementationDialogRef = useRef<HTMLElement | null>(null);
   const planImplementationReturnFocusRef = useRef<HTMLElement | null>(null);
@@ -1699,6 +1788,16 @@ function App() {
   const userInputAutoResolutionTimersRef = useRef(new Map<string, number>());
   const requestActionLocksRef = useRef(new Set<string>());
   const planActionLocksRef = useRef(new Set<string>());
+  const promptQueuesByChatRef = useRef<
+    Record<number, PromptQueueItem[] | undefined>
+  >({});
+  const pausedPromptQueueChatIdsRef = useRef<Set<number>>(new Set());
+  const promptQueuePauseReasonsRef = useRef(
+    new Map<number, PromptQueuePauseReason>(),
+  );
+  const promptQueueEnqueueLocksRef = useRef(new Set<number>());
+  const promptQueueClaimLocksRef = useRef(new Set<number>());
+  const promptQueueDispatchTimersRef = useRef(new Map<number, number>());
   const historyChatLoadIdRef = useRef(0);
   const taskChatEntriesRef = useRef<TaskChatEntry[]>([]);
   const contextFilesRef = useRef<ComposerContextFile[]>([]);
@@ -1752,6 +1851,10 @@ function App() {
         window.clearTimeout(timer),
       );
       userInputAutoResolutionTimersRef.current.clear();
+      promptQueueDispatchTimersRef.current.forEach((timer) =>
+        window.clearTimeout(timer),
+      );
+      promptQueueDispatchTimersRef.current.clear();
     },
     [],
   );
@@ -1760,6 +1863,8 @@ function App() {
   selectedSkillsRef.current = selectedSkills;
   historicalTranscriptRef.current = historicalTranscript;
   pendingAccountHandoffsRef.current = pendingAccountHandoffs;
+  promptQueuesByChatRef.current = promptQueuesByChat;
+  pausedPromptQueueChatIdsRef.current = pausedPromptQueueChatIds;
   workspacesRef.current = workspaces;
   activeViewRef.current = activeView;
   accountMenuOpenRef.current = accountMenuOpen;
@@ -2376,6 +2481,36 @@ function App() {
   const runComposerPrompt = useStableEvent((nextPrompt: string) => {
     void launchRun(nextPrompt);
   });
+  const dispatchSelectedPromptQueue = useStableEvent(() => {
+    const chatId =
+      workspaceChatSessionsRef.current[selectedWorkspaceRef.current?.id ?? -1]
+        ?.chatId;
+    if (chatId) {
+      setPromptQueuePaused(chatId, false);
+      schedulePromptQueueDispatch(chatId);
+    }
+  });
+  const editComposerQueuedPrompt = useStableEvent(openPromptQueueEditor);
+  const removeComposerQueuedPrompt = useStableEvent((item: PromptQueueItem) => {
+    void removeQueuedPrompt(item);
+  });
+  const retryComposerQueuedPrompt = useStableEvent((item: PromptQueueItem) => {
+    void retryQueuedPrompt(item);
+  });
+  const skipComposerQueuedPrompt = useStableEvent((item: PromptQueueItem) => {
+    void skipQueuedPrompt(item);
+  });
+  const sendComposerQueuedPromptNow = useStableEvent(
+    (item: PromptQueueItem) => {
+      void sendQueuedPromptNow(item);
+    },
+  );
+  const resumeComposerPromptQueue = useStableEvent(resumeSelectedPromptQueue);
+  const reorderComposerPromptQueue = useStableEvent(
+    (orderedItemIds: string[]) => {
+      void reorderSelectedPromptQueue(orderedItemIds);
+    },
+  );
   const stopComposerRun = useStableEvent(() => {
     void stopActiveRun();
   });
@@ -2441,6 +2576,71 @@ function App() {
   const selectedWorkspaceChatSession = selectedWorkspace
     ? (workspaceChatSessions[selectedWorkspace.id] ?? null)
     : null;
+  const selectedPromptQueueItems = selectedWorkspaceChatSession
+    ? (promptQueuesByChat[selectedWorkspaceChatSession.chatId] ?? [])
+        .filter(isPromptQueueItemPending)
+        .sort(comparePromptQueueDisplayOrder)
+    : [];
+  const selectedPromptQueuePaused = selectedWorkspaceChatSession
+    ? pausedPromptQueueChatIds.has(selectedWorkspaceChatSession.chatId)
+    : false;
+  const promptQueueEditorSelectedModel =
+    promptQueueEditor?.models.find(
+      (model) =>
+        model.model === promptQueueEditor.model ||
+        model.id === promptQueueEditor.model,
+    ) ?? null;
+  const promptQueueEditorAccountOptions = useMemo<ComposerSelectOption[]>(
+    () => [
+      ...(promptQueueEditor?.item.snapshot.executionSettings.profileKey ===
+      DEFAULT_CODEX_PROFILE_KEY
+        ? [{ value: "0", label: "Codex default profile" }]
+        : []),
+      ...signedInAccounts.map((account) => ({
+        value: account.id.toString(),
+        label: account.label,
+      })),
+    ],
+    [promptQueueEditor?.item.id, signedInAccounts],
+  );
+  const promptQueueEditorModelOptions = useMemo<ComposerSelectOption[]>(
+    () =>
+      (promptQueueEditor?.models ?? []).map((model) => ({
+        value: model.model,
+        label: model.displayName,
+      })),
+    [promptQueueEditor?.models],
+  );
+  const promptQueueEditorReasoningOptions = useMemo<ComposerSelectOption[]>(
+    () =>
+      (promptQueueEditorSelectedModel?.supportedReasoningEfforts ?? []).map(
+        (option) => ({
+          value: option.reasoningEffort,
+          label: formatReasoningEffort(option.reasoningEffort),
+        }),
+      ),
+    [promptQueueEditorSelectedModel],
+  );
+  const promptQueueEditorBranchOptions = useMemo<ComposerSelectOption[]>(
+    () => {
+      const values = new Set(branches);
+      if (promptQueueEditor?.branch) values.add(promptQueueEditor.branch);
+      return [...values].map((branch) => ({ value: branch, label: branch }));
+    },
+    [branches, promptQueueEditor?.branch],
+  );
+  const promptQueueEditorAvailableSkills = useMemo(
+    () =>
+      slashCommandResults
+        .filter(
+          (
+            item,
+          ): item is Extract<SlashCommandItem, { kind: "skill" }> =>
+            item.kind === "skill",
+        )
+        .map((item) => item.skill),
+    [slashCommandResults],
+  );
   const selectedPendingAccountHandoff = selectedWorkspaceChatSession
     ? pendingAccountHandoffs[selectedWorkspaceChatSession.chatId] ?? null
     : null;
@@ -3892,8 +4092,28 @@ function App() {
   ]);
 
   async function bootstrap() {
-    await recoverAbandonedRuns();
-    await recoverInterruptedChatTitleGenerations();
+    await Promise.all([
+      recoverAbandonedRuns(),
+      recoverInterruptedChatTitleGenerations(),
+      recoverInterruptedPromptQueueItems(),
+    ]);
+    const restoredQueueItems = await listRestoredPromptQueueItems();
+    const restoredQueues = restoredQueueItems.reduce<
+      Record<number, PromptQueueItem[]>
+    >((queues, item) => {
+      (queues[item.chatId] ??= []).push(item);
+      return queues;
+    }, {});
+    const restoredPausedChatIds = new Set(
+      restoredQueueItems.map((item) => item.chatId),
+    );
+    promptQueuesByChatRef.current = restoredQueues;
+    pausedPromptQueueChatIdsRef.current = restoredPausedChatIds;
+    promptQueuePauseReasonsRef.current = new Map(
+      [...restoredPausedChatIds].map((chatId) => [chatId, "restart"]),
+    );
+    setPromptQueuesByChat(restoredQueues);
+    setPausedPromptQueueChatIds(restoredPausedChatIds);
     const duplicateProfileIds = await listDuplicateProfilesPendingCleanup();
     await Promise.allSettled(
       duplicateProfileIds.map(async (accountId) => {
@@ -4038,6 +4258,65 @@ function App() {
       };
       return { ...current, chats };
     });
+  }
+
+  function setChatPromptQueue(chatId: number, items: PromptQueueItem[]) {
+    const nextItems = items
+      .filter(isPromptQueueItemPending)
+      .sort(comparePromptQueueDisplayOrder);
+    const next = {
+      ...promptQueuesByChatRef.current,
+      [chatId]: nextItems,
+    };
+    if (nextItems.length === 0) {
+      delete next[chatId];
+    }
+    promptQueuesByChatRef.current = next;
+    setPromptQueuesByChat(next);
+  }
+
+  function upsertPromptQueueItemInMemory(item: PromptQueueItem) {
+    const current = promptQueuesByChatRef.current[item.chatId] ?? [];
+    const index = current.findIndex((candidate) => candidate.id === item.id);
+    const next =
+      index < 0
+        ? [...current, item]
+        : current.map((candidate) =>
+            candidate.id === item.id ? item : candidate,
+          );
+    setChatPromptQueue(item.chatId, next);
+  }
+
+  function removePromptQueueItemFromMemory(chatId: number, itemId: string) {
+    setChatPromptQueue(
+      chatId,
+      (promptQueuesByChatRef.current[chatId] ?? []).filter(
+        (item) => item.id !== itemId,
+      ),
+    );
+  }
+
+  async function refreshPromptQueue(chatId: number) {
+    const items = await listPromptQueueItems(chatId);
+    setChatPromptQueue(chatId, items);
+    return items;
+  }
+
+  function setPromptQueuePaused(
+    chatId: number,
+    paused: boolean,
+    reason: PromptQueuePauseReason = "manual",
+  ) {
+    const next = new Set(pausedPromptQueueChatIdsRef.current);
+    if (paused) {
+      next.add(chatId);
+      promptQueuePauseReasonsRef.current.set(chatId, reason);
+    } else {
+      next.delete(chatId);
+      promptQueuePauseReasonsRef.current.delete(chatId);
+    }
+    pausedPromptQueueChatIdsRef.current = next;
+    setPausedPromptQueueChatIds(next);
   }
 
   function startChatTitleGeneration(request: ChatTitleGenerationRequest) {
@@ -4829,6 +5108,14 @@ function App() {
       );
       selectedRunControl =
         activeRunControlsRef.current.get(draftSelection.clientId) ?? null;
+      if (!draftExists && selectedRunControl?.entry) {
+        restoredEntries = [
+          ...taskChatEntriesRef.current.filter(
+            (entry) => entry.clientId !== selectedRunControl?.clientId,
+          ),
+          selectedRunControl.entry,
+        ];
+      }
       if (!draftExists && !selectedRunControl) {
         selection = { kind: "new" };
         workspaceTaskMemoriesRef.current[workspace.id] = {
@@ -4853,16 +5140,31 @@ function App() {
           chatSelection.session.chatId,
         );
         if (cached) {
+          const cachedEntries = selectedRunControl?.entry
+            ? [
+                ...cached.entries.filter(
+                  (entry) => entry.clientId !== selectedRunControl?.clientId,
+                ),
+                selectedRunControl.entry,
+              ]
+            : cached.entries;
           restoredEntries = replaceChatEntries(
             taskChatEntriesRef.current,
             workspace.id,
             chatSelection.session.chatId,
-            cached.entries,
+            cachedEntries,
           );
           restoredTranscript =
             restoredTranscript ??
             sanitizeRememberedHistoricalTranscript(cached.transcript);
-        } else if (!selectedRunControl) {
+        } else if (selectedRunControl?.entry) {
+          restoredEntries = replaceChatEntries(
+            taskChatEntriesRef.current,
+            workspace.id,
+            chatSelection.session.chatId,
+            [selectedRunControl.entry],
+          );
+        } else {
           needsHistoryReload = true;
         }
       }
@@ -5529,6 +5831,10 @@ function App() {
       turnIndex?: number;
     },
   ) {
+    const control = activeRunControlsRef.current.get(clientId);
+    if (control?.entry) {
+      control.entry = { ...control.entry, ...ids };
+    }
     setTaskChatEntries((current) =>
       current.map((entry) =>
         entry.clientId === clientId ? { ...entry, ...ids } : entry,
@@ -5540,6 +5846,10 @@ function App() {
     clientId: string,
     updater: (entry: TaskChatEntry) => TaskChatEntry,
   ) {
+    const control = activeRunControlsRef.current.get(clientId);
+    if (control?.entry) {
+      control.entry = updater(control.entry);
+    }
     setTaskChatEntries((current) =>
       current.map((entry) =>
         entry.clientId === clientId ? updater(entry) : entry,
@@ -5551,10 +5861,22 @@ function App() {
     clientId: string,
     updater: (runView: RunViewState) => RunViewState,
   ) {
+    const control = activeRunControlsRef.current.get(clientId);
+    let controlledRunView: RunViewState | null = null;
+    if (control?.entry) {
+      const nextRunView = updater(control.entry.runView);
+      controlledRunView = nextRunView;
+      control.entry = {
+        ...control.entry,
+        status: nextRunView.status,
+        runView: nextRunView,
+      };
+      control.runView = nextRunView;
+    }
     setTaskChatEntries((current) =>
       current.map((entry) => {
         if (entry.clientId !== clientId) return entry;
-        const nextRunView = updater(entry.runView);
+        const nextRunView = controlledRunView ?? updater(entry.runView);
         return { ...entry, status: nextRunView.status, runView: nextRunView };
       }),
     );
@@ -5566,6 +5888,13 @@ function App() {
   ) {
     const nextRunView = updater(control.runView);
     control.runView = nextRunView;
+    if (control.entry) {
+      control.entry = {
+        ...control.entry,
+        status: nextRunView.status,
+        runView: nextRunView,
+      };
+    }
     if (activeRunControlRef.current === control) {
       runViewRef.current = nextRunView;
       setRunView(nextRunView);
@@ -5932,7 +6261,9 @@ function App() {
     }
 
     const shouldRestorePrompt =
-      control?.turnId === null && Boolean(control?.promptFallback);
+      control.queueItemId === null &&
+      control.turnId === null &&
+      Boolean(control.promptFallback);
     const { completedAt, stoppedRunView } = markRunInterrupted(control);
     if (shouldRestorePrompt && control) {
       updateTaskChatEntry(control.clientId, (entry) => ({
@@ -5948,6 +6279,25 @@ function App() {
       );
     }
     await persistInterruptedRun(control, completedAt, stoppedRunView);
+    if (control.queueItemId) {
+      const failedQueueItem = await failPromptQueueItem(
+        control.queueItemId,
+        "The queued prompt was cancelled.",
+      ).catch(() => null);
+      if (failedQueueItem) {
+        upsertPromptQueueItemInMemory(failedQueueItem);
+      }
+      if (control.chatId !== null) {
+        setPromptQueuePaused(control.chatId, true, "failure");
+      }
+    } else if (
+      control.chatId !== null &&
+      (promptQueuesByChatRef.current[control.chatId] ?? []).some(
+        isPromptQueueItemPending,
+      )
+    ) {
+      setPromptQueuePaused(control.chatId, true, "failure");
+    }
 
     if (
       shouldClearThreadGoal &&
@@ -6730,6 +7080,7 @@ function App() {
     );
 
     if (runningControl) {
+      const liveEntry = runningControl.entry;
       flushSync(() => {
         applyWorkspaceForChatNavigation(targetWorkspace);
         setChatHistoryContextMenu(null);
@@ -6741,6 +7092,30 @@ function App() {
         historicalTranscriptRef.current = null;
         setHistoricalTranscript(null);
         closeHistoryDrawer();
+        if (liveEntry) {
+          setTaskChatEntries((current) => {
+            const existing = current.filter(
+              (entry) =>
+                entry.workspaceId === chat.workspace_id &&
+                entry.chatId === chat.id,
+            );
+            const nextEntries = existing.some(
+              (entry) => entry.clientId === runningControl.clientId,
+            )
+              ? existing.map((entry) =>
+                  entry.clientId === runningControl.clientId
+                    ? liveEntry
+                    : entry,
+                )
+              : [...existing, liveEntry];
+            return replaceChatEntries(
+              current,
+              chat.workspace_id,
+              chat.id,
+              nextEntries,
+            );
+          });
+        }
         setSelectedRunAliases(runningControl);
       });
       selectWorkspaceExecutionAccount(targetWorkspace, session);
@@ -7020,6 +7395,15 @@ function App() {
     }
 
     await softDeleteChat(chat.id);
+    const queueDispatchTimer =
+      promptQueueDispatchTimersRef.current.get(chat.id);
+    if (queueDispatchTimer !== undefined) {
+      window.clearTimeout(queueDispatchTimer);
+      promptQueueDispatchTimersRef.current.delete(chat.id);
+    }
+    promptQueueClaimLocksRef.current.delete(chat.id);
+    setChatPromptQueue(chat.id, []);
+    setPromptQueuePaused(chat.id, false);
     clearPendingAccountHandoff(chat.id);
     stableHistoryChatCacheRef.current.delete(chat.id);
     const remembered = workspaceTaskMemoriesRef.current[chat.workspace_id];
@@ -7158,6 +7542,29 @@ function App() {
     );
     setTaskChatEntries((current) =>
       current.filter((entry) => entry.workspaceId !== workspace.id),
+    );
+    const workspaceQueueChatIds = Object.values(
+      promptQueuesByChatRef.current,
+    ).flatMap((items) =>
+      (items ?? [])
+        .filter((item) => item.workspaceId === workspace.id)
+        .map((item) => item.chatId),
+    );
+    for (const chatId of new Set(workspaceQueueChatIds)) {
+      const dispatchTimer = promptQueueDispatchTimersRef.current.get(chatId);
+      if (dispatchTimer !== undefined) {
+        window.clearTimeout(dispatchTimer);
+        promptQueueDispatchTimersRef.current.delete(chatId);
+      }
+      promptQueueClaimLocksRef.current.delete(chatId);
+      setChatPromptQueue(chatId, []);
+      setPromptQueuePaused(chatId, false);
+    }
+    setPromptQueueEditor((current) =>
+      current?.item.workspaceId === workspace.id ? null : current,
+    );
+    setPromptQueueStaleReview((current) =>
+      current?.item.workspaceId === workspace.id ? null : current,
     );
     delete workspaceTaskMemoriesRef.current[workspace.id];
     const remainingHandoffs = Object.fromEntries(
@@ -8512,15 +8919,24 @@ function App() {
   }
 
   function beginOptimisticRun(snapshot: RunSetupSnapshot) {
-    historyChatLoadIdRef.current += 1;
-    cancelActiveExternalTranscriptSync();
-    cancelActiveHistoricalTranscriptPreparation();
-    pendingTranscriptCommitRef.current = null;
-    setHistoryChatLoadState(null);
-    setHistoryOpenRequest(null);
-    historicalTranscriptRef.current = null;
-    setHistoricalTranscript(null);
-    const clientId = createTaskChatClientId();
+    const selectedSession = selectedWorkspaceRef.current
+      ? workspaceChatSessionsRef.current[selectedWorkspaceRef.current.id] ?? null
+      : null;
+    const visibleTarget =
+      selectedWorkspaceRef.current?.id === snapshot.workspace.id &&
+      (snapshot.chatId === null ||
+        selectedSession?.chatId === snapshot.chatId);
+    if (visibleTarget) {
+      historyChatLoadIdRef.current += 1;
+      cancelActiveExternalTranscriptSync();
+      cancelActiveHistoricalTranscriptPreparation();
+      pendingTranscriptCommitRef.current = null;
+      setHistoryChatLoadState(null);
+      setHistoryOpenRequest(null);
+      historicalTranscriptRef.current = null;
+      setHistoricalTranscript(null);
+    }
+    const clientId = snapshot.queueItemId ?? createTaskChatClientId();
     const intent: RunIntent =
       snapshot.intent ?? (snapshot.mode === "plan" ? "plan" : "normal");
     const clientUserMessageId =
@@ -8591,8 +9007,12 @@ function App() {
       turnId: null,
       intent,
       clientUserMessageId,
+      executionSettings: snapshot.executionSettings,
+      entry: null,
       runView: initialRunView,
       eventSequence: 0,
+      queueItemId: snapshot.queueItemId ?? null,
+      queueAdvanceBlocked: false,
       browserSession: null,
       activePlaywrightToolCalls: new Map(),
       webPreviewDetection: {
@@ -8624,22 +9044,27 @@ function App() {
           ? { status: "preparing", error: null }
           : undefined,
     };
-    flushSync(() => {
-      if (snapshot.replacementClientId) {
-        replaceTaskChatEntry(snapshot.replacementClientId, nextEntry);
-      } else {
-        startTaskChatEntry(nextEntry);
-      }
-      if (snapshot.restorePromptOnSetupFailure !== false) {
-        replaceComposerPrompt("");
-        removeSubmittedImagesFromWorkspaceComposer(
-          snapshot.workspace.id,
-          snapshot.contextFiles,
-        );
-      }
-    });
+    runControl.entry = nextEntry;
+    if (visibleTarget) {
+      flushSync(() => {
+        if (snapshot.replacementClientId) {
+          replaceTaskChatEntry(snapshot.replacementClientId, nextEntry);
+        } else {
+          startTaskChatEntry(nextEntry);
+        }
+        if (snapshot.restorePromptOnSetupFailure !== false) {
+          replaceComposerPrompt("");
+          removeSubmittedImagesFromWorkspaceComposer(
+            snapshot.workspace.id,
+            snapshot.contextFiles,
+          );
+        }
+      });
+    }
     registerRunControl(runControl);
-    rememberCurrentWorkspaceTaskMemory();
+    if (visibleTarget) {
+      rememberCurrentWorkspaceTaskMemory();
+    }
     markPerformance("orchestrator:submit:optimistic-committed");
 
     return runControl;
@@ -8682,6 +9107,7 @@ function App() {
         ...snapshot.executionSettings,
         contextFiles: snapshot.contextFiles,
       });
+      runControl.executionSettings = snapshot.executionSettings;
       runControl.imageContextFilesFallback = snapshot.contextFiles
         .filter(isImageContextFile)
         .map((file) => ({ ...file }));
@@ -9333,6 +9759,27 @@ function App() {
           }),
         );
       }
+      if (snapshot.queueItemId && runId !== null) {
+        const acceptedQueueItem = await acceptPromptQueueItem({
+          itemId: snapshot.queueItemId,
+          runId,
+          turnId: turn.turn.id,
+        });
+        if (!acceptedQueueItem) {
+          await codexRpcForProfile(
+            snapshot.profileKey,
+            snapshot.accountId,
+            "turn/interrupt",
+            { threadId, turnId: turn.turn.id },
+          ).catch(() => undefined);
+          throw new Error(
+            "The queued prompt changed before Codex accepted it.",
+          );
+        }
+        upsertPromptQueueItemInMemory(acceptedQueueItem);
+        await advanceChatConversationRevision(chatId, { queueOwned: true });
+        await refreshPromptQueue(chatId);
+      }
 
       updateRunControlView(runControl, (current) => ({
         ...current,
@@ -9393,6 +9840,18 @@ function App() {
           new Date().toISOString(),
           runControl.runView,
         );
+        if (snapshot.queueItemId) {
+          const failedQueueItem = await failPromptQueueItem(
+            snapshot.queueItemId,
+            "The queued prompt was cancelled before Codex accepted it.",
+          ).catch(() => null);
+          if (failedQueueItem) {
+            upsertPromptQueueItemInMemory(failedQueueItem);
+          }
+          if (chatId !== null) {
+            setPromptQueuePaused(chatId, true, "failure");
+          }
+        }
         removeRunControl(runControl);
         return;
       }
@@ -9470,6 +9929,18 @@ function App() {
       if (chatId !== null && !handoffDidNotActivate) {
         await updateChat(chatId, { status: "failed" }).catch(() => undefined);
       }
+      if (snapshot.queueItemId) {
+        const failedQueueItem = await failPromptQueueItem(
+          snapshot.queueItemId,
+          message,
+        ).catch(() => null);
+        if (failedQueueItem) {
+          upsertPromptQueueItemInMemory(failedQueueItem);
+        }
+        if (chatId !== null) {
+          setPromptQueuePaused(chatId, true, "failure");
+        }
+      }
       removeRunControl(runControl);
       setStatusMessage(`Run setup failed: ${message}`);
     }
@@ -9490,100 +9961,597 @@ function App() {
     });
   }
 
+  async function capturePromptQueueContextFingerprint(input: {
+    workspace: Workspace;
+    chat: ChatRecord;
+    executionSettings: RunExecutionSettings;
+  }): Promise<PromptQueueContextFingerprint> {
+    const inspection = await inspectPromptQueueContext(
+      input.workspace.path,
+      input.executionSettings.contextFiles.map((file) => file.path),
+    );
+    return {
+      version: 1,
+      workspacePath: inspection.workspacePath,
+      branch: inspection.branch,
+      headCommit: inspection.headCommit,
+      worktreeFingerprint: inspection.worktreeFingerprint,
+      profileKey:
+        (input.chat.profile_key as CodexProfileKey | null) ??
+        input.executionSettings.profileKey,
+      threadId:
+        input.chat.codex_thread_id ??
+        (input.chat.origin === "codex_external"
+          ? input.chat.external_thread_id
+          : null),
+      conversationRevision: Number(input.chat.conversation_revision ?? 0),
+      files: inspection.files,
+    };
+  }
+
+  function queueContextStaleReasons(
+    item: PromptQueueItem,
+    chat: ChatRecord,
+    inspection: Awaited<ReturnType<typeof inspectPromptQueueContext>>,
+  ) {
+    const expected = item.snapshot.contextFingerprint;
+    const reasons: string[] = [];
+    if (inspection.workspacePath !== expected.workspacePath) {
+      reasons.push("The workspace location changed.");
+    }
+    if (expected.branch !== inspection.branch) {
+      reasons.push("The active branch changed.");
+    }
+    if (expected.headCommit !== inspection.headCommit) {
+      reasons.push("The repository HEAD changed.");
+    }
+    if (expected.worktreeFingerprint !== inspection.worktreeFingerprint) {
+      reasons.push("The workspace files changed.");
+    }
+    if (
+      Number(chat.conversation_revision ?? 0) !==
+      expected.conversationRevision
+    ) {
+      reasons.push("The conversation changed after this prompt was queued.");
+    }
+    const currentProfileKey =
+      (chat.profile_key as CodexProfileKey | null) ??
+      item.snapshot.executionSettings.profileKey;
+    const currentThreadId =
+      chat.codex_thread_id ??
+      (chat.origin === "codex_external" ? chat.external_thread_id : null);
+    if (
+      expected.profileKey !== currentProfileKey ||
+      expected.threadId !== currentThreadId
+    ) {
+      reasons.push("The conversation account or Codex thread changed.");
+    }
+    const currentFiles = new Map(
+      inspection.files.map((file) => [file.path, file]),
+    );
+    for (const expectedFile of expected.files) {
+      const currentFile = currentFiles.get(expectedFile.path);
+      if (!currentFile?.available) {
+        reasons.push(`Attachment is unavailable: ${expectedFile.path}`);
+        continue;
+      }
+      if (
+        expectedFile.canonicalPath !== currentFile.canonicalPath ||
+        expectedFile.size !== currentFile.size ||
+        expectedFile.modifiedAtMs !== currentFile.modifiedAtMs
+      ) {
+        reasons.push(`Attachment changed: ${expectedFile.path}`);
+      }
+    }
+    return [...new Set(reasons)];
+  }
+
+  async function rebaselineQueuedPromptContexts(chatId: number) {
+    const [chat, items] = await Promise.all([
+      getChatRecord(chatId),
+      listPromptQueueItems(chatId),
+    ]);
+    if (!chat || items.length === 0) {
+      setChatPromptQueue(chatId, items);
+      return;
+    }
+    const pendingItems = items.filter((item) =>
+      ["queued", "scheduled-next"].includes(item.status),
+    );
+    if (pendingItems.length === 0) {
+      setChatPromptQueue(chatId, items);
+      return;
+    }
+    const profileKey =
+      (chat.profile_key as CodexProfileKey | null) ??
+      pendingItems[0]?.snapshot.executionSettings.profileKey ??
+      DEFAULT_CODEX_PROFILE_KEY;
+    const threadId =
+      chat.codex_thread_id ??
+      (chat.origin === "codex_external" ? chat.external_thread_id : null);
+    const conversationRevision = Number(chat.conversation_revision ?? 0);
+    const workspace =
+      workspacesRef.current.find(
+        (candidate) => candidate.id === chat.workspace_id,
+      ) ?? null;
+    if (!workspace) {
+      setChatPromptQueue(chatId, items);
+      return;
+    }
+    const inspections = new Map<
+      string,
+      Promise<Awaited<ReturnType<typeof inspectPromptQueueContext>>>
+    >();
+    const inspectItemContext = (item: PromptQueueItem) => {
+      const paths = item.snapshot.executionSettings.contextFiles.map(
+        (file) => file.path,
+      );
+      const key = JSON.stringify(paths);
+      const existing = inspections.get(key);
+      if (existing) return existing;
+      const inspection = inspectPromptQueueContext(workspace.path, paths);
+      inspections.set(key, inspection);
+      return inspection;
+    };
+    const updated = await Promise.all(
+      pendingItems.map(async (item) => {
+        const expected = item.snapshot.contextFingerprint;
+        const inspection = await inspectItemContext(item);
+        const contextFingerprint =
+          rebaselinePromptQueueContextFingerprint({
+            expected,
+            inspection,
+            executionProfileKey:
+              item.snapshot.executionSettings.profileKey,
+            currentProfileKey: profileKey,
+            currentThreadId: threadId,
+            conversationRevision,
+          });
+        return updatePromptQueueItemContextFingerprint(
+          item.id,
+          createQueuedPromptSnapshot({
+            prompt: item.prompt,
+            executionSettings: item.snapshot.executionSettings,
+            contextFingerprint,
+          }),
+        );
+      }),
+    );
+    const updatedById = new Map(
+      updated
+        .filter((item): item is PromptQueueItem => item !== null)
+        .map((item) => [item.id, item]),
+    );
+    setChatPromptQueue(
+      chatId,
+      items.map((item) => updatedById.get(item.id) ?? item),
+    );
+  }
+
+  async function chatBlocksPromptQueue(chatId: number) {
+    const activeControl = [...activeRunControlsRef.current.values()].find(
+      (control) =>
+        control.chatId === chatId && isActiveRunControl(control),
+    );
+    if (activeControl) return true;
+
+    return chatHasPendingPlanReview(chatId).catch(() => true);
+  }
+
+  function schedulePromptQueueDispatch(chatId: number, delayMs = 0) {
+    if (promptQueueDispatchTimersRef.current.has(chatId)) return;
+    const timer = window.setTimeout(() => {
+      promptQueueDispatchTimersRef.current.delete(chatId);
+      void dispatchPromptQueue(chatId);
+    }, delayMs);
+    promptQueueDispatchTimersRef.current.set(chatId, timer);
+  }
+
+  async function dispatchPromptQueue(chatId: number) {
+    if (
+      promptQueueClaimLocksRef.current.has(chatId) ||
+      pausedPromptQueueChatIdsRef.current.has(chatId)
+    ) {
+      return;
+    }
+    promptQueueClaimLocksRef.current.add(chatId);
+    try {
+      if (await chatBlocksPromptQueue(chatId)) return;
+      const items = await refreshPromptQueue(chatId);
+      const item = items
+        .filter(isPromptQueueItemPending)
+        .sort(comparePromptQueueDispatchOrder)[0];
+      if (!item) return;
+      if (item.status === "failed" || item.status === "stale") {
+        setPromptQueuePaused(
+          chatId,
+          true,
+          item.status === "stale" ? "stale" : "failure",
+        );
+        setStatusMessage(
+          item.status === "stale"
+            ? "Review the first queued prompt before continuing."
+            : "Retry, edit, skip, or remove the failed prompt before resuming the queue.",
+        );
+        return;
+      }
+      if (
+        item.status !== "queued" &&
+        item.status !== "scheduled-next"
+      ) {
+        return;
+      }
+      const [chat, workspace] = await Promise.all([
+        getChatRecord(chatId),
+        Promise.resolve(
+          workspacesRef.current.find(
+            (candidate) => candidate.id === item.workspaceId,
+          ) ?? null,
+        ),
+      ]);
+      if (!chat || !workspace) {
+        const failed = await failPromptQueueItem(
+          item.id,
+          "The queued prompt's workspace or chat is no longer available.",
+        );
+        if (failed) upsertPromptQueueItemInMemory(failed);
+        setPromptQueuePaused(chatId, true, "failure");
+        return;
+      }
+      const inspection = await inspectPromptQueueContext(
+        workspace.path,
+        item.snapshot.executionSettings.contextFiles.map((file) => file.path),
+      );
+      const staleReasons = queueContextStaleReasons(item, chat, inspection);
+      if (staleReasons.length > 0) {
+        const staleItem = await markPromptQueueItemStale(
+          item.id,
+          staleReasons,
+        );
+        if (staleItem) {
+          upsertPromptQueueItemInMemory(staleItem);
+          if (
+            selectedWorkspaceRef.current?.id === staleItem.workspaceId &&
+            workspaceChatSessionsRef.current[staleItem.workspaceId]?.chatId ===
+              staleItem.chatId
+          ) {
+            setPromptQueueStaleReview({
+              item: staleItem,
+              reasons: staleReasons,
+              status: "idle",
+            });
+          }
+        }
+        setPromptQueuePaused(chatId, true, "stale");
+        setStatusMessage(
+          "A queued prompt needs review because its original context changed.",
+        );
+        return;
+      }
+      const claimed = await claimPromptQueueItem(item.id);
+      if (!claimed) return;
+      upsertPromptQueueItemInMemory(claimed);
+      await launchQueuedPrompt(claimed, chat, workspace);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      const currentItems = promptQueuesByChatRef.current[chatId] ?? [];
+      const startingItem = currentItems.find(
+        (item) => item.status === "starting",
+      );
+      if (startingItem) {
+        const failed = await failPromptQueueItem(
+          startingItem.id,
+          message,
+        ).catch(() => null);
+        if (failed) upsertPromptQueueItemInMemory(failed);
+      }
+      setPromptQueuePaused(chatId, true, "failure");
+      setStatusMessage(`Queued prompt could not start: ${message}`);
+    } finally {
+      promptQueueClaimLocksRef.current.delete(chatId);
+    }
+  }
+
+  async function launchQueuedPrompt(
+    item: PromptQueueItem,
+    chat: ChatRecord,
+    workspace: Workspace,
+  ) {
+    const settings = item.snapshot.executionSettings;
+    const profileKey = settings.profileKey;
+    const accountId = settings.accountId;
+    const account =
+      profileKey === DEFAULT_CODEX_PROFILE_KEY
+        ? null
+        : codexAccountsRef.current.find(
+            (candidate) => candidate.id === accountId,
+          ) ?? null;
+    if (
+      profileKey !== DEFAULT_CODEX_PROFILE_KEY &&
+      (!account || account.status !== "signed_in")
+    ) {
+      throw new Error("The queued prompt's Codex account is unavailable.");
+    }
+    const availableModels = settings.useOss
+      ? []
+      : await listCodexModelsForProfile(profileKey, accountId);
+    const selectedQueuedModel = settings.model
+      ? availableModels.find(
+          (model) =>
+            model.model === settings.model || model.id === settings.model,
+        ) ?? null
+      : null;
+    if (settings.model && !selectedQueuedModel) {
+      throw new Error("The queued prompt's model is no longer available.");
+    }
+    if (
+      settings.reasoningEffort &&
+      selectedQueuedModel &&
+      !selectedQueuedModel.supportedReasoningEfforts.some(
+        (option) =>
+          option.reasoningEffort === settings.reasoningEffort,
+      )
+    ) {
+      throw new Error(
+        "The queued prompt's reasoning level is no longer available.",
+      );
+    }
+    const currentProfileKey =
+      (chat.profile_key as CodexProfileKey | null) ?? profileKey;
+    const currentThreadId =
+      chat.codex_thread_id ??
+      (chat.origin === "codex_external" ? chat.external_thread_id : null);
+    const accountHandoff: AccountHandoffRunStrategy | null =
+      currentProfileKey !== profileKey
+        ? {
+            workspaceId: workspace.id,
+            chatId: chat.id,
+            fromProfileKey: currentProfileKey,
+            fromThreadId: currentThreadId,
+            targetAccountId: accountId,
+            targetProfileKey: profileKey,
+            adoptingExternalChat:
+              chat.origin === "codex_external" &&
+              currentProfileKey === DEFAULT_CODEX_PROFILE_KEY,
+          }
+        : null;
+    const mode = settings.mode;
+    const intent = settings.intent;
+    const turnIndex = await getNextChatTurnIndex(chat.id);
+    const snapshot: RunSetupSnapshot = {
+      promptText: item.prompt,
+      promptFallback: item.prompt,
+      workspace: { ...workspace },
+      accountId,
+      account: account ? { ...account } : null,
+      profileKey,
+      chatOrigin: chat.origin,
+      externalThreadId: chat.external_thread_id,
+      selectedBranch: settings.selectedBranch,
+      cachedPreflight: null,
+      mode,
+      intent,
+      clientUserMessageId: item.clientMessageId,
+      access: accessSettings({ accessMode: settings.accessMode }),
+      computerUseEnabled: settings.computerUseEnabled,
+      model: settings.model,
+      effort: settings.reasoningEffort,
+      useOss: settings.useOss,
+      ossProvider: settings.ossProvider,
+      improvedPrompt: improvePrompt(item.prompt),
+      contextFiles: settings.contextFiles.map((file) => ({ ...file })),
+      selectedSkills: settings.selectedSkills.map((skill) => ({ ...skill })),
+      goalMode: settings.goalMode,
+      loginState: "idle",
+      chatId: chat.id,
+      threadId: accountHandoff ? null : currentThreadId,
+      turnIndex,
+      threadStrategy: accountHandoff
+        ? { kind: "handoff", handoff: accountHandoff }
+        : currentThreadId
+          ? { kind: "resume" }
+          : { kind: "fresh" },
+      handoffContextBudgetTokens: Math.max(
+        1,
+        Math.floor(
+          (getCodexModelContextWindow(selectedQueuedModel) ??
+            DEFAULT_CONTEXT_WINDOW) * 0.25,
+        ),
+      ),
+      executionSettings: settings,
+      restorePromptOnSetupFailure: false,
+      queueItemId: item.id,
+      fromQueue: true,
+    };
+    const runControl = beginOptimisticRun(snapshot);
+    scheduleRunSetup(runControl, snapshot);
+  }
+
+  function queuedPromptCanSteerActiveTurn(
+    item: PromptQueueItem,
+    control: ActiveRunControl,
+  ) {
+    const queued = item.snapshot.executionSettings;
+    const active = control.executionSettings;
+    const imagesOnly = queued.contextFiles.every(isImageContextFile);
+    const selectedSession =
+      workspaceChatSessionsRef.current[item.workspaceId] ?? null;
+    return (
+      control.chatId === item.chatId &&
+      control.threadId !== null &&
+      control.turnId !== null &&
+      control.runId !== null &&
+      control.interactionMode === "chat" &&
+      control.intent === "normal" &&
+      control.goal === null &&
+      control.runView.nativePlan.reviewState === "none" &&
+      control.runView.approvalRequests.length === 0 &&
+      control.runView.serverRequests.length === 0 &&
+      !pendingAccountHandoffsRef.current[item.chatId] &&
+      queued.mode === "run" &&
+      queued.intent === "normal" &&
+      !queued.goalMode &&
+      queued.profileKey === control.profileKey &&
+      queued.accountId === control.accountId &&
+      queued.selectedBranch === active.selectedBranch &&
+      queued.model === active.model &&
+      queued.reasoningEffort === active.reasoningEffort &&
+      queued.accessMode === active.accessMode &&
+      queued.computerUseEnabled === active.computerUseEnabled &&
+      queued.useOss === active.useOss &&
+      queued.ossProvider === active.ossProvider &&
+      selectedSession?.threadId === control.threadId &&
+      imagesOnly
+    );
+  }
+
+  async function steerQueuedPrompt(
+    item: PromptQueueItem,
+    control: ActiveRunControl,
+  ) {
+    if (
+      !queuedPromptCanSteerActiveTurn(item, control) ||
+      !control.threadId ||
+      !control.turnId ||
+      control.runId === null
+    ) {
+      return false;
+    }
+    const workspace = workspacesRef.current.find(
+      (candidate) => candidate.id === item.workspaceId,
+    );
+    const chat = await getChatRecord(item.chatId);
+    if (!workspace || !chat) return false;
+    const inspection = await inspectPromptQueueContext(
+      workspace.path,
+      item.snapshot.executionSettings.contextFiles.map((file) => file.path),
+    );
+    const staleReasons = queueContextStaleReasons(item, chat, inspection);
+    if (staleReasons.length > 0) {
+      const staleItem = await markPromptQueueItemStale(
+        item.id,
+        staleReasons,
+      );
+      if (staleItem) upsertPromptQueueItemInMemory(staleItem);
+      setPromptQueuePaused(item.chatId, true, "stale");
+      setPromptQueueStaleReview({
+        item: staleItem ?? item,
+        reasons: staleReasons,
+        status: "idle",
+      });
+      return true;
+    }
+    const steeringItem = await markPromptQueueItemSteering(item.id);
+    if (!steeringItem) return true;
+    upsertPromptQueueItemInMemory(steeringItem);
+    try {
+      const preparedFiles = await prepareContextImageFiles(
+        item.snapshot.executionSettings.contextFiles,
+      );
+      const text = applySelectedSkillsToPrompt(
+        item.prompt,
+        item.snapshot.executionSettings.selectedSkills,
+      );
+      await codexRpcForProfile(
+        control.profileKey,
+        control.accountId,
+        "turn/steer",
+        {
+          threadId: control.threadId,
+          expectedTurnId: control.turnId,
+          clientUserMessageId: item.clientMessageId,
+          input: buildCodexTurnInput(text, preparedFiles),
+        },
+      );
+      await persistRunEvent(control, "client-action", "turn/steer", {
+        queueItemId: item.id,
+        clientUserMessageId: item.clientMessageId,
+        prompt: item.prompt,
+      });
+      updateTaskChatEntry(control.clientId, (entry) => ({
+        ...entry,
+        steeredPrompts: [
+          ...(entry.steeredPrompts ?? []),
+          {
+            id: item.id,
+            prompt: item.prompt,
+            submittedAt: new Date().toISOString(),
+          },
+        ],
+      }));
+      await completePromptQueueItem(item.id);
+      removePromptQueueItemFromMemory(item.chatId, item.id);
+      setStatusMessage("Queued prompt was sent to the active turn.");
+      return true;
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      if (/turn.+(complete|not active|not found|mismatch)/i.test(message)) {
+        const scheduled =
+          await reschedulePromptQueueItemAfterSteeringRace(item.id);
+        if (scheduled) {
+          upsertPromptQueueItemInMemory(scheduled);
+        }
+        schedulePromptQueueDispatch(item.chatId);
+        setStatusMessage(
+          "The active turn finished first, so the prompt is scheduled next.",
+        );
+        return true;
+      }
+      const failed = await failPromptQueueItem(item.id, message);
+      if (failed) upsertPromptQueueItemInMemory(failed);
+      setPromptQueuePaused(item.chatId, true, "failure");
+      setStatusMessage(`Could not send queued prompt: ${message}`);
+      return true;
+    }
+  }
+
   async function launchRun(composerPrompt = promptRef.current) {
     markPerformance("orchestrator:submit:start");
     setApprovalSafetyWarning(null);
     setEditedPromptNotice(null);
 
-    const promptText = serializePromptInlineFileReferences(
-      composerPrompt.trim(),
-      contextFiles.filter((file) => file.source === "search"),
-    );
-    const workspace = selectedWorkspace;
-    const chatSession = workspace
-      ? (workspaceChatSessionsRef.current[workspace.id] ?? null)
-      : null;
-    const pendingHandoff = chatSession
-      ? pendingAccountHandoffsRef.current[chatSession.chatId] ?? null
-      : null;
-    if (
-      pendingHandoff &&
-      (pendingHandoff.workspaceId !== workspace?.id ||
-        pendingHandoff.fromProfileKey !== chatSession?.profileKey ||
-        pendingHandoff.fromThreadId !== chatSession?.threadId)
-    ) {
-      clearPendingAccountHandoff(pendingHandoff.chatId);
-      setStatusMessage(
-        "The chat changed after the account switch was confirmed. Select the account again.",
-      );
+    const workspace = selectedWorkspaceRef.current;
+    if (!workspace) {
+      setStatusMessage("Select a workspace before adding a prompt.");
       return;
     }
+    const promptText = serializePromptInlineFileReferences(
+      composerPrompt.trim(),
+      contextFilesRef.current.filter((file) => file.source === "search"),
+    );
+    let session = workspaceChatSessionsRef.current[workspace.id] ?? null;
+    const pendingHandoff = session
+      ? pendingAccountHandoffsRef.current[session.chatId] ?? null
+      : null;
     const profileKey: CodexProfileKey =
       pendingHandoff?.targetProfileKey ??
-      chatSession?.profileKey ??
-      (chatSession?.origin === "codex_external"
-        ? DEFAULT_CODEX_PROFILE_KEY
-        : (`account:${selectedAccountId}` as CodexProfileKey));
+      session?.profileKey ??
+      (`account:${selectedAccountIdRef.current}` as CodexProfileKey);
     const accountId =
       profileKey === DEFAULT_CODEX_PROFILE_KEY
         ? 0
         : accountIdFromProfileKey(profileKey);
     const account =
-      accountId === null || accountId === 0
-        ? null
-        : codexAccountsRef.current.find(
+      accountId && accountId !== 0
+        ? codexAccountsRef.current.find(
             (candidate) => candidate.id === accountId,
-          ) ?? null;
-    const accountHandoff: AccountHandoffRunStrategy | null =
-      pendingHandoff && pendingHandoff.targetProfileKey !== chatSession?.profileKey
-        ? {
-            ...pendingHandoff,
-            adoptingExternalChat:
-              chatSession?.origin === "codex_external" &&
-              chatSession.profileKey === DEFAULT_CODEX_PROFILE_KEY,
-          }
+          ) ?? null
         : null;
-    const usesDefaultProfile = profileKey === DEFAULT_CODEX_PROFILE_KEY;
-
-    if (!workspace || !promptText) {
-      setStatusMessage("Select a workspace and write a prompt first.");
-      return;
-    }
-    if (!usesDefaultProfile && (!accountId || !account)) {
-      setStatusMessage("Sign in to a Codex account before starting a run.");
-      return;
-    }
-    if (usesDefaultProfile && !chatSession?.threadId) {
-      setStatusMessage("This external Codex chat is missing its original thread id.");
-      return;
-    }
-    if (selectedRunIsActiveNow()) {
-      setStatusMessage("Wait for the active run to finish before starting another.");
-      return;
-    }
-    if (planReviewAwaiting) {
-      setStatusMessage("Approve, revise, or cancel the current plan first.");
+    if (!promptText) {
+      if (session) schedulePromptQueueDispatch(session.chatId);
       return;
     }
     if (
-      !usesDefaultProfile &&
-      account?.status !== "error" &&
-      (selectedAccountIdRef.current === accountId
-        ? shouldBlockRunForAuth(requiresOpenaiAuth, codexAccount)
-        : account?.status !== "signed_in")
+      profileKey !== DEFAULT_CODEX_PROFILE_KEY &&
+      (!accountId || !account || account.status !== "signed_in")
     ) {
-      setStatusMessage(
-        loginState === "waiting"
-          ? "Finish Codex sign-in before starting a run."
-          : "Sign in to Codex before starting a run.",
-      );
+      setStatusMessage("Sign in to a Codex account before queuing a prompt.");
       return;
     }
-
-    const selectedModel =
-      models.find((model) => model.id === selectedModelId) ?? models[0] ?? null;
-    const model = useOss || modelLoadError ? null : (selectedModel?.model ?? null);
-    const turnIndex = chatSession?.nextTurnIndex ?? 1;
+    const selectedQueuedModel =
+      modelsRef.current.find((model) => model.id === selectedModelId) ??
+      modelsRef.current[0] ??
+      null;
     const mode = planMode ? "plan" : "run";
     const intent: RunIntent = planMode ? "plan" : "normal";
     const executionSettings = createRunExecutionSettings({
@@ -9594,61 +10562,655 @@ function App() {
       intent,
       accessMode,
       computerUseEnabled,
-      model,
-      reasoningEffort: model ? selectedReasoningEffort : null,
+      model:
+        useOss || modelLoadErrorRef.current
+          ? null
+          : selectedQueuedModel?.model ?? null,
+      reasoningEffort:
+        useOss || modelLoadErrorRef.current
+          ? null
+          : selectedReasoningEffort,
       useOss,
       ossProvider,
-      contextFiles,
-      selectedSkills,
+      contextFiles: contextFilesRef.current,
+      selectedSkills: selectedSkillsRef.current,
       goalMode,
     });
-    const snapshot: RunSetupSnapshot = {
-      promptText,
-      promptFallback: composerPrompt,
-      workspace: { ...workspace },
-      accountId: accountId ?? 0,
-      account: account ? { ...account } : null,
-      profileKey,
-      chatOrigin: chatSession?.origin ?? "orchestrator",
-      externalThreadId: chatSession?.externalThreadId ?? null,
-      selectedBranch,
-      cachedPreflight: preflightRef.current,
-      mode,
-      intent,
-      access: accessSettings({ accessMode }),
-      computerUseEnabled,
-      model,
-      effort: model ? selectedReasoningEffort : null,
-      useOss,
-      ossProvider,
-      improvedPrompt: improvePrompt(promptText),
-      contextFiles: [...contextFiles],
-      selectedSkills: [...selectedSkills],
-      goalMode,
-      loginState,
-      chatId: chatSession?.chatId ?? null,
-      threadId: accountHandoff ? null : chatSession?.threadId ?? null,
-      turnIndex,
-      threadStrategy: accountHandoff
-        ? { kind: "handoff", handoff: accountHandoff }
-        : chatSession?.threadId
-          ? { kind: "resume" }
-          : { kind: "fresh" },
-      handoffContextBudgetTokens: Math.max(
-        1,
-        Math.floor(
-          (getCodexModelContextWindow(selectedModel) ?? DEFAULT_CONTEXT_WINDOW) *
-            0.25,
-        ),
-      ),
-      executionSettings,
-    };
-
-    const runControl = beginOptimisticRun(snapshot);
-    if (snapshot.mode === "plan") {
-      setPlanMode(false);
+    const currentQueueSize = session
+      ? (promptQueuesByChatRef.current[session.chatId] ?? []).filter(
+          isPromptQueueItemPending,
+        ).length
+      : 0;
+    const validationError = validatePromptQueueDraft({
+      prompt: promptText,
+      attachmentCount: executionSettings.contextFiles.length,
+      currentQueueSize,
+    });
+    if (validationError) {
+      setStatusMessage(validationError);
+      return;
     }
-    scheduleRunSetup(runControl, snapshot);
+    if (promptQueueEnqueueLocksRef.current.has(workspace.id)) {
+      return;
+    }
+    promptQueueEnqueueLocksRef.current.add(workspace.id);
+
+    let createdChat: ChatRecord | null = null;
+    try {
+      let queuedItem: PromptQueueItem | null = null;
+      if (!session) {
+        const initialTitlePrompt = restorePromptInlineFileReferencesForComposer(
+          promptText,
+          executionSettings.contextFiles.filter(
+            (file) => file.source === "search",
+          ),
+        );
+        const fallbackTitle = fallbackChatTitle(initialTitlePrompt);
+        const inspection = await inspectPromptQueueContext(
+          workspace.path,
+          executionSettings.contextFiles.map((file) => file.path),
+        );
+        const contextFingerprint: PromptQueueContextFingerprint = {
+          version: 1,
+          workspacePath: inspection.workspacePath,
+          branch: inspection.branch,
+          headCommit: inspection.headCommit,
+          worktreeFingerprint: inspection.worktreeFingerprint,
+          profileKey,
+          threadId: null,
+          conversationRevision: 0,
+          files: inspection.files,
+        };
+        const snapshot = createQueuedPromptSnapshot({
+          prompt: promptText,
+          executionSettings,
+          contextFingerprint,
+        });
+        const queuedConversation = await createChatWithQueuedPrompt({
+          workspaceId: workspace.id,
+          accountId:
+            profileKey === DEFAULT_CODEX_PROFILE_KEY ? null : accountId,
+          title: fallbackTitle,
+          status: "queued",
+          generateTitle: true,
+          itemId: createPromptQueueItemId(),
+          clientMessageId: createStableClientMessageId(),
+          prompt: promptText,
+          snapshot,
+        });
+        createdChat = queuedConversation.chat;
+        queuedItem = queuedConversation.item;
+        session = {
+          chatId: createdChat.id,
+          threadId: null,
+          origin: "orchestrator",
+          profileKey,
+          externalThreadId: null,
+          nextTurnIndex: 1,
+        };
+        setWorkspaceChatSession(workspace.id, session);
+        rememberWorkspaceTaskSelection(
+          workspace.id,
+          { kind: "chat", session },
+          null,
+        );
+        setSelectedDraftChat(null);
+        setSelectedHistoryChatId(createdChat.id);
+      } else {
+        const chat = await getChatRecord(session.chatId);
+        if (!chat) {
+          throw new Error("The conversation could not be prepared.");
+        }
+        const contextFingerprint =
+          await capturePromptQueueContextFingerprint({
+            workspace,
+            chat,
+            executionSettings,
+          });
+        const snapshot = createQueuedPromptSnapshot({
+          prompt: promptText,
+          executionSettings,
+          contextFingerprint,
+        });
+        queuedItem = await enqueuePromptQueueItem({
+          id: createPromptQueueItemId(),
+          clientMessageId: createStableClientMessageId(),
+          workspaceId: workspace.id,
+          chatId: session.chatId,
+          prompt: promptText,
+          snapshot,
+        });
+      }
+      if (!queuedItem) {
+        throw new Error("The prompt was not added to the queue.");
+      }
+      upsertPromptQueueItemInMemory(queuedItem);
+      flushSync(() => {
+        replaceComposerPrompt("");
+        removeSubmittedImagesFromWorkspaceComposer(
+          workspace.id,
+          executionSettings.contextFiles,
+        );
+        if (planMode) setPlanMode(false);
+      });
+      if (createdChat) {
+        const initialPrompt = restorePromptInlineFileReferencesForComposer(
+          promptText,
+          executionSettings.contextFiles.filter(
+            (file) => file.source === "search",
+          ),
+        );
+        const fallbackTitle = fallbackChatTitle(initialPrompt);
+        startChatTitleGeneration({
+          chatId: createdChat.id,
+          workspacePath: workspace.path,
+          accountId: accountId ?? 0,
+          model: executionSettings.model,
+          initialPrompt,
+          fallbackTitle,
+        });
+      }
+      setStatusMessage(
+        runIsActive
+          ? "Prompt added to this chat's queue."
+          : "Prompt queued.",
+      );
+      schedulePromptQueueDispatch(session.chatId);
+    } catch (error) {
+      setStatusMessage(
+        `Could not queue prompt: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+      );
+    } finally {
+      promptQueueEnqueueLocksRef.current.delete(workspace.id);
+    }
+  }
+
+  function openPromptQueueEditor(item: PromptQueueItem) {
+    if (!isPromptQueueItemMutable(item)) return;
+    const settings = item.snapshot.executionSettings;
+    const initialModels =
+      settings.accountId === selectedComposerAccountId ? modelsRef.current : [];
+    setPromptQueueEditor({
+      item,
+      prompt: restorePromptInlineFileReferencesForComposer(
+        item.prompt,
+        settings.contextFiles.filter((file) => file.source === "search"),
+      ),
+      accountId: settings.accountId,
+      models: initialModels,
+      modelsStatus: "loading",
+      branch: settings.selectedBranch,
+      model: settings.model,
+      reasoningEffort: settings.reasoningEffort,
+      mode: settings.mode,
+      goalMode: settings.goalMode,
+      accessMode: settings.accessMode,
+      computerUseEnabled: settings.computerUseEnabled,
+      useOss: settings.useOss,
+      ossProvider: settings.ossProvider,
+      contextFiles: settings.contextFiles.map((file) => ({ ...file })),
+      selectedSkills: settings.selectedSkills.map((skill) => ({ ...skill })),
+      status: "idle",
+      error: null,
+    });
+    void loadPromptQueueEditorModels(item.id, settings.accountId);
+  }
+
+  async function loadPromptQueueEditorModels(
+    itemId: string,
+    accountId: number,
+  ) {
+    const profileKey: CodexProfileKey =
+      accountId === 0
+        ? DEFAULT_CODEX_PROFILE_KEY
+        : (`account:${accountId}` as CodexProfileKey);
+    try {
+      const nextModels = await listCodexModelsForProfile(profileKey, accountId);
+      setPromptQueueEditor((current) => {
+        if (!current || current.item.id !== itemId || current.accountId !== accountId) {
+          return current;
+        }
+        const retained =
+          nextModels.find(
+            (model) =>
+              model.model === current.model || model.id === current.model,
+          ) ??
+          nextModels.find((model) => model.isDefault) ??
+          nextModels[0] ??
+          null;
+        return {
+          ...current,
+          models: nextModels,
+          modelsStatus: "idle",
+          model: retained?.model ?? null,
+          reasoningEffort:
+            retained?.supportedReasoningEfforts.some(
+              (option) =>
+                option.reasoningEffort === current.reasoningEffort,
+            )
+              ? current.reasoningEffort
+              : retained?.defaultReasoningEffort ?? null,
+          error: nextModels.length === 0 ? "No Codex models are available." : null,
+        };
+      });
+    } catch (error) {
+      setPromptQueueEditor((current) =>
+        current &&
+        current.item.id === itemId &&
+        current.accountId === accountId
+          ? {
+              ...current,
+              models: [],
+              modelsStatus: "error",
+              error:
+                error instanceof Error ? error.message : String(error),
+            }
+          : current,
+      );
+    }
+  }
+
+  function changePromptQueueEditorAccount(value: string) {
+    const accountId = Number(value);
+    if (!Number.isSafeInteger(accountId) || accountId < 0) return;
+    setPromptQueueEditor((current) =>
+      current
+        ? {
+            ...current,
+            accountId,
+            models: [],
+            modelsStatus: "loading",
+            model: null,
+            reasoningEffort: null,
+            error: null,
+          }
+        : current,
+    );
+    if (promptQueueEditor) {
+      void loadPromptQueueEditorModels(promptQueueEditor.item.id, accountId);
+    }
+  }
+
+  function changePromptQueueEditorModel(value: string) {
+    setPromptQueueEditor((current) => {
+      if (!current) return current;
+      const selected = current.models.find(
+        (model) => model.model === value || model.id === value,
+      );
+      return {
+        ...current,
+        model: selected?.model ?? value,
+        reasoningEffort:
+          selected?.supportedReasoningEfforts.some(
+            (option) =>
+              option.reasoningEffort === current.reasoningEffort,
+          )
+            ? current.reasoningEffort
+            : selected?.defaultReasoningEffort ?? null,
+      };
+    });
+  }
+
+  async function addPromptQueueEditorFiles() {
+    const selected = await open({
+      directory: false,
+      multiple: true,
+      title: "Add files to queued prompt",
+    });
+    const paths = normalizeDialogSelection(selected);
+    if (paths.length === 0) return;
+    setPromptQueueEditor((current) => {
+      if (!current) return current;
+      const contextFiles = mergeContextFiles(
+        current.contextFiles,
+        paths.map(contextFileFromPath),
+      );
+      const validationError = validatePromptQueueDraft({
+        prompt: current.prompt,
+        attachmentCount: contextFiles.length,
+        currentQueueSize: 0,
+      });
+      return validationError
+        ? { ...current, error: validationError }
+        : { ...current, contextFiles, error: null };
+    });
+  }
+
+  async function savePromptQueueEditor() {
+    const editor = promptQueueEditor;
+    if (!editor || editor.status !== "idle") return;
+    const currentItem = await readPromptQueueItem(editor.item.id);
+    if (!currentItem || !isPromptQueueItemMutable(currentItem)) {
+      setPromptQueueEditor((current) =>
+        current
+          ? { ...current, error: "This queued prompt has already started." }
+          : current,
+      );
+      return;
+    }
+    const account =
+      editor.accountId === 0
+        ? null
+        : codexAccountsRef.current.find(
+            (candidate) => candidate.id === editor.accountId,
+          ) ?? null;
+    if (
+      editor.accountId !== 0 &&
+      (!account || account.status !== "signed_in")
+    ) {
+      setPromptQueueEditor((current) =>
+        current
+          ? { ...current, error: "The selected Codex account is unavailable." }
+          : current,
+      );
+      return;
+    }
+    const serializedPrompt = serializePromptInlineFileReferences(
+      editor.prompt.trim(),
+      editor.contextFiles.filter((file) => file.source === "search"),
+    );
+    const queueSize = (
+      promptQueuesByChatRef.current[editor.item.chatId] ?? []
+    ).filter(
+      (item) => item.id !== editor.item.id && isPromptQueueItemPending(item),
+    ).length;
+    const validationError = validatePromptQueueDraft({
+      prompt: serializedPrompt,
+      attachmentCount: editor.contextFiles.length,
+      currentQueueSize: queueSize,
+    });
+    if (validationError) {
+      setPromptQueueEditor((current) =>
+        current ? { ...current, error: validationError } : current,
+      );
+      return;
+    }
+    const selectedEditorModel =
+      editor.models.find(
+        (model) =>
+          model.model === editor.model || model.id === editor.model,
+      ) ?? null;
+    if (!editor.useOss && !selectedEditorModel) {
+      setPromptQueueEditor((current) =>
+        current
+          ? { ...current, error: "Choose an available Codex model." }
+          : current,
+      );
+      return;
+    }
+    if (
+      editor.accessMode === "full-access" &&
+      currentItem.snapshot.executionSettings.accessMode !== "full-access"
+    ) {
+      const warning = accessModeWarning(editor.accessMode);
+      if (warning && !window.confirm(warning)) return;
+    }
+
+    setPromptQueueEditor((current) =>
+      current ? { ...current, status: "saving", error: null } : current,
+    );
+    try {
+      const [chat, workspace] = await Promise.all([
+        getChatRecord(editor.item.chatId),
+        Promise.resolve(
+          workspacesRef.current.find(
+            (candidate) => candidate.id === editor.item.workspaceId,
+          ) ?? null,
+        ),
+      ]);
+      if (!chat || !workspace) {
+        throw new Error("The queued prompt's chat is no longer available.");
+      }
+      const profileKey: CodexProfileKey =
+        editor.accountId === 0
+          ? DEFAULT_CODEX_PROFILE_KEY
+          : (`account:${editor.accountId}` as CodexProfileKey);
+      const executionSettings = createRunExecutionSettings({
+        accountId: editor.accountId,
+        profileKey,
+        selectedBranch: editor.branch,
+        mode: editor.mode,
+        intent: editor.mode === "plan" ? "plan" : "normal",
+        accessMode: editor.accessMode,
+        computerUseEnabled: editor.computerUseEnabled,
+        model: editor.useOss ? null : selectedEditorModel?.model ?? null,
+        reasoningEffort:
+          editor.useOss ? null : editor.reasoningEffort,
+        useOss: editor.useOss,
+        ossProvider: editor.ossProvider,
+        contextFiles: editor.contextFiles,
+        selectedSkills: editor.selectedSkills,
+        goalMode: editor.mode === "run" && editor.goalMode,
+      });
+      const contextFingerprint =
+        await capturePromptQueueContextFingerprint({
+          workspace,
+          chat,
+          executionSettings,
+        });
+      const snapshot = createQueuedPromptSnapshot({
+        prompt: serializedPrompt,
+        executionSettings,
+        contextFingerprint,
+      });
+      const updated = await updatePromptQueueItemSnapshot(
+        editor.item.id,
+        snapshot,
+      );
+      if (!updated) {
+        throw new Error("This queued prompt changed before it could be saved.");
+      }
+      upsertPromptQueueItemInMemory(updated);
+      setPromptQueueEditor(null);
+      setStatusMessage("Queued prompt updated.");
+    } catch (error) {
+      setPromptQueueEditor((current) =>
+        current
+          ? {
+              ...current,
+              status: "idle",
+              error:
+                error instanceof Error ? error.message : String(error),
+            }
+          : current,
+      );
+    }
+  }
+
+  async function acceptPromptQueueCurrentContext() {
+    const review = promptQueueStaleReview;
+    if (!review || review.status !== "idle") return;
+    setPromptQueueStaleReview({ ...review, status: "updating" });
+    try {
+      const [currentItem, chat, workspace] = await Promise.all([
+        readPromptQueueItem(review.item.id),
+        getChatRecord(review.item.chatId),
+        Promise.resolve(
+          workspacesRef.current.find(
+            (candidate) => candidate.id === review.item.workspaceId,
+          ) ?? null,
+        ),
+      ]);
+      if (!currentItem || !chat || !workspace) {
+        throw new Error("The queued prompt is no longer available.");
+      }
+      const contextFingerprint =
+        await capturePromptQueueContextFingerprint({
+          workspace,
+          chat,
+          executionSettings: currentItem.snapshot.executionSettings,
+        });
+      const snapshot = createQueuedPromptSnapshot({
+        prompt: currentItem.prompt,
+        executionSettings: currentItem.snapshot.executionSettings,
+        contextFingerprint,
+      });
+      const updated = await updatePromptQueueItemSnapshot(
+        currentItem.id,
+        snapshot,
+      );
+      if (!updated) throw new Error("The queued prompt could not be updated.");
+      upsertPromptQueueItemInMemory(updated);
+      setPromptQueueStaleReview(null);
+      setPromptQueuePaused(currentItem.chatId, false);
+      schedulePromptQueueDispatch(currentItem.chatId);
+      setStatusMessage("Queued prompt updated to use the current context.");
+    } catch (error) {
+      setPromptQueueStaleReview((current) =>
+        current
+          ? { ...current, status: "idle" }
+          : current,
+      );
+      setStatusMessage(
+        `Could not update queued prompt context: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+      );
+    }
+  }
+
+  function editStalePromptQueueItem() {
+    if (!promptQueueStaleReview) return;
+    const item = promptQueueStaleReview.item;
+    setPromptQueueStaleReview(null);
+    openPromptQueueEditor(item);
+  }
+
+  async function removeQueuedPrompt(item: PromptQueueItem) {
+    if (!isPromptQueueItemMutable(item)) return;
+    setPromptQueueActionPendingItemId(item.id);
+    try {
+      if (!(await removePromptQueueItem(item.id))) {
+        throw new Error("The prompt has already started.");
+      }
+      removePromptQueueItemFromMemory(item.chatId, item.id);
+      setStatusMessage("Queued prompt removed.");
+    } catch (error) {
+      setStatusMessage(
+        `Could not remove queued prompt: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+      );
+    } finally {
+      setPromptQueueActionPendingItemId(null);
+    }
+  }
+
+  async function retryQueuedPrompt(item: PromptQueueItem) {
+    setPromptQueueActionPendingItemId(item.id);
+    try {
+      const retried = await retryPromptQueueItem(item.id);
+      if (!retried) throw new Error("The prompt is no longer retryable.");
+      upsertPromptQueueItemInMemory(retried);
+      setPromptQueuePaused(item.chatId, false);
+      setStatusMessage("Queued prompt ready to retry.");
+      schedulePromptQueueDispatch(item.chatId);
+    } catch (error) {
+      setStatusMessage(
+        `Could not retry queued prompt: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+      );
+    } finally {
+      setPromptQueueActionPendingItemId(null);
+    }
+  }
+
+  async function skipQueuedPrompt(item: PromptQueueItem) {
+    setPromptQueueActionPendingItemId(item.id);
+    try {
+      if (!(await skipPromptQueueItem(item.id))) {
+        throw new Error("The prompt can no longer be skipped.");
+      }
+      removePromptQueueItemFromMemory(item.chatId, item.id);
+      setPromptQueuePaused(item.chatId, false);
+      setStatusMessage("Queued prompt skipped.");
+      schedulePromptQueueDispatch(item.chatId);
+    } catch (error) {
+      setStatusMessage(
+        `Could not skip queued prompt: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+      );
+    } finally {
+      setPromptQueueActionPendingItemId(null);
+    }
+  }
+
+  async function sendQueuedPromptNow(item: PromptQueueItem) {
+    if (promptQueueActionPendingItemId === item.id) return;
+    setPromptQueueActionPendingItemId(item.id);
+    try {
+      let prioritized = item;
+      if (item.status === "failed" || item.status === "stale") {
+        const retried = await retryPromptQueueItem(item.id);
+        if (!retried) throw new Error("The prompt is no longer retryable.");
+        prioritized = retried;
+      }
+      const next = await prioritizePromptQueueItem(prioritized.id);
+      if (!next) throw new Error("The prompt could not be prioritized.");
+      upsertPromptQueueItemInMemory(next);
+      const activeControl = [...activeRunControlsRef.current.values()].find(
+        (control) =>
+          control.chatId === item.chatId && isActiveRunControl(control),
+      );
+      if (activeControl && (await steerQueuedPrompt(next, activeControl))) {
+        return;
+      }
+      setPromptQueuePaused(item.chatId, false);
+      schedulePromptQueueDispatch(item.chatId);
+      setStatusMessage(
+        activeControl
+          ? "Queued prompt scheduled to run next."
+          : "Queued prompt moved to the front.",
+      );
+    } catch (error) {
+      setStatusMessage(
+        `Could not prioritize queued prompt: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+      );
+    } finally {
+      setPromptQueueActionPendingItemId(null);
+    }
+  }
+
+  async function reorderSelectedPromptQueue(orderedItemIds: string[]) {
+    const chatId = selectedWorkspaceChatSession?.chatId;
+    if (!chatId) return;
+    const current = promptQueuesByChatRef.current[chatId] ?? [];
+    const currentById = new Map(current.map((item) => [item.id, item]));
+    const ordered = orderedItemIds
+      .map((id) => currentById.get(id))
+      .filter((item): item is PromptQueueItem => Boolean(item));
+    const optimistic = ordered.map((item, index) => ({
+      ...item,
+      position: index,
+    }));
+    setChatPromptQueue(chatId, optimistic);
+    try {
+      if (!(await reorderPromptQueueItems(chatId, orderedItemIds))) {
+        throw new Error("The queue changed while it was being reordered.");
+      }
+      await refreshPromptQueue(chatId);
+    } catch (error) {
+      await refreshPromptQueue(chatId).catch(() => undefined);
+      setStatusMessage(
+        `Could not reorder queue: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+      );
+    }
+  }
+
+  function resumeSelectedPromptQueue() {
+    const chatId = selectedWorkspaceChatSession?.chatId;
+    if (!chatId) return;
+    setPromptQueuePaused(chatId, false);
+    setStatusMessage("Prompt queue resumed.");
+    schedulePromptQueueDispatch(chatId);
   }
 
   async function handleEditLatestPrompt(
@@ -11068,6 +12630,67 @@ function App() {
       if (activeChatId !== null) {
         await updateChat(activeChatId, { status }).catch(() => undefined);
       }
+      if (completedControl.queueItemId && activeChatId !== null) {
+        if (status === "completed") {
+          await completePromptQueueItem(completedControl.queueItemId).catch(
+            () => null,
+          );
+          removePromptQueueItemFromMemory(
+            activeChatId,
+            completedControl.queueItemId,
+          );
+          await rebaselineQueuedPromptContexts(activeChatId).catch(
+            () => undefined,
+          );
+          if (nextRunView.nativePlan.reviewState === "available") {
+            setPromptQueuePaused(activeChatId, true, "workflow");
+          } else if (completedControl.queueAdvanceBlocked) {
+            setPromptQueuePaused(activeChatId, true, "manual");
+            setStatusMessage(
+              "Prompt queue paused after an approval was denied or a question went unanswered.",
+            );
+          } else {
+            schedulePromptQueueDispatch(activeChatId);
+          }
+        } else {
+          const failedQueueItem = await failPromptQueueItem(
+            completedControl.queueItemId,
+            nextRunView.error ?? "Codex could not complete this queued prompt.",
+          ).catch(() => null);
+          if (failedQueueItem) {
+            upsertPromptQueueItemInMemory(failedQueueItem);
+          }
+          setPromptQueuePaused(activeChatId, true, "failure");
+        }
+      } else if (activeChatId !== null) {
+        await advanceChatConversationRevision(activeChatId, {
+          queueOwned: false,
+        }).catch(() => undefined);
+        const pendingQueue = await refreshPromptQueue(activeChatId).catch(
+          () => [],
+        );
+        if (pendingQueue.length > 0) {
+          if (status === "failed") {
+            setPromptQueuePaused(activeChatId, true, "failure");
+          } else if (nextRunView.nativePlan.reviewState === "available") {
+            setPromptQueuePaused(activeChatId, true, "workflow");
+          } else if (completedControl.queueAdvanceBlocked) {
+            setPromptQueuePaused(activeChatId, true, "manual");
+            setStatusMessage(
+              "Prompt queue paused after an approval was denied or a question went unanswered.",
+            );
+          } else {
+            const pauseReason =
+              promptQueuePauseReasonsRef.current.get(activeChatId);
+            if (pauseReason === "workflow") {
+              setPromptQueuePaused(activeChatId, false);
+            }
+            if (!pausedPromptQueueChatIdsRef.current.has(activeChatId)) {
+              schedulePromptQueueDispatch(activeChatId);
+            }
+          }
+        }
+      }
       const completedWorkspace = completedControl
         ? workspacesRef.current.find(
             (workspace) => workspace.id === completedControl.workspaceId,
@@ -11368,6 +12991,7 @@ function App() {
           (entry) => entry.clientId === control.clientId,
         );
         if (activeEntry) {
+          control.queueAdvanceBlocked = true;
           void handleAnswerUserInput(activeEntry, routedUserInputRequest, {
             answers: {},
           });
@@ -11555,6 +13179,9 @@ function App() {
           currentRequest.requestToken,
           selectedChoice.response,
         );
+      }
+      if (selectedChoice.tone === "danger") {
+        control.queueAdvanceBlocked = true;
       }
       void removeAgentNotification(
         approvalNotificationEventKey(currentRequest),
@@ -12288,8 +13915,25 @@ function App() {
         collaborationMode: "default",
         savedDefaultCollaborationModeJson: null,
       });
+      await advanceChatConversationRevision(entry.chatId, {
+        queueOwned: false,
+      }).catch(() => undefined);
+      const pendingQueue = await refreshPromptQueue(entry.chatId).catch(
+        () => [],
+      );
+      if (pendingQueue.length > 0) {
+        if (
+          promptQueuePauseReasonsRef.current.get(entry.chatId) === "workflow"
+        ) {
+          setPromptQueuePaused(entry.chatId, false);
+        }
+        if (!pausedPromptQueueChatIdsRef.current.has(entry.chatId)) {
+          schedulePromptQueueDispatch(entry.chatId);
+        }
+      }
       setPlanMode(false);
       setStatusMessage("Plan cancelled. Codex returned to Default mode.");
+      planActionLocksRef.current.delete(entry.clientId);
     } catch (error) {
       planActionLocksRef.current.delete(entry.clientId);
       updateTaskChatEntryRunView(entry.clientId, (current) =>
@@ -14156,6 +15800,454 @@ function App() {
         </div>
       </aside>
 
+      {promptQueueEditor ? (
+        <div
+          className="modal-backdrop"
+          role="presentation"
+          onMouseDown={(event) => {
+            if (
+              event.target === event.currentTarget &&
+              promptQueueEditor.status === "idle"
+            ) {
+              setPromptQueueEditor(null);
+            }
+          }}
+        >
+          <section
+            className="confirmation-dialog prompt-queue-editor-dialog"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="prompt-queue-editor-title"
+          >
+            <div className="prompt-queue-editor-heading">
+              <h2 id="prompt-queue-editor-title">Edit queued prompt</h2>
+              <p>
+                These settings belong only to this queued prompt and do not
+                change the composer defaults.
+              </p>
+            </div>
+            <label className="prompt-queue-editor-prompt">
+              <span>Prompt</span>
+              <textarea
+                value={promptQueueEditor.prompt}
+                maxLength={100_000}
+                disabled={promptQueueEditor.status !== "idle"}
+                onChange={(event) =>
+                  setPromptQueueEditor((current) =>
+                    current
+                      ? {
+                          ...current,
+                          prompt: event.target.value,
+                          error: null,
+                        }
+                      : current,
+                  )
+                }
+              />
+            </label>
+            <div className="prompt-queue-editor-fields">
+              <ComposerSelect
+                ariaLabel="Queued prompt account"
+                value={promptQueueEditor.accountId.toString()}
+                options={promptQueueEditorAccountOptions}
+                placeholder="Choose account"
+                icon={<CircleUserRound size={16} />}
+                disabled={promptQueueEditor.status !== "idle"}
+                onChange={changePromptQueueEditorAccount}
+              />
+              <ComposerSelect
+                ariaLabel="Queued prompt branch"
+                value={promptQueueEditor.branch ?? ""}
+                options={promptQueueEditorBranchOptions}
+                placeholder="Choose branch"
+                icon={<GitBranch size={16} />}
+                disabled={
+                  promptQueueEditor.status !== "idle" ||
+                  promptQueueEditorBranchOptions.length === 0
+                }
+                onChange={(value) =>
+                  setPromptQueueEditor((current) =>
+                    current
+                      ? { ...current, branch: value, error: null }
+                      : current,
+                  )
+                }
+              />
+              <ComposerSelect
+                ariaLabel="Queued prompt model"
+                value={promptQueueEditor.model ?? ""}
+                options={promptQueueEditorModelOptions}
+                placeholder={
+                  promptQueueEditor.modelsStatus === "loading"
+                    ? "Loading models"
+                    : promptQueueEditor.useOss
+                      ? "OSS provider"
+                      : "Choose model"
+                }
+                icon={<Bot size={16} />}
+                disabled={
+                  promptQueueEditor.status !== "idle" ||
+                  promptQueueEditor.modelsStatus === "loading" ||
+                  promptQueueEditor.useOss ||
+                  promptQueueEditorModelOptions.length === 0
+                }
+                onChange={changePromptQueueEditorModel}
+              />
+              <ComposerSelect
+                ariaLabel="Queued prompt reasoning"
+                value={promptQueueEditor.reasoningEffort ?? ""}
+                options={promptQueueEditorReasoningOptions}
+                placeholder="Default reasoning"
+                icon={<Gauge size={16} />}
+                disabled={
+                  promptQueueEditor.status !== "idle" ||
+                  promptQueueEditor.useOss ||
+                  promptQueueEditorReasoningOptions.length === 0
+                }
+                onChange={(value) =>
+                  setPromptQueueEditor((current) =>
+                    current
+                      ? {
+                          ...current,
+                          reasoningEffort: value,
+                          error: null,
+                        }
+                      : current,
+                  )
+                }
+              />
+              <ComposerSelect
+                ariaLabel="Queued prompt mode"
+                value={
+                  promptQueueEditor.goalMode
+                    ? "goal"
+                    : promptQueueEditor.mode
+                }
+                options={[
+                  { value: "run", label: "Normal" },
+                  { value: "plan", label: "Plan mode" },
+                  { value: "goal", label: "Goal mode" },
+                ]}
+                placeholder="Choose mode"
+                icon={<FileText size={16} />}
+                disabled={promptQueueEditor.status !== "idle"}
+                onChange={(value) =>
+                  setPromptQueueEditor((current) =>
+                    current
+                      ? {
+                          ...current,
+                          mode: value === "plan" ? "plan" : "run",
+                          goalMode: value === "goal",
+                          error: null,
+                        }
+                      : current,
+                  )
+                }
+              />
+              <ComposerSelect
+                ariaLabel="Queued prompt access"
+                value={promptQueueEditor.accessMode}
+                options={[
+                  {
+                    value: "ask-for-approval",
+                    label: "Ask for approval",
+                  },
+                  { value: "full-access", label: "Full access" },
+                ]}
+                placeholder="Choose access"
+                icon={<Gauge size={16} />}
+                disabled={promptQueueEditor.status !== "idle"}
+                onChange={(value) =>
+                  setPromptQueueEditor((current) =>
+                    current
+                      ? {
+                          ...current,
+                          accessMode: value as CodexAccessMode,
+                          error: null,
+                        }
+                      : current,
+                  )
+                }
+              />
+              <ComposerSelect
+                ariaLabel="Queued prompt provider"
+                value={
+                  promptQueueEditor.useOss
+                    ? promptQueueEditor.ossProvider
+                    : "codex"
+                }
+                options={[
+                  { value: "codex", label: "Codex" },
+                  { value: "ollama", label: "Ollama" },
+                  { value: "lmstudio", label: "LM Studio" },
+                ]}
+                placeholder="Choose provider"
+                icon={<Plug size={16} />}
+                disabled={promptQueueEditor.status !== "idle"}
+                onChange={(value) =>
+                  setPromptQueueEditor((current) =>
+                    current
+                      ? {
+                          ...current,
+                          useOss: value !== "codex",
+                          ossProvider:
+                            value === "lmstudio" ? "lmstudio" : "ollama",
+                          error: null,
+                        }
+                      : current,
+                  )
+                }
+              />
+              <label className="prompt-queue-editor-toggle">
+                <input
+                  type="checkbox"
+                  checked={promptQueueEditor.computerUseEnabled}
+                  disabled={promptQueueEditor.status !== "idle"}
+                  onChange={(event) =>
+                    setPromptQueueEditor((current) =>
+                      current
+                        ? {
+                            ...current,
+                            computerUseEnabled: event.target.checked,
+                            error: null,
+                          }
+                        : current,
+                    )
+                  }
+                />
+                <span>Computer use</span>
+              </label>
+            </div>
+            <div className="prompt-queue-editor-context">
+              <div className="prompt-queue-editor-section-heading">
+                <span>Attachments</span>
+                <button
+                  className="native-plan-icon-action"
+                  type="button"
+                  aria-label="Add queued prompt attachments"
+                  data-tooltip="Add attachments"
+                  disabled={promptQueueEditor.status !== "idle"}
+                  onClick={() => void addPromptQueueEditorFiles()}
+                >
+                  <Plus size={15} aria-hidden="true" />
+                </button>
+              </div>
+              {promptQueueEditor.contextFiles.length > 0 ? (
+                <div className="prompt-queue-editor-chip-list">
+                  {promptQueueEditor.contextFiles.map((file) => (
+                    <span className="prompt-queue-editor-chip" key={file.path}>
+                      <span title={file.path}>{file.name}</span>
+                      <button
+                        type="button"
+                        aria-label={`Remove ${file.name}`}
+                        data-tooltip={`Remove ${file.name}`}
+                        disabled={promptQueueEditor.status !== "idle"}
+                        onClick={() =>
+                          setPromptQueueEditor((current) =>
+                            current
+                              ? {
+                                  ...current,
+                                  contextFiles: current.contextFiles.filter(
+                                    (candidate) =>
+                                      candidate.path !== file.path,
+                                  ),
+                                  error: null,
+                                }
+                              : current,
+                          )
+                        }
+                      >
+                        <X size={13} aria-hidden="true" />
+                      </button>
+                    </span>
+                  ))}
+                </div>
+              ) : (
+                <span className="prompt-queue-editor-empty">No attachments</span>
+              )}
+            </div>
+            {promptQueueEditorAvailableSkills.length > 0 ||
+            promptQueueEditor.selectedSkills.length > 0 ? (
+              <div className="prompt-queue-editor-context">
+                <div className="prompt-queue-editor-section-heading">
+                  <span>Skills</span>
+                </div>
+                <div className="prompt-queue-editor-skill-list">
+                  {[
+                    ...new Map(
+                      [
+                        ...promptQueueEditorAvailableSkills,
+                        ...promptQueueEditor.selectedSkills,
+                      ].map((skill) => [skill.id, skill]),
+                    ).values(),
+                  ].map((skill) => {
+                    const selected = promptQueueEditor.selectedSkills.some(
+                      (candidate) => candidate.id === skill.id,
+                    );
+                    return (
+                      <button
+                        className="prompt-queue-editor-skill"
+                        type="button"
+                        key={skill.id}
+                        aria-pressed={selected}
+                        disabled={promptQueueEditor.status !== "idle"}
+                        title={skill.description ?? skill.name}
+                        onClick={() =>
+                          setPromptQueueEditor((current) =>
+                            current
+                              ? {
+                                  ...current,
+                                  selectedSkills: selected
+                                    ? current.selectedSkills.filter(
+                                        (candidate) =>
+                                          candidate.id !== skill.id,
+                                      )
+                                    : [...current.selectedSkills, skill],
+                                  error: null,
+                                }
+                              : current,
+                          )
+                        }
+                      >
+                        {skill.name}
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+            ) : null}
+            <div className="prompt-queue-editor-feedback" aria-live="polite">
+              {promptQueueEditor.error ? (
+                <p role="alert">
+                  <AlertCircle size={15} aria-hidden="true" />
+                  <span>{promptQueueEditor.error}</span>
+                </p>
+              ) : null}
+            </div>
+            <div className="confirmation-actions">
+              <button
+                className="native-plan-icon-action"
+                type="button"
+                aria-label="Cancel queued prompt edit"
+                data-tooltip="Cancel"
+                disabled={promptQueueEditor.status !== "idle"}
+                onClick={() => setPromptQueueEditor(null)}
+              >
+                <X size={15} aria-hidden="true" />
+              </button>
+              <button
+                className="native-plan-icon-action implement"
+                type="button"
+                aria-label="Save queued prompt"
+                data-tooltip="Save queued prompt"
+                disabled={
+                  promptQueueEditor.status !== "idle" ||
+                  promptQueueEditor.modelsStatus === "loading"
+                }
+                onClick={() => void savePromptQueueEditor()}
+              >
+                {promptQueueEditor.status === "saving" ? (
+                  <Loader2 className="spin" size={15} aria-hidden="true" />
+                ) : (
+                  <Check size={15} aria-hidden="true" />
+                )}
+              </button>
+            </div>
+          </section>
+        </div>
+      ) : null}
+
+      {promptQueueStaleReview ? (
+        <div
+          className="modal-backdrop"
+          role="presentation"
+          onMouseDown={(event) => {
+            if (
+              event.target === event.currentTarget &&
+              promptQueueStaleReview.status === "idle"
+            ) {
+              setPromptQueueStaleReview(null);
+            }
+          }}
+        >
+          <section
+            className="confirmation-dialog prompt-queue-stale-dialog"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="prompt-queue-stale-title"
+            aria-describedby="prompt-queue-stale-description"
+          >
+            <div>
+              <p className="eyebrow">Queued prompt</p>
+              <h2 id="prompt-queue-stale-title">Review changed context</h2>
+              <p id="prompt-queue-stale-description">
+                This prompt was queued against different conversation or
+                workspace state. Choose whether to use the current context.
+              </p>
+              <ul className="prompt-queue-stale-reasons">
+                {promptQueueStaleReview.reasons.map((reason) => (
+                  <li key={reason}>{reason}</li>
+                ))}
+              </ul>
+            </div>
+            <div className="confirmation-actions prompt-queue-stale-actions">
+              <button
+                className="native-plan-icon-action"
+                type="button"
+                aria-label="Edit stale queued prompt"
+                data-tooltip="Edit prompt"
+                disabled={promptQueueStaleReview.status !== "idle"}
+                onClick={editStalePromptQueueItem}
+              >
+                <Pencil size={15} aria-hidden="true" />
+              </button>
+              <button
+                className="native-plan-icon-action"
+                type="button"
+                aria-label="Skip stale queued prompt"
+                data-tooltip="Skip prompt"
+                disabled={promptQueueStaleReview.status !== "idle"}
+                onClick={() => {
+                  const item = promptQueueStaleReview.item;
+                  setPromptQueueStaleReview(null);
+                  void skipQueuedPrompt(item);
+                }}
+              >
+                <ChevronRight size={15} aria-hidden="true" />
+              </button>
+              <button
+                className="native-plan-icon-action cancel"
+                type="button"
+                aria-label="Remove stale queued prompt"
+                data-tooltip="Remove prompt"
+                disabled={promptQueueStaleReview.status !== "idle"}
+                onClick={() => {
+                  const item = promptQueueStaleReview.item;
+                  setPromptQueueStaleReview(null);
+                  void removeQueuedPrompt(item);
+                }}
+              >
+                <Trash2 size={15} aria-hidden="true" />
+              </button>
+              <button
+                className="native-plan-icon-action implement"
+                type="button"
+                aria-label="Use current context"
+                data-tooltip="Use current context"
+                disabled={promptQueueStaleReview.status !== "idle"}
+                onClick={() => void acceptPromptQueueCurrentContext()}
+              >
+                {promptQueueStaleReview.status === "updating" ? (
+                  <Loader2 className="spin" size={15} aria-hidden="true" />
+                ) : (
+                  <Check size={15} aria-hidden="true" />
+                )}
+              </button>
+            </div>
+          </section>
+        </div>
+      ) : null}
+
       {accountHandoffCandidate ? (
         <div
           className="modal-backdrop"
@@ -14837,7 +16929,6 @@ function App() {
                 <TaskComposer
                   disabled={
                     !canRun ||
-                    planReviewAwaiting ||
                     selectedGoalTerminationPending
                   }
                   runActive={runIsActive}
@@ -14850,7 +16941,6 @@ function App() {
                     runIsActive || selectedGoalTerminationPending
                   }
                   modelSelectionDisabled={
-                    runIsActive ||
                     planReviewAwaiting ||
                     selectedGoalTerminationPending
                   }
@@ -14863,6 +16953,9 @@ function App() {
                   goalProgress={selectedGoalProgress}
                   planProgress={selectedPlanProgress}
                   statusNotices={composerStatusNotices}
+                  queueItems={selectedPromptQueueItems}
+                  queuePaused={selectedPromptQueuePaused}
+                  queueActionPendingItemId={promptQueueActionPendingItemId}
                   accessMode={accessMode}
                   contextFiles={contextFiles}
                   selectedSkills={selectedSkills}
@@ -14889,6 +16982,14 @@ function App() {
                     void stopSelectedGoal();
                   }}
                   onStatusNoticeActivate={activateComposerStatusNotice}
+                  onQueueEdit={editComposerQueuedPrompt}
+                  onQueueRemove={removeComposerQueuedPrompt}
+                  onQueueRetry={retryComposerQueuedPrompt}
+                  onQueueSkip={skipComposerQueuedPrompt}
+                  onQueueSendNow={sendComposerQueuedPromptNow}
+                  onQueueResume={resumeComposerPromptQueue}
+                  onQueueReorder={reorderComposerPromptQueue}
+                  onDispatchQueued={dispatchSelectedPromptQueue}
                   onAccessModeChange={handleAccessModeChange}
                   onAddFiles={chooseComposerContextFiles}
                   onMentionSearch={searchComposerMentionFiles}

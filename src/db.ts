@@ -1,4 +1,5 @@
 import Database from "@tauri-apps/plugin-sql";
+import { invoke } from "@tauri-apps/api/core";
 import type {
   AnalyticsSummary,
   ChatListItem,
@@ -13,16 +14,30 @@ import type {
   HistoryRunSummary,
   HistoryTranscriptIndex,
   HistoryTurnHint,
+  PromptQueueItem,
+  PromptQueueItemRecord,
+  PromptQueueStatus,
+  QueuedPromptSnapshot,
   RunListItem,
   RunRecord,
   TaskRecord,
   Workspace,
 } from "./types";
+import {
+  parsePromptQueueItemRecord,
+  serializeQueuedPromptSnapshot,
+} from "./lib/promptQueue";
 
 const DATABASE_URL = "sqlite:app.db";
+const PROMPT_QUEUE_COLUMNS = `
+  id, client_message_id, workspace_id, chat_id, position,
+  send_now_priority, prompt_text, execution_snapshot_json,
+  context_fingerprint_json, conversation_revision, status,
+  linked_run_id, linked_turn_id, error, stale_reasons_json,
+  created_at, updated_at, accepted_at, completed_at
+`;
 
 let database: Promise<Database> | null = null;
-
 function getDatabase() {
   database ??= Database.load(DATABASE_URL);
   return database;
@@ -79,6 +94,10 @@ export async function upsertWorkspace(path: string) {
 
 export async function softDeleteWorkspace(workspaceId: number) {
   const db = await getDatabase();
+  await db.execute(
+    "DELETE FROM prompt_queue_items WHERE workspace_id = $1",
+    [workspaceId],
+  );
   await db.execute(
     `UPDATE workspaces
      SET default_account_id = NULL,
@@ -238,7 +257,7 @@ export async function createChat(input: {
       origin, profile_key, external_thread_id, source_kind, sync_status,
       external_cwd, external_created_at, external_updated_at, last_synced_at,
       title_generation_state, title_fallback, title_manually_edited,
-      title_generation_started_at,
+      title_generation_started_at, conversation_revision,
       created_at, updated_at, deleted_at
      FROM chats WHERE id = $1`,
     [result.lastInsertId],
@@ -249,6 +268,512 @@ export async function createChat(input: {
   }
 
   return chat;
+}
+
+export async function createChatWithQueuedPrompt(input: {
+  workspaceId: number;
+  accountId: number | null;
+  title: string;
+  status: string;
+  generateTitle?: boolean;
+  itemId: string;
+  clientMessageId: string;
+  prompt: string;
+  snapshot: QueuedPromptSnapshot;
+}) {
+  const result = await invoke<{ chatId: number }>(
+    "create_chat_with_queued_prompt",
+    {
+      request: {
+        workspaceId: input.workspaceId,
+        accountId: input.accountId,
+        title: input.title,
+        status: input.status,
+        generateTitle: input.generateTitle ?? false,
+        itemId: input.itemId,
+        clientMessageId: input.clientMessageId,
+        prompt: input.prompt,
+        executionSnapshotJson: serializeQueuedPromptSnapshot(input.snapshot),
+        contextFingerprintJson: JSON.stringify(
+          input.snapshot.contextFingerprint,
+        ),
+        conversationRevision:
+          input.snapshot.contextFingerprint.conversationRevision,
+      },
+    },
+  );
+  const chatId = Number(result.chatId);
+  if (!Number.isSafeInteger(chatId) || chatId <= 0) {
+    throw new Error("Chat was not created");
+  }
+
+  const [chat, itemRecord] = await Promise.all([
+    getChatRecord(chatId),
+    selectOne<PromptQueueItemRecord>(
+      `SELECT ${PROMPT_QUEUE_COLUMNS}
+       FROM prompt_queue_items
+       WHERE id = $1`,
+      [input.itemId],
+    ),
+  ]);
+  const item = itemRecord ? parsePromptQueueItemRecord(itemRecord) : null;
+  if (!chat || !item) {
+    throw new Error("The queued conversation could not be read.");
+  }
+  return { chat, item };
+}
+
+export async function getChatRecord(chatId: number) {
+  return selectOne<ChatRecord>(
+    `SELECT id, workspace_id, account_id, title, codex_thread_id, status,
+      origin, profile_key, external_thread_id, source_kind, sync_status,
+      external_cwd, external_created_at, external_updated_at, last_synced_at,
+      collaboration_mode, saved_default_collaboration_mode_json,
+      title_generation_state, title_fallback, title_manually_edited,
+      title_generation_started_at, conversation_revision,
+      created_at, updated_at, deleted_at
+     FROM chats
+     WHERE id = $1 AND deleted_at IS NULL`,
+    [chatId],
+  );
+}
+
+export async function getNextChatTurnIndex(chatId: number) {
+  const row = await selectOne<{ next_turn_index: number }>(
+    `SELECT COALESCE(MAX(turn_index), 0) + 1 AS next_turn_index
+     FROM (
+       SELECT turn_index FROM runs
+       WHERE chat_id = $1 AND deleted_at IS NULL
+       UNION ALL
+       SELECT turn_index FROM tasks
+       WHERE chat_id = $1
+     )`,
+    [chatId],
+  );
+  return Math.max(1, Number(row?.next_turn_index ?? 1));
+}
+
+export async function chatHasPendingPlanReview(chatId: number) {
+  const row = await selectOne<{ has_pending_review: number }>(
+    `SELECT EXISTS(
+       SELECT 1
+       FROM runs
+       WHERE chat_id = $1
+         AND deleted_at IS NULL
+         AND plan_review_state = 'available'
+     ) AS has_pending_review`,
+    [chatId],
+  );
+  return Number(row?.has_pending_review ?? 0) === 1;
+}
+
+export async function listPromptQueueItems(chatId: number) {
+  const db = await getDatabase();
+  const rows = await db.select<PromptQueueItemRecord[]>(
+    `SELECT ${PROMPT_QUEUE_COLUMNS}
+     FROM prompt_queue_items
+     WHERE chat_id = $1
+       AND status NOT IN ('skipped', 'completed')
+     ORDER BY position, created_at`,
+    [chatId],
+  );
+  return rows
+    .map(parsePromptQueueItemRecord)
+    .filter((item): item is PromptQueueItem => item !== null);
+}
+
+export async function listRestoredPromptQueueItems() {
+  const db = await getDatabase();
+  const rows = await db.select<PromptQueueItemRecord[]>(
+    `SELECT ${PROMPT_QUEUE_COLUMNS}
+     FROM prompt_queue_items
+     WHERE status NOT IN ('skipped', 'completed')
+     ORDER BY workspace_id, chat_id, position, created_at`,
+  );
+  return rows
+    .map(parsePromptQueueItemRecord)
+    .filter((item): item is PromptQueueItem => item !== null);
+}
+
+export async function enqueuePromptQueueItem(input: {
+  id: string;
+  clientMessageId: string;
+  workspaceId: number;
+  chatId: number;
+  prompt: string;
+  snapshot: QueuedPromptSnapshot;
+}) {
+  const db = await getDatabase();
+  const snapshotJson = serializeQueuedPromptSnapshot(input.snapshot);
+  const result = await db.execute(
+    `INSERT INTO prompt_queue_items (
+       id, client_message_id, workspace_id, chat_id, position,
+       prompt_text, execution_snapshot_json, context_fingerprint_json,
+       conversation_revision, status
+     )
+     SELECT
+       $1, $2, $3, $4,
+       COALESCE(MAX(position) + 1, 0),
+       $5, $6, $7, $8, 'queued'
+     FROM prompt_queue_items
+     WHERE chat_id = $4`,
+    [
+      input.id,
+      input.clientMessageId,
+      input.workspaceId,
+      input.chatId,
+      input.prompt,
+      snapshotJson,
+      JSON.stringify(input.snapshot.contextFingerprint),
+      input.snapshot.contextFingerprint.conversationRevision,
+    ],
+  );
+  if (result.rowsAffected !== 1) {
+    throw new Error("Prompt was not added to the queue.");
+  }
+  return readPromptQueueItem(input.id);
+}
+
+export async function readPromptQueueItem(itemId: string) {
+  const record = await selectOne<PromptQueueItemRecord>(
+    `SELECT ${PROMPT_QUEUE_COLUMNS}
+     FROM prompt_queue_items
+     WHERE id = $1`,
+    [itemId],
+  );
+  if (!record) return null;
+  return parsePromptQueueItemRecord(record);
+}
+
+export async function updatePromptQueueItemSnapshot(
+  itemId: string,
+  snapshot: QueuedPromptSnapshot,
+) {
+  const db = await getDatabase();
+  const result = await db.execute(
+    `UPDATE prompt_queue_items
+     SET prompt_text = $1,
+         execution_snapshot_json = $2,
+         context_fingerprint_json = $3,
+         conversation_revision = $4,
+         status = 'queued',
+         error = NULL,
+         stale_reasons_json = NULL,
+         updated_at = CURRENT_TIMESTAMP
+     WHERE id = $5
+       AND status NOT IN ('starting', 'steering', 'active', 'completed', 'skipped')`,
+    [
+      snapshot.prompt,
+      serializeQueuedPromptSnapshot(snapshot),
+      JSON.stringify(snapshot.contextFingerprint),
+      snapshot.contextFingerprint.conversationRevision,
+      itemId,
+    ],
+  );
+  return result.rowsAffected === 1 ? readPromptQueueItem(itemId) : null;
+}
+
+export async function updatePromptQueueItemContextFingerprint(
+  itemId: string,
+  snapshot: QueuedPromptSnapshot,
+) {
+  const db = await getDatabase();
+  const result = await db.execute(
+    `UPDATE prompt_queue_items
+     SET execution_snapshot_json = $1,
+         context_fingerprint_json = $2,
+         conversation_revision = $3,
+         updated_at = CURRENT_TIMESTAMP
+     WHERE id = $4
+       AND status IN ('queued', 'scheduled-next')`,
+    [
+      serializeQueuedPromptSnapshot(snapshot),
+      JSON.stringify(snapshot.contextFingerprint),
+      snapshot.contextFingerprint.conversationRevision,
+      itemId,
+    ],
+  );
+  return result.rowsAffected === 1 ? readPromptQueueItem(itemId) : null;
+}
+
+export async function reorderPromptQueueItems(
+  chatId: number,
+  orderedItemIds: string[],
+) {
+  if (orderedItemIds.length === 0) return true;
+  const uniqueIds = [...new Set(orderedItemIds)];
+  if (uniqueIds.length !== orderedItemIds.length) return false;
+
+  const db = await getDatabase();
+  const cases = uniqueIds
+    .map((_, index) => `WHEN $${index + 2} THEN ${index}`)
+    .join(" ");
+  const placeholders = uniqueIds
+    .map((_, index) => `$${index + 2}`)
+    .join(", ");
+  const counts = await selectOne<{
+    total_count: number;
+    mutable_count: number;
+  }>(
+    `SELECT
+       COUNT(*) AS total_count,
+       SUM(
+         CASE
+           WHEN status NOT IN ('starting', 'steering', 'active', 'completed', 'skipped')
+           THEN 1
+           ELSE 0
+         END
+       ) AS mutable_count
+     FROM prompt_queue_items
+     WHERE chat_id = $1
+       AND id IN (${placeholders})`,
+    [chatId, ...uniqueIds],
+  );
+  if (Number(counts?.total_count ?? 0) !== uniqueIds.length) return false;
+  const mutableCount = Number(counts?.mutable_count ?? 0);
+  if (mutableCount === 0) return true;
+  const result = await db.execute(
+    `UPDATE prompt_queue_items
+     SET position = CASE id ${cases} ELSE position END,
+         updated_at = CURRENT_TIMESTAMP
+     WHERE chat_id = $1
+       AND id IN (${placeholders})
+       AND status NOT IN ('starting', 'steering', 'active', 'completed', 'skipped')`,
+    [chatId, ...uniqueIds],
+  );
+  return result.rowsAffected === mutableCount;
+}
+
+export async function prioritizePromptQueueItem(itemId: string) {
+  const db = await getDatabase();
+  const result = await db.execute(
+    `UPDATE prompt_queue_items
+     SET send_now_priority = (
+           SELECT COALESCE(MAX(existing.send_now_priority), 0) + 1
+           FROM prompt_queue_items existing
+           WHERE existing.chat_id = prompt_queue_items.chat_id
+         ),
+         status = 'scheduled-next',
+         error = NULL,
+         updated_at = CURRENT_TIMESTAMP
+     WHERE id = $1
+       AND status IN ('queued', 'failed', 'stale', 'scheduled-next')`,
+    [itemId],
+  );
+  return result.rowsAffected === 1 ? readPromptQueueItem(itemId) : null;
+}
+
+export async function claimPromptQueueItem(itemId: string) {
+  const db = await getDatabase();
+  const result = await db.execute(
+    `UPDATE prompt_queue_items
+     SET status = 'starting',
+         error = NULL,
+         stale_reasons_json = NULL,
+         updated_at = CURRENT_TIMESTAMP
+     WHERE id = $1
+       AND status IN ('queued', 'scheduled-next')`,
+    [itemId],
+  );
+  return result.rowsAffected === 1 ? readPromptQueueItem(itemId) : null;
+}
+
+export async function markPromptQueueItemSteering(itemId: string) {
+  return transitionPromptQueueItem(itemId, ["queued", "scheduled-next"], {
+    status: "steering",
+    error: null,
+  });
+}
+
+export async function reschedulePromptQueueItemAfterSteeringRace(
+  itemId: string,
+) {
+  return transitionPromptQueueItem(itemId, ["steering"], {
+    status: "scheduled-next",
+    error: null,
+  });
+}
+
+export async function acceptPromptQueueItem(input: {
+  itemId: string;
+  runId: number;
+  turnId: string;
+}) {
+  const db = await getDatabase();
+  const result = await db.execute(
+    `UPDATE prompt_queue_items
+     SET status = 'active',
+         linked_run_id = $1,
+         linked_turn_id = $2,
+         error = NULL,
+         accepted_at = CURRENT_TIMESTAMP,
+         updated_at = CURRENT_TIMESTAMP
+     WHERE id = $3
+       AND status IN ('starting', 'steering')`,
+    [input.runId, input.turnId, input.itemId],
+  );
+  return result.rowsAffected === 1 ? readPromptQueueItem(input.itemId) : null;
+}
+
+export async function completePromptQueueItem(itemId: string) {
+  return transitionPromptQueueItem(
+    itemId,
+    ["active", "steering"],
+    {
+      status: "completed",
+      error: null,
+      completedAt: true,
+    },
+  );
+}
+
+export async function failPromptQueueItem(
+  itemId: string,
+  error: string,
+) {
+  return transitionPromptQueueItem(
+    itemId,
+    ["queued", "scheduled-next", "starting", "steering", "active", "stale"],
+    { status: "failed", error, clearSendNowPriority: true },
+  );
+}
+
+export async function markPromptQueueItemStale(
+  itemId: string,
+  reasons: string[],
+) {
+  const db = await getDatabase();
+  const result = await db.execute(
+    `UPDATE prompt_queue_items
+     SET status = 'stale',
+         error = NULL,
+         stale_reasons_json = $1,
+         updated_at = CURRENT_TIMESTAMP
+     WHERE id = $2
+       AND status IN ('queued', 'scheduled-next', 'failed')`,
+    [JSON.stringify(reasons), itemId],
+  );
+  return result.rowsAffected === 1 ? readPromptQueueItem(itemId) : null;
+}
+
+export async function retryPromptQueueItem(itemId: string) {
+  return transitionPromptQueueItem(
+    itemId,
+    ["failed", "stale"],
+    {
+      status: "queued",
+      error: null,
+      clearStaleReasons: true,
+    },
+  );
+}
+
+export async function skipPromptQueueItem(itemId: string) {
+  return transitionPromptQueueItem(
+    itemId,
+    ["queued", "scheduled-next", "failed", "stale"],
+    {
+      status: "skipped",
+      error: null,
+      completedAt: true,
+    },
+  );
+}
+
+export async function removePromptQueueItem(itemId: string) {
+  const db = await getDatabase();
+  const result = await db.execute(
+    `DELETE FROM prompt_queue_items
+     WHERE id = $1
+       AND linked_run_id IS NULL
+       AND status NOT IN ('starting', 'steering', 'active')`,
+    [itemId],
+  );
+  return result.rowsAffected === 1;
+}
+
+export async function recoverInterruptedPromptQueueItems() {
+  const db = await getDatabase();
+  const result = await db.execute(
+    `UPDATE prompt_queue_items
+     SET status = 'failed',
+         error = CASE status
+           WHEN 'steering' THEN 'The app closed before delivery could be confirmed.'
+           WHEN 'active' THEN 'The queued run was interrupted when the app closed.'
+           ELSE 'The app closed before Codex accepted this prompt.'
+         END,
+         send_now_priority = NULL,
+         updated_at = CURRENT_TIMESTAMP
+     WHERE status IN ('starting', 'steering', 'active')`,
+  );
+  return result.rowsAffected;
+}
+
+export async function advanceChatConversationRevision(
+  chatId: number,
+  options: { queueOwned: boolean },
+) {
+  const db = await getDatabase();
+  await db.execute(
+    `UPDATE chats
+     SET conversation_revision = conversation_revision + 1,
+         updated_at = CURRENT_TIMESTAMP
+     WHERE id = $1`,
+    [chatId],
+  );
+  const row = await selectOne<{ conversation_revision: number }>(
+    `SELECT conversation_revision FROM chats WHERE id = $1`,
+    [chatId],
+  );
+  const revision = row?.conversation_revision ?? 0;
+  if (options.queueOwned) {
+    await db.execute(
+      `UPDATE prompt_queue_items
+       SET conversation_revision = $1,
+           updated_at = CURRENT_TIMESTAMP
+       WHERE chat_id = $2
+         AND status IN ('queued', 'scheduled-next')`,
+      [revision, chatId],
+    );
+  }
+  return revision;
+}
+
+async function transitionPromptQueueItem(
+  itemId: string,
+  currentStatuses: PromptQueueStatus[],
+  update: {
+    status: PromptQueueStatus;
+    error: string | null;
+    clearStaleReasons?: boolean;
+    clearSendNowPriority?: boolean;
+    completedAt?: boolean;
+  },
+) {
+  const db = await getDatabase();
+  const result = await db.execute(
+    `UPDATE prompt_queue_items
+     SET status = $1,
+         error = $2,
+         stale_reasons_json = CASE WHEN $3 = 1 THEN NULL ELSE stale_reasons_json END,
+         completed_at = CASE WHEN $4 = 1 THEN CURRENT_TIMESTAMP ELSE completed_at END,
+         send_now_priority = CASE WHEN $5 = 1 THEN NULL ELSE send_now_priority END,
+         updated_at = CURRENT_TIMESTAMP
+     WHERE id = $6
+       AND status IN (${currentStatuses
+         .map((_, index) => `$${index + 7}`)
+         .join(", ")})`,
+    [
+      update.status,
+      update.error,
+      update.clearStaleReasons ? 1 : 0,
+      update.completedAt ? 1 : 0,
+      update.clearSendNowPriority ? 1 : 0,
+      itemId,
+      ...currentStatuses,
+    ],
+  );
+  return result.rowsAffected === 1 ? readPromptQueueItem(itemId) : null;
 }
 
 export async function recoverInterruptedChatTitleGenerations() {
@@ -428,6 +953,11 @@ export async function upsertExternalCodexChats(chats: ExternalCodexChatInput[]) 
              external_created_at = $7,
              external_updated_at = $8,
              updated_at = $8,
+             conversation_revision = conversation_revision + CASE
+               WHEN COALESCE(external_updated_at, '') <> COALESCE($8, '')
+               THEN 1
+               ELSE 0
+             END,
              last_synced_at = CURRENT_TIMESTAMP
          WHERE id = $9`,
         [
@@ -902,6 +1432,7 @@ export async function listWorkspaceChats(workspaceId: number) {
       chats.collaboration_mode, chats.saved_default_collaboration_mode_json,
       chats.title_generation_state, chats.title_fallback,
       chats.title_manually_edited, chats.title_generation_started_at,
+      chats.conversation_revision,
       latest_run.account_label,
       latest_run.account_email,
       MAX(
@@ -965,6 +1496,7 @@ export async function getChatWithRuns(chatId: number): Promise<ChatWithRuns> {
       chats.collaboration_mode, chats.saved_default_collaboration_mode_json,
       chats.title_generation_state, chats.title_fallback,
       chats.title_manually_edited, chats.title_generation_started_at,
+      chats.conversation_revision,
       latest_run.account_label,
       latest_run.account_email,
       MAX(
@@ -1472,6 +2004,10 @@ function buildLocalHistoryPages(
 
 export async function softDeleteChat(chatId: number) {
   const db = await getDatabase();
+  await db.execute(
+    "DELETE FROM prompt_queue_items WHERE chat_id = $1",
+    [chatId],
+  );
   await db.execute(
     "DELETE FROM external_chat_history_indexes WHERE chat_id = $1",
     [chatId],

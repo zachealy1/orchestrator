@@ -430,6 +430,7 @@ export type ChatRecord = {
   title_fallback?: string | null;
   title_manually_edited?: number;
   title_generation_started_at?: string | null;
+  conversation_revision?: number;
   created_at: string;
   updated_at: string;
   deleted_at: string | null;
@@ -694,6 +695,91 @@ export type RunExecutionSettings = {
   contextFiles: ComposerContextFile[];
   selectedSkills: SelectedComposerSkill[];
   goalMode: boolean;
+};
+
+export type PromptQueueStatus =
+  | "queued"
+  | "scheduled-next"
+  | "starting"
+  | "steering"
+  | "active"
+  | "failed"
+  | "stale"
+  | "skipped"
+  | "completed";
+
+export type PromptQueueContextFileFingerprint = {
+  path: string;
+  canonicalPath: string | null;
+  size: number | null;
+  modifiedAtMs: number | null;
+  available: boolean;
+};
+
+export type PromptQueueContextFingerprint = {
+  version: 1;
+  workspacePath: string;
+  branch: string | null;
+  headCommit: string | null;
+  worktreeFingerprint: string | null;
+  profileKey: CodexProfileKey;
+  threadId: string | null;
+  conversationRevision: number;
+  files: PromptQueueContextFileFingerprint[];
+};
+
+export type PromptQueueContextInspection = Pick<
+  PromptQueueContextFingerprint,
+  "workspacePath" | "branch" | "headCommit" | "worktreeFingerprint" | "files"
+>;
+
+export type QueuedPromptSnapshot = {
+  version: 1;
+  prompt: string;
+  executionSettings: RunExecutionSettings;
+  contextFingerprint: PromptQueueContextFingerprint;
+};
+
+export type PromptQueueItemRecord = {
+  id: string;
+  client_message_id: string;
+  workspace_id: number;
+  chat_id: number;
+  position: number;
+  send_now_priority: number | null;
+  prompt_text: string;
+  execution_snapshot_json: string;
+  context_fingerprint_json: string;
+  conversation_revision: number;
+  status: PromptQueueStatus;
+  linked_run_id: number | null;
+  linked_turn_id: string | null;
+  error: string | null;
+  stale_reasons_json: string | null;
+  created_at: string;
+  updated_at: string;
+  accepted_at: string | null;
+  completed_at: string | null;
+};
+
+export type PromptQueueItem = {
+  id: string;
+  clientMessageId: string;
+  workspaceId: number;
+  chatId: number;
+  position: number;
+  sendNowPriority: number | null;
+  prompt: string;
+  snapshot: QueuedPromptSnapshot;
+  status: PromptQueueStatus;
+  linkedRunId: number | null;
+  linkedTurnId: string | null;
+  error: string | null;
+  staleReasons: string[];
+  createdAt: string;
+  updatedAt: string;
+  acceptedAt: string | null;
+  completedAt: string | null;
 };
 
 export type RunExecutionSettingsSource = "captured" | "legacy";

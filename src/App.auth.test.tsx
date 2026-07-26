@@ -47,6 +47,7 @@ const mocks = vi.hoisted(() => ({
   readWorkspaceFilePreviewMock: vi.fn(),
   prepareImageAttachmentMock: vi.fn(),
   inspectDroppedContextPathsMock: vi.fn(),
+  inspectPromptQueueContextMock: vi.fn(),
   probeLocalWebPreviewMock: vi.fn(),
   checkoutGitBranchMock: vi.fn(),
   runPreflightMock: vi.fn(),
@@ -67,12 +68,36 @@ const mocks = vi.hoisted(() => ({
   listDuplicateProfilesPendingCleanupMock: vi.fn(),
   completeDuplicateProfileCleanupMock: vi.fn(),
   createChatMock: vi.fn(),
+  createChatWithQueuedPromptMock: vi.fn(),
   claimChatTitleGenerationMock: vi.fn(),
   completeChatTitleGenerationMock: vi.fn(),
   failChatTitleGenerationMock: vi.fn(),
   recoverAbandonedRunsMock: vi.fn(),
   recoverInterruptedChatTitleGenerationsMock: vi.fn(),
   updateChatMock: vi.fn(),
+  chatHasPendingPlanReviewMock: vi.fn(),
+  getChatRecordMock: vi.fn(),
+  getNextChatTurnIndexMock: vi.fn(),
+  listPromptQueueItemsMock: vi.fn(),
+  listRestoredPromptQueueItemsMock: vi.fn(),
+  enqueuePromptQueueItemMock: vi.fn(),
+  readPromptQueueItemMock: vi.fn(),
+  updatePromptQueueItemSnapshotMock: vi.fn(),
+  updatePromptQueueItemContextFingerprintMock: vi.fn(),
+  reorderPromptQueueItemsMock: vi.fn(),
+  prioritizePromptQueueItemMock: vi.fn(),
+  claimPromptQueueItemMock: vi.fn(),
+  markPromptQueueItemSteeringMock: vi.fn(),
+  reschedulePromptQueueItemAfterSteeringRaceMock: vi.fn(),
+  acceptPromptQueueItemMock: vi.fn(),
+  completePromptQueueItemMock: vi.fn(),
+  failPromptQueueItemMock: vi.fn(),
+  markPromptQueueItemStaleMock: vi.fn(),
+  retryPromptQueueItemMock: vi.fn(),
+  skipPromptQueueItemMock: vi.fn(),
+  removePromptQueueItemMock: vi.fn(),
+  recoverInterruptedPromptQueueItemsMock: vi.fn(),
+  advanceChatConversationRevisionMock: vi.fn(),
   listWorkspaceChatsMock: vi.fn(),
   getChatWithRunsMock: vi.fn(),
   listChatRunsPageMock: vi.fn(),
@@ -103,6 +128,12 @@ const mocks = vi.hoisted(() => ({
   upsertWorkspaceMock: vi.fn(),
   upsertExternalCodexChatsMock: vi.fn(),
   registerNativeContextFileDropMock: vi.fn(),
+  promptQueueItems: new Map<string, any>(),
+  promptQueueChats: new Map<number, any>(),
+  promptQueueState: {
+    priority: 0,
+    revision: 0,
+  },
   nativeContextFileDropHandler: null as
     | ((event: {
         type: "enter" | "drop";
@@ -231,6 +262,7 @@ vi.mock("./codexClient", () => ({
   readWorkspaceFilePreview: mocks.readWorkspaceFilePreviewMock,
   prepareImageAttachment: mocks.prepareImageAttachmentMock,
   inspectDroppedContextPaths: mocks.inspectDroppedContextPathsMock,
+  inspectPromptQueueContext: mocks.inspectPromptQueueContextMock,
   probeLocalWebPreview: mocks.probeLocalWebPreviewMock,
   resolveDefaultCodexServerRequest: mocks.resolveDefaultCodexServerRequestMock,
   resolveCodexServerRequest: mocks.resolveCodexServerRequestMock,
@@ -257,33 +289,53 @@ vi.mock("./codexClient", () => ({
 
 vi.mock("./db", () => ({
   activateChatAccountHandoff: mocks.activateChatAccountHandoffMock,
+  acceptPromptQueueItem: mocks.acceptPromptQueueItemMock,
+  advanceChatConversationRevision: mocks.advanceChatConversationRevisionMock,
   appendRunEvent: mocks.appendRunEventMock,
   appendRunEvents: mocks.appendRunEventsMock,
   buildLocalChatHistoryIndex: mocks.buildLocalChatHistoryIndexMock,
   claimChatTitleGeneration: mocks.claimChatTitleGenerationMock,
   completeDuplicateProfileCleanup: mocks.completeDuplicateProfileCleanupMock,
   completeChatTitleGeneration: mocks.completeChatTitleGenerationMock,
+  completePromptQueueItem: mocks.completePromptQueueItemMock,
+  chatHasPendingPlanReview: mocks.chatHasPendingPlanReviewMock,
   createChat: mocks.createChatMock,
+  createChatWithQueuedPrompt: mocks.createChatWithQueuedPromptMock,
   createCodexAccount: mocks.createCodexAccountMock,
   createRun: mocks.createRunMock,
   createTask: mocks.createTaskMock,
+  enqueuePromptQueueItem: mocks.enqueuePromptQueueItemMock,
+  failPromptQueueItem: mocks.failPromptQueueItemMock,
+  getChatRecord: mocks.getChatRecordMock,
   getChatWithRuns: mocks.getChatWithRunsMock,
+  getNextChatTurnIndex: mocks.getNextChatTurnIndexMock,
   getAnalyticsSummary: mocks.getAnalyticsSummaryMock,
   listChatRunsPage: mocks.listChatRunsPageMock,
   listCodexAccounts: mocks.listCodexAccountsMock,
   listDuplicateProfilesPendingCleanup:
     mocks.listDuplicateProfilesPendingCleanupMock,
+  listPromptQueueItems: mocks.listPromptQueueItemsMock,
+  listRestoredPromptQueueItems: mocks.listRestoredPromptQueueItemsMock,
   listWorkspaceChats: mocks.listWorkspaceChatsMock,
   listWorkspaceRuns: mocks.listWorkspaceRunsMock,
   listWorkspaces: mocks.listWorkspacesMock,
   recordTokenUsage: mocks.recordTokenUsageMock,
   readExternalChatHistoryIndex: mocks.readExternalChatHistoryIndexMock,
   readExternalTranscriptSnapshot: mocks.readExternalTranscriptSnapshotMock,
+  readPromptQueueItem: mocks.readPromptQueueItemMock,
   recoverAbandonedRuns: mocks.recoverAbandonedRunsMock,
+  recoverInterruptedPromptQueueItems:
+    mocks.recoverInterruptedPromptQueueItemsMock,
   recoverInterruptedChatTitleGenerations:
     mocks.recoverInterruptedChatTitleGenerationsMock,
   renameCodexAccount: mocks.renameCodexAccountMock,
+  removePromptQueueItem: mocks.removePromptQueueItemMock,
+  reorderPromptQueueItems: mocks.reorderPromptQueueItemsMock,
+  reschedulePromptQueueItemAfterSteeringRace:
+    mocks.reschedulePromptQueueItemAfterSteeringRaceMock,
+  retryPromptQueueItem: mocks.retryPromptQueueItemMock,
   softDeleteWorkspace: mocks.softDeleteWorkspaceMock,
+  skipPromptQueueItem: mocks.skipPromptQueueItemMock,
   savePreflightReport: mocks.savePreflightReportMock,
   saveExternalChatHistoryIndex: mocks.saveExternalChatHistoryIndexMock,
   activateExternalTranscriptSnapshot:
@@ -293,8 +345,15 @@ vi.mock("./db", () => ({
   softDeleteCodexAccount: mocks.softDeleteCodexAccountMock,
   softDeleteRun: mocks.softDeleteRunMock,
   failChatTitleGeneration: mocks.failChatTitleGenerationMock,
+  prioritizePromptQueueItem: mocks.prioritizePromptQueueItemMock,
+  claimPromptQueueItem: mocks.claimPromptQueueItemMock,
+  markPromptQueueItemStale: mocks.markPromptQueueItemStaleMock,
+  markPromptQueueItemSteering: mocks.markPromptQueueItemSteeringMock,
   updateCodexAccount: mocks.updateCodexAccountMock,
   updateChat: mocks.updateChatMock,
+  updatePromptQueueItemContextFingerprint:
+    mocks.updatePromptQueueItemContextFingerprintMock,
+  updatePromptQueueItemSnapshot: mocks.updatePromptQueueItemSnapshotMock,
   updateRun: mocks.updateRunMock,
   updateTaskStatus: mocks.updateTaskStatusMock,
   upsertExternalCodexChats: mocks.upsertExternalCodexChatsMock,
@@ -437,6 +496,7 @@ function workspaceChatFixture(
     total_tokens: number | null;
     duration_ms: number | null;
     latest_activity_at: string;
+    conversation_revision: number;
   }> = {},
 ) {
   return {
@@ -465,6 +525,7 @@ function workspaceChatFixture(
     total_tokens: overrides.total_tokens ?? 1280,
     duration_ms: overrides.duration_ms ?? 60000,
     latest_model: "GPT-5.5",
+    conversation_revision: overrides.conversation_revision ?? 0,
   };
 }
 
@@ -514,7 +575,78 @@ function externalTranscriptSnapshotFixture(count: number) {
   };
 }
 
+function promptQueueItemFixture(input: {
+  id: string;
+  clientMessageId: string;
+  workspaceId: number;
+  chatId: number;
+  prompt: string;
+  snapshot: any;
+}) {
+  const position = Array.from(mocks.promptQueueItems.values()).filter(
+    (item) =>
+      item.chatId === input.chatId &&
+      item.status !== "completed" &&
+      item.status !== "skipped",
+  ).length;
+  return {
+    id: input.id,
+    clientMessageId: input.clientMessageId,
+    workspaceId: input.workspaceId,
+    chatId: input.chatId,
+    position,
+    sendNowPriority: null,
+    prompt: input.prompt,
+    snapshot: input.snapshot,
+    status: "queued",
+    linkedRunId: null,
+    linkedTurnId: null,
+    error: null,
+    staleReasons: [],
+    createdAt: "2026-06-30T09:00:00Z",
+    updatedAt: "2026-06-30T09:00:00Z",
+    acceptedAt: null,
+    completedAt: null,
+  };
+}
+
+function updatePromptQueueFixture(
+  itemId: string,
+  update: Record<string, unknown>,
+) {
+  const current = mocks.promptQueueItems.get(itemId);
+  if (!current) return null;
+  const next = {
+    ...current,
+    ...update,
+    updatedAt: "2026-06-30T09:00:01Z",
+  };
+  mocks.promptQueueItems.set(itemId, next);
+  return next;
+}
+
 function prepareDefaults() {
+  [
+    mocks.createChatMock,
+    mocks.createTaskMock,
+    mocks.createRunMock,
+    mocks.chatHasPendingPlanReviewMock,
+    mocks.generateChatTitleMock,
+    mocks.inspectDroppedContextPathsMock,
+    mocks.listCodexModelsMock,
+    mocks.loadDefaultProfileTurnActivityMock,
+    mocks.readBrowserRuntimeStatusMock,
+    mocks.readBrowserSessionStatusMock,
+    mocks.resolveCodexServerRequestMock,
+    mocks.runPreflightMock,
+    mocks.sendAgentNotificationMock,
+    mocks.updateRunMock,
+  ].forEach((mock) => mock.mockReset());
+  mocks.promptQueueItems.clear();
+  mocks.promptQueueChats.clear();
+  mocks.promptQueueState.priority = 0;
+  mocks.promptQueueState.revision = 0;
+  mocks.chatHasPendingPlanReviewMock.mockResolvedValue(false);
   mocks.connectCodexMock.mockResolvedValue({
     alreadyConnected: false,
     pid: 1234,
@@ -665,6 +797,21 @@ function prepareDefaults() {
       rejected: [],
     }),
   );
+  mocks.inspectPromptQueueContextMock.mockImplementation(
+    async (workspacePath: string, paths: string[]) => ({
+      workspacePath,
+      branch: "main",
+      headCommit: "0123456789abcdef",
+      worktreeFingerprint: "clean",
+      files: paths.map((path) => ({
+        path,
+        canonicalPath: path,
+        size: 128,
+        modifiedAtMs: 1_750_000_000_000,
+        available: true,
+      })),
+    }),
+  );
   mocks.probeLocalWebPreviewMock.mockImplementation(async (url: string) => ({
     normalizedUrl: url,
     reachable: true,
@@ -783,8 +930,239 @@ function prepareDefaults() {
     created_at: "2026-06-30T09:00:00Z",
     updated_at: "2026-06-30T09:00:00Z",
     deleted_at: null,
+    conversation_revision: 0,
   });
-  mocks.updateChatMock.mockResolvedValue(undefined);
+  mocks.createChatWithQueuedPromptMock.mockImplementation(async (input) => {
+    const created = await mocks.createChatMock({
+      workspaceId: input.workspaceId,
+      accountId: input.accountId,
+      title: input.title,
+      status: input.status,
+      generateTitle: input.generateTitle,
+    });
+    const chat = {
+      ...created,
+      codex_thread_id: null,
+      status: input.status,
+      workspace_id: input.workspaceId,
+      account_id: input.accountId,
+      profile_key:
+        input.accountId === null ? null : `account:${input.accountId}`,
+      conversation_revision: created.conversation_revision ?? 0,
+    };
+    const item = promptQueueItemFixture({
+      id: input.itemId,
+      clientMessageId: input.clientMessageId,
+      workspaceId: input.workspaceId,
+      chatId: chat.id,
+      prompt: input.prompt,
+      snapshot: input.snapshot,
+    });
+    mocks.promptQueueChats.set(chat.id, chat);
+    mocks.promptQueueItems.set(item.id, item);
+    return { chat, item };
+  });
+  mocks.enqueuePromptQueueItemMock.mockImplementation(async (input) => {
+    const item = promptQueueItemFixture(input);
+    mocks.promptQueueItems.set(item.id, item);
+    return item;
+  });
+  mocks.readPromptQueueItemMock.mockImplementation(async (itemId: string) =>
+    mocks.promptQueueItems.get(itemId) ?? null,
+  );
+  mocks.listPromptQueueItemsMock.mockImplementation(async (chatId: number) =>
+    Array.from(mocks.promptQueueItems.values())
+      .filter(
+        (item) =>
+          item.chatId === chatId &&
+          item.status !== "completed" &&
+          item.status !== "skipped",
+      )
+      .sort(
+        (left, right) =>
+          (left.sendNowPriority ?? Number.MAX_SAFE_INTEGER) -
+            (right.sendNowPriority ?? Number.MAX_SAFE_INTEGER) ||
+          left.position - right.position,
+      ),
+  );
+  mocks.listRestoredPromptQueueItemsMock.mockResolvedValue([]);
+  mocks.getChatRecordMock.mockImplementation(async (chatId: number) => {
+    const queuedChat = mocks.promptQueueChats.get(chatId);
+    if (queuedChat) return queuedChat;
+    const listedChats = await mocks.listWorkspaceChatsMock(workspace.id);
+    const listedChat = listedChats.find((chat: any) => chat.id === chatId);
+    if (listedChat) return listedChat;
+    const result = await mocks.getChatWithRunsMock(chatId);
+    return result?.chat ?? null;
+  });
+  mocks.getNextChatTurnIndexMock.mockImplementation(async (chatId: number) => {
+    const chat = await mocks.getChatRecordMock(chatId);
+    return Math.max(1, Number(chat?.turn_count ?? 0) + 1);
+  });
+  mocks.updatePromptQueueItemSnapshotMock.mockImplementation(
+    async (itemId: string, snapshot: any) =>
+      updatePromptQueueFixture(itemId, {
+        prompt: snapshot.prompt,
+        snapshot,
+        status: "queued",
+        error: null,
+        staleReasons: [],
+      }),
+  );
+  mocks.updatePromptQueueItemContextFingerprintMock.mockImplementation(
+    async (itemId: string, snapshot: any) =>
+      updatePromptQueueFixture(itemId, { snapshot }),
+  );
+  mocks.reorderPromptQueueItemsMock.mockImplementation(
+    async (_chatId: number, orderedItemIds: string[]) => {
+      orderedItemIds.forEach((itemId, position) => {
+        updatePromptQueueFixture(itemId, { position });
+      });
+      return true;
+    },
+  );
+  mocks.prioritizePromptQueueItemMock.mockImplementation(
+    async (itemId: string) =>
+      updatePromptQueueFixture(itemId, {
+        status: "scheduled-next",
+        sendNowPriority: ++mocks.promptQueueState.priority,
+        error: null,
+      }),
+  );
+  mocks.claimPromptQueueItemMock.mockImplementation(async (itemId: string) => {
+    const item = mocks.promptQueueItems.get(itemId);
+    if (!item || !["queued", "scheduled-next"].includes(item.status)) {
+      return null;
+    }
+    return updatePromptQueueFixture(itemId, {
+      status: "starting",
+      error: null,
+      staleReasons: [],
+    });
+  });
+  mocks.markPromptQueueItemSteeringMock.mockImplementation(
+    async (itemId: string) =>
+      updatePromptQueueFixture(itemId, {
+        status: "steering",
+        error: null,
+      }),
+  );
+  mocks.reschedulePromptQueueItemAfterSteeringRaceMock.mockImplementation(
+    async (itemId: string) =>
+      updatePromptQueueFixture(itemId, {
+        status: "scheduled-next",
+        error: null,
+      }),
+  );
+  mocks.acceptPromptQueueItemMock.mockImplementation(async (input) =>
+    updatePromptQueueFixture(input.itemId, {
+      status: "active",
+      linkedRunId: input.runId,
+      linkedTurnId: input.turnId,
+      error: null,
+      acceptedAt: "2026-06-30T09:00:02Z",
+    }),
+  );
+  mocks.completePromptQueueItemMock.mockImplementation(
+    async (itemId: string) => {
+      const item = mocks.promptQueueItems.get(itemId);
+      const completed = updatePromptQueueFixture(itemId, {
+        status: "completed",
+        error: null,
+        completedAt: "2026-06-30T09:01:00Z",
+      });
+      if (item) {
+        const chat = mocks.promptQueueChats.get(item.chatId);
+        if (chat) {
+          mocks.promptQueueChats.set(item.chatId, {
+            ...chat,
+            turn_count: Number(chat.turn_count ?? 0) + 1,
+          });
+        }
+      }
+      return completed;
+    },
+  );
+  mocks.failPromptQueueItemMock.mockImplementation(
+    async (itemId: string, error: string) =>
+      updatePromptQueueFixture(itemId, {
+        status: "failed",
+        sendNowPriority: null,
+        error,
+      }),
+  );
+  mocks.markPromptQueueItemStaleMock.mockImplementation(
+    async (itemId: string, reasons: string[]) =>
+      updatePromptQueueFixture(itemId, {
+        status: "stale",
+        error: null,
+        staleReasons: reasons,
+      }),
+  );
+  mocks.retryPromptQueueItemMock.mockImplementation(async (itemId: string) =>
+    updatePromptQueueFixture(itemId, {
+      status: "queued",
+      error: null,
+      staleReasons: [],
+    }),
+  );
+  mocks.skipPromptQueueItemMock.mockImplementation(async (itemId: string) =>
+    updatePromptQueueFixture(itemId, {
+      status: "skipped",
+      error: null,
+      completedAt: "2026-06-30T09:01:00Z",
+    }),
+  );
+  mocks.removePromptQueueItemMock.mockImplementation(async (itemId: string) =>
+    mocks.promptQueueItems.delete(itemId),
+  );
+  mocks.recoverInterruptedPromptQueueItemsMock.mockResolvedValue(0);
+  mocks.advanceChatConversationRevisionMock.mockImplementation(
+    async (chatId: number, options: { queueOwned: boolean }) => {
+      const revision = ++mocks.promptQueueState.revision;
+      const chat = mocks.promptQueueChats.get(chatId);
+      if (chat) {
+        mocks.promptQueueChats.set(chatId, {
+          ...chat,
+          conversation_revision: revision,
+        });
+      }
+      if (options.queueOwned) {
+        Array.from(mocks.promptQueueItems.values()).forEach((item) => {
+          if (
+            item.chatId === chatId &&
+            ["queued", "scheduled-next"].includes(item.status)
+          ) {
+            updatePromptQueueFixture(item.id, {
+              snapshot: {
+                ...item.snapshot,
+                contextFingerprint: {
+                  ...item.snapshot.contextFingerprint,
+                  conversationRevision: revision,
+                },
+              },
+            });
+          }
+        });
+      }
+      return revision;
+    },
+  );
+  mocks.updateChatMock.mockImplementation(async (chatId: number, fields) => {
+    const chat = mocks.promptQueueChats.get(chatId);
+    if (!chat) return;
+    mocks.promptQueueChats.set(chatId, {
+      ...chat,
+      ...("title" in fields ? { title: fields.title } : {}),
+      ...("codexThreadId" in fields
+        ? { codex_thread_id: fields.codexThreadId }
+        : {}),
+      ...("status" in fields ? { status: fields.status } : {}),
+      ...("collaborationMode" in fields
+        ? { collaboration_mode: fields.collaborationMode }
+        : {}),
+    });
+  });
   mocks.listWorkspaceChatsMock.mockResolvedValue([]);
   mocks.getChatWithRunsMock.mockImplementation(async (chatId: number) =>
     workspaceChatWithRunsFixture(workspaceChatFixture({ id: chatId })),
@@ -4659,13 +5037,11 @@ describe("App Codex auth", () => {
     await user.click(
       within(workspaceNav).getByRole("button", { name: "orchestrator" }),
     );
+    const transcript = await screen.findByLabelText("Task chat transcript");
     expect(
-      within(screen.getByLabelText("Task chat transcript")).getByLabelText(
-        "Submitted prompt",
-      ),
+      within(transcript).getByLabelText("Submitted prompt"),
     ).toHaveTextContent("Background setup");
     expect(screen.getByRole("button", { name: /stop codex/i })).toBeInTheDocument();
-    expect(mocks.getChatWithRunsMock).not.toHaveBeenCalledWith(407);
   });
 
   it("restores a historical chat and keeps an explicit new chat empty", async () => {
@@ -5579,7 +5955,7 @@ describe("App Codex auth", () => {
     ).toBe(false);
   });
 
-  it("fails closed when native Plan and Default presets are unavailable", async () => {
+  it("fails and pauses a queued Plan when native Plan presets are unavailable", async () => {
     prepareSignedInRun();
     mocks.codexRpcMock.mockImplementation(
       async (_accountId: number, method: string) => {
@@ -5596,9 +5972,14 @@ describe("App Codex auth", () => {
     await user.click(screen.getByRole("button", { name: /run codex/i }));
 
     await waitFor(() =>
-      expect(screen.getByLabelText("Prompt")).toHaveValue("Plan unsupported work"),
+      expect(mocks.failPromptQueueItemMock).toHaveBeenCalledWith(
+        expect.any(String),
+        expect.stringMatching(/Plan/i),
+      ),
     );
-    expect(mocks.createChatMock).not.toHaveBeenCalled();
+    expect(screen.getByLabelText("Prompt")).toHaveValue("");
+    expect(screen.getByText("Queue paused")).toBeInTheDocument();
+    expect(mocks.createChatMock).toHaveBeenCalledTimes(1);
     expect(
       mocks.codexRpcMock.mock.calls.some((call) => call[1] === "turn/start"),
     ).toBe(false);
@@ -6565,7 +6946,7 @@ describe("App Codex auth", () => {
     );
   });
 
-  it("restores images and prompt when image preparation fails before turn start", async () => {
+  it("retains images in a failed queue item when preparation fails before turn start", async () => {
     prepareSignedInRun();
     const imagePath = `${workspace.path}/broken.png`;
     mocks.openDialogMock.mockResolvedValue(imagePath);
@@ -6579,10 +6960,13 @@ describe("App Codex auth", () => {
     await user.click(screen.getByRole("button", { name: /run codex/i }));
 
     await waitFor(() =>
-      expect(screen.getByLabelText("Prompt")).toHaveValue("Inspect this image"),
+      expect(mocks.failPromptQueueItemMock).toHaveBeenCalledWith(
+        expect.any(String),
+        "Unable to prepare broken.png: Selected image could not be decoded",
+      ),
     );
-    const contextList = screen.getByLabelText("Selected context files");
-    expect(within(contextList).getByText("broken.png")).toBeInTheDocument();
+    expect(screen.getByLabelText("Prompt")).toHaveValue("");
+    expect(screen.getByText("Queue paused")).toBeInTheDocument();
     expect(screen.getByText("Image not sent")).toBeInTheDocument();
     expect(mocks.createTaskMock).not.toHaveBeenCalled();
     expect(
@@ -7988,7 +8372,7 @@ describe("App Codex auth", () => {
     expect(JSON.parse(localStorage.getItem("orchestrator.codex-access.v2")!)).toEqual({
       accessMode: "full-access",
     });
-    expect(screen.getByRole("combobox", { name: "Access" })).toBeDisabled();
+    expect(screen.getByRole("combobox", { name: "Access" })).toBeEnabled();
 
     await emitCodexNotification({
       method: "turn/completed",
@@ -8234,7 +8618,7 @@ describe("App Codex auth", () => {
     expect(handoffContext).not.toContain("User: Implement the plan.");
   });
 
-  it("rolls back the visible handoff when chat activation fails", async () => {
+  it("fails the queued handoff without changing the current chat owner", async () => {
     prepareSignedInRun();
     mocks.listCodexAccountsMock.mockResolvedValue([
       signedInAccount,
@@ -8325,7 +8709,12 @@ describe("App Codex auth", () => {
         },
       ),
     );
-    expect(prompt).toHaveValue("Retry this handoff");
+    expect(prompt).toHaveValue("");
+    expect(screen.getByText("Queue paused")).toBeInTheDocument();
+    expect(mocks.failPromptQueueItemMock).toHaveBeenCalledWith(
+      expect.any(String),
+      expect.stringMatching(/persist|ownership|activate/i),
+    );
     expect(mocks.updateChatMock).not.toHaveBeenCalledWith(
       452,
       expect.objectContaining({ status: "failed" }),
@@ -8815,7 +9204,7 @@ describe("App Codex auth", () => {
       defaultReasoningEffort: "high",
       isDefault: true,
     };
-    mocks.listCodexModelsMock.mockResolvedValueOnce([unavailableModel]);
+    mocks.listCodexModelsMock.mockResolvedValue([unavailableModel]);
 
     const { user } = await renderApp();
     expect(
@@ -8935,7 +9324,7 @@ describe("App Codex auth", () => {
         "Timed out waiting for Codex response to account/read",
       ),
     ).toBeInTheDocument();
-    expect(mocks.createChatMock).not.toHaveBeenCalled();
+    expect(mocks.createChatMock).toHaveBeenCalledTimes(1);
     expect(screen.getByLabelText("Codex account")).toBeInTheDocument();
     expect(screen.queryByLabelText("Sign in to Codex")).not.toBeInTheDocument();
 
@@ -9040,7 +9429,11 @@ describe("App Codex auth", () => {
       expect(screen.getByRole("button", { name: /stop codex/i })).toBeEnabled();
       expect(mocks.runPreflightMock).not.toHaveBeenCalled();
       expect(mocks.createTaskMock).not.toHaveBeenCalled();
-      expect(mocks.codexRpcMock).not.toHaveBeenCalled();
+      expect(
+        mocks.codexRpcMock.mock.calls.some(([, method]) =>
+          ["thread/start", "turn/start"].includes(method),
+        ),
+      ).toBe(false);
 
       await animationFrames.flush();
       await waitFor(() => expect(mocks.createTaskMock).toHaveBeenCalledTimes(1));
@@ -9075,26 +9468,35 @@ describe("App Codex auth", () => {
 
       await user.click(screen.getByRole("button", { name: /stop codex/i }));
 
-      expect(screen.getByLabelText("Prompt")).toHaveValue("Stop while preparing");
+      expect(screen.getByLabelText("Prompt")).toHaveValue("");
       expect(
         within(screen.getByLabelText("Run summary")).getByText("Stopped by user."),
       ).toBeInTheDocument();
+      expect(screen.getByText("Queue paused")).toBeInTheDocument();
       expect(mocks.stopCodexMock).not.toHaveBeenCalled();
       expect(mocks.runPreflightMock).not.toHaveBeenCalled();
       expect(mocks.createTaskMock).not.toHaveBeenCalled();
       expect(mocks.createRunMock).not.toHaveBeenCalled();
-      expect(mocks.codexRpcMock).not.toHaveBeenCalled();
+      expect(
+        mocks.codexRpcMock.mock.calls.some(([, method]) =>
+          ["thread/start", "turn/start"].includes(method),
+        ),
+      ).toBe(false);
 
       await animationFrames.flush();
       expect(mocks.runPreflightMock).not.toHaveBeenCalled();
       expect(mocks.createTaskMock).not.toHaveBeenCalled();
-      expect(mocks.codexRpcMock).not.toHaveBeenCalled();
+      expect(
+        mocks.codexRpcMock.mock.calls.some(([, method]) =>
+          ["thread/start", "turn/start"].includes(method),
+        ),
+      ).toBe(false);
     } finally {
       animationFrames.restore();
     }
   });
 
-  it("restores the prompt and marks the optimistic entry failed when setup fails before a run is created", async () => {
+  it("marks the queued item failed when setup fails before a run is created", async () => {
     prepareSignedInRun();
     let rejectPreflight!: (error: Error) => void;
     mocks.runPreflightMock.mockReturnValueOnce(
@@ -9117,10 +9519,19 @@ describe("App Codex auth", () => {
       rejectPreflight(new Error("Preflight failed"));
     });
     expect(await screen.findByText("Preflight failed")).toBeInTheDocument();
-    expect(screen.getByLabelText("Prompt")).toHaveValue("Try a failing setup");
+    expect(screen.getByLabelText("Prompt")).toHaveValue("");
+    expect(screen.getByText("Queue paused")).toBeInTheDocument();
+    expect(mocks.failPromptQueueItemMock).toHaveBeenCalledWith(
+      expect.any(String),
+      "Preflight failed",
+    );
     expect(mocks.createTaskMock).not.toHaveBeenCalled();
     expect(mocks.createRunMock).not.toHaveBeenCalled();
-    expect(mocks.codexRpcMock).not.toHaveBeenCalled();
+    expect(
+      mocks.codexRpcMock.mock.calls.some(([, method]) =>
+        ["thread/start", "turn/start"].includes(method),
+      ),
+    ).toBe(false);
   });
 
   it("ignores duplicate Enter submissions while optimistic setup is active", async () => {
@@ -9152,7 +9563,99 @@ describe("App Codex auth", () => {
     );
   });
 
-  it("accepts an Enter retry while a terminal run is still persisting", async () => {
+  it("steers a compatible queued normal prompt into the active turn", async () => {
+    prepareSignedInRun();
+
+    const { user } = await renderApp();
+    await startMockRun(user, "Start the active task");
+
+    await user.type(
+      screen.getByLabelText("Prompt"),
+      "Add this detail to the active task",
+    );
+    await user.click(
+      screen.getByRole("button", { name: "Add prompt to queue" }),
+    );
+
+    await user.click(screen.getByRole("button", { name: /^Queue/ }));
+    await user.click(
+      screen.getByRole("button", {
+        name: /^Add this detail to the active task/,
+      }),
+    );
+    await user.click(
+      screen.getByRole("button", { name: "Send queued prompt now" }),
+    );
+
+    await waitFor(() =>
+      expect(mocks.codexRpcMock).toHaveBeenCalledWith(
+        7,
+        "turn/steer",
+        expect.objectContaining({
+          threadId: "thread-1",
+          expectedTurnId: "turn-1",
+          input: [
+            {
+              type: "text",
+              text: "Add this detail to the active task",
+              text_elements: [],
+            },
+          ],
+        }),
+      ),
+    );
+    expect(mocks.appendRunEventMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        runId: 202,
+        eventType: "client-action",
+        method: "turn/steer",
+      }),
+    );
+    expect(mocks.completePromptQueueItemMock).toHaveBeenCalledTimes(1);
+    expect(screen.getByLabelText("Task chat transcript")).toHaveTextContent(
+      "Add this detail to the active task",
+    );
+
+    await user.click(screen.getByRole("button", { name: /stop codex/i }));
+  });
+
+  it("schedules a steering prompt next when the active turn finishes first", async () => {
+    prepareSignedInRun();
+
+    const { user } = await renderApp();
+    await startMockRun(user, "Start the active task");
+    await user.type(
+      screen.getByLabelText("Prompt"),
+      "Run this after the completion race",
+    );
+    await user.click(
+      screen.getByRole("button", { name: "Add prompt to queue" }),
+    );
+    await user.click(screen.getByRole("button", { name: /^Queue/ }));
+    await user.click(
+      screen.getByRole("button", {
+        name: /^Run this after the completion race/,
+      }),
+    );
+    mocks.codexRpcMock.mockRejectedValueOnce(
+      new Error("turn is not active because it completed"),
+    );
+    await user.click(
+      screen.getByRole("button", { name: "Send queued prompt now" }),
+    );
+
+    await waitFor(() =>
+      expect(
+        mocks.reschedulePromptQueueItemAfterSteeringRaceMock,
+      ).toHaveBeenCalledTimes(1),
+    );
+    expect(screen.getByText("Next")).toBeInTheDocument();
+    expect(mocks.failPromptQueueItemMock).not.toHaveBeenCalled();
+
+    await user.click(screen.getByRole("button", { name: /stop codex/i }));
+  });
+
+  it("queues an Enter retry while terminal failure persistence is pending", async () => {
     prepareSignedInRun();
     let resolveFailedRunPersistence!: () => void;
     let failedPersistenceCalls = 0;
@@ -9203,14 +9706,29 @@ describe("App Codex auth", () => {
     await user.keyboard("{Enter}");
 
     expect(screen.getByLabelText("Prompt")).toHaveValue("");
-    expect(screen.getAllByLabelText("Submitted prompt")).toHaveLength(2);
-    expect(screen.getByText("Run the retry")).toBeInTheDocument();
+    expect(screen.getAllByLabelText("Submitted prompt")).toHaveLength(1);
+    expect(turnStartCalls).toBe(1);
 
     await act(async () => {
       resolveFailedRunPersistence();
       await Promise.resolve();
     });
+    await waitFor(() =>
+      expect(screen.getByText("Queue paused")).toBeInTheDocument(),
+    );
+    expect(turnStartCalls).toBe(1);
+
+    await user.click(
+      screen.getByRole("button", { name: /^Queue paused/ }),
+    );
+    await user.click(
+      screen.getByRole("button", { name: /^Run the first attempt/ }),
+    );
+    await user.click(screen.getByRole("button", { name: "Skip queued prompt" }));
     await waitFor(() => expect(turnStartCalls).toBe(2));
+    const submittedPrompts = screen.getAllByLabelText("Submitted prompt");
+    expect(submittedPrompts).toHaveLength(2);
+    expect(submittedPrompts[1]).toHaveTextContent("Run the retry");
     await user.click(screen.getByRole("button", { name: /stop codex/i }));
   });
 
@@ -10805,9 +11323,7 @@ describe("App Codex auth", () => {
       ),
     );
     await waitFor(() =>
-      expect(
-        screen.getByRole("button", { name: /run codex/i }),
-      ).toBeInTheDocument(),
+      expect(screen.getByText("Queue paused")).toBeInTheDocument(),
     );
     expect(mocks.codexRpcMock).toHaveBeenCalledWith(
       7,

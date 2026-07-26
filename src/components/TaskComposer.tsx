@@ -36,6 +36,7 @@ import type {
 import { ComposerSelect } from "./ComposerSelect";
 import { GoalProgressIndicator } from "./GoalProgressIndicator";
 import { PlanProgressIndicator } from "./PlanProgressIndicator";
+import { PromptQueueStatus } from "./PromptQueueStatus";
 import type { GoalProgressIndicatorModel } from "../lib/goalProgress";
 import type { PlanProgressIndicatorModel } from "../lib/planProgress";
 import type {
@@ -44,6 +45,7 @@ import type {
   ComposerMentionSearchStatus,
   CodexModel,
   ComposerContextFile,
+  PromptQueueItem,
   SelectedComposerSkill,
   SlashCommandItem,
   SlashCommandSearchStatus,
@@ -91,6 +93,9 @@ type Props = {
   goalProgress?: GoalProgressIndicatorModel | null;
   planProgress?: PlanProgressIndicatorModel | null;
   statusNotices?: ComposerStatusNotice[];
+  queueItems?: PromptQueueItem[];
+  queuePaused?: boolean;
+  queueActionPendingItemId?: string | null;
   accessMode: CodexAccessMode;
   contextFiles: ComposerContextFile[];
   selectedSkills: SelectedComposerSkill[];
@@ -111,6 +116,14 @@ type Props = {
   onEditGoal: () => void;
   onStopGoal: () => void;
   onStatusNoticeActivate?: (noticeId: string) => void;
+  onQueueEdit?: (item: PromptQueueItem) => void;
+  onQueueRemove?: (item: PromptQueueItem) => void;
+  onQueueRetry?: (item: PromptQueueItem) => void;
+  onQueueSkip?: (item: PromptQueueItem) => void;
+  onQueueSendNow?: (item: PromptQueueItem) => void;
+  onQueueResume?: () => void;
+  onQueueReorder?: (orderedItemIds: string[]) => void;
+  onDispatchQueued?: () => void;
   onAccessModeChange: (accessMode: CodexAccessMode) => void;
   onAddFiles: () => void;
   onMentionSearch: (query: string) => void;
@@ -158,6 +171,9 @@ const PROMPT_AUTOSIZE_CAPPED_LINES = 12;
 const DISABLED_WEBKIT_WRITING_SUGGESTIONS = {
   writingsuggestions: "false",
 } as const;
+const NOOP = () => undefined;
+const NOOP_QUEUE_ITEM = (_item: PromptQueueItem) => undefined;
+const NOOP_QUEUE_ORDER = (_itemIds: string[]) => undefined;
 
 export function promptAutosizeMirrorText(prompt: string) {
   if (prompt.length > PROMPT_AUTOSIZE_MIRROR_CHARACTER_LIMIT) {
@@ -185,6 +201,9 @@ export const TaskComposer = memo(function TaskComposer({
   goalProgress = null,
   planProgress = null,
   statusNotices = [],
+  queueItems = [],
+  queuePaused = false,
+  queueActionPendingItemId = null,
   accessMode,
   contextFiles,
   selectedSkills,
@@ -205,6 +224,14 @@ export const TaskComposer = memo(function TaskComposer({
   onEditGoal,
   onStopGoal,
   onStatusNoticeActivate,
+  onQueueEdit = NOOP_QUEUE_ITEM,
+  onQueueRemove = NOOP_QUEUE_ITEM,
+  onQueueRetry = NOOP_QUEUE_ITEM,
+  onQueueSkip = NOOP_QUEUE_ITEM,
+  onQueueSendNow = NOOP_QUEUE_ITEM,
+  onQueueResume = NOOP,
+  onQueueReorder = NOOP_QUEUE_ORDER,
+  onDispatchQueued = NOOP,
   onAccessModeChange,
   onAddFiles,
   onMentionSearch,
@@ -528,8 +555,12 @@ export const TaskComposer = memo(function TaskComposer({
     ) {
       event.preventDefault();
       closeActiveSearch();
-      if (!disabled && !runActive) {
-        onRun(draftPromptRef.current);
+      if (!disabled) {
+        if (draftPromptRef.current.trim()) {
+          onRun(draftPromptRef.current);
+        } else if (!runActive && !queuePaused && queueItems.length > 0) {
+          onDispatchQueued();
+        }
       }
     }
   }
@@ -769,7 +800,8 @@ export const TaskComposer = memo(function TaskComposer({
   const hasComposerStatus =
     statusNotices.length > 0 ||
     Boolean(goalProgress) ||
-    Boolean(planProgress);
+    Boolean(planProgress) ||
+    queueItems.length > 0;
 
   return (
     <section
@@ -798,6 +830,20 @@ export const TaskComposer = memo(function TaskComposer({
           ) : null}
           {planProgress ? (
             <PlanProgressIndicator progress={planProgress} />
+          ) : null}
+          {queueItems.length > 0 ? (
+            <PromptQueueStatus
+              items={queueItems}
+              paused={queuePaused}
+              actionPendingItemId={queueActionPendingItemId}
+              onEdit={onQueueEdit}
+              onRemove={onQueueRemove}
+              onRetry={onQueueRetry}
+              onSkip={onQueueSkip}
+              onSendNow={onQueueSendNow}
+              onResume={onQueueResume}
+              onReorder={onQueueReorder}
+            />
           ) : null}
         </div>
       ) : null}
@@ -923,21 +969,56 @@ export const TaskComposer = memo(function TaskComposer({
           </div>
 
           <div className="composer-run-group">
+            {runActive && draftPrompt.trim() ? (
+              <button
+                className="send-button queue"
+                type="button"
+                onClick={() => onRun(draftPromptRef.current)}
+                disabled={disabled}
+                aria-label="Add prompt to queue"
+                title="Add prompt to queue"
+              >
+                <Play size={16} />
+                <span className="sr-only">Add prompt to queue</span>
+              </button>
+            ) : null}
             <button
               className={`send-button ${runActive ? "stop" : ""}`}
               type="button"
               onClick={() => {
                 if (runActive) {
                   onStop();
-                } else {
+                } else if (draftPromptRef.current.trim()) {
                   onRun(draftPromptRef.current);
+                } else {
+                  onDispatchQueued();
                 }
               }}
-              disabled={runActive ? false : disabled || !draftPrompt.trim()}
-              aria-label={runActive ? "Stop Codex" : "Run Codex"}
+              disabled={
+                runActive
+                  ? false
+                  : disabled ||
+                    (!draftPrompt.trim() &&
+                      (queueItems.length === 0 || queuePaused))
+              }
+              aria-label={
+                runActive
+                  ? "Stop Codex"
+                  : draftPrompt.trim()
+                    ? "Run Codex"
+                    : queueItems.length > 0
+                      ? "Run next queued prompt"
+                      : "Run Codex"
+              }
             >
               {runActive ? <Square size={15} fill="currentColor" /> : <Play size={16} />}
-              <span className="sr-only">{runActive ? "Stop Codex" : "Run Codex"}</span>
+              <span className="sr-only">
+                {runActive
+                  ? "Stop Codex"
+                  : draftPrompt.trim()
+                    ? "Run Codex"
+                    : "Run next queued prompt"}
+              </span>
             </button>
           </div>
         </div>
@@ -955,7 +1036,6 @@ export const TaskComposer = memo(function TaskComposer({
           onModelChange={onModelChange}
           onReasoningEffortChange={onReasoningEffortChange}
           reasoningOptions={reasoningOptions}
-          runActive={runActive}
           selectedAccountId={selectedAccountId}
           accountPlaceholder={accountPlaceholder}
           selectedModel={selectedModel}
@@ -1100,7 +1180,6 @@ const ComposerOptionsRow = memo(function ComposerOptionsRow({
   onModelChange,
   onReasoningEffortChange,
   reasoningOptions,
-  runActive,
   selectedAccountId,
   accountPlaceholder,
   selectedModel,
@@ -1118,7 +1197,6 @@ const ComposerOptionsRow = memo(function ComposerOptionsRow({
   onModelChange: (modelId: string) => void;
   onReasoningEffortChange: (effort: string) => void;
   reasoningOptions: NonNullable<CodexModel["supportedReasoningEfforts"]>;
-  runActive: boolean;
   selectedAccountId: number | null;
   accountPlaceholder: string;
   selectedModel: CodexModel | null;
@@ -1179,7 +1257,6 @@ const ComposerOptionsRow = memo(function ComposerOptionsRow({
         placeholder="Ask for approval"
         icon={<ShieldCheck size={16} />}
         className="access-select"
-        disabled={runActive}
         onChange={handleAccessModeChange}
       />
 

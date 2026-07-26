@@ -260,6 +260,11 @@ export type TaskChatEntry = {
   runId: number | null;
   taskId: number | null;
   prompt: string;
+  steeredPrompts?: Array<{
+    id: string;
+    prompt: string;
+    submittedAt: string;
+  }>;
   contextFiles?: ComposerContextFile[];
   imageAttachmentDelivery?: {
     status: "preparing" | "sent" | "failed";
@@ -1492,6 +1497,19 @@ export const TaskChatTurn = memo(function TaskChatTurn({
                 onOpenFileLink={onOpenFileLink}
               />
             </article>
+            {entry.steeredPrompts?.map((steeredPrompt) => (
+              <article
+                className="submitted-prompt submitted-steered-prompt"
+                aria-label="Additional submitted prompt"
+                key={steeredPrompt.id}
+              >
+                <SubmittedPrompt
+                  prompt={steeredPrompt.prompt}
+                  contextFiles={EMPTY_CONTEXT_FILES}
+                  onOpenFileLink={onOpenFileLink}
+                />
+              </article>
+            ))}
             {editable ? (
               <button
                 className="submitted-prompt-edit-button"

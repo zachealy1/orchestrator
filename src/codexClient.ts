@@ -28,6 +28,7 @@ import type {
   ModelListResponse,
   OssProvider,
   PreflightReport,
+  PromptQueueContextInspection,
   PreparedBrowserSession,
   Workspace,
   WorkspaceFilePreview,
@@ -332,6 +333,16 @@ export function prepareImageAttachment(path: string) {
 
 export function inspectDroppedContextPaths(paths: string[]) {
   return invoke<DroppedContextPathInspection>("inspect_dropped_context_paths", {
+    paths,
+  });
+}
+
+export function inspectPromptQueueContext(
+  workspacePath: string,
+  paths: string[],
+) {
+  return invoke<PromptQueueContextInspection>("inspect_prompt_queue_context", {
+    workspacePath,
     paths,
   });
 }

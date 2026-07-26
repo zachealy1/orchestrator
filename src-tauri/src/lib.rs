@@ -2,6 +2,10 @@ use base64::{engine::general_purpose::STANDARD as BASE64_STANDARD, Engine as _};
 use image::{ImageFormat, ImageReader};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
+use sqlx::{
+    sqlite::{SqliteConnectOptions, SqliteConnection},
+    Connection,
+};
 use std::{
     collections::{HashMap, HashSet},
     env,
@@ -14,7 +18,7 @@ use std::{
         atomic::{AtomicU64, Ordering},
         Arc, Mutex,
     },
-    time::{Duration, Instant},
+    time::{Duration, Instant, SystemTime},
 };
 use tauri::{AppHandle, Emitter, Manager, State};
 use tauri_plugin_sql::{Migration, MigrationKind};
@@ -42,6 +46,8 @@ const MAX_COMMIT_UNTRACKED_FILE_SAMPLE_BYTES: u64 = 1_200;
 const MAX_COMMIT_UNTRACKED_FILES: usize = 24;
 const COMMIT_MESSAGE_GENERATION_TIMEOUT_SECS: u64 = 60;
 const MAX_CHAT_TITLE_PROMPT_CHARS: usize = 12_000;
+const MAX_PROMPT_QUEUE_PROMPT_CHARS: usize = 100_000;
+const MAX_PROMPT_QUEUE_SNAPSHOT_BYTES: usize = 4 * 1024 * 1024;
 const MAX_WORKSPACE_UNDO_DIFF_BYTES: usize = 8 * 1024 * 1024;
 const DEFAULT_CODEX_PROFILE_ID: i64 = 0;
 const DEFAULT_CODEX_PROFILE_KEY: &str = "default";
@@ -405,6 +411,48 @@ struct RejectedDroppedContextPath {
 struct DroppedContextPathInspection {
     files: Vec<DroppedContextPath>,
     rejected: Vec<RejectedDroppedContextPath>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct PromptQueueFileFingerprint {
+    path: String,
+    canonical_path: Option<String>,
+    size: Option<u64>,
+    modified_at_ms: Option<u64>,
+    available: bool,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct PromptQueueContextInspection {
+    workspace_path: String,
+    branch: Option<String>,
+    head_commit: Option<String>,
+    worktree_fingerprint: Option<String>,
+    files: Vec<PromptQueueFileFingerprint>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct CreateChatWithQueuedPromptRequest {
+    workspace_id: i64,
+    account_id: Option<i64>,
+    title: String,
+    status: String,
+    generate_title: bool,
+    item_id: String,
+    client_message_id: String,
+    prompt: String,
+    execution_snapshot_json: String,
+    context_fingerprint_json: String,
+    conversation_revision: i64,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct CreateChatWithQueuedPromptResult {
+    chat_id: i64,
 }
 
 fn migrations() -> Vec<Migration> {
@@ -980,6 +1028,46 @@ fn migrations() -> Vec<Migration> {
                     FROM token_usage_snapshots
                     GROUP BY run_id
                 );
+            ",
+            kind: MigrationKind::Up,
+        },
+        Migration {
+            version: 21,
+            description: "persist_prompt_queue",
+            sql: "
+                ALTER TABLE chats ADD COLUMN conversation_revision INTEGER NOT NULL DEFAULT 0;
+
+                CREATE TABLE IF NOT EXISTS prompt_queue_items (
+                    id TEXT PRIMARY KEY,
+                    client_message_id TEXT NOT NULL UNIQUE,
+                    workspace_id INTEGER NOT NULL,
+                    chat_id INTEGER NOT NULL,
+                    position INTEGER NOT NULL,
+                    send_now_priority INTEGER,
+                    prompt_text TEXT NOT NULL,
+                    execution_snapshot_json TEXT NOT NULL,
+                    context_fingerprint_json TEXT NOT NULL,
+                    conversation_revision INTEGER NOT NULL DEFAULT 0,
+                    status TEXT NOT NULL,
+                    linked_run_id INTEGER,
+                    linked_turn_id TEXT,
+                    error TEXT,
+                    stale_reasons_json TEXT,
+                    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    accepted_at TEXT,
+                    completed_at TEXT,
+                    FOREIGN KEY (workspace_id) REFERENCES workspaces(id) ON DELETE CASCADE,
+                    FOREIGN KEY (chat_id) REFERENCES chats(id) ON DELETE CASCADE,
+                    FOREIGN KEY (linked_run_id) REFERENCES runs(id) ON DELETE SET NULL
+                );
+
+                CREATE INDEX IF NOT EXISTS idx_prompt_queue_chat_position
+                    ON prompt_queue_items(chat_id, position, created_at);
+                CREATE INDEX IF NOT EXISTS idx_prompt_queue_dispatch
+                    ON prompt_queue_items(
+                        chat_id, status, send_now_priority, position
+                    );
             ",
             kind: MigrationKind::Up,
         },
@@ -4050,6 +4138,372 @@ async fn inspect_dropped_context_paths(
     .await
 }
 
+fn extend_stable_fingerprint(hash: &mut u64, value: &[u8]) {
+    for byte in (value.len() as u64).to_le_bytes() {
+        *hash ^= u64::from(byte);
+        *hash = hash.wrapping_mul(0x100000001b3);
+    }
+    for byte in value {
+        *hash ^= u64::from(*byte);
+        *hash = hash.wrapping_mul(0x100000001b3);
+    }
+}
+
+fn prompt_queue_status_paths(status: &str) -> Vec<String> {
+    let mut records = status.split('\0').filter(|record| !record.is_empty());
+    let mut paths = Vec::new();
+
+    while let Some(record) = records.next() {
+        let bytes = record.as_bytes();
+        if bytes.len() < 4 || bytes[2] != b' ' {
+            continue;
+        }
+
+        if let Some(path) = record.get(3..) {
+            paths.push(path.to_string());
+        }
+        if matches!(bytes[0], b'R' | b'C') || matches!(bytes[1], b'R' | b'C') {
+            if let Some(previous_path) = records.next() {
+                paths.push(previous_path.to_string());
+            }
+        }
+    }
+
+    paths.sort();
+    paths.dedup();
+    paths
+}
+
+fn extend_prompt_queue_file_fingerprint(hash: &mut u64, git_root: &Path, relative_path: &str) {
+    extend_stable_fingerprint(hash, relative_path.as_bytes());
+    let path = git_root.join(relative_path);
+    let Ok(metadata) = fs::symlink_metadata(&path) else {
+        extend_stable_fingerprint(hash, b"missing");
+        return;
+    };
+
+    if metadata.file_type().is_symlink() {
+        match fs::read_link(&path) {
+            Ok(target) => {
+                extend_stable_fingerprint(hash, b"symlink");
+                extend_stable_fingerprint(hash, target.to_string_lossy().as_bytes());
+            }
+            Err(error) => {
+                extend_stable_fingerprint(hash, b"unreadable-symlink");
+                extend_stable_fingerprint(hash, error.kind().to_string().as_bytes());
+            }
+        }
+        return;
+    }
+
+    if !metadata.is_file() {
+        extend_stable_fingerprint(hash, b"not-file");
+        return;
+    }
+
+    extend_stable_fingerprint(hash, b"file");
+    extend_stable_fingerprint(hash, &metadata.len().to_le_bytes());
+    let Ok(canonical_path) = fs::canonicalize(&path) else {
+        extend_stable_fingerprint(hash, b"uncanonicalized");
+        return;
+    };
+    if !canonical_path.starts_with(git_root) {
+        extend_stable_fingerprint(hash, b"outside-git-root");
+        return;
+    }
+
+    let Ok(file) = fs::File::open(&canonical_path) else {
+        extend_stable_fingerprint(hash, b"unreadable");
+        return;
+    };
+    let mut reader = BufReader::new(file);
+    let mut buffer = [0_u8; 64 * 1024];
+    loop {
+        match reader.read(&mut buffer) {
+            Ok(0) => break,
+            Ok(read) => extend_stable_fingerprint(hash, &buffer[..read]),
+            Err(error) => {
+                extend_stable_fingerprint(hash, b"read-error");
+                extend_stable_fingerprint(hash, error.kind().to_string().as_bytes());
+                break;
+            }
+        }
+    }
+}
+
+fn prompt_queue_worktree_fingerprint(git_root: &Path, pathspec: &str) -> Option<String> {
+    let status = git_status_for_pathspec(git_root, pathspec);
+    if !status.ok {
+        return None;
+    }
+    let git_root_arg = git_root.to_string_lossy();
+    let index = run_command_bytes(
+        "git",
+        &[
+            "-C",
+            git_root_arg.as_ref(),
+            "ls-files",
+            "--stage",
+            "-z",
+            "--",
+            pathspec,
+        ],
+    );
+    if !index.ok {
+        return None;
+    }
+
+    let mut hash = 0xcbf29ce484222325_u64;
+    extend_stable_fingerprint(&mut hash, b"status");
+    extend_stable_fingerprint(&mut hash, status.stdout.as_bytes());
+    extend_stable_fingerprint(&mut hash, b"index");
+    extend_stable_fingerprint(&mut hash, &index.stdout);
+    for path in prompt_queue_status_paths(&status.stdout) {
+        extend_prompt_queue_file_fingerprint(&mut hash, git_root, &path);
+    }
+    Some(format!("{hash:016x}"))
+}
+
+fn validate_create_chat_with_queued_prompt_request(
+    request: &CreateChatWithQueuedPromptRequest,
+) -> Result<(Value, Value), String> {
+    if request.workspace_id <= 0 {
+        return Err("The queued prompt has an invalid workspace.".to_string());
+    }
+    if request.account_id.is_some_and(|account_id| account_id <= 0) {
+        return Err("The queued prompt has an invalid account.".to_string());
+    }
+    if request.status != "queued" {
+        return Err("The queued conversation has an invalid status.".to_string());
+    }
+    if request.item_id.trim().is_empty()
+        || request.item_id.len() > 200
+        || request.client_message_id.trim().is_empty()
+        || request.client_message_id.len() > 200
+    {
+        return Err("The queued prompt has an invalid identifier.".to_string());
+    }
+    if request.prompt.trim().is_empty() {
+        return Err("Write a prompt before adding it to the queue.".to_string());
+    }
+    if request.prompt.chars().count() > MAX_PROMPT_QUEUE_PROMPT_CHARS {
+        return Err(format!(
+            "Queued prompts are limited to {MAX_PROMPT_QUEUE_PROMPT_CHARS} characters."
+        ));
+    }
+    if request.conversation_revision < 0 {
+        return Err("The queued prompt has an invalid conversation revision.".to_string());
+    }
+    if request.execution_snapshot_json.len() > MAX_PROMPT_QUEUE_SNAPSHOT_BYTES
+        || request.context_fingerprint_json.len() > MAX_PROMPT_QUEUE_SNAPSHOT_BYTES
+    {
+        return Err("The queued prompt settings are too large.".to_string());
+    }
+
+    let snapshot: Value = serde_json::from_str(&request.execution_snapshot_json)
+        .map_err(|_| "The queued prompt settings are invalid.".to_string())?;
+    let fingerprint: Value = serde_json::from_str(&request.context_fingerprint_json)
+        .map_err(|_| "The queued prompt context is invalid.".to_string())?;
+    if !snapshot.is_object() || !fingerprint.is_object() {
+        return Err("The queued prompt settings are invalid.".to_string());
+    }
+    if snapshot.get("prompt").and_then(Value::as_str) != Some(request.prompt.as_str())
+        || snapshot.get("contextFingerprint") != Some(&fingerprint)
+        || fingerprint
+            .get("conversationRevision")
+            .and_then(Value::as_i64)
+            != Some(request.conversation_revision)
+    {
+        return Err("The queued prompt settings do not match the prompt context.".to_string());
+    }
+
+    Ok((snapshot, fingerprint))
+}
+
+async fn create_chat_with_queued_prompt_transaction(
+    connection: &mut SqliteConnection,
+    request: &CreateChatWithQueuedPromptRequest,
+) -> Result<i64, String> {
+    validate_create_chat_with_queued_prompt_request(request)?;
+
+    let fallback_title = {
+        let title = request.title.trim();
+        if title.is_empty() {
+            "Untitled conversation"
+        } else {
+            title
+        }
+    };
+    let title = if request.generate_title {
+        "Generating title..."
+    } else {
+        fallback_title
+    };
+    let profile_key = request
+        .account_id
+        .map(|account_id| format!("account:{account_id}"));
+    let title_generation_state = if request.generate_title {
+        "pending"
+    } else {
+        "complete"
+    };
+    let title_fallback = request.generate_title.then_some(fallback_title);
+
+    let mut transaction = connection
+        .begin()
+        .await
+        .map_err(|_| "The queued conversation could not be created.".to_string())?;
+    let chat_result = sqlx::query(
+        "INSERT INTO chats (
+            workspace_id, account_id, title, status, origin, profile_key,
+            title_generation_state, title_fallback
+         )
+         VALUES (?1, ?2, ?3, ?4, 'orchestrator', ?5, ?6, ?7)",
+    )
+    .bind(request.workspace_id)
+    .bind(request.account_id)
+    .bind(title)
+    .bind(&request.status)
+    .bind(profile_key)
+    .bind(title_generation_state)
+    .bind(title_fallback)
+    .execute(&mut *transaction)
+    .await
+    .map_err(|_| "The queued conversation could not be created.".to_string())?;
+    let chat_id = chat_result.last_insert_rowid();
+    if chat_id <= 0 {
+        return Err("The queued conversation could not be created.".to_string());
+    }
+
+    let queue_result = sqlx::query(
+        "INSERT INTO prompt_queue_items (
+            id, client_message_id, workspace_id, chat_id, position,
+            prompt_text, execution_snapshot_json, context_fingerprint_json,
+            conversation_revision, status
+         )
+         VALUES (?1, ?2, ?3, ?4, 0, ?5, ?6, ?7, ?8, 'queued')",
+    )
+    .bind(&request.item_id)
+    .bind(&request.client_message_id)
+    .bind(request.workspace_id)
+    .bind(chat_id)
+    .bind(&request.prompt)
+    .bind(&request.execution_snapshot_json)
+    .bind(&request.context_fingerprint_json)
+    .bind(request.conversation_revision)
+    .execute(&mut *transaction)
+    .await
+    .map_err(|_| "The prompt was not added to the queue.".to_string())?;
+    if queue_result.rows_affected() != 1 {
+        return Err("The prompt was not added to the queue.".to_string());
+    }
+
+    transaction
+        .commit()
+        .await
+        .map_err(|_| "The queued conversation could not be saved.".to_string())?;
+    Ok(chat_id)
+}
+
+#[tauri::command]
+async fn create_chat_with_queued_prompt(
+    app: AppHandle,
+    request: CreateChatWithQueuedPromptRequest,
+) -> Result<CreateChatWithQueuedPromptResult, String> {
+    let database_path = app
+        .path()
+        .app_config_dir()
+        .map_err(|_| "The application database is unavailable.".to_string())?
+        .join(
+            DATABASE_URL
+                .strip_prefix("sqlite:")
+                .ok_or_else(|| "The application database is unavailable.".to_string())?,
+        );
+    let options = SqliteConnectOptions::new()
+        .filename(database_path)
+        .create_if_missing(false)
+        .foreign_keys(true)
+        .busy_timeout(Duration::from_secs(10));
+    let mut connection = SqliteConnection::connect_with(&options)
+        .await
+        .map_err(|_| "The application database is unavailable.".to_string())?;
+    let chat_id = create_chat_with_queued_prompt_transaction(&mut connection, &request).await?;
+    Ok(CreateChatWithQueuedPromptResult { chat_id })
+}
+
+fn inspect_prompt_queue_context_blocking(
+    workspace_path: String,
+    paths: Vec<String>,
+) -> Result<PromptQueueContextInspection, String> {
+    let workspace = canonical_workspace(&workspace_path)?;
+    let workspace_display = workspace.to_string_lossy().to_string();
+    let mut branch = None;
+    let mut head_commit = None;
+    let mut worktree_fingerprint = None;
+
+    if let Ok(git_root) = resolve_git_root(&workspace) {
+        branch = current_git_branch(&git_root);
+        let git_root_arg = git_root.to_string_lossy();
+        let head = run_command("git", &["-C", git_root_arg.as_ref(), "rev-parse", "HEAD"]);
+        if head.ok {
+            head_commit = head
+                .stdout
+                .lines()
+                .next()
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .map(str::to_string);
+        }
+        let pathspec = workspace_git_pathspec(&git_root, &workspace)?;
+        worktree_fingerprint = prompt_queue_worktree_fingerprint(&git_root, &pathspec);
+    }
+
+    let files = paths
+        .into_iter()
+        .map(|original_path| {
+            let source = PathBuf::from(&original_path);
+            let canonical = fs::canonicalize(&source).ok();
+            let metadata = canonical
+                .as_ref()
+                .and_then(|path| fs::metadata(path).ok())
+                .filter(|metadata| metadata.is_file());
+            let modified_at_ms = metadata
+                .as_ref()
+                .and_then(|metadata| metadata.modified().ok())
+                .and_then(|modified| modified.duration_since(SystemTime::UNIX_EPOCH).ok())
+                .map(|duration| duration.as_millis().min(u128::from(u64::MAX)) as u64);
+            PromptQueueFileFingerprint {
+                path: original_path,
+                canonical_path: canonical
+                    .as_ref()
+                    .map(|path| path.to_string_lossy().to_string()),
+                size: metadata.as_ref().map(|metadata| metadata.len()),
+                modified_at_ms,
+                available: metadata.is_some(),
+            }
+        })
+        .collect();
+
+    Ok(PromptQueueContextInspection {
+        workspace_path: workspace_display,
+        branch,
+        head_commit,
+        worktree_fingerprint,
+        files,
+    })
+}
+
+#[tauri::command]
+async fn inspect_prompt_queue_context(
+    workspace_path: String,
+    paths: Vec<String>,
+) -> Result<PromptQueueContextInspection, String> {
+    run_blocking_command("inspect prompt queue context", move || {
+        inspect_prompt_queue_context_blocking(workspace_path, paths)
+    })
+    .await
+}
+
 fn is_image_extension(path: &Path) -> bool {
     path.extension()
         .and_then(OsStr::to_str)
@@ -5435,6 +5889,8 @@ pub fn run() {
             read_workspace_file_preview,
             prepare_image_attachment,
             inspect_dropped_context_paths,
+            inspect_prompt_queue_context,
+            create_chat_with_queued_prompt,
             run_preflight,
             web_preview::probe_local_web_preview,
             browser_sessions::browser_runtime_status,
@@ -5471,6 +5927,163 @@ fn present_main_window(app: &AppHandle) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn queued_chat_request(
+        item_id: &str,
+        client_message_id: &str,
+    ) -> CreateChatWithQueuedPromptRequest {
+        let fingerprint = json!({
+            "conversationRevision": 0
+        });
+        let snapshot = json!({
+            "prompt": "Implement durable queuing",
+            "contextFingerprint": fingerprint
+        });
+        CreateChatWithQueuedPromptRequest {
+            workspace_id: 3,
+            account_id: Some(7),
+            title: "Implement durable queuing".to_string(),
+            status: "queued".to_string(),
+            generate_title: true,
+            item_id: item_id.to_string(),
+            client_message_id: client_message_id.to_string(),
+            prompt: "Implement durable queuing".to_string(),
+            execution_snapshot_json: snapshot.to_string(),
+            context_fingerprint_json: fingerprint.to_string(),
+            conversation_revision: 0,
+        }
+    }
+
+    async fn create_prompt_queue_test_schema(connection: &mut SqliteConnection) {
+        sqlx::query(
+            "CREATE TABLE chats (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                workspace_id INTEGER NOT NULL,
+                account_id INTEGER,
+                title TEXT NOT NULL,
+                status TEXT NOT NULL,
+                origin TEXT NOT NULL,
+                profile_key TEXT,
+                title_generation_state TEXT NOT NULL,
+                title_fallback TEXT
+            )",
+        )
+        .execute(&mut *connection)
+        .await
+        .expect("create chats table");
+        sqlx::query(
+            "CREATE TABLE prompt_queue_items (
+                id TEXT PRIMARY KEY,
+                client_message_id TEXT NOT NULL UNIQUE,
+                workspace_id INTEGER NOT NULL,
+                chat_id INTEGER NOT NULL,
+                position INTEGER NOT NULL,
+                prompt_text TEXT NOT NULL,
+                execution_snapshot_json TEXT NOT NULL,
+                context_fingerprint_json TEXT NOT NULL,
+                conversation_revision INTEGER NOT NULL,
+                status TEXT NOT NULL
+            )",
+        )
+        .execute(&mut *connection)
+        .await
+        .expect("create queue table");
+    }
+
+    #[test]
+    fn first_queued_prompt_creation_is_atomic() {
+        tauri::async_runtime::block_on(async {
+            let mut connection = SqliteConnection::connect("sqlite::memory:")
+                .await
+                .expect("open in-memory database");
+            create_prompt_queue_test_schema(&mut connection).await;
+
+            let chat_id = create_chat_with_queued_prompt_transaction(
+                &mut connection,
+                &queued_chat_request("queue-1", "message-1"),
+            )
+            .await
+            .expect("create queued conversation");
+            assert_eq!(chat_id, 1);
+            let chat_count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM chats")
+                .fetch_one(&mut connection)
+                .await
+                .expect("count chats");
+            let queue_count: i64 =
+                sqlx::query_scalar("SELECT COUNT(*) FROM prompt_queue_items")
+                    .fetch_one(&mut connection)
+                    .await
+                    .expect("count queue items");
+            assert_eq!(chat_count, 1);
+            assert_eq!(queue_count, 1);
+
+            let failed = create_chat_with_queued_prompt_transaction(
+                &mut connection,
+                &queued_chat_request("queue-1", "message-2"),
+            )
+            .await;
+            assert_eq!(
+                failed.expect_err("duplicate queue item must fail"),
+                "The prompt was not added to the queue."
+            );
+            let chat_count_after_failure: i64 =
+                sqlx::query_scalar("SELECT COUNT(*) FROM chats")
+                    .fetch_one(&mut connection)
+                    .await
+                    .expect("count chats after rollback");
+            assert_eq!(chat_count_after_failure, 1);
+        });
+    }
+
+    #[test]
+    fn prompt_queue_worktree_fingerprint_tracks_content_changes() {
+        let test_root = env::temp_dir().join(format!(
+            "orchestrator-prompt-queue-fingerprint-{}-{}",
+            std::process::id(),
+            SystemTime::now()
+                .duration_since(SystemTime::UNIX_EPOCH)
+                .expect("clock after epoch")
+                .as_nanos()
+        ));
+        fs::create_dir_all(&test_root).expect("create test repository");
+        let git_root = fs::canonicalize(&test_root).expect("canonicalize test repository");
+        let root_arg = git_root.to_string_lossy();
+
+        let init = run_command("git", &["-C", root_arg.as_ref(), "init"]);
+        assert!(init.ok, "git init failed: {}", init.stderr);
+        fs::write(git_root.join("tracked.txt"), b"first\n").expect("write tracked file");
+        let add = run_command("git", &["-C", root_arg.as_ref(), "add", "tracked.txt"]);
+        assert!(add.ok, "git add failed: {}", add.stderr);
+        let commit = run_command(
+            "git",
+            &[
+                "-C",
+                root_arg.as_ref(),
+                "-c",
+                "user.name=Orchestrator Test",
+                "-c",
+                "user.email=orchestrator@example.invalid",
+                "commit",
+                "-m",
+                "Initial fixture",
+            ],
+        );
+        assert!(commit.ok, "git commit failed: {}", commit.stderr);
+
+        fs::write(git_root.join("tracked.txt"), b"alpha\n").expect("modify tracked file");
+        fs::write(git_root.join("untracked.txt"), b"first\n").expect("write untracked file");
+        let first =
+            prompt_queue_worktree_fingerprint(&git_root, ".").expect("first worktree fingerprint");
+
+        // Both paths retain the same porcelain status and byte length.
+        fs::write(git_root.join("tracked.txt"), b"bravo\n").expect("remodify tracked file");
+        fs::write(git_root.join("untracked.txt"), b"other\n").expect("remodify untracked file");
+        let second = prompt_queue_worktree_fingerprint(&git_root, ".")
+            .expect("second worktree fingerprint");
+
+        assert_ne!(first, second);
+        fs::remove_dir_all(test_root).expect("remove test repository");
+    }
 
     #[test]
     fn finds_codex_binary_on_path() {
@@ -6019,6 +6632,33 @@ mod tests {
             .sql
             .contains("previous_tokens.cached_input_tokens"));
         assert!(migration.sql.contains("previous_runs.codex_thread_id"));
+    }
+
+    #[test]
+    fn prompt_queue_uses_a_new_durable_migration_slot() {
+        let all_migrations = migrations();
+        let prompt_queue = all_migrations
+            .iter()
+            .find(|migration| migration.version == 21)
+            .expect("migration 21");
+        let cached_token_repair = all_migrations
+            .iter()
+            .find(|migration| migration.version == 20)
+            .expect("migration 20");
+
+        assert_eq!(prompt_queue.description, "persist_prompt_queue");
+        assert!(prompt_queue
+            .sql
+            .contains("ADD COLUMN conversation_revision"));
+        assert!(prompt_queue
+            .sql
+            .contains("CREATE TABLE IF NOT EXISTS prompt_queue_items"));
+        assert!(prompt_queue.sql.contains("execution_snapshot_json"));
+        assert!(prompt_queue.sql.contains("context_fingerprint_json"));
+        assert_eq!(
+            cached_token_repair.description,
+            "repair_per_run_cached_token_usage"
+        );
     }
 
     #[test]
