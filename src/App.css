@@ -4186,7 +4186,8 @@ select:disabled {
   position: relative;
   width: 100%;
   min-width: 0;
-  min-height: 32px;
+  height: var(--composer-progress-row-height);
+  min-height: var(--composer-progress-row-height);
   border: 0;
   border-bottom: 1px solid var(--color-divider);
   border-radius: calc(var(--radius) - 1px) calc(var(--radius) - 1px) 0 0;
@@ -4197,6 +4198,7 @@ select:disabled {
 }
 
 .composer-status-stack {
+  --composer-progress-row-height: 43px;
   display: grid;
   min-width: 0;
 }

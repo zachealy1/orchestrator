@@ -16,6 +16,19 @@ function rule(selector: string) {
 }
 
 describe("plan progress CSS", () => {
+  it("uses one fixed row height for Goal and Step progress", () => {
+    const stack = rule(".composer-status-stack");
+    const progressRow = rule(".plan-progress-indicator");
+
+    expect(stack).toContain("--composer-progress-row-height: 43px");
+    expect(progressRow).toContain(
+      "height: var(--composer-progress-row-height)",
+    );
+    expect(progressRow).toContain(
+      "min-height: var(--composer-progress-row-height)",
+    );
+  });
+
   it("uses only the filled track without an active progress marker", () => {
     expect(css).not.toContain(".plan-progress-marker");
     expect(css).not.toContain("@keyframes plan-progress-pulse");
