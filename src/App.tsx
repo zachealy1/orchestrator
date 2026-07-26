@@ -6005,10 +6005,15 @@ function App() {
 
     if (shouldStopCodex) {
       try {
-        await codexRpcForProfile(profileKey, accountId ?? 0, "turn/interrupt", {
+        const interruptedTurnId = await interruptTurnForProfile(
+          profileKey,
+          accountId ?? 0,
           threadId,
           turnId,
-        });
+        );
+        if (interruptedTurnId) {
+          control.turnId = interruptedTurnId;
+        }
       } catch (error) {
         setStatusMessage(
           `Run stopped locally, but Codex could not be interrupted safely: ${
@@ -7712,6 +7717,41 @@ function App() {
       "thread/goal/clear",
       { threadId },
     );
+  }
+
+  async function interruptTurnForProfile(
+    profileKey: CodexProfileKey,
+    accountId: number,
+    threadId: string,
+    turnId: string,
+  ) {
+    let activeTurnId = turnId;
+
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      try {
+        await codexRpcForProfile(profileKey, accountId, "turn/interrupt", {
+          threadId,
+          turnId: activeTurnId,
+        });
+        return activeTurnId;
+      } catch (error) {
+        const expectedTurnId = readExpectedActiveTurnId(error);
+        if (
+          attempt === 0 &&
+          expectedTurnId &&
+          expectedTurnId !== activeTurnId
+        ) {
+          activeTurnId = expectedTurnId;
+          continue;
+        }
+        if (isCodexTurnAlreadyTerminalError(error)) {
+          return null;
+        }
+        throw error;
+      }
+    }
+
+    return null;
   }
 
   async function selectCodexAccount(accountId: number) {
@@ -10821,6 +10861,18 @@ function App() {
         fallbackThreadId: readString(params.threadId),
       });
       if (goal) {
+        if (identity.turnId && identity.turnId !== control.turnId) {
+          control.turnId = identity.turnId;
+          if (goal.status !== "complete") {
+            control.goalTurnCompleted = false;
+          }
+          if (control.runId !== null) {
+            void updateRun(control.runId, {
+              codexTurnId: identity.turnId,
+              status: "running",
+            }).catch(() => undefined);
+          }
+        }
         control.goal = goal;
         if (!control.goalActionPending) {
           control.goalActionError = null;
@@ -13035,61 +13087,6 @@ function App() {
       control.goal = goal;
       control.goalActionError = null;
       setActiveRunRegistryVersion((current) => current + 1);
-
-      if (
-        status === "paused" &&
-        control.turnId &&
-        !control.goalTurnCompleted
-      ) {
-        try {
-          await codexRpcForProfile(
-            control.profileKey,
-            control.accountId,
-            "turn/interrupt",
-            {
-              threadId: control.threadId,
-              turnId: control.turnId,
-            },
-          );
-        } catch (interruptError) {
-          if (!control.goalTurnCompleted) {
-            if (
-              control.stopped ||
-              activeRunControlsRef.current.get(control.clientId) !== control
-            ) {
-              return;
-            }
-            let rollbackError: unknown = null;
-            try {
-              const rollbackResponse = await updateThreadGoalStatusForProfile(
-                control.profileKey,
-                control.accountId,
-                control.threadId,
-                "active",
-              );
-              const restoredGoal = parseThreadGoal(rollbackResponse.goal, {
-                fallbackThreadId: control.threadId,
-              });
-              if (!restoredGoal) {
-                throw new Error("Codex returned invalid restored goal state.");
-              }
-              control.goal = restoredGoal;
-            } catch (error) {
-              rollbackError = error;
-            }
-
-            throw new Error(
-              rollbackError
-                ? "Codex could not stop the active agent or restore the goal. Stop the run manually."
-                : `Codex could not stop the active agent: ${
-                    interruptError instanceof Error
-                      ? interruptError.message
-                      : String(interruptError)
-                  }`,
-            );
-          }
-        }
-      }
 
       if (
         control.stopped ||
@@ -17325,6 +17322,44 @@ function isCodexThreadNotFoundError(error: unknown) {
     );
   } catch {
     return message.toLowerCase().includes("thread not found");
+  }
+}
+
+function readExpectedActiveTurnId(error: unknown) {
+  const message = readCodexRpcErrorMessage(error);
+  return (
+    message.match(
+      /expected active turn id\s+([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})/i,
+    )?.[1] ?? null
+  );
+}
+
+function isCodexTurnAlreadyTerminalError(error: unknown) {
+  const message = readCodexRpcErrorMessage(error).toLowerCase();
+  return (
+    message.includes("no active turn") ||
+    message.includes("turn is not active") ||
+    message.includes("turn not active") ||
+    message.includes("turn already completed") ||
+    message.includes("turn already interrupted")
+  );
+}
+
+function readCodexRpcErrorMessage(error: unknown) {
+  const root = readObject(error);
+  const directMessage = readString(root.message);
+  const message =
+    error instanceof Error
+      ? error.message
+      : typeof error === "string"
+        ? error
+        : directMessage ?? "";
+
+  try {
+    const parsed = readObject(JSON.parse(message));
+    return readString(parsed.message) ?? message;
+  } catch {
+    return message;
   }
 }
 

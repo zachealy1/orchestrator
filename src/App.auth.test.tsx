@@ -10697,11 +10697,11 @@ describe("App Codex auth", () => {
         { threadId: "thread-1", status: "paused" },
       ),
     );
-    expect(mocks.codexRpcMock).toHaveBeenCalledWith(
-      7,
-      "turn/interrupt",
-      { threadId: "thread-1", turnId: "turn-1" },
-    );
+    expect(
+      mocks.codexRpcMock.mock.calls.filter(
+        ([, method]) => method === "turn/interrupt",
+      ),
+    ).toHaveLength(0);
     expect(
       within(composer).getByRole("button", { name: "Resume goal" }),
     ).toBeInTheDocument();
@@ -10756,8 +10756,9 @@ describe("App Codex auth", () => {
     ).not.toBeInTheDocument();
   });
 
-  it("stops a Goal immediately and turns Goal Mode off", async () => {
+  it("stops a Goal with Codex's current active turn when the cached turn is stale", async () => {
     prepareSignedInRun();
+    const activeTurnId = "019f9fc5-25dd-76a1-b223-b439ce5af283";
     mocks.codexRpcMock.mockImplementation(
       async (_accountId: number, method: string, params: any) => {
         if (method === "thread/start") {
@@ -10775,6 +10776,14 @@ describe("App Codex auth", () => {
               timeUsedSeconds: 42,
             },
           };
+        }
+        if (method === "turn/interrupt" && params.turnId === "turn-1") {
+          throw new Error(
+            JSON.stringify({
+              code: -32600,
+              message: `expected active turn id ${activeTurnId}, got turn-1`,
+            }),
+          );
         }
         return {};
       },
@@ -10803,6 +10812,11 @@ describe("App Codex auth", () => {
       7,
       "turn/interrupt",
       { threadId: "thread-1", turnId: "turn-1" },
+    );
+    expect(mocks.codexRpcMock).toHaveBeenCalledWith(
+      7,
+      "turn/interrupt",
+      { threadId: "thread-1", turnId: activeTurnId },
     );
     expect(screen.queryByLabelText("Goal progress")).not.toBeInTheDocument();
     expect(goalMode).toHaveAttribute("aria-pressed", "false");
@@ -11005,7 +11019,7 @@ describe("App Codex auth", () => {
     ).toBeInTheDocument();
   });
 
-  it("does not interrupt a completed Goal turn when pausing between turns", async () => {
+  it("does not manually interrupt a Goal turn when pausing between turns", async () => {
     prepareSignedInRun();
     mocks.codexRpcMock.mockImplementation(
       async (_accountId: number, method: string, params: any) => {
@@ -11061,7 +11075,7 @@ describe("App Codex auth", () => {
     ).toBeInTheDocument();
   });
 
-  it("restores an active Goal when its running turn cannot be interrupted", async () => {
+  it("does not issue a stale turn interruption after native Goal pause", async () => {
     prepareSignedInRun();
     mocks.codexRpcMock.mockImplementation(
       async (_accountId: number, method: string, params: any) => {
@@ -11082,7 +11096,13 @@ describe("App Codex auth", () => {
           };
         }
         if (method === "turn/interrupt") {
-          throw new Error("Interrupt unavailable");
+          throw new Error(
+            JSON.stringify({
+              code: -32600,
+              message:
+                "expected active turn id 019f9fc5-25dd-76a1-b223-b439ce5af283, got turn-1",
+            }),
+          );
         }
         return {};
       },
@@ -11093,20 +11113,19 @@ describe("App Codex auth", () => {
     await startMockRun(user, "Finish the workspace migration");
     await user.click(screen.getByRole("button", { name: "Pause goal" }));
 
-    await screen.findByText(
-      "Could not pause goal: Codex could not stop the active agent: Interrupt unavailable",
+    await waitFor(() =>
+      expect(
+        screen.getByRole("button", { name: "Resume goal" }),
+      ).toBeInTheDocument(),
     );
     expect(
-      screen.getByRole("button", { name: "Pause goal" }),
-    ).toBeEnabled();
-    expect(screen.getByLabelText("Goal progress")).toHaveTextContent(
-      "In progress",
-    );
-    expect(mocks.codexRpcMock).toHaveBeenCalledWith(
-      7,
-      "thread/goal/set",
-      { threadId: "thread-1", status: "active" },
-    );
+      mocks.codexRpcMock.mock.calls.filter(
+        ([, method]) => method === "turn/interrupt",
+      ),
+    ).toHaveLength(0);
+    expect(
+      screen.queryByText(/Could not pause goal/i),
+    ).not.toBeInTheDocument();
   });
 
   it("removes pending approval controls when the App Server disconnects", async () => {
