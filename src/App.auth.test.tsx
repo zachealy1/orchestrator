@@ -10697,18 +10697,21 @@ describe("App Codex auth", () => {
         { threadId: "thread-1", status: "paused" },
       ),
     );
+    expect(mocks.codexRpcMock).toHaveBeenCalledWith(
+      7,
+      "turn/interrupt",
+      { threadId: "thread-1", turnId: "turn-1" },
+    );
     expect(
       within(composer).getByRole("button", { name: "Resume goal" }),
     ).toBeInTheDocument();
 
     await emitCodexNotification({
-      method: "turn/completed",
+      method: "turn/interrupted",
       params: {
         threadId: "thread-1",
         turn: {
           id: "turn-1",
-          status: "completed",
-          durationMs: 4_000,
         },
       },
     });
@@ -10791,6 +10794,110 @@ describe("App Codex auth", () => {
     expect(
       screen.getByRole("button", { name: /stop codex/i }),
     ).toBeInTheDocument();
+  });
+
+  it("does not interrupt a completed Goal turn when pausing between turns", async () => {
+    prepareSignedInRun();
+    mocks.codexRpcMock.mockImplementation(
+      async (_accountId: number, method: string, params: any) => {
+        if (method === "thread/start") {
+          return { thread: { id: "thread-1" } };
+        }
+        if (method === "turn/start") {
+          return { turn: { id: "turn-1" } };
+        }
+        if (method === "thread/goal/set") {
+          return {
+            goal: {
+              threadId: params.threadId,
+              objective: "Finish the workspace migration",
+              status: params.status,
+              timeUsedSeconds: 42,
+            },
+          };
+        }
+        return {};
+      },
+    );
+
+    const { user } = await renderApp();
+    await user.click(screen.getByRole("button", { name: /goal mode/i }));
+    await startMockRun(user, "Finish the workspace migration");
+    await emitCodexNotification({
+      method: "turn/completed",
+      params: {
+        threadId: "thread-1",
+        turn: {
+          id: "turn-1",
+          status: "completed",
+          durationMs: 4_000,
+        },
+      },
+    });
+
+    await user.click(screen.getByRole("button", { name: "Pause goal" }));
+
+    await waitFor(() =>
+      expect(
+        screen.getByRole("button", { name: "Resume goal" }),
+      ).toBeInTheDocument(),
+    );
+    expect(
+      mocks.codexRpcMock.mock.calls.filter(
+        ([, method]) => method === "turn/interrupt",
+      ),
+    ).toHaveLength(0);
+    expect(
+      screen.getByRole("button", { name: /stop codex/i }),
+    ).toBeInTheDocument();
+  });
+
+  it("restores an active Goal when its running turn cannot be interrupted", async () => {
+    prepareSignedInRun();
+    mocks.codexRpcMock.mockImplementation(
+      async (_accountId: number, method: string, params: any) => {
+        if (method === "thread/start") {
+          return { thread: { id: "thread-1" } };
+        }
+        if (method === "turn/start") {
+          return { turn: { id: "turn-1" } };
+        }
+        if (method === "thread/goal/set") {
+          return {
+            goal: {
+              threadId: params.threadId,
+              objective: "Finish the workspace migration",
+              status: params.status,
+              timeUsedSeconds: 42,
+            },
+          };
+        }
+        if (method === "turn/interrupt") {
+          throw new Error("Interrupt unavailable");
+        }
+        return {};
+      },
+    );
+
+    const { user } = await renderApp();
+    await user.click(screen.getByRole("button", { name: /goal mode/i }));
+    await startMockRun(user, "Finish the workspace migration");
+    await user.click(screen.getByRole("button", { name: "Pause goal" }));
+
+    await screen.findByText(
+      "Could not pause goal: Codex could not stop the active agent: Interrupt unavailable",
+    );
+    expect(
+      screen.getByRole("button", { name: "Pause goal" }),
+    ).toBeEnabled();
+    expect(screen.getByLabelText("Goal progress")).toHaveTextContent(
+      "In progress",
+    );
+    expect(mocks.codexRpcMock).toHaveBeenCalledWith(
+      7,
+      "thread/goal/set",
+      { threadId: "thread-1", status: "active" },
+    );
   });
 
   it("removes pending approval controls when the App Server disconnects", async () => {

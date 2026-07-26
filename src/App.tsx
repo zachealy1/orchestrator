@@ -10788,8 +10788,9 @@ function App() {
       });
       if (goal) {
         control.goal = goal;
-        control.goalActionPending = null;
-        control.goalActionError = null;
+        if (!control.goalActionPending) {
+          control.goalActionError = null;
+        }
         control.acceptsThreadContinuation = true;
       }
     } else if (method === "thread/goal/cleared") {
@@ -10836,7 +10837,12 @@ function App() {
         readString(params.threadId) ?? undefined,
       );
     });
-    if (method === "turn/completed") {
+    if (
+      method === "turn/completed" ||
+      (method === "turn/interrupted" &&
+        !control.stopped &&
+        goalKeepsRunOpen(control.goal))
+    ) {
       control.goalTurnCompleted = true;
     }
     if (terminalTurnCompleted) {
@@ -12823,10 +12829,77 @@ function App() {
       if (!goal) {
         throw new Error("Codex returned invalid goal state.");
       }
-      if (activeRunControlsRef.current.get(control.clientId) !== control) {
+      if (
+        control.stopped ||
+        activeRunControlsRef.current.get(control.clientId) !== control
+      ) {
         return;
       }
       control.goal = goal;
+      control.goalActionError = null;
+      setActiveRunRegistryVersion((current) => current + 1);
+
+      if (
+        status === "paused" &&
+        control.turnId &&
+        !control.goalTurnCompleted
+      ) {
+        try {
+          await codexRpcForProfile(
+            control.profileKey,
+            control.accountId,
+            "turn/interrupt",
+            {
+              threadId: control.threadId,
+              turnId: control.turnId,
+            },
+          );
+        } catch (interruptError) {
+          if (!control.goalTurnCompleted) {
+            if (
+              control.stopped ||
+              activeRunControlsRef.current.get(control.clientId) !== control
+            ) {
+              return;
+            }
+            let rollbackError: unknown = null;
+            try {
+              const rollbackResponse = await updateThreadGoalStatusForProfile(
+                control.profileKey,
+                control.accountId,
+                control.threadId,
+                "active",
+              );
+              const restoredGoal = parseThreadGoal(rollbackResponse.goal, {
+                fallbackThreadId: control.threadId,
+              });
+              if (!restoredGoal) {
+                throw new Error("Codex returned invalid restored goal state.");
+              }
+              control.goal = restoredGoal;
+            } catch (error) {
+              rollbackError = error;
+            }
+
+            throw new Error(
+              rollbackError
+                ? "Codex could not stop the active agent or restore the goal. Stop the run manually."
+                : `Codex could not stop the active agent: ${
+                    interruptError instanceof Error
+                      ? interruptError.message
+                      : String(interruptError)
+                  }`,
+            );
+          }
+        }
+      }
+
+      if (
+        control.stopped ||
+        activeRunControlsRef.current.get(control.clientId) !== control
+      ) {
+        return;
+      }
       control.goalActionPending = null;
       control.goalActionError = null;
       setActiveRunRegistryVersion((current) => current + 1);
