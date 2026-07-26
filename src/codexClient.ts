@@ -37,6 +37,7 @@ import type {
   WorkspaceTreeEntry,
 } from "./types";
 import type { LocalWebPreviewProbeResult } from "./lib/webPreview";
+import type { ThreadGoalSetResponse } from "./lib/goalProgress";
 
 export function readBrowserRuntimeStatus() {
   return invoke<BrowserRuntimeStatus>("browser_runtime_status");
@@ -433,7 +434,7 @@ export async function setThreadGoal(
   threadId: string,
   objective: string,
 ) {
-  return codexRpc(accountId, "thread/goal/set", {
+  return codexRpc<ThreadGoalSetResponse>(accountId, "thread/goal/set", {
     threadId,
     objective,
     status: "active",

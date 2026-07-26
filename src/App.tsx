@@ -224,6 +224,15 @@ import {
   type RunIntent,
   type UserInputResponse,
 } from "./lib/nativePlanMode";
+import {
+  deriveGoalProgressIndicator,
+  goalKeepsRunOpen,
+  parseThreadGoal,
+  type GoalProgressAction,
+  type ThreadGoalSetResponse,
+  type ThreadGoalState,
+  type ThreadGoalStatus,
+} from "./lib/goalProgress";
 import { derivePlanProgressIndicator } from "./lib/planProgress";
 import { parseProposedPlanEnvelope } from "./lib/proposedPlan";
 import {
@@ -607,7 +616,9 @@ type ActiveRunControl = {
   cancelScheduledSetup: (() => void) | null;
   interactionMode: RunInteractionMode;
   acceptsThreadContinuation: boolean;
-  goalStatus: ThreadGoalStatus | null;
+  goal: ThreadGoalState | null;
+  goalActionPending: GoalProgressAction | null;
+  goalActionError: string | null;
   goalTurnCompleted: boolean;
   threadId: string | null;
   turnId: string | null;
@@ -619,14 +630,6 @@ type ActiveRunControl = {
   activePlaywrightToolCalls: Map<string, ActivePlaywrightToolCall>;
   webPreviewDetection: WebPreviewDetectionState;
 };
-
-type ThreadGoalStatus =
-  | "active"
-  | "paused"
-  | "blocked"
-  | "usageLimited"
-  | "budgetLimited"
-  | "complete";
 
 type WebPreviewCommandBuffer = {
   command: string;
@@ -1041,18 +1044,6 @@ function readCodexMessageRunIdentity(message: CodexMessage) {
     turnId:
       readString(params.turnId) ?? readString(readObject(params.turn).id),
   };
-}
-
-function readThreadGoalStatus(params: Record<string, unknown>) {
-  const status = readString(readObject(params.goal).status);
-  return status === "active" ||
-    status === "paused" ||
-    status === "blocked" ||
-    status === "usageLimited" ||
-    status === "budgetLimited" ||
-    status === "complete"
-    ? status
-    : null;
 }
 
 function markPerformance(name: string) {
@@ -2520,6 +2511,10 @@ function App() {
   const runIsActive = Boolean(
     selectedActiveRunControl && isActiveRunControl(selectedActiveRunControl),
   );
+  const selectedGoalProgress = deriveGoalProgressIndicator(
+    selectedActiveRunControl?.goal ?? null,
+    selectedActiveRunControl?.goalActionPending ?? null,
+  );
   const selectedPlanProgress = useMemo(
     () =>
       derivePlanProgressIndicator(selectedActiveRunControl?.runView ?? null),
@@ -2856,8 +2851,20 @@ function App() {
         detail: approvalSafetyWarning,
       });
     }
+    if (selectedActiveRunControl?.goalActionError) {
+      notices.push({
+        id: "goal-action-error",
+        tone: "warning",
+        title: "Goal update failed",
+        detail: selectedActiveRunControl.goalActionError,
+      });
+    }
     return notices;
-  }, [approvalSafetyWarning, crossConversationApprovals.length]);
+  }, [
+    approvalSafetyWarning,
+    crossConversationApprovals.length,
+    selectedActiveRunControl?.goalActionError,
+  ]);
   const activateComposerStatusNotice = useStableEvent((noticeId: string) => {
     if (noticeId !== "cross-conversation-approvals") return;
     const oldest = [...crossConversationApprovals].sort((left, right) =>
@@ -5921,7 +5928,9 @@ function App() {
       try {
         await clearThreadGoalForProfile(profileKey, accountId, threadId);
         control.acceptsThreadContinuation = false;
-        control.goalStatus = null;
+        control.goal = null;
+        control.goalActionPending = null;
+        control.goalActionError = null;
       } catch (error) {
         goalClearError =
           error instanceof Error ? error.message : String(error);
@@ -7633,15 +7642,29 @@ function App() {
     accountId: number,
     threadId: string,
     objective: string,
-  ) {
+  ): Promise<ThreadGoalSetResponse> {
     return profileKey === DEFAULT_CODEX_PROFILE_KEY
-      ? codexDefaultProfileRpc("thread/goal/set", {
+      ? codexDefaultProfileRpc<ThreadGoalSetResponse>("thread/goal/set", {
           threadId,
           objective,
           status: "active",
           tokenBudget: null,
         })
       : setThreadGoal(accountId, threadId, objective);
+  }
+
+  function updateThreadGoalStatusForProfile(
+    profileKey: CodexProfileKey,
+    accountId: number,
+    threadId: string,
+    status: Extract<ThreadGoalStatus, "active" | "paused">,
+  ) {
+    return codexRpcForProfile<ThreadGoalSetResponse>(
+      profileKey,
+      accountId,
+      "thread/goal/set",
+      { threadId, status },
+    );
   }
 
   function clearThreadGoalForProfile(
@@ -8486,7 +8509,9 @@ function App() {
       cancelScheduledSetup: null,
       interactionMode: interactionModeForSnapshot(snapshot),
       acceptsThreadContinuation: snapshot.goalMode,
-      goalStatus: snapshot.goalMode ? "active" : null,
+      goal: null,
+      goalActionPending: null,
+      goalActionError: null,
       goalTurnCompleted: false,
       threadId: snapshot.threadId,
       turnId: null,
@@ -8992,21 +9017,32 @@ function App() {
 
       if (snapshot.goalMode) {
         try {
-          await setThreadGoalForProfile(
+          const response = await setThreadGoalForProfile(
             snapshot.profileKey,
             snapshot.accountId,
             threadId,
             snapshot.promptText,
           );
+          const goal = parseThreadGoal(response.goal, {
+            fallbackThreadId: threadId,
+          });
+          if (!goal) {
+            throw new Error("Codex returned invalid goal state.");
+          }
           runControl.acceptsThreadContinuation = true;
-          runControl.goalStatus = "active";
+          runControl.goal = goal;
+          runControl.goalActionPending = null;
+          runControl.goalActionError = null;
+          setActiveRunRegistryVersion((current) => current + 1);
           ensureRunControlActive(runControl);
         } catch (error) {
           if (error instanceof RunStoppedError) {
             throw error;
           }
           runControl.acceptsThreadContinuation = false;
-          runControl.goalStatus = null;
+          runControl.goal = null;
+          runControl.goalActionPending = null;
+          runControl.goalActionError = null;
           warnings.push(
             `Goal mode could not set a thread goal: ${
               error instanceof Error ? error.message : String(error)
@@ -9108,21 +9144,32 @@ function App() {
         ensureRunControlActive(runControl);
         if (snapshot.goalMode) {
           try {
-            await setThreadGoalForProfile(
+            const response = await setThreadGoalForProfile(
               snapshot.profileKey,
               snapshot.accountId,
               threadId,
               snapshot.promptText,
             );
+            const goal = parseThreadGoal(response.goal, {
+              fallbackThreadId: threadId,
+            });
+            if (!goal) {
+              throw new Error("Codex returned invalid goal state.");
+            }
             runControl.acceptsThreadContinuation = true;
-            runControl.goalStatus = "active";
+            runControl.goal = goal;
+            runControl.goalActionPending = null;
+            runControl.goalActionError = null;
+            setActiveRunRegistryVersion((current) => current + 1);
             ensureRunControlActive(runControl);
           } catch (goalError) {
             if (goalError instanceof RunStoppedError) {
               throw goalError;
             }
             runControl.acceptsThreadContinuation = false;
-            runControl.goalStatus = null;
+            runControl.goal = null;
+            runControl.goalActionPending = null;
+            runControl.goalActionError = null;
             warnings.push(
               `Goal mode could not set a thread goal on the fresh thread: ${
                 goalError instanceof Error ? goalError.message : String(goalError)
@@ -10736,19 +10783,25 @@ function App() {
       }
     }
     if (method === "thread/goal/updated") {
-      const goalStatus = readThreadGoalStatus(params);
-      if (goalStatus) {
-        control.goalStatus = goalStatus;
+      const goal = parseThreadGoal(params.goal, {
+        fallbackThreadId: readString(params.threadId),
+      });
+      if (goal) {
+        control.goal = goal;
+        control.goalActionPending = null;
+        control.goalActionError = null;
         control.acceptsThreadContinuation = true;
       }
     } else if (method === "thread/goal/cleared") {
-      control.goalStatus = null;
+      control.goal = null;
+      control.goalActionPending = null;
+      control.goalActionError = null;
       control.acceptsThreadContinuation = false;
     }
     const intermediateGoalTurnCompleted =
       method === "turn/completed" &&
       control.acceptsThreadContinuation &&
-      control.goalStatus === "active";
+      goalKeepsRunOpen(control.goal);
     const terminalTurnCompleted =
       method === "turn/completed" && !intermediateGoalTurnCompleted;
     inspectCodexMessageForWebPreview(control, message);
@@ -10965,12 +11018,10 @@ function App() {
     }
     if (
       method === "thread/goal/updated" &&
-      control.goalStatus !== null &&
-      control.goalStatus !== "active" &&
+      control.goal?.status === "complete" &&
       control.goalTurnCompleted &&
       activeRunControlsRef.current.get(control.clientId) === control
     ) {
-      const goalStatus = control.goalStatus;
       control.goalTurnCompleted = false;
       await handleCodexNotification(accountId, profileKey, {
         method: "turn/completed",
@@ -10978,12 +11029,9 @@ function App() {
           threadId: control.threadId,
           turn: {
             id: control.turnId,
-            status: goalStatus === "complete" ? "completed" : "failed",
+            status: "completed",
             durationMs: control.runView.elapsedMs,
-            error:
-              goalStatus === "complete"
-                ? null
-                : `Goal stopped with status ${goalStatus}.`,
+            error: null,
           },
         },
       });
@@ -12742,6 +12790,61 @@ function App() {
     }
   }, []);
 
+  async function updateSelectedGoalStatus(
+    status: Extract<ThreadGoalStatus, "active" | "paused">,
+  ) {
+    const control = selectedActiveRunControl;
+    if (
+      !control ||
+      !control.threadId ||
+      !control.goal ||
+      control.goalActionPending ||
+      !isActiveRunControl(control)
+    ) {
+      return;
+    }
+
+    const action: GoalProgressAction =
+      status === "paused" ? "pausing" : "resuming";
+    control.goalActionPending = action;
+    control.goalActionError = null;
+    setActiveRunRegistryVersion((current) => current + 1);
+
+    try {
+      const response = await updateThreadGoalStatusForProfile(
+        control.profileKey,
+        control.accountId,
+        control.threadId,
+        status,
+      );
+      const goal = parseThreadGoal(response.goal, {
+        fallbackThreadId: control.threadId,
+      });
+      if (!goal) {
+        throw new Error("Codex returned invalid goal state.");
+      }
+      if (activeRunControlsRef.current.get(control.clientId) !== control) {
+        return;
+      }
+      control.goal = goal;
+      control.goalActionPending = null;
+      control.goalActionError = null;
+      setActiveRunRegistryVersion((current) => current + 1);
+    } catch (error) {
+      if (activeRunControlsRef.current.get(control.clientId) === control) {
+        control.goalActionPending = null;
+        control.goalActionError = `Could not ${
+          status === "paused" ? "pause" : "resume"
+        } goal: ${error instanceof Error ? error.message : String(error)}`;
+        setActiveRunRegistryVersion((current) => current + 1);
+      }
+      setStatusMessage(
+        control.goalActionError ??
+          `Could not ${status === "paused" ? "pause" : "resume"} goal.`,
+      );
+    }
+  }
+
   const handlePlanModeChange = useCallback((nextPlanMode: boolean) => {
     setPlanMode(nextPlanMode);
     if (nextPlanMode) {
@@ -14413,6 +14516,7 @@ function App() {
                   selectedReasoningEffort={selectedReasoningEffort}
                   goalMode={goalMode}
                   planMode={planMode}
+                  goalProgress={selectedGoalProgress}
                   planProgress={selectedPlanProgress}
                   statusNotices={composerStatusNotices}
                   accessMode={accessMode}
@@ -14430,6 +14534,12 @@ function App() {
                   onReasoningEffortChange={setSelectedReasoningEffort}
                   onGoalModeChange={handleGoalModeChange}
                   onPlanModeChange={handlePlanModeChange}
+                  onPauseGoal={() => {
+                    void updateSelectedGoalStatus("paused");
+                  }}
+                  onResumeGoal={() => {
+                    void updateSelectedGoalStatus("active");
+                  }}
                   onStatusNoticeActivate={activateComposerStatusNotice}
                   onAccessModeChange={handleAccessModeChange}
                   onAddFiles={chooseComposerContextFiles}

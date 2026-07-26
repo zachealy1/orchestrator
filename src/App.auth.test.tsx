@@ -676,7 +676,16 @@ function prepareDefaults() {
   mocks.runPreflightMock.mockResolvedValue(preflight);
   mocks.readCodexFileMock.mockResolvedValue("file contents");
   mocks.readDefaultCodexFileMock.mockResolvedValue("file contents");
-  mocks.setThreadGoalMock.mockResolvedValue(undefined);
+  mocks.setThreadGoalMock.mockImplementation(
+    async (_accountId: number, threadId: string, objective: string) => ({
+      goal: {
+        threadId,
+        objective,
+        status: "active",
+        timeUsedSeconds: 0,
+      },
+    }),
+  );
   mocks.resolveCodexServerRequestMock.mockResolvedValue(undefined);
   mocks.resolveDefaultCodexServerRequestMock.mockResolvedValue(undefined);
   mocks.codexRpcMock.mockResolvedValue(undefined);
@@ -8480,7 +8489,12 @@ describe("App Codex auth", () => {
       method: "thread/goal/updated",
       params: {
         threadId: "thread-1",
-        goal: { status: "complete" },
+        goal: {
+          threadId: "thread-1",
+          objective: "Fix docs /docs",
+          status: "complete",
+          timeUsedSeconds: 1,
+        },
       },
     });
     mocks.readCodexFileMock.mockResolvedValue("updated file contents");
@@ -10591,7 +10605,12 @@ describe("App Codex auth", () => {
       method: "thread/goal/updated",
       params: {
         threadId: "thread-1",
-        goal: { status: "complete" },
+        goal: {
+          threadId: "thread-1",
+          objective: "Run a goal command",
+          status: "complete",
+          timeUsedSeconds: 3,
+        },
       },
     });
 
@@ -10604,6 +10623,174 @@ describe("App Codex auth", () => {
       202,
       expect.objectContaining({ status: "completed" }),
     );
+  });
+
+  it("shows native Goal progress and pauses or resumes without ending the run", async () => {
+    prepareSignedInRun();
+    mocks.codexRpcMock.mockImplementation(
+      async (_accountId: number, method: string, params: any) => {
+        if (method === "thread/start") {
+          return { thread: { id: "thread-1" } };
+        }
+        if (method === "turn/start") {
+          return { turn: { id: "turn-1" } };
+        }
+        if (method === "thread/goal/set") {
+          return {
+            goal: {
+              threadId: params.threadId,
+              objective: "Finish the workspace migration",
+              status: params.status,
+              timeUsedSeconds: 3_723,
+            },
+          };
+        }
+        return {};
+      },
+    );
+
+    const { user } = await renderApp();
+    await user.click(screen.getByRole("button", { name: /goal mode/i }));
+    await startMockRun(user, "Finish the workspace migration");
+
+    await emitCodexNotification({
+      method: "thread/goal/updated",
+      params: {
+        threadId: "thread-1",
+        goal: {
+          threadId: "thread-1",
+          objective: "Finish the workspace migration",
+          status: "active",
+          timeUsedSeconds: 3_723,
+        },
+      },
+    });
+    await emitCodexNotification({
+      method: "turn/plan/updated",
+      params: {
+        threadId: "thread-1",
+        turnId: "turn-1",
+        plan: [
+          { step: "Inspect the repository", status: "in_progress" },
+          { step: "Complete the migration", status: "pending" },
+        ],
+      },
+    });
+
+    const composer = screen.getByLabelText("Task composer");
+    const goalProgress = within(composer).getByLabelText("Goal progress");
+    const planProgress = within(composer).getByRole("status");
+    expect(goalProgress).toHaveTextContent("Finish the workspace migration");
+    expect(goalProgress).toHaveTextContent("1hr 2m 3s");
+    expect(
+      goalProgress.compareDocumentPosition(planProgress) &
+        Node.DOCUMENT_POSITION_FOLLOWING,
+    ).not.toBe(0);
+
+    await user.click(
+      within(goalProgress).getByRole("button", { name: "Pause goal" }),
+    );
+    await waitFor(() =>
+      expect(mocks.codexRpcMock).toHaveBeenCalledWith(
+        7,
+        "thread/goal/set",
+        { threadId: "thread-1", status: "paused" },
+      ),
+    );
+    expect(
+      within(composer).getByRole("button", { name: "Resume goal" }),
+    ).toBeInTheDocument();
+
+    await emitCodexNotification({
+      method: "turn/completed",
+      params: {
+        threadId: "thread-1",
+        turn: {
+          id: "turn-1",
+          status: "completed",
+          durationMs: 4_000,
+        },
+      },
+    });
+    expect(screen.getByRole("button", { name: /stop codex/i })).toBeInTheDocument();
+    expect(within(composer).getByLabelText("Goal progress")).toHaveTextContent(
+      "Paused",
+    );
+
+    await user.click(
+      within(composer).getByRole("button", { name: "Resume goal" }),
+    );
+    await waitFor(() =>
+      expect(mocks.codexRpcMock).toHaveBeenCalledWith(
+        7,
+        "thread/goal/set",
+        { threadId: "thread-1", status: "active" },
+      ),
+    );
+    expect(
+      within(composer).getByRole("button", { name: "Pause goal" }),
+    ).toBeInTheDocument();
+
+    await emitCodexNotification({
+      method: "thread/goal/updated",
+      params: {
+        threadId: "thread-1",
+        goal: {
+          threadId: "thread-1",
+          objective: "Finish the workspace migration",
+          status: "complete",
+          timeUsedSeconds: 3_725,
+        },
+      },
+    });
+    await waitFor(() =>
+      expect(
+        screen.getByRole("button", { name: /run codex/i }),
+      ).toBeInTheDocument(),
+    );
+    expect(
+      within(composer).queryByLabelText("Goal progress"),
+    ).not.toBeInTheDocument();
+  });
+
+  it("keeps the current Goal state when a pause request fails", async () => {
+    prepareSignedInRun();
+    mocks.codexRpcMock.mockImplementation(
+      async (_accountId: number, method: string) => {
+        if (method === "thread/start") {
+          return { thread: { id: "thread-1" } };
+        }
+        if (method === "turn/start") {
+          return { turn: { id: "turn-1" } };
+        }
+        if (method === "thread/goal/set") {
+          throw new Error("Goal service unavailable");
+        }
+        return {};
+      },
+    );
+
+    const { user } = await renderApp();
+    await user.click(screen.getByRole("button", { name: /goal mode/i }));
+    await startMockRun(user, "Finish the workspace migration");
+
+    const composer = screen.getByLabelText("Task composer");
+    await user.click(
+      within(composer).getByRole("button", { name: "Pause goal" }),
+    );
+
+    await screen.findByText(
+      "Could not pause goal: Goal service unavailable",
+    );
+    expect(
+      within(composer).getByRole("button", { name: "Pause goal" }),
+    ).toBeEnabled();
+    expect(within(composer).getByLabelText("Goal progress")).toHaveTextContent(
+      "In progress",
+    );
+    expect(
+      screen.getByRole("button", { name: /stop codex/i }),
+    ).toBeInTheDocument();
   });
 
   it("removes pending approval controls when the App Server disconnects", async () => {

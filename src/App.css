@@ -4313,6 +4313,70 @@ button.composer-status-action:focus-visible {
   color: var(--color-primary);
 }
 
+.goal-progress-content > svg {
+  flex: 0 0 auto;
+  color: var(--color-primary);
+}
+
+.goal-progress-elapsed {
+  min-width: 68px;
+  flex: 0 0 auto;
+  color: var(--color-text-secondary);
+  font-size: 0.72rem;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.goal-progress-label {
+  min-width: 0;
+  flex: 1 1 auto;
+  overflow: hidden;
+  color: var(--color-text-secondary);
+  font-size: 0.76rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.goal-progress-state {
+  flex: 0 0 auto;
+  color: var(--color-text-secondary);
+  font-size: 0.72rem;
+  font-weight: 650;
+  white-space: nowrap;
+}
+
+button.goal-progress-action {
+  flex: 0 0 auto;
+  color: var(--color-primary);
+}
+
+button.goal-progress-action:hover:not(:disabled),
+button.goal-progress-action:focus-visible {
+  color: var(--color-primary);
+}
+
+.goal-progress-spinner {
+  animation: file-preview-spinner-rotate 0.9s linear infinite;
+}
+
+.goal-progress-indicator[data-state="paused"] .goal-progress-content > svg,
+.goal-progress-indicator[data-state="paused"] .goal-progress-state {
+  color: var(--color-icon-muted);
+}
+
+.goal-progress-indicator[data-state="blocked"] .goal-progress-content > svg,
+.goal-progress-indicator[data-state="blocked"] .goal-progress-state,
+.goal-progress-indicator[data-state="usageLimited"]
+  .goal-progress-content
+  > svg,
+.goal-progress-indicator[data-state="usageLimited"] .goal-progress-state,
+.goal-progress-indicator[data-state="budgetLimited"]
+  .goal-progress-content
+  > svg,
+.goal-progress-indicator[data-state="budgetLimited"] .goal-progress-state {
+  color: var(--color-accent);
+}
+
 .plan-progress-indicator strong {
   flex: 0 0 auto;
   color: var(--color-text);
@@ -4456,7 +4520,8 @@ button.composer-status-action:focus-visible {
   }
 
   .plan-progress-spinner,
-  .plan-progress-tooltip-spinner {
+  .plan-progress-tooltip-spinner,
+  .goal-progress-spinner {
     animation: none;
   }
 }
@@ -4467,6 +4532,10 @@ button.composer-status-action:focus-visible {
   }
 
   .plan-progress-label {
+    display: none;
+  }
+
+  .goal-progress-label {
     display: none;
   }
 

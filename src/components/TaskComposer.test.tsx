@@ -80,6 +80,8 @@ function renderComposer(overrides: Partial<TaskComposerProps> = {}) {
     onReasoningEffortChange: vi.fn(),
     onGoalModeChange: vi.fn(),
     onPlanModeChange: vi.fn(),
+    onPauseGoal: vi.fn(),
+    onResumeGoal: vi.fn(),
     onAccessModeChange: vi.fn(),
     onAddFiles: vi.fn(),
     onMentionSearch: vi.fn(),
@@ -136,6 +138,8 @@ function renderControlledComposer(overrides: Partial<TaskComposerProps> = {}) {
       onReasoningEffortChange: vi.fn(),
       onGoalModeChange: vi.fn(),
       onPlanModeChange: vi.fn(),
+      onPauseGoal: vi.fn(),
+      onResumeGoal: vi.fn(),
       onAccessModeChange: vi.fn(),
       onAddFiles: vi.fn(),
       onMentionSearch: vi.fn(),
@@ -293,7 +297,7 @@ describe("TaskComposer", () => {
     expect(prompt).toHaveValue("Keep this draft");
   });
 
-  it("stacks approval notices with plan progress inside the composer", async () => {
+  it("stacks approval, goal, and plan progress inside the composer", async () => {
     const onStatusNoticeActivate = vi.fn();
     const notice = {
       id: "cross-conversation-approvals",
@@ -314,8 +318,17 @@ describe("TaskComposer", () => {
         { step: "Implement the change", status: "pending" as const },
       ],
     };
+    const goalProgress = {
+      threadId: "thread-1",
+      objective: "Finish the workspace migration",
+      status: "active" as const,
+      timeUsedSeconds: 42,
+      observedAtMs: Date.now(),
+      actionPending: null,
+    };
     const { user, container, props, rerender } = renderComposer({
       prompt: "Keep this draft",
+      goalProgress,
       planProgress,
       onStatusNoticeActivate,
     });
@@ -326,6 +339,7 @@ describe("TaskComposer", () => {
       <TaskComposer
         {...props}
         statusNotices={[notice]}
+        goalProgress={goalProgress}
         planProgress={planProgress}
       />,
     );
@@ -339,7 +353,13 @@ describe("TaskComposer", () => {
     expect(stack).not.toBeNull();
     expect(composer).toHaveClass("has-composer-status");
     expect(stack).toContainElement(approvalAction);
+    expect(stack).toContainElement(screen.getByLabelText("Goal progress"));
     expect(stack).toContainElement(screen.getByRole("status"));
+    expect(Array.from(stack!.children)).toEqual([
+      approvalAction.closest(".composer-status-notice"),
+      screen.getByLabelText("Goal progress"),
+      screen.getByRole("status").closest(".plan-progress-indicator"),
+    ]);
     expect(
       stack!.compareDocumentPosition(prompt) &
         Node.DOCUMENT_POSITION_FOLLOWING,

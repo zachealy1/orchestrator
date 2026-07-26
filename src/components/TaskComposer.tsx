@@ -34,7 +34,9 @@ import type {
   KeyboardEvent,
 } from "react";
 import { ComposerSelect } from "./ComposerSelect";
+import { GoalProgressIndicator } from "./GoalProgressIndicator";
 import { PlanProgressIndicator } from "./PlanProgressIndicator";
+import type { GoalProgressIndicatorModel } from "../lib/goalProgress";
 import type { PlanProgressIndicatorModel } from "../lib/planProgress";
 import type {
   CodexAccountProfile,
@@ -86,6 +88,7 @@ type Props = {
   selectedReasoningEffort: string | null;
   goalMode: boolean;
   planMode: boolean;
+  goalProgress?: GoalProgressIndicatorModel | null;
   planProgress?: PlanProgressIndicatorModel | null;
   statusNotices?: ComposerStatusNotice[];
   accessMode: CodexAccessMode;
@@ -103,6 +106,8 @@ type Props = {
   onReasoningEffortChange: (effort: string) => void;
   onGoalModeChange: (value: boolean) => void;
   onPlanModeChange: (value: boolean) => void;
+  onPauseGoal: () => void;
+  onResumeGoal: () => void;
   onStatusNoticeActivate?: (noticeId: string) => void;
   onAccessModeChange: (accessMode: CodexAccessMode) => void;
   onAddFiles: () => void;
@@ -175,6 +180,7 @@ export const TaskComposer = memo(function TaskComposer({
   selectedReasoningEffort,
   goalMode,
   planMode,
+  goalProgress = null,
   planProgress = null,
   statusNotices = [],
   accessMode,
@@ -192,6 +198,8 @@ export const TaskComposer = memo(function TaskComposer({
   onReasoningEffortChange,
   onGoalModeChange,
   onPlanModeChange,
+  onPauseGoal,
+  onResumeGoal,
   onStatusNoticeActivate,
   onAccessModeChange,
   onAddFiles,
@@ -754,7 +762,10 @@ export const TaskComposer = memo(function TaskComposer({
     onContextFileDropHandled?.();
   }
 
-  const hasComposerStatus = statusNotices.length > 0 || Boolean(planProgress);
+  const hasComposerStatus =
+    statusNotices.length > 0 ||
+    Boolean(goalProgress) ||
+    Boolean(planProgress);
 
   return (
     <section
@@ -772,6 +783,13 @@ export const TaskComposer = memo(function TaskComposer({
               onActivate={onStatusNoticeActivate}
             />
           ))}
+          {goalProgress ? (
+            <GoalProgressIndicator
+              progress={goalProgress}
+              onPause={onPauseGoal}
+              onResume={onResumeGoal}
+            />
+          ) : null}
           {planProgress ? (
             <PlanProgressIndicator progress={planProgress} />
           ) : null}
