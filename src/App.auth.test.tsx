@@ -5109,6 +5109,9 @@ describe("App Codex auth", () => {
       name: "Confirm implementation settings",
     });
     expect(
+      within(implementationDialog).queryByText("Plan implementation"),
+    ).not.toBeInTheDocument();
+    expect(
       within(implementationDialog).getByRole("combobox", {
         name: "Implementation account",
       }),

@@ -13876,7 +13876,6 @@ function App() {
             onKeyDown={trapPlanImplementationDialogFocus}
           >
             <div className="plan-implementation-copy">
-              <p className="eyebrow">Plan implementation</p>
               <h2 id="plan-implementation-title">
                 Confirm implementation settings
               </h2>

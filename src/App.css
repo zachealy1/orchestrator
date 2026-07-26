@@ -699,6 +699,12 @@ button.danger:hover:not(:disabled) {
 
 .plan-implementation-fields .composer-select {
   width: 100%;
+  background: var(--dropdown-bg);
+}
+
+.plan-implementation-fields .composer-select:hover:not(.disabled),
+.plan-implementation-fields .composer-select.open {
+  background: var(--dropdown-bg);
 }
 
 .confirmation-dialog p.account-handoff-error {
