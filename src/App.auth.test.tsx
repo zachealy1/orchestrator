@@ -10125,7 +10125,7 @@ describe("App Codex auth", () => {
     );
   });
 
-  it("deduplicates approval replays and ignores requests from untracked runs", async () => {
+  it("deduplicates approval replays and safely rejects requests from untracked runs", async () => {
     prepareSignedInRun();
     mocks.readAgentNotificationPermissionStatusMock.mockResolvedValue("allowed");
     let finishNotificationDelivery!: () => void;
@@ -10180,23 +10180,30 @@ describe("App Codex auth", () => {
       { requestToken: null },
     );
     expect(screen.getByText(/without a one-shot request token/i)).toBeInTheDocument();
-    expect(mocks.resolveCodexServerRequestMock).not.toHaveBeenCalled();
+    expect(
+      mocks.resolveCodexServerRequestMock.mock.calls.some(
+        ([, requestId]) => requestId === 11,
+      ),
+    ).toBe(false);
   });
 
-  it("does not show an approval notice when no agent is running", async () => {
+  it("denies an orphaned approval so a later prompt can start normally", async () => {
     prepareSignedInRun();
-    await renderApp();
+    const { user } = await renderApp();
 
-    await emitCodexServerRequest({
-      id: 12,
-      method: "item/commandExecution/requestApproval",
-      params: {
-        threadId: "thread-from-completed-chat",
-        turnId: "turn-from-completed-chat",
-        command: "npm test",
-        availableDecisions: ["accept", "cancel"],
+    await emitCodexServerRequest(
+      {
+        id: 12,
+        method: "item/commandExecution/requestApproval",
+        params: {
+          threadId: "thread-from-completed-chat",
+          turnId: "turn-from-completed-chat",
+          command: "npm test",
+          availableDecisions: ["accept", "cancel"],
+        },
       },
-    });
+      { requestToken: "server-request-orphan-12" },
+    );
 
     expect(
       screen.queryByRole("button", {
@@ -10205,6 +10212,105 @@ describe("App Codex auth", () => {
     ).not.toBeInTheDocument();
     expect(screen.queryByText("Approval needed")).not.toBeInTheDocument();
     expect(mocks.sendAgentNotificationMock).not.toHaveBeenCalled();
+    await waitFor(() =>
+      expect(mocks.resolveCodexServerRequestMock).toHaveBeenCalledWith(
+        7,
+        12,
+        "server-request-orphan-12",
+        { decision: "cancel" },
+      ),
+    );
+    await emitCodexServerRequest(
+      {
+        id: 12,
+        method: "item/commandExecution/requestApproval",
+        params: {
+          threadId: "thread-from-completed-chat",
+          turnId: "turn-from-completed-chat",
+          command: "npm test",
+          availableDecisions: ["accept", "cancel"],
+        },
+      },
+      { requestToken: "server-request-orphan-12" },
+    );
+    expect(mocks.resolveCodexServerRequestMock).toHaveBeenCalledTimes(1);
+
+    await startMockRun(user, "Start after stale approval");
+    expect(
+      mocks.codexRpcMock.mock.calls.some(([, method]) => method === "turn/start"),
+    ).toBe(true);
+  });
+
+  it("routes an approval that arrives before turn/start returns", async () => {
+    prepareSignedInRun();
+    let finishTurnStart!: (value: { turn: { id: string } }) => void;
+    const pendingTurnStart = new Promise<{ turn: { id: string } }>(
+      (resolve) => {
+        finishTurnStart = resolve;
+      },
+    );
+    mocks.codexRpcMock.mockImplementation(
+      async (_accountId: number, method: string) => {
+        if (method === "thread/start") {
+          return { thread: { id: "thread-1" } };
+        }
+        if (method === "turn/start") {
+          return pendingTurnStart;
+        }
+        return {};
+      },
+    );
+
+    const { user } = await renderApp();
+    await user.type(screen.getByLabelText("Prompt"), "Run guarded setup");
+    await user.click(screen.getByRole("button", { name: /run codex/i }));
+    await waitFor(() =>
+      expect(
+        mocks.codexRpcMock.mock.calls.some(
+          ([, method]) => method === "turn/start",
+        ),
+      ).toBe(true),
+    );
+
+    await emitCodexServerRequest(
+      {
+        id: 15,
+        method: "item/commandExecution/requestApproval",
+        params: {
+          threadId: "thread-1",
+          turnId: "turn-delayed",
+          command: "npm test",
+          availableDecisions: ["accept", "cancel"],
+        },
+      },
+      { requestToken: "server-request-before-turn-start" },
+    );
+    expect(
+      mocks.resolveCodexServerRequestMock.mock.calls.some(
+        ([, requestId]) => requestId === 15,
+      ),
+    ).toBe(false);
+
+    await act(async () => {
+      finishTurnStart({ turn: { id: "turn-delayed" } });
+      await pendingTurnStart;
+    });
+    const approvalCard = await screen.findByRole("article", {
+      name: "Codex needs approval to run a command",
+    });
+    await user.click(
+      within(approvalCard).getByRole("button", {
+        name: "Cancel operation",
+      }),
+    );
+    await waitFor(() =>
+      expect(mocks.resolveCodexServerRequestMock).toHaveBeenCalledWith(
+        7,
+        15,
+        "server-request-before-turn-start",
+        { decision: "cancel" },
+      ),
+    );
   });
 
   it("clears an approval when Codex resolves it without thread metadata", async () => {

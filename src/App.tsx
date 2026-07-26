@@ -133,6 +133,8 @@ import {
   runPreflight,
   setThreadGoal,
   startCodexLogin,
+  stopCodex,
+  stopDefaultCodexProfile,
   stopBrowserSession,
   sendAgentNotification,
   syncDefaultProfileThreadTranscript,
@@ -179,6 +181,7 @@ import {
   type RunViewState,
 } from "./lib/codexEventReducer";
 import {
+  findSafeApprovalDenialChoice,
   parseApprovalRequest,
   type ActivePlaywrightToolCall,
   type ApprovalChoice,
@@ -837,6 +840,17 @@ function pendingApprovalCouldBelongToControl(
     request.turnId &&
     control.turnId &&
     request.turnId !== control.turnId
+  ) {
+    return false;
+  }
+  const requestReceivedAt = Date.parse(request.receivedAt);
+  const runStartedAt = control.runView.startedAt
+    ? Date.parse(control.runView.startedAt)
+    : Number.NaN;
+  if (
+    Number.isFinite(requestReceivedAt) &&
+    Number.isFinite(runStartedAt) &&
+    requestReceivedAt < runStartedAt
   ) {
     return false;
   }
@@ -1627,6 +1641,8 @@ function App() {
     PendingApprovalAttention[]
   >([]);
   const unroutedApprovalsRef = useRef<PendingApprovalAttention[]>([]);
+  const orphanApprovalResolutionLocksRef = useRef(new Set<string>());
+  const resolvedOrphanApprovalKeysRef = useRef(new Set<string>());
   const [approvalSafetyWarning, setApprovalSafetyWarning] = useState<
     string | null
   >(null);
@@ -3271,6 +3287,11 @@ function App() {
     const intervalId = window.setInterval(tick, 1000);
     return () => window.clearInterval(intervalId);
   }, [activeRunRegistryVersion]);
+
+  useEffect(() => {
+    if (unroutedApprovals.length === 0) return;
+    reconcileUnroutedApprovals();
+  }, [activeRunRegistryVersion, taskChatEntries, unroutedApprovals]);
 
   useEffect(() => {
     mentionSearchRequestId.current += 1;
@@ -5039,6 +5060,172 @@ function App() {
         approvalNotificationEventKey(request),
       ).catch(() => undefined);
     });
+  }
+
+  function removeUnroutedApprovalByKey(requestKey: string) {
+    const current = unroutedApprovalsRef.current;
+    if (
+      !current.some(({ request }) => request.key === requestKey)
+    ) {
+      return;
+    }
+    const next = current.filter(
+      ({ request }) => request.key !== requestKey,
+    );
+    unroutedApprovalsRef.current = next;
+    setUnroutedApprovals(next);
+  }
+
+  function rememberResolvedOrphanApproval(requestKey: string) {
+    const resolved = resolvedOrphanApprovalKeysRef.current;
+    resolved.add(requestKey);
+    if (resolved.size <= 256) return;
+    const oldest = resolved.values().next().value;
+    if (typeof oldest === "string") resolved.delete(oldest);
+  }
+
+  function markCodexProfileDisconnected(
+    profileKey: CodexProfileKey,
+    accountId: number,
+  ) {
+    const connectionId =
+      profileKey === DEFAULT_CODEX_PROFILE_KEY ? 0 : accountId;
+    const next = new Set(connectedAccountIdsRef.current);
+    next.delete(connectionId);
+    connectedAccountIdsRef.current = next;
+    setConnectedAccountIds(next);
+    collaborationModeMasksRef.current.delete(profileKey);
+  }
+
+  function approvalResolutionAlreadyTerminal(error: unknown) {
+    const message =
+      error instanceof Error ? error.message : String(error);
+    return /stale|already resolved|already submitted|not connected/iu.test(
+      message,
+    );
+  }
+
+  async function rejectOrphanedApproval(
+    attention: PendingApprovalAttention,
+  ) {
+    const requestKey = attention.request.key;
+    if (
+      resolvedOrphanApprovalKeysRef.current.has(requestKey) ||
+      orphanApprovalResolutionLocksRef.current.has(requestKey)
+    ) {
+      return;
+    }
+    orphanApprovalResolutionLocksRef.current.add(requestKey);
+
+    try {
+      const denial = findSafeApprovalDenialChoice(attention.request);
+      if (denial) {
+        if (
+          attention.request.profileKey === DEFAULT_CODEX_PROFILE_KEY
+        ) {
+          await resolveDefaultCodexServerRequest(
+            attention.request.id,
+            attention.request.requestToken,
+            denial.response,
+          );
+        } else {
+          await resolveCodexServerRequest(
+            attention.accountId,
+            attention.request.id,
+            attention.request.requestToken,
+            denial.response,
+          );
+        }
+      } else {
+        let interrupted = false;
+        if (attention.request.threadId && attention.request.turnId) {
+          try {
+            await codexRpcForProfile(
+              attention.request.profileKey,
+              attention.accountId,
+              "turn/interrupt",
+              {
+                threadId: attention.request.threadId,
+                turnId: attention.request.turnId,
+              },
+            );
+            interrupted = true;
+          } catch {
+            // If the stale turn cannot be interrupted, an idle profile can be
+            // restarted without disrupting a bound agent turn.
+          }
+        }
+
+        if (!interrupted) {
+          const hasBoundProfileTurn = [
+            ...activeRunControlsRef.current.values(),
+          ].some(
+            (control) =>
+              isActiveRunControl(control) &&
+              control.profileKey === attention.request.profileKey &&
+              control.turnId !== null,
+          );
+          if (hasBoundProfileTurn) {
+            throw new Error(
+              "The stale request could not be cancelled without interrupting another active turn.",
+            );
+          }
+          if (
+            attention.request.profileKey === DEFAULT_CODEX_PROFILE_KEY
+          ) {
+            await stopDefaultCodexProfile();
+          } else {
+            await stopCodex(attention.accountId);
+          }
+          markCodexProfileDisconnected(
+            attention.request.profileKey,
+            attention.accountId,
+          );
+        }
+      }
+
+      rememberResolvedOrphanApproval(requestKey);
+      removeUnroutedApprovalByKey(requestKey);
+      void removeAgentNotification(
+        approvalNotificationEventKey(attention.request),
+      ).catch(() => undefined);
+    } catch (error) {
+      if (approvalResolutionAlreadyTerminal(error)) {
+        rememberResolvedOrphanApproval(requestKey);
+        removeUnroutedApprovalByKey(requestKey);
+        return;
+      }
+      setApprovalSafetyWarning(
+        "Codex has a stale approval request that could not be cancelled safely. Stop the affected turn or restart its Codex profile.",
+      );
+    } finally {
+      orphanApprovalResolutionLocksRef.current.delete(requestKey);
+    }
+  }
+
+  function reconcileUnroutedApprovals() {
+    const controls = [...activeRunControlsRef.current.values()];
+    for (const attention of unroutedApprovalsRef.current) {
+      const exactControl = findRunControlForIds(
+        attention.request.profileKey,
+        attention.request.threadId,
+        attention.request.turnId,
+      );
+      if (exactControl) {
+        updateRunControlView(exactControl, (current) =>
+          addApprovalRequest(current, attention.request),
+        );
+        removeUnroutedApprovalByKey(attention.request.key);
+        continue;
+      }
+      if (
+        !controls.some((control) =>
+          pendingApprovalCouldBelongToControl(attention, control),
+        )
+      ) {
+        void rejectOrphanedApproval(attention);
+      }
+    }
   }
 
   function clearApprovalAttentionForRun(
@@ -10735,6 +10922,7 @@ function App() {
           pendingApprovalCouldBelongToControl(attention, candidate),
         );
         if (!hasPotentialOwner) {
+          void rejectOrphanedApproval(attention);
           return;
         }
         if (

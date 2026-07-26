@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  findSafeApprovalDenialChoice,
   parseApprovalRequest,
   type ActivePlaywrightToolCall,
 } from "./codexApprovals";
@@ -23,6 +24,16 @@ function parse(
 }
 
 describe("native Codex approval protocol", () => {
+  it("selects the narrow native denial response for orphan recovery", () => {
+    const request = parse("item/commandExecution/requestApproval", {
+      availableDecisions: ["accept", "cancel"],
+    });
+
+    expect(findSafeApprovalDenialChoice(request)?.response).toEqual({
+      decision: "cancel",
+    });
+  });
+
   it("renders only supplied command decisions and preserves object decisions exactly", () => {
     const rule = {
       acceptWithExecpolicyAmendment: {

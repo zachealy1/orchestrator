@@ -125,6 +125,36 @@ export type ApprovalResolutionHandler = (
   choice: ApprovalChoice,
 ) => void;
 
+const SAFE_DENIAL_CHOICE_IDS = [
+  "decline",
+  "permissions-deny",
+  "browser-deny",
+  "browser-tool-deny",
+  "denied",
+  "cancel",
+  "abort",
+] as const;
+
+export function findSafeApprovalDenialChoice(
+  request: CodexApprovalRequest,
+): ApprovalChoice | null {
+  for (const choiceId of SAFE_DENIAL_CHOICE_IDS) {
+    const choice = request.choices.find(
+      (candidate) =>
+        candidate.id === choiceId &&
+        candidate.tone === "danger" &&
+        !candidate.broadScope,
+    );
+    if (choice) return choice;
+  }
+
+  return (
+    request.choices.find(
+      (choice) => choice.tone === "danger" && !choice.broadScope,
+    ) ?? null
+  );
+}
+
 export type CodexFileSystemAccess = "read" | "write" | "deny";
 
 export type CodexFileSystemPermissionEntry = {
