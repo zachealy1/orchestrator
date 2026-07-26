@@ -10,6 +10,7 @@ import {
 
 const DEFAULT_PREPARED_CHAT_LIMIT = 5;
 const DEFAULT_SOURCE_CHARACTER_BUDGET = 2_000_000;
+const DEFAULT_WORKER_TIMEOUT_MS = 5_000;
 export const HISTORICAL_RENDER_PIPELINE_VERSION = "prepared-html-v1";
 
 type HistoricalPreparationEntry = {
@@ -47,6 +48,7 @@ type HistoricalTranscriptPreparerOptions = {
   renderMarkdown?: (markdown: string) => Promise<string>;
   maxChats?: number;
   maxSourceCharacters?: number;
+  workerTimeoutMs?: number;
 };
 
 function createBrowserWorker(): WorkerLike | null {
@@ -72,6 +74,7 @@ export class HistoricalTranscriptPreparer {
   private readonly renderMarkdown: (markdown: string) => Promise<string>;
   private readonly maxChats: number;
   private readonly maxSourceCharacters: number;
+  private readonly workerTimeoutMs: number;
   private readonly cache = new Map<string, PreparedTranscriptCacheEntry>();
   private active: ActivePreparation | null = null;
   private generationSequence = 0;
@@ -82,6 +85,7 @@ export class HistoricalTranscriptPreparer {
     this.maxChats = options.maxChats ?? DEFAULT_PREPARED_CHAT_LIMIT;
     this.maxSourceCharacters =
       options.maxSourceCharacters ?? DEFAULT_SOURCE_CHARACTER_BUDGET;
+    this.workerTimeoutMs = options.workerTimeoutMs ?? DEFAULT_WORKER_TIMEOUT_MS;
   }
 
   async prepare<T extends HistoricalPreparationEntry>(
@@ -125,9 +129,14 @@ export class HistoricalTranscriptPreparer {
 
     return await new Promise<PreparedHistoricalEntry<T>[]>((resolve, reject) => {
       let settled = false;
+      let timeoutId: ReturnType<typeof globalThis.setTimeout> | null = null;
       const finish = () => {
         if (settled) return false;
         settled = true;
+        if (timeoutId !== null) {
+          globalThis.clearTimeout(timeoutId);
+          timeoutId = null;
+        }
         signal?.removeEventListener("abort", handleAbort);
         worker.onmessage = null;
         worker.onerror = null;
@@ -193,6 +202,7 @@ export class HistoricalTranscriptPreparer {
         },
       };
       signal?.addEventListener("abort", handleAbort, { once: true });
+      timeoutId = globalThis.setTimeout(resolveFallback, this.workerTimeoutMs);
 
       try {
         worker.postMessage(request);

@@ -78,6 +78,7 @@ import {
   listWorkspaces,
   recordTokenUsage,
   readExternalTranscriptSnapshot,
+  recoverAbandonedRuns,
   recoverInterruptedChatTitleGenerations,
   renameCodexAccount,
   savePreflightReport,
@@ -187,6 +188,7 @@ import {
   type ApprovalChoice,
   type CodexApprovalRequest,
 } from "./lib/codexApprovals";
+import { selectRunControlForIds } from "./lib/runControlRouting";
 import {
   ASK_FOR_APPROVAL_PERMISSION_PROFILE,
   accessModeWarning,
@@ -604,6 +606,9 @@ type ActiveRunControl = {
   setupStarted: boolean;
   cancelScheduledSetup: (() => void) | null;
   interactionMode: RunInteractionMode;
+  acceptsThreadContinuation: boolean;
+  goalStatus: ThreadGoalStatus | null;
+  goalTurnCompleted: boolean;
   threadId: string | null;
   turnId: string | null;
   intent: RunIntent;
@@ -614,6 +619,14 @@ type ActiveRunControl = {
   activePlaywrightToolCalls: Map<string, ActivePlaywrightToolCall>;
   webPreviewDetection: WebPreviewDetectionState;
 };
+
+type ThreadGoalStatus =
+  | "active"
+  | "paused"
+  | "blocked"
+  | "usageLimited"
+  | "budgetLimited"
+  | "complete";
 
 type WebPreviewCommandBuffer = {
   command: string;
@@ -839,7 +852,8 @@ function pendingApprovalCouldBelongToControl(
   if (
     request.turnId &&
     control.turnId &&
-    request.turnId !== control.turnId
+    request.turnId !== control.turnId &&
+    !control.acceptsThreadContinuation
   ) {
     return false;
   }
@@ -1027,6 +1041,18 @@ function readCodexMessageRunIdentity(message: CodexMessage) {
     turnId:
       readString(params.turnId) ?? readString(readObject(params.turn).id),
   };
+}
+
+function readThreadGoalStatus(params: Record<string, unknown>) {
+  const status = readString(readObject(params.goal).status);
+  return status === "active" ||
+    status === "paused" ||
+    status === "blocked" ||
+    status === "usageLimited" ||
+    status === "budgetLimited" ||
+    status === "complete"
+    ? status
+    : null;
 }
 
 function markPerformance(name: string) {
@@ -1972,7 +1998,22 @@ function App() {
       return Promise.resolve();
     }
     return new Promise<void>((resolve) => {
-      historyDrawerClosedWaitersRef.current.add(resolve);
+      let settled = false;
+      let timeoutId: number | null = null;
+      const finish = () => {
+        if (settled) return;
+        settled = true;
+        historyDrawerClosedWaitersRef.current.delete(finish);
+        if (timeoutId !== null) {
+          window.clearTimeout(timeoutId);
+        }
+        resolve();
+      };
+      historyDrawerClosedWaitersRef.current.add(finish);
+      timeoutId = window.setTimeout(
+        finish,
+        HISTORY_DRAWER_TRANSITION_FALLBACK_MS + 100,
+      );
     });
   }, []);
 
@@ -3818,6 +3859,7 @@ function App() {
   ]);
 
   async function bootstrap() {
+    await recoverAbandonedRuns();
     await recoverInterruptedChatTitleGenerations();
     const duplicateProfileIds = await listDuplicateProfilesPendingCleanup();
     await Promise.allSettled(
@@ -5329,19 +5371,11 @@ function App() {
       threadId: messageThreadId,
       turnId: messageTurnId,
     } = readCodexMessageRunIdentity(message);
-    const candidates = [...activeRunControlsRef.current.values()].filter(
-      (control) => !control.stopped && control.profileKey === profileKey,
+    return findRunControlForIds(
+      profileKey,
+      messageThreadId,
+      messageTurnId,
     );
-    const exact = candidates.filter(
-      (control) =>
-        (!messageThreadId || control.threadId === messageThreadId) &&
-        (!messageTurnId || control.turnId === messageTurnId),
-    );
-    if (exact.length === 1) return exact[0];
-    if (!messageThreadId && !messageTurnId && candidates.length === 1) {
-      return candidates[0];
-    }
-    return null;
   }
 
   function prunePendingRunBindingNotifications(now = Date.now()) {
@@ -5411,14 +5445,22 @@ function App() {
     threadId: string | null,
     turnId: string | null,
   ) {
-    const candidates = [...activeRunControlsRef.current.values()].filter(
-      (control) =>
-        !control.stopped &&
-        control.profileKey === profileKey &&
-        (!threadId || control.threadId === threadId) &&
-        (!turnId || control.turnId === turnId),
+    return (
+      selectRunControlForIds(
+        [...activeRunControlsRef.current.values()].map((control) => ({
+          control,
+          profileKey: control.profileKey,
+          stopped: control.stopped,
+          threadId: control.threadId,
+          turnId: control.turnId,
+          startedAt: control.runView.startedAt,
+          acceptsThreadContinuation: control.acceptsThreadContinuation,
+        })),
+        profileKey,
+        threadId,
+        turnId,
+      )?.control ?? null
     );
-    return candidates.length === 1 ? candidates[0] : null;
   }
 
   function startTaskChatEntry(entry: TaskChatEntry) {
@@ -5839,6 +5881,11 @@ function App() {
       profileKey !== null &&
       threadId !== null &&
       turnId !== null;
+    const shouldClearThreadGoal =
+      Boolean(control?.acceptsThreadContinuation) &&
+      profileKey !== null &&
+      threadId !== null;
+    let goalClearError: string | null = null;
 
     if (control) {
       control.stopped = true;
@@ -5864,6 +5911,22 @@ function App() {
       );
     }
     await persistInterruptedRun(control, completedAt, stoppedRunView);
+
+    if (
+      shouldClearThreadGoal &&
+      profileKey !== null &&
+      accountId !== null &&
+      threadId !== null
+    ) {
+      try {
+        await clearThreadGoalForProfile(profileKey, accountId, threadId);
+        control.acceptsThreadContinuation = false;
+        control.goalStatus = null;
+      } catch (error) {
+        goalClearError =
+          error instanceof Error ? error.message : String(error);
+      }
+    }
 
     if (interruptNativePlan && profileKey !== null && accountId !== null) {
       try {
@@ -5895,7 +5958,11 @@ function App() {
     }
 
     removeRunControl(control, { cleanupBrowser: false });
-    setStatusMessage("Codex run stopped.");
+    setStatusMessage(
+      goalClearError
+        ? `Codex run stopped, but its Goal Mode state could not be cleared: ${goalClearError}`
+        : "Codex run stopped.",
+    );
 
     if (shouldStopCodex) {
       try {
@@ -6124,15 +6191,10 @@ function App() {
     const accountId = profileKey === DEFAULT_CODEX_PROFILE_KEY
       ? 0
       : Number(profileKey.slice("account:".length));
-    const workspace = selectedWorkspaceRef.current;
-    if (!Number.isFinite(accountId) || !workspace) return;
+    if (!Number.isFinite(accountId)) return;
 
     try {
       await ensureCodexProfileConnected(profileKey, accountId);
-      await codexRpcForProfile(profileKey, accountId, "thread/resume", {
-        threadId,
-        cwd: workspace.path,
-      });
       const response = await codexRpcForProfile<{ thread?: unknown }>(
         profileKey,
         accountId,
@@ -6215,7 +6277,33 @@ function App() {
       return;
     }
     await new Promise<void>((resolve) => {
-      transcriptViewportWaitersRef.current.add(resolve);
+      let settled = false;
+      let timeoutId: number | null = null;
+      const finish = () => {
+        if (settled) return;
+        settled = true;
+        transcriptViewportWaitersRef.current.delete(finish);
+        if (timeoutId !== null) {
+          window.clearTimeout(timeoutId);
+        }
+        resolve();
+      };
+      transcriptViewportWaitersRef.current.add(finish);
+      timeoutId = window.setTimeout(() => {
+        const width =
+          taskViewportElement?.getBoundingClientRect().width ??
+          transcriptViewportWidthRef.current;
+        if (width > 0) {
+          settleTranscriptViewportWidth(width);
+        } else {
+          transcriptViewportStableRef.current = true;
+          setTaskViewportStable(true);
+          transcriptViewportWaitersRef.current.forEach((waiter) => waiter());
+          transcriptViewportWaitersRef.current.clear();
+          schedulePendingTranscriptCommit();
+        }
+        finish();
+      }, HISTORY_TRANSCRIPT_RESIZE_WAIT_LIMIT_MS);
     });
   }
 
@@ -7556,6 +7644,19 @@ function App() {
       : setThreadGoal(accountId, threadId, objective);
   }
 
+  function clearThreadGoalForProfile(
+    profileKey: CodexProfileKey,
+    accountId: number,
+    threadId: string,
+  ) {
+    return codexRpcForProfile<{ cleared: boolean }>(
+      profileKey,
+      accountId,
+      "thread/goal/clear",
+      { threadId },
+    );
+  }
+
   async function selectCodexAccount(accountId: number) {
     if (runIsActive) {
       return false;
@@ -8384,6 +8485,9 @@ function App() {
       setupStarted: false,
       cancelScheduledSetup: null,
       interactionMode: interactionModeForSnapshot(snapshot),
+      acceptsThreadContinuation: snapshot.goalMode,
+      goalStatus: snapshot.goalMode ? "active" : null,
+      goalTurnCompleted: false,
       threadId: snapshot.threadId,
       turnId: null,
       intent,
@@ -8685,6 +8789,7 @@ function App() {
 
       let threadModel: string | null | undefined = snapshot.model;
       let threadModelProvider: string | null | undefined = snapshot.useOss ? "oss" : null;
+      let resumedThread = false;
       const startThread = async () => {
         if (chatId === null) {
           throw new Error("Chat was not prepared before starting a Codex thread.");
@@ -8772,6 +8877,7 @@ function App() {
             permissions: snapshot.access.permissionProfile,
             config: threadConfig,
           });
+          resumedThread = true;
           assertRuntimeAccessMatches(resumed, snapshot.access);
           threadModel = resumed.model ?? threadModel;
           threadModelProvider = resumed.modelProvider ?? threadModelProvider;
@@ -8797,6 +8903,21 @@ function App() {
             );
           } else {
             throw error;
+          }
+        }
+        if (resumedThread && !snapshot.goalMode) {
+          try {
+            await clearThreadGoalForProfile(
+              snapshot.profileKey,
+              snapshot.accountId,
+              threadId,
+            );
+          } catch (error) {
+            throw new Error(
+              `Could not clear the previous Goal Mode state before starting this turn: ${
+                error instanceof Error ? error.message : String(error)
+              }`,
+            );
           }
         }
         try {
@@ -8877,11 +8998,15 @@ function App() {
             threadId,
             snapshot.promptText,
           );
+          runControl.acceptsThreadContinuation = true;
+          runControl.goalStatus = "active";
           ensureRunControlActive(runControl);
         } catch (error) {
           if (error instanceof RunStoppedError) {
             throw error;
           }
+          runControl.acceptsThreadContinuation = false;
+          runControl.goalStatus = null;
           warnings.push(
             `Goal mode could not set a thread goal: ${
               error instanceof Error ? error.message : String(error)
@@ -8989,11 +9114,15 @@ function App() {
               threadId,
               snapshot.promptText,
             );
+            runControl.acceptsThreadContinuation = true;
+            runControl.goalStatus = "active";
             ensureRunControlActive(runControl);
           } catch (goalError) {
             if (goalError instanceof RunStoppedError) {
               throw goalError;
             }
+            runControl.acceptsThreadContinuation = false;
+            runControl.goalStatus = null;
             warnings.push(
               `Goal mode could not set a thread goal on the fresh thread: ${
                 goalError instanceof Error ? goalError.message : String(goalError)
@@ -9090,6 +9219,7 @@ function App() {
         threadId,
         turnId: turn.turn.id,
       }));
+      reconcileUnroutedApprovals();
       updateTaskChatEntry(runControl.clientId, (entry) => ({
         ...entry,
         imageAttachmentDelivery: entry.imageAttachmentDelivery
@@ -10590,6 +10720,37 @@ function App() {
       bufferPendingRunBindingNotification(accountId, profileKey, message);
       return;
     }
+    const identity = readCodexMessageRunIdentity(message);
+    if (
+      method === "turn/started" &&
+      identity.turnId &&
+      control.acceptsThreadContinuation
+    ) {
+      control.turnId = identity.turnId;
+      control.goalTurnCompleted = false;
+      if (control.runId !== null) {
+        void updateRun(control.runId, {
+          codexTurnId: identity.turnId,
+          status: "running",
+        }).catch(() => undefined);
+      }
+    }
+    if (method === "thread/goal/updated") {
+      const goalStatus = readThreadGoalStatus(params);
+      if (goalStatus) {
+        control.goalStatus = goalStatus;
+        control.acceptsThreadContinuation = true;
+      }
+    } else if (method === "thread/goal/cleared") {
+      control.goalStatus = null;
+      control.acceptsThreadContinuation = false;
+    }
+    const intermediateGoalTurnCompleted =
+      method === "turn/completed" &&
+      control.acceptsThreadContinuation &&
+      control.goalStatus === "active";
+    const terminalTurnCompleted =
+      method === "turn/completed" && !intermediateGoalTurnCompleted;
     inspectCodexMessageForWebPreview(control, message);
     applyBrowserLifecycleNotification(control, method, params);
 
@@ -10602,7 +10763,15 @@ function App() {
     flushFrameBatchedCodexNotifications();
 
     const nextRunView = updateRunControlView(control, (current) => {
-      const next = applyCodexMessage(current, message);
+      let next = applyCodexMessage(current, message);
+      if (intermediateGoalTurnCompleted) {
+        next = {
+          ...next,
+          status: "running",
+          completedAt: null,
+          error: null,
+        };
+      }
       if (method !== "serverRequest/resolved") return next;
       const requestId = params.requestId;
       if (typeof requestId !== "string" && typeof requestId !== "number") {
@@ -10615,6 +10784,9 @@ function App() {
       );
     });
     if (method === "turn/completed") {
+      control.goalTurnCompleted = true;
+    }
+    if (terminalTurnCompleted) {
       // Terminal UI state is authoritative immediately. Post-run persistence and
       // workspace refreshes must not leave this control registered as active.
       const terminalPreview = nextRunView.webPreview;
@@ -10678,7 +10850,7 @@ function App() {
       }
     }
 
-    if (method === "turn/completed") {
+    if (terminalTurnCompleted) {
       const turn = readObject(params.turn);
       const status = readString(turn.status) === "failed" ? "failed" : "completed";
       const completedControl = control;
@@ -10791,6 +10963,31 @@ function App() {
         await refreshSelectedWorkspaceHistory();
       }
     }
+    if (
+      method === "thread/goal/updated" &&
+      control.goalStatus !== null &&
+      control.goalStatus !== "active" &&
+      control.goalTurnCompleted &&
+      activeRunControlsRef.current.get(control.clientId) === control
+    ) {
+      const goalStatus = control.goalStatus;
+      control.goalTurnCompleted = false;
+      await handleCodexNotification(accountId, profileKey, {
+        method: "turn/completed",
+        params: {
+          threadId: control.threadId,
+          turn: {
+            id: control.turnId,
+            status: goalStatus === "complete" ? "completed" : "failed",
+            durationMs: control.runView.elapsedMs,
+            error:
+              goalStatus === "complete"
+                ? null
+                : `Goal stopped with status ${goalStatus}.`,
+          },
+        },
+      });
+    }
   }
 
   async function handleCodexServerRequest(
@@ -10807,9 +11004,10 @@ function App() {
       return;
     }
     flushFrameBatchedCodexNotifications();
-    const requestParams = readObject(request.params);
-    const requestThreadId = readString(requestParams.threadId);
-    const requestTurnId = readString(requestParams.turnId);
+    const {
+      threadId: requestThreadId,
+      turnId: requestTurnId,
+    } = readCodexMessageRunIdentity(request);
     const control = findRunControlForIds(
       profileKey,
       requestThreadId,

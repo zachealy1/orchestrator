@@ -23,6 +23,7 @@ import {
   listLocalChatTranscript,
   listWorkspaceChats,
   recordTokenUsage,
+  recoverAbandonedRuns,
   recoverInterruptedChatTitleGenerations,
   renameChat,
   updateRun,
@@ -129,6 +130,30 @@ describe("chat title generation persistence", () => {
     expect(query).toContain("title_manually_edited = 1");
     expect(query).toContain("title_generation_state = 'complete'");
     expect(values).toEqual(["Manual OAuth Investigation", 42]);
+  });
+});
+
+describe("abandoned run recovery", () => {
+  it("marks process-owned run state interrupted before history loads", async () => {
+    mocks.execute
+      .mockResolvedValueOnce({ rowsAffected: 3 })
+      .mockResolvedValueOnce({ rowsAffected: 2 })
+      .mockResolvedValueOnce({ rowsAffected: 1 });
+
+    await expect(recoverAbandonedRuns()).resolves.toEqual({
+      runs: 3,
+      tasks: 2,
+      chats: 1,
+    });
+
+    const [runsQuery] = mocks.execute.mock.calls[0] ?? [];
+    const [tasksQuery] = mocks.execute.mock.calls[1] ?? [];
+    const [chatsQuery] = mocks.execute.mock.calls[2] ?? [];
+    expect(runsQuery).toContain("status IN ('starting', 'connecting', 'running')");
+    expect(runsQuery).not.toContain("completed_at =");
+    expect(tasksQuery).toContain("SET status = 'interrupted'");
+    expect(chatsQuery).toContain("origin = 'orchestrator'");
+    expect(chatsQuery).toContain("SET status = 'interrupted'");
   });
 });
 

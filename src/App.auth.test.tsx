@@ -70,6 +70,7 @@ const mocks = vi.hoisted(() => ({
   claimChatTitleGenerationMock: vi.fn(),
   completeChatTitleGenerationMock: vi.fn(),
   failChatTitleGenerationMock: vi.fn(),
+  recoverAbandonedRunsMock: vi.fn(),
   recoverInterruptedChatTitleGenerationsMock: vi.fn(),
   updateChatMock: vi.fn(),
   listWorkspaceChatsMock: vi.fn(),
@@ -278,6 +279,7 @@ vi.mock("./db", () => ({
   recordTokenUsage: mocks.recordTokenUsageMock,
   readExternalChatHistoryIndex: mocks.readExternalChatHistoryIndexMock,
   readExternalTranscriptSnapshot: mocks.readExternalTranscriptSnapshotMock,
+  recoverAbandonedRuns: mocks.recoverAbandonedRunsMock,
   recoverInterruptedChatTitleGenerations:
     mocks.recoverInterruptedChatTitleGenerationsMock,
   renameCodexAccount: mocks.renameCodexAccountMock,
@@ -747,6 +749,11 @@ function prepareDefaults() {
   mocks.claimChatTitleGenerationMock.mockResolvedValue(true);
   mocks.completeChatTitleGenerationMock.mockResolvedValue(true);
   mocks.failChatTitleGenerationMock.mockResolvedValue(true);
+  mocks.recoverAbandonedRunsMock.mockResolvedValue({
+    runs: 0,
+    tasks: 0,
+    chats: 0,
+  });
   mocks.createChatMock.mockResolvedValue({
     id: 401,
     workspace_id: workspace.id,
@@ -4756,6 +4763,62 @@ describe("App Codex auth", () => {
     }
   });
 
+  it("clears a stale Goal Mode objective before continuing a historical chat normally", async () => {
+    prepareSignedInRun();
+    const historicalChat = workspaceChatFixture({
+      id: 404,
+      title: "ExpressJS App Scaffolding Plan",
+      codex_thread_id: "thread-1",
+    });
+    const historicalRun = workspaceRunFixture({
+      id: 304,
+      chat_id: historicalChat.id,
+      original_prompt: "Scaffold the ExpressJS app",
+      final_message: "Prepared the app.",
+    });
+    mocks.listWorkspaceChatsMock.mockResolvedValue([historicalChat]);
+    mocks.getChatWithRunsMock.mockResolvedValue(
+      workspaceChatWithRunsFixture(historicalChat, [historicalRun]),
+    );
+
+    const { user } = await renderApp();
+    const banner = screen.getByRole("region", { name: "Selected folder" });
+    await user.click(
+      within(banner).getByRole("button", { name: /open chat history/i }),
+    );
+    await user.click(
+      within(
+        await screen.findByRole("complementary", {
+          name: "Workspace chat history",
+        }),
+      ).getByRole("button", { name: /expressjs app scaffolding plan/i }),
+    );
+    await screen.findByText("Prepared the app.");
+
+    await user.type(screen.getByLabelText("Prompt"), "Report the working directory");
+    await user.keyboard("{Enter}");
+
+    await waitFor(() =>
+      expect(mocks.codexRpcMock).toHaveBeenCalledWith(
+        7,
+        "thread/goal/clear",
+        { threadId: "thread-1" },
+      ),
+    );
+    await waitFor(() =>
+      expect(
+        mocks.codexRpcMock.mock.calls.some(([, method]) => method === "turn/start"),
+      ).toBe(true),
+    );
+    const methods = mocks.codexRpcMock.mock.calls.map(([, method]) => method);
+    expect(methods.indexOf("thread/resume")).toBeLessThan(
+      methods.indexOf("thread/goal/clear"),
+    );
+    expect(methods.indexOf("thread/goal/clear")).toBeLessThan(
+      methods.indexOf("turn/start"),
+    );
+  });
+
   it("starts a fresh Codex thread when a restored history thread is no longer available", async () => {
     prepareSignedInRun();
     const historicalChat = workspaceChatFixture({
@@ -5571,9 +5634,6 @@ describe("App Codex auth", () => {
             ],
           };
         }
-        if (method === "thread/resume") {
-          return { thread: { id: "thread-1" } };
-        }
         if (method === "thread/read") {
           return {
             thread: {
@@ -5620,10 +5680,10 @@ describe("App Codex auth", () => {
         { threadId: "thread-1", includeTurns: true },
       ),
     );
-    expect(mocks.codexRpcMock).toHaveBeenCalledWith(
+    expect(mocks.codexRpcMock).not.toHaveBeenCalledWith(
       7,
       "thread/resume",
-      { threadId: "thread-1", cwd: workspace.path },
+      expect.anything(),
     );
 
     const newChatButton = within(banner).getByRole("button", {
@@ -7802,9 +7862,13 @@ describe("App Codex auth", () => {
   it("recovers interrupted title generation once during startup", async () => {
     await renderApp();
 
+    expect(mocks.recoverAbandonedRunsMock).toHaveBeenCalledTimes(1);
     expect(
       mocks.recoverInterruptedChatTitleGenerationsMock,
     ).toHaveBeenCalledTimes(1);
+    expect(
+      mocks.recoverAbandonedRunsMock.mock.invocationCallOrder[0],
+    ).toBeLessThan(mocks.listWorkspacesMock.mock.invocationCallOrder[0] ?? 0);
     expect(mocks.generateChatTitleMock).not.toHaveBeenCalled();
   });
 
@@ -8408,6 +8472,13 @@ describe("App Codex auth", () => {
     await emitCodexNotification({
       method: "turn/completed",
       params: { turn: { status: "completed", durationMs: 1000 } },
+    });
+    await emitCodexNotification({
+      method: "thread/goal/updated",
+      params: {
+        threadId: "thread-1",
+        goal: { status: "complete" },
+      },
     });
     mocks.readCodexFileMock.mockResolvedValue("updated file contents");
     await user.click(screen.getByRole("button", { name: "Goal mode" }));
@@ -10453,12 +10524,35 @@ describe("App Codex auth", () => {
     await user.click(screen.getByRole("button", { name: /goal mode/i }));
     await startMockRun(user, "Run a goal command");
     expect(mocks.prepareBrowserSessionMock).toHaveBeenCalledTimes(1);
+
+    await emitCodexNotification({
+      method: "turn/completed",
+      params: {
+        threadId: "thread-1",
+        turn: {
+          id: "turn-1",
+          status: "completed",
+          durationMs: 1_000,
+        },
+      },
+    });
+    expect(
+      screen.getByRole("button", { name: /stop codex/i }),
+    ).toBeInTheDocument();
+
+    await emitCodexNotification({
+      method: "turn/started",
+      params: {
+        threadId: "thread-1",
+        turn: { id: "turn-goal-continuation" },
+      },
+    });
     await emitCodexServerRequest({
       id: 9,
       method: "item/commandExecution/requestApproval",
       params: {
         threadId: "thread-1",
-        turnId: "turn-1",
+        turnId: "turn-goal-continuation",
         command: "npm test",
         availableDecisions: ["accept", "cancel"],
       },
@@ -10468,6 +10562,45 @@ describe("App Codex auth", () => {
       .getByText("Codex needs approval to run a command")
       .closest("article")!;
     expect(within(approval).queryByText("Goal Mode")).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", {
+        name: "Open chat awaiting approval",
+      }),
+    ).not.toBeInTheDocument();
+    expect(mocks.resolveCodexServerRequestMock).not.toHaveBeenCalled();
+
+    await emitCodexNotification({
+      method: "turn/completed",
+      params: {
+        threadId: "thread-1",
+        turn: {
+          id: "turn-goal-continuation",
+          status: "completed",
+          durationMs: 2_000,
+        },
+      },
+    });
+    expect(
+      screen.getByRole("button", { name: /stop codex/i }),
+    ).toBeInTheDocument();
+
+    await emitCodexNotification({
+      method: "thread/goal/updated",
+      params: {
+        threadId: "thread-1",
+        goal: { status: "complete" },
+      },
+    });
+
+    await waitFor(() =>
+      expect(
+        screen.getByRole("button", { name: /run codex/i }),
+      ).toBeInTheDocument(),
+    );
+    expect(mocks.updateRunMock).toHaveBeenCalledWith(
+      202,
+      expect.objectContaining({ status: "completed" }),
+    );
   });
 
   it("removes pending approval controls when the App Server disconnects", async () => {

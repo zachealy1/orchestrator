@@ -158,6 +158,37 @@ describe("HistoricalTranscriptPreparer", () => {
     });
   });
 
+  it("falls back when the Markdown worker stops responding", async () => {
+    vi.useFakeTimers();
+    try {
+      const worker = new FakeHistoricalMarkdownWorker();
+      const preparer = new HistoricalTranscriptPreparer({
+        createWorker: () => worker,
+        renderMarkdown: async (markdown) => `<p>${markdown}</p>`,
+        workerTimeoutMs: 100,
+      });
+
+      const pending = preparer.prepare(
+        [entry("stalled", "Still readable")],
+        "chat:stalled-worker:v1",
+      );
+      await vi.advanceTimersByTimeAsync(100);
+
+      await expect(pending).resolves.toMatchObject([
+        {
+          clientId: "stalled",
+          preparedSummary: {
+            kind: "html",
+            html: "<p>Still readable</p>",
+          },
+        },
+      ]);
+      expect(worker.terminate).toHaveBeenCalledOnce();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("enforces the chat-count and source-character cache limits", async () => {
     const preparer = new HistoricalTranscriptPreparer({
       createWorker: () => null,

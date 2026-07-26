@@ -265,6 +265,35 @@ export async function recoverInterruptedChatTitleGenerations() {
   );
 }
 
+export async function recoverAbandonedRuns() {
+  const db = await getDatabase();
+
+  const recoveredRuns = await db.execute(
+    `UPDATE runs
+     SET status = 'interrupted'
+     WHERE status IN ('starting', 'connecting', 'running')
+       AND completed_at IS NULL`,
+  );
+  const recoveredTasks = await db.execute(
+    `UPDATE tasks
+     SET status = 'interrupted'
+     WHERE status IN ('starting', 'connecting', 'running')`,
+  );
+  const recoveredChats = await db.execute(
+    `UPDATE chats
+     SET status = 'interrupted'
+     WHERE origin = 'orchestrator'
+       AND deleted_at IS NULL
+       AND status IN ('starting', 'connecting', 'running')`,
+  );
+
+  return {
+    runs: recoveredRuns.rowsAffected,
+    tasks: recoveredTasks.rowsAffected,
+    chats: recoveredChats.rowsAffected,
+  };
+}
+
 export async function claimChatTitleGeneration(chatId: number) {
   const db = await getDatabase();
   const result = await db.execute(
