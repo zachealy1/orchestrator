@@ -1,5 +1,6 @@
 import {
   BrainCircuit,
+  CheckCircle2,
   ChevronRight,
   CircleAlert,
   ClipboardCheck,
@@ -68,7 +69,7 @@ import { estimateTokens, recommendRoute } from "../lib/taskAnalysis";
 
 export type ComposerStatusNotice = {
   id: string;
-  tone: "approval" | "warning";
+  tone: "approval" | "warning" | "success";
   title: string;
   detail: string;
   actionLabel?: string;
@@ -1076,6 +1077,8 @@ function ComposerStatusRow({
     <>
       {notice.tone === "approval" ? (
         <ShieldCheck size={15} aria-hidden="true" />
+      ) : notice.tone === "success" ? (
+        <CheckCircle2 size={15} aria-hidden="true" />
       ) : (
         <CircleAlert size={15} aria-hidden="true" />
       )}
@@ -1095,7 +1098,7 @@ function ComposerStatusRow({
     <div
       className="composer-status-notice"
       data-tone={notice.tone}
-      role="alert"
+      role={notice.tone === "success" ? "status" : "alert"}
     >
       {actionable ? (
         <button

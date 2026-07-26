@@ -59,6 +59,18 @@ import {
   type WorkspaceCommitIntentContext,
 } from "./lib/commitMessage";
 import {
+  clearRunningGitOperation,
+  gitOperationFailureCopy,
+  gitOperationRetryLabel,
+  gitOperationRunningCopy,
+  gitOperationSuccessCopy,
+  persistRunningGitOperation,
+  restoreInterruptedGitOperations,
+  type GitOperationPhase,
+  type WorkspaceGitOperationRequest,
+  type WorkspaceGitOperationState,
+} from "./lib/gitOperations";
+import {
   appendRunEvent,
   appendRunEvents,
   activateChatAccountHandoff,
@@ -1673,6 +1685,9 @@ function App() {
   const [gitActionStatus, setGitActionStatus] = useState<
     "idle" | "generating" | "committing" | "pushing"
   >("idle");
+  const [gitOperationsByWorkspace, setGitOperationsByWorkspace] = useState<
+    Record<number, WorkspaceGitOperationState | undefined>
+  >(restoreInterruptedGitOperations);
   const [statusMessage, setStatusMessage] = useState("Choose a workspace to begin.");
   const [codexAccount, setCodexAccount] = useState<CodexAccount | null>(null);
   const [requiresOpenaiAuth, setRequiresOpenaiAuth] = useState(true);
@@ -1906,11 +1921,12 @@ function App() {
   const codexSkillRequestCache = useRef(
     new Map<number, Promise<CodexSkillSummary[]>>(),
   );
-  const lastCommitSubjectRef = useRef<{
-    subject: string;
-    changeKey: string;
-  } | null>(null);
+  const lastCommitSubjectsRef = useRef(
+    new Map<number, { subject: string; changeKey: string }>(),
+  );
   const gitActionInFlightRef = useRef(false);
+  const gitOperationInFlightWorkspaceIdsRef = useRef(new Set<number>());
+  const gitOperationSequenceRef = useRef(0);
   const workspaceContextMenuRef = useRef<HTMLDivElement | null>(null);
   const chatHistoryContextMenuRef = useRef<HTMLDivElement | null>(null);
   const accountMenuContainerRef = useRef<HTMLDivElement | null>(null);
@@ -2861,6 +2877,15 @@ function App() {
       ),
     [selectedGitFiles],
   );
+  const selectedGitOperation = selectedWorkspace
+    ? gitOperationsByWorkspace[selectedWorkspace.id] ?? null
+    : null;
+  const selectedGitActionStatus =
+    gitActionStatus === "generating"
+      ? "generating"
+      : selectedGitOperation?.status === "running"
+        ? selectedGitOperation.phase
+        : "idle";
   const headerGitAction = useMemo<HeaderGitAction>(() => {
     const baseLabel = "Commit or push";
     if (!selectedWorkspace) {
@@ -3085,19 +3110,49 @@ function App() {
         detail: selectedActiveRunControl.goalActionError,
       });
     }
+    if (
+      selectedGitOperation &&
+      (selectedGitOperation.status === "succeeded" ||
+        selectedGitOperation.status === "failed")
+    ) {
+      notices.push({
+        id: `git-operation-${selectedGitOperation.id}`,
+        tone:
+          selectedGitOperation.status === "succeeded" ? "success" : "warning",
+        title: selectedGitOperation.title,
+        detail: selectedGitOperation.detail,
+        actionLabel:
+          selectedGitOperation.status === "failed"
+            ? gitOperationRetryLabel(selectedGitOperation.retryRequest)
+            : undefined,
+      });
+    }
     return notices;
   }, [
     approvalSafetyWarning,
     crossConversationApprovals.length,
     selectedActiveRunControl?.goalActionError,
+    selectedGitOperation,
   ]);
   const activateComposerStatusNotice = useStableEvent((noticeId: string) => {
-    if (noticeId !== "cross-conversation-approvals") return;
-    const oldest = [...crossConversationApprovals].sort((left, right) =>
-      left.request.receivedAt.localeCompare(right.request.receivedAt),
-    )[0];
-    if (oldest) {
-      void openPendingApprovalAttention(oldest);
+    if (noticeId === "cross-conversation-approvals") {
+      const oldest = [...crossConversationApprovals].sort((left, right) =>
+        left.request.receivedAt.localeCompare(right.request.receivedAt),
+      )[0];
+      if (oldest) {
+        void openPendingApprovalAttention(oldest);
+      }
+      return;
+    }
+    if (
+      selectedGitOperation?.status === "failed" &&
+      noticeId === `git-operation-${selectedGitOperation.id}`
+    ) {
+      if (selectedGitOperation.retryRequest) {
+        retryWorkspaceGitOperation(selectedGitOperation.retryRequest);
+      } else {
+        openCommitDialog();
+      }
     }
   });
   const planReviewAwaiting = visibleTaskChatEntries.some(
@@ -7537,6 +7592,13 @@ function App() {
       delete next[workspace.id];
       return next;
     });
+    setGitOperationsByWorkspace((current) => {
+      if (!current[workspace.id]) return current;
+      const next = { ...current };
+      delete next[workspace.id];
+      return next;
+    });
+    clearRunningGitOperation(workspace.id);
     setContextFiles((current) =>
       current.filter((file) => !belongsToWorkspace(file.path)),
     );
@@ -8749,9 +8811,19 @@ function App() {
   }
 
   function openCommitDialog() {
-    if (!selectedWorkspace) {
+    if (
+      !selectedWorkspace ||
+      gitOperationInFlightWorkspaceIdsRef.current.has(selectedWorkspace.id)
+    ) {
       return;
     }
+    setGitOperationsByWorkspace((current) => {
+      if (!current[selectedWorkspace.id]) return current;
+      const next = { ...current };
+      delete next[selectedWorkspace.id];
+      return next;
+    });
+    clearRunningGitOperation(selectedWorkspace.id);
     setCommitIntentContext(suggestedCommitIntentContext);
     setCommitMessage("");
     setCommitDialogMessage("");
@@ -8763,7 +8835,7 @@ function App() {
   function handleHeaderGitAction() {
     if (
       !selectedWorkspace ||
-      gitActionStatus !== "idle" ||
+      selectedGitActionStatus !== "idle" ||
       gitActionInFlightRef.current
     ) {
       return;
@@ -8776,29 +8848,178 @@ function App() {
     }
   }
 
-  async function pushSelectedWorkspaceBranch(workspace: Workspace) {
-    setGitActionStatus("pushing");
-    setStatusMessage("Pushing current branch...");
+  function updateWorkspaceGitOperation(
+    workspaceId: number,
+    operationId: number,
+    update:
+      | Partial<WorkspaceGitOperationState>
+      | ((
+          current: WorkspaceGitOperationState,
+        ) => WorkspaceGitOperationState),
+  ) {
+    setGitOperationsByWorkspace((current) => {
+      const operation = current[workspaceId];
+      if (!operation || operation.id !== operationId) {
+        return current;
+      }
+      const nextOperation =
+        typeof update === "function"
+          ? update(operation)
+          : { ...operation, ...update };
+      return {
+        ...current,
+        [workspaceId]: nextOperation,
+      };
+    });
+  }
+
+  async function refreshWorkspaceAfterGitOperation(workspace: Workspace) {
+    await refreshWorkspaceGitStatus(workspace, {
+      showLoading: false,
+      force: true,
+    });
+  }
+
+  async function executeWorkspaceGitOperation(
+    workspace: Workspace,
+    request: WorkspaceGitOperationRequest,
+    operationId: number,
+  ) {
+    let phase: GitOperationPhase =
+      request.kind === "push" ? "pushing" : "committing";
+    let commitCompleted = false;
+
     try {
-      const result = await pushWorkspaceBranch(workspace.path);
-      setStatusMessage(result.message || "Branch pushed.");
-      await refreshBranches(workspace);
-      await refreshWorkspaceGitStatus(workspace);
-      return true;
+      if (request.kind !== "push") {
+        await commitWorkspaceChanges(
+          workspace.path,
+          request.commitMessage ?? "",
+          request.includeUnstaged,
+        );
+        commitCompleted = true;
+        if (request.commitMessage && request.changeKey) {
+          lastCommitSubjectsRef.current.set(workspace.id, {
+            subject: cleanGeneratedCommitSubject(request.commitMessage),
+            changeKey: request.changeKey,
+          });
+        }
+      }
+
+      if (request.kind !== "commit") {
+        phase = "pushing";
+        persistRunningGitOperation(request, phase);
+        const runningCopy = gitOperationRunningCopy(request.kind, phase);
+        updateWorkspaceGitOperation(workspace.id, operationId, (current) => ({
+          ...current,
+          phase,
+          ...runningCopy,
+        }));
+        await pushWorkspaceBranch(workspace.path);
+      }
+
+      await refreshWorkspaceAfterGitOperation(workspace);
+      const successCopy = gitOperationSuccessCopy(request.kind);
+      updateWorkspaceGitOperation(workspace.id, operationId, {
+        status: "succeeded",
+        retryRequest: null,
+        ...successCopy,
+      });
+      if (selectedWorkspaceRef.current?.id === workspace.id) {
+        setStatusMessage(successCopy.detail);
+      }
     } catch (error) {
-      setStatusMessage(
-        `Push failed: ${error instanceof Error ? error.message : String(error)}`,
+      await refreshWorkspaceAfterGitOperation(workspace);
+      const failureCopy = gitOperationFailureCopy(
+        phase,
+        error,
+        commitCompleted,
       );
-      return false;
+      const retryRequest =
+        commitCompleted && phase === "pushing"
+          ? {
+              ...request,
+              kind: "push" as const,
+              commitMessage: null,
+              changeKey: null,
+            }
+          : request;
+      updateWorkspaceGitOperation(workspace.id, operationId, {
+        status: "failed",
+        retryRequest,
+        ...failureCopy,
+      });
+      if (selectedWorkspaceRef.current?.id === workspace.id) {
+        setStatusMessage(failureCopy.detail);
+      }
+    } finally {
+      gitOperationInFlightWorkspaceIdsRef.current.delete(workspace.id);
+      clearRunningGitOperation(workspace.id);
     }
   }
 
-  async function handlePushOnly() {
+  function startWorkspaceGitOperation(request: WorkspaceGitOperationRequest) {
+    if (
+      gitOperationInFlightWorkspaceIdsRef.current.has(request.workspaceId)
+    ) {
+      return false;
+    }
+    const workspace =
+      workspacesRef.current.find(
+        (candidate) =>
+          candidate.id === request.workspaceId &&
+          candidate.path === request.workspacePath,
+      ) ?? null;
+    if (!workspace) {
+      return false;
+    }
+
+    gitOperationInFlightWorkspaceIdsRef.current.add(workspace.id);
+    const operationId = ++gitOperationSequenceRef.current;
+    const phase: GitOperationPhase =
+      request.kind === "push" ? "pushing" : "committing";
+    const runningCopy = gitOperationRunningCopy(request.kind, phase);
+    const operation: WorkspaceGitOperationState = {
+      id: operationId,
+      request,
+      phase,
+      status: "running",
+      retryRequest: null,
+      ...runningCopy,
+    };
+
+    persistRunningGitOperation(request, phase);
+    flushSync(() => {
+      setGitOperationsByWorkspace((current) => ({
+        ...current,
+        [workspace.id]: operation,
+      }));
+      setCommitDialogOpen(false);
+      setCommitIntentContext(null);
+      setCommitMessage("");
+      setCommitDialogMessage("");
+      setCommitDialogError(false);
+      setGitActionStatus("idle");
+    });
+    void executeWorkspaceGitOperation(workspace, request, operationId);
+    return true;
+  }
+
+  function retryWorkspaceGitOperation(request: WorkspaceGitOperationRequest) {
+    if (!startWorkspaceGitOperation(request)) {
+      setStatusMessage(
+        gitOperationInFlightWorkspaceIdsRef.current.has(request.workspaceId)
+          ? "A Git operation is already running for this workspace."
+          : "This workspace is no longer available.",
+      );
+    }
+  }
+
+  function handlePushOnly() {
     const workspace = selectedWorkspace;
     if (
       !workspace ||
       !headerGitAction.canPush ||
-      gitActionStatus !== "idle" ||
+      selectedGitActionStatus !== "idle" ||
       gitActionInFlightRef.current
     ) {
       return;
@@ -8806,21 +9027,23 @@ function App() {
 
     gitActionInFlightRef.current = true;
     try {
-      const pushed = await pushSelectedWorkspaceBranch(workspace);
-      if (pushed) {
-        setCommitDialogOpen(false);
-      }
+      startWorkspaceGitOperation({
+        workspaceId: workspace.id,
+        workspacePath: workspace.path,
+        workspaceLabel: workspace.label,
+        kind: "push",
+        commitMessage: null,
+        includeUnstaged: true,
+        changeKey: null,
+      });
     } finally {
       gitActionInFlightRef.current = false;
-      setGitActionStatus("idle");
     }
   }
 
-  async function resolveCommitMessage(): Promise<string | null> {
-    if (!selectedWorkspace) {
-      return null;
-    }
-
+  async function resolveCommitMessage(
+    workspace: Workspace,
+  ): Promise<string | null> {
     const failGeneration = () => {
       setCommitDialogMessage(COMMIT_MESSAGE_GENERATION_ERROR);
       setCommitDialogError(true);
@@ -8833,7 +9056,7 @@ function App() {
     setCommitDialogError(false);
     try {
       const result = await generateWorkspaceCommitMessage({
-        workspacePath: selectedWorkspace.path,
+        workspacePath: workspace.path,
         accountId: selectedAccountId,
         includeUnstaged: includeUnstagedChanges,
         model: selectedModel?.model ?? selectedModel?.id ?? null,
@@ -8847,7 +9070,7 @@ function App() {
         return failGeneration();
       }
       const generated = cleanGeneratedCommitSubject(result.message);
-      const previous = lastCommitSubjectRef.current;
+      const previous = lastCommitSubjectsRef.current.get(workspace.id);
       if (
         previous &&
         previous.changeKey !== commitMessageChangeKey &&
@@ -8869,7 +9092,7 @@ function App() {
     if (
       !workspace ||
       !canCommitFromDialog ||
-      gitActionStatus !== "idle" ||
+      selectedGitActionStatus !== "idle" ||
       gitActionInFlightRef.current
     ) {
       return;
@@ -8878,43 +9101,25 @@ function App() {
     gitActionInFlightRef.current = true;
     try {
       const authoredMessage = commitMessage.trim();
-      const message = authoredMessage || (await resolveCommitMessage());
+      const message = authoredMessage || (await resolveCommitMessage(workspace));
       if (!message) {
         return;
       }
 
-      setGitActionStatus("committing");
-      setStatusMessage("Committing workspace changes...");
-      const result = await commitWorkspaceChanges(
-        workspace.path,
-        message,
-        includeUnstagedChanges,
-      );
-      lastCommitSubjectRef.current = {
-        subject: cleanGeneratedCommitSubject(message),
+      startWorkspaceGitOperation({
+        workspaceId: workspace.id,
+        workspacePath: workspace.path,
+        workspaceLabel: workspace.label,
+        kind: options.pushAfter ? "commit-and-push" : "commit",
+        commitMessage: message,
+        includeUnstaged: includeUnstagedChanges,
         changeKey: commitMessageChangeKey,
-      };
-      setStatusMessage(result.message || "Workspace changes committed.");
-      await refreshBranches(workspace);
-      await refreshWorkspaceGitStatus(workspace);
-      if (options.pushAfter) {
-        const pushed = await pushSelectedWorkspaceBranch(workspace);
-        if (!pushed) {
-          return;
-        }
-      }
-      setCommitDialogOpen(false);
-      setCommitIntentContext(null);
-      setCommitMessage("");
-      setCommitDialogMessage("");
-      setCommitDialogError(false);
-    } catch (error) {
-      setStatusMessage(
-        `Commit failed: ${error instanceof Error ? error.message : String(error)}`,
-      );
+      });
     } finally {
       gitActionInFlightRef.current = false;
-      setGitActionStatus("idle");
+      if (!gitOperationInFlightWorkspaceIdsRef.current.has(workspace.id)) {
+        setGitActionStatus("idle");
+      }
     }
   }
 
@@ -16810,7 +17015,7 @@ function App() {
               gitState={selectedGitStatusState}
               gitSummary={selectedGitSummary}
               gitAction={headerGitAction}
-              gitActionStatus={gitActionStatus}
+              gitActionStatus={selectedGitActionStatus}
               commitDialogOpen={commitDialogOpen}
               contextUsage={selectedWorkspaceContextUsage}
               contextWindow={selectedModelContextWindow}
@@ -17659,6 +17864,16 @@ function WorkspaceContextBanner({
   const gitLoading = gitState?.status === "loading" || gitState?.status === "idle";
   const gitError = gitState?.status === "error";
   const gitClean = !gitLoading && !gitError && gitSummary.total === 0;
+  const gitOperationRunning =
+    gitActionStatus === "committing" || gitActionStatus === "pushing";
+  const gitBusyLabel =
+    gitActionStatus === "generating"
+      ? "Generating commit message"
+      : gitActionStatus === "committing"
+        ? "Committing changes"
+        : gitActionStatus === "pushing"
+          ? "Pushing branch"
+          : null;
 
   return (
     <section
@@ -17681,19 +17896,39 @@ function WorkspaceContextBanner({
           aria-label="Selected folder status"
           data-tauri-drag-region="false"
         >
-          {gitLoading ? (
+          {gitOperationRunning ? (
+            <span
+              className="workspace-context-chip git-operation-running"
+              role="status"
+              aria-label={gitBusyLabel ?? "Git operation in progress"}
+            >
+              <Loader2 className="spin" size={14} aria-hidden="true" />
+              <span className="sr-only">
+                {gitActionStatus === "committing" ? "Committing" : "Pushing"}
+              </span>
+            </span>
+          ) : null}
+          {!gitOperationRunning && gitLoading ? (
             <span className="workspace-context-chip">Checking git</span>
           ) : null}
-          {gitError ? (
-            <span className="workspace-context-chip warning">Git unavailable</span>
+          {!gitOperationRunning && gitError ? (
+              <span className="workspace-context-chip warning">
+                Git unavailable
+              </span>
           ) : null}
-          {gitClean ? (
+          {!gitOperationRunning && gitClean ? (
             <span className="workspace-context-chip clean">Clean</span>
           ) : null}
-          {!gitLoading && !gitError && gitSummary.total > 0 ? (
+          {!gitOperationRunning &&
+          !gitLoading &&
+          !gitError &&
+          gitSummary.total > 0 ? (
             <WorkspaceContextGitSummaryChip gitSummary={gitSummary} />
           ) : null}
-          <WorkspaceContextMeter tokenUsage={contextUsage} contextWindow={contextWindow} />
+          <WorkspaceContextMeter
+            tokenUsage={contextUsage}
+            contextWindow={contextWindow}
+          />
         </div>
       </div>
 
@@ -17708,7 +17943,7 @@ function WorkspaceContextBanner({
           placeholder="No branch"
           icon={<GitBranch size={14} />}
           className="workspace-branch-select"
-          disabled={branches.length === 0}
+          disabled={branches.length === 0 || gitActionStatus !== "idle"}
           onChange={onBranchChange}
         />
         {browserVisible ? (
@@ -17790,16 +18025,18 @@ function WorkspaceContextBanner({
             type="button"
             onClick={onGitAction}
             disabled={gitAction.disabled || gitActionStatus !== "idle"}
-            title={gitAction.disabled ? gitAction.reason : gitAction.label}
+            title={
+              gitBusyLabel ??
+              (gitAction.disabled ? gitAction.reason : gitAction.label)
+            }
             aria-label={gitAction.label}
             aria-expanded={commitDialogOpen}
+            aria-busy={gitActionStatus !== "idle"}
           >
-            {gitActionStatus === "generating" ||
-            gitActionStatus === "committing" ||
-            gitActionStatus === "pushing" ? (
-              <Loader2 className="spin" size={15} />
+            {gitActionStatus === "generating" ? (
+              <Loader2 className="spin" size={15} aria-hidden="true" />
             ) : (
-              <GitCommitHorizontal size={15} />
+              <GitCommitHorizontal size={15} aria-hidden="true" />
             )}
           </button>
         </div>

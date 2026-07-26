@@ -1885,6 +1885,12 @@ button.account-switcher-item:hover:not(:disabled) {
   color: var(--color-button-primary-text);
 }
 
+.workspace-context-chip.git-operation-running {
+  width: 30px;
+  justify-content: center;
+  padding: 0;
+}
+
 .workspace-context-chip.git-summary {
   max-width: min(160px, 16vw);
   gap: var(--workspace-header-gap);
@@ -4791,6 +4797,10 @@ button.composer-status-action:focus-visible {
 
 .composer-status-notice[data-tone="warning"] svg {
   color: var(--color-error);
+}
+
+.composer-status-notice[data-tone="success"] svg {
+  color: var(--color-diff-addition);
 }
 
 .composer-status-notice strong {

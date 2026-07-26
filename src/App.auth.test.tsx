@@ -3,6 +3,7 @@ import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import App, { buildBoundedAccountHandoffContext } from "./App";
 import { ASK_FOR_APPROVAL_PERMISSION_PROFILE } from "./lib/codexAccess";
+import { persistRunningGitOperation } from "./lib/gitOperations";
 import {
   ORCHESTRATOR_CONTEXT_FILE_MIME,
   type RunListItem,
@@ -2519,10 +2520,20 @@ describe("App Codex auth", () => {
     await waitFor(() =>
       expect(mocks.commitWorkspaceChangesMock).toHaveBeenCalledTimes(1),
     );
-    expect(within(dialog).getByLabelText(/commit message/i)).toHaveValue(
+    expect(
+      screen.queryByRole("dialog", { name: "Commit or push" }),
+    ).not.toBeInTheDocument();
+    expect(
+      within(banner).getByRole("button", { name: /commit or push/i }),
+    ).toHaveAttribute("aria-busy", "true");
+    expect(
+      within(banner).getByRole("button", { name: /commit or push/i }),
+    ).toBeDisabled();
+    expect(mocks.commitWorkspaceChangesMock).toHaveBeenCalledWith(
+      workspace.path,
       "Keep Snake controls responsive",
+      true,
     );
-    expect(within(dialog).queryByText(/^Generated:/i)).not.toBeInTheDocument();
 
     await act(async () => {
       resolveCommit?.({
@@ -2534,6 +2545,350 @@ describe("App Codex auth", () => {
     await waitFor(() =>
       expect(mocks.pushWorkspaceBranchMock).toHaveBeenCalledTimes(1),
     );
+    await waitFor(() =>
+      expect(
+        within(banner).getByRole("button", { name: /commit or push/i }),
+      ).toHaveAttribute("aria-busy", "false"),
+    );
+  });
+
+  it("closes the dialog while an accepted commit runs in the background", async () => {
+    let resolveCommit:
+      | ((value: { message: string; branch: string }) => void)
+      | null = null;
+    mocks.commitWorkspaceChangesMock.mockImplementation(
+      () =>
+        new Promise<{ message: string; branch: string }>((resolve) => {
+          resolveCommit = resolve;
+        }),
+    );
+    mocks.listWorkspaceGitStatusMock.mockResolvedValue({
+      workspacePath: workspace.path,
+      gitRoot: workspace.path,
+      currentBranch: "main",
+      aheadCount: 0,
+      hasUpstream: true,
+      hasOrigin: true,
+      canPush: false,
+      additions: 4,
+      deletions: 1,
+      files: [
+        {
+          path: "/repo/orchestrator/src/App.tsx",
+          relativePath: "src/App.tsx",
+          oldRelativePath: null,
+          indexStatus: " ",
+          worktreeStatus: "M",
+          statusKind: "modified",
+          badge: "M",
+        },
+      ],
+    });
+
+    const { user } = await renderApp();
+    const banner = screen.getByRole("region", { name: "Selected folder" });
+    const gitButton = await within(banner).findByRole("button", {
+      name: /commit or push/i,
+    });
+    await user.click(gitButton);
+    const dialog = screen.getByRole("dialog", { name: "Commit or push" });
+    await user.type(
+      within(dialog).getByLabelText(/commit message/i),
+      "Keep Git actions responsive",
+    );
+    await user.click(within(dialog).getByRole("button", { name: /^commit$/i }));
+
+    expect(
+      screen.queryByRole("dialog", { name: "Commit or push" }),
+    ).not.toBeInTheDocument();
+    expect(gitButton).toBeDisabled();
+    expect(gitButton).toHaveAttribute("aria-busy", "true");
+    expect(
+      within(banner)
+        .getByRole("status", { name: "Committing changes" })
+        .querySelector(".spin"),
+    ).toBeInTheDocument();
+
+    await act(async () => {
+      resolveCommit?.({
+        message: "Committed workspace changes",
+        branch: "main",
+      });
+      await Promise.resolve();
+    });
+
+    expect(
+      await screen.findByText("Workspace changes were committed successfully."),
+    ).toBeInTheDocument();
+    await waitFor(() => expect(gitButton).toHaveAttribute("aria-busy", "false"));
+  });
+
+  it("reports a failed background commit and retries without reopening the dialog", async () => {
+    mocks.commitWorkspaceChangesMock
+      .mockRejectedValueOnce(new Error("commit timed out"))
+      .mockResolvedValueOnce({
+        message: "Committed workspace changes",
+        branch: "main",
+      });
+    mocks.listWorkspaceGitStatusMock.mockResolvedValue({
+      workspacePath: workspace.path,
+      gitRoot: workspace.path,
+      currentBranch: "main",
+      aheadCount: 0,
+      hasUpstream: true,
+      hasOrigin: true,
+      canPush: false,
+      additions: 4,
+      deletions: 1,
+      files: [
+        {
+          path: "/repo/orchestrator/src/App.tsx",
+          relativePath: "src/App.tsx",
+          oldRelativePath: null,
+          indexStatus: " ",
+          worktreeStatus: "M",
+          statusKind: "modified",
+          badge: "M",
+        },
+      ],
+    });
+
+    const { user } = await renderApp();
+    const banner = screen.getByRole("region", { name: "Selected folder" });
+    await user.click(
+      await within(banner).findByRole("button", { name: /commit or push/i }),
+    );
+    const dialog = screen.getByRole("dialog", { name: "Commit or push" });
+    await user.type(
+      within(dialog).getByLabelText(/commit message/i),
+      "Keep failed Git actions retryable",
+    );
+    await user.click(within(dialog).getByRole("button", { name: /^commit$/i }));
+
+    const retry = await screen.findByRole("button", { name: "Retry commit" });
+    expect(retry).toHaveTextContent(
+      "Commit timed out. Check your connection and try again.",
+    );
+    expect(
+      screen.queryByRole("dialog", { name: "Commit or push" }),
+    ).not.toBeInTheDocument();
+
+    await user.click(retry);
+    await waitFor(() =>
+      expect(mocks.commitWorkspaceChangesMock).toHaveBeenCalledTimes(2),
+    );
+    expect(
+      await screen.findByText("Workspace changes were committed successfully."),
+    ).toBeInTheDocument();
+  });
+
+  it("shows a retryable composer warning when a background push fails", async () => {
+    mocks.pushWorkspaceBranchMock
+      .mockRejectedValueOnce(
+        new Error("failed to push some refs (non-fast-forward)"),
+      )
+      .mockResolvedValueOnce({
+        message: "Pushed main",
+        branch: "main",
+      });
+    mocks.listWorkspaceGitStatusMock.mockResolvedValue({
+      workspacePath: workspace.path,
+      gitRoot: workspace.path,
+      currentBranch: "main",
+      aheadCount: 1,
+      hasUpstream: true,
+      hasOrigin: true,
+      canPush: true,
+      files: [],
+    });
+
+    const { user } = await renderApp();
+    const banner = screen.getByRole("region", { name: "Selected folder" });
+    await user.click(
+      await within(banner).findByRole("button", { name: /commit or push/i }),
+    );
+    const dialog = screen.getByRole("dialog", { name: "Commit or push" });
+    await user.click(within(dialog).getByRole("button", { name: /^push$/i }));
+
+    expect(
+      screen.queryByRole("dialog", { name: "Commit or push" }),
+    ).not.toBeInTheDocument();
+    const retry = await screen.findByRole("button", { name: "Retry push" });
+    expect(retry).toHaveTextContent(
+      "Push was rejected. Pull or resolve the remote changes, then try again.",
+    );
+
+    await user.click(retry);
+    await waitFor(() =>
+      expect(mocks.pushWorkspaceBranchMock).toHaveBeenCalledTimes(2),
+    );
+    expect(
+      await screen.findByText("The current branch was pushed successfully."),
+    ).toBeInTheDocument();
+  });
+
+  it("retries only the push after a combined operation commits successfully", async () => {
+    mocks.pushWorkspaceBranchMock
+      .mockRejectedValueOnce(new Error("authentication failed"))
+      .mockResolvedValueOnce({
+        message: "Pushed main",
+        branch: "main",
+      });
+    mocks.listWorkspaceGitStatusMock.mockResolvedValue({
+      workspacePath: workspace.path,
+      gitRoot: workspace.path,
+      currentBranch: "main",
+      aheadCount: 0,
+      hasUpstream: true,
+      hasOrigin: true,
+      canPush: true,
+      additions: 8,
+      deletions: 0,
+      files: [
+        {
+          path: "/repo/orchestrator/src/App.tsx",
+          relativePath: "src/App.tsx",
+          oldRelativePath: null,
+          indexStatus: " ",
+          worktreeStatus: "M",
+          statusKind: "modified",
+          badge: "M",
+        },
+      ],
+    });
+
+    const { user } = await renderApp();
+    const banner = screen.getByRole("region", { name: "Selected folder" });
+    await user.click(
+      await within(banner).findByRole("button", { name: /commit or push/i }),
+    );
+    const dialog = screen.getByRole("dialog", { name: "Commit or push" });
+    await user.type(
+      within(dialog).getByLabelText(/commit message/i),
+      "Keep background Git operations isolated",
+    );
+    await user.click(
+      within(dialog).getByRole("button", { name: /^commit and push$/i }),
+    );
+
+    const retry = await screen.findByRole("button", { name: "Retry push" });
+    expect(retry).toHaveTextContent(
+      "The commit succeeded, but the push failed.",
+    );
+    await user.click(retry);
+
+    await waitFor(() =>
+      expect(mocks.pushWorkspaceBranchMock).toHaveBeenCalledTimes(2),
+    );
+    expect(mocks.commitWorkspaceChangesMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps background Git progress scoped to its workspace", async () => {
+    const otherWorkspace = {
+      ...workspace,
+      id: 2,
+      path: "/repo/other",
+      label: "other",
+    };
+    let resolvePush:
+      | ((value: { message: string; branch: string }) => void)
+      | null = null;
+    mocks.listWorkspacesMock.mockResolvedValue([workspace, otherWorkspace]);
+    mocks.listWorkspaceGitStatusMock.mockImplementation(
+      async (workspacePath: string) => ({
+        workspacePath,
+        gitRoot: workspacePath,
+        currentBranch: "main",
+        aheadCount: workspacePath === workspace.path ? 1 : 0,
+        hasUpstream: true,
+        hasOrigin: true,
+        canPush: workspacePath === workspace.path,
+        files: [],
+      }),
+    );
+    mocks.pushWorkspaceBranchMock.mockImplementation(
+      () =>
+        new Promise<{ message: string; branch: string }>((resolve) => {
+          resolvePush = resolve;
+        }),
+    );
+
+    const { user } = await renderApp();
+    let banner = screen.getByRole("region", { name: "Selected folder" });
+    await user.click(
+      await within(banner).findByRole("button", { name: /commit or push/i }),
+    );
+    await user.click(
+      within(screen.getByRole("dialog", { name: "Commit or push" })).getByRole(
+        "button",
+        { name: /^push$/i },
+      ),
+    );
+    expect(
+      within(banner).getByRole("button", { name: /commit or push/i }),
+    ).toHaveAttribute("aria-busy", "true");
+
+    const workspaceNav = screen.getByRole("navigation", { name: "Workspaces" });
+    await user.click(
+      within(workspaceNav).getByRole("button", { name: "other" }),
+    );
+    banner = screen.getByRole("region", { name: "Selected folder" });
+    expect(within(banner).getByText("other")).toBeInTheDocument();
+    expect(
+      within(banner).getByRole("button", { name: /commit or push/i }),
+    ).toHaveAttribute("aria-busy", "false");
+
+    await user.click(
+      within(workspaceNav).getByRole("button", { name: "orchestrator" }),
+    );
+    banner = screen.getByRole("region", { name: "Selected folder" });
+    expect(
+      within(banner).getByRole("button", { name: /commit or push/i }),
+    ).toHaveAttribute("aria-busy", "true");
+
+    await act(async () => {
+      resolvePush?.({ message: "Pushed main", branch: "main" });
+      await Promise.resolve();
+    });
+    await waitFor(() =>
+      expect(
+        within(banner).getByRole("button", { name: /commit or push/i }),
+      ).toHaveAttribute("aria-busy", "false"),
+    );
+  });
+
+  it("recovers an interrupted Git operation without retrying it after restart", async () => {
+    persistRunningGitOperation(
+      {
+        workspaceId: workspace.id,
+        workspacePath: workspace.path,
+        workspaceLabel: workspace.label,
+        kind: "commit-and-push",
+        commitMessage: "Do not retain this message",
+        includeUnstaged: true,
+        changeKey: "old-change",
+      },
+      "pushing",
+    );
+
+    const { user } = await renderApp();
+    const banner = screen.getByRole("region", { name: "Selected folder" });
+    expect(
+      within(banner).getByRole("button", { name: /commit or push/i }),
+    ).toHaveAttribute("aria-busy", "false");
+    const review = await screen.findByRole("button", {
+      name: "Open Git actions",
+    });
+    expect(review).toHaveTextContent(
+      "Review the current Git status before starting another commit or push.",
+    );
+    expect(mocks.commitWorkspaceChangesMock).not.toHaveBeenCalled();
+    expect(mocks.pushWorkspaceBranchMock).not.toHaveBeenCalled();
+
+    await user.click(review);
+    expect(
+      screen.getByRole("dialog", { name: "Commit or push" }),
+    ).toBeInTheDocument();
   });
 
   it("rejects broad AI commit messages that only describe changed areas", async () => {
