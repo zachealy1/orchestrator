@@ -4184,21 +4184,23 @@ select:disabled {
 
 .plan-progress-indicator {
   position: relative;
+  display: flex;
   width: 100%;
   min-width: 0;
   height: var(--composer-progress-row-height);
   min-height: var(--composer-progress-row-height);
+  align-items: center;
   border: 0;
   border-bottom: 1px solid var(--color-divider);
   border-radius: calc(var(--radius) - 1px) calc(var(--radius) - 1px) 0 0;
   background: var(--color-surface-soft);
   box-shadow: none;
   color: var(--color-text-secondary);
-  padding: 6px 10px;
+  padding: 4px 10px;
 }
 
 .composer-status-stack {
-  --composer-progress-row-height: 43px;
+  --composer-progress-row-height: 39px;
   display: grid;
   min-width: 0;
 }

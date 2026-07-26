@@ -16,17 +16,20 @@ function rule(selector: string) {
 }
 
 describe("plan progress CSS", () => {
-  it("uses one fixed row height for Goal and Step progress", () => {
+  it("uses one compact, vertically centered row height for Goal and Step progress", () => {
     const stack = rule(".composer-status-stack");
     const progressRow = rule(".plan-progress-indicator");
 
-    expect(stack).toContain("--composer-progress-row-height: 43px");
+    expect(stack).toContain("--composer-progress-row-height: 39px");
     expect(progressRow).toContain(
       "height: var(--composer-progress-row-height)",
     );
     expect(progressRow).toContain(
       "min-height: var(--composer-progress-row-height)",
     );
+    expect(progressRow).toContain("display: flex");
+    expect(progressRow).toContain("align-items: center");
+    expect(progressRow).toContain("padding: 4px 10px");
   });
 
   it("uses only the filled track without an active progress marker", () => {
