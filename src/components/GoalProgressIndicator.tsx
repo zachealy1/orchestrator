@@ -3,7 +3,9 @@ import {
   Gauge,
   LoaderCircle,
   Pause,
+  Pencil,
   Play,
+  X,
 } from "lucide-react";
 import { memo, useEffect, useState } from "react";
 import {
@@ -16,6 +18,8 @@ type Props = {
   progress: GoalProgressIndicatorModel;
   onPause: () => void;
   onResume: () => void;
+  onEdit: () => void;
+  onStop: () => void;
 };
 
 const STATUS_LABELS: Record<ThreadGoalStatus, string> = {
@@ -31,6 +35,8 @@ export const GoalProgressIndicator = memo(function GoalProgressIndicator({
   progress,
   onPause,
   onResume,
+  onEdit,
+  onStop,
 }: Props) {
   const [nowMs, setNowMs] = useState(() => Date.now());
 
@@ -48,7 +54,11 @@ export const GoalProgressIndicator = memo(function GoalProgressIndicator({
       ? "Pausing"
       : progress.actionPending === "resuming"
         ? "Resuming"
-        : STATUS_LABELS[progress.status];
+        : progress.actionPending === "stopping"
+          ? "Stopping"
+          : progress.actionPending === "editing"
+            ? "Preparing edit"
+            : STATUS_LABELS[progress.status];
   const elapsed = formatGoalDuration(goalElapsedSeconds(progress, nowMs));
   const canPause = progress.status === "active";
   const canResume = progress.status === "paused";
@@ -94,6 +104,28 @@ export const GoalProgressIndicator = memo(function GoalProgressIndicator({
             )}
           </button>
         ) : null}
+        <button
+          className="native-plan-icon-action goal-progress-action"
+          type="button"
+          onClick={onEdit}
+          disabled={pending}
+          aria-label="Edit goal"
+          title="Edit goal"
+          data-tooltip="Edit goal"
+        >
+          <Pencil size={15} aria-hidden="true" />
+        </button>
+        <button
+          className="native-plan-icon-action goal-progress-action cancel"
+          type="button"
+          onClick={onStop}
+          disabled={pending}
+          aria-label="Stop goal"
+          title="Stop goal"
+          data-tooltip="Stop goal"
+        >
+          <X size={15} aria-hidden="true" />
+        </button>
       </div>
     </div>
   );

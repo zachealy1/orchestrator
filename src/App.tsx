@@ -23,6 +23,7 @@ import {
   Monitor,
   Moon,
   PanelRight,
+  Pencil,
   Plug,
   Plus,
   RefreshCw,
@@ -958,6 +959,25 @@ type PlanImplementationDialogState = {
   error: string | null;
 };
 
+type GoalEditCandidate = {
+  workspaceId: number;
+  clientId: string;
+  objective: string;
+  status: "idle" | "stopping";
+  error: string | null;
+};
+
+type GoalTerminationState = {
+  workspaceId: number;
+  clientId: string;
+  action: Extract<GoalProgressAction, "stopping" | "editing">;
+};
+
+type StopActiveRunResult = {
+  stopped: boolean;
+  goalCleared: boolean;
+};
+
 type PlanFollowUpExecutionSelection = {
   accountId: number;
   profileKey: CodexProfileKey;
@@ -1547,6 +1567,10 @@ function App() {
     useState<AccountHandoffCandidate | null>(null);
   const [planImplementationDialog, setPlanImplementationDialog] =
     useState<PlanImplementationDialogState | null>(null);
+  const [goalEditCandidate, setGoalEditCandidate] =
+    useState<GoalEditCandidate | null>(null);
+  const [goalTermination, setGoalTermination] =
+    useState<GoalTerminationState | null>(null);
   const planImplementationDialogRequestRef = useRef(0);
   const planImplementationDialogRef = useRef<HTMLElement | null>(null);
   const planImplementationReturnFocusRef = useRef<HTMLElement | null>(null);
@@ -2511,6 +2535,8 @@ function App() {
   const runIsActive = Boolean(
     selectedActiveRunControl && isActiveRunControl(selectedActiveRunControl),
   );
+  const selectedGoalTerminationPending =
+    goalTermination?.workspaceId === selectedWorkspace?.id;
   const selectedGoalProgress = deriveGoalProgressIndicator(
     selectedActiveRunControl?.goal ?? null,
     selectedActiveRunControl?.goalActionPending ?? null,
@@ -5858,8 +5884,13 @@ function App() {
     }
   }
 
-  async function stopActiveRun() {
-    const control = selectedActiveRunControl ?? activeRunControlRef.current;
+  async function stopActiveRun(
+    targetControl?: ActiveRunControl | null,
+  ): Promise<StopActiveRunResult> {
+    const control =
+      targetControl === undefined
+        ? selectedActiveRunControl ?? activeRunControlRef.current
+        : targetControl;
     const accountId =
       control?.accountId ?? currentRunAccountId.current ?? selectedAccountIdRef.current;
     const profileKey =
@@ -5869,8 +5900,8 @@ function App() {
     const threadId = control?.threadId ?? runViewRef.current.threadId;
     const turnId = control?.turnId ?? runViewRef.current.turnId;
 
-    if (!control && !runIsActive) {
-      return;
+    if (!control) {
+      return { stopped: false, goalCleared: false };
     }
 
     flushFrameBatchedCodexNotifications();
@@ -5902,7 +5933,6 @@ function App() {
 
     const shouldRestorePrompt =
       control?.turnId === null && Boolean(control?.promptFallback);
-    if (!control) return;
     const { completedAt, stoppedRunView } = markRunInterrupted(control);
     if (shouldRestorePrompt && control) {
       updateTaskChatEntry(control.clientId, (entry) => ({
@@ -5988,6 +6018,10 @@ function App() {
       }
     }
     void cleanupRunBrowserSession(control);
+    return {
+      stopped: true,
+      goalCleared: goalClearError === null,
+    };
   }
 
   async function focusSelectedBrowserSession() {
@@ -12796,6 +12830,169 @@ function App() {
     }
   }, []);
 
+  async function terminateSelectedGoal(
+    control: ActiveRunControl,
+    action: Extract<GoalProgressAction, "stopping" | "editing">,
+  ) {
+    if (
+      !control.threadId ||
+      !control.goal ||
+      control.goalActionPending ||
+      !isActiveRunControl(control)
+    ) {
+      return false;
+    }
+
+    const actionLabel =
+      action === "editing" ? "prepare the goal for editing" : "stop the goal";
+    setGoalTermination({
+      workspaceId: control.workspaceId,
+      clientId: control.clientId,
+      action,
+    });
+    control.goalActionPending = action;
+    control.goalActionError = null;
+    setActiveRunRegistryVersion((current) => current + 1);
+
+    try {
+      await clearThreadGoalForProfile(
+        control.profileKey,
+        control.accountId,
+        control.threadId,
+      );
+      if (
+        control.stopped ||
+        activeRunControlsRef.current.get(control.clientId) !== control
+      ) {
+        return false;
+      }
+
+      control.acceptsThreadContinuation = false;
+      control.goal = null;
+      control.goalActionPending = null;
+      control.goalActionError = null;
+      setActiveRunRegistryVersion((current) => current + 1);
+
+      const result = await stopActiveRun(control);
+      return result.stopped && result.goalCleared;
+    } catch (error) {
+      const message = `Could not ${actionLabel}: ${
+        error instanceof Error ? error.message : String(error)
+      }`;
+      if (
+        !control.stopped &&
+        activeRunControlsRef.current.get(control.clientId) === control
+      ) {
+        control.goalActionPending = null;
+        control.goalActionError = message;
+        setActiveRunRegistryVersion((current) => current + 1);
+      }
+      setStatusMessage(message);
+      return false;
+    } finally {
+      setGoalTermination((current) =>
+        current?.clientId === control.clientId && current.action === action
+          ? null
+          : current,
+      );
+    }
+  }
+
+  async function stopSelectedGoal() {
+    const control = selectedActiveRunControl;
+    if (!control) return;
+    if (await terminateSelectedGoal(control, "stopping")) {
+      setGoalMode(false);
+    }
+  }
+
+  function focusGoalObjectiveInComposer(
+    workspaceId: number,
+    objective: string,
+  ) {
+    flushSync(() => {
+      setPlanMode(false);
+      setGoalMode(true);
+      updateRememberedWorkspaceComposer(workspaceId, {
+        prompt: objective,
+      });
+    });
+    preflightRef.current = null;
+
+    window.requestAnimationFrame(() => {
+      if (selectedWorkspaceRef.current?.id !== workspaceId) return;
+      const textarea = taskComposerPromptRef.current;
+      if (!textarea) return;
+      textarea.focus({ preventScroll: true });
+      textarea.setSelectionRange(0, textarea.value.length);
+    });
+  }
+
+  async function editSelectedGoal(candidate: GoalEditCandidate) {
+    const control = activeRunControlsRef.current.get(candidate.clientId) ?? null;
+    if (
+      !control ||
+      selectedWorkspaceRef.current?.id !== candidate.workspaceId ||
+      control.workspaceId !== candidate.workspaceId ||
+      control.goal?.objective !== candidate.objective
+    ) {
+      setGoalEditCandidate(null);
+      setStatusMessage("That goal changed before it could be edited.");
+      return;
+    }
+
+    setGoalEditCandidate((current) =>
+      current?.clientId === candidate.clientId
+        ? { ...current, status: "stopping", error: null }
+        : current,
+    );
+    const stopped = await terminateSelectedGoal(control, "editing");
+    if (!stopped) {
+      setGoalEditCandidate((current) =>
+        current?.clientId === candidate.clientId
+          ? {
+              ...current,
+              status: "idle",
+              error: "The goal could not be stopped. Try again.",
+            }
+          : current,
+      );
+      return;
+    }
+
+    setGoalEditCandidate(null);
+    focusGoalObjectiveInComposer(candidate.workspaceId, candidate.objective);
+    setStatusMessage("Goal stopped. Edit the objective, then submit it to continue.");
+  }
+
+  function requestEditSelectedGoal() {
+    const control = selectedActiveRunControl;
+    const objective = control?.goal?.objective.trim() ?? "";
+    if (
+      !control ||
+      !objective ||
+      control.goalActionPending ||
+      !isActiveRunControl(control)
+    ) {
+      return;
+    }
+
+    const candidate: GoalEditCandidate = {
+      workspaceId: control.workspaceId,
+      clientId: control.clientId,
+      objective,
+      status: "idle",
+      error: null,
+    };
+    const currentDraft = promptRef.current.trim();
+    if (currentDraft && currentDraft !== objective) {
+      setGoalEditCandidate(candidate);
+      return;
+    }
+
+    void editSelectedGoal(candidate);
+  }
+
   async function updateSelectedGoalStatus(
     status: Extract<ThreadGoalStatus, "active" | "paused">,
   ) {
@@ -14156,6 +14353,73 @@ function App() {
         </div>
       ) : null}
 
+      {goalEditCandidate ? (
+        <div
+          className="modal-backdrop"
+          role="presentation"
+          onMouseDown={(event) => {
+            if (
+              event.target === event.currentTarget &&
+              goalEditCandidate.status === "idle"
+            ) {
+              setGoalEditCandidate(null);
+            }
+          }}
+        >
+          <section
+            className="confirmation-dialog"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="goal-edit-title"
+            aria-describedby="goal-edit-description"
+          >
+            <div>
+              <p className="eyebrow">Goal</p>
+              <h2 id="goal-edit-title">Replace draft and edit goal?</h2>
+              <p id="goal-edit-description">
+                This stops the current goal and replaces your unsent prompt
+                with its objective. Attached files and selected skills remain
+                available.
+              </p>
+              {goalEditCandidate.error ? (
+                <p className="account-handoff-error" role="alert">
+                  <AlertCircle size={15} aria-hidden="true" />
+                  <span>{goalEditCandidate.error}</span>
+                </p>
+              ) : null}
+            </div>
+            <div className="confirmation-actions">
+              <button
+                className="native-plan-icon-action"
+                type="button"
+                aria-label="Keep current goal"
+                title="Keep current goal"
+                data-tooltip="Keep current goal"
+                disabled={goalEditCandidate.status !== "idle"}
+                onClick={() => setGoalEditCandidate(null)}
+              >
+                <X size={15} aria-hidden="true" />
+              </button>
+              <button
+                className="native-plan-icon-action"
+                type="button"
+                aria-label="Stop and edit goal"
+                title="Stop and edit goal"
+                data-tooltip="Stop and edit goal"
+                disabled={goalEditCandidate.status !== "idle"}
+                onClick={() => void editSelectedGoal(goalEditCandidate)}
+              >
+                {goalEditCandidate.status === "stopping" ? (
+                  <Loader2 className="spin" size={15} aria-hidden="true" />
+                ) : (
+                  <Pencil size={15} aria-hidden="true" />
+                )}
+              </button>
+            </div>
+          </section>
+        </div>
+      ) : null}
+
       {workspaceDeleteCandidate ? (
         <div
           className="modal-backdrop"
@@ -14574,15 +14838,25 @@ function App() {
                   </div>
                 ) : null}
                 <TaskComposer
-                  disabled={!canRun || planReviewAwaiting}
+                  disabled={
+                    !canRun ||
+                    planReviewAwaiting ||
+                    selectedGoalTerminationPending
+                  }
                   runActive={runIsActive}
                   prompt={prompt}
                   promptRevision={promptRevision}
                   accounts={signedInAccounts}
                   selectedAccountId={selectedComposerAccountId}
                   accountPlaceholder={selectedComposerAccountPlaceholder}
-                  accountSelectionDisabled={runIsActive}
-                  modelSelectionDisabled={runIsActive || planReviewAwaiting}
+                  accountSelectionDisabled={
+                    runIsActive || selectedGoalTerminationPending
+                  }
+                  modelSelectionDisabled={
+                    runIsActive ||
+                    planReviewAwaiting ||
+                    selectedGoalTerminationPending
+                  }
                   models={models}
                   modelLoadError={modelLoadError}
                   selectedModelId={selectedModelId}
@@ -14612,6 +14886,10 @@ function App() {
                   }}
                   onResumeGoal={() => {
                     void updateSelectedGoalStatus("active");
+                  }}
+                  onEditGoal={requestEditSelectedGoal}
+                  onStopGoal={() => {
+                    void stopSelectedGoal();
                   }}
                   onStatusNoticeActivate={activateComposerStatusNotice}
                   onAccessModeChange={handleAccessModeChange}

@@ -10756,6 +10756,215 @@ describe("App Codex auth", () => {
     ).not.toBeInTheDocument();
   });
 
+  it("stops a Goal immediately and turns Goal Mode off", async () => {
+    prepareSignedInRun();
+    mocks.codexRpcMock.mockImplementation(
+      async (_accountId: number, method: string, params: any) => {
+        if (method === "thread/start") {
+          return { thread: { id: "thread-1" } };
+        }
+        if (method === "turn/start") {
+          return { turn: { id: "turn-1" } };
+        }
+        if (method === "thread/goal/set") {
+          return {
+            goal: {
+              threadId: params.threadId,
+              objective: "Finish the workspace migration",
+              status: params.status,
+              timeUsedSeconds: 42,
+            },
+          };
+        }
+        return {};
+      },
+    );
+
+    const { user } = await renderApp();
+    const goalMode = screen.getByRole("button", { name: "Goal mode" });
+    await user.click(goalMode);
+    await startMockRun(user, "Finish the workspace migration");
+
+    await user.click(screen.getByRole("button", { name: "Stop goal" }));
+
+    await waitFor(() =>
+      expect(mocks.codexRpcMock).toHaveBeenCalledWith(
+        7,
+        "thread/goal/clear",
+        { threadId: "thread-1" },
+      ),
+    );
+    await waitFor(() =>
+      expect(
+        screen.getByRole("button", { name: /run codex/i }),
+      ).toBeInTheDocument(),
+    );
+    expect(mocks.codexRpcMock).toHaveBeenCalledWith(
+      7,
+      "turn/interrupt",
+      { threadId: "thread-1", turnId: "turn-1" },
+    );
+    expect(screen.queryByLabelText("Goal progress")).not.toBeInTheDocument();
+    expect(goalMode).toHaveAttribute("aria-pressed", "false");
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+  });
+
+  it("stops a Goal and moves its objective into the focused composer for editing", async () => {
+    prepareSignedInRun();
+    mocks.codexRpcMock.mockImplementation(
+      async (_accountId: number, method: string, params: any) => {
+        if (method === "thread/start") {
+          return { thread: { id: "thread-1" } };
+        }
+        if (method === "turn/start") {
+          return { turn: { id: "turn-1" } };
+        }
+        if (method === "thread/goal/set") {
+          return {
+            goal: {
+              threadId: params.threadId,
+              objective: "Finish the workspace migration",
+              status: params.status,
+              timeUsedSeconds: 42,
+            },
+          };
+        }
+        return {};
+      },
+    );
+
+    const { user } = await renderApp();
+    await user.click(screen.getByRole("button", { name: "Goal mode" }));
+    await startMockRun(user, "Finish the workspace migration");
+    await user.click(screen.getByRole("button", { name: "Edit goal" }));
+
+    const prompt = screen.getByLabelText("Prompt");
+    await waitFor(() =>
+      expect(prompt).toHaveValue("Finish the workspace migration"),
+    );
+    await waitFor(() => expect(prompt).toHaveFocus());
+    expect((prompt as HTMLTextAreaElement).selectionStart).toBe(0);
+    expect((prompt as HTMLTextAreaElement).selectionEnd).toBe(
+      "Finish the workspace migration".length,
+    );
+    expect(screen.getByRole("button", { name: "Goal mode" })).toHaveAttribute(
+      "aria-pressed",
+      "true",
+    );
+    expect(screen.queryByLabelText("Goal progress")).not.toBeInTheDocument();
+  });
+
+  it("confirms before replacing an unsent draft while editing a Goal", async () => {
+    prepareSignedInRun();
+    mocks.codexRpcMock.mockImplementation(
+      async (_accountId: number, method: string, params: any) => {
+        if (method === "thread/start") {
+          return { thread: { id: "thread-1" } };
+        }
+        if (method === "turn/start") {
+          return { turn: { id: "turn-1" } };
+        }
+        if (method === "thread/goal/set") {
+          return {
+            goal: {
+              threadId: params.threadId,
+              objective: "Finish the workspace migration",
+              status: params.status,
+              timeUsedSeconds: 42,
+            },
+          };
+        }
+        return {};
+      },
+    );
+
+    const { user } = await renderApp();
+    await user.click(screen.getByRole("button", { name: "Goal mode" }));
+    await startMockRun(user, "Finish the workspace migration");
+    const prompt = screen.getByLabelText("Prompt");
+    await user.type(prompt, "Keep this draft");
+    await user.click(screen.getByRole("button", { name: "Edit goal" }));
+
+    const dialog = screen.getByRole("dialog", {
+      name: "Replace draft and edit goal?",
+    });
+    expect(prompt).toHaveValue("Keep this draft");
+    expect(screen.getByLabelText("Goal progress")).toBeInTheDocument();
+    expect(mocks.codexRpcMock).not.toHaveBeenCalledWith(
+      7,
+      "thread/goal/clear",
+      expect.anything(),
+    );
+
+    await user.click(
+      within(dialog).getByRole("button", { name: "Keep current goal" }),
+    );
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    expect(prompt).toHaveValue("Keep this draft");
+    expect(screen.getByLabelText("Goal progress")).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "Edit goal" }));
+    await user.click(
+      within(
+        screen.getByRole("dialog", {
+          name: "Replace draft and edit goal?",
+        }),
+      ).getByRole("button", { name: "Stop and edit goal" }),
+    );
+    await waitFor(() =>
+      expect(prompt).toHaveValue("Finish the workspace migration"),
+    );
+  });
+
+  it("keeps a Goal and composer draft unchanged when Goal clearing fails", async () => {
+    prepareSignedInRun();
+    mocks.codexRpcMock.mockImplementation(
+      async (_accountId: number, method: string, params: any) => {
+        if (method === "thread/start") {
+          return { thread: { id: "thread-1" } };
+        }
+        if (method === "turn/start") {
+          return { turn: { id: "turn-1" } };
+        }
+        if (method === "thread/goal/set") {
+          return {
+            goal: {
+              threadId: params.threadId,
+              objective: "Finish the workspace migration",
+              status: params.status,
+              timeUsedSeconds: 42,
+            },
+          };
+        }
+        if (method === "thread/goal/clear") {
+          throw new Error("Goal service unavailable");
+        }
+        return {};
+      },
+    );
+
+    const { user } = await renderApp();
+    await user.click(screen.getByRole("button", { name: "Goal mode" }));
+    await startMockRun(user, "Finish the workspace migration");
+    await user.click(screen.getByRole("button", { name: "Edit goal" }));
+
+    await screen.findByText(
+      "Could not prepare the goal for editing: Goal service unavailable",
+    );
+    expect(screen.getByLabelText("Prompt")).toHaveValue("");
+    expect(screen.getByLabelText("Goal progress")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Edit goal" })).toBeEnabled();
+    expect(screen.getByRole("button", { name: "Goal mode" })).toHaveAttribute(
+      "aria-pressed",
+      "true",
+    );
+    expect(mocks.codexRpcMock).not.toHaveBeenCalledWith(
+      7,
+      "turn/interrupt",
+      expect.anything(),
+    );
+  });
+
   it("keeps the current Goal state when a pause request fails", async () => {
     prepareSignedInRun();
     mocks.codexRpcMock.mockImplementation(

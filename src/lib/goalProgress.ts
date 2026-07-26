@@ -14,7 +14,11 @@ export type ThreadGoalState = {
   observedAtMs: number;
 };
 
-export type GoalProgressAction = "pausing" | "resuming";
+export type GoalProgressAction =
+  | "pausing"
+  | "resuming"
+  | "stopping"
+  | "editing";
 
 export type GoalProgressIndicatorModel = ThreadGoalState & {
   actionPending: GoalProgressAction | null;

@@ -32,6 +32,8 @@ describe("GoalProgressIndicator", () => {
         progress={goal()}
         onPause={onPause}
         onResume={vi.fn()}
+        onEdit={vi.fn()}
+        onStop={vi.fn()}
       />,
     );
 
@@ -57,6 +59,8 @@ describe("GoalProgressIndicator", () => {
         progress={goal({ status: "paused" })}
         onPause={vi.fn()}
         onResume={onResume}
+        onEdit={vi.fn()}
+        onStop={vi.fn()}
       />,
     );
 
@@ -67,12 +71,14 @@ describe("GoalProgressIndicator", () => {
     expect(onResume).toHaveBeenCalledTimes(1);
   });
 
-  it("disables duplicate actions and leaves limited goals informational", () => {
+  it("disables duplicate actions and limits pause or resume by state", () => {
     const { rerender } = render(
       <GoalProgressIndicator
         progress={goal({ actionPending: "pausing" })}
         onPause={vi.fn()}
         onResume={vi.fn()}
+        onEdit={vi.fn()}
+        onStop={vi.fn()}
       />,
     );
 
@@ -87,11 +93,60 @@ describe("GoalProgressIndicator", () => {
         })}
         onPause={vi.fn()}
         onResume={vi.fn()}
+        onEdit={vi.fn()}
+        onStop={vi.fn()}
       />,
     );
     expect(screen.getByText("Budget limited")).toBeInTheDocument();
     expect(
-      screen.queryByRole("button", { name: /goal/i }),
+      screen.queryByRole("button", { name: "Pause goal" }),
     ).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "Resume goal" }),
+    ).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Edit goal" })).toBeEnabled();
+    expect(screen.getByRole("button", { name: "Stop goal" })).toBeEnabled();
+  });
+
+  it("renders shared icon-only edit and stop actions and blocks duplicates", () => {
+    const onEdit = vi.fn();
+    const onStop = vi.fn();
+    const { rerender } = render(
+      <GoalProgressIndicator
+        progress={goal()}
+        onPause={vi.fn()}
+        onResume={vi.fn()}
+        onEdit={onEdit}
+        onStop={onStop}
+      />,
+    );
+
+    const edit = screen.getByRole("button", { name: "Edit goal" });
+    const stop = screen.getByRole("button", { name: "Stop goal" });
+    expect(edit).toHaveClass("native-plan-icon-action");
+    expect(stop).toHaveClass("native-plan-icon-action", "cancel");
+    expect(edit).toHaveAttribute("data-tooltip", "Edit goal");
+    expect(stop).toHaveAttribute("data-tooltip", "Stop goal");
+    expect(edit).not.toHaveTextContent("Edit goal");
+    expect(stop).not.toHaveTextContent("Stop goal");
+
+    fireEvent.click(edit);
+    fireEvent.click(stop);
+    expect(onEdit).toHaveBeenCalledTimes(1);
+    expect(onStop).toHaveBeenCalledTimes(1);
+
+    rerender(
+      <GoalProgressIndicator
+        progress={goal({ actionPending: "editing" })}
+        onPause={vi.fn()}
+        onResume={vi.fn()}
+        onEdit={onEdit}
+        onStop={onStop}
+      />,
+    );
+    expect(screen.getByText("Preparing edit")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Pause goal" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Edit goal" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Stop goal" })).toBeDisabled();
   });
 });

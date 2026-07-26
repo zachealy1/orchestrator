@@ -108,6 +108,8 @@ type Props = {
   onPlanModeChange: (value: boolean) => void;
   onPauseGoal: () => void;
   onResumeGoal: () => void;
+  onEditGoal: () => void;
+  onStopGoal: () => void;
   onStatusNoticeActivate?: (noticeId: string) => void;
   onAccessModeChange: (accessMode: CodexAccessMode) => void;
   onAddFiles: () => void;
@@ -200,6 +202,8 @@ export const TaskComposer = memo(function TaskComposer({
   onPlanModeChange,
   onPauseGoal,
   onResumeGoal,
+  onEditGoal,
+  onStopGoal,
   onStatusNoticeActivate,
   onAccessModeChange,
   onAddFiles,
@@ -788,6 +792,8 @@ export const TaskComposer = memo(function TaskComposer({
               progress={goalProgress}
               onPause={onPauseGoal}
               onResume={onResumeGoal}
+              onEdit={onEditGoal}
+              onStop={onStopGoal}
             />
           ) : null}
           {planProgress ? (
