@@ -293,6 +293,90 @@ describe("TaskComposer", () => {
     expect(prompt).toHaveValue("Keep this draft");
   });
 
+  it("stacks approval notices with plan progress inside the composer", async () => {
+    const onStatusNoticeActivate = vi.fn();
+    const notice = {
+      id: "cross-conversation-approvals",
+      tone: "approval" as const,
+      title: "Approval needed",
+      detail: "Another chat is waiting for your approval",
+      actionLabel: "Open chat awaiting approval",
+    };
+    const planProgress = {
+      currentStep: 1,
+      totalSteps: 2,
+      completedSteps: 0,
+      progressPercent: 0,
+      stepLabel: "Inspect the repository",
+      state: "in-progress" as const,
+      steps: [
+        { step: "Inspect the repository", status: "in_progress" as const },
+        { step: "Implement the change", status: "pending" as const },
+      ],
+    };
+    const { user, container, props, rerender } = renderComposer({
+      prompt: "Keep this draft",
+      planProgress,
+      onStatusNoticeActivate,
+    });
+
+    const prompt = screen.getByLabelText("Prompt");
+    prompt.focus();
+    rerender(
+      <TaskComposer
+        {...props}
+        statusNotices={[notice]}
+        planProgress={planProgress}
+      />,
+    );
+
+    const composer = screen.getByRole("region", { name: "Task composer" });
+    const stack = composer.querySelector(".composer-status-stack");
+    const approvalAction = screen.getByRole("button", {
+      name: "Open chat awaiting approval",
+    });
+
+    expect(stack).not.toBeNull();
+    expect(composer).toHaveClass("has-composer-status");
+    expect(stack).toContainElement(approvalAction);
+    expect(stack).toContainElement(screen.getByRole("status"));
+    expect(
+      stack!.compareDocumentPosition(prompt) &
+        Node.DOCUMENT_POSITION_FOLLOWING,
+    ).not.toBe(0);
+    expect(container.querySelector(".unrouted-approval-warning")).toBeNull();
+    expect(prompt).toHaveFocus();
+    expect(prompt).toHaveValue("Keep this draft");
+    await user.click(approvalAction);
+    expect(onStatusNoticeActivate).toHaveBeenCalledWith(
+      "cross-conversation-approvals",
+    );
+    expect(prompt).toHaveValue("Keep this draft");
+  });
+
+  it("renders approval safety warnings as non-actionable composer status rows", () => {
+    const { container } = renderComposer({
+      statusNotices: [
+        {
+          id: "approval-safety-warning",
+          tone: "warning",
+          title: "Approval unavailable",
+          detail: "The request could not be resolved safely.",
+        },
+      ],
+    });
+
+    const alert = screen.getByRole("alert");
+    expect(alert).toHaveTextContent("Approval unavailable");
+    expect(alert).toHaveTextContent(
+      "The request could not be resolved safely.",
+    );
+    expect(within(alert).queryByRole("button")).not.toBeInTheDocument();
+    expect(container.querySelector(".composer-status-stack")).toContainElement(
+      alert,
+    );
+  });
+
   it("updates the prompt and exposes composer actions", async () => {
     const onPromptChange = vi.fn();
     const { user } = renderComposer({ onPromptChange });

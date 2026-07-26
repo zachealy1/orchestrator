@@ -157,7 +157,10 @@ import {
   type TranscriptNotificationFocusRequest,
 } from "./components/VirtuosoTaskChatTranscript";
 import { TaskTranscriptErrorBoundary } from "./components/TaskTranscriptErrorBoundary";
-import { TaskComposer } from "./components/TaskComposer";
+import {
+  TaskComposer,
+  type ComposerStatusNotice,
+} from "./components/TaskComposer";
 import {
   addApprovalRequest,
   addServerRequest,
@@ -736,6 +739,54 @@ type PendingAgentNotificationFocus = {
   timeoutId: number;
   resolve: (found: boolean) => void;
 };
+
+type PendingApprovalAttention = {
+  accountId: number;
+  request: CodexApprovalRequest;
+  target: AgentNotificationTarget;
+};
+
+function pendingApprovalMatchesEntry(
+  attention: PendingApprovalAttention,
+  entry: TaskChatEntry,
+) {
+  const { request, target } = attention;
+  if (
+    target.workspaceId !== null &&
+    target.workspaceId !== undefined &&
+    target.workspaceId !== entry.workspaceId
+  ) {
+    return false;
+  }
+  if (
+    target.chatId !== null &&
+    target.chatId !== undefined &&
+    target.chatId !== entry.chatId
+  ) {
+    return false;
+  }
+  if (target.runId !== null && target.runId !== undefined) {
+    return target.runId === entry.runId;
+  }
+  if (
+    request.threadId &&
+    entry.runView.threadId &&
+    request.threadId !== entry.runView.threadId
+  ) {
+    return false;
+  }
+  if (
+    request.turnId &&
+    entry.runView.turnId &&
+    request.turnId !== entry.runView.turnId
+  ) {
+    return false;
+  }
+  return Boolean(
+    (request.threadId && entry.runView.threadId) ||
+      (request.turnId && entry.runView.turnId),
+  );
+}
 
 type SelectHistoryChatOptions = {
   source?: "drawer" | "notification" | "workspace";
@@ -1498,9 +1549,9 @@ function App() {
   const pendingAgentNotificationFocusRef =
     useRef<PendingAgentNotificationFocus | null>(null);
   const [unroutedApprovals, setUnroutedApprovals] = useState<
-    CodexApprovalRequest[]
+    PendingApprovalAttention[]
   >([]);
-  const unroutedApprovalsRef = useRef<CodexApprovalRequest[]>([]);
+  const unroutedApprovalsRef = useRef<PendingApprovalAttention[]>([]);
   const [approvalSafetyWarning, setApprovalSafetyWarning] = useState<
     string | null
   >(null);
@@ -2534,7 +2585,7 @@ function App() {
   const canCommitFromDialog =
     headerGitAction.canCommit &&
     (includeUnstagedChanges || selectedHasStagedGitChanges);
-  const selectedWorkspaceChatEntries = useMemo(
+  const selectedWorkspaceBaseChatEntries = useMemo(
     () => {
       if (!selectedWorkspace) return [];
       if (selectedWorkspaceChatSession) {
@@ -2560,7 +2611,125 @@ function App() {
       taskChatEntries,
     ],
   );
+  const pendingApprovalAttentions = useMemo(() => {
+    const attentions = [...unroutedApprovals];
+    const knownKeys = new Set(
+      attentions.map(
+        ({ request }) => `${request.profileKey}:${request.key}`,
+      ),
+    );
+
+    activeRunControlsRef.current.forEach((control) => {
+      if (!isActiveRunControl(control)) return;
+      control.runView.approvalRequests.forEach((request) => {
+        const key = `${request.profileKey}:${request.key}`;
+        if (knownKeys.has(key)) return;
+        knownKeys.add(key);
+        attentions.push({
+          accountId: control.accountId,
+          request,
+          target: {
+            eventKey: approvalNotificationEventKey(request),
+            kind: "approval-required",
+            workspaceId: control.workspaceId,
+            chatId: control.chatId,
+            runId: control.runId,
+            entryClientId: control.clientId,
+            requestId: request.key,
+            planItemId: null,
+            accountId:
+              control.profileKey === DEFAULT_CODEX_PROFILE_KEY
+                ? null
+                : control.accountId,
+            profileKey: control.profileKey,
+            threadId: request.threadId ?? control.threadId,
+            turnId: request.turnId ?? control.turnId,
+          },
+        });
+      });
+    });
+
+    return attentions;
+  }, [taskChatEntries, unroutedApprovals]);
+  const selectedWorkspaceChatEntries = useMemo(() => {
+    if (
+      selectedWorkspaceBaseChatEntries.length === 0 ||
+      pendingApprovalAttentions.length === 0
+    ) {
+      return selectedWorkspaceBaseChatEntries;
+    }
+
+    let changed = false;
+    const entries = selectedWorkspaceBaseChatEntries.map((entry) => {
+      const matchingRequests = pendingApprovalAttentions
+        .filter((attention) =>
+          pendingApprovalMatchesEntry(attention, entry),
+        )
+        .map((attention) => attention.request);
+      if (matchingRequests.length === 0) return entry;
+
+      let nextRunView = entry.runView;
+      matchingRequests.forEach((request) => {
+        nextRunView = addApprovalRequest(nextRunView, request);
+      });
+      if (nextRunView === entry.runView) return entry;
+      changed = true;
+      return {
+        ...entry,
+        runView: nextRunView,
+      };
+    });
+
+    return changed ? entries : selectedWorkspaceBaseChatEntries;
+  }, [pendingApprovalAttentions, selectedWorkspaceBaseChatEntries]);
   const visibleTaskChatEntries = selectedWorkspaceChatEntries;
+  const crossConversationApprovals = useMemo(
+    () =>
+      pendingApprovalAttentions.filter(
+        (attention) =>
+          !selectedWorkspaceChatEntries.some((entry) =>
+            pendingApprovalMatchesEntry(attention, entry),
+          ),
+      ),
+    [pendingApprovalAttentions, selectedWorkspaceChatEntries],
+  );
+  const composerStatusNotices = useMemo<ComposerStatusNotice[]>(() => {
+    const notices: ComposerStatusNotice[] = [];
+    if (crossConversationApprovals.length > 0) {
+      const count = crossConversationApprovals.length;
+      notices.push({
+        id: "cross-conversation-approvals",
+        tone: "approval",
+        title: count === 1 ? "Approval needed" : `${count} approvals needed`,
+        detail:
+          count === 1
+            ? "Another chat is waiting for your approval"
+            : "Other chats are waiting for your approval",
+        actionLabel:
+          count === 1
+            ? "Open chat awaiting approval"
+            : "Open oldest chat awaiting approval",
+      });
+    }
+    if (approvalSafetyWarning) {
+      notices.push({
+        id: "approval-safety-warning",
+        tone: "warning",
+        title: "Approval unavailable",
+        detail: approvalSafetyWarning,
+      });
+    }
+    return notices;
+  }, [approvalSafetyWarning, crossConversationApprovals.length]);
+  const activateComposerStatusNotice = useStableEvent((noticeId: string) => {
+    if (noticeId !== "cross-conversation-approvals") return;
+    const oldest = [...crossConversationApprovals].sort((left, right) =>
+      left.request.receivedAt.localeCompare(right.request.receivedAt),
+    )[0];
+    if (oldest) {
+      void openPendingApprovalAttention(oldest);
+    }
+  });
   const planReviewAwaiting = visibleTaskChatEntries.some(
     (entry) => entry.runView.nativePlan.reviewState === "available",
   );
@@ -3392,7 +3561,9 @@ function App() {
           ...profileControls.flatMap(
             (control) => control.runView.approvalRequests,
           ),
-          ...unroutedApprovalsRef.current,
+          ...unroutedApprovalsRef.current.map(
+            (attention) => attention.request,
+          ),
         ]
           .filter((request) => request.profileKey === profileKey)
           .forEach((request) => {
@@ -3413,7 +3584,9 @@ function App() {
           });
         setApprovalSafetyWarning(null);
         setUnroutedApprovals((current) =>
-          current.filter((request) => request.profileKey !== profileKey),
+          current.filter(
+            (attention) => attention.request.profileKey !== profileKey,
+          ),
         );
       }
       if (profileControls.length > 0) {
@@ -9546,6 +9719,93 @@ function App() {
     );
   }
 
+  async function resolvePendingApprovalTarget(
+    attention: PendingApprovalAttention,
+  ): Promise<AgentNotificationTarget | null> {
+    if (isAgentNotificationTargetNavigable(attention.target)) {
+      return attention.target;
+    }
+
+    const entry = taskChatEntriesRef.current.find((candidate) =>
+      pendingApprovalMatchesEntry(attention, candidate),
+    );
+    if (entry) {
+      return {
+        ...attention.target,
+        workspaceId: entry.workspaceId,
+        chatId: entry.chatId,
+        runId: entry.runId,
+        entryClientId: entry.clientId,
+      };
+    }
+
+    const threadId = attention.request.threadId;
+    if (!threadId) return null;
+
+    const cachedChat = historyStateRef.current.chats.find(
+      (chat) =>
+        !chat.deleted_at &&
+        (chat.codex_thread_id === threadId ||
+          chat.external_thread_id === threadId),
+    );
+    if (cachedChat) {
+      return {
+        ...attention.target,
+        workspaceId: cachedChat.workspace_id,
+        chatId: cachedChat.id,
+      };
+    }
+
+    const workspaceHistories = await Promise.all(
+      workspacesRef.current.map(async (workspace) => {
+        try {
+          return await listWorkspaceChats(workspace.id);
+        } catch {
+          return [];
+        }
+      }),
+    );
+    const chat = workspaceHistories
+      .flat()
+      .find(
+        (candidate) =>
+          !candidate.deleted_at &&
+          (candidate.codex_thread_id === threadId ||
+            candidate.external_thread_id === threadId),
+      );
+    if (!chat) return null;
+
+    return {
+      ...attention.target,
+      workspaceId: chat.workspace_id,
+      chatId: chat.id,
+    };
+  }
+
+  async function openPendingApprovalAttention(
+    attention: PendingApprovalAttention,
+  ) {
+    const target = await resolvePendingApprovalTarget(attention);
+    if (!target || !isAgentNotificationTargetNavigable(target)) {
+      setStatusMessage(
+        "The chat waiting for approval is no longer available.",
+      );
+      return;
+    }
+
+    setUnroutedApprovals((current) =>
+      current.map((candidate) =>
+        candidate.request.key === attention.request.key
+          ? { ...candidate, target }
+          : candidate,
+      ),
+    );
+    const result = await handleAgentNotificationActivation(target);
+    if (result === "retryable") {
+      setStatusMessage("Could not open the chat waiting for approval.");
+    }
+  }
+
   function findEntryForAgentNotification(
     target: AgentNotificationTarget,
     workspaceId: number,
@@ -9931,7 +10191,9 @@ function App() {
         ...[...activeRunControlsRef.current.values()].flatMap(
           (control) => control.runView.approvalRequests,
         ),
-        ...unroutedApprovalsRef.current,
+        ...unroutedApprovalsRef.current.map(
+          (attention) => attention.request,
+        ),
       ].filter(
         (request) =>
           request.profileKey === profileKey &&
@@ -9950,7 +10212,7 @@ function App() {
       });
       setUnroutedApprovals((current) =>
         current.filter(
-          (request) =>
+          ({ request }) =>
             request.profileKey !== profileKey ||
             request.id !== requestId ||
             request.threadId !== threadId,
@@ -10266,25 +10528,26 @@ function App() {
         (candidate) => candidate.id === workspaceId,
       );
       const eventKey = approvalNotificationEventKey(parsed);
+      const notificationTarget: AgentNotificationTarget = {
+        eventKey,
+        kind: "approval-required",
+        workspaceId,
+        chatId: control?.chatId ?? historyChat?.id ?? null,
+        runId: control?.runId ?? null,
+        entryClientId: control?.clientId ?? null,
+        requestId: parsed.key,
+        planItemId: null,
+        accountId:
+          profileKey === DEFAULT_CODEX_PROFILE_KEY ? null : accountId,
+        profileKey,
+        threadId: parsed.threadId,
+        turnId: parsed.turnId,
+      };
       const notifyApproval = () => {
         if (!shouldNotify) return;
         void deliverAgentNotification({
           kind: "approval-required",
-          target: {
-            eventKey,
-            kind: "approval-required",
-            workspaceId,
-            chatId: control?.chatId ?? historyChat?.id ?? null,
-            runId: control?.runId ?? null,
-            entryClientId: control?.clientId ?? null,
-            requestId: parsed.key,
-            planItemId: null,
-            accountId:
-              profileKey === DEFAULT_CODEX_PROFILE_KEY ? null : accountId,
-            profileKey,
-            threadId: parsed.threadId,
-            turnId: parsed.turnId,
-          },
+          target: notificationTarget,
           chatTitle: activeEntry?.prompt ?? historyChat?.title,
           workspaceLabel: workspace?.label,
         });
@@ -10292,9 +10555,18 @@ function App() {
 
       if (!belongsToActiveRun) {
         setUnroutedApprovals((current) =>
-          current.some((candidate) => candidate.key === parsed.key)
+          current.some(
+            (candidate) => candidate.request.key === parsed.key,
+          )
             ? current
-            : [...current, parsed],
+            : [
+                ...current,
+                {
+                  accountId,
+                  request: parsed,
+                  target: notificationTarget,
+                },
+              ],
         );
         setStatusMessage(
           "Codex is waiting for approval in another conversation. The request remains blocked and was not approved.",
@@ -10431,7 +10703,92 @@ function App() {
       request.threadId,
       request.turnId,
     );
-    if (!control) return;
+    if (!control) {
+      const attention = unroutedApprovalsRef.current.find(
+        (candidate) => candidate.request.key === request.key,
+      );
+      const currentRequest = attention?.request;
+      const selectedChoice = currentRequest?.choices.find(
+        (candidate) => candidate.id === choice.id,
+      );
+      if (
+        !attention ||
+        !currentRequest ||
+        (currentRequest.status !== "pending" &&
+          currentRequest.status !== "error") ||
+        !selectedChoice
+      ) {
+        return;
+      }
+
+      setUnroutedApprovals((current) =>
+        current.map((candidate) =>
+          candidate.request.key === currentRequest.key
+            ? {
+                ...candidate,
+                request: {
+                  ...candidate.request,
+                  status: "submitting",
+                  selectedChoiceId: selectedChoice.id,
+                  error: null,
+                },
+              }
+            : candidate,
+        ),
+      );
+      try {
+        if (currentRequest.profileKey === DEFAULT_CODEX_PROFILE_KEY) {
+          await resolveDefaultCodexServerRequest(
+            currentRequest.id,
+            currentRequest.requestToken,
+            selectedChoice.response,
+          );
+        } else {
+          await resolveCodexServerRequest(
+            attention.accountId,
+            currentRequest.id,
+            currentRequest.requestToken,
+            selectedChoice.response,
+          );
+        }
+        void removeAgentNotification(
+          approvalNotificationEventKey(currentRequest),
+        ).catch(() => undefined);
+        setUnroutedApprovals((current) =>
+          current.map((candidate) =>
+            candidate.request.key === currentRequest.key
+              ? {
+                  ...candidate,
+                  request: {
+                    ...candidate.request,
+                    status: "awaiting-resolution",
+                    error: null,
+                  },
+                }
+              : candidate,
+          ),
+        );
+      } catch (error) {
+        setUnroutedApprovals((current) =>
+          current.map((candidate) =>
+            candidate.request.key === currentRequest.key
+              ? {
+                  ...candidate,
+                  request: {
+                    ...candidate.request,
+                    status: "error",
+                    error:
+                      error instanceof Error
+                        ? error.message
+                        : String(error),
+                  },
+                }
+              : candidate,
+          ),
+        );
+      }
+      return;
+    }
     const accountId = control.accountId;
     const profileKey = control.profileKey;
     const currentRequest = control.runView.approvalRequests.find(
@@ -13463,22 +13820,6 @@ function App() {
                 ) : (
                   <h1>{taskQuote}</h1>
                 )}
-                {unroutedApprovals.length > 0 ? (
-                  <div className="unrouted-approval-warning" role="alert">
-                    <AlertCircle size={16} aria-hidden="true" />
-                    <span>
-                      Codex is waiting for {unroutedApprovals.length} approval
-                      {unroutedApprovals.length === 1 ? "" : "s"} in another
-                      conversation. The request remains blocked and has not been approved.
-                    </span>
-                  </div>
-                ) : null}
-                {approvalSafetyWarning ? (
-                  <div className="unrouted-approval-warning" role="alert">
-                    <AlertCircle size={16} aria-hidden="true" />
-                    <span>{approvalSafetyWarning}</span>
-                  </div>
-                ) : null}
                 {editedPromptNotice &&
                 editedPromptNotice.kind === "rerun-error" &&
                 editedPromptNotice.workspaceId === selectedWorkspace?.id &&
@@ -13510,6 +13851,7 @@ function App() {
                   goalMode={goalMode}
                   planMode={planMode}
                   planProgress={selectedPlanProgress}
+                  statusNotices={composerStatusNotices}
                   accessMode={accessMode}
                   contextFiles={contextFiles}
                   selectedSkills={selectedSkills}
@@ -13525,6 +13867,7 @@ function App() {
                   onReasoningEffortChange={setSelectedReasoningEffort}
                   onGoalModeChange={handleGoalModeChange}
                   onPlanModeChange={handlePlanModeChange}
+                  onStatusNoticeActivate={activateComposerStatusNotice}
                   onAccessModeChange={handleAccessModeChange}
                   onAddFiles={chooseComposerContextFiles}
                   onMentionSearch={searchComposerMentionFiles}

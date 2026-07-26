@@ -4190,6 +4190,100 @@ select:disabled {
   padding: 6px 10px;
 }
 
+.composer-status-stack {
+  display: grid;
+  min-width: 0;
+}
+
+.composer-status-stack > :first-child {
+  border-radius: calc(var(--radius) - 1px) calc(var(--radius) - 1px) 0 0;
+}
+
+.composer-status-stack > :not(:first-child) {
+  border-radius: 0;
+}
+
+.composer-status-notice {
+  min-width: 0;
+  min-height: 32px;
+  overflow: hidden;
+  border: 0;
+  border-bottom: 1px solid var(--color-divider);
+  background: var(--color-surface-soft);
+  color: var(--color-text-secondary);
+}
+
+.composer-status-action,
+.composer-status-content {
+  display: flex;
+  width: 100%;
+  min-width: 0;
+  min-height: 32px;
+  align-items: center;
+  gap: 8px;
+  border: 0;
+  border-radius: inherit;
+  background: transparent;
+  color: inherit;
+  box-shadow: none;
+  padding: 6px 10px;
+  text-align: left;
+}
+
+button.composer-status-action {
+  justify-content: flex-start;
+  font: inherit;
+}
+
+button.composer-status-action:hover,
+button.composer-status-action:focus-visible,
+button.composer-status-action:active {
+  background: var(--color-button-active);
+  box-shadow: none;
+  color: inherit;
+  transform: none;
+}
+
+button.composer-status-action:focus-visible {
+  outline: 2px solid var(--color-primary);
+  outline-offset: -2px;
+}
+
+.composer-status-action > svg,
+.composer-status-content > svg {
+  flex: 0 0 auto;
+}
+
+.composer-status-notice[data-tone="approval"] svg,
+.composer-status-notice[data-tone="approval"] .composer-status-chevron {
+  color: var(--color-accent);
+}
+
+.composer-status-notice[data-tone="warning"] svg {
+  color: var(--color-error);
+}
+
+.composer-status-notice strong {
+  flex: 0 0 auto;
+  color: var(--color-text);
+  font-size: 0.78rem;
+  font-weight: 700;
+}
+
+.composer-status-detail {
+  min-width: 0;
+  flex: 1 1 auto;
+  overflow: hidden;
+  color: var(--color-text-secondary);
+  font-size: 0.76rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.composer-status-chevron {
+  margin-left: auto;
+}
+
 .plan-progress-indicator:focus-visible {
   outline: 2px solid var(--color-primary);
   outline-offset: -2px;
@@ -4203,8 +4297,8 @@ select:disabled {
   gap: 8px;
 }
 
-.composer-panel.has-plan-progress .composer-input-zone,
-.composer-panel.has-plan-progress .prompt-field {
+.composer-panel.has-composer-status .composer-input-zone,
+.composer-panel.has-composer-status .prompt-field {
   border-radius: 0;
 }
 
@@ -4362,6 +4456,10 @@ select:disabled {
 }
 
 @media (max-width: 720px) {
+  .composer-status-detail {
+    display: none;
+  }
+
   .plan-progress-label {
     display: none;
   }
@@ -5663,17 +5761,6 @@ button.pending-interaction-nav:disabled {
 
 .approval-stale {
   opacity: 0.78;
-}
-
-.unrouted-approval-warning {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  border: 1px solid var(--color-warning, #c88b2d);
-  border-radius: 8px;
-  background: color-mix(in srgb, var(--color-surface-soft) 88%, #f3a632 12%);
-  padding: 9px 11px;
-  font-size: 0.82rem;
 }
 
 .edited-prompt-notice {
