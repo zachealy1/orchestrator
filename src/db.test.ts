@@ -268,6 +268,9 @@ describe("run execution settings persistence", () => {
     expect(query).toContain("runs.execution_settings_json");
     expect(query).toContain("runs.account_id");
     expect(query).toContain("runs.model");
+    expect(query).toContain(
+      "latest_tokens.cached_input_tokens AS latest_cached_input_tokens",
+    );
   });
 });
 

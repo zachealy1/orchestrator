@@ -406,6 +406,7 @@ function workspaceRunFixture(
     route_recommendation: "direct-run" as const,
     budget_tokens: 42,
     latest_total_tokens: 1280,
+    latest_cached_input_tokens: 100,
     latest_run_tokens: 640,
     latest_run_cached_input_tokens: 50,
     latest_context_tokens: 640,

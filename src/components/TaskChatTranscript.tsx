@@ -3868,9 +3868,21 @@ function formatDuration(milliseconds: number) {
 }
 
 function formatTokenCount(runView: RunViewState) {
-  return `${(
-    runView.tokenUsage?.turnTokens ?? runView.tokenUsage?.totalTokens ?? 0
-  ).toLocaleString()} tokens`;
+  if (
+    runView.tokenUsage?.turnTokens !== null &&
+    runView.tokenUsage?.turnTokens !== undefined
+  ) {
+    return `${runView.tokenUsage.turnTokens.toLocaleString()} tokens`;
+  }
+  if (
+    runView.tokenUsage === null &&
+    (runView.status === "idle" ||
+      runView.status === "connecting" ||
+      runView.status === "running")
+  ) {
+    return "0 tokens";
+  }
+  return "Token usage unavailable";
 }
 
 function commandActionLabel(status: RunCommandActivity["status"]) {

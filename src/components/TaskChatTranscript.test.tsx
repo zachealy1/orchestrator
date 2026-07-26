@@ -1429,6 +1429,48 @@ describe("TaskChatTranscript", () => {
     ).not.toBeInTheDocument();
   });
 
+  it("does not label cumulative thread usage as a completed turn total", () => {
+    render(
+      <TaskChatTranscript
+        entries={[
+          {
+            clientId: "chat-unknown-turn-usage",
+            workspaceId: 1,
+            chatId: 401,
+            turnIndex: 2,
+            runId: 2,
+            taskId: 3,
+            prompt: "Continue an imported thread",
+            submittedAt: "2026-06-30T17:30:00Z",
+            status: "completed",
+            runView: {
+              ...emptyRunView,
+              status: "completed",
+              tokenUsage: {
+                totalTokens: 173_959,
+                inputTokens: 171_922,
+                cachedInputTokens: 131_968,
+                outputTokens: 2_037,
+                reasoningOutputTokens: 103,
+                turnTokens: null,
+                turnCachedInputTokens: null,
+                contextTokens: 18_757,
+                modelContextWindow: 258_400,
+              },
+              finalMessage: "Completed the imported-thread request.",
+            },
+          },
+        ]}
+        onResolveRequest={vi.fn()}
+      />,
+    );
+
+    expect(screen.getByLabelText("Run metrics")).toHaveTextContent(
+      "Token usage unavailable",
+    );
+    expect(screen.queryByText("173,959 tokens")).not.toBeInTheDocument();
+  });
+
   it("routes markdown file links through the app file preview handler", () => {
     const onOpenFileLink = vi.fn(() => true);
     render(

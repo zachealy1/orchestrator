@@ -870,6 +870,7 @@ export async function listWorkspaceRuns(workspaceId: number) {
       runs.execution_settings_json, runs.web_preview_json,
       tasks.original_prompt, tasks.improved_prompt, tasks.route_recommendation, tasks.budget_tokens,
       latest_tokens.total_tokens AS latest_total_tokens,
+      latest_tokens.cached_input_tokens AS latest_cached_input_tokens,
       latest_tokens.run_tokens AS latest_run_tokens,
       latest_tokens.run_cached_input_tokens AS latest_run_cached_input_tokens,
       latest_tokens.context_tokens AS latest_context_tokens,
@@ -1030,6 +1031,7 @@ export async function getChatWithRuns(chatId: number): Promise<ChatWithRuns> {
       runs.execution_settings_json, runs.web_preview_json,
       tasks.original_prompt, tasks.improved_prompt, tasks.route_recommendation, tasks.budget_tokens,
       latest_tokens.total_tokens AS latest_total_tokens,
+      latest_tokens.cached_input_tokens AS latest_cached_input_tokens,
       latest_tokens.run_tokens AS latest_run_tokens,
       latest_tokens.run_cached_input_tokens AS latest_run_cached_input_tokens,
       latest_tokens.context_tokens AS latest_context_tokens,
@@ -1076,6 +1078,7 @@ export async function listChatRunsPage(
         LIMIT 1
       ) AS latest_diff,
       latest_tokens.total_tokens AS latest_total_tokens,
+      latest_tokens.cached_input_tokens AS latest_cached_input_tokens,
       latest_tokens.run_tokens AS latest_run_tokens,
       latest_tokens.run_cached_input_tokens AS latest_run_cached_input_tokens,
       latest_tokens.context_tokens AS latest_context_tokens,
@@ -1117,6 +1120,7 @@ export async function listLocalChatTranscript(chatId: number) {
         LIMIT 1
       ) AS latest_diff,
       latest_tokens.total_tokens AS latest_total_tokens,
+      latest_tokens.cached_input_tokens AS latest_cached_input_tokens,
       latest_tokens.run_tokens AS latest_run_tokens,
       latest_tokens.run_cached_input_tokens AS latest_run_cached_input_tokens,
       latest_tokens.context_tokens AS latest_context_tokens,

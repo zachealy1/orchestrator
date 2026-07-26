@@ -16302,7 +16302,7 @@ function createTaskChatEntryFromHistoryRun(run: HistoryRunSummary): TaskChatEntr
           : {
               totalTokens: run.latest_total_tokens,
               inputTokens: 0,
-              cachedInputTokens: 0,
+              cachedInputTokens: run.latest_cached_input_tokens ?? 0,
               outputTokens: 0,
               reasoningOutputTokens: 0,
               turnTokens: run.latest_run_tokens,

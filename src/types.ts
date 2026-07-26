@@ -198,6 +198,7 @@ export type RunListItem = RunRecord & {
   route_recommendation: RouteRecommendation;
   budget_tokens: number;
   latest_total_tokens: number | null;
+  latest_cached_input_tokens: number | null;
   latest_run_tokens: number | null;
   latest_run_cached_input_tokens: number | null;
   latest_context_tokens: number | null;
@@ -236,6 +237,7 @@ export type HistoryRunSummary = Pick<
   original_prompt: string;
   latest_diff?: string | null;
   latest_total_tokens: number | null;
+  latest_cached_input_tokens: number | null;
   latest_run_tokens: number | null;
   latest_run_cached_input_tokens: number | null;
   latest_context_tokens: number | null;
