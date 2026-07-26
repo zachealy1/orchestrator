@@ -4341,6 +4341,74 @@ describe("App Codex auth", () => {
     );
   });
 
+  it("removes a cross-chat approval notice when its turn completes", async () => {
+    prepareSignedInRun();
+    const historicalChat = workspaceChatFixture({
+      id: 403,
+      title: "Old chat",
+    });
+    const historicalRun = workspaceRunFixture({
+      id: 303,
+      chat_id: historicalChat.id,
+      original_prompt: "Old chat",
+      final_message: "Old result.",
+    });
+    mocks.listWorkspaceChatsMock.mockResolvedValue([historicalChat]);
+    mocks.getChatWithRunsMock.mockResolvedValue(
+      workspaceChatWithRunsFixture(historicalChat, [historicalRun]),
+    );
+
+    const { user } = await renderApp();
+    await startMockRun(user, "Current active run");
+    const banner = screen.getByRole("region", { name: "Selected folder" });
+    await user.click(
+      within(banner).getByRole("button", { name: /open chat history/i }),
+    );
+    await user.click(
+      within(
+        await screen.findByRole("complementary", {
+          name: "Workspace chat history",
+        }),
+      ).getByRole("button", { name: /old chat/i }),
+    );
+    await emitCodexServerRequest({
+      id: 14,
+      method: "item/commandExecution/requestApproval",
+      params: {
+        threadId: "thread-1",
+        turnId: "turn-1",
+        command: "npm run release",
+        availableDecisions: ["accept", "cancel"],
+      },
+    });
+    expect(
+      screen.getByRole("button", {
+        name: "Open chat awaiting approval",
+      }),
+    ).toBeInTheDocument();
+
+    await emitCodexNotification({
+      method: "turn/completed",
+      params: {
+        threadId: "thread-1",
+        turn: {
+          id: "turn-1",
+          status: "failed",
+          durationMs: 1_000,
+          error: "Turn ended before approval.",
+        },
+      },
+    });
+
+    await waitFor(() =>
+      expect(
+        screen.queryByRole("button", {
+          name: "Open chat awaiting approval",
+        }),
+      ).not.toBeInTheDocument(),
+    );
+  });
+
   it("scopes active agents to their chats across workspace switches", async () => {
     const mobileWorkspace = {
       ...workspace,
@@ -10057,7 +10125,7 @@ describe("App Codex auth", () => {
     );
   });
 
-  it("deduplicates approval replays and leaves mismatched or untracked requests blocked", async () => {
+  it("deduplicates approval replays and ignores requests from untracked runs", async () => {
     prepareSignedInRun();
     mocks.readAgentNotificationPermissionStatusMock.mockResolvedValue("allowed");
     let finishNotificationDelivery!: () => void;
@@ -10101,14 +10169,10 @@ describe("App Codex auth", () => {
       },
       { requestToken: "server-request-7-1-10" },
     );
-    const crossConversationWarning = screen.getByRole("alert");
-    expect(crossConversationWarning).toHaveTextContent("Approval needed");
-    expect(crossConversationWarning).toHaveTextContent(
-      "Another chat is waiting for your approval",
-    );
-    expect(crossConversationWarning.closest(".composer-panel")).not.toBeNull();
     expect(
-      document.querySelector(".unrouted-approval-warning"),
+      screen.queryByRole("button", {
+        name: "Open chat awaiting approval",
+      }),
     ).not.toBeInTheDocument();
 
     await emitCodexServerRequest(
@@ -10119,87 +10183,70 @@ describe("App Codex auth", () => {
     expect(mocks.resolveCodexServerRequestMock).not.toHaveBeenCalled();
   });
 
-  it("opens and resolves the oldest cross-conversation approval from the composer", async () => {
-    const approvalChat = workspaceChatFixture({
-      id: 402,
-      title: "Approve the release command",
-      codex_thread_id: "thread-other",
-      status: "running",
-    });
-    const approvalRun = workspaceRunFixture({
-      id: 302,
-      chat_id: approvalChat.id,
-      codex_thread_id: "thread-other",
-      codex_turn_id: "turn-other",
-      original_prompt: approvalChat.title,
-      status: "running",
-      completed_at: null,
-      duration_ms: null,
-      final_message: "",
-    });
+  it("does not show an approval notice when no agent is running", async () => {
     prepareSignedInRun();
-    mocks.listWorkspaceChatsMock.mockResolvedValue([approvalChat]);
-    mocks.listLocalChatTranscriptMock.mockResolvedValue([approvalRun]);
+    await renderApp();
 
-    const { user } = await renderApp();
-    await startMockRun(user, "Continue the current goal");
-    const banner = screen.getByRole("region", { name: "Selected folder" });
-    const historyButton = within(banner).getByRole("button", {
-      name: /open chat history/i,
-    });
-    await user.click(historyButton);
-    const drawer = await screen.findByRole("complementary", {
-      name: "Workspace chat history",
-    });
-    expect(
-      await within(drawer).findByRole("button", {
-        name: /approve the release command/i,
-      }),
-    ).toBeInTheDocument();
-    await user.click(historyButton);
-
-    await emitCodexServerRequest(
-      {
-        id: 12,
-        method: "item/commandExecution/requestApproval",
-        params: {
-          threadId: "thread-other",
-          turnId: "turn-other",
-          command: "npm run release",
-          availableDecisions: ["accept", "cancel"],
-        },
+    await emitCodexServerRequest({
+      id: 12,
+      method: "item/commandExecution/requestApproval",
+      params: {
+        threadId: "thread-from-completed-chat",
+        turnId: "turn-from-completed-chat",
+        command: "npm test",
+        availableDecisions: ["accept", "cancel"],
       },
-      { requestToken: "server-request-7-other-12" },
-    );
-
-    const openApprovalChat = screen.getByRole("button", {
-      name: "Open chat awaiting approval",
     });
-    expect(openApprovalChat.closest(".composer-status-stack")).not.toBeNull();
-    await user.click(openApprovalChat);
 
-    const approvalCard = await screen.findByRole("article", {
-      name: "Codex needs approval to run a command",
-    });
-    await waitFor(() => expect(approvalCard).toHaveFocus());
-    expect(drawer).toHaveClass("closed");
     expect(
       screen.queryByRole("button", {
         name: "Open chat awaiting approval",
       }),
     ).not.toBeInTheDocument();
+    expect(screen.queryByText("Approval needed")).not.toBeInTheDocument();
+    expect(mocks.sendAgentNotificationMock).not.toHaveBeenCalled();
+  });
 
-    await user.click(
-      within(approvalCard).getByRole("button", { name: "Approve once" }),
+  it("clears an approval when Codex resolves it without thread metadata", async () => {
+    prepareSignedInRun();
+
+    const { user } = await renderApp();
+    await startMockRun(user, "Run a guarded command");
+    await emitCodexServerRequest(
+      {
+        id: 12,
+        method: "item/commandExecution/requestApproval",
+        params: {
+          threadId: "thread-1",
+          turnId: "turn-1",
+          command: "npm test",
+          availableDecisions: ["accept", "cancel"],
+        },
+      },
+      { requestToken: "server-request-7-1-12" },
     );
+    expect(
+      screen.getByRole("article", {
+        name: "Codex needs approval to run a command",
+      }),
+    ).toBeInTheDocument();
+
+    await emitCodexNotification({
+      method: "serverRequest/resolved",
+      params: { requestId: "12" },
+    });
     await waitFor(() =>
-      expect(mocks.resolveCodexServerRequestMock).toHaveBeenCalledWith(
-        7,
-        12,
-        "server-request-7-other-12",
-        expect.any(Object),
-      ),
+      expect(
+        screen.queryByRole("article", {
+          name: "Codex needs approval to run a command",
+        }),
+      ).not.toBeInTheDocument(),
     );
+    expect(
+      screen.queryByRole("button", {
+        name: "Open chat awaiting approval",
+      }),
+    ).not.toBeInTheDocument();
   });
 
   it("shows lifecycle file paths without interaction mode metadata", async () => {

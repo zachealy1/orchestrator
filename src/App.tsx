@@ -788,6 +788,81 @@ function pendingApprovalMatchesEntry(
   );
 }
 
+function pendingApprovalCouldBelongToControl(
+  attention: PendingApprovalAttention,
+  control: ActiveRunControl,
+) {
+  const { request, target } = attention;
+  if (
+    !isActiveRunControl(control) ||
+    request.profileKey !== control.profileKey
+  ) {
+    return false;
+  }
+  if (
+    target.entryClientId &&
+    target.entryClientId !== control.clientId
+  ) {
+    return false;
+  }
+  if (
+    target.runId !== null &&
+    target.runId !== undefined &&
+    target.runId !== control.runId
+  ) {
+    return false;
+  }
+  if (
+    target.workspaceId !== null &&
+    target.workspaceId !== undefined &&
+    target.workspaceId !== control.workspaceId
+  ) {
+    return false;
+  }
+  if (
+    target.chatId !== null &&
+    target.chatId !== undefined &&
+    target.chatId !== control.chatId
+  ) {
+    return false;
+  }
+  if (
+    request.threadId &&
+    control.threadId &&
+    request.threadId !== control.threadId
+  ) {
+    return false;
+  }
+  if (
+    request.turnId &&
+    control.turnId &&
+    request.turnId !== control.turnId
+  ) {
+    return false;
+  }
+  return true;
+}
+
+function approvalRequestMatchesRun(
+  request: CodexApprovalRequest,
+  profileKey: CodexProfileKey,
+  threadId: string | null,
+  turnId: string | null,
+) {
+  if (request.profileKey !== profileKey) return false;
+  if (turnId && request.turnId) {
+    return (
+      request.turnId === turnId &&
+      (!threadId || !request.threadId || request.threadId === threadId)
+    );
+  }
+  return Boolean(
+    threadId &&
+      request.threadId &&
+      request.threadId === threadId,
+  );
+}
+
 type SelectHistoryChatOptions = {
   source?: "drawer" | "notification" | "workspace";
   workspace?: Workspace;
@@ -2612,14 +2687,19 @@ function App() {
     ],
   );
   const pendingApprovalAttentions = useMemo(() => {
-    const attentions = [...unroutedApprovals];
+    const activeControls = [...activeRunControlsRef.current.values()];
+    const attentions = unroutedApprovals.filter((attention) =>
+      activeControls.some((control) =>
+        pendingApprovalCouldBelongToControl(attention, control),
+      ),
+    );
     const knownKeys = new Set(
       attentions.map(
         ({ request }) => `${request.profileKey}:${request.key}`,
       ),
     );
 
-    activeRunControlsRef.current.forEach((control) => {
+    activeControls.forEach((control) => {
       if (!isActiveRunControl(control)) return;
       control.runView.approvalRequests.forEach((request) => {
         const key = `${request.profileKey}:${request.key}`;
@@ -2650,7 +2730,7 @@ function App() {
     });
 
     return attentions;
-  }, [taskChatEntries, unroutedApprovals]);
+  }, [activeRunRegistryVersion, taskChatEntries, unroutedApprovals]);
   const selectedWorkspaceChatEntries = useMemo(() => {
     if (
       selectedWorkspaceBaseChatEntries.length === 0 ||
@@ -3583,11 +3663,12 @@ function App() {
             ).catch(() => undefined);
           });
         setApprovalSafetyWarning(null);
-        setUnroutedApprovals((current) =>
-          current.filter(
+        const remainingUnroutedApprovals =
+          unroutedApprovalsRef.current.filter(
             (attention) => attention.request.profileKey !== profileKey,
-          ),
-        );
+          );
+        unroutedApprovalsRef.current = remainingUnroutedApprovals;
+        setUnroutedApprovals(remainingUnroutedApprovals);
       }
       if (profileControls.length > 0) {
         flushFrameBatchedCodexNotifications();
@@ -4936,6 +5017,67 @@ function App() {
     await stopBrowserSession(session.token).catch(() => undefined);
   }
 
+  function clearUnroutedApprovalsForRun(
+    profileKey: CodexProfileKey,
+    threadId: string | null,
+    turnId: string | null,
+  ) {
+    const current = unroutedApprovalsRef.current;
+    const removed = current.filter(({ request }) =>
+      approvalRequestMatchesRun(request, profileKey, threadId, turnId),
+    );
+    if (removed.length === 0) return;
+
+    const next = current.filter(
+      ({ request }) =>
+        !approvalRequestMatchesRun(request, profileKey, threadId, turnId),
+    );
+    unroutedApprovalsRef.current = next;
+    setUnroutedApprovals(next);
+    removed.forEach(({ request }) => {
+      void removeAgentNotification(
+        approvalNotificationEventKey(request),
+      ).catch(() => undefined);
+    });
+  }
+
+  function clearApprovalAttentionForRun(
+    profileKey: CodexProfileKey,
+    threadId: string | null,
+    turnId: string | null,
+  ) {
+    activeRunControlsRef.current.forEach((control) => {
+      const matchingRequests = control.runView.approvalRequests.filter(
+        (request) =>
+          approvalRequestMatchesRun(
+            request,
+            profileKey,
+            threadId,
+            turnId,
+          ),
+      );
+      matchingRequests.forEach((request) => {
+        void removeAgentNotification(
+          approvalNotificationEventKey(request),
+        ).catch(() => undefined);
+      });
+      if (matchingRequests.length > 0) {
+        updateRunControlView(control, (current) =>
+          matchingRequests.reduce(
+            (next, request) =>
+              resolveApprovalRequest(
+                next,
+                request.id,
+                request.threadId ?? undefined,
+              ),
+            current,
+          ),
+        );
+      }
+    });
+    clearUnroutedApprovalsForRun(profileKey, threadId, turnId);
+  }
+
   function removeRunControl(
     control: ActiveRunControl,
     options: { cleanupBrowser?: boolean } = {},
@@ -4953,6 +5095,16 @@ function App() {
           userInputNotificationEventKey(control.profileKey, request),
         ).catch(() => undefined);
       });
+    control.runView.approvalRequests.forEach((request) => {
+      void removeAgentNotification(
+        approvalNotificationEventKey(request),
+      ).catch(() => undefined);
+    });
+    clearUnroutedApprovalsForRun(
+      control.profileKey,
+      control.threadId,
+      control.turnId,
+    );
     activeRunControlsRef.current.delete(control.clientId);
     pendingRunBindingNotificationsRef.current =
       pendingRunBindingNotificationsRef.current.filter((pending) => {
@@ -10210,22 +10362,40 @@ function App() {
           userInputNotificationEventKey(control.profileKey, request),
         ).catch(() => undefined);
       });
-      setUnroutedApprovals((current) =>
-        current.filter(
+      const remainingUnroutedApprovals =
+        unroutedApprovalsRef.current.filter(
           ({ request }) =>
             request.profileKey !== profileKey ||
-            request.id !== requestId ||
-            request.threadId !== threadId,
-        ),
-      );
+            String(request.id) !== String(requestId) ||
+            Boolean(threadId && request.threadId !== threadId),
+        );
+      unroutedApprovalsRef.current = remainingUnroutedApprovals;
+      setUnroutedApprovals(remainingUnroutedApprovals);
       if (typeof requestId === "string" || typeof requestId === "number") {
         activeRunControlsRef.current.forEach((control) => {
           if (control.profileKey !== profileKey) return;
           updateRunControlView(control, (current) =>
-            resolveApprovalRequest(current, requestId, threadId),
+            resolveApprovalRequest(
+              current,
+              requestId,
+              threadId ?? undefined,
+            ),
           );
         });
       }
+    }
+
+    if (
+      method === "turn/completed" ||
+      method === "turn/interrupted" ||
+      method === "error"
+    ) {
+      const identity = readCodexMessageRunIdentity(message);
+      clearApprovalAttentionForRun(
+        profileKey,
+        identity.threadId,
+        identity.turnId,
+      );
     }
 
     const control = findRunControlForMessage(profileKey, message);
@@ -10254,7 +10424,7 @@ function App() {
       return resolveApprovalRequest(
         next,
         requestId,
-        readString(params.threadId),
+        readString(params.threadId) ?? undefined,
       );
     });
     if (method === "turn/completed") {
@@ -10554,20 +10724,28 @@ function App() {
       };
 
       if (!belongsToActiveRun) {
-        setUnroutedApprovals((current) =>
-          current.some(
+        const attention: PendingApprovalAttention = {
+          accountId,
+          request: parsed,
+          target: notificationTarget,
+        };
+        const hasPotentialOwner = [
+          ...activeRunControlsRef.current.values(),
+        ].some((candidate) =>
+          pendingApprovalCouldBelongToControl(attention, candidate),
+        );
+        if (!hasPotentialOwner) {
+          return;
+        }
+        if (
+          !unroutedApprovalsRef.current.some(
             (candidate) => candidate.request.key === parsed.key,
           )
-            ? current
-            : [
-                ...current,
-                {
-                  accountId,
-                  request: parsed,
-                  target: notificationTarget,
-                },
-              ],
-        );
+        ) {
+          const next = [...unroutedApprovalsRef.current, attention];
+          unroutedApprovalsRef.current = next;
+          setUnroutedApprovals(next);
+        }
         setStatusMessage(
           "Codex is waiting for approval in another conversation. The request remains blocked and was not approved.",
         );

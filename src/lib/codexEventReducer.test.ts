@@ -785,6 +785,9 @@ describe("codexEventReducer", () => {
     expect(
       resolveApprovalRequest(state, 9, "thread-1").approvalRequests,
     ).toHaveLength(0);
+    expect(
+      resolveApprovalRequest(state, "9").approvalRequests,
+    ).toHaveLength(0);
   });
 
   it("deduplicates request replays and fails closed on a reused request token", () => {

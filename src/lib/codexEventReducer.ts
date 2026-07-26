@@ -566,7 +566,7 @@ export function resolveApprovalRequest(
 ) {
   const approvalRequests = state.approvalRequests.filter(
     (request) =>
-      request.id !== requestId ||
+      String(request.id) !== String(requestId) ||
       (threadId !== undefined && request.threadId !== threadId),
   );
   const remainingKeys = new Set(approvalRequests.map((request) => request.key));
