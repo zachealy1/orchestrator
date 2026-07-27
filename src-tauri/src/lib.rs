@@ -1047,7 +1047,6 @@ fn migrations() -> Vec<Migration> {
                     prompt_text TEXT NOT NULL,
                     execution_snapshot_json TEXT NOT NULL,
                     context_fingerprint_json TEXT NOT NULL,
-                    conversation_revision INTEGER NOT NULL DEFAULT 0,
                     status TEXT NOT NULL,
                     linked_run_id INTEGER,
                     linked_turn_id TEXT,
@@ -1068,6 +1067,15 @@ fn migrations() -> Vec<Migration> {
                     ON prompt_queue_items(
                         chat_id, status, send_now_priority, position
                     );
+            ",
+            kind: MigrationKind::Up,
+        },
+        Migration {
+            version: 22,
+            description: "add_prompt_queue_conversation_revision",
+            sql: "
+                ALTER TABLE prompt_queue_items
+                    ADD COLUMN conversation_revision INTEGER NOT NULL DEFAULT 0;
             ",
             kind: MigrationKind::Up,
         },
@@ -6641,6 +6649,10 @@ mod tests {
             .iter()
             .find(|migration| migration.version == 21)
             .expect("migration 21");
+        let prompt_queue_revision = all_migrations
+            .iter()
+            .find(|migration| migration.version == 22)
+            .expect("migration 22");
         let cached_token_repair = all_migrations
             .iter()
             .find(|migration| migration.version == 20)
@@ -6655,6 +6667,16 @@ mod tests {
             .contains("CREATE TABLE IF NOT EXISTS prompt_queue_items"));
         assert!(prompt_queue.sql.contains("execution_snapshot_json"));
         assert!(prompt_queue.sql.contains("context_fingerprint_json"));
+        assert!(!prompt_queue.sql.contains(
+            "context_fingerprint_json TEXT NOT NULL,\n                    conversation_revision"
+        ));
+        assert_eq!(
+            prompt_queue_revision.description,
+            "add_prompt_queue_conversation_revision"
+        );
+        assert!(prompt_queue_revision
+            .sql
+            .contains("ADD COLUMN conversation_revision"));
         assert_eq!(
             cached_token_repair.description,
             "repair_per_run_cached_token_usage"

@@ -803,6 +803,18 @@ export const TaskComposer = memo(function TaskComposer({
     Boolean(goalProgress) ||
     Boolean(planProgress) ||
     queueItems.length > 0;
+  const hasDraftPrompt = draftPrompt.trim().length > 0;
+  const queueDraftWhileRunning = runActive && hasDraftPrompt;
+  const primaryActionIsStop = runActive && !queueDraftWhileRunning;
+  const primaryActionLabel = primaryActionIsStop
+    ? "Stop Codex"
+    : queueDraftWhileRunning
+      ? "Add prompt to queue"
+      : hasDraftPrompt
+        ? "Run Codex"
+        : queueItems.length > 0
+          ? "Run next queued prompt"
+          : "Run Codex";
 
   return (
     <section
@@ -970,56 +982,40 @@ export const TaskComposer = memo(function TaskComposer({
           </div>
 
           <div className="composer-run-group">
-            {runActive && draftPrompt.trim() ? (
-              <button
-                className="send-button queue"
-                type="button"
-                onClick={() => onRun(draftPromptRef.current)}
-                disabled={disabled}
-                aria-label="Add prompt to queue"
-                title="Add prompt to queue"
-              >
-                <Play size={16} />
-                <span className="sr-only">Add prompt to queue</span>
-              </button>
-            ) : null}
             <button
-              className={`send-button ${runActive ? "stop" : ""}`}
+              className={`send-button ${primaryActionIsStop ? "stop" : ""}`}
               type="button"
               onClick={() => {
                 if (runActive) {
-                  onStop();
-                } else if (draftPromptRef.current.trim()) {
+                  if (draftPromptRef.current.trim()) {
+                    onRun(draftPromptRef.current);
+                  } else {
+                    onStop();
+                  }
+                } else if (hasDraftPrompt) {
                   onRun(draftPromptRef.current);
                 } else {
                   onDispatchQueued();
                 }
               }}
               disabled={
-                runActive
+                queueDraftWhileRunning
+                  ? disabled
+                  : runActive
                   ? false
                   : disabled ||
-                    (!draftPrompt.trim() &&
+                    (!hasDraftPrompt &&
                       (queueItems.length === 0 || queuePaused))
               }
-              aria-label={
-                runActive
-                  ? "Stop Codex"
-                  : draftPrompt.trim()
-                    ? "Run Codex"
-                    : queueItems.length > 0
-                      ? "Run next queued prompt"
-                      : "Run Codex"
-              }
+              aria-label={primaryActionLabel}
+              title={primaryActionLabel}
             >
-              {runActive ? <Square size={15} fill="currentColor" /> : <Play size={16} />}
-              <span className="sr-only">
-                {runActive
-                  ? "Stop Codex"
-                  : draftPrompt.trim()
-                    ? "Run Codex"
-                    : "Run next queued prompt"}
-              </span>
+              {primaryActionIsStop ? (
+                <Square size={15} fill="currentColor" />
+              ) : (
+                <Play size={16} />
+              )}
+              <span className="sr-only">{primaryActionLabel}</span>
             </button>
           </div>
         </div>

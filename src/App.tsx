@@ -10891,7 +10891,7 @@ function App() {
       }
       upsertPromptQueueItemInMemory(queuedItem);
       flushSync(() => {
-        replaceComposerPrompt("");
+        updateRememberedWorkspaceComposer(workspace.id, { prompt: "" });
         removeSubmittedImagesFromWorkspaceComposer(
           workspace.id,
           executionSettings.contextFiles,

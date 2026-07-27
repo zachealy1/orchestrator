@@ -1,4 +1,11 @@
-import { act, fireEvent, render, screen, within } from "@testing-library/react";
+import {
+  act,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+  within,
+} from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 import { TaskComposer } from "./TaskComposer";
@@ -864,6 +871,51 @@ describe("TaskComposer", () => {
     await user.click(stopButton);
 
     expect(onStop).toHaveBeenCalledOnce();
+  });
+
+  it("turns the stop button into the queue play button while typing during a run", async () => {
+    const onRun = vi.fn();
+    const onStop = vi.fn();
+    const { user } = renderControlledComposer({
+      runActive: true,
+      onRun,
+      onStop,
+    });
+    const promptInput = screen.getByLabelText("Prompt");
+    const stopButton = screen.getByRole("button", { name: "Stop Codex" });
+
+    expect(
+      document.querySelectorAll(".composer-run-group .send-button"),
+    ).toHaveLength(1);
+
+    await user.type(promptInput, "Run this next");
+
+    const queueButton = screen.getByRole("button", {
+      name: "Add prompt to queue",
+    });
+    expect(queueButton).toBe(stopButton);
+    expect(
+      screen.queryByRole("button", { name: "Stop Codex" }),
+    ).not.toBeInTheDocument();
+    expect(
+      document.querySelectorAll(".composer-run-group .send-button"),
+    ).toHaveLength(1);
+
+    await user.click(queueButton);
+
+    expect(onRun).toHaveBeenCalledWith("Run this next");
+    expect(onStop).not.toHaveBeenCalled();
+
+    await user.clear(promptInput);
+
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: "Stop Codex" })).toBe(
+        stopButton,
+      ),
+    );
+    expect(
+      document.querySelectorAll(".composer-run-group .send-button"),
+    ).toHaveLength(1);
   });
 
   it("submits the prompt when pressing Enter", async () => {
