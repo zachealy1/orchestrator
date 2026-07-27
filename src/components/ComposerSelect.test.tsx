@@ -92,4 +92,41 @@ describe("ComposerSelect", () => {
     await user.keyboard("{Escape}");
     expect(screen.queryByRole("listbox")).not.toBeInTheDocument();
   });
+
+  it("invokes menu actions without changing the selected value", async () => {
+    mockTriggerRect(100, 140);
+    const user = userEvent.setup();
+    const onChange = vi.fn();
+    const onAction = vi.fn();
+    render(
+      <ComposerSelect
+        ariaLabel="Branch"
+        value="main"
+        options={[
+          { value: "main", label: "main" },
+          {
+            id: "create-branch",
+            value: "",
+            label: "Create branch...",
+            action: true,
+          },
+        ]}
+        placeholder="No branch"
+        icon={<span>B</span>}
+        onChange={onChange}
+        onAction={onAction}
+      />,
+    );
+
+    await user.click(screen.getByRole("combobox", { name: "Branch" }));
+    const action = screen.getByRole("option", { name: "Create branch..." });
+    expect(action).toHaveAttribute("aria-selected", "false");
+    await user.click(action);
+
+    expect(onAction).toHaveBeenCalledWith("create-branch");
+    expect(onChange).not.toHaveBeenCalled();
+    expect(screen.getByRole("combobox", { name: "Branch" })).toHaveTextContent(
+      "main",
+    );
+  });
 });

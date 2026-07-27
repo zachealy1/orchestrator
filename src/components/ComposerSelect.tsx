@@ -12,10 +12,12 @@ import {
 import { createPortal } from "react-dom";
 
 export type ComposerSelectOption = {
+  id?: string;
   value: string;
   label: string;
   disabled?: boolean;
   action?: boolean;
+  icon?: ReactNode;
 };
 
 type Props = {
@@ -27,6 +29,7 @@ type Props = {
   disabled?: boolean;
   className?: string;
   onChange: (value: string) => void;
+  onAction?: (actionId: string) => void;
 };
 
 type Placement = "above" | "below";
@@ -40,6 +43,7 @@ export function ComposerSelect({
   disabled = false,
   className = "",
   onChange,
+  onAction,
 }: Props) {
   const menuId = useId();
   const rootRef = useRef<HTMLDivElement>(null);
@@ -49,9 +53,13 @@ export function ComposerSelect({
   const [open, setOpen] = useState(false);
   const [placement, setPlacement] = useState<Placement>("below");
   const [menuStyle, setMenuStyle] = useState<CSSProperties>({});
-  const [focusedValue, setFocusedValue] = useState<string | null>(null);
-  const selectedOption = options.find((option) => option.value === value);
+  const [focusedOptionId, setFocusedOptionId] = useState<string | null>(null);
+  const selectedOption = options.find(
+    (option) => !option.action && option.value === value,
+  );
   const enabledOptions = options.filter((option) => !option.disabled);
+  const optionId = (option: ComposerSelectOption) =>
+    option.id ?? option.value;
 
   useLayoutEffect(() => {
     if (!open) {
@@ -127,15 +135,15 @@ export function ComposerSelect({
   }, [open]);
 
   useEffect(() => {
-    if (!open || !focusedValue) {
+    if (!open || !focusedOptionId) {
       return;
     }
 
     const frame = window.requestAnimationFrame(() => {
-      optionRefs.current.get(focusedValue)?.focus();
+      optionRefs.current.get(focusedOptionId)?.focus();
     });
     return () => window.cancelAnimationFrame(frame);
-  }, [focusedValue, open]);
+  }, [focusedOptionId, open]);
 
   useEffect(() => {
     if (disabled) {
@@ -149,11 +157,12 @@ export function ComposerSelect({
     }
 
     const selectedEnabled = enabledOptions.find((option) => option.value === value);
-    setFocusedValue(
-      selectedEnabled?.value ??
-        (focusLast
-          ? enabledOptions[enabledOptions.length - 1]?.value
-          : enabledOptions[0]?.value) ??
+    const fallbackOption = focusLast
+      ? enabledOptions[enabledOptions.length - 1]
+      : enabledOptions[0];
+    setFocusedOptionId(
+      (selectedEnabled ? optionId(selectedEnabled) : null) ??
+        (fallbackOption ? optionId(fallbackOption) : null) ??
         null,
     );
     setOpen(true);
@@ -163,7 +172,11 @@ export function ComposerSelect({
     if (option.disabled) {
       return;
     }
-    onChange(option.value);
+    if (option.action) {
+      onAction?.(optionId(option));
+    } else {
+      onChange(option.value);
+    }
     setOpen(false);
     window.requestAnimationFrame(() => triggerRef.current?.focus());
   }
@@ -214,7 +227,8 @@ export function ComposerSelect({
 
     if (nextIndex !== null) {
       event.preventDefault();
-      setFocusedValue(enabledOptions[nextIndex]?.value ?? null);
+      const nextOption = enabledOptions[nextIndex];
+      setFocusedOptionId(nextOption ? optionId(nextOption) : null);
     }
   }
 
@@ -263,19 +277,28 @@ export function ComposerSelect({
                   }`}
                   type="button"
                   role="option"
-                  aria-selected={option.value === value}
+                  aria-selected={!option.action && option.value === value}
                   disabled={option.disabled}
-                  key={option.value}
+                  key={optionId(option)}
                   ref={(element) => {
+                    const id = optionId(option);
                     if (element) {
-                      optionRefs.current.set(option.value, element);
+                      optionRefs.current.set(id, element);
                     } else {
-                      optionRefs.current.delete(option.value);
+                      optionRefs.current.delete(id);
                     }
                   }}
                   onClick={() => selectOption(option)}
                   onKeyDown={(event) => handleOptionKeyDown(event, option)}
                 >
+                  {option.icon ? (
+                    <span
+                      className="composer-select-option-icon"
+                      aria-hidden="true"
+                    >
+                      {option.icon}
+                    </span>
+                  ) : null}
                   <span>{option.label}</span>
                   {option.value === value && !option.action ? (
                     <Check size={14} aria-hidden="true" />

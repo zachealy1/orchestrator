@@ -45,6 +45,7 @@ const mocks = vi.hoisted(() => ({
   listCodexModelsMock: vi.fn(),
   listCodexSkillsMock: vi.fn(),
   listGitBranchesMock: vi.fn(),
+  createGitBranchMock: vi.fn(),
   listWorkspaceGitStatusMock: vi.fn(),
   readWorkspaceGitDiffMock: vi.fn(),
   undoWorkspaceGitDiffMock: vi.fn(),
@@ -250,6 +251,7 @@ vi.mock("./codexClient", () => ({
   connectDefaultCodexProfile: mocks.connectDefaultCodexProfileMock,
   connectCodex: mocks.connectCodexMock,
   checkoutGitBranch: mocks.checkoutGitBranchMock,
+  createGitBranch: mocks.createGitBranchMock,
   deleteCodexProfile: mocks.deleteCodexProfileMock,
   generateChatTitle: mocks.generateChatTitleMock,
   generateWorkspaceCommitMessage: mocks.generateWorkspaceCommitMessageMock,
@@ -765,6 +767,9 @@ function prepareDefaults() {
   mocks.listGitBranchesMock.mockResolvedValue({
     branches: ["main"],
     currentBranch: "main",
+  });
+  mocks.createGitBranchMock.mockResolvedValue({
+    branch: "feature/new-branch",
   });
   mocks.listWorkspaceGitStatusMock.mockResolvedValue({
     workspacePath: workspace.path,
@@ -1989,6 +1994,99 @@ describe("App Codex auth", () => {
       ),
     );
     expect(await within(banner).findByText("Clean")).toBeInTheDocument();
+  });
+
+  it("creates and selects a branch from the header branch menu", async () => {
+    let currentBranch = "main";
+    mocks.listGitBranchesMock.mockImplementation(async () => ({
+      branches:
+        currentBranch === "main"
+          ? ["main"]
+          : ["feature/chat-controls", "main"],
+      currentBranch,
+    }));
+    mocks.createGitBranchMock.mockImplementation(
+      async (_path: string, branch: string) => {
+        currentBranch = branch;
+        return { branch };
+      },
+    );
+
+    const { user } = await renderApp();
+    const banner = screen.getByRole("region", { name: "Selected folder" });
+    const branchSelect = await within(banner).findByRole("combobox", {
+      name: "Branch",
+    });
+    await waitFor(() => expect(branchSelect).toBeEnabled());
+
+    await user.click(branchSelect);
+    await user.click(
+      screen.getByRole("option", { name: "Create branch..." }),
+    );
+    const dialog = screen.getByRole("dialog", { name: "Create branch" });
+    expect(dialog).toHaveTextContent("from main");
+    const input = within(dialog).getByRole("textbox", { name: "Branch name" });
+    await waitFor(() => expect(input).toHaveFocus());
+    await user.type(input, "feature/chat-controls");
+    await user.keyboard("{Enter}");
+
+    await waitFor(() =>
+      expect(mocks.createGitBranchMock).toHaveBeenCalledWith(
+        workspace.path,
+        "feature/chat-controls",
+      ),
+    );
+    await waitFor(() =>
+      expect(
+        screen.queryByRole("dialog", { name: "Create branch" }),
+      ).not.toBeInTheDocument(),
+    );
+    expect(branchSelect).toHaveTextContent("feature/chat-controls");
+    expect(mocks.checkoutGitBranchMock).not.toHaveBeenCalled();
+  });
+
+  it("keeps branch creation open for validation and Git failures", async () => {
+    mocks.createGitBranchMock.mockRejectedValue(
+      new Error("Branch `feature/existing` already exists"),
+    );
+
+    const { user } = await renderApp();
+    const banner = screen.getByRole("region", { name: "Selected folder" });
+    const branchSelect = await within(banner).findByRole("combobox", {
+      name: "Branch",
+    });
+    await waitFor(() => expect(branchSelect).toBeEnabled());
+    await user.click(branchSelect);
+    await user.click(
+      screen.getByRole("option", { name: "Create branch..." }),
+    );
+
+    const dialog = screen.getByRole("dialog", { name: "Create branch" });
+    await user.click(
+      within(dialog).getByRole("button", { name: "Create branch" }),
+    );
+    expect(
+      within(dialog).getByText("Enter a branch name before creating it."),
+    ).toBeInTheDocument();
+    expect(mocks.createGitBranchMock).not.toHaveBeenCalled();
+
+    await user.type(
+      within(dialog).getByRole("textbox", { name: "Branch name" }),
+      "feature/existing",
+    );
+    await user.click(
+      within(dialog).getByRole("button", { name: "Create branch" }),
+    );
+
+    expect(
+      await within(dialog).findByText(
+        "Could not create branch: Branch `feature/existing` already exists",
+      ),
+    ).toBeInTheDocument();
+    expect(
+      within(dialog).getByRole("textbox", { name: "Branch name" }),
+    ).toHaveValue("feature/existing");
+    expect(branchSelect).toHaveTextContent("main");
   });
 
   it("summarizes changed files in the selected folder banner", async () => {

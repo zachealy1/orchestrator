@@ -278,7 +278,7 @@ struct GitBranchList {
     current_branch: Option<String>,
 }
 
-#[derive(Serialize)]
+#[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 struct GitCheckoutResult {
     branch: String,
@@ -2543,6 +2543,76 @@ fn checkout_git_branch_blocking(
 async fn checkout_git_branch(path: String, branch: String) -> Result<GitCheckoutResult, String> {
     run_blocking_command("check out Git branch", move || {
         checkout_git_branch_blocking(path, branch)
+    })
+    .await
+}
+
+fn create_git_branch_blocking(path: String, branch: String) -> Result<GitCheckoutResult, String> {
+    let branch = branch.trim();
+    if branch.is_empty() {
+        return Err("Enter a branch name".to_string());
+    }
+
+    let workspace = canonical_workspace(&path)?;
+    let git_root = resolve_git_root(&workspace)?;
+    let git_root_arg = git_root.to_string_lossy();
+    let format_probe = run_command(
+        "git",
+        &[
+            "-C",
+            git_root_arg.as_ref(),
+            "check-ref-format",
+            "--branch",
+            branch,
+        ],
+    );
+    if !format_probe.ok {
+        return Err(output_detail(&format_probe)
+            .unwrap_or_else(|| format!("`{branch}` is not a valid Git branch name")));
+    }
+
+    let branch_ref = format!("refs/heads/{branch}");
+    let existing_probe = run_command(
+        "git",
+        &[
+            "-C",
+            git_root_arg.as_ref(),
+            "show-ref",
+            "--verify",
+            "--quiet",
+            &branch_ref,
+        ],
+    );
+    if existing_probe.ok {
+        return Err(format!("Branch `{branch}` already exists"));
+    }
+
+    let checkout_probe = run_command(
+        "git",
+        &["-C", git_root_arg.as_ref(), "checkout", "-b", branch],
+    );
+    if !checkout_probe.ok {
+        return Err(output_detail(&checkout_probe)
+            .unwrap_or_else(|| format!("Unable to create branch `{branch}`")));
+    }
+
+    let checked_out_branch = current_git_branch(&git_root)
+        .ok_or_else(|| format!("Branch `{branch}` was created but could not be selected"))?;
+    if checked_out_branch != branch {
+        return Err(format!(
+            "Branch `{branch}` was created but Git selected `{checked_out_branch}`"
+        ));
+    }
+
+    Ok(GitCheckoutResult {
+        branch: checked_out_branch,
+    })
+}
+
+#[tauri::command]
+async fn create_git_branch(path: String, branch: String) -> Result<GitCheckoutResult, String> {
+    run_blocking_command("create Git branch", move || {
+        create_git_branch_blocking(path, branch)
     })
     .await
 }
@@ -5895,6 +5965,7 @@ pub fn run() {
             codex_delete_profile,
             list_git_branches,
             checkout_git_branch,
+            create_git_branch,
             commit_workspace_changes,
             generate_workspace_commit_message,
             generate_chat_title,
@@ -7977,6 +8048,80 @@ mod tests {
         )
         .unwrap_err()
         .contains("exactly one plain subject line"));
+    }
+
+    #[test]
+    fn create_git_branch_switches_and_preserves_workspace_changes() {
+        let workspace = git_test_directory("git-create-branch-preserves-changes");
+        let tracked_file = workspace.join("tracked.txt");
+        fs::write(&tracked_file, "initial\n").unwrap();
+        git(&workspace, &["add", "tracked.txt"]);
+        git(&workspace, &["commit", "-m", "initial"]);
+
+        fs::write(&tracked_file, "staged\n").unwrap();
+        git(&workspace, &["add", "tracked.txt"]);
+        fs::write(&tracked_file, "unstaged\n").unwrap();
+        fs::write(workspace.join("untracked.txt"), "untracked\n").unwrap();
+
+        let result = create_git_branch_blocking(
+            workspace.to_string_lossy().to_string(),
+            "feature/preserved-worktree".to_string(),
+        )
+        .unwrap();
+
+        assert_eq!(result.branch, "feature/preserved-worktree");
+        assert_eq!(
+            git_stdout(&workspace, &["branch", "--show-current"]).trim(),
+            "feature/preserved-worktree"
+        );
+        let status = git_stdout(&workspace, &["status", "--short"]);
+        assert!(status.contains("MM tracked.txt"), "{status}");
+        assert!(status.contains("?? untracked.txt"), "{status}");
+        remove_test_directory(workspace);
+    }
+
+    #[test]
+    fn create_git_branch_rejects_empty_invalid_and_existing_names() {
+        let workspace = git_test_directory("git-create-branch-validation");
+        fs::write(workspace.join("tracked.txt"), "initial\n").unwrap();
+        git(&workspace, &["add", "tracked.txt"]);
+        git(&workspace, &["commit", "-m", "initial"]);
+        let current_branch = git_stdout(&workspace, &["branch", "--show-current"])
+            .trim()
+            .to_string();
+        let workspace_path = workspace.to_string_lossy().to_string();
+
+        assert_eq!(
+            create_git_branch_blocking(workspace_path.clone(), "   ".to_string()).unwrap_err(),
+            "Enter a branch name"
+        );
+        assert!(
+            create_git_branch_blocking(workspace_path.clone(), "feature..invalid".to_string(),)
+                .unwrap_err()
+                .contains("not a valid branch name")
+        );
+        assert!(create_git_branch_blocking(workspace_path, current_branch)
+            .unwrap_err()
+            .contains("already exists"));
+        remove_test_directory(workspace);
+    }
+
+    #[test]
+    fn create_git_branch_supports_an_unborn_repository() {
+        let workspace = git_test_directory("git-create-branch-unborn");
+
+        let result = create_git_branch_blocking(
+            workspace.to_string_lossy().to_string(),
+            "feature/first-commit".to_string(),
+        )
+        .unwrap();
+
+        assert_eq!(result.branch, "feature/first-commit");
+        assert_eq!(
+            git_stdout(&workspace, &["branch", "--show-current"]).trim(),
+            "feature/first-commit"
+        );
+        remove_test_directory(workspace);
     }
 
     #[test]

@@ -687,6 +687,51 @@ button.danger:hover:not(:disabled) {
   width: min(620px, 100%);
 }
 
+.branch-creation-dialog {
+  width: min(460px, 100%);
+}
+
+.branch-creation-field {
+  display: grid;
+  gap: 8px;
+  color: var(--color-text);
+  font-size: 0.86rem;
+  font-weight: 600;
+}
+
+.branch-creation-field input {
+  width: 100%;
+  min-height: 42px;
+  border: 1px solid var(--color-divider);
+  border-radius: var(--radius);
+  background: var(--dropdown-bg);
+  color: var(--color-text);
+  outline: none;
+  padding: 9px 11px;
+}
+
+.branch-creation-field input::placeholder {
+  color: var(--color-text-secondary);
+  opacity: 0.72;
+}
+
+.branch-creation-field input:focus-visible {
+  border-color: var(--color-divider);
+  box-shadow: 0 0 0 3px var(--dropdown-focus-ring);
+}
+
+.confirmation-dialog p.confirmation-error {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  color: var(--color-error);
+}
+
+.confirmation-error svg {
+  flex: 0 0 auto;
+  margin-top: 2px;
+}
+
 .plan-implementation-copy {
   min-width: 0;
 }
@@ -5316,6 +5361,16 @@ button.composer-select-option:focus-visible {
   white-space: nowrap;
 }
 
+.composer-select-option > .composer-select-option-icon {
+  display: inline-flex;
+  width: 16px;
+  min-width: 16px;
+  align-items: center;
+  justify-content: center;
+  overflow: visible;
+  color: var(--color-icon-muted);
+}
+
 .composer-select-option > svg {
   flex: 0 0 auto;
   margin-left: auto;
@@ -5323,7 +5378,18 @@ button.composer-select-option:focus-visible {
 }
 
 button.composer-select-option.action:not(:first-child) {
-  margin-top: 3px;
+  position: relative;
+  margin-top: 6px;
+}
+
+button.composer-select-option.action:not(:first-child)::before {
+  position: absolute;
+  top: -3px;
+  right: 4px;
+  left: 4px;
+  height: 1px;
+  background: var(--color-divider);
+  content: "";
 }
 
 .settings-provider-select {

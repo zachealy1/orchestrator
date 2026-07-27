@@ -16,6 +16,7 @@ import {
   FolderOpen,
   Gauge,
   GitBranch,
+  GitBranchPlus,
   GitCommitHorizontal,
   Loader2,
   LogIn,
@@ -140,6 +141,7 @@ import {
   connectDefaultCodexProfile,
   connectCodex,
   checkoutGitBranch,
+  createGitBranch,
   deleteCodexProfile,
   generateWorkspaceCommitMessage,
   generateChatTitle,
@@ -1040,6 +1042,14 @@ type PlanImplementationDialogState = {
   error: string | null;
 };
 
+type BranchCreationDialogState = {
+  workspace: Workspace;
+  baseBranch: string | null;
+  branchName: string;
+  status: "idle" | "creating";
+  error: string | null;
+};
+
 type GoalEditCandidate = {
   workspaceId: number;
   clientId: string;
@@ -1658,6 +1668,10 @@ function App() {
     useState<AccountHandoffCandidate | null>(null);
   const [planImplementationDialog, setPlanImplementationDialog] =
     useState<PlanImplementationDialogState | null>(null);
+  const [branchCreationDialog, setBranchCreationDialog] =
+    useState<BranchCreationDialogState | null>(null);
+  const [branchCreationPendingWorkspaceId, setBranchCreationPendingWorkspaceId] =
+    useState<number | null>(null);
   const [goalEditCandidate, setGoalEditCandidate] =
     useState<GoalEditCandidate | null>(null);
   const [goalTermination, setGoalTermination] =
@@ -1672,6 +1686,8 @@ function App() {
   const planImplementationDialogRequestRef = useRef(0);
   const planImplementationDialogRef = useRef<HTMLElement | null>(null);
   const planImplementationReturnFocusRef = useRef<HTMLElement | null>(null);
+  const branchCreationInputRef = useRef<HTMLInputElement | null>(null);
+  const branchCreationInFlightRef = useRef(false);
   const [commitDialogOpen, setCommitDialogOpen] = useState(false);
   const [commitIntentContext, setCommitIntentContext] =
     useState<WorkspaceCommitIntentContext | null>(null);
@@ -3788,6 +3804,39 @@ function App() {
   ]);
 
   useEffect(() => {
+    if (!branchCreationDialog) return;
+    const canClose = branchCreationDialog.status === "idle";
+
+    function handleKeyDown(event: KeyboardEvent) {
+      if (event.key === "Escape" && canClose) {
+        setBranchCreationDialog(null);
+      }
+    }
+
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [branchCreationDialog?.status]);
+
+  useEffect(() => {
+    if (!branchCreationDialog) return;
+    const frame = window.requestAnimationFrame(() => {
+      branchCreationInputRef.current?.focus({ preventScroll: true });
+      branchCreationInputRef.current?.select();
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, [branchCreationDialog?.workspace.id]);
+
+  useEffect(() => {
+    if (
+      branchCreationDialog &&
+      branchCreationDialog.status === "idle" &&
+      branchCreationDialog.workspace.id !== selectedWorkspace?.id
+    ) {
+      setBranchCreationDialog(null);
+    }
+  }, [branchCreationDialog, selectedWorkspace?.id]);
+
+  useEffect(() => {
     if (!accountMenuOpen) {
       return;
     }
@@ -4567,9 +4616,15 @@ function App() {
   async function refreshBranches(workspace: Workspace) {
     try {
       const result = await listGitBranches(workspace.path);
+      if (selectedWorkspaceRef.current?.id !== workspace.id) {
+        return;
+      }
       setBranches(result.branches);
       setSelectedBranch(result.currentBranch ?? result.branches[0] ?? null);
     } catch (error) {
+      if (selectedWorkspaceRef.current?.id !== workspace.id) {
+        return;
+      }
       setBranches([]);
       setSelectedBranch(null);
       setStatusMessage(
@@ -7723,6 +7778,94 @@ function App() {
     gitStatusRefreshCache.current.delete(workspace.id);
     workspaceFileIndexCache.current.delete(workspace.id);
     workspaceFileIndexRequestCache.current.delete(workspace.id);
+  }
+
+  function openBranchCreationDialog() {
+    const workspace = selectedWorkspaceRef.current;
+    if (
+      !workspace ||
+      branchCreationInFlightRef.current ||
+      branchCreationPendingWorkspaceId !== null ||
+      selectedGitActionStatus !== "idle" ||
+      selectedGitStatusState?.status !== "loaded"
+    ) {
+      return;
+    }
+
+    setBranchCreationDialog({
+      workspace,
+      baseBranch: selectedBranch,
+      branchName: "",
+      status: "idle",
+      error: null,
+    });
+  }
+
+  async function confirmBranchCreation() {
+    const dialog = branchCreationDialog;
+    if (!dialog || dialog.status !== "idle" || branchCreationInFlightRef.current) {
+      return;
+    }
+
+    const branchName = dialog.branchName.trim();
+    if (!branchName) {
+      setBranchCreationDialog((current) =>
+        current
+          ? { ...current, error: "Enter a branch name before creating it." }
+          : current,
+      );
+      return;
+    }
+
+    branchCreationInFlightRef.current = true;
+    setBranchCreationPendingWorkspaceId(dialog.workspace.id);
+    setBranchCreationDialog((current) =>
+      current?.workspace.id === dialog.workspace.id
+        ? {
+            ...current,
+            branchName,
+            status: "creating",
+            error: null,
+          }
+        : current,
+    );
+
+    try {
+      const result = await createGitBranch(dialog.workspace.path, branchName);
+      preflightRef.current = null;
+      await Promise.allSettled([
+        refreshBranches(dialog.workspace),
+        refreshWorkspaceGitStatus(dialog.workspace, {
+          showLoading: false,
+          force: true,
+        }),
+      ]);
+      if (selectedWorkspaceRef.current?.id === dialog.workspace.id) {
+        setSelectedBranch(result.branch);
+        setStatusMessage(
+          `Created and switched to ${result.branch} in ${dialog.workspace.label}.`,
+        );
+      }
+      setBranchCreationDialog((current) =>
+        current?.workspace.id === dialog.workspace.id ? null : current,
+      );
+    } catch (error) {
+      const detail = error instanceof Error ? error.message : String(error);
+      setBranchCreationDialog((current) =>
+        current?.workspace.id === dialog.workspace.id
+          ? {
+              ...current,
+              status: "idle",
+              error: `Could not create branch: ${detail}`,
+            }
+          : current,
+      );
+    } finally {
+      branchCreationInFlightRef.current = false;
+      setBranchCreationPendingWorkspaceId((current) =>
+        current === dialog.workspace.id ? null : current,
+      );
+    }
   }
 
   async function selectBranch(branch: string) {
@@ -16166,6 +16309,100 @@ function App() {
         </div>
       ) : null}
 
+      {branchCreationDialog ? (
+        <div
+          className="modal-backdrop"
+          role="presentation"
+          onMouseDown={(event) => {
+            if (
+              event.target === event.currentTarget &&
+              branchCreationDialog.status === "idle"
+            ) {
+              setBranchCreationDialog(null);
+            }
+          }}
+        >
+          <form
+            className="confirmation-dialog branch-creation-dialog"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="branch-creation-title"
+            aria-describedby="branch-creation-description"
+            onSubmit={(event) => {
+              event.preventDefault();
+              void confirmBranchCreation();
+            }}
+          >
+            <div>
+              <p className="eyebrow">Git</p>
+              <h2 id="branch-creation-title">Create branch</h2>
+              <p id="branch-creation-description">
+                Create and switch to a new local branch
+                {branchCreationDialog.baseBranch
+                  ? ` from ${branchCreationDialog.baseBranch}`
+                  : " from the current Git state"}
+                . Current workspace changes will carry over.
+              </p>
+            </div>
+            <label className="branch-creation-field">
+              <span>Branch name</span>
+              <input
+                ref={branchCreationInputRef}
+                type="text"
+                value={branchCreationDialog.branchName}
+                placeholder="feature/my-branch"
+                autoComplete="off"
+                spellCheck={false}
+                disabled={branchCreationDialog.status !== "idle"}
+                onChange={(event) => {
+                  const branchName = event.currentTarget.value;
+                  setBranchCreationDialog((current) =>
+                    current
+                      ? {
+                          ...current,
+                          branchName,
+                          error: null,
+                        }
+                      : current,
+                  );
+                }}
+              />
+            </label>
+            {branchCreationDialog.error ? (
+              <p className="confirmation-error" role="alert">
+                <AlertCircle size={15} aria-hidden="true" />
+                <span>{branchCreationDialog.error}</span>
+              </p>
+            ) : null}
+            <div className="confirmation-actions">
+              <button
+                className="native-plan-icon-action"
+                type="button"
+                aria-label="Cancel branch creation"
+                data-tooltip="Cancel branch creation"
+                disabled={branchCreationDialog.status !== "idle"}
+                onClick={() => setBranchCreationDialog(null)}
+              >
+                <X size={15} aria-hidden="true" />
+              </button>
+              <button
+                className="native-plan-icon-action implement"
+                type="submit"
+                aria-label="Create branch"
+                data-tooltip="Create branch"
+                disabled={branchCreationDialog.status !== "idle"}
+              >
+                {branchCreationDialog.status === "creating" ? (
+                  <Loader2 className="spin" size={15} aria-hidden="true" />
+                ) : (
+                  <GitBranchPlus size={15} aria-hidden="true" />
+                )}
+              </button>
+            </div>
+          </form>
+        </div>
+      ) : null}
+
       {planImplementationDialog ? (
         <div
           className="modal-backdrop"
@@ -16683,6 +16920,8 @@ function App() {
               contextWindow={selectedModelContextWindow}
               onGitAction={() => void handleHeaderGitAction()}
               onBranchChange={(branch) => void selectBranch(branch)}
+              branchCreationBusy={branchCreationPendingWorkspaceId !== null}
+              onCreateBranch={openBranchCreationDialog}
               newChatDisabled={false}
               onNewChat={startNewWorkspaceChat}
               historyOpen={historyDrawerOpen}
@@ -17406,6 +17645,8 @@ function WorkspaceContextBanner({
   contextWindow,
   onGitAction,
   onBranchChange,
+  branchCreationBusy,
+  onCreateBranch,
   newChatDisabled,
   onNewChat,
   historyOpen,
@@ -17428,6 +17669,8 @@ function WorkspaceContextBanner({
   contextWindow: number;
   onGitAction: () => void;
   onBranchChange: (branch: string) => void;
+  branchCreationBusy: boolean;
+  onCreateBranch: () => void;
   newChatDisabled: boolean;
   onNewChat: () => void;
   historyOpen: boolean;
@@ -17522,11 +17765,19 @@ function WorkspaceContextBanner({
     );
   }
 
-  const gitLoading = gitState?.status === "loading" || gitState?.status === "idle";
+  const gitLoading =
+    !gitState ||
+    gitState.status === "loading" ||
+    gitState.status === "idle";
   const gitError = gitState?.status === "error";
   const gitClean = !gitLoading && !gitError && gitSummary.total === 0;
   const gitOperationRunning =
     gitActionStatus === "committing" || gitActionStatus === "pushing";
+  const branchSelectorDisabled =
+    gitLoading ||
+    gitError ||
+    gitActionStatus !== "idle" ||
+    branchCreationBusy;
   const gitBusyLabel =
     gitActionStatus === "generating"
       ? "Generating commit message"
@@ -17597,15 +17848,27 @@ function WorkspaceContextBanner({
         <ComposerSelect
           ariaLabel="Branch"
           value={branch ?? ""}
-          options={branches.map((candidate) => ({
-            value: candidate,
-            label: candidate,
-          }))}
+          options={[
+            ...branches.map((candidate) => ({
+              value: candidate,
+              label: candidate,
+            })),
+            {
+              id: "create-branch",
+              value: "",
+              label: "Create branch...",
+              action: true,
+              icon: <GitBranchPlus size={14} />,
+            },
+          ]}
           placeholder="No branch"
           icon={<GitBranch size={14} />}
           className="workspace-branch-select"
-          disabled={branches.length === 0 || gitActionStatus !== "idle"}
+          disabled={branchSelectorDisabled}
           onChange={onBranchChange}
+          onAction={(actionId) => {
+            if (actionId === "create-branch") onCreateBranch();
+          }}
         />
         {browserVisible ? (
           <div className="workspace-browser-action" ref={browserMenuRef}>

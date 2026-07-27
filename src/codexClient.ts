@@ -237,6 +237,10 @@ export function checkoutGitBranch(path: string, branch: string) {
   return invoke<{ branch: string }>("checkout_git_branch", { path, branch });
 }
 
+export function createGitBranch(path: string, branch: string) {
+  return invoke<{ branch: string }>("create_git_branch", { path, branch });
+}
+
 export function commitWorkspaceChanges(
   workspacePath: string,
   message: string,
