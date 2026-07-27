@@ -2202,12 +2202,15 @@ describe("App Codex auth", () => {
     const dialog = screen.getByRole("dialog", { name: "Commit or push" });
     await user.click(within(dialog).getByRole("button", { name: /^commit$/i }));
 
-    const alert = await within(dialog).findByRole("alert");
-    expect(alert).toHaveTextContent(
+    expect(
+      screen.queryByRole("dialog", { name: "Commit or push" }),
+    ).not.toBeInTheDocument();
+    const review = await screen.findByRole("button", {
+      name: "Open Git actions",
+    });
+    expect(review).toHaveTextContent(
       "Could not generate a commit message. Enter a message manually or try again.",
     );
-    expect(alert.querySelector("svg")).toBeInTheDocument();
-    expect(alert.parentElement).toHaveClass("git-action-feedback-slot");
     expect(mocks.commitWorkspaceChangesMock).not.toHaveBeenCalled();
   });
 
@@ -2378,18 +2381,23 @@ describe("App Codex auth", () => {
         }),
       ),
     );
-    expect(await within(dialog).findByRole("alert")).toHaveTextContent(
+    const review = await screen.findByRole("button", {
+      name: "Open Git actions",
+    });
+    expect(review).toHaveTextContent(
       "Could not generate a commit message. Enter a message manually or try again.",
     );
     expect(mocks.commitWorkspaceChangesMock).not.toHaveBeenCalled();
     expect(mocks.pushWorkspaceBranchMock).not.toHaveBeenCalled();
 
+    await user.click(review);
+    const retryDialog = screen.getByRole("dialog", { name: "Commit or push" });
     await user.type(
-      within(dialog).getByLabelText(/commit message/i),
+      within(retryDialog).getByLabelText(/commit message/i),
       "Fix manual commit fallback",
     );
     await user.click(
-      within(dialog).getByRole("button", { name: /^commit and push$/i }),
+      within(retryDialog).getByRole("button", { name: /^commit and push$/i }),
     );
     await waitFor(() =>
       expect(mocks.commitWorkspaceChangesMock).toHaveBeenCalledWith(
@@ -2439,14 +2447,18 @@ describe("App Codex auth", () => {
     await user.click(
       await within(banner).findByRole("button", { name: /commit or push/i }),
     );
-    const dialog = screen.getByRole("dialog", { name: "Commit or push" });
-    const commit = within(dialog).getByRole("button", { name: /^commit$/i });
+    let dialog = screen.getByRole("dialog", { name: "Commit or push" });
 
-    await user.click(commit);
-    expect(await within(dialog).findByRole("alert")).toHaveTextContent(
+    await user.click(within(dialog).getByRole("button", { name: /^commit$/i }));
+    const review = await screen.findByRole("button", {
+      name: "Open Git actions",
+    });
+    expect(review).toHaveTextContent(
       "Could not generate a commit message. Enter a message manually or try again.",
     );
-    await user.click(commit);
+    await user.click(review);
+    dialog = screen.getByRole("dialog", { name: "Commit or push" });
+    await user.click(within(dialog).getByRole("button", { name: /^commit$/i }));
 
     await waitFor(() =>
       expect(mocks.generateWorkspaceCommitMessageMock).toHaveBeenCalledTimes(2),
@@ -2635,6 +2647,93 @@ describe("App Codex auth", () => {
       await screen.findByText("Workspace changes were committed successfully."),
     ).toBeInTheDocument();
     await waitFor(() => expect(gitButton).toHaveAttribute("aria-busy", "false"));
+  });
+
+  it("closes the dialog immediately while generating a commit message", async () => {
+    prepareSignedInRun();
+    let resolveGeneration:
+      | ((value: { message: string; source: "codex" }) => void)
+      | null = null;
+    let resolveCommit:
+      | ((value: { message: string; branch: string }) => void)
+      | null = null;
+    mocks.generateWorkspaceCommitMessageMock.mockImplementation(
+      () =>
+        new Promise<{ message: string; source: "codex" }>((resolve) => {
+          resolveGeneration = resolve;
+        }),
+    );
+    mocks.commitWorkspaceChangesMock.mockImplementation(
+      () =>
+        new Promise<{ message: string; branch: string }>((resolve) => {
+          resolveCommit = resolve;
+        }),
+    );
+    mocks.listWorkspaceGitStatusMock.mockResolvedValue({
+      workspacePath: workspace.path,
+      gitRoot: workspace.path,
+      currentBranch: "main",
+      aheadCount: 0,
+      hasUpstream: true,
+      hasOrigin: true,
+      canPush: false,
+      additions: 4,
+      deletions: 1,
+      files: [
+        {
+          path: "/repo/orchestrator/src/App.tsx",
+          relativePath: "src/App.tsx",
+          oldRelativePath: null,
+          indexStatus: " ",
+          worktreeStatus: "M",
+          statusKind: "modified",
+          badge: "M",
+        },
+      ],
+    });
+
+    const { user } = await renderApp();
+    const banner = screen.getByRole("region", { name: "Selected folder" });
+    const gitButton = await within(banner).findByRole("button", {
+      name: /commit or push/i,
+    });
+    await user.click(gitButton);
+    const dialog = screen.getByRole("dialog", { name: "Commit or push" });
+    await user.click(within(dialog).getByRole("button", { name: /^commit$/i }));
+
+    expect(
+      screen.queryByRole("dialog", { name: "Commit or push" }),
+    ).not.toBeInTheDocument();
+    expect(mocks.generateWorkspaceCommitMessageMock).toHaveBeenCalledTimes(1);
+    expect(gitButton).toHaveAttribute("aria-busy", "true");
+    expect(
+      within(banner)
+        .getByRole("button", { name: /commit or push/i })
+        .querySelector(".spin"),
+    ).toBeInTheDocument();
+
+    await act(async () => {
+      resolveGeneration?.({
+        message: "Preserve workspace scroll position",
+        source: "codex",
+      });
+      await Promise.resolve();
+    });
+    await waitFor(() =>
+      expect(mocks.commitWorkspaceChangesMock).toHaveBeenCalledWith(
+        workspace.path,
+        "Preserve workspace scroll position",
+        true,
+      ),
+    );
+
+    await act(async () => {
+      resolveCommit?.({
+        message: "Committed workspace changes",
+        branch: "main",
+      });
+      await Promise.resolve();
+    });
   });
 
   it("reports a failed background commit and retries without reopening the dialog", async () => {
@@ -2956,7 +3055,12 @@ describe("App Codex auth", () => {
       expect(mocks.generateWorkspaceCommitMessageMock).toHaveBeenCalled(),
     );
     expect(mocks.commitWorkspaceChangesMock).not.toHaveBeenCalled();
-    expect(within(dialog).getByRole("alert")).toHaveTextContent(
+    expect(
+      screen.queryByRole("dialog", { name: "Commit or push" }),
+    ).not.toBeInTheDocument();
+    expect(
+      await screen.findByRole("button", { name: "Open Git actions" }),
+    ).toHaveTextContent(
       "Could not generate a commit message. Enter a message manually or try again.",
     );
   });
@@ -3008,11 +3112,15 @@ describe("App Codex auth", () => {
         within(dialog).getByRole("button", { name: /^commit$/i }),
       );
 
-      expect(await within(dialog).findByRole("alert")).toHaveTextContent(
+      expect(
+        screen.queryByRole("dialog", { name: "Commit or push" }),
+      ).not.toBeInTheDocument();
+      expect(
+        await screen.findByRole("button", { name: "Open Git actions" }),
+      ).toHaveTextContent(
         "Could not generate a commit message. Enter a message manually or try again.",
       );
       expect(mocks.commitWorkspaceChangesMock).not.toHaveBeenCalled();
-      expect(dialog).toBeInTheDocument();
     },
   );
 

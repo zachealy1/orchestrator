@@ -1,6 +1,6 @@
 export type GitOperationKind = "commit" | "push" | "commit-and-push";
 
-export type GitOperationPhase = "committing" | "pushing";
+export type GitOperationPhase = "generating" | "committing" | "pushing";
 
 export type WorkspaceGitOperationRequest = {
   workspaceId: number;
@@ -29,6 +29,12 @@ export function gitOperationRunningCopy(
   kind: GitOperationKind,
   phase: GitOperationPhase,
 ) {
+  if (phase === "generating") {
+    return {
+      title: "Generating commit message",
+      detail: "Creating an intent-driven commit message...",
+    };
+  }
   if (phase === "pushing") {
     return kind === "commit-and-push"
       ? {
@@ -70,7 +76,12 @@ export function gitOperationFailureCopy(
   error: unknown,
   commitCompleted = false,
 ) {
-  const action = phase === "pushing" ? "Push" : "Commit";
+  const action =
+    phase === "generating"
+      ? "Commit message generation"
+      : phase === "pushing"
+        ? "Push"
+        : "Commit";
   const raw = compactGitError(error);
   let detail: string;
 
@@ -226,7 +237,9 @@ function isRecoveryMarker(value: unknown): value is GitOperationRecoveryMarker {
     | Partial<WorkspaceGitOperationRequest>
     | undefined;
   return (
-    (marker.phase === "committing" || marker.phase === "pushing") &&
+    (marker.phase === "generating" ||
+      marker.phase === "committing" ||
+      marker.phase === "pushing") &&
     Boolean(request) &&
     Number.isInteger(request?.workspaceId) &&
     typeof request?.workspacePath === "string" &&

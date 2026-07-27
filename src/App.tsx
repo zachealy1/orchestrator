@@ -1099,6 +1099,15 @@ type WorkspaceTaskMemory = {
   transcriptViewportSnapshot: TranscriptViewportSnapshot | null;
 };
 
+type CommitMessageGenerationSnapshot = {
+  accountId: number | null;
+  includeUnstaged: boolean;
+  model: string | null;
+  intentContext: WorkspaceCommitIntentContext | null;
+  files: WorkspaceGitFileStatus[];
+  changeKey: string;
+};
+
 type HeaderGitAction =
   | {
       label: string;
@@ -1685,9 +1694,6 @@ function App() {
   const [commitDialogMessage, setCommitDialogMessage] = useState("");
   const [commitDialogError, setCommitDialogError] = useState(false);
   const [includeUnstagedChanges, setIncludeUnstagedChanges] = useState(true);
-  const [gitActionStatus, setGitActionStatus] = useState<
-    "idle" | "generating" | "committing" | "pushing"
-  >("idle");
   const [gitOperationsByWorkspace, setGitOperationsByWorkspace] = useState<
     Record<number, WorkspaceGitOperationState | undefined>
   >(restoreInterruptedGitOperations);
@@ -2889,11 +2895,9 @@ function App() {
     ? gitOperationsByWorkspace[selectedWorkspace.id] ?? null
     : null;
   const selectedGitActionStatus =
-    gitActionStatus === "generating"
-      ? "generating"
-      : selectedGitOperation?.status === "running"
-        ? selectedGitOperation.phase
-        : "idle";
+    selectedGitOperation?.status === "running"
+      ? selectedGitOperation.phase
+      : "idle";
   const headerGitAction = useMemo<HeaderGitAction>(() => {
     const baseLabel = "Commit or push";
     if (!selectedWorkspace) {
@@ -8997,11 +9001,14 @@ function App() {
     }
   }
 
-  function startWorkspaceGitOperation(request: WorkspaceGitOperationRequest) {
+  function registerWorkspaceGitOperation(
+    request: WorkspaceGitOperationRequest,
+    phase: GitOperationPhase,
+  ) {
     if (
       gitOperationInFlightWorkspaceIdsRef.current.has(request.workspaceId)
     ) {
-      return false;
+      return null;
     }
     const workspace =
       workspacesRef.current.find(
@@ -9010,13 +9017,11 @@ function App() {
           candidate.path === request.workspacePath,
       ) ?? null;
     if (!workspace) {
-      return false;
+      return null;
     }
 
     gitOperationInFlightWorkspaceIdsRef.current.add(workspace.id);
     const operationId = ++gitOperationSequenceRef.current;
-    const phase: GitOperationPhase =
-      request.kind === "push" ? "pushing" : "committing";
     const runningCopy = gitOperationRunningCopy(request.kind, phase);
     const operation: WorkspaceGitOperationState = {
       id: operationId,
@@ -9038,9 +9043,20 @@ function App() {
       setCommitMessage("");
       setCommitDialogMessage("");
       setCommitDialogError(false);
-      setGitActionStatus("idle");
     });
-    void executeWorkspaceGitOperation(workspace, request, operationId);
+    return { operationId, workspace };
+  }
+
+  function startWorkspaceGitOperation(request: WorkspaceGitOperationRequest) {
+    const phase: GitOperationPhase =
+      request.kind === "push" ? "pushing" : "committing";
+    const registered = registerWorkspaceGitOperation(request, phase);
+    if (!registered) return false;
+    void executeWorkspaceGitOperation(
+      registered.workspace,
+      request,
+      registered.operationId,
+    );
     return true;
   }
 
@@ -9081,53 +9097,101 @@ function App() {
     }
   }
 
-  async function resolveCommitMessage(
+  async function generateCommitMessageForOperation(
     workspace: Workspace,
-  ): Promise<string | null> {
-    const failGeneration = () => {
-      setCommitDialogMessage(COMMIT_MESSAGE_GENERATION_ERROR);
-      setCommitDialogError(true);
-      setStatusMessage(COMMIT_MESSAGE_GENERATION_ERROR);
-      return null;
-    };
-
-    setGitActionStatus("generating");
-    setCommitDialogMessage("");
-    setCommitDialogError(false);
-    try {
-      const result = await generateWorkspaceCommitMessage({
-        workspacePath: workspace.path,
-        accountId: selectedAccountId,
-        includeUnstaged: includeUnstagedChanges,
-        model: selectedModel?.model ?? selectedModel?.id ?? null,
-        intentContext: commitIntentContext,
-      });
-      const rejection = generatedCommitSubjectRejectionReason(
-        result.message,
-        commitMessageFiles,
-      );
-      if (rejection) {
-        return failGeneration();
-      }
-      const generated = cleanGeneratedCommitSubject(result.message);
-      const previous = lastCommitSubjectsRef.current.get(workspace.id);
-      if (
-        previous &&
-        previous.changeKey !== commitMessageChangeKey &&
-        previous.subject.toLowerCase() === generated.toLowerCase()
-      ) {
-        return failGeneration();
-      }
-      setCommitMessage(generated);
-      setCommitDialogMessage("");
-      setCommitDialogError(false);
-      return generated;
-    } catch {
-      return failGeneration();
+    snapshot: CommitMessageGenerationSnapshot,
+  ) {
+    const result = await generateWorkspaceCommitMessage({
+      workspacePath: workspace.path,
+      accountId: snapshot.accountId,
+      includeUnstaged: snapshot.includeUnstaged,
+      model: snapshot.model,
+      intentContext: snapshot.intentContext,
+    });
+    const rejection = generatedCommitSubjectRejectionReason(
+      result.message,
+      snapshot.files,
+    );
+    if (rejection) {
+      throw new Error(rejection);
     }
+    const generated = cleanGeneratedCommitSubject(result.message);
+    const previous = lastCommitSubjectsRef.current.get(workspace.id);
+    if (
+      previous &&
+      previous.changeKey !== snapshot.changeKey &&
+      previous.subject.toLowerCase() === generated.toLowerCase()
+    ) {
+      throw new Error("Codex repeated a subject for different changes.");
+    }
+    return generated;
   }
 
-  async function handleCommitAll(options: { pushAfter?: boolean } = {}) {
+  async function executeWorkspaceCommitGeneration(
+    workspace: Workspace,
+    request: WorkspaceGitOperationRequest,
+    snapshot: CommitMessageGenerationSnapshot,
+    operationId: number,
+  ) {
+    let message: string;
+    try {
+      message = await generateCommitMessageForOperation(
+        workspace,
+        snapshot,
+      );
+    } catch {
+      updateWorkspaceGitOperation(workspace.id, operationId, {
+        status: "failed",
+        retryRequest: null,
+        title: "Commit message unavailable",
+        detail: COMMIT_MESSAGE_GENERATION_ERROR,
+      });
+      if (selectedWorkspaceRef.current?.id === workspace.id) {
+        setStatusMessage(COMMIT_MESSAGE_GENERATION_ERROR);
+      }
+      gitOperationInFlightWorkspaceIdsRef.current.delete(workspace.id);
+      clearRunningGitOperation(workspace.id);
+      return;
+    }
+
+    const generatedRequest: WorkspaceGitOperationRequest = {
+      ...request,
+      commitMessage: message,
+    };
+    const runningCopy = gitOperationRunningCopy(
+      generatedRequest.kind,
+      "committing",
+    );
+    persistRunningGitOperation(generatedRequest, "committing");
+    updateWorkspaceGitOperation(workspace.id, operationId, (current) => ({
+      ...current,
+      request: generatedRequest,
+      phase: "committing",
+      ...runningCopy,
+    }));
+    await executeWorkspaceGitOperation(
+      workspace,
+      generatedRequest,
+      operationId,
+    );
+  }
+
+  function startWorkspaceCommitGeneration(
+    request: WorkspaceGitOperationRequest,
+    snapshot: CommitMessageGenerationSnapshot,
+  ) {
+    const registered = registerWorkspaceGitOperation(request, "generating");
+    if (!registered) return false;
+    void executeWorkspaceCommitGeneration(
+      registered.workspace,
+      request,
+      snapshot,
+      registered.operationId,
+    );
+    return true;
+  }
+
+  function handleCommitAll(options: { pushAfter?: boolean } = {}) {
     const workspace = selectedWorkspace;
     if (
       !workspace ||
@@ -9141,25 +9205,29 @@ function App() {
     gitActionInFlightRef.current = true;
     try {
       const authoredMessage = commitMessage.trim();
-      const message = authoredMessage || (await resolveCommitMessage(workspace));
-      if (!message) {
-        return;
-      }
-
-      startWorkspaceGitOperation({
+      const request: WorkspaceGitOperationRequest = {
         workspaceId: workspace.id,
         workspacePath: workspace.path,
         workspaceLabel: workspace.label,
         kind: options.pushAfter ? "commit-and-push" : "commit",
-        commitMessage: message,
+        commitMessage: authoredMessage || null,
         includeUnstaged: includeUnstagedChanges,
         changeKey: commitMessageChangeKey,
-      });
+      };
+      if (authoredMessage) {
+        startWorkspaceGitOperation(request);
+      } else {
+        startWorkspaceCommitGeneration(request, {
+          accountId: selectedAccountId,
+          includeUnstaged: includeUnstagedChanges,
+          model: selectedModel?.model ?? selectedModel?.id ?? null,
+          intentContext: commitIntentContext,
+          files: [...commitMessageFiles],
+          changeKey: commitMessageChangeKey,
+        });
+      }
     } finally {
       gitActionInFlightRef.current = false;
-      if (!gitOperationInFlightWorkspaceIdsRef.current.has(workspace.id)) {
-        setGitActionStatus("idle");
-      }
     }
   }
 
@@ -16855,7 +16923,7 @@ function App() {
           onMouseDown={(event) => {
             if (
               event.target === event.currentTarget &&
-              gitActionStatus === "idle"
+              selectedGitActionStatus === "idle"
             ) {
               setCommitDialogOpen(false);
             }
@@ -16895,7 +16963,7 @@ function App() {
                   setCommitDialogMessage("");
                   setCommitDialogError(false);
                 }}
-                disabled={gitActionStatus !== "idle"}
+                disabled={selectedGitActionStatus !== "idle"}
               />
             </label>
 
@@ -16931,7 +16999,7 @@ function App() {
                 onChange={(event) =>
                   setIncludeUnstagedChanges(event.currentTarget.checked)
                 }
-                disabled={gitActionStatus !== "idle"}
+                disabled={selectedGitActionStatus !== "idle"}
               />
               <span className="git-action-checkbox" aria-hidden="true">
                 {includeUnstagedChanges ? <Check size={14} strokeWidth={3} /> : null}
@@ -16945,17 +17013,21 @@ function App() {
                 type="button"
                 aria-label="Commit"
                 onClick={() => void handleCommitAll()}
-                disabled={!canCommitFromDialog || gitActionStatus !== "idle"}
+                disabled={
+                  !canCommitFromDialog || selectedGitActionStatus !== "idle"
+                }
               >
                 <span>
-                  {gitActionStatus === "committing" ? (
+                  {selectedGitActionStatus === "committing" ? (
                     <Loader2 className="spin" size={16} aria-hidden="true" />
-                  ) : gitActionStatus === "generating" ? (
+                  ) : selectedGitActionStatus === "generating" ? (
                     <Loader2 className="spin" size={16} aria-hidden="true" />
                   ) : (
                     <GitCommitHorizontal size={16} aria-hidden="true" />
                   )}
-                  {gitActionStatus === "generating" ? "Generating" : "Commit"}
+                  {selectedGitActionStatus === "generating"
+                    ? "Generating"
+                    : "Commit"}
                 </span>
                 <kbd>Cmd Return</kbd>
               </button>
@@ -16964,15 +17036,17 @@ function App() {
                 type="button"
                 aria-label="Commit and push"
                 onClick={() => void handleCommitAll({ pushAfter: true })}
-                disabled={!canCommitFromDialog || gitActionStatus !== "idle"}
+                disabled={
+                  !canCommitFromDialog || selectedGitActionStatus !== "idle"
+                }
               >
                 <span>
-                  {gitActionStatus === "generating" ? (
+                  {selectedGitActionStatus === "generating" ? (
                     <Loader2 className="spin" size={16} aria-hidden="true" />
                   ) : (
                     <UploadCloud size={16} aria-hidden="true" />
                   )}
-                  {gitActionStatus === "generating"
+                  {selectedGitActionStatus === "generating"
                     ? "Generating"
                     : "Commit and push"}
                 </span>
@@ -16982,10 +17056,13 @@ function App() {
                 type="button"
                 aria-label="Push"
                 onClick={() => void handlePushOnly()}
-                disabled={!headerGitAction.canPush || gitActionStatus !== "idle"}
+                disabled={
+                  !headerGitAction.canPush ||
+                  selectedGitActionStatus !== "idle"
+                }
               >
                 <span>
-                  {gitActionStatus === "pushing" ? (
+                  {selectedGitActionStatus === "pushing" ? (
                     <Loader2 className="spin" size={16} aria-hidden="true" />
                   ) : (
                     <UploadCloud size={16} aria-hidden="true" />
