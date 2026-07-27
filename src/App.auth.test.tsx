@@ -10290,11 +10290,39 @@ describe("App Codex auth", () => {
 
   it("edits a queued prompt in the composer without changing its queue position", async () => {
     prepareSignedInRun();
+    const queuedCodexModel = {
+      ...defaultCodexModel,
+      id: "gpt-5.5-max",
+      model: "gpt-5.5-max",
+      displayName: "GPT-5.5 Max",
+      supportedReasoningEfforts: [
+        {
+          reasoningEffort: "high",
+          description: "Deeper reasoning",
+        },
+      ],
+      defaultReasoningEffort: "high",
+      isDefault: false,
+    };
+    mocks.listCodexModelsMock.mockResolvedValue([
+      defaultCodexModel,
+      queuedCodexModel,
+    ]);
 
     const { user } = await renderApp();
     await startMockRun(user, "Start the active task");
 
     const promptInput = screen.getByLabelText("Prompt");
+    await user.click(screen.getByRole("button", { name: "Plan mode" }));
+    await user.click(screen.getByRole("combobox", { name: "Agent" }));
+    await user.click(
+      screen.getByRole("option", { name: queuedCodexModel.displayName }),
+    );
+    await waitFor(() =>
+      expect(screen.getByRole("combobox", { name: "Reasoning" })).toHaveTextContent(
+        "High",
+      ),
+    );
     await user.type(promptInput, "Original queued follow-up");
     await user.keyboard("{Enter}");
     await waitFor(() =>
@@ -10306,6 +10334,17 @@ describe("App Codex auth", () => {
     const originalQueuePosition =
       mocks.promptQueueItems.get(queuedItemId)?.position;
 
+    await user.click(screen.getByRole("combobox", { name: "Agent" }));
+    await user.click(
+      screen.getByRole("option", { name: defaultCodexModel.displayName }),
+    );
+    await user.click(screen.getByRole("combobox", { name: "Reasoning" }));
+    await user.click(screen.getByRole("option", { name: "Medium" }));
+    await waitFor(() =>
+      expect(screen.getByRole("combobox", { name: "Reasoning" })).toHaveTextContent(
+        "Medium",
+      ),
+    );
     await user.type(promptInput, "Keep this unrelated draft");
     await user.click(screen.getByRole("button", { name: /^Queue/ }));
     const originalQueuedActions = screen.getByRole("toolbar", {
@@ -10320,10 +10359,36 @@ describe("App Codex auth", () => {
     expect(
       screen.queryByRole("dialog", { name: /edit queued prompt/i }),
     ).not.toBeInTheDocument();
-    expect(screen.getByText("Editing queued prompt")).toBeInTheDocument();
+    expect(screen.queryByText("Editing queued prompt")).not.toBeInTheDocument();
     expect(promptInput).toHaveValue("Original queued follow-up");
+    expect(screen.getByRole("button", { name: "Plan mode" })).toHaveAttribute(
+      "aria-pressed",
+      "true",
+    );
+    expect(screen.getByRole("button", { name: "Goal mode" })).toHaveAttribute(
+      "aria-pressed",
+      "false",
+    );
+    expect(screen.getByRole("combobox", { name: "Agent" })).toHaveTextContent(
+      queuedCodexModel.displayName,
+    );
+    expect(
+      screen.getByRole("combobox", { name: "Reasoning" }),
+    ).toHaveTextContent("High");
     await waitFor(() => expect(promptInput).toHaveFocus());
 
+    await user.click(screen.getByRole("button", { name: "Goal mode" }));
+    await user.click(screen.getByRole("combobox", { name: "Agent" }));
+    await user.click(
+      screen.getByRole("option", { name: defaultCodexModel.displayName }),
+    );
+    await user.click(screen.getByRole("combobox", { name: "Reasoning" }));
+    await user.click(screen.getByRole("option", { name: "Medium" }));
+    await waitFor(() =>
+      expect(screen.getByRole("combobox", { name: "Reasoning" })).toHaveTextContent(
+        "Medium",
+      ),
+    );
     await user.clear(promptInput);
     await user.type(promptInput, "Refined queued follow-up");
     await user.keyboard("{Enter}");
@@ -10331,7 +10396,16 @@ describe("App Codex auth", () => {
     await waitFor(() =>
       expect(mocks.updatePromptQueueItemSnapshotMock).toHaveBeenCalledWith(
         queuedItemId,
-        expect.objectContaining({ prompt: "Refined queued follow-up" }),
+        expect.objectContaining({
+          prompt: "Refined queued follow-up",
+          executionSettings: expect.objectContaining({
+            mode: "run",
+            intent: "normal",
+            goalMode: true,
+            model: defaultCodexModel.model,
+            reasoningEffort: "medium",
+          }),
+        }),
       ),
     );
     expect(mocks.enqueuePromptQueueItemMock).toHaveBeenCalledTimes(1);
@@ -10344,6 +10418,20 @@ describe("App Codex auth", () => {
     await waitFor(() =>
       expect(promptInput).toHaveValue("Keep this unrelated draft"),
     );
+    expect(screen.getByRole("button", { name: "Goal mode" })).toHaveAttribute(
+      "aria-pressed",
+      "false",
+    );
+    expect(screen.getByRole("button", { name: "Plan mode" })).toHaveAttribute(
+      "aria-pressed",
+      "false",
+    );
+    expect(screen.getByRole("combobox", { name: "Agent" })).toHaveTextContent(
+      defaultCodexModel.displayName,
+    );
+    expect(
+      screen.getByRole("combobox", { name: "Reasoning" }),
+    ).toHaveTextContent("Medium");
 
     await user.click(screen.getByRole("button", { name: /^Queue/ }));
     const refinedQueuedActions = screen.getByRole("toolbar", {
@@ -10354,6 +10442,30 @@ describe("App Codex auth", () => {
         name: "Edit queued prompt",
       }),
     );
+    expect(screen.getByRole("button", { name: "Goal mode" })).toHaveAttribute(
+      "aria-pressed",
+      "true",
+    );
+    expect(screen.getByRole("combobox", { name: "Agent" })).toHaveTextContent(
+      defaultCodexModel.displayName,
+    );
+    expect(
+      screen.getByRole("combobox", { name: "Reasoning" }),
+    ).toHaveTextContent("Medium");
+    await user.click(screen.getByRole("button", { name: "Goal mode" }));
+    expect(screen.getByRole("button", { name: "Goal mode" })).toHaveAttribute(
+      "aria-pressed",
+      "false",
+    );
+    expect(screen.getByRole("button", { name: "Plan mode" })).toHaveAttribute(
+      "aria-pressed",
+      "false",
+    );
+    await user.click(screen.getByRole("button", { name: "Plan mode" }));
+    await user.click(screen.getByRole("combobox", { name: "Agent" }));
+    await user.click(
+      screen.getByRole("option", { name: queuedCodexModel.displayName }),
+    );
     await user.clear(promptInput);
     await user.type(promptInput, "Do not save this edit");
     await user.keyboard("{Escape}");
@@ -10362,7 +10474,32 @@ describe("App Codex auth", () => {
     expect(mocks.promptQueueItems.get(queuedItemId)?.prompt).toBe(
       "Refined queued follow-up",
     );
+    expect(
+      mocks.promptQueueItems.get(queuedItemId)?.snapshot.executionSettings,
+    ).toEqual(
+      expect.objectContaining({
+        mode: "run",
+        intent: "normal",
+        goalMode: true,
+        model: defaultCodexModel.model,
+        reasoningEffort: "medium",
+      }),
+    );
     expect(promptInput).toHaveValue("Keep this unrelated draft");
+    expect(screen.getByRole("button", { name: "Goal mode" })).toHaveAttribute(
+      "aria-pressed",
+      "false",
+    );
+    expect(screen.getByRole("button", { name: "Plan mode" })).toHaveAttribute(
+      "aria-pressed",
+      "false",
+    );
+    expect(screen.getByRole("combobox", { name: "Agent" })).toHaveTextContent(
+      defaultCodexModel.displayName,
+    );
+    expect(
+      screen.getByRole("combobox", { name: "Reasoning" }),
+    ).toHaveTextContent("Medium");
   });
 
   it("steers a compatible queued normal prompt into the active turn", async () => {

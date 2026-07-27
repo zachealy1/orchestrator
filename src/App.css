@@ -4548,46 +4548,6 @@ button.prompt-queue-icon-action {
   transform: translateX(-50%);
 }
 
-.prompt-queue-edit-status {
-  display: flex;
-  width: 100%;
-  min-width: 0;
-  height: var(--composer-progress-row-height);
-  min-height: var(--composer-progress-row-height);
-  align-items: center;
-  gap: 8px;
-  border: 0;
-  border-bottom: 1px solid var(--color-divider);
-  background: var(--color-surface-soft);
-  color: var(--color-text-secondary);
-  padding: 4px 6px 4px 10px;
-}
-
-.prompt-queue-edit-status > svg {
-  flex: 0 0 auto;
-  color: var(--color-primary);
-}
-
-.prompt-queue-edit-status > strong {
-  flex: 0 0 auto;
-  color: var(--color-text);
-  font-size: 0.78rem;
-}
-
-.prompt-queue-edit-status > span {
-  min-width: 0;
-  flex: 1 1 auto;
-  overflow: hidden;
-  color: inherit;
-  font-size: 0.76rem;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.prompt-queue-edit-status[role="alert"] {
-  color: var(--color-error);
-}
-
 .composer-status-action,
 .composer-status-content {
   display: flex;
@@ -4954,6 +4914,14 @@ button.goal-progress-action:focus-visible {
 
 .prompt-shell.has-context-files {
   display: grid;
+}
+
+.prompt-queue-edit-error {
+  margin: 0;
+  color: var(--color-error);
+  padding: 0 20px 4px;
+  font-size: 0.76rem;
+  line-height: 1.35;
 }
 
 .prompt-field {

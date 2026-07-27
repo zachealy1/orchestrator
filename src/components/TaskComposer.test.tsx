@@ -967,19 +967,37 @@ describe("TaskComposer", () => {
   it("uses the normal composer to save or cancel a queued prompt edit", async () => {
     const onRun = vi.fn();
     const onQueueEditCancel = vi.fn();
+    const onGoalModeChange = vi.fn();
+    const onPlanModeChange = vi.fn();
     const { user } = renderControlledComposer({
+      disabled: true,
+      modelSelectionDisabled: true,
       prompt: "Refine the queued prompt",
       queueItems: [queuedPrompt()],
       queueEditActive: true,
       onQueueEditCancel,
+      onGoalModeChange,
+      onPlanModeChange,
       onRun,
     });
     const promptInput = screen.getByLabelText("Prompt");
 
-    expect(screen.getByText("Editing queued prompt")).toBeInTheDocument();
+    expect(screen.queryByText("Editing queued prompt")).not.toBeInTheDocument();
+    expect(document.querySelector(".prompt-queue-edit-status")).toBeNull();
     expect(
       screen.queryByRole("dialog", { name: "Edit queued prompt" }),
     ).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Goal mode" })).toBeEnabled();
+    expect(screen.getByRole("button", { name: "Plan mode" })).toBeEnabled();
+    expect(screen.getByRole("combobox", { name: "Agent" })).toBeEnabled();
+    expect(screen.getByRole("combobox", { name: "Reasoning" })).toBeEnabled();
+    expect(screen.getByRole("combobox", { name: "Run account" })).toBeDisabled();
+    expect(screen.getByRole("combobox", { name: "Access" })).toBeDisabled();
+
+    await user.click(screen.getByRole("button", { name: "Goal mode" }));
+    await user.click(screen.getByRole("button", { name: "Plan mode" }));
+    expect(onGoalModeChange).toHaveBeenCalledWith(true);
+    expect(onPlanModeChange).toHaveBeenCalledWith(true);
 
     await user.click(promptInput);
     await user.keyboard("{Enter}");
@@ -1011,6 +1029,21 @@ describe("TaskComposer", () => {
     fireEvent.click(save);
     expect(onRun).not.toHaveBeenCalled();
     expect(onStop).not.toHaveBeenCalled();
+  });
+
+  it("shows save errors without restoring the removed edit status row", () => {
+    renderControlledComposer({
+      prompt: "Refine the queued prompt",
+      queueItems: [queuedPrompt()],
+      queueEditActive: true,
+      queueEditError: "Select an available model for the queued prompt.",
+    });
+
+    expect(
+      screen.getByRole("alert"),
+    ).toHaveTextContent("Select an available model for the queued prompt.");
+    expect(screen.queryByText("Editing queued prompt")).not.toBeInTheDocument();
+    expect(document.querySelector(".prompt-queue-edit-status")).toBeNull();
   });
 
   it("dispatches the first queued prompt when Enter is pressed on an empty composer", async () => {

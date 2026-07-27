@@ -764,7 +764,12 @@ type PromptQueueComposerEditState = {
   previousComposer: Pick<
     WorkspaceTaskMemory,
     "prompt" | "contextFiles" | "selectedSkills"
-  >;
+  > & {
+    selectedModelId: string | null;
+    selectedReasoningEffort: string | null;
+    goalMode: boolean;
+    planMode: boolean;
+  };
   status: "editing" | "saving";
   error: string | null;
 };
@@ -11058,6 +11063,12 @@ function App() {
       contextFiles: edit.previousComposer.contextFiles,
       selectedSkills: edit.previousComposer.selectedSkills,
     });
+    setSelectedModelId(edit.previousComposer.selectedModelId);
+    setSelectedReasoningEffort(
+      edit.previousComposer.selectedReasoningEffort,
+    );
+    setGoalMode(edit.previousComposer.goalMode);
+    setPlanMode(edit.previousComposer.planMode);
   }
 
   function setPromptQueueComposerEditState(
@@ -11091,11 +11102,23 @@ function App() {
       return;
     }
 
+    const settings = item.snapshot.executionSettings;
+    const queuedModel = settings.model
+      ? modelsRef.current.find(
+          (model) =>
+            model.id === settings.model || model.model === settings.model,
+        ) ?? null
+      : null;
+    if (!settings.useOss && settings.model && !queuedModel) {
+      setStatusMessage(
+        `The queued prompt's model ${settings.model} is no longer available.`,
+      );
+      return;
+    }
     const existingEdit = promptQueueComposerEditRef.current;
     if (existingEdit?.status === "saving") return;
     if (existingEdit) restorePromptQueueComposer(existingEdit);
 
-    const settings = item.snapshot.executionSettings;
     const nextEdit: PromptQueueComposerEditState = {
       item,
       previousComposer: {
@@ -11112,6 +11135,18 @@ function App() {
             ? existingEdit.previousComposer.selectedSkills
             : selectedSkillsRef.current
         ).map((skill) => ({ ...skill })),
+        selectedModelId: existingEdit
+          ? existingEdit.previousComposer.selectedModelId
+          : selectedModelId,
+        selectedReasoningEffort: existingEdit
+          ? existingEdit.previousComposer.selectedReasoningEffort
+          : selectedReasoningEffort,
+        goalMode: existingEdit
+          ? existingEdit.previousComposer.goalMode
+          : goalMode,
+        planMode: existingEdit
+          ? existingEdit.previousComposer.planMode
+          : planMode,
       },
       status: "editing",
       error: null,
@@ -11125,6 +11160,13 @@ function App() {
       contextFiles: settings.contextFiles,
       selectedSkills: settings.selectedSkills,
     });
+    if (!settings.useOss) {
+      setSelectedModelId(queuedModel?.id ?? null);
+      setSelectedReasoningEffort(settings.reasoningEffort);
+    }
+    const queuedPlanMode = settings.mode === "plan";
+    setGoalMode(!queuedPlanMode && settings.goalMode);
+    setPlanMode(queuedPlanMode);
     focusPromptQueueComposer(true);
   }
 
@@ -11149,19 +11191,23 @@ function App() {
     try {
       currentItem = await readPromptQueueItem(editor.item.id);
     } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
       setPromptQueueComposerEditState({
         ...editor,
         status: "editing",
-        error: error instanceof Error ? error.message : String(error),
+        error: message,
       });
+      setStatusMessage(`Could not load queued prompt: ${message}`);
       return;
     }
     if (!currentItem || !isPromptQueueItemMutable(currentItem)) {
+      const message = "This queued prompt has already started.";
       setPromptQueueComposerEditState({
         ...editor,
         status: "editing",
-        error: "This queued prompt has already started.",
+        error: message,
       });
+      setStatusMessage(message);
       return;
     }
     const serializedPrompt = serializePromptInlineFileReferences(
@@ -11184,6 +11230,7 @@ function App() {
         status: "editing",
         error: validationError,
       });
+      setStatusMessage(validationError);
       return;
     }
     try {
@@ -11199,21 +11246,47 @@ function App() {
         throw new Error("The queued prompt's chat is no longer available.");
       }
       const originalSettings = currentItem.snapshot.executionSettings;
+      const selectedEditedModel = originalSettings.useOss
+        ? null
+        : modelsRef.current.find(
+            (model) => model.id === selectedModelId,
+          ) ?? null;
+      if (!originalSettings.useOss && !selectedEditedModel) {
+        throw new Error("Select an available model for the queued prompt.");
+      }
+      if (
+        selectedReasoningEffort &&
+        selectedEditedModel &&
+        !selectedEditedModel.supportedReasoningEfforts.some(
+          (option) =>
+            option.reasoningEffort === selectedReasoningEffort,
+        )
+      ) {
+        throw new Error(
+          "Select an available reasoning level for the queued prompt.",
+        );
+      }
+      const editedPlanMode = planMode;
+      const editedGoalMode = !editedPlanMode && goalMode;
       const executionSettings = createRunExecutionSettings({
         accountId: originalSettings.accountId,
         profileKey: originalSettings.profileKey,
         selectedBranch: originalSettings.selectedBranch,
-        mode: originalSettings.mode,
-        intent: originalSettings.intent,
+        mode: editedPlanMode ? "plan" : "run",
+        intent: editedPlanMode ? "plan" : "normal",
         accessMode: originalSettings.accessMode,
         computerUseEnabled: originalSettings.computerUseEnabled,
-        model: originalSettings.model,
-        reasoningEffort: originalSettings.reasoningEffort,
+        model: originalSettings.useOss
+          ? originalSettings.model
+          : selectedEditedModel?.model ?? null,
+        reasoningEffort: originalSettings.useOss
+          ? originalSettings.reasoningEffort
+          : selectedReasoningEffort,
         useOss: originalSettings.useOss,
         ossProvider: originalSettings.ossProvider,
         contextFiles: contextFilesRef.current,
         selectedSkills: selectedSkillsRef.current,
-        goalMode: originalSettings.goalMode,
+        goalMode: editedGoalMode,
       });
       const contextFingerprint =
         await capturePromptQueueContextFingerprint({
@@ -11239,11 +11312,13 @@ function App() {
       focusPromptQueueComposer();
       setStatusMessage("Queued prompt updated.");
     } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
       setPromptQueueComposerEditState({
         ...editor,
         status: "editing",
-        error: error instanceof Error ? error.message : String(error),
+        error: message,
       });
+      setStatusMessage(`Could not update queued prompt: ${message}`);
     }
   }
 
