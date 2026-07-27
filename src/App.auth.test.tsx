@@ -595,7 +595,7 @@ function promptQueueItemFixture(input: {
   chatId: number;
   prompt: string;
   snapshot: any;
-}) {
+}): PromptQueueItem {
   const position = Array.from(mocks.promptQueueItems.values()).filter(
     (item) =>
       item.chatId === input.chatId &&
@@ -10220,6 +10220,136 @@ describe("App Codex auth", () => {
         expect.any(Object),
       ),
     );
+  });
+
+  it("serializes distinct single-Enter queue submissions while a prior enqueue is pending", async () => {
+    prepareSignedInRun();
+
+    const { user } = await renderApp();
+    await startMockRun(user, "Start the active task");
+
+    let firstEnqueueInput: any;
+    let resolveFirstEnqueue!: (item: PromptQueueItem) => void;
+    mocks.enqueuePromptQueueItemMock.mockImplementationOnce(
+      (input) =>
+        new Promise<PromptQueueItem>((resolve) => {
+          firstEnqueueInput = input;
+          resolveFirstEnqueue = resolve;
+        }),
+    );
+
+    const promptInput = screen.getByLabelText("Prompt");
+    await user.type(promptInput, "Queue the first follow-up");
+    await user.keyboard("{Enter}");
+    await waitFor(() =>
+      expect(mocks.enqueuePromptQueueItemMock).toHaveBeenCalledTimes(1),
+    );
+
+    await user.clear(promptInput);
+    await user.type(promptInput, "Queue the second follow-up");
+    await user.keyboard("{Enter}");
+    expect(mocks.enqueuePromptQueueItemMock).toHaveBeenCalledTimes(1);
+
+    await act(async () => {
+      const firstItem = promptQueueItemFixture(firstEnqueueInput);
+      mocks.promptQueueItems.set(firstItem.id, firstItem);
+      resolveFirstEnqueue(firstItem);
+      await Promise.resolve();
+    });
+
+    await waitFor(() =>
+      expect(mocks.enqueuePromptQueueItemMock).toHaveBeenCalledTimes(2),
+    );
+    expect(
+      mocks.enqueuePromptQueueItemMock.mock.calls.map(([input]) => input.prompt),
+    ).toEqual([
+      "Queue the first follow-up",
+      "Queue the second follow-up",
+    ]);
+    await waitFor(() => expect(promptInput).toHaveValue(""));
+
+    await user.click(screen.getByRole("button", { name: /^Queue/ }));
+    expect(screen.getByText("Queue the first follow-up")).toBeInTheDocument();
+    expect(screen.getByText("Queue the second follow-up")).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: /stop codex/i }));
+  });
+
+  it("edits a queued prompt in the composer without changing its queue position", async () => {
+    prepareSignedInRun();
+
+    const { user } = await renderApp();
+    await startMockRun(user, "Start the active task");
+
+    const promptInput = screen.getByLabelText("Prompt");
+    await user.type(promptInput, "Original queued follow-up");
+    await user.keyboard("{Enter}");
+    await waitFor(() =>
+      expect(mocks.enqueuePromptQueueItemMock).toHaveBeenCalledTimes(1),
+    );
+    await waitFor(() => expect(promptInput).toHaveValue(""));
+    const queuedItemId =
+      mocks.enqueuePromptQueueItemMock.mock.calls[0][0].id;
+    const originalQueuePosition =
+      mocks.promptQueueItems.get(queuedItemId)?.position;
+
+    await user.type(promptInput, "Keep this unrelated draft");
+    await user.click(screen.getByRole("button", { name: /^Queue/ }));
+    const originalQueuedActions = screen.getByRole("toolbar", {
+      name: /Actions for queued prompt: Original queued follow-up/i,
+    });
+    await user.click(
+      within(originalQueuedActions).getByRole("button", {
+        name: "Edit queued prompt",
+      }),
+    );
+
+    expect(
+      screen.queryByRole("dialog", { name: /edit queued prompt/i }),
+    ).not.toBeInTheDocument();
+    expect(screen.getByText("Editing queued prompt")).toBeInTheDocument();
+    expect(promptInput).toHaveValue("Original queued follow-up");
+    await waitFor(() => expect(promptInput).toHaveFocus());
+
+    await user.clear(promptInput);
+    await user.type(promptInput, "Refined queued follow-up");
+    await user.keyboard("{Enter}");
+
+    await waitFor(() =>
+      expect(mocks.updatePromptQueueItemSnapshotMock).toHaveBeenCalledWith(
+        queuedItemId,
+        expect.objectContaining({ prompt: "Refined queued follow-up" }),
+      ),
+    );
+    expect(mocks.enqueuePromptQueueItemMock).toHaveBeenCalledTimes(1);
+    expect(mocks.promptQueueItems.get(queuedItemId)).toEqual(
+      expect.objectContaining({
+        prompt: "Refined queued follow-up",
+        position: originalQueuePosition,
+      }),
+    );
+    await waitFor(() =>
+      expect(promptInput).toHaveValue("Keep this unrelated draft"),
+    );
+
+    await user.click(screen.getByRole("button", { name: /^Queue/ }));
+    const refinedQueuedActions = screen.getByRole("toolbar", {
+      name: /Actions for queued prompt: Refined queued follow-up/i,
+    });
+    await user.click(
+      within(refinedQueuedActions).getByRole("button", {
+        name: "Edit queued prompt",
+      }),
+    );
+    await user.clear(promptInput);
+    await user.type(promptInput, "Do not save this edit");
+    await user.keyboard("{Escape}");
+
+    expect(mocks.updatePromptQueueItemSnapshotMock).toHaveBeenCalledTimes(1);
+    expect(mocks.promptQueueItems.get(queuedItemId)?.prompt).toBe(
+      "Refined queued follow-up",
+    );
+    expect(promptInput).toHaveValue("Keep this unrelated draft");
   });
 
   it("steers a compatible queued normal prompt into the active turn", async () => {

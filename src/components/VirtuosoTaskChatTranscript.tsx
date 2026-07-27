@@ -205,6 +205,8 @@ export type TranscriptViewportSnapshot = {
 
 export type VirtuosoTaskChatTranscriptHandle = {
   captureViewportState: () => void;
+  stabilizeForSubmission: () => void;
+  settleAfterSubmission: () => void;
 };
 
 export type TranscriptNotificationFocusRequest = {
@@ -347,6 +349,12 @@ const VirtuosoTaskChatTranscriptImpl = forwardRef<
     const planAnchorFrameRef = useRef<number | null>(null);
     const planAnchorSettleFrameRef = useRef<number | null>(null);
     const interactionAnchorFrameRef = useRef<number | null>(null);
+    const submissionAnchorFrameRef = useRef<number | null>(null);
+    const submissionAnchorRef = useRef<
+      | { mode: "follow" }
+      | { mode: "preserve"; element: HTMLElement; top: number }
+      | null
+    >(null);
     const suppressInteractionFollowRef = useRef(false);
     const notificationFocusTimerRef = useRef<number | null>(null);
     const latestPositionAttemptCountRef = useRef(0);
@@ -556,10 +564,108 @@ const VirtuosoTaskChatTranscriptImpl = forwardRef<
         publishViewportSnapshot(metadata, snapshot);
       });
     }, [publishViewportSnapshot]);
+    const clearSubmissionAnchorSchedule = useCallback(() => {
+      if (submissionAnchorFrameRef.current !== null) {
+        window.cancelAnimationFrame(submissionAnchorFrameRef.current);
+        submissionAnchorFrameRef.current = null;
+      }
+    }, []);
+    const cancelSubmissionAnchor = useCallback(() => {
+      clearSubmissionAnchorSchedule();
+      submissionAnchorRef.current = null;
+      suppressInteractionFollowRef.current = false;
+    }, [clearSubmissionAnchorSchedule]);
+    const stabilizeForSubmission = useCallback(() => {
+      cancelSubmissionAnchor();
+      const shouldFollow = bottomStateKnownRef.current
+        ? atBottomRef.current
+        : liveFollowIntentRef.current;
+      if (shouldFollow) {
+        submissionAnchorRef.current = { mode: "follow" };
+        return;
+      }
+
+      const scroller = scrollerRef.current;
+      if (!scroller) {
+        submissionAnchorRef.current = null;
+        return;
+      }
+      const viewport = scroller.getBoundingClientRect();
+      const anchor = Array.from(
+        scroller.querySelectorAll<HTMLElement>(
+          "[data-transcript-entry-id]",
+        ),
+      ).find((row) => {
+        const bounds = row.getBoundingClientRect();
+        return bounds.bottom > viewport.top && bounds.top < viewport.bottom;
+      });
+      submissionAnchorRef.current = anchor
+        ? {
+            mode: "preserve",
+            element: anchor,
+            top: anchor.getBoundingClientRect().top,
+          }
+        : null;
+      suppressInteractionFollowRef.current =
+        submissionAnchorRef.current?.mode === "preserve";
+    }, [cancelSubmissionAnchor]);
+    const settleAfterSubmission = useCallback(() => {
+      clearSubmissionAnchorSchedule();
+      const anchor = submissionAnchorRef.current;
+      if (!anchor) return;
+
+      let remainingFrames = 4;
+      const settle = () => {
+        submissionAnchorFrameRef.current = null;
+        const current = submissionAnchorRef.current;
+        if (!current) {
+          suppressInteractionFollowRef.current = false;
+          return;
+        }
+        if (current.mode === "follow") {
+          if (entries.length > 0) {
+            virtuosoRef.current?.scrollToIndex({
+              index: "LAST",
+              align: "end",
+              behavior: "auto",
+            });
+          }
+        } else if (current.element.isConnected) {
+          const offset =
+            current.element.getBoundingClientRect().top - current.top;
+          if (Math.abs(offset) >= 0.5) {
+            virtuosoRef.current?.scrollBy({
+              top: offset,
+              behavior: "auto",
+            });
+          }
+        }
+
+        remainingFrames -= 1;
+        if (remainingFrames > 0) {
+          submissionAnchorFrameRef.current =
+            window.requestAnimationFrame(settle);
+          return;
+        }
+        submissionAnchorRef.current = null;
+        suppressInteractionFollowRef.current = false;
+      };
+
+      submissionAnchorFrameRef.current =
+        window.requestAnimationFrame(settle);
+    }, [clearSubmissionAnchorSchedule, entries.length]);
     useImperativeHandle(
       forwardedRef,
-      () => ({ captureViewportState }),
-      [captureViewportState],
+      () => ({
+        captureViewportState,
+        stabilizeForSubmission,
+        settleAfterSubmission,
+      }),
+      [
+        captureViewportState,
+        settleAfterSubmission,
+        stabilizeForSubmission,
+      ],
     );
 
     const validPlanKeys = useMemo(
@@ -882,6 +988,7 @@ const VirtuosoTaskChatTranscriptImpl = forwardRef<
 
     const markUserScrollActivity = useCallback(
       (movesAwayFromLatest = false) => {
+        cancelSubmissionAnchor();
         clearInteractionAnchorCorrection();
         if (movesAwayFromLatest) disableLiveFollow();
         lastUserScrollEventAtRef.current = monotonicNow();
@@ -893,6 +1000,7 @@ const VirtuosoTaskChatTranscriptImpl = forwardRef<
         scheduleScrollIdleCheck();
       },
       [
+        cancelSubmissionAnchor,
         cancelLatestPosition,
         clearInteractionAnchorCorrection,
         disableLiveFollow,
@@ -1282,6 +1390,7 @@ const VirtuosoTaskChatTranscriptImpl = forwardRef<
         clearCompletionFollowSchedule();
         clearPlanAnchorCorrection();
         clearInteractionAnchorCorrection();
+        cancelSubmissionAnchor();
         clearScrollIdleCheck();
         if (notificationFocusTimerRef.current !== null) {
           window.clearTimeout(notificationFocusTimerRef.current);
@@ -1299,6 +1408,7 @@ const VirtuosoTaskChatTranscriptImpl = forwardRef<
       clearCompletionFollowSchedule,
       clearInteractionAnchorCorrection,
       clearPlanAnchorCorrection,
+      cancelSubmissionAnchor,
       clearScrollIdleCheck,
       onScrollActivityChange,
       publishViewportSnapshot,

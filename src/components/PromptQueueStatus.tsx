@@ -32,12 +32,15 @@ import {
 } from "lucide-react";
 import {
   memo,
+  useCallback,
   useEffect,
+  useId,
   useMemo,
   useRef,
   useState,
   type ReactNode,
 } from "react";
+import { createPortal } from "react-dom";
 import { Virtuoso } from "react-virtuoso";
 import {
   isPromptQueueItemMutable,
@@ -270,7 +273,10 @@ export const PromptQueueStatus = memo(function PromptQueueStatus({
                   <SortableQueueItem
                     item={item}
                     pending={actionPendingItemId === item.id}
-                    onEdit={() => onEdit(item)}
+                    onEdit={() => {
+                      onEdit(item);
+                      setOpen(false);
+                    }}
                     onRemove={() => onRemove(item)}
                     onRetry={() => onRetry(item)}
                     onAutoSendChange={(enabled) =>
@@ -495,19 +501,80 @@ function QueueIconButton({
   destructive?: boolean;
   children: ReactNode;
 }) {
+  const buttonRef = useRef<HTMLButtonElement>(null);
+  const tooltipId = useId();
+  const [tooltip, setTooltip] = useState<{
+    left: number;
+    top: number;
+    placement: "above" | "below";
+  } | null>(null);
+  const updateTooltipPosition = useCallback(() => {
+    const button = buttonRef.current;
+    if (!button) return;
+    const bounds = button.getBoundingClientRect();
+    const viewportWidth = document.documentElement.clientWidth;
+    const left = Math.min(
+      Math.max(bounds.left + bounds.width / 2, 96),
+      Math.max(96, viewportWidth - 96),
+    );
+    const placement = bounds.top >= 52 ? "above" : "below";
+    setTooltip({
+      left,
+      top: placement === "above" ? bounds.top - 8 : bounds.bottom + 8,
+      placement,
+    });
+  }, []);
+  const showTooltip = useCallback(() => {
+    updateTooltipPosition();
+  }, [updateTooltipPosition]);
+  const hideTooltip = useCallback(() => setTooltip(null), []);
+
+  useEffect(() => {
+    if (!tooltip) return;
+    window.addEventListener("resize", updateTooltipPosition);
+    window.addEventListener("scroll", updateTooltipPosition, true);
+    return () => {
+      window.removeEventListener("resize", updateTooltipPosition);
+      window.removeEventListener("scroll", updateTooltipPosition, true);
+    };
+  }, [tooltip, updateTooltipPosition]);
+
   return (
-    <button
-      className={`native-plan-icon-action prompt-queue-icon-action ${
-        emphasis ? "implement" : ""
-      } ${destructive ? "cancel" : ""}`}
-      type="button"
-      onClick={onClick}
-      disabled={disabled}
-      aria-label={label}
-      title={label}
-      data-tooltip={label}
-    >
-      {children}
-    </button>
+    <>
+      <button
+        ref={buttonRef}
+        className={`native-plan-icon-action prompt-queue-icon-action ${
+          emphasis ? "implement" : ""
+        } ${destructive ? "cancel" : ""}`}
+        type="button"
+        onClick={() => {
+          hideTooltip();
+          onClick();
+        }}
+        onMouseEnter={showTooltip}
+        onMouseLeave={hideTooltip}
+        onFocus={showTooltip}
+        onBlur={hideTooltip}
+        disabled={disabled}
+        aria-label={label}
+        aria-describedby={tooltip ? tooltipId : undefined}
+      >
+        {children}
+      </button>
+      {tooltip && typeof document !== "undefined"
+        ? createPortal(
+            <div
+              id={tooltipId}
+              className="prompt-queue-portal-tooltip"
+              data-placement={tooltip.placement}
+              role="tooltip"
+              style={{ left: tooltip.left, top: tooltip.top }}
+            >
+              {label}
+            </div>,
+            document.body,
+          )
+        : null}
+    </>
   );
 }

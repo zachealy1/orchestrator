@@ -1,4 +1,5 @@
 import { act, fireEvent, render, screen } from "@testing-library/react";
+import { createRef } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { emptyRunView } from "../lib/codexEventReducer";
 import { isNativeUserInputRequest } from "../lib/nativePlanMode";
@@ -13,6 +14,7 @@ import {
   TRANSCRIPT_RENDER_AHEAD_PX,
   TRANSCRIPT_SCROLL_IDLE_MS,
   VirtuosoTaskChatTranscript,
+  type VirtuosoTaskChatTranscriptHandle,
 } from "./VirtuosoTaskChatTranscript";
 
 const virtuosoMock = vi.hoisted(() => ({
@@ -1406,6 +1408,140 @@ describe("VirtuosoTaskChatTranscript", () => {
     expect(
       screen.getByRole("button", { name: "Jump to latest message" }),
     ).toBeInTheDocument();
+  });
+
+  it("preserves the first visible row when submission changes surrounding layout", async () => {
+    const transcriptRef = createRef<VirtuosoTaskChatTranscriptHandle>();
+    const commonProps = {
+      transcriptIdentity: "chat:manual-submission-anchor",
+      transcriptVersion: "live",
+      firstItemIndex: 999_998,
+      openAtLatestRequest: null,
+      liveFollow: false,
+      onResolveRequest: vi.fn(),
+    };
+    const { rerender } = render(
+      <VirtuosoTaskChatTranscript
+        ref={transcriptRef}
+        entries={[historyEntry(1), historyEntry(2)]}
+        {...commonProps}
+      />,
+    );
+    const viewport = transcript();
+    configureScrollerGeometry(viewport);
+    act(() => virtuosoMock.lastProps.atBottomStateChange(false));
+
+    const anchor = screen
+      .getByText("Prompt 1")
+      .closest<HTMLElement>("[data-transcript-entry-id]");
+    expect(anchor).not.toBeNull();
+    let anchorTop = 140;
+    anchor!.getBoundingClientRect = () => ({
+      x: 0,
+      y: anchorTop,
+      width: 800,
+      height: 120,
+      top: anchorTop,
+      right: 800,
+      bottom: anchorTop + 120,
+      left: 0,
+      toJSON: () => ({}),
+    });
+    virtuosoMock.scrollBy.mockImplementation(
+      ({ top }: { top: number }) => {
+        anchorTop -= top;
+      },
+    );
+
+    act(() => transcriptRef.current?.stabilizeForSubmission());
+    anchorTop = 212;
+    rerender(
+      <VirtuosoTaskChatTranscript
+        ref={transcriptRef}
+        entries={[historyEntry(1), historyEntry(2), historyEntry(3)]}
+        {...commonProps}
+      />,
+    );
+    act(() => transcriptRef.current?.settleAfterSubmission());
+
+    await vi.waitFor(() =>
+      expect(virtuosoMock.scrollBy).toHaveBeenCalledWith({
+        top: 72,
+        behavior: "auto",
+      }),
+    );
+    expect(virtuosoMock.scrollBy).toHaveBeenCalledTimes(1);
+    expect(virtuosoMock.scrollToIndex).not.toHaveBeenCalled();
+  });
+
+  it("follows the latest row after submission only when already at the bottom", async () => {
+    const transcriptRef = createRef<VirtuosoTaskChatTranscriptHandle>();
+    const commonProps = {
+      transcriptIdentity: "chat:follow-submission",
+      transcriptVersion: "live",
+      firstItemIndex: 999_998,
+      openAtLatestRequest: null,
+      liveFollow: false,
+      onResolveRequest: vi.fn(),
+    };
+    const { rerender } = render(
+      <VirtuosoTaskChatTranscript
+        ref={transcriptRef}
+        entries={[historyEntry(1), historyEntry(2)]}
+        {...commonProps}
+      />,
+    );
+    act(() => virtuosoMock.lastProps.atBottomStateChange(true));
+    virtuosoMock.scrollToIndex.mockClear();
+
+    act(() => transcriptRef.current?.stabilizeForSubmission());
+    rerender(
+      <VirtuosoTaskChatTranscript
+        ref={transcriptRef}
+        entries={[historyEntry(1), historyEntry(2), historyEntry(3)]}
+        {...commonProps}
+      />,
+    );
+    act(() => transcriptRef.current?.settleAfterSubmission());
+
+    await vi.waitFor(() =>
+      expect(virtuosoMock.scrollToIndex).toHaveBeenCalledWith({
+        index: "LAST",
+        align: "end",
+        behavior: "auto",
+      }),
+    );
+    expect(virtuosoMock.scrollBy).not.toHaveBeenCalled();
+  });
+
+  it("cancels pending submission positioning when the user starts scrolling", async () => {
+    const transcriptRef = createRef<VirtuosoTaskChatTranscriptHandle>();
+    render(
+      <VirtuosoTaskChatTranscript
+        ref={transcriptRef}
+        entries={[historyEntry(1), historyEntry(2)]}
+        transcriptIdentity="chat:submission-user-scroll"
+        transcriptVersion="live"
+        firstItemIndex={999_998}
+        openAtLatestRequest={null}
+        liveFollow={false}
+        onResolveRequest={vi.fn()}
+      />,
+    );
+    act(() => virtuosoMock.lastProps.atBottomStateChange(true));
+    virtuosoMock.scrollToIndex.mockClear();
+
+    act(() => {
+      transcriptRef.current?.stabilizeForSubmission();
+      transcriptRef.current?.settleAfterSubmission();
+      fireEvent.wheel(transcript(), { deltaY: -240 });
+    });
+    await act(async () => {
+      await new Promise((resolve) => window.setTimeout(resolve, 30));
+    });
+
+    expect(virtuosoMock.scrollToIndex).not.toHaveBeenCalled();
+    expect(virtuosoMock.scrollBy).not.toHaveBeenCalled();
   });
 
   it("waits for viewport resizing to settle before reaffirming the bottom", async () => {

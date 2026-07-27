@@ -132,10 +132,19 @@ describe("PromptQueueStatus", () => {
       name: "Remove queued prompt",
     });
 
-    expect(edit).toHaveAttribute("title", "Edit queued prompt");
-    expect(sendNow).toHaveAttribute("title", "Send queued prompt now");
-    expect(remove).toHaveAttribute("title", "Remove queued prompt");
     expect(edit).toHaveTextContent("");
+    expect(remove).toHaveTextContent("");
+    await user.hover(edit);
+    const tooltip = screen.getByRole("tooltip", {
+      name: "Edit queued prompt",
+    });
+    expect(tooltip.parentElement).toBe(document.body);
+    expect(tooltip).toHaveClass("prompt-queue-portal-tooltip");
+    expect(edit).toHaveAttribute("aria-describedby", tooltip.id);
+    await user.unhover(edit);
+    expect(
+      screen.queryByRole("tooltip", { name: "Edit queued prompt" }),
+    ).not.toBeInTheDocument();
     await user.click(sendNow);
     expect(props.onSendNow).toHaveBeenCalledWith(props.items[0]);
   });

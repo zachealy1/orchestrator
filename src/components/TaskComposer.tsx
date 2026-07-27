@@ -11,6 +11,7 @@ import {
   Bot,
   Gauge,
   Paperclip,
+  Pencil,
   Play,
   ShieldCheck,
   Square,
@@ -97,6 +98,9 @@ type Props = {
   queueItems?: PromptQueueItem[];
   queuePaused?: boolean;
   queueActionPendingItemId?: string | null;
+  queueEditActive?: boolean;
+  queueEditSaving?: boolean;
+  queueEditError?: string | null;
   accessMode: CodexAccessMode;
   contextFiles: ComposerContextFile[];
   selectedSkills: SelectedComposerSkill[];
@@ -127,6 +131,7 @@ type Props = {
   onQueueSendNow?: (item: PromptQueueItem) => void;
   onQueueResume?: () => void;
   onQueueReorder?: (orderedItemIds: string[]) => void;
+  onQueueEditCancel?: () => void;
   onDispatchQueued?: () => void;
   onAccessModeChange: (accessMode: CodexAccessMode) => void;
   onAddFiles: () => void;
@@ -212,6 +217,9 @@ export const TaskComposer = memo(function TaskComposer({
   queueItems = [],
   queuePaused = false,
   queueActionPendingItemId = null,
+  queueEditActive = false,
+  queueEditSaving = false,
+  queueEditError = null,
   accessMode,
   contextFiles,
   selectedSkills,
@@ -239,6 +247,7 @@ export const TaskComposer = memo(function TaskComposer({
   onQueueSendNow = NOOP_QUEUE_ITEM,
   onQueueResume = NOOP,
   onQueueReorder = NOOP_QUEUE_ORDER,
+  onQueueEditCancel = NOOP,
   onDispatchQueued = NOOP,
   onAccessModeChange,
   onAddFiles,
@@ -277,7 +286,8 @@ export const TaskComposer = memo(function TaskComposer({
     [models, selectedModelId],
   );
   const reasoningOptions = selectedModel?.supportedReasoningEfforts ?? [];
-  const controlsDisabled = models.length === 0 || Boolean(modelLoadError);
+  const controlsDisabled =
+    queueEditActive || models.length === 0 || Boolean(modelLoadError);
   const mentionOpen = activeToken?.trigger === "@";
   const slashOpen = activeToken?.trigger === "/";
   const inlineContextFiles = useMemo(
@@ -391,6 +401,7 @@ export const TaskComposer = memo(function TaskComposer({
   ]);
 
   function handleGoalModeClick() {
+    if (queueEditActive) return;
     const nextGoalMode = !goalMode;
     onGoalModeChange(nextGoalMode);
     if (nextGoalMode && planMode) {
@@ -399,6 +410,7 @@ export const TaskComposer = memo(function TaskComposer({
   }
 
   function handlePlanModeClick() {
+    if (queueEditActive) return;
     const nextPlanMode = !planMode;
     onPlanModeChange(nextPlanMode);
     if (nextPlanMode && goalMode) {
@@ -503,6 +515,16 @@ export const TaskComposer = memo(function TaskComposer({
       return;
     }
 
+    if (
+      queueEditActive &&
+      event.key === "Escape" &&
+      !event.nativeEvent.isComposing
+    ) {
+      event.preventDefault();
+      onQueueEditCancel();
+      return;
+    }
+
     const itemCount = getActivePopoverItemCount();
     if (activeToken && event.key === "ArrowDown" && itemCount > 0) {
       event.preventDefault();
@@ -563,7 +585,7 @@ export const TaskComposer = memo(function TaskComposer({
     ) {
       event.preventDefault();
       closeActiveSearch();
-      if (!disabled) {
+      if (!disabled && !queueEditSaving) {
         if (draftPromptRef.current.trim()) {
           onRun(draftPromptRef.current);
         } else if (!runActive && !queuePaused && queueItems.length > 0) {
@@ -809,19 +831,23 @@ export const TaskComposer = memo(function TaskComposer({
     statusNotices.length > 0 ||
     Boolean(goalProgress) ||
     Boolean(planProgress) ||
+    queueEditActive ||
     queueItems.length > 0;
   const hasDraftPrompt = draftPrompt.trim().length > 0;
   const queueDraftWhileRunning = runActive && hasDraftPrompt;
-  const primaryActionIsStop = runActive && !queueDraftWhileRunning;
-  const primaryActionLabel = primaryActionIsStop
-    ? "Stop Codex"
-    : queueDraftWhileRunning
-      ? "Add prompt to queue"
-      : hasDraftPrompt
-        ? "Run Codex"
-        : queueItems.length > 0
-          ? "Run next queued prompt"
-          : "Run Codex";
+  const primaryActionIsStop =
+    !queueEditActive && runActive && !queueDraftWhileRunning;
+  const primaryActionLabel = queueEditActive
+    ? "Save queued prompt"
+    : primaryActionIsStop
+      ? "Stop Codex"
+      : queueDraftWhileRunning
+        ? "Add prompt to queue"
+        : hasDraftPrompt
+          ? "Run Codex"
+          : queueItems.length > 0
+            ? "Run next queued prompt"
+            : "Run Codex";
 
   return (
     <section
@@ -864,6 +890,30 @@ export const TaskComposer = memo(function TaskComposer({
               onResume={onQueueResume}
               onReorder={onQueueReorder}
             />
+          ) : null}
+          {queueEditActive ? (
+            <div
+              className="prompt-queue-edit-status"
+              role={queueEditError ? "alert" : "status"}
+            >
+              <Pencil size={15} aria-hidden="true" />
+              <strong>Editing queued prompt</strong>
+              <span>
+                {queueEditError ??
+                  "Press Enter to save or Escape to cancel"}
+              </span>
+              <button
+                className="native-plan-icon-action"
+                type="button"
+                aria-label="Cancel queued prompt edit"
+                title="Cancel queued prompt edit"
+                data-tooltip="Cancel queued prompt edit"
+                disabled={queueEditSaving}
+                onClick={onQueueEditCancel}
+              >
+                <X size={15} aria-hidden="true" />
+              </button>
+            </div>
           ) : null}
         </div>
       ) : null}
@@ -970,6 +1020,7 @@ export const TaskComposer = memo(function TaskComposer({
               className={`mode-toggle ${goalMode ? "active" : ""}`}
               type="button"
               aria-pressed={goalMode}
+              disabled={queueEditActive}
               onClick={handleGoalModeClick}
             >
               <Flag size={16} />
@@ -979,6 +1030,7 @@ export const TaskComposer = memo(function TaskComposer({
             <PlanModeToggle
               active={planMode}
               prompt={draftPrompt}
+              disabled={queueEditActive}
               onClick={handlePlanModeClick}
             />
 
@@ -993,7 +1045,11 @@ export const TaskComposer = memo(function TaskComposer({
               className={`send-button ${primaryActionIsStop ? "stop" : ""}`}
               type="button"
               onClick={() => {
-                if (runActive) {
+                if (queueEditActive) {
+                  if (draftPromptRef.current.trim()) {
+                    onRun(draftPromptRef.current);
+                  }
+                } else if (runActive) {
                   if (draftPromptRef.current.trim()) {
                     onRun(draftPromptRef.current);
                   } else {
@@ -1006,13 +1062,15 @@ export const TaskComposer = memo(function TaskComposer({
                 }
               }}
               disabled={
-                queueDraftWhileRunning
-                  ? disabled
-                  : runActive
-                  ? false
-                  : disabled ||
-                    (!hasDraftPrompt &&
-                      (queueItems.length === 0 || queuePaused))
+                queueEditActive
+                  ? queueEditSaving || disabled || !hasDraftPrompt
+                  : queueDraftWhileRunning
+                    ? disabled
+                    : runActive
+                      ? false
+                      : disabled ||
+                        (!hasDraftPrompt &&
+                          (queueItems.length === 0 || queuePaused))
               }
               aria-label={primaryActionLabel}
               title={primaryActionLabel}
@@ -1029,11 +1087,15 @@ export const TaskComposer = memo(function TaskComposer({
 
         <ComposerOptionsRow
           accessMode={accessMode}
-          accountSelectionDisabled={accountSelectionDisabled}
+          accountSelectionDisabled={
+            accountSelectionDisabled || queueEditActive
+          }
           accounts={accounts}
           controlsDisabled={controlsDisabled}
           modelLoadError={modelLoadError}
-          modelSelectionDisabled={modelSelectionDisabled}
+          modelSelectionDisabled={
+            modelSelectionDisabled || queueEditActive
+          }
           models={models}
           onAccessModeChange={onAccessModeChange}
           onAccountChange={onAccountChange}
@@ -1044,6 +1106,7 @@ export const TaskComposer = memo(function TaskComposer({
           accountPlaceholder={accountPlaceholder}
           selectedModel={selectedModel}
           selectedReasoningEffort={selectedReasoningEffort}
+          settingsSelectionDisabled={queueEditActive}
         />
 
         {selectedSkills.length > 0 ? (
@@ -1145,10 +1208,12 @@ const PromptTokenEstimate = memo(function PromptTokenEstimate({
 
 const PlanModeToggle = memo(function PlanModeToggle({
   active,
+  disabled,
   prompt,
   onClick,
 }: {
   active: boolean;
+  disabled: boolean;
   prompt: string;
   onClick: () => void;
 }) {
@@ -1165,6 +1230,7 @@ const PlanModeToggle = memo(function PlanModeToggle({
       }`}
       type="button"
       aria-pressed={active}
+      disabled={disabled}
       onClick={onClick}
     >
       <BrainCircuit size={16} />
@@ -1190,6 +1256,7 @@ const ComposerOptionsRow = memo(function ComposerOptionsRow({
   accountPlaceholder,
   selectedModel,
   selectedReasoningEffort,
+  settingsSelectionDisabled,
 }: {
   accessMode: CodexAccessMode;
   accountSelectionDisabled: boolean;
@@ -1207,6 +1274,7 @@ const ComposerOptionsRow = memo(function ComposerOptionsRow({
   accountPlaceholder: string;
   selectedModel: CodexModel | null;
   selectedReasoningEffort: string | null;
+  settingsSelectionDisabled: boolean;
 }) {
   const accountOptions = useMemo(
     () =>
@@ -1263,6 +1331,7 @@ const ComposerOptionsRow = memo(function ComposerOptionsRow({
         placeholder="Ask for approval"
         icon={<ShieldCheck size={16} />}
         className="access-select"
+        disabled={settingsSelectionDisabled}
         onChange={handleAccessModeChange}
       />
 

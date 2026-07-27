@@ -931,6 +931,88 @@ describe("TaskComposer", () => {
     expect(promptInput).toHaveValue("Fix the failing test");
   });
 
+  it("submits a new prompt with one Enter when the queue already has an item", async () => {
+    const onRun = vi.fn();
+    const { user } = renderControlledComposer({
+      queueItems: [queuedPrompt()],
+      onRun,
+    });
+    const promptInput = screen.getByLabelText("Prompt");
+
+    await user.type(promptInput, "Queue this after the existing prompt");
+    await user.keyboard("{Enter}");
+
+    expect(onRun).toHaveBeenCalledOnce();
+    expect(onRun).toHaveBeenCalledWith(
+      "Queue this after the existing prompt",
+    );
+  });
+
+  it("keeps Shift+Enter as multiline input when prompts are queued", async () => {
+    const onRun = vi.fn();
+    const { user } = renderControlledComposer({
+      queueItems: [queuedPrompt()],
+      onRun,
+    });
+    const promptInput = screen.getByLabelText("Prompt");
+
+    await user.type(promptInput, "First line");
+    await user.keyboard("{Shift>}{Enter}{/Shift}");
+    await user.type(promptInput, "Second line");
+
+    expect(onRun).not.toHaveBeenCalled();
+    expect(promptInput).toHaveValue("First line\nSecond line");
+  });
+
+  it("uses the normal composer to save or cancel a queued prompt edit", async () => {
+    const onRun = vi.fn();
+    const onQueueEditCancel = vi.fn();
+    const { user } = renderControlledComposer({
+      prompt: "Refine the queued prompt",
+      queueItems: [queuedPrompt()],
+      queueEditActive: true,
+      onQueueEditCancel,
+      onRun,
+    });
+    const promptInput = screen.getByLabelText("Prompt");
+
+    expect(screen.getByText("Editing queued prompt")).toBeInTheDocument();
+    expect(
+      screen.queryByRole("dialog", { name: "Edit queued prompt" }),
+    ).not.toBeInTheDocument();
+
+    await user.click(promptInput);
+    await user.keyboard("{Enter}");
+    expect(onRun).toHaveBeenCalledWith("Refine the queued prompt");
+
+    await user.keyboard("{Escape}");
+    expect(onQueueEditCancel).toHaveBeenCalledOnce();
+  });
+
+  it("never turns an empty queued-prompt edit into a Stop action", async () => {
+    const onRun = vi.fn();
+    const onStop = vi.fn();
+    renderControlledComposer({
+      prompt: "",
+      queueItems: [queuedPrompt()],
+      queueEditActive: true,
+      runActive: true,
+      onRun,
+      onStop,
+    });
+
+    const save = screen.getByRole("button", {
+      name: "Save queued prompt",
+    });
+    expect(save).toBeDisabled();
+    expect(
+      screen.queryByRole("button", { name: "Stop Codex" }),
+    ).not.toBeInTheDocument();
+    fireEvent.click(save);
+    expect(onRun).not.toHaveBeenCalled();
+    expect(onStop).not.toHaveBeenCalled();
+  });
+
   it("dispatches the first queued prompt when Enter is pressed on an empty composer", async () => {
     const onDispatchQueued = vi.fn();
     const onRun = vi.fn();
