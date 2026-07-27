@@ -395,6 +395,27 @@ export async function listRestoredPromptQueueItems() {
     .filter((item): item is PromptQueueItem => item !== null);
 }
 
+export async function holdRestoredPromptQueueItems() {
+  const db = await getDatabase();
+  await db.execute(
+    `UPDATE prompt_queue_items
+     SET auto_send_enabled = 0,
+         send_now_priority = NULL,
+         status = CASE
+           WHEN status = 'scheduled-next' THEN 'queued'
+           ELSE status
+         END,
+         updated_at = CURRENT_TIMESTAMP
+     WHERE status NOT IN ('skipped', 'completed')
+       AND (
+         auto_send_enabled != 0
+         OR send_now_priority IS NOT NULL
+         OR status = 'scheduled-next'
+       )`,
+  );
+  return listRestoredPromptQueueItems();
+}
+
 export async function enqueuePromptQueueItem(input: {
   id: string;
   clientMessageId: string;

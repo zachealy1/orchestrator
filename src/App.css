@@ -4325,7 +4325,7 @@ select:disabled {
   display: grid;
   max-height: min(520px, 72vh);
   min-height: 0;
-  grid-template-rows: auto auto minmax(0, 1fr);
+  grid-template-rows: auto minmax(0, 1fr);
   overflow: visible;
   border: 1px solid var(--color-divider);
   border-radius: var(--radius);
@@ -4358,27 +4358,6 @@ select:disabled {
 .prompt-queue-popover-header span {
   color: var(--color-text-secondary);
   font-size: 0.74rem;
-}
-
-.prompt-queue-paused-notice {
-  display: flex;
-  min-width: 0;
-  min-height: 36px;
-  align-items: center;
-  gap: 8px;
-  border-bottom: 1px solid var(--color-divider);
-  color: var(--color-text-secondary);
-  padding: 3px 8px 3px 14px;
-  font-size: 0.76rem;
-}
-
-.prompt-queue-paused-notice > svg {
-  color: var(--color-accent);
-}
-
-.prompt-queue-paused-notice > span {
-  min-width: 0;
-  flex: 1 1 auto;
 }
 
 .prompt-queue-list {

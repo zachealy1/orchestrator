@@ -88,14 +88,12 @@ function renderQueue(
 ) {
   const props: React.ComponentProps<typeof PromptQueueStatus> = {
     items: [queueItem("queue-1")],
-    paused: false,
     actionPendingItemId: null,
     onEdit: vi.fn(),
     onRemove: vi.fn(),
     onRetry: vi.fn(),
     onAutoSendChange: vi.fn(),
     onSendNow: vi.fn(),
-    onResume: vi.fn(),
     onReorder: vi.fn(),
     ...overrides,
   };
@@ -175,13 +173,27 @@ describe("PromptQueueStatus", () => {
     expect(props.onAutoSendChange).toHaveBeenCalledWith(heldItem, true);
   });
 
-  it("requires explicit resume for a paused restored queue", async () => {
-    const { user, props } = renderQueue({ paused: true });
+  it("does not render queue-level paused controls", async () => {
+    const { user } = renderQueue({
+      items: [
+        {
+          ...queueItem("queue-1"),
+          autoSendEnabled: false,
+        },
+      ],
+    });
 
-    expect(screen.getByText("Queue paused")).toBeInTheDocument();
-    const resume = screen.getByRole("button", { name: "Resume queue" });
-    await user.click(resume);
-    expect(props.onResume).toHaveBeenCalledTimes(1);
+    expect(screen.queryByText("Queue paused")).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "Resume queue" }),
+    ).not.toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: /queued/i }));
+    expect(
+      screen.queryByText("Queue processing is paused."),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "Restore automatic sending" }),
+    ).toBeInTheDocument();
   });
 
   it("disables mutation and reordering for the active item", async () => {

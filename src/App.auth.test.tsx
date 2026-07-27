@@ -328,7 +328,7 @@ vi.mock("./db", () => ({
   listDuplicateProfilesPendingCleanup:
     mocks.listDuplicateProfilesPendingCleanupMock,
   listPromptQueueItems: mocks.listPromptQueueItemsMock,
-  listRestoredPromptQueueItems: mocks.listRestoredPromptQueueItemsMock,
+  holdRestoredPromptQueueItems: mocks.listRestoredPromptQueueItemsMock,
   listWorkspaceChats: mocks.listWorkspaceChatsMock,
   listWorkspaceRuns: mocks.listWorkspaceRunsMock,
   listWorkspaces: mocks.listWorkspacesMock,
@@ -3845,15 +3845,23 @@ describe("App Codex auth", () => {
       }),
     );
 
-    expect(await screen.findByText("Queue paused")).toBeInTheDocument();
-    await user.click(screen.getByRole("button", { name: /^Queue paused/ }));
+    expect(await screen.findByText("Queued")).toBeInTheDocument();
+    expect(screen.queryByText("Queue paused")).not.toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: /^Queued/ }));
     expect(screen.getAllByText("Held").length).toBeGreaterThan(0);
-    expect(
-      screen.getByRole("button", { name: "Restore automatic sending" }),
-    ).toBeInTheDocument();
+    const restore = screen.getByRole("button", {
+      name: "Restore automatic sending",
+    });
     expect(
       mocks.codexRpcMock.mock.calls.some(([, method]) => method === "turn/start"),
     ).toBe(false);
+    await user.click(restore);
+    await waitFor(() =>
+      expect(mocks.setPromptQueueItemAutoSendMock).toHaveBeenCalledWith(
+        heldItem.id,
+        true,
+      ),
+    );
   });
 
   it("opens another history chat while the current plan awaits review", async () => {
@@ -6637,7 +6645,8 @@ describe("App Codex auth", () => {
       ),
     );
     expect(screen.getByLabelText("Prompt")).toHaveValue("");
-    expect(screen.getByText("Queue paused")).toBeInTheDocument();
+    expect(screen.queryByText("Queue paused")).not.toBeInTheDocument();
+    expect(screen.getByText("Queued")).toBeInTheDocument();
     expect(mocks.createChatMock).toHaveBeenCalledTimes(1);
     expect(
       mocks.codexRpcMock.mock.calls.some((call) => call[1] === "turn/start"),
@@ -7625,7 +7634,8 @@ describe("App Codex auth", () => {
       ),
     );
     expect(screen.getByLabelText("Prompt")).toHaveValue("");
-    expect(screen.getByText("Queue paused")).toBeInTheDocument();
+    expect(screen.queryByText("Queue paused")).not.toBeInTheDocument();
+    expect(screen.getByText("Queued")).toBeInTheDocument();
     expect(screen.getByText("Image not sent")).toBeInTheDocument();
     expect(mocks.createTaskMock).not.toHaveBeenCalled();
     expect(
@@ -9369,7 +9379,8 @@ describe("App Codex auth", () => {
       ),
     );
     expect(prompt).toHaveValue("");
-    expect(screen.getByText("Queue paused")).toBeInTheDocument();
+    expect(screen.queryByText("Queue paused")).not.toBeInTheDocument();
+    expect(screen.getByText("Queued")).toBeInTheDocument();
     expect(mocks.failPromptQueueItemMock).toHaveBeenCalledWith(
       expect.any(String),
       expect.stringMatching(/persist|ownership|activate/i),
@@ -10131,7 +10142,8 @@ describe("App Codex auth", () => {
       expect(
         within(screen.getByLabelText("Run summary")).getByText("Stopped by user."),
       ).toBeInTheDocument();
-      expect(screen.getByText("Queue paused")).toBeInTheDocument();
+      expect(screen.queryByText("Queue paused")).not.toBeInTheDocument();
+      expect(screen.getByText("Queued")).toBeInTheDocument();
       expect(mocks.stopCodexMock).not.toHaveBeenCalled();
       expect(mocks.runPreflightMock).not.toHaveBeenCalled();
       expect(mocks.createTaskMock).not.toHaveBeenCalled();
@@ -10179,7 +10191,8 @@ describe("App Codex auth", () => {
     });
     expect(await screen.findByText("Preflight failed")).toBeInTheDocument();
     expect(screen.getByLabelText("Prompt")).toHaveValue("");
-    expect(screen.getByText("Queue paused")).toBeInTheDocument();
+    expect(screen.queryByText("Queue paused")).not.toBeInTheDocument();
+    expect(screen.getByText("Queued")).toBeInTheDocument();
     expect(mocks.failPromptQueueItemMock).toHaveBeenCalledWith(
       expect.any(String),
       "Preflight failed",
@@ -10493,12 +10506,13 @@ describe("App Codex auth", () => {
       await Promise.resolve();
     });
     await waitFor(() =>
-      expect(screen.getByText("Queue paused")).toBeInTheDocument(),
+      expect(screen.getByText("Queued")).toBeInTheDocument(),
     );
+    expect(screen.queryByText("Queue paused")).not.toBeInTheDocument();
     expect(turnStartCalls).toBe(1);
 
     await user.click(
-      screen.getByRole("button", { name: /^Queue paused/ }),
+      screen.getByRole("button", { name: /^Queued/ }),
     );
     const failedActions = screen.getByRole("toolbar", {
       name: /Actions for queued prompt: Run the first attempt/i,
@@ -12106,8 +12120,9 @@ describe("App Codex auth", () => {
       ),
     );
     await waitFor(() =>
-      expect(screen.getByText("Queue paused")).toBeInTheDocument(),
+      expect(screen.getByText("Queued")).toBeInTheDocument(),
     );
+    expect(screen.queryByText("Queue paused")).not.toBeInTheDocument();
     expect(mocks.codexRpcMock).toHaveBeenCalledWith(
       7,
       "turn/interrupt",

@@ -54,7 +54,6 @@ import type {
 
 type Props = {
   items: PromptQueueItem[];
-  paused: boolean;
   actionPendingItemId?: string | null;
   onEdit: (item: PromptQueueItem) => void;
   onRemove: (item: PromptQueueItem) => void;
@@ -64,7 +63,6 @@ type Props = {
     enabled: boolean,
   ) => void;
   onSendNow: (item: PromptQueueItem) => void;
-  onResume: () => void;
   onReorder: (orderedItemIds: string[]) => void;
 };
 
@@ -88,14 +86,12 @@ function queueItemStatusLabel(item: PromptQueueItem) {
 
 export const PromptQueueStatus = memo(function PromptQueueStatus({
   items,
-  paused,
   actionPendingItemId = null,
   onEdit,
   onRemove,
   onRetry,
   onAutoSendChange,
   onSendNow,
-  onResume,
   onReorder,
 }: Props) {
   const [open, setOpen] = useState(false);
@@ -181,11 +177,7 @@ export const PromptQueueStatus = memo(function PromptQueueStatus({
   if (items.length === 0) return null;
 
   const countLabel = `${items.length} prompt${items.length === 1 ? "" : "s"}`;
-  const rowTitle = paused
-    ? "Queue paused"
-    : activeItem
-      ? "Queue"
-      : "Queued";
+  const rowTitle = activeItem ? "Queue" : "Queued";
   const rowDetail = previewItem
     ? `${queueItemStatusLabel(previewItem)} · ${queuePromptPreview(previewItem.prompt)}`
     : countLabel;
@@ -210,15 +202,6 @@ export const PromptQueueStatus = memo(function PromptQueueStatus({
           <ChevronUp size={15} aria-hidden="true" />
         )}
       </button>
-      {paused ? (
-        <QueueIconButton
-          label="Resume queue"
-          onClick={onResume}
-          disabled={actionPendingItemId !== null}
-        >
-          <Play size={15} aria-hidden="true" />
-        </QueueIconButton>
-      ) : null}
       {open ? (
         <div
           ref={popoverRef}
@@ -236,19 +219,6 @@ export const PromptQueueStatus = memo(function PromptQueueStatus({
               <X size={15} aria-hidden="true" />
             </QueueIconButton>
           </header>
-          {paused ? (
-            <div className="prompt-queue-paused-notice" role="status">
-              <AlertCircle size={15} aria-hidden="true" />
-              <span>Queue processing is paused.</span>
-              <QueueIconButton
-                label="Resume queue"
-                onClick={onResume}
-                disabled={actionPendingItemId !== null}
-              >
-                <Play size={15} aria-hidden="true" />
-              </QueueIconButton>
-            </div>
-          ) : null}
           <DndContext
             sensors={sensors}
             collisionDetection={closestCenter}

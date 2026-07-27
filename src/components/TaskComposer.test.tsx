@@ -1030,11 +1030,10 @@ describe("TaskComposer", () => {
     expect(onRun).not.toHaveBeenCalled();
   });
 
-  it("requires an explicit resume before dispatching a paused queue", async () => {
+  it("does not dispatch a held queue item from an empty composer", async () => {
     const onDispatchQueued = vi.fn();
     const { user } = renderControlledComposer({
-      queueItems: [queuedPrompt()],
-      queuePaused: true,
+      queueItems: [{ ...queuedPrompt(), autoSendEnabled: false }],
       onDispatchQueued,
     });
     const promptInput = screen.getByLabelText("Prompt");

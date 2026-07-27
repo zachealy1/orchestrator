@@ -27,6 +27,7 @@ import {
   createChatWithQueuedPrompt,
   createRun,
   failChatTitleGeneration,
+  holdRestoredPromptQueueItems,
   listLocalChatTranscript,
   listRestoredPromptQueueItems,
   listWorkspaceChats,
@@ -274,6 +275,21 @@ describe("prompt queue persistence", () => {
       "WHERE status NOT IN ('skipped', 'completed')",
     );
     expect(mocks.select.mock.calls[0]?.[0]).toContain("auto_send_enabled");
+  });
+
+  it("holds every restored queue item before returning it to the app", async () => {
+    mocks.execute.mockResolvedValueOnce({ rowsAffected: 2 });
+    mocks.select.mockResolvedValueOnce([]);
+
+    await expect(holdRestoredPromptQueueItems()).resolves.toEqual([]);
+
+    const [query] = mocks.execute.mock.calls[0] ?? [];
+    expect(query).toContain("SET auto_send_enabled = 0");
+    expect(query).toContain("send_now_priority = NULL");
+    expect(query).toContain(
+      "WHEN status = 'scheduled-next' THEN 'queued'",
+    );
+    expect(query).toContain("WHERE status NOT IN ('skipped', 'completed')");
   });
 
   it("removes durable queue items when a chat is soft-deleted", async () => {

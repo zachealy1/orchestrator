@@ -66,6 +66,7 @@ import {
   isImageContextFile,
   loadImageAttachmentPreview,
 } from "../lib/imageAttachments";
+import { isPromptQueueItemAutoDispatchEligible } from "../lib/promptQueue";
 import { estimateTokens, recommendRoute } from "../lib/taskAnalysis";
 
 export type ComposerStatusNotice = {
@@ -96,7 +97,6 @@ type Props = {
   planProgress?: PlanProgressIndicatorModel | null;
   statusNotices?: ComposerStatusNotice[];
   queueItems?: PromptQueueItem[];
-  queuePaused?: boolean;
   queueActionPendingItemId?: string | null;
   queueEditActive?: boolean;
   queueEditSaving?: boolean;
@@ -129,7 +129,6 @@ type Props = {
     enabled: boolean,
   ) => void;
   onQueueSendNow?: (item: PromptQueueItem) => void;
-  onQueueResume?: () => void;
   onQueueReorder?: (orderedItemIds: string[]) => void;
   onQueueEditCancel?: () => void;
   onDispatchQueued?: () => void;
@@ -215,7 +214,6 @@ export const TaskComposer = memo(function TaskComposer({
   planProgress = null,
   statusNotices = [],
   queueItems = [],
-  queuePaused = false,
   queueActionPendingItemId = null,
   queueEditActive = false,
   queueEditSaving = false,
@@ -245,7 +243,6 @@ export const TaskComposer = memo(function TaskComposer({
   onQueueRetry = NOOP_QUEUE_ITEM,
   onQueueAutoSendChange = NOOP_QUEUE_AUTO_SEND,
   onQueueSendNow = NOOP_QUEUE_ITEM,
-  onQueueResume = NOOP,
   onQueueReorder = NOOP_QUEUE_ORDER,
   onQueueEditCancel = NOOP,
   onDispatchQueued = NOOP,
@@ -588,7 +585,14 @@ export const TaskComposer = memo(function TaskComposer({
       if (!disabled && !queueEditSaving) {
         if (draftPromptRef.current.trim()) {
           onRun(draftPromptRef.current);
-        } else if (!runActive && !queuePaused && queueItems.length > 0) {
+        } else if (
+          !runActive &&
+          queueItems.some(
+            (item) =>
+              ["queued", "scheduled-next"].includes(item.status) &&
+              isPromptQueueItemAutoDispatchEligible(item),
+          )
+        ) {
           onDispatchQueued();
         }
       }
@@ -834,6 +838,11 @@ export const TaskComposer = memo(function TaskComposer({
     queueEditActive ||
     queueItems.length > 0;
   const hasDraftPrompt = draftPrompt.trim().length > 0;
+  const hasRunnableQueuedPrompt = queueItems.some(
+    (item) =>
+      ["queued", "scheduled-next"].includes(item.status) &&
+      isPromptQueueItemAutoDispatchEligible(item),
+  );
   const queueDraftWhileRunning = runActive && hasDraftPrompt;
   const primaryActionIsStop =
     !queueEditActive && runActive && !queueDraftWhileRunning;
@@ -880,14 +889,12 @@ export const TaskComposer = memo(function TaskComposer({
           {queueItems.length > 0 ? (
             <PromptQueueStatus
               items={queueItems}
-              paused={queuePaused}
               actionPendingItemId={queueActionPendingItemId}
               onEdit={onQueueEdit}
               onRemove={onQueueRemove}
               onRetry={onQueueRetry}
               onAutoSendChange={onQueueAutoSendChange}
               onSendNow={onQueueSendNow}
-              onResume={onQueueResume}
               onReorder={onQueueReorder}
             />
           ) : null}
@@ -1070,7 +1077,7 @@ export const TaskComposer = memo(function TaskComposer({
                       ? false
                       : disabled ||
                         (!hasDraftPrompt &&
-                          (queueItems.length === 0 || queuePaused))
+                          !hasRunnableQueuedPrompt)
               }
               aria-label={primaryActionLabel}
               title={primaryActionLabel}

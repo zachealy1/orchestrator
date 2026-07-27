@@ -90,8 +90,8 @@ import {
   getChatRecord,
   getChatWithRuns,
   getNextChatTurnIndex,
+  holdRestoredPromptQueueItems,
   listPromptQueueItems,
-  listRestoredPromptQueueItems,
   listLocalChatTranscript,
   listWorkspaceChats,
   listCodexAccounts,
@@ -1665,9 +1665,6 @@ function App() {
   const [promptQueuesByChat, setPromptQueuesByChat] = useState<
     Record<number, PromptQueueItem[] | undefined>
   >({});
-  const [pausedPromptQueueChatIds, setPausedPromptQueueChatIds] = useState<
-    Set<number>
-  >(() => new Set());
   const [promptQueueActionPendingItemId, setPromptQueueActionPendingItemId] =
     useState<string | null>(null);
   const [promptQueueComposerEdit, setPromptQueueComposerEdit] =
@@ -1888,7 +1885,6 @@ function App() {
   historicalTranscriptRef.current = historicalTranscript;
   pendingAccountHandoffsRef.current = pendingAccountHandoffs;
   promptQueuesByChatRef.current = promptQueuesByChat;
-  pausedPromptQueueChatIdsRef.current = pausedPromptQueueChatIds;
   workspacesRef.current = workspaces;
   activeViewRef.current = activeView;
   accountMenuOpenRef.current = accountMenuOpen;
@@ -2522,7 +2518,6 @@ function App() {
       workspaceChatSessionsRef.current[selectedWorkspaceRef.current?.id ?? -1]
         ?.chatId;
     if (chatId) {
-      setPromptQueuePaused(chatId, false);
       schedulePromptQueueDispatch(chatId);
     }
   });
@@ -2546,7 +2541,6 @@ function App() {
       void sendQueuedPromptNow(item);
     },
   );
-  const resumeComposerPromptQueue = useStableEvent(resumeSelectedPromptQueue);
   const reorderComposerPromptQueue = useStableEvent(
     (orderedItemIds: string[]) => {
       void reorderSelectedPromptQueue(orderedItemIds);
@@ -2623,9 +2617,6 @@ function App() {
         .filter(isPromptQueueItemPending)
         .sort(comparePromptQueueDisplayOrder)
     : [];
-  const selectedPromptQueuePaused = selectedWorkspaceChatSession
-    ? pausedPromptQueueChatIds.has(selectedWorkspaceChatSession.chatId)
-    : false;
   useEffect(() => {
     const edit = promptQueueComposerEditRef.current;
     if (
@@ -4135,7 +4126,7 @@ function App() {
       recoverInterruptedChatTitleGenerations(),
       recoverInterruptedPromptQueueItems(),
     ]);
-    const restoredQueueItems = await listRestoredPromptQueueItems();
+    const restoredQueueItems = await holdRestoredPromptQueueItems();
     const restoredQueues = restoredQueueItems.reduce<
       Record<number, PromptQueueItem[]>
     >((queues, item) => {
@@ -4151,7 +4142,6 @@ function App() {
       [...restoredPausedChatIds].map((chatId) => [chatId, "restart"]),
     );
     setPromptQueuesByChat(restoredQueues);
-    setPausedPromptQueueChatIds(restoredPausedChatIds);
     const duplicateProfileIds = await listDuplicateProfilesPendingCleanup();
     await Promise.allSettled(
       duplicateProfileIds.map(async (accountId) => {
@@ -4354,7 +4344,6 @@ function App() {
       promptQueuePauseReasonsRef.current.delete(chatId);
     }
     pausedPromptQueueChatIdsRef.current = next;
-    setPausedPromptQueueChatIds(next);
   }
 
   function startChatTitleGeneration(request: ChatTitleGenerationRequest) {
@@ -11377,7 +11366,10 @@ function App() {
       upsertPromptQueueItemInMemory(updated);
 
       const pauseReason = promptQueuePauseReasonsRef.current.get(item.chatId);
-      if (!enabled && (pauseReason === "failure" || pauseReason === "stale")) {
+      if (
+        enabled ||
+        (!enabled && (pauseReason === "failure" || pauseReason === "stale"))
+      ) {
         setPromptQueuePaused(item.chatId, false);
       }
       if (!pausedPromptQueueChatIdsRef.current.has(item.chatId)) {
@@ -11466,14 +11458,6 @@ function App() {
         }`,
       );
     }
-  }
-
-  function resumeSelectedPromptQueue() {
-    const chatId = selectedWorkspaceChatSession?.chatId;
-    if (!chatId) return;
-    setPromptQueuePaused(chatId, false);
-    setStatusMessage("Prompt queue resumed.");
-    schedulePromptQueueDispatch(chatId);
   }
 
   async function handleEditLatestPrompt(
@@ -16874,7 +16858,6 @@ function App() {
                   planProgress={selectedPlanProgress}
                   statusNotices={composerStatusNotices}
                   queueItems={selectedPromptQueueItems}
-                  queuePaused={selectedPromptQueuePaused}
                   queueActionPendingItemId={promptQueueActionPendingItemId}
                   queueEditActive={promptQueueComposerEdit !== null}
                   queueEditSaving={
@@ -16912,7 +16895,6 @@ function App() {
                   onQueueRetry={retryComposerQueuedPrompt}
                   onQueueAutoSendChange={changeComposerQueuedPromptAutoSend}
                   onQueueSendNow={sendComposerQueuedPromptNow}
-                  onQueueResume={resumeComposerPromptQueue}
                   onQueueReorder={reorderComposerPromptQueue}
                   onQueueEditCancel={cancelComposerQueuedPromptEdit}
                   onDispatchQueued={dispatchSelectedPromptQueue}
