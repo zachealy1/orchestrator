@@ -3164,6 +3164,11 @@ function App() {
     historicalTranscript?.chatId === selectedWorkspaceChatSession?.chatId
       ? historicalTranscript
       : null;
+  const selectedTranscriptIdentity = selectedWorkspaceChatSession?.chatId
+    ? `chat:${selectedWorkspaceChatSession.chatId}`
+    : selectedDraftChatEntryId
+      ? `draft:${selectedDraftChatEntryId}`
+      : `workspace:${selectedWorkspace?.id ?? "none"}:live`;
   const selectedTranscriptViewportSnapshot = selectedWorkspace
     ? workspaceTaskMemoriesRef.current[selectedWorkspace.id]
         ?.transcriptViewportSnapshot ?? null
@@ -9324,7 +9329,11 @@ function App() {
     };
     runControl.entry = nextEntry;
     if (visibleTarget) {
-      taskChatTranscriptRef.current?.stabilizeForSubmission();
+      // Queue state is committed before dispatch. Let Virtuoso own the
+      // subsequent append so it cannot compete with a second anchor.
+      if (!snapshot.fromQueue) {
+        taskChatTranscriptRef.current?.stabilizeForSubmission();
+      }
       flushSync(() => {
         if (snapshot.replacementClientId) {
           replaceTaskChatEntry(snapshot.replacementClientId, nextEntry);
@@ -9339,7 +9348,9 @@ function App() {
           );
         }
       });
-      taskChatTranscriptRef.current?.settleAfterSubmission();
+      if (!snapshot.fromQueue) {
+        taskChatTranscriptRef.current?.settleAfterSubmission();
+      }
     }
     registerRunControl(runControl);
     if (visibleTarget) {
@@ -16829,17 +16840,9 @@ function App() {
                   >
                     <VirtuosoTaskChatTranscript
                       ref={taskChatTranscriptRef}
-                      key={
-                        selectedHistoricalTranscript
-                          ? `history:${selectedHistoricalTranscript.chatId}:${selectedHistoricalTranscript.sourceVersion}`
-                          : `live:${selectedWorkspace?.id ?? "none"}`
-                      }
+                      key={selectedTranscriptIdentity}
                       entries={visibleTaskChatEntries}
-                      transcriptIdentity={
-                        selectedWorkspaceChatSession?.chatId
-                          ? `chat:${selectedWorkspaceChatSession.chatId}`
-                          : `workspace:${selectedWorkspace?.id ?? "none"}:live`
-                      }
+                      transcriptIdentity={selectedTranscriptIdentity}
                       transcriptVersion={
                         selectedHistoricalTranscript?.sourceVersion ?? "live"
                       }

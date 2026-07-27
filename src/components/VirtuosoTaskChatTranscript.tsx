@@ -90,6 +90,11 @@ type CachedTranscriptState = {
   entryCount: number;
 };
 
+type InitialRestoredState = {
+  initialized: boolean;
+  snapshot: StateSnapshot | undefined;
+};
+
 type TranscriptCacheMetadata = Omit<
   TranscriptViewportSnapshot,
   "snapshot" | "workspaceId"
@@ -378,6 +383,10 @@ const VirtuosoTaskChatTranscriptImpl = forwardRef<
       null,
     );
     const stableHeightEstimatesRef = useRef<StableHeightEstimates | null>(null);
+    const initialRestoredStateRef = useRef<InitialRestoredState>({
+      initialized: false,
+      snapshot: undefined,
+    });
     const liveTailInteractionRevisionRef =
       useRef<LiveTailInteractionRevision>({
         entryId: null,
@@ -518,9 +527,9 @@ const VirtuosoTaskChatTranscriptImpl = forwardRef<
       ],
     );
 
-    const restoredState = useMemo(
-      () => {
-        if (suppressRestoreOnMountRef.current) return undefined;
+    if (!initialRestoredStateRef.current.initialized) {
+      let snapshot: StateSnapshot | undefined;
+      if (!suppressRestoreOnMountRef.current) {
         if (
           restoredViewportSnapshot &&
           restoredViewportSnapshot.transcriptIdentity === transcriptIdentity &&
@@ -528,14 +537,17 @@ const VirtuosoTaskChatTranscriptImpl = forwardRef<
           restoredViewportSnapshot.viewportWidthBucket === viewportWidthBucket &&
           restoredViewportSnapshot.entryCount === entries.length
         ) {
-          return restoredViewportSnapshot.snapshot;
+          snapshot = restoredViewportSnapshot.snapshot;
+        } else {
+          snapshot = readCachedTranscriptState(cacheKey, entries.length);
         }
-        return readCachedTranscriptState(cacheKey, entries.length);
-      },
-      // Restoration is intentionally read only when this transcript mounts.
-      // eslint-disable-next-line react-hooks/exhaustive-deps
-      [cacheKey],
-    );
+      }
+      initialRestoredStateRef.current = {
+        initialized: true,
+        snapshot,
+      };
+    }
+    const restoredState = initialRestoredStateRef.current.snapshot;
 
     const publishViewportSnapshot = useCallback(
       (metadata: TranscriptCacheMetadata, snapshot: StateSnapshot) => {
@@ -577,9 +589,7 @@ const VirtuosoTaskChatTranscriptImpl = forwardRef<
     }, [clearSubmissionAnchorSchedule]);
     const stabilizeForSubmission = useCallback(() => {
       cancelSubmissionAnchor();
-      const shouldFollow = bottomStateKnownRef.current
-        ? atBottomRef.current
-        : liveFollowIntentRef.current;
+      const shouldFollow = liveFollowIntentRef.current;
       if (shouldFollow) {
         submissionAnchorRef.current = { mode: "follow" };
         return;
@@ -614,7 +624,6 @@ const VirtuosoTaskChatTranscriptImpl = forwardRef<
       const anchor = submissionAnchorRef.current;
       if (!anchor) return;
 
-      let remainingFrames = 4;
       const settle = () => {
         submissionAnchorFrameRef.current = null;
         const current = submissionAnchorRef.current;
@@ -641,12 +650,6 @@ const VirtuosoTaskChatTranscriptImpl = forwardRef<
           }
         }
 
-        remainingFrames -= 1;
-        if (remainingFrames > 0) {
-          submissionAnchorFrameRef.current =
-            window.requestAnimationFrame(settle);
-          return;
-        }
         submissionAnchorRef.current = null;
         suppressInteractionFollowRef.current = false;
       };

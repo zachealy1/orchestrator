@@ -848,6 +848,51 @@ describe("VirtuosoTaskChatTranscript", () => {
     expect(virtuosoMock.lastProps.restoreStateFrom).toEqual(virtuosoMock.state);
   });
 
+  it("does not restore another version's cached position into a mounted transcript", () => {
+    const entries = Array.from({ length: 20 }, (_, index) =>
+      historyEntry(index + 1),
+    );
+    const cachedLiveTranscript = render(
+      <VirtuosoTaskChatTranscript
+        entries={entries}
+        transcriptIdentity="chat:version-transition"
+        transcriptVersion="live"
+        firstItemIndex={999_980}
+        openAtLatestRequest={null}
+        liveFollow={false}
+        onResolveRequest={vi.fn()}
+      />,
+    );
+    cachedLiveTranscript.unmount();
+
+    const mountedTranscript = render(
+      <VirtuosoTaskChatTranscript
+        entries={entries}
+        transcriptIdentity="chat:version-transition"
+        transcriptVersion="history-v1"
+        firstItemIndex={999_980}
+        openAtLatestRequest={null}
+        liveFollow={false}
+        onResolveRequest={vi.fn()}
+      />,
+    );
+    expect(virtuosoMock.lastProps.restoreStateFrom).toBeUndefined();
+
+    mountedTranscript.rerender(
+      <VirtuosoTaskChatTranscript
+        entries={[...entries, historyEntry(21)]}
+        transcriptIdentity="chat:version-transition"
+        transcriptVersion="live"
+        firstItemIndex={999_980}
+        openAtLatestRequest={null}
+        liveFollow
+        onResolveRequest={vi.fn()}
+      />,
+    );
+
+    expect(virtuosoMock.lastProps.restoreStateFrom).toBeUndefined();
+  });
+
   it("suppresses cached state when a fresh latest request exists", () => {
     const entries = Array.from({ length: 20 }, (_, index) => historyEntry(index + 1));
     const first = render(
@@ -1492,6 +1537,9 @@ describe("VirtuosoTaskChatTranscript", () => {
       />,
     );
     act(() => virtuosoMock.lastProps.atBottomStateChange(true));
+    // Parent layout changes can transiently report false without user input.
+    // Submission should retain the user's established follow intent.
+    act(() => virtuosoMock.lastProps.atBottomStateChange(false));
     virtuosoMock.scrollToIndex.mockClear();
 
     act(() => transcriptRef.current?.stabilizeForSubmission());
@@ -1511,6 +1559,10 @@ describe("VirtuosoTaskChatTranscript", () => {
         behavior: "auto",
       }),
     );
+    await act(async () => {
+      await new Promise((resolve) => window.setTimeout(resolve, 80));
+    });
+    expect(virtuosoMock.scrollToIndex).toHaveBeenCalledTimes(1);
     expect(virtuosoMock.scrollBy).not.toHaveBeenCalled();
   });
 

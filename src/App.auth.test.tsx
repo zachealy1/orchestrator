@@ -5802,6 +5802,9 @@ describe("App Codex auth", () => {
       within(drawer).getByRole("button", { name: /old selected chat/i }),
     );
     expect(await screen.findByText("Old selected result.")).toBeInTheDocument();
+    const transcriptBeforeSubmission = screen.getByLabelText(
+      "Task chat transcript",
+    );
 
     const animationFrames = holdNextAnimationFrames();
     try {
@@ -5809,6 +5812,7 @@ describe("App Codex auth", () => {
       await user.keyboard("{Enter}");
 
       const transcript = screen.getByLabelText("Task chat transcript");
+      expect(transcript).toBe(transcriptBeforeSubmission);
       expect(transcript).toHaveTextContent("Start fresh work");
       expect(transcript).toHaveTextContent("Old selected result.");
     } finally {
