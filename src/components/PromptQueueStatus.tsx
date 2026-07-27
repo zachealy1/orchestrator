@@ -195,7 +195,6 @@ export const PromptQueueStatus = memo(function PromptQueueStatus({
       tone={promptQueueTone(previewItem)}
       icon={<ListTodo size={15} aria-hidden="true" />}
       title={rowTitle}
-      meta={countLabel}
       description={rowDetail}
       descriptionTitle={previewItem?.prompt}
       status={visibleRowStatus}

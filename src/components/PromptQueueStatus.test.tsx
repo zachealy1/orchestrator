@@ -117,7 +117,6 @@ describe("PromptQueueStatus", () => {
     ).toEqual([
       "composer-strip-icon",
       "composer-strip-title",
-      "composer-strip-meta",
       "composer-strip-description",
       "composer-strip-trailing",
     ]);
@@ -268,7 +267,10 @@ describe("PromptQueueStatus", () => {
 
     renderQueue({ items });
 
-    expect(screen.getByText("12 prompts")).toHaveClass("composer-strip-meta");
+    expect(screen.queryByText("12 prompts")).not.toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: /12 prompts/i }),
+    ).toBeInTheDocument();
     expect(screen.getByTitle(longPrompt)).toHaveClass(
       "composer-strip-description",
     );

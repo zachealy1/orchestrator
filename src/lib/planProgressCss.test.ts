@@ -45,12 +45,17 @@ describe("plan progress CSS", () => {
     expect(title).toContain("font-size: 0.78rem");
     expect(title).toContain("font-weight: 700");
     expect(meta).toContain("font-size: 0.72rem");
+    expect(meta).toContain("font-weight: 400");
     expect(description).toContain("font-size: 0.76rem");
+    expect(description).toContain("font-weight: 400");
     expect(description).toContain("text-overflow: ellipsis");
     expect(description).toContain("white-space: nowrap");
     expect(state).toContain("font-size: 0.72rem");
     expect(state).toContain("font-weight: 650");
     expect(state).toContain("text-overflow: ellipsis");
+    expect(css).not.toContain(
+      ".composer-strip-content-button:focus-visible .composer-strip-description",
+    );
   });
 
   it("uses shared icon, control, status-tone, and narrow-layout rules", () => {

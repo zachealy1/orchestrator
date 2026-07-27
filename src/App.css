@@ -4327,6 +4327,7 @@ select:disabled {
   flex: 0 0 auto;
   color: var(--color-text-secondary);
   font-size: 0.72rem;
+  font-weight: 400;
   font-variant-numeric: tabular-nums;
   line-height: 1.2;
   white-space: nowrap;
@@ -4338,6 +4339,7 @@ select:disabled {
   overflow: hidden;
   color: var(--color-text-secondary);
   font-size: 0.76rem;
+  font-weight: 400;
   line-height: 1.25;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -4382,12 +4384,6 @@ select:disabled {
 .composer-strip-row[data-tone="success"] .composer-strip-icon,
 .composer-strip-row[data-tone="success"] .composer-strip-state {
   color: var(--color-diff-addition);
-}
-
-.composer-strip-content-button:hover:not(:disabled)
-  .composer-strip-description,
-.composer-strip-content-button:focus-visible .composer-strip-description {
-  color: var(--color-text);
 }
 
 .prompt-queue-popover {
