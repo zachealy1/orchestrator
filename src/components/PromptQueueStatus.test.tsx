@@ -108,7 +108,21 @@ describe("PromptQueueStatus", () => {
   it("shows a compact preview and accessible icon-only actions", async () => {
     const { user, props } = renderQueue();
 
-    await user.click(screen.getByRole("button", { name: /queue/i }));
+    const toggle = screen.getByRole("button", { name: /queue/i });
+    const row = toggle.closest(".prompt-queue-status-row");
+    expect(row).toHaveClass("composer-strip-row");
+    expect(row).toHaveAttribute("data-tone", "neutral");
+    expect(
+      Array.from(toggle.children).map((element) => element.className),
+    ).toEqual([
+      "composer-strip-icon",
+      "composer-strip-title",
+      "composer-strip-meta",
+      "composer-strip-description",
+      "composer-strip-trailing",
+    ]);
+
+    await user.click(toggle);
     const queueRegion = screen.getByRole("region", { name: "Prompt queue" });
     expect(
       queueRegion.querySelector(".prompt-queue-item-disclosure"),
@@ -168,6 +182,9 @@ describe("PromptQueueStatus", () => {
         items={[heldItem]}
       />,
     );
+    expect(
+      document.querySelector(".prompt-queue-status-row"),
+    ).toHaveAttribute("data-tone", "muted");
     expect(screen.getAllByText("Held").length).toBeGreaterThan(0);
     const restore = screen.getByRole("button", {
       name: "Restore automatic sending",
@@ -191,7 +208,7 @@ describe("PromptQueueStatus", () => {
     expect(
       screen.queryByRole("button", { name: "Resume queue" }),
     ).not.toBeInTheDocument();
-    await user.click(screen.getByRole("button", { name: /queued/i }));
+    await user.click(screen.getByRole("button", { name: /prompt queue/i }));
     expect(
       screen.queryByText("Queue processing is paused."),
     ).not.toBeInTheDocument();
@@ -232,5 +249,28 @@ describe("PromptQueueStatus", () => {
     expect(
       screen.getByText(/Press Space to lift a queued prompt/i),
     ).toBeInTheDocument();
+  });
+
+  it("keeps double-digit counts and long prompts in the shared truncating slots", () => {
+    const longPrompt =
+      "Implement a deliberately long queued prompt that must remain accessible while the compact composer strip truncates it visually";
+    const items = Array.from({ length: 12 }, (_, index) => ({
+      ...queueItem(`queue-${index + 1}`),
+      position: index,
+      prompt: index === 0 ? longPrompt : `Queued prompt ${index + 1}`,
+      snapshot: createQueuedPromptSnapshot({
+        prompt: index === 0 ? longPrompt : `Queued prompt ${index + 1}`,
+        executionSettings: settings,
+        contextFingerprint: queueItem(`queue-${index + 1}`).snapshot
+          .contextFingerprint,
+      }),
+    }));
+
+    renderQueue({ items });
+
+    expect(screen.getByText("12 prompts")).toHaveClass("composer-strip-meta");
+    expect(screen.getByTitle(longPrompt)).toHaveClass(
+      "composer-strip-description",
+    );
   });
 });

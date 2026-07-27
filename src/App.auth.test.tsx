@@ -5259,7 +5259,7 @@ describe("App Codex auth", () => {
     expect(screen.getByRole("button", { name: /run codex/i })).toBeInTheDocument();
   });
 
-  it("surfaces a routed approval from another running chat in the composer", async () => {
+  it("surfaces a routed approval below the header outside the composer", async () => {
     prepareSignedInRun();
     const historicalChat = workspaceChatFixture({
       id: 403,
@@ -5307,7 +5307,11 @@ describe("App Codex auth", () => {
     const openApprovalChat = screen.getByRole("button", {
       name: "Open chat awaiting approval",
     });
-    expect(openApprovalChat.closest(".composer-status-stack")).not.toBeNull();
+    expect(
+      openApprovalChat.closest(".floating-header-status-bubble"),
+    ).not.toBeNull();
+    expect(openApprovalChat.closest(".composer-panel")).toBeNull();
+    expect(openApprovalChat.closest(".task-hero")).not.toBeNull();
     await user.click(openApprovalChat);
 
     const approvalCard = await screen.findByRole("article", {
@@ -10552,6 +10556,125 @@ describe("App Codex auth", () => {
     expect(mocks.completePromptQueueItemMock).toHaveBeenCalledTimes(1);
     expect(screen.getByLabelText("Task chat transcript")).toHaveTextContent(
       "Add this detail to the active task",
+    );
+
+    await user.click(screen.getByRole("button", { name: /stop codex/i }));
+  });
+
+  it("automatically uses current context when a queued prompt becomes stale", async () => {
+    prepareSignedInRun();
+    let inspectionCount = 0;
+    mocks.inspectPromptQueueContextMock.mockImplementation(
+      async (workspacePath: string, paths: string[]) => {
+        inspectionCount += 1;
+        const changed = inspectionCount > 1;
+        return {
+          workspacePath,
+          branch: "main",
+          headCommit: changed ? "fedcba9876543210" : "0123456789abcdef",
+          worktreeFingerprint: changed ? "modified" : "clean",
+          files: paths.map((path) => ({
+            path,
+            canonicalPath: path,
+            size: 128,
+            modifiedAtMs: 1_750_000_000_000,
+            available: true,
+          })),
+        };
+      },
+    );
+
+    const { user } = await renderApp();
+    await user.type(
+      screen.getByLabelText("Prompt"),
+      "Run with whichever context is current",
+    );
+    await user.keyboard("{Enter}");
+
+    await waitFor(() =>
+      expect(
+        mocks.updatePromptQueueItemContextFingerprintMock,
+      ).toHaveBeenCalledWith(
+        expect.any(String),
+        expect.objectContaining({
+          contextFingerprint: expect.objectContaining({
+            headCommit: "fedcba9876543210",
+            worktreeFingerprint: "modified",
+          }),
+        }),
+      ),
+    );
+    expect(
+      screen.queryByRole("dialog", { name: /review changed context/i }),
+    ).not.toBeInTheDocument();
+    expect(mocks.markPromptQueueItemStaleMock).not.toHaveBeenCalled();
+    await waitFor(() => expect(mocks.runPreflightMock).toHaveBeenCalled());
+  });
+
+  it("automatically refreshes current context before steering a queued prompt", async () => {
+    prepareSignedInRun();
+
+    const { user } = await renderApp();
+    await startMockRun(user, "Start the active task");
+    await user.type(
+      screen.getByLabelText("Prompt"),
+      "Steer using the latest workspace state",
+    );
+    await user.click(
+      screen.getByRole("button", { name: "Add prompt to queue" }),
+    );
+
+    mocks.inspectPromptQueueContextMock.mockImplementation(
+      async (workspacePath: string, paths: string[]) => ({
+        workspacePath,
+        branch: "main",
+        headCommit: "new-head-after-queueing",
+        worktreeFingerprint: "modified-after-queueing",
+        files: paths.map((path) => ({
+          path,
+          canonicalPath: path,
+          size: 128,
+          modifiedAtMs: 1_750_000_000_000,
+          available: true,
+        })),
+      }),
+    );
+    await user.click(screen.getByRole("button", { name: /^Queue/ }));
+    await user.click(
+      screen.getByRole("button", { name: "Send queued prompt now" }),
+    );
+
+    await waitFor(() =>
+      expect(
+        mocks.updatePromptQueueItemContextFingerprintMock,
+      ).toHaveBeenCalledWith(
+        expect.any(String),
+        expect.objectContaining({
+          contextFingerprint: expect.objectContaining({
+            headCommit: "new-head-after-queueing",
+            worktreeFingerprint: "modified-after-queueing",
+          }),
+        }),
+      ),
+    );
+    expect(
+      screen.queryByRole("dialog", { name: /review changed context/i }),
+    ).not.toBeInTheDocument();
+    expect(mocks.markPromptQueueItemStaleMock).not.toHaveBeenCalled();
+    await waitFor(() =>
+      expect(mocks.codexRpcMock).toHaveBeenCalledWith(
+        7,
+        "turn/steer",
+        expect.objectContaining({
+          input: [
+            {
+              type: "text",
+              text: "Steer using the latest workspace state",
+              text_elements: [],
+            },
+          ],
+        }),
+      ),
     );
 
     await user.click(screen.getByRole("button", { name: /stop codex/i }));

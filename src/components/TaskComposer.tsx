@@ -1,8 +1,5 @@
 import {
   BrainCircuit,
-  CheckCircle2,
-  ChevronRight,
-  CircleAlert,
   ClipboardCheck,
   CircleUserRound,
   Flag,
@@ -68,14 +65,6 @@ import {
 import { isPromptQueueItemAutoDispatchEligible } from "../lib/promptQueue";
 import { estimateTokens, recommendRoute } from "../lib/taskAnalysis";
 
-export type ComposerStatusNotice = {
-  id: string;
-  tone: "approval" | "warning" | "success";
-  title: string;
-  detail: string;
-  actionLabel?: string;
-};
-
 type Props = {
   disabled: boolean;
   runActive: boolean;
@@ -94,7 +83,6 @@ type Props = {
   planMode: boolean;
   goalProgress?: GoalProgressIndicatorModel | null;
   planProgress?: PlanProgressIndicatorModel | null;
-  statusNotices?: ComposerStatusNotice[];
   queueItems?: PromptQueueItem[];
   queueActionPendingItemId?: string | null;
   queueEditActive?: boolean;
@@ -119,7 +107,6 @@ type Props = {
   onResumeGoal: () => void;
   onEditGoal: () => void;
   onStopGoal: () => void;
-  onStatusNoticeActivate?: (noticeId: string) => void;
   onQueueEdit?: (item: PromptQueueItem) => void;
   onQueueRemove?: (item: PromptQueueItem) => void;
   onQueueRetry?: (item: PromptQueueItem) => void;
@@ -211,7 +198,6 @@ export const TaskComposer = memo(function TaskComposer({
   planMode,
   goalProgress = null,
   planProgress = null,
-  statusNotices = [],
   queueItems = [],
   queueActionPendingItemId = null,
   queueEditActive = false,
@@ -236,7 +222,6 @@ export const TaskComposer = memo(function TaskComposer({
   onResumeGoal,
   onEditGoal,
   onStopGoal,
-  onStatusNoticeActivate,
   onQueueEdit = NOOP_QUEUE_ITEM,
   onQueueRemove = NOOP_QUEUE_ITEM,
   onQueueRetry = NOOP_QUEUE_ITEM,
@@ -831,7 +816,6 @@ export const TaskComposer = memo(function TaskComposer({
   }
 
   const hasComposerStatus =
-    statusNotices.length > 0 ||
     Boolean(goalProgress) ||
     Boolean(planProgress) ||
     queueItems.length > 0;
@@ -865,13 +849,6 @@ export const TaskComposer = memo(function TaskComposer({
     >
       {hasComposerStatus ? (
         <div className="composer-status-stack">
-          {statusNotices.map((notice) => (
-            <ComposerStatusRow
-              key={notice.id}
-              notice={notice}
-              onActivate={onStatusNoticeActivate}
-            />
-          ))}
           {goalProgress ? (
             <GoalProgressIndicator
               progress={goalProgress}
@@ -1117,58 +1094,6 @@ export const TaskComposer = memo(function TaskComposer({
     </section>
   );
 });
-
-function ComposerStatusRow({
-  notice,
-  onActivate,
-}: {
-  notice: ComposerStatusNotice;
-  onActivate?: (noticeId: string) => void;
-}) {
-  const actionable = Boolean(notice.actionLabel && onActivate);
-  const content = (
-    <>
-      {notice.tone === "approval" ? (
-        <ShieldCheck size={15} aria-hidden="true" />
-      ) : notice.tone === "success" ? (
-        <CheckCircle2 size={15} aria-hidden="true" />
-      ) : (
-        <CircleAlert size={15} aria-hidden="true" />
-      )}
-      <strong>{notice.title}</strong>
-      <span className="composer-status-detail">{notice.detail}</span>
-      {actionable ? (
-        <ChevronRight
-          className="composer-status-chevron"
-          size={15}
-          aria-hidden="true"
-        />
-      ) : null}
-    </>
-  );
-
-  return (
-    <div
-      className="composer-status-notice"
-      data-tone={notice.tone}
-      role={notice.tone === "success" ? "status" : "alert"}
-    >
-      {actionable ? (
-        <button
-          className="composer-status-action"
-          type="button"
-          aria-label={notice.actionLabel}
-          title={notice.actionLabel}
-          onClick={() => onActivate?.(notice.id)}
-        >
-          {content}
-        </button>
-      ) : (
-        <div className="composer-status-content">{content}</div>
-      )}
-    </div>
-  );
-}
 
 const PromptTokenEstimate = memo(function PromptTokenEstimate({
   prompt,

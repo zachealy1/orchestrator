@@ -51,6 +51,10 @@ import type {
   PromptQueueItem,
   PromptQueueStatus as PromptQueueItemStatus,
 } from "../types";
+import {
+  ComposerStripRow,
+  type ComposerStripTone,
+} from "./ComposerStripRow";
 
 type Props = {
   items: PromptQueueItem[];
@@ -178,30 +182,41 @@ export const PromptQueueStatus = memo(function PromptQueueStatus({
 
   const countLabel = `${items.length} prompt${items.length === 1 ? "" : "s"}`;
   const rowTitle = activeItem ? "Queue" : "Queued";
+  const rowStatus = previewItem ? queueItemStatusLabel(previewItem) : "Queued";
   const rowDetail = previewItem
-    ? `${queueItemStatusLabel(previewItem)} · ${queuePromptPreview(previewItem.prompt)}`
-    : countLabel;
+    ? queuePromptPreview(previewItem.prompt)
+    : null;
+  const visibleRowStatus = rowStatus === rowTitle ? null : rowStatus;
 
   return (
-    <div className="prompt-queue-status-row">
-      <button
-        ref={toggleRef}
-        className="prompt-queue-status-toggle"
-        type="button"
-        aria-expanded={open}
-        aria-controls="prompt-queue-popover"
-        onClick={() => setOpen((current) => !current)}
-      >
-        <ListTodo size={15} aria-hidden="true" />
-        <strong>{rowTitle}</strong>
-        <span className="prompt-queue-count">{countLabel}</span>
-        <span className="prompt-queue-status-preview">{rowDetail}</span>
-        {open ? (
+    <ComposerStripRow
+      className="prompt-queue-status-row"
+      state={previewItem?.status}
+      tone={promptQueueTone(previewItem)}
+      icon={<ListTodo size={15} aria-hidden="true" />}
+      title={rowTitle}
+      meta={countLabel}
+      description={rowDetail}
+      descriptionTitle={previewItem?.prompt}
+      status={visibleRowStatus}
+      statusTitle={rowStatus}
+      trailing={
+        open ? (
           <ChevronDown size={15} aria-hidden="true" />
         ) : (
           <ChevronUp size={15} aria-hidden="true" />
-        )}
-      </button>
+        )
+      }
+      interactive={{
+        buttonRef: toggleRef,
+        label: `${rowTitle}, ${countLabel}, ${rowStatus}. ${
+          open ? "Close" : "Open"
+        } prompt queue`,
+        expanded: open,
+        controls: "prompt-queue-popover",
+        onClick: () => setOpen((current) => !current),
+      }}
+    >
       {open ? (
         <div
           ref={popoverRef}
@@ -260,9 +275,35 @@ export const PromptQueueStatus = memo(function PromptQueueStatus({
           </DndContext>
         </div>
       ) : null}
-    </div>
+    </ComposerStripRow>
   );
 });
+
+function promptQueueTone(
+  item: PromptQueueItem | null,
+): ComposerStripTone {
+  if (!item) return "neutral";
+  if (!item.autoSendEnabled && item.sendNowPriority === null) {
+    return "muted";
+  }
+  switch (item.status) {
+    case "starting":
+    case "steering":
+    case "active":
+      return "active";
+    case "failed":
+      return "danger";
+    case "stale":
+      return "attention";
+    case "skipped":
+      return "muted";
+    case "completed":
+      return "success";
+    case "queued":
+    case "scheduled-next":
+      return "neutral";
+  }
+}
 
 type SortableQueueItemProps = {
   item: PromptQueueItem;

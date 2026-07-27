@@ -8,6 +8,10 @@ import {
   ShieldCheck,
 } from "lucide-react";
 import { memo, useId, useState } from "react";
+import {
+  ComposerStripRow,
+  type ComposerStripTone,
+} from "./ComposerStripRow";
 import type {
   PlanProgressIndicatorModel,
   PlanProgressIndicatorState,
@@ -36,38 +40,35 @@ export const PlanProgressIndicator = memo(function PlanProgressIndicator({
   const tooltipVisible = isHovered || isFocused;
 
   return (
-    <div
+    <ComposerStripRow
       className="plan-progress-indicator"
-      data-state={progress.state}
-      data-tooltip-visible={tooltipVisible ? "true" : "false"}
+      state={progress.state}
+      tone={planProgressTone(progress.state)}
+      tooltipVisible={tooltipVisible}
       tabIndex={0}
-      aria-describedby={tooltipVisible ? tooltipId : undefined}
+      ariaDescribedBy={tooltipVisible ? tooltipId : undefined}
       onMouseEnter={() => setIsHovered(true)}
       onMouseLeave={() => setIsHovered(false)}
       onFocus={() => setIsFocused(true)}
       onBlur={() => setIsFocused(false)}
-    >
-      <div
-        className="plan-progress-content"
-        role="status"
-        aria-live="polite"
-        aria-atomic="true"
-      >
-        <ProgressIcon state={progress.state} />
-        <strong>
-          Step {progress.currentStep} / {progress.totalSteps}
-        </strong>
-        {progress.stepLabel ? (
-          <span className="plan-progress-label">{progress.stepLabel}</span>
-        ) : null}
-        <span className="plan-progress-state">{stateLabel}</span>
+      contentRole="status"
+      contentAriaLive="polite"
+      contentAriaAtomic
+      icon={<ProgressIcon state={progress.state} />}
+      title={`Step ${progress.currentStep} / ${progress.totalSteps}`}
+      description={progress.stepLabel || null}
+      descriptionTitle={progress.stepLabel || undefined}
+      status={stateLabel}
+      statusTitle={stateLabel}
+      trailing={
         <span className="plan-progress-track" aria-hidden="true">
           <span
             className="plan-progress-fill"
             style={{ width: `${progress.progressPercent}%` }}
           />
         </span>
-      </div>
+      }
+    >
       <div
         id={tooltipId}
         className="plan-progress-tooltip"
@@ -91,9 +92,25 @@ export const PlanProgressIndicator = memo(function PlanProgressIndicator({
           })}
         </ol>
       </div>
-    </div>
+    </ComposerStripRow>
   );
 });
+
+function planProgressTone(
+  state: PlanProgressIndicatorState,
+): ComposerStripTone {
+  switch (state) {
+    case "in-progress":
+      return "active";
+    case "paused":
+      return "muted";
+    case "waiting-approval":
+    case "blocked":
+      return "attention";
+    case "failed":
+      return "danger";
+  }
+}
 
 const STEP_STATUS_LABELS: Record<RunPlanStepStatus, string> = {
   pending: "Pending",
@@ -109,15 +126,21 @@ const STEP_STATUS_LABELS: Record<RunPlanStepStatus, string> = {
 function ProgressIcon({ state }: { state: PlanProgressIndicatorState }) {
   switch (state) {
     case "in-progress":
-      return <LoaderCircle className="plan-progress-spinner" size={15} />;
+      return (
+        <LoaderCircle
+          className="plan-progress-spinner"
+          size={15}
+          aria-hidden="true"
+        />
+      );
     case "paused":
-      return <Pause size={15} />;
+      return <Pause size={15} aria-hidden="true" />;
     case "waiting-approval":
-      return <ShieldCheck size={15} />;
+      return <ShieldCheck size={15} aria-hidden="true" />;
     case "blocked":
-      return <CircleAlert size={15} />;
+      return <CircleAlert size={15} aria-hidden="true" />;
     case "failed":
-      return <CircleX size={15} />;
+      return <CircleX size={15} aria-hidden="true" />;
   }
 }
 

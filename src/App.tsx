@@ -110,7 +110,6 @@ import {
   setPromptQueueItemAutoSend,
   prioritizePromptQueueItem,
   claimPromptQueueItem,
-  markPromptQueueItemStale,
   markPromptQueueItemSteering,
   acceptPromptQueueItem,
   completePromptQueueItem,
@@ -200,10 +199,12 @@ import {
   type VirtuosoTaskChatTranscriptHandle,
 } from "./components/VirtuosoTaskChatTranscript";
 import { TaskTranscriptErrorBoundary } from "./components/TaskTranscriptErrorBoundary";
+import { TaskComposer } from "./components/TaskComposer";
 import {
-  TaskComposer,
-  type ComposerStatusNotice,
-} from "./components/TaskComposer";
+  FLOATING_STATUS_NOTICE_TIMEOUT_MS,
+  FloatingHeaderStatusBubble,
+  type FloatingStatusNotice,
+} from "./components/FloatingHeaderStatusBubble";
 import {
   addApprovalRequest,
   addServerRequest,
@@ -772,12 +773,6 @@ type PromptQueueComposerEditState = {
   };
   status: "editing" | "saving";
   error: string | null;
-};
-
-type PromptQueueStaleReviewState = {
-  item: PromptQueueItem;
-  reasons: string[];
-  status: "idle" | "updating";
 };
 
 type PromptQueuePauseReason =
@@ -1674,8 +1669,6 @@ function App() {
     useState<string | null>(null);
   const [promptQueueComposerEdit, setPromptQueueComposerEdit] =
     useState<PromptQueueComposerEditState | null>(null);
-  const [promptQueueStaleReview, setPromptQueueStaleReview] =
-    useState<PromptQueueStaleReviewState | null>(null);
   const planImplementationDialogRequestRef = useRef(0);
   const planImplementationDialogRef = useRef<HTMLElement | null>(null);
   const planImplementationReturnFocusRef = useRef<HTMLElement | null>(null);
@@ -3048,15 +3041,24 @@ function App() {
           !selectedWorkspaceChatEntries.some((entry) =>
             pendingApprovalMatchesEntry(attention, entry),
           ),
-      ),
+    ),
     [pendingApprovalAttentions, selectedWorkspaceChatEntries],
   );
-  const composerStatusNotices = useMemo<ComposerStatusNotice[]>(() => {
-    const notices: ComposerStatusNotice[] = [];
+  const crossConversationApprovalRevision = useMemo(
+    () =>
+      crossConversationApprovals
+        .map(({ request }) => `${request.profileKey}:${request.key}`)
+        .sort()
+        .join("|"),
+    [crossConversationApprovals],
+  );
+  const floatingStatusNotices = useMemo<FloatingStatusNotice[]>(() => {
+    const notices: FloatingStatusNotice[] = [];
     if (crossConversationApprovals.length > 0) {
       const count = crossConversationApprovals.length;
       notices.push({
         id: "cross-conversation-approvals",
+        revisionKey: crossConversationApprovalRevision,
         tone: "approval",
         title: count === 1 ? "Approval needed" : `${count} approvals needed`,
         detail:
@@ -3067,22 +3069,27 @@ function App() {
           count === 1
             ? "Open chat awaiting approval"
             : "Open oldest chat awaiting approval",
+        timeoutMs: null,
       });
     }
     if (approvalSafetyWarning) {
       notices.push({
         id: "approval-safety-warning",
+        revisionKey: approvalSafetyWarning,
         tone: "warning",
         title: "Approval unavailable",
         detail: approvalSafetyWarning,
+        timeoutMs: FLOATING_STATUS_NOTICE_TIMEOUT_MS,
       });
     }
     if (selectedActiveRunControl?.goalActionError) {
       notices.push({
         id: "goal-action-error",
+        revisionKey: selectedActiveRunControl.goalActionError,
         tone: "warning",
         title: "Goal update failed",
         detail: selectedActiveRunControl.goalActionError,
+        timeoutMs: FLOATING_STATUS_NOTICE_TIMEOUT_MS,
       });
     }
     if (
@@ -3092,6 +3099,7 @@ function App() {
     ) {
       notices.push({
         id: `git-operation-${selectedGitOperation.id}`,
+        revisionKey: `${selectedGitOperation.status}:${selectedGitOperation.detail}`,
         tone:
           selectedGitOperation.status === "succeeded" ? "success" : "warning",
         title: selectedGitOperation.title,
@@ -3100,16 +3108,18 @@ function App() {
           selectedGitOperation.status === "failed"
             ? gitOperationRetryLabel(selectedGitOperation.retryRequest)
             : undefined,
+        timeoutMs: FLOATING_STATUS_NOTICE_TIMEOUT_MS,
       });
     }
     return notices;
   }, [
     approvalSafetyWarning,
+    crossConversationApprovalRevision,
     crossConversationApprovals.length,
     selectedActiveRunControl?.goalActionError,
     selectedGitOperation,
   ]);
-  const activateComposerStatusNotice = useStableEvent((noticeId: string) => {
+  const activateFloatingStatusNotice = useStableEvent((noticeId: string) => {
     if (noticeId === "cross-conversation-approvals") {
       const oldest = [...crossConversationApprovals].sort((left, right) =>
         left.request.receivedAt.localeCompare(right.request.receivedAt),
@@ -7639,9 +7649,6 @@ function App() {
     }
     promptQueueEnqueueOperationsRef.current.delete(workspace.id);
     promptQueuePendingSubmissionKeysRef.current.delete(workspace.id);
-    setPromptQueueStaleReview((current) =>
-      current?.item.workspaceId === workspace.id ? null : current,
-    );
     delete workspaceTaskMemoriesRef.current[workspace.id];
     const remainingHandoffs = Object.fromEntries(
       Object.entries(pendingAccountHandoffsRef.current).filter(
@@ -10337,6 +10344,37 @@ function App() {
     return [...new Set(reasons)];
   }
 
+  async function refreshQueuedPromptCurrentContext(
+    item: PromptQueueItem,
+    chat: ChatRecord,
+    inspection: Awaited<ReturnType<typeof inspectPromptQueueContext>>,
+  ) {
+    const currentProfileKey =
+      (chat.profile_key as CodexProfileKey | null) ??
+      item.snapshot.executionSettings.profileKey;
+    const currentThreadId =
+      chat.codex_thread_id ??
+      (chat.origin === "codex_external" ? chat.external_thread_id : null);
+    const contextFingerprint = rebaselinePromptQueueContextFingerprint({
+      expected: item.snapshot.contextFingerprint,
+      inspection,
+      executionProfileKey: item.snapshot.executionSettings.profileKey,
+      currentProfileKey,
+      currentThreadId,
+      conversationRevision: Number(chat.conversation_revision ?? 0),
+    });
+    const updated = await updatePromptQueueItemContextFingerprint(
+      item.id,
+      createQueuedPromptSnapshot({
+        prompt: item.prompt,
+        executionSettings: item.snapshot.executionSettings,
+        contextFingerprint,
+      }),
+    );
+    if (updated) upsertPromptQueueItemInMemory(updated);
+    return updated;
+  }
+
   async function rebaselineQueuedPromptContexts(chatId: number) {
     const [chat, items] = await Promise.all([
       getChatRecord(chatId),
@@ -10449,23 +10487,29 @@ function App() {
     try {
       if (await chatBlocksPromptQueue(chatId)) return;
       const items = await refreshPromptQueue(chatId);
-      const item = items
+      let item = items
         .filter(isPromptQueueItemPending)
         .filter(isPromptQueueItemAutoDispatchEligible)
         .sort(comparePromptQueueDispatchOrder)[0];
       if (!item) return;
-      if (item.status === "failed" || item.status === "stale") {
+      if (item.status === "failed") {
         setPromptQueuePaused(
           chatId,
           true,
-          item.status === "stale" ? "stale" : "failure",
+          "failure",
         );
         setStatusMessage(
-          item.status === "stale"
-            ? "Review the first queued prompt before continuing."
-            : "Retry, edit, skip, or remove the failed prompt before resuming the queue.",
+          "Retry, edit, skip, or remove the failed prompt before resuming the queue.",
         );
         return;
+      }
+      if (item.status === "stale") {
+        const recovered = await retryPromptQueueItem(item.id, {
+          autoSendEnabled: item.autoSendEnabled,
+        });
+        if (!recovered) return;
+        item = recovered;
+        upsertPromptQueueItemInMemory(recovered);
       }
       if (
         item.status !== "queued" &&
@@ -10496,29 +10540,13 @@ function App() {
       );
       const staleReasons = queueContextStaleReasons(item, chat, inspection);
       if (staleReasons.length > 0) {
-        const staleItem = await markPromptQueueItemStale(
-          item.id,
-          staleReasons,
+        const refreshedItem = await refreshQueuedPromptCurrentContext(
+          item,
+          chat,
+          inspection,
         );
-        if (staleItem) {
-          upsertPromptQueueItemInMemory(staleItem);
-          if (
-            selectedWorkspaceRef.current?.id === staleItem.workspaceId &&
-            workspaceChatSessionsRef.current[staleItem.workspaceId]?.chatId ===
-              staleItem.chatId
-          ) {
-            setPromptQueueStaleReview({
-              item: staleItem,
-              reasons: staleReasons,
-              status: "idle",
-            });
-          }
-        }
-        setPromptQueuePaused(chatId, true, "stale");
-        setStatusMessage(
-          "A queued prompt needs review because its original context changed.",
-        );
-        return;
+        if (!refreshedItem) return;
+        item = refreshedItem;
       }
       const claimed = await claimPromptQueueItem(item.id);
       if (!claimed) return;
@@ -10720,18 +10748,16 @@ function App() {
     );
     const staleReasons = queueContextStaleReasons(item, chat, inspection);
     if (staleReasons.length > 0) {
-      const staleItem = await markPromptQueueItemStale(
-        item.id,
-        staleReasons,
+      const refreshedItem = await refreshQueuedPromptCurrentContext(
+        item,
+        chat,
+        inspection,
       );
-      if (staleItem) upsertPromptQueueItemInMemory(staleItem);
-      setPromptQueuePaused(item.chatId, true, "stale");
-      setPromptQueueStaleReview({
-        item: staleItem ?? item,
-        reasons: staleReasons,
-        status: "idle",
-      });
-      return true;
+      if (!refreshedItem) {
+        throw new Error(
+          "The queued prompt changed before its current context could be applied.",
+        );
+      }
     }
     const steeringItem = await markPromptQueueItemSteering(item.id);
     if (!steeringItem) return true;
@@ -11331,65 +11357,6 @@ function App() {
       });
       setStatusMessage(`Could not update queued prompt: ${message}`);
     }
-  }
-
-  async function acceptPromptQueueCurrentContext() {
-    const review = promptQueueStaleReview;
-    if (!review || review.status !== "idle") return;
-    setPromptQueueStaleReview({ ...review, status: "updating" });
-    try {
-      const [currentItem, chat, workspace] = await Promise.all([
-        readPromptQueueItem(review.item.id),
-        getChatRecord(review.item.chatId),
-        Promise.resolve(
-          workspacesRef.current.find(
-            (candidate) => candidate.id === review.item.workspaceId,
-          ) ?? null,
-        ),
-      ]);
-      if (!currentItem || !chat || !workspace) {
-        throw new Error("The queued prompt is no longer available.");
-      }
-      const contextFingerprint =
-        await capturePromptQueueContextFingerprint({
-          workspace,
-          chat,
-          executionSettings: currentItem.snapshot.executionSettings,
-        });
-      const snapshot = createQueuedPromptSnapshot({
-        prompt: currentItem.prompt,
-        executionSettings: currentItem.snapshot.executionSettings,
-        contextFingerprint,
-      });
-      const updated = await updatePromptQueueItemSnapshot(
-        currentItem.id,
-        snapshot,
-      );
-      if (!updated) throw new Error("The queued prompt could not be updated.");
-      upsertPromptQueueItemInMemory(updated);
-      setPromptQueueStaleReview(null);
-      setPromptQueuePaused(currentItem.chatId, false);
-      schedulePromptQueueDispatch(currentItem.chatId);
-      setStatusMessage("Queued prompt updated to use the current context.");
-    } catch (error) {
-      setPromptQueueStaleReview((current) =>
-        current
-          ? { ...current, status: "idle" }
-          : current,
-      );
-      setStatusMessage(
-        `Could not update queued prompt context: ${
-          error instanceof Error ? error.message : String(error)
-        }`,
-      );
-    }
-  }
-
-  function editStalePromptQueueItem() {
-    if (!promptQueueStaleReview) return;
-    const item = promptQueueStaleReview.item;
-    setPromptQueueStaleReview(null);
-    openPromptQueueComposerEdit(item);
   }
 
   async function removeQueuedPrompt(item: PromptQueueItem) {
@@ -16133,97 +16100,6 @@ function App() {
         </div>
       </aside>
 
-      {promptQueueStaleReview ? (
-        <div
-          className="modal-backdrop"
-          role="presentation"
-          onMouseDown={(event) => {
-            if (
-              event.target === event.currentTarget &&
-              promptQueueStaleReview.status === "idle"
-            ) {
-              setPromptQueueStaleReview(null);
-            }
-          }}
-        >
-          <section
-            className="confirmation-dialog prompt-queue-stale-dialog"
-            role="dialog"
-            aria-modal="true"
-            aria-labelledby="prompt-queue-stale-title"
-            aria-describedby="prompt-queue-stale-description"
-          >
-            <div>
-              <p className="eyebrow">Queued prompt</p>
-              <h2 id="prompt-queue-stale-title">Review changed context</h2>
-              <p id="prompt-queue-stale-description">
-                This prompt was queued against different conversation or
-                workspace state. Choose whether to use the current context.
-              </p>
-              <ul className="prompt-queue-stale-reasons">
-                {promptQueueStaleReview.reasons.map((reason) => (
-                  <li key={reason}>{reason}</li>
-                ))}
-              </ul>
-            </div>
-            <div className="confirmation-actions prompt-queue-stale-actions">
-              <button
-                className="native-plan-icon-action"
-                type="button"
-                aria-label="Edit stale queued prompt"
-                data-tooltip="Edit prompt"
-                disabled={promptQueueStaleReview.status !== "idle"}
-                onClick={editStalePromptQueueItem}
-              >
-                <Pencil size={15} aria-hidden="true" />
-              </button>
-              <button
-                className="native-plan-icon-action"
-                type="button"
-                aria-label="Hold stale queued prompt"
-                data-tooltip="Hold prompt"
-                disabled={promptQueueStaleReview.status !== "idle"}
-                onClick={() => {
-                  const item = promptQueueStaleReview.item;
-                  setPromptQueueStaleReview(null);
-                  void changeQueuedPromptAutoSend(item, false);
-                }}
-              >
-                <ChevronRight size={15} aria-hidden="true" />
-              </button>
-              <button
-                className="native-plan-icon-action cancel"
-                type="button"
-                aria-label="Remove stale queued prompt"
-                data-tooltip="Remove prompt"
-                disabled={promptQueueStaleReview.status !== "idle"}
-                onClick={() => {
-                  const item = promptQueueStaleReview.item;
-                  setPromptQueueStaleReview(null);
-                  void removeQueuedPrompt(item);
-                }}
-              >
-                <Trash2 size={15} aria-hidden="true" />
-              </button>
-              <button
-                className="native-plan-icon-action implement"
-                type="button"
-                aria-label="Use current context"
-                data-tooltip="Use current context"
-                disabled={promptQueueStaleReview.status !== "idle"}
-                onClick={() => void acceptPromptQueueCurrentContext()}
-              >
-                {promptQueueStaleReview.status === "updating" ? (
-                  <Loader2 className="spin" size={15} aria-hidden="true" />
-                ) : (
-                  <Check size={15} aria-hidden="true" />
-                )}
-              </button>
-            </div>
-          </section>
-        </div>
-      ) : null}
-
       {accountHandoffCandidate ? (
         <div
           className="modal-backdrop"
@@ -16744,6 +16620,12 @@ function App() {
           activeView === "task" ? selfWindowDragRegion : "false"
         }
       >
+        <FloatingHeaderStatusBubble
+          notices={floatingStatusNotices}
+          anchorElement={taskViewportElement}
+          active={activeView === "task"}
+          onActivate={activateFloatingStatusNotice}
+        />
         {activeView !== "task" ? (
           <>
             <header
@@ -16934,7 +16816,6 @@ function App() {
                   planMode={planMode}
                   goalProgress={selectedGoalProgress}
                   planProgress={selectedPlanProgress}
-                  statusNotices={composerStatusNotices}
                   queueItems={selectedPromptQueueItems}
                   queueActionPendingItemId={promptQueueActionPendingItemId}
                   queueEditActive={promptQueueComposerEdit !== null}
@@ -16967,7 +16848,6 @@ function App() {
                   onStopGoal={() => {
                     void stopSelectedGoal();
                   }}
-                  onStatusNoticeActivate={activateComposerStatusNotice}
                   onQueueEdit={editComposerQueuedPrompt}
                   onQueueRemove={removeComposerQueuedPrompt}
                   onQueueRetry={retryComposerQueuedPrompt}

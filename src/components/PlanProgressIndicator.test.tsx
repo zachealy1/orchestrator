@@ -26,6 +26,17 @@ describe("PlanProgressIndicator", () => {
 
     const indicator = screen.getByRole("status");
     const indicatorShell = container.querySelector(".plan-progress-indicator");
+    expect(indicatorShell).toHaveClass("composer-strip-row");
+    expect(indicatorShell).toHaveAttribute("data-tone", "active");
+    expect(
+      Array.from(indicator.children).map((element) => element.className),
+    ).toEqual([
+      "composer-strip-icon",
+      "composer-strip-title",
+      "composer-strip-description",
+      "composer-strip-state",
+      "composer-strip-trailing",
+    ]);
     expect(indicator).toHaveTextContent("Step 2 / 4");
     expect(indicator).toHaveTextContent("Run focused tests");
     expect(indicator).toHaveTextContent("In progress");
@@ -99,6 +110,43 @@ describe("PlanProgressIndicator", () => {
     expect(screen.getByRole("status")).toHaveTextContent(
       "Waiting for approval",
     );
+    expect(container.querySelector(".plan-progress-indicator")).toHaveAttribute(
+      "data-tone",
+      "attention",
+    );
     expect(container.querySelector(".plan-progress-marker")).toBeNull();
+  });
+
+  it("supports double-digit step counts and preserves the full step label", () => {
+    const stepLabel =
+      "Verify responsive alignment with an intentionally long current step description";
+    render(
+      <PlanProgressIndicator
+        progress={{
+          currentStep: 12,
+          totalSteps: 24,
+          completedSteps: 11,
+          progressPercent: 46,
+          stepLabel,
+          state: "in-progress",
+          steps: Array.from({ length: 24 }, (_, index) => ({
+            step: index === 11 ? stepLabel : `Step ${index + 1}`,
+            status:
+              index < 11
+                ? ("completed" as const)
+                : index === 11
+                  ? ("in_progress" as const)
+                  : ("pending" as const),
+          })),
+        }}
+      />,
+    );
+
+    expect(screen.getByText("Step 12 / 24")).toHaveClass(
+      "composer-strip-title",
+    );
+    expect(screen.getByTitle(stepLabel)).toHaveClass(
+      "composer-strip-description",
+    );
   });
 });

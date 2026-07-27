@@ -38,6 +38,22 @@ describe("GoalProgressIndicator", () => {
     );
 
     const indicator = screen.getByLabelText("Goal progress");
+    const content = indicator.querySelector(".composer-strip-content");
+    expect(indicator).toHaveClass(
+      "composer-strip-row",
+      "goal-progress-indicator",
+    );
+    expect(indicator).toHaveAttribute("data-tone", "active");
+    expect(
+      Array.from(content!.children).map((element) => element.className),
+    ).toEqual([
+      "composer-strip-icon",
+      "composer-strip-title",
+      "composer-strip-meta",
+      "composer-strip-description",
+      "composer-strip-state",
+      "composer-strip-trailing",
+    ]);
     expect(indicator).toHaveTextContent("Goal");
     expect(indicator).toHaveTextContent("1hr 52m 6s");
     expect(indicator).toHaveTextContent("Finish the repository migration");
@@ -65,6 +81,7 @@ describe("GoalProgressIndicator", () => {
     );
 
     const indicator = screen.getByLabelText("Goal progress");
+    expect(indicator).toHaveAttribute("data-tone", "muted");
     act(() => vi.advanceTimersByTime(5_000));
     expect(indicator).toHaveTextContent("1hr 52m 6s");
     fireEvent.click(screen.getByRole("button", { name: "Resume goal" }));
@@ -148,5 +165,24 @@ describe("GoalProgressIndicator", () => {
     expect(screen.getByRole("button", { name: "Pause goal" })).toBeDisabled();
     expect(screen.getByRole("button", { name: "Edit goal" })).toBeDisabled();
     expect(screen.getByRole("button", { name: "Stop goal" })).toBeDisabled();
+  });
+
+  it("keeps a long objective available while using the shared truncating slot", () => {
+    const objective =
+      "Standardise every composer status row without allowing long goal objectives to change the compact row height";
+
+    render(
+      <GoalProgressIndicator
+        progress={goal({ objective })}
+        onPause={vi.fn()}
+        onResume={vi.fn()}
+        onEdit={vi.fn()}
+        onStop={vi.fn()}
+      />,
+    );
+
+    const description = screen.getByTitle(objective);
+    expect(description).toHaveClass("composer-strip-description");
+    expect(description).toHaveAttribute("aria-label", `Goal: ${objective}`);
   });
 });

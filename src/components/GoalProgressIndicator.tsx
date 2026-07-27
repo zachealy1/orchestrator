@@ -1,5 +1,6 @@
 import {
   CircleAlert,
+  CircleCheck,
   Gauge,
   LoaderCircle,
   Pause,
@@ -8,6 +9,10 @@ import {
   X,
 } from "lucide-react";
 import { memo, useEffect, useState } from "react";
+import {
+  ComposerStripRow,
+  type ComposerStripTone,
+} from "./ComposerStripRow";
 import {
   goalElapsedSeconds,
   type GoalProgressIndicatorModel,
@@ -65,71 +70,86 @@ export const GoalProgressIndicator = memo(function GoalProgressIndicator({
   const actionLabel = canPause ? "Pause goal" : canResume ? "Resume goal" : null;
 
   return (
-    <div
-      className="plan-progress-indicator goal-progress-indicator"
-      data-state={progress.status}
-      aria-label="Goal progress"
-    >
-      <div className="plan-progress-content goal-progress-content">
+    <ComposerStripRow
+      className="goal-progress-indicator"
+      state={progress.status}
+      tone={goalProgressTone(progress.status)}
+      ariaLabel="Goal progress"
+      icon={
         <GoalStatusIcon
           status={progress.status}
           pending={progress.actionPending}
         />
-        <strong>Goal</strong>
-        <span className="goal-progress-elapsed">{elapsed}</span>
-        <span
-          className="goal-progress-label"
-          title={progress.objective}
-          aria-label={`Goal: ${progress.objective}`}
-        >
-          {progress.objective}
-        </span>
-        <span className="goal-progress-state" aria-live="polite">
-          {statusLabel}
-        </span>
-        {actionLabel ? (
+      }
+      title="Goal"
+      meta={elapsed}
+      description={progress.objective}
+      descriptionTitle={progress.objective}
+      descriptionAriaLabel={`Goal: ${progress.objective}`}
+      status={statusLabel}
+      statusTitle={statusLabel}
+      statusAriaLive="polite"
+      trailing={
+        <>
+          {actionLabel ? (
+            <button
+              className="native-plan-icon-action goal-progress-action implement"
+              type="button"
+              onClick={canPause ? onPause : onResume}
+              disabled={pending}
+              aria-label={actionLabel}
+              title={actionLabel}
+              data-tooltip={actionLabel}
+            >
+              {canPause ? (
+                <Pause size={15} aria-hidden="true" />
+              ) : (
+                <Play size={15} aria-hidden="true" />
+              )}
+            </button>
+          ) : null}
           <button
             className="native-plan-icon-action goal-progress-action"
             type="button"
-            onClick={canPause ? onPause : onResume}
+            onClick={onEdit}
             disabled={pending}
-            aria-label={actionLabel}
-            title={actionLabel}
-            data-tooltip={actionLabel}
+            aria-label="Edit goal"
+            title="Edit goal"
+            data-tooltip="Edit goal"
           >
-            {canPause ? (
-              <Pause size={15} aria-hidden="true" />
-            ) : (
-              <Play size={15} aria-hidden="true" />
-            )}
+            <Pencil size={15} aria-hidden="true" />
           </button>
-        ) : null}
-        <button
-          className="native-plan-icon-action goal-progress-action"
-          type="button"
-          onClick={onEdit}
-          disabled={pending}
-          aria-label="Edit goal"
-          title="Edit goal"
-          data-tooltip="Edit goal"
-        >
-          <Pencil size={15} aria-hidden="true" />
-        </button>
-        <button
-          className="native-plan-icon-action goal-progress-action cancel"
-          type="button"
-          onClick={onStop}
-          disabled={pending}
-          aria-label="Stop goal"
-          title="Stop goal"
-          data-tooltip="Stop goal"
-        >
-          <X size={15} aria-hidden="true" />
-        </button>
-      </div>
-    </div>
+          <button
+            className="native-plan-icon-action goal-progress-action cancel"
+            type="button"
+            onClick={onStop}
+            disabled={pending}
+            aria-label="Stop goal"
+            title="Stop goal"
+            data-tooltip="Stop goal"
+          >
+            <X size={15} aria-hidden="true" />
+          </button>
+        </>
+      }
+    />
   );
 });
+
+function goalProgressTone(status: ThreadGoalStatus): ComposerStripTone {
+  switch (status) {
+    case "active":
+      return "active";
+    case "paused":
+      return "muted";
+    case "blocked":
+    case "usageLimited":
+    case "budgetLimited":
+      return "attention";
+    case "complete":
+      return "success";
+  }
+}
 
 function GoalStatusIcon({
   status,
@@ -152,6 +172,9 @@ function GoalStatusIcon({
   }
   if (status === "usageLimited" || status === "budgetLimited") {
     return <Gauge size={15} aria-hidden="true" />;
+  }
+  if (status === "complete") {
+    return <CircleCheck size={15} aria-hidden="true" />;
   }
   return <CircleAlert size={15} aria-hidden="true" />;
 }

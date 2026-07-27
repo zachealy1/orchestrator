@@ -369,15 +369,7 @@ describe("TaskComposer", () => {
     expect(prompt).toHaveValue("Keep this draft");
   });
 
-  it("stacks approval, goal, and plan progress inside the composer", async () => {
-    const onStatusNoticeActivate = vi.fn();
-    const notice = {
-      id: "cross-conversation-approvals",
-      tone: "approval" as const,
-      title: "Approval needed",
-      detail: "Another chat is waiting for your approval",
-      actionLabel: "Open chat awaiting approval",
-    };
+  it("stacks goal, plan, and queue progress inside the composer", () => {
     const planProgress = {
       currentStep: 1,
       totalSteps: 2,
@@ -399,12 +391,11 @@ describe("TaskComposer", () => {
       actionPending: null,
     };
     const queueItems = [queuedPrompt()];
-    const { user, container, props, rerender } = renderComposer({
+    const { container, props, rerender } = renderComposer({
       prompt: "Keep this draft",
       goalProgress,
       planProgress,
       queueItems,
-      onStatusNoticeActivate,
     });
 
     const prompt = screen.getByLabelText("Prompt");
@@ -412,7 +403,6 @@ describe("TaskComposer", () => {
     rerender(
       <TaskComposer
         {...props}
-        statusNotices={[notice]}
         goalProgress={goalProgress}
         planProgress={planProgress}
         queueItems={queueItems}
@@ -421,17 +411,12 @@ describe("TaskComposer", () => {
 
     const composer = screen.getByRole("region", { name: "Task composer" });
     const stack = composer.querySelector(".composer-status-stack");
-    const approvalAction = screen.getByRole("button", {
-      name: "Open chat awaiting approval",
-    });
 
     expect(stack).not.toBeNull();
     expect(composer).toHaveClass("has-composer-status");
-    expect(stack).toContainElement(approvalAction);
     expect(stack).toContainElement(screen.getByLabelText("Goal progress"));
     expect(stack).toContainElement(screen.getByRole("status"));
     expect(Array.from(stack!.children)).toEqual([
-      approvalAction.closest(".composer-status-notice"),
       screen.getByLabelText("Goal progress"),
       screen.getByRole("status").closest(".plan-progress-indicator"),
       stack!.querySelector(".prompt-queue-status-row"),
@@ -443,34 +428,6 @@ describe("TaskComposer", () => {
     expect(container.querySelector(".unrouted-approval-warning")).toBeNull();
     expect(prompt).toHaveFocus();
     expect(prompt).toHaveValue("Keep this draft");
-    await user.click(approvalAction);
-    expect(onStatusNoticeActivate).toHaveBeenCalledWith(
-      "cross-conversation-approvals",
-    );
-    expect(prompt).toHaveValue("Keep this draft");
-  });
-
-  it("renders approval safety warnings as non-actionable composer status rows", () => {
-    const { container } = renderComposer({
-      statusNotices: [
-        {
-          id: "approval-safety-warning",
-          tone: "warning",
-          title: "Approval unavailable",
-          detail: "The request could not be resolved safely.",
-        },
-      ],
-    });
-
-    const alert = screen.getByRole("alert");
-    expect(alert).toHaveTextContent("Approval unavailable");
-    expect(alert).toHaveTextContent(
-      "The request could not be resolved safely.",
-    );
-    expect(within(alert).queryByRole("button")).not.toBeInTheDocument();
-    expect(container.querySelector(".composer-status-stack")).toContainElement(
-      alert,
-    );
   });
 
   it("updates the prompt and exposes composer actions", async () => {
