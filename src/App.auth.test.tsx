@@ -2,6 +2,7 @@ import { act, fireEvent, render, screen, waitFor, within } from "@testing-librar
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import App, { buildBoundedAccountHandoffContext } from "./App";
+import { clearTranscriptStateCache } from "./components/VirtuosoTaskChatTranscript";
 import { ASK_FOR_APPROVAL_PERMISSION_PROFILE } from "./lib/codexAccess";
 import { persistRunningGitOperation } from "./lib/gitOperations";
 import {
@@ -129,6 +130,10 @@ const mocks = vi.hoisted(() => ({
   upsertWorkspaceMock: vi.fn(),
   upsertExternalCodexChatsMock: vi.fn(),
   registerNativeContextFileDropMock: vi.fn(),
+  virtuosoState: {
+    ranges: [{ startIndex: 0, endIndex: 0 }],
+    scrollTop: 0,
+  },
   promptQueueItems: new Map<string, any>(),
   promptQueueChats: new Map<number, any>(),
   promptQueueState: {
@@ -187,7 +192,7 @@ vi.mock("react-virtuoso", async () => {
       const scrollerRef = React.useRef<HTMLDivElement | null>(null);
       React.useImperativeHandle(ref, () => ({
         getState: (callback: (state: unknown) => void) =>
-          callback({ ranges: [], scrollTop: 0 }),
+          callback(mocks.virtuosoState),
         scrollToIndex: () => undefined,
       }));
       React.useEffect(() => {
@@ -212,6 +217,10 @@ vi.mock("react-virtuoso", async () => {
         <div
           aria-label={props["aria-label"]}
           className={props.className}
+          data-restored-scroll-top={
+            props.restoredViewportSnapshot?.snapshot.scrollTop ??
+            props.restoreStateFrom?.scrollTop
+          }
           ref={scrollerRef}
           role={props.role}
           tabIndex={props.tabIndex}
@@ -1536,6 +1545,11 @@ describe("App Codex auth", () => {
     localStorage.clear();
     setWindowWidth(1024);
     document.documentElement.removeAttribute("data-theme");
+    clearTranscriptStateCache();
+    mocks.virtuosoState = {
+      ranges: [{ startIndex: 0, endIndex: 0 }],
+      scrollTop: 0,
+    };
     prepareDefaults();
   });
 
@@ -5459,6 +5473,73 @@ describe("App Codex auth", () => {
     expect(
       screen.queryByRole("article", { name: "Submitted prompt" }),
     ).not.toBeInTheDocument();
+  });
+
+  it("restores the remembered chat viewport after switching workspaces", async () => {
+    const mobileWorkspace = {
+      ...workspace,
+      id: 2,
+      path: "/repo/mobile-client",
+      label: "mobile-client",
+    };
+    const historicalChat = workspaceChatFixture({
+      id: 416,
+      title: "ExpressJS App Scaffolding Plan",
+    });
+    const historicalRuns = Array.from({ length: 18 }, (_, index) =>
+      workspaceRunFixture({
+        id: 316 + index,
+        task_id: 116 + index,
+        chat_id: historicalChat.id,
+        turn_index: index + 1,
+        original_prompt: `Prompt ${index + 1}`,
+        final_message: `Result ${index + 1}.`,
+      }),
+    );
+    mocks.listWorkspacesMock.mockResolvedValue([workspace, mobileWorkspace]);
+    mocks.listWorkspaceChatsMock.mockImplementation(async (workspaceId: number) =>
+      workspaceId === workspace.id ? [historicalChat] : [],
+    );
+    mocks.getChatWithRunsMock.mockResolvedValue(
+      workspaceChatWithRunsFixture(historicalChat, historicalRuns),
+    );
+    mocks.listLocalChatTranscriptMock.mockResolvedValue(historicalRuns);
+
+    const { user } = await renderApp();
+    const banner = screen.getByRole("region", { name: "Selected folder" });
+    await user.click(
+      within(banner).getByRole("button", { name: /open chat history/i }),
+    );
+    const drawer = await screen.findByRole("complementary", {
+      name: "Workspace chat history",
+    });
+    await user.click(
+      within(drawer).getByRole("button", {
+        name: /expressjs app scaffolding plan/i,
+      }),
+    );
+    expect(await screen.findByText("Result 18.")).toBeInTheDocument();
+
+    mocks.virtuosoState = {
+      ranges: [{ startIndex: 7, endIndex: 13 }],
+      scrollTop: 1_842,
+    };
+    const workspaceNav = screen.getByRole("navigation", { name: "Workspaces" });
+    await user.click(
+      within(workspaceNav).getByRole("button", { name: "mobile-client" }),
+    );
+
+    // The workspace memory, not the component's bounded cache, owns restoration.
+    clearTranscriptStateCache();
+    await user.click(
+      within(workspaceNav).getByRole("button", { name: "orchestrator" }),
+    );
+
+    expect(screen.getByLabelText("Task chat transcript")).toHaveAttribute(
+      "data-restored-scroll-top",
+      "1842",
+    );
+    expect(screen.getByText("Result 18.")).toBeInTheDocument();
   });
 
   it("keeps a selected history chat visible when submitting a follow-up prompt", async () => {

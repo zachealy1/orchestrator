@@ -196,6 +196,8 @@ import type { TaskChatEntry } from "./components/TaskChatTranscript";
 import {
   VirtuosoTaskChatTranscript,
   type TranscriptNotificationFocusRequest,
+  type TranscriptViewportSnapshot,
+  type VirtuosoTaskChatTranscriptHandle,
 } from "./components/VirtuosoTaskChatTranscript";
 import { TaskTranscriptErrorBoundary } from "./components/TaskTranscriptErrorBoundary";
 import {
@@ -1094,6 +1096,7 @@ type WorkspaceTaskMemory = {
   contextFiles: ComposerContextFile[];
   selectedSkills: SelectedComposerSkill[];
   historicalTranscript: HistoricalTranscriptState | null;
+  transcriptViewportSnapshot: TranscriptViewportSnapshot | null;
 };
 
 type HeaderGitAction =
@@ -1821,6 +1824,8 @@ function App() {
   const workspaceTaskMemoriesRef = useRef<
     Record<number, WorkspaceTaskMemory | undefined>
   >({});
+  const taskChatTranscriptRef =
+    useRef<VirtuosoTaskChatTranscriptHandle | null>(null);
   const pendingAccountHandoffsRef = useRef<
     Record<number, PendingAccountHandoff | undefined>
   >({});
@@ -2397,6 +2402,9 @@ function App() {
   const undoTranscriptEditedFiles = useStableEvent(handleUndoEditedFiles);
   const editTranscriptPrompt = useStableEvent(handleEditLatestPrompt);
   const loadTranscriptHistoricalActivity = useStableEvent(loadHistoricalActivity);
+  const rememberTranscriptViewport = useStableEvent(
+    rememberTranscriptViewportSnapshot,
+  );
   const activateAgentNotification = useStableEvent(
     handleAgentNotificationActivation,
   );
@@ -3189,6 +3197,10 @@ function App() {
     historicalTranscript?.chatId === selectedWorkspaceChatSession?.chatId
       ? historicalTranscript
       : null;
+  const selectedTranscriptViewportSnapshot = selectedWorkspace
+    ? workspaceTaskMemoriesRef.current[selectedWorkspace.id]
+        ?.transcriptViewportSnapshot ?? null
+    : null;
   const suggestedCommitIntentContext = useMemo(
     () => buildCommitIntentContext(selectedWorkspaceChatEntries),
     [selectedWorkspaceChatEntries],
@@ -4836,6 +4848,7 @@ function App() {
       contextFiles: [],
       selectedSkills: [],
       historicalTranscript: null,
+      transcriptViewportSnapshot: null,
     };
   }
 
@@ -4868,12 +4881,33 @@ function App() {
           )
         : null;
 
+    const existing = workspaceTaskMemoriesRef.current[workspace.id];
     workspaceTaskMemoriesRef.current[workspace.id] = {
       selection,
       prompt: promptRef.current,
       contextFiles: [...contextFilesRef.current],
       selectedSkills: [...selectedSkillsRef.current],
       historicalTranscript: transcript,
+      transcriptViewportSnapshot:
+        existing?.transcriptViewportSnapshot ?? null,
+    };
+  }
+
+  function rememberTranscriptViewportSnapshot(
+    snapshot: TranscriptViewportSnapshot,
+  ) {
+    const memory = workspaceTaskMemoriesRef.current[snapshot.workspaceId];
+    if (!memory) return;
+    const expectedIdentity =
+      memory.selection.kind === "chat"
+        ? `chat:${memory.selection.session.chatId}`
+        : memory.selection.kind === "draft"
+          ? `workspace:${snapshot.workspaceId}:live`
+          : null;
+    if (snapshot.transcriptIdentity !== expectedIdentity) return;
+    workspaceTaskMemoriesRef.current[snapshot.workspaceId] = {
+      ...memory,
+      transcriptViewportSnapshot: snapshot,
     };
   }
 
@@ -4897,6 +4931,7 @@ function App() {
         ? [...selectedSkillsRef.current]
         : [...existing.selectedSkills],
       historicalTranscript: sanitizeRememberedHistoricalTranscript(transcript),
+      transcriptViewportSnapshot: null,
     };
   }
 
@@ -5064,6 +5099,7 @@ function App() {
       ...existing,
       selection: { kind: "new" },
       historicalTranscript: null,
+      transcriptViewportSnapshot: null,
     };
     if (selectedWorkspaceRef.current?.id !== workspace.id) return;
 
@@ -5137,6 +5173,7 @@ function App() {
       return;
     }
 
+    taskChatTranscriptRef.current?.captureViewportState();
     rememberCurrentWorkspaceTaskMemory();
     historyChatLoadIdRef.current += 1;
     cancelActiveExternalTranscriptSync();
@@ -5177,6 +5214,7 @@ function App() {
           ...memory,
           selection,
           historicalTranscript: null,
+          transcriptViewportSnapshot: null,
         };
       }
     } else if (selection.kind === "chat") {
@@ -7060,6 +7098,7 @@ function App() {
 
   function applyWorkspaceForChatNavigation(workspace: Workspace) {
     if (selectedWorkspaceRef.current?.id !== workspace.id) {
+      taskChatTranscriptRef.current?.captureViewportState();
       rememberCurrentWorkspaceTaskMemory();
     }
     const memory =
@@ -7470,6 +7509,7 @@ function App() {
         ...remembered,
         selection: { kind: "new" },
         historicalTranscript: null,
+        transcriptViewportSnapshot: null,
       };
     }
     if (
@@ -17059,6 +17099,7 @@ function App() {
                     }}
                   >
                     <VirtuosoTaskChatTranscript
+                      ref={taskChatTranscriptRef}
                       key={
                         selectedHistoricalTranscript
                           ? `history:${selectedHistoricalTranscript.chatId}:${selectedHistoricalTranscript.sourceVersion}`
@@ -17073,6 +17114,10 @@ function App() {
                       transcriptVersion={
                         selectedHistoricalTranscript?.sourceVersion ?? "live"
                       }
+                      restoredViewportSnapshot={
+                        selectedTranscriptViewportSnapshot
+                      }
+                      onViewportSnapshotChange={rememberTranscriptViewport}
                       viewportWidth={taskViewportWidth}
                       viewportStable={taskViewportStable}
                       firstItemIndex={

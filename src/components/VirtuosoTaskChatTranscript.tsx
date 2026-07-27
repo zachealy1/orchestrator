@@ -1,7 +1,9 @@
 import {
+  forwardRef,
   memo,
   useCallback,
   useEffect,
+  useImperativeHandle,
   useMemo,
   useRef,
   useState,
@@ -88,6 +90,14 @@ type CachedTranscriptState = {
   entryCount: number;
 };
 
+type TranscriptCacheMetadata = Omit<
+  TranscriptViewportSnapshot,
+  "snapshot" | "workspaceId"
+> & {
+  cacheKey: string;
+  workspaceId: number | null;
+};
+
 const transcriptStateCache = new Map<string, CachedTranscriptState>();
 
 function readCachedTranscriptState(key: string, entryCount: number) {
@@ -139,6 +149,10 @@ export type VirtuosoTaskChatTranscriptProps = {
   entries: TaskChatEntry[];
   transcriptIdentity: string;
   transcriptVersion: string;
+  restoredViewportSnapshot?: TranscriptViewportSnapshot | null;
+  onViewportSnapshotChange?: (
+    snapshot: TranscriptViewportSnapshot,
+  ) => void;
   viewportWidth?: number;
   viewportStable?: boolean;
   firstItemIndex: number;
@@ -178,6 +192,19 @@ export type VirtuosoTaskChatTranscriptProps = {
     request: TranscriptNotificationFocusRequest,
     found: boolean,
   ) => void;
+};
+
+export type TranscriptViewportSnapshot = {
+  workspaceId: number;
+  transcriptIdentity: string;
+  transcriptVersion: string;
+  viewportWidthBucket: number;
+  entryCount: number;
+  snapshot: StateSnapshot;
+};
+
+export type VirtuosoTaskChatTranscriptHandle = {
+  captureViewportState: () => void;
 };
 
 export type TranscriptNotificationFocusRequest = {
@@ -273,11 +300,15 @@ const VirtualTranscriptRow = memo(function VirtualTranscriptRow({
   );
 });
 
-export const VirtuosoTaskChatTranscript = memo(
-  function VirtuosoTaskChatTranscript({
+const VirtuosoTaskChatTranscriptImpl = forwardRef<
+  VirtuosoTaskChatTranscriptHandle,
+  VirtuosoTaskChatTranscriptProps
+>(function VirtuosoTaskChatTranscript({
     entries,
     transcriptIdentity,
     transcriptVersion,
+    restoredViewportSnapshot = null,
+    onViewportSnapshotChange,
     viewportWidth = 1_024,
     viewportStable = true,
     firstItemIndex,
@@ -301,7 +332,7 @@ export const VirtuosoTaskChatTranscript = memo(
     onScrollActivityChange,
     notificationFocusRequest = null,
     onNotificationFocusApplied,
-  }: VirtuosoTaskChatTranscriptProps) {
+  }, forwardedRef) {
     const virtuosoRef = useRef<VirtuosoHandle | null>(null);
     const scrollerRef = useRef<HTMLElement | null>(null);
     const detachScrollerListenersRef = useRef<(() => void) | null>(null);
@@ -345,8 +376,12 @@ export const VirtuosoTaskChatTranscript = memo(
         revision: 0,
         seenKeys: new Set(),
       });
-    const cacheMetadataRef = useRef({
+    const cacheMetadataRef = useRef<TranscriptCacheMetadata>({
       cacheKey: "",
+      workspaceId: entries[0]?.workspaceId ?? null,
+      transcriptIdentity,
+      transcriptVersion,
+      viewportWidthBucket: getTranscriptWidthBucket(viewportWidth),
       entryCount: entries.length,
     });
     const suppressRestoreOnMountRef = useRef(openAtLatestRequest !== null);
@@ -362,7 +397,14 @@ export const VirtuosoTaskChatTranscript = memo(
     const viewportWidthBucket = getTranscriptWidthBucket(viewportWidth);
     const geometryScope = `${transcriptIdentity}:${transcriptVersion}`;
     const cacheKey = `${geometryScope}:${viewportWidthBucket}`;
-    cacheMetadataRef.current = { cacheKey, entryCount: entries.length };
+    cacheMetadataRef.current = {
+      cacheKey,
+      workspaceId: entries[0]?.workspaceId ?? null,
+      transcriptIdentity,
+      transcriptVersion,
+      viewportWidthBucket,
+      entryCount: entries.length,
+    };
 
     const defaultHeightKey = `${geometryScope}:${viewportWidthBucket}`;
     if (stableDefaultItemHeightRef.current?.key !== defaultHeightKey) {
@@ -469,13 +511,55 @@ export const VirtuosoTaskChatTranscript = memo(
     );
 
     const restoredState = useMemo(
-      () =>
-        suppressRestoreOnMountRef.current
-          ? undefined
-          : readCachedTranscriptState(cacheKey, entries.length),
+      () => {
+        if (suppressRestoreOnMountRef.current) return undefined;
+        if (
+          restoredViewportSnapshot &&
+          restoredViewportSnapshot.transcriptIdentity === transcriptIdentity &&
+          restoredViewportSnapshot.transcriptVersion === transcriptVersion &&
+          restoredViewportSnapshot.viewportWidthBucket === viewportWidthBucket &&
+          restoredViewportSnapshot.entryCount === entries.length
+        ) {
+          return restoredViewportSnapshot.snapshot;
+        }
+        return readCachedTranscriptState(cacheKey, entries.length);
+      },
       // Restoration is intentionally read only when this transcript mounts.
       // eslint-disable-next-line react-hooks/exhaustive-deps
       [cacheKey],
+    );
+
+    const publishViewportSnapshot = useCallback(
+      (metadata: TranscriptCacheMetadata, snapshot: StateSnapshot) => {
+        writeCachedTranscriptState(
+          metadata.cacheKey,
+          metadata.entryCount,
+          snapshot,
+        );
+        if (metadata.workspaceId === null) return;
+        onViewportSnapshotChange?.({
+          workspaceId: metadata.workspaceId,
+          transcriptIdentity: metadata.transcriptIdentity,
+          transcriptVersion: metadata.transcriptVersion,
+          viewportWidthBucket: metadata.viewportWidthBucket,
+          entryCount: metadata.entryCount,
+          snapshot,
+        });
+      },
+      [onViewportSnapshotChange],
+    );
+    const captureViewportState = useCallback(() => {
+      const handle = virtuosoRef.current;
+      if (!handle) return;
+      const metadata = { ...cacheMetadataRef.current };
+      handle.getState((snapshot) => {
+        publishViewportSnapshot(metadata, snapshot);
+      });
+    }, [publishViewportSnapshot]);
+    useImperativeHandle(
+      forwardedRef,
+      () => ({ captureViewportState }),
+      [captureViewportState],
     );
 
     const validPlanKeys = useMemo(
@@ -721,6 +805,7 @@ export const VirtuosoTaskChatTranscript = memo(
       clearScrollIdleCheck();
       userScrollActiveRef.current = false;
       reportScrollActivity();
+      captureViewportState();
       if (
         completionFollowPendingRef.current &&
         liveFollowIntentRef.current
@@ -734,6 +819,7 @@ export const VirtuosoTaskChatTranscript = memo(
         queueLiveFollow();
       }
     }, [
+      captureViewportState,
       clearScrollIdleCheck,
       queueCompletionFollow,
       queueLiveFollow,
@@ -778,8 +864,13 @@ export const VirtuosoTaskChatTranscript = memo(
       activeLatestRequestRef.current = null;
       clearLatestPositionSchedule();
       onOpenAtLatestApplied?.(request);
+      captureViewportState();
       return true;
-    }, [clearLatestPositionSchedule, onOpenAtLatestApplied]);
+    }, [
+      captureViewportState,
+      clearLatestPositionSchedule,
+      onOpenAtLatestApplied,
+    ]);
 
     const cancelLatestPosition = useCallback(() => {
       const request = activeLatestRequestRef.current;
@@ -1195,13 +1286,9 @@ export const VirtuosoTaskChatTranscript = memo(
           notificationFocusTimerRef.current = null;
         }
         if (reportedActivityRef.current) onScrollActivityChange?.(false);
+        const metadata = { ...cacheMetadataRef.current };
         handle?.getState((snapshot) => {
-          const metadata = cacheMetadataRef.current;
-          writeCachedTranscriptState(
-            metadata.cacheKey,
-            metadata.entryCount,
-            snapshot,
-          );
+          publishViewportSnapshot(metadata, snapshot);
         });
       };
     }, [
@@ -1212,6 +1299,7 @@ export const VirtuosoTaskChatTranscript = memo(
       clearPlanAnchorCorrection,
       clearScrollIdleCheck,
       onScrollActivityChange,
+      publishViewportSnapshot,
     ]);
 
     const handleStartEdit = useCallback((entry: TaskChatEntry) => {
@@ -1265,8 +1353,11 @@ export const VirtuosoTaskChatTranscript = memo(
       (active: boolean) => {
         virtuosoScrollingRef.current = active;
         reportScrollActivity();
+        if (!active && !userScrollActiveRef.current) {
+          captureViewportState();
+        }
       },
-      [reportScrollActivity],
+      [captureViewportState, reportScrollActivity],
     );
 
     const handleJumpToLatest = useCallback(() => {
@@ -1415,6 +1506,10 @@ export const VirtuosoTaskChatTranscript = memo(
       </div>
     );
   },
+);
+
+export const VirtuosoTaskChatTranscript = memo(
+  VirtuosoTaskChatTranscriptImpl,
 );
 
 export function clearTranscriptStateCache() {
