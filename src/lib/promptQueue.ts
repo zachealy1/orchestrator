@@ -74,7 +74,12 @@ export function parsePromptQueueItemRecord(
   const contextFingerprint = parsePromptQueueContextFingerprint(
     record.context_fingerprint_json,
   );
-  if (!snapshot || !contextFingerprint || !isPromptQueueStatus(record.status)) {
+  if (
+    !snapshot ||
+    !contextFingerprint ||
+    !isPromptQueueStatus(record.status) ||
+    ![0, 1].includes(Number(record.auto_send_enabled))
+  ) {
     return null;
   }
 
@@ -86,6 +91,7 @@ export function parsePromptQueueItemRecord(
     chatId: record.chat_id,
     position: record.position,
     sendNowPriority: record.send_now_priority,
+    autoSendEnabled: Number(record.auto_send_enabled) === 1,
     prompt: record.prompt_text,
     snapshot: {
       ...snapshot,
@@ -108,6 +114,12 @@ export function parsePromptQueueItemRecord(
 
 export function isPromptQueueItemPending(item: PromptQueueItem) {
   return ACTIVE_QUEUE_STATUSES.has(item.status);
+}
+
+export function isPromptQueueItemAutoDispatchEligible(
+  item: PromptQueueItem,
+) {
+  return item.sendNowPriority !== null || item.autoSendEnabled;
 }
 
 export function isPromptQueueItemMutable(item: PromptQueueItem) {

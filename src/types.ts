@@ -747,6 +747,7 @@ export type PromptQueueItemRecord = {
   chat_id: number;
   position: number;
   send_now_priority: number | null;
+  auto_send_enabled: number;
   prompt_text: string;
   execution_snapshot_json: string;
   context_fingerprint_json: string;
@@ -769,6 +770,7 @@ export type PromptQueueItem = {
   chatId: number;
   position: number;
   sendNowPriority: number | null;
+  autoSendEnabled: boolean;
   prompt: string;
   snapshot: QueuedPromptSnapshot;
   status: PromptQueueStatus;

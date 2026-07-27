@@ -100,6 +100,7 @@ function queuedPrompt(): PromptQueueItem {
     chatId: 2,
     position: 0,
     sendNowPriority: null,
+    autoSendEnabled: true,
     prompt: "Queued follow-up",
     snapshot: createQueuedPromptSnapshot({
       prompt: "Queued follow-up",

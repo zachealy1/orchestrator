@@ -5,8 +5,11 @@ import App, { buildBoundedAccountHandoffContext } from "./App";
 import { clearTranscriptStateCache } from "./components/VirtuosoTaskChatTranscript";
 import { ASK_FOR_APPROVAL_PERMISSION_PROFILE } from "./lib/codexAccess";
 import { persistRunningGitOperation } from "./lib/gitOperations";
+import { createQueuedPromptSnapshot } from "./lib/promptQueue";
+import { createRunExecutionSettings } from "./lib/runExecutionSettings";
 import {
   ORCHESTRATOR_CONTEXT_FILE_MIME,
+  type PromptQueueItem,
   type RunListItem,
 } from "./types";
 
@@ -96,7 +99,7 @@ const mocks = vi.hoisted(() => ({
   failPromptQueueItemMock: vi.fn(),
   markPromptQueueItemStaleMock: vi.fn(),
   retryPromptQueueItemMock: vi.fn(),
-  skipPromptQueueItemMock: vi.fn(),
+  setPromptQueueItemAutoSendMock: vi.fn(),
   removePromptQueueItemMock: vi.fn(),
   recoverInterruptedPromptQueueItemsMock: vi.fn(),
   advanceChatConversationRevisionMock: vi.fn(),
@@ -345,7 +348,7 @@ vi.mock("./db", () => ({
     mocks.reschedulePromptQueueItemAfterSteeringRaceMock,
   retryPromptQueueItem: mocks.retryPromptQueueItemMock,
   softDeleteWorkspace: mocks.softDeleteWorkspaceMock,
-  skipPromptQueueItem: mocks.skipPromptQueueItemMock,
+  setPromptQueueItemAutoSend: mocks.setPromptQueueItemAutoSendMock,
   savePreflightReport: mocks.savePreflightReportMock,
   saveExternalChatHistoryIndex: mocks.saveExternalChatHistoryIndexMock,
   activateExternalTranscriptSnapshot:
@@ -606,6 +609,7 @@ function promptQueueItemFixture(input: {
     chatId: input.chatId,
     position,
     sendNowPriority: null,
+    autoSendEnabled: true,
     prompt: input.prompt,
     snapshot: input.snapshot,
     status: "queued",
@@ -1109,19 +1113,36 @@ function prepareDefaults() {
         staleReasons: reasons,
       }),
   );
-  mocks.retryPromptQueueItemMock.mockImplementation(async (itemId: string) =>
-    updatePromptQueueFixture(itemId, {
-      status: "queued",
-      error: null,
-      staleReasons: [],
-    }),
+  mocks.retryPromptQueueItemMock.mockImplementation(
+    async (
+      itemId: string,
+      options: { autoSendEnabled?: boolean } = {},
+    ) =>
+      updatePromptQueueFixture(itemId, {
+        status: "queued",
+        autoSendEnabled: options.autoSendEnabled ?? true,
+        error: null,
+        staleReasons: [],
+      }),
   );
-  mocks.skipPromptQueueItemMock.mockImplementation(async (itemId: string) =>
-    updatePromptQueueFixture(itemId, {
-      status: "skipped",
-      error: null,
-      completedAt: "2026-06-30T09:01:00Z",
-    }),
+  mocks.setPromptQueueItemAutoSendMock.mockImplementation(
+    async (itemId: string, enabled: boolean) => {
+      const item = mocks.promptQueueItems.get(itemId);
+      if (
+        !item ||
+        !["queued", "scheduled-next", "failed", "stale"].includes(item.status)
+      ) {
+        return null;
+      }
+      return updatePromptQueueFixture(itemId, {
+        autoSendEnabled: enabled,
+        sendNowPriority: enabled ? item.sendNowPriority : null,
+        status:
+          !enabled && item.status === "scheduled-next"
+            ? "queued"
+            : item.status,
+      });
+    },
   );
   mocks.removePromptQueueItemMock.mockImplementation(async (itemId: string) =>
     mocks.promptQueueItems.delete(itemId),
@@ -3739,6 +3760,100 @@ describe("App Codex auth", () => {
     expect(within(transcript).getByText("Header fixed.")).toBeInTheDocument();
     expect(within(transcript).getByText("1m 0s")).toBeInTheDocument();
     expect(within(transcript).getByText("640 tokens")).toBeInTheDocument();
+  });
+
+  it("restores a held queue item after restart and keeps the chat queue paused", async () => {
+    const historicalChat = workspaceChatFixture({
+      id: 409,
+      title: "Persisted prompt queue",
+    });
+    const historicalRun = workspaceRunFixture({
+      id: 309,
+      chat_id: historicalChat.id,
+      original_prompt: "Initial completed work",
+      final_message: "Initial work complete.",
+    });
+    const executionSettings = createRunExecutionSettings({
+      accountId: signedInAccount.id,
+      profileKey: `account:${signedInAccount.id}`,
+      selectedBranch: "main",
+      mode: "run",
+      intent: "normal",
+      accessMode: "ask-for-approval",
+      computerUseEnabled: true,
+      model: "gpt-5.6",
+      reasoningEffort: "medium",
+      useOss: false,
+      ossProvider: "ollama",
+      contextFiles: [],
+      selectedSkills: [],
+      goalMode: false,
+    });
+    const snapshot = createQueuedPromptSnapshot({
+      prompt: "Keep this prompt held",
+      executionSettings,
+      contextFingerprint: {
+        version: 1,
+        workspacePath: workspace.path,
+        branch: "main",
+        headCommit: "abc123",
+        worktreeFingerprint: "clean",
+        profileKey: `account:${signedInAccount.id}`,
+        threadId: historicalChat.codex_thread_id,
+        conversationRevision: historicalChat.conversation_revision,
+        files: [],
+      },
+    });
+    const heldItem: PromptQueueItem = {
+      id: "restored-held-queue-item",
+      clientMessageId: "restored-held-message",
+      workspaceId: workspace.id,
+      chatId: historicalChat.id,
+      position: 0,
+      sendNowPriority: null,
+      autoSendEnabled: false,
+      prompt: snapshot.prompt,
+      snapshot,
+      status: "queued",
+      linkedRunId: null,
+      linkedTurnId: null,
+      error: null,
+      staleReasons: [],
+      createdAt: "2026-07-26T10:00:00Z",
+      updatedAt: "2026-07-26T10:00:00Z",
+      acceptedAt: null,
+      completedAt: null,
+    };
+    mocks.listRestoredPromptQueueItemsMock.mockResolvedValue([heldItem]);
+    mocks.promptQueueItems.set(heldItem.id, heldItem);
+    mocks.listWorkspaceChatsMock.mockResolvedValue([historicalChat]);
+    mocks.getChatWithRunsMock.mockResolvedValue(
+      workspaceChatWithRunsFixture(historicalChat, [historicalRun]),
+    );
+
+    const { user } = await renderApp();
+    const banner = screen.getByRole("region", { name: "Selected folder" });
+    await user.click(
+      within(banner).getByRole("button", { name: /open chat history/i }),
+    );
+    const drawer = await screen.findByRole("complementary", {
+      name: "Workspace chat history",
+    });
+    await user.click(
+      within(drawer).getByRole("button", {
+        name: /persisted prompt queue/i,
+      }),
+    );
+
+    expect(await screen.findByText("Queue paused")).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: /^Queue paused/ }));
+    expect(screen.getAllByText("Held").length).toBeGreaterThan(0);
+    expect(
+      screen.getByRole("button", { name: "Restore automatic sending" }),
+    ).toBeInTheDocument();
+    expect(
+      mocks.codexRpcMock.mock.calls.some(([, method]) => method === "turn/start"),
+    ).toBe(false);
   });
 
   it("opens another history chat while the current plan awaits review", async () => {
@@ -10123,11 +10238,6 @@ describe("App Codex auth", () => {
 
     await user.click(screen.getByRole("button", { name: /^Queue/ }));
     await user.click(
-      screen.getByRole("button", {
-        name: /^Add this detail to the active task/,
-      }),
-    );
-    await user.click(
       screen.getByRole("button", { name: "Send queued prompt now" }),
     );
 
@@ -10176,11 +10286,6 @@ describe("App Codex auth", () => {
       screen.getByRole("button", { name: "Add prompt to queue" }),
     );
     await user.click(screen.getByRole("button", { name: /^Queue/ }));
-    await user.click(
-      screen.getByRole("button", {
-        name: /^Run this after the completion race/,
-      }),
-    );
     mocks.codexRpcMock.mockRejectedValueOnce(
       new Error("turn is not active because it completed"),
     );
@@ -10265,10 +10370,14 @@ describe("App Codex auth", () => {
     await user.click(
       screen.getByRole("button", { name: /^Queue paused/ }),
     );
+    const failedActions = screen.getByRole("toolbar", {
+      name: /Actions for queued prompt: Run the first attempt/i,
+    });
     await user.click(
-      screen.getByRole("button", { name: /^Run the first attempt/ }),
+      within(failedActions).getByRole("button", {
+        name: "Skip automatic sending",
+      }),
     );
-    await user.click(screen.getByRole("button", { name: "Skip queued prompt" }));
     await waitFor(() => expect(turnStartCalls).toBe(2));
     const submittedPrompts = screen.getAllByLabelText("Submitted prompt");
     expect(submittedPrompts).toHaveLength(2);

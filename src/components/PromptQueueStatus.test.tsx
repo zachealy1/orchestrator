@@ -64,6 +64,7 @@ function queueItem(
     chatId: 2,
     position: 0,
     sendNowPriority: null,
+    autoSendEnabled: true,
     prompt: "Implement durable prompt queuing",
     snapshot: createQueuedPromptSnapshot({
       prompt: "Implement durable prompt queuing",
@@ -92,7 +93,7 @@ function renderQueue(
     onEdit: vi.fn(),
     onRemove: vi.fn(),
     onRetry: vi.fn(),
-    onSkip: vi.fn(),
+    onAutoSendChange: vi.fn(),
     onSendNow: vi.fn(),
     onResume: vi.fn(),
     onReorder: vi.fn(),
@@ -111,16 +112,15 @@ describe("PromptQueueStatus", () => {
 
     await user.click(screen.getByRole("button", { name: /queue/i }));
     const queueRegion = screen.getByRole("region", { name: "Prompt queue" });
-    const disclosure = queueRegion.querySelector(
-      ".prompt-queue-item-disclosure",
-    );
-    expect(disclosure).toBeInstanceOf(HTMLButtonElement);
-    await user.click(
-      disclosure as HTMLButtonElement,
-    );
+    expect(
+      queueRegion.querySelector(".prompt-queue-item-disclosure"),
+    ).not.toBeInTheDocument();
+    expect(
+      queueRegion.querySelector(".prompt-queue-item-expanded"),
+    ).not.toBeInTheDocument();
 
     const toolbar = screen.getByRole("toolbar", {
-      name: "Queued prompt actions",
+      name: /Actions for queued prompt/i,
     });
     const edit = within(toolbar).getByRole("button", {
       name: "Edit queued prompt",
@@ -140,6 +140,32 @@ describe("PromptQueueStatus", () => {
     expect(props.onSendNow).toHaveBeenCalledWith(props.items[0]);
   });
 
+  it("holds and restores automatic sending without removing the item", async () => {
+    const heldItem = {
+      ...queueItem("queue-1"),
+      autoSendEnabled: false,
+    };
+    const { user, props, rerender } = renderQueue();
+
+    await user.click(screen.getByRole("button", { name: /queue/i }));
+    await user.click(
+      screen.getByRole("button", { name: "Skip automatic sending" }),
+    );
+    expect(props.onAutoSendChange).toHaveBeenCalledWith(props.items[0], false);
+
+    rerender(
+      <PromptQueueStatus
+        {...props}
+        items={[heldItem]}
+      />,
+    );
+    expect(screen.getAllByText("Held").length).toBeGreaterThan(0);
+    await user.click(
+      screen.getByRole("button", { name: "Restore automatic sending" }),
+    );
+    expect(props.onAutoSendChange).toHaveBeenCalledWith(heldItem, true);
+  });
+
   it("requires explicit resume for a paused restored queue", async () => {
     const { user, props } = renderQueue({ paused: true });
 
@@ -154,14 +180,6 @@ describe("PromptQueueStatus", () => {
     const { user } = renderQueue({ items: [active] });
 
     await user.click(screen.getByRole("button", { name: /queue/i }));
-    const queueRegion = screen.getByRole("region", { name: "Prompt queue" });
-    const disclosure = queueRegion.querySelector(
-      ".prompt-queue-item-disclosure",
-    );
-    expect(disclosure).toBeInstanceOf(HTMLButtonElement);
-    await user.click(
-      disclosure as HTMLButtonElement,
-    );
 
     expect(
       screen.getByRole("button", { name: /reorder queued prompt/i }),

@@ -910,6 +910,100 @@ describe("VirtuosoTaskChatTranscript", () => {
     expect(virtuosoMock.lastProps.followOutput(true)).toBe(false);
   });
 
+  it("does not jump an unconfirmed idle viewport when prompt submission starts a run", async () => {
+    const completedEntry = historyEntry(1);
+    const { rerender } = render(
+      <VirtuosoTaskChatTranscript
+        entries={[completedEntry]}
+        transcriptIdentity="chat:submit-with-restored-position"
+        transcriptVersion="live"
+        firstItemIndex={1_000_000}
+        openAtLatestRequest={null}
+        liveFollow={false}
+        onResolveRequest={vi.fn()}
+      />,
+    );
+    virtuosoMock.scrollToIndex.mockClear();
+
+    rerender(
+      <VirtuosoTaskChatTranscript
+        entries={[completedEntry, runningEntry(2)]}
+        transcriptIdentity="chat:submit-with-restored-position"
+        transcriptVersion="live"
+        firstItemIndex={999_999}
+        openAtLatestRequest={null}
+        liveFollow={false}
+        onResolveRequest={vi.fn()}
+      />,
+    );
+    rerender(
+      <VirtuosoTaskChatTranscript
+        entries={[completedEntry, runningEntry(2)]}
+        transcriptIdentity="chat:submit-with-restored-position"
+        transcriptVersion="live"
+        firstItemIndex={999_999}
+        openAtLatestRequest={null}
+        liveFollow
+        onResolveRequest={vi.fn()}
+      />,
+    );
+    await act(async () => {
+      await new Promise((resolve) => window.setTimeout(resolve, 30));
+    });
+
+    expect(virtuosoMock.scrollToIndex).not.toHaveBeenCalled();
+    expect(virtuosoMock.lastProps.followOutput(false)).toBe(false);
+  });
+
+  it("follows a submitted prompt when the idle viewport was confirmed at the bottom", async () => {
+    const completedEntry = historyEntry(1);
+    const { rerender } = render(
+      <VirtuosoTaskChatTranscript
+        entries={[completedEntry]}
+        transcriptIdentity="chat:submit-at-bottom"
+        transcriptVersion="live"
+        firstItemIndex={1_000_000}
+        openAtLatestRequest={null}
+        liveFollow={false}
+        onResolveRequest={vi.fn()}
+      />,
+    );
+    act(() => virtuosoMock.lastProps.atBottomStateChange(true));
+    virtuosoMock.scrollToIndex.mockClear();
+
+    rerender(
+      <VirtuosoTaskChatTranscript
+        entries={[completedEntry, runningEntry(2)]}
+        transcriptIdentity="chat:submit-at-bottom"
+        transcriptVersion="live"
+        firstItemIndex={999_999}
+        openAtLatestRequest={null}
+        liveFollow={false}
+        onResolveRequest={vi.fn()}
+      />,
+    );
+    rerender(
+      <VirtuosoTaskChatTranscript
+        entries={[completedEntry, runningEntry(2)]}
+        transcriptIdentity="chat:submit-at-bottom"
+        transcriptVersion="live"
+        firstItemIndex={999_999}
+        openAtLatestRequest={null}
+        liveFollow
+        onResolveRequest={vi.fn()}
+      />,
+    );
+
+    await vi.waitFor(() =>
+      expect(virtuosoMock.scrollToIndex).toHaveBeenCalledWith({
+        index: "LAST",
+        align: "end",
+        behavior: "auto",
+      }),
+    );
+    expect(virtuosoMock.lastProps.followOutput(false)).toBe("auto");
+  });
+
   it("releases live follow on upward input and resumes at the bottom", () => {
     render(
       <VirtuosoTaskChatTranscript

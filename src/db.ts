@@ -31,7 +31,7 @@ import {
 const DATABASE_URL = "sqlite:app.db";
 const PROMPT_QUEUE_COLUMNS = `
   id, client_message_id, workspace_id, chat_id, position,
-  send_now_priority, prompt_text, execution_snapshot_json,
+  send_now_priority, auto_send_enabled, prompt_text, execution_snapshot_json,
   context_fingerprint_json, conversation_revision, status,
   linked_run_id, linked_turn_id, error, stale_reasons_json,
   created_at, updated_at, accepted_at, completed_at
@@ -656,7 +656,10 @@ export async function markPromptQueueItemStale(
   return result.rowsAffected === 1 ? readPromptQueueItem(itemId) : null;
 }
 
-export async function retryPromptQueueItem(itemId: string) {
+export async function retryPromptQueueItem(
+  itemId: string,
+  options: { autoSendEnabled?: boolean } = {},
+) {
   return transitionPromptQueueItem(
     itemId,
     ["failed", "stale"],
@@ -664,20 +667,33 @@ export async function retryPromptQueueItem(itemId: string) {
       status: "queued",
       error: null,
       clearStaleReasons: true,
+      autoSendEnabled: options.autoSendEnabled ?? true,
     },
   );
 }
 
-export async function skipPromptQueueItem(itemId: string) {
-  return transitionPromptQueueItem(
-    itemId,
-    ["queued", "scheduled-next", "failed", "stale"],
-    {
-      status: "skipped",
-      error: null,
-      completedAt: true,
-    },
+export async function setPromptQueueItemAutoSend(
+  itemId: string,
+  enabled: boolean,
+) {
+  const db = await getDatabase();
+  const result = await db.execute(
+    `UPDATE prompt_queue_items
+     SET auto_send_enabled = $1,
+         send_now_priority = CASE
+           WHEN $1 = 0 THEN NULL
+           ELSE send_now_priority
+         END,
+         status = CASE
+           WHEN $1 = 0 AND status = 'scheduled-next' THEN 'queued'
+           ELSE status
+         END,
+         updated_at = CURRENT_TIMESTAMP
+     WHERE id = $2
+       AND status IN ('queued', 'scheduled-next', 'failed', 'stale')`,
+    [enabled ? 1 : 0, itemId],
   );
+  return result.rowsAffected === 1 ? readPromptQueueItem(itemId) : null;
 }
 
 export async function removePromptQueueItem(itemId: string) {
@@ -748,6 +764,7 @@ async function transitionPromptQueueItem(
     clearStaleReasons?: boolean;
     clearSendNowPriority?: boolean;
     completedAt?: boolean;
+    autoSendEnabled?: boolean;
   },
 ) {
   const db = await getDatabase();
@@ -758,10 +775,14 @@ async function transitionPromptQueueItem(
          stale_reasons_json = CASE WHEN $3 = 1 THEN NULL ELSE stale_reasons_json END,
          completed_at = CASE WHEN $4 = 1 THEN CURRENT_TIMESTAMP ELSE completed_at END,
          send_now_priority = CASE WHEN $5 = 1 THEN NULL ELSE send_now_priority END,
+         auto_send_enabled = CASE
+           WHEN $6 IS NULL THEN auto_send_enabled
+           ELSE $6
+         END,
          updated_at = CURRENT_TIMESTAMP
-     WHERE id = $6
+     WHERE id = $7
        AND status IN (${currentStatuses
-         .map((_, index) => `$${index + 7}`)
+         .map((_, index) => `$${index + 8}`)
          .join(", ")})`,
     [
       update.status,
@@ -769,6 +790,11 @@ async function transitionPromptQueueItem(
       update.clearStaleReasons ? 1 : 0,
       update.completedAt ? 1 : 0,
       update.clearSendNowPriority ? 1 : 0,
+      update.autoSendEnabled === undefined
+        ? null
+        : update.autoSendEnabled
+          ? 1
+          : 0,
       itemId,
       ...currentStatuses,
     ],

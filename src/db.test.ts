@@ -28,12 +28,14 @@ import {
   createRun,
   failChatTitleGeneration,
   listLocalChatTranscript,
+  listRestoredPromptQueueItems,
   listWorkspaceChats,
   recordTokenUsage,
   recoverAbandonedRuns,
   recoverInterruptedPromptQueueItems,
   recoverInterruptedChatTitleGenerations,
   renameChat,
+  setPromptQueueItemAutoSend,
   softDeleteChat,
   softDeleteWorkspace,
   updateRun,
@@ -131,6 +133,7 @@ describe("prompt queue persistence", () => {
           chat_id: 42,
           position: 0,
           send_now_priority: null,
+          auto_send_enabled: 1,
           prompt_text: snapshot.prompt,
           execution_snapshot_json: JSON.stringify(snapshot),
           context_fingerprint_json: JSON.stringify(
@@ -216,6 +219,61 @@ describe("prompt queue persistence", () => {
     expect(query).toContain("status = 'failed'");
     expect(query).toContain("delivery could be confirmed");
     expect(query).toContain("send_now_priority = NULL");
+  });
+
+  it("holds a queued item without archiving it", async () => {
+    await setPromptQueueItemAutoSend("queue-1", false);
+
+    const [query, values] = mocks.execute.mock.calls[0] ?? [];
+    expect(query).toContain("SET auto_send_enabled = $1");
+    expect(query).toContain("WHEN $1 = 0 THEN NULL");
+    expect(query).toContain(
+      "WHEN $1 = 0 AND status = 'scheduled-next' THEN 'queued'",
+    );
+    expect(query).not.toContain("status = 'skipped'");
+    expect(values).toEqual([0, "queue-1"]);
+  });
+
+  it("restores held queue items with their automatic-send state intact", async () => {
+    const snapshot = queuedPromptSnapshot();
+    mocks.select.mockResolvedValueOnce([
+      {
+        id: "queue-held",
+        client_message_id: "message-held",
+        workspace_id: 3,
+        chat_id: 42,
+        position: 1,
+        send_now_priority: null,
+        auto_send_enabled: 0,
+        prompt_text: snapshot.prompt,
+        execution_snapshot_json: JSON.stringify(snapshot),
+        context_fingerprint_json: JSON.stringify(
+          snapshot.contextFingerprint,
+        ),
+        conversation_revision: 0,
+        status: "queued",
+        linked_run_id: null,
+        linked_turn_id: null,
+        error: null,
+        stale_reasons_json: null,
+        created_at: "2026-07-26T10:00:00Z",
+        updated_at: "2026-07-26T10:00:00Z",
+        accepted_at: null,
+        completed_at: null,
+      },
+    ]);
+
+    await expect(listRestoredPromptQueueItems()).resolves.toEqual([
+      expect.objectContaining({
+        id: "queue-held",
+        autoSendEnabled: false,
+        status: "queued",
+      }),
+    ]);
+    expect(mocks.select.mock.calls[0]?.[0]).toContain(
+      "WHERE status NOT IN ('skipped', 'completed')",
+    );
+    expect(mocks.select.mock.calls[0]?.[0]).toContain("auto_send_enabled");
   });
 
   it("removes durable queue items when a chat is soft-deleted", async () => {

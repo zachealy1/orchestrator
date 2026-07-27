@@ -1068,7 +1068,9 @@ const VirtuosoTaskChatTranscriptImpl = forwardRef<
       clearCompletionFollowSchedule();
       if (!previousLiveFollowRef.current) {
         const shouldFollow =
-          !bottomStateKnownRef.current || atBottomRef.current;
+          bottomStateKnownRef.current
+            ? atBottomRef.current
+            : liveFollowIntentRef.current;
         liveFollowIntentRef.current = shouldFollow;
         setShowJumpToLatest(!shouldFollow);
       }

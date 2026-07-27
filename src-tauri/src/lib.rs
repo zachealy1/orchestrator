@@ -1079,6 +1079,15 @@ fn migrations() -> Vec<Migration> {
             ",
             kind: MigrationKind::Up,
         },
+        Migration {
+            version: 23,
+            description: "add_prompt_queue_auto_send",
+            sql: "
+                ALTER TABLE prompt_queue_items
+                    ADD COLUMN auto_send_enabled INTEGER NOT NULL DEFAULT 1;
+            ",
+            kind: MigrationKind::Up,
+        },
     ]
 }
 
@@ -6653,6 +6662,10 @@ mod tests {
             .iter()
             .find(|migration| migration.version == 22)
             .expect("migration 22");
+        let prompt_queue_auto_send = all_migrations
+            .iter()
+            .find(|migration| migration.version == 23)
+            .expect("migration 23");
         let cached_token_repair = all_migrations
             .iter()
             .find(|migration| migration.version == 20)
@@ -6677,6 +6690,15 @@ mod tests {
         assert!(prompt_queue_revision
             .sql
             .contains("ADD COLUMN conversation_revision"));
+        assert!(!prompt_queue.sql.contains("auto_send_enabled"));
+        assert!(!prompt_queue_revision.sql.contains("auto_send_enabled"));
+        assert_eq!(
+            prompt_queue_auto_send.description,
+            "add_prompt_queue_auto_send"
+        );
+        assert!(prompt_queue_auto_send
+            .sql
+            .contains("ADD COLUMN auto_send_enabled INTEGER NOT NULL DEFAULT 1"));
         assert_eq!(
             cached_token_repair.description,
             "repair_per_run_cached_token_usage"

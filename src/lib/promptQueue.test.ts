@@ -8,6 +8,7 @@ import {
   comparePromptQueueDisplayOrder,
   comparePromptQueueDispatchOrder,
   createQueuedPromptSnapshot,
+  isPromptQueueItemAutoDispatchEligible,
   isPromptQueueItemMutable,
   parsePromptQueueItemRecord,
   parseQueuedPromptSnapshot,
@@ -77,6 +78,7 @@ function queueItem(
   position: number,
   sendNowPriority: number | null,
   status: PromptQueueItem["status"] = "queued",
+  autoSendEnabled = true,
 ): PromptQueueItem {
   return {
     id,
@@ -85,6 +87,7 @@ function queueItem(
     chatId: 2,
     position,
     sendNowPriority,
+    autoSendEnabled,
     prompt: `Prompt ${id}`,
     snapshot: createQueuedPromptSnapshot({
       prompt: `Prompt ${id}`,
@@ -126,6 +129,7 @@ describe("prompt queue snapshots", () => {
         chat_id: 2,
         position: 0,
         send_now_priority: null,
+        auto_send_enabled: 1,
         prompt_text: "Prompt",
         execution_snapshot_json: '{"version":2}',
         context_fingerprint_json: JSON.stringify(fingerprint),
@@ -184,6 +188,22 @@ describe("prompt queue dispatch rules", () => {
     expect(
       isPromptQueueItemMutable(queueItem("active", 0, null, "active")),
     ).toBe(false);
+  });
+
+  it("bypasses held items unless they have an explicit send-now priority", () => {
+    expect(
+      isPromptQueueItemAutoDispatchEligible(
+        queueItem("held", 0, null, "queued", false),
+      ),
+    ).toBe(false);
+    expect(
+      isPromptQueueItemAutoDispatchEligible(
+        queueItem("held-priority", 0, 1, "scheduled-next", false),
+      ),
+    ).toBe(true);
+    expect(
+      isPromptQueueItemAutoDispatchEligible(queueItem("automatic", 0, null)),
+    ).toBe(true);
   });
 
   it("rebaselines repository context after a successful queued turn", () => {

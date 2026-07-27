@@ -107,7 +107,7 @@ import {
   reorderPromptQueueItems,
   reschedulePromptQueueItemAfterSteeringRace,
   retryPromptQueueItem,
-  skipPromptQueueItem,
+  setPromptQueueItemAutoSend,
   prioritizePromptQueueItem,
   claimPromptQueueItem,
   markPromptQueueItemStale,
@@ -251,6 +251,7 @@ import {
   comparePromptQueueDispatchOrder,
   createPromptQueueItemId,
   createQueuedPromptSnapshot,
+  isPromptQueueItemAutoDispatchEligible,
   isPromptQueueItemMutable,
   isPromptQueueItemPending,
   rebaselinePromptQueueContextFingerprint,
@@ -1821,6 +1822,7 @@ function App() {
   );
   const promptQueueEnqueueLocksRef = useRef(new Set<number>());
   const promptQueueClaimLocksRef = useRef(new Set<number>());
+  const promptQueueActionLocksRef = useRef(new Set<string>());
   const promptQueueDispatchTimersRef = useRef(new Map<number, number>());
   const historyChatLoadIdRef = useRef(0);
   const taskChatEntriesRef = useRef<TaskChatEntry[]>([]);
@@ -2527,9 +2529,11 @@ function App() {
   const retryComposerQueuedPrompt = useStableEvent((item: PromptQueueItem) => {
     void retryQueuedPrompt(item);
   });
-  const skipComposerQueuedPrompt = useStableEvent((item: PromptQueueItem) => {
-    void skipQueuedPrompt(item);
-  });
+  const changeComposerQueuedPromptAutoSend = useStableEvent(
+    (item: PromptQueueItem, enabled: boolean) => {
+      void changeQueuedPromptAutoSend(item, enabled);
+    },
+  );
   const sendComposerQueuedPromptNow = useStableEvent(
     (item: PromptQueueItem) => {
       void sendQueuedPromptNow(item);
@@ -10473,6 +10477,7 @@ function App() {
       const items = await refreshPromptQueue(chatId);
       const item = items
         .filter(isPromptQueueItemPending)
+        .filter(isPromptQueueItemAutoDispatchEligible)
         .sort(comparePromptQueueDispatchOrder)[0];
       if (!item) return;
       if (item.status === "failed" || item.status === "stale") {
@@ -11431,23 +11436,45 @@ function App() {
     }
   }
 
-  async function skipQueuedPrompt(item: PromptQueueItem) {
+  async function changeQueuedPromptAutoSend(
+    item: PromptQueueItem,
+    enabled: boolean,
+  ) {
+    const actionKey = `auto-send:${item.id}`;
+    if (promptQueueActionLocksRef.current.has(actionKey)) return;
+    promptQueueActionLocksRef.current.add(actionKey);
     setPromptQueueActionPendingItemId(item.id);
     try {
-      if (!(await skipPromptQueueItem(item.id))) {
-        throw new Error("The prompt can no longer be skipped.");
+      const updated = await setPromptQueueItemAutoSend(item.id, enabled);
+      if (!updated) {
+        throw new Error(
+          enabled
+            ? "The prompt can no longer be restored."
+            : "The prompt can no longer be held.",
+        );
       }
-      removePromptQueueItemFromMemory(item.chatId, item.id);
-      setPromptQueuePaused(item.chatId, false);
-      setStatusMessage("Queued prompt skipped.");
-      schedulePromptQueueDispatch(item.chatId);
+      upsertPromptQueueItemInMemory(updated);
+
+      const pauseReason = promptQueuePauseReasonsRef.current.get(item.chatId);
+      if (!enabled && (pauseReason === "failure" || pauseReason === "stale")) {
+        setPromptQueuePaused(item.chatId, false);
+      }
+      if (!pausedPromptQueueChatIdsRef.current.has(item.chatId)) {
+        schedulePromptQueueDispatch(item.chatId);
+      }
+      setStatusMessage(
+        enabled
+          ? "Automatic sending restored for the queued prompt."
+          : "Queued prompt held from automatic sending.",
+      );
     } catch (error) {
       setStatusMessage(
-        `Could not skip queued prompt: ${
+        `Could not ${enabled ? "restore" : "hold"} queued prompt: ${
           error instanceof Error ? error.message : String(error)
         }`,
       );
     } finally {
+      promptQueueActionLocksRef.current.delete(actionKey);
       setPromptQueueActionPendingItemId(null);
     }
   }
@@ -11458,7 +11485,9 @@ function App() {
     try {
       let prioritized = item;
       if (item.status === "failed" || item.status === "stale") {
-        const retried = await retryPromptQueueItem(item.id);
+        const retried = await retryPromptQueueItem(item.id, {
+          autoSendEnabled: item.autoSendEnabled,
+        });
         if (!retried) throw new Error("The prompt is no longer retryable.");
         prioritized = retried;
       }
@@ -16517,13 +16546,13 @@ function App() {
               <button
                 className="native-plan-icon-action"
                 type="button"
-                aria-label="Skip stale queued prompt"
-                data-tooltip="Skip prompt"
+                aria-label="Hold stale queued prompt"
+                data-tooltip="Hold prompt"
                 disabled={promptQueueStaleReview.status !== "idle"}
                 onClick={() => {
                   const item = promptQueueStaleReview.item;
                   setPromptQueueStaleReview(null);
-                  void skipQueuedPrompt(item);
+                  void changeQueuedPromptAutoSend(item, false);
                 }}
               >
                 <ChevronRight size={15} aria-hidden="true" />
@@ -17312,7 +17341,7 @@ function App() {
                   onQueueEdit={editComposerQueuedPrompt}
                   onQueueRemove={removeComposerQueuedPrompt}
                   onQueueRetry={retryComposerQueuedPrompt}
-                  onQueueSkip={skipComposerQueuedPrompt}
+                  onQueueAutoSendChange={changeComposerQueuedPromptAutoSend}
                   onQueueSendNow={sendComposerQueuedPromptNow}
                   onQueueResume={resumeComposerPromptQueue}
                   onQueueReorder={reorderComposerPromptQueue}

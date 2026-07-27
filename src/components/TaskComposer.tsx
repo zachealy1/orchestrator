@@ -120,7 +120,10 @@ type Props = {
   onQueueEdit?: (item: PromptQueueItem) => void;
   onQueueRemove?: (item: PromptQueueItem) => void;
   onQueueRetry?: (item: PromptQueueItem) => void;
-  onQueueSkip?: (item: PromptQueueItem) => void;
+  onQueueAutoSendChange?: (
+    item: PromptQueueItem,
+    enabled: boolean,
+  ) => void;
   onQueueSendNow?: (item: PromptQueueItem) => void;
   onQueueResume?: () => void;
   onQueueReorder?: (orderedItemIds: string[]) => void;
@@ -174,6 +177,10 @@ const DISABLED_WEBKIT_WRITING_SUGGESTIONS = {
 } as const;
 const NOOP = () => undefined;
 const NOOP_QUEUE_ITEM = (_item: PromptQueueItem) => undefined;
+const NOOP_QUEUE_AUTO_SEND = (
+  _item: PromptQueueItem,
+  _enabled: boolean,
+) => undefined;
 const NOOP_QUEUE_ORDER = (_itemIds: string[]) => undefined;
 
 export function promptAutosizeMirrorText(prompt: string) {
@@ -228,7 +235,7 @@ export const TaskComposer = memo(function TaskComposer({
   onQueueEdit = NOOP_QUEUE_ITEM,
   onQueueRemove = NOOP_QUEUE_ITEM,
   onQueueRetry = NOOP_QUEUE_ITEM,
-  onQueueSkip = NOOP_QUEUE_ITEM,
+  onQueueAutoSendChange = NOOP_QUEUE_AUTO_SEND,
   onQueueSendNow = NOOP_QUEUE_ITEM,
   onQueueResume = NOOP,
   onQueueReorder = NOOP_QUEUE_ORDER,
@@ -852,7 +859,7 @@ export const TaskComposer = memo(function TaskComposer({
               onEdit={onQueueEdit}
               onRemove={onQueueRemove}
               onRetry={onQueueRetry}
-              onSkip={onQueueSkip}
+              onAutoSendChange={onQueueAutoSendChange}
               onSendNow={onQueueSendNow}
               onResume={onQueueResume}
               onReorder={onQueueReorder}
