@@ -155,9 +155,11 @@ describe("PromptQueueStatus", () => {
     const { user, props, rerender } = renderQueue();
 
     await user.click(screen.getByRole("button", { name: /queue/i }));
-    await user.click(
-      screen.getByRole("button", { name: "Skip automatic sending" }),
-    );
+    const hold = screen.getByRole("button", {
+      name: "Skip automatic sending",
+    });
+    expect(hold.querySelector(".lucide-pause")).toBeInTheDocument();
+    await user.click(hold);
     expect(props.onAutoSendChange).toHaveBeenCalledWith(props.items[0], false);
 
     rerender(
@@ -167,9 +169,11 @@ describe("PromptQueueStatus", () => {
       />,
     );
     expect(screen.getAllByText("Held").length).toBeGreaterThan(0);
-    await user.click(
-      screen.getByRole("button", { name: "Restore automatic sending" }),
-    );
+    const restore = screen.getByRole("button", {
+      name: "Restore automatic sending",
+    });
+    expect(restore.querySelector(".lucide-play")).toBeInTheDocument();
+    await user.click(restore);
     expect(props.onAutoSendChange).toHaveBeenCalledWith(heldItem, true);
   });
 

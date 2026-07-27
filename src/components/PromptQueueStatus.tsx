@@ -22,11 +22,11 @@ import {
   GripVertical,
   ListTodo,
   LoaderCircle,
+  Pause,
   Pencil,
   Play,
   RotateCcw,
   Send,
-  SkipForward,
   Trash2,
   X,
 } from "lucide-react";
@@ -436,7 +436,7 @@ const SortableQueueItem = memo(function SortableQueueItem({
               {held ? (
                 <Play size={15} aria-hidden="true" />
               ) : (
-                <SkipForward size={15} aria-hidden="true" />
+                <Pause size={15} aria-hidden="true" />
               )}
             </QueueIconButton>
           ) : null}
