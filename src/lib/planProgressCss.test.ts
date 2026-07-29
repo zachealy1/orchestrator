@@ -20,6 +20,8 @@ describe("plan progress CSS", () => {
     const stack = rule(".composer-status-stack");
     const progressRow = rule(".composer-strip-row");
     const progressContent = rule(".composer-strip-content");
+    const primary = rule(".composer-strip-primary");
+    const end = rule(".composer-strip-end");
 
     expect(stack).toContain("--composer-strip-row-height: 39px");
     expect(stack).toContain("--composer-strip-row-padding: 4px 8px");
@@ -33,7 +35,14 @@ describe("plan progress CSS", () => {
     expect(progressRow).toContain("display: flex");
     expect(progressRow).toContain("align-items: center");
     expect(progressRow).toContain("padding: var(--composer-strip-row-padding)");
+    expect(progressContent).toContain("display: grid");
+    expect(progressContent).toContain("minmax(0, 1fr)");
     expect(progressContent).toContain("gap: var(--composer-strip-gap)");
+    expect(progressContent).toContain("justify-content: stretch");
+    expect(primary).toContain("display: flex");
+    expect(primary).toContain("min-width: 0");
+    expect(primary).toContain("text-align: left");
+    expect(end).toContain("justify-self: end");
   });
 
   it("uses shared typography and truncation rules across strip rows", () => {
@@ -75,8 +84,14 @@ describe("plan progress CSS", () => {
     expect(css).toContain(
       '.composer-strip-row[data-tone="danger"] .composer-strip-state',
     );
-    expect(css).toMatch(
+    expect(css).not.toMatch(
       /@container composer-strip \(max-width: 720px\)[\s\S]*?\.composer-strip-description \{\s*display: none;/,
+    );
+    expect(css).not.toMatch(
+      /@container composer-strip \(max-width: 720px\)[\s\S]*?--composer-strip-row-padding:/,
+    );
+    expect(css).not.toMatch(
+      /@container composer-strip \(max-width: 720px\)[\s\S]*?--composer-strip-gap:/,
     );
   });
 

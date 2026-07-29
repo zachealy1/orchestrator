@@ -32,8 +32,22 @@ describe("PlanProgressIndicator", () => {
       Array.from(indicator.children).map((element) => element.className),
     ).toEqual([
       "composer-strip-icon",
+      "composer-strip-primary",
+      "composer-strip-end",
+    ]);
+    expect(
+      Array.from(
+        indicator.querySelector(".composer-strip-primary")!.children,
+      ).map((element) => element.className),
+    ).toEqual([
       "composer-strip-title",
       "composer-strip-description",
+    ]);
+    expect(
+      Array.from(
+        indicator.querySelector(".composer-strip-end")!.children,
+      ).map((element) => element.className),
+    ).toEqual([
       "composer-strip-state",
       "composer-strip-trailing",
     ]);

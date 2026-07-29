@@ -116,8 +116,22 @@ describe("PromptQueueStatus", () => {
       Array.from(toggle.children).map((element) => element.className),
     ).toEqual([
       "composer-strip-icon",
+      "composer-strip-primary",
+      "composer-strip-end",
+    ]);
+    expect(
+      Array.from(
+        toggle.querySelector(".composer-strip-primary")!.children,
+      ).map((element) => element.className),
+    ).toEqual([
       "composer-strip-title",
       "composer-strip-description",
+    ]);
+    expect(
+      Array.from(
+        toggle.querySelector(".composer-strip-end")!.children,
+      ).map((element) => element.className),
+    ).toEqual([
       "composer-strip-trailing",
     ]);
 

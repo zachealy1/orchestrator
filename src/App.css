@@ -4554,15 +4554,21 @@ select:disabled {
 }
 
 .composer-strip-content {
-  display: flex;
+  display: grid;
+  grid-template-columns:
+    var(--composer-strip-icon-size)
+    minmax(0, 1fr)
+    auto;
   width: 100%;
   min-width: 0;
   min-height: var(--composer-strip-control-size);
   align-items: center;
   gap: var(--composer-strip-gap);
+  justify-content: stretch;
 }
 
 .composer-strip-content-button {
+  justify-content: stretch;
   border: 0;
   border-radius: 7px;
   background: transparent;
@@ -4599,6 +4605,22 @@ select:disabled {
 .composer-strip-icon > svg {
   width: var(--composer-strip-icon-size);
   height: var(--composer-strip-icon-size);
+}
+
+.composer-strip-primary {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: var(--composer-strip-gap);
+  text-align: left;
+}
+
+.composer-strip-end {
+  display: inline-flex;
+  min-width: 0;
+  align-items: center;
+  justify-self: end;
+  gap: var(--composer-strip-gap);
 }
 
 .composer-strip-title {
@@ -5213,29 +5235,12 @@ button.composer-status-action:focus-visible {
 }
 
 @container composer-strip (max-width: 720px) {
-  .composer-strip-description {
-    display: none;
-  }
-
-  .composer-strip-row {
-    --composer-strip-row-padding: 4px 7px;
-    --composer-strip-gap: 6px;
-  }
-
-  .composer-strip-state {
-    max-width: 124px;
-  }
-
   .prompt-queue-item-main {
     grid-template-columns: 30px minmax(0, 1fr) auto;
   }
 
   .prompt-queue-item-actions {
     grid-column: 2 / -1;
-  }
-
-  .plan-progress-track {
-    width: 48px;
   }
 }
 

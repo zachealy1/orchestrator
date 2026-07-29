@@ -83,30 +83,37 @@ export const ComposerStripRow = memo(function ComposerStripRow({
   const content = (
     <>
       <span className="composer-strip-icon">{icon}</span>
-      <strong className="composer-strip-title">{title}</strong>
-      {meta !== undefined && meta !== null ? (
-        <span className="composer-strip-meta">{meta}</span>
-      ) : null}
-      {description !== undefined && description !== null ? (
-        <span
-          className="composer-strip-description"
-          title={descriptionTitle}
-          aria-label={descriptionAriaLabel}
-        >
-          {description}
+      <span className="composer-strip-primary">
+        <strong className="composer-strip-title">{title}</strong>
+        {meta !== undefined && meta !== null ? (
+          <span className="composer-strip-meta">{meta}</span>
+        ) : null}
+        {description !== undefined && description !== null ? (
+          <span
+            className="composer-strip-description"
+            title={descriptionTitle}
+            aria-label={descriptionAriaLabel}
+          >
+            {description}
+          </span>
+        ) : null}
+      </span>
+      {(status !== undefined && status !== null) ||
+      (trailing !== undefined && trailing !== null) ? (
+        <span className="composer-strip-end">
+          {status !== undefined && status !== null ? (
+            <span
+              className="composer-strip-state"
+              title={statusTitle}
+              aria-live={statusAriaLive}
+            >
+              {status}
+            </span>
+          ) : null}
+          {trailing !== undefined && trailing !== null ? (
+            <span className="composer-strip-trailing">{trailing}</span>
+          ) : null}
         </span>
-      ) : null}
-      {status !== undefined && status !== null ? (
-        <span
-          className="composer-strip-state"
-          title={statusTitle}
-          aria-live={statusAriaLive}
-        >
-          {status}
-        </span>
-      ) : null}
-      {trailing !== undefined && trailing !== null ? (
-        <span className="composer-strip-trailing">{trailing}</span>
       ) : null}
     </>
   );
