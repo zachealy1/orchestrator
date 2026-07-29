@@ -1,5 +1,5 @@
 import {
-  Bot,
+  BrainCircuit,
   Check,
   FileCode2,
   LoaderCircle,
@@ -12,7 +12,9 @@ import {
 } from "lucide-react";
 import {
   memo,
+  useCallback,
   useEffect,
+  useId,
   useMemo,
   useRef,
   useState,
@@ -32,6 +34,7 @@ import {
   type SubagentRecord,
   type SubagentTranscript,
   type SubagentTranscriptItem,
+  type SubagentTranscriptTurn,
 } from "../lib/subagents";
 import type {
   NativeUserInputRequest,
@@ -74,15 +77,9 @@ type TranscriptState =
       error: string;
     };
 
-type InspectorRow = {
-  id: string;
-  turnId: string;
-  turnStatus: string;
-  item: SubagentTranscriptItem;
-};
-
 const transcriptCache = new Map<string, SubagentTranscript>();
 const TRANSCRIPT_CACHE_LIMIT = 5;
+const ACTIVE_TRANSCRIPT_REFRESH_MS = 700;
 
 export const SubagentInspector = memo(function SubagentInspector({
   conversationKey,
@@ -113,7 +110,11 @@ export const SubagentInspector = memo(function SubagentInspector({
   const [stopping, setStopping] = useState(false);
   const [stopError, setStopError] = useState<string | null>(null);
   const loadGenerationRef = useRef(0);
+  const transcriptRequestCountRef = useRef(0);
+  const loadedRecordRevisionRef = useRef("");
+  const recordRef = useRef(record);
   const steeringLockRef = useRef(false);
+  recordRef.current = record;
 
   useEffect(
     () =>
@@ -128,16 +129,19 @@ export const SubagentInspector = memo(function SubagentInspector({
     const generation = ++loadGenerationRef.current;
     const cacheKey = transcriptCacheKey(record);
     const cached = transcriptCache.get(cacheKey) ?? null;
+    const requestedRevision = record.updatedAt;
     setTranscriptState({
       status: cached ? "loaded" : "loading",
       transcript: cached,
       error: null,
     } as TranscriptState);
     const timer = window.setTimeout(() => {
+      transcriptRequestCountRef.current += 1;
       void onLoadTranscript(record)
         .then((transcript) => {
           if (loadGenerationRef.current !== generation) return;
           rememberTranscript(cacheKey, transcript);
+          loadedRecordRevisionRef.current = requestedRevision;
           setTranscriptState({
             status: "loaded",
             transcript,
@@ -154,6 +158,12 @@ export const SubagentInspector = memo(function SubagentInspector({
                 ? error.message
                 : "The subagent transcript is unavailable.",
           });
+        })
+        .finally(() => {
+          transcriptRequestCountRef.current = Math.max(
+            0,
+            transcriptRequestCountRef.current - 1,
+          );
         });
     }, cached ? 240 : 0);
     return () => window.clearTimeout(timer);
@@ -163,6 +173,54 @@ export const SubagentInspector = memo(function SubagentInspector({
     record?.completedAt,
     record?.id,
   ]);
+
+  useEffect(() => {
+    if (!record || !isActiveSubagentStatus(record.status)) return;
+    const recordId = record.id;
+    const timer = window.setInterval(() => {
+      const current = recordRef.current;
+      if (
+        !current ||
+        current.id !== recordId ||
+        !isActiveSubagentStatus(current.status) ||
+        current.updatedAt === loadedRecordRevisionRef.current ||
+        transcriptRequestCountRef.current > 0
+      ) {
+        return;
+      }
+      const generation = loadGenerationRef.current;
+      const requestedRevision = current.updatedAt;
+      const cacheKey = transcriptCacheKey(current);
+      transcriptRequestCountRef.current += 1;
+      void onLoadTranscript(current)
+        .then((transcript) => {
+          if (
+            loadGenerationRef.current !== generation ||
+            recordRef.current?.id !== recordId
+          ) {
+            return;
+          }
+          rememberTranscript(cacheKey, transcript);
+          loadedRecordRevisionRef.current = requestedRevision;
+          setTranscriptState({
+            status: "loaded",
+            transcript,
+            error: null,
+          });
+        })
+        .catch(() => {
+          // Keep the last usable transcript during a transient streaming read.
+          loadedRecordRevisionRef.current = requestedRevision;
+        })
+        .finally(() => {
+          transcriptRequestCountRef.current = Math.max(
+            0,
+            transcriptRequestCountRef.current - 1,
+          );
+        });
+    }, ACTIVE_TRANSCRIPT_REFRESH_MS);
+    return () => window.clearInterval(timer);
+  }, [onLoadTranscript, record?.id, record?.status]);
 
   const interactionRunView = useMemo(
     () =>
@@ -178,8 +236,11 @@ export const SubagentInspector = memo(function SubagentInspector({
         : null,
     [interactionRunView, parentEntry],
   );
-  const transcriptRows = useMemo(
-    () => flattenTranscript(transcriptState.transcript),
+  const transcriptTurns = useMemo(
+    () =>
+      transcriptState.transcript?.turns.filter(
+        (turn) => turn.items.length > 0,
+      ) ?? [],
     [transcriptState.transcript],
   );
   const canStop =
@@ -263,16 +324,19 @@ export const SubagentInspector = memo(function SubagentInspector({
             label="Refresh subagent transcript"
             onClick={() => {
               const generation = ++loadGenerationRef.current;
+              const requestedRevision = record.updatedAt;
               transcriptCache.delete(transcriptCacheKey(record));
               setTranscriptState({
                 status: "loading",
                 transcript: transcriptState.transcript,
                 error: null,
               });
+              transcriptRequestCountRef.current += 1;
               void onLoadTranscript(record)
                 .then((transcript) => {
                   if (loadGenerationRef.current !== generation) return;
                   rememberTranscript(transcriptCacheKey(record), transcript);
+                  loadedRecordRevisionRef.current = requestedRevision;
                   setTranscriptState({
                     status: "loaded",
                     transcript,
@@ -289,6 +353,12 @@ export const SubagentInspector = memo(function SubagentInspector({
                         ? error.message
                         : "The subagent transcript is unavailable.",
                   });
+                })
+                .finally(() => {
+                  transcriptRequestCountRef.current = Math.max(
+                    0,
+                    transcriptRequestCountRef.current - 1,
+                  );
                 });
             }}
           >
@@ -299,11 +369,6 @@ export const SubagentInspector = memo(function SubagentInspector({
           </InspectorIconButton>
         </div>
       </header>
-
-      <section className="subagent-inspector-task" aria-label="Subagent task">
-        <Bot size={15} aria-hidden="true" />
-        <p>{record.task || "Subagent task details are unavailable."}</p>
-      </section>
 
       <div
         className={`subagent-inspector-interactions${
@@ -327,17 +392,19 @@ export const SubagentInspector = memo(function SubagentInspector({
             <LoaderCircle className="spin" size={16} aria-hidden="true" />
             <span>Loading subagent transcript</span>
           </div>
-        ) : transcriptRows.length > 0 ? (
+        ) : transcriptTurns.length > 0 ? (
           <Virtuoso
             className="subagent-transcript-list"
-            data={transcriptRows}
-            computeItemKey={(_, row) => row.id}
+            data={transcriptTurns}
+            computeItemKey={(_, turn) => turn.id}
             increaseViewportBy={{ top: 500, bottom: 800 }}
             followOutput={canStop ? "auto" : false}
-            itemContent={(_, row) => <SubagentTranscriptRow row={row} />}
+            itemContent={(_, turn) => (
+              <SubagentTranscriptTurnView turn={turn} />
+            )}
           />
         ) : (
-          <div className="subagent-inspector-empty">
+          <div className="run-summary muted subagent-inspector-empty">
             {record.finalResult ??
               "No user-visible transcript is available for this subagent."}
           </div>
@@ -505,60 +572,114 @@ function filterSubagentInteractions(
   };
 }
 
-function flattenTranscript(
-  transcript: SubagentTranscript | null,
-): InspectorRow[] {
-  if (!transcript) return [];
-  return transcript.turns.flatMap((turn) =>
-    turn.items.map((item) => ({
-      id: `${turn.id}:${item.id}`,
-      turnId: turn.id,
-      turnStatus: turn.status,
-      item,
-    })),
-  );
-}
-
-const SubagentTranscriptRow = memo(function SubagentTranscriptRow({
-  row,
+const SubagentTranscriptTurnView = memo(function SubagentTranscriptTurnView({
+  turn,
 }: {
-  row: InspectorRow;
+  turn: SubagentTranscriptTurn;
 }) {
-  if (row.item.kind === "activity") {
-    const Icon =
-      row.item.activityKind === "command"
-        ? TerminalSquare
-        : row.item.activityKind === "file"
-          ? FileCode2
-          : MessageSquareText;
-    return (
-      <article className="subagent-transcript-activity">
-        <Icon size={14} aria-hidden="true" />
-        <span>{row.item.label}</span>
-        {row.item.status ? <small>{row.item.status}</small> : null}
-      </article>
-    );
-  }
-  if (row.item.kind === "reasoning") {
-    return (
-      <article className="subagent-transcript-reasoning">
-        {row.item.summaries.map((summary, index) => (
-          <p key={`${row.item.id}:${index}`}>{summary}</p>
-        ))}
-      </article>
-    );
-  }
-  const text = row.item.text;
+  const userItems = turn.items.filter(
+    (item): item is Extract<SubagentTranscriptItem, { kind: "user" }> =>
+      item.kind === "user",
+  );
+  const streamItems = turn.items.filter(
+    (item) =>
+      item.kind === "activity" ||
+      item.kind === "reasoning" ||
+      (item.kind === "assistant" && item.phase === "commentary"),
+  );
+  const summaryItems = turn.items.filter(
+    (
+      item,
+    ): item is Extract<
+      SubagentTranscriptItem,
+      { kind: "assistant" | "plan" }
+    > =>
+      item.kind === "plan" ||
+      (item.kind === "assistant" && item.phase !== "commentary"),
+  );
+
   return (
-    <article
-      className={`subagent-transcript-message subagent-transcript-${row.item.kind}`}
-    >
-      <ReactMarkdown remarkPlugins={[remarkGfm]} skipHtml>
-        {text}
-      </ReactMarkdown>
+    <article className="subagent-transcript-turn" data-turn-status={turn.status}>
+      {userItems.map((item) => (
+        <div className="submitted-prompt-stack" key={item.id}>
+          <article className="submitted-prompt" aria-label="Submitted prompt">
+            {item.text}
+          </article>
+        </div>
+      ))}
+      {streamItems.length > 0 || summaryItems.length > 0 ? (
+        <article className="chat-message assistant-message">
+          <div
+            className={`run-output-surface ${
+              isActiveTranscriptTurn(turn.status) ? "running" : "completed"
+            }`}
+          >
+            {streamItems.length > 0 ? (
+              <div className="stream-event-list" aria-label="App-server stream">
+                {streamItems.flatMap((item) =>
+                  renderSubagentStreamItem(item),
+                )}
+              </div>
+            ) : null}
+            {summaryItems.map((item) => (
+              <div
+                className="run-summary markdown-summary"
+                aria-label={
+                  item.kind === "plan" ? "Subagent plan" : "Run summary"
+                }
+                key={item.id}
+              >
+                <ReactMarkdown remarkPlugins={[remarkGfm]} skipHtml>
+                  {item.text}
+                </ReactMarkdown>
+              </div>
+            ))}
+          </div>
+        </article>
+      ) : null}
     </article>
   );
 });
+
+function isActiveTranscriptTurn(status: string) {
+  return ["inProgress", "running", "active"].includes(status);
+}
+
+function renderSubagentStreamItem(item: SubagentTranscriptItem): ReactNode[] {
+  if (item.kind === "assistant") {
+    return [
+      <div className="stream-message" key={item.id}>
+        {item.text}
+      </div>,
+    ];
+  }
+  if (item.kind === "reasoning") {
+    return item.summaries.map((summary, index) => (
+      <div className="stream-event reasoning" key={`${item.id}:${index}`}>
+        <BrainCircuit size={15} aria-hidden="true" />
+        <span>{summary}</span>
+      </div>
+    ));
+  }
+  if (item.kind !== "activity") return [];
+  const Icon =
+    item.activityKind === "command"
+      ? TerminalSquare
+      : item.activityKind === "file"
+        ? FileCode2
+        : MessageSquareText;
+  return [
+    <div className={`stream-event ${item.activityKind}`} key={item.id}>
+      <Icon size={15} aria-hidden="true" />
+      <span>{item.label}</span>
+      {item.status ? (
+        <span className="subagent-transcript-activity-status">
+          {item.status}
+        </span>
+      ) : null}
+    </div>,
+  ];
+}
 
 function transcriptCacheKey(record: SubagentRecord) {
   return `${record.profileKey}:${record.childThreadId}:${
@@ -591,19 +712,77 @@ function InspectorIconButton({
   destructive?: boolean;
   children: ReactNode;
 }) {
+  const buttonRef = useRef<HTMLButtonElement>(null);
+  const tooltipId = useId();
+  const [tooltip, setTooltip] = useState<{
+    left: number;
+    top: number;
+    placement: "above" | "below";
+  } | null>(null);
+  const updateTooltipPosition = useCallback(() => {
+    const button = buttonRef.current;
+    if (!button) return;
+    const bounds = button.getBoundingClientRect();
+    const viewportWidth = document.documentElement.clientWidth;
+    const left = Math.min(
+      Math.max(bounds.left + bounds.width / 2, 96),
+      Math.max(96, viewportWidth - 96),
+    );
+    const placement = bounds.top >= 52 ? "above" : "below";
+    setTooltip({
+      left,
+      top: placement === "above" ? bounds.top - 8 : bounds.bottom + 8,
+      placement,
+    });
+  }, []);
+  const hideTooltip = useCallback(() => setTooltip(null), []);
+
+  useEffect(() => {
+    if (!tooltip) return;
+    window.addEventListener("resize", updateTooltipPosition);
+    window.addEventListener("scroll", updateTooltipPosition, true);
+    return () => {
+      window.removeEventListener("resize", updateTooltipPosition);
+      window.removeEventListener("scroll", updateTooltipPosition, true);
+    };
+  }, [tooltip, updateTooltipPosition]);
+
   return (
-    <button
-      className={`native-plan-icon-action${
-        emphasis ? " implement" : ""
-      }${destructive ? " cancel" : ""}`}
-      type="button"
-      onClick={onClick}
-      disabled={disabled}
-      aria-label={label}
-      title={label}
-      data-tooltip={label}
-    >
-      {children}
-    </button>
+    <>
+      <button
+        ref={buttonRef}
+        className={`native-plan-icon-action${
+          emphasis ? " implement" : ""
+        }${destructive ? " cancel" : ""}`}
+        type="button"
+        onClick={() => {
+          hideTooltip();
+          onClick();
+        }}
+        onMouseEnter={updateTooltipPosition}
+        onMouseLeave={hideTooltip}
+        onFocus={updateTooltipPosition}
+        onBlur={hideTooltip}
+        disabled={disabled}
+        aria-label={label}
+        aria-describedby={tooltip ? tooltipId : undefined}
+      >
+        {children}
+      </button>
+      {tooltip && typeof document !== "undefined"
+        ? createPortal(
+            <div
+              id={tooltipId}
+              className="prompt-queue-portal-tooltip"
+              data-placement={tooltip.placement}
+              role="tooltip"
+              style={{ left: tooltip.left, top: tooltip.top }}
+            >
+              {label}
+            </div>,
+            document.body,
+          )
+        : null}
+    </>
   );
 }

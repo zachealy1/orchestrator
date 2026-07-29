@@ -3467,7 +3467,7 @@ button.edited-files-disclosure:focus-visible:not(:disabled) {
   min-width: 340px;
   height: 100%;
   min-height: 0;
-  grid-template-rows: auto auto auto minmax(0, 1fr) auto;
+  grid-template-rows: auto auto minmax(0, 1fr) auto;
   border-left: 1px solid var(--color-divider);
   background: var(--color-component-background);
   box-shadow: none;
@@ -3545,27 +3545,6 @@ button.edited-files-disclosure:focus-visible:not(:disabled) {
   gap: 4px;
 }
 
-.subagent-inspector-task {
-  display: grid;
-  min-width: 0;
-  grid-template-columns: 18px minmax(0, 1fr);
-  gap: 8px;
-  border-bottom: 1px solid var(--color-divider);
-  color: var(--color-text-secondary);
-  padding: 11px 14px;
-}
-
-.subagent-inspector-task svg {
-  margin-top: 2px;
-}
-
-.subagent-inspector-task p {
-  margin: 0;
-  color: var(--color-text);
-  font-size: 0.78rem;
-  line-height: 1.45;
-}
-
 .subagent-inspector-interactions {
   min-width: 0;
   border-bottom: 1px solid var(--color-divider);
@@ -3595,68 +3574,29 @@ button.edited-files-disclosure:focus-visible:not(:disabled) {
   overscroll-behavior: contain;
 }
 
-.subagent-transcript-message,
-.subagent-transcript-reasoning,
-.subagent-transcript-activity {
-  margin: 10px 12px 0;
-  border: 1px solid var(--color-divider);
-  border-radius: var(--radius);
-  background: var(--color-surface-soft);
-  color: var(--color-text);
-  padding: 10px 12px;
-  overflow-wrap: anywhere;
-}
-
-.subagent-transcript-message:last-child,
-.subagent-transcript-reasoning:last-child,
-.subagent-transcript-activity:last-child {
-  margin-bottom: 10px;
-}
-
-.subagent-transcript-user {
-  margin-left: 40px;
-  background: var(--color-button-active);
-}
-
-.subagent-transcript-message :first-child,
-.subagent-transcript-reasoning :first-child {
-  margin-top: 0;
-}
-
-.subagent-transcript-message :last-child,
-.subagent-transcript-reasoning :last-child {
-  margin-bottom: 0;
-}
-
-.subagent-transcript-message {
-  font-size: 0.8rem;
-  line-height: 1.5;
-}
-
-.subagent-transcript-reasoning {
-  color: var(--color-text-secondary);
-  font-size: 0.76rem;
-  line-height: 1.45;
-}
-
-.subagent-transcript-activity {
+.subagent-transcript-turn {
   display: grid;
-  grid-template-columns: 18px minmax(0, 1fr) auto;
-  gap: 7px;
-  align-items: center;
+  min-width: 0;
+  gap: 14px;
+  padding: 14px;
+}
+
+.subagent-transcript-turn .run-summary,
+.subagent-transcript-turn .stream-message {
+  max-width: 100%;
+}
+
+.subagent-transcript-turn .stream-event-list {
+  gap: 14px;
+}
+
+.subagent-transcript-turn .stream-event {
+  align-items: flex-start;
+}
+
+.subagent-transcript-activity-status {
   color: var(--color-text-secondary);
-  font-size: 0.75rem;
-}
-
-.subagent-transcript-activity > span {
-  overflow: hidden;
-  color: var(--color-text);
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.subagent-transcript-activity > small {
-  font-size: 0.68rem;
+  font-size: 0.82rem;
 }
 
 .subagent-inspector-loading,
@@ -4790,8 +4730,8 @@ select:disabled {
   transform: none;
 }
 
-.subagent-status-item:hover,
-.subagent-status-item:focus-visible {
+button.subagent-status-item:hover:not(:disabled),
+button.subagent-status-item:focus-visible {
   background: var(--color-surface-soft);
   box-shadow: none;
   color: var(--color-text);

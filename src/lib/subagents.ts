@@ -470,7 +470,7 @@ export function subagentDurationMs(
 
 function compareSubagents(left: SubagentRecord, right: SubagentRecord) {
   return (
-    Date.parse(right.updatedAt) - Date.parse(left.updatedAt) ||
+    Date.parse(right.startedAt) - Date.parse(left.startedAt) ||
     left.depth - right.depth ||
     left.id.localeCompare(right.id)
   );

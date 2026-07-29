@@ -1,15 +1,21 @@
-import { describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it } from "vitest";
 import {
+  clearSubagentStore,
   deriveSubagentComposerModel,
+  getConversationSubagents,
   lifecycleFromChildTurn,
   lifecycleFromCollabToolCall,
   parseCollabToolCall,
   parseCollabToolCalls,
   parseLegacySubagentActivity,
+  replaceConversationSubagents,
+  upsertConversationSubagent,
   type SubagentRecord,
 } from "./subagents";
 
 describe("subagent protocol", () => {
+  beforeEach(() => clearSubagentStore());
+
   it("parses modern spawn events without relying on display text", () => {
     const parsed = parseCollabToolCall({
       method: "item/completed",
@@ -171,5 +177,57 @@ describe("subagent protocol", () => {
       completedCount: 1,
       attentionCount: 1,
     });
+  });
+
+  it("keeps list order stable while lifecycle updates change timestamps", () => {
+    const older: SubagentRecord = {
+      id: "older",
+      ownerClientId: "owner",
+      workspaceId: 1,
+      chatId: 2,
+      runId: 3,
+      parentTurnId: "turn-parent",
+      profileKey: "account:1",
+      accountId: 1,
+      rootThreadId: "root",
+      parentThreadId: "root",
+      childThreadId: "child-older",
+      childTurnId: "turn-older",
+      spawnItemId: "spawn-older",
+      task: "Older task",
+      depth: 1,
+      status: "running",
+      statusBeforeAttention: null,
+      agentStatus: "running",
+      needsAttention: false,
+      error: null,
+      finalResult: null,
+      startedAt: "2026-07-29T10:00:00.000Z",
+      updatedAt: "2026-07-29T10:00:01.000Z",
+      completedAt: null,
+    };
+    const newer: SubagentRecord = {
+      ...older,
+      id: "newer",
+      childThreadId: "child-newer",
+      childTurnId: "turn-newer",
+      spawnItemId: "spawn-newer",
+      task: "Newer task",
+      startedAt: "2026-07-29T10:01:00.000Z",
+      updatedAt: "2026-07-29T10:01:01.000Z",
+    };
+
+    replaceConversationSubagents("chat:2", [older, newer]);
+    expect(
+      getConversationSubagents("chat:2").map((record) => record.id),
+    ).toEqual(["newer", "older"]);
+
+    upsertConversationSubagent({
+      ...older,
+      updatedAt: "2026-07-29T10:10:00.000Z",
+    });
+    expect(
+      getConversationSubagents("chat:2").map((record) => record.id),
+    ).toEqual(["newer", "older"]);
   });
 });

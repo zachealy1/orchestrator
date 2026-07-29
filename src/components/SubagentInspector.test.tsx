@@ -1,4 +1,4 @@
-import { render, screen, waitFor, within } from "@testing-library/react";
+import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import React from "react";
 import { describe, expect, it, vi } from "vitest";
@@ -75,7 +75,7 @@ function transcript(threadId: string): SubagentTranscript {
           {
             id: "assistant",
             kind: "assistant",
-            text: "**Inspection underway**",
+            text: "Inspection underway",
             phase: "commentary",
           },
           {
@@ -84,6 +84,12 @@ function transcript(threadId: string): SubagentTranscript {
             activityKind: "command",
             label: "Shell command",
             status: "completed",
+          },
+          {
+            id: "final",
+            kind: "assistant",
+            text: "**Inspection complete**",
+            phase: "final_answer",
           },
         ],
       },
@@ -136,6 +142,19 @@ describe("SubagentInspector", () => {
       await screen.findByText("Inspection underway"),
     ).toBeInTheDocument();
     expect(screen.getByText("Shell command")).toBeInTheDocument();
+    expect(screen.queryByLabelText("Subagent task")).toBeNull();
+    expect(screen.getByLabelText("Submitted prompt")).toHaveClass(
+      "submitted-prompt",
+    );
+    expect(screen.getByText("Inspection underway")).toHaveClass(
+      "stream-message",
+    );
+    expect(
+      screen.getByText("Shell command").closest(".stream-event"),
+    ).not.toBeNull();
+    expect(
+      screen.getByText("Inspection complete").closest(".run-summary"),
+    ).toHaveClass("markdown-summary");
 
     const input = screen.getByRole("textbox", {
       name: "Send instruction to subagent",
@@ -168,5 +187,59 @@ describe("SubagentInspector", () => {
     expect(onStop).toHaveBeenCalledWith(
       expect.objectContaining({ id: "stop" }),
     );
+  });
+
+  it("renders icon-action tooltips in a viewport portal", async () => {
+    const { user } = renderInspector("tooltip");
+    await screen.findByText("Inspection underway");
+    const inspector = screen.getByLabelText(
+      "Subagent inspector: Inspect the API",
+    );
+    const stop = screen.getByRole("button", { name: "Stop subagent" });
+
+    await user.hover(stop);
+
+    const tooltip = await screen.findByRole("tooltip", {
+      name: "Stop subagent",
+    });
+    expect(inspector.contains(tooltip)).toBe(false);
+    expect(tooltip.parentElement).toBe(document.body);
+  });
+
+  it("refreshes visible app-server output as an active child advances", async () => {
+    const { subagent, onLoadTranscript } = renderInspector("stream");
+    await screen.findByText("Inspection underway");
+    onLoadTranscript.mockResolvedValue({
+      ...transcript(subagent.childThreadId),
+      turns: [
+        {
+          ...transcript(subagent.childThreadId).turns[0],
+          items: [
+            {
+              id: "assistant-update",
+              kind: "assistant",
+              text: "Checking another endpoint",
+              phase: "commentary",
+            },
+          ],
+        },
+      ],
+    });
+
+    act(() => {
+      replaceConversationSubagents("chat:stream", [
+        {
+          ...subagent,
+          updatedAt: "2026-07-29T10:02:00.000Z",
+        },
+      ]);
+    });
+
+    expect(
+      await screen.findByText("Checking another endpoint", undefined, {
+        timeout: 1_500,
+      }),
+    ).toHaveClass("stream-message");
+    expect(onLoadTranscript).toHaveBeenCalledTimes(2);
   });
 });
