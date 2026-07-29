@@ -27,6 +27,11 @@ import {
   parsePromptQueueItemRecord,
   serializeQueuedPromptSnapshot,
 } from "./lib/promptQueue";
+import {
+  isSubagentLifecycleStatus,
+  type SubagentLifecycleStatus,
+  type SubagentRecord,
+} from "./lib/subagents";
 
 const DATABASE_URL = "sqlite:app.db";
 const PROMPT_QUEUE_COLUMNS = `
@@ -1717,6 +1722,155 @@ export async function listLocalChatTranscript(chatId: number) {
      ORDER BY COALESCE(runs.turn_index, runs.id), runs.started_at`,
     [chatId],
   );
+}
+
+type RunSubagentRow = {
+  id: string;
+  run_id: number;
+  workspace_id: number;
+  chat_id: number | null;
+  owner_client_id: string | null;
+  profile_key: string;
+  account_id: number;
+  root_thread_id: string;
+  parent_thread_id: string;
+  parent_turn_id: string | null;
+  child_thread_id: string;
+  child_turn_id: string | null;
+  spawn_item_id: string | null;
+  task_prompt: string;
+  hierarchy_depth: number;
+  status: string;
+  status_before_attention: string | null;
+  agent_status: string | null;
+  needs_attention: number;
+  error: string | null;
+  final_result: string | null;
+  started_at: string;
+  updated_at: string;
+  completed_at: string | null;
+};
+
+function parseRunSubagentRow(row: RunSubagentRow): SubagentRecord {
+  const status: SubagentLifecycleStatus = isSubagentLifecycleStatus(row.status)
+    ? row.status
+    : row.completed_at
+      ? "failed"
+      : "waiting";
+  const statusBeforeAttention = isSubagentLifecycleStatus(
+    row.status_before_attention,
+  )
+    ? row.status_before_attention
+    : null;
+  return {
+    id: row.id,
+    ownerClientId: row.owner_client_id,
+    workspaceId: row.workspace_id,
+    chatId: row.chat_id,
+    runId: row.run_id,
+    parentTurnId: row.parent_turn_id,
+    profileKey: row.profile_key,
+    accountId: row.account_id,
+    rootThreadId: row.root_thread_id,
+    parentThreadId: row.parent_thread_id,
+    childThreadId: row.child_thread_id,
+    childTurnId: row.child_turn_id,
+    spawnItemId: row.spawn_item_id,
+    task: row.task_prompt,
+    depth: row.hierarchy_depth,
+    status,
+    statusBeforeAttention,
+    agentStatus: row.agent_status,
+    needsAttention: row.needs_attention === 1,
+    error: row.error,
+    finalResult: row.final_result,
+    startedAt: row.started_at,
+    updatedAt: row.updated_at,
+    completedAt: row.completed_at,
+  };
+}
+
+export async function upsertRunSubagent(record: SubagentRecord) {
+  if (record.runId === null) return record;
+  const db = await getDatabase();
+  await db.execute(
+    `INSERT INTO run_subagents (
+       id, run_id, profile_key, account_id, root_thread_id, parent_thread_id,
+       parent_turn_id, child_thread_id, child_turn_id, spawn_item_id,
+       task_prompt, hierarchy_depth, status, status_before_attention,
+       agent_status, needs_attention, error, final_result, started_at,
+       updated_at, completed_at
+     ) VALUES (
+       $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14,
+       $15, $16, $17, $18, $19, $20, $21
+     )
+     ON CONFLICT(run_id, child_thread_id) DO UPDATE SET
+       parent_thread_id = excluded.parent_thread_id,
+       parent_turn_id = COALESCE(excluded.parent_turn_id, run_subagents.parent_turn_id),
+       child_turn_id = excluded.child_turn_id,
+       spawn_item_id = COALESCE(excluded.spawn_item_id, run_subagents.spawn_item_id),
+       task_prompt = CASE
+         WHEN excluded.task_prompt = '' THEN run_subagents.task_prompt
+         ELSE excluded.task_prompt
+       END,
+       hierarchy_depth = excluded.hierarchy_depth,
+       status = excluded.status,
+       status_before_attention = excluded.status_before_attention,
+       agent_status = excluded.agent_status,
+       needs_attention = excluded.needs_attention,
+       error = excluded.error,
+       final_result = COALESCE(excluded.final_result, run_subagents.final_result),
+       updated_at = excluded.updated_at,
+       completed_at = excluded.completed_at`,
+    [
+      record.id,
+      record.runId,
+      record.profileKey,
+      record.accountId,
+      record.rootThreadId,
+      record.parentThreadId,
+      record.parentTurnId,
+      record.childThreadId,
+      record.childTurnId,
+      record.spawnItemId,
+      record.task,
+      record.depth,
+      record.status,
+      record.statusBeforeAttention,
+      record.agentStatus,
+      record.needsAttention ? 1 : 0,
+      record.error,
+      record.finalResult,
+      record.startedAt,
+      record.updatedAt,
+      record.completedAt,
+    ],
+  );
+  return record;
+}
+
+export async function listChatSubagents(chatId: number) {
+  const db = await getDatabase();
+  const rows = await db.select<RunSubagentRow[]>(
+    `SELECT subagents.id, subagents.run_id, runs.workspace_id, runs.chat_id,
+       runs.client_user_message_id AS owner_client_id,
+       subagents.profile_key, subagents.account_id,
+       subagents.root_thread_id, subagents.parent_thread_id,
+       subagents.parent_turn_id, subagents.child_thread_id,
+       subagents.child_turn_id, subagents.spawn_item_id,
+       subagents.task_prompt, subagents.hierarchy_depth,
+       subagents.status, subagents.status_before_attention,
+       subagents.agent_status, subagents.needs_attention,
+       subagents.error, subagents.final_result, subagents.started_at,
+       subagents.updated_at, subagents.completed_at
+     FROM run_subagents subagents
+     JOIN runs ON runs.id = subagents.run_id
+     WHERE runs.chat_id = $1
+       AND runs.deleted_at IS NULL
+     ORDER BY subagents.updated_at DESC, subagents.id`,
+    [chatId],
+  );
+  return rows.map(parseRunSubagentRow);
 }
 
 type LocalHistoryTurnIndexRow = {

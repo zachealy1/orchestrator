@@ -92,6 +92,7 @@ import {
   getChatWithRuns,
   getNextChatTurnIndex,
   holdRestoredPromptQueueItems,
+  listChatSubagents,
   listPromptQueueItems,
   listLocalChatTranscript,
   listWorkspaceChats,
@@ -129,6 +130,7 @@ import {
   updateRun,
   updateTaskStatus,
   upsertExternalCodexChats,
+  upsertRunSubagent,
   upsertWorkspace,
   type RunEventInput,
 } from "./db";
@@ -162,6 +164,7 @@ import {
   readAgentNotificationPermissionStatus,
   readBrowserRuntimeStatus,
   readBrowserSessionStatus,
+  readProjectedSubagentThread,
   readWorkspaceGitDiff,
   readWorkspaceFilePreview,
   resolveCodexServerRequest,
@@ -202,6 +205,7 @@ import {
 } from "./components/VirtuosoTaskChatTranscript";
 import { TaskTranscriptErrorBoundary } from "./components/TaskTranscriptErrorBoundary";
 import { TaskComposer } from "./components/TaskComposer";
+import { SubagentInspector } from "./components/SubagentInspector";
 import {
   FLOATING_STATUS_NOTICE_TIMEOUT_MS,
   FloatingHeaderStatusBubble,
@@ -288,6 +292,21 @@ import {
   type ThreadGoalStatus,
 } from "./lib/goalProgress";
 import { derivePlanProgressIndicator } from "./lib/planProgress";
+import {
+  findSubagentByThread,
+  getConversationSubagents,
+  isActiveSubagentStatus,
+  lifecycleFromChildTurn,
+  lifecycleFromCollabToolCall,
+  parseCollabToolCalls,
+  parseLegacySubagentActivity,
+  promoteSubagentConversation,
+  replaceConversationSubagents,
+  subagentConversationKey,
+  updateSubagentByThread,
+  upsertConversationSubagent,
+  type SubagentRecord,
+} from "./lib/subagents";
 import { parseProposedPlanEnvelope } from "./lib/proposedPlan";
 import {
   getContextUsageDisplay,
@@ -896,6 +915,11 @@ function pendingApprovalCouldBelongToControl(
   control: ActiveRunControl,
 ) {
   const { request, target } = attention;
+  const child =
+    request.threadId && request.profileKey === control.profileKey
+      ? findSubagentByThread(request.profileKey, request.threadId)
+      : null;
+  const belongsToChild = child?.ownerClientId === control.clientId;
   if (
     !isActiveRunControl(control) ||
     request.profileKey !== control.profileKey
@@ -932,11 +956,14 @@ function pendingApprovalCouldBelongToControl(
   if (
     request.threadId &&
     control.threadId &&
-    request.threadId !== control.threadId
+    request.threadId !== control.threadId &&
+    !belongsToChild
   ) {
     return false;
   }
-  if (
+  if (request.turnId && belongsToChild && child?.childTurnId) {
+    if (request.turnId !== child.childTurnId) return false;
+  } else if (
     request.turnId &&
     control.turnId &&
     request.turnId !== control.turnId &&
@@ -1000,6 +1027,11 @@ type WorkspaceChatSession = {
   externalThreadId: string | null;
   nextTurnIndex: number;
   savedDefaultCollaborationMode?: CollaborationMode | null;
+};
+
+type SubagentInspectorTarget = {
+  conversationKey: string;
+  subagentId: string;
 };
 
 type PendingAccountHandoff = {
@@ -1165,6 +1197,47 @@ function readCodexMessageRunIdentity(message: CodexMessage) {
     turnId:
       readString(params.turnId) ?? readString(readObject(params.turn).id),
   };
+}
+
+function readSubagentTurnStatus(message: CodexMessage) {
+  const params = readObject(message.params);
+  const turn = readObject(params.turn);
+  return readString(turn.status) ?? readString(params.status);
+}
+
+function readSubagentVisibleResult(message: CodexMessage) {
+  if (message.method !== "item/completed") return null;
+  const params = readObject(message.params);
+  const item = readObject(params.item);
+  if (readString(item.type) !== "agentMessage") return null;
+  const phase = readString(item.phase);
+  if (phase && phase !== "final_answer") return null;
+  const text =
+    readString(item.text) ??
+    readString(item.content) ??
+    (Array.isArray(item.content)
+      ? item.content
+          .map((part) => {
+            if (typeof part === "string") return part;
+            return readString(readObject(part).text) ?? "";
+          })
+          .filter(Boolean)
+          .join("\n")
+      : null);
+  return text?.trim() || null;
+}
+
+function readSubagentError(message: CodexMessage) {
+  const params = readObject(message.params);
+  const turn = readObject(params.turn);
+  const error = params.error ?? turn.error;
+  if (typeof error === "string") return error;
+  const record = readObject(error);
+  return (
+    readString(record.message) ??
+    readString(record.error) ??
+    (Object.keys(record).length > 0 ? JSON.stringify(record) : null)
+  );
 }
 
 function markPerformance(name: string) {
@@ -1639,6 +1712,11 @@ function App() {
   >({});
   const [historyDrawerPhase, setHistoryDrawerPhase] =
     useState<HistoryDrawerPhase>("closed");
+  const [subagentInspectorTarget, setSubagentInspectorTarget] =
+    useState<SubagentInspectorTarget | null>(null);
+  const subagentInspectorTargetRef = useRef<SubagentInspectorTarget | null>(
+    null,
+  );
   const historyDrawerOpen = historyDrawerTargetsOpen(historyDrawerPhase);
   const historyDrawerSpaceReserved =
     historyDrawerReservesSpace(historyDrawerPhase);
@@ -2135,14 +2213,256 @@ function App() {
     beginHistoryDrawerClose();
   }, [beginHistoryDrawerClose]);
 
+  const closeSubagentInspector = useCallback(() => {
+    if (!subagentInspectorTargetRef.current) return;
+    cancelHistoryDrawerAnchorSchedule();
+    historyDrawerAnchorRef.current = captureHistoryDrawerAnchor();
+    subagentInspectorTargetRef.current = null;
+    setSubagentInspectorTarget(null);
+    scheduleHistoryDrawerAnchorRestore();
+    releaseHistoryDrawerAnchorAfterResize();
+  }, [
+    cancelHistoryDrawerAnchorSchedule,
+    captureHistoryDrawerAnchor,
+    releaseHistoryDrawerAnchorAfterResize,
+    scheduleHistoryDrawerAnchorRestore,
+  ]);
+
+  const openSubagentInspector = useCallback(
+    (record: SubagentRecord) => {
+      const conversationKey = subagentConversationKey(record);
+      if (!conversationKey) return;
+      cancelHistoryDrawerAnchorSchedule();
+      historyDrawerAnchorRef.current = captureHistoryDrawerAnchor();
+      pendingHistoryDrawerOpenRef.current = false;
+      pendingHistoryDrawerCloseRef.current = false;
+      updateHistoryDrawerPhase("closed");
+      const target = {
+        conversationKey,
+        subagentId: record.id,
+      };
+      subagentInspectorTargetRef.current = target;
+      setSubagentInspectorTarget(target);
+      scheduleHistoryDrawerAnchorRestore();
+      releaseHistoryDrawerAnchorAfterResize();
+    },
+    [
+      cancelHistoryDrawerAnchorSchedule,
+      captureHistoryDrawerAnchor,
+      releaseHistoryDrawerAnchorAfterResize,
+      scheduleHistoryDrawerAnchorRestore,
+      updateHistoryDrawerPhase,
+    ],
+  );
+
+  const loadSubagentTranscript = useStableEvent(
+    async (record: SubagentRecord) => {
+      await ensureCodexProfileConnected(
+        record.profileKey as CodexProfileKey,
+        record.accountId,
+      );
+      return readProjectedSubagentThread({
+        accountId: record.accountId,
+        profileKey: record.profileKey,
+        threadId: record.childThreadId,
+      });
+    },
+  );
+
+  const steerSubagent = useStableEvent(
+    async (record: SubagentRecord, instruction: string) => {
+      const current =
+        findSubagentByThread(record.profileKey, record.childThreadId) ??
+        record;
+      if (
+        !current.childTurnId ||
+        !isActiveSubagentStatus(current.status) ||
+        current.needsAttention
+      ) {
+        throw new Error(
+          "This subagent does not have an active turn that can accept instructions.",
+        );
+      }
+      await ensureCodexProfileConnected(
+        current.profileKey as CodexProfileKey,
+        current.accountId,
+      );
+      await codexRpcForProfile(
+        current.profileKey as CodexProfileKey,
+        current.accountId,
+        "turn/steer",
+        {
+          threadId: current.childThreadId,
+          expectedTurnId: current.childTurnId,
+          clientUserMessageId: createStableClientMessageId(),
+          input: [{ type: "text", text: instruction.trim() }],
+        },
+      );
+      const updated = {
+        ...current,
+        status: "running" as const,
+        error: null,
+        updatedAt: new Date().toISOString(),
+      };
+      saveSubagentRecord(updated);
+    },
+  );
+
+  const stopSubagent = useStableEvent(async (record: SubagentRecord) => {
+    const records = getConversationSubagents(
+      subagentConversationKey(record),
+    );
+    const byThread = new Map(
+      records.map((candidate) => [candidate.childThreadId, candidate]),
+    );
+    const isDescendantOf = (
+      candidate: SubagentRecord,
+      ancestorThreadId: string,
+    ) => {
+      let parentThreadId = candidate.parentThreadId;
+      const visited = new Set<string>();
+      while (parentThreadId && !visited.has(parentThreadId)) {
+        if (parentThreadId === ancestorThreadId) return true;
+        visited.add(parentThreadId);
+        parentThreadId =
+          byThread.get(parentThreadId)?.parentThreadId ?? "";
+      }
+      return false;
+    };
+    const hierarchyDepth = (candidate: SubagentRecord) => {
+      let depth = 1;
+      let parentThreadId = candidate.parentThreadId;
+      const visited = new Set<string>([candidate.childThreadId]);
+      while (parentThreadId && !visited.has(parentThreadId)) {
+        visited.add(parentThreadId);
+        const parent = byThread.get(parentThreadId);
+        if (!parent) break;
+        depth += 1;
+        parentThreadId = parent.parentThreadId;
+      }
+      return depth;
+    };
+    const targets = records
+      .filter(
+        (candidate) =>
+          isActiveSubagentStatus(candidate.status) &&
+          (candidate.childThreadId === record.childThreadId ||
+            isDescendantOf(candidate, record.childThreadId)),
+      )
+      .sort((left, right) => hierarchyDepth(right) - hierarchyDepth(left));
+    if (targets.length === 0) {
+      throw new Error("This subagent is no longer running.");
+    }
+
+    for (const target of targets) {
+      const current =
+        findSubagentByThread(target.profileKey, target.childThreadId) ??
+        target;
+      if (!current.childTurnId) {
+        throw new Error(
+          `The active turn for ${current.task || "this subagent"} is unavailable.`,
+        );
+      }
+      saveSubagentRecord({
+        ...current,
+        status: "stopping",
+        updatedAt: new Date().toISOString(),
+      });
+      try {
+        await ensureCodexProfileConnected(
+          current.profileKey as CodexProfileKey,
+          current.accountId,
+        );
+        const interruptedTurnId = await interruptTurnForProfile(
+          current.profileKey as CodexProfileKey,
+          current.accountId,
+          current.childThreadId,
+          current.childTurnId,
+        );
+        if (interruptedTurnId === null) {
+          saveSubagentRecord({
+            ...current,
+            status: "stopped",
+            needsAttention: false,
+            statusBeforeAttention: null,
+            completedAt: new Date().toISOString(),
+            updatedAt: new Date().toISOString(),
+          });
+        }
+      } catch (error) {
+        saveSubagentRecord({
+          ...current,
+          status: current.status,
+          error: error instanceof Error ? error.message : String(error),
+          updatedAt: new Date().toISOString(),
+        });
+        throw error;
+      }
+    }
+
+    window.setTimeout(() => {
+      targets.forEach((target) => {
+        const current = findSubagentByThread(
+          target.profileKey,
+          target.childThreadId,
+        );
+        if (!current || current.status !== "stopping") return;
+        void loadSubagentTranscript(current)
+          .then((transcript) => {
+            const latest = findSubagentByThread(
+              current.profileKey,
+              current.childThreadId,
+            );
+            if (!latest || latest.status !== "stopping") return;
+            if (transcript.activeTurnId) {
+              saveSubagentRecord({
+                ...latest,
+                childTurnId: transcript.activeTurnId,
+                status: "running",
+                updatedAt: new Date().toISOString(),
+              });
+              return;
+            }
+            saveSubagentRecord({
+              ...latest,
+              status: "stopped",
+              needsAttention: false,
+              statusBeforeAttention: null,
+              completedAt: new Date().toISOString(),
+              updatedAt: new Date().toISOString(),
+            });
+          })
+          .catch(() => undefined);
+      });
+    }, 4_000);
+  });
+
   const toggleHistoryDrawer = useCallback(() => {
+    if (subagentInspectorTargetRef.current) {
+      cancelHistoryDrawerAnchorSchedule();
+      historyDrawerAnchorRef.current = captureHistoryDrawerAnchor();
+      subagentInspectorTargetRef.current = null;
+      setSubagentInspectorTarget(null);
+      beginHistoryDrawerOpen();
+      scheduleHistoryDrawerAnchorRestore();
+      releaseHistoryDrawerAnchorAfterResize();
+      return;
+    }
     const phase = historyDrawerPhaseRef.current;
     if (phase === "open" || phase === "opening") {
       closeHistoryDrawer();
     } else {
       openHistoryDrawer();
     }
-  }, [closeHistoryDrawer, openHistoryDrawer]);
+  }, [
+    beginHistoryDrawerOpen,
+    cancelHistoryDrawerAnchorSchedule,
+    captureHistoryDrawerAnchor,
+    closeHistoryDrawer,
+    openHistoryDrawer,
+    releaseHistoryDrawerAnchorAfterResize,
+    scheduleHistoryDrawerAnchorRestore,
+  ]);
 
   const waitForHistoryDrawerClosed = useCallback(() => {
     if (
@@ -2626,11 +2946,46 @@ function App() {
   const selectedWorkspaceChatSession = selectedWorkspace
     ? (workspaceChatSessions[selectedWorkspace.id] ?? null)
     : null;
+  const selectedSubagentConversationKey =
+    subagentConversationKey({
+      chatId: selectedWorkspaceChatSession?.chatId,
+      ownerClientId: selectedDraftChatEntryId,
+    });
   const selectedPromptQueueItems = selectedWorkspaceChatSession
     ? (promptQueuesByChat[selectedWorkspaceChatSession.chatId] ?? [])
         .filter(isPromptQueueItemPending)
         .sort(comparePromptQueueDisplayOrder)
     : [];
+  useEffect(() => {
+    subagentInspectorTargetRef.current = subagentInspectorTarget;
+  }, [subagentInspectorTarget]);
+  useEffect(() => {
+    if (
+      subagentInspectorTarget &&
+      subagentInspectorTarget.conversationKey !==
+        selectedSubagentConversationKey
+    ) {
+      subagentInspectorTargetRef.current = null;
+      setSubagentInspectorTarget(null);
+    }
+  }, [selectedSubagentConversationKey, subagentInspectorTarget]);
+  const inspectedSubagentParentEntry = useMemo(() => {
+    if (!subagentInspectorTarget) return null;
+    const record = getConversationSubagents(
+      subagentInspectorTarget.conversationKey,
+    ).find(
+      (candidate) => candidate.id === subagentInspectorTarget.subagentId,
+    );
+    if (!record) return null;
+    return (
+      taskChatEntries.find(
+        (entry) =>
+          (record.ownerClientId &&
+            entry.clientId === record.ownerClientId) ||
+          (record.runId !== null && entry.runId === record.runId),
+      ) ?? null
+    );
+  }, [subagentInspectorTarget, taskChatEntries]);
   useEffect(() => {
     const edit = promptQueueComposerEditRef.current;
     if (
@@ -3011,6 +3366,13 @@ function App() {
             profileKey: control.profileKey,
             threadId: request.threadId ?? control.threadId,
             turnId: request.turnId ?? control.turnId,
+            subagentThreadId:
+              findSubagentByThread(
+                control.profileKey,
+                request.threadId,
+              )?.ownerClientId === control.clientId
+                ? request.threadId
+                : null,
           },
         });
       });
@@ -5720,6 +6082,17 @@ function App() {
         updateRunControlView(exactControl, (current) =>
           addApprovalRequest(current, attention.request),
         );
+        const child = findSubagentByThread(
+          attention.request.profileKey,
+          attention.request.threadId,
+        );
+        if (child?.ownerClientId === exactControl.clientId) {
+          setSubagentAttention(
+            exactControl,
+            child.childThreadId,
+            true,
+          );
+        }
         removeUnroutedApprovalByKey(attention.request.key);
         continue;
       }
@@ -5903,11 +6276,308 @@ function App() {
     }
   }
 
+  function saveSubagentRecord(record: SubagentRecord) {
+    upsertConversationSubagent(record);
+    if (record.runId === null) return;
+    void upsertRunSubagent(record).catch((error) => {
+      console.error("Could not persist subagent lifecycle", error);
+    });
+  }
+
+  function trackSubagentCollaboration(
+    control: ActiveRunControl,
+    message: CodexMessage,
+  ) {
+    const identity = readCodexMessageRunIdentity(message);
+    const now = new Date().toISOString();
+    const records = parseCollabToolCalls(message).map((call) => {
+      const existing = findSubagentByThread(
+        control.profileKey,
+        call.childThreadId,
+      );
+      const hierarchyParent =
+        call.senderThreadId === control.threadId
+          ? null
+          : findSubagentByThread(control.profileKey, call.senderThreadId);
+      const status = lifecycleFromCollabToolCall(
+        call,
+        message.method,
+        existing?.status ?? null,
+      );
+      const terminal = !isActiveSubagentStatus(status);
+      const record: SubagentRecord = {
+        id:
+          existing?.id ??
+          `${control.profileKey}:${control.runId ?? control.clientId}:${call.childThreadId}`,
+        ownerClientId: control.clientId,
+        workspaceId: control.workspaceId,
+        chatId: control.chatId,
+        runId: control.runId,
+        parentTurnId:
+          existing?.parentTurnId ??
+          identity.turnId ??
+          hierarchyParent?.childTurnId ??
+          control.turnId,
+        profileKey: control.profileKey,
+        accountId: control.accountId,
+        rootThreadId:
+          existing?.rootThreadId ??
+          control.threadId ??
+          call.senderThreadId,
+        parentThreadId: call.senderThreadId,
+        childThreadId: call.childThreadId,
+        childTurnId: existing?.childTurnId ?? null,
+        spawnItemId:
+          call.tool === "spawn_agent"
+            ? call.itemId
+            : existing?.spawnItemId ?? null,
+        task: call.prompt ?? existing?.task ?? "Subagent task",
+        depth:
+          existing?.depth ??
+          (hierarchyParent ? hierarchyParent.depth + 1 : 1),
+        status,
+        statusBeforeAttention:
+          status === "needs-attention"
+            ? existing?.statusBeforeAttention ??
+              existing?.status ??
+              "running"
+            : null,
+        agentStatus: call.agentStatus ?? existing?.agentStatus ?? null,
+        needsAttention: status === "needs-attention",
+        error:
+          status === "failed"
+            ? existing?.error ?? "The subagent operation failed."
+            : null,
+        finalResult: existing?.finalResult ?? null,
+        startedAt: existing?.startedAt ?? now,
+        updatedAt: now,
+        completedAt: terminal ? existing?.completedAt ?? now : null,
+      };
+      saveSubagentRecord(record);
+      return record;
+    });
+    if (records.length > 0) return records;
+
+    const legacy = parseLegacySubagentActivity(message);
+    if (!legacy) return [];
+    const existing = findSubagentByThread(
+      control.profileKey,
+      legacy.childThreadId,
+    );
+    const parentThreadId =
+      identity.threadId ?? control.threadId ?? legacy.childThreadId;
+    const hierarchyParent =
+      parentThreadId === control.threadId
+        ? null
+        : findSubagentByThread(control.profileKey, parentThreadId);
+    const terminal = !isActiveSubagentStatus(legacy.status);
+    const record: SubagentRecord = {
+      id:
+        existing?.id ??
+        `${control.profileKey}:${control.runId ?? control.clientId}:${legacy.childThreadId}`,
+      ownerClientId: control.clientId,
+      workspaceId: control.workspaceId,
+      chatId: control.chatId,
+      runId: control.runId,
+      parentTurnId:
+        existing?.parentTurnId ??
+        identity.turnId ??
+        hierarchyParent?.childTurnId ??
+        control.turnId,
+      profileKey: control.profileKey,
+      accountId: control.accountId,
+      rootThreadId:
+        existing?.rootThreadId ??
+        control.threadId ??
+        parentThreadId,
+      parentThreadId,
+      childThreadId: legacy.childThreadId,
+      childTurnId: existing?.childTurnId ?? null,
+      spawnItemId: existing?.spawnItemId ?? legacy.itemId,
+      task:
+        existing?.task ??
+        (legacy.agentPath
+          ? `Subagent ${legacy.agentPath}`
+          : "Subagent task"),
+      depth:
+        existing?.depth ??
+        (hierarchyParent ? hierarchyParent.depth + 1 : 1),
+      status: legacy.status,
+      statusBeforeAttention: existing?.statusBeforeAttention ?? null,
+      agentStatus: existing?.agentStatus ?? null,
+      needsAttention: false,
+      error: existing?.error ?? null,
+      finalResult: existing?.finalResult ?? null,
+      startedAt: existing?.startedAt ?? now,
+      updatedAt: now,
+      completedAt: terminal ? existing?.completedAt ?? now : null,
+    };
+    saveSubagentRecord(record);
+    return [record];
+  }
+
+  function updateSubagentFromNotification(
+    control: ActiveRunControl,
+    record: SubagentRecord,
+    message: CodexMessage,
+  ) {
+    const identity = readCodexMessageRunIdentity(message);
+    const now = new Date().toISOString();
+    const lifecycle = lifecycleFromChildTurn(
+      message.method,
+      readSubagentTurnStatus(message),
+    );
+    const visibleResult = readSubagentVisibleResult(message);
+    const failed = lifecycle === "failed" || message.method === "error";
+    const status =
+      lifecycle ??
+      (message.method === "thread/status/changed"
+        ? readString(readObject(readObject(message.params).status).type) ===
+          "idle"
+          ? "waiting"
+          : record.status
+        : record.status);
+    const terminal = !isActiveSubagentStatus(status);
+    const next: SubagentRecord = {
+      ...record,
+      ownerClientId: control.clientId,
+      chatId: control.chatId,
+      runId: control.runId,
+      childTurnId:
+        message.method?.startsWith("turn/")
+          ? identity.turnId ?? record.childTurnId
+          : record.childTurnId,
+      status,
+      statusBeforeAttention:
+        status === "needs-attention"
+          ? record.statusBeforeAttention ?? record.status
+          : record.statusBeforeAttention,
+      needsAttention:
+        status === "needs-attention" ? true : record.needsAttention,
+      error: failed ? readSubagentError(message) ?? record.error : record.error,
+      finalResult: visibleResult ?? record.finalResult,
+      updatedAt: now,
+      completedAt: terminal ? record.completedAt ?? now : null,
+    };
+    saveSubagentRecord(next);
+    return next;
+  }
+
+  function setSubagentAttention(
+    control: ActiveRunControl,
+    threadId: string | null,
+    needsAttention: boolean,
+  ) {
+    if (!threadId) return null;
+    const next = updateSubagentByThread(
+      control.profileKey,
+      threadId,
+      (record) => ({
+        ...record,
+        status: needsAttention
+          ? "needs-attention"
+          : !isActiveSubagentStatus(record.status)
+            ? record.status
+            : record.statusBeforeAttention &&
+                isActiveSubagentStatus(record.statusBeforeAttention)
+              ? record.statusBeforeAttention
+              : "running",
+        statusBeforeAttention: needsAttention
+          ? record.status === "needs-attention"
+            ? record.statusBeforeAttention
+            : record.status
+          : null,
+        needsAttention,
+        updatedAt: new Date().toISOString(),
+      }),
+    );
+    if (next?.runId !== null && next?.runId !== undefined) {
+      void upsertRunSubagent(next).catch((error) => {
+        console.error("Could not persist subagent attention", error);
+      });
+    }
+    return next;
+  }
+
+  function subagentHasPendingInteractions(
+    control: ActiveRunControl,
+    threadId: string,
+  ) {
+    return (
+      control.runView.approvalRequests.some(
+        (request) =>
+          request.threadId === threadId &&
+          request.status !== "stale",
+      ) ||
+      control.runView.serverRequests.some((request) => {
+        const identity = readCodexMessageRunIdentity(request);
+        return identity.threadId === threadId;
+      })
+    );
+  }
+
+  function clearSubagentInteractions(
+    control: ActiveRunControl,
+    threadId: string,
+  ) {
+    const approvals = control.runView.approvalRequests.filter(
+      (request) => request.threadId === threadId,
+    );
+    const questions = control.runView.serverRequests
+      .filter(isNativeUserInputRequest)
+      .filter((request) => request.params.threadId === threadId);
+    approvals.forEach((request) => {
+      void removeAgentNotification(
+        approvalNotificationEventKey(request),
+      ).catch(() => undefined);
+    });
+    questions.forEach((request) => {
+      clearUserInputAutoResolutionTimer(control.profileKey, request.id);
+      void removeAgentNotification(
+        userInputNotificationEventKey(control.profileKey, request),
+      ).catch(() => undefined);
+    });
+    if (approvals.length > 0 || questions.length > 0) {
+      updateRunControlView(control, (current) => {
+        const withoutApprovals = approvals.reduce(
+          (next, request) =>
+            resolveApprovalRequest(
+              next,
+              request.id,
+              request.threadId ?? undefined,
+            ),
+          current,
+        );
+        return questions.reduce(
+          (next, request) => resolveServerRequest(next, request.id),
+          withoutApprovals,
+        );
+      });
+    }
+    setSubagentAttention(control, threadId, false);
+  }
+
   function findRunControlForIds(
     profileKey: CodexProfileKey,
     threadId: string | null,
     turnId: string | null,
   ) {
+    const child = findSubagentByThread(profileKey, threadId);
+    if (child?.ownerClientId) {
+      const owner =
+        activeRunControlsRef.current.get(child.ownerClientId) ?? null;
+      if (
+        owner &&
+        !owner.stopped &&
+        owner.profileKey === profileKey &&
+        (!turnId ||
+          !child.childTurnId ||
+          child.childTurnId === turnId ||
+          child.status === "starting")
+      ) {
+        return owner;
+      }
+    }
     return (
       selectRunControlForIds(
         [...activeRunControlsRef.current.values()].map((control) => ({
@@ -5962,6 +6632,27 @@ function App() {
     const control = activeRunControlsRef.current.get(clientId);
     if (control?.entry) {
       control.entry = { ...control.entry, ...ids };
+    }
+    if (ids.chatId !== undefined) {
+      promoteSubagentConversation(clientId, ids.chatId);
+    }
+    if (ids.runId !== undefined) {
+      const conversationKey = subagentConversationKey({
+        chatId: ids.chatId ?? control?.chatId ?? null,
+        ownerClientId: clientId,
+      });
+      if (conversationKey) {
+        getConversationSubagents(conversationKey)
+          .filter((record) => record.ownerClientId === clientId)
+          .forEach((record) => {
+            saveSubagentRecord({
+              ...record,
+              runId: ids.runId ?? record.runId,
+              chatId: ids.chatId ?? record.chatId,
+              updatedAt: new Date().toISOString(),
+            });
+          });
+      }
     }
     setTaskChatEntries((current) =>
       current.map((entry) =>
@@ -7198,6 +7889,19 @@ function App() {
         chat.saved_default_collaboration_mode_json,
       ),
     };
+    const subagentKey = subagentConversationKey({ chatId: chat.id });
+    if (
+      subagentKey &&
+      getConversationSubagents(subagentKey).length === 0
+    ) {
+      void listChatSubagents(chat.id)
+        .then((records) => {
+          replaceConversationSubagents(subagentKey, records);
+        })
+        .catch((error) => {
+          console.error("Could not restore chat subagents", error);
+        });
+    }
     const runningControl = findRunControlByChat(chat.workspace_id, chat.id);
     const positionIntent = options.positionIntent ?? "latest";
 
@@ -7535,6 +8239,10 @@ function App() {
     setPromptQueuePaused(chat.id, false);
     clearPendingAccountHandoff(chat.id);
     stableHistoryChatCacheRef.current.delete(chat.id);
+    const deletedSubagentKey = subagentConversationKey({ chatId: chat.id });
+    if (deletedSubagentKey) {
+      replaceConversationSubagents(deletedSubagentKey, []);
+    }
     const remembered = workspaceTaskMemoriesRef.current[chat.workspace_id];
     if (
       remembered?.selection.kind === "chat" &&
@@ -10606,6 +11314,16 @@ function App() {
         control.chatId === chatId && isActiveRunControl(control),
     );
     if (activeControl) return true;
+    const conversationKey = subagentConversationKey({ chatId });
+    if (
+      conversationKey &&
+      getConversationSubagents(conversationKey).some(
+        (record) =>
+          record.needsAttention || record.status === "needs-attention",
+      )
+    ) {
+      return true;
+    }
 
     return chatHasPendingPlanReview(chatId).catch(() => true);
   }
@@ -12184,6 +12902,39 @@ function App() {
         : taskChatEntriesRef.current.some(
             (entry) => entry.clientId === target.entryClientId,
           );
+    if (target.subagentThreadId) {
+      if (!targetChatVisible) return false;
+      const inspected = subagentInspectorTargetRef.current;
+      const record = findSubagentByThread(
+        (target.profileKey ?? DEFAULT_CODEX_PROFILE_KEY) as CodexProfileKey,
+        target.subagentThreadId,
+      );
+      if (!inspected || inspected.subagentId !== record?.id) return false;
+      const kind =
+        target.kind === "approval-required"
+          ? "approval"
+          : target.kind === "user-input-required"
+            ? "user-input"
+            : null;
+      if (!kind) return true;
+      const control = Array.from(
+        document.querySelectorAll<HTMLElement>(
+          `.subagent-inspector [data-agent-notification-target="${kind}"]`,
+        ),
+      ).find(
+        (candidate) =>
+          !target.requestId ||
+          candidate.dataset.agentNotificationId === target.requestId,
+      );
+      if (!control) return false;
+      const bounds = control.getBoundingClientRect();
+      return (
+        bounds.bottom > 0 &&
+        bounds.right > 0 &&
+        bounds.top < window.innerHeight &&
+        bounds.left < window.innerWidth
+      );
+    }
     if (!targetChatVisible || target.kind !== "user-input-required") {
       return targetChatVisible;
     }
@@ -12534,12 +13285,100 @@ function App() {
     return true;
   }
 
+  async function focusSubagentNotificationTarget(
+    target: AgentNotificationTarget,
+    navigationRequestId: number,
+  ) {
+    if (!target.subagentThreadId) return false;
+    let record = findSubagentByThread(
+      (target.profileKey ?? DEFAULT_CODEX_PROFILE_KEY) as CodexProfileKey,
+      target.subagentThreadId,
+    );
+    if (!record && target.chatId !== null && target.chatId !== undefined) {
+      try {
+        const records = await listChatSubagents(target.chatId);
+        const conversationKey = subagentConversationKey({
+          chatId: target.chatId,
+        });
+        if (conversationKey) {
+          replaceConversationSubagents(conversationKey, records);
+        }
+        record =
+          records.find(
+            (candidate) =>
+              candidate.childThreadId === target.subagentThreadId &&
+              (!target.profileKey ||
+                candidate.profileKey === target.profileKey),
+          ) ?? null;
+      } catch {
+        return false;
+      }
+    }
+    if (
+      !record ||
+      !agentNotificationNavigationIsCurrent(navigationRequestId)
+    ) {
+      return false;
+    }
+
+    openSubagentInspector(record);
+    setAgentNotificationNavigationPhase(
+      navigationRequestId,
+      target,
+      "focusing",
+    );
+    const notificationKind =
+      target.kind === "approval-required"
+        ? "approval"
+        : target.kind === "user-input-required"
+          ? "user-input"
+          : null;
+    if (!notificationKind) return true;
+
+    const deadline = Date.now() + AGENT_NOTIFICATION_FOCUS_TIMEOUT_MS;
+    while (
+      Date.now() < deadline &&
+      agentNotificationNavigationIsCurrent(navigationRequestId)
+    ) {
+      await waitForNextPaint();
+      const candidates = Array.from(
+        document.querySelectorAll<HTMLElement>(
+          `.subagent-inspector [data-agent-notification-target="${notificationKind}"]`,
+        ),
+      );
+      const targetElement =
+        candidates.find(
+          (candidate) =>
+            !target.requestId ||
+            candidate.dataset.agentNotificationId === target.requestId,
+        ) ?? null;
+      if (targetElement) {
+        const focusTarget =
+          targetElement.querySelector<HTMLElement>(
+            'button:not([disabled]), input:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])',
+          ) ?? targetElement;
+        focusTarget.focus({ preventScroll: true });
+        return true;
+      }
+      await new Promise<void>((resolve) => {
+        window.setTimeout(resolve, 40);
+      });
+    }
+    return false;
+  }
+
   function focusAgentNotificationTarget(
     target: AgentNotificationTarget,
     navigationRequestId: number,
   ) {
     if (!agentNotificationNavigationIsCurrent(navigationRequestId)) {
       return Promise.resolve(false);
+    }
+    if (target.subagentThreadId) {
+      return focusSubagentNotificationTarget(
+        target,
+        navigationRequestId,
+      );
     }
 
     notificationFocusSequenceRef.current += 1;
@@ -12847,6 +13686,66 @@ function App() {
       return;
     }
     const identity = readCodexMessageRunIdentity(message);
+    const trackedSubagents = trackSubagentCollaboration(control, message);
+    if (
+      trackedSubagents.length > 0 &&
+      pendingRunBindingNotificationsRef.current.length > 0
+    ) {
+      await flushPendingRunBindingNotifications(control);
+    }
+    const childRecord = findSubagentByThread(profileKey, identity.threadId);
+    const isChildThread =
+      childRecord?.ownerClientId === control.clientId &&
+      childRecord.childThreadId !== control.threadId;
+    if (isChildThread && childRecord) {
+      if (method === "item/started" || method === "item/completed") {
+        applyBrowserLifecycleNotification(control, method, params);
+      }
+      const updatedChild = updateSubagentFromNotification(
+        control,
+        childRecord,
+        message,
+      );
+      if (
+        method === "turn/completed" ||
+        method === "turn/interrupted" ||
+        method === "error"
+      ) {
+        clearSubagentInteractions(control, childRecord.childThreadId);
+        void loadSubagentTranscript(updatedChild)
+          .then((transcript) => {
+            const finalResult =
+              transcript.turns
+                .flatMap((turn) => turn.items)
+                .reverse()
+                .find(
+                  (item) =>
+                    item.kind === "assistant" &&
+                    item.phase === "final_answer" &&
+                    item.text.trim(),
+                ) ?? null;
+            if (!finalResult || finalResult.kind !== "assistant") return;
+            const latest = findSubagentByThread(
+              updatedChild.profileKey,
+              updatedChild.childThreadId,
+            );
+            if (!latest) return;
+            saveSubagentRecord({
+              ...latest,
+              finalResult: finalResult.text,
+              updatedAt: new Date().toISOString(),
+            });
+          })
+          .catch(() => undefined);
+      }
+      if (
+        method === "serverRequest/resolved" &&
+        !subagentHasPendingInteractions(control, childRecord.childThreadId)
+      ) {
+        setSubagentAttention(control, childRecord.childThreadId, false);
+      }
+      return;
+    }
     if (
       method === "turn/started" &&
       identity.turnId &&
@@ -13219,6 +14118,13 @@ function App() {
       requestThreadId,
       requestTurnId,
     );
+    const requestSubagent = findSubagentByThread(
+      profileKey,
+      requestThreadId,
+    );
+    const requestBelongsToSubagent =
+      control !== null &&
+      requestSubagent?.ownerClientId === control.clientId;
     const parsed = parseApprovalRequest({
       message: request,
       profileKey,
@@ -13303,13 +14209,18 @@ function App() {
         profileKey,
         threadId: parsed.threadId,
         turnId: parsed.turnId,
+        subagentThreadId: requestBelongsToSubagent
+          ? requestSubagent.childThreadId
+          : null,
       };
       const notifyApproval = () => {
         if (!shouldNotify) return;
         void deliverAgentNotification({
           kind: "approval-required",
           target: notificationTarget,
-          chatTitle: activeEntry?.prompt ?? historyChat?.title,
+          chatTitle: requestBelongsToSubagent
+            ? requestSubagent?.task
+            : activeEntry?.prompt ?? historyChat?.title,
           workspaceLabel: workspace?.label,
         });
       };
@@ -13346,6 +14257,9 @@ function App() {
       }
 
       updateRunControlView(control, (current) => addApprovalRequest(current, parsed));
+      if (requestBelongsToSubagent) {
+        setSubagentAttention(control, requestSubagent.childThreadId, true);
+      }
       if (parsed.kind === "browser" || parsed.kind === "browser-tool") {
         setRunControlBrowserLifecycle(control, "awaiting-approval");
       }
@@ -13405,7 +14319,13 @@ function App() {
         profileKey,
         threadId: routedRequest.params.threadId,
         turnId: routedRequest.params.turnId,
+        subagentThreadId: requestBelongsToSubagent
+          ? requestSubagent.childThreadId
+          : null,
       };
+      if (requestBelongsToSubagent) {
+        setSubagentAttention(control, requestSubagent.childThreadId, true);
+      }
       window.requestAnimationFrame(() => {
         if (
           activeRunControlsRef.current.get(control.clientId) !== control ||
@@ -13420,7 +14340,9 @@ function App() {
         void deliverAgentNotification({
           kind: "user-input-required",
           target,
-          chatTitle: activeEntry?.prompt ?? control.promptFallback,
+          chatTitle: requestBelongsToSubagent
+            ? requestSubagent?.task
+            : activeEntry?.prompt ?? control.promptFallback,
           workspaceLabel: workspace?.label,
         });
       });
@@ -13565,6 +14487,12 @@ function App() {
     const currentRequest = control.runView.approvalRequests.find(
       (candidate) => candidate.key === request.key,
     );
+    const requestSubagent = findSubagentByThread(
+      currentRequest?.profileKey ?? request.profileKey,
+      currentRequest?.threadId ?? request.threadId,
+    );
+    const requestBelongsToSubagent =
+      requestSubagent?.ownerClientId === control.clientId;
     const selectedChoice = currentRequest?.choices.find(
       (candidate) => candidate.id === choice.id,
     );
@@ -13579,7 +14507,8 @@ function App() {
     if (
       currentRequest.threadId &&
       control?.threadId &&
-      currentRequest.threadId !== control.threadId
+      currentRequest.threadId !== control.threadId &&
+      !requestBelongsToSubagent
     ) {
       updateRunControlView(control, (current) =>
         markApprovalError(
@@ -13592,8 +14521,12 @@ function App() {
     }
     if (
       currentRequest.turnId &&
-      control?.turnId &&
-      currentRequest.turnId !== control.turnId
+      ((requestBelongsToSubagent &&
+        requestSubagent?.childTurnId &&
+        currentRequest.turnId !== requestSubagent.childTurnId) ||
+        (!requestBelongsToSubagent &&
+          control?.turnId &&
+          currentRequest.turnId !== control.turnId))
     ) {
       updateRunControlView(control, (current) =>
         markApprovalError(
@@ -13665,11 +14598,24 @@ function App() {
     const activeEntryId = control.clientId;
     const accountId = control.accountId;
     const profileKey = control.profileKey;
+    const requestSubagent = findSubagentByThread(
+      profileKey,
+      request.params.threadId,
+    );
+    const requestBelongsToSubagent =
+      requestSubagent?.ownerClientId === control.clientId;
+    const matchesThread =
+      request.params.threadId === control.threadId ||
+      requestBelongsToSubagent;
+    const matchesTurn = requestBelongsToSubagent
+      ? !requestSubagent?.childTurnId ||
+        requestSubagent.childTurnId === request.params.turnId
+      : request.params.turnId === control.turnId;
     if (
       activeEntryId !== entry.clientId ||
-      entry.runView.threadId !== request.params.threadId ||
-      entry.runView.turnId !== request.params.turnId ||
-      !entry.runView.serverRequests.some(
+      !matchesThread ||
+      !matchesTurn ||
+      !control.runView.serverRequests.some(
         (candidate) => String(candidate.id) === String(request.id),
       )
     ) {
@@ -13735,6 +14681,13 @@ function App() {
     updateRunControlView(control, (current) =>
       resolveServerRequest(current, request.id),
     );
+    if (
+      requestBelongsToSubagent &&
+      requestSubagent &&
+      !subagentHasPendingInteractions(control, requestSubagent.childThreadId)
+    ) {
+      setSubagentAttention(control, requestSubagent.childThreadId, false);
+    }
     requestActionLocksRef.current.delete(actionKey);
   }
 
@@ -16937,7 +17890,9 @@ function App() {
             <div
               className={`codex-workspace-body${
                 historyDrawerSpaceReserved ? " history-space-reserved" : ""
-              }${historyDrawerOpen ? " history-open" : ""}`}
+              }${historyDrawerOpen ? " history-open" : ""}${
+                subagentInspectorTarget ? " subagent-inspector-open" : ""
+              }`}
               data-history-transition-phase={historyDrawerPhase}
             >
               <section
@@ -17055,6 +18010,7 @@ function App() {
                   planMode={planMode}
                   goalProgress={selectedGoalProgress}
                   planProgress={selectedPlanProgress}
+                  subagentConversationKey={selectedSubagentConversationKey}
                   queueItems={selectedPromptQueueItems}
                   queueActionPendingItemId={promptQueueActionPendingItemId}
                   queueEditActive={promptQueueComposerEdit !== null}
@@ -17093,6 +18049,7 @@ function App() {
                   onQueueAutoSendChange={changeComposerQueuedPromptAutoSend}
                   onQueueSendNow={sendComposerQueuedPromptNow}
                   onQueueReorder={reorderComposerPromptQueue}
+                  onInspectSubagent={openSubagentInspector}
                   onQueueEditCancel={cancelComposerQueuedPromptEdit}
                   onDispatchQueued={dispatchSelectedPromptQueue}
                   onAccessModeChange={handleAccessModeChange}
@@ -17127,6 +18084,24 @@ function App() {
                 onOpenChatContextMenu={openChatHistoryContextMenuFromDrawer}
                 onTransitionEnd={handleHistoryDrawerTransitionEnd}
               />
+              {subagentInspectorTarget ? (
+                <SubagentInspector
+                  conversationKey={
+                    subagentInspectorTarget.conversationKey
+                  }
+                  subagentId={subagentInspectorTarget.subagentId}
+                  parentEntry={inspectedSubagentParentEntry}
+                  parentRunView={
+                    inspectedSubagentParentEntry?.runView ?? null
+                  }
+                  onClose={closeSubagentInspector}
+                  onLoadTranscript={loadSubagentTranscript}
+                  onResolveRequest={resolveTranscriptRequest}
+                  onAnswerUserInput={answerTranscriptUserInput}
+                  onSteer={steerSubagent}
+                  onStop={stopSubagent}
+                />
+              ) : null}
               {chatHistoryContextMenu ? (
                 <div
                   className="workspace-context-menu"

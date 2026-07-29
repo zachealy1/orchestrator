@@ -58,6 +58,8 @@ import {
 
 type Props = {
   items: PromptQueueItem[];
+  open?: boolean;
+  onOpenChange?: (open: boolean) => void;
   actionPendingItemId?: string | null;
   onEdit: (item: PromptQueueItem) => void;
   onRemove: (item: PromptQueueItem) => void;
@@ -90,6 +92,8 @@ function queueItemStatusLabel(item: PromptQueueItem) {
 
 export const PromptQueueStatus = memo(function PromptQueueStatus({
   items,
+  open: controlledOpen,
+  onOpenChange,
   actionPendingItemId = null,
   onEdit,
   onRemove,
@@ -98,7 +102,17 @@ export const PromptQueueStatus = memo(function PromptQueueStatus({
   onSendNow,
   onReorder,
 }: Props) {
-  const [open, setOpen] = useState(false);
+  const [internalOpen, setInternalOpen] = useState(false);
+  const open = controlledOpen ?? internalOpen;
+  const setOpen = useCallback(
+    (next: boolean | ((current: boolean) => boolean)) => {
+      const resolved =
+        typeof next === "function" ? next(open) : next;
+      if (controlledOpen === undefined) setInternalOpen(resolved);
+      onOpenChange?.(resolved);
+    },
+    [controlledOpen, onOpenChange, open],
+  );
   const popoverRef = useRef<HTMLDivElement>(null);
   const toggleRef = useRef<HTMLButtonElement>(null);
   const sensors = useSensors(

@@ -162,6 +162,25 @@ struct HistoricalTurnActivityResponse {
     next_cursor: Option<String>,
 }
 
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ProjectedSubagentThread {
+    thread_id: String,
+    status: Option<String>,
+    active_turn_id: Option<String>,
+    turns: Vec<ProjectedSubagentTurn>,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ProjectedSubagentTurn {
+    id: String,
+    status: String,
+    started_at: Option<String>,
+    completed_at: Option<String>,
+    items: Vec<Value>,
+}
+
 #[derive(Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 struct HistoryTurnHint {
@@ -1088,6 +1107,43 @@ fn migrations() -> Vec<Migration> {
             ",
             kind: MigrationKind::Up,
         },
+        Migration {
+            version: 24,
+            description: "persist_run_subagents",
+            sql: "
+                CREATE TABLE IF NOT EXISTS run_subagents (
+                    id TEXT PRIMARY KEY,
+                    run_id INTEGER NOT NULL,
+                    profile_key TEXT NOT NULL,
+                    account_id INTEGER NOT NULL,
+                    root_thread_id TEXT NOT NULL,
+                    parent_thread_id TEXT NOT NULL,
+                    parent_turn_id TEXT,
+                    child_thread_id TEXT NOT NULL,
+                    child_turn_id TEXT,
+                    spawn_item_id TEXT,
+                    task_prompt TEXT NOT NULL,
+                    hierarchy_depth INTEGER NOT NULL DEFAULT 0,
+                    status TEXT NOT NULL,
+                    status_before_attention TEXT,
+                    agent_status TEXT,
+                    needs_attention INTEGER NOT NULL DEFAULT 0,
+                    error TEXT,
+                    final_result TEXT,
+                    started_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL,
+                    completed_at TEXT,
+                    FOREIGN KEY (run_id) REFERENCES runs(id) ON DELETE CASCADE,
+                    UNIQUE (run_id, child_thread_id)
+                );
+
+                CREATE INDEX IF NOT EXISTS idx_run_subagents_run_status
+                    ON run_subagents(run_id, status, updated_at);
+                CREATE INDEX IF NOT EXISTS idx_run_subagents_child_thread
+                    ON run_subagents(profile_key, child_thread_id);
+            ",
+            kind: MigrationKind::Up,
+        },
     ]
 }
 
@@ -1516,6 +1572,261 @@ fn project_historical_turn_activity(response: &Value) -> HistoricalTurnActivityR
             .and_then(Value::as_str)
             .map(str::to_string),
     }
+}
+
+fn project_subagent_thread(
+    requested_thread_id: &str,
+    response: &Value,
+) -> Result<ProjectedSubagentThread, String> {
+    let thread = response
+        .get("thread")
+        .or_else(|| response.get("data").and_then(|data| data.get("thread")))
+        .unwrap_or(response);
+    let thread_id = thread
+        .get("id")
+        .and_then(Value::as_str)
+        .unwrap_or(requested_thread_id)
+        .to_string();
+    if thread_id != requested_thread_id {
+        return Err("Codex returned a different subagent thread".to_string());
+    }
+    let turns: Vec<ProjectedSubagentTurn> = thread
+        .get("turns")
+        .and_then(Value::as_array)
+        .map(|turns| turns.iter().filter_map(project_subagent_turn).collect())
+        .unwrap_or_default();
+    let active_turn_id = turns
+        .iter()
+        .rev()
+        .find(|turn| matches!(turn.status.as_str(), "inProgress" | "running" | "active"))
+        .map(|turn| turn.id.clone());
+    Ok(ProjectedSubagentThread {
+        thread_id,
+        status: project_status_label(thread.get("status")),
+        active_turn_id,
+        turns,
+    })
+}
+
+fn project_subagent_turn(turn: &Value) -> Option<ProjectedSubagentTurn> {
+    let id = turn.get("id").and_then(Value::as_str)?.to_string();
+    let status =
+        project_status_label(turn.get("status")).unwrap_or_else(|| "unknown".to_string());
+    let items = turn
+        .get("items")
+        .and_then(Value::as_array)
+        .map(|items| items.iter().filter_map(project_subagent_item).collect())
+        .unwrap_or_default();
+    Some(ProjectedSubagentTurn {
+        id,
+        status,
+        started_at: read_projected_timestamp(turn, &["startedAt", "createdAt"]),
+        completed_at: read_projected_timestamp(turn, &["completedAt", "updatedAt"]),
+        items,
+    })
+}
+
+fn project_subagent_item(item: &Value) -> Option<Value> {
+    let item_type = item.get("type").and_then(Value::as_str)?;
+    let id = item
+        .get("id")
+        .and_then(Value::as_str)
+        .unwrap_or("unknown")
+        .to_string();
+    match item_type {
+        "userMessage" => {
+            let text = project_user_message_text(item.get("content")?);
+            (!text.is_empty()).then(|| json!({
+                "id": id,
+                "kind": "user",
+                "text": text
+            }))
+        }
+        "agentMessage" => {
+            let text = item.get("text").and_then(Value::as_str)?;
+            Some(json!({
+                "id": id,
+                "kind": "assistant",
+                "text": text,
+                "phase": item.get("phase").and_then(Value::as_str)
+            }))
+        }
+        "plan" => {
+            let text = item.get("text").and_then(Value::as_str)?;
+            Some(json!({
+                "id": id,
+                "kind": "plan",
+                "text": text
+            }))
+        }
+        "reasoning" => {
+            let summaries = project_reasoning_summaries(item.get("summary"));
+            (!summaries.is_empty()).then(|| json!({
+                "id": id,
+                "kind": "reasoning",
+                "summaries": summaries
+            }))
+        }
+        "commandExecution" => Some(project_activity_item(
+            id,
+            "command",
+            "Shell command".to_string(),
+            project_status_label(item.get("status")),
+        )),
+        "fileChange" => {
+            let names = item
+                .get("changes")
+                .and_then(Value::as_array)
+                .map(|changes| {
+                    changes
+                        .iter()
+                        .filter_map(|change| {
+                            change
+                                .get("path")
+                                .and_then(Value::as_str)
+                                .and_then(|path| Path::new(path).file_name())
+                                .and_then(OsStr::to_str)
+                                .map(str::to_string)
+                        })
+                        .take(12)
+                        .collect::<Vec<_>>()
+                })
+                .unwrap_or_default();
+            let label = if names.is_empty() {
+                "File changes".to_string()
+            } else {
+                format!("Edited {}", names.join(", "))
+            };
+            Some(project_activity_item(
+                id,
+                "file",
+                label,
+                project_status_label(item.get("status")),
+            ))
+        }
+        "mcpToolCall" => {
+            let server = item
+                .get("server")
+                .and_then(Value::as_str)
+                .unwrap_or("MCP");
+            let tool = item
+                .get("tool")
+                .and_then(Value::as_str)
+                .unwrap_or("tool");
+            Some(project_activity_item(
+                id,
+                "mcp",
+                format!("{server} / {tool}"),
+                project_status_label(item.get("status")),
+            ))
+        }
+        "dynamicToolCall" => Some(project_activity_item(
+            id,
+            "mcp",
+            item.get("tool")
+                .and_then(Value::as_str)
+                .unwrap_or("Dynamic tool")
+                .to_string(),
+            project_status_label(item.get("status")),
+        )),
+        "collabAgentToolCall" | "collabToolCall" => Some(project_activity_item(
+            id,
+            "collaboration",
+            item.get("tool")
+                .and_then(Value::as_str)
+                .map(humanize_collab_tool)
+                .unwrap_or_else(|| "Subagent activity".to_string()),
+            project_status_label(item.get("status")),
+        )),
+        "webSearch" => Some(project_activity_item(
+            id,
+            "web",
+            "Web search".to_string(),
+            project_status_label(item.get("status")),
+        )),
+        _ => None,
+    }
+}
+
+fn project_activity_item(
+    id: String,
+    activity_kind: &str,
+    label: String,
+    status: Option<String>,
+) -> Value {
+    json!({
+        "id": id,
+        "kind": "activity",
+        "activityKind": activity_kind,
+        "label": label,
+        "status": status
+    })
+}
+
+fn project_user_message_text(content: &Value) -> String {
+    content
+        .as_array()
+        .map(|parts| {
+            parts
+                .iter()
+                .filter_map(|part| match part.get("type").and_then(Value::as_str) {
+                    Some("text") => part.get("text").and_then(Value::as_str),
+                    _ => None,
+                })
+                .collect::<Vec<_>>()
+                .join("\n")
+        })
+        .unwrap_or_default()
+}
+
+fn project_reasoning_summaries(value: Option<&Value>) -> Vec<String> {
+    value
+        .and_then(Value::as_array)
+        .map(|parts| {
+            parts
+                .iter()
+                .filter_map(|part| {
+                    part.as_str().or_else(|| {
+                        part.get("text")
+                            .and_then(Value::as_str)
+                            .or_else(|| part.get("summary").and_then(Value::as_str))
+                    })
+                })
+                .filter(|summary| !summary.trim().is_empty())
+                .map(str::to_string)
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+fn read_projected_timestamp(value: &Value, keys: &[&str]) -> Option<String> {
+    keys.iter()
+        .find_map(|key| value.get(*key).and_then(Value::as_str))
+        .map(str::to_string)
+}
+
+fn project_status_label(value: Option<&Value>) -> Option<String> {
+    match value {
+        Some(Value::String(status)) => Some(status.clone()),
+        Some(Value::Object(status)) => status
+            .get("type")
+            .or_else(|| status.get("status"))
+            .and_then(Value::as_str)
+            .map(str::to_string),
+        _ => None,
+    }
+}
+
+fn humanize_collab_tool(tool: &str) -> String {
+    match tool {
+        "spawnAgent" | "spawn_agent" => "Started subagent",
+        "sendInput" | "send_input" => "Sent subagent instruction",
+        "resumeAgent" | "resume_agent" => "Resumed subagent",
+        "wait" | "wait_agent" => "Waited for subagent",
+        "closeAgent" | "close_agent" => "Closed subagent",
+        _ => "Subagent activity",
+    }
+    .to_string()
 }
 
 struct RawHistoryIndexPage {
@@ -2190,6 +2501,40 @@ async fn codex_default_profile_rpc(
     state: State<'_, CodexState>,
 ) -> Result<Value, String> {
     send_request(&state, DEFAULT_CODEX_PROFILE_ID, &method, params).await
+}
+
+#[tauri::command]
+async fn codex_projected_subagent_thread_read(
+    account_id: Option<i64>,
+    profile_key: String,
+    thread_id: String,
+    state: State<'_, CodexState>,
+) -> Result<ProjectedSubagentThread, String> {
+    let thread_id = thread_id.trim();
+    if thread_id.is_empty() {
+        return Err("Subagent thread id is required".to_string());
+    }
+    let resolved_account_id = if profile_key == DEFAULT_CODEX_PROFILE_KEY {
+        DEFAULT_CODEX_PROFILE_ID
+    } else {
+        let account_id =
+            account_id.ok_or_else(|| "A managed Codex account id is required".to_string())?;
+        if profile_key != profile_key_for_account(account_id) {
+            return Err("The subagent profile did not match its Codex account".to_string());
+        }
+        account_id
+    };
+    let response = send_request(
+        &state,
+        resolved_account_id,
+        "thread/read",
+        json!({
+            "threadId": thread_id,
+            "includeTurns": true
+        }),
+    )
+    .await?;
+    project_subagent_thread(thread_id, &response)
 }
 
 #[tauri::command]
@@ -5953,6 +6298,7 @@ pub fn run() {
             codex_default_profile_connect,
             codex_rpc,
             codex_default_profile_rpc,
+            codex_projected_subagent_thread_read,
             codex_default_profile_turn_activity,
             codex_default_profile_thread_index,
             codex_default_profile_thread_index_cancel,
@@ -6500,6 +6846,79 @@ mod tests {
     }
 
     #[test]
+    fn subagent_projection_keeps_visible_turns_and_omits_bulk_content() {
+        let response = json!({
+            "thread": {
+                "id": "child-thread",
+                "status": { "type": "idle" },
+                "turns": [{
+                    "id": "child-turn",
+                    "status": "completed",
+                    "items": [
+                        {
+                            "type": "userMessage",
+                            "id": "user",
+                            "content": [{ "type": "text", "text": "Inspect the API" }]
+                        },
+                        {
+                            "type": "agentMessage",
+                            "id": "assistant",
+                            "phase": "final_answer",
+                            "text": "The API is valid."
+                        },
+                        {
+                            "type": "reasoning",
+                            "id": "reasoning",
+                            "summary": [{ "text": "Checked the public contract" }],
+                            "content": "hidden chain of thought"
+                        },
+                        {
+                            "type": "commandExecution",
+                            "id": "command",
+                            "command": "cat .env",
+                            "aggregatedOutput": "SECRET_TOKEN=private",
+                            "status": "completed"
+                        },
+                        {
+                            "type": "fileChange",
+                            "id": "file",
+                            "status": "completed",
+                            "changes": [{
+                                "path": "/tmp/project/src/App.tsx",
+                                "diff": "-secret\n+replacement"
+                            }]
+                        },
+                        {
+                            "type": "mcpToolCall",
+                            "id": "mcp",
+                            "server": "playwright",
+                            "tool": "browser_type",
+                            "arguments": { "text": "password-value" },
+                            "result": { "content": "private-result" },
+                            "status": "completed"
+                        }
+                    ]
+                }]
+            }
+        });
+
+        let projected = project_subagent_thread("child-thread", &response).unwrap();
+        let value = serde_json::to_value(projected).unwrap();
+        let serialized = value.to_string();
+
+        assert!(serialized.contains("Inspect the API"));
+        assert!(serialized.contains("The API is valid."));
+        assert!(serialized.contains("Checked the public contract"));
+        assert!(serialized.contains("App.tsx"));
+        assert!(!serialized.contains("hidden chain of thought"));
+        assert!(!serialized.contains("cat .env"));
+        assert!(!serialized.contains("SECRET_TOKEN"));
+        assert!(!serialized.contains("-secret"));
+        assert!(!serialized.contains("password-value"));
+        assert!(!serialized.contains("private-result"));
+    }
+
+    #[test]
     fn history_index_projection_returns_metrics_without_message_content() {
         let prompt = "private prompt text\nwith another line";
         let final_answer = "private final answer";
@@ -6773,6 +7192,31 @@ mod tests {
         assert_eq!(
             cached_token_repair.description,
             "repair_per_run_cached_token_usage"
+        );
+    }
+
+    #[test]
+    fn subagent_metadata_uses_a_new_immutable_migration_slot() {
+        let all_migrations = migrations();
+        let subagents = all_migrations
+            .iter()
+            .find(|migration| migration.version == 24)
+            .expect("migration 24");
+
+        assert_eq!(subagents.description, "persist_run_subagents");
+        assert!(subagents
+            .sql
+            .contains("CREATE TABLE IF NOT EXISTS run_subagents"));
+        assert!(subagents
+            .sql
+            .contains("UNIQUE (run_id, child_thread_id)"));
+        assert!(subagents.sql.contains("ON DELETE CASCADE"));
+        assert_eq!(
+            all_migrations
+                .iter()
+                .filter(|migration| migration.version == 24)
+                .count(),
+            1
         );
     }
 

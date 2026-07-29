@@ -21,6 +21,7 @@ pub struct AgentNotificationTarget {
     pub profile_key: Option<String>,
     pub thread_id: Option<String>,
     pub turn_id: Option<String>,
+    pub subagent_thread_id: Option<String>,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -305,6 +306,7 @@ mod tests {
                 profile_key: Some("account:4".to_string()),
                 thread_id: Some("thread-1".to_string()),
                 turn_id: Some("turn-1".to_string()),
+                subagent_thread_id: None,
             },
         }
     }

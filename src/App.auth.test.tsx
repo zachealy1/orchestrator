@@ -7,6 +7,7 @@ import { ASK_FOR_APPROVAL_PERMISSION_PROFILE } from "./lib/codexAccess";
 import { persistRunningGitOperation } from "./lib/gitOperations";
 import { createQueuedPromptSnapshot } from "./lib/promptQueue";
 import { createRunExecutionSettings } from "./lib/runExecutionSettings";
+import { clearSubagentStore } from "./lib/subagents";
 import {
   ORCHESTRATOR_CONTEXT_FILE_MIME,
   type PromptQueueItem,
@@ -65,6 +66,7 @@ const mocks = vi.hoisted(() => ({
   codexRpcMock: vi.fn(),
   codexDefaultProfileRpcMock: vi.fn(),
   loadDefaultProfileTurnActivityMock: vi.fn(),
+  readProjectedSubagentThreadMock: vi.fn(),
   indexDefaultProfileThreadMock: vi.fn(),
   cancelDefaultProfileThreadIndexMock: vi.fn(),
   syncDefaultProfileThreadTranscriptMock: vi.fn(),
@@ -107,6 +109,7 @@ const mocks = vi.hoisted(() => ({
   listWorkspaceChatsMock: vi.fn(),
   getChatWithRunsMock: vi.fn(),
   listChatRunsPageMock: vi.fn(),
+  listChatSubagentsMock: vi.fn(),
   buildLocalChatHistoryIndexMock: vi.fn(),
   readExternalChatHistoryIndexMock: vi.fn(),
   saveExternalChatHistoryIndexMock: vi.fn(),
@@ -133,6 +136,7 @@ const mocks = vi.hoisted(() => ({
   softDeleteRunMock: vi.fn(),
   upsertWorkspaceMock: vi.fn(),
   upsertExternalCodexChatsMock: vi.fn(),
+  upsertRunSubagentMock: vi.fn(),
   registerNativeContextFileDropMock: vi.fn(),
   virtuosoState: {
     ranges: [{ startIndex: 0, endIndex: 0 }],
@@ -263,6 +267,7 @@ vi.mock("./codexClient", () => ({
   listCodexSkills: mocks.listCodexSkillsMock,
   listWorkspaceDirectory: mocks.listWorkspaceDirectoryMock,
   loadDefaultProfileTurnActivity: mocks.loadDefaultProfileTurnActivityMock,
+  readProjectedSubagentThread: mocks.readProjectedSubagentThreadMock,
   indexDefaultProfileThread: mocks.indexDefaultProfileThreadMock,
   cancelDefaultProfileThreadIndex: mocks.cancelDefaultProfileThreadIndexMock,
   syncDefaultProfileThreadTranscript:
@@ -326,6 +331,7 @@ vi.mock("./db", () => ({
   getNextChatTurnIndex: mocks.getNextChatTurnIndexMock,
   getAnalyticsSummary: mocks.getAnalyticsSummaryMock,
   listChatRunsPage: mocks.listChatRunsPageMock,
+  listChatSubagents: mocks.listChatSubagentsMock,
   listCodexAccounts: mocks.listCodexAccountsMock,
   listDuplicateProfilesPendingCleanup:
     mocks.listDuplicateProfilesPendingCleanupMock,
@@ -372,6 +378,7 @@ vi.mock("./db", () => ({
   updateRun: mocks.updateRunMock,
   updateTaskStatus: mocks.updateTaskStatusMock,
   upsertExternalCodexChats: mocks.upsertExternalCodexChatsMock,
+  upsertRunSubagent: mocks.upsertRunSubagentMock,
   upsertWorkspace: mocks.upsertWorkspaceMock,
 }));
 
@@ -650,7 +657,9 @@ function prepareDefaults() {
     mocks.generateChatTitleMock,
     mocks.inspectDroppedContextPathsMock,
     mocks.listCodexModelsMock,
+    mocks.listChatSubagentsMock,
     mocks.loadDefaultProfileTurnActivityMock,
+    mocks.readProjectedSubagentThreadMock,
     mocks.readBrowserRuntimeStatusMock,
     mocks.readBrowserSessionStatusMock,
     mocks.resolveCodexServerRequestMock,
@@ -763,6 +772,14 @@ function prepareDefaults() {
   mocks.cancelCodexLoginMock.mockResolvedValue(undefined);
   mocks.logoutCodexAccountMock.mockResolvedValue(undefined);
   mocks.listCodexModelsMock.mockResolvedValue([]);
+  mocks.listChatSubagentsMock.mockResolvedValue([]);
+  mocks.readProjectedSubagentThreadMock.mockResolvedValue({
+    threadId: "child-thread",
+    status: "idle",
+    activeTurnId: null,
+    turns: [],
+  });
+  mocks.upsertRunSubagentMock.mockResolvedValue(undefined);
   mocks.listCodexSkillsMock.mockResolvedValue([]);
   mocks.listGitBranchesMock.mockResolvedValue({
     branches: ["main"],
@@ -1572,6 +1589,7 @@ describe("App Codex auth", () => {
     setWindowWidth(1024);
     document.documentElement.removeAttribute("data-theme");
     clearTranscriptStateCache();
+    clearSubagentStore();
     mocks.virtuosoState = {
       ranges: [{ startIndex: 0, endIndex: 0 }],
       scrollTop: 0,
@@ -11345,6 +11363,136 @@ describe("App Codex auth", () => {
     expect(
       screen.queryByText("Codex needs approval to run a command"),
     ).not.toBeInTheDocument();
+  });
+
+  it("routes child turns into the subagent inspector without completing the parent run", async () => {
+    prepareSignedInRun();
+    mocks.readProjectedSubagentThreadMock.mockResolvedValue({
+      threadId: "child-thread-1",
+      status: "active",
+      activeTurnId: "child-turn-1",
+      turns: [
+        {
+          id: "child-turn-1",
+          status: "running",
+          startedAt: "2026-07-29T10:00:00.000Z",
+          completedAt: null,
+          items: [
+            {
+              id: "child-user-1",
+              kind: "user",
+              text: "Inspect the integration tests",
+            },
+            {
+              id: "child-assistant-1",
+              kind: "assistant",
+              text: "Reviewing the existing coverage.",
+              phase: "commentary",
+            },
+          ],
+        },
+      ],
+    });
+
+    const { user } = await renderApp();
+    await startMockRun(user, "Coordinate the implementation");
+
+    await emitCodexNotification({
+      method: "item/started",
+      params: {
+        threadId: "thread-1",
+        turnId: "turn-1",
+        item: {
+          type: "collabAgentToolCall",
+          id: "spawn-child-1",
+          tool: "spawnAgent",
+          status: "inProgress",
+          senderThreadId: "thread-1",
+          receiverThreadIds: ["child-thread-1"],
+          prompt: "Inspect the integration tests",
+          agentsStates: {
+            "child-thread-1": {
+              status: "running",
+              message: null,
+            },
+          },
+        },
+      },
+    });
+    await emitCodexNotification({
+      method: "turn/started",
+      params: {
+        threadId: "child-thread-1",
+        turn: {
+          id: "child-turn-1",
+          status: "inProgress",
+        },
+      },
+    });
+
+    const subagents = await screen.findByRole("button", {
+      name: /Subagents, 1 active · 0 completed/i,
+    });
+    await user.click(subagents);
+    await user.click(
+      screen.getByRole("button", {
+        name: /Inspect the integration tests.*Open inspector/i,
+      }),
+    );
+
+    expect(
+      await screen.findByText("Reviewing the existing coverage."),
+    ).toBeInTheDocument();
+    expect(mocks.readProjectedSubagentThreadMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        accountId: 7,
+        profileKey: "account:7",
+        threadId: "child-thread-1",
+      }),
+    );
+
+    const instruction = screen.getByRole("textbox", {
+      name: "Send instruction to subagent",
+    });
+    await user.type(instruction, "Check the failure path{enter}");
+    await waitFor(() =>
+      expect(mocks.codexRpcMock).toHaveBeenCalledWith(
+        7,
+        "turn/steer",
+        expect.objectContaining({
+          threadId: "child-thread-1",
+          expectedTurnId: "child-turn-1",
+          input: [{ type: "text", text: "Check the failure path" }],
+        }),
+      ),
+    );
+
+    await emitCodexNotification({
+      method: "turn/completed",
+      params: {
+        threadId: "child-thread-1",
+        turn: {
+          id: "child-turn-1",
+          status: "completed",
+        },
+      },
+    });
+
+    await waitFor(() =>
+      expect(
+        screen.getByRole("button", { name: /Subagents/i }),
+      ).toHaveTextContent("0 active · 1 completed"),
+    );
+    expect(
+      screen.getByRole("button", { name: /stop codex/i }),
+    ).toBeInTheDocument();
+    expect(mocks.upsertRunSubagentMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        runId: 202,
+        childThreadId: "child-thread-1",
+        status: "completed",
+      }),
+    );
   });
 
   it("renders exact outside-workspace permissions and grants them for one turn only", async () => {

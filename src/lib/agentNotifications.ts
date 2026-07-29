@@ -39,6 +39,7 @@ export type AgentNotificationTarget = {
   profileKey?: string | null;
   threadId?: string | null;
   turnId?: string | null;
+  subagentThreadId?: string | null;
 };
 
 export type AgentNotificationRequest = {

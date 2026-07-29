@@ -3347,7 +3347,7 @@ const UserInputQuestionCard = memo(function UserInputQuestionCard({
   );
 });
 
-const RunApprovalRequests = memo(function RunApprovalRequests({
+export const RunApprovalRequests = memo(function RunApprovalRequests({
   entry,
   runView,
   onResolveRequest,

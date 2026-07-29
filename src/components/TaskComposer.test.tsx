@@ -7,7 +7,7 @@ import {
   within,
 } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { TaskComposer } from "./TaskComposer";
 import { useState } from "react";
 import type { ComponentProps } from "react";
@@ -16,11 +16,20 @@ import {
 } from "../lib/promptQueue";
 import { createRunExecutionSettings } from "../lib/runExecutionSettings";
 import {
+  clearSubagentStore,
+  replaceConversationSubagents,
+  type SubagentRecord,
+} from "../lib/subagents";
+import {
   ORCHESTRATOR_PROMPT_CONTEXT_MIME,
   type PromptQueueItem,
 } from "../types";
 
 type TaskComposerProps = ComponentProps<typeof TaskComposer>;
+
+afterEach(() => {
+  act(clearSubagentStore);
+});
 
 const models: TaskComposerProps["models"] = [
   {
@@ -115,6 +124,35 @@ function queuedPrompt(): PromptQueueItem {
     createdAt: "2026-07-26T10:00:00Z",
     updatedAt: "2026-07-26T10:00:00Z",
     acceptedAt: null,
+    completedAt: null,
+  };
+}
+
+function activeSubagent(chatId: number): SubagentRecord {
+  return {
+    id: `subagent-${chatId}`,
+    ownerClientId: "owner",
+    workspaceId: 1,
+    chatId,
+    runId: 3,
+    parentTurnId: "parent-turn",
+    profileKey: "account:7",
+    accountId: 7,
+    rootThreadId: "root-thread",
+    parentThreadId: "root-thread",
+    childThreadId: `child-thread-${chatId}`,
+    childTurnId: `child-turn-${chatId}`,
+    spawnItemId: `spawn-${chatId}`,
+    task: `Inspect chat ${chatId}`,
+    depth: 1,
+    status: "running",
+    statusBeforeAttention: null,
+    agentStatus: "running",
+    needsAttention: false,
+    error: null,
+    finalResult: null,
+    startedAt: "2026-07-29T10:00:00.000Z",
+    updatedAt: "2026-07-29T10:00:01.000Z",
     completedAt: null,
   };
 }
@@ -369,7 +407,7 @@ describe("TaskComposer", () => {
     expect(prompt).toHaveValue("Keep this draft");
   });
 
-  it("stacks goal, plan, and queue progress inside the composer", () => {
+  it("stacks goal, plan, subagent, and queue progress inside the composer", () => {
     const planProgress = {
       currentStep: 1,
       totalSteps: 2,
@@ -391,10 +429,13 @@ describe("TaskComposer", () => {
       actionPending: null,
     };
     const queueItems = [queuedPrompt()];
+    replaceConversationSubagents("chat:2", [activeSubagent(2)]);
     const { container, props, rerender } = renderComposer({
       prompt: "Keep this draft",
       goalProgress,
       planProgress,
+      subagentConversationKey: "chat:2",
+      onInspectSubagent: vi.fn(),
       queueItems,
     });
 
@@ -405,6 +446,8 @@ describe("TaskComposer", () => {
         {...props}
         goalProgress={goalProgress}
         planProgress={planProgress}
+        subagentConversationKey="chat:2"
+        onInspectSubagent={vi.fn()}
         queueItems={queueItems}
       />,
     );
@@ -419,6 +462,7 @@ describe("TaskComposer", () => {
     expect(Array.from(stack!.children)).toEqual([
       screen.getByLabelText("Goal progress"),
       screen.getByRole("status").closest(".plan-progress-indicator"),
+      stack!.querySelector(".subagent-status-row"),
       stack!.querySelector(".prompt-queue-status-row"),
     ]);
     expect(
@@ -428,6 +472,35 @@ describe("TaskComposer", () => {
     expect(container.querySelector(".unrouted-approval-warning")).toBeNull();
     expect(prompt).toHaveFocus();
     expect(prompt).toHaveValue("Keep this draft");
+  });
+
+  it("closes the subagent popover when the selected chat changes", async () => {
+    replaceConversationSubagents("chat:2", [activeSubagent(2)]);
+    replaceConversationSubagents("chat:3", [activeSubagent(3)]);
+    const onInspectSubagent = vi.fn();
+    const { props, rerender, user } = renderComposer({
+      subagentConversationKey: "chat:2",
+      onInspectSubagent,
+    });
+
+    await user.click(screen.getByRole("button", { name: /Subagents/i }));
+    expect(
+      screen.getByRole("region", { name: "Subagents" }),
+    ).toBeInTheDocument();
+
+    rerender(
+      <TaskComposer
+        {...props}
+        subagentConversationKey="chat:3"
+        onInspectSubagent={onInspectSubagent}
+      />,
+    );
+
+    await waitFor(() =>
+      expect(
+        screen.queryByRole("region", { name: "Subagents" }),
+      ).not.toBeInTheDocument(),
+    );
   });
 
   it("updates the prompt and exposes composer actions", async () => {

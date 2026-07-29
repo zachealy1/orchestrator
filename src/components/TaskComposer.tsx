@@ -35,6 +35,11 @@ import { ComposerSelect } from "./ComposerSelect";
 import { GoalProgressIndicator } from "./GoalProgressIndicator";
 import { PlanProgressIndicator } from "./PlanProgressIndicator";
 import { PromptQueueStatus } from "./PromptQueueStatus";
+import { SubagentStatus } from "./SubagentStatus";
+import {
+  useConversationSubagents,
+  type SubagentRecord,
+} from "../lib/subagents";
 import type { GoalProgressIndicatorModel } from "../lib/goalProgress";
 import type { PlanProgressIndicatorModel } from "../lib/planProgress";
 import type {
@@ -83,6 +88,7 @@ type Props = {
   planMode: boolean;
   goalProgress?: GoalProgressIndicatorModel | null;
   planProgress?: PlanProgressIndicatorModel | null;
+  subagentConversationKey?: string | null;
   queueItems?: PromptQueueItem[];
   queueActionPendingItemId?: string | null;
   queueEditActive?: boolean;
@@ -107,6 +113,7 @@ type Props = {
   onResumeGoal: () => void;
   onEditGoal: () => void;
   onStopGoal: () => void;
+  onInspectSubagent?: (subagent: SubagentRecord) => void;
   onQueueEdit?: (item: PromptQueueItem) => void;
   onQueueRemove?: (item: PromptQueueItem) => void;
   onQueueRetry?: (item: PromptQueueItem) => void;
@@ -198,6 +205,7 @@ export const TaskComposer = memo(function TaskComposer({
   planMode,
   goalProgress = null,
   planProgress = null,
+  subagentConversationKey = null,
   queueItems = [],
   queueActionPendingItemId = null,
   queueEditActive = false,
@@ -222,6 +230,7 @@ export const TaskComposer = memo(function TaskComposer({
   onResumeGoal,
   onEditGoal,
   onStopGoal,
+  onInspectSubagent,
   onQueueEdit = NOOP_QUEUE_ITEM,
   onQueueRemove = NOOP_QUEUE_ITEM,
   onQueueRetry = NOOP_QUEUE_ITEM,
@@ -251,6 +260,10 @@ export const TaskComposer = memo(function TaskComposer({
   onRun,
   onStop,
 }: Props) {
+  const [openStatusPopover, setOpenStatusPopover] = useState<
+    "subagents" | "queue" | null
+  >(null);
+  const subagents = useConversationSubagents(subagentConversationKey);
   const promptTextareaRef = useRef<HTMLTextAreaElement>(null);
   const compositionActiveRef = useRef(false);
   const externalPromptRevisionRef = useRef(promptRevision);
@@ -262,6 +275,11 @@ export const TaskComposer = memo(function TaskComposer({
   const [activeToken, setActiveToken] = useState<ComposerToken | null>(null);
   const [activePopoverIndex, setActivePopoverIndex] = useState(0);
   const [slashPanel, setSlashPanel] = useState<SlashPanel>("commands");
+
+  useEffect(() => {
+    setOpenStatusPopover(null);
+  }, [subagentConversationKey]);
+
   const selectedModel = useMemo(
     () => models.find((model) => model.id === selectedModelId) ?? models[0] ?? null,
     [models, selectedModelId],
@@ -818,6 +836,7 @@ export const TaskComposer = memo(function TaskComposer({
   const hasComposerStatus =
     Boolean(goalProgress) ||
     Boolean(planProgress) ||
+    subagents.length > 0 ||
     queueItems.length > 0;
   const hasDraftPrompt = draftPrompt.trim().length > 0;
   const hasRunnableQueuedPrompt = queueItems.some(
@@ -861,9 +880,23 @@ export const TaskComposer = memo(function TaskComposer({
           {planProgress ? (
             <PlanProgressIndicator progress={planProgress} />
           ) : null}
+          {subagents.length > 0 && onInspectSubagent ? (
+            <SubagentStatus
+              records={subagents}
+              open={openStatusPopover === "subagents"}
+              onOpenChange={(open) =>
+                setOpenStatusPopover(open ? "subagents" : null)
+              }
+              onInspect={onInspectSubagent}
+            />
+          ) : null}
           {queueItems.length > 0 ? (
             <PromptQueueStatus
               items={queueItems}
+              open={openStatusPopover === "queue"}
+              onOpenChange={(open) =>
+                setOpenStatusPopover(open ? "queue" : null)
+              }
               actionPendingItemId={queueActionPendingItemId}
               onEdit={onQueueEdit}
               onRemove={onQueueRemove}

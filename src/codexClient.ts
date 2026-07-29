@@ -39,6 +39,7 @@ import type {
 } from "./types";
 import type { LocalWebPreviewProbeResult } from "./lib/webPreview";
 import type { ThreadGoalSetResponse } from "./lib/goalProgress";
+import type { SubagentTranscript } from "./lib/subagents";
 
 export function readBrowserRuntimeStatus() {
   return invoke<BrowserRuntimeStatus>("browser_runtime_status");
@@ -132,6 +133,18 @@ export function codexRpc<T>(accountId: number, method: string, params: unknown =
 
 export function codexDefaultProfileRpc<T>(method: string, params: unknown = {}) {
   return invoke<T>("codex_default_profile_rpc", { method, params });
+}
+
+export function readProjectedSubagentThread(input: {
+  accountId: number | null;
+  profileKey: string;
+  threadId: string;
+}) {
+  return invoke<SubagentTranscript>("codex_projected_subagent_thread_read", {
+    accountId: input.accountId,
+    profileKey: input.profileKey,
+    threadId: input.threadId,
+  });
 }
 
 export type HistoricalTurnActivityResponse = {
