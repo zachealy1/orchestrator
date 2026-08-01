@@ -1922,14 +1922,16 @@ button.account-switcher-item:hover:not(:disabled) {
 
 .workspace-context-meter {
   --context-meter-fill: 0%;
+  --context-meter-width: 188px;
   position: relative;
   display: inline-flex;
   overflow: hidden;
+  width: var(--context-meter-width);
   height: 30px;
   min-height: 30px;
-  min-width: 132px;
-  max-width: 188px;
-  flex: 0 1 188px;
+  min-width: var(--context-meter-width);
+  max-width: var(--context-meter-width);
+  flex: 0 0 var(--context-meter-width);
   align-items: center;
   border-radius: 7px;
   background: rgb(var(--text-secondary-rgb) / 0.1);
