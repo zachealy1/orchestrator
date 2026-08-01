@@ -19,7 +19,10 @@ import {
 
 const virtuosoMock = vi.hoisted(() => ({
   lastProps: null as any,
-  state: { ranges: [{ startIndex: 292, endIndex: 299 }], scrollTop: 42 },
+  state: {
+    ranges: [{ startIndex: 0, endIndex: Number.POSITIVE_INFINITY, size: 360 }],
+    scrollTop: 42,
+  },
   scrollBy: vi.fn(),
   scrollToIndex: vi.fn(),
 }));
@@ -832,6 +835,7 @@ describe("VirtuosoTaskChatTranscript", () => {
       />,
     );
     expect(virtuosoMock.lastProps.restoreStateFrom).toBeUndefined();
+    expect(virtuosoMock.lastProps.initialItemCount).toBe(20);
     first.unmount();
 
     render(
@@ -846,6 +850,10 @@ describe("VirtuosoTaskChatTranscript", () => {
       />,
     );
     expect(virtuosoMock.lastProps.restoreStateFrom).toEqual(virtuosoMock.state);
+    expect(virtuosoMock.lastProps).not.toHaveProperty("initialItemCount");
+    expect(virtuosoMock.lastProps).not.toHaveProperty(
+      "initialTopMostItemIndex",
+    );
   });
 
   it("does not restore another version's cached position into a mounted transcript", () => {
@@ -876,7 +884,7 @@ describe("VirtuosoTaskChatTranscript", () => {
         onResolveRequest={vi.fn()}
       />,
     );
-    expect(virtuosoMock.lastProps.restoreStateFrom).toBeUndefined();
+    expect(virtuosoMock.lastProps).not.toHaveProperty("restoreStateFrom");
 
     mountedTranscript.rerender(
       <VirtuosoTaskChatTranscript
@@ -924,6 +932,85 @@ describe("VirtuosoTaskChatTranscript", () => {
       index: "LAST",
       align: "end",
     });
+    expect(virtuosoMock.lastProps).not.toHaveProperty("initialItemCount");
+  });
+
+  it("keeps the outgoing chat visible until the incoming transcript is positioned", async () => {
+    const outgoingEntry = {
+      ...historyEntry(1),
+      clientId: "switch-outgoing",
+      prompt: "Outgoing prompt",
+    };
+    const incomingEntry = {
+      ...historyEntry(2),
+      clientId: "switch-incoming",
+      prompt: "Incoming prompt",
+    };
+    const view = render(
+      <VirtuosoTaskChatTranscript
+        entries={[outgoingEntry]}
+        transcriptIdentity="chat:outgoing"
+        transcriptVersion="v1"
+        firstItemIndex={999_999}
+        openAtLatestRequest={null}
+        liveFollow={false}
+        onResolveRequest={vi.fn()}
+      />,
+    );
+
+    view.rerender(
+      <VirtuosoTaskChatTranscript
+        entries={[incomingEntry]}
+        transcriptIdentity="chat:incoming"
+        transcriptVersion="v1"
+        firstItemIndex={999_999}
+        openAtLatestRequest={null}
+        liveFollow={false}
+        onResolveRequest={vi.fn()}
+      />,
+    );
+
+    const visibleLayer = view.container.querySelector<HTMLElement>(
+      ".task-chat-transcript-layer.is-visible",
+    );
+    const preparingLayer = view.container.querySelector<HTMLElement>(
+      ".task-chat-transcript-layer.is-preparing",
+    );
+    expect(visibleLayer).toHaveTextContent("Outgoing prompt");
+    expect(preparingLayer).toHaveTextContent("Incoming prompt");
+    expect(preparingLayer).toHaveAttribute("aria-hidden", "true");
+
+    const incomingViewport = preparingLayer?.querySelector<HTMLElement>(
+      '[data-testid="virtuoso-viewport"]',
+    );
+    const incomingRow = preparingLayer?.querySelector<HTMLElement>(
+      '[data-transcript-entry-id="switch-incoming"]',
+    );
+    expect(incomingViewport).not.toBeNull();
+    expect(incomingRow).not.toBeNull();
+    configureScrollerGeometry(incomingViewport!);
+    incomingRow!.getBoundingClientRect = () => ({
+      x: 0,
+      y: 0,
+      width: 900,
+      height: 240,
+      top: 0,
+      right: 900,
+      bottom: 240,
+      left: 0,
+      toJSON: () => ({}),
+    });
+
+    await act(async () => {
+      await new Promise((resolve) => window.setTimeout(resolve, 40));
+    });
+    const nextVisibleLayer = view.container.querySelector<HTMLElement>(
+      ".task-chat-transcript-layer.is-visible",
+    );
+    expect(nextVisibleLayer).toHaveTextContent("Incoming prompt");
+    expect(
+      view.container.querySelector(".task-chat-transcript-layer.is-preparing"),
+    ).toBeNull();
   });
 
   it("keeps following through transient bottom-state changes while streaming", () => {
