@@ -34,7 +34,8 @@ import type {
   WorkspaceFilePreview,
   WorkspaceGitActionResult,
   WorkspaceGitDiff,
-  WorkspaceGitStatusSnapshot,
+  WorkspaceGitOverview,
+  WorkspaceGitRepository,
   WorkspaceTreeEntry,
 } from "./types";
 import type { LocalWebPreviewProbeResult } from "./lib/webPreview";
@@ -242,25 +243,46 @@ export function resolveDefaultCodexServerRequest(
   });
 }
 
-export function listGitBranches(path: string) {
-  return invoke<GitBranchList>("list_git_branches", { path });
+export function listGitBranches(path: string, repositoryPath?: string | null) {
+  return invoke<GitBranchList>("list_git_branches", {
+    path,
+    repositoryPath: repositoryPath ?? null,
+  });
 }
 
-export function checkoutGitBranch(path: string, branch: string) {
-  return invoke<{ branch: string }>("checkout_git_branch", { path, branch });
+export function checkoutGitBranch(
+  workspacePath: string,
+  branch: string,
+  repositoryPath?: string | null,
+) {
+  return invoke<{ branch: string }>("checkout_git_branch_in_workspace", {
+    workspacePath,
+    repositoryPath: repositoryPath ?? null,
+    branch,
+  });
 }
 
-export function createGitBranch(path: string, branch: string) {
-  return invoke<{ branch: string }>("create_git_branch", { path, branch });
+export function createGitBranch(
+  workspacePath: string,
+  branch: string,
+  repositoryPath?: string | null,
+) {
+  return invoke<{ branch: string }>("create_git_branch_in_workspace", {
+    workspacePath,
+    repositoryPath: repositoryPath ?? null,
+    branch,
+  });
 }
 
 export function commitWorkspaceChanges(
   workspacePath: string,
   message: string,
   includeUnstaged: boolean,
+  repositoryPath?: string | null,
 ) {
   return invoke<WorkspaceGitActionResult>("commit_workspace_changes", {
     workspacePath,
+    repositoryPath: repositoryPath ?? null,
     message,
     includeUnstaged,
   });
@@ -268,6 +290,7 @@ export function commitWorkspaceChanges(
 
 export function generateWorkspaceCommitMessage(input: {
   workspacePath: string;
+  repositoryPath?: string | null;
   accountId: number | null;
   includeUnstaged: boolean;
   model: string | null;
@@ -277,6 +300,7 @@ export function generateWorkspaceCommitMessage(input: {
     "generate_workspace_commit_message",
     {
       workspacePath: input.workspacePath,
+      repositoryPath: input.repositoryPath ?? null,
       accountId: input.accountId,
       includeUnstaged: input.includeUnstaged,
       model: input.model,
@@ -299,21 +323,41 @@ export function generateChatTitle(input: {
   });
 }
 
-export function pushWorkspaceBranch(workspacePath: string) {
+export function pushWorkspaceBranch(
+  workspacePath: string,
+  repositoryPath?: string | null,
+) {
   return invoke<WorkspaceGitActionResult>("push_workspace_branch", {
     workspacePath,
+    repositoryPath: repositoryPath ?? null,
   });
 }
 
-export function listWorkspaceGitStatus(workspacePath: string) {
-  return invoke<WorkspaceGitStatusSnapshot>("list_workspace_git_status", {
+export function discoverWorkspaceGitRepositories(workspacePath: string) {
+  return invoke<WorkspaceGitRepository[]>(
+    "discover_workspace_git_repositories",
+    { workspacePath },
+  );
+}
+
+export function listWorkspaceGitStatus(
+  workspacePath: string,
+  forceDiscovery = false,
+) {
+  return invoke<WorkspaceGitOverview>("list_workspace_git_status", {
     workspacePath,
+    forceDiscovery,
   });
 }
 
-export function readWorkspaceGitDiff(workspacePath: string, filePath: string) {
+export function readWorkspaceGitDiff(
+  workspacePath: string,
+  filePath: string,
+  repositoryPath?: string | null,
+) {
   return invoke<WorkspaceGitDiff>("read_workspace_git_diff", {
     workspacePath,
+    repositoryPath: repositoryPath ?? null,
     filePath,
   });
 }

@@ -47,6 +47,9 @@ export function createQueuedPromptSnapshot(
     },
     contextFingerprint: {
       ...input.contextFingerprint,
+      repositories: input.contextFingerprint.repositories.map((repository) => ({
+        ...repository,
+      })),
       files: input.contextFingerprint.files.map((file) => ({ ...file })),
     },
   };
@@ -163,15 +166,16 @@ export function rebaselinePromptQueueContextFingerprint(input: {
   currentProfileKey: PromptQueueContextFingerprint["profileKey"];
   currentThreadId: string | null;
   conversationRevision: number;
-}) {
+}): PromptQueueContextFingerprint {
   const followsCurrentThread =
     input.executionProfileKey === input.currentProfileKey;
   return {
     ...input.expected,
+    version: 2,
     workspacePath: input.inspection.workspacePath,
-    branch: input.inspection.branch,
-    headCommit: input.inspection.headCommit,
-    worktreeFingerprint: input.inspection.worktreeFingerprint,
+    repositories: input.inspection.repositories.map((repository) => ({
+      ...repository,
+    })),
     profileKey: followsCurrentThread
       ? input.currentProfileKey
       : input.expected.profileKey,
@@ -246,16 +250,41 @@ function readPromptQueueContextFingerprint(
 ): PromptQueueContextFingerprint | null {
   if (
     !isRecord(value) ||
-    value.version !== 1 ||
+    (value.version !== 1 && value.version !== 2) ||
     typeof value.workspacePath !== "string" ||
-    !isOptionalString(value.branch) ||
-    !isOptionalString(value.headCommit) ||
-    !isOptionalString(value.worktreeFingerprint) ||
     !isProfileKey(value.profileKey) ||
     !isOptionalString(value.threadId) ||
     !Number.isSafeInteger(value.conversationRevision) ||
     Number(value.conversationRevision) < 0 ||
     !Array.isArray(value.files)
+  ) {
+    return null;
+  }
+  const rawRepositories = value.repositories;
+  const repositories =
+    value.version === 1
+      ? !isOptionalString(value.branch) ||
+        !isOptionalString(value.headCommit) ||
+        !isOptionalString(value.worktreeFingerprint)
+        ? null
+        : [
+            {
+              repositoryPath: null,
+              branch: value.branch,
+              headCommit: value.headCommit,
+              worktreeFingerprint: value.worktreeFingerprint,
+            },
+          ]
+      : Array.isArray(rawRepositories)
+        ? rawRepositories
+            .map(readRepositoryFingerprint)
+            .filter((repository) => repository !== null)
+        : null;
+  if (
+    repositories === null ||
+    (value.version === 2 &&
+      Array.isArray(rawRepositories) &&
+      repositories.length !== rawRepositories.length)
   ) {
     return null;
   }
@@ -266,15 +295,31 @@ function readPromptQueueContextFingerprint(
     );
   if (files.length !== value.files.length) return null;
   return {
-    version: 1,
+    version: 2,
     workspacePath: value.workspacePath,
-    branch: value.branch,
-    headCommit: value.headCommit,
-    worktreeFingerprint: value.worktreeFingerprint,
+    repositories,
     profileKey: value.profileKey,
     threadId: value.threadId,
     conversationRevision: Number(value.conversationRevision),
     files,
+  };
+}
+
+function readRepositoryFingerprint(value: unknown) {
+  if (
+    !isRecord(value) ||
+    !isOptionalString(value.repositoryPath) ||
+    !isOptionalString(value.branch) ||
+    !isOptionalString(value.headCommit) ||
+    !isOptionalString(value.worktreeFingerprint)
+  ) {
+    return null;
+  }
+  return {
+    repositoryPath: value.repositoryPath,
+    branch: value.branch,
+    headCommit: value.headCommit,
+    worktreeFingerprint: value.worktreeFingerprint,
   };
 }
 

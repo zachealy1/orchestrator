@@ -72,6 +72,7 @@ const mocks = vi.hoisted(() => ({
   syncDefaultProfileThreadTranscriptMock: vi.fn(),
   cancelDefaultProfileThreadTranscriptMock: vi.fn(),
   listWorkspacesMock: vi.fn(),
+  updateWorkspaceSelectedGitRepositoryMock: vi.fn(),
   listCodexAccountsMock: vi.fn(),
   listDuplicateProfilesPendingCleanupMock: vi.fn(),
   completeDuplicateProfileCleanupMock: vi.fn(),
@@ -377,6 +378,8 @@ vi.mock("./db", () => ({
   updatePromptQueueItemSnapshot: mocks.updatePromptQueueItemSnapshotMock,
   updateRun: mocks.updateRunMock,
   updateTaskStatus: mocks.updateTaskStatusMock,
+  updateWorkspaceSelectedGitRepository:
+    mocks.updateWorkspaceSelectedGitRepositoryMock,
   upsertExternalCodexChats: mocks.upsertExternalCodexChatsMock,
   upsertRunSubagent: mocks.upsertRunSubagentMock,
   upsertWorkspace: mocks.upsertWorkspaceMock,
@@ -665,6 +668,7 @@ function prepareDefaults() {
     mocks.resolveCodexServerRequestMock,
     mocks.runPreflightMock,
     mocks.sendAgentNotificationMock,
+    mocks.updateWorkspaceSelectedGitRepositoryMock,
     mocks.updateRunMock,
   ].forEach((mock) => mock.mockReset());
   mocks.promptQueueItems.clear();
@@ -836,9 +840,14 @@ function prepareDefaults() {
   mocks.inspectPromptQueueContextMock.mockImplementation(
     async (workspacePath: string, paths: string[]) => ({
       workspacePath,
-      branch: "main",
-      headCommit: "0123456789abcdef",
-      worktreeFingerprint: "clean",
+      repositories: [
+        {
+          repositoryPath: workspacePath,
+          branch: "main",
+          headCommit: "0123456789abcdef",
+          worktreeFingerprint: "clean",
+        },
+      ],
       files: paths.map((path) => ({
         path,
         canonicalPath: path,
@@ -935,6 +944,7 @@ function prepareDefaults() {
     initialize: {},
   });
   mocks.listWorkspacesMock.mockResolvedValue([workspace]);
+  mocks.updateWorkspaceSelectedGitRepositoryMock.mockResolvedValue(undefined);
   mocks.listCodexAccountsMock.mockResolvedValue([]);
   mocks.listDuplicateProfilesPendingCleanupMock.mockResolvedValue([]);
   mocks.completeDuplicateProfileCleanupMock.mockResolvedValue(undefined);
@@ -2009,6 +2019,7 @@ describe("App Codex auth", () => {
       expect(mocks.checkoutGitBranchMock).toHaveBeenCalledWith(
         workspace.path,
         "feature/chat-controls",
+        workspace.path,
       ),
     );
     expect(await within(banner).findByText("Clean")).toBeInTheDocument();
@@ -2052,6 +2063,7 @@ describe("App Codex auth", () => {
       expect(mocks.createGitBranchMock).toHaveBeenCalledWith(
         workspace.path,
         "feature/chat-controls",
+        workspace.path,
       ),
     );
     await waitFor(() =>
@@ -2182,6 +2194,165 @@ describe("App Codex auth", () => {
     expect(within(changeSummary).getByText("-82")).toBeInTheDocument();
   });
 
+  it("selects one repository for branch and commit actions in a multi-repo workspace", async () => {
+    const frontendPath = `${workspace.path}/frontend`;
+    const backendPath = `${workspace.path}/backend`;
+    const frontendFile = {
+      path: `${frontendPath}/src/App.tsx`,
+      relativePath: "frontend/src/App.tsx",
+      repositoryPath: frontendPath,
+      repositoryRelativePath: "src/App.tsx",
+      oldRelativePath: null,
+      indexStatus: " ",
+      worktreeStatus: "M",
+      statusKind: "modified",
+      badge: "M",
+    };
+    const backendFile = {
+      path: `${backendPath}/src/server.ts`,
+      relativePath: "backend/src/server.ts",
+      repositoryPath: backendPath,
+      repositoryRelativePath: "src/server.ts",
+      oldRelativePath: null,
+      indexStatus: " ",
+      worktreeStatus: "M",
+      statusKind: "modified",
+      badge: "M",
+    };
+    mocks.listWorkspaceGitStatusMock.mockResolvedValue({
+      workspacePath: workspace.path,
+      repositories: [
+        {
+          repository: {
+            rootPath: frontendPath,
+            relativePath: "frontend",
+            label: "frontend",
+          },
+          workspacePath: workspace.path,
+          gitRoot: frontendPath,
+          currentBranch: "main",
+          aheadCount: 0,
+          additions: 5,
+          deletions: 1,
+          hasUpstream: true,
+          hasOrigin: true,
+          canPush: false,
+          files: [frontendFile],
+        },
+        {
+          repository: {
+            rootPath: backendPath,
+            relativePath: "backend",
+            label: "backend",
+          },
+          workspacePath: workspace.path,
+          gitRoot: backendPath,
+          currentBranch: "release",
+          aheadCount: 2,
+          additions: 8,
+          deletions: 3,
+          hasUpstream: true,
+          hasOrigin: true,
+          canPush: true,
+          files: [backendFile],
+        },
+      ],
+      additions: 13,
+      deletions: 4,
+      changedRepositoryCount: 2,
+      files: [frontendFile, backendFile],
+      discoveryTruncated: false,
+    });
+    mocks.listGitBranchesMock.mockImplementation(
+      async (_workspacePath: string, repositoryPath: string) =>
+        repositoryPath === backendPath
+          ? { branches: ["release", "main"], currentBranch: "release" }
+          : { branches: ["main"], currentBranch: "main" },
+    );
+
+    const { user } = await renderApp();
+    const banner = screen.getByRole("region", { name: "Selected folder" });
+    const repositorySelect = await within(banner).findByRole("combobox", {
+      name: "Git repository",
+    });
+    const branchSelect = within(banner).getByRole("combobox", {
+      name: "Branch",
+    });
+    expect(
+      repositorySelect.compareDocumentPosition(branchSelect) &
+        Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
+    expect(repositorySelect).toHaveTextContent("frontend · main");
+    expect(within(banner).getByText("+13")).toBeInTheDocument();
+    expect(within(banner).getByText("-4")).toBeInTheDocument();
+
+    await user.click(
+      within(banner).getByRole("button", { name: /commit or push/i }),
+    );
+    const dialog = screen.getByRole("dialog", { name: "Commit or push" });
+    const dialogRepositorySelect = within(dialog).getByRole("combobox", {
+      name: "Commit repository",
+    });
+    await user.type(
+      within(dialog).getByLabelText(/commit message/i),
+      "Frontend message",
+    );
+    await user.click(dialogRepositorySelect);
+    await user.click(
+      screen.getByRole("option", {
+        name: "backend · release · 1 changed",
+      }),
+    );
+
+    expect(within(dialog).getByLabelText(/commit message/i)).toHaveValue("");
+    expect(within(dialog).getByText("release")).toBeInTheDocument();
+    expect(within(dialog).getByLabelText("8 additions, 3 deletions"))
+      .toBeInTheDocument();
+    await waitFor(() =>
+      expect(mocks.updateWorkspaceSelectedGitRepositoryMock).toHaveBeenCalledWith(
+        workspace.id,
+        backendPath,
+      ),
+    );
+    expect(mocks.listGitBranchesMock).toHaveBeenCalledWith(
+      workspace.path,
+      backendPath,
+    );
+
+    await user.type(
+      within(dialog).getByLabelText(/commit message/i),
+      "Update backend",
+    );
+    await user.click(within(dialog).getByRole("button", { name: /^commit$/i }));
+    await waitFor(() =>
+      expect(mocks.commitWorkspaceChangesMock).toHaveBeenCalledWith(
+        workspace.path,
+        "Update backend",
+        true,
+        backendPath,
+      ),
+    );
+    await waitFor(() =>
+      expect(screen.queryByRole("dialog", { name: "Commit or push" }))
+        .not.toBeInTheDocument(),
+    );
+    await user.click(
+      within(banner).getByRole("button", { name: /commit or push/i }),
+    );
+    await user.click(
+      within(screen.getByRole("dialog", { name: "Commit or push" })).getByRole(
+        "button",
+        { name: /^push$/i },
+      ),
+    );
+    await waitFor(() =>
+      expect(mocks.pushWorkspaceBranchMock).toHaveBeenCalledWith(
+        workspace.path,
+        backendPath,
+      ),
+    );
+  });
+
   it("commits all workspace changes from the selected folder banner", async () => {
     mocks.listWorkspaceGitStatusMock.mockResolvedValue({
       workspacePath: workspace.path,
@@ -2228,6 +2399,7 @@ describe("App Codex auth", () => {
         workspace.path,
         "Update app shell",
         true,
+        workspace.path,
       ),
     );
     await waitFor(() =>
@@ -2284,6 +2456,7 @@ describe("App Codex auth", () => {
         workspace.path,
         "Commit staged app source",
         false,
+        workspace.path,
       ),
     );
   });
@@ -2402,6 +2575,7 @@ describe("App Codex auth", () => {
       expect(mocks.generateWorkspaceCommitMessageMock).toHaveBeenCalledWith(
         expect.objectContaining({
           workspacePath: workspace.path,
+          repositoryPath: workspace.path,
           accountId: 7,
           includeUnstaged: true,
         }),
@@ -2412,6 +2586,7 @@ describe("App Codex auth", () => {
         workspace.path,
         "Make staged-only commits respect the checkbox",
         true,
+        workspace.path,
       ),
     );
   });
@@ -2464,10 +2639,14 @@ describe("App Codex auth", () => {
         workspace.path,
         "Keep header controls on one row",
         true,
+        workspace.path,
       ),
     );
     await waitFor(() =>
-      expect(mocks.pushWorkspaceBranchMock).toHaveBeenCalledWith(workspace.path),
+      expect(mocks.pushWorkspaceBranchMock).toHaveBeenCalledWith(
+        workspace.path,
+        workspace.path,
+      ),
     );
   });
 
@@ -2513,6 +2692,7 @@ describe("App Codex auth", () => {
       expect(mocks.generateWorkspaceCommitMessageMock).toHaveBeenCalledWith(
         expect.objectContaining({
           workspacePath: workspace.path,
+          repositoryPath: workspace.path,
           accountId: null,
           includeUnstaged: true,
         }),
@@ -2541,10 +2721,14 @@ describe("App Codex auth", () => {
         workspace.path,
         "Fix manual commit fallback",
         true,
+        workspace.path,
       ),
     );
     await waitFor(() =>
-      expect(mocks.pushWorkspaceBranchMock).toHaveBeenCalledWith(workspace.path),
+      expect(mocks.pushWorkspaceBranchMock).toHaveBeenCalledWith(
+        workspace.path,
+        workspace.path,
+      ),
     );
   });
 
@@ -2605,6 +2789,7 @@ describe("App Codex auth", () => {
         workspace.path,
         "Keep Snake controls responsive",
         true,
+        workspace.path,
       ),
     );
     expect(mocks.commitWorkspaceChangesMock).toHaveBeenCalledTimes(1);
@@ -2696,6 +2881,7 @@ describe("App Codex auth", () => {
       workspace.path,
       "Keep Snake controls responsive",
       true,
+      workspace.path,
     );
 
     await act(async () => {
@@ -2781,7 +2967,9 @@ describe("App Codex auth", () => {
     });
 
     expect(
-      await screen.findByText("Workspace changes were committed successfully."),
+      await screen.findByText(
+        "Workspace changes were committed successfully. Repository: orchestrator.",
+      ),
     ).toBeInTheDocument();
     await waitFor(() => expect(gitButton).toHaveAttribute("aria-busy", "false"));
   });
@@ -2861,6 +3049,7 @@ describe("App Codex auth", () => {
         workspace.path,
         "Preserve workspace scroll position",
         true,
+        workspace.path,
       ),
     );
 
@@ -2928,7 +3117,9 @@ describe("App Codex auth", () => {
       expect(mocks.commitWorkspaceChangesMock).toHaveBeenCalledTimes(2),
     );
     expect(
-      await screen.findByText("Workspace changes were committed successfully."),
+      await screen.findByText(
+        "Workspace changes were committed successfully. Repository: orchestrator.",
+      ),
     ).toBeInTheDocument();
   });
 
@@ -2973,7 +3164,9 @@ describe("App Codex auth", () => {
       expect(mocks.pushWorkspaceBranchMock).toHaveBeenCalledTimes(2),
     );
     expect(
-      await screen.findByText("The current branch was pushed successfully."),
+      await screen.findByText(
+        "The current branch was pushed successfully. Repository: orchestrator.",
+      ),
     ).toBeInTheDocument();
   });
 
@@ -3113,6 +3306,8 @@ describe("App Codex auth", () => {
         workspaceId: workspace.id,
         workspacePath: workspace.path,
         workspaceLabel: workspace.label,
+        repositoryPath: workspace.path,
+        repositoryLabel: workspace.label,
         kind: "commit-and-push",
         commitMessage: "Do not retain this message",
         includeUnstaged: true,
@@ -3348,6 +3543,7 @@ describe("App Codex auth", () => {
         workspace.path,
         "Improve commit dialog staging controls",
         true,
+        workspace.path,
       ),
     );
     await waitFor(() =>
@@ -3412,10 +3608,14 @@ describe("App Codex auth", () => {
         workspace.path,
         "Commit workspace changes",
         true,
+        workspace.path,
       ),
     );
     await waitFor(() =>
-      expect(mocks.pushWorkspaceBranchMock).toHaveBeenCalledWith(workspace.path),
+      expect(mocks.pushWorkspaceBranchMock).toHaveBeenCalledWith(
+        workspace.path,
+        workspace.path,
+      ),
     );
   });
 
@@ -3441,7 +3641,10 @@ describe("App Codex auth", () => {
     await user.click(within(dialog).getByRole("button", { name: /^push$/i }));
 
     await waitFor(() =>
-      expect(mocks.pushWorkspaceBranchMock).toHaveBeenCalledWith(workspace.path),
+      expect(mocks.pushWorkspaceBranchMock).toHaveBeenCalledWith(
+        workspace.path,
+        workspace.path,
+      ),
     );
   });
 
@@ -3909,11 +4112,16 @@ describe("App Codex auth", () => {
       prompt: "Keep this prompt held",
       executionSettings,
       contextFingerprint: {
-        version: 1,
+        version: 2,
         workspacePath: workspace.path,
-        branch: "main",
-        headCommit: "abc123",
-        worktreeFingerprint: "clean",
+        repositories: [
+          {
+            repositoryPath: workspace.path,
+            branch: "main",
+            headCommit: "abc123",
+            worktreeFingerprint: "clean",
+          },
+        ],
         profileKey: `account:${signedInAccount.id}`,
         threadId: historicalChat.codex_thread_id,
         conversationRevision: historicalChat.conversation_revision,
@@ -7253,6 +7461,7 @@ describe("App Codex auth", () => {
       expect(mocks.readWorkspaceGitDiffMock).toHaveBeenCalledWith(
         workspace.path,
         readmeEntry.path,
+        workspace.path,
       ),
     );
     expect(screen.getByRole("button", { name: "Diff" })).toHaveClass("active");
@@ -9634,9 +9843,10 @@ describe("App Codex auth", () => {
     );
     expect(firstSettings).toEqual(
       expect.objectContaining({
-        version: 1,
+        version: 2,
         accountId: 7,
         profileKey: "account:7",
+        selectedRepositoryPath: workspace.path,
         selectedBranch: "main",
         mode: "run",
         intent: "normal",
@@ -9953,7 +10163,11 @@ describe("App Codex auth", () => {
     await waitFor(() => expect(mocks.createRunMock).toHaveBeenCalledTimes(1));
     expect(
       JSON.parse(mocks.createRunMock.mock.calls[0]?.[0].executionSettingsJson),
-    ).toEqual(persistedSettings);
+    ).toEqual({
+      ...persistedSettings,
+      version: 2,
+      selectedRepositoryPath: workspace.path,
+    });
     expect(mocks.prepareBrowserSessionMock).not.toHaveBeenCalled();
     expect(mocks.readCodexFileMock).toHaveBeenCalledWith(
       7,
@@ -10686,9 +10900,16 @@ describe("App Codex auth", () => {
         const changed = inspectionCount > 1;
         return {
           workspacePath,
-          branch: "main",
-          headCommit: changed ? "fedcba9876543210" : "0123456789abcdef",
-          worktreeFingerprint: changed ? "modified" : "clean",
+          repositories: [
+            {
+              repositoryPath: workspacePath,
+              branch: "main",
+              headCommit: changed
+                ? "fedcba9876543210"
+                : "0123456789abcdef",
+              worktreeFingerprint: changed ? "modified" : "clean",
+            },
+          ],
           files: paths.map((path) => ({
             path,
             canonicalPath: path,
@@ -10714,8 +10935,13 @@ describe("App Codex auth", () => {
         expect.any(String),
         expect.objectContaining({
           contextFingerprint: expect.objectContaining({
-            headCommit: "fedcba9876543210",
-            worktreeFingerprint: "modified",
+            repositories: [
+              expect.objectContaining({
+                repositoryPath: workspace.path,
+                headCommit: "fedcba9876543210",
+                worktreeFingerprint: "modified",
+              }),
+            ],
           }),
         }),
       ),
@@ -10743,9 +10969,14 @@ describe("App Codex auth", () => {
     mocks.inspectPromptQueueContextMock.mockImplementation(
       async (workspacePath: string, paths: string[]) => ({
         workspacePath,
-        branch: "main",
-        headCommit: "new-head-after-queueing",
-        worktreeFingerprint: "modified-after-queueing",
+        repositories: [
+          {
+            repositoryPath: workspacePath,
+            branch: "main",
+            headCommit: "new-head-after-queueing",
+            worktreeFingerprint: "modified-after-queueing",
+          },
+        ],
         files: paths.map((path) => ({
           path,
           canonicalPath: path,
@@ -10767,8 +10998,13 @@ describe("App Codex auth", () => {
         expect.any(String),
         expect.objectContaining({
           contextFingerprint: expect.objectContaining({
-            headCommit: "new-head-after-queueing",
-            worktreeFingerprint: "modified-after-queueing",
+            repositories: [
+              expect.objectContaining({
+                repositoryPath: workspace.path,
+                headCommit: "new-head-after-queueing",
+                worktreeFingerprint: "modified-after-queueing",
+              }),
+            ],
           }),
         }),
       ),
@@ -11114,6 +11350,7 @@ describe("App Codex auth", () => {
       expect(mocks.readWorkspaceGitDiffMock).toHaveBeenCalledWith(
         workspace.path,
         "/repo/orchestrator/README.md",
+        workspace.path,
       ),
     );
     expect(

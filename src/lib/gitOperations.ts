@@ -6,6 +6,8 @@ export type WorkspaceGitOperationRequest = {
   workspaceId: number;
   workspacePath: string;
   workspaceLabel: string;
+  repositoryPath: string;
+  repositoryLabel: string;
   kind: GitOperationKind;
   commitMessage: string | null;
   includeUnstaged: boolean;
@@ -23,7 +25,7 @@ export type WorkspaceGitOperationState = {
 };
 
 export const GIT_OPERATION_RECOVERY_STORAGE_KEY =
-  "orchestrator.git-operations.v1";
+  "orchestrator.git-operations.v2";
 
 export function gitOperationRunningCopy(
   kind: GitOperationKind,
@@ -245,6 +247,9 @@ function isRecoveryMarker(value: unknown): value is GitOperationRecoveryMarker {
     typeof request?.workspacePath === "string" &&
     request.workspacePath.length > 0 &&
     typeof request.workspaceLabel === "string" &&
+    typeof request.repositoryPath === "string" &&
+    request.repositoryPath.length > 0 &&
+    typeof request.repositoryLabel === "string" &&
     (request.kind === "commit" ||
       request.kind === "push" ||
       request.kind === "commit-and-push") &&

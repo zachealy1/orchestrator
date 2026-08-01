@@ -16,7 +16,7 @@ use std::{
     process::{Child, ChildStdin, Command, Stdio},
     sync::{
         atomic::{AtomicU64, Ordering},
-        Arc, Mutex,
+        Arc, Mutex, OnceLock,
     },
     time::{Duration, Instant, SystemTime},
 };
@@ -55,6 +55,21 @@ const ASK_FOR_APPROVAL_PERMISSION_PROFILE: &str = "orchestrator_workspace_networ
 const REQUEST_PERMISSIONS_FEATURE: &str = "request_permissions_tool";
 const IGNORED_EXPLORER_DIRECTORIES: &[&str] =
     &[".git", "node_modules", "target", "dist", "build", ".next"];
+const GIT_REPOSITORY_DISCOVERY_TTL: Duration = Duration::from_secs(30);
+const MAX_GIT_DISCOVERY_DIRECTORIES: usize = 20_000;
+const MAX_GIT_DISCOVERY_REPOSITORIES: usize = 100;
+const IGNORED_GIT_DISCOVERY_DIRECTORIES: &[&str] = &[
+    ".git",
+    "node_modules",
+    "target",
+    "dist",
+    "build",
+    ".next",
+    ".cache",
+    ".turbo",
+    ".venv",
+    "vendor",
+];
 
 struct PendingResponse {
     account_id: i64,
@@ -348,9 +363,65 @@ struct WorkspaceGitStatusSnapshot {
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
+struct WorkspaceGitRepository {
+    root_path: String,
+    relative_path: String,
+    label: String,
+}
+
+#[derive(Debug, Clone)]
+struct DiscoveredGitRepository {
+    public: WorkspaceGitRepository,
+    root: PathBuf,
+    scope: PathBuf,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct WorkspaceGitRepositoryStatus {
+    repository: WorkspaceGitRepository,
+    workspace_path: String,
+    git_root: String,
+    current_branch: Option<String>,
+    ahead_count: usize,
+    additions: usize,
+    deletions: usize,
+    has_upstream: bool,
+    has_origin: bool,
+    can_push: bool,
+    files: Vec<WorkspaceGitFileStatus>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct WorkspaceGitOverview {
+    workspace_path: String,
+    repositories: Vec<WorkspaceGitRepositoryStatus>,
+    additions: usize,
+    deletions: usize,
+    changed_repository_count: usize,
+    files: Vec<WorkspaceGitFileStatus>,
+    discovery_truncated: bool,
+}
+
+#[derive(Debug, Clone)]
+struct CachedGitRepositories {
+    discovered_at: Instant,
+    repositories: Vec<DiscoveredGitRepository>,
+    truncated: bool,
+}
+
+static GIT_REPOSITORY_DISCOVERY_CACHE: OnceLock<
+    Mutex<HashMap<String, CachedGitRepositories>>,
+> = OnceLock::new();
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
 struct WorkspaceGitFileStatus {
     path: String,
     relative_path: String,
+    repository_path: String,
+    repository_relative_path: String,
     old_relative_path: Option<String>,
     index_status: String,
     worktree_status: String,
@@ -446,10 +517,17 @@ struct PromptQueueFileFingerprint {
 #[serde(rename_all = "camelCase")]
 struct PromptQueueContextInspection {
     workspace_path: String,
+    repositories: Vec<PromptQueueRepositoryFingerprint>,
+    files: Vec<PromptQueueFileFingerprint>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct PromptQueueRepositoryFingerprint {
+    repository_path: Option<String>,
     branch: Option<String>,
     head_commit: Option<String>,
     worktree_fingerprint: Option<String>,
-    files: Vec<PromptQueueFileFingerprint>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -1141,6 +1219,15 @@ fn migrations() -> Vec<Migration> {
                     ON run_subagents(run_id, status, updated_at);
                 CREATE INDEX IF NOT EXISTS idx_run_subagents_child_thread
                     ON run_subagents(profile_key, child_thread_id);
+            ",
+            kind: MigrationKind::Up,
+        },
+        Migration {
+            version: 25,
+            description: "remember_selected_git_repository",
+            sql: "
+                ALTER TABLE workspaces
+                    ADD COLUMN selected_git_repository_path TEXT;
             ",
             kind: MigrationKind::Up,
         },
@@ -2854,8 +2941,23 @@ fn list_git_branches_blocking(path: String) -> Result<GitBranchList, String> {
 }
 
 #[tauri::command]
-async fn list_git_branches(path: String) -> Result<GitBranchList, String> {
-    run_blocking_command("list Git branches", move || list_git_branches_blocking(path)).await
+async fn list_git_branches(
+    path: String,
+    repository_path: Option<String>,
+) -> Result<GitBranchList, String> {
+    run_blocking_command("list Git branches", move || {
+        let target = if repository_path.is_some() {
+            let workspace = canonical_workspace(&path)?;
+            resolve_workspace_git_repository(&workspace, repository_path.as_deref())?
+                .root
+                .to_string_lossy()
+                .to_string()
+        } else {
+            path
+        };
+        list_git_branches_blocking(target)
+    })
+    .await
 }
 
 fn checkout_git_branch_blocking(
@@ -2886,8 +2988,20 @@ fn checkout_git_branch_blocking(
 
 #[tauri::command]
 async fn checkout_git_branch(path: String, branch: String) -> Result<GitCheckoutResult, String> {
+    checkout_git_branch_in_workspace(path, None, branch).await
+}
+
+#[tauri::command]
+async fn checkout_git_branch_in_workspace(
+    workspace_path: String,
+    repository_path: Option<String>,
+    branch: String,
+) -> Result<GitCheckoutResult, String> {
     run_blocking_command("check out Git branch", move || {
-        checkout_git_branch_blocking(path, branch)
+        let workspace = canonical_workspace(&workspace_path)?;
+        let repository =
+            resolve_workspace_git_repository(&workspace, repository_path.as_deref())?;
+        checkout_git_branch_blocking(repository.root.to_string_lossy().to_string(), branch)
     })
     .await
 }
@@ -2956,14 +3070,40 @@ fn create_git_branch_blocking(path: String, branch: String) -> Result<GitCheckou
 
 #[tauri::command]
 async fn create_git_branch(path: String, branch: String) -> Result<GitCheckoutResult, String> {
+    create_git_branch_in_workspace(path, None, branch).await
+}
+
+#[tauri::command]
+async fn create_git_branch_in_workspace(
+    workspace_path: String,
+    repository_path: Option<String>,
+    branch: String,
+) -> Result<GitCheckoutResult, String> {
     run_blocking_command("create Git branch", move || {
-        create_git_branch_blocking(path, branch)
+        let workspace = canonical_workspace(&workspace_path)?;
+        let repository =
+            resolve_workspace_git_repository(&workspace, repository_path.as_deref())?;
+        create_git_branch_blocking(repository.root.to_string_lossy().to_string(), branch)
     })
     .await
 }
 
 fn commit_workspace_changes_blocking(
     workspace_path: String,
+    message: String,
+    include_unstaged: Option<bool>,
+) -> Result<WorkspaceGitActionResult, String> {
+    commit_workspace_repository_changes_blocking(
+        workspace_path,
+        None,
+        message,
+        include_unstaged,
+    )
+}
+
+fn commit_workspace_repository_changes_blocking(
+    workspace_path: String,
+    repository_path: Option<String>,
     message: String,
     include_unstaged: Option<bool>,
 ) -> Result<WorkspaceGitActionResult, String> {
@@ -2974,10 +3114,12 @@ fn commit_workspace_changes_blocking(
     let include_unstaged = include_unstaged.unwrap_or(true);
 
     let workspace = canonical_workspace(&workspace_path)?;
-    let git_root = resolve_git_root(&workspace)?;
-    let pathspec = workspace_git_pathspec(&git_root, &workspace)?;
+    let repository =
+        resolve_workspace_git_repository(&workspace, repository_path.as_deref())?;
+    let git_root = repository.root.clone();
+    let pathspecs = discover_repository_pathspecs(&workspace, &repository)?;
 
-    let status_probe = git_status_for_pathspec(&git_root, &pathspec);
+    let status_probe = git_status_for_pathspecs(&git_root, &pathspecs);
     if !status_probe.ok {
         return Err(output_detail(&status_probe)
             .unwrap_or_else(|| "Unable to inspect Git changes".to_string()));
@@ -2988,17 +3130,17 @@ fn commit_workspace_changes_blocking(
 
     let root_arg = git_root.to_string_lossy();
     if include_unstaged {
-        let add_probe = run_command(
-            "git",
-            &["-C", root_arg.as_ref(), "add", "-A", "--", &pathspec],
-        );
+        let mut add_args = vec!["-C", root_arg.as_ref(), "add", "-A", "--"];
+        add_args.extend(pathspecs.iter().map(String::as_str));
+        let add_probe = run_command("git", &add_args);
         if !add_probe.ok {
             return Err(output_detail(&add_probe)
                 .unwrap_or_else(|| "Unable to stage workspace changes".to_string()));
         }
     }
 
-    let staged_inside_workspace = git_staged_paths(&git_root, Some(&pathspec))?;
+    let staged_inside_workspace =
+        git_staged_paths_for_pathspecs(&git_root, Some(&pathspecs))?;
     if staged_inside_workspace.is_empty() {
         return Err(if include_unstaged {
             "No workspace changes to commit".to_string()
@@ -3008,18 +3150,16 @@ fn commit_workspace_changes_blocking(
     }
 
     let commit_probe = if include_unstaged {
-        run_command(
-            "git",
-            &[
-                "-C",
-                root_arg.as_ref(),
-                "commit",
-                "-m",
-                trimmed_message,
-                "--",
-                &pathspec,
-            ],
-        )
+        let mut commit_args = vec![
+            "-C",
+            root_arg.as_ref(),
+            "commit",
+            "-m",
+            trimmed_message,
+            "--",
+        ];
+        commit_args.extend(pathspecs.iter().map(String::as_str));
+        run_command("git", &commit_args)
     } else {
         let inside_paths: HashSet<&str> = staged_inside_workspace
             .iter()
@@ -3055,11 +3195,17 @@ fn commit_workspace_changes_blocking(
 #[tauri::command]
 async fn commit_workspace_changes(
     workspace_path: String,
+    repository_path: Option<String>,
     message: String,
     include_unstaged: Option<bool>,
 ) -> Result<WorkspaceGitActionResult, String> {
     run_blocking_command("commit workspace changes", move || {
-        commit_workspace_changes_blocking(workspace_path, message, include_unstaged)
+        commit_workspace_repository_changes_blocking(
+            workspace_path,
+            repository_path,
+            message,
+            include_unstaged,
+        )
     })
     .await
 }
@@ -3100,12 +3246,38 @@ fn generate_workspace_commit_message_blocking(
     model: Option<String>,
     intent_context: Option<WorkspaceCommitIntentContext>,
 ) -> Result<WorkspaceCommitMessageResult, String> {
+    generate_workspace_repository_commit_message_blocking(
+        app,
+        workspace_path,
+        None,
+        account_id,
+        include_unstaged,
+        model,
+        intent_context,
+    )
+}
+
+fn generate_workspace_repository_commit_message_blocking(
+    app: AppHandle,
+    workspace_path: String,
+    repository_path: Option<String>,
+    account_id: Option<i64>,
+    include_unstaged: Option<bool>,
+    model: Option<String>,
+    intent_context: Option<WorkspaceCommitIntentContext>,
+) -> Result<WorkspaceCommitMessageResult, String> {
     let workspace = canonical_workspace(&workspace_path)?;
-    let git_root = resolve_git_root(&workspace)?;
-    let pathspec = workspace_git_pathspec(&git_root, &workspace)?;
+    let repository =
+        resolve_workspace_git_repository(&workspace, repository_path.as_deref())?;
+    let git_root = repository.root.clone();
+    let pathspecs = discover_repository_pathspecs(&workspace, &repository)?;
     let include_unstaged = include_unstaged.unwrap_or(true);
-    let context =
-        workspace_commit_context(&git_root, &workspace, &pathspec, include_unstaged)?;
+    let context = workspace_commit_context_for_pathspecs(
+        &git_root,
+        &workspace,
+        &pathspecs,
+        include_unstaged,
+    )?;
     if context.trim().is_empty() {
         return Err("No Git changes were found for commit message generation".to_string());
     }
@@ -3192,15 +3364,17 @@ fn generate_workspace_commit_message_blocking(
 async fn generate_workspace_commit_message(
     app: AppHandle,
     workspace_path: String,
+    repository_path: Option<String>,
     account_id: Option<i64>,
     include_unstaged: Option<bool>,
     model: Option<String>,
     intent_context: Option<WorkspaceCommitIntentContext>,
 ) -> Result<WorkspaceCommitMessageResult, String> {
     run_blocking_command("generate workspace commit message", move || {
-        generate_workspace_commit_message_blocking(
+        generate_workspace_repository_commit_message_blocking(
             app,
             workspace_path,
+            repository_path,
             account_id,
             include_unstaged,
             model,
@@ -3403,6 +3577,14 @@ fn commit_message_generation_prompt(
 }
 
 fn git_staged_paths(git_root: &Path, pathspec: Option<&str>) -> Result<Vec<String>, String> {
+    let owned_pathspecs = pathspec.map(|value| vec![value.to_string()]);
+    git_staged_paths_for_pathspecs(git_root, owned_pathspecs.as_deref())
+}
+
+fn git_staged_paths_for_pathspecs(
+    git_root: &Path,
+    pathspecs: Option<&[String]>,
+) -> Result<Vec<String>, String> {
     let git_root_arg = git_root.to_string_lossy();
     let mut args = vec![
         "-C",
@@ -3412,8 +3594,9 @@ fn git_staged_paths(git_root: &Path, pathspec: Option<&str>) -> Result<Vec<Strin
         "--name-only",
         "-z",
     ];
-    if let Some(pathspec) = pathspec {
-        args.extend(["--", pathspec]);
+    if let Some(pathspecs) = pathspecs {
+        args.push("--");
+        args.extend(pathspecs.iter().map(String::as_str));
     }
 
     let probe = run_command_raw("git", &args);
@@ -3436,16 +3619,32 @@ fn workspace_commit_context(
     pathspec: &str,
     include_unstaged: bool,
 ) -> Result<String, String> {
+    workspace_commit_context_for_pathspecs(
+        git_root,
+        workspace,
+        &[pathspec.to_string()],
+        include_unstaged,
+    )
+}
+
+fn workspace_commit_context_for_pathspecs(
+    git_root: &Path,
+    workspace: &Path,
+    pathspecs: &[String],
+    include_unstaged: bool,
+) -> Result<String, String> {
     let mut context = String::new();
     let status = if include_unstaged {
-        git_context_output(
+        git_context_output_with_pathspecs(
             git_root,
-            &["status", "--short", "--untracked-files=all", "--", pathspec],
+            &["status", "--short", "--untracked-files=all"],
+            pathspecs,
         )?
     } else {
-        git_context_output(
+        git_context_output_with_pathspecs(
             git_root,
-            &["diff", "--cached", "--name-status", "--", pathspec],
+            &["diff", "--cached", "--name-status"],
+            pathspecs,
         )?
     };
     append_commit_context_section(
@@ -3457,7 +3656,11 @@ fn workspace_commit_context(
     append_commit_context_section(
         &mut context,
         "Staged diffstat",
-        &git_context_output(git_root, &["diff", "--cached", "--stat", "--", pathspec])?,
+        &git_context_output_with_pathspecs(
+            git_root,
+            &["diff", "--cached", "--stat"],
+            pathspecs,
+        )?,
         MAX_COMMIT_DIFFSTAT_CHARS,
     );
 
@@ -3465,13 +3668,21 @@ fn workspace_commit_context(
         append_commit_context_section(
             &mut context,
             "Working tree diffstat",
-            &git_context_output(git_root, &["diff", "--stat", "--", pathspec])?,
+            &git_context_output_with_pathspecs(
+                git_root,
+                &["diff", "--stat"],
+                pathspecs,
+            )?,
             MAX_COMMIT_DIFFSTAT_CHARS,
         );
         append_commit_context_section(
             &mut context,
             "Untracked file samples",
-            &untracked_workspace_context(git_root, workspace, pathspec)?,
+            &untracked_workspace_context_for_pathspecs(
+                git_root,
+                workspace,
+                pathspecs,
+            )?,
             MAX_COMMIT_UNTRACKED_CONTEXT_CHARS,
         );
     }
@@ -3479,7 +3690,7 @@ fn workspace_commit_context(
     append_commit_context_section(
         &mut context,
         "Staged diff",
-        &git_context_output(
+        &git_context_output_with_pathspecs(
             git_root,
             &[
                 "diff",
@@ -3487,9 +3698,8 @@ fn workspace_commit_context(
                 "--find-renames",
                 "--find-copies",
                 "--unified=1",
-                "--",
-                pathspec,
             ],
+            pathspecs,
         )?,
         MAX_COMMIT_DIFF_CHARS,
     );
@@ -3498,16 +3708,15 @@ fn workspace_commit_context(
         append_commit_context_section(
             &mut context,
             "Working tree diff",
-            &git_context_output(
+            &git_context_output_with_pathspecs(
                 git_root,
                 &[
                     "diff",
                     "--find-renames",
                     "--find-copies",
                     "--unified=1",
-                    "--",
-                    pathspec,
                 ],
+                pathspecs,
             )?,
             MAX_COMMIT_DIFF_CHARS,
         );
@@ -3567,18 +3776,24 @@ fn untracked_workspace_context(
     workspace: &Path,
     pathspec: &str,
 ) -> Result<String, String> {
+    untracked_workspace_context_for_pathspecs(
+        git_root,
+        workspace,
+        &[pathspec.to_string()],
+    )
+}
+
+fn untracked_workspace_context_for_pathspecs(
+    git_root: &Path,
+    workspace: &Path,
+    pathspecs: &[String],
+) -> Result<String, String> {
     let canonical_workspace =
         fs::canonicalize(workspace).unwrap_or_else(|_| workspace.to_path_buf());
-    let paths = git_context_output(
+    let paths = git_context_output_with_pathspecs(
         git_root,
-        &[
-            "ls-files",
-            "--others",
-            "--exclude-standard",
-            "-z",
-            "--",
-            pathspec,
-        ],
+        &["ls-files", "--others", "--exclude-standard", "-z"],
+        pathspecs,
     )?;
     let mut context = String::new();
     let mut included = 0usize;
@@ -3645,6 +3860,25 @@ fn git_context_output(git_root: &Path, git_args: &[&str]) -> Result<String, Stri
     let git_root_arg = git_root.to_string_lossy();
     let mut args = vec!["-C", git_root_arg.as_ref()];
     args.extend(git_args.iter().copied());
+    let probe = run_command_raw("git", &args);
+    if probe.ok {
+        Ok(probe.stdout)
+    } else {
+        Err(output_detail(&probe)
+            .unwrap_or_else(|| "Unable to inspect Git changes for commit message".to_string()))
+    }
+}
+
+fn git_context_output_with_pathspecs(
+    git_root: &Path,
+    git_args: &[&str],
+    pathspecs: &[String],
+) -> Result<String, String> {
+    let git_root_arg = git_root.to_string_lossy();
+    let mut args = vec!["-C", git_root_arg.as_ref()];
+    args.extend(git_args.iter().copied());
+    args.push("--");
+    args.extend(pathspecs.iter().map(String::as_str));
     let probe = run_command_raw("git", &args);
     if probe.ok {
         Ok(probe.stdout)
@@ -3963,8 +4197,19 @@ fn is_commit_count_suffix(inner: &str) -> bool {
 fn push_workspace_branch_blocking(
     workspace_path: String,
 ) -> Result<WorkspaceGitActionResult, String> {
+    push_workspace_repository_branch_blocking(workspace_path, None)
+}
+
+fn push_workspace_repository_branch_blocking(
+    workspace_path: String,
+    repository_path: Option<String>,
+) -> Result<WorkspaceGitActionResult, String> {
     let workspace = canonical_workspace(&workspace_path)?;
-    let git_root = resolve_git_root(&workspace)?;
+    let git_root = resolve_workspace_git_repository(
+        &workspace,
+        repository_path.as_deref(),
+    )?
+    .root;
     let branch = current_git_branch(&git_root)
         .ok_or_else(|| "Cannot push while detached from a branch".to_string())?;
     let root_arg = git_root.to_string_lossy();
@@ -3995,9 +4240,10 @@ fn push_workspace_branch_blocking(
 #[tauri::command]
 async fn push_workspace_branch(
     workspace_path: String,
+    repository_path: Option<String>,
 ) -> Result<WorkspaceGitActionResult, String> {
     run_blocking_command("push workspace branch", move || {
-        push_workspace_branch_blocking(workspace_path)
+        push_workspace_repository_branch_blocking(workspace_path, repository_path)
     })
     .await
 }
@@ -4006,25 +4252,48 @@ fn list_workspace_git_status_blocking(
     workspace_path: String,
 ) -> Result<WorkspaceGitStatusSnapshot, String> {
     let workspace = canonical_workspace(&workspace_path)?;
-    let git_root = resolve_git_root(&workspace)?;
-    let pathspec = workspace_git_pathspec(&git_root, &workspace)?;
-    let status_probe = git_status_for_pathspec(&git_root, &pathspec);
+    let repository = resolve_workspace_git_repository(&workspace, None)?;
+    let (repositories, _) = discover_git_repositories(&workspace, false)?;
+    let status = list_git_repository_status(&workspace, &repository, &repositories)?;
+    Ok(WorkspaceGitStatusSnapshot {
+        workspace_path: status.workspace_path,
+        git_root: status.git_root,
+        current_branch: status.current_branch,
+        ahead_count: status.ahead_count,
+        additions: status.additions,
+        deletions: status.deletions,
+        has_upstream: status.has_upstream,
+        has_origin: status.has_origin,
+        can_push: status.can_push,
+        files: status.files,
+    })
+}
+
+fn list_git_repository_status(
+    workspace: &Path,
+    repository: &DiscoveredGitRepository,
+    repositories: &[DiscoveredGitRepository],
+) -> Result<WorkspaceGitRepositoryStatus, String> {
+    let git_root = &repository.root;
+    let pathspecs = git_repository_pathspecs(repository, repositories)?;
+    let status_probe = git_status_for_pathspecs(&git_root, &pathspecs);
     if !status_probe.ok {
         return Err(output_detail(&status_probe)
             .unwrap_or_else(|| "Unable to read Git status".to_string()));
     }
 
-    let (mut additions, deletions) = git_numstat_totals(&git_root, &pathspec);
+    let (mut additions, deletions) = git_numstat_totals_for_pathspecs(&git_root, &pathspecs);
     let mut files = Vec::new();
     for parsed in parse_git_status_porcelain(&status_probe.stdout)? {
-        let absolute_path = git_path_to_workspace_child(&git_root, &workspace, &parsed.path)?;
+        let absolute_path = git_path_to_workspace_child(git_root, workspace, &parsed.path)?;
         let relative_path = relative_workspace_path(&workspace, &absolute_path)?;
+        let repository_relative_path = git_relative_path(git_root, &absolute_path)?;
         let status_kind = git_status_kind(parsed.index_status, parsed.worktree_status);
         let old_relative_path = parsed
             .old_path
             .as_ref()
             .and_then(|old_path| {
-                git_path_to_workspace_child(&git_root, &workspace, old_path).ok()
+                git_path_to_workspace_child(git_root, workspace, old_path).ok()
             })
             .and_then(|old_absolute| relative_workspace_path(&workspace, &old_absolute).ok());
 
@@ -4035,6 +4304,8 @@ fn list_workspace_git_status_blocking(
         files.push(WorkspaceGitFileStatus {
             path: absolute_path.to_string_lossy().to_string(),
             relative_path,
+            repository_path: repository.public.root_path.clone(),
+            repository_relative_path,
             old_relative_path,
             index_status: parsed.index_status.to_string(),
             worktree_status: parsed.worktree_status.to_string(),
@@ -4045,7 +4316,8 @@ fn list_workspace_git_status_blocking(
 
     files.sort_by(|left, right| left.relative_path.cmp(&right.relative_path));
 
-    Ok(WorkspaceGitStatusSnapshot {
+    Ok(WorkspaceGitRepositoryStatus {
+        repository: repository.public.clone(),
         workspace_path: workspace.to_string_lossy().to_string(),
         git_root: git_root.to_string_lossy().to_string(),
         current_branch: current_git_branch(&git_root),
@@ -4059,12 +4331,90 @@ fn list_workspace_git_status_blocking(
     })
 }
 
+fn list_workspace_git_overview_blocking(
+    workspace_path: String,
+    force_discovery: bool,
+) -> Result<WorkspaceGitOverview, String> {
+    let workspace = canonical_workspace(&workspace_path)?;
+    let (repositories, discovery_truncated) =
+        discover_git_repositories(&workspace, force_discovery)?;
+    if repositories.is_empty() {
+        return Err("No Git repositories were found in the selected workspace".to_string());
+    }
+    let mut statuses = repositories
+        .iter()
+        .map(|repository| list_git_repository_status(&workspace, repository, &repositories))
+        .collect::<Result<Vec<_>, _>>()?;
+    statuses.sort_by(|left, right| {
+        let left_group = if !left.files.is_empty() {
+            0
+        } else if left.can_push {
+            1
+        } else {
+            2
+        };
+        let right_group = if !right.files.is_empty() {
+            0
+        } else if right.can_push {
+            1
+        } else {
+            2
+        };
+        left_group
+            .cmp(&right_group)
+            .then_with(|| left.repository.label.cmp(&right.repository.label))
+            .then_with(|| {
+                left.repository
+                    .relative_path
+                    .cmp(&right.repository.relative_path)
+            })
+    });
+    let additions = statuses.iter().map(|status| status.additions).sum();
+    let deletions = statuses.iter().map(|status| status.deletions).sum();
+    let changed_repository_count = statuses
+        .iter()
+        .filter(|status| !status.files.is_empty())
+        .count();
+    let files = statuses
+        .iter()
+        .flat_map(|status| status.files.iter().cloned())
+        .collect();
+    Ok(WorkspaceGitOverview {
+        workspace_path: workspace.to_string_lossy().to_string(),
+        repositories: statuses,
+        additions,
+        deletions,
+        changed_repository_count,
+        files,
+        discovery_truncated,
+    })
+}
+
+#[tauri::command]
+async fn discover_workspace_git_repositories(
+    workspace_path: String,
+) -> Result<Vec<WorkspaceGitRepository>, String> {
+    run_blocking_command("discover workspace Git repositories", move || {
+        let workspace = canonical_workspace(&workspace_path)?;
+        let (repositories, _) = discover_git_repositories(&workspace, true)?;
+        Ok(repositories
+            .into_iter()
+            .map(|repository| repository.public)
+            .collect())
+    })
+    .await
+}
+
 #[tauri::command]
 async fn list_workspace_git_status(
     workspace_path: String,
-) -> Result<WorkspaceGitStatusSnapshot, String> {
+    force_discovery: Option<bool>,
+) -> Result<WorkspaceGitOverview, String> {
     run_blocking_command("list workspace Git status", move || {
-        list_workspace_git_status_blocking(workspace_path)
+        list_workspace_git_overview_blocking(
+            workspace_path,
+            force_discovery.unwrap_or(false),
+        )
     })
     .await
 }
@@ -4073,12 +4423,29 @@ fn read_workspace_git_diff_blocking(
     workspace_path: String,
     file_path: String,
 ) -> Result<WorkspaceGitDiff, String> {
+    read_workspace_repository_git_diff_blocking(workspace_path, None, file_path)
+}
+
+fn read_workspace_repository_git_diff_blocking(
+    workspace_path: String,
+    repository_path: Option<String>,
+    file_path: String,
+) -> Result<WorkspaceGitDiff, String> {
     let workspace = canonical_workspace(&workspace_path)?;
-    let git_root = resolve_git_root(&workspace)?;
+    let repository =
+        resolve_workspace_git_repository(&workspace, repository_path.as_deref())?;
+    let git_root = repository.root.clone();
     let file_path = workspace_child_path_allow_missing(&workspace, &file_path)?;
+    if !file_path.starts_with(&repository.scope) {
+        return Err("The selected file does not belong to this Git repository".to_string());
+    }
+    let (repositories, _) = discover_git_repositories(&workspace, false)?;
+    if !git_repository_owns_workspace_path(&repository, &repositories, &file_path) {
+        return Err("The selected file belongs to another Git repository".to_string());
+    }
     let relative_path = relative_workspace_path(&workspace, &file_path)?;
     let git_path = git_relative_path(&git_root, &file_path)?;
-    let status = list_workspace_git_status_blocking(workspace.to_string_lossy().to_string())?
+    let status = list_git_repository_status(&workspace, &repository, &repositories)?
         .files
         .into_iter()
         .find(|file| file.relative_path == relative_path);
@@ -4142,10 +4509,15 @@ fn read_workspace_git_diff_blocking(
 #[tauri::command]
 async fn read_workspace_git_diff(
     workspace_path: String,
+    repository_path: Option<String>,
     file_path: String,
 ) -> Result<WorkspaceGitDiff, String> {
     run_blocking_command("read workspace Git diff", move || {
-        read_workspace_git_diff_blocking(workspace_path, file_path)
+        read_workspace_repository_git_diff_blocking(
+            workspace_path,
+            repository_path,
+            file_path,
+        )
     })
     .await
 }
@@ -4664,23 +5036,31 @@ fn extend_prompt_queue_file_fingerprint(hash: &mut u64, git_root: &Path, relativ
 }
 
 fn prompt_queue_worktree_fingerprint(git_root: &Path, pathspec: &str) -> Option<String> {
-    let status = git_status_for_pathspec(git_root, pathspec);
+    prompt_queue_worktree_fingerprint_for_pathspecs(
+        git_root,
+        &[pathspec.to_string()],
+    )
+}
+
+fn prompt_queue_worktree_fingerprint_for_pathspecs(
+    git_root: &Path,
+    pathspecs: &[String],
+) -> Option<String> {
+    let status = git_status_for_pathspecs(git_root, pathspecs);
     if !status.ok {
         return None;
     }
     let git_root_arg = git_root.to_string_lossy();
-    let index = run_command_bytes(
-        "git",
-        &[
-            "-C",
-            git_root_arg.as_ref(),
-            "ls-files",
-            "--stage",
-            "-z",
-            "--",
-            pathspec,
-        ],
-    );
+    let mut index_args = vec![
+        "-C",
+        git_root_arg.as_ref(),
+        "ls-files",
+        "--stage",
+        "-z",
+        "--",
+    ];
+    index_args.extend(pathspecs.iter().map(String::as_str));
+    let index = run_command_bytes("git", &index_args);
     if !index.ok {
         return None;
     }
@@ -4869,26 +5249,39 @@ fn inspect_prompt_queue_context_blocking(
 ) -> Result<PromptQueueContextInspection, String> {
     let workspace = canonical_workspace(&workspace_path)?;
     let workspace_display = workspace.to_string_lossy().to_string();
-    let mut branch = None;
-    let mut head_commit = None;
-    let mut worktree_fingerprint = None;
-
-    if let Ok(git_root) = resolve_git_root(&workspace) {
-        branch = current_git_branch(&git_root);
-        let git_root_arg = git_root.to_string_lossy();
-        let head = run_command("git", &["-C", git_root_arg.as_ref(), "rev-parse", "HEAD"]);
-        if head.ok {
-            head_commit = head
-                .stdout
-                .lines()
-                .next()
-                .map(str::trim)
-                .filter(|value| !value.is_empty())
-                .map(str::to_string);
-        }
-        let pathspec = workspace_git_pathspec(&git_root, &workspace)?;
-        worktree_fingerprint = prompt_queue_worktree_fingerprint(&git_root, &pathspec);
-    }
+    let discovered_repositories = discover_git_repositories(&workspace, true)?.0;
+    let repositories = discovered_repositories
+        .iter()
+        .map(|repository| {
+            let git_root_arg = repository.root.to_string_lossy();
+            let head = run_command(
+                "git",
+                &["-C", git_root_arg.as_ref(), "rev-parse", "HEAD"],
+            );
+            let head_commit = head.ok.then(|| {
+                head.stdout
+                    .lines()
+                    .next()
+                    .map(str::trim)
+                    .filter(|value| !value.is_empty())
+                    .map(str::to_string)
+            }).flatten();
+            let pathspecs = git_repository_pathspecs(
+                repository,
+                &discovered_repositories,
+            )
+            .unwrap_or_else(|_| vec![".".to_string()]);
+            PromptQueueRepositoryFingerprint {
+                repository_path: Some(repository.public.root_path.clone()),
+                branch: current_git_branch(&repository.root),
+                head_commit,
+                worktree_fingerprint: prompt_queue_worktree_fingerprint_for_pathspecs(
+                    &repository.root,
+                    &pathspecs,
+                ),
+            }
+        })
+        .collect();
 
     let files = paths
         .into_iter()
@@ -4918,9 +5311,7 @@ fn inspect_prompt_queue_context_blocking(
 
     Ok(PromptQueueContextInspection {
         workspace_path: workspace_display,
-        branch,
-        head_commit,
-        worktree_fingerprint,
+        repositories,
         files,
     })
 }
@@ -5744,6 +6135,186 @@ fn resolve_git_root(workspace: &Path) -> Result<PathBuf, String> {
     Ok(root)
 }
 
+fn git_repository_descriptor(
+    workspace: &Path,
+    root: PathBuf,
+) -> Result<DiscoveredGitRepository, String> {
+    if !root.starts_with(workspace) && !workspace.starts_with(&root) {
+        return Err("Git repository is outside the selected workspace".to_string());
+    }
+    let scope = if root.starts_with(workspace) {
+        root.clone()
+    } else {
+        workspace.to_path_buf()
+    };
+    let relative_path = if root == workspace || workspace.starts_with(&root) {
+        ".".to_string()
+    } else {
+        relative_workspace_path(workspace, &root)?
+    };
+    let label = if relative_path == "." {
+        workspace
+            .file_name()
+            .and_then(OsStr::to_str)
+            .unwrap_or("Repository")
+            .to_string()
+    } else {
+        root.file_name()
+            .and_then(OsStr::to_str)
+            .unwrap_or(relative_path.as_str())
+            .to_string()
+    };
+    Ok(DiscoveredGitRepository {
+        public: WorkspaceGitRepository {
+            root_path: root.to_string_lossy().to_string(),
+            relative_path,
+            label,
+        },
+        root,
+        scope,
+    })
+}
+
+fn validate_git_worktree(candidate: &Path) -> Option<PathBuf> {
+    let candidate_arg = candidate.to_string_lossy();
+    let inside = run_command(
+        "git",
+        &["-C", candidate_arg.as_ref(), "rev-parse", "--is-inside-work-tree"],
+    );
+    if !inside.ok || inside.stdout.trim() != "true" {
+        return None;
+    }
+    let bare = run_command(
+        "git",
+        &["-C", candidate_arg.as_ref(), "rev-parse", "--is-bare-repository"],
+    );
+    if !bare.ok || bare.stdout.trim() == "true" {
+        return None;
+    }
+    let root = run_command(
+        "git",
+        &["-C", candidate_arg.as_ref(), "rev-parse", "--show-toplevel"],
+    );
+    if !root.ok {
+        return None;
+    }
+    fs::canonicalize(root.stdout.trim()).ok()
+}
+
+fn discover_git_repositories_uncached(
+    workspace: &Path,
+) -> Result<(Vec<DiscoveredGitRepository>, bool), String> {
+    let mut roots = HashSet::<PathBuf>::new();
+    if let Ok(root) = resolve_git_root(workspace) {
+        roots.insert(root);
+    }
+
+    let mut stack = vec![workspace.to_path_buf()];
+    let mut visited_directories = 0usize;
+    let mut truncated = false;
+    while let Some(directory) = stack.pop() {
+        if visited_directories >= MAX_GIT_DISCOVERY_DIRECTORIES
+            || roots.len() >= MAX_GIT_DISCOVERY_REPOSITORIES
+        {
+            truncated = true;
+            break;
+        }
+        visited_directories += 1;
+
+        if directory.join(".git").exists() {
+            if let Some(root) = validate_git_worktree(&directory) {
+                if root.starts_with(workspace) || workspace.starts_with(&root) {
+                    roots.insert(root);
+                }
+            }
+        }
+
+        let entries = match fs::read_dir(&directory) {
+            Ok(entries) => entries,
+            Err(_) => continue,
+        };
+        for entry in entries.flatten() {
+            let file_type = match entry.file_type() {
+                Ok(file_type) => file_type,
+                Err(_) => continue,
+            };
+            if !file_type.is_dir() || file_type.is_symlink() {
+                continue;
+            }
+            let name = entry.file_name();
+            if name
+                .to_str()
+                .is_some_and(|name| IGNORED_GIT_DISCOVERY_DIRECTORIES.contains(&name))
+            {
+                continue;
+            }
+            stack.push(entry.path());
+        }
+    }
+
+    let mut repositories = roots
+        .into_iter()
+        .filter_map(|root| git_repository_descriptor(workspace, root).ok())
+        .collect::<Vec<_>>();
+    repositories.sort_by(|left, right| {
+        left.public
+            .relative_path
+            .cmp(&right.public.relative_path)
+            .then_with(|| left.public.root_path.cmp(&right.public.root_path))
+    });
+    Ok((repositories, truncated))
+}
+
+fn discover_git_repositories(
+    workspace: &Path,
+    force: bool,
+) -> Result<(Vec<DiscoveredGitRepository>, bool), String> {
+    let key = workspace.to_string_lossy().to_string();
+    let cache = GIT_REPOSITORY_DISCOVERY_CACHE.get_or_init(|| Mutex::new(HashMap::new()));
+    if !force {
+        if let Ok(cache) = cache.lock() {
+            if let Some(cached) = cache.get(&key) {
+                if cached.discovered_at.elapsed() < GIT_REPOSITORY_DISCOVERY_TTL {
+                    return Ok((cached.repositories.clone(), cached.truncated));
+                }
+            }
+        }
+    }
+
+    let (repositories, truncated) = discover_git_repositories_uncached(workspace)?;
+    if let Ok(mut cache) = cache.lock() {
+        cache.insert(
+            key,
+            CachedGitRepositories {
+                discovered_at: Instant::now(),
+                repositories: repositories.clone(),
+                truncated,
+            },
+        );
+    }
+    Ok((repositories, truncated))
+}
+
+fn resolve_workspace_git_repository(
+    workspace: &Path,
+    repository_path: Option<&str>,
+) -> Result<DiscoveredGitRepository, String> {
+    let Some(repository_path) = repository_path
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    else {
+        return git_repository_descriptor(workspace, resolve_git_root(workspace)?);
+    };
+    let requested = fs::canonicalize(repository_path).map_err(|_| {
+        "The selected Git repository is no longer available".to_string()
+    })?;
+    let (repositories, _) = discover_git_repositories(workspace, true)?;
+    repositories
+        .into_iter()
+        .find(|repository| repository.root == requested)
+        .ok_or_else(|| "The selected Git repository does not belong to this workspace".to_string())
+}
+
 fn git_relative_path(git_root: &Path, path: &Path) -> Result<String, String> {
     let relative = path
         .strip_prefix(git_root)
@@ -5761,21 +6332,106 @@ fn workspace_git_pathspec(git_root: &Path, workspace: &Path) -> Result<String, S
     })
 }
 
-fn git_status_for_pathspec(git_root: &Path, pathspec: &str) -> CommandProbe {
+fn git_path_is_submodule(git_root: &Path, git_path: &str) -> bool {
     let git_root_arg = git_root.to_string_lossy();
-    run_command_raw(
+    let probe = run_command_raw(
         "git",
         &[
             "-C",
             git_root_arg.as_ref(),
-            "status",
-            "--porcelain=v1",
+            "ls-files",
+            "--stage",
             "-z",
-            "--untracked-files=all",
             "--",
-            pathspec,
+            git_path,
         ],
-    )
+    );
+    probe.ok
+        && probe.stdout.split('\0').any(|entry| {
+            entry.starts_with("160000 ")
+                && entry
+                    .rsplit_once('\t')
+                    .is_some_and(|(_, path)| path == git_path)
+        })
+}
+
+fn git_repository_owns_workspace_path(
+    repository: &DiscoveredGitRepository,
+    repositories: &[DiscoveredGitRepository],
+    path: &Path,
+) -> bool {
+    if !path.starts_with(&repository.scope) {
+        return false;
+    }
+
+    let deepest_owner = repositories
+        .iter()
+        .filter(|candidate| path.starts_with(&candidate.root))
+        .max_by_key(|candidate| candidate.root.components().count());
+    let Some(deepest_owner) = deepest_owner else {
+        return path.starts_with(&repository.root);
+    };
+    if deepest_owner.root == repository.root {
+        return true;
+    }
+
+    path == deepest_owner.root
+        && git_relative_path(&repository.root, path)
+            .ok()
+            .is_some_and(|git_path| git_path_is_submodule(&repository.root, &git_path))
+}
+
+fn git_repository_pathspecs(
+    repository: &DiscoveredGitRepository,
+    repositories: &[DiscoveredGitRepository],
+) -> Result<Vec<String>, String> {
+    let include = workspace_git_pathspec(&repository.root, &repository.scope)?;
+    let mut excludes = repositories
+        .iter()
+        .filter(|candidate| candidate.root != repository.root)
+        .filter(|candidate| candidate.root.starts_with(&repository.scope))
+        .filter_map(|candidate| {
+            git_relative_path(&repository.root, &candidate.root)
+                .ok()
+                .filter(|path| !path.is_empty())
+        })
+        .filter(|path| !git_path_is_submodule(&repository.root, path))
+        .map(|path| format!(":(exclude){path}"))
+        .collect::<Vec<_>>();
+    excludes.sort();
+    excludes.dedup();
+
+    let mut pathspecs = Vec::with_capacity(excludes.len() + 1);
+    pathspecs.push(include);
+    pathspecs.extend(excludes);
+    Ok(pathspecs)
+}
+
+fn discover_repository_pathspecs(
+    workspace: &Path,
+    repository: &DiscoveredGitRepository,
+) -> Result<Vec<String>, String> {
+    let (repositories, _) = discover_git_repositories(workspace, true)?;
+    git_repository_pathspecs(repository, &repositories)
+}
+
+fn git_status_for_pathspec(git_root: &Path, pathspec: &str) -> CommandProbe {
+    git_status_for_pathspecs(git_root, &[pathspec.to_string()])
+}
+
+fn git_status_for_pathspecs(git_root: &Path, pathspecs: &[String]) -> CommandProbe {
+    let git_root_arg = git_root.to_string_lossy();
+    let mut args = vec![
+        "-C",
+        git_root_arg.as_ref(),
+        "status",
+        "--porcelain=v1",
+        "-z",
+        "--untracked-files=all",
+        "--",
+    ];
+    args.extend(pathspecs.iter().map(String::as_str));
+    run_command_raw("git", &args)
 }
 
 fn current_git_branch(git_root: &Path) -> Option<String> {
@@ -5892,12 +6548,11 @@ fn workspace_relative_to_git_path(
         return Err("Selected path is outside the workspace".to_string());
     }
 
-    let workspace_prefix = git_relative_path(git_root, workspace)?;
-    let git_path = if workspace_prefix.is_empty() {
-        workspace_relative_path.to_string()
-    } else {
-        format!("{workspace_prefix}/{workspace_relative_path}")
-    };
+    let absolute_path = workspace.join(workspace_relative_path);
+    if !absolute_path.starts_with(workspace) || !absolute_path.starts_with(git_root) {
+        return Err("Selected path is outside the Git repository".to_string());
+    }
+    let git_path = git_relative_path(git_root, &absolute_path)?;
     git_path_to_workspace_child(git_root, workspace, &git_path)?;
     Ok(git_path)
 }
@@ -5996,6 +6651,13 @@ fn git_status_is_conflicted(index_status: char, worktree_status: char) -> bool {
 }
 
 fn git_numstat_totals(git_root: &Path, pathspec: &str) -> (usize, usize) {
+    git_numstat_totals_for_pathspecs(git_root, &[pathspec.to_string()])
+}
+
+fn git_numstat_totals_for_pathspecs(
+    git_root: &Path,
+    pathspecs: &[String],
+) -> (usize, usize) {
     let git_root_arg = git_root.to_string_lossy();
     let mut additions = 0;
     let mut deletions = 0;
@@ -6013,7 +6675,8 @@ fn git_numstat_totals(git_root: &Path, pathspec: &str) -> (usize, usize) {
         if staged {
             args.push("--cached");
         }
-        args.extend(["--", pathspec]);
+        args.push("--");
+        args.extend(pathspecs.iter().map(String::as_str));
 
         let probe = run_command("git", &args);
         if probe.ok {
@@ -6311,11 +6974,14 @@ pub fn run() {
             codex_delete_profile,
             list_git_branches,
             checkout_git_branch,
+            checkout_git_branch_in_workspace,
             create_git_branch,
+            create_git_branch_in_workspace,
             commit_workspace_changes,
             generate_workspace_commit_message,
             generate_chat_title,
             push_workspace_branch,
+            discover_workspace_git_repositories,
             list_workspace_git_status,
             read_workspace_git_diff,
             undo_workspace_git_diff,
@@ -7221,6 +7887,30 @@ mod tests {
     }
 
     #[test]
+    fn selected_git_repository_uses_a_new_immutable_migration_slot() {
+        let all_migrations = migrations();
+        let selected_repository = all_migrations
+            .iter()
+            .find(|migration| migration.version == 25)
+            .expect("migration 25");
+
+        assert_eq!(
+            selected_repository.description,
+            "remember_selected_git_repository"
+        );
+        assert!(selected_repository
+            .sql
+            .contains("ADD COLUMN selected_git_repository_path TEXT"));
+        assert_eq!(
+            all_migrations
+                .iter()
+                .filter(|migration| migration.version == 25)
+                .count(),
+            1
+        );
+    }
+
+    #[test]
     fn run_delete_migration_keeps_archive_compatibility_slot() {
         let all_migrations = migrations();
         let archive_compatibility = all_migrations
@@ -7964,6 +8654,47 @@ mod tests {
     }
 
     #[test]
+    fn nested_repository_diff_resolves_staged_rename_paths() {
+        let workspace = test_directory("git-multi-nested-diff");
+        let repository = workspace.join("backend");
+        initialize_git_repository(&repository);
+        let old_file = repository.join("old.ts");
+        let new_file = repository.join("new.ts");
+        fs::write(
+            &old_file,
+            "export const keep = true;\nexport const value = 1;\n",
+        )
+        .unwrap();
+        git(&repository, &["add", "old.ts"]);
+        git(&repository, &["commit", "-m", "initial"]);
+        git(&repository, &["mv", "old.ts", "new.ts"]);
+        fs::write(
+            &new_file,
+            "export const keep = true;\nexport const value = 2;\n",
+        )
+        .unwrap();
+        git(&repository, &["add", "new.ts"]);
+
+        let diff = read_workspace_repository_git_diff_blocking(
+            workspace.to_string_lossy().to_string(),
+            Some(
+                fs::canonicalize(&repository)
+                    .unwrap()
+                    .to_string_lossy()
+                    .to_string(),
+            ),
+            new_file.to_string_lossy().to_string(),
+        )
+        .unwrap();
+
+        assert_eq!(diff.sections[0].kind, "staged");
+        assert!(diff.sections[0].base_label.contains("old.ts"));
+        assert!(diff.sections[0].base_content.contains("value = 1"));
+        assert!(diff.sections[0].head_content.contains("value = 2"));
+        remove_test_directory(workspace);
+    }
+
+    #[test]
     fn git_diff_returns_full_contents_for_staged_copied_files() {
         let workspace = git_test_directory("git-diff-copied");
         let source_file = workspace.join("source.ts");
@@ -8217,6 +8948,348 @@ mod tests {
             "Add staged app source"
         );
         remove_test_directory(workspace);
+    }
+
+    #[test]
+    fn multi_repository_commit_targets_only_the_selected_sibling() {
+        let workspace = test_directory("git-multi-sibling-commit");
+        let frontend = workspace.join("frontend");
+        let backend = workspace.join("backend");
+        initialize_git_repository(&frontend);
+        initialize_git_repository(&backend);
+        fs::write(frontend.join("app.ts"), "export const value = 1;\n").unwrap();
+        fs::write(backend.join("server.ts"), "export const value = 1;\n").unwrap();
+        git(&frontend, &["add", "."]);
+        git(&frontend, &["commit", "-m", "initial frontend"]);
+        git(&backend, &["add", "."]);
+        git(&backend, &["commit", "-m", "initial backend"]);
+        fs::write(frontend.join("app.ts"), "export const value = 2;\n").unwrap();
+        fs::write(backend.join("server.ts"), "export const value = 2;\n").unwrap();
+
+        let canonical_workspace = fs::canonicalize(&workspace).unwrap();
+        let canonical_frontend = fs::canonicalize(&frontend).unwrap();
+        let (repositories, _) =
+            discover_git_repositories(&canonical_workspace, true).unwrap();
+        let frontend_repository = repositories
+            .iter()
+            .find(|repository| repository.root == canonical_frontend)
+            .unwrap();
+        let pathspecs =
+            git_repository_pathspecs(frontend_repository, &repositories).unwrap();
+        let commit_context = workspace_commit_context_for_pathspecs(
+            &frontend_repository.root,
+            &canonical_workspace,
+            &pathspecs,
+            true,
+        )
+        .unwrap();
+        assert!(commit_context.contains("app.ts"));
+        assert!(!commit_context.contains("server.ts"));
+
+        commit_workspace_repository_changes_blocking(
+            workspace.to_string_lossy().to_string(),
+            Some(fs::canonicalize(&frontend).unwrap().to_string_lossy().to_string()),
+            "Update frontend".to_string(),
+            Some(true),
+        )
+        .unwrap();
+
+        assert_eq!(
+            git_stdout(&frontend, &["log", "-1", "--pretty=%s"]).trim(),
+            "Update frontend"
+        );
+        assert_eq!(
+            git_stdout(&backend, &["log", "-1", "--pretty=%s"]).trim(),
+            "initial backend"
+        );
+        assert!(git_stdout(&frontend, &["status", "--porcelain"])
+            .trim()
+            .is_empty());
+        assert!(git_stdout(&backend, &["status", "--porcelain"])
+            .contains("server.ts"));
+
+        let overview = list_workspace_git_overview_blocking(
+            workspace.to_string_lossy().to_string(),
+            true,
+        )
+        .unwrap();
+        assert_eq!(overview.repositories.len(), 2);
+        assert_eq!(overview.changed_repository_count, 1);
+        assert_eq!(overview.files.len(), 1);
+        assert_eq!(overview.files[0].relative_path, "backend/server.ts");
+        remove_test_directory(workspace);
+    }
+
+    #[test]
+    fn repository_discovery_includes_enclosing_and_contained_repositories() {
+        let root = git_test_directory("git-multi-enclosing-root");
+        let workspace = root.join("workspace");
+        fs::create_dir_all(&workspace).unwrap();
+        let nested = workspace.join("nested");
+        initialize_git_repository(&nested);
+
+        let canonical_root = fs::canonicalize(&root).unwrap();
+        let canonical_workspace = fs::canonicalize(&workspace).unwrap();
+        let canonical_nested = fs::canonicalize(&nested).unwrap();
+        let (repositories, truncated) =
+            discover_git_repositories(&canonical_workspace, true).unwrap();
+
+        assert!(!truncated);
+        assert_eq!(repositories.len(), 2);
+        assert!(repositories.iter().any(|repository| {
+            repository.root == canonical_root
+                && repository.scope == canonical_workspace
+                && repository.public.relative_path == "."
+        }));
+        assert!(repositories.iter().any(|repository| {
+            repository.root == canonical_nested
+                && repository.scope == canonical_nested
+                && repository.public.relative_path == "nested"
+        }));
+
+        remove_test_directory(root);
+    }
+
+    #[test]
+    fn repository_discovery_accepts_git_file_worktrees() {
+        let source = git_test_directory("git-multi-worktree-source");
+        fs::write(source.join("tracked.txt"), "tracked\n").unwrap();
+        git(&source, &["add", "tracked.txt"]);
+        git(&source, &["commit", "-m", "initial"]);
+        let workspace = test_directory("git-multi-worktree-parent");
+        let worktree = workspace.join("linked-worktree");
+        let worktree_arg = worktree.to_string_lossy().to_string();
+        git(
+            &source,
+            &[
+                "worktree",
+                "add",
+                "-b",
+                "feature/discovered-worktree",
+                &worktree_arg,
+            ],
+        );
+
+        assert!(worktree.join(".git").is_file());
+        let canonical_workspace = fs::canonicalize(&workspace).unwrap();
+        let canonical_worktree = fs::canonicalize(&worktree).unwrap();
+        let (repositories, truncated) =
+            discover_git_repositories(&canonical_workspace, true).unwrap();
+
+        assert!(!truncated);
+        assert_eq!(repositories.len(), 1);
+        assert_eq!(repositories[0].root, canonical_worktree);
+        assert_eq!(repositories[0].public.relative_path, "linked-worktree");
+
+        remove_test_directory(workspace);
+        remove_test_directory(source);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn repository_discovery_ignores_symlinked_repositories_outside_workspace() {
+        use std::os::unix::fs::symlink;
+
+        let workspace = test_directory("git-multi-symlink-workspace");
+        let outside = git_test_directory("git-multi-symlink-outside");
+        symlink(&outside, workspace.join("linked-repository")).unwrap();
+
+        let canonical_workspace = fs::canonicalize(&workspace).unwrap();
+        let (repositories, truncated) =
+            discover_git_repositories(&canonical_workspace, true).unwrap();
+
+        assert!(!truncated);
+        assert!(repositories.is_empty());
+        assert!(list_workspace_git_overview_blocking(
+            workspace.to_string_lossy().to_string(),
+            true,
+        )
+        .unwrap_err()
+        .contains("No Git repositories"));
+
+        remove_test_directory(workspace);
+        remove_test_directory(outside);
+    }
+
+    #[test]
+    fn parent_repository_excludes_independent_nested_repository_changes() {
+        let workspace = git_test_directory("git-multi-nested-commit");
+        let root_file = workspace.join("root.txt");
+        fs::write(&root_file, "root 1\n").unwrap();
+        git(&workspace, &["add", "root.txt"]);
+        git(&workspace, &["commit", "-m", "initial root"]);
+
+        let child = workspace.join("packages/child");
+        initialize_git_repository(&child);
+        let child_file = child.join("child.txt");
+        fs::write(&child_file, "child 1\n").unwrap();
+        git(&child, &["add", "child.txt"]);
+        git(&child, &["commit", "-m", "initial child"]);
+        fs::write(&root_file, "root 2\n").unwrap();
+        fs::write(&child_file, "child 2\n").unwrap();
+
+        let overview = list_workspace_git_overview_blocking(
+            workspace.to_string_lossy().to_string(),
+            true,
+        )
+        .unwrap();
+        let root_path = fs::canonicalize(&workspace)
+            .unwrap()
+            .to_string_lossy()
+            .to_string();
+        let child_path = fs::canonicalize(&child)
+            .unwrap()
+            .to_string_lossy()
+            .to_string();
+        let root_status = overview
+            .repositories
+            .iter()
+            .find(|status| status.repository.root_path == root_path)
+            .unwrap();
+        let child_status = overview
+            .repositories
+            .iter()
+            .find(|status| status.repository.root_path == child_path)
+            .unwrap();
+        assert_eq!(root_status.files.len(), 1);
+        assert_eq!(root_status.files[0].relative_path, "root.txt");
+        assert_eq!(child_status.files.len(), 1);
+        assert_eq!(child_status.files[0].relative_path, "packages/child/child.txt");
+
+        commit_workspace_repository_changes_blocking(
+            workspace.to_string_lossy().to_string(),
+            Some(root_path.clone()),
+            "Update root".to_string(),
+            Some(true),
+        )
+        .unwrap();
+
+        assert_eq!(
+            git_stdout(&workspace, &["log", "-1", "--pretty=%s"]).trim(),
+            "Update root"
+        );
+        assert_eq!(
+            git_stdout(&child, &["log", "-1", "--pretty=%s"]).trim(),
+            "initial child"
+        );
+        assert!(git_stdout(&child, &["status", "--porcelain"])
+            .contains("child.txt"));
+        remove_test_directory(workspace);
+    }
+
+    #[test]
+    fn repository_file_ownership_uses_the_deepest_nested_repository() {
+        let workspace = git_test_directory("git-multi-nested-file-owner");
+        let child = workspace.join("packages/child");
+        initialize_git_repository(&child);
+        let child_file = child.join("child.txt");
+        fs::write(&child_file, "child\n").unwrap();
+
+        let canonical_workspace = fs::canonicalize(&workspace).unwrap();
+        let canonical_child = fs::canonicalize(&child).unwrap();
+        let canonical_child_file = fs::canonicalize(&child_file).unwrap();
+        let (repositories, _) = discover_git_repositories(&canonical_workspace, true).unwrap();
+        let parent = repositories
+            .iter()
+            .find(|repository| repository.root == canonical_workspace)
+            .unwrap();
+        let child_repository = repositories
+            .iter()
+            .find(|repository| repository.root == canonical_child)
+            .unwrap();
+
+        assert!(!git_repository_owns_workspace_path(
+            parent,
+            &repositories,
+            &canonical_child_file,
+        ));
+        assert!(git_repository_owns_workspace_path(
+            child_repository,
+            &repositories,
+            &canonical_child_file,
+        ));
+
+        remove_test_directory(workspace);
+    }
+
+    #[test]
+    fn parent_repository_keeps_submodule_pointer_changes_visible() {
+        let workspace = git_test_directory("git-multi-submodule-parent");
+        let source = git_test_directory("git-multi-submodule-source");
+        fs::write(source.join("module.txt"), "module 1\n").unwrap();
+        git(&source, &["add", "module.txt"]);
+        git(&source, &["commit", "-m", "initial module"]);
+        let source_arg = source.to_string_lossy().to_string();
+        git(
+            &workspace,
+            &[
+                "-c",
+                "protocol.file.allow=always",
+                "submodule",
+                "add",
+                &source_arg,
+                "modules/child",
+            ],
+        );
+        git(&workspace, &["commit", "-m", "add submodule"]);
+
+        let child = workspace.join("modules/child");
+        git(&child, &["config", "user.email", "test@example.com"]);
+        git(&child, &["config", "user.name", "Orchestrator Test"]);
+        fs::write(child.join("module.txt"), "module 2\n").unwrap();
+        git(&child, &["add", "module.txt"]);
+        git(&child, &["commit", "-m", "update module"]);
+
+        let overview = list_workspace_git_overview_blocking(
+            workspace.to_string_lossy().to_string(),
+            true,
+        )
+        .unwrap();
+        let root_path = fs::canonicalize(&workspace)
+            .unwrap()
+            .to_string_lossy()
+            .to_string();
+        let parent_status = overview
+            .repositories
+            .iter()
+            .find(|status| status.repository.root_path == root_path)
+            .unwrap();
+        assert!(parent_status
+            .files
+            .iter()
+            .any(|file| file.relative_path == "modules/child"));
+        let canonical_workspace = fs::canonicalize(&workspace).unwrap();
+        let canonical_child = fs::canonicalize(&child).unwrap();
+        let (repositories, _) = discover_git_repositories(&canonical_workspace, true).unwrap();
+        let parent = repositories
+            .iter()
+            .find(|repository| repository.root == canonical_workspace)
+            .unwrap();
+        assert!(git_repository_owns_workspace_path(
+            parent,
+            &repositories,
+            &canonical_child,
+        ));
+
+        remove_test_directory(workspace);
+        remove_test_directory(source);
+    }
+
+    #[test]
+    fn repository_selection_rejects_a_repository_outside_the_workspace() {
+        let workspace = test_directory("git-multi-contained-workspace");
+        let contained = workspace.join("contained");
+        initialize_git_repository(&contained);
+        let outside = git_test_directory("git-multi-outside-repository");
+
+        let result = resolve_workspace_git_repository(
+            &fs::canonicalize(&workspace).unwrap(),
+            Some(outside.to_string_lossy().as_ref()),
+        );
+
+        assert!(result.unwrap_err().contains("does not belong"));
+        remove_test_directory(workspace);
+        remove_test_directory(outside);
     }
 
     #[test]
@@ -8609,10 +9682,15 @@ mod tests {
 
     fn git_test_directory(name: &str) -> PathBuf {
         let workspace = test_directory(name);
+        initialize_git_repository(&workspace);
+        workspace
+    }
+
+    fn initialize_git_repository(workspace: &Path) {
+        fs::create_dir_all(workspace).expect("create Git repository directory");
         git(&workspace, &["init"]);
         git(&workspace, &["config", "user.email", "test@example.com"]);
         git(&workspace, &["config", "user.name", "Orchestrator Test"]);
-        workspace
     }
 
     fn git(workspace: &Path, args: &[&str]) {

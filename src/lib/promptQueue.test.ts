@@ -11,6 +11,7 @@ import {
   isPromptQueueItemAutoDispatchEligible,
   isPromptQueueItemMutable,
   parsePromptQueueItemRecord,
+  parsePromptQueueContextFingerprint,
   parseQueuedPromptSnapshot,
   PROMPT_QUEUE_MAX_ATTACHMENTS,
   PROMPT_QUEUE_MAX_ITEMS,
@@ -22,11 +23,16 @@ import {
 } from "./promptQueue";
 
 const fingerprint: PromptQueueContextFingerprint = {
-  version: 1,
+  version: 2,
   workspacePath: "/workspace/project",
-  branch: "main",
-  headCommit: "abc123",
-  worktreeFingerprint: "worktree-1",
+  repositories: [
+    {
+      repositoryPath: "/workspace/project",
+      branch: "main",
+      headCommit: "abc123",
+      worktreeFingerprint: "worktree-1",
+    },
+  ],
   profileKey: "account:7",
   threadId: "thread-1",
   conversationRevision: 3,
@@ -44,6 +50,7 @@ const fingerprint: PromptQueueContextFingerprint = {
 const executionSettings = createRunExecutionSettings({
   accountId: 7,
   profileKey: "account:7",
+  selectedRepositoryPath: "/workspace/project",
   selectedBranch: "main",
   mode: "plan",
   intent: "plan",
@@ -117,6 +124,39 @@ describe("prompt queue snapshots", () => {
     expect(
       parseQueuedPromptSnapshot(serializeQueuedPromptSnapshot(snapshot)),
     ).toEqual(snapshot);
+    expect(snapshot.executionSettings.selectedRepositoryPath).toBe(
+      "/workspace/project",
+    );
+  });
+
+  it("upgrades version 1 context fingerprints without assigning a repository", () => {
+    const parsed = parsePromptQueueContextFingerprint(
+      JSON.stringify({
+        version: 1,
+        workspacePath: "/workspace/project",
+        branch: "main",
+        headCommit: "abc123",
+        worktreeFingerprint: "worktree-1",
+        profileKey: "account:7",
+        threadId: "thread-1",
+        conversationRevision: 3,
+        files: [],
+      }),
+    );
+
+    expect(parsed).toEqual(
+      expect.objectContaining({
+        version: 2,
+        repositories: [
+          {
+            repositoryPath: null,
+            branch: "main",
+            headCommit: "abc123",
+            worktreeFingerprint: "worktree-1",
+          },
+        ],
+      }),
+    );
   });
 
   it("rejects malformed snapshots and records without applying partial settings", () => {
@@ -211,9 +251,14 @@ describe("prompt queue dispatch rules", () => {
       expected: fingerprint,
       inspection: {
         workspacePath: "/workspace/project",
-        branch: "feature/queue",
-        headCommit: "def456",
-        worktreeFingerprint: "worktree-2",
+        repositories: [
+          {
+            repositoryPath: "/workspace/project",
+            branch: "feature/queue",
+            headCommit: "def456",
+            worktreeFingerprint: "worktree-2",
+          },
+        ],
         files: [
           {
             path: "/workspace/project/spec.md",
@@ -232,9 +277,14 @@ describe("prompt queue dispatch rules", () => {
 
     expect(next).toMatchObject({
       workspacePath: "/workspace/project",
-      branch: "feature/queue",
-      headCommit: "def456",
-      worktreeFingerprint: "worktree-2",
+      repositories: [
+        {
+          repositoryPath: "/workspace/project",
+          branch: "feature/queue",
+          headCommit: "def456",
+          worktreeFingerprint: "worktree-2",
+        },
+      ],
       profileKey: "account:7",
       threadId: "thread-2",
       conversationRevision: 4,

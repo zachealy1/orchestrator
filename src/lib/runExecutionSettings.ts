@@ -8,9 +8,14 @@ import type {
   SelectedComposerSkill,
 } from "../types";
 
-export const RUN_EXECUTION_SETTINGS_VERSION = 1;
+export const RUN_EXECUTION_SETTINGS_VERSION = 2;
 
-type RunExecutionSettingsInput = Omit<RunExecutionSettings, "version">;
+type RunExecutionSettingsInput = Omit<
+  RunExecutionSettings,
+  "version" | "selectedRepositoryPath"
+> & {
+  selectedRepositoryPath?: string | null;
+};
 
 type LegacyRunSettingsRecord = {
   account_id: number | null;
@@ -29,6 +34,7 @@ export function createRunExecutionSettings(
     version: RUN_EXECUTION_SETTINGS_VERSION,
     accountId: input.accountId,
     profileKey: input.profileKey,
+    selectedRepositoryPath: input.selectedRepositoryPath ?? null,
     selectedBranch: input.selectedBranch,
     mode: input.mode,
     intent: input.intent,
@@ -90,6 +96,7 @@ export function resolveStoredRunExecutionSettings(
     settings: createRunExecutionSettings({
       accountId,
       profileKey: `account:${accountId}` as CodexProfileKey,
+      selectedRepositoryPath: null,
       selectedBranch: null,
       mode:
         legacy.collaboration_mode === "plan" ||
@@ -117,12 +124,13 @@ export function resolveStoredRunExecutionSettings(
 }
 
 function readRunExecutionSettings(value: unknown): RunExecutionSettings | null {
-  if (!isRecord(value) || value.version !== RUN_EXECUTION_SETTINGS_VERSION) {
+  if (!isRecord(value) || (value.version !== 1 && value.version !== 2)) {
     return null;
   }
   if (
     !isSafeAccountId(value.accountId) ||
     !isProfileKeyForAccount(value.profileKey, value.accountId) ||
+    (value.version === 2 && !isOptionalString(value.selectedRepositoryPath)) ||
     !isOptionalString(value.selectedBranch) ||
     !isRunMode(value.mode) ||
     !isRunIntent(value.intent) ||
@@ -155,6 +163,10 @@ function readRunExecutionSettings(value: unknown): RunExecutionSettings | null {
   return createRunExecutionSettings({
     accountId: value.accountId,
     profileKey: value.profileKey,
+    selectedRepositoryPath:
+      value.version === 2
+        ? normalizeOptionalString(value.selectedRepositoryPath)
+        : null,
     selectedBranch: normalizeOptionalString(value.selectedBranch),
     mode: value.mode,
     intent: value.intent,

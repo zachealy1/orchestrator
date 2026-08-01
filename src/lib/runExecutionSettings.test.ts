@@ -11,6 +11,7 @@ describe("run execution settings", () => {
     const settings = createRunExecutionSettings({
       accountId: 7,
       profileKey: "account:7",
+      selectedRepositoryPath: "/workspace/project",
       selectedBranch: "feature/original",
       mode: "plan",
       intent: "plan",
@@ -46,6 +47,34 @@ describe("run execution settings", () => {
 
     expect(parseRunExecutionSettings(serializeRunExecutionSettings(settings))).toEqual(
       settings,
+    );
+  });
+
+  it("upgrades version 1 settings without guessing a repository", () => {
+    const legacySettings = JSON.stringify({
+      version: 1,
+      accountId: 7,
+      profileKey: "account:7",
+      selectedBranch: "feature/original",
+      mode: "run",
+      intent: "normal",
+      accessMode: "ask-for-approval",
+      computerUseEnabled: true,
+      model: "gpt-5.5",
+      reasoningEffort: "high",
+      useOss: false,
+      ossProvider: "ollama",
+      contextFiles: [],
+      selectedSkills: [],
+      goalMode: false,
+    });
+
+    expect(parseRunExecutionSettings(legacySettings)).toEqual(
+      expect.objectContaining({
+        version: 2,
+        selectedRepositoryPath: null,
+        selectedBranch: "feature/original",
+      }),
     );
   });
 
@@ -86,7 +115,8 @@ describe("run execution settings", () => {
     expect(resolved).toEqual({
       source: "legacy",
       settings: expect.objectContaining({
-        version: 1,
+        version: 2,
+        selectedRepositoryPath: null,
         accountId: 7,
         profileKey: "account:7",
         selectedBranch: null,

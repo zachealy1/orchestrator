@@ -62,7 +62,8 @@ function workspaceLabel(path: string) {
 export async function listWorkspaces() {
   const db = await getDatabase();
   return db.select<Workspace[]>(
-    `SELECT id, path, label, default_account_id, last_opened_at, created_at
+    `SELECT id, path, label, default_account_id, selected_git_repository_path,
+      last_opened_at, created_at
      FROM workspaces
      WHERE deleted_at IS NULL
      ORDER BY last_opened_at DESC`,
@@ -84,7 +85,8 @@ export async function upsertWorkspace(path: string) {
   );
 
   const workspace = await selectOne<Workspace>(
-    `SELECT id, path, label, default_account_id, last_opened_at, created_at
+    `SELECT id, path, label, default_account_id, selected_git_repository_path,
+      last_opened_at, created_at
      FROM workspaces
      WHERE path = $1 AND deleted_at IS NULL`,
     [path],
@@ -95,6 +97,19 @@ export async function upsertWorkspace(path: string) {
   }
 
   return workspace;
+}
+
+export async function updateWorkspaceSelectedGitRepository(
+  workspaceId: number,
+  repositoryPath: string | null,
+) {
+  const db = await getDatabase();
+  await db.execute(
+    `UPDATE workspaces
+     SET selected_git_repository_path = $1
+     WHERE id = $2 AND deleted_at IS NULL`,
+    [repositoryPath, workspaceId],
+  );
 }
 
 export async function softDeleteWorkspace(workspaceId: number) {

@@ -9,6 +9,7 @@ export type Workspace = {
   path: string;
   label: string;
   default_account_id: number | null;
+  selected_git_repository_path: string | null;
   last_opened_at: string;
   created_at: string;
 };
@@ -67,11 +68,19 @@ export type WorkspaceGitStatusKind =
 export type WorkspaceGitFileStatus = {
   path: string;
   relativePath: string;
+  repositoryPath: string;
+  repositoryRelativePath: string;
   oldRelativePath: string | null;
   indexStatus: string;
   worktreeStatus: string;
   statusKind: WorkspaceGitStatusKind;
   badge: string;
+};
+
+export type WorkspaceGitRepository = {
+  rootPath: string;
+  relativePath: string;
+  label: string;
 };
 
 export type WorkspaceGitStatusSnapshot = {
@@ -85,6 +94,20 @@ export type WorkspaceGitStatusSnapshot = {
   hasOrigin?: boolean;
   canPush?: boolean;
   files: WorkspaceGitFileStatus[];
+};
+
+export type WorkspaceGitRepositoryStatus = WorkspaceGitStatusSnapshot & {
+  repository: WorkspaceGitRepository;
+};
+
+export type WorkspaceGitOverview = {
+  workspacePath: string;
+  repositories: WorkspaceGitRepositoryStatus[];
+  additions: number;
+  deletions: number;
+  changedRepositoryCount: number;
+  files: WorkspaceGitFileStatus[];
+  discoveryTruncated: boolean;
 };
 
 export type WorkspaceGitActionResult = {
@@ -680,9 +703,10 @@ export type SlashCommandSearchStatus =
 export type SelectedComposerSkill = CodexSkillSummary;
 
 export type RunExecutionSettings = {
-  version: 1;
+  version: 2;
   accountId: number;
   profileKey: CodexProfileKey;
+  selectedRepositoryPath: string | null;
   selectedBranch: string | null;
   mode: "plan" | "run";
   intent: "normal" | "plan" | "plan-revision" | "plan-implementation";
@@ -716,12 +740,17 @@ export type PromptQueueContextFileFingerprint = {
   available: boolean;
 };
 
-export type PromptQueueContextFingerprint = {
-  version: 1;
-  workspacePath: string;
+export type PromptQueueRepositoryFingerprint = {
+  repositoryPath: string | null;
   branch: string | null;
   headCommit: string | null;
   worktreeFingerprint: string | null;
+};
+
+export type PromptQueueContextFingerprint = {
+  version: 2;
+  workspacePath: string;
+  repositories: PromptQueueRepositoryFingerprint[];
   profileKey: CodexProfileKey;
   threadId: string | null;
   conversationRevision: number;
@@ -730,7 +759,7 @@ export type PromptQueueContextFingerprint = {
 
 export type PromptQueueContextInspection = Pick<
   PromptQueueContextFingerprint,
-  "workspacePath" | "branch" | "headCommit" | "worktreeFingerprint" | "files"
+  "workspacePath" | "repositories" | "files"
 >;
 
 export type QueuedPromptSnapshot = {

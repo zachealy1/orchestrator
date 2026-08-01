@@ -80,11 +80,16 @@ function queuedPromptSnapshot() {
     prompt: "Implement durable queuing",
     executionSettings,
     contextFingerprint: {
-      version: 1,
+      version: 2,
       workspacePath: "/workspace/project",
-      branch: "main",
-      headCommit: "abc",
-      worktreeFingerprint: "clean",
+      repositories: [
+        {
+          repositoryPath: "/workspace/project",
+          branch: "main",
+          headCommit: "abc",
+          worktreeFingerprint: "clean",
+        },
+      ],
       profileKey: "account:7",
       threadId: null,
       conversationRevision: 0,

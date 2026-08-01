@@ -47,11 +47,16 @@ function queueItem(
   status: PromptQueueItem["status"] = "queued",
 ): PromptQueueItem {
   const contextFingerprint = {
-    version: 1 as const,
+    version: 2 as const,
     workspacePath: "/workspace",
-    branch: "main",
-    headCommit: "abc",
-    worktreeFingerprint: "clean",
+    repositories: [
+      {
+        repositoryPath: "/workspace",
+        branch: "main",
+        headCommit: "abc",
+        worktreeFingerprint: "clean",
+      },
+    ],
     profileKey: "account:7" as const,
     threadId: "thread-1",
     conversationRevision: 1,

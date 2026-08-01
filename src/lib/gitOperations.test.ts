@@ -14,6 +14,8 @@ const pushRequest: WorkspaceGitOperationRequest = {
   workspaceId: 1,
   workspacePath: "/repo/app",
   workspaceLabel: "app",
+  repositoryPath: "/repo/app",
+  repositoryLabel: "app",
   kind: "push",
   commitMessage: null,
   includeUnstaged: true,

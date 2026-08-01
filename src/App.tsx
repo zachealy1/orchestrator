@@ -132,6 +132,7 @@ import {
   upsertExternalCodexChats,
   upsertRunSubagent,
   upsertWorkspace,
+  updateWorkspaceSelectedGitRepository,
   type RunEventInput,
 } from "./db";
 import {
@@ -424,6 +425,8 @@ import type {
   WorkspaceFilePreview,
   WorkspaceGitDiff,
   WorkspaceGitFileStatus,
+  WorkspaceGitOverview,
+  WorkspaceGitRepositoryStatus,
   WorkspaceGitStatusSnapshot,
   WorkspacePreviewState,
   WorkspaceTreeEntry,
@@ -748,6 +751,7 @@ type RunSetupSnapshot = {
   profileKey: CodexProfileKey;
   chatOrigin: ChatOrigin;
   externalThreadId: string | null;
+  selectedRepositoryPath: string | null;
   selectedBranch: string | null;
   cachedPreflight: PreflightReport | null;
   mode: "plan" | "run";
@@ -1076,6 +1080,8 @@ type PlanImplementationDialogState = {
 
 type BranchCreationDialogState = {
   workspace: Workspace;
+  repositoryPath: string;
+  repositoryLabel: string;
   baseBranch: string | null;
   branchName: string;
   status: "idle" | "creating";
@@ -1132,6 +1138,7 @@ type WorkspaceTaskMemory = {
 };
 
 type CommitMessageGenerationSnapshot = {
+  repositoryPath: string;
   accountId: number | null;
   includeUnstaged: boolean;
   model: string | null;
@@ -1357,7 +1364,7 @@ type WorkspaceDirectoryState = {
 
 type WorkspaceGitStatusState = {
   status: "idle" | "loading" | "loaded" | "error";
-  snapshot: WorkspaceGitStatusSnapshot | null;
+  snapshot: WorkspaceGitOverview | null;
   error: string | null;
 };
 
@@ -1399,7 +1406,7 @@ function workspaceCacheKey(workspacePath: string, childPath: string) {
   return `${workspacePath}\u0000${childPath}`;
 }
 
-function gitStatusSnapshotKey(snapshot: WorkspaceGitStatusSnapshot | null) {
+function gitStatusSnapshotKey(snapshot: WorkspaceGitOverview | null) {
   if (!snapshot) {
     return "";
   }
@@ -1420,7 +1427,18 @@ function gitStatusSnapshotKey(snapshot: WorkspaceGitStatusSnapshot | null) {
 
   return [
     snapshot.workspacePath,
-    snapshot.gitRoot,
+    snapshot.repositories
+      .map((repository) =>
+        [
+          repository.repository.rootPath,
+          repository.currentBranch ?? "",
+          repository.aheadCount ?? 0,
+          repository.canPush ? 1 : 0,
+          repository.additions ?? 0,
+          repository.deletions ?? 0,
+        ].join("\u0000"),
+      )
+      .join("\u0001"),
     snapshot.additions ?? "",
     snapshot.deletions ?? "",
     files,
@@ -1428,13 +1446,73 @@ function gitStatusSnapshotKey(snapshot: WorkspaceGitStatusSnapshot | null) {
 }
 
 function summarizeWorkspaceGitStatus(
-  snapshot: WorkspaceGitStatusSnapshot | null,
+  snapshot: WorkspaceGitOverview | null,
 ): WorkspaceGitSummary {
   return summarizeWorkspaceGitFiles(
     snapshot?.files ?? [],
     snapshot?.additions,
     snapshot?.deletions,
   );
+}
+
+function normalizeWorkspaceGitOverview(
+  workspacePath: string,
+  value: WorkspaceGitOverview | WorkspaceGitStatusSnapshot,
+): WorkspaceGitOverview {
+  const overview = value as WorkspaceGitOverview;
+  if (Array.isArray(overview.repositories)) {
+    return overview;
+  }
+  const legacy = value as WorkspaceGitStatusSnapshot;
+  const rootPath = legacy.gitRoot;
+  const label =
+    rootPath.split(/[\\/]/).filter(Boolean).slice(-1)[0] ??
+    workspacePath.split(/[\\/]/).filter(Boolean).slice(-1)[0] ??
+    "Repository";
+  const files = legacy.files.map((file) => ({
+    ...file,
+    repositoryPath: file.repositoryPath ?? rootPath,
+    repositoryRelativePath:
+      file.repositoryRelativePath ?? file.relativePath,
+  }));
+  const repository: WorkspaceGitRepositoryStatus = {
+    ...legacy,
+    files,
+    repository: {
+      rootPath,
+      relativePath: ".",
+      label,
+    },
+  };
+  return {
+    workspacePath,
+    repositories: [repository],
+    additions: legacy.additions ?? 0,
+    deletions: legacy.deletions ?? 0,
+    changedRepositoryCount: files.length > 0 ? 1 : 0,
+    files,
+    discoveryTruncated: false,
+  };
+}
+
+function preferredWorkspaceGitRepository(
+  overview: WorkspaceGitOverview | null,
+  preferredPath: string | null | undefined,
+) {
+  if (!overview || overview.repositories.length === 0) return null;
+  return (
+    overview.repositories.find(
+      (repository) => repository.repository.rootPath === preferredPath,
+    ) ?? overview.repositories[0]
+  );
+}
+
+function workspaceGitRepositoryDisplayPath(
+  repository: WorkspaceGitRepositoryStatus["repository"],
+) {
+  return repository.relativePath === "."
+    ? repository.label
+    : repository.relativePath;
 }
 
 function summarizeWorkspaceGitFiles(
@@ -1609,6 +1687,13 @@ function App() {
   );
   const [workspaces, setWorkspaces] = useState<Workspace[]>([]);
   const [selectedWorkspace, setSelectedWorkspace] = useState<Workspace | null>(null);
+  const workspaceLocationsKey = useMemo(
+    () =>
+      workspaces
+        .map((workspace) => `${workspace.id}\u0000${workspace.path}`)
+        .join("\u0001"),
+    [workspaces],
+  );
   const [workspaceContextMenu, setWorkspaceContextMenu] =
     useState<WorkspaceContextMenuState | null>(null);
   const [workspaceDeleteCandidate, setWorkspaceDeleteCandidate] =
@@ -2019,7 +2104,7 @@ function App() {
     new Map<number, Promise<CodexSkillSummary[]>>(),
   );
   const lastCommitSubjectsRef = useRef(
-    new Map<number, { subject: string; changeKey: string }>(),
+    new Map<string, { subject: string; changeKey: string }>(),
   );
   const gitActionInFlightRef = useRef(false);
   const gitOperationInFlightWorkspaceIdsRef = useRef(new Set<number>());
@@ -3135,6 +3220,11 @@ function App() {
         error: null,
       }
     : null;
+  const selectedGitOverview = selectedGitStatusState?.snapshot ?? null;
+  const selectedGitRepository = preferredWorkspaceGitRepository(
+    selectedGitOverview,
+    selectedWorkspace?.selected_git_repository_path,
+  );
   const gitStatusByWorkspaceId = useMemo(() => {
     const maps = new Map<number, Map<string, WorkspaceGitFileStatus>>();
     Object.entries(gitStatusStates).forEach(([workspaceId, state]) => {
@@ -3172,7 +3262,16 @@ function App() {
     () => summarizeWorkspaceGitStatus(selectedGitStatusState?.snapshot ?? null),
     [selectedGitStatusState?.snapshot],
   );
-  const selectedGitFiles = selectedGitStatusState?.snapshot?.files ?? [];
+  const selectedRepositoryGitSummary = useMemo(
+    () =>
+      summarizeWorkspaceGitFiles(
+        selectedGitRepository?.files ?? [],
+        selectedGitRepository?.additions,
+        selectedGitRepository?.deletions,
+      ),
+    [selectedGitRepository],
+  );
+  const selectedGitFiles = selectedGitRepository?.files ?? [];
   const commitMessageFiles = useMemo(
     () => filesIncludedInCommitMessage(selectedGitFiles, includeUnstagedChanges),
     [includeUnstagedChanges, selectedGitFiles],
@@ -3182,21 +3281,21 @@ function App() {
       includeUnstagedChanges
         ? summarizeWorkspaceGitFiles(
             commitMessageFiles,
-            selectedGitStatusState?.snapshot?.additions,
-            selectedGitStatusState?.snapshot?.deletions,
+            selectedGitRepository?.additions,
+            selectedGitRepository?.deletions,
           )
         : summarizeWorkspaceGitFiles(commitMessageFiles),
     [
       commitMessageFiles,
       includeUnstagedChanges,
-      selectedGitStatusState?.snapshot?.additions,
-      selectedGitStatusState?.snapshot?.deletions,
+      selectedGitRepository?.additions,
+      selectedGitRepository?.deletions,
     ],
   );
   const commitMessageChangeKey = useMemo(
     () =>
       gitChangeFingerprint(
-        selectedWorkspace?.path ?? null,
+        selectedGitRepository?.repository.rootPath ?? null,
         commitMessageFiles,
         commitMessageSummary,
         includeUnstagedChanges,
@@ -3205,7 +3304,7 @@ function App() {
       commitMessageFiles,
       commitMessageSummary,
       includeUnstagedChanges,
-      selectedWorkspace?.path,
+      selectedGitRepository?.repository.rootPath,
     ],
   );
   const selectedHasStagedGitChanges = useMemo(
@@ -3260,15 +3359,15 @@ function App() {
         reason: selectedGitStatusState.error ?? "Git unavailable",
       };
     }
-    const snapshot = selectedGitStatusState?.snapshot;
+    const snapshot = selectedGitRepository;
     const canPush = Boolean(snapshot?.canPush);
-    if (selectedGitSummary.total > 0) {
+    if (selectedRepositoryGitSummary.total > 0) {
       return {
         label: baseLabel,
         disabled: false,
         canCommit: true,
         canPush,
-        statusLabel: `${selectedGitSummary.total} changed`,
+        statusLabel: `${selectedRepositoryGitSummary.total} changed`,
         statusKind: "changed",
       };
     }
@@ -3296,7 +3395,7 @@ function App() {
     selectedGitStatusState?.error,
     selectedGitStatusState?.snapshot,
     selectedGitStatusState?.status,
-    selectedGitSummary.total,
+    selectedRepositoryGitSummary.total,
     selectedWorkspace,
   ]);
   const canCommitFromDialog =
@@ -3844,9 +3943,8 @@ function App() {
     }
 
     void refreshWorkspaceData(selectedWorkspace.id);
-    void refreshBranches(selectedWorkspace);
     void refreshWorkspaceGitStatus(selectedWorkspace);
-  }, [selectedWorkspace]);
+  }, [selectedWorkspace?.id, selectedWorkspace?.path]);
 
   useEffect(() => {
     if (!historyDrawerOpen || !selectedWorkspace) {
@@ -3874,7 +3972,7 @@ function App() {
     workspaces.forEach((workspace) => {
       void refreshWorkspaceGitStatus(workspace, { showLoading: false });
     });
-  }, [workspaces]);
+  }, [workspaceLocationsKey]);
 
   useEffect(() => {
     const markForegroundInteraction = () => {
@@ -4906,7 +5004,7 @@ function App() {
       await existingRefresh.catch(() => undefined);
       return refreshWorkspaceGitStatus(workspace, {
         ...options,
-        force: false,
+        force: true,
       });
     }
 
@@ -4922,8 +5020,42 @@ function App() {
       }));
     }
 
-    const refresh = listWorkspaceGitStatus(workspace.path)
-      .then((snapshot) => {
+    const statusRequest = options.force
+      ? listWorkspaceGitStatus(workspace.path, true)
+      : listWorkspaceGitStatus(workspace.path);
+    const refresh = statusRequest
+      .then((rawSnapshot) => {
+        const currentWorkspace =
+          selectedWorkspaceRef.current?.id === workspace.id
+            ? selectedWorkspaceRef.current
+            : workspacesRef.current.find(
+                (candidate) => candidate.id === workspace.id,
+              ) ?? null;
+        if (!currentWorkspace || currentWorkspace.path !== workspace.path) {
+          return;
+        }
+        const snapshot = normalizeWorkspaceGitOverview(
+          workspace.path,
+          rawSnapshot as WorkspaceGitOverview | WorkspaceGitStatusSnapshot,
+        );
+        const preferredRepository = preferredWorkspaceGitRepository(
+          snapshot,
+          currentWorkspace.selected_git_repository_path,
+        );
+        if (
+          preferredRepository &&
+          preferredRepository.repository.rootPath !==
+            currentWorkspace.selected_git_repository_path
+        ) {
+          rememberWorkspaceGitRepository(
+            workspace.id,
+            preferredRepository.repository.rootPath,
+          );
+          void updateWorkspaceSelectedGitRepository(
+            workspace.id,
+            preferredRepository.repository.rootPath,
+          ).catch(() => undefined);
+        }
         const update = () => {
           setGitStatusStates((current) => {
             const previous = current[workspace.id];
@@ -4944,8 +5076,30 @@ function App() {
         };
         if (options.background) startTransition(update);
         else update();
+        if (
+          selectedWorkspaceRef.current?.id === workspace.id &&
+          preferredRepository
+        ) {
+          void refreshBranches(
+            {
+              ...currentWorkspace,
+              selected_git_repository_path:
+                preferredRepository.repository.rootPath,
+            },
+            preferredRepository.repository.rootPath,
+          );
+        }
       })
       .catch((error) => {
+        const currentWorkspace =
+          selectedWorkspaceRef.current?.id === workspace.id
+            ? selectedWorkspaceRef.current
+            : workspacesRef.current.find(
+                (candidate) => candidate.id === workspace.id,
+              ) ?? null;
+        if (!currentWorkspace || currentWorkspace.path !== workspace.path) {
+          return;
+        }
         const errorMessage = error instanceof Error ? error.message : String(error);
         const update = () => {
           setGitStatusStates((current) => {
@@ -4975,16 +5129,55 @@ function App() {
     return refresh;
   }
 
-  async function refreshBranches(workspace: Workspace) {
+  function rememberWorkspaceGitRepository(
+    workspaceId: number,
+    repositoryPath: string | null,
+  ) {
+    setWorkspaces((current) => {
+      const next = current.map((workspace) =>
+        workspace.id === workspaceId
+          ? { ...workspace, selected_git_repository_path: repositoryPath }
+          : workspace,
+      );
+      workspacesRef.current = next;
+      return next;
+    });
+    if (selectedWorkspaceRef.current?.id === workspaceId) {
+      const next = {
+        ...selectedWorkspaceRef.current,
+        selected_git_repository_path: repositoryPath,
+      };
+      selectedWorkspaceRef.current = next;
+      setSelectedWorkspace(next);
+    }
+  }
+
+  async function refreshBranches(
+    workspace: Workspace,
+    repositoryPath = workspace.selected_git_repository_path,
+  ) {
     try {
-      const result = await listGitBranches(workspace.path);
-      if (selectedWorkspaceRef.current?.id !== workspace.id) {
+      if (!repositoryPath) {
+        setBranches([]);
+        setSelectedBranch(null);
+        return;
+      }
+      const result = await listGitBranches(workspace.path, repositoryPath);
+      if (
+        selectedWorkspaceRef.current?.id !== workspace.id ||
+        selectedWorkspaceRef.current.selected_git_repository_path !==
+          repositoryPath
+      ) {
         return;
       }
       setBranches(result.branches);
       setSelectedBranch(result.currentBranch ?? result.branches[0] ?? null);
     } catch (error) {
-      if (selectedWorkspaceRef.current?.id !== workspace.id) {
+      if (
+        selectedWorkspaceRef.current?.id !== workspace.id ||
+        selectedWorkspaceRef.current.selected_git_repository_path !==
+          repositoryPath
+      ) {
         return;
       }
       setBranches([]);
@@ -5233,6 +5426,8 @@ function App() {
     setHistoryOpenRequest(null);
     setHistoricalTranscript(null);
     setWorkspaces(await listWorkspaces());
+    setBranches([]);
+    setSelectedBranch(null);
     setSelectedWorkspace(workspace);
     setActiveView("task");
     setStatusMessage(`Selected ${workspace.label}`);
@@ -5671,6 +5866,8 @@ function App() {
       setWorkspaceContextMenu(null);
       selectedWorkspaceRef.current = workspace;
       setSelectedWorkspace(workspace);
+      setBranches([]);
+      setSelectedBranch(null);
       restoreWorkspaceComposer(
         workspaceTaskMemoriesRef.current[workspace.id] ?? memory,
       );
@@ -7823,7 +8020,8 @@ function App() {
   }
 
   function applyWorkspaceForChatNavigation(workspace: Workspace) {
-    if (selectedWorkspaceRef.current?.id !== workspace.id) {
+    const switchingWorkspace = selectedWorkspaceRef.current?.id !== workspace.id;
+    if (switchingWorkspace) {
       taskChatTranscriptRef.current?.captureViewportState();
       rememberCurrentWorkspaceTaskMemory();
     }
@@ -7834,6 +8032,10 @@ function App() {
     setWorkspaceContextMenu(null);
     selectedWorkspaceRef.current = workspace;
     setSelectedWorkspace(workspace);
+    if (switchingWorkspace) {
+      setBranches([]);
+      setSelectedBranch(null);
+    }
     restoreWorkspaceComposer(memory);
     activeViewRef.current = "task";
     setActiveView("task");
@@ -8490,8 +8692,16 @@ function App() {
 
   function openBranchCreationDialog() {
     const workspace = selectedWorkspaceRef.current;
+    const overview = workspace
+      ? gitStatusStates[workspace.id]?.snapshot ?? null
+      : null;
+    const repository = preferredWorkspaceGitRepository(
+      overview,
+      workspace?.selected_git_repository_path,
+    );
     if (
       !workspace ||
+      !repository ||
       branchCreationInFlightRef.current ||
       branchCreationPendingWorkspaceId !== null ||
       selectedGitActionStatus !== "idle" ||
@@ -8502,6 +8712,8 @@ function App() {
 
     setBranchCreationDialog({
       workspace,
+      repositoryPath: repository.repository.rootPath,
+      repositoryLabel: repository.repository.label,
       baseBranch: selectedBranch,
       branchName: "",
       status: "idle",
@@ -8539,10 +8751,14 @@ function App() {
     );
 
     try {
-      const result = await createGitBranch(dialog.workspace.path, branchName);
+      const result = await createGitBranch(
+        dialog.workspace.path,
+        branchName,
+        dialog.repositoryPath,
+      );
       preflightRef.current = null;
       await Promise.allSettled([
-        refreshBranches(dialog.workspace),
+        refreshBranches(dialog.workspace, dialog.repositoryPath),
         refreshWorkspaceGitStatus(dialog.workspace, {
           showLoading: false,
           force: true,
@@ -8551,7 +8767,7 @@ function App() {
       if (selectedWorkspaceRef.current?.id === dialog.workspace.id) {
         setSelectedBranch(result.branch);
         setStatusMessage(
-          `Created and switched to ${result.branch} in ${dialog.workspace.label}.`,
+          `Created and switched to ${result.branch} in ${dialog.repositoryLabel}.`,
         );
       }
       setBranchCreationDialog((current) =>
@@ -8577,19 +8793,20 @@ function App() {
   }
 
   async function selectBranch(branch: string) {
-    if (!selectedWorkspace || !branch) {
+    const repositoryPath = selectedGitRepository?.repository.rootPath ?? null;
+    if (!selectedWorkspace || !repositoryPath || !branch) {
       return;
     }
 
     setSelectedBranch(branch);
     preflightRef.current = null;
     try {
-      await checkoutGitBranch(selectedWorkspace.path, branch);
-      await refreshBranches(selectedWorkspace);
+      await checkoutGitBranch(selectedWorkspace.path, branch, repositoryPath);
+      await refreshBranches(selectedWorkspace, repositoryPath);
       await refreshWorkspaceGitStatus(selectedWorkspace);
       setStatusMessage(`Working on ${selectedWorkspace.label} at ${branch}.`);
     } catch (error) {
-      await refreshBranches(selectedWorkspace);
+      await refreshBranches(selectedWorkspace, repositoryPath);
       await refreshWorkspaceGitStatus(selectedWorkspace);
       setStatusMessage(
         `Could not switch to ${branch}: ${error instanceof Error ? error.message : String(error)}`,
@@ -8597,16 +8814,60 @@ function App() {
     }
   }
 
-  async function ensureRunBranch(workspace: Workspace, branch: string | null) {
+  async function selectGitRepository(repositoryPath: string) {
+    const workspace = selectedWorkspaceRef.current;
+    const overview = workspace
+      ? gitStatusStates[workspace.id]?.snapshot ?? null
+      : null;
+    const repository = overview?.repositories.find(
+      (candidate) => candidate.repository.rootPath === repositoryPath,
+    );
+    if (!workspace || !repository || selectedGitActionStatus !== "idle") {
+      return;
+    }
+    rememberWorkspaceGitRepository(workspace.id, repositoryPath);
+    setSelectedBranch(repository.currentBranch ?? null);
+    setBranches(repository.currentBranch ? [repository.currentBranch] : []);
+    setCommitMessage("");
+    setCommitDialogMessage("");
+    setCommitDialogError(false);
+    preflightRef.current = null;
+    try {
+      await updateWorkspaceSelectedGitRepository(workspace.id, repositoryPath);
+      await refreshBranches(
+        { ...workspace, selected_git_repository_path: repositoryPath },
+        repositoryPath,
+      );
+      setStatusMessage(`Git actions now target ${repository.repository.label}.`);
+    } catch (error) {
+      setStatusMessage(
+        `Could not select ${repository.repository.label}: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+      );
+    }
+  }
+
+  async function ensureRunBranch(
+    workspace: Workspace,
+    repositoryPath: string | null,
+    branch: string | null,
+  ) {
     if (!branch) {
       return true;
     }
+    if (!repositoryPath) {
+      setStatusMessage(
+        "Choose the Git repository for this run before switching branches.",
+      );
+      return false;
+    }
 
     try {
-      await checkoutGitBranch(workspace.path, branch);
+      await checkoutGitBranch(workspace.path, branch, repositoryPath);
       return true;
     } catch (error) {
-      await refreshBranches(workspace);
+      await refreshBranches(workspace, repositoryPath);
       await refreshWorkspaceGitStatus(workspace);
       setStatusMessage(
         `Could not switch to ${branch}: ${
@@ -9685,6 +9946,7 @@ function App() {
   function openCommitDialog() {
     if (
       !selectedWorkspace ||
+      !selectedGitRepository ||
       gitOperationInFlightWorkspaceIdsRef.current.has(selectedWorkspace.id)
     ) {
       return;
@@ -9767,10 +10029,11 @@ function App() {
           workspace.path,
           request.commitMessage ?? "",
           request.includeUnstaged,
+          request.repositoryPath,
         );
         commitCompleted = true;
         if (request.commitMessage && request.changeKey) {
-          lastCommitSubjectsRef.current.set(workspace.id, {
+          lastCommitSubjectsRef.current.set(request.repositoryPath, {
             subject: cleanGeneratedCommitSubject(request.commitMessage),
             changeKey: request.changeKey,
           });
@@ -9786,18 +10049,20 @@ function App() {
           phase,
           ...runningCopy,
         }));
-        await pushWorkspaceBranch(workspace.path);
+        await pushWorkspaceBranch(workspace.path, request.repositoryPath);
       }
 
       await refreshWorkspaceAfterGitOperation(workspace);
       const successCopy = gitOperationSuccessCopy(request.kind);
+      const successDetail = `${successCopy.detail} Repository: ${request.repositoryLabel}.`;
       updateWorkspaceGitOperation(workspace.id, operationId, {
         status: "succeeded",
         retryRequest: null,
         ...successCopy,
+        detail: successDetail,
       });
       if (selectedWorkspaceRef.current?.id === workspace.id) {
-        setStatusMessage(successCopy.detail);
+        setStatusMessage(successDetail);
       }
     } catch (error) {
       await refreshWorkspaceAfterGitOperation(workspace);
@@ -9806,6 +10071,7 @@ function App() {
         error,
         commitCompleted,
       );
+      const failureDetail = `${failureCopy.detail} Repository: ${request.repositoryLabel}.`;
       const retryRequest =
         commitCompleted && phase === "pushing"
           ? {
@@ -9819,9 +10085,10 @@ function App() {
         status: "failed",
         retryRequest,
         ...failureCopy,
+        detail: failureDetail,
       });
       if (selectedWorkspaceRef.current?.id === workspace.id) {
-        setStatusMessage(failureCopy.detail);
+        setStatusMessage(failureDetail);
       }
     } finally {
       gitOperationInFlightWorkspaceIdsRef.current.delete(workspace.id);
@@ -9900,8 +10167,10 @@ function App() {
 
   function handlePushOnly() {
     const workspace = selectedWorkspace;
+    const repository = selectedGitRepository;
     if (
       !workspace ||
+      !repository ||
       !headerGitAction.canPush ||
       selectedGitActionStatus !== "idle" ||
       gitActionInFlightRef.current
@@ -9915,6 +10184,8 @@ function App() {
         workspaceId: workspace.id,
         workspacePath: workspace.path,
         workspaceLabel: workspace.label,
+        repositoryPath: repository.repository.rootPath,
+        repositoryLabel: repository.repository.label,
         kind: "push",
         commitMessage: null,
         includeUnstaged: true,
@@ -9931,6 +10202,7 @@ function App() {
   ) {
     const result = await generateWorkspaceCommitMessage({
       workspacePath: workspace.path,
+      repositoryPath: snapshot.repositoryPath,
       accountId: snapshot.accountId,
       includeUnstaged: snapshot.includeUnstaged,
       model: snapshot.model,
@@ -9944,7 +10216,7 @@ function App() {
       throw new Error(rejection);
     }
     const generated = cleanGeneratedCommitSubject(result.message);
-    const previous = lastCommitSubjectsRef.current.get(workspace.id);
+    const previous = lastCommitSubjectsRef.current.get(snapshot.repositoryPath);
     if (
       previous &&
       previous.changeKey !== snapshot.changeKey &&
@@ -10021,8 +10293,10 @@ function App() {
 
   function handleCommitAll(options: { pushAfter?: boolean } = {}) {
     const workspace = selectedWorkspace;
+    const repository = selectedGitRepository;
     if (
       !workspace ||
+      !repository ||
       !canCommitFromDialog ||
       selectedGitActionStatus !== "idle" ||
       gitActionInFlightRef.current
@@ -10037,6 +10311,8 @@ function App() {
         workspaceId: workspace.id,
         workspacePath: workspace.path,
         workspaceLabel: workspace.label,
+        repositoryPath: repository.repository.rootPath,
+        repositoryLabel: repository.repository.label,
         kind: options.pushAfter ? "commit-and-push" : "commit",
         commitMessage: authoredMessage || null,
         includeUnstaged: includeUnstagedChanges,
@@ -10046,6 +10322,7 @@ function App() {
         startWorkspaceGitOperation(request);
       } else {
         startWorkspaceCommitGeneration(request, {
+          repositoryPath: repository.repository.rootPath,
           accountId: selectedAccountId,
           includeUnstaged: includeUnstagedChanges,
           model: selectedModel?.model ?? selectedModel?.id ?? null,
@@ -10240,7 +10517,13 @@ function App() {
     preflightRef.current = null;
 
     try {
-      if (!(await ensureRunBranch(snapshot.workspace, snapshot.selectedBranch))) {
+      if (
+        !(await ensureRunBranch(
+          snapshot.workspace,
+          snapshot.selectedRepositoryPath,
+          snapshot.selectedBranch,
+        ))
+      ) {
         throw new Error(
           snapshot.selectedBranch
             ? `Could not switch to ${snapshot.selectedBranch}.`
@@ -11120,11 +11403,9 @@ function App() {
       input.executionSettings.contextFiles.map((file) => file.path),
     );
     return {
-      version: 1,
+      version: 2,
       workspacePath: inspection.workspacePath,
-      branch: inspection.branch,
-      headCommit: inspection.headCommit,
-      worktreeFingerprint: inspection.worktreeFingerprint,
+      repositories: inspection.repositories,
       profileKey:
         (input.chat.profile_key as CodexProfileKey | null) ??
         input.executionSettings.profileKey,
@@ -11148,15 +11429,42 @@ function App() {
     if (inspection.workspacePath !== expected.workspacePath) {
       reasons.push("The workspace location changed.");
     }
-    if (expected.branch !== inspection.branch) {
-      reasons.push("The active branch changed.");
+    const expectedRepositories = new Map(
+      expected.repositories.map((repository) => [
+        repository.repositoryPath ?? "legacy",
+        repository,
+      ]),
+    );
+    const currentRepositories = new Map(
+      inspection.repositories.map((repository) => [
+        repository.repositoryPath ?? "legacy",
+        repository,
+      ]),
+    );
+    if (
+      expectedRepositories.size !== currentRepositories.size ||
+      [...expectedRepositories.keys()].some(
+        (repositoryPath) => !currentRepositories.has(repositoryPath),
+      )
+    ) {
+      reasons.push("The workspace Git repositories changed.");
     }
-    if (expected.headCommit !== inspection.headCommit) {
-      reasons.push("The repository HEAD changed.");
-    }
-    if (expected.worktreeFingerprint !== inspection.worktreeFingerprint) {
-      reasons.push("The workspace files changed.");
-    }
+    expectedRepositories.forEach((expectedRepository, repositoryPath) => {
+      const currentRepository = currentRepositories.get(repositoryPath);
+      if (!currentRepository) return;
+      if (expectedRepository.branch !== currentRepository.branch) {
+        reasons.push("A repository branch changed.");
+      }
+      if (expectedRepository.headCommit !== currentRepository.headCommit) {
+        reasons.push("A repository HEAD changed.");
+      }
+      if (
+        expectedRepository.worktreeFingerprint !==
+        currentRepository.worktreeFingerprint
+      ) {
+        reasons.push("Workspace files changed.");
+      }
+    });
     if (
       Number(chat.conversation_revision ?? 0) !==
       expected.conversationRevision
@@ -11214,11 +11522,20 @@ function App() {
       currentThreadId,
       conversationRevision: Number(chat.conversation_revision ?? 0),
     });
+    const originalSettings = item.snapshot.executionSettings;
+    const executionSettings = createRunExecutionSettings({
+      ...originalSettings,
+      selectedRepositoryPath:
+        originalSettings.selectedRepositoryPath ??
+        (inspection.repositories.length === 1
+          ? inspection.repositories[0].repositoryPath
+          : null),
+    });
     const updated = await updatePromptQueueItemContextFingerprint(
       item.id,
       createQueuedPromptSnapshot({
         prompt: item.prompt,
-        executionSettings: item.snapshot.executionSettings,
+        executionSettings,
         contextFingerprint,
       }),
     );
@@ -11508,6 +11825,7 @@ function App() {
       profileKey,
       chatOrigin: chat.origin,
       externalThreadId: chat.external_thread_id,
+      selectedRepositoryPath: settings.selectedRepositoryPath,
       selectedBranch: settings.selectedBranch,
       cachedPreflight: null,
       mode,
@@ -11574,6 +11892,7 @@ function App() {
       !queued.goalMode &&
       queued.profileKey === control.profileKey &&
       queued.accountId === control.accountId &&
+      queued.selectedRepositoryPath === active.selectedRepositoryPath &&
       queued.selectedBranch === active.selectedBranch &&
       queued.model === active.model &&
       queued.reasoningEffort === active.reasoningEffort &&
@@ -11736,6 +12055,8 @@ function App() {
     const executionSettings = createRunExecutionSettings({
       accountId: accountId ?? 0,
       profileKey,
+      selectedRepositoryPath:
+        selectedGitRepository?.repository.rootPath ?? null,
       selectedBranch,
       mode,
       intent,
@@ -11816,11 +12137,9 @@ function App() {
           executionSettings.contextFiles.map((file) => file.path),
         );
         const contextFingerprint: PromptQueueContextFingerprint = {
-          version: 1,
+          version: 2,
           workspacePath: inspection.workspacePath,
-          branch: inspection.branch,
-          headCommit: inspection.headCommit,
-          worktreeFingerprint: inspection.worktreeFingerprint,
+          repositories: inspection.repositories,
           profileKey,
           threadId: null,
           conversationRevision: 0,
@@ -12169,6 +12488,7 @@ function App() {
       const executionSettings = createRunExecutionSettings({
         accountId: originalSettings.accountId,
         profileKey: originalSettings.profileKey,
+        selectedRepositoryPath: originalSettings.selectedRepositoryPath,
         selectedBranch: originalSettings.selectedBranch,
         mode: editedPlanMode ? "plan" : "run",
         intent: editedPlanMode ? "plan" : "normal",
@@ -12454,8 +12774,25 @@ function App() {
       return;
     }
 
+    let originalRepositoryPath = originalSettings.selectedRepositoryPath;
     try {
-      const branchList = await listGitBranches(workspace.path);
+      if (!originalRepositoryPath) {
+        const overview = normalizeWorkspaceGitOverview(
+          workspace.path,
+          await listWorkspaceGitStatus(workspace.path, true),
+        );
+        if (overview.repositories.length !== 1) {
+          showRerunIssue(
+            "Choose a repository before rerunning this older prompt in a multi-repository workspace.",
+          );
+          return;
+        }
+        originalRepositoryPath = overview.repositories[0].repository.rootPath;
+      }
+      const branchList = await listGitBranches(
+        workspace.path,
+        originalRepositoryPath,
+      );
       if (
         originalSettings.selectedBranch &&
         !branchList.branches.includes(originalSettings.selectedBranch)
@@ -12533,6 +12870,7 @@ function App() {
       profileKey: originalSettings.profileKey,
       chatOrigin: "orchestrator",
       externalThreadId: null,
+      selectedRepositoryPath: originalRepositoryPath,
       selectedBranch: originalSettings.selectedBranch,
       cachedPreflight: null,
       mode: originalSettings.mode,
@@ -12561,6 +12899,7 @@ function App() {
       restorePromptOnSetupFailure: false,
       executionSettings: createRunExecutionSettings({
         ...originalSettings,
+        selectedRepositoryPath: originalRepositoryPath,
         contextFiles: originalContextFiles,
       }),
     };
@@ -15184,6 +15523,8 @@ function App() {
     const executionSettings = createRunExecutionSettings({
       accountId: accountId ?? 0,
       profileKey,
+      selectedRepositoryPath:
+        selectedGitRepository?.repository.rootPath ?? null,
       selectedBranch,
       mode,
       intent,
@@ -15206,6 +15547,8 @@ function App() {
       profileKey,
       chatOrigin: chatSession.origin,
       externalThreadId: chatSession.externalThreadId,
+      selectedRepositoryPath:
+        selectedGitRepository?.repository.rootPath ?? null,
       selectedBranch,
       cachedPreflight: null,
       mode,
@@ -15859,9 +16202,23 @@ function App() {
 
     try {
       const existingRequest = fileDiffRequestCache.current.get(cacheKey);
+      const overview = gitStatusStates[workspace.id]?.snapshot ?? null;
+      const repositoryPath =
+        gitStatusByWorkspaceId
+          .get(workspace.id)
+          ?.get(file.relativePath)?.repositoryPath ??
+        preferredWorkspaceGitRepository(
+          overview,
+          workspace.selected_git_repository_path,
+        )?.repository.rootPath ??
+        null;
       const request =
         existingRequest ??
-        readWorkspaceGitDiff(workspace.path, file.path).finally(() => {
+        readWorkspaceGitDiff(
+          workspace.path,
+          file.path,
+          repositoryPath,
+        ).finally(() => {
           fileDiffRequestCache.current.delete(cacheKey);
         });
       if (!existingRequest) {
@@ -17294,7 +17651,8 @@ function App() {
                 {branchCreationDialog.baseBranch
                   ? ` from ${branchCreationDialog.baseBranch}`
                   : " from the current Git state"}
-                . Current workspace changes will carry over.
+                {` in ${branchCreationDialog.repositoryLabel}`}. Current
+                workspace changes will carry over.
               </p>
             </div>
             <label className="branch-creation-field">
@@ -17665,15 +18023,41 @@ function App() {
             aria-labelledby="git-action-title"
           >
             <h2 className="sr-only" id="git-action-title">Commit or push</h2>
+            {selectedGitOverview &&
+            selectedGitOverview.repositories.length > 1 ? (
+              <ComposerSelect
+                ariaLabel="Commit repository"
+                value={selectedGitRepository?.repository.rootPath ?? ""}
+                options={selectedGitOverview.repositories.map((repository) => ({
+                  value: repository.repository.rootPath,
+                  label: `${workspaceGitRepositoryDisplayPath(repository.repository)} · ${
+                    repository.currentBranch ?? "No branch"
+                  }${
+                    repository.files.length > 0
+                      ? ` · ${repository.files.length} changed`
+                      : repository.canPush
+                        ? ` · ${repository.aheadCount || "Ready to push"}`
+                        : " · Clean"
+                  }`,
+                }))}
+                placeholder="Choose repository"
+                icon={<FolderOpen size={15} />}
+                className="git-action-repository-select"
+                disabled={selectedGitActionStatus !== "idle"}
+                onChange={(repositoryPath) =>
+                  void selectGitRepository(repositoryPath)
+                }
+              />
+            ) : null}
             <div className="git-action-status-row">
               <span className="git-action-branch">
                 <GitBranch size={15} aria-hidden="true" />
                 <span>{selectedBranch ?? "No branch"}</span>
               </span>
-              {selectedGitSummary.total > 0 ? (
-                <span className="git-action-diff-summary" aria-label={`${selectedGitSummary.additions} additions, ${selectedGitSummary.deletions} deletions`}>
-                  <span className="added">+{selectedGitSummary.additions}</span>
-                  <span className="deleted">-{selectedGitSummary.deletions}</span>
+              {selectedRepositoryGitSummary.total > 0 ? (
+                <span className="git-action-diff-summary" aria-label={`${selectedRepositoryGitSummary.additions} additions, ${selectedRepositoryGitSummary.deletions} deletions`}>
+                  <span className="added">+{selectedRepositoryGitSummary.additions}</span>
+                  <span className="deleted">-{selectedRepositoryGitSummary.deletions}</span>
                 </span>
               ) : (
                 <span className={`git-action-state ${headerGitAction.statusKind}`}>
@@ -17862,6 +18246,10 @@ function App() {
           <div className="codex-workspace">
             <WorkspaceContextBanner
               workspace={selectedWorkspace}
+              repositories={selectedGitOverview?.repositories ?? []}
+              repositoryPath={
+                selectedGitRepository?.repository.rootPath ?? null
+              }
               branch={selectedBranch}
               branches={branches}
               gitState={selectedGitStatusState}
@@ -17872,6 +18260,9 @@ function App() {
               contextUsage={selectedWorkspaceContextUsage}
               contextWindow={selectedModelContextWindow}
               onGitAction={() => void handleHeaderGitAction()}
+              onRepositoryChange={(repositoryPath) =>
+                void selectGitRepository(repositoryPath)
+              }
               onBranchChange={(branch) => void selectBranch(branch)}
               branchCreationBusy={branchCreationPendingWorkspaceId !== null}
               onCreateBranch={openBranchCreationDialog}
@@ -18609,6 +19000,8 @@ function App() {
 
 function WorkspaceContextBanner({
   workspace,
+  repositories,
+  repositoryPath,
   branch,
   branches,
   gitState,
@@ -18619,6 +19012,7 @@ function WorkspaceContextBanner({
   contextUsage,
   contextWindow,
   onGitAction,
+  onRepositoryChange,
   onBranchChange,
   branchCreationBusy,
   onCreateBranch,
@@ -18633,6 +19027,8 @@ function WorkspaceContextBanner({
   windowDragRegionsEnabled,
 }: {
   workspace: Workspace | null;
+  repositories: WorkspaceGitRepositoryStatus[];
+  repositoryPath: string | null;
   branch: string | null;
   branches: string[];
   gitState: WorkspaceGitStatusState | null;
@@ -18643,6 +19039,7 @@ function WorkspaceContextBanner({
   contextUsage: RunViewState["tokenUsage"];
   contextWindow: number;
   onGitAction: () => void;
+  onRepositoryChange: (repositoryPath: string) => void;
   onBranchChange: (branch: string) => void;
   branchCreationBusy: boolean;
   onCreateBranch: () => void;
@@ -18749,6 +19146,7 @@ function WorkspaceContextBanner({
   const gitOperationRunning =
     gitActionStatus === "committing" || gitActionStatus === "pushing";
   const branchSelectorDisabled =
+    repositoryPath === null ||
     gitLoading ||
     gitError ||
     gitActionStatus !== "idle" ||
@@ -18820,6 +19218,23 @@ function WorkspaceContextBanner({
       </div>
 
       <div className="workspace-context-actions" data-tauri-drag-region="false">
+        {repositories.length > 1 ? (
+          <ComposerSelect
+            ariaLabel="Git repository"
+            value={repositoryPath ?? ""}
+            options={repositories.map((repository) => ({
+              value: repository.repository.rootPath,
+              label: `${workspaceGitRepositoryDisplayPath(repository.repository)} · ${
+                repository.currentBranch ?? "No branch"
+              }`,
+            }))}
+            placeholder="Repository"
+            icon={<FolderOpen size={14} />}
+            className="workspace-branch-select workspace-repository-select"
+            disabled={branchSelectorDisabled}
+            onChange={onRepositoryChange}
+          />
+        ) : null}
         <ComposerSelect
           ariaLabel="Branch"
           value={branch ?? ""}

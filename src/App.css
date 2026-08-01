@@ -1711,6 +1711,12 @@ button.account-switcher-item:hover:not(:disabled) {
     box-shadow 140ms ease;
 }
 
+.composer-select.workspace-repository-select {
+  width: clamp(120px, 14vw, 220px);
+  max-width: 220px;
+  flex-basis: 220px;
+}
+
 .workspace-branch-select button.composer-select-trigger {
   height: 30px;
   min-height: 30px;
@@ -2013,6 +2019,22 @@ button.account-switcher-item:hover:not(:disabled) {
   gap: 0;
   overflow: hidden;
   padding: 0;
+}
+
+.composer-select.git-action-repository-select {
+  width: calc(100% - 52px);
+  max-width: none;
+  margin: 22px 26px 0;
+  border: 1px solid var(--color-divider);
+  border-radius: 7px;
+  background: var(--color-surface-soft);
+}
+
+.git-action-repository-select button.composer-select-trigger {
+  min-height: 38px;
+  color: var(--color-text);
+  font-size: 0.84rem;
+  font-weight: 600;
 }
 
 .git-action-status-row {
