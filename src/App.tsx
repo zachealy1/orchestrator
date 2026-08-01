@@ -18307,7 +18307,6 @@ function App() {
                   >
                     <VirtuosoTaskChatTranscript
                       ref={taskChatTranscriptRef}
-                      key={selectedTranscriptIdentity}
                       entries={visibleTaskChatEntries}
                       transcriptIdentity={selectedTranscriptIdentity}
                       transcriptVersion={

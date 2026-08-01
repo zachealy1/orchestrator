@@ -48,6 +48,8 @@ export const TRANSCRIPT_SCROLL_IDLE_MS = 280;
 export const LATEST_TURN_POSITION_RETRY_MS = 80;
 export const LATEST_TURN_POSITION_MAX_ATTEMPTS = 8;
 export const COMPLETION_FOLLOW_MAX_ATTEMPTS = 4;
+const INITIAL_POSITION_READY_MAX_FRAMES = 180;
+const INITIAL_POSITION_OFFSET_TOLERANCE_PX = 2;
 
 const transcriptIncreaseViewportBy = {
   top: TRANSCRIPT_RENDER_AHEAD_PX,
@@ -90,10 +92,14 @@ type CachedTranscriptState = {
   entryCount: number;
 };
 
-type InitialRestoredState = {
-  initialized: boolean;
-  snapshot: StateSnapshot | undefined;
-};
+type InitialTranscriptPosition =
+  | { kind: "default" }
+  | { kind: "latest" }
+  | {
+      kind: "restore";
+      snapshot: StateSnapshot;
+      location: { index: number; align: "start"; offset: number };
+    };
 
 type TranscriptCacheMetadata = Omit<
   TranscriptViewportSnapshot,
@@ -125,6 +131,45 @@ function writeCachedTranscriptState(
     if (typeof oldest !== "string") break;
     transcriptStateCache.delete(oldest);
   }
+}
+
+function createRestoredTranscriptPosition(
+  snapshot: StateSnapshot,
+  fallbackHeights: number[],
+): Extract<InitialTranscriptPosition, { kind: "restore" }> {
+  const heightEstimates = [...fallbackHeights];
+  for (const range of snapshot.ranges) {
+    if (!Number.isFinite(range.size) || range.size <= 0) continue;
+    const startIndex = Math.max(0, Math.floor(range.startIndex));
+    const endIndex = Math.min(
+      heightEstimates.length - 1,
+      Number.isFinite(range.endIndex)
+        ? Math.floor(range.endIndex)
+        : heightEstimates.length - 1,
+    );
+    for (let index = startIndex; index <= endIndex; index += 1) {
+      heightEstimates[index] = range.size;
+    }
+  }
+
+  const scrollTop = Math.max(0, snapshot.scrollTop);
+  let itemTop = 0;
+  let index = 0;
+  for (; index < heightEstimates.length - 1; index += 1) {
+    const itemBottom = itemTop + heightEstimates[index];
+    if (scrollTop < itemBottom) break;
+    itemTop = itemBottom;
+  }
+
+  return {
+    kind: "restore",
+    snapshot,
+    location: {
+      index,
+      align: "start",
+      offset: Math.max(0, scrollTop - itemTop),
+    },
+  };
 }
 
 function isTranscriptScrollKey(key: string) {
@@ -198,6 +243,12 @@ export type VirtuosoTaskChatTranscriptProps = {
     found: boolean,
   ) => void;
 };
+
+type VirtuosoTaskChatTranscriptInstanceProps =
+  VirtuosoTaskChatTranscriptProps & {
+    onInitialPositionReady?: () => void;
+    preparing?: boolean;
+  };
 
 export type TranscriptViewportSnapshot = {
   workspaceId: number;
@@ -309,7 +360,7 @@ const VirtualTranscriptRow = memo(function VirtualTranscriptRow({
 
 const VirtuosoTaskChatTranscriptImpl = forwardRef<
   VirtuosoTaskChatTranscriptHandle,
-  VirtuosoTaskChatTranscriptProps
+  VirtuosoTaskChatTranscriptInstanceProps
 >(function VirtuosoTaskChatTranscript({
     entries,
     transcriptIdentity,
@@ -339,6 +390,8 @@ const VirtuosoTaskChatTranscriptImpl = forwardRef<
     onScrollActivityChange,
     notificationFocusRequest = null,
     onNotificationFocusApplied,
+    onInitialPositionReady,
+    preparing = false,
   }, forwardedRef) {
     const virtuosoRef = useRef<VirtuosoHandle | null>(null);
     const scrollerRef = useRef<HTMLElement | null>(null);
@@ -362,6 +415,9 @@ const VirtuosoTaskChatTranscriptImpl = forwardRef<
     >(null);
     const suppressInteractionFollowRef = useRef(false);
     const notificationFocusTimerRef = useRef<number | null>(null);
+    const initialPositionFrameRef = useRef<number | null>(null);
+    const initialPositionAttemptCountRef = useRef(0);
+    const initialPositionReadyRef = useRef(false);
     const latestPositionAttemptCountRef = useRef(0);
     const latestTurnVisibleRef = useRef(false);
     const atBottomRef = useRef(false);
@@ -383,10 +439,7 @@ const VirtuosoTaskChatTranscriptImpl = forwardRef<
       null,
     );
     const stableHeightEstimatesRef = useRef<StableHeightEstimates | null>(null);
-    const initialRestoredStateRef = useRef<InitialRestoredState>({
-      initialized: false,
-      snapshot: undefined,
-    });
+    const initialPositionRef = useRef<InitialTranscriptPosition | null>(null);
     const liveTailInteractionRevisionRef =
       useRef<LiveTailInteractionRevision>({
         entryId: null,
@@ -401,7 +454,6 @@ const VirtuosoTaskChatTranscriptImpl = forwardRef<
       viewportWidthBucket: getTranscriptWidthBucket(viewportWidth),
       entryCount: entries.length,
     });
-    const suppressRestoreOnMountRef = useRef(openAtLatestRequest !== null);
     const [editingEntryId, setEditingEntryId] = useState<string | null>(null);
     const [editingPrompt, setEditingPrompt] = useState("");
     const [showJumpToLatest, setShowJumpToLatest] = useState(false);
@@ -527,9 +579,14 @@ const VirtuosoTaskChatTranscriptImpl = forwardRef<
       ],
     );
 
-    if (!initialRestoredStateRef.current.initialized) {
-      let snapshot: StateSnapshot | undefined;
-      if (!suppressRestoreOnMountRef.current) {
+    if (initialPositionRef.current === null) {
+      if (
+        openAtLatestRequest?.transcriptVersion === transcriptVersion &&
+        entries.length > 0
+      ) {
+        initialPositionRef.current = { kind: "latest" };
+      } else {
+        let snapshot: StateSnapshot | undefined;
         if (
           restoredViewportSnapshot &&
           restoredViewportSnapshot.transcriptIdentity === transcriptIdentity &&
@@ -541,13 +598,107 @@ const VirtuosoTaskChatTranscriptImpl = forwardRef<
         } else {
           snapshot = readCachedTranscriptState(cacheKey, entries.length);
         }
+        initialPositionRef.current = snapshot
+          ? createRestoredTranscriptPosition(snapshot, heightEstimates)
+          : { kind: "default" };
       }
-      initialRestoredStateRef.current = {
-        initialized: true,
-        snapshot,
-      };
     }
-    const restoredState = initialRestoredStateRef.current.snapshot;
+    const initialPosition = initialPositionRef.current;
+    const initialPositionProps =
+      initialPosition.kind === "latest"
+        ? {
+            initialTopMostItemIndex: {
+              index: "LAST" as const,
+              align: "end" as const,
+            },
+          }
+        : initialPosition.kind === "restore"
+          ? { restoreStateFrom: initialPosition.snapshot }
+          : { initialItemCount: Math.min(entries.length, 20) };
+
+    const clearInitialPositionSchedule = useCallback(() => {
+      if (initialPositionFrameRef.current === null) return;
+      window.cancelAnimationFrame(initialPositionFrameRef.current);
+      initialPositionFrameRef.current = null;
+    }, []);
+    const reportInitialPositionReady = useCallback(() => {
+      if (initialPositionReadyRef.current) return;
+      initialPositionReadyRef.current = true;
+      clearInitialPositionSchedule();
+      onInitialPositionReady?.();
+    }, [clearInitialPositionSchedule, onInitialPositionReady]);
+    const initialPositionIsReady = useCallback(() => {
+      const scroller = scrollerRef.current;
+      if (!scroller || entries.length === 0) return false;
+      if (initialPosition.kind === "latest") {
+        return latestTurnVisibleRef.current && atBottomRef.current;
+      }
+
+      const viewport = scroller.getBoundingClientRect();
+      const rows = Array.from(
+        scroller.querySelectorAll<HTMLElement>("[data-transcript-entry-id]"),
+      );
+      if (viewport.width <= 0 || viewport.height <= 0) {
+        return rows.length > 0;
+      }
+      if (initialPosition.kind === "restore") {
+        const targetEntry = entries[initialPosition.location.index];
+        if (!targetEntry) return false;
+        const row = rows.find(
+          (candidate) =>
+            candidate.dataset.transcriptEntryId === targetEntry.clientId,
+        );
+        if (!row) return false;
+        const bounds = row.getBoundingClientRect();
+        const expectedOffset = -initialPosition.location.offset;
+        return (
+          bounds.bottom > viewport.top &&
+          bounds.top < viewport.bottom &&
+          Math.abs(bounds.top - viewport.top - expectedOffset) <=
+            INITIAL_POSITION_OFFSET_TOLERANCE_PX
+        );
+      }
+
+      return rows.some((row) => {
+        const bounds = row.getBoundingClientRect();
+        return bounds.bottom > viewport.top && bounds.top < viewport.bottom;
+      });
+    }, [entries, initialPosition]);
+    const queueInitialPositionCheck = useCallback(() => {
+      if (
+        initialPositionReadyRef.current ||
+        initialPositionFrameRef.current !== null ||
+        !viewportStableRef.current
+      ) {
+        return;
+      }
+
+      const check = () => {
+        initialPositionFrameRef.current = null;
+        if (initialPositionReadyRef.current) return;
+        if (initialPositionIsReady()) {
+          reportInitialPositionReady();
+          return;
+        }
+        initialPositionAttemptCountRef.current += 1;
+        if (
+          initialPositionAttemptCountRef.current <
+          INITIAL_POSITION_READY_MAX_FRAMES
+        ) {
+          initialPositionFrameRef.current = window.requestAnimationFrame(check);
+        }
+      };
+      initialPositionFrameRef.current = window.requestAnimationFrame(check);
+    }, [initialPositionIsReady, reportInitialPositionReady]);
+
+    useEffect(() => {
+      queueInitialPositionCheck();
+      return clearInitialPositionSchedule;
+    }, [
+      clearInitialPositionSchedule,
+      queueInitialPositionCheck,
+      viewportStable,
+    ]);
 
     const publishViewportSnapshot = useCallback(
       (metadata: TranscriptCacheMetadata, snapshot: StateSnapshot) => {
@@ -1570,13 +1721,13 @@ const VirtuosoTaskChatTranscriptImpl = forwardRef<
       <div className="task-chat-scroll-frame">
         <Virtuoso
           className="task-chat-transcript virtuoso-transcript task-chat-virtuoso"
-          role="region"
-          aria-label="Task chat transcript"
-          tabIndex={0}
+          role={preparing ? undefined : "region"}
+          aria-label={preparing ? undefined : "Task chat transcript"}
+          tabIndex={preparing ? -1 : 0}
           ref={virtuosoRef}
           data={entries}
           firstItemIndex={firstItemIndex}
-          initialItemCount={Math.min(entries.length, 20)}
+          {...initialPositionProps}
           computeItemKey={computeItemKey}
           defaultItemHeight={defaultItemHeight}
           heightEstimates={heightEstimates}
@@ -1587,12 +1738,6 @@ const VirtuosoTaskChatTranscriptImpl = forwardRef<
             bottom: overscanItemCount,
           }}
           scrollerRef={handleScrollerRef}
-          initialTopMostItemIndex={
-            suppressRestoreOnMountRef.current
-              ? { index: "LAST", align: "end" }
-              : undefined
-          }
-          restoreStateFrom={restoredState}
           alignToBottom
           atBottomThreshold={TRANSCRIPT_BOTTOM_THRESHOLD_PX}
           followOutput={() =>
@@ -1623,8 +1768,102 @@ const VirtuosoTaskChatTranscriptImpl = forwardRef<
   },
 );
 
-export const VirtuosoTaskChatTranscript = memo(
+const MemoizedVirtuosoTaskChatTranscript = memo(
   VirtuosoTaskChatTranscriptImpl,
+);
+
+const VirtuosoTaskChatTranscriptHost = forwardRef<
+  VirtuosoTaskChatTranscriptHandle,
+  VirtuosoTaskChatTranscriptProps
+>(function VirtuosoTaskChatTranscriptHost(props, forwardedRef) {
+  const [displayedIdentity, setDisplayedIdentity] = useState(
+    props.transcriptIdentity,
+  );
+  const displayedPropsRef = useRef(props);
+  const incomingPropsRef = useRef(props);
+  const visibleTranscriptRef = useRef<VirtuosoTaskChatTranscriptHandle | null>(
+    null,
+  );
+  const incomingTranscriptRef = useRef<VirtuosoTaskChatTranscriptHandle | null>(
+    null,
+  );
+  const switching = displayedIdentity !== props.transcriptIdentity;
+
+  incomingPropsRef.current = props;
+  if (!switching) displayedPropsRef.current = props;
+
+  useImperativeHandle(
+    forwardedRef,
+    () => ({
+      captureViewportState: () =>
+        visibleTranscriptRef.current?.captureViewportState(),
+      stabilizeForSubmission: () =>
+        visibleTranscriptRef.current?.stabilizeForSubmission(),
+      settleAfterSubmission: () =>
+        visibleTranscriptRef.current?.settleAfterSubmission(),
+    }),
+    [],
+  );
+
+  const showIncomingTranscript = useCallback((identity: string) => {
+    if (incomingPropsRef.current.transcriptIdentity !== identity) return;
+    setDisplayedIdentity(identity);
+  }, []);
+
+  const layers = switching
+    ? [
+        {
+          identity: displayedIdentity,
+          props: displayedPropsRef.current,
+          preparing: false,
+        },
+        {
+          identity: props.transcriptIdentity,
+          props,
+          preparing: true,
+        },
+      ]
+    : [
+        {
+          identity: props.transcriptIdentity,
+          props,
+          preparing: false,
+        },
+      ];
+
+  return (
+    <div className="task-chat-transcript-switcher">
+      {layers.map((layer) => (
+        <div
+          aria-hidden={layer.preparing || undefined}
+          className={`task-chat-transcript-layer${
+            layer.preparing ? " is-preparing" : " is-visible"
+          }`}
+          inert={layer.preparing || undefined}
+          key={layer.identity}
+        >
+          <MemoizedVirtuosoTaskChatTranscript
+            {...layer.props}
+            preparing={layer.preparing}
+            ref={
+              layer.preparing
+                ? incomingTranscriptRef
+                : visibleTranscriptRef
+            }
+            onInitialPositionReady={
+              layer.preparing
+                ? () => showIncomingTranscript(layer.identity)
+                : undefined
+            }
+          />
+        </div>
+      ))}
+    </div>
+  );
+});
+
+export const VirtuosoTaskChatTranscript = memo(
+  VirtuosoTaskChatTranscriptHost,
 );
 
 export function clearTranscriptStateCache() {

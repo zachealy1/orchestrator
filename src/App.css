@@ -2308,7 +2308,8 @@ button.account-switcher-item:hover:not(:disabled) {
   flex: 0 0 auto;
 }
 
-.task-chat-scroll-frame {
+.task-chat-scroll-frame,
+.task-chat-transcript-switcher {
   position: relative;
   display: flex;
   flex: 1 1 auto;
@@ -2319,6 +2320,28 @@ button.account-switcher-item:hover:not(:disabled) {
   overflow: hidden;
   border-radius: var(--radius);
   isolation: isolate;
+}
+
+.task-chat-transcript-switcher {
+  contain: layout paint;
+}
+
+.task-chat-transcript-layer {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  min-width: 0;
+  min-height: 0;
+}
+
+.task-chat-transcript-layer.is-visible {
+  z-index: 2;
+}
+
+.task-chat-transcript-layer.is-preparing {
+  z-index: 1;
+  opacity: 0;
+  pointer-events: none;
 }
 
 .task-transcript-error {

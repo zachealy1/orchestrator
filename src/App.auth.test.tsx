@@ -5831,22 +5831,26 @@ describe("App Codex auth", () => {
       within(workspaceNav).getByRole("button", { name: "orchestrator" }),
     );
     expect(await screen.findByLabelText("1 completed chat")).toBeInTheDocument();
-    expect(
-      within(screen.getByLabelText("Task chat transcript")).getByLabelText(
-        "Submitted prompt",
-      ),
-    ).toHaveTextContent("Run in orchestrator");
+    await waitFor(() =>
+      expect(
+        within(screen.getByLabelText("Task chat transcript")).getByLabelText(
+          "Submitted prompt",
+        ),
+      ).toHaveTextContent("Run in orchestrator"),
+    );
     expect(screen.queryByText("Run in mobile client")).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: /run codex/i })).toBeInTheDocument();
 
     await user.click(
       within(workspaceNav).getByRole("button", { name: "mobile-client" }),
     );
-    expect(
-      within(screen.getByLabelText("Task chat transcript")).getByLabelText(
-        "Submitted prompt",
-      ),
-    ).toHaveTextContent("Run in mobile client");
+    await waitFor(() =>
+      expect(
+        within(screen.getByLabelText("Task chat transcript")).getByLabelText(
+          "Submitted prompt",
+        ),
+      ).toHaveTextContent("Run in mobile client"),
+    );
     expect(screen.getByRole("button", { name: /stop codex/i })).toBeInTheDocument();
   });
 
