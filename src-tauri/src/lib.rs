@@ -359,6 +359,7 @@ struct ChatTitleGenerationResult {
     title: String,
 }
 
+#[cfg(test)]
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 struct WorkspaceGitStatusSnapshot {
@@ -3318,6 +3319,7 @@ async fn create_git_branch_in_workspace(
     .await
 }
 
+#[cfg(test)]
 fn commit_workspace_changes_blocking(
     workspace_path: String,
     message: String,
@@ -3466,25 +3468,6 @@ fn commit_message_generation_args(workspace: &Path, model: Option<&str>) -> Vec<
     }
     args.push("-".to_string());
     args
-}
-
-fn generate_workspace_commit_message_blocking(
-    app: AppHandle,
-    workspace_path: String,
-    account_id: Option<i64>,
-    include_unstaged: Option<bool>,
-    model: Option<String>,
-    intent_context: Option<WorkspaceCommitIntentContext>,
-) -> Result<WorkspaceCommitMessageResult, String> {
-    generate_workspace_repository_commit_message_blocking(
-        app,
-        workspace_path,
-        None,
-        account_id,
-        include_unstaged,
-        model,
-        intent_context,
-    )
 }
 
 fn generate_workspace_repository_commit_message_blocking(
@@ -3843,6 +3826,7 @@ fn git_staged_paths_for_pathspecs(
         .collect())
 }
 
+#[cfg(test)]
 fn workspace_commit_context(
     git_root: &Path,
     workspace: &Path,
@@ -4001,18 +3985,6 @@ fn truncate_commit_context(value: &str, limit: usize) -> String {
     truncated
 }
 
-fn untracked_workspace_context(
-    git_root: &Path,
-    workspace: &Path,
-    pathspec: &str,
-) -> Result<String, String> {
-    untracked_workspace_context_for_pathspecs(
-        git_root,
-        workspace,
-        &[pathspec.to_string()],
-    )
-}
-
 fn untracked_workspace_context_for_pathspecs(
     git_root: &Path,
     workspace: &Path,
@@ -4084,19 +4056,6 @@ fn untracked_workspace_context_for_pathspecs(
         context.trim(),
         MAX_COMMIT_UNTRACKED_CONTEXT_CHARS,
     ))
-}
-
-fn git_context_output(git_root: &Path, git_args: &[&str]) -> Result<String, String> {
-    let git_root_arg = git_root.to_string_lossy();
-    let mut args = vec!["-C", git_root_arg.as_ref()];
-    args.extend(git_args.iter().copied());
-    let probe = run_command_raw("git", &args);
-    if probe.ok {
-        Ok(probe.stdout)
-    } else {
-        Err(output_detail(&probe)
-            .unwrap_or_else(|| "Unable to inspect Git changes for commit message".to_string()))
-    }
 }
 
 fn git_context_output_with_pathspecs(
@@ -4424,6 +4383,7 @@ fn is_commit_count_suffix(inner: &str) -> bool {
     })
 }
 
+#[cfg(test)]
 fn push_workspace_branch_blocking(
     workspace_path: String,
 ) -> Result<WorkspaceGitActionResult, String> {
@@ -4478,6 +4438,7 @@ async fn push_workspace_branch(
     .await
 }
 
+#[cfg(test)]
 fn list_workspace_git_status_blocking(
     workspace_path: String,
 ) -> Result<WorkspaceGitStatusSnapshot, String> {
@@ -4649,6 +4610,7 @@ async fn list_workspace_git_status(
     .await
 }
 
+#[cfg(test)]
 fn read_workspace_git_diff_blocking(
     workspace_path: String,
     file_path: String,
@@ -5265,6 +5227,7 @@ fn extend_prompt_queue_file_fingerprint(hash: &mut u64, git_root: &Path, relativ
     }
 }
 
+#[cfg(test)]
 fn prompt_queue_worktree_fingerprint(git_root: &Path, pathspec: &str) -> Option<String> {
     prompt_queue_worktree_fingerprint_for_pathspecs(
         git_root,
@@ -6645,10 +6608,6 @@ fn discover_repository_pathspecs(
     git_repository_pathspecs(repository, &repositories)
 }
 
-fn git_status_for_pathspec(git_root: &Path, pathspec: &str) -> CommandProbe {
-    git_status_for_pathspecs(git_root, &[pathspec.to_string()])
-}
-
 fn git_status_for_pathspecs(git_root: &Path, pathspecs: &[String]) -> CommandProbe {
     let git_root_arg = git_root.to_string_lossy();
     let mut args = vec![
@@ -6878,10 +6837,6 @@ fn git_status_is_conflicted(index_status: char, worktree_status: char) -> bool {
             (index_status, worktree_status),
             ('A', 'A') | ('D', 'D') | ('A', 'D') | ('D', 'A')
         )
-}
-
-fn git_numstat_totals(git_root: &Path, pathspec: &str) -> (usize, usize) {
-    git_numstat_totals_for_pathspecs(git_root, &[pathspec.to_string()])
 }
 
 fn git_numstat_totals_for_pathspecs(

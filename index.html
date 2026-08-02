@@ -100,6 +100,14 @@
         </div>
       </div>
     </div>
-    <script type="module" src="/src/main.tsx"></script>
+    <script type="module">
+      import("/src/main.tsx").catch((error) => {
+        console.error("Orchestrator failed to start", error);
+        const bootstrap = document.querySelector(".app-bootstrap-content");
+        if (bootstrap) {
+          bootstrap.textContent = `Startup failed: ${error instanceof Error ? error.message : String(error)}`;
+        }
+      });
+    </script>
   </body>
 </html>
