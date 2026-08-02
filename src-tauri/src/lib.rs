@@ -11,7 +11,7 @@ use std::{
     env,
     ffi::OsStr,
     fs,
-    io::{BufRead, BufReader, Cursor, Read, Write},
+    io::{BufRead, BufReader, Cursor, Read, Seek, SeekFrom, Write},
     path::{Path, PathBuf},
     process::{Child, ChildStdin, Command, Stdio},
     sync::{
@@ -32,7 +32,6 @@ use agent_notifications::AgentNotificationState;
 use browser_sessions::{BrowserSessionRegistry, PlaywrightRuntime};
 
 const DATABASE_URL: &str = "sqlite:app.db";
-const MAX_FILE_PREVIEW_BYTES: usize = 512 * 1024;
 const MAX_IMAGE_ATTACHMENT_BYTES: u64 = 25 * 1024 * 1024;
 const MAX_IMAGE_ATTACHMENT_PIXELS: u64 = 80_000_000;
 const IMAGE_ATTACHMENT_THUMBNAIL_EDGE: u32 = 512;
@@ -49,6 +48,8 @@ const MAX_CHAT_TITLE_PROMPT_CHARS: usize = 12_000;
 const MAX_PROMPT_QUEUE_PROMPT_CHARS: usize = 100_000;
 const MAX_PROMPT_QUEUE_SNAPSHOT_BYTES: usize = 4 * 1024 * 1024;
 const MAX_WORKSPACE_UNDO_DIFF_BYTES: usize = 8 * 1024 * 1024;
+const WORKSPACE_FILE_PREVIEW_CHUNK_BYTES: usize = 512 * 1024;
+const WORKSPACE_FILE_BINARY_PROBE_BYTES: usize = 8 * 1024;
 const DEFAULT_CODEX_PROFILE_ID: i64 = 0;
 const DEFAULT_CODEX_PROFILE_KEY: &str = "default";
 const ASK_FOR_APPROVAL_PERMISSION_PROFILE: &str = "orchestrator_workspace_network_v1";
@@ -483,6 +484,10 @@ struct WorkspaceFilePreview {
     content: String,
     truncated: bool,
     is_binary: bool,
+    complete: bool,
+    next_offset: u64,
+    total_bytes: u64,
+    version: String,
 }
 
 #[derive(Debug, Serialize)]
@@ -4931,30 +4936,178 @@ fn read_workspace_file_preview_blocking(
     workspace_path: String,
     file_path: String,
 ) -> Result<WorkspaceFilePreview, String> {
+    read_workspace_file_preview_chunk_blocking(workspace_path, file_path, 0, None)
+}
+
+fn workspace_file_preview_version(metadata: &fs::Metadata) -> Result<String, String> {
+    let modified = metadata
+        .modified()
+        .map_err(|error| format!("Unable to inspect file modification time: {error}"))?;
+    let modified_component = match modified.duration_since(SystemTime::UNIX_EPOCH) {
+        Ok(duration) => format!("{}-{}", duration.as_secs(), duration.subsec_nanos()),
+        Err(error) => {
+            let duration = error.duration();
+            format!("pre-{}-{}", duration.as_secs(), duration.subsec_nanos())
+        }
+    };
+
+    Ok(format!("{}:{modified_component}", metadata.len()))
+}
+
+fn utf8_sequence_width(byte: u8) -> Option<usize> {
+    match byte {
+        0x00..=0x7f => Some(1),
+        0xc2..=0xdf => Some(2),
+        0xe0..=0xef => Some(3),
+        0xf0..=0xf4 => Some(4),
+        _ => None,
+    }
+}
+
+fn validate_workspace_file_preview_offset(
+    source: &mut fs::File,
+    offset: u64,
+    total_bytes: u64,
+) -> Result<(), String> {
+    if offset == 0 || offset == total_bytes {
+        return Ok(());
+    }
+
+    source
+        .seek(SeekFrom::Start(offset))
+        .map_err(|error| format!("Unable to seek in preview file: {error}"))?;
+    let mut current = [0_u8; 1];
+    source
+        .read_exact(&mut current)
+        .map_err(|error| format!("Unable to validate preview offset: {error}"))?;
+    if current[0] & 0xc0 != 0x80 {
+        return Ok(());
+    }
+
+    let preceding_length = offset.min(3) as usize;
+    let preceding_start = offset - preceding_length as u64;
+    source
+        .seek(SeekFrom::Start(preceding_start))
+        .map_err(|error| format!("Unable to seek in preview file: {error}"))?;
+    let mut preceding = vec![0_u8; preceding_length];
+    source
+        .read_exact(&mut preceding)
+        .map_err(|error| format!("Unable to validate preview offset: {error}"))?;
+
+    for distance in 1..=preceding_length {
+        let lead_index = preceding_length - distance;
+        let Some(width) = utf8_sequence_width(preceding[lead_index]) else {
+            continue;
+        };
+        if width > distance
+            && preceding[lead_index + 1..]
+                .iter()
+                .all(|byte| byte & 0xc0 == 0x80)
+        {
+            return Err("Preview offset is not a UTF-8 character boundary".to_string());
+        }
+    }
+
+    Ok(())
+}
+
+fn decode_workspace_file_preview_chunk(
+    bytes: &[u8],
+    reaches_end_of_file: bool,
+) -> Result<(String, usize, bool), String> {
+    if bytes.contains(&0) {
+        return Ok((String::new(), bytes.len(), true));
+    }
+
+    match std::str::from_utf8(bytes) {
+        Ok(content) => Ok((content.to_string(), bytes.len(), false)),
+        Err(error)
+            if error.error_len().is_none()
+                && !reaches_end_of_file
+                && error.valid_up_to() > 0 =>
+        {
+            let valid_length = error.valid_up_to();
+            Ok((
+                std::str::from_utf8(&bytes[..valid_length])
+                    .map_err(|_| "Unable to decode a valid preview chunk prefix".to_string())?
+                    .to_string(),
+                valid_length,
+                false,
+            ))
+        }
+        Err(_) => Ok((String::new(), bytes.len(), true)),
+    }
+}
+
+fn read_workspace_file_preview_chunk_blocking(
+    workspace_path: String,
+    file_path: String,
+    offset: u64,
+    expected_version: Option<String>,
+) -> Result<WorkspaceFilePreview, String> {
     let (workspace, file_path) = canonical_workspace_child(&workspace_path, &file_path)?;
     if !file_path.is_file() {
         return Err("Selected path is not a file".to_string());
     }
 
-    let mut file = fs::File::open(&file_path)
-        .map_err(|error| format!("Unable to open {}: {error}", file_path.display()))?;
-    let mut bytes = Vec::with_capacity(MAX_FILE_PREVIEW_BYTES + 1);
-    Read::by_ref(&mut file)
-        .take((MAX_FILE_PREVIEW_BYTES + 1) as u64)
+    let mut source = fs::File::open(&file_path)
+        .map_err(|error| format!("Unable to read {}: {error}", file_path.display()))?;
+    let metadata = source
+        .metadata()
+        .map_err(|error| format!("Unable to inspect {}: {error}", file_path.display()))?;
+    let total_bytes = metadata.len();
+    let version = workspace_file_preview_version(&metadata)?;
+
+    if expected_version
+        .as_deref()
+        .is_some_and(|expected| expected != version)
+    {
+        return Err("File changed while loading; restart the preview".to_string());
+    }
+    if offset > total_bytes {
+        return Err(format!(
+            "Preview offset {offset} exceeds file size {total_bytes}"
+        ));
+    }
+
+    validate_workspace_file_preview_offset(&mut source, offset, total_bytes)?;
+    source
+        .seek(SeekFrom::Start(offset))
+        .map_err(|error| format!("Unable to seek in {}: {error}", file_path.display()))?;
+    let maximum_length = (total_bytes - offset).min(WORKSPACE_FILE_PREVIEW_CHUNK_BYTES as u64);
+    let mut bytes = Vec::with_capacity(maximum_length as usize);
+    source
+        .take(maximum_length)
         .read_to_end(&mut bytes)
         .map_err(|error| format!("Unable to read {}: {error}", file_path.display()))?;
 
-    let truncated = bytes.len() > MAX_FILE_PREVIEW_BYTES;
-    let preview_len = bytes.len().min(MAX_FILE_PREVIEW_BYTES);
-    let preview_bytes = &bytes[..preview_len];
-    let (content, is_binary) = decode_preview_text(preview_bytes);
+    let reaches_end_of_file = offset + bytes.len() as u64 == total_bytes;
+    let (content, consumed_bytes, is_binary) =
+        decode_workspace_file_preview_chunk(&bytes, reaches_end_of_file)?;
+
+    let current_metadata = fs::metadata(&file_path)
+        .map_err(|_| "File changed while loading; restart the preview".to_string())?;
+    if workspace_file_preview_version(&current_metadata)? != version {
+        return Err("File changed while loading; restart the preview".to_string());
+    }
+
+    let next_offset = if is_binary {
+        total_bytes
+    } else {
+        offset + consumed_bytes as u64
+    };
+    let complete = is_binary || next_offset == total_bytes;
 
     Ok(WorkspaceFilePreview {
         relative_path: relative_workspace_path(&workspace, &file_path)?,
         path: file_path.to_string_lossy().to_string(),
         content,
-        truncated,
+        truncated: false,
         is_binary,
+        complete,
+        next_offset,
+        total_bytes,
+        version,
     })
 }
 
@@ -4965,6 +5118,48 @@ async fn read_workspace_file_preview(
 ) -> Result<WorkspaceFilePreview, String> {
     run_blocking_command("read workspace file preview", move || {
         read_workspace_file_preview_blocking(workspace_path, file_path)
+    })
+    .await
+}
+
+#[tauri::command]
+async fn read_workspace_file_preview_chunk(
+    workspace_path: String,
+    file_path: String,
+    offset: u64,
+    version: String,
+) -> Result<WorkspaceFilePreview, String> {
+    run_blocking_command("read workspace file preview chunk", move || {
+        read_workspace_file_preview_chunk_blocking(
+            workspace_path,
+            file_path,
+            offset,
+            Some(version),
+        )
+    })
+    .await
+}
+
+fn read_workspace_file_preview_version_blocking(
+    workspace_path: String,
+    file_path: String,
+) -> Result<String, String> {
+    let (_, file_path) = canonical_workspace_child(&workspace_path, &file_path)?;
+    if !file_path.is_file() {
+        return Err("Selected path is not a file".to_string());
+    }
+    let metadata = fs::metadata(&file_path)
+        .map_err(|error| format!("Unable to inspect {}: {error}", file_path.display()))?;
+    workspace_file_preview_version(&metadata)
+}
+
+#[tauri::command]
+async fn read_workspace_file_preview_version(
+    workspace_path: String,
+    file_path: String,
+) -> Result<String, String> {
+    run_blocking_command("read workspace file preview version", move || {
+        read_workspace_file_preview_version_blocking(workspace_path, file_path)
     })
     .await
 }
@@ -6892,11 +7087,52 @@ fn parse_git_numstat_totals(output: &str) -> (usize, usize) {
 }
 
 fn untracked_file_additions(workspace: &Path, file_path: &Path) -> usize {
-    read_workspace_file_preview_text(workspace, file_path)
-        .ok()
-        .filter(|preview| !preview.is_binary)
-        .map(|preview| preview.content.lines().count())
-        .unwrap_or(0)
+    let Ok(canonical_file) = fs::canonicalize(file_path) else {
+        return 0;
+    };
+    if !canonical_file.starts_with(workspace) {
+        return 0;
+    }
+
+    let Ok(source) = fs::File::open(&canonical_file) else {
+        return 0;
+    };
+    let mut reader = BufReader::new(source);
+    let mut incomplete_utf8 = Vec::with_capacity(3);
+    let mut total_bytes = 0_usize;
+    let mut newline_count = 0_usize;
+    let mut final_byte = None;
+
+    loop {
+        let Ok(buffer) = reader.fill_buf() else {
+            return 0;
+        };
+        if buffer.is_empty() {
+            break;
+        }
+        if buffer.contains(&0) {
+            return 0;
+        }
+
+        let consumed = buffer.len();
+        total_bytes += consumed;
+        newline_count += buffer.iter().filter(|byte| **byte == b'\n').count();
+        final_byte = buffer.last().copied();
+        incomplete_utf8.extend_from_slice(buffer);
+        match std::str::from_utf8(&incomplete_utf8) {
+            Ok(_) => incomplete_utf8.clear(),
+            Err(error) if error.error_len().is_none() => {
+                incomplete_utf8 = incomplete_utf8.split_off(error.valid_up_to());
+            }
+            Err(_) => return 0,
+        }
+        reader.consume(consumed);
+    }
+
+    if !incomplete_utf8.is_empty() || total_bytes == 0 {
+        return 0;
+    }
+    newline_count + usize::from(final_byte != Some(b'\n'))
 }
 
 fn run_git_diff(git_root: &Path, staged: bool, git_path: &str) -> Result<String, String> {
@@ -7014,24 +7250,59 @@ fn read_workspace_file_preview_text(workspace: &Path, file_path: &Path) -> Resul
         return Err("Selected path is outside the workspace".to_string());
     }
 
-    let mut file = fs::File::open(&canonical_file)
-        .map_err(|error| format!("Unable to open {}: {error}", canonical_file.display()))?;
-    let mut bytes = Vec::with_capacity(MAX_FILE_PREVIEW_BYTES + 1);
-    Read::by_ref(&mut file)
-        .take((MAX_FILE_PREVIEW_BYTES + 1) as u64)
-        .read_to_end(&mut bytes)
+    let mut source = fs::File::open(&canonical_file)
+        .map_err(|error| format!("Unable to read {}: {error}", canonical_file.display()))?;
+    let metadata = source
+        .metadata()
+        .map_err(|error| format!("Unable to inspect {}: {error}", canonical_file.display()))?;
+    let mut probe = Vec::with_capacity(WORKSPACE_FILE_BINARY_PROBE_BYTES);
+    Read::by_ref(&mut source)
+        .take(WORKSPACE_FILE_BINARY_PROBE_BYTES as u64)
+        .read_to_end(&mut probe)
         .map_err(|error| format!("Unable to read {}: {error}", canonical_file.display()))?;
 
-    Ok(preview_text_from_bytes(&bytes))
+    let probe_reaches_end_of_file = probe.len() as u64 == metadata.len();
+    let probe_is_binary = probe.contains(&0)
+        || matches!(
+            std::str::from_utf8(&probe),
+            Err(error) if error.error_len().is_some() || probe_reaches_end_of_file
+        );
+    if probe_is_binary {
+        return Ok(PreviewText {
+            content: String::new(),
+            truncated: false,
+            is_binary: true,
+        });
+    }
+
+    match fs::read_to_string(&canonical_file) {
+        Ok(content) if content.contains('\0') => Ok(PreviewText {
+            content: String::new(),
+            truncated: false,
+            is_binary: true,
+        }),
+        Ok(content) => Ok(PreviewText {
+            content,
+            truncated: false,
+            is_binary: false,
+        }),
+        Err(error) if error.kind() == std::io::ErrorKind::InvalidData => Ok(PreviewText {
+            content: String::new(),
+            truncated: false,
+            is_binary: true,
+        }),
+        Err(error) => Err(format!(
+            "Unable to read {}: {error}",
+            canonical_file.display()
+        )),
+    }
 }
 
 fn preview_text_from_bytes(bytes: &[u8]) -> PreviewText {
-    let preview_len = bytes.len().min(MAX_FILE_PREVIEW_BYTES);
-    let preview_bytes = &bytes[..preview_len];
-    let (content, is_binary) = decode_preview_text(preview_bytes);
+    let (content, is_binary) = decode_preview_text(bytes);
     PreviewText {
         content,
-        truncated: bytes.len() > MAX_FILE_PREVIEW_BYTES,
+        truncated: false,
         is_binary,
     }
 }
@@ -7112,15 +7383,6 @@ fn decode_preview_text(bytes: &[u8]) -> (String, bool) {
 
     match std::str::from_utf8(bytes) {
         Ok(content) => (content.to_string(), false),
-        Err(error) if error.error_len().is_none() => {
-            let valid_bytes = &bytes[..error.valid_up_to()];
-            (
-                std::str::from_utf8(valid_bytes)
-                    .unwrap_or_default()
-                    .to_string(),
-                false,
-            )
-        }
         Err(_) => (String::new(), true),
     }
 }
@@ -7173,6 +7435,8 @@ pub fn run() {
             undo_workspace_git_diff,
             list_workspace_directory,
             read_workspace_file_preview,
+            read_workspace_file_preview_chunk,
+            read_workspace_file_preview_version,
             prepare_image_attachment,
             inspect_dropped_context_paths,
             inspect_prompt_queue_context,
@@ -8479,21 +8743,82 @@ mod tests {
     }
 
     #[test]
-    fn workspace_file_preview_truncates_large_text_files() {
-        let workspace = test_directory("workspace-preview-truncates");
-        let file = workspace.join("large.txt");
-        fs::write(&file, "a".repeat(MAX_FILE_PREVIEW_BYTES + 16)).unwrap();
+    fn workspace_file_preview_streams_large_text_files_completely() {
+        const TAIL_SENTINEL: &str = "UNIQUE_FILE_PREVIEW_TAIL_SENTINEL";
 
-        let preview = read_workspace_file_preview_blocking(
+        let workspace = test_directory("workspace-preview-complete");
+        let file = workspace.join("large.txt");
+        let payload = "x".repeat(40);
+        let mut expected = String::new();
+        for line_number in 1..=12_345 {
+            expected.push_str(&format!("{line_number:05}: {payload}\n"));
+        }
+        expected.push_str(TAIL_SENTINEL);
+        assert!(expected.len() > WORKSPACE_FILE_PREVIEW_CHUNK_BYTES);
+        assert!(expected.lines().count() > 10_000);
+        fs::write(&file, &expected).unwrap();
+
+        let mut preview = read_workspace_file_preview_blocking(
             workspace.to_string_lossy().to_string(),
             file.to_string_lossy().to_string(),
         )
         .unwrap();
-
-        assert!(preview.truncated);
+        assert!(!preview.truncated);
         assert!(!preview.is_binary);
-        assert_eq!(preview.content.len(), MAX_FILE_PREVIEW_BYTES);
+        assert!(!preview.complete);
+        assert!(preview.content.len() <= WORKSPACE_FILE_PREVIEW_CHUNK_BYTES);
+        assert_eq!(preview.total_bytes, expected.len() as u64);
+        assert_eq!(preview.next_offset, preview.content.len() as u64);
         assert_eq!(preview.relative_path, "large.txt");
+        assert_eq!(
+            read_workspace_file_preview_version_blocking(
+                workspace.to_string_lossy().to_string(),
+                file.to_string_lossy().to_string(),
+            )
+            .unwrap(),
+            preview.version
+        );
+
+        let serialized = serde_json::to_value(&preview).unwrap();
+        assert!(serialized.get("complete").is_some());
+        assert!(serialized.get("nextOffset").is_some());
+        assert!(serialized.get("totalBytes").is_some());
+        assert!(serialized.get("version").is_some());
+
+        let version = preview.version.clone();
+        let mut assembled = String::new();
+        loop {
+            assembled.push_str(&preview.content);
+            if preview.complete {
+                break;
+            }
+            let previous_offset = preview.next_offset;
+            preview = read_workspace_file_preview_chunk_blocking(
+                workspace.to_string_lossy().to_string(),
+                file.to_string_lossy().to_string(),
+                previous_offset,
+                Some(version.clone()),
+            )
+            .unwrap();
+            assert_eq!(preview.version, version);
+            assert!(!preview.truncated);
+            assert!(preview.next_offset > previous_offset);
+        }
+
+        let canonical_workspace = fs::canonicalize(&workspace).unwrap();
+        let shared_preview =
+            read_workspace_file_preview_text(&canonical_workspace, &file).unwrap();
+
+        assert!(!preview.truncated);
+        assert!(!preview.is_binary);
+        assert!(preview.complete);
+        assert_eq!(preview.next_offset, expected.len() as u64);
+        assert_eq!(assembled, expected);
+        assert!(assembled.ends_with(TAIL_SENTINEL));
+        assert!(!shared_preview.truncated);
+        assert!(!shared_preview.is_binary);
+        assert_eq!(shared_preview.content, expected);
+        assert!(shared_preview.content.ends_with(TAIL_SENTINEL));
         remove_test_directory(workspace);
     }
 
@@ -8510,7 +8835,190 @@ mod tests {
         .unwrap();
 
         assert!(preview.is_binary);
+        assert!(preview.complete);
+        assert!(!preview.truncated);
         assert_eq!(preview.content, "");
+        assert_eq!(preview.next_offset, preview.total_bytes);
+        assert_eq!(preview.total_bytes, 11);
+        remove_test_directory(workspace);
+    }
+
+    #[test]
+    fn workspace_file_preview_preserves_utf8_across_chunk_boundaries() {
+        let workspace = test_directory("workspace-preview-utf8-boundary");
+        let file = workspace.join("unicode.txt");
+        let expected = format!(
+            "{}é-tail",
+            "x".repeat(WORKSPACE_FILE_PREVIEW_CHUNK_BYTES - 1)
+        );
+        fs::write(&file, &expected).unwrap();
+
+        let first = read_workspace_file_preview_blocking(
+            workspace.to_string_lossy().to_string(),
+            file.to_string_lossy().to_string(),
+        )
+        .unwrap();
+        assert!(!first.complete);
+        assert!(!first.is_binary);
+        assert!(!first.truncated);
+        assert_eq!(
+            first.next_offset,
+            (WORKSPACE_FILE_PREVIEW_CHUNK_BYTES - 1) as u64
+        );
+
+        let invalid_offset = read_workspace_file_preview_chunk_blocking(
+            workspace.to_string_lossy().to_string(),
+            file.to_string_lossy().to_string(),
+            WORKSPACE_FILE_PREVIEW_CHUNK_BYTES as u64,
+            Some(first.version.clone()),
+        );
+        assert!(invalid_offset
+            .unwrap_err()
+            .contains("UTF-8 character boundary"));
+
+        let second = read_workspace_file_preview_chunk_blocking(
+            workspace.to_string_lossy().to_string(),
+            file.to_string_lossy().to_string(),
+            first.next_offset,
+            Some(first.version.clone()),
+        )
+        .unwrap();
+        assert!(second.complete);
+        assert!(!second.is_binary);
+        assert_eq!(format!("{}{}", first.content, second.content), expected);
+        remove_test_directory(workspace);
+    }
+
+    #[test]
+    fn workspace_file_preview_treats_incomplete_utf8_as_binary() {
+        let workspace = test_directory("workspace-preview-incomplete-utf8");
+        let file = workspace.join("malformed.txt");
+        fs::write(&file, b"valid prefix\xe2\x82").unwrap();
+
+        let preview = read_workspace_file_preview_blocking(
+            workspace.to_string_lossy().to_string(),
+            file.to_string_lossy().to_string(),
+        )
+        .unwrap();
+        let canonical_workspace = fs::canonicalize(&workspace).unwrap();
+        let complete_reader =
+            read_workspace_file_preview_text(&canonical_workspace, &file).unwrap();
+
+        assert!(preview.complete);
+        assert!(preview.is_binary);
+        assert!(!preview.truncated);
+        assert!(preview.content.is_empty());
+        assert!(complete_reader.is_binary);
+        assert!(complete_reader.content.is_empty());
+        assert_eq!(decode_preview_text(b"valid prefix\xe2\x82"), (String::new(), true));
+        remove_test_directory(workspace);
+    }
+
+    #[test]
+    fn workspace_file_preview_rejects_stale_versions() {
+        let workspace = test_directory("workspace-preview-stale-version");
+        let file = workspace.join("changing.txt");
+        fs::write(
+            &file,
+            "a".repeat(WORKSPACE_FILE_PREVIEW_CHUNK_BYTES + 8),
+        )
+        .unwrap();
+
+        let first = read_workspace_file_preview_blocking(
+            workspace.to_string_lossy().to_string(),
+            file.to_string_lossy().to_string(),
+        )
+        .unwrap();
+        assert!(!first.complete);
+
+        fs::write(
+            &file,
+            "b".repeat(WORKSPACE_FILE_PREVIEW_CHUNK_BYTES + 9),
+        )
+        .unwrap();
+        let current_version = read_workspace_file_preview_version_blocking(
+            workspace.to_string_lossy().to_string(),
+            file.to_string_lossy().to_string(),
+        )
+        .unwrap();
+        assert_ne!(current_version, first.version);
+
+        let stale = read_workspace_file_preview_chunk_blocking(
+            workspace.to_string_lossy().to_string(),
+            file.to_string_lossy().to_string(),
+            first.next_offset,
+            Some(first.version),
+        );
+        assert!(stale.unwrap_err().contains("File changed while loading"));
+        remove_test_directory(workspace);
+    }
+
+    #[test]
+    fn workspace_file_preview_completes_empty_and_small_files_immediately() {
+        let workspace = test_directory("workspace-preview-small");
+        let empty_file = workspace.join("empty.txt");
+        let small_file = workspace.join("small.txt");
+        fs::write(&empty_file, b"").unwrap();
+        fs::write(&small_file, b"one\ntwo\n").unwrap();
+
+        for (file, expected) in [(&empty_file, ""), (&small_file, "one\ntwo\n")] {
+            let preview = read_workspace_file_preview_blocking(
+                workspace.to_string_lossy().to_string(),
+                file.to_string_lossy().to_string(),
+            )
+            .unwrap();
+            assert!(preview.complete);
+            assert!(!preview.truncated);
+            assert!(!preview.is_binary);
+            assert_eq!(preview.content, expected);
+            assert_eq!(preview.next_offset, preview.total_bytes);
+        }
+        remove_test_directory(workspace);
+    }
+
+    #[test]
+    fn untracked_file_additions_streams_text_and_rejects_binary_data() {
+        let workspace = test_directory("untracked-streaming-line-count");
+        let canonical_workspace = fs::canonicalize(&workspace).unwrap();
+        let text_file = workspace.join("large.txt");
+        let single_line_file = workspace.join("single-line.txt");
+        let unicode_file = workspace.join("unicode.txt");
+        let binary_file = workspace.join("binary.dat");
+        let invalid_file = workspace.join("invalid.txt");
+        let mut text = String::new();
+        for line_number in 0..12_345 {
+            text.push_str(&format!("line {line_number}\n"));
+        }
+        fs::write(&text_file, text).unwrap();
+        fs::write(
+            &single_line_file,
+            "x".repeat(WORKSPACE_FILE_PREVIEW_CHUNK_BYTES * 2),
+        )
+        .unwrap();
+        fs::write(&unicode_file, format!("{}é", "x".repeat(8_191))).unwrap();
+        fs::write(&binary_file, b"one\ntwo\0three\n").unwrap();
+        fs::write(&invalid_file, b"one\ntwo\xe2\x82").unwrap();
+
+        assert_eq!(
+            untracked_file_additions(&canonical_workspace, &text_file),
+            12_345
+        );
+        assert_eq!(
+            untracked_file_additions(&canonical_workspace, &single_line_file),
+            1
+        );
+        assert_eq!(
+            untracked_file_additions(&canonical_workspace, &unicode_file),
+            1
+        );
+        assert_eq!(
+            untracked_file_additions(&canonical_workspace, &binary_file),
+            0
+        );
+        assert_eq!(
+            untracked_file_additions(&canonical_workspace, &invalid_file),
+            0
+        );
         remove_test_directory(workspace);
     }
 

@@ -54,6 +54,17 @@ export type WorkspaceFilePreview = {
   content: string;
   truncated: boolean;
   isBinary: boolean;
+  /** False only while a bounded large-file transfer is still in progress. */
+  complete?: boolean;
+  /** UTF-8 byte offset for the next bounded chunk. */
+  nextOffset?: number;
+  totalBytes?: number;
+  /** Native size/mtime identity used to reject mixed-version chunk reads. */
+  version?: string;
+  /** Frontend-only line index used to avoid assembling very large source strings. */
+  lines?: string[];
+  /** Character budget represented by content or lines, for bounded caching. */
+  sourceCharacters?: number;
 };
 
 export type WorkspaceGitStatusKind =

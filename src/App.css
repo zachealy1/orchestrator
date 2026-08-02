@@ -4137,6 +4137,7 @@ button.history-run-item.disabled {
 }
 
 .code-preview-code {
+  grid-row: 2;
   min-height: 0;
   overflow: auto;
   margin: 0;
@@ -4144,7 +4145,7 @@ button.history-run-item.disabled {
   color: var(--text);
   font-family: "SFMono-Regular", Consolas, monospace;
   font-size: 0.78rem;
-  line-height: 1.55;
+  line-height: 20px;
   tab-size: 2;
 }
 
@@ -4165,10 +4166,8 @@ button.history-run-item.disabled {
   left: 0;
   display: grid;
   contain: layout paint style;
-  content-visibility: auto;
-  grid-template-columns: 52px minmax(0, 1fr);
-  contain-intrinsic-size: auto 1.55em;
-  min-height: 1.55em;
+  grid-template-columns: var(--code-preview-gutter-width) minmax(0, 1fr);
+  min-height: 20px;
 }
 
 .code-preview-gutter {
@@ -4179,8 +4178,12 @@ button.history-run-item.disabled {
   background: var(--color-background);
   color: var(--muted);
   padding: 0 12px;
+  overflow-wrap: normal;
   text-align: right;
   user-select: none;
+  white-space: nowrap;
+  word-break: normal;
+  font-variant-numeric: tabular-nums;
 }
 
 .code-preview-source {

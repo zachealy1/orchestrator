@@ -135,9 +135,6 @@ export const FilePreviewDrawer = memo(function FilePreviewDrawer({
       previewState.status === "loaded" &&
       previewState.preview ? (
         <>
-          {previewState.preview.truncated ? (
-            <div className="file-preview-notice">Preview truncated to 512 KB.</div>
-          ) : null}
           {previewState.preview.isBinary ? (
             <div className="file-preview-state">
               <FileText size={16} aria-hidden="true" />
@@ -149,6 +146,9 @@ export const FilePreviewDrawer = memo(function FilePreviewDrawer({
               content={previewState.preview.content}
               resolvedTheme={resolvedTheme}
               truncated={previewState.preview.truncated}
+              complete={previewState.preview.complete}
+              version={previewState.preview.version}
+              lines={previewState.preview.lines}
             />
           )}
         </>
