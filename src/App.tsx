@@ -1816,6 +1816,10 @@ function App() {
   const [historyChatLoadState, setHistoryChatLoadState] =
     useState<HistoryChatLoadState | null>(null);
   const [selectedHistoryChatId, setSelectedHistoryChatId] = useState<number | null>(null);
+  const [
+    retainTranscriptDuringWorkspaceSwitch,
+    setRetainTranscriptDuringWorkspaceSwitch,
+  ] = useState(false);
   const [historyOpenRequest, setHistoryOpenRequest] =
     useState<HistoryOpenRequest | null>(null);
   const [historicalTranscript, setHistoricalTranscript] =
@@ -2009,6 +2013,7 @@ function App() {
   >({});
   const taskChatTranscriptRef =
     useRef<VirtuosoTaskChatTranscriptHandle | null>(null);
+  const taskChatTranscriptHasMountedRef = useRef(false);
   const pendingAccountHandoffsRef = useRef<
     Record<number, PendingAccountHandoff | undefined>
   >({});
@@ -3521,6 +3526,23 @@ function App() {
     return changed ? entries : selectedWorkspaceBaseChatEntries;
   }, [pendingApprovalAttentions, selectedWorkspaceBaseChatEntries]);
   const visibleTaskChatEntries = selectedWorkspaceChatEntries;
+  useEffect(() => {
+    if (visibleTaskChatEntries.length > 0) {
+      taskChatTranscriptHasMountedRef.current = true;
+    }
+  }, [visibleTaskChatEntries.length]);
+  const historyChatIsLoadingForSelectedWorkspace = Boolean(
+    selectedWorkspace &&
+      historyChatLoadState?.workspaceId === selectedWorkspace.id,
+  );
+  const shouldSuspendTaskChatTranscript =
+    visibleTaskChatEntries.length === 0 &&
+    (retainTranscriptDuringWorkspaceSwitch ||
+      historyChatIsLoadingForSelectedWorkspace);
+  const shouldRenderTaskChatTranscript =
+    visibleTaskChatEntries.length > 0 ||
+    (taskChatTranscriptHasMountedRef.current &&
+      shouldSuspendTaskChatTranscript);
   const crossConversationApprovals = useMemo(
     () =>
       pendingApprovalAttentions.filter(
@@ -5959,6 +5981,7 @@ function App() {
     if (selectedWorkspaceRef.current?.id !== workspace.id) return;
 
     flushSync(() => {
+      setRetainTranscriptDuringWorkspaceSwitch(false);
       setWorkspaceChatSession(workspace.id, undefined);
       setSelectedDraftChat(null);
       setSelectedHistoryChatId(null);
@@ -6129,6 +6152,7 @@ function App() {
       setWorkspaceContextMenu(null);
       selectedWorkspaceRef.current = workspace;
       setSelectedWorkspace(workspace);
+      setRetainTranscriptDuringWorkspaceSwitch(selection.kind === "new");
       setBranches([]);
       setSelectedBranch(null);
       restoreWorkspaceComposer(
@@ -8293,6 +8317,7 @@ function App() {
       createEmptyWorkspaceTaskMemory();
     workspaceTaskMemoriesRef.current[workspace.id] = memory;
     setWorkspaceContextMenu(null);
+    setRetainTranscriptDuringWorkspaceSwitch(false);
     selectedWorkspaceRef.current = workspace;
     setSelectedWorkspace(workspace);
     if (switchingWorkspace) {
@@ -8671,6 +8696,7 @@ function App() {
     transcriptScrollActiveRef.current = false;
     setHistoryChatLoadState(null);
     setHistoryOpenRequest(null);
+    setRetainTranscriptDuringWorkspaceSwitch(false);
     historicalTranscriptRef.current = null;
     setHistoricalTranscript(null);
     rememberWorkspaceTaskSelection(
@@ -18584,7 +18610,7 @@ function App() {
                 data-tauri-drag-region={selfWindowDragRegion}
                 ref={setTaskViewportElement}
               >
-                {visibleTaskChatEntries.length > 0 ? (
+                {shouldRenderTaskChatTranscript ? (
                   <TaskTranscriptErrorBoundary
                     resetKey={
                       selectedHistoricalTranscript
@@ -18604,6 +18630,7 @@ function App() {
                       transcriptVersion={
                         selectedHistoricalTranscript?.sourceVersion ?? "live"
                       }
+                      suspended={shouldSuspendTaskChatTranscript}
                       restoredViewportSnapshot={
                         selectedTranscriptViewportSnapshot
                       }
@@ -18644,14 +18671,15 @@ function App() {
                       onNotificationFocusApplied={completeAgentNotificationFocus}
                     />
                   </TaskTranscriptErrorBoundary>
-                ) : selectedHistoryChatLoading ? (
+                ) : null}
+                {visibleTaskChatEntries.length === 0 && selectedHistoryChatLoading ? (
                   <HistoryChatLoading
                     title={selectedHistoryChatLoading.title}
                     error={selectedHistoryChatLoading.error}
                   />
-                ) : (
+                ) : visibleTaskChatEntries.length === 0 ? (
                   <h1>{taskQuote}</h1>
-                )}
+                ) : null}
                 {editedPromptNotice &&
                 editedPromptNotice.kind === "rerun-error" &&
                 editedPromptNotice.workspaceId === selectedWorkspace?.id &&

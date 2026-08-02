@@ -935,7 +935,7 @@ describe("VirtuosoTaskChatTranscript", () => {
     expect(virtuosoMock.lastProps).not.toHaveProperty("initialItemCount");
   });
 
-  it("keeps the outgoing chat visible until the incoming transcript is positioned", async () => {
+  it("removes the outgoing chat while the incoming transcript is positioned", async () => {
     const outgoingEntry = {
       ...historyEntry(1),
       clientId: "switch-outgoing",
@@ -970,15 +970,15 @@ describe("VirtuosoTaskChatTranscript", () => {
       />,
     );
 
-    const visibleLayer = view.container.querySelector<HTMLElement>(
-      ".task-chat-transcript-layer.is-visible",
-    );
     const preparingLayer = view.container.querySelector<HTMLElement>(
       ".task-chat-transcript-layer.is-preparing",
     );
-    expect(visibleLayer).toHaveTextContent("Outgoing prompt");
+    expect(view.container).not.toHaveTextContent("Outgoing prompt");
     expect(preparingLayer).toHaveTextContent("Incoming prompt");
     expect(preparingLayer).toHaveAttribute("aria-hidden", "true");
+    expect(
+      screen.getByRole("region", { name: "Task chat transcript" }),
+    ).toHaveTextContent("Loading conversation");
 
     const incomingViewport = preparingLayer?.querySelector<HTMLElement>(
       '[data-testid="virtuoso-viewport"]',
@@ -1053,8 +1053,8 @@ describe("VirtuosoTaskChatTranscript", () => {
       view.container.querySelector(".task-chat-transcript-layer.is-visible"),
     ).toBeNull();
     expect(
-      screen.queryByRole("region", { name: "Task chat transcript" }),
-    ).toBeNull();
+      screen.getByRole("region", { name: "Task chat transcript" }),
+    ).toHaveTextContent("Loading conversation");
     const preparingLayer = view.container.querySelector<HTMLElement>(
       ".task-chat-transcript-layer.is-preparing",
     );
@@ -1093,6 +1093,69 @@ describe("VirtuosoTaskChatTranscript", () => {
     expect(
       screen.getByRole("region", { name: "Task chat transcript" }),
     ).toBeInTheDocument();
+    expect(
+      view.container.querySelector(".task-chat-transcript-layer.is-preparing"),
+    ).toBeNull();
+  });
+
+  it("retains the mounted viewport while the transcript is suspended", () => {
+    const entry = {
+      ...historyEntry(1),
+      clientId: "retained-workspace-entry",
+      prompt: "Retained workspace prompt",
+    };
+    const commonProps = {
+      entries: [entry],
+      transcriptIdentity: "chat:retained-workspace",
+      transcriptVersion: "v1",
+      restoredViewportSnapshot: null,
+      viewportWidth: 1_024,
+      firstItemIndex: 999_999,
+      openAtLatestRequest: null,
+      liveFollow: false,
+      onResolveRequest: vi.fn(),
+    };
+    const view = render(
+      <VirtuosoTaskChatTranscript {...commonProps} />,
+    );
+    const viewport = screen.getByRole("region", {
+      name: "Task chat transcript",
+    });
+
+    view.rerender(
+      <VirtuosoTaskChatTranscript
+        {...commonProps}
+        entries={[]}
+        transcriptIdentity="workspace:2:live"
+        suspended
+      />,
+    );
+
+    const switcher = view.container.querySelector<HTMLElement>(
+      ".task-chat-transcript-switcher",
+    );
+    expect(switcher).toHaveClass("is-suspended");
+    expect(switcher).toHaveAttribute("aria-hidden", "true");
+    expect(switcher).toHaveTextContent("Retained workspace prompt");
+
+    view.rerender(
+      <VirtuosoTaskChatTranscript
+        {...commonProps}
+        restoredViewportSnapshot={{
+          workspaceId: 1,
+          transcriptIdentity: "chat:retained-workspace",
+          transcriptVersion: "v1",
+          viewportWidthBucket: 1_024,
+          entryCount: 1,
+          snapshot: virtuosoMock.state,
+        }}
+      />,
+    );
+
+    expect(
+      screen.getByRole("region", { name: "Task chat transcript" }),
+    ).toBe(viewport);
+    expect(switcher).not.toHaveClass("is-suspended");
     expect(
       view.container.querySelector(".task-chat-transcript-layer.is-preparing"),
     ).toBeNull();

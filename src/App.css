@@ -2373,6 +2373,13 @@ button.account-switcher-item:hover:not(:disabled) {
   contain: layout paint;
 }
 
+.task-chat-transcript-switcher.is-suspended {
+  position: absolute;
+  inset: 0;
+  visibility: hidden;
+  pointer-events: none;
+}
+
 .task-chat-transcript-layer {
   position: absolute;
   inset: 0;
@@ -2389,6 +2396,12 @@ button.account-switcher-item:hover:not(:disabled) {
   z-index: 1;
   opacity: 0;
   pointer-events: none;
+}
+
+.task-chat-transcript-switch-loading {
+  position: absolute;
+  inset: 0;
+  z-index: 3;
 }
 
 .task-transcript-error {

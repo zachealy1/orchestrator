@@ -199,6 +199,7 @@ export type VirtuosoTaskChatTranscriptProps = {
   entries: TaskChatEntry[];
   transcriptIdentity: string;
   transcriptVersion: string;
+  suspended?: boolean;
   restoredViewportSnapshot?: TranscriptViewportSnapshot | null;
   onViewportSnapshotChange?: (
     snapshot: TranscriptViewportSnapshot,
@@ -631,7 +632,37 @@ const VirtuosoTaskChatTranscriptImpl = forwardRef<
       const scroller = scrollerRef.current;
       if (!scroller || entries.length === 0) return false;
       if (initialPosition.kind === "latest") {
-        return latestTurnVisibleRef.current && atBottomRef.current;
+        if (latestTurnVisibleRef.current && atBottomRef.current) {
+          return true;
+        }
+
+        // Virtuoso may keep its range and bottom state unchanged when two
+        // transcripts have identical geometry. In that case its callbacks do
+        // not fire for the incoming list, so verify the mounted final row
+        // directly instead of leaving the previous transcript visible.
+        const finalEntry = entries[entries.length - 1];
+        const finalRow = Array.from(
+          scroller.querySelectorAll<HTMLElement>(
+            "[data-transcript-entry-id]",
+          ),
+        ).find(
+          (candidate) =>
+            candidate.dataset.transcriptEntryId === finalEntry.clientId,
+        );
+        if (!finalRow) return false;
+
+        const viewport = scroller.getBoundingClientRect();
+        if (viewport.width <= 0 || viewport.height <= 0) {
+          return true;
+        }
+        const bounds = finalRow.getBoundingClientRect();
+        const bottomGap =
+          scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight;
+        return (
+          bounds.bottom > viewport.top &&
+          bounds.top < viewport.bottom &&
+          bottomGap <= TRANSCRIPT_BOTTOM_THRESHOLD_PX
+        );
       }
 
       const viewport = scroller.getBoundingClientRect();
@@ -1776,25 +1807,27 @@ const VirtuosoTaskChatTranscriptHost = forwardRef<
   VirtuosoTaskChatTranscriptHandle,
   VirtuosoTaskChatTranscriptProps
 >(function VirtuosoTaskChatTranscriptHost(props, forwardedRef) {
+  const suspended = props.suspended ?? false;
+  const retainedPropsRef = useRef(props);
+  if (!suspended) retainedPropsRef.current = props;
+  const transcriptProps = suspended ? retainedPropsRef.current : props;
   const [displayedIdentity, setDisplayedIdentity] = useState<string | null>(
     () =>
-      props.restoredViewportSnapshot != null &&
-      props.openAtLatestRequest == null
+      transcriptProps.restoredViewportSnapshot != null &&
+      transcriptProps.openAtLatestRequest == null
         ? null
-        : props.transcriptIdentity,
+        : transcriptProps.transcriptIdentity,
   );
-  const displayedPropsRef = useRef(props);
-  const incomingPropsRef = useRef(props);
+  const incomingPropsRef = useRef(transcriptProps);
   const visibleTranscriptRef = useRef<VirtuosoTaskChatTranscriptHandle | null>(
     null,
   );
   const incomingTranscriptRef = useRef<VirtuosoTaskChatTranscriptHandle | null>(
     null,
   );
-  const switching = displayedIdentity !== props.transcriptIdentity;
+  const switching = displayedIdentity !== transcriptProps.transcriptIdentity;
 
-  incomingPropsRef.current = props;
-  if (!switching) displayedPropsRef.current = props;
+  incomingPropsRef.current = transcriptProps;
 
   useImperativeHandle(
     forwardedRef,
@@ -1818,28 +1851,23 @@ const VirtuosoTaskChatTranscriptHost = forwardRef<
     displayedIdentity === null
       ? [
           {
-            identity: props.transcriptIdentity,
-            props,
+            identity: transcriptProps.transcriptIdentity,
+            props: transcriptProps,
             preparing: true,
           },
         ]
       : switching
         ? [
             {
-              identity: displayedIdentity,
-              props: displayedPropsRef.current,
-              preparing: false,
-            },
-            {
-              identity: props.transcriptIdentity,
-              props,
+              identity: transcriptProps.transcriptIdentity,
+              props: transcriptProps,
               preparing: true,
             },
           ]
         : [
             {
-              identity: props.transcriptIdentity,
-              props,
+              identity: transcriptProps.transcriptIdentity,
+              props: transcriptProps,
               preparing: false,
             },
           ];
@@ -1847,8 +1875,30 @@ const VirtuosoTaskChatTranscriptHost = forwardRef<
   return (
     <div
       aria-busy={displayedIdentity === null || switching || undefined}
-      className="task-chat-transcript-switcher"
+      aria-hidden={suspended || undefined}
+      className={`task-chat-transcript-switcher${
+        suspended ? " is-suspended" : ""
+      }`}
+      inert={suspended || undefined}
     >
+      {!suspended && (displayedIdentity === null || switching) ? (
+        <section
+          aria-label="Task chat transcript"
+          className="task-chat-loading task-chat-transcript-switch-loading"
+        >
+          <p
+            aria-label="Loading chat"
+            className="stream-placeholder stream-preparing"
+          >
+            <span className="stream-loading-dots" aria-hidden="true">
+              <span />
+              <span />
+              <span />
+            </span>
+            Loading conversation
+          </p>
+        </section>
+      ) : null}
       {layers.map((layer) => (
         <div
           aria-hidden={layer.preparing || undefined}
