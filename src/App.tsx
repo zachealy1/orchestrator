@@ -18321,37 +18321,31 @@ function App() {
             aria-labelledby="git-action-title"
           >
             <h2 className="sr-only" id="git-action-title">Commit or push</h2>
-            {selectedGitOverview &&
-            selectedGitOverview.repositories.length > 1 ? (
-              <ComposerSelect
-                ariaLabel="Commit repository"
-                value={selectedGitRepository?.repository.rootPath ?? ""}
-                options={selectedGitOverview.repositories.map((repository) => ({
-                  value: repository.repository.rootPath,
-                  label: `${workspaceGitRepositoryDisplayPath(repository.repository)} · ${
-                    repository.currentBranch ?? "No branch"
-                  }${
-                    repository.files.length > 0
-                      ? ` · ${repository.files.length} changed`
-                      : repository.canPush
-                        ? ` · ${repository.aheadCount || "Ready to push"}`
-                        : " · Clean"
-                  }`,
-                }))}
-                placeholder="Choose repository"
-                icon={<FolderOpen size={15} />}
-                className="git-action-repository-select"
-                disabled={selectedGitActionStatus !== "idle"}
-                onChange={(repositoryPath) =>
-                  void selectGitRepository(repositoryPath)
-                }
-              />
-            ) : null}
             <div className="git-action-status-row">
-              <span className="git-action-branch">
-                <GitBranch size={15} aria-hidden="true" />
-                <span>{selectedBranch ?? "No branch"}</span>
-              </span>
+              <div className="git-action-branch-context">
+                <span className="git-action-branch">
+                  <GitBranch size={15} aria-hidden="true" />
+                  <span>{selectedBranch ?? "No branch"}</span>
+                </span>
+                {selectedGitOverview &&
+                selectedGitOverview.repositories.length > 1 ? (
+                  <ComposerSelect
+                    ariaLabel="Commit repository"
+                    value={selectedGitRepository?.repository.rootPath ?? ""}
+                    options={selectedGitOverview.repositories.map((repository) => ({
+                      value: repository.repository.rootPath,
+                      label: repository.repository.label,
+                    }))}
+                    placeholder="Choose repository"
+                    icon={<FolderOpen size={15} />}
+                    className="git-action-repository-select"
+                    disabled={selectedGitActionStatus !== "idle"}
+                    onChange={(repositoryPath) =>
+                      void selectGitRepository(repositoryPath)
+                    }
+                  />
+                ) : null}
+              </div>
               {selectedRepositoryGitSummary.total > 0 ? (
                 <span className="git-action-diff-summary" aria-label={`${selectedRepositoryGitSummary.additions} additions, ${selectedRepositoryGitSummary.deletions} deletions`}>
                   <span className="added">+{selectedRepositoryGitSummary.additions}</span>

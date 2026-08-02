@@ -2296,6 +2296,22 @@ describe("App Codex auth", () => {
     const dialogRepositorySelect = within(dialog).getByRole("combobox", {
       name: "Commit repository",
     });
+    const dialogBranch = within(dialog).getByText("main");
+    expect(
+      dialogBranch.compareDocumentPosition(dialogRepositorySelect) &
+        Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
+    expect(dialogRepositorySelect).toHaveTextContent("frontend");
+    expect(dialogRepositorySelect).not.toHaveTextContent("main");
+    expect(dialogRepositorySelect).not.toHaveTextContent("changed");
+    expect(
+      dialog.querySelector(
+        ".git-action-status-row .git-action-repository-select",
+      ),
+    ).not.toBeNull();
+    expect(
+      dialog.querySelector(":scope > .git-action-repository-select"),
+    ).toBeNull();
     await user.type(
       within(dialog).getByLabelText(/commit message/i),
       "Frontend message",
@@ -2303,7 +2319,7 @@ describe("App Codex auth", () => {
     await user.click(dialogRepositorySelect);
     await user.click(
       screen.getByRole("option", {
-        name: "backend · release · 1 changed",
+        name: "backend",
       }),
     );
 
