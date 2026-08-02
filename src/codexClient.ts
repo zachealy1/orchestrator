@@ -11,6 +11,7 @@ import type {
 } from "./lib/agentNotifications";
 import type { WorkspaceCommitIntentContext } from "./lib/commitMessage";
 import type {
+  ActiveCodexLogin,
   CodexAccountResponse,
   BrowserRuntimeStatus,
   BrowserSessionState,
@@ -86,6 +87,10 @@ export function connectDefaultCodexProfile() {
 
 export function stopCodex(accountId: number) {
   return invoke<void>("codex_stop", { accountId });
+}
+
+export function readActiveCodexLogin() {
+  return invoke<ActiveCodexLogin | null>("codex_active_login");
 }
 
 export function stopDefaultCodexProfile() {
@@ -434,6 +439,8 @@ export async function readCodexAccount(
 export async function startCodexLogin(accountId: number) {
   return codexRpc<CodexLoginResponse>(accountId, "account/login/start", {
     type: "chatgpt",
+    useHostedLoginSuccessPage: true,
+    appBrand: "codex",
   });
 }
 

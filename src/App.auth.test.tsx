@@ -25,6 +25,7 @@ const mocks = vi.hoisted(() => ({
   generateWorkspaceCommitMessageMock: vi.fn(),
   pushWorkspaceBranchMock: vi.fn(),
   deleteCodexProfileMock: vi.fn(),
+  readActiveCodexLoginMock: vi.fn(),
   readCodexAccountMock: vi.fn(),
   startCodexLoginMock: vi.fn(),
   stopCodexMock: vi.fn(),
@@ -277,6 +278,7 @@ vi.mock("./codexClient", () => ({
     mocks.cancelDefaultProfileThreadTranscriptMock,
   logoutCodexAccount: mocks.logoutCodexAccountMock,
   pushWorkspaceBranch: mocks.pushWorkspaceBranchMock,
+  readActiveCodexLogin: mocks.readActiveCodexLoginMock,
   readCodexAccount: mocks.readCodexAccountMock,
   readCodexFile: mocks.readCodexFileMock,
   readDefaultCodexFile: mocks.readDefaultCodexFileMock,
@@ -696,6 +698,7 @@ function prepareDefaults() {
     branch: "main",
   });
   mocks.deleteCodexProfileMock.mockResolvedValue(undefined);
+  mocks.readActiveCodexLoginMock.mockResolvedValue(null);
   mocks.readCodexAccountMock.mockResolvedValue({
     account: null,
     requiresOpenaiAuth: true,
@@ -8621,6 +8624,111 @@ describe("App Codex auth", () => {
     await waitFor(() => expect(mocks.connectCodexMock).toHaveBeenCalledWith(8));
     expect(mocks.startCodexLoginMock).toHaveBeenCalledWith(8);
     expect(mocks.openUrlMock).toHaveBeenCalledWith("https://example.com/auth");
+  });
+
+  it("recovers an active native sign-in after the webview reloads", async () => {
+    const signingInAccount = { ...pendingAccount, id: 8 };
+    mocks.listCodexAccountsMock.mockResolvedValue([signingInAccount]);
+    mocks.readActiveCodexLoginMock.mockResolvedValue({
+      accountId: 8,
+      loginId: "login-recovered",
+      authUrl: "https://example.com/recovered-auth",
+      connectionGeneration: 4,
+      startedAtMs: Date.now(),
+      expiresAtMs: Date.now() + 600_000,
+      state: "waiting",
+    });
+
+    const { user } = await renderApp();
+
+    expect(await screen.findByText("Waiting for browser sign-in")).toBeInTheDocument();
+    expect(mocks.startCodexLoginMock).not.toHaveBeenCalled();
+    expect(mocks.openUrlMock).toHaveBeenCalledWith(
+      "https://example.com/recovered-auth",
+    );
+    await user.click(screen.getByRole("button", { name: "Settings" }));
+    expect(await screen.findByText(/Signing in/)).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Cancel sign-in" }));
+
+    expect(mocks.cancelCodexLoginMock).toHaveBeenCalledWith(
+      8,
+      "login-recovered",
+    );
+    expect(mocks.deleteCodexProfileMock).toHaveBeenCalledWith(8);
+  });
+
+  it("recovers a login id that arrives after the webview reloads", async () => {
+    const now = Date.now();
+    const startingLogin = {
+      accountId: 8,
+      loginId: null,
+      authUrl: null,
+      connectionGeneration: 4,
+      startedAtMs: now,
+      expiresAtMs: now + 600_000,
+      state: "starting" as const,
+    };
+    mocks.listCodexAccountsMock.mockResolvedValue([
+      { ...pendingAccount, id: 8 },
+    ]);
+    mocks.readActiveCodexLoginMock
+      .mockResolvedValueOnce(startingLogin)
+      .mockResolvedValue({
+        ...startingLogin,
+        loginId: "login-after-reload",
+        authUrl: "https://example.com/after-reload",
+        state: "waiting",
+      });
+
+    await renderApp();
+
+    expect(await screen.findByText("Waiting for browser sign-in")).toBeInTheDocument();
+    expect(mocks.startCodexLoginMock).not.toHaveBeenCalled();
+    expect(mocks.openUrlMock).toHaveBeenCalledWith(
+      "https://example.com/after-reload",
+    );
+  });
+
+  it("reconciles a stranded active-login error during startup", async () => {
+    mocks.listCodexAccountsMock.mockResolvedValue([
+      {
+        ...pendingAccount,
+        id: 11,
+        status: "error",
+        last_error: "Another Codex sign-in is already active for account 10",
+      },
+    ]);
+
+    await renderApp();
+
+    await waitFor(() =>
+      expect(mocks.updateCodexAccountMock).toHaveBeenCalledWith(11, {
+        status: "signed_out",
+        lastError: null,
+      }),
+    );
+  });
+
+  it("adds another account while the selected account has an active turn", async () => {
+    prepareSignedInRun();
+    mocks.createCodexAccountMock.mockResolvedValue({
+      ...pendingAccount,
+      id: 8,
+    });
+    const { user } = await renderApp();
+    await startMockRun(user, "Keep working in this account");
+
+    await user.click(await screen.findByLabelText("Codex account"));
+    const addAccount = screen.getByRole("button", { name: "Add account" });
+    expect(addAccount).toBeEnabled();
+    await user.click(addAccount);
+
+    await waitFor(() => expect(mocks.startCodexLoginMock).toHaveBeenCalledWith(8));
+    expect(mocks.codexRpcMock).not.toHaveBeenCalledWith(
+      7,
+      "turn/interrupt",
+      expect.anything(),
+    );
   });
 
   it("renders account actions as an anchored popover", async () => {

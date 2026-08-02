@@ -554,6 +554,16 @@ export type CodexLoginResponse =
 
 export type CodexLoginState = "idle" | "starting" | "waiting" | "failed";
 
+export type ActiveCodexLogin = {
+  accountId: number;
+  loginId: string | null;
+  authUrl: string | null;
+  connectionGeneration: number;
+  startedAtMs: number;
+  expiresAtMs: number;
+  state: "starting" | "waiting";
+};
+
 export type AccountLoginCompletedNotification = {
   success: boolean;
   error: string | null;

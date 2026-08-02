@@ -58,6 +58,7 @@ const IGNORED_EXPLORER_DIRECTORIES: &[&str] =
 const GIT_REPOSITORY_DISCOVERY_TTL: Duration = Duration::from_secs(30);
 const MAX_GIT_DISCOVERY_DIRECTORIES: usize = 20_000;
 const MAX_GIT_DISCOVERY_REPOSITORIES: usize = 100;
+const CODEX_LOGIN_TIMEOUT: Duration = Duration::from_secs(10 * 60);
 const IGNORED_GIT_DISCOVERY_DIRECTORIES: &[&str] = &[
     ".git",
     "node_modules",
@@ -99,6 +100,18 @@ struct CodexProcess {
     connection_generation: u64,
 }
 
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ActiveCodexLogin {
+    account_id: i64,
+    login_id: Option<String>,
+    auth_url: Option<String>,
+    connection_generation: u64,
+    started_at_ms: u64,
+    expires_at_ms: u64,
+    state: String,
+}
+
 #[derive(Default)]
 struct CodexState {
     processes: Mutex<HashMap<i64, CodexProcess>>,
@@ -107,7 +120,7 @@ struct CodexState {
     next_id: AtomicU64,
     next_connection_generation: AtomicU64,
     next_server_request_token: Arc<AtomicU64>,
-    login_account: Arc<Mutex<Option<i64>>>,
+    active_login: Arc<Mutex<Option<ActiveCodexLogin>>>,
     history_index_requests: Arc<Mutex<HashSet<String>>>,
     transcript_sync_requests: Arc<Mutex<HashSet<String>>>,
 }
@@ -1271,6 +1284,53 @@ fn write_message(stdin: &Arc<Mutex<ChildStdin>>, message: &Value) -> Result<(), 
         .map_err(|err| format!("Failed to flush Codex stdin: {err}"))
 }
 
+fn unix_timestamp_ms() -> u64 {
+    SystemTime::now()
+        .duration_since(SystemTime::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis()
+        .try_into()
+        .unwrap_or(u64::MAX)
+}
+
+fn clear_active_login(
+    active_login: &Arc<Mutex<Option<ActiveCodexLogin>>>,
+    account_id: i64,
+    connection_generation: Option<u64>,
+    login_id: Option<&str>,
+) -> bool {
+    let Ok(mut active) = active_login.lock() else {
+        return false;
+    };
+    let Some(current) = active.as_ref() else {
+        return false;
+    };
+    if current.account_id != account_id
+        || connection_generation
+            .is_some_and(|generation| current.connection_generation != generation)
+        || login_id.is_some_and(|id| current.login_id.as_deref() != Some(id))
+    {
+        return false;
+    }
+    *active = None;
+    true
+}
+
+fn active_login_snapshot(
+    active_login: &Arc<Mutex<Option<ActiveCodexLogin>>>,
+) -> Result<Option<ActiveCodexLogin>, String> {
+    let active = active_login
+        .lock()
+        .map_err(|_| "Codex login lock was poisoned".to_string())?;
+    if active
+        .as_ref()
+        .is_some_and(|attempt| attempt.expires_at_ms <= unix_timestamp_ms())
+    {
+        return Ok(None);
+    }
+    Ok(active.clone())
+}
+
 fn process_stdout(
     app: AppHandle,
     account_id: i64,
@@ -1279,7 +1339,7 @@ fn process_stdout(
     pending: PendingMap,
     pending_server_requests: PendingServerRequestMap,
     next_server_request_token: Arc<AtomicU64>,
-    login_account: Arc<Mutex<Option<i64>>>,
+    active_login: Arc<Mutex<Option<ActiveCodexLogin>>>,
 ) {
     for line in BufReader::new(stdout).lines() {
         match line {
@@ -1310,11 +1370,16 @@ fn process_stdout(
                         }
                         (Some(method), None) => {
                             if method == "account/login/completed" {
-                                if let Ok(mut active) = login_account.lock() {
-                                    if *active == Some(account_id) {
-                                        *active = None;
-                                    }
-                                }
+                                let login_id = message
+                                    .get("params")
+                                    .and_then(|params| params.get("loginId"))
+                                    .and_then(Value::as_str);
+                                clear_active_login(
+                                    &active_login,
+                                    account_id,
+                                    Some(connection_generation),
+                                    login_id,
+                                );
                             }
                             if method == "serverRequest/resolved" {
                                 if let Some(request_id) = message
@@ -1350,7 +1415,7 @@ fn process_stdout(
                                     let result = message.get("result").cloned().unwrap_or(Value::Null);
                                     let _ = pending_response.sender.send(Ok(result));
                                 }
-                            } else {
+                            } else if !key.starts_with("orchestrator-login-timeout-") {
                                 emit_process(&app, account_id, "warning", format!("Unmatched Codex response: {line}"));
                             }
                         }
@@ -1377,6 +1442,12 @@ fn process_stdout(
         &pending_server_requests,
         account_id,
         connection_generation,
+    );
+    clear_active_login(
+        &active_login,
+        account_id,
+        Some(connection_generation),
+        None,
     );
     emit_process(&app, account_id, "exited", "Codex app-server stdout closed");
 }
@@ -2350,6 +2421,53 @@ async fn codex_default_profile_connect(
     .await
 }
 
+fn process_connection_generation(state: &CodexState, account_id: i64) -> Result<u64, String> {
+    state
+        .processes
+        .lock()
+        .map_err(|_| "Codex processes lock was poisoned".to_string())?
+        .get(&account_id)
+        .map(|process| process.connection_generation)
+        .ok_or_else(|| format!("Codex account {account_id} is not connected"))
+}
+
+fn start_login_timeout_watchdog(
+    active_login: Arc<Mutex<Option<ActiveCodexLogin>>>,
+    stdin: Arc<Mutex<ChildStdin>>,
+    attempt: ActiveCodexLogin,
+) {
+    std::thread::spawn(move || {
+        std::thread::sleep(CODEX_LOGIN_TIMEOUT);
+        let should_cancel = active_login.lock().ok().is_some_and(|mut active| {
+            let matches = active.as_ref().is_some_and(|current| {
+                current.account_id == attempt.account_id
+                    && current.connection_generation == attempt.connection_generation
+                    && current.login_id == attempt.login_id
+            });
+            if matches {
+                *active = None;
+            }
+            matches
+        });
+        if !should_cancel {
+            return;
+        }
+        if let Some(login_id) = attempt.login_id {
+            let _ = write_message(
+                &stdin,
+                &json!({
+                    "id": format!(
+                        "orchestrator-login-timeout-{}-{}",
+                        attempt.account_id, attempt.connection_generation
+                    ),
+                    "method": "account/login/cancel",
+                    "params": { "loginId": login_id }
+                }),
+            );
+        }
+    });
+}
+
 async fn connect_codex_profile(
     account_id: i64,
     app: &AppHandle,
@@ -2417,7 +2535,7 @@ async fn connect_codex_profile(
         let pending = Arc::clone(&state.pending);
         let pending_server_requests = Arc::clone(&state.pending_server_requests);
         let next_server_request_token = Arc::clone(&state.next_server_request_token);
-        let login_account = Arc::clone(&state.login_account);
+        let active_login = Arc::clone(&state.active_login);
         let stdout_app = app.clone();
         std::thread::spawn(move || {
             process_stdout(
@@ -2428,7 +2546,7 @@ async fn connect_codex_profile(
                 pending,
                 pending_server_requests,
                 next_server_request_token,
-                login_account,
+                active_login,
             )
         });
 
@@ -2550,35 +2668,151 @@ async fn codex_rpc(
     params: Value,
     state: State<'_, CodexState>,
 ) -> Result<Value, String> {
+    let mut login_generation = None;
     if method == "account/login/start" {
-        let mut active = state
-            .login_account
-            .lock()
-            .map_err(|_| "Codex login lock was poisoned".to_string())?;
-        if let Some(active_account_id) = *active {
-            if active_account_id != account_id {
+        let connection_generation = process_connection_generation(&state, account_id)?;
+        let now = unix_timestamp_ms();
+        let expires_at_ms = now.saturating_add(
+            CODEX_LOGIN_TIMEOUT
+                .as_millis()
+                .try_into()
+                .unwrap_or(u64::MAX),
+        );
+        let expired_attempt = {
+            let mut active = state
+                .active_login
+                .lock()
+                .map_err(|_| "Codex login lock was poisoned".to_string())?;
+            let expired = if active
+                .as_ref()
+                .is_some_and(|attempt| attempt.expires_at_ms <= now)
+            {
+                active.take()
+            } else {
+                None
+            };
+            if let Some(active_attempt) = active.as_ref() {
+                if active_attempt.account_id != account_id {
+                    return Err(format!(
+                        "Another Codex sign-in is already active for account {}",
+                        active_attempt.account_id
+                    ));
+                }
                 return Err(format!(
-                    "Another Codex sign-in is already active for account {active_account_id}"
+                    "A Codex sign-in is already active for account {account_id}"
                 ));
             }
+            *active = Some(ActiveCodexLogin {
+                account_id,
+                login_id: None,
+                auth_url: None,
+                connection_generation,
+                started_at_ms: now,
+                expires_at_ms,
+                state: "starting".to_string(),
+            });
+            expired
+        };
+        if let Some(expired) = expired_attempt {
+            if let (Some(login_id), Ok(stdin)) = (
+                expired.login_id,
+                process_stdin(&state, expired.account_id),
+            ) {
+                let _ = write_message(
+                    &stdin,
+                    &json!({
+                        "id": format!(
+                            "orchestrator-login-timeout-{}-{}",
+                            expired.account_id, expired.connection_generation
+                        ),
+                        "method": "account/login/cancel",
+                        "params": { "loginId": login_id }
+                    }),
+                );
+            }
         }
-        *active = Some(account_id);
+        login_generation = Some(connection_generation);
     }
 
     let response = send_request(&state, account_id, &method, params).await;
 
-    if response.is_err()
-        || method == "account/login/cancel"
-        || method == "account/logout"
-    {
-        if let Ok(mut active) = state.login_account.lock() {
-            if *active == Some(account_id) {
-                *active = None;
+    if method == "account/login/start" {
+        let connection_generation = login_generation.expect("login generation is set");
+        match response.as_ref() {
+            Ok(value) => {
+                let login_id = value
+                    .get("loginId")
+                    .and_then(Value::as_str)
+                    .map(str::to_string);
+                let auth_url = value
+                    .get("authUrl")
+                    .or_else(|| value.get("verificationUrl"))
+                    .and_then(Value::as_str)
+                    .map(str::to_string);
+                if login_id.is_some() {
+                    let attempt = {
+                        let mut active = state
+                            .active_login
+                            .lock()
+                            .map_err(|_| "Codex login lock was poisoned".to_string())?;
+                        let Some(current) = active.as_mut().filter(|current| {
+                            current.account_id == account_id
+                                && current.connection_generation == connection_generation
+                        }) else {
+                            return Err(
+                                "Codex sign-in was cancelled before it started".to_string(),
+                            );
+                        };
+                        current.login_id = login_id;
+                        current.auth_url = auth_url;
+                        current.state = "waiting".to_string();
+                        current.clone()
+                    };
+                    let stdin = match process_stdin(&state, account_id) {
+                        Ok(stdin) => stdin,
+                        Err(error) => {
+                            clear_active_login(
+                                &state.active_login,
+                                account_id,
+                                Some(connection_generation),
+                                None,
+                            );
+                            return Err(error);
+                        }
+                    };
+                    start_login_timeout_watchdog(
+                        Arc::clone(&state.active_login),
+                        stdin,
+                        attempt,
+                    );
+                } else {
+                    clear_active_login(
+                        &state.active_login,
+                        account_id,
+                        Some(connection_generation),
+                        None,
+                    );
+                }
+            }
+            Err(_) => {
+                clear_active_login(
+                    &state.active_login,
+                    account_id,
+                    Some(connection_generation),
+                    None,
+                );
             }
         }
+    } else if method == "account/login/cancel" || method == "account/logout" {
+        clear_active_login(&state.active_login, account_id, None, None);
     }
 
     response
+}
+
+#[tauri::command]
+fn codex_active_login(state: State<'_, CodexState>) -> Result<Option<ActiveCodexLogin>, String> {
+    active_login_snapshot(&state.active_login)
 }
 
 #[tauri::command]
@@ -2840,11 +3074,7 @@ fn stop_codex_account(
     );
     clear_server_requests_for_account(&state.pending_server_requests, account_id);
 
-    if let Ok(mut active) = state.login_account.lock() {
-        if *active == Some(account_id) {
-            *active = None;
-        }
-    }
+    clear_active_login(&state.active_login, account_id, None, None);
 
     emit_process(app, account_id, "stopped", "Codex app-server stopped");
     Ok(())
@@ -6960,6 +7190,7 @@ pub fn run() {
             codex_connect,
             codex_default_profile_connect,
             codex_rpc,
+            codex_active_login,
             codex_default_profile_rpc,
             codex_projected_subagent_thread_read,
             codex_default_profile_turn_activity,
@@ -7027,6 +7258,52 @@ fn present_main_window(app: &AppHandle) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn active_login_fixture(
+        account_id: i64,
+        login_id: Option<&str>,
+        connection_generation: u64,
+        expires_at_ms: u64,
+    ) -> ActiveCodexLogin {
+        ActiveCodexLogin {
+            account_id,
+            login_id: login_id.map(str::to_string),
+            auth_url: None,
+            connection_generation,
+            started_at_ms: unix_timestamp_ms(),
+            expires_at_ms,
+            state: "waiting".to_string(),
+        }
+    }
+
+    #[test]
+    fn active_login_clears_only_for_the_matching_profile_and_generation() {
+        let active = Arc::new(Mutex::new(Some(active_login_fixture(
+            8,
+            Some("login-8"),
+            4,
+            unix_timestamp_ms() + 60_000,
+        ))));
+
+        assert!(!clear_active_login(&active, 7, Some(4), Some("login-8")));
+        assert!(!clear_active_login(&active, 8, Some(3), Some("login-8")));
+        assert!(!clear_active_login(&active, 8, Some(4), Some("other")));
+        assert!(active_login_snapshot(&active).unwrap().is_some());
+        assert!(clear_active_login(&active, 8, Some(4), Some("login-8")));
+        assert!(active_login_snapshot(&active).unwrap().is_none());
+    }
+
+    #[test]
+    fn expired_active_login_does_not_block_a_later_attempt() {
+        let active = Arc::new(Mutex::new(Some(active_login_fixture(
+            10,
+            Some("stale-login"),
+            2,
+            unix_timestamp_ms().saturating_sub(1),
+        ))));
+
+        assert!(active_login_snapshot(&active).unwrap().is_none());
+    }
 
     fn queued_chat_request(
         item_id: &str,
