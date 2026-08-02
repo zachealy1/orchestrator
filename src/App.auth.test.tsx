@@ -4373,7 +4373,7 @@ describe("App Codex auth", () => {
     );
     expect(await screen.findByText("Latest result.")).toBeInTheDocument();
 
-    const transcript = screen.getByRole("region", {
+    const transcript = await screen.findByRole("region", {
       name: "Task chat transcript",
     });
     expect(transcript).toHaveClass("virtuoso-transcript");
@@ -5890,10 +5890,9 @@ describe("App Codex auth", () => {
       within(workspaceNav).getByRole("button", { name: "orchestrator" }),
     );
 
-    expect(screen.getByLabelText("Task chat transcript")).toHaveAttribute(
-      "data-restored-scroll-top",
-      "1842",
-    );
+    expect(
+      await screen.findByLabelText("Task chat transcript"),
+    ).toHaveAttribute("data-restored-scroll-top", "1842");
     expect(screen.getByText("Result 18.")).toBeInTheDocument();
   });
 

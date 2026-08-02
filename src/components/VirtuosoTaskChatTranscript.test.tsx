@@ -1013,6 +1013,91 @@ describe("VirtuosoTaskChatTranscript", () => {
     ).toBeNull();
   });
 
+  it("keeps an initially restored transcript hidden until its saved position is ready", async () => {
+    const entry = {
+      ...historyEntry(1),
+      clientId: "cold-restored-entry",
+      prompt: "Cold restored prompt",
+    };
+    const view = render(
+      <VirtuosoTaskChatTranscript
+        entries={[entry]}
+        transcriptIdentity="chat:cold-restore"
+        transcriptVersion="v1"
+        restoredViewportSnapshot={{
+          workspaceId: 1,
+          transcriptIdentity: "chat:cold-restore",
+          transcriptVersion: "v1",
+          viewportWidthBucket: 1_024,
+          entryCount: 1,
+          snapshot: {
+            ranges: [
+              {
+                startIndex: 0,
+                endIndex: Number.POSITIVE_INFINITY,
+                size: 360,
+              },
+            ],
+            scrollTop: 42,
+          },
+        }}
+        viewportWidth={1_024}
+        firstItemIndex={999_999}
+        openAtLatestRequest={null}
+        liveFollow={false}
+        onResolveRequest={vi.fn()}
+      />,
+    );
+
+    expect(
+      view.container.querySelector(".task-chat-transcript-layer.is-visible"),
+    ).toBeNull();
+    expect(
+      screen.queryByRole("region", { name: "Task chat transcript" }),
+    ).toBeNull();
+    const preparingLayer = view.container.querySelector<HTMLElement>(
+      ".task-chat-transcript-layer.is-preparing",
+    );
+    expect(preparingLayer).toHaveTextContent("Cold restored prompt");
+    expect(preparingLayer).toHaveAttribute("aria-hidden", "true");
+
+    const viewport = preparingLayer?.querySelector<HTMLElement>(
+      '[data-testid="virtuoso-viewport"]',
+    );
+    const row = preparingLayer?.querySelector<HTMLElement>(
+      '[data-transcript-entry-id="cold-restored-entry"]',
+    );
+    expect(viewport).not.toBeNull();
+    expect(row).not.toBeNull();
+    configureScrollerGeometry(viewport!);
+    row!.getBoundingClientRect = () => ({
+      x: 0,
+      y: -42,
+      width: 900,
+      height: 240,
+      top: -42,
+      right: 900,
+      bottom: 198,
+      left: 0,
+      toJSON: () => ({}),
+    });
+
+    await act(async () => {
+      await new Promise((resolve) => window.setTimeout(resolve, 40));
+    });
+
+    const visibleLayer = view.container.querySelector<HTMLElement>(
+      ".task-chat-transcript-layer.is-visible",
+    );
+    expect(visibleLayer).toHaveTextContent("Cold restored prompt");
+    expect(
+      screen.getByRole("region", { name: "Task chat transcript" }),
+    ).toBeInTheDocument();
+    expect(
+      view.container.querySelector(".task-chat-transcript-layer.is-preparing"),
+    ).toBeNull();
+  });
+
   it("keeps following through transient bottom-state changes while streaming", () => {
     const { rerender } = render(
       <VirtuosoTaskChatTranscript

@@ -1776,8 +1776,12 @@ const VirtuosoTaskChatTranscriptHost = forwardRef<
   VirtuosoTaskChatTranscriptHandle,
   VirtuosoTaskChatTranscriptProps
 >(function VirtuosoTaskChatTranscriptHost(props, forwardedRef) {
-  const [displayedIdentity, setDisplayedIdentity] = useState(
-    props.transcriptIdentity,
+  const [displayedIdentity, setDisplayedIdentity] = useState<string | null>(
+    () =>
+      props.restoredViewportSnapshot != null &&
+      props.openAtLatestRequest == null
+        ? null
+        : props.transcriptIdentity,
   );
   const displayedPropsRef = useRef(props);
   const incomingPropsRef = useRef(props);
@@ -1810,29 +1814,41 @@ const VirtuosoTaskChatTranscriptHost = forwardRef<
     setDisplayedIdentity(identity);
   }, []);
 
-  const layers = switching
-    ? [
-        {
-          identity: displayedIdentity,
-          props: displayedPropsRef.current,
-          preparing: false,
-        },
-        {
-          identity: props.transcriptIdentity,
-          props,
-          preparing: true,
-        },
-      ]
-    : [
-        {
-          identity: props.transcriptIdentity,
-          props,
-          preparing: false,
-        },
-      ];
+  const layers =
+    displayedIdentity === null
+      ? [
+          {
+            identity: props.transcriptIdentity,
+            props,
+            preparing: true,
+          },
+        ]
+      : switching
+        ? [
+            {
+              identity: displayedIdentity,
+              props: displayedPropsRef.current,
+              preparing: false,
+            },
+            {
+              identity: props.transcriptIdentity,
+              props,
+              preparing: true,
+            },
+          ]
+        : [
+            {
+              identity: props.transcriptIdentity,
+              props,
+              preparing: false,
+            },
+          ];
 
   return (
-    <div className="task-chat-transcript-switcher">
+    <div
+      aria-busy={displayedIdentity === null || switching || undefined}
+      className="task-chat-transcript-switcher"
+    >
       {layers.map((layer) => (
         <div
           aria-hidden={layer.preparing || undefined}
