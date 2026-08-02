@@ -28,10 +28,12 @@ vi.mock("../lib/codePreview", () => ({
   detectPreviewLanguage: () => "plaintext",
 }));
 
-vi.mock("../lib/codePreviewHighlighting", () => ({
-  codePreviewHighlightingService: {
-    highlight: vi.fn(),
-  },
+vi.mock("../runtime/AppServices", () => ({
+  useAppServices: () => ({
+    codePreviewHighlighting: {
+      highlight: vi.fn(),
+    },
+  }),
 }));
 
 describe("CodePreview virtual height", () => {

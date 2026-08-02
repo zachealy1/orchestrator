@@ -1,4 +1,5 @@
 import {
+  CodePreviewCache,
   highlightPreviewContent,
   type CodePreviewHighlightInput,
   type PreviewSemanticToken,
@@ -23,6 +24,7 @@ type ActiveHighlight = {
 };
 
 type CodePreviewHighlightingServiceOptions = {
+  cache?: CodePreviewCache;
   createWorker?: () => CodePreviewHighlightWorker | null;
   highlightOnMainThread?: (
     input: CodePreviewHighlightInput,
@@ -61,9 +63,11 @@ export class CodePreviewHighlightingService {
   private generationSequence = 0;
 
   constructor(options: CodePreviewHighlightingServiceOptions = {}) {
+    const cache = options.cache ?? new CodePreviewCache();
     this.createWorker = options.createWorker ?? createBrowserWorker;
     this.highlightOnMainThread =
-      options.highlightOnMainThread ?? highlightPreviewContent;
+      options.highlightOnMainThread ??
+      ((input) => highlightPreviewContent(input, cache));
   }
 
   highlight(input: CodePreviewHighlightInput, signal?: AbortSignal) {
@@ -235,6 +239,3 @@ export class CodePreviewHighlightingService {
     });
   }
 }
-
-export const codePreviewHighlightingService =
-  new CodePreviewHighlightingService();

@@ -1,0 +1,382 @@
+import { useRef } from "react";
+import type { CodexAccountProfile } from "../accounts/types";
+import type {
+  CodexModel,
+  CodexProfileKey,
+  OssProvider,
+} from "../codex/types";
+import type {
+  ChatListItem,
+  ChatRecord,
+  ChatWithRuns,
+} from "../conversations/types";
+import type {
+  RunSetupSnapshot,
+  StopActiveRunResult,
+} from "../runs/runtimeTypes";
+import type { Workspace } from "../workspaces/types";
+import { accessSettings } from "../../lib/codexAccess";
+import { createRunExecutionSettings } from "../../lib/runExecutionSettings";
+import { improvePrompt } from "../../lib/taskAnalysis";
+import {
+  claimKanbanAttempt,
+  loadKanbanInheritedContext,
+  stopInactiveKanbanCard,
+  type KanbanAttemptRecord,
+  type KanbanCardRecord,
+} from "./api";
+import type {
+  KanbanAttemptControl,
+  KanbanAttemptStateController,
+} from "./attemptLifecycle";
+import { prepareKanbanRepositoryExecution } from "./repositoryExecution";
+
+export type KanbanLaunchKind = KanbanAttemptRecord["kind"];
+
+export type KanbanRuntimeRunControl = KanbanAttemptControl & {
+  kanbanStopStatus: "paused" | "stopped" | null;
+};
+
+export type KanbanRuntimeState = {
+  workspaces: Workspace[];
+  accounts: CodexAccountProfile[];
+  selectedAccountId: number | null;
+  computerUseEnabled: boolean;
+  ossProvider: OssProvider;
+};
+
+export type KanbanRuntimeControllerDependencies<
+  RunControl extends KanbanRuntimeRunControl = KanbanRuntimeRunControl,
+> = {
+  getState: () => KanbanRuntimeState;
+  listModels: (
+    profileKey: CodexProfileKey,
+    accountId: number,
+  ) => Promise<CodexModel[]>;
+  loadConversation: (chatId: number) => Promise<ChatWithRuns>;
+  selectConversation: (
+    chat: ChatListItem,
+    workspace: Workspace,
+  ) => unknown | Promise<unknown>;
+  loadChat: (chatId: number) => Promise<ChatRecord | null>;
+  updateChat: (
+    chatId: number,
+    fields: {
+      accountId: number;
+      profileKey: CodexProfileKey;
+      status: string;
+    },
+  ) => Promise<unknown>;
+  getNextTurnIndex: (chatId: number) => Promise<number>;
+  findRunControl: (workspaceId: number, chatId: number) => RunControl | null;
+  beginRun: (snapshot: RunSetupSnapshot) => RunControl;
+  scheduleRun: (control: RunControl, snapshot: RunSetupSnapshot) => void;
+  stopRun: (control: RunControl) => Promise<StopActiveRunResult>;
+  attempts: Pick<KanbanAttemptStateController, "persist">;
+  refreshBoards: () => void;
+};
+
+export type KanbanRuntimeNativeDependencies = {
+  claimAttempt: typeof claimKanbanAttempt;
+  prepareRepositoryExecution: typeof prepareKanbanRepositoryExecution;
+  loadInheritedContext: typeof loadKanbanInheritedContext;
+  stopInactiveCard: typeof stopInactiveKanbanCard;
+};
+
+const nativeDependencies: KanbanRuntimeNativeDependencies = {
+  claimAttempt: claimKanbanAttempt,
+  prepareRepositoryExecution: prepareKanbanRepositoryExecution,
+  loadInheritedContext: loadKanbanInheritedContext,
+  stopInactiveCard: stopInactiveKanbanCard,
+};
+
+export type KanbanRuntimeController = {
+  isLaunchReserved: (workspaceId: number, chatId: number) => boolean;
+  openConversation: (card: KanbanCardRecord) => Promise<void>;
+  launchCard: (
+    card: KanbanCardRecord,
+    kind: KanbanLaunchKind,
+    promptText: string,
+  ) => Promise<void>;
+  pauseCard: (card: KanbanCardRecord) => Promise<void>;
+  stopCard: (card: KanbanCardRecord) => Promise<void>;
+};
+
+function errorMessage(error: unknown) {
+  return error instanceof Error ? error.message : String(error);
+}
+
+function workspaceForCard(state: KanbanRuntimeState, card: KanbanCardRecord) {
+  const workspace = state.workspaces.find(
+    (candidate) => candidate.id === card.workspaceId,
+  );
+  if (!workspace) {
+    throw new Error("The card workspace is no longer available.");
+  }
+  return workspace;
+}
+
+function modelForCard(card: KanbanCardRecord, models: CodexModel[]) {
+  return card.model
+    ? models.find(
+        (model) => model.model === card.model || model.id === card.model,
+      ) ?? null
+    : models.find((model) => model.isDefault) ?? models[0] ?? null;
+}
+
+export function createKanbanRuntimeController<
+  RunControl extends KanbanRuntimeRunControl = KanbanRuntimeRunControl,
+>(
+  getDependencies: () => KanbanRuntimeControllerDependencies<RunControl>,
+  native: KanbanRuntimeNativeDependencies = nativeDependencies,
+): KanbanRuntimeController {
+  const launchReservations = new Set<string>();
+
+  async function openConversation(card: KanbanCardRecord) {
+    const dependencies = getDependencies();
+    const workspace = workspaceForCard(dependencies.getState(), card);
+    const conversation = await dependencies.loadConversation(card.chatId);
+    await dependencies.selectConversation(conversation.chat, workspace);
+  }
+
+  async function launchCard(
+    card: KanbanCardRecord,
+    kind: KanbanLaunchKind,
+    promptText: string,
+  ) {
+    const dependencies = getDependencies();
+    const state = dependencies.getState();
+    const workspace = workspaceForCard(state, card);
+    const accountId =
+      card.accountId ??
+      workspace.default_account_id ??
+      state.selectedAccountId;
+    if (!accountId) {
+      throw new Error(
+        "Choose a signed-in Codex account before starting this card.",
+      );
+    }
+    const account =
+      state.accounts.find((candidate) => candidate.id === accountId) ?? null;
+    if (!account || account.status !== "signed_in") {
+      throw new Error("The card's Codex account is unavailable or signed out.");
+    }
+
+    const profileKey = `account:${accountId}` as CodexProfileKey;
+    const availableModels = await dependencies.listModels(profileKey, accountId);
+    const selectedModel = modelForCard(card, availableModels);
+    if (card.model && !selectedModel) {
+      throw new Error("The model saved on this card is no longer available.");
+    }
+    if (
+      card.reasoningLevel &&
+      selectedModel &&
+      !selectedModel.supportedReasoningEfforts.some(
+        (option) => option.reasoningEffort === card.reasoningLevel,
+      )
+    ) {
+      throw new Error(
+        "The reasoning level saved on this card is no longer available.",
+      );
+    }
+    if (card.repositories.length === 0) {
+      throw new Error(
+        "This card has no captured Git repositories. Edit it before starting and select a repository scope.",
+      );
+    }
+
+    const access = accessSettings({ accessMode: card.accessMode });
+    const executionSettings = createRunExecutionSettings({
+      accountId,
+      profileKey,
+      selectedRepositoryPath: null,
+      selectedBranch: null,
+      mode: "run",
+      intent: "normal",
+      accessMode: card.accessMode,
+      computerUseEnabled: state.computerUseEnabled,
+      model: selectedModel?.model ?? card.model,
+      reasoningEffort:
+        card.reasoningLevel ?? selectedModel?.defaultReasoningEffort ?? null,
+      useOss: false,
+      ossProvider: state.ossProvider,
+      contextFiles: [],
+      selectedSkills: [],
+      goalMode: true,
+    });
+    const reservationKey = `${card.workspaceId}:${card.chatId}`;
+    if (
+      launchReservations.has(reservationKey) ||
+      dependencies.findRunControl(card.workspaceId, card.chatId)
+    ) {
+      throw new Error(
+        "This card conversation already has an active or starting run.",
+      );
+    }
+
+    launchReservations.add(reservationKey);
+    try {
+      const claimed = await native.claimAttempt({
+        card,
+        kind,
+        prompt: promptText,
+        configSnapshot: {
+          version: 1,
+          cardId: card.id,
+          title: card.title,
+          accountId,
+          accessMode: card.accessMode,
+          model: executionSettings.model,
+          reasoningLevel: executionSettings.reasoningEffort,
+          repositories: card.repositories,
+        },
+      });
+      dependencies.refreshBoards();
+
+      let executionRoot: string | null = null;
+      try {
+        const repositoryExecution = await native.prepareRepositoryExecution({
+          card,
+          claimedCard: claimed.card,
+          onExecutionRoot: (nextExecutionRoot) => {
+            executionRoot = nextExecutionRoot;
+          },
+        });
+        executionRoot = repositoryExecution.executionRoot;
+
+        const chat = await dependencies.loadChat(card.chatId);
+        if (!chat) {
+          throw new Error("The card conversation is no longer available.");
+        }
+        await dependencies.updateChat(chat.id, {
+          accountId,
+          profileKey,
+          status: "starting",
+        });
+        const turnIndex = await dependencies.getNextTurnIndex(chat.id);
+        const currentThreadId = chat.codex_thread_id;
+        const inheritedContext = currentThreadId
+          ? null
+          : await native.loadInheritedContext(card.id);
+        const snapshot: RunSetupSnapshot = {
+          promptText,
+          promptFallback: promptText,
+          workspace: { ...workspace, path: executionRoot },
+          accountId,
+          account: { ...account },
+          profileKey,
+          chatOrigin: "orchestrator",
+          externalThreadId: null,
+          selectedRepositoryPath: null,
+          selectedBranch: null,
+          cachedPreflight: null,
+          mode: "run",
+          intent: "normal",
+          access,
+          computerUseEnabled: state.computerUseEnabled,
+          model: executionSettings.model,
+          effort: executionSettings.reasoningEffort,
+          useOss: false,
+          ossProvider: state.ossProvider,
+          improvedPrompt: improvePrompt(promptText),
+          contextFiles: [],
+          selectedSkills: [],
+          goalMode: true,
+          loginState: "idle",
+          chatId: chat.id,
+          threadId: currentThreadId,
+          turnIndex,
+          threadStrategy: currentThreadId
+            ? { kind: "resume" }
+            : { kind: "fresh" },
+          previousChatContext: inheritedContext,
+          executionSettings,
+          restorePromptOnSetupFailure: false,
+          kanbanAttempt: {
+            cardId: card.id,
+            attemptId: claimed.attempt.id,
+            generation: claimed.attempt.generation,
+            executionRoot,
+            eventSequence: 0,
+          },
+        };
+        const runControl = dependencies.beginRun(snapshot);
+        dependencies.scheduleRun(runControl, snapshot);
+      } catch (launchError) {
+        await dependencies.attempts.persist(
+          {
+            accountId,
+            profileKey,
+            runId: null,
+            taskId: null,
+            threadId: null,
+            turnId: null,
+            kanbanAttempt: {
+              cardId: card.id,
+              attemptId: claimed.attempt.id,
+              generation: claimed.attempt.generation,
+              executionRoot,
+              eventSequence: 0,
+            },
+          },
+          "failed",
+          errorMessage(launchError),
+        );
+        throw launchError;
+      }
+    } finally {
+      launchReservations.delete(reservationKey);
+    }
+  }
+
+  async function pauseCard(card: KanbanCardRecord) {
+    const dependencies = getDependencies();
+    const control = dependencies.findRunControl(card.workspaceId, card.chatId);
+    if (!control || control.kanbanAttempt?.cardId !== card.id) {
+      throw new Error("This card no longer has a live turn to pause.");
+    }
+    control.kanbanStopStatus = "paused";
+    const result = await dependencies.stopRun(control);
+    if (!result.stopped) {
+      throw new Error("The card turn could not be paused.");
+    }
+  }
+
+  async function stopCard(card: KanbanCardRecord) {
+    const dependencies = getDependencies();
+    const control = dependencies.findRunControl(card.workspaceId, card.chatId);
+    if (!control || control.kanbanAttempt?.cardId !== card.id) {
+      await native.stopInactiveCard(card);
+      dependencies.refreshBoards();
+      return;
+    }
+    control.kanbanStopStatus = "stopped";
+    const result = await dependencies.stopRun(control);
+    if (!result.stopped) {
+      throw new Error("The card turn could not be stopped.");
+    }
+  }
+
+  return {
+    isLaunchReserved: (workspaceId, chatId) =>
+      launchReservations.has(`${workspaceId}:${chatId}`),
+    openConversation,
+    launchCard,
+    pauseCard,
+    stopCard,
+  };
+}
+
+export function useKanbanRuntimeController<
+  RunControl extends KanbanRuntimeRunControl = KanbanRuntimeRunControl,
+>(
+  dependencies: KanbanRuntimeControllerDependencies<RunControl>,
+): KanbanRuntimeController {
+  const dependenciesRef = useRef(dependencies);
+  dependenciesRef.current = dependencies;
+  const controllerRef = useRef<KanbanRuntimeController | null>(null);
+  controllerRef.current ??= createKanbanRuntimeController(
+    () => dependenciesRef.current,
+  );
+  return controllerRef.current;
+}

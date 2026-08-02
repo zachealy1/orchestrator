@@ -1,8 +1,4 @@
-import type {
-  HistoricalMarkdownWorkerRequest,
-  HistoricalMarkdownWorkerResponse,
-  PreparedHistoricalSummary,
-} from "../types";
+import type { HistoricalMarkdownWorkerRequest, HistoricalMarkdownWorkerResponse, PreparedHistoricalSummary } from "../features/conversations/types";
 import {
   hashHistoricalMarkdown,
   renderHistoricalMarkdown,

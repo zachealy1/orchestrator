@@ -42,18 +42,11 @@ import {
 } from "../lib/subagents";
 import type { GoalProgressIndicatorModel } from "../lib/goalProgress";
 import type { PlanProgressIndicatorModel } from "../lib/planProgress";
-import type {
-  CodexAccountProfile,
-  CodexAccessMode,
-  ComposerMentionSearchStatus,
-  CodexModel,
-  ComposerContextFile,
-  PromptQueueItem,
-  SelectedComposerSkill,
-  SlashCommandItem,
-  SlashCommandSearchStatus,
-} from "../types";
-import { ORCHESTRATOR_PROMPT_CONTEXT_MIME } from "../types";
+import type { CodexAccountProfile } from "../features/accounts/types";
+import type { CodexAccessMode, CodexModel } from "../features/codex/types";
+import type { ComposerMentionSearchStatus, ComposerContextFile, SelectedComposerSkill, SlashCommandItem, SlashCommandSearchStatus } from "../features/composer/types";
+import type { PromptQueueItem } from "../features/queue/types";
+import { ORCHESTRATOR_PROMPT_CONTEXT_MIME } from "../features/composer/types";
 import {
   contextFileDisplayReference,
   contextFileExtensionLabel,
@@ -69,8 +62,9 @@ import {
 } from "../lib/imageAttachments";
 import { isPromptQueueItemAutoDispatchEligible } from "../lib/promptQueue";
 import { estimateTokens, recommendRoute } from "../lib/taskAnalysis";
+import { useAppServices } from "../runtime/AppServices";
 
-type Props = {
+export type ComposerModel = {
   disabled: boolean;
   runActive: boolean;
   prompt: string;
@@ -103,6 +97,10 @@ type Props = {
   slashCommandResults: SlashCommandItem[];
   slashCommandSearchStatus: SlashCommandSearchStatus;
   slashCommandSearchError?: string | null;
+  contextDropActive?: boolean;
+};
+
+export type ComposerActions = {
   onAccountChange: (accountId: number) => void;
   onPromptChange: (prompt: string) => void;
   onModelChange: (modelId: string) => void;
@@ -135,7 +133,6 @@ type Props = {
   onSlashCommandClose: () => void;
   onContextFilesDrop: (files: ComposerContextFile[]) => void;
   onContextFilesDropError?: (message: string) => void;
-  contextDropActive?: boolean;
   onDropSurfaceElementChange?: (element: HTMLElement | null) => void;
   onPromptElementChange?: (element: HTMLTextAreaElement | null) => void;
   hasContextFileDropFallback?: () => boolean;
@@ -145,6 +142,11 @@ type Props = {
   onRemoveSkill: (skillId: string) => void;
   onRun: (prompt: string) => void;
   onStop: () => void;
+};
+
+type Props = {
+  model: ComposerModel;
+  actions: ComposerActions;
 };
 
 type ComposerToken = {
@@ -187,7 +189,8 @@ export function promptAutosizeMirrorText(prompt: string) {
   return `${prompt}\u200b`;
 }
 
-export const TaskComposer = memo(function TaskComposer({
+export const TaskComposer = memo(function TaskComposer({ model, actions }: Props) {
+  const {
   disabled,
   runActive,
   prompt,
@@ -220,6 +223,9 @@ export const TaskComposer = memo(function TaskComposer({
   slashCommandResults,
   slashCommandSearchStatus,
   slashCommandSearchError,
+  contextDropActive = false,
+  } = model;
+  const {
   onAccountChange,
   onPromptChange,
   onModelChange,
@@ -249,7 +255,6 @@ export const TaskComposer = memo(function TaskComposer({
   onSlashCommandClose,
   onContextFilesDrop,
   onContextFilesDropError,
-  contextDropActive = false,
   onDropSurfaceElementChange,
   onPromptElementChange,
   hasContextFileDropFallback,
@@ -259,12 +264,17 @@ export const TaskComposer = memo(function TaskComposer({
   onRemoveSkill,
   onRun,
   onStop,
-}: Props) {
+  } = actions;
+  const { subagents: subagentStore } = useAppServices();
   const [openStatusPopover, setOpenStatusPopover] = useState<
     "subagents" | "queue" | null
   >(null);
-  const subagents = useConversationSubagents(subagentConversationKey);
+  const subagents = useConversationSubagents(
+    subagentStore,
+    subagentConversationKey,
+  );
   const promptTextareaRef = useRef<HTMLTextAreaElement>(null);
+  const previousSubagentConversationKeyRef = useRef(subagentConversationKey);
   const compositionActiveRef = useRef(false);
   const externalPromptRevisionRef = useRef(promptRevision);
   const draftPromptRef = useRef(prompt);
@@ -277,7 +287,11 @@ export const TaskComposer = memo(function TaskComposer({
   const [slashPanel, setSlashPanel] = useState<SlashPanel>("commands");
 
   useEffect(() => {
-    setOpenStatusPopover(null);
+    if (previousSubagentConversationKeyRef.current === subagentConversationKey) {
+      return;
+    }
+    previousSubagentConversationKeyRef.current = subagentConversationKey;
+    setOpenStatusPopover((current) => (current === null ? current : null));
   }, [subagentConversationKey]);
 
   const selectedModel = useMemo(
@@ -1370,11 +1384,15 @@ const ComposerImageAttachmentPreview = memo(
   }: {
     file: ComposerContextFile;
   }) {
+    const { imageAttachments } = useAppServices();
     const [thumbnailDataUrl, setThumbnailDataUrl] = useState<string | null>(null);
 
     useEffect(() => {
       let active = true;
-      void loadImageAttachmentPreview(file.canonicalPath ?? file.path)
+      void loadImageAttachmentPreview(
+        file.canonicalPath ?? file.path,
+        imageAttachments,
+      )
         .then((preview) => {
           if (active) {
             setThumbnailDataUrl(preview?.thumbnailDataUrl ?? null);
@@ -1386,7 +1404,7 @@ const ComposerImageAttachmentPreview = memo(
       return () => {
         active = false;
       };
-    }, [file.canonicalPath, file.path]);
+    }, [file.canonicalPath, file.path, imageAttachments]);
 
     return (
       <span className="context-attachment-icon image" aria-hidden="true">

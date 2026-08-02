@@ -1,4 +1,4 @@
-import type { CodexAccessMode } from "../types";
+import type { CodexAccessMode } from "../features/codex/types";
 
 export const CODEX_ACCESS_STORAGE_KEY = "orchestrator.codex-access.v2";
 export const LEGACY_CODEX_ACCESS_STORAGE_KEY = "orchestrator.codex-access.v1";

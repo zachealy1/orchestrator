@@ -5,7 +5,7 @@ use url::{Host, Url};
 
 const WEB_PREVIEW_PROBE_TIMEOUT: Duration = Duration::from_millis(650);
 
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug, Serialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct LocalWebPreviewProbeResult {
     normalized_url: String,
@@ -13,6 +13,7 @@ pub(crate) struct LocalWebPreviewProbeResult {
 }
 
 #[tauri::command]
+#[specta::specta]
 pub(crate) async fn probe_local_web_preview(
     url: String,
 ) -> Result<LocalWebPreviewProbeResult, String> {
@@ -126,7 +127,7 @@ mod tests {
                 .port()
         };
         let closed = tauri::async_runtime::block_on(probe_local_web_preview(format!(
-            "http://localhost:{closed_port}/"
+            "http://127.0.0.1:{closed_port}/"
         )))
         .expect("probe closed port");
         assert!(!closed.reachable);

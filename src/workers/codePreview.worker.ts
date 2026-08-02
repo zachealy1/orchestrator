@@ -1,12 +1,16 @@
 /// <reference lib="webworker" />
 
-import { highlightPreviewContent } from "../lib/codePreview";
+import {
+  CodePreviewCache,
+  highlightPreviewContent,
+} from "../lib/codePreview";
 import type {
   CodePreviewHighlightWorkerRequest,
   CodePreviewHighlightWorkerResponse,
 } from "../lib/codePreviewWorkerProtocol";
 
 const workerScope: DedicatedWorkerGlobalScope = self as DedicatedWorkerGlobalScope;
+const cache = new CodePreviewCache();
 
 workerScope.addEventListener(
   "message",
@@ -17,7 +21,7 @@ workerScope.addEventListener(
     }
 
     try {
-      const lines = await highlightPreviewContent(request.input);
+      const lines = await highlightPreviewContent(request.input, cache);
       const response: CodePreviewHighlightWorkerResponse = {
         type: "highlighted",
         generationId: request.generationId,

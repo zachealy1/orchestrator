@@ -14,7 +14,7 @@ const CARD_BRANCH_PREFIX: &str = "codex/kanban-";
 const MAX_CARD_ID_LENGTH: usize = 128;
 const MAX_BRANCH_ATTEMPTS: usize = 1_000;
 
-#[derive(Clone, Debug, Deserialize)]
+#[derive(Clone, Debug, Deserialize, specta::Type)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub(crate) struct KanbanGitRepositorySelection {
     pub repository_path: String,
@@ -23,7 +23,7 @@ pub(crate) struct KanbanGitRepositorySelection {
     pub include_dirty_changes: bool,
 }
 
-#[derive(Clone, Debug, Deserialize)]
+#[derive(Clone, Debug, Deserialize, specta::Type)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub(crate) struct KanbanGitProvisionRequest {
     pub card_id: String,
@@ -31,7 +31,7 @@ pub(crate) struct KanbanGitProvisionRequest {
     pub repositories: Vec<KanbanGitRepositorySelection>,
 }
 
-#[derive(Clone, Debug, Deserialize, Serialize)]
+#[derive(Clone, Debug, Deserialize, Serialize, specta::Type)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub(crate) struct KanbanGitRepositoryBinding {
     pub source_repository_path: String,
@@ -46,7 +46,7 @@ pub(crate) struct KanbanGitRepositoryBinding {
     pub error: Option<KanbanGitOperationError>,
 }
 
-#[derive(Clone, Debug, Deserialize, Serialize)]
+#[derive(Clone, Debug, Deserialize, Serialize, specta::Type)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub(crate) struct KanbanGitOperationError {
     pub repository_path: Option<String>,
@@ -55,7 +55,7 @@ pub(crate) struct KanbanGitOperationError {
     pub cleanup_required: bool,
 }
 
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug, Serialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct KanbanGitProvisionResult {
     pub card_id: String,
@@ -66,13 +66,13 @@ pub(crate) struct KanbanGitProvisionResult {
     pub rolled_back: bool,
 }
 
-#[derive(Clone, Debug, Deserialize)]
+#[derive(Clone, Debug, Deserialize, specta::Type)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub(crate) struct KanbanGitBindingRequest {
     pub binding: KanbanGitRepositoryBinding,
 }
 
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug, Serialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct KanbanGitReconcileResult {
     pub binding: KanbanGitRepositoryBinding,
@@ -87,7 +87,7 @@ pub(crate) struct KanbanGitReconcileResult {
     pub has_conflicts: bool,
 }
 
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug, Serialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct KanbanGitFileStatus {
     pub path: String,
@@ -97,7 +97,7 @@ pub(crate) struct KanbanGitFileStatus {
     pub kind: String,
 }
 
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug, Serialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct KanbanGitStatusResult {
     pub binding: KanbanGitRepositoryBinding,
@@ -115,7 +115,7 @@ pub(crate) struct KanbanGitStatusResult {
     pub files: Vec<KanbanGitFileStatus>,
 }
 
-#[derive(Clone, Debug, Deserialize)]
+#[derive(Clone, Debug, Deserialize, specta::Type)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub(crate) struct KanbanGitDiffRequest {
     pub binding: KanbanGitRepositoryBinding,
@@ -123,7 +123,7 @@ pub(crate) struct KanbanGitDiffRequest {
     pub include_binary: bool,
 }
 
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug, Serialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct KanbanGitDiffResult {
     pub binding: KanbanGitRepositoryBinding,
@@ -134,7 +134,7 @@ pub(crate) struct KanbanGitDiffResult {
     pub is_empty: bool,
 }
 
-#[derive(Clone, Debug, Deserialize)]
+#[derive(Clone, Debug, Deserialize, specta::Type)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub(crate) struct KanbanGitCommitRequest {
     pub binding: KanbanGitRepositoryBinding,
@@ -143,7 +143,7 @@ pub(crate) struct KanbanGitCommitRequest {
     pub stage_all: bool,
 }
 
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug, Serialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct KanbanGitActionResult {
     pub binding: KanbanGitRepositoryBinding,
@@ -153,14 +153,14 @@ pub(crate) struct KanbanGitActionResult {
     pub head_commit: String,
 }
 
-#[derive(Clone, Debug, Deserialize)]
+#[derive(Clone, Debug, Deserialize, specta::Type)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub(crate) struct KanbanGitMergeRequest {
     pub binding: KanbanGitRepositoryBinding,
     pub message: Option<String>,
 }
 
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug, Serialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct KanbanGitMergeResult {
     pub binding: KanbanGitRepositoryBinding,
@@ -172,7 +172,7 @@ pub(crate) struct KanbanGitMergeResult {
     pub message: String,
 }
 
-#[derive(Clone, Debug, Deserialize)]
+#[derive(Clone, Debug, Deserialize, specta::Type)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub(crate) struct KanbanGitCleanupRequest {
     pub binding: KanbanGitRepositoryBinding,
@@ -182,7 +182,7 @@ pub(crate) struct KanbanGitCleanupRequest {
     pub force: bool,
 }
 
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug, Serialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct KanbanGitCleanupResult {
     pub binding: KanbanGitRepositoryBinding,
@@ -1876,6 +1876,7 @@ where
 }
 
 #[tauri::command]
+#[specta::specta]
 pub(crate) async fn kanban_git_provision(
     app: AppHandle,
     request: KanbanGitProvisionRequest,
@@ -1888,6 +1889,7 @@ pub(crate) async fn kanban_git_provision(
 }
 
 #[tauri::command]
+#[specta::specta]
 pub(crate) async fn kanban_git_reconcile(
     app: AppHandle,
     request: KanbanGitBindingRequest,
@@ -1901,6 +1903,7 @@ pub(crate) async fn kanban_git_reconcile(
 }
 
 #[tauri::command]
+#[specta::specta]
 pub(crate) async fn kanban_git_status(
     app: AppHandle,
     request: KanbanGitBindingRequest,
@@ -1914,6 +1917,7 @@ pub(crate) async fn kanban_git_status(
 }
 
 #[tauri::command]
+#[specta::specta]
 pub(crate) async fn kanban_git_diff(
     app: AppHandle,
     request: KanbanGitDiffRequest,
@@ -1924,6 +1928,7 @@ pub(crate) async fn kanban_git_diff(
 }
 
 #[tauri::command]
+#[specta::specta]
 pub(crate) async fn kanban_git_commit(
     app: AppHandle,
     request: KanbanGitCommitRequest,
@@ -1934,6 +1939,7 @@ pub(crate) async fn kanban_git_commit(
 }
 
 #[tauri::command]
+#[specta::specta]
 pub(crate) async fn kanban_git_push(
     app: AppHandle,
     request: KanbanGitBindingRequest,
@@ -1947,6 +1953,7 @@ pub(crate) async fn kanban_git_push(
 }
 
 #[tauri::command]
+#[specta::specta]
 pub(crate) async fn kanban_git_merge(
     app: AppHandle,
     request: KanbanGitMergeRequest,
@@ -1957,6 +1964,7 @@ pub(crate) async fn kanban_git_merge(
 }
 
 #[tauri::command]
+#[specta::specta]
 pub(crate) async fn kanban_git_cleanup(
     app: AppHandle,
     request: KanbanGitCleanupRequest,

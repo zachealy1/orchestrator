@@ -1,7 +1,7 @@
 import { render, screen } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import { FilePreviewDrawer } from "./FilePreviewDrawer";
-import type { WorkspacePreviewState } from "../types";
+import type { WorkspacePreviewState } from "../features/workspaces/types";
 
 const file = {
   name: "App.tsx",

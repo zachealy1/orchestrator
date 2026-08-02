@@ -1,9 +1,16 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-const invokeMock = vi.hoisted(() => vi.fn());
+const commandMocks = vi.hoisted(() => ({
+  kanbanClaimAttempt: vi.fn(),
+  kanbanGitCleanup: vi.fn(),
+  kanbanGitCommit: vi.fn(),
+  kanbanGitProvision: vi.fn(),
+  kanbanSaveGitBindings: vi.fn(),
+  kanbanUpdateAttempt: vi.fn(),
+}));
 
-vi.mock("@tauri-apps/api/core", () => ({
-  invoke: invokeMock,
+vi.mock("../../generated/tauri", () => ({
+  commands: commandMocks,
 }));
 
 import {
@@ -31,8 +38,10 @@ const binding: KanbanGitBinding = {
 
 describe("Kanban native API", () => {
   beforeEach(() => {
-    invokeMock.mockReset();
-    invokeMock.mockResolvedValue(null);
+    Object.values(commandMocks).forEach((command) => {
+      command.mockReset();
+      command.mockResolvedValue(null);
+    });
   });
 
   it("passes dirty-change consent per repository during provisioning", async () => {
@@ -49,23 +58,21 @@ describe("Kanban native API", () => {
       ],
     });
 
-    expect(invokeMock).toHaveBeenCalledWith("kanban_git_provision", {
-      request: {
-        cardId: "card-1",
-        cardSlug: "Ship safely",
-        repositories: [
-          {
-            repositoryPath: "/repo",
-            relativePath: ".",
-            includeDirtyChanges: false,
-          },
-          {
-            repositoryPath: "/repo/nested",
-            relativePath: "nested",
-            includeDirtyChanges: true,
-          },
-        ],
-      },
+    expect(commandMocks.kanbanGitProvision).toHaveBeenCalledWith({
+      cardId: "card-1",
+      cardSlug: "Ship safely",
+      repositories: [
+        {
+          repositoryPath: "/repo",
+          relativePath: ".",
+          includeDirtyChanges: false,
+        },
+        {
+          repositoryPath: "/repo/nested",
+          relativePath: "nested",
+          includeDirtyChanges: true,
+        },
+      ],
     });
   });
 
@@ -73,11 +80,15 @@ describe("Kanban native API", () => {
     await commitKanbanGit({ binding, message: "Implement Kanban", stageAll: true });
     await cleanupKanbanGit({ binding, deleteBranch: true, force: false });
 
-    expect(invokeMock).toHaveBeenNthCalledWith(1, "kanban_git_commit", {
-      request: { binding, message: "Implement Kanban", stageAll: true },
+    expect(commandMocks.kanbanGitCommit).toHaveBeenCalledWith({
+      binding,
+      message: "Implement Kanban",
+      stageAll: true,
     });
-    expect(invokeMock).toHaveBeenNthCalledWith(2, "kanban_git_cleanup", {
-      request: { binding, deleteBranch: true, force: false },
+    expect(commandMocks.kanbanGitCleanup).toHaveBeenCalledWith({
+      binding,
+      deleteBranch: true,
+      force: false,
     });
   });
 
@@ -91,19 +102,17 @@ describe("Kanban native API", () => {
       operationId: "operation-1",
     });
 
-    expect(invokeMock).toHaveBeenCalledWith("kanban_claim_attempt", {
-      request: {
-        cardId: "card-1",
-        attemptId: "attempt-1",
-        expectedVersion: 4,
-        kind: "start",
-        prompt: "Implement the card",
-        configSnapshotJson: JSON.stringify({
-          model: "gpt-5.6",
-          repositories: ["/repo"],
-        }),
-        operationId: "operation-1",
-      },
+    expect(commandMocks.kanbanClaimAttempt).toHaveBeenCalledWith({
+      cardId: "card-1",
+      attemptId: "attempt-1",
+      expectedVersion: 4,
+      kind: "start",
+      prompt: "Implement the card",
+      configSnapshotJson: JSON.stringify({
+        model: "gpt-5.6",
+        repositories: ["/repo"],
+      }),
+      operationId: "operation-1",
     });
   });
 
@@ -117,21 +126,19 @@ describe("Kanban native API", () => {
       operationId: "operation-2",
     });
 
-    expect(invokeMock).toHaveBeenCalledWith("kanban_update_attempt", {
-      request: {
-        cardId: "card-1",
-        attemptId: "attempt-1",
-        generation: 2,
-        sequence: 7,
-        status: "waiting_approval",
-        runId: null,
-        taskId: null,
-        threadId: null,
-        turnId: null,
-        executionRoot: null,
-        error: null,
-        operationId: "operation-2",
-      },
+    expect(commandMocks.kanbanUpdateAttempt).toHaveBeenCalledWith({
+      cardId: "card-1",
+      attemptId: "attempt-1",
+      generation: 2,
+      sequence: 7,
+      status: "waiting_approval",
+      runId: null,
+      taskId: null,
+      threadId: null,
+      turnId: null,
+      executionRoot: null,
+      error: null,
+      operationId: "operation-2",
     });
   });
 
@@ -142,13 +149,11 @@ describe("Kanban native API", () => {
       "operation-3",
     );
 
-    expect(invokeMock).toHaveBeenCalledWith("kanban_save_git_bindings", {
-      request: {
-        cardId: "card-1",
-        expectedVersion: 9,
-        operationId: "operation-3",
-        bindings: [binding],
-      },
+    expect(commandMocks.kanbanSaveGitBindings).toHaveBeenCalledWith({
+      cardId: "card-1",
+      expectedVersion: 9,
+      operationId: "operation-3",
+      bindings: [binding],
     });
   });
 });

@@ -50,7 +50,7 @@ struct BrowserSessionRecord {
     control_socket: PathBuf,
 }
 
-#[derive(Clone, Debug, Deserialize, Serialize)]
+#[derive(Clone, Debug, Deserialize, Serialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct BrowserSessionTarget {
     pub profile_key: String,
@@ -63,7 +63,7 @@ pub(crate) struct BrowserSessionTarget {
     pub access_mode: String,
 }
 
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug, Serialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct BrowserSessionStatus {
     pub token: String,
@@ -73,22 +73,23 @@ pub(crate) struct BrowserSessionStatus {
     pub error: Option<String>,
 }
 
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug, Serialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct BrowserRuntimeStatus {
     pub available: bool,
     pub message: Option<String>,
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct PreparedBrowserSession {
     pub token: String,
+    #[specta(type = specta_typescript::Unknown)]
     pub config: Value,
     pub state: BrowserSessionStatus,
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
 struct RuntimeManifest {
     version: u32,
@@ -100,7 +101,7 @@ struct RuntimeManifest {
     chromium_executable: String,
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
 struct WrapperState {
     session_token: String,
@@ -196,6 +197,7 @@ pub(crate) fn append_playwright_app_server_args(
 }
 
 #[tauri::command]
+#[specta::specta]
 pub(crate) async fn browser_runtime_status(app: AppHandle) -> BrowserRuntimeStatus {
     match resolve_playwright_runtime(&app) {
         Ok(_) => BrowserRuntimeStatus {
@@ -210,6 +212,7 @@ pub(crate) async fn browser_runtime_status(app: AppHandle) -> BrowserRuntimeStat
 }
 
 #[tauri::command]
+#[specta::specta]
 pub(crate) async fn browser_session_prepare(
     target: BrowserSessionTarget,
     app: AppHandle,
@@ -285,6 +288,7 @@ pub(crate) async fn browser_session_prepare(
 }
 
 #[tauri::command]
+#[specta::specta]
 pub(crate) async fn browser_session_status(
     token: String,
     state: State<'_, BrowserSessionRegistry>,
@@ -295,6 +299,7 @@ pub(crate) async fn browser_session_status(
 }
 
 #[tauri::command]
+#[specta::specta]
 pub(crate) async fn browser_session_focus(
     token: String,
     app: AppHandle,
@@ -309,6 +314,7 @@ pub(crate) async fn browser_session_focus(
 }
 
 #[tauri::command]
+#[specta::specta]
 pub(crate) async fn browser_session_update_target(
     token: String,
     target: BrowserSessionTarget,
@@ -334,6 +340,7 @@ pub(crate) async fn browser_session_update_target(
 }
 
 #[tauri::command]
+#[specta::specta]
 pub(crate) async fn browser_session_stop(
     token: String,
     app: AppHandle,

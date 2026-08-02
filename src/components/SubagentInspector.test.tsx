@@ -1,12 +1,10 @@
-import { act, render, screen, waitFor, within } from "@testing-library/react";
+import { act, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import React from "react";
 import { describe, expect, it, vi } from "vitest";
-import {
-  replaceConversationSubagents,
-  type SubagentRecord,
-  type SubagentTranscript,
-} from "../lib/subagents";
+import type { SubagentRecord, SubagentTranscript } from "../lib/subagents";
+import { AppServices } from "../runtime/AppServices";
+import { renderWithAppServices } from "../test/renderWithAppServices";
 import { SubagentInspector } from "./SubagentInspector";
 
 vi.mock("react-virtuoso", () => ({
@@ -98,9 +96,10 @@ function transcript(threadId: string): SubagentTranscript {
 }
 
 function renderInspector(id: string) {
+  const services = new AppServices();
   const conversationKey = `chat:${id}`;
   const subagent = record(id);
-  replaceConversationSubagents(conversationKey, [subagent]);
+  services.subagents.replaceConversation(conversationKey, [subagent]);
   const onLoadTranscript = vi
     .fn()
     .mockResolvedValue(transcript(subagent.childThreadId));
@@ -113,7 +112,7 @@ function renderInspector(id: string) {
     onSteer,
     onStop,
     user,
-    ...render(
+    ...renderWithAppServices(
       <SubagentInspector
         conversationKey={conversationKey}
         subagentId={subagent.id}
@@ -126,6 +125,8 @@ function renderInspector(id: string) {
         onSteer={onSteer}
         onStop={onStop}
       />,
+      {},
+      services,
     ),
   };
 }
@@ -207,7 +208,7 @@ describe("SubagentInspector", () => {
   });
 
   it("refreshes visible app-server output as an active child advances", async () => {
-    const { subagent, onLoadTranscript } = renderInspector("stream");
+    const { subagent, onLoadTranscript, services } = renderInspector("stream");
     await screen.findByText("Inspection underway");
     onLoadTranscript.mockResolvedValue({
       ...transcript(subagent.childThreadId),
@@ -227,7 +228,7 @@ describe("SubagentInspector", () => {
     });
 
     act(() => {
-      replaceConversationSubagents("chat:stream", [
+      services.subagents.replaceConversation("chat:stream", [
         {
           ...subagent,
           updatedAt: "2026-07-29T10:02:00.000Z",

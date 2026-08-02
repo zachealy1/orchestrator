@@ -1,11 +1,7 @@
 /// <reference lib="webworker" />
 
 import { renderHistoricalMarkdown } from "../lib/historicalMarkdown";
-import type {
-  HistoricalMarkdownWorkerRequest,
-  HistoricalMarkdownWorkerResponse,
-  PreparedHistoricalTurn,
-} from "../types";
+import type { HistoricalMarkdownWorkerRequest, HistoricalMarkdownWorkerResponse, PreparedHistoricalTurn } from "../features/conversations/types";
 
 const workerScope: DedicatedWorkerGlobalScope = self as DedicatedWorkerGlobalScope;
 

@@ -1,4 +1,4 @@
-import { invoke } from "@tauri-apps/api/core";
+import { commands } from "../../generated/tauri";
 
 export type KanbanColumnKey = "todo" | "in_progress" | "in_review" | "done";
 export type KanbanExecutionStateValue =
@@ -220,10 +220,10 @@ export function loadKanbanBoard(
   workspaceId: number,
   options: { includeArchived?: boolean } = {},
 ) {
-  return invoke<KanbanBoardSnapshotRecord>("kanban_board_snapshot", {
+  return commands.kanbanBoardSnapshot(
     workspaceId,
-    includeArchived: options.includeArchived ?? false,
-  });
+    options.includeArchived ?? false,
+  ) as Promise<KanbanBoardSnapshotRecord>;
 }
 
 export function createKanbanCard(
@@ -231,14 +231,12 @@ export function createKanbanCard(
   draft: KanbanCardDraft,
   ids: { cardId?: string; operationId?: string } = {},
 ) {
-  return invoke<KanbanCardRecord>("kanban_create_card", {
-    request: {
-      id: ids.cardId ?? createKanbanId("card"),
-      workspaceId,
-      ...draft,
-      operationId: ids.operationId ?? createKanbanId("op"),
-    },
-  });
+  return commands.kanbanCreateCard({
+    id: ids.cardId ?? createKanbanId("card"),
+    workspaceId,
+    ...draft,
+    operationId: ids.operationId ?? createKanbanId("op"),
+  }) as Promise<KanbanCardRecord>;
 }
 
 export function updateKanbanCard(
@@ -246,14 +244,12 @@ export function updateKanbanCard(
   draft: KanbanCardDraft,
   operationId = createKanbanId("op"),
 ) {
-  return invoke<KanbanCardRecord>("kanban_update_card", {
-    request: {
-      cardId: card.id,
-      expectedVersion: card.stateVersion,
-      ...draft,
-      operationId,
-    },
-  });
+  return commands.kanbanUpdateCard({
+    cardId: card.id,
+    expectedVersion: card.stateVersion,
+    ...draft,
+    operationId,
+  }) as Promise<KanbanCardRecord>;
 }
 
 export function moveKanbanCard(input: {
@@ -263,16 +259,14 @@ export function moveKanbanCard(input: {
   afterCardId?: string | null;
   operationId?: string;
 }) {
-  return invoke<KanbanCardRecord>("kanban_move_card", {
-    request: {
-      cardId: input.card.id,
-      expectedVersion: input.card.stateVersion,
-      targetStage: input.targetStage,
-      beforeCardId: input.beforeCardId ?? null,
-      afterCardId: input.afterCardId ?? null,
-      operationId: input.operationId ?? createKanbanId("op"),
-    },
-  });
+  return commands.kanbanMoveCard({
+    cardId: input.card.id,
+    expectedVersion: input.card.stateVersion,
+    targetStage: input.targetStage,
+    beforeCardId: input.beforeCardId ?? null,
+    afterCardId: input.afterCardId ?? null,
+    operationId: input.operationId ?? createKanbanId("op"),
+  }) as Promise<KanbanCardRecord>;
 }
 
 export function claimKanbanAttempt(input: {
@@ -284,17 +278,15 @@ export function claimKanbanAttempt(input: {
   operationId?: string;
 }) {
   const attemptId = input.attemptId ?? createKanbanId("attempt");
-  return invoke<KanbanAttemptResult>("kanban_claim_attempt", {
-    request: {
-      cardId: input.card.id,
-      attemptId,
-      expectedVersion: input.card.stateVersion,
-      kind: input.kind,
-      prompt: input.prompt,
-      configSnapshotJson: JSON.stringify(input.configSnapshot),
-      operationId: input.operationId ?? createKanbanId("op"),
-    },
-  });
+  return commands.kanbanClaimAttempt({
+    cardId: input.card.id,
+    attemptId,
+    expectedVersion: input.card.stateVersion,
+    kind: input.kind,
+    prompt: input.prompt,
+    configSnapshotJson: JSON.stringify(input.configSnapshot),
+    operationId: input.operationId ?? createKanbanId("op"),
+  }) as Promise<KanbanAttemptResult>;
 }
 
 export function updateKanbanAttempt(input: {
@@ -311,57 +303,49 @@ export function updateKanbanAttempt(input: {
   error?: string | null;
   operationId?: string;
 }) {
-  return invoke<KanbanAttemptResult>("kanban_update_attempt", {
-    request: {
-      ...input,
-      runId: input.runId ?? null,
-      taskId: input.taskId ?? null,
-      threadId: input.threadId ?? null,
-      turnId: input.turnId ?? null,
-      executionRoot: input.executionRoot ?? null,
-      error: input.error ?? null,
-      operationId: input.operationId ?? createKanbanId("op"),
-    },
-  });
+  return commands.kanbanUpdateAttempt({
+    ...input,
+    runId: input.runId ?? null,
+    taskId: input.taskId ?? null,
+    threadId: input.threadId ?? null,
+    turnId: input.turnId ?? null,
+    executionRoot: input.executionRoot ?? null,
+    error: input.error ?? null,
+    operationId: input.operationId ?? createKanbanId("op"),
+  }) as Promise<KanbanAttemptResult>;
 }
 
 export function approveKanbanCard(
   card: Pick<KanbanCardRecord, "id" | "stateVersion">,
   operationId = createKanbanId("op"),
 ) {
-  return invoke<KanbanCardRecord>("kanban_approve_card", {
-    request: {
-      cardId: card.id,
-      expectedVersion: card.stateVersion,
-      operationId,
-    },
-  });
+  return commands.kanbanApproveCard({
+    cardId: card.id,
+    expectedVersion: card.stateVersion,
+    operationId,
+  }) as Promise<KanbanCardRecord>;
 }
 
 export function reopenKanbanCard(
   card: Pick<KanbanCardRecord, "id" | "stateVersion">,
   operationId = createKanbanId("op"),
 ) {
-  return invoke<KanbanCardRecord>("kanban_reopen_card", {
-    request: {
-      cardId: card.id,
-      expectedVersion: card.stateVersion,
-      operationId,
-    },
-  });
+  return commands.kanbanReopenCard({
+    cardId: card.id,
+    expectedVersion: card.stateVersion,
+    operationId,
+  }) as Promise<KanbanCardRecord>;
 }
 
 export function stopInactiveKanbanCard(
   card: Pick<KanbanCardRecord, "id" | "stateVersion">,
   operationId = createKanbanId("op"),
 ) {
-  return invoke<KanbanCardRecord>("kanban_stop_inactive_card", {
-    request: {
-      cardId: card.id,
-      expectedVersion: card.stateVersion,
-      operationId,
-    },
-  });
+  return commands.kanbanStopInactiveCard({
+    cardId: card.id,
+    expectedVersion: card.stateVersion,
+    operationId,
+  }) as Promise<KanbanCardRecord>;
 }
 
 export function archiveKanbanCard(
@@ -369,26 +353,22 @@ export function archiveKanbanCard(
   archived: boolean,
   operationId = createKanbanId("op"),
 ) {
-  return invoke<KanbanCardRecord>("kanban_archive_card", {
-    request: {
-      cardId: card.id,
-      expectedVersion: card.stateVersion,
-      archived,
-      operationId,
-    },
-  });
+  return commands.kanbanArchiveCard({
+    cardId: card.id,
+    expectedVersion: card.stateVersion,
+    archived,
+    operationId,
+  }) as Promise<KanbanCardRecord>;
 }
 
 export function deleteKanbanCard(
   card: Pick<KanbanCardRecord, "id" | "stateVersion">,
   operationId = createKanbanId("op"),
 ) {
-  return invoke<void>("kanban_delete_card", {
-    request: {
-      cardId: card.id,
-      expectedVersion: card.stateVersion,
-      operationId,
-    },
+  return commands.kanbanDeleteCard({
+    cardId: card.id,
+    expectedVersion: card.stateVersion,
+    operationId,
   });
 }
 
@@ -399,19 +379,17 @@ export function saveKanbanPreferences(input: {
   columnOrder: KanbanColumnKey[];
   operationId?: string;
 }) {
-  return invoke<KanbanBoardSnapshotRecord>("kanban_update_preferences", {
-    request: {
-      workspaceId: input.workspaceId,
-      expectedRevision: input.expectedRevision,
-      preferencesJson: JSON.stringify(input.preferences),
-      columnOrder: input.columnOrder,
-      operationId: input.operationId ?? createKanbanId("op"),
-    },
-  });
+  return commands.kanbanUpdatePreferences({
+    workspaceId: input.workspaceId,
+    expectedRevision: input.expectedRevision,
+    preferencesJson: JSON.stringify(input.preferences),
+    columnOrder: input.columnOrder,
+    operationId: input.operationId ?? createKanbanId("op"),
+  }) as Promise<KanbanBoardSnapshotRecord>;
 }
 
 export function recoverInterruptedKanbanAttempts() {
-  return invoke<number>("kanban_recover_interrupted");
+  return commands.kanbanRecoverInterrupted();
 }
 
 export function provisionKanbanGit(input: {
@@ -420,39 +398,31 @@ export function provisionKanbanGit(input: {
   repositories: KanbanGitRepositoryRequest[];
   includeDirty?: boolean;
 }) {
-  return invoke<KanbanGitProvisionResult>("kanban_git_provision", {
-    request: {
-      cardId: input.cardId,
-      cardSlug: input.cardSlug ?? null,
-      repositories: input.repositories.map((repository) => ({
-        repositoryPath: repository.repositoryPath,
-        relativePath: repository.relativePath ?? null,
-        includeDirtyChanges:
-          repository.includeDirtyChanges ?? input.includeDirty ?? false,
-      })),
-    },
-  });
+  return commands.kanbanGitProvision({
+    cardId: input.cardId,
+    cardSlug: input.cardSlug ?? null,
+    repositories: input.repositories.map((repository) => ({
+      repositoryPath: repository.repositoryPath,
+      relativePath: repository.relativePath ?? null,
+      includeDirtyChanges:
+        repository.includeDirtyChanges ?? input.includeDirty ?? false,
+    })),
+  }) as Promise<KanbanGitProvisionResult>;
 }
 
 export function reconcileKanbanGit(binding: KanbanGitBinding) {
-  return invoke<KanbanGitReconcileResult>("kanban_git_reconcile", {
-    request: { binding },
-  });
+  return commands.kanbanGitReconcile({ binding }) as Promise<KanbanGitReconcileResult>;
 }
 
 export function readKanbanGitStatus(binding: KanbanGitBinding) {
-  return invoke<KanbanGitStatusResult>("kanban_git_status", {
-    request: { binding },
-  });
+  return commands.kanbanGitStatus({ binding }) as Promise<KanbanGitStatusResult>;
 }
 
 export function readKanbanGitDiff(
   binding: KanbanGitBinding,
   includeBinary = true,
 ) {
-  return invoke<KanbanGitDiffResult>("kanban_git_diff", {
-    request: { binding, includeBinary },
-  });
+  return commands.kanbanGitDiff({ binding, includeBinary }) as Promise<KanbanGitDiffResult>;
 }
 
 export function commitKanbanGit(input: {
@@ -460,28 +430,25 @@ export function commitKanbanGit(input: {
   message: string;
   stageAll?: boolean;
 }) {
-  return invoke<KanbanGitActionResult>("kanban_git_commit", {
-    request: {
-      binding: input.binding,
-      message: input.message,
-      stageAll: input.stageAll ?? true,
-    },
-  });
+  return commands.kanbanGitCommit({
+    binding: input.binding,
+    message: input.message,
+    stageAll: input.stageAll ?? true,
+  }) as Promise<KanbanGitActionResult>;
 }
 
 export function pushKanbanGit(binding: KanbanGitBinding) {
-  return invoke<KanbanGitActionResult>("kanban_git_push", {
-    request: { binding },
-  });
+  return commands.kanbanGitPush({ binding }) as Promise<KanbanGitActionResult>;
 }
 
 export function mergeKanbanGit(
   binding: KanbanGitBinding,
   message?: string | null,
 ) {
-  return invoke<KanbanGitMergeResult>("kanban_git_merge", {
-    request: { binding, message: message ?? null },
-  });
+  return commands.kanbanGitMerge({
+    binding,
+    message: message ?? null,
+  }) as Promise<KanbanGitMergeResult>;
 }
 
 export function cleanupKanbanGit(input: {
@@ -489,13 +456,11 @@ export function cleanupKanbanGit(input: {
   deleteBranch?: boolean;
   force?: boolean;
 }) {
-  return invoke<KanbanGitCleanupResult>("kanban_git_cleanup", {
-    request: {
-      binding: input.binding,
-      deleteBranch: input.deleteBranch ?? false,
-      force: input.force ?? false,
-    },
-  });
+  return commands.kanbanGitCleanup({
+    binding: input.binding,
+    deleteBranch: input.deleteBranch ?? false,
+    force: input.force ?? false,
+  }) as Promise<KanbanGitCleanupResult>;
 }
 
 export function saveKanbanGitBindings(
@@ -503,18 +468,16 @@ export function saveKanbanGitBindings(
   bindings: KanbanGitBinding[],
   operationId = createKanbanId("op"),
 ) {
-  return invoke<KanbanGitBinding[]>("kanban_save_git_bindings", {
-    request: {
-      cardId: card.id,
-      expectedVersion: card.stateVersion,
-      operationId,
-      bindings,
-    },
-  });
+  return commands.kanbanSaveGitBindings({
+    cardId: card.id,
+    expectedVersion: card.stateVersion,
+    operationId,
+    bindings,
+  }) as Promise<KanbanGitBinding[]>;
 }
 
 export function loadKanbanGitBindings(cardId: string) {
-  return invoke<KanbanGitBinding[]>("kanban_list_git_bindings", { cardId });
+  return commands.kanbanListGitBindings(cardId) as Promise<KanbanGitBinding[]>;
 }
 
 export function saveKanbanInheritedContext(input: {
@@ -523,17 +486,15 @@ export function saveKanbanInheritedContext(input: {
   context: string;
   operationId?: string;
 }) {
-  return invoke<void>("kanban_set_inherited_context", {
-    request: {
-      cardId: input.card.id,
-      sourceCardId: input.sourceCardId,
-      context: input.context,
-      expectedVersion: input.card.stateVersion,
-      operationId: input.operationId ?? createKanbanId("op"),
-    },
+  return commands.kanbanSetInheritedContext({
+    cardId: input.card.id,
+    sourceCardId: input.sourceCardId,
+    context: input.context,
+    expectedVersion: input.card.stateVersion,
+    operationId: input.operationId ?? createKanbanId("op"),
   });
 }
 
 export function loadKanbanInheritedContext(cardId: string) {
-  return invoke<string | null>("kanban_get_inherited_context", { cardId });
+  return commands.kanbanGetInheritedContext(cardId);
 }

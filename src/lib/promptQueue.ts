@@ -1,15 +1,7 @@
 import {
   parseRunExecutionSettingsValue,
 } from "./runExecutionSettings";
-import type {
-  PromptQueueContextFileFingerprint,
-  PromptQueueContextFingerprint,
-  PromptQueueContextInspection,
-  PromptQueueItem,
-  PromptQueueItemRecord,
-  PromptQueueStatus,
-  QueuedPromptSnapshot,
-} from "../types";
+import type { PromptQueueContextFileFingerprint, PromptQueueContextFingerprint, PromptQueueContextInspection, PromptQueueItem, PromptQueueItemRecord, PromptQueueStatus, QueuedPromptSnapshot } from "../features/queue/types";
 
 export const PROMPT_QUEUE_SNAPSHOT_VERSION = 1;
 export const PROMPT_QUEUE_MAX_ITEMS = 50;

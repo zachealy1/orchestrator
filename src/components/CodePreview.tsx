@@ -9,13 +9,13 @@ import {
   useState,
   type CSSProperties,
 } from "react";
-import type { ResolvedTheme } from "../types";
+import type { ResolvedTheme } from "../shared/types";
 import {
   codePreviewTheme,
   detectPreviewLanguage,
   type PreviewSemanticToken,
 } from "../lib/codePreview";
-import { codePreviewHighlightingService } from "../lib/codePreviewHighlighting";
+import { useAppServices } from "../runtime/AppServices";
 
 type Token = {
   content: string;
@@ -69,6 +69,7 @@ export const CodePreview = memo(function CodePreview({
   lines,
   languageOverride,
 }: Props) {
+  const { codePreviewHighlighting } = useAppServices();
   const scrollRef = useRef<HTMLPreElement | null>(null);
   const language = useMemo(
     () => languageOverride ?? detectPreviewLanguage(path),
@@ -110,7 +111,7 @@ export const CodePreview = memo(function CodePreview({
       };
     }
 
-    void codePreviewHighlightingService
+    void codePreviewHighlighting
       .highlight(
         {
           path,
@@ -147,7 +148,16 @@ export const CodePreview = memo(function CodePreview({
       disposed = true;
       abortController.abort();
     };
-  }, [complete, content, language, lines, path, resolvedTheme, theme]);
+  }, [
+    codePreviewHighlighting,
+    complete,
+    content,
+    language,
+    lines,
+    path,
+    resolvedTheme,
+    theme,
+  ]);
 
   const tokenLines =
     highlightedPreview?.path === path &&

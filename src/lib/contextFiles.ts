@@ -1,7 +1,5 @@
-import {
-  ORCHESTRATOR_CONTEXT_FILE_MIME,
-  type ComposerContextFile,
-} from "../types";
+import { ORCHESTRATOR_CONTEXT_FILE_MIME } from "../features/composer/types";
+import type { ComposerContextFile } from "../features/composer/types";
 import { normalizeContextFileMedia } from "./imageAttachments";
 
 type ContextDataTransfer = Pick<DataTransfer, "getData" | "types"> & {

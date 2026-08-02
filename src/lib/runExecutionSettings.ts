@@ -1,12 +1,6 @@
-import type {
-  CodexAccessMode,
-  CodexProfileKey,
-  ComposerContextFile,
-  OssProvider,
-  ResolvedRunExecutionSettings,
-  RunExecutionSettings,
-  SelectedComposerSkill,
-} from "../types";
+import type { CodexAccessMode, CodexProfileKey, OssProvider } from "../features/codex/types";
+import type { ComposerContextFile, SelectedComposerSkill } from "../features/composer/types";
+import type { ResolvedRunExecutionSettings, RunExecutionSettings } from "../features/runs/types";
 
 export const RUN_EXECUTION_SETTINGS_VERSION = 2;
 

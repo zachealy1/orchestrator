@@ -1,8 +1,9 @@
 import { diffLines } from "diff";
-import type { ResolvedTheme } from "../types";
+import type { ResolvedTheme } from "../shared/types";
 import {
   detectPreviewLanguage,
   highlightPreviewContent,
+  type CodePreviewCache,
   type PreviewSemanticToken,
 } from "./codePreview";
 
@@ -204,18 +205,22 @@ export async function highlightDiffSide(
   content: string,
   path: string,
   resolvedTheme: ResolvedTheme,
+  cache: CodePreviewCache,
 ): Promise<HighlightedDiffSide> {
   const language = detectPreviewLanguage(path);
   if (language === "plaintext") {
     return { language, lines: splitDiffLines(content).map(textToTokenLine) };
   }
 
-  const lines = await highlightPreviewContent({
-    path,
-    content,
-    language,
-    resolvedTheme,
-  });
+  const lines = await highlightPreviewContent(
+    {
+      path,
+      content,
+      language,
+      resolvedTheme,
+    },
+    cache,
+  );
 
   return {
     language,

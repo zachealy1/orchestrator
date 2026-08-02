@@ -1,10 +1,8 @@
-// @ts-expect-error Vitest runs in Node; the app typecheck intentionally omits Node types.
-import { readFileSync } from "node:fs";
+import { readAppStyles } from "../test/readAppStyles";
 import { describe, expect, it } from "vitest";
 
-declare const process: { cwd(): string };
 
-const css = readFileSync(`${process.cwd()}/src/App.css`, "utf8");
+const css = readAppStyles();
 
 function rule(selector: string) {
   const exactStart = css.indexOf(`\n${selector} {`);

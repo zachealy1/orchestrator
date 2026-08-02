@@ -1,8 +1,6 @@
 import { prepareImageAttachment } from "../codexClient";
-import type {
-  ComposerContextFile,
-  ImageAttachmentPreview,
-} from "../types";
+import type { ComposerContextFile, ImageAttachmentPreview } from "../features/composer/types";
+import { BoundedLruCache } from "../shared/cache/BoundedLruCache";
 
 const IMAGE_EXTENSIONS = new Set(["gif", "jpeg", "jpg", "png", "webp"]);
 const MAX_CACHED_IMAGE_PREVIEWS = 64;
@@ -21,21 +19,26 @@ type CodexLocalImageInput = {
 
 export type CodexTurnInput = CodexTextInput | CodexLocalImageInput;
 
-const previewRequests = new Map<
-  string,
-  Promise<ImageAttachmentPreview | null>
->();
+export class ImageAttachmentPreviewCache {
+  readonly #requests = new BoundedLruCache<
+    string,
+    Promise<ImageAttachmentPreview | null>
+  >(MAX_CACHED_IMAGE_PREVIEWS);
 
-function cachePreviewRequest(
-  path: string,
-  request: Promise<ImageAttachmentPreview | null>,
-) {
-  previewRequests.delete(path);
-  previewRequests.set(path, request);
-  while (previewRequests.size > MAX_CACHED_IMAGE_PREVIEWS) {
-    const oldestKey = previewRequests.keys().next().value;
-    if (typeof oldestKey !== "string") break;
-    previewRequests.delete(oldestKey);
+  get(path: string) {
+    return this.#requests.get(path);
+  }
+
+  set(path: string, request: Promise<ImageAttachmentPreview | null>) {
+    this.#requests.set(path, request);
+  }
+
+  delete(path: string) {
+    this.#requests.delete(path);
+  }
+
+  clear() {
+    this.#requests.clear();
   }
 }
 
@@ -69,24 +72,24 @@ export function isImageContextFile(
 
 export function loadImageAttachmentPreview(
   path: string,
+  cache: ImageAttachmentPreviewCache,
 ): Promise<ImageAttachmentPreview | null> {
-  const cached = previewRequests.get(path);
+  const cached = cache.get(path);
   if (cached) {
-    previewRequests.delete(path);
-    previewRequests.set(path, cached);
     return cached;
   }
 
   const request = prepareImageAttachment(path).catch((error) => {
-    previewRequests.delete(path);
+    cache.delete(path);
     throw error;
   });
-  cachePreviewRequest(path, request);
+  cache.set(path, request);
   return request;
 }
 
 export async function prepareContextImageFiles(
   files: ComposerContextFile[],
+  cache: ImageAttachmentPreviewCache,
 ): Promise<ComposerContextFile[]> {
   return Promise.all(
     files.map(async (sourceFile) => {
@@ -100,8 +103,8 @@ export async function prepareContextImageFiles(
           };
         }
         const cachedPreview = Promise.resolve(preview);
-        cachePreviewRequest(file.path, cachedPreview);
-        cachePreviewRequest(preview.path, cachedPreview);
+        cache.set(file.path, cachedPreview);
+        cache.set(preview.path, cachedPreview);
         return {
           ...file,
           canonicalPath: preview.path,
@@ -140,8 +143,4 @@ export function buildCodexTurnInput(
         detail: "auto",
       })),
   ];
-}
-
-export function clearImageAttachmentPreviewCache() {
-  previewRequests.clear();
 }

@@ -15,7 +15,19 @@ import {
   type StateSnapshot,
   type VirtuosoHandle,
 } from "react-virtuoso";
-import type { HistoricalChatOpenRequest } from "../types";
+import type {
+  HistoricalChatOpenRequest,
+  TranscriptViewportSnapshot,
+} from "../features/conversations/types";
+export type { TranscriptViewportSnapshot } from "../features/conversations/types";
+import {
+  createRestoredTranscriptPosition,
+  isEditableScrollTarget,
+  isTranscriptScrollKey,
+  latestTranscriptRowIsVisible,
+  monotonicNow,
+  type InitialTranscriptPosition,
+} from "../features/conversations/transcriptViewport";
 import type { ApprovalResolutionHandler } from "../lib/codexApprovals";
 import type { RunEditedFile } from "../lib/codexEventReducer";
 import type { RunWebPreview } from "../lib/webPreview";
@@ -37,9 +49,12 @@ import {
   type NativePlanDisclosureChangeHandler,
   type PendingInteractionPageChangeHandler,
   type TaskChatEntry,
-} from "./TaskChatTranscript";
+} from "./TaskChatTurn";
+import {
+  useAppServices,
+  type AppServices,
+} from "../runtime/AppServices";
 
-const TRANSCRIPT_STATE_CACHE_LIMIT = 5;
 const TRANSCRIPT_BOTTOM_THRESHOLD_PX = 48;
 const CHAT_SCROLLBAR_CORNER_INSET_PX = 12;
 export const TRANSCRIPT_RENDER_AHEAD_PX = 3_200;
@@ -87,20 +102,6 @@ type LiveTailInteractionRevision = {
   seenKeys: Set<string>;
 };
 
-type CachedTranscriptState = {
-  snapshot: StateSnapshot;
-  entryCount: number;
-};
-
-type InitialTranscriptPosition =
-  | { kind: "default" }
-  | { kind: "latest" }
-  | {
-      kind: "restore";
-      snapshot: StateSnapshot;
-      location: { index: number; align: "start"; offset: number };
-    };
-
 type TranscriptCacheMetadata = Omit<
   TranscriptViewportSnapshot,
   "snapshot" | "workspaceId"
@@ -109,106 +110,43 @@ type TranscriptCacheMetadata = Omit<
   workspaceId: number | null;
 };
 
-const transcriptStateCache = new Map<string, CachedTranscriptState>();
-
-function readCachedTranscriptState(key: string, entryCount: number) {
-  const cached = transcriptStateCache.get(key);
+function readCachedTranscriptState(
+  cache: AppServices["transcriptStates"],
+  key: string,
+  entryCount: number,
+) {
+  const cached = cache.get(key);
   if (!cached || cached.entryCount !== entryCount) return undefined;
-  transcriptStateCache.delete(key);
-  transcriptStateCache.set(key, cached);
   return cached.snapshot;
 }
 
 function writeCachedTranscriptState(
+  cache: AppServices["transcriptStates"],
   key: string,
   entryCount: number,
   snapshot: StateSnapshot,
 ) {
-  transcriptStateCache.delete(key);
-  transcriptStateCache.set(key, { entryCount, snapshot });
-  while (transcriptStateCache.size > TRANSCRIPT_STATE_CACHE_LIMIT) {
-    const oldest = transcriptStateCache.keys().next().value;
-    if (typeof oldest !== "string") break;
-    transcriptStateCache.delete(oldest);
-  }
+  cache.set(key, { entryCount, snapshot });
 }
 
-function createRestoredTranscriptPosition(
-  snapshot: StateSnapshot,
-  fallbackHeights: number[],
-): Extract<InitialTranscriptPosition, { kind: "restore" }> {
-  const heightEstimates = [...fallbackHeights];
-  for (const range of snapshot.ranges) {
-    if (!Number.isFinite(range.size) || range.size <= 0) continue;
-    const startIndex = Math.max(0, Math.floor(range.startIndex));
-    const endIndex = Math.min(
-      heightEstimates.length - 1,
-      Number.isFinite(range.endIndex)
-        ? Math.floor(range.endIndex)
-        : heightEstimates.length - 1,
-    );
-    for (let index = startIndex; index <= endIndex; index += 1) {
-      heightEstimates[index] = range.size;
-    }
-  }
-
-  const scrollTop = Math.max(0, snapshot.scrollTop);
-  let itemTop = 0;
-  let index = 0;
-  for (; index < heightEstimates.length - 1; index += 1) {
-    const itemBottom = itemTop + heightEstimates[index];
-    if (scrollTop < itemBottom) break;
-    itemTop = itemBottom;
-  }
-
-  return {
-    kind: "restore",
-    snapshot,
-    location: {
-      index,
-      align: "start",
-      offset: Math.max(0, scrollTop - itemTop),
-    },
-  };
-}
-
-function isTranscriptScrollKey(key: string) {
-  return (
-    key === "ArrowUp" ||
-    key === "ArrowDown" ||
-    key === "PageUp" ||
-    key === "PageDown" ||
-    key === "Home" ||
-    key === "End" ||
-    key === " "
-  );
-}
-
-function isEditableScrollTarget(target: EventTarget | null) {
-  return (
-    target instanceof Element &&
-    Boolean(target.closest("input, textarea, select, [contenteditable='true']"))
-  );
-}
-
-function monotonicNow() {
-  return typeof performance === "undefined" ? Date.now() : performance.now();
-}
-
-export type VirtuosoTaskChatTranscriptProps = {
+export type TranscriptModel = {
   entries: TaskChatEntry[];
   transcriptIdentity: string;
   transcriptVersion: string;
   suspended?: boolean;
   restoredViewportSnapshot?: TranscriptViewportSnapshot | null;
-  onViewportSnapshotChange?: (
-    snapshot: TranscriptViewportSnapshot,
-  ) => void;
   viewportWidth?: number;
   viewportStable?: boolean;
   firstItemIndex: number;
   openAtLatestRequest: HistoricalChatOpenRequest | null;
   liveFollow: boolean;
+  fileUndoDisabled?: boolean;
+  editablePromptEntryId?: string | null;
+  notificationFocusRequest?: TranscriptNotificationFocusRequest | null;
+};
+
+export type TranscriptActions = {
+  onViewportSnapshotChange?: (snapshot: TranscriptViewportSnapshot) => void;
   onOpenAtLatestApplied?: (request: HistoricalChatOpenRequest) => void;
   onOpenAtLatestCancelled?: (request: HistoricalChatOpenRequest) => void;
   onResolveRequest: ApprovalResolutionHandler;
@@ -233,32 +171,27 @@ export type VirtuosoTaskChatTranscriptProps = {
     file: RunEditedFile,
   ) => Promise<void> | void;
   onUndoEditedFiles?: (entry: TaskChatEntry) => Promise<void> | void;
-  fileUndoDisabled?: boolean;
-  editablePromptEntryId?: string | null;
   onEditPrompt?: (entry: TaskChatEntry, prompt: string) => void;
   onLoadHistoricalActivity?: (entry: TaskChatEntry) => void;
   onScrollActivityChange?: (active: boolean) => void;
-  notificationFocusRequest?: TranscriptNotificationFocusRequest | null;
   onNotificationFocusApplied?: (
     request: TranscriptNotificationFocusRequest,
     found: boolean,
   ) => void;
 };
 
+export type VirtuosoTaskChatTranscriptProps = {
+  model: TranscriptModel;
+  actions: TranscriptActions;
+};
+
+type FlatTranscriptProps = TranscriptModel & TranscriptActions;
+
 type VirtuosoTaskChatTranscriptInstanceProps =
-  VirtuosoTaskChatTranscriptProps & {
+  FlatTranscriptProps & {
     onInitialPositionReady?: () => void;
     preparing?: boolean;
   };
-
-export type TranscriptViewportSnapshot = {
-  workspaceId: number;
-  transcriptIdentity: string;
-  transcriptVersion: string;
-  viewportWidthBucket: number;
-  entryCount: number;
-  snapshot: StateSnapshot;
-};
 
 export type VirtuosoTaskChatTranscriptHandle = {
   captureViewportState: () => void;
@@ -309,14 +242,14 @@ const VirtualTranscriptRow = memo(function VirtualTranscriptRow({
   onCancelEdit: () => void;
   onStartEdit: (entry: TaskChatEntry) => void;
   onResolveRequest: ApprovalResolutionHandler;
-  onAnswerUserInput?: VirtuosoTaskChatTranscriptProps["onAnswerUserInput"];
-  onImplementPlan?: VirtuosoTaskChatTranscriptProps["onImplementPlan"];
-  onRevisePlan?: VirtuosoTaskChatTranscriptProps["onRevisePlan"];
-  onCancelPlan?: VirtuosoTaskChatTranscriptProps["onCancelPlan"];
+  onAnswerUserInput?: TranscriptActions["onAnswerUserInput"];
+  onImplementPlan?: TranscriptActions["onImplementPlan"];
+  onRevisePlan?: TranscriptActions["onRevisePlan"];
+  onCancelPlan?: TranscriptActions["onCancelPlan"];
   onOpenFileLink?: (href: string) => boolean;
-  onOpenWebPreview?: VirtuosoTaskChatTranscriptProps["onOpenWebPreview"];
-  onReviewEditedFile?: VirtuosoTaskChatTranscriptProps["onReviewEditedFile"];
-  onUndoEditedFiles?: VirtuosoTaskChatTranscriptProps["onUndoEditedFiles"];
+  onOpenWebPreview?: TranscriptActions["onOpenWebPreview"];
+  onReviewEditedFile?: TranscriptActions["onReviewEditedFile"];
+  onUndoEditedFiles?: TranscriptActions["onUndoEditedFiles"];
   fileUndoDisabled: boolean;
   onLoadHistoricalActivity?: (entry: TaskChatEntry) => void;
   planExpanded: boolean;
@@ -331,29 +264,33 @@ const VirtualTranscriptRow = memo(function VirtualTranscriptRow({
       tabIndex={-1}
     >
       <TaskChatTurn
-        editable={editable}
-        editing={editing}
-        editingPrompt={editing ? editingPrompt : ""}
-        entry={entry}
-        onCancelEdit={onCancelEdit}
-        onEditingPromptChange={onEditingPromptChange}
-        onOpenFileLink={onOpenFileLink}
-        onOpenWebPreview={onOpenWebPreview}
-        onResolveRequest={onResolveRequest}
-        onAnswerUserInput={onAnswerUserInput}
-        onImplementPlan={onImplementPlan}
-        onRevisePlan={onRevisePlan}
-        onCancelPlan={onCancelPlan}
-        onReviewEditedFile={onReviewEditedFile}
-        onUndoEditedFiles={onUndoEditedFiles}
-        fileUndoDisabled={fileUndoDisabled}
-        onStartEdit={onStartEdit}
-        onSubmitEdit={onSubmitEdit}
-        onLoadHistoricalActivity={onLoadHistoricalActivity}
-        planExpanded={planExpanded}
-        editedFilesExpanded={editedFilesExpanded}
-        onPlanDisclosureChange={onPlanDisclosureChange}
-        onPendingInteractionPageChange={onPendingInteractionPageChange}
+        model={{
+          editable,
+          editing,
+          editingPrompt: editing ? editingPrompt : "",
+          entry,
+          fileUndoDisabled,
+          planExpanded,
+          editedFilesExpanded,
+        }}
+        actions={{
+          onCancelEdit,
+          onEditingPromptChange,
+          onOpenFileLink,
+          onOpenWebPreview,
+          onResolveRequest,
+          onAnswerUserInput,
+          onImplementPlan,
+          onRevisePlan,
+          onCancelPlan,
+          onReviewEditedFile,
+          onUndoEditedFiles,
+          onStartEdit,
+          onSubmitEdit,
+          onLoadHistoricalActivity,
+          onPlanDisclosureChange,
+          onPendingInteractionPageChange,
+        }}
       />
     </div>
   );
@@ -394,6 +331,7 @@ const VirtuosoTaskChatTranscriptImpl = forwardRef<
     onInitialPositionReady,
     preparing = false,
   }, forwardedRef) {
+    const { transcriptGeometry, transcriptStates } = useAppServices();
     const virtuosoRef = useRef<VirtuosoHandle | null>(null);
     const scrollerRef = useRef<HTMLElement | null>(null);
     const detachScrollerListenersRef = useRef<(() => void) | null>(null);
@@ -484,6 +422,7 @@ const VirtuosoTaskChatTranscriptImpl = forwardRef<
           entries,
           viewportWidthBucket,
           geometryScope,
+          transcriptGeometry,
         ),
       };
     }
@@ -500,7 +439,12 @@ const VirtuosoTaskChatTranscriptImpl = forwardRef<
       stableHeightEstimatesRef.current = {
         key: heightEstimateKey,
         heights: entries.map((entry) =>
-          estimateTranscriptRowHeight(entry, viewportWidthBucket, geometryScope),
+          estimateTranscriptRowHeight(
+            entry,
+            viewportWidthBucket,
+            geometryScope,
+            transcriptGeometry,
+          ),
         ),
       };
     }
@@ -597,7 +541,11 @@ const VirtuosoTaskChatTranscriptImpl = forwardRef<
         ) {
           snapshot = restoredViewportSnapshot.snapshot;
         } else {
-          snapshot = readCachedTranscriptState(cacheKey, entries.length);
+          snapshot = readCachedTranscriptState(
+            transcriptStates,
+            cacheKey,
+            entries.length,
+          );
         }
         initialPositionRef.current = snapshot
           ? createRestoredTranscriptPosition(snapshot, heightEstimates)
@@ -632,36 +580,15 @@ const VirtuosoTaskChatTranscriptImpl = forwardRef<
       const scroller = scrollerRef.current;
       if (!scroller || entries.length === 0) return false;
       if (initialPosition.kind === "latest") {
-        if (latestTurnVisibleRef.current && atBottomRef.current) {
-          return true;
-        }
+        if (latestTurnVisibleRef.current && atBottomRef.current) return true;
 
-        // Virtuoso may keep its range and bottom state unchanged when two
-        // transcripts have identical geometry. In that case its callbacks do
-        // not fire for the incoming list, so verify the mounted final row
-        // directly instead of leaving the previous transcript visible.
-        const finalEntry = entries[entries.length - 1];
-        const finalRow = Array.from(
-          scroller.querySelectorAll<HTMLElement>(
-            "[data-transcript-entry-id]",
-          ),
-        ).find(
-          (candidate) =>
-            candidate.dataset.transcriptEntryId === finalEntry.clientId,
-        );
-        if (!finalRow) return false;
-
-        const viewport = scroller.getBoundingClientRect();
-        if (viewport.width <= 0 || viewport.height <= 0) {
-          return true;
-        }
-        const bounds = finalRow.getBoundingClientRect();
-        const bottomGap =
-          scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight;
-        return (
-          bounds.bottom > viewport.top &&
-          bounds.top < viewport.bottom &&
-          bottomGap <= TRANSCRIPT_BOTTOM_THRESHOLD_PX
+        // Identical transcript geometry may leave Virtuoso's range callbacks
+        // unchanged, so verify the incoming final row directly before keeping
+        // the preparation layer hidden.
+        return latestTranscriptRowIsVisible(
+          scroller,
+          entries[entries.length - 1].clientId,
+          TRANSCRIPT_BOTTOM_THRESHOLD_PX,
         );
       }
 
@@ -734,6 +661,7 @@ const VirtuosoTaskChatTranscriptImpl = forwardRef<
     const publishViewportSnapshot = useCallback(
       (metadata: TranscriptCacheMetadata, snapshot: StateSnapshot) => {
         writeCachedTranscriptState(
+          transcriptStates,
           metadata.cacheKey,
           metadata.entryCount,
           snapshot,
@@ -1806,7 +1734,8 @@ const MemoizedVirtuosoTaskChatTranscript = memo(
 const VirtuosoTaskChatTranscriptHost = forwardRef<
   VirtuosoTaskChatTranscriptHandle,
   VirtuosoTaskChatTranscriptProps
->(function VirtuosoTaskChatTranscriptHost(props, forwardedRef) {
+>(function VirtuosoTaskChatTranscriptHost({ model, actions }, forwardedRef) {
+  const props: FlatTranscriptProps = { ...model, ...actions };
   const suspended = props.suspended ?? false;
   const retainedPropsRef = useRef(props);
   if (!suspended) retainedPropsRef.current = props;
@@ -1818,7 +1747,7 @@ const VirtuosoTaskChatTranscriptHost = forwardRef<
         ? null
         : transcriptProps.transcriptIdentity,
   );
-  const incomingPropsRef = useRef(transcriptProps);
+  const incomingPropsRef = useRef(props);
   const visibleTranscriptRef = useRef<VirtuosoTaskChatTranscriptHandle | null>(
     null,
   );
@@ -1931,7 +1860,3 @@ const VirtuosoTaskChatTranscriptHost = forwardRef<
 export const VirtuosoTaskChatTranscript = memo(
   VirtuosoTaskChatTranscriptHost,
 );
-
-export function clearTranscriptStateCache() {
-  transcriptStateCache.clear();
-}

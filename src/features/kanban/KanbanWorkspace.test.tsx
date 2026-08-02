@@ -1,7 +1,7 @@
 import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import type { Workspace } from "../../types";
+import type { Workspace } from "../workspaces/types";
 import type {
   KanbanBoardSnapshotRecord,
   KanbanCardRecord,
@@ -32,12 +32,11 @@ const apiMocks = vi.hoisted(() => ({
   saveKanbanPreferences: vi.fn(),
   updateKanbanCard: vi.fn(),
 }));
-const dbMocks = vi.hoisted(() => ({
+const transcriptMocks = vi.hoisted(() => ({
   listLocalChatTranscript: vi.fn(),
 }));
 
 vi.mock("./api", () => apiMocks);
-vi.mock("../../db", () => dbMocks);
 
 const workspace: Workspace = {
   id: 1,
@@ -174,6 +173,7 @@ function renderWorkspace() {
       defaultModel={null}
       defaultReasoningLevel={null}
       refreshToken={0}
+      listChatTranscript={transcriptMocks.listLocalChatTranscript}
       {...props}
     />,
   );
@@ -202,7 +202,7 @@ async function confirmDeleteWithWorktreeCleanup(
 
 beforeEach(() => {
   vi.resetAllMocks();
-  dbMocks.listLocalChatTranscript.mockResolvedValue([]);
+  transcriptMocks.listLocalChatTranscript.mockResolvedValue([]);
   const initialCard = card();
   const initialBinding = binding();
   const initialSnapshot = snapshot([initialCard]);

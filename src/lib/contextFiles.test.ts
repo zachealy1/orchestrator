@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import type { ComposerContextFile } from "../types";
+import type { ComposerContextFile } from "../features/composer/types";
 import {
   contextFileMarkdownReference,
   restorePromptInlineFileReferencesForComposer,

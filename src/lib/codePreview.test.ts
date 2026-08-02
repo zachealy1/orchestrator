@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   applyPreviewSemanticTokenColors,
   BoundedPreviewHighlightCache,
-  clearPreviewHighlightCache,
+  CodePreviewCache,
   codePreviewTheme,
   detectPreviewLanguage,
   highlightPreviewContent,
@@ -90,7 +90,7 @@ describe("codePreview", () => {
   });
 
   it("reuses cached highlighted token lines for identical requests", async () => {
-    clearPreviewHighlightCache();
+    const cache = new CodePreviewCache();
 
     const input = {
       path: "/repo/src/App.ts",
@@ -99,8 +99,8 @@ describe("codePreview", () => {
       resolvedTheme: "dark" as const,
     };
 
-    const first = await highlightPreviewContent(input);
-    const second = await highlightPreviewContent(input);
+    const first = await highlightPreviewContent(input, cache);
+    const second = await highlightPreviewContent(input, cache);
 
     expect(second).toBe(first);
   });

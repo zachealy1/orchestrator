@@ -1,5 +1,5 @@
 import { AlertTriangle, CheckCircle2, Info, XCircle } from "lucide-react";
-import type { PreflightReport, RecommendationDraft } from "../types";
+import type { PreflightReport, RecommendationDraft } from "../features/runs/types";
 
 type Props = {
   report: PreflightReport | null;

@@ -1,4 +1,4 @@
-import type { RecommendationDraft, RouteRecommendation } from "../types";
+import type { RecommendationDraft, RouteRecommendation } from "../features/runs/types";
 
 const PLAN_TRIGGERS = [
   "build",

@@ -6,14 +6,13 @@ import {
   useState,
   type ReactNode,
 } from "react";
+import type { CodexAccountProfile } from "../accounts/types";
+import type { CodexAccessMode, CodexModel } from "../codex/types";
+import type { HistoryRunSummary } from "../conversations/types";
 import type {
-  CodexAccessMode,
-  CodexAccountProfile,
-  CodexModel,
   Workspace,
   WorkspaceGitRepositoryStatus,
-} from "../../types";
-import { listLocalChatTranscript } from "../../db";
+} from "../workspaces/types";
 import {
   approveKanbanCard,
   archiveKanbanCard,
@@ -89,6 +88,7 @@ type Props = {
   defaultModel: string | null;
   defaultReasoningLevel: string | null;
   refreshToken: number;
+  listChatTranscript: (chatId: number) => Promise<HistoryRunSummary[]>;
   conversation?: ReactNode;
   onOpenConversation: (card: KanbanCardRecord) => void | Promise<void>;
   onShowConversation?: (card: KanbanCardRecord) => void | Promise<void>;
@@ -315,7 +315,7 @@ function errorMessage(error: unknown) {
 }
 
 function inheritedConversationContext(
-  runs: Awaited<ReturnType<typeof listLocalChatTranscript>>,
+  runs: HistoryRunSummary[],
 ) {
   const sections = runs.flatMap((run, index) => {
     const section = [
@@ -350,6 +350,7 @@ export function KanbanWorkspace({
   defaultModel,
   defaultReasoningLevel,
   refreshToken,
+  listChatTranscript,
   conversation,
   onOpenConversation,
   onShowConversation,
@@ -867,7 +868,7 @@ export function KanbanWorkspace({
             if (!source) {
               throw new Error("The source card changed before its context could be copied.");
             }
-            const runs = await listLocalChatTranscript(source.chatId);
+            const runs = await listChatTranscript(source.chatId);
             if (runs.length > 0) {
               await saveKanbanInheritedContext({
                 card: created,
@@ -920,7 +921,7 @@ export function KanbanWorkspace({
     if (!card) return;
     const bindings = explicitBindings ?? bindingsByCard[cardId] ?? [];
     setReview((current) => ({ ...current, gitBusy: true }));
-    const transcriptPromise = listLocalChatTranscript(card.chatId).catch(() => []);
+    const transcriptPromise = listChatTranscript(card.chatId).catch(() => []);
     const results = await Promise.allSettled(
       bindings.map((binding) => readKanbanGitStatus(binding)),
     );

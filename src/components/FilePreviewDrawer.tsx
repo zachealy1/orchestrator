@@ -1,11 +1,7 @@
 import { memo, type KeyboardEvent, type PointerEvent } from "react";
 import { AlertCircle, FileText, Loader2, X } from "lucide-react";
-import type {
-  ResolvedTheme,
-  WorkspaceGitDiffSection,
-  WorkspaceGitFileStatus,
-  WorkspacePreviewState,
-} from "../types";
+import type { ResolvedTheme } from "../shared/types";
+import type { WorkspaceGitDiffSection, WorkspaceGitFileStatus, WorkspacePreviewState } from "../features/workspaces/types";
 import { CodePreview } from "./CodePreview";
 import { DiffPreview } from "./DiffPreview";
 
@@ -135,6 +131,9 @@ export const FilePreviewDrawer = memo(function FilePreviewDrawer({
       previewState.status === "loaded" &&
       previewState.preview ? (
         <>
+          {previewState.preview.truncated ? (
+            <div className="file-preview-notice">Preview truncated to 512 KB.</div>
+          ) : null}
           {previewState.preview.isBinary ? (
             <div className="file-preview-state">
               <FileText size={16} aria-hidden="true" />

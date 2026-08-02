@@ -1,4 +1,4 @@
-import type { CodexAccessMode } from "../../types";
+import type { CodexAccessMode } from "../codex/types";
 
 export const KANBAN_STAGES = [
   "todo",

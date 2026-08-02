@@ -1,0 +1,353 @@
+:root,
+:root[data-theme="light"] {
+  color: #292f33;
+  background: #f9f8f8;
+  color-scheme: light;
+
+  --color-text: #292f33;
+  --color-text-secondary: #8899a6;
+  --color-background: #f9f8f8;
+  --color-component-background: #ffffff;
+  --color-surface-soft: #f1f7fb;
+  --color-surface-muted: #e1e8ed;
+  --color-primary: #0084b4;
+  --color-secondary: #1da1f2;
+  --color-accent: #76c5f5;
+  --color-selected-background: #e8f5fd;
+  --color-selected-text: #0084b4;
+  --color-button-primary: #1da1f2;
+  --color-button-primary-text: #ffffff;
+  --color-button-secondary: #eef7fd;
+  --color-button-secondary-text: #292f33;
+  --color-button-active: #dff1fd;
+  --color-button-active-text: #0084b4;
+  --color-icon: #0084b4;
+  --color-icon-muted: #8899a6;
+  --color-divider: #e1e8ed;
+  --color-pastel-blue: #c0deed;
+  --color-error: #d9534f;
+  --color-diff-addition: #2e7d32;
+  --color-shadow: #000000;
+  --color-modal-backdrop: #00000073;
+
+  --text-rgb: 41 47 51;
+  --text-secondary-rgb: 136 153 166;
+  --component-rgb: 255 255 255;
+  --surface-soft-rgb: 241 247 251;
+  --surface-muted-rgb: 225 232 237;
+  --primary-rgb: 0 132 180;
+  --secondary-rgb: 29 161 242;
+  --accent-rgb: 118 197 245;
+  --error-rgb: 217 83 79;
+  --diff-addition-rgb: 46 125 50;
+  --shadow-rgb: 0 0 0;
+
+  --code-json-key: #005cc5;
+  --code-json-value: var(--color-text);
+}
+
+:root[data-theme="dark"] {
+  color: #f9f8f8;
+  background: #15202b;
+  color-scheme: dark;
+
+  --color-text: #f9f8f8;
+  --color-text-secondary: #8899a6;
+  --color-background: #15202b;
+  --color-component-background: #22303c;
+  --color-surface-soft: #334e5b;
+  --color-surface-muted: #445c6d;
+  --color-primary: #1da1f2;
+  --color-secondary: #55acee;
+  --color-accent: #76c5f5;
+  --color-selected-background: #334e5b;
+  --color-selected-text: #76c5f5;
+  --color-button-primary: #1da1f2;
+  --color-button-primary-text: #ffffff;
+  --color-button-secondary: #334e5b;
+  --color-button-secondary-text: #f9f8f8;
+  --color-button-active: #445c6d;
+  --color-button-active-text: #76c5f5;
+  --color-icon: #76c5f5;
+  --color-icon-muted: #8899a6;
+  --color-divider: #445c6d;
+  --color-pastel-blue: #c0deed;
+  --color-error: #d9534f;
+  --color-diff-addition: #3fb950;
+  --color-shadow: #000000;
+  --color-modal-backdrop: #000000b3;
+
+  --text-rgb: 249 248 248;
+  --text-secondary-rgb: 136 153 166;
+  --component-rgb: 34 48 60;
+  --surface-soft-rgb: 51 78 91;
+  --surface-muted-rgb: 68 92 109;
+  --primary-rgb: 29 161 242;
+  --secondary-rgb: 85 172 238;
+  --accent-rgb: 118 197 245;
+  --error-rgb: 217 83 79;
+  --diff-addition-rgb: 63 185 80;
+  --shadow-rgb: 0 0 0;
+
+  --code-json-key: #79b8ff;
+  --code-json-value: #facc15;
+}
+
+:root {
+  --canvas: var(--color-background);
+  --bg: var(--color-background);
+  --panel: var(--color-component-background);
+  --panel-strong: var(--color-surface-soft);
+  --panel-muted: var(--color-surface-muted);
+  --main: var(--color-background);
+  --rail: var(--color-component-background);
+  --composer: var(--color-component-background);
+  --text: var(--color-text);
+  --text-soft: var(--color-text);
+  --muted: var(--color-text-secondary);
+  --subtle: var(--color-text-secondary);
+  --line: var(--color-divider);
+  --line-strong: var(--color-surface-muted);
+  --accent: var(--color-primary);
+  --accent-sky: var(--color-secondary);
+  --accent-blue: var(--color-primary);
+  --accent-blue-dark: var(--color-primary);
+  --accent-2: var(--color-accent);
+  --accent-teal-dark: var(--color-secondary);
+  --accent-teal-soft: var(--color-accent);
+  --accent-purple: var(--color-selected-text);
+  --accent-purple-dark: var(--color-primary);
+  --warning: var(--color-primary);
+  --danger: var(--color-error);
+  --dropdown-bg: var(--color-button-secondary);
+  --dropdown-bg-hover: var(--color-button-active);
+  --dropdown-menu-bg: var(--color-component-background);
+  --dropdown-text: var(--color-button-secondary-text);
+  --dropdown-muted: var(--color-icon-muted);
+  --dropdown-accent: var(--color-primary);
+  --dropdown-selected: var(--color-selected-text);
+  --dropdown-focus-ring: rgb(var(--primary-rgb) / 0.22);
+  --shadow: 0 18px 60px rgb(var(--shadow-rgb) / 0.2);
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html {
+  background: var(--bg);
+}
+
+body {
+  margin: 0;
+  min-width: 960px;
+  min-height: 100vh;
+  overflow: hidden;
+}
+
+button,
+textarea,
+select,
+input {
+  font: inherit;
+}
+
+button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  min-height: 38px;
+  border: 0;
+  border-radius: 6px;
+  background: var(--color-button-primary);
+  color: var(--color-button-primary-text);
+  cursor: pointer;
+  font-weight: 700;
+  padding: 9px 14px;
+  transition:
+    background 140ms ease,
+    transform 140ms ease;
+}
+
+button:hover:not(:disabled) {
+  background: var(--color-secondary);
+}
+
+button:active:not(:disabled) {
+  transform: translateY(1px);
+}
+
+button:disabled {
+  cursor: not-allowed;
+  opacity: 0.45;
+}
+
+button.secondary {
+  background: var(--color-button-secondary);
+  color: var(--color-button-secondary-text);
+}
+
+button.secondary:hover:not(:disabled) {
+  background: var(--dropdown-bg-hover);
+}
+
+button.danger {
+  background: rgb(var(--error-rgb) / 0.12);
+  color: var(--color-error);
+}
+
+button.danger:hover:not(:disabled) {
+  background: rgb(var(--error-rgb) / 0.2);
+}
+
+.modal-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 90;
+  display: grid;
+  place-items: center;
+  background: var(--color-modal-backdrop);
+  padding: 24px;
+}
+
+.confirmation-dialog {
+  display: grid;
+  width: min(420px, 100%);
+  gap: 20px;
+  border-radius: 8px;
+  background: var(--color-component-background);
+  box-shadow: 0 24px 72px rgb(var(--shadow-rgb) / 0.32);
+  padding: 22px;
+}
+
+.confirmation-dialog h2,
+.confirmation-dialog p {
+  margin: 0;
+}
+
+.confirmation-dialog h2 {
+  margin-top: 4px;
+  color: var(--text);
+  font-size: 1.18rem;
+}
+
+.confirmation-dialog p:not(.eyebrow) {
+  margin-top: 8px;
+  color: var(--muted);
+  line-height: 1.45;
+}
+
+.confirmation-actions {
+  display: flex;
+  gap: 10px;
+  justify-content: flex-end;
+}
+
+.account-handoff-dialog {
+  width: min(480px, 100%);
+}
+
+.plan-implementation-dialog {
+  width: min(620px, 100%);
+}
+
+.branch-creation-dialog {
+  width: min(460px, 100%);
+}
+
+.branch-creation-field {
+  display: grid;
+  gap: 8px;
+  color: var(--color-text);
+  font-size: 0.86rem;
+  font-weight: 600;
+}
+
+.branch-creation-field input {
+  width: 100%;
+  min-height: 42px;
+  border: 1px solid var(--color-divider);
+  border-radius: var(--radius);
+  background: var(--dropdown-bg);
+  color: var(--color-text);
+  outline: none;
+  padding: 9px 11px;
+}
+
+.branch-creation-field input::placeholder {
+  color: var(--color-text-secondary);
+  opacity: 0.72;
+}
+
+.branch-creation-field input:focus-visible {
+  border-color: var(--color-divider);
+  box-shadow: 0 0 0 3px var(--dropdown-focus-ring);
+}
+
+.confirmation-dialog p.confirmation-error {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  color: var(--color-error);
+}
+
+.confirmation-error svg {
+  flex: 0 0 auto;
+  margin-top: 2px;
+}
+
+.plan-implementation-copy {
+  min-width: 0;
+}
+
+.plan-implementation-fields {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.plan-implementation-fields .composer-select {
+  width: 100%;
+  background: var(--dropdown-bg);
+}
+
+.plan-implementation-fields .composer-select:hover:not(.disabled),
+.plan-implementation-fields .composer-select.open {
+  background: var(--dropdown-bg);
+}
+
+.confirmation-dialog p.account-handoff-error {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  color: var(--color-error);
+}
+
+.account-handoff-error svg {
+  flex: 0 0 auto;
+  margin-top: 2px;
+}
+
+@media (max-width: 620px) {
+  .plan-implementation-fields {
+    grid-template-columns: 1fr;
+  }
+}
+
+button.small {
+  min-height: 30px;
+  padding: 6px 10px;
+  font-size: 0.84rem;
+}
+
+.icon-button {
+  width: 36px;
+  min-width: 36px;
+  min-height: 36px;
+  padding: 0;
+}
+
+.wide {
+  width: 100%;
+}

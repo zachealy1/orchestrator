@@ -1,14 +1,10 @@
+use crate::DatabaseState;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
-use sqlx::{
-    sqlite::{SqliteConnectOptions, SqliteConnection},
-    Connection, Row,
-};
-use std::time::Duration;
+use sqlx::{pool::PoolConnection, sqlite::SqliteConnection, Connection, Row, Sqlite};
 use tauri::{AppHandle, Manager};
 use uuid::Uuid;
 
-const DATABASE_URL: &str = "sqlite:app.db";
 const POSITION_STEP: i64 = 1_024;
 const MAX_TITLE_CHARS: usize = 240;
 const MAX_DESCRIPTION_CHARS: usize = 100_000;
@@ -24,14 +20,14 @@ const ACTIVE_ATTEMPT_STATES: &[&str] = &[
     "stop_requested",
 ];
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct KanbanColumnDto {
     pub key: String,
     pub position: i64,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct KanbanRepositorySelectionDto {
     pub repository_path: String,
@@ -40,7 +36,7 @@ pub struct KanbanRepositorySelectionDto {
     pub include_dirty_changes: bool,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct KanbanCardDto {
     pub id: String,
@@ -69,7 +65,7 @@ pub struct KanbanCardDto {
     pub repositories: Vec<KanbanRepositorySelectionDto>,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct KanbanBoardSnapshotDto {
     pub workspace_id: i64,
@@ -79,7 +75,7 @@ pub struct KanbanBoardSnapshotDto {
     pub cards: Vec<KanbanCardDto>,
 }
 
-#[derive(Debug, Deserialize, Serialize)]
+#[derive(Debug, Deserialize, Serialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct KanbanRepositorySelectionInput {
     pub repository_path: String,
@@ -91,7 +87,7 @@ pub struct KanbanRepositorySelectionInput {
     pub include_dirty_changes: bool,
 }
 
-#[derive(Debug, Deserialize, Serialize)]
+#[derive(Debug, Deserialize, Serialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct CreateKanbanCardRequest {
     pub id: String,
@@ -108,7 +104,7 @@ pub struct CreateKanbanCardRequest {
     pub operation_id: String,
 }
 
-#[derive(Debug, Deserialize, Serialize)]
+#[derive(Debug, Deserialize, Serialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct UpdateKanbanCardRequest {
     pub card_id: String,
@@ -125,7 +121,7 @@ pub struct UpdateKanbanCardRequest {
     pub operation_id: String,
 }
 
-#[derive(Debug, Deserialize, Serialize)]
+#[derive(Debug, Deserialize, Serialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct MoveKanbanCardRequest {
     pub card_id: String,
@@ -136,7 +132,7 @@ pub struct MoveKanbanCardRequest {
     pub operation_id: String,
 }
 
-#[derive(Debug, Deserialize, Serialize)]
+#[derive(Debug, Deserialize, Serialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct ClaimKanbanAttemptRequest {
     pub card_id: String,
@@ -148,7 +144,7 @@ pub struct ClaimKanbanAttemptRequest {
     pub operation_id: String,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct KanbanAttemptDto {
     pub id: String,
@@ -168,14 +164,14 @@ pub struct KanbanAttemptDto {
     pub completed_at: Option<String>,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct ClaimKanbanAttemptResult {
     pub card: KanbanCardDto,
     pub attempt: KanbanAttemptDto,
 }
 
-#[derive(Debug, Deserialize, Serialize)]
+#[derive(Debug, Deserialize, Serialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct UpdateKanbanAttemptRequest {
     pub card_id: String,
@@ -192,7 +188,7 @@ pub struct UpdateKanbanAttemptRequest {
     pub operation_id: String,
 }
 
-#[derive(Debug, Deserialize, Serialize)]
+#[derive(Debug, Deserialize, Serialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct VersionedKanbanCardRequest {
     pub card_id: String,
@@ -200,7 +196,7 @@ pub struct VersionedKanbanCardRequest {
     pub operation_id: String,
 }
 
-#[derive(Debug, Deserialize, Serialize)]
+#[derive(Debug, Deserialize, Serialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct ArchiveKanbanCardRequest {
     pub card_id: String,
@@ -209,7 +205,7 @@ pub struct ArchiveKanbanCardRequest {
     pub operation_id: String,
 }
 
-#[derive(Debug, Deserialize, Serialize)]
+#[derive(Debug, Deserialize, Serialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct DeleteKanbanCardRequest {
     pub card_id: String,
@@ -217,7 +213,7 @@ pub struct DeleteKanbanCardRequest {
     pub operation_id: String,
 }
 
-#[derive(Debug, Deserialize, Serialize)]
+#[derive(Debug, Deserialize, Serialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct UpdateKanbanPreferencesRequest {
     pub workspace_id: i64,
@@ -227,7 +223,7 @@ pub struct UpdateKanbanPreferencesRequest {
     pub operation_id: String,
 }
 
-#[derive(Debug, Clone, Deserialize, Serialize)]
+#[derive(Debug, Clone, Deserialize, Serialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct PersistedKanbanGitBinding {
     pub source_repository_path: String,
@@ -239,10 +235,11 @@ pub struct PersistedKanbanGitBinding {
     pub card_branch: String,
     pub worktree_path: String,
     pub status: String,
+    #[specta(type = Option<specta_typescript::Unknown>)]
     pub error: Option<serde_json::Value>,
 }
 
-#[derive(Debug, Deserialize, Serialize)]
+#[derive(Debug, Deserialize, Serialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct SaveKanbanGitBindingsRequest {
     pub card_id: String,
@@ -251,7 +248,7 @@ pub struct SaveKanbanGitBindingsRequest {
     pub bindings: Vec<PersistedKanbanGitBinding>,
 }
 
-#[derive(Debug, Deserialize, Serialize)]
+#[derive(Debug, Deserialize, Serialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct SetKanbanInheritedContextRequest {
     pub card_id: String,
@@ -261,24 +258,8 @@ pub struct SetKanbanInheritedContextRequest {
     pub operation_id: String,
 }
 
-async fn open_database(app: &AppHandle) -> Result<SqliteConnection, String> {
-    let database_path = app
-        .path()
-        .app_config_dir()
-        .map_err(|_| "The application database is unavailable.".to_string())?
-        .join(
-            DATABASE_URL
-                .strip_prefix("sqlite:")
-                .ok_or_else(|| "The application database is unavailable.".to_string())?,
-        );
-    let options = SqliteConnectOptions::new()
-        .filename(database_path)
-        .create_if_missing(false)
-        .foreign_keys(true)
-        .busy_timeout(Duration::from_secs(10));
-    SqliteConnection::connect_with(&options)
-        .await
-        .map_err(|_| "The application database is unavailable.".to_string())
+async fn open_database(app: &AppHandle) -> Result<PoolConnection<Sqlite>, String> {
+    app.state::<DatabaseState>().acquire().await
 }
 
 fn validate_identifier(value: &str, label: &str) -> Result<(), String> {
@@ -713,6 +694,7 @@ async fn card_workspace_id(
 }
 
 #[tauri::command]
+#[specta::specta]
 pub async fn kanban_board_snapshot(
     app: AppHandle,
     workspace_id: i64,
@@ -775,6 +757,7 @@ pub async fn kanban_board_snapshot(
 }
 
 #[tauri::command]
+#[specta::specta]
 pub async fn kanban_create_card(
     app: AppHandle,
     request: CreateKanbanCardRequest,
@@ -882,6 +865,7 @@ pub async fn kanban_create_card(
 }
 
 #[tauri::command]
+#[specta::specta]
 pub async fn kanban_update_card(
     app: AppHandle,
     request: UpdateKanbanCardRequest,
@@ -1137,6 +1121,7 @@ async fn rebalance_stage_positions(
 }
 
 #[tauri::command]
+#[specta::specta]
 pub async fn kanban_move_card(
     app: AppHandle,
     request: MoveKanbanCardRequest,
@@ -1281,6 +1266,7 @@ pub async fn kanban_move_card(
 }
 
 #[tauri::command]
+#[specta::specta]
 pub async fn kanban_claim_attempt(
     app: AppHandle,
     request: ClaimKanbanAttemptRequest,
@@ -1427,6 +1413,7 @@ pub async fn kanban_claim_attempt(
 }
 
 #[tauri::command]
+#[specta::specta]
 pub async fn kanban_update_attempt(
     app: AppHandle,
     request: UpdateKanbanAttemptRequest,
@@ -1568,6 +1555,7 @@ pub async fn kanban_update_attempt(
 }
 
 #[tauri::command]
+#[specta::specta]
 pub async fn kanban_approve_card(
     app: AppHandle,
     request: VersionedKanbanCardRequest,
@@ -1631,6 +1619,7 @@ pub async fn kanban_approve_card(
 }
 
 #[tauri::command]
+#[specta::specta]
 pub async fn kanban_reopen_card(
     app: AppHandle,
     request: VersionedKanbanCardRequest,
@@ -1697,6 +1686,7 @@ pub async fn kanban_reopen_card(
 }
 
 #[tauri::command]
+#[specta::specta]
 pub async fn kanban_stop_inactive_card(
     app: AppHandle,
     request: VersionedKanbanCardRequest,
@@ -1766,6 +1756,7 @@ pub async fn kanban_stop_inactive_card(
 }
 
 #[tauri::command]
+#[specta::specta]
 pub async fn kanban_archive_card(
     app: AppHandle,
     request: ArchiveKanbanCardRequest,
@@ -1822,6 +1813,7 @@ pub async fn kanban_archive_card(
 }
 
 #[tauri::command]
+#[specta::specta]
 pub async fn kanban_delete_card(
     app: AppHandle,
     request: DeleteKanbanCardRequest,
@@ -1886,6 +1878,7 @@ pub async fn kanban_delete_card(
 }
 
 #[tauri::command]
+#[specta::specta]
 pub async fn kanban_update_preferences(
     app: AppHandle,
     request: UpdateKanbanPreferencesRequest,
@@ -2021,6 +2014,7 @@ async fn advance_git_binding_owner_version(
 }
 
 #[tauri::command]
+#[specta::specta]
 pub async fn kanban_save_git_bindings(
     app: AppHandle,
     request: SaveKanbanGitBindingsRequest,
@@ -2122,6 +2116,7 @@ pub async fn kanban_save_git_bindings(
 }
 
 #[tauri::command]
+#[specta::specta]
 pub async fn kanban_list_git_bindings(
     app: AppHandle,
     card_id: String,
@@ -2134,7 +2129,7 @@ pub async fn kanban_list_git_bindings(
          WHERE card_id = ?1 AND state != 'removed' ORDER BY repository_path",
     )
     .bind(card_id)
-    .fetch_all(&mut connection)
+    .fetch_all(&mut *connection)
     .await
     .map_err(|error| format!("The Kanban Git bindings could not be loaded: {error}"))?;
     rows.into_iter()
@@ -2146,6 +2141,7 @@ pub async fn kanban_list_git_bindings(
 }
 
 #[tauri::command]
+#[specta::specta]
 pub async fn kanban_set_inherited_context(
     app: AppHandle,
     request: SetKanbanInheritedContextRequest,
@@ -2218,6 +2214,7 @@ pub async fn kanban_set_inherited_context(
 }
 
 #[tauri::command]
+#[specta::specta]
 pub async fn kanban_get_inherited_context(
     app: AppHandle,
     card_id: String,
@@ -2229,13 +2226,14 @@ pub async fn kanban_get_inherited_context(
          WHERE id = ?1 AND deleted_at IS NULL",
     )
     .bind(card_id)
-    .fetch_optional(&mut connection)
+    .fetch_optional(&mut *connection)
     .await
     .map_err(|error| format!("The inherited card context could not be loaded: {error}"))?
     .ok_or_else(|| "The Kanban card no longer exists.".to_string())
 }
 
 #[tauri::command]
+#[specta::specta]
 pub async fn kanban_recover_interrupted(app: AppHandle) -> Result<u64, String> {
     let mut connection = open_database(&app).await?;
     let mut transaction = connection

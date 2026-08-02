@@ -1,4 +1,4 @@
-import type { AnalyticsSummary } from "../types";
+import type { AnalyticsSummary } from "../features/analytics/types";
 import type { TokenUsage } from "./codexEventReducer";
 
 export function summarizeTokenUsage(usages: TokenUsage[]) {

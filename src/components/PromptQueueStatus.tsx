@@ -47,10 +47,7 @@ import {
   isPromptQueueItemAutoDispatchEligible,
   queuePromptPreview,
 } from "../lib/promptQueue";
-import type {
-  PromptQueueItem,
-  PromptQueueStatus as PromptQueueItemStatus,
-} from "../types";
+import type { PromptQueueItem, PromptQueueStatus as PromptQueueItemStatus } from "../features/queue/types";
 import {
   ComposerStripRow,
   type ComposerStripTone,

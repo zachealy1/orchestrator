@@ -4,7 +4,7 @@ import React from "react";
 import { describe, expect, it, vi } from "vitest";
 import { createQueuedPromptSnapshot } from "../lib/promptQueue";
 import { createRunExecutionSettings } from "../lib/runExecutionSettings";
-import type { PromptQueueItem } from "../types";
+import type { PromptQueueItem } from "../features/queue/types";
 import { PromptQueueStatus } from "./PromptQueueStatus";
 
 vi.mock("react-virtuoso", () => ({

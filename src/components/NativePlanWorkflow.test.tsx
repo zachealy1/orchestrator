@@ -1,4 +1,4 @@
-import { fireEvent, render, screen } from "@testing-library/react";
+import { fireEvent, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 import {
@@ -10,7 +10,10 @@ import {
   TaskChatTurn,
   buildNativePlanPreview,
   type TaskChatEntry,
-} from "./TaskChatTranscript";
+  type TranscriptTurnActions,
+  type TranscriptTurnModel,
+} from "./TaskChatTurn";
+import { renderWithAppServices } from "../test/renderWithAppServices";
 
 function renderTurn(entry: TaskChatEntry, overrides: Record<string, unknown> = {}) {
   const props = {
@@ -24,8 +27,30 @@ function renderTurn(entry: TaskChatEntry, overrides: Record<string, unknown> = {
     onStartEdit: vi.fn(),
     onResolveRequest: vi.fn(),
     ...overrides,
-  };
-  return render(<TaskChatTurn {...props} />);
+  } as TranscriptTurnModel & TranscriptTurnActions;
+  const {
+    editable,
+    editing,
+    editingPrompt,
+    fileUndoDisabled,
+    planExpanded,
+    editedFilesExpanded,
+    ...actions
+  } = props;
+  return renderWithAppServices(
+    <TaskChatTurn
+      model={{
+        entry,
+        editable,
+        editing,
+        editingPrompt,
+        fileUndoDisabled,
+        planExpanded,
+        editedFilesExpanded,
+      }}
+      actions={actions}
+    />,
+  );
 }
 
 function planEntry(): TaskChatEntry {

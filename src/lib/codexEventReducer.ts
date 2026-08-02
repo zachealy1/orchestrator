@@ -1,4 +1,4 @@
-import type { CodexMessage } from "../types";
+import type { CodexMessage } from "../features/codex/types";
 import type { CodexApprovalRequest } from "./codexApprovals";
 import {
   emptyNativePlanState,
