@@ -14,6 +14,7 @@ export function selectRunControlForIds<
   profileKey: string,
   threadId: string | null,
   turnId: string | null,
+  allowThreadContinuation = false,
 ) {
   const profileCandidates = [...controls].filter(
     (control) =>
@@ -31,11 +32,13 @@ export function selectRunControlForIds<
   const threadCandidates = profileCandidates.filter(
     (control) => control.threadId === threadId,
   );
-  const continuationCandidates = turnId
+  const continuationCandidates = turnId && allowThreadContinuation
     ? threadCandidates.filter(
         (control) => control.acceptsThreadContinuation,
       )
-    : threadCandidates;
+    : turnId
+      ? []
+      : threadCandidates;
   if (continuationCandidates.length === 0) return null;
 
   return continuationCandidates

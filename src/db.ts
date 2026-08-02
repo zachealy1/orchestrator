@@ -346,6 +346,7 @@ export async function createChatWithQueuedPrompt(input: {
 export async function getChatRecord(chatId: number) {
   return selectOne<ChatRecord>(
     `SELECT id, workspace_id, account_id, title, codex_thread_id, status,
+      surface,
       origin, profile_key, external_thread_id, source_kind, sync_status,
       external_cwd, external_created_at, external_updated_at, last_synced_at,
       collaboration_mode, saved_default_collaboration_mode_json,
@@ -1082,6 +1083,8 @@ export async function updateChat(
   chatId: number,
   fields: Partial<{
     title: string;
+    accountId: number | null;
+    profileKey: string | null;
     codexThreadId: string | null;
     status: string;
     collaborationMode: "plan" | "default" | null;
@@ -1097,6 +1100,8 @@ export async function updateChat(
   };
 
   if ("title" in fields) add("title", fields.title);
+  if ("accountId" in fields) add("account_id", fields.accountId);
+  if ("profileKey" in fields) add("profile_key", fields.profileKey);
   if ("codexThreadId" in fields) add("codex_thread_id", fields.codexThreadId);
   if ("status" in fields) add("status", fields.status);
   if ("collaborationMode" in fields) add("collaboration_mode", fields.collaborationMode);
@@ -1493,7 +1498,7 @@ export async function listWorkspaceChats(workspaceId: number) {
   return db.select<ChatListItem[]>(
     `SELECT chats.id, chats.workspace_id, chats.account_id, chats.title,
       chats.codex_thread_id, chats.status, chats.created_at, chats.updated_at,
-      chats.deleted_at, chats.origin, chats.profile_key, chats.external_thread_id,
+      chats.deleted_at, chats.surface, chats.origin, chats.profile_key, chats.external_thread_id,
       chats.source_kind, chats.sync_status, chats.external_cwd,
       chats.external_created_at, chats.external_updated_at, chats.last_synced_at,
       chats.collaboration_mode, chats.saved_default_collaboration_mode_json,
@@ -1546,6 +1551,7 @@ export async function listWorkspaceChats(workspaceId: number) {
      )
      WHERE chats.workspace_id = $1
        AND chats.deleted_at IS NULL
+       AND chats.surface = 'chat'
      GROUP BY chats.id
      ORDER BY julianday(latest_activity_at) DESC, chats.id DESC
      LIMIT 50`,
@@ -1557,7 +1563,7 @@ export async function getChatWithRuns(chatId: number): Promise<ChatWithRuns> {
   const chat = await selectOne<ChatListItem>(
     `SELECT chats.id, chats.workspace_id, chats.account_id, chats.title,
       chats.codex_thread_id, chats.status, chats.created_at, chats.updated_at,
-      chats.deleted_at, chats.origin, chats.profile_key, chats.external_thread_id,
+      chats.deleted_at, chats.surface, chats.origin, chats.profile_key, chats.external_thread_id,
       chats.source_kind, chats.sync_status, chats.external_cwd,
       chats.external_created_at, chats.external_updated_at, chats.last_synced_at,
       chats.collaboration_mode, chats.saved_default_collaboration_mode_json,

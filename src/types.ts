@@ -449,6 +449,8 @@ export type ChatRecord = {
   title: string;
   codex_thread_id: string | null;
   status: string;
+  /** UI surface that owns the chat. Older rows and callers default to `chat`. */
+  surface?: "chat" | "kanban";
   origin: ChatOrigin;
   profile_key: CodexProfileKey | null;
   external_thread_id: string | null;

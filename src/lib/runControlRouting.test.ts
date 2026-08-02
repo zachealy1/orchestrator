@@ -91,6 +91,7 @@ describe("run control routing", () => {
         "account:3",
         "thread-1",
         "turn-continuation",
+        true,
       ),
     ).toBe(goalControl);
   });
@@ -102,6 +103,22 @@ describe("run control routing", () => {
         "account:3",
         "thread-1",
         "turn-other",
+      ),
+    ).toBeNull();
+  });
+
+  it("does not route a stale continuation turn unless identity establishment is explicit", () => {
+    const goalControl = control({
+      turnId: "turn-current",
+      acceptsThreadContinuation: true,
+    });
+
+    expect(
+      selectRunControlForIds(
+        [goalControl],
+        "account:3",
+        "thread-1",
+        "turn-previous",
       ),
     ).toBeNull();
   });

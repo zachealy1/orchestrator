@@ -1675,6 +1675,47 @@ button.account-switcher-item:hover:not(:disabled) {
   justify-content: flex-end;
 }
 
+.workspace-surface-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  padding: 2px;
+  border: 1px solid var(--border-subtle);
+  border-radius: 8px;
+  background: var(--surface-muted);
+}
+
+.workspace-surface-toggle button {
+  min-height: 28px;
+  padding: 0 10px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text-muted);
+  font: inherit;
+  font-size: 12px;
+  font-weight: 650;
+  cursor: pointer;
+}
+
+.workspace-surface-toggle button.active {
+  background: var(--surface);
+  color: var(--text-primary);
+  box-shadow: 0 1px 3px rgb(0 0 0 / 12%);
+}
+
+.workspace-kanban-scope-note {
+  color: var(--text-muted);
+  font-size: 11px;
+  white-space: nowrap;
+}
+
+.kanban-workspace-mount {
+  display: flex;
+  min-height: 0;
+  flex: 1;
+}
+
 .workspace-context-chip {
   display: inline-flex;
   max-width: 220px;

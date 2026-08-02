@@ -26,6 +26,8 @@ use tokio::{sync::oneshot, time::timeout};
 
 mod agent_notifications;
 mod browser_sessions;
+mod kanban_git;
+mod kanban_store;
 mod web_preview;
 
 use agent_notifications::AgentNotificationState;
@@ -1247,6 +1249,389 @@ fn migrations() -> Vec<Migration> {
             sql: "
                 ALTER TABLE workspaces
                     ADD COLUMN selected_git_repository_path TEXT;
+            ",
+            kind: MigrationKind::Up,
+        },
+        Migration {
+            version: 26,
+            description: "add_workspace_kanban_boards",
+            sql: "
+                ALTER TABLE chats
+                    ADD COLUMN surface TEXT NOT NULL DEFAULT 'chat'
+                    CHECK (surface IN ('chat', 'kanban'));
+
+                CREATE TABLE IF NOT EXISTS kanban_boards (
+                    workspace_id INTEGER PRIMARY KEY,
+                    revision INTEGER NOT NULL DEFAULT 0,
+                    preferences_json TEXT NOT NULL DEFAULT '{}',
+                    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    FOREIGN KEY (workspace_id) REFERENCES workspaces(id) ON DELETE CASCADE
+                );
+
+                CREATE TABLE IF NOT EXISTS kanban_columns (
+                    workspace_id INTEGER NOT NULL,
+                    column_key TEXT NOT NULL
+                        CHECK (column_key IN ('todo', 'in_progress', 'in_review', 'done')),
+                    position INTEGER NOT NULL,
+                    PRIMARY KEY (workspace_id, column_key),
+                    UNIQUE (workspace_id, position),
+                    FOREIGN KEY (workspace_id) REFERENCES workspaces(id) ON DELETE CASCADE
+                );
+
+                CREATE TABLE IF NOT EXISTS kanban_cards (
+                    id TEXT PRIMARY KEY,
+                    workspace_id INTEGER NOT NULL,
+                    chat_id INTEGER NOT NULL UNIQUE,
+                    title TEXT NOT NULL,
+                    description TEXT NOT NULL,
+                    account_id INTEGER,
+                    access_mode TEXT NOT NULL
+                        CHECK (access_mode IN ('ask-for-approval', 'full-access')),
+                    model TEXT,
+                    reasoning_level TEXT,
+                    repository_scope TEXT NOT NULL DEFAULT 'all'
+                        CHECK (repository_scope IN ('all', 'selected')),
+                    stage TEXT NOT NULL DEFAULT 'todo'
+                        CHECK (stage IN ('todo', 'in_progress', 'in_review', 'done')),
+                    sort_position INTEGER NOT NULL,
+                    execution_state TEXT NOT NULL DEFAULT 'idle'
+                        CHECK (execution_state IN (
+                            'idle', 'starting', 'running', 'paused', 'waiting_user',
+                            'waiting_approval', 'blocked', 'failed', 'stopped',
+                            'interrupted', 'completed'
+                        )),
+                    review_state TEXT NOT NULL DEFAULT 'none'
+                        CHECK (review_state IN ('none', 'awaiting_review', 'changes_requested', 'approved')),
+                    current_attempt_id TEXT,
+                    state_version INTEGER NOT NULL DEFAULT 0,
+                    archived_at TEXT,
+                    deleted_at TEXT,
+                    approved_at TEXT,
+                    last_error TEXT,
+                    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    FOREIGN KEY (workspace_id) REFERENCES workspaces(id) ON DELETE CASCADE,
+                    FOREIGN KEY (chat_id) REFERENCES chats(id) ON DELETE CASCADE,
+                    FOREIGN KEY (account_id) REFERENCES codex_accounts(id) ON DELETE SET NULL
+                );
+
+                CREATE TABLE IF NOT EXISTS kanban_card_repository_selections (
+                    card_id TEXT NOT NULL,
+                    repository_path TEXT NOT NULL,
+                    relative_path TEXT NOT NULL DEFAULT '.',
+                    label TEXT NOT NULL,
+                    PRIMARY KEY (card_id, repository_path),
+                    FOREIGN KEY (card_id) REFERENCES kanban_cards(id) ON DELETE CASCADE
+                );
+
+                INSERT OR IGNORE INTO kanban_boards (workspace_id)
+                    SELECT id FROM workspaces WHERE deleted_at IS NULL;
+                INSERT OR IGNORE INTO kanban_columns (workspace_id, column_key, position)
+                    SELECT id, 'todo', 0 FROM workspaces WHERE deleted_at IS NULL;
+                INSERT OR IGNORE INTO kanban_columns (workspace_id, column_key, position)
+                    SELECT id, 'in_progress', 1 FROM workspaces WHERE deleted_at IS NULL;
+                INSERT OR IGNORE INTO kanban_columns (workspace_id, column_key, position)
+                    SELECT id, 'in_review', 2 FROM workspaces WHERE deleted_at IS NULL;
+                INSERT OR IGNORE INTO kanban_columns (workspace_id, column_key, position)
+                    SELECT id, 'done', 3 FROM workspaces WHERE deleted_at IS NULL;
+
+                CREATE INDEX IF NOT EXISTS idx_kanban_cards_workspace_stage_position
+                    ON kanban_cards(workspace_id, archived_at, deleted_at, stage, sort_position);
+                CREATE INDEX IF NOT EXISTS idx_kanban_card_repositories_path
+                    ON kanban_card_repository_selections(repository_path, card_id);
+            ",
+            kind: MigrationKind::Up,
+        },
+        Migration {
+            version: 27,
+            description: "add_kanban_execution_and_recovery",
+            sql: "
+                CREATE TABLE IF NOT EXISTS kanban_attempts (
+                    id TEXT PRIMARY KEY,
+                    card_id TEXT NOT NULL,
+                    generation INTEGER NOT NULL,
+                    attempt_kind TEXT NOT NULL
+                        CHECK (attempt_kind IN ('start', 'retry', 'resume', 'request_changes')),
+                    status TEXT NOT NULL
+                        CHECK (status IN (
+                            'provisioning', 'starting', 'running', 'waiting_user',
+                            'waiting_approval', 'pause_requested', 'paused',
+                            'stop_requested', 'stopped', 'blocked', 'failed',
+                            'interrupted', 'completed'
+                        )),
+                    prompt TEXT NOT NULL,
+                    config_snapshot_json TEXT NOT NULL,
+                    run_id INTEGER,
+                    task_id INTEGER,
+                    thread_id TEXT,
+                    turn_id TEXT,
+                    execution_root TEXT,
+                    recoverable INTEGER NOT NULL DEFAULT 0,
+                    error TEXT,
+                    started_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    completed_at TEXT,
+                    UNIQUE (card_id, generation),
+                    FOREIGN KEY (card_id) REFERENCES kanban_cards(id) ON DELETE CASCADE,
+                    FOREIGN KEY (run_id) REFERENCES runs(id) ON DELETE SET NULL,
+                    FOREIGN KEY (task_id) REFERENCES tasks(id) ON DELETE SET NULL
+                );
+
+                CREATE UNIQUE INDEX IF NOT EXISTS idx_kanban_attempt_one_active
+                    ON kanban_attempts(card_id)
+                    WHERE status IN (
+                        'provisioning', 'starting', 'running', 'waiting_user',
+                        'waiting_approval', 'pause_requested', 'stop_requested'
+                    );
+
+                CREATE TABLE IF NOT EXISTS kanban_repository_bindings (
+                    id TEXT PRIMARY KEY,
+                    card_id TEXT NOT NULL,
+                    repository_path TEXT NOT NULL,
+                    relative_path TEXT NOT NULL,
+                    base_branch TEXT NOT NULL,
+                    base_commit TEXT NOT NULL,
+                    card_branch TEXT NOT NULL,
+                    worktree_path TEXT NOT NULL UNIQUE,
+                    include_dirty INTEGER NOT NULL DEFAULT 0,
+                    state TEXT NOT NULL DEFAULT 'ready'
+                        CHECK (state IN ('provisioning', 'ready', 'conflicted', 'missing', 'cleanup_pending', 'cleanup_failed', 'removed')),
+                    head_commit TEXT,
+                    status_fingerprint TEXT,
+                    last_error TEXT,
+                    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    UNIQUE (card_id, repository_path),
+                    FOREIGN KEY (card_id) REFERENCES kanban_cards(id) ON DELETE CASCADE
+                );
+
+                CREATE TABLE IF NOT EXISTS kanban_operations (
+                    operation_id TEXT PRIMARY KEY,
+                    workspace_id INTEGER NOT NULL,
+                    card_id TEXT,
+                    operation_kind TEXT NOT NULL,
+                    status TEXT NOT NULL
+                        CHECK (status IN ('applying', 'completed', 'failed')),
+                    result_json TEXT,
+                    error_code TEXT,
+                    error TEXT,
+                    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    completed_at TEXT,
+                    FOREIGN KEY (workspace_id) REFERENCES workspaces(id) ON DELETE CASCADE,
+                    FOREIGN KEY (card_id) REFERENCES kanban_cards(id) ON DELETE SET NULL
+                );
+
+                CREATE TABLE IF NOT EXISTS kanban_pending_requests (
+                    id TEXT PRIMARY KEY,
+                    card_id TEXT NOT NULL,
+                    attempt_id TEXT NOT NULL,
+                    request_kind TEXT NOT NULL CHECK (request_kind IN ('approval', 'user_input')),
+                    request_key TEXT NOT NULL,
+                    payload_json TEXT NOT NULL,
+                    status TEXT NOT NULL DEFAULT 'pending'
+                        CHECK (status IN ('pending', 'submitting', 'resolved', 'denied', 'expired', 'failed')),
+                    resolution_json TEXT,
+                    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    resolved_at TEXT,
+                    UNIQUE (attempt_id, request_key),
+                    FOREIGN KEY (card_id) REFERENCES kanban_cards(id) ON DELETE CASCADE,
+                    FOREIGN KEY (attempt_id) REFERENCES kanban_attempts(id) ON DELETE CASCADE
+                );
+
+                CREATE TABLE IF NOT EXISTS kanban_review_decisions (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    card_id TEXT NOT NULL,
+                    attempt_id TEXT,
+                    decision TEXT NOT NULL CHECK (decision IN ('changes_requested', 'approved', 'reopened')),
+                    message TEXT,
+                    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    FOREIGN KEY (card_id) REFERENCES kanban_cards(id) ON DELETE CASCADE,
+                    FOREIGN KEY (attempt_id) REFERENCES kanban_attempts(id) ON DELETE SET NULL
+                );
+
+                CREATE TABLE IF NOT EXISTS kanban_runtime_events (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    card_id TEXT NOT NULL,
+                    attempt_id TEXT,
+                    generation INTEGER NOT NULL DEFAULT 0,
+                    sequence INTEGER NOT NULL,
+                    event_key TEXT NOT NULL UNIQUE,
+                    event_type TEXT NOT NULL,
+                    payload_json TEXT NOT NULL,
+                    applied INTEGER NOT NULL DEFAULT 1,
+                    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    UNIQUE (attempt_id, generation, sequence),
+                    FOREIGN KEY (card_id) REFERENCES kanban_cards(id) ON DELETE CASCADE,
+                    FOREIGN KEY (attempt_id) REFERENCES kanban_attempts(id) ON DELETE CASCADE
+                );
+
+                CREATE INDEX IF NOT EXISTS idx_kanban_attempts_card_generation
+                    ON kanban_attempts(card_id, generation DESC);
+                CREATE INDEX IF NOT EXISTS idx_kanban_bindings_card_state
+                    ON kanban_repository_bindings(card_id, state);
+                CREATE INDEX IF NOT EXISTS idx_kanban_requests_attempt_status
+                    ON kanban_pending_requests(attempt_id, status, created_at);
+                CREATE INDEX IF NOT EXISTS idx_kanban_events_card_cursor
+                    ON kanban_runtime_events(card_id, id);
+            ",
+            kind: MigrationKind::Up,
+        },
+        Migration {
+            version: 28,
+            description: "persist_complete_kanban_git_bindings",
+            sql: "
+                ALTER TABLE kanban_card_repository_selections
+                    ADD COLUMN include_dirty INTEGER NOT NULL DEFAULT 0;
+                ALTER TABLE kanban_repository_bindings
+                    ADD COLUMN binding_json TEXT NOT NULL DEFAULT '{}';
+
+                UPDATE kanban_repository_bindings
+                SET binding_json = json_object(
+                    'sourceRepositoryPath', repository_path,
+                    'relativePath', relative_path,
+                    'executionRoot', CASE
+                        WHEN length(worktree_path) > length(relative_path) + 1
+                         AND substr(
+                               worktree_path,
+                               length(worktree_path) - length(relative_path) + 1
+                             ) = relative_path
+                        THEN substr(
+                               worktree_path,
+                               1,
+                               length(worktree_path) - length(relative_path) - 1
+                             )
+                        ELSE worktree_path
+                    END,
+                    'sourceBranch', base_branch,
+                    'baseBranch', base_branch,
+                    'baseCommit', base_commit,
+                    'cardBranch', card_branch,
+                    'worktreePath', worktree_path,
+                    'status', CASE
+                        WHEN length(worktree_path) <= length(relative_path) + 1
+                          OR substr(
+                               worktree_path,
+                               length(worktree_path) - length(relative_path) + 1
+                             ) != relative_path
+                            THEN 'cleanupRequired'
+                        WHEN state = 'conflicted' THEN 'conflicted'
+                        WHEN state = 'missing' THEN 'missing'
+                        WHEN state = 'cleanup_pending' THEN 'cleanupRequired'
+                        WHEN state = 'cleanup_failed' THEN 'cleanupFailed'
+                        WHEN state = 'removed' THEN 'removed'
+                        WHEN state = 'provisioning' THEN 'provisioning'
+                        ELSE 'ready'
+                    END,
+                    'error', CASE
+                        WHEN length(worktree_path) <= length(relative_path) + 1
+                          OR substr(
+                               worktree_path,
+                               length(worktree_path) - length(relative_path) + 1
+                             ) != relative_path
+                        THEN json_object(
+                            'repositoryPath', repository_path,
+                            'code', 'legacy_binding_path',
+                            'message', 'The persisted worktree path could not be migrated safely.',
+                            'cleanupRequired', json('true')
+                        )
+                        WHEN last_error IS NOT NULL THEN json_object(
+                            'repositoryPath', repository_path,
+                            'code', 'legacy_binding_error',
+                            'message', last_error,
+                            'cleanupRequired', json('true')
+                        )
+                        ELSE NULL
+                    END
+                )
+                WHERE binding_json = '{}';
+            ",
+            kind: MigrationKind::Up,
+        },
+        Migration {
+            version: 29,
+            description: "add_opt_in_kanban_conversation_context",
+            sql: "
+                ALTER TABLE kanban_cards ADD COLUMN inherited_context TEXT;
+                ALTER TABLE kanban_cards ADD COLUMN inherited_from_card_id TEXT;
+            ",
+            kind: MigrationKind::Up,
+        },
+        Migration {
+            version: 30,
+            description: "harden_kanban_operation_and_event_ordering",
+            sql: "
+                ALTER TABLE kanban_attempts
+                    ADD COLUMN last_event_sequence INTEGER NOT NULL DEFAULT 0;
+                UPDATE kanban_attempts
+                SET last_event_sequence = COALESCE((
+                    SELECT MAX(event.sequence)
+                    FROM kanban_runtime_events event
+                    WHERE event.attempt_id = kanban_attempts.id
+                      AND event.generation = kanban_attempts.generation
+                ), 0);
+                ALTER TABLE kanban_operations
+                    ADD COLUMN request_fingerprint TEXT NOT NULL DEFAULT '';
+
+                UPDATE kanban_repository_bindings
+                SET binding_json = json_object(
+                    'sourceRepositoryPath', repository_path,
+                    'relativePath', relative_path,
+                    'executionRoot', CASE
+                        WHEN length(worktree_path) > length(relative_path) + 1
+                         AND substr(
+                               worktree_path,
+                               length(worktree_path) - length(relative_path) + 1
+                             ) = relative_path
+                        THEN substr(
+                               worktree_path,
+                               1,
+                               length(worktree_path) - length(relative_path) - 1
+                             )
+                        ELSE worktree_path
+                    END,
+                    'sourceBranch', base_branch,
+                    'baseBranch', base_branch,
+                    'baseCommit', base_commit,
+                    'cardBranch', card_branch,
+                    'worktreePath', worktree_path,
+                    'status', CASE
+                        WHEN length(worktree_path) <= length(relative_path) + 1
+                          OR substr(
+                               worktree_path,
+                               length(worktree_path) - length(relative_path) + 1
+                             ) != relative_path
+                            THEN 'cleanupRequired'
+                        WHEN state = 'conflicted' THEN 'conflicted'
+                        WHEN state = 'missing' THEN 'missing'
+                        WHEN state = 'cleanup_pending' THEN 'cleanupRequired'
+                        WHEN state = 'cleanup_failed' THEN 'cleanupFailed'
+                        WHEN state = 'removed' THEN 'removed'
+                        WHEN state = 'provisioning' THEN 'provisioning'
+                        ELSE 'ready'
+                    END,
+                    'error', CASE
+                        WHEN length(worktree_path) <= length(relative_path) + 1
+                          OR substr(
+                               worktree_path,
+                               length(worktree_path) - length(relative_path) + 1
+                             ) != relative_path
+                        THEN json_object(
+                            'repositoryPath', repository_path,
+                            'code', 'legacy_binding_path',
+                            'message', 'The persisted worktree path could not be migrated safely.',
+                            'cleanupRequired', json('true')
+                        )
+                        WHEN last_error IS NOT NULL THEN json_object(
+                            'repositoryPath', repository_path,
+                            'code', 'legacy_binding_error',
+                            'message', last_error,
+                            'cleanupRequired', json('true')
+                        )
+                        ELSE NULL
+                    END
+                )
+                WHERE binding_json = '{}';
             ",
             kind: MigrationKind::Up,
         },
@@ -7441,6 +7826,31 @@ pub fn run() {
             inspect_dropped_context_paths,
             inspect_prompt_queue_context,
             create_chat_with_queued_prompt,
+            kanban_store::kanban_board_snapshot,
+            kanban_store::kanban_create_card,
+            kanban_store::kanban_update_card,
+            kanban_store::kanban_move_card,
+            kanban_store::kanban_claim_attempt,
+            kanban_store::kanban_update_attempt,
+            kanban_store::kanban_approve_card,
+            kanban_store::kanban_reopen_card,
+            kanban_store::kanban_stop_inactive_card,
+            kanban_store::kanban_archive_card,
+            kanban_store::kanban_delete_card,
+            kanban_store::kanban_update_preferences,
+            kanban_store::kanban_recover_interrupted,
+            kanban_store::kanban_save_git_bindings,
+            kanban_store::kanban_list_git_bindings,
+            kanban_store::kanban_set_inherited_context,
+            kanban_store::kanban_get_inherited_context,
+            kanban_git::kanban_git_provision,
+            kanban_git::kanban_git_reconcile,
+            kanban_git::kanban_git_status,
+            kanban_git::kanban_git_diff,
+            kanban_git::kanban_git_commit,
+            kanban_git::kanban_git_push,
+            kanban_git::kanban_git_merge,
+            kanban_git::kanban_git_cleanup,
             run_preflight,
             web_preview::probe_local_web_preview,
             browser_sessions::browser_runtime_status,
@@ -8232,6 +8642,266 @@ mod tests {
         for pair in versions.windows(2) {
             assert_ne!(pair[0], pair[1], "duplicate migration version {}", pair[0]);
         }
+    }
+
+    #[test]
+    fn kanban_schema_migrations_apply_from_a_clean_database() {
+        tauri::async_runtime::block_on(async {
+            let mut connection = SqliteConnection::connect("sqlite::memory:")
+                .await
+                .expect("open in-memory database");
+            for migration in migrations() {
+                sqlx::raw_sql(migration.sql)
+                    .execute(&mut connection)
+                    .await
+                    .unwrap_or_else(|error| {
+                        panic!(
+                            "migration {} ({}) failed: {error}",
+                            migration.version, migration.description
+                        )
+                    });
+            }
+
+            let card_columns: Vec<String> =
+                sqlx::query_scalar("SELECT name FROM pragma_table_info('kanban_cards')")
+                    .fetch_all(&mut connection)
+                    .await
+                    .expect("read Kanban card columns");
+            assert!(card_columns.iter().any(|column| column == "state_version"));
+            assert!(card_columns
+                .iter()
+                .any(|column| column == "inherited_context"));
+
+            let binding_columns: Vec<String> = sqlx::query_scalar(
+                "SELECT name FROM pragma_table_info('kanban_repository_bindings')",
+            )
+            .fetch_all(&mut connection)
+            .await
+            .expect("read Kanban binding columns");
+            assert!(binding_columns
+                .iter()
+                .any(|column| column == "binding_json"));
+
+            let selection_columns: Vec<String> = sqlx::query_scalar(
+                "SELECT name FROM pragma_table_info('kanban_card_repository_selections')",
+            )
+            .fetch_all(&mut connection)
+            .await
+            .expect("read Kanban selection columns");
+            assert!(selection_columns
+                .iter()
+                .any(|column| column == "include_dirty"));
+
+            let attempt_columns: Vec<String> =
+                sqlx::query_scalar("SELECT name FROM pragma_table_info('kanban_attempts')")
+                    .fetch_all(&mut connection)
+                    .await
+                    .expect("read Kanban attempt columns");
+            assert!(attempt_columns
+                .iter()
+                .any(|column| column == "last_event_sequence"));
+
+            let operation_columns: Vec<String> =
+                sqlx::query_scalar("SELECT name FROM pragma_table_info('kanban_operations')")
+                    .fetch_all(&mut connection)
+                    .await
+                    .expect("read Kanban operation columns");
+            assert!(operation_columns
+                .iter()
+                .any(|column| column == "request_fingerprint"));
+        });
+    }
+
+    #[test]
+    fn kanban_schema_migrations_preserve_existing_execution_data() {
+        tauri::async_runtime::block_on(async {
+            let mut connection = SqliteConnection::connect("sqlite::memory:")
+                .await
+                .expect("open in-memory database");
+            let all_migrations = migrations();
+            for migration in all_migrations
+                .iter()
+                .filter(|migration| migration.version <= 27)
+            {
+                sqlx::raw_sql(migration.sql)
+                    .execute(&mut connection)
+                    .await
+                    .unwrap_or_else(|error| {
+                        panic!(
+                            "migration {} ({}) failed: {error}",
+                            migration.version, migration.description
+                        )
+                    });
+            }
+
+            sqlx::query(
+                "INSERT INTO workspaces (id, path, label)
+                 VALUES (1, '/tmp/kanban-upgrade', 'Kanban upgrade')",
+            )
+            .execute(&mut connection)
+            .await
+            .expect("insert workspace");
+            sqlx::query(
+                "INSERT INTO chats (id, workspace_id, title, status, surface)
+                 VALUES (1, 1, 'Upgrade card', 'draft', 'kanban')",
+            )
+            .execute(&mut connection)
+            .await
+            .expect("insert card chat");
+            sqlx::query(
+                "INSERT INTO kanban_cards (
+                    id, workspace_id, chat_id, title, description, access_mode,
+                    repository_scope, stage, sort_position, execution_state, review_state
+                 ) VALUES (
+                    'card-upgrade', 1, 1, 'Upgrade card', 'Keep existing data',
+                    'ask-for-approval', 'all', 'in_progress', 1024, 'paused', 'none'
+                 )",
+            )
+            .execute(&mut connection)
+            .await
+            .expect("insert card");
+            sqlx::query(
+                "INSERT INTO kanban_attempts (
+                    id, card_id, generation, attempt_kind, status, prompt,
+                    config_snapshot_json
+                 ) VALUES (
+                    'attempt-upgrade', 'card-upgrade', 3, 'start', 'paused',
+                    'Keep existing data', '{}'
+                 )",
+            )
+            .execute(&mut connection)
+            .await
+            .expect("insert attempt");
+            sqlx::query(
+                "UPDATE kanban_cards SET current_attempt_id = 'attempt-upgrade'
+                 WHERE id = 'card-upgrade'",
+            )
+            .execute(&mut connection)
+            .await
+            .expect("link attempt");
+            for (generation, sequence, key) in [
+                (3_i64, 4_i64, "event-4"),
+                (3_i64, 9_i64, "event-9"),
+                (2_i64, 99_i64, "event-other-generation"),
+            ] {
+                sqlx::query(
+                    "INSERT INTO kanban_runtime_events (
+                        card_id, attempt_id, generation, sequence, event_key,
+                        event_type, payload_json
+                     ) VALUES ('card-upgrade', 'attempt-upgrade', ?1, ?2, ?3, 'status', '{}')",
+                )
+                .bind(generation)
+                .bind(sequence)
+                .bind(key)
+                .execute(&mut connection)
+                .await
+                .expect("insert runtime event");
+            }
+            sqlx::query(
+                "INSERT INTO kanban_operations (
+                    operation_id, workspace_id, card_id, operation_kind, status,
+                    completed_at
+                 ) VALUES (
+                    'operation-upgrade', 1, 'card-upgrade', 'update_attempt',
+                    'completed', CURRENT_TIMESTAMP
+                 )",
+            )
+            .execute(&mut connection)
+            .await
+            .expect("insert operation");
+            sqlx::query(
+                "INSERT INTO kanban_repository_bindings (
+                    id, card_id, repository_path, relative_path, base_branch,
+                    base_commit, card_branch, worktree_path, state
+                 ) VALUES (
+                    'binding-upgrade', 'card-upgrade', '/tmp/source-repo', '01-source-repo',
+                    'main', 'base-commit', 'codex/card-upgrade',
+                    '/tmp/kanban-cards/card-upgrade/01-source-repo', 'ready'
+                 )",
+            )
+            .execute(&mut connection)
+            .await
+            .expect("insert binding");
+
+            let binding_migration = all_migrations
+                .iter()
+                .find(|migration| migration.version == 28)
+                .expect("binding migration");
+            sqlx::raw_sql(binding_migration.sql)
+                .execute(&mut connection)
+                .await
+                .expect("apply binding migration");
+            let migrated_binding_json: String = sqlx::query_scalar(
+                "SELECT binding_json FROM kanban_repository_bindings
+                 WHERE id = 'binding-upgrade'",
+            )
+            .fetch_one(&mut connection)
+            .await
+            .expect("load migrated binding");
+            let migrated_binding: kanban_store::PersistedKanbanGitBinding =
+                serde_json::from_str(&migrated_binding_json).expect("decode migrated binding");
+            assert_eq!(
+                migrated_binding.execution_root,
+                "/tmp/kanban-cards/card-upgrade"
+            );
+            assert_eq!(migrated_binding.source_branch, "main");
+            assert_eq!(migrated_binding.status, "ready");
+
+            // Simulate a database that already applied the original v28
+            // migration, whose default placeholder could not be decoded.
+            sqlx::query(
+                "UPDATE kanban_repository_bindings SET binding_json = '{}'
+                 WHERE id = 'binding-upgrade'",
+            )
+            .execute(&mut connection)
+            .await
+            .expect("restore legacy binding placeholder");
+            for migration in all_migrations
+                .iter()
+                .filter(|migration| migration.version > 28)
+            {
+                sqlx::raw_sql(migration.sql)
+                    .execute(&mut connection)
+                    .await
+                    .unwrap_or_else(|error| {
+                        panic!(
+                            "migration {} ({}) failed: {error}",
+                            migration.version, migration.description
+                        )
+                    });
+            }
+
+            let last_event_sequence: i64 = sqlx::query_scalar(
+                "SELECT last_event_sequence FROM kanban_attempts
+                 WHERE id = 'attempt-upgrade'",
+            )
+            .fetch_one(&mut connection)
+            .await
+            .expect("load migrated event cursor");
+            assert_eq!(last_event_sequence, 9);
+            let request_fingerprint: String = sqlx::query_scalar(
+                "SELECT request_fingerprint FROM kanban_operations
+                 WHERE operation_id = 'operation-upgrade'",
+            )
+            .fetch_one(&mut connection)
+            .await
+            .expect("load migrated operation");
+            assert!(request_fingerprint.is_empty());
+            let remigrated_binding_json: String = sqlx::query_scalar(
+                "SELECT binding_json FROM kanban_repository_bindings
+                 WHERE id = 'binding-upgrade'",
+            )
+            .fetch_one(&mut connection)
+            .await
+            .expect("load remigrated binding");
+            let remigrated_binding: kanban_store::PersistedKanbanGitBinding =
+                serde_json::from_str(&remigrated_binding_json).expect("decode remigrated binding");
+            assert_eq!(
+                remigrated_binding.execution_root,
+                migrated_binding.execution_root
+            );
+            assert_eq!(remigrated_binding.status, "ready");
+        });
     }
 
     #[test]

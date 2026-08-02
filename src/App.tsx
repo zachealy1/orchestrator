@@ -211,6 +211,30 @@ import { TaskTranscriptErrorBoundary } from "./components/TaskTranscriptErrorBou
 import { TaskComposer } from "./components/TaskComposer";
 import { SubagentInspector } from "./components/SubagentInspector";
 import {
+  KanbanWorkspace,
+  type KanbanLaunchKind,
+} from "./features/kanban/KanbanWorkspace";
+import {
+  claimKanbanAttempt,
+  cleanupKanbanGit,
+  createKanbanId,
+  loadKanbanBoard,
+  loadKanbanGitBindings,
+  loadKanbanInheritedContext,
+  provisionKanbanGit,
+  reconcileKanbanGit,
+  recoverInterruptedKanbanAttempts,
+  saveKanbanGitBindings,
+  stopInactiveKanbanCard,
+  updateKanbanAttempt,
+  type KanbanCardRecord,
+} from "./features/kanban/api";
+import {
+  persistWorkspaceSurfaceMode,
+  readWorkspaceSurfaceMode,
+  type WorkspaceSurfaceMode,
+} from "./features/kanban/preferences";
+import {
   FLOATING_STATUS_NOTICE_TIMEOUT_MS,
   FloatingHeaderStatusBubble,
   type FloatingStatusNotice,
@@ -699,6 +723,7 @@ type ActiveRunControl = {
   taskId: number | null;
   runId: number | null;
   setupStarted: boolean;
+  turnStartPending: boolean;
   cancelScheduledSetup: (() => void) | null;
   interactionMode: RunInteractionMode;
   acceptsThreadContinuation: boolean;
@@ -719,7 +744,33 @@ type ActiveRunControl = {
   browserSession: PreparedBrowserSession | null;
   activePlaywrightToolCalls: Map<string, ActivePlaywrightToolCall>;
   webPreviewDetection: WebPreviewDetectionState;
+  kanbanAttempt: KanbanRunAttemptBinding | null;
+  kanbanStopStatus: "paused" | "stopped" | null;
+  kanbanStopRequest: PendingKanbanStopRequest | null;
 };
+
+type KanbanRunAttemptBinding = {
+  cardId: string;
+  attemptId: string;
+  generation: number;
+  executionRoot: string;
+  eventSequence: number;
+};
+
+type KanbanStopAcknowledgement =
+  | { acknowledged: true }
+  | { acknowledged: false; error: string };
+
+type PendingKanbanStopRequest = {
+  promise: Promise<KanbanStopAcknowledgement>;
+  settle: (result: KanbanStopAcknowledgement) => void;
+  settled: boolean;
+  interrupting: boolean;
+};
+
+type KanbanAttemptPersistenceResult =
+  | { persisted: true; error: null }
+  | { persisted: false; error: string };
 
 type WebPreviewCommandBuffer = {
   command: string;
@@ -791,6 +842,7 @@ type RunSetupSnapshot = {
   executionSettings: RunExecutionSettings;
   queueItemId?: string | null;
   fromQueue?: boolean;
+  kanbanAttempt?: KanbanRunAttemptBinding | null;
 };
 
 type PromptQueueComposerEditState = {
@@ -1997,6 +2049,9 @@ function App() {
   );
   const [analytics, setAnalytics] = useState<AnalyticsSummaryType>(DEFAULT_ANALYTICS);
   const [activeView, setActiveView] = useState<AppView>("task");
+  const [workspaceSurfaceMode, setWorkspaceSurfaceMode] =
+    useState<WorkspaceSurfaceMode>(readWorkspaceSurfaceMode);
+  const [kanbanRefreshToken, setKanbanRefreshToken] = useState(0);
   const [themePreference, setThemePreference] = useState<ThemePreference>(
     readThemePreference,
   );
@@ -2182,6 +2237,7 @@ function App() {
   const activeChatEntryIdRef = useRef<string | null>(null);
   const activeRunControlRef = useRef<ActiveRunControl | null>(null);
   const activeRunControlsRef = useRef(new Map<string, ActiveRunControl>());
+  const kanbanChatLaunchReservationsRef = useRef(new Set<string>());
   const workspacesRef = useRef<Workspace[]>([]);
   const activeViewRef = useRef<AppView>("task");
   const accountMenuOpenRef = useRef(false);
@@ -2311,6 +2367,13 @@ function App() {
     },
     [],
   );
+  useEffect(() => {
+    persistWorkspaceSurfaceMode(workspaceSurfaceMode);
+    if (workspaceSurfaceMode === "kanban") {
+      closeHistoryDrawer();
+      closeWorkspaceFilePreview();
+    }
+  }, [workspaceSurfaceMode]);
   taskChatEntriesRef.current = taskChatEntries;
   contextFilesRef.current = contextFiles;
   selectedSkillsRef.current = selectedSkills;
@@ -4822,6 +4885,12 @@ function App() {
               approvalResourcesByItemId: {},
               serverRequests: [],
             }));
+            if (control.kanbanAttempt) {
+              void terminalizeKanbanRunAfterProcessStop(
+                control,
+                event.payload.message,
+              );
+            }
           });
         }
       }
@@ -5020,6 +5089,7 @@ function App() {
       recoverAbandonedRuns(),
       recoverInterruptedChatTitleGenerations(),
       recoverInterruptedPromptQueueItems(),
+      recoverInterruptedKanbanAttempts(),
     ]);
     const restoredQueueItems = await holdRestoredPromptQueueItems();
     const restoredQueues = restoredQueueItems.reduce<
@@ -6941,6 +7011,7 @@ function App() {
       profileKey,
       messageThreadId,
       messageTurnId,
+      message.method === "turn/started",
     );
   }
 
@@ -7291,6 +7362,7 @@ function App() {
     profileKey: CodexProfileKey,
     threadId: string | null,
     turnId: string | null,
+    allowThreadContinuation = false,
   ) {
     const child = findSubagentByThread(profileKey, threadId);
     if (child?.ownerClientId) {
@@ -7317,11 +7389,13 @@ function App() {
           threadId: control.threadId,
           turnId: control.turnId,
           startedAt: control.runView.startedAt,
-          acceptsThreadContinuation: control.acceptsThreadContinuation,
+          acceptsThreadContinuation:
+            control.acceptsThreadContinuation && control.goalTurnCompleted,
         })),
         profileKey,
         threadId,
         turnId,
+        allowThreadContinuation,
       )?.control ?? null
     );
   }
@@ -7689,6 +7763,7 @@ function App() {
   function ensureRunControlActive(control: ActiveRunControl) {
     if (
       control.stopped ||
+      (control.kanbanStopRequest !== null && control.turnId === null) ||
       activeRunControlsRef.current.get(control.clientId) !== control
     ) {
       throw new RunStoppedError();
@@ -7734,6 +7809,159 @@ function App() {
     return { completedAt, stoppedRunView };
   }
 
+  function refreshKanbanBoards() {
+    setKanbanRefreshToken((current) => current + 1);
+  }
+
+  async function persistKanbanAttemptState(
+    control: ActiveRunControl | null,
+    status: string,
+    error: string | null = null,
+    options: { retryCount?: number } = {},
+  ): Promise<KanbanAttemptPersistenceResult> {
+    const binding = control?.kanbanAttempt;
+    if (!control || !binding) return { persisted: true, error: null };
+    binding.eventSequence += 1;
+    const sequence = binding.eventSequence;
+    const operationId = createKanbanId("op");
+    const request = {
+      cardId: binding.cardId,
+      attemptId: binding.attemptId,
+      generation: binding.generation,
+      sequence,
+      status,
+      runId: control.runId,
+      taskId: control.taskId,
+      threadId: control.threadId,
+      turnId: control.turnId,
+      executionRoot: binding.executionRoot,
+      error,
+      operationId,
+    };
+    let lastError = "The Kanban attempt state could not be saved.";
+    const attempts = Math.max(1, (options.retryCount ?? 0) + 1);
+    for (let attempt = 0; attempt < attempts; attempt += 1) {
+      try {
+        await updateKanbanAttempt(request);
+        refreshKanbanBoards();
+        return { persisted: true, error: null };
+      } catch (persistError) {
+        lastError =
+          persistError instanceof Error
+            ? persistError.message
+            : String(persistError);
+      }
+    }
+    console.error("Could not persist Kanban attempt state", lastError);
+    refreshKanbanBoards();
+    return { persisted: false, error: lastError };
+  }
+
+  async function terminalizeKanbanRunAfterProcessStop(
+    control: ActiveRunControl,
+    processMessage: string,
+  ) {
+    if (
+      !control.kanbanAttempt ||
+      activeRunControlsRef.current.get(control.clientId) !== control
+    ) {
+      return;
+    }
+    const error = processMessage || "The Codex app-server stopped unexpectedly.";
+    const { completedAt, stoppedRunView } = markRunInterrupted(control, error);
+    const persistence = await persistKanbanAttemptState(
+      control,
+      "interrupted",
+      error,
+      { retryCount: 1 },
+    );
+    await Promise.all([
+      control.runId === null
+        ? Promise.resolve()
+        : updateRun(control.runId, {
+            status: "interrupted",
+            completedAt,
+            durationMs: stoppedRunView.elapsedMs,
+            error,
+          }).catch(() => undefined),
+      control.taskId === null
+        ? Promise.resolve()
+        : updateTaskStatus(control.taskId, "interrupted").catch(
+            () => undefined,
+          ),
+      control.chatId === null
+        ? Promise.resolve()
+        : updateChat(control.chatId, { status: "interrupted" }).catch(
+            () => undefined,
+          ),
+    ]);
+    if (persistence.persisted) {
+      removeRunControl(control);
+      return;
+    }
+    setStatusMessage(
+      `The Codex app-server stopped, but the Kanban attempt could not be saved: ${persistence.error}`,
+    );
+  }
+
+  function createPendingKanbanStopRequest(): PendingKanbanStopRequest {
+    let resolvePromise: (result: KanbanStopAcknowledgement) => void = () =>
+      undefined;
+    const request: PendingKanbanStopRequest = {
+      promise: new Promise<KanbanStopAcknowledgement>((resolve) => {
+        resolvePromise = resolve;
+      }),
+      settle: (result) => {
+        if (request.settled) return;
+        request.settled = true;
+        resolvePromise(result);
+      },
+      settled: false,
+      interrupting: false,
+    };
+    return request;
+  }
+
+  function kanbanStatusAfterFailedStop(control: ActiveRunControl) {
+    if (control.runView.serverRequests.some(isNativeUserInputRequest)) {
+      return "waiting_user";
+    }
+    if (control.runView.approvalRequests.length > 0) {
+      return "waiting_approval";
+    }
+    return "running";
+  }
+
+  async function acknowledgeKanbanStopWithTurn(
+    control: ActiveRunControl,
+    request: PendingKanbanStopRequest,
+    threadId: string,
+    turnId: string,
+  ) {
+    if (request.settled || request.interrupting) {
+      return request.promise;
+    }
+    request.interrupting = true;
+    try {
+      const interruptedTurnId = await interruptTurnForProfile(
+        control.profileKey,
+        control.accountId,
+        threadId,
+        turnId,
+      );
+      if (interruptedTurnId) {
+        control.turnId = interruptedTurnId;
+      }
+      request.settle({ acknowledged: true });
+    } catch (error) {
+      request.settle({
+        acknowledged: false,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+    return request.promise;
+  }
+
   async function persistInterruptedRun(
     control: ActiveRunControl | null,
     completedAt: string,
@@ -7760,6 +7988,16 @@ function App() {
     if (taskId !== null) {
       await updateTaskStatus(taskId, "interrupted").catch(() => undefined);
     }
+
+    if (control?.kanbanAttempt) {
+      await persistKanbanAttemptState(
+        control,
+        control.kanbanStopStatus ?? "stopped",
+        control.kanbanStopStatus === "paused"
+          ? null
+          : stoppedRunView.error ?? "Stopped by user.",
+      );
+    }
   }
 
   async function stopActiveRun(
@@ -7775,15 +8013,92 @@ function App() {
       control?.profileKey ??
       currentRunProfileKey.current ??
       (accountId ? (`account:${accountId}` as CodexProfileKey) : null);
-    const threadId = control?.threadId ?? runViewRef.current.threadId;
-    const turnId = control?.turnId ?? runViewRef.current.turnId;
 
     if (!control) {
       return { stopped: false, goalCleared: false };
     }
 
+    let kanbanStopRequest: PendingKanbanStopRequest | null = null;
+    if (control.kanbanAttempt) {
+      if (control.kanbanStopRequest) {
+        setStatusMessage("This Kanban run already has a stop request in progress.");
+        return { stopped: false, goalCleared: false };
+      }
+      control.kanbanStopStatus ??= "stopped";
+      kanbanStopRequest = createPendingKanbanStopRequest();
+      control.kanbanStopRequest = kanbanStopRequest;
+      control.cancelScheduledSetup?.();
+      control.cancelScheduledSetup = null;
+      if (control.turnId === null && !control.turnStartPending) {
+        kanbanStopRequest.settle({ acknowledged: true });
+      }
+      await persistKanbanAttemptState(
+        control,
+        control.kanbanStopStatus === "paused"
+          ? "pause_requested"
+          : "stop_requested",
+      );
+    }
+
     flushFrameBatchedCodexNotifications();
     await flushBufferedRunEvents().catch(() => undefined);
+
+    if (kanbanStopRequest) {
+      if (
+        !kanbanStopRequest.settled &&
+        control.threadId !== null &&
+        control.turnId !== null
+      ) {
+        void acknowledgeKanbanStopWithTurn(
+          control,
+          kanbanStopRequest,
+          control.threadId,
+          control.turnId,
+        );
+      } else if (
+        !kanbanStopRequest.settled &&
+        control.turnId === null &&
+        !control.turnStartPending
+      ) {
+        kanbanStopRequest.settle({ acknowledged: true });
+      }
+
+      const acknowledgement = await kanbanStopRequest.promise;
+      if (!acknowledgement.acknowledged) {
+        if (
+          activeRunControlsRef.current.get(control.clientId) !== control ||
+          !isActiveRunControl(control)
+        ) {
+          control.kanbanStopRequest = null;
+          control.kanbanStopStatus = null;
+          return { stopped: true, goalCleared: false };
+        }
+        if (control.kanbanStopRequest === kanbanStopRequest) {
+          control.kanbanStopRequest = null;
+        }
+        const action = control.kanbanStopStatus === "paused" ? "pause" : "stop";
+        control.kanbanStopStatus = null;
+        await persistKanbanAttemptState(
+          control,
+          kanbanStatusAfterFailedStop(control),
+        );
+        setStatusMessage(
+          `Could not ${action} the Kanban run; it is still active: ${acknowledgement.error}`,
+        );
+        return { stopped: false, goalCleared: false };
+      }
+      if (
+        control.stopped ||
+        activeRunControlsRef.current.get(control.clientId) !== control
+      ) {
+        control.kanbanStopRequest = null;
+        control.kanbanStopStatus = null;
+        return { stopped: false, goalCleared: false };
+      }
+    }
+
+    const threadId = control.threadId ?? runViewRef.current.threadId;
+    const turnId = control.turnId ?? runViewRef.current.turnId;
 
     const planningThreadId = control?.runView.threadId ?? null;
     const planningTurnId = control?.runView.turnId ?? null;
@@ -7793,6 +8108,7 @@ function App() {
       planningTurnId !== null &&
       profileKey !== null;
     const shouldStopCodex =
+      kanbanStopRequest === null &&
       !interruptNativePlan &&
       profileKey !== null &&
       threadId !== null &&
@@ -7899,7 +8215,9 @@ function App() {
     setStatusMessage(
       goalClearError
         ? `Codex run stopped, but its Goal Mode state could not be cleared: ${goalClearError}`
-        : "Codex run stopped.",
+        : control.kanbanStopStatus === "paused"
+          ? "Codex run paused."
+          : "Codex run stopped.",
     );
 
     if (shouldStopCodex) {
@@ -10919,6 +11237,19 @@ function App() {
   }
 
   function beginOptimisticRun(snapshot: RunSetupSnapshot) {
+    if (snapshot.chatId !== null) {
+      const chatKey = `${snapshot.workspace.id}:${snapshot.chatId}`;
+      const existing = findRunControlByChat(snapshot.workspace.id, snapshot.chatId);
+      if (existing) {
+        throw new Error("This conversation already has an active Codex run.");
+      }
+      if (
+        kanbanChatLaunchReservationsRef.current.has(chatKey) &&
+        !snapshot.kanbanAttempt
+      ) {
+        throw new Error("This card conversation is currently starting from Kanban.");
+      }
+    }
     const selectedSession = selectedWorkspaceRef.current
       ? workspaceChatSessionsRef.current[selectedWorkspaceRef.current.id] ?? null
       : null;
@@ -10996,6 +11327,7 @@ function App() {
       taskId: null,
       runId: null,
       setupStarted: false,
+      turnStartPending: false,
       cancelScheduledSetup: null,
       interactionMode: interactionModeForSnapshot(snapshot),
       acceptsThreadContinuation: snapshot.goalMode,
@@ -11022,6 +11354,9 @@ function App() {
         confirmedSequence: 0,
         disposed: false,
       },
+      kanbanAttempt: snapshot.kanbanAttempt ?? null,
+      kanbanStopStatus: null,
+      kanbanStopRequest: null,
     };
     const nextEntry: TaskChatEntry = {
       clientId,
@@ -11627,8 +11962,11 @@ function App() {
 
       let turn: { turn: { id: string } };
       try {
+        runControl.turnStartPending = true;
         turn = await startTurn(threadId);
       } catch (error) {
+        runControl.turnStartPending = false;
+        ensureRunControlActive(runControl);
         if (
           !isCodexThreadNotFoundError(error) ||
           snapshot.profileKey === DEFAULT_CODEX_PROFILE_KEY
@@ -11691,11 +12029,41 @@ function App() {
             );
           }
         }
+        runControl.turnStartPending = true;
         turn = await startTurn(threadId);
       }
-      ensureRunControlActive(runControl);
       runControl.threadId = threadId;
       runControl.turnId = turn.turn.id;
+      runControl.turnStartPending = false;
+      const pendingKanbanStop = runControl.kanbanStopRequest;
+      if (pendingKanbanStop) {
+        const acknowledgement = await acknowledgeKanbanStopWithTurn(
+          runControl,
+          pendingKanbanStop,
+          threadId,
+          turn.turn.id,
+        );
+        if (acknowledgement.acknowledged) {
+          throw new RunStoppedError();
+        }
+      } else if (
+        runControl.stopped ||
+        activeRunControlsRef.current.get(runControl.clientId) !== runControl
+      ) {
+        await interruptTurnForProfile(
+          runControl.profileKey,
+          runControl.accountId,
+          threadId,
+          turn.turn.id,
+        ).catch((error) => {
+          console.error(
+            "Could not interrupt a turn that started after cancellation",
+            error,
+          );
+        });
+        throw new RunStoppedError();
+      }
+      ensureRunControlActive(runControl);
       if (accountHandoff) {
         let activated = false;
         try {
@@ -11815,6 +12183,8 @@ function App() {
       ensureRunControlActive(runControl);
       await updateTaskStatus(task.id, "running");
       ensureRunControlActive(runControl);
+      await persistKanbanAttemptState(runControl, "running");
+      ensureRunControlActive(runControl);
       void flushPendingRunBindingNotifications(runControl).catch((error) => {
         console.error("Could not replay buffered Codex notifications", error);
       });
@@ -11837,6 +12207,7 @@ function App() {
       );
       preflightRef.current = null;
     } catch (error) {
+      runControl.turnStartPending = false;
       if (pendingChatTitleGeneration) {
         const titleRequest = pendingChatTitleGeneration;
         pendingChatTitleGeneration = null;
@@ -11846,6 +12217,16 @@ function App() {
             titleRequest.fallbackTitle,
             "failed",
           );
+        }
+      }
+      const pendingKanbanStop = runControl.kanbanStopRequest;
+      if (pendingKanbanStop) {
+        if (!pendingKanbanStop.settled && runControl.turnId === null) {
+          pendingKanbanStop.settle({ acknowledged: true });
+        }
+        const acknowledgement = await pendingKanbanStop.promise;
+        if (acknowledgement.acknowledged) {
+          return;
         }
       }
       if (error instanceof RunStoppedError || runControl.stopped) {
@@ -11940,6 +12321,7 @@ function App() {
       if (taskId !== null) {
         await updateTaskStatus(taskId, "failed").catch(() => undefined);
       }
+      await persistKanbanAttemptState(runControl, "failed", message);
       if (chatId !== null && !handoffDidNotActivate) {
         await updateChat(chatId, { status: "failed" }).catch(() => undefined);
       }
@@ -12446,6 +12828,317 @@ function App() {
     };
     const runControl = beginOptimisticRun(snapshot);
     scheduleRunSetup(runControl, snapshot);
+  }
+
+  async function openKanbanCardConversation(card: KanbanCardRecord) {
+    const workspace = workspacesRef.current.find(
+      (candidate) => candidate.id === card.workspaceId,
+    );
+    if (!workspace) {
+      throw new Error("The card workspace is no longer available.");
+    }
+    const conversation = await getChatWithRuns(card.chatId);
+    await selectHistoryChat(conversation.chat, { workspace });
+  }
+
+  async function launchKanbanCard(
+    card: KanbanCardRecord,
+    kind: KanbanLaunchKind,
+    promptText: string,
+  ) {
+    const workspace = workspacesRef.current.find(
+      (candidate) => candidate.id === card.workspaceId,
+    );
+    if (!workspace) {
+      throw new Error("The card workspace is no longer available.");
+    }
+    const accountId =
+      card.accountId ??
+      workspace.default_account_id ??
+      selectedAccountIdRef.current;
+    if (!accountId) {
+      throw new Error("Choose a signed-in Codex account before starting this card.");
+    }
+    const account =
+      codexAccountsRef.current.find((candidate) => candidate.id === accountId) ??
+      null;
+    if (!account || account.status !== "signed_in") {
+      throw new Error("The card's Codex account is unavailable or signed out.");
+    }
+    const profileKey = `account:${accountId}` as CodexProfileKey;
+    const availableModels = await listCodexModelsForProfile(profileKey, accountId);
+    const selectedCardModel = card.model
+      ? availableModels.find(
+          (model) => model.model === card.model || model.id === card.model,
+        ) ?? null
+      : availableModels.find((model) => model.isDefault) ?? availableModels[0] ?? null;
+    if (card.model && !selectedCardModel) {
+      throw new Error("The model saved on this card is no longer available.");
+    }
+    if (
+      card.reasoningLevel &&
+      selectedCardModel &&
+      !selectedCardModel.supportedReasoningEfforts.some(
+        (option) => option.reasoningEffort === card.reasoningLevel,
+      )
+    ) {
+      throw new Error("The reasoning level saved on this card is no longer available.");
+    }
+    if (card.repositories.length === 0) {
+      throw new Error(
+        "This card has no captured Git repositories. Edit it before starting and select a repository scope.",
+      );
+    }
+
+    const access = accessSettings({ accessMode: card.accessMode });
+    const executionSettings = createRunExecutionSettings({
+      accountId,
+      profileKey,
+      selectedRepositoryPath: null,
+      selectedBranch: null,
+      mode: "run",
+      intent: "normal",
+      accessMode: card.accessMode,
+      computerUseEnabled,
+      model: selectedCardModel?.model ?? card.model,
+      reasoningEffort:
+        card.reasoningLevel ?? selectedCardModel?.defaultReasoningEffort ?? null,
+      useOss: false,
+      ossProvider,
+      contextFiles: [],
+      selectedSkills: [],
+      goalMode: true,
+    });
+    const chatReservationKey = `${card.workspaceId}:${card.chatId}`;
+    if (
+      kanbanChatLaunchReservationsRef.current.has(chatReservationKey) ||
+      findRunControlByChat(card.workspaceId, card.chatId)
+    ) {
+      throw new Error("This card conversation already has an active or starting run.");
+    }
+    kanbanChatLaunchReservationsRef.current.add(chatReservationKey);
+    let claimed: Awaited<ReturnType<typeof claimKanbanAttempt>>;
+    try {
+      claimed = await claimKanbanAttempt({
+        card,
+        kind,
+        prompt: promptText,
+        configSnapshot: {
+          version: 1,
+          cardId: card.id,
+          title: card.title,
+          accountId,
+          accessMode: card.accessMode,
+          model: executionSettings.model,
+          reasoningLevel: executionSettings.reasoningEffort,
+          repositories: card.repositories,
+        },
+      });
+    } catch (claimError) {
+      kanbanChatLaunchReservationsRef.current.delete(chatReservationKey);
+      throw claimError;
+    }
+    refreshKanbanBoards();
+
+    let executionRoot: string | null = null;
+    try {
+      let bindings = await loadKanbanGitBindings(card.id);
+      if (bindings.length > 0) {
+        const reconciled = await Promise.all(
+          bindings.map((binding) => reconcileKanbanGit(binding)),
+        );
+        const reconciledBindings = reconciled.map((result) => result.binding);
+        const bindingsChanged = reconciledBindings.some(
+          (binding, index) =>
+            JSON.stringify(binding) !== JSON.stringify(bindings[index]),
+        );
+        if (bindingsChanged) {
+          await saveKanbanGitBindings(claimed.card, reconciledBindings);
+        }
+        bindings = reconciledBindings;
+      }
+      const unsafeBindings = bindings.filter(
+        (binding) =>
+          !["ready", "conflicted", "targetMoved"].includes(binding.status),
+      );
+      if (unsafeBindings.length > 0) {
+        const details = unsafeBindings
+          .map((binding) => binding.error?.message)
+          .filter(Boolean)
+          .join(" ");
+        throw new Error(
+          details ||
+            "This card has repository cleanup or reconciliation work pending. Repair the preserved worktree or clean up its artifacts before retrying.",
+        );
+      }
+      executionRoot = bindings[0]?.executionRoot ?? null;
+      if (bindings.length === 0) {
+        const provisioned = await provisionKanbanGit({
+          cardId: card.id,
+          cardSlug: card.title,
+          repositories: card.repositories.map((repository) => ({
+            repositoryPath: repository.repositoryPath,
+            relativePath: repository.relativePath,
+            includeDirtyChanges: repository.includeDirtyChanges,
+          })),
+        });
+        bindings = provisioned.repositories;
+        executionRoot = provisioned.executionRoot;
+        if (bindings.length > 0) {
+          try {
+            await saveKanbanGitBindings(claimed.card, bindings);
+          } catch (initialSaveError) {
+            let retryError: unknown = initialSaveError;
+            try {
+              const latestBoard = await loadKanbanBoard(card.workspaceId, {
+                includeArchived: true,
+              });
+              const latestCard = latestBoard.cards.find(
+                (candidate) => candidate.id === card.id,
+              );
+              if (!latestCard) {
+                throw new Error(
+                  "The card disappeared while its worktrees were being saved.",
+                );
+              }
+              await saveKanbanGitBindings(latestCard, bindings);
+              retryError = null;
+            } catch (error) {
+              retryError = error;
+            }
+            if (retryError) {
+              const cleanup = await Promise.allSettled(
+                bindings.map((binding) =>
+                  cleanupKanbanGit({
+                    binding,
+                    deleteBranch: true,
+                    force: true,
+                  }),
+                ),
+              );
+              const cleanupFailed = cleanup.some(
+                (result) =>
+                  result.status === "rejected" ||
+                  result.value.status !== "cleaned" ||
+                  !result.value.worktreeRemoved,
+              );
+              const persistenceMessage =
+                retryError instanceof Error
+                  ? retryError.message
+                  : String(retryError);
+              throw new Error(
+                cleanupFailed
+                  ? `The card worktrees could not be saved, and some newly created artifacts require cleanup: ${persistenceMessage}`
+                  : `The card worktrees could not be saved: ${persistenceMessage}`,
+              );
+            }
+          }
+        }
+        if (!provisioned.complete) {
+          const details = provisioned.errors
+            .map((error) => error.message)
+            .filter(Boolean)
+            .join(" ");
+          throw new Error(details || "The card worktrees could not be provisioned safely.");
+        }
+      }
+      if (!executionRoot) {
+        throw new Error("The card's isolated execution root is unavailable.");
+      }
+
+      const chat = await getChatRecord(card.chatId);
+      if (!chat) {
+        throw new Error("The card conversation is no longer available.");
+      }
+      await updateChat(chat.id, {
+        accountId,
+        profileKey,
+        status: "starting",
+      });
+      const turnIndex = await getNextChatTurnIndex(chat.id);
+      const currentThreadId = chat.codex_thread_id;
+      const inheritedContext = currentThreadId
+        ? null
+        : await loadKanbanInheritedContext(card.id);
+      const snapshot: RunSetupSnapshot = {
+        promptText,
+        promptFallback: promptText,
+        workspace: { ...workspace, path: executionRoot },
+        accountId,
+        account: { ...account },
+        profileKey,
+        chatOrigin: "orchestrator",
+        externalThreadId: null,
+        selectedRepositoryPath: null,
+        selectedBranch: null,
+        cachedPreflight: null,
+        mode: "run",
+        intent: "normal",
+        access,
+        computerUseEnabled,
+        model: executionSettings.model,
+        effort: executionSettings.reasoningEffort,
+        useOss: false,
+        ossProvider,
+        improvedPrompt: improvePrompt(promptText),
+        contextFiles: [],
+        selectedSkills: [],
+        goalMode: true,
+        loginState: "idle",
+        chatId: chat.id,
+        threadId: currentThreadId,
+        turnIndex,
+        threadStrategy: currentThreadId ? { kind: "resume" } : { kind: "fresh" },
+        previousChatContext: inheritedContext,
+        executionSettings,
+        restorePromptOnSetupFailure: false,
+        kanbanAttempt: {
+          cardId: card.id,
+          attemptId: claimed.attempt.id,
+          generation: claimed.attempt.generation,
+          executionRoot,
+          eventSequence: 0,
+        },
+      };
+      const runControl = beginOptimisticRun(snapshot);
+      scheduleRunSetup(runControl, snapshot);
+    } catch (launchError) {
+      await updateKanbanAttempt({
+        cardId: card.id,
+        attemptId: claimed.attempt.id,
+        generation: claimed.attempt.generation,
+        sequence: 1,
+        status: "failed",
+        executionRoot,
+        error: launchError instanceof Error ? launchError.message : String(launchError),
+      }).catch(() => undefined);
+      refreshKanbanBoards();
+      throw launchError;
+    } finally {
+      kanbanChatLaunchReservationsRef.current.delete(chatReservationKey);
+    }
+  }
+
+  async function pauseKanbanCard(card: KanbanCardRecord) {
+    const control = findRunControlByChat(card.workspaceId, card.chatId);
+    if (!control || control.kanbanAttempt?.cardId !== card.id) {
+      throw new Error("This card no longer has a live turn to pause.");
+    }
+    control.kanbanStopStatus = "paused";
+    const result = await stopActiveRun(control);
+    if (!result.stopped) throw new Error("The card turn could not be paused.");
+  }
+
+  async function stopKanbanCard(card: KanbanCardRecord) {
+    const control = findRunControlByChat(card.workspaceId, card.chatId);
+    if (!control || control.kanbanAttempt?.cardId !== card.id) {
+      await stopInactiveKanbanCard(card);
+      refreshKanbanBoards();
+      return;
+    }
+    control.kanbanStopStatus = "stopped";
+    const result = await stopActiveRun(control);
+    if (!result.stopped) throw new Error("The card turn could not be stopped.");
   }
 
   function queuedPromptCanSteerActiveTurn(
@@ -14669,6 +15362,12 @@ function App() {
       identity.turnId &&
       control.acceptsThreadContinuation
     ) {
+      if (
+        identity.turnId === control.turnId &&
+        control.goalTurnCompleted
+      ) {
+        return;
+      }
       control.turnId = identity.turnId;
       control.goalTurnCompleted = false;
       if (control.runId !== null) {
@@ -14696,6 +15395,21 @@ function App() {
           }
         }
         control.goal = goal;
+        if (control.kanbanAttempt) {
+          const kanbanGoalStatus =
+            goal.status === "paused"
+              ? "paused"
+              : goal.status === "blocked" ||
+                  goal.status === "usageLimited" ||
+                  goal.status === "budgetLimited"
+                ? "blocked"
+                : goal.status === "active"
+                  ? "running"
+                  : null;
+          if (kanbanGoalStatus) {
+            void persistKanbanAttemptState(control, kanbanGoalStatus);
+          }
+        }
         if (!control.goalActionPending) {
           control.goalActionError = null;
         }
@@ -14713,6 +15427,24 @@ function App() {
       goalKeepsRunOpen(control.goal);
     const terminalTurnCompleted =
       method === "turn/completed" && !intermediateGoalTurnCompleted;
+    const terminalProtocolError =
+      method === "error" && Boolean(control.kanbanAttempt);
+    const terminalKanbanInterrupted =
+      method === "turn/interrupted" &&
+      Boolean(control.kanbanAttempt) &&
+      control.kanbanStopRequest === null &&
+      !goalKeepsRunOpen(control.goal);
+    const terminalRunFinished =
+      terminalTurnCompleted || terminalProtocolError || terminalKanbanInterrupted;
+    const terminalTurn = readObject(params.turn);
+    const terminalStatus: "completed" | "failed" | "interrupted" | null =
+      terminalRunFinished
+        ? terminalKanbanInterrupted
+          ? "interrupted"
+          : terminalProtocolError || readString(terminalTurn.status) === "failed"
+            ? "failed"
+            : "completed"
+        : null;
     inspectCodexMessageForWebPreview(control, message);
     applyBrowserLifecycleNotification(control, method, params);
 
@@ -14745,6 +15477,30 @@ function App() {
         readString(params.threadId) ?? undefined,
       );
     });
+    const terminalError =
+      terminalStatus === "failed"
+        ? readSubagentError(message) ??
+          nextRunView.error ??
+          "Codex could not complete this card."
+        : terminalStatus === "interrupted"
+          ? nextRunView.error ?? "The Codex turn ended unexpectedly."
+          : null;
+    if (method === "serverRequest/resolved" && control.kanbanAttempt) {
+      const hasPendingUserInput = nextRunView.serverRequests
+        .filter(isNativeUserInputRequest)
+        .some((request) => request.params.threadId === control.threadId);
+      const hasPendingApproval = nextRunView.approvalRequests.some(
+        (request) => !request.threadId || request.threadId === control.threadId,
+      );
+      void persistKanbanAttemptState(
+        control,
+        hasPendingUserInput
+          ? "waiting_user"
+          : hasPendingApproval
+            ? "waiting_approval"
+            : "running",
+      );
+    }
     if (
       method === "turn/completed" ||
       (method === "turn/interrupted" &&
@@ -14753,9 +15509,7 @@ function App() {
     ) {
       control.goalTurnCompleted = true;
     }
-    if (terminalTurnCompleted) {
-      // Terminal UI state is authoritative immediately. Post-run persistence and
-      // workspace refreshes must not leave this control registered as active.
+    if (terminalRunFinished) {
       const terminalPreview = nextRunView.webPreview;
       if (terminalPreview) {
         void recheckWebPreview(terminalPreview, {
@@ -14777,9 +15531,26 @@ function App() {
           );
         }
       }
-      removeRunControl(control);
     }
     await persistRunEvent(control, "notification", method, message);
+
+    if (terminalStatus) {
+      const persistence = await persistKanbanAttemptState(
+        control,
+        terminalStatus,
+        terminalError,
+        { retryCount: 1 },
+      );
+      if (persistence.persisted) {
+        removeRunControl(control);
+      } else if (
+        activeRunControlsRef.current.get(control.clientId) === control
+      ) {
+        setStatusMessage(
+          `The run finished, but the Kanban attempt could not be saved: ${persistence.error}`,
+        );
+      }
+    }
 
     if (method === "serverRequest/resolved") {
       const requestId = params.requestId;
@@ -14817,9 +15588,9 @@ function App() {
       }
     }
 
-    if (terminalTurnCompleted) {
-      const turn = readObject(params.turn);
-      const status = readString(turn.status) === "failed" ? "failed" : "completed";
+    if (terminalStatus) {
+      const turn = terminalTurn;
+      const status = terminalStatus;
       const completedControl = control;
       const completedEntry =
         taskChatEntriesRef.current.find(
@@ -14873,7 +15644,12 @@ function App() {
         completedAt: new Date().toISOString(),
         durationMs: readNumber(turn.durationMs) ?? nextRunView.elapsedMs,
         finalMessage: nextRunView.finalMessage,
-        error: status === "failed" ? JSON.stringify(turn.error ?? "Turn failed") : null,
+        error:
+          status === "failed"
+            ? JSON.stringify(turn.error ?? terminalError ?? "Turn failed")
+            : status === "interrupted"
+              ? terminalError
+              : null,
         collaborationMode: nextRunView.nativePlan.mode,
         runIntent: nextRunView.nativePlan.intent,
         completedPlanItemId: nextRunView.nativePlan.planItemId,
@@ -15043,6 +15819,12 @@ function App() {
     const requestBelongsToSubagent =
       control !== null &&
       requestSubagent?.ownerClientId === control.clientId;
+    if (control?.kanbanAttempt && !requestBelongsToSubagent) {
+      void persistKanbanAttemptState(
+        control,
+        isNativeUserInputRequest(request) ? "waiting_user" : "waiting_approval",
+      );
+    }
     const parsed = parseApprovalRequest({
       message: request,
       profileKey,
@@ -18952,6 +19734,8 @@ function App() {
           <div className="codex-workspace">
             <WorkspaceContextBanner
               workspace={selectedWorkspace}
+              surfaceMode={workspaceSurfaceMode}
+              onSurfaceModeChange={setWorkspaceSurfaceMode}
               repositories={selectedGitOverview?.repositories ?? []}
               repositoryPath={
                 selectedGitRepository?.repository.rootPath ?? null
@@ -18984,12 +19768,50 @@ function App() {
               onStopBrowser={() => void stopSelectedBrowserSession()}
               windowDragRegionsEnabled={macOsWindowDragRegionsEnabled}
             />
+            {selectedWorkspace ? (
+              <div
+                className="kanban-workspace-mount"
+                style={
+                  workspaceSurfaceMode === "kanban"
+                    ? undefined
+                    : { display: "none" }
+                }
+              >
+                <KanbanWorkspace
+                  key={selectedWorkspace.id}
+                  workspace={selectedWorkspace}
+                  repositories={selectedGitOverview?.repositories ?? []}
+                  accounts={signedInAccounts}
+                  models={models}
+                  defaultAccountId={
+                    selectedWorkspace.default_account_id ?? selectedAccountId
+                  }
+                  defaultAccessMode={accessMode}
+                  defaultModel={selectedModel?.model ?? null}
+                  defaultReasoningLevel={selectedReasoningEffort}
+                  refreshToken={kanbanRefreshToken}
+                  onOpenConversation={openKanbanCardConversation}
+                  onShowConversation={async (card) => {
+                    await openKanbanCardConversation(card);
+                    setWorkspaceSurfaceMode("chat");
+                  }}
+                  onLaunch={launchKanbanCard}
+                  onPause={pauseKanbanCard}
+                  onStop={stopKanbanCard}
+                />
+              </div>
+            ) : null}
             <div
               className={`codex-workspace-body${
                 historyDrawerSpaceReserved ? " history-space-reserved" : ""
               }${historyDrawerOpen ? " history-open" : ""}${
                 subagentInspectorTarget ? " subagent-inspector-open" : ""
               }`}
+              style={
+                workspaceSurfaceMode === "kanban"
+                  ? { display: "none" }
+                  : undefined
+              }
               data-history-transition-phase={historyDrawerPhase}
             >
               <section
@@ -19730,6 +20552,8 @@ function App() {
 
 function WorkspaceContextBanner({
   workspace,
+  surfaceMode,
+  onSurfaceModeChange,
   repositories,
   repositoryPath,
   branch,
@@ -19757,6 +20581,8 @@ function WorkspaceContextBanner({
   windowDragRegionsEnabled,
 }: {
   workspace: Workspace | null;
+  surfaceMode: WorkspaceSurfaceMode;
+  onSurfaceModeChange: (mode: WorkspaceSurfaceMode) => void;
   repositories: WorkspaceGitRepositoryStatus[];
   repositoryPath: string | null;
   branch: string | null;
@@ -19948,6 +20774,32 @@ function WorkspaceContextBanner({
       </div>
 
       <div className="workspace-context-actions" data-tauri-drag-region="false">
+        <div
+          className="workspace-surface-toggle"
+          role="radiogroup"
+          aria-label="Workspace mode"
+        >
+          <button
+            type="button"
+            role="radio"
+            aria-checked={surfaceMode === "chat"}
+            className={surfaceMode === "chat" ? "active" : ""}
+            onClick={() => onSurfaceModeChange("chat")}
+          >
+            Chat
+          </button>
+          <button
+            type="button"
+            role="radio"
+            aria-checked={surfaceMode === "kanban"}
+            className={surfaceMode === "kanban" ? "active" : ""}
+            onClick={() => onSurfaceModeChange("kanban")}
+          >
+            Kanban
+          </button>
+        </div>
+        {surfaceMode === "chat" ? (
+          <>
         {repositories.length > 1 ? (
           <ComposerSelect
             ariaLabel="Git repository"
@@ -20116,6 +20968,12 @@ function WorkspaceContextBanner({
             </span>
           ) : null}
         </button>
+          </>
+        ) : (
+          <span className="workspace-kanban-scope-note">
+            Card agents run in isolated worktrees
+          </span>
+        )}
       </div>
     </section>
   );
