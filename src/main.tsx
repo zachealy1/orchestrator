@@ -1,4 +1,4 @@
-import React from "react";
+import React, { useEffect, useState } from "react";
 import ReactDOM from "react-dom/client";
 import App from "./App";
 import DrawerSyncDiagnostics from "./drawerSyncDiagnostics";
@@ -6,11 +6,17 @@ import TranscriptRestoreDiagnostics from "./transcriptRestoreDiagnostics";
 import TranscriptScrollDiagnostics from "./transcriptScrollDiagnostics";
 import TranscriptWorkspaceReturnDiagnostics from "./transcriptWorkspaceReturnDiagnostics";
 import { initializeTheme } from "./lib/theme";
+import { AppServices, AppServicesProvider } from "./runtime/AppServices";
 
 initializeTheme();
 
-ReactDOM.createRoot(document.getElementById("root") as HTMLElement).render(
-  <React.StrictMode>
+function ApplicationRoot() {
+  const [services] = useState(() => new AppServices());
+
+  useEffect(() => () => services.dispose(), [services]);
+
+  return (
+    <AppServicesProvider services={services}>
     {import.meta.env.VITE_TRANSCRIPT_RESTORE_PROFILE === "1" ? (
       <TranscriptRestoreDiagnostics />
     ) : import.meta.env.VITE_TRANSCRIPT_WORKSPACE_RETURN_PROFILE === "1" ? (
@@ -22,5 +28,12 @@ ReactDOM.createRoot(document.getElementById("root") as HTMLElement).render(
     ) : (
       <App />
     )}
+    </AppServicesProvider>
+  );
+}
+
+ReactDOM.createRoot(document.getElementById("root") as HTMLElement).render(
+  <React.StrictMode>
+    <ApplicationRoot />
   </React.StrictMode>,
 );

@@ -1,6 +1,6 @@
 import { Activity, Clock3, Database, Gauge } from "lucide-react";
 import type { ReactNode } from "react";
-import type { AnalyticsSummary as AnalyticsSummaryType } from "../types";
+import type { AnalyticsSummary as AnalyticsSummaryType } from "../features/analytics/types";
 
 type Props = {
   summary: AnalyticsSummaryType;

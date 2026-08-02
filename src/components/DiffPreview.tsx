@@ -1,5 +1,6 @@
 import {
   useVirtualizer,
+  type Virtualizer,
   type VirtualItem,
 } from "@tanstack/react-virtual";
 import {
@@ -13,7 +14,8 @@ import {
   type KeyboardEvent,
   type PointerEvent,
 } from "react";
-import type { ResolvedTheme, WorkspaceGitDiffSection } from "../types";
+import type { ResolvedTheme } from "../shared/types";
+import type { WorkspaceGitDiffSection } from "../features/workspaces/types";
 import {
   buildDiffOverviewMarkers,
   buildDiffRows,
@@ -27,6 +29,7 @@ import {
   type DiffToken,
   type HighlightedDiffSide,
 } from "../lib/diffPreview";
+import { useAppServices } from "../runtime/AppServices";
 
 type DiffLayout = "side-by-side" | "inline";
 
@@ -73,12 +76,44 @@ const PENDING_SECTION_HIGHLIGHT: SectionHighlight = {
   fallback: false,
 };
 
+function observeDiffElementOffset<TItemElement extends Element>(
+  instance: Virtualizer<HTMLDivElement, TItemElement>,
+  callback: (offset: number, isScrolling: boolean) => void,
+) {
+  const element = instance.scrollElement;
+  const targetWindow = instance.targetWindow;
+  if (!element || !targetWindow) return;
+
+  let settledTimeoutId: number | null = null;
+  let latestOffset = element.scrollTop;
+  const handleScroll = () => {
+    latestOffset = element.scrollTop;
+    if (settledTimeoutId !== null) {
+      targetWindow.clearTimeout(settledTimeoutId);
+    }
+    settledTimeoutId = targetWindow.setTimeout(() => {
+      settledTimeoutId = null;
+      callback(latestOffset, false);
+    }, instance.options.isScrollingResetDelay);
+    callback(latestOffset, true);
+  };
+
+  element.addEventListener("scroll", handleScroll, { passive: true });
+  return () => {
+    element.removeEventListener("scroll", handleScroll);
+    if (settledTimeoutId !== null) {
+      targetWindow.clearTimeout(settledTimeoutId);
+    }
+  };
+}
+
 export const DiffPreview = memo(function DiffPreview({
   path,
   sections,
   resolvedTheme,
   layout,
 }: Props) {
+  const { codePreview } = useAppServices();
   const scrollRef = useRef<HTMLDivElement | null>(null);
   const scrollMetricsFrameRef = useRef<number | null>(null);
   const renderSections = useMemo(
@@ -114,6 +149,7 @@ export const DiffPreview = memo(function DiffPreview({
     estimateSize: () => rowEstimate,
     overscan: VIRTUAL_OVERSCAN,
     initialRect: { width: 900, height: 720 },
+    observeElementOffset: observeDiffElementOffset,
     getItemKey: (index) => {
       const item = flattenedRows[index];
       return item ? `${item.sectionId}-${item.row.id}` : index;
@@ -179,8 +215,18 @@ export const DiffPreview = memo(function DiffPreview({
       renderSections.map(async ({ id, section }) => {
         try {
           const [base, head] = await Promise.all([
-            highlightDiffSide(section.baseContent, path, resolvedTheme),
-            highlightDiffSide(section.headContent, path, resolvedTheme),
+            highlightDiffSide(
+              section.baseContent,
+              path,
+              resolvedTheme,
+              codePreview,
+            ),
+            highlightDiffSide(
+              section.headContent,
+              path,
+              resolvedTheme,
+              codePreview,
+            ),
           ]);
           return { id, highlight: { base, head, fallback: false } };
         } catch {
@@ -211,7 +257,7 @@ export const DiffPreview = memo(function DiffPreview({
     return () => {
       disposed = true;
     };
-  }, [path, renderSections, resolvedTheme]);
+  }, [codePreview, path, renderSections, resolvedTheme]);
 
   useEffect(() => {
     const scrollElement = scrollRef.current;

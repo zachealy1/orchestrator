@@ -1,10 +1,4 @@
 import {
-  measureElement as measureVirtualElement,
-  useVirtualizer,
-  type VirtualItem,
-  type Virtualizer,
-} from "@tanstack/react-virtual";
-import {
   Activity,
   Ban,
   BrainCircuit,
@@ -22,7 +16,6 @@ import {
   Loader2,
   MessageSquare,
   Pencil,
-  RefreshCw,
   RotateCcw,
   ShieldAlert,
   ShieldCheck,
@@ -35,7 +28,6 @@ import {
   useCallback,
   useEffect,
   useId,
-  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -44,14 +36,11 @@ import { createPortal } from "react-dom";
 import type {
   ClipboardEvent as ReactClipboardEvent,
   MouseEvent as ReactMouseEvent,
-  RefObject,
   ReactNode,
 } from "react";
 import ReactMarkdown from "react-markdown";
 import type { Components } from "react-markdown";
 import remarkGfm from "remark-gfm";
-import remarkParse from "remark-parse";
-import { unified } from "unified";
 import type {
   RunCommandActivity,
   RunEditedFile,
@@ -81,61 +70,35 @@ import {
   loadImageAttachmentPreview,
 } from "../lib/imageAttachments";
 import type { RunWebPreview } from "../lib/webPreview";
+import { useAppServices } from "../runtime/AppServices";
 import { isPreviewableSummaryLink } from "../lib/summaryLinks";
+import { ORCHESTRATOR_PROMPT_CONTEXT_MIME } from "../features/composer/types";
+import type { ComposerContextFile } from "../features/composer/types";
+import type { CodexMessage } from "../features/codex/types";
+import type {
+  PreparedHistoricalSummary,
+  TaskChatEntry,
+} from "../features/conversations/types";
+export type { TaskChatEntry } from "../features/conversations/types";
 import {
-  cacheTranscriptRowHeight,
-  estimateHistoryPlaceholderHeight,
-  estimateTranscriptRowHeight,
-  getCachedTranscriptRowHeight,
-  getTranscriptWidthBucket,
-} from "../lib/transcriptVirtualization";
-import {
-  ORCHESTRATOR_PROMPT_CONTEXT_MIME,
-  type CodexMessage,
-  type ComposerContextFile,
-  type HistoryPageLoadState,
-  type HistoryPageDescriptor,
-  type HistoryTranscriptIndex,
-  type HistoryTurnHint,
-  type PreparedHistoricalSummary,
-  type ResolvedRunExecutionSettings,
-} from "../types";
+  buildNativePlanPreview,
+  editedFilesDisclosureKey,
+  nativePlanDisclosureKey,
+  type NativePlanDisclosureChangeHandler,
+} from "../features/plans/nativePlanPreview";
+export {
+  buildNativePlanPreview,
+  editedFilesDisclosureKey,
+  nativePlanDisclosureKey,
+} from "../features/plans/nativePlanPreview";
+export type {
+  NativePlanDisclosureChange,
+  NativePlanDisclosureChangeHandler,
+  NativePlanPreview,
+} from "../features/plans/nativePlanPreview";
 
-const AUTO_SCROLL_BOTTOM_THRESHOLD_PX = 48;
-const HISTORY_SCROLL_SETTLE_DELAY_MS = 120;
-const TRANSCRIPT_SCROLL_IDLE_DELAY_MS = 120;
-const TRANSCRIPT_OVERSCAN_ROWS = 6;
 const EMPTY_CONTEXT_FILES: ComposerContextFile[] = [];
-const PLAN_PREVIEW_BLOCK_LIMIT = 5;
-const PLAN_PREVIEW_CHARACTER_LIMIT = 1_600;
-const PLAN_PREVIEW_LINE_LIMIT = 14;
 const PLAN_MARKDOWN_PLUGINS = [remarkGfm];
-
-type PositionedMarkdownNode = {
-  type: string;
-  value?: string;
-  children?: PositionedMarkdownNode[];
-  position?: {
-    start: { offset?: number };
-    end: { offset?: number };
-  };
-};
-
-export type NativePlanPreview = {
-  isLong: boolean;
-  previewText: string;
-};
-
-export type NativePlanDisclosureChange = {
-  anchorElement: HTMLElement;
-  anchorTop: number;
-  expanded: boolean;
-  planKey: string;
-};
-
-export type NativePlanDisclosureChangeHandler = (
-  change: NativePlanDisclosureChange,
-) => void;
 
 export type PendingInteractionPageChange = {
   anchorElement: HTMLElement;
@@ -146,459 +109,22 @@ export type PendingInteractionPageChangeHandler = (
   change: PendingInteractionPageChange,
 ) => void;
 
-const planMarkdownParser = unified().use(remarkParse).use(remarkGfm);
 
-function markdownNodeEndOffset(node: PositionedMarkdownNode) {
-  return node.position?.end.offset ?? 0;
-}
-
-function markdownNodeSource(text: string, node: PositionedMarkdownNode) {
-  const start = node.position?.start.offset;
-  const end = node.position?.end.offset;
-  if (start === undefined || end === undefined) return "";
-  return text.slice(start, end);
-}
-
-export function buildNativePlanPreview(text: string): NativePlanPreview {
-  const lineCount = text.split(/\r?\n/).length;
-  try {
-    const tree = planMarkdownParser.parse(text) as unknown as {
-      children: PositionedMarkdownNode[];
-    };
-    const definitions = tree.children.filter(
-      (node) => node.type === "definition",
-    );
-    const content = tree.children.filter(
-      (node) => node.type !== "definition",
-    );
-    const isLong =
-      content.length > PLAN_PREVIEW_BLOCK_LIMIT ||
-      text.length > PLAN_PREVIEW_CHARACTER_LIMIT ||
-      lineCount > PLAN_PREVIEW_LINE_LIMIT;
-    if (!isLong) {
-      return { isLong: false, previewText: text };
-    }
-
-    const selected = content.slice(0, PLAN_PREVIEW_BLOCK_LIMIT);
-    const boundary = selected.reduce(
-      (furthest, node) => Math.max(furthest, markdownNodeEndOffset(node)),
-      0,
-    );
-    const definitionText = definitions
-      .filter((node) => (node.position?.start.offset ?? 0) >= boundary)
-      .map((node) => markdownNodeSource(text, node))
-      .filter(Boolean)
-      .join("\n\n");
-    const preview = text.slice(0, boundary || text.length).trimEnd();
-    return {
-      isLong: true,
-      previewText: definitionText
-        ? `${preview}\n\n${definitionText}`
-        : preview,
-    };
-  } catch {
-    return {
-      isLong: text.length > PLAN_PREVIEW_CHARACTER_LIMIT || lineCount > PLAN_PREVIEW_LINE_LIMIT,
-      previewText: text,
-    };
-  }
-}
-
-export function nativePlanDisclosureKey(entry: TaskChatEntry) {
-  const plan = entry.runView.nativePlan;
-  const text = plan.completedText || plan.previewText;
-  return [
-    entry.clientId,
-    plan.planItemId ?? "plan",
-    plan.completedTurnId ?? "draft",
-    planContentRevision(text),
-  ].join(":");
-}
-
-export function editedFilesDisclosureKey(entry: TaskChatEntry) {
-  const revision = entry.runView.editedFiles
-    .map(
-      (file) =>
-        `${file.path}:${file.status}:${file.additions}:${file.deletions}`,
-    )
-    .join("|");
-  return `${entry.clientId}:edited-files:${planContentRevision(revision)}`;
-}
-
-function planContentRevision(text: string) {
-  let hash = 2_166_136_261;
-  for (let index = 0; index < text.length; index += 1) {
-    hash ^= text.charCodeAt(index);
-    hash = Math.imul(hash, 16_777_619);
-  }
-  return `${text.length}-${(hash >>> 0).toString(36)}`;
-}
-
-function scheduleAnimationFrame(callback: FrameRequestCallback) {
-  if (typeof requestAnimationFrame === "function") {
-    return requestAnimationFrame(callback);
-  }
-
-  return window.setTimeout(() => callback(Date.now()), 0);
-}
-
-function cancelScheduledAnimationFrame(handle: number) {
-  if (typeof cancelAnimationFrame === "function") {
-    cancelAnimationFrame(handle);
-    return;
-  }
-
-  window.clearTimeout(handle);
-}
-
-export type TaskChatEntry = {
-  clientId: string;
-  workspaceId: number;
-  chatId: number | null;
-  turnIndex: number | null;
-  historySlotIndex?: number;
-  runId: number | null;
-  taskId: number | null;
-  prompt: string;
-  steeredPrompts?: Array<{
-    id: string;
-    prompt: string;
-    submittedAt: string;
-  }>;
-  contextFiles?: ComposerContextFile[];
-  imageAttachmentDelivery?: {
-    status: "preparing" | "sent" | "failed";
-    error: string | null;
-  };
-  executionSettings?: ResolvedRunExecutionSettings;
-  submittedAt: string;
-  status: RunViewState["status"];
-  runView: RunViewState;
-  preparedSummary?: PreparedHistoricalSummary;
-  historicalActivity?: {
-    profileKey: "default";
-    threadId: string;
-    turnId: string;
-    status: "available" | "loading" | "loaded" | "error";
-    nextCursor: string | null;
-    error: string | null;
-  };
+export type TranscriptTurnModel = {
+  entry: TaskChatEntry;
+  editable: boolean;
+  editing: boolean;
+  editingPrompt: string;
+  fileUndoDisabled?: boolean;
+  planExpanded?: boolean;
+  editedFilesExpanded?: boolean;
 };
 
-export type HistoryVisibleRange = {
-  startIndex: number;
-  endIndex: number;
-};
-
-export type HistoryScrollDirection = "backward" | "forward";
-
-export type TranscriptHistoryOpenRequest = {
-  requestId: number;
-  phase: "loading" | "hydrating" | "complete";
-};
-
-type TranscriptScrollMode =
-  | "opening-history"
-  | "following-live"
-  | "manual";
-
-type TranscriptScrollControllerOptions = {
-  transcriptRef: RefObject<HTMLElement | null>;
-  rowVirtualizer: Virtualizer<HTMLElement, HTMLDivElement>;
-  entryCount: number;
-  historyOpenRequest: TranscriptHistoryOpenRequest | null;
-  onHistoryPositionSettled?: (requestId: number) => void;
-  onScrollActivityChange?: (active: boolean) => void;
-  onScrollIdle?: (transcript: HTMLElement) => void;
-};
-
-function shouldAdjustTranscriptScrollPosition(
-  item: VirtualItem,
-  _delta: number,
-  instance: Virtualizer<HTMLElement, HTMLDivElement>,
-) {
-  return item.end <= (instance.scrollOffset ?? 0);
-}
-
-function scrollTranscriptElement(
-  offset: number,
-  {
-    adjustments = 0,
-    behavior = "auto",
-  }: { adjustments?: number; behavior?: "auto" | "smooth" | "instant" },
-  instance: Virtualizer<HTMLElement, HTMLDivElement>,
-) {
-  const transcript = instance.scrollElement;
-  if (!transcript) {
-    return;
-  }
-
-  const top = offset + adjustments;
-  if (typeof transcript.scrollTo === "function") {
-    transcript.scrollTo({
-      top,
-      behavior: behavior === "smooth" ? "smooth" : "auto",
-    });
-    return;
-  }
-
-  // Older WebKit and the test DOM do not expose Element.scrollTo.
-  transcript.scrollTop = top;
-}
-
-function useTranscriptScrollController({
-  transcriptRef,
-  rowVirtualizer,
-  entryCount,
-  historyOpenRequest,
-  onHistoryPositionSettled,
-  onScrollActivityChange,
-  onScrollIdle,
-}: TranscriptScrollControllerOptions) {
-  const modeRef = useRef<TranscriptScrollMode>("following-live");
-  const entryCountRef = useRef(entryCount);
-  const historyRequestRef = useRef(historyOpenRequest);
-  const historyRequestIdRef = useRef<number | null>(null);
-  const callbacksRef = useRef({
-    onHistoryPositionSettled,
-    onScrollActivityChange,
-    onScrollIdle,
-  });
-  const followFrameRef = useRef<number | null>(null);
-  const settlementFrameRef = useRef<number | null>(null);
-  const settlementTimeoutRef = useRef<number | null>(null);
-  const scrollIdleTimeoutRef = useRef<number | null>(null);
-  const scrollActivityRef = useRef(false);
-
-  entryCountRef.current = entryCount;
-  historyRequestRef.current = historyOpenRequest;
-  callbacksRef.current = {
-    onHistoryPositionSettled,
-    onScrollActivityChange,
-    onScrollIdle,
-  };
-
-  const clearQueuedEnd = useCallback(() => {
-    if (followFrameRef.current !== null) {
-      cancelScheduledAnimationFrame(followFrameRef.current);
-      followFrameRef.current = null;
-    }
-  }, []);
-
-  const clearSettlement = useCallback(() => {
-    if (settlementTimeoutRef.current !== null) {
-      window.clearTimeout(settlementTimeoutRef.current);
-      settlementTimeoutRef.current = null;
-    }
-    if (settlementFrameRef.current !== null) {
-      cancelScheduledAnimationFrame(settlementFrameRef.current);
-      settlementFrameRef.current = null;
-    }
-  }, []);
-
-  const setScrollActivity = useCallback((active: boolean) => {
-    if (scrollActivityRef.current === active) {
-      return;
-    }
-    scrollActivityRef.current = active;
-    callbacksRef.current.onScrollActivityChange?.(active);
-  }, []);
-
-  const scrollToTranscriptEnd = useCallback(() => {
-    if (entryCountRef.current === 0) {
-      return;
-    }
-    rowVirtualizer.scrollToEnd({ behavior: "auto" });
-  }, [rowVirtualizer]);
-
-  const queueScrollToTranscriptEnd = useCallback(() => {
-    if (followFrameRef.current !== null || modeRef.current === "manual") {
-      return;
-    }
-    followFrameRef.current = scheduleAnimationFrame(() => {
-      followFrameRef.current = null;
-      if (modeRef.current !== "manual") {
-        scrollToTranscriptEnd();
-      }
-    });
-  }, [scrollToTranscriptEnd]);
-
-  const scheduleHistorySettlement = useCallback(() => {
-    clearSettlement();
-    const request = historyRequestRef.current;
-    if (!request || request.phase !== "complete") {
-      return;
-    }
-
-    settlementTimeoutRef.current = window.setTimeout(() => {
-      settlementTimeoutRef.current = null;
-      const currentRequest = historyRequestRef.current;
-      if (
-        !currentRequest ||
-        currentRequest.requestId !== request.requestId ||
-        currentRequest.phase !== "complete"
-      ) {
-        return;
-      }
-
-      if (modeRef.current === "opening-history") {
-        scrollToTranscriptEnd();
-      }
-      settlementFrameRef.current = scheduleAnimationFrame(() => {
-        settlementFrameRef.current = null;
-        const settledRequest = historyRequestRef.current;
-        if (
-          !settledRequest ||
-          settledRequest.requestId !== request.requestId ||
-          settledRequest.phase !== "complete"
-        ) {
-          return;
-        }
-        if (modeRef.current === "opening-history") {
-          modeRef.current = "following-live";
-        }
-        callbacksRef.current.onHistoryPositionSettled?.(request.requestId);
-      });
-    }, HISTORY_SCROLL_SETTLE_DELAY_MS);
-  }, [clearSettlement, scrollToTranscriptEnd]);
-
-  const finishScrollActivity = useCallback(() => {
-    scrollIdleTimeoutRef.current = null;
-    setScrollActivity(false);
-    const transcript = transcriptRef.current;
-    if (!transcript) {
-      return;
-    }
-    if (
-      !historyRequestRef.current &&
-      isScrolledNearBottom(transcript)
-    ) {
-      modeRef.current = "following-live";
-    }
-    callbacksRef.current.onScrollIdle?.(transcript);
-  }, [setScrollActivity, transcriptRef]);
-
-  const markScrollActivity = useCallback(() => {
-    setScrollActivity(true);
-    if (scrollIdleTimeoutRef.current !== null) {
-      window.clearTimeout(scrollIdleTimeoutRef.current);
-    }
-    scrollIdleTimeoutRef.current = window.setTimeout(
-      finishScrollActivity,
-      TRANSCRIPT_SCROLL_IDLE_DELAY_MS,
-    );
-  }, [finishScrollActivity, setScrollActivity]);
-
-  const registerUserScrollIntent = useCallback(() => {
-    modeRef.current = "manual";
-    clearQueuedEnd();
-    markScrollActivity();
-    scheduleHistorySettlement();
-  }, [clearQueuedEnd, markScrollActivity, scheduleHistorySettlement]);
-
-  const handleScroll = useCallback(
-    (transcript: HTMLElement) => {
-      if (scrollActivityRef.current) {
-        markScrollActivity();
-        return;
-      }
-      if (
-        !historyRequestRef.current &&
-        modeRef.current !== "manual" &&
-        isScrolledNearBottom(transcript)
-      ) {
-        modeRef.current = "following-live";
-      }
-    },
-    [markScrollActivity],
-  );
-
-  const handleGeometryChange = useCallback(() => {
-    if (
-      modeRef.current === "opening-history" ||
-      modeRef.current === "following-live"
-    ) {
-      queueScrollToTranscriptEnd();
-    }
-    scheduleHistorySettlement();
-  }, [queueScrollToTranscriptEnd, scheduleHistorySettlement]);
-
-  const handleEntriesChanged = useCallback(
-    ({ initialLoad, appended }: { initialLoad: boolean; appended: boolean }) => {
-      if (
-        !historyRequestRef.current &&
-        modeRef.current !== "manual" &&
-        (initialLoad || appended)
-      ) {
-        modeRef.current = "following-live";
-      }
-      handleGeometryChange();
-    },
-    [handleGeometryChange],
-  );
-
-  useLayoutEffect(() => {
-    const request = historyOpenRequest;
-    if (!request) {
-      if (historyRequestIdRef.current !== null) {
-        historyRequestIdRef.current = null;
-        clearSettlement();
-        if (modeRef.current === "opening-history") {
-          modeRef.current = "following-live";
-        }
-      }
-      return;
-    }
-
-    if (historyRequestIdRef.current !== request.requestId) {
-      historyRequestIdRef.current = request.requestId;
-      modeRef.current = "opening-history";
-      clearQueuedEnd();
-      clearSettlement();
-      queueScrollToTranscriptEnd();
-    } else if (modeRef.current === "opening-history") {
-      queueScrollToTranscriptEnd();
-    }
-    scheduleHistorySettlement();
-  }, [
-    clearQueuedEnd,
-    clearSettlement,
-    historyOpenRequest,
-    queueScrollToTranscriptEnd,
-    scheduleHistorySettlement,
-  ]);
-
-  useEffect(
-    () => () => {
-      clearQueuedEnd();
-      clearSettlement();
-      if (scrollIdleTimeoutRef.current !== null) {
-        window.clearTimeout(scrollIdleTimeoutRef.current);
-      }
-      setScrollActivity(false);
-    },
-    [clearQueuedEnd, clearSettlement, setScrollActivity],
-  );
-
-  return useMemo(
-    () => ({
-      handleEntriesChanged,
-      handleGeometryChange,
-      handleScroll,
-      registerUserScrollIntent,
-      isUserScrolling: () => scrollActivityRef.current,
-    }),
-    [
-      handleEntriesChanged,
-      handleGeometryChange,
-      handleScroll,
-      registerUserScrollIntent,
-    ],
-  );
-}
-
-type Props = {
-  entries: TaskChatEntry[];
+export type TranscriptTurnActions = {
+  onEditingPromptChange: (prompt: string) => void;
+  onSubmitEdit: (entry: TaskChatEntry, prompt: string) => void;
+  onCancelEdit: () => void;
+  onStartEdit: (entry: TaskChatEntry) => void;
   onResolveRequest: ApprovalResolutionHandler;
   onAnswerUserInput?: (
     entry: TaskChatEntry,
@@ -606,12 +132,8 @@ type Props = {
     response: UserInputResponse,
   ) => void;
   onImplementPlan?: (entry: TaskChatEntry) => void;
-  onRevisePlan?: (
-    entry: TaskChatEntry,
-    revision: string,
-  ) => boolean | void;
+  onRevisePlan?: (entry: TaskChatEntry, revision: string) => boolean | void;
   onCancelPlan?: (entry: TaskChatEntry) => void;
-  onOpenFileLink?: (href: string) => boolean;
   onOpenWebPreview?: (
     entry: TaskChatEntry,
     preview: RunWebPreview,
@@ -621,775 +143,29 @@ type Props = {
     file: RunEditedFile,
   ) => Promise<void> | void;
   onUndoEditedFiles?: (entry: TaskChatEntry) => Promise<void> | void;
-  fileUndoDisabled?: boolean;
-  editablePromptEntryId?: string | null;
-  onEditPrompt?: (entry: TaskChatEntry, prompt: string) => void;
-  historyOpenRequest?: TranscriptHistoryOpenRequest | null;
-  onHistoryPositionSettled?: (requestId: number) => void;
-  historyIndex?: HistoryTranscriptIndex | null;
-  historyPageStates?: Record<string, HistoryPageLoadState>;
-  onVisibleHistoryRangeChange?: (
-    range: HistoryVisibleRange,
-    direction: HistoryScrollDirection,
-  ) => void;
-  onRetryHistoryPage?: (pageId: string) => void;
+  onOpenFileLink?: (href: string) => boolean;
   onLoadHistoricalActivity?: (entry: TaskChatEntry) => void;
-  onScrollActivityChange?: (active: boolean) => void;
+  onPlanDisclosureChange?: NativePlanDisclosureChangeHandler;
+  onPendingInteractionPageChange?: PendingInteractionPageChangeHandler;
 };
 
-export function TaskChatTranscript({
-  entries,
-  onResolveRequest,
-  onAnswerUserInput,
-  onImplementPlan,
-  onRevisePlan,
-  onCancelPlan,
-  onOpenFileLink,
-  onOpenWebPreview,
-  onReviewEditedFile,
-  onUndoEditedFiles,
-  fileUndoDisabled = false,
-  editablePromptEntryId = null,
-  onEditPrompt,
-  historyOpenRequest = null,
-  onHistoryPositionSettled,
-  historyIndex = null,
-  historyPageStates,
-  onVisibleHistoryRangeChange,
-  onRetryHistoryPage,
-  onLoadHistoricalActivity,
-  onScrollActivityChange,
-}: Props) {
-  const callbacksRef = useRef({
-    onResolveRequest,
-    onAnswerUserInput,
-    onImplementPlan,
-    onRevisePlan,
-    onCancelPlan,
-    onOpenFileLink,
-    onOpenWebPreview,
-    onReviewEditedFile,
-    onUndoEditedFiles,
-    onEditPrompt,
-    onHistoryPositionSettled,
-    onVisibleHistoryRangeChange,
-    onRetryHistoryPage,
-    onLoadHistoricalActivity,
-    onScrollActivityChange,
-  });
-  callbacksRef.current = {
-    onResolveRequest,
-    onAnswerUserInput,
-    onImplementPlan,
-    onRevisePlan,
-    onCancelPlan,
-    onOpenFileLink,
-    onOpenWebPreview,
-    onReviewEditedFile,
-    onUndoEditedFiles,
-    onEditPrompt,
-    onHistoryPositionSettled,
-    onVisibleHistoryRangeChange,
-    onRetryHistoryPage,
-    onLoadHistoricalActivity,
-    onScrollActivityChange,
-  };
-
-  const stableResolveRequest = useCallback(
-    (request: CodexApprovalRequest, choice: CodexApprovalRequest["choices"][number]) =>
-      callbacksRef.current.onResolveRequest(request, choice),
-    [],
-  );
-  const stableOpenFileLink = useCallback(
-    (href: string) => callbacksRef.current.onOpenFileLink?.(href) ?? false,
-    [],
-  );
-  const stableOpenWebPreview = useCallback(
-    (entry: TaskChatEntry, preview: RunWebPreview) =>
-      callbacksRef.current.onOpenWebPreview?.(entry, preview),
-    [],
-  );
-  const stableReviewEditedFile = useCallback(
-    (entry: TaskChatEntry, file: RunEditedFile) =>
-      callbacksRef.current.onReviewEditedFile?.(entry, file),
-    [],
-  );
-  const stableUndoEditedFiles = useCallback(
-    (entry: TaskChatEntry) =>
-      callbacksRef.current.onUndoEditedFiles?.(entry),
-    [],
-  );
-  const stableEditPrompt = useCallback(
-    (entry: TaskChatEntry, prompt: string) =>
-      callbacksRef.current.onEditPrompt?.(entry, prompt),
-    [],
-  );
-  const stableHistoryPositionSettled = useCallback(
-    (requestId: number) =>
-      callbacksRef.current.onHistoryPositionSettled?.(requestId),
-    [],
-  );
-  const stableVisibleHistoryRangeChange = useCallback(
-    (range: HistoryVisibleRange, direction: HistoryScrollDirection) =>
-      callbacksRef.current.onVisibleHistoryRangeChange?.(range, direction),
-    [],
-  );
-  const stableRetryHistoryPage = useCallback(
-    (pageId: string) => callbacksRef.current.onRetryHistoryPage?.(pageId),
-    [],
-  );
-  const stableLoadHistoricalActivity = useCallback(
-    (entry: TaskChatEntry) =>
-      callbacksRef.current.onLoadHistoricalActivity?.(entry),
-    [],
-  );
-  const stableScrollActivityChange = useCallback(
-    (active: boolean) =>
-      callbacksRef.current.onScrollActivityChange?.(active),
-    [],
-  );
-
-  return (
-    <VirtualizedTaskChatTranscript
-      entries={entries}
-      onResolveRequest={stableResolveRequest}
-      onAnswerUserInput={onAnswerUserInput}
-      onImplementPlan={onImplementPlan}
-      onRevisePlan={onRevisePlan}
-      onCancelPlan={onCancelPlan}
-      onOpenFileLink={onOpenFileLink ? stableOpenFileLink : undefined}
-      onOpenWebPreview={
-        onOpenWebPreview ? stableOpenWebPreview : undefined
-      }
-      onReviewEditedFile={
-        onReviewEditedFile ? stableReviewEditedFile : undefined
-      }
-      onUndoEditedFiles={
-        onUndoEditedFiles ? stableUndoEditedFiles : undefined
-      }
-      fileUndoDisabled={fileUndoDisabled}
-      editablePromptEntryId={editablePromptEntryId}
-      onEditPrompt={onEditPrompt ? stableEditPrompt : undefined}
-      historyOpenRequest={historyOpenRequest}
-      onHistoryPositionSettled={
-        onHistoryPositionSettled ? stableHistoryPositionSettled : undefined
-      }
-      historyIndex={historyIndex}
-      historyPageStates={historyPageStates}
-      onVisibleHistoryRangeChange={
-        onVisibleHistoryRangeChange
-          ? stableVisibleHistoryRangeChange
-          : undefined
-      }
-      onRetryHistoryPage={
-        onRetryHistoryPage ? stableRetryHistoryPage : undefined
-      }
-      onLoadHistoricalActivity={
-        onLoadHistoricalActivity ? stableLoadHistoricalActivity : undefined
-      }
-      onScrollActivityChange={
-        onScrollActivityChange ? stableScrollActivityChange : undefined
-      }
-    />
-  );
-}
-
-const VirtualizedTaskChatTranscript = /* @__PURE__ */ memo(function VirtualizedTaskChatTranscript({
-  entries,
-  onResolveRequest,
-  onAnswerUserInput,
-  onImplementPlan,
-  onRevisePlan,
-  onCancelPlan,
-  onOpenFileLink,
-  onOpenWebPreview,
-  onReviewEditedFile,
-  onUndoEditedFiles,
-  fileUndoDisabled = false,
-  editablePromptEntryId = null,
-  onEditPrompt,
-  historyOpenRequest = null,
-  onHistoryPositionSettled,
-  historyIndex = null,
-  historyPageStates = {},
-  onVisibleHistoryRangeChange,
-  onRetryHistoryPage,
-  onLoadHistoricalActivity,
-  onScrollActivityChange,
-}: Props) {
-  const transcriptRef = useRef<HTMLElement | null>(null);
-  const stableTranscriptWidthRef = useRef(1_024);
-  const pendingTranscriptWidthRef = useRef(1_024);
-  const transcriptWidthChangingRef = useRef(false);
-  const transcriptWidthSettleTimeoutRef = useRef<number | null>(null);
-  const pendingRowMeasurementsRef = useRef(
-    new Map<string, { height: number; width: number }>(),
-  );
-  const geometryChangeHandlerRef = useRef<() => void>(() => undefined);
-  const visibleRangeFrameRef = useRef<number | null>(null);
-  const previousScrollTopRef = useRef(0);
-  const pendingScrollDirectionRef = useRef<HistoryScrollDirection | null>(null);
-  const previousEntriesRef = useRef({
-    count: 0,
-    lastId: null as string | null,
-    totalSize: 0,
-    entries: entries as TaskChatEntry[],
-  });
-  const [editingEntryId, setEditingEntryId] = useState<string | null>(null);
-  const [editingPrompt, setEditingPrompt] = useState("");
-
-  const loadedEntriesBySlot = useMemo(() => {
-    const loaded = new Map<number, TaskChatEntry>();
-    entries.forEach((entry, index) => {
-      const slotIndex = historyIndex ? entry.historySlotIndex : index;
-      if (slotIndex !== undefined && slotIndex >= 0) {
-        loaded.set(slotIndex, entry);
-      }
-    });
-    return loaded;
-  }, [entries, historyIndex]);
-  const entrySlotsById = useMemo(
-    () =>
-      new Map(
-        [...loadedEntriesBySlot.entries()].map(([slotIndex, entry]) => [
-          entry.clientId,
-          slotIndex,
-        ]),
-      ),
-    [loadedEntriesBySlot],
-  );
-  const historyHintsBySlot = useMemo(
-    () =>
-      new Map(
-        (historyIndex?.hints ?? []).map((hint) => [hint.slotIndex, hint]),
-      ),
-    [historyIndex],
-  );
-  const historyPagesBySlot = useMemo(() => {
-    const pages = new Map<number, HistoryPageDescriptor>();
-    for (const page of historyIndex?.pages ?? []) {
-      for (
-        let slotIndex = page.startIndex;
-        slotIndex < page.startIndex + page.turnCount;
-        slotIndex += 1
-      ) {
-        pages.set(slotIndex, page);
-      }
-    }
-    return pages;
-  }, [historyIndex]);
-  const virtualCount = historyIndex?.totalTurns ?? entries.length;
-  const entryAt = useCallback(
-    (index: number) => loadedEntriesBySlot.get(index),
-    [loadedEntriesBySlot],
-  );
-  const hintAt = useCallback(
-    (index: number) => historyHintsBySlot.get(index),
-    [historyHintsBySlot],
-  );
-
-  const measureTranscriptRow = useCallback(
-    (
-      element: HTMLDivElement,
-      resizeEntry: ResizeObserverEntry | undefined,
-      instance: Virtualizer<HTMLElement, HTMLDivElement>,
-    ) => {
-      const measuredHeight = measureVirtualElement(
-        element,
-        resizeEntry,
-        instance,
-      );
-      const index = instance.indexFromElement(element);
-      const chatEntry = entryAt(index);
-      if (!chatEntry) {
-        return Math.max(
-          measuredHeight,
-          estimateHistoryPlaceholderHeight(
-            hintAt(index),
-            stableTranscriptWidthRef.current,
-          ),
-        );
-      }
-
-      if (transcriptWidthChangingRef.current) {
-        pendingRowMeasurementsRef.current.set(chatEntry.clientId, {
-          height: measuredHeight,
-          width: pendingTranscriptWidthRef.current,
-        });
-        return (
-          instance.itemSizeCache.get(chatEntry.clientId) ??
-          getCachedTranscriptRowHeight(
-            chatEntry,
-            stableTranscriptWidthRef.current,
-          ) ??
-          estimateTranscriptRowHeight(
-            chatEntry,
-            stableTranscriptWidthRef.current,
-          )
-        );
-      }
-
-      cacheTranscriptRowHeight(
-        chatEntry,
-        stableTranscriptWidthRef.current,
-        measuredHeight,
-      );
-      geometryChangeHandlerRef.current();
-      return measuredHeight;
-    },
-    [entryAt, hintAt],
-  );
-
-  const rowVirtualizer = useVirtualizer({
-    count: virtualCount,
-    getScrollElement: () => transcriptRef.current,
-    scrollToFn: scrollTranscriptElement,
-    estimateSize: (index) => {
-      const entry = entryAt(index);
-      return entry
-        ? estimateTranscriptRowHeight(
-            entry,
-            stableTranscriptWidthRef.current,
-          )
-        : estimateHistoryPlaceholderHeight(
-            hintAt(index),
-            stableTranscriptWidthRef.current,
-          );
-    },
-    measureElement: measureTranscriptRow,
-    overscan: TRANSCRIPT_OVERSCAN_ROWS,
-    anchorTo: "end",
-    followOnAppend: false,
-    scrollEndThreshold: AUTO_SCROLL_BOTTOM_THRESHOLD_PX,
-    useAnimationFrameWithResizeObserver: true,
-    directDomUpdates: true,
-    directDomUpdatesMode: "transform",
-    getItemKey: useCallback(
-      (index: number) =>
-        entryAt(index)?.clientId ??
-        `history-placeholder:${historyIndex?.chatId ?? "live"}:${index}`,
-      [entryAt, historyIndex?.chatId],
-    ),
-    initialRect: {
-      width: 1024,
-      height: 720,
-    },
-  });
-  rowVirtualizer.shouldAdjustScrollPositionOnItemSizeChange =
-    shouldAdjustTranscriptScrollPosition;
-
-  const virtualItems = rowVirtualizer.getVirtualItems();
-  const usingFallbackRows = virtualItems.length === 0;
-  const renderedRows =
-    !usingFallbackRows
-      ? virtualItems
-      : buildFallbackTranscriptRows(
-          virtualCount,
-          entryAt,
-          hintAt,
-        );
-  const totalSize = rowVirtualizer.getTotalSize();
-
-  const scrollController = useTranscriptScrollController({
-    transcriptRef,
-    rowVirtualizer,
-    entryCount: virtualCount,
-    historyOpenRequest,
-    onHistoryPositionSettled,
-    onScrollActivityChange,
-  });
-  geometryChangeHandlerRef.current = scrollController.handleGeometryChange;
-
-  const reportVisibleHistoryRange = useCallback(
-    (direction: HistoryScrollDirection) => {
-      if (!historyIndex || !onVisibleHistoryRangeChange) {
-        return;
-      }
-      if (visibleRangeFrameRef.current !== null) {
-        cancelScheduledAnimationFrame(visibleRangeFrameRef.current);
-      }
-      visibleRangeFrameRef.current = scheduleAnimationFrame(() => {
-        visibleRangeFrameRef.current = null;
-        const virtualIndexes = rowVirtualizer.getVirtualIndexes();
-        const fallbackCount = Math.min(
-          virtualCount,
-          TRANSCRIPT_OVERSCAN_ROWS * 2 + 1,
-        );
-        const transcript = transcriptRef.current;
-        const maxFallbackStart = Math.max(0, virtualCount - fallbackCount);
-        const scrollRange = transcript
-          ? Math.max(0, transcript.scrollHeight - transcript.clientHeight)
-          : 0;
-        const fallbackStart = Math.round(
-          maxFallbackStart *
-            (scrollRange > 0 && transcript ? transcript.scrollTop / scrollRange : 1),
-        );
-        const indexes =
-          virtualIndexes.length > 0
-            ? virtualIndexes
-            : Array.from(
-                { length: fallbackCount },
-                (_, offset) => fallbackStart + offset,
-              );
-        if (indexes.length === 0) return;
-        onVisibleHistoryRangeChange(
-          {
-            startIndex: indexes[0],
-            endIndex: indexes[indexes.length - 1],
-          },
-          direction,
-        );
-      });
-    },
-    [historyIndex, onVisibleHistoryRangeChange, rowVirtualizer, virtualCount],
-  );
-
-  useLayoutEffect(() => {
-    const previous = previousEntriesRef.current;
-    const lastId = entryAt(virtualCount - 1)?.clientId ?? null;
-    const entryCountIncreased = virtualCount > previous.count;
-    const appended = entryCountIncreased && lastId !== previous.lastId;
-    const initialLoad = previous.count === 0 && virtualCount > 0;
-    const entriesChanged = previous.entries !== entries;
-    const totalSizeChanged = previous.totalSize !== totalSize;
-    previousEntriesRef.current = {
-      count: virtualCount,
-      lastId,
-      totalSize,
-      entries,
-    };
-
-    if (initialLoad || appended || entriesChanged || totalSizeChanged) {
-      scrollController.handleEntriesChanged({ initialLoad, appended });
-    }
-  }, [
-    entries,
-    entryAt,
-    scrollController,
-    totalSize,
-    virtualCount,
-  ]);
-
-  useEffect(() => {
-    const transcript = transcriptRef.current;
-    if (!transcript || typeof ResizeObserver === "undefined") {
-      return;
-    }
-
-    let previousWidth = stableTranscriptWidthRef.current;
-    let previousHeight = transcript.clientHeight;
-    const observer = new ResizeObserver(() => {
-      const width = transcript.clientWidth;
-      const height = transcript.clientHeight;
-      const widthChanged = width > 0 && width !== previousWidth;
-      const heightChanged = height !== previousHeight;
-      if (!widthChanged && !heightChanged) {
-        return;
-      }
-      previousHeight = height;
-
-      if (widthChanged) {
-        previousWidth = width;
-        pendingTranscriptWidthRef.current = getTranscriptWidthBucket(width);
-        transcriptWidthChangingRef.current = true;
-        if (transcriptWidthSettleTimeoutRef.current !== null) {
-          window.clearTimeout(transcriptWidthSettleTimeoutRef.current);
-        }
-        transcriptWidthSettleTimeoutRef.current = window.setTimeout(() => {
-          transcriptWidthSettleTimeoutRef.current = null;
-          stableTranscriptWidthRef.current = pendingTranscriptWidthRef.current;
-          transcriptWidthChangingRef.current = false;
-          rowVirtualizer.measure();
-          for (const [clientId, measurement] of pendingRowMeasurementsRef.current) {
-            const index = entrySlotsById.get(clientId);
-            const entry = index === undefined ? undefined : entryAt(index);
-            if (!entry || index === undefined) {
-              continue;
-            }
-            cacheTranscriptRowHeight(entry, measurement.width, measurement.height);
-            rowVirtualizer.resizeItem(index, measurement.height);
-          }
-          pendingRowMeasurementsRef.current.clear();
-          scrollController.handleGeometryChange();
-        }, HISTORY_SCROLL_SETTLE_DELAY_MS);
-      }
-      if (heightChanged) {
-        scrollController.handleGeometryChange();
-      }
-    });
-    observer.observe(transcript);
-    return () => observer.disconnect();
-  }, [entryAt, entrySlotsById, rowVirtualizer, scrollController]);
-
-  useEffect(
-    () => () => {
-      if (transcriptWidthSettleTimeoutRef.current !== null) {
-        window.clearTimeout(transcriptWidthSettleTimeoutRef.current);
-      }
-      if (visibleRangeFrameRef.current !== null) {
-        cancelScheduledAnimationFrame(visibleRangeFrameRef.current);
-      }
-    },
-    [],
-  );
-
-  useEffect(() => {
-    if (
-      editingEntryId !== null &&
-      !entries.some((entry) => entry.clientId === editingEntryId)
-    ) {
-      setEditingEntryId(null);
-      setEditingPrompt("");
-    }
-  }, [editingEntryId, entries]);
-
-  const handleSubmitEdit = useCallback(
-    (entry: TaskChatEntry, nextPrompt: string) => {
-      if (!nextPrompt || !onEditPrompt) {
-        return;
-      }
-      setEditingEntryId(null);
-      setEditingPrompt("");
-      onEditPrompt(entry, nextPrompt);
-    },
-    [onEditPrompt],
-  );
-
-  const handleCancelEdit = useCallback(() => {
-    setEditingEntryId(null);
-    setEditingPrompt("");
-  }, []);
-
-  const handleStartEdit = useCallback((entry: TaskChatEntry) => {
-    setEditingEntryId(entry.clientId);
-    setEditingPrompt(entry.prompt);
-  }, []);
-
-  return (
-    <section
-      className="task-chat-transcript"
-      aria-label="Task chat transcript"
-      ref={transcriptRef}
-      tabIndex={0}
-      onKeyDownCapture={(event) => {
-        if (
-          event.target === event.currentTarget &&
-          isTranscriptScrollKey(event.key)
-        ) {
-          pendingScrollDirectionRef.current = isBackwardTranscriptScrollKey(
-            event.key,
-          )
-            ? "backward"
-            : "forward";
-          scrollController.registerUserScrollIntent();
-        }
-      }}
-      onPointerDownCapture={(event) => {
-        const bounds = event.currentTarget.getBoundingClientRect();
-        if (event.clientX >= bounds.right - 20) {
-          scrollController.registerUserScrollIntent();
-        }
-      }}
-      onScroll={(event) => {
-        const transcript = event.currentTarget;
-        const direction: HistoryScrollDirection =
-          pendingScrollDirectionRef.current ??
-          (transcript.scrollTop < previousScrollTopRef.current
-            ? "backward"
-            : "forward");
-        pendingScrollDirectionRef.current = null;
-        previousScrollTopRef.current = transcript.scrollTop;
-        scrollController.handleScroll(transcript);
-        reportVisibleHistoryRange(direction);
-      }}
-      onTouchStartCapture={scrollController.registerUserScrollIntent}
-      onTouchMoveCapture={scrollController.registerUserScrollIntent}
-      onWheelCapture={(event) => {
-        pendingScrollDirectionRef.current =
-          event.deltaY < 0 ? "backward" : "forward";
-        scrollController.registerUserScrollIntent();
-      }}
-    >
-      <div
-        className="task-chat-virtual-spacer"
-        ref={rowVirtualizer.containerRef}
-      >
-        {renderedRows.map((virtualItem) => {
-          const entry = entryAt(virtualItem.index);
-          if (!entry) {
-            const hint = hintAt(virtualItem.index);
-            const page = historyPagesBySlot.get(virtualItem.index);
-            const pageState = page
-              ? historyPageStates[page.id] ?? "idle"
-              : "idle";
-
-            return (
-              <div
-                className="task-chat-virtual-row"
-                data-index={virtualItem.index}
-                key={virtualItem.key}
-                ref={rowVirtualizer.measureElement}
-                style={
-                  usingFallbackRows
-                    ? { transform: `translateY(${virtualItem.start}px)` }
-                    : undefined
-                }
-              >
-                <HistoryTurnSkeleton
-                  estimatedHeight={estimateHistoryPlaceholderHeight(
-                    hint,
-                    stableTranscriptWidthRef.current,
-                  )}
-                  page={page}
-                  pageState={pageState}
-                  onRetryHistoryPage={onRetryHistoryPage}
-                />
-              </div>
-            );
-          }
-
-          const editable =
-            Boolean(onEditPrompt) &&
-            entry.clientId === editablePromptEntryId &&
-            !isRunActiveStatus(entry.status);
-          const editing = editingEntryId === entry.clientId;
-
-          return (
-            <div
-              className="task-chat-virtual-row"
-              data-index={virtualItem.index}
-              key={virtualItem.key}
-              ref={rowVirtualizer.measureElement}
-              style={
-                usingFallbackRows
-                  ? { transform: `translateY(${virtualItem.start}px)` }
-                  : undefined
-              }
-            >
-              <TaskChatTurn
-                editable={editable}
-                editing={editing}
-                editingPrompt={editingPrompt}
-                entry={entry}
-                onCancelEdit={handleCancelEdit}
-                onEditingPromptChange={setEditingPrompt}
-                onOpenFileLink={onOpenFileLink}
-                onOpenWebPreview={onOpenWebPreview}
-                onResolveRequest={onResolveRequest}
-                onAnswerUserInput={onAnswerUserInput}
-                onImplementPlan={onImplementPlan}
-                onRevisePlan={onRevisePlan}
-                onCancelPlan={onCancelPlan}
-                onReviewEditedFile={onReviewEditedFile}
-                onUndoEditedFiles={onUndoEditedFiles}
-                fileUndoDisabled={fileUndoDisabled}
-                onStartEdit={handleStartEdit}
-                onSubmitEdit={handleSubmitEdit}
-                onLoadHistoricalActivity={onLoadHistoricalActivity}
-              />
-            </div>
-          );
-        })}
-      </div>
-    </section>
-  );
-});
-
-function buildFallbackTranscriptRows(
-  count: number,
-  entryAt: (index: number) => TaskChatEntry | undefined,
-  hintAt: (index: number) => HistoryTurnHint | undefined,
-) {
-  const visibleCount = Math.min(count, TRANSCRIPT_OVERSCAN_ROWS * 2 + 1);
-  const startIndex = Math.max(0, count - visibleCount);
-  const width = 1_024;
-  let start = 0;
-  for (let index = 0; index < startIndex; index += 1) {
-    const entry = entryAt(index);
-    start += entry
-      ? estimateTranscriptRowHeight(entry, width)
-      : estimateHistoryPlaceholderHeight(hintAt(index), width);
-  }
-
-  return Array.from({ length: visibleCount }, (_, offset) => {
-    const index = startIndex + offset;
-    const row = {
-      key: `transcript-fallback-${index}`,
-      index,
-      start,
-    };
-    const entry = entryAt(index);
-    start += entry
-      ? estimateTranscriptRowHeight(entry, width)
-      : estimateHistoryPlaceholderHeight(hintAt(index), width);
-    return row;
-  });
-}
-
-const HistoryTurnSkeleton = /* @__PURE__ */ memo(function HistoryTurnSkeleton({
-  estimatedHeight,
-  page,
-  pageState,
-  onRetryHistoryPage,
-}: {
-  estimatedHeight: number;
-  page: HistoryPageDescriptor | undefined;
-  pageState: HistoryPageLoadState;
-  onRetryHistoryPage?: (pageId: string) => void;
-}) {
-  const canRetry = pageState === "error" && page && onRetryHistoryPage;
-
-  return (
-    <div
-      className={`history-turn-skeleton state-${pageState}`}
-      style={{ minHeight: `${estimatedHeight}px` }}
-      aria-hidden={canRetry ? undefined : "true"}
-    >
-      <div className="history-turn-skeleton-prompt">
-        <span />
-        <span />
-      </div>
-      <div className="history-turn-skeleton-response">
-        <span />
-        <span />
-        <span />
-      </div>
-      {canRetry ? (
-        <button
-          className="history-turn-skeleton-retry"
-          type="button"
-          aria-label="Retry loading this part of the chat"
-          title="Retry loading"
-          onClick={() => onRetryHistoryPage(page.id)}
-        >
-          <RefreshCw size={15} aria-hidden="true" />
-        </button>
-      ) : null}
-    </div>
-  );
-});
-
-function isTranscriptScrollKey(key: string) {
-  return (
-    key === "ArrowUp" ||
-    key === "ArrowDown" ||
-    key === "PageUp" ||
-    key === "PageDown" ||
-    key === "Home" ||
-    key === "End" ||
-    key === " "
-  );
-}
-
-function isBackwardTranscriptScrollKey(key: string) {
-  return key === "ArrowUp" || key === "PageUp" || key === "Home";
-}
-
 export const TaskChatTurn = memo(function TaskChatTurn({
+  model,
+  actions,
+}: {
+  model: TranscriptTurnModel;
+  actions: TranscriptTurnActions;
+}) {
+  const {
   entry,
   editable,
   editing,
   editingPrompt,
+  fileUndoDisabled = false,
+  planExpanded,
+  editedFilesExpanded,
+  } = model;
+  const {
   onEditingPromptChange,
   onSubmitEdit,
   onCancelEdit,
@@ -1403,37 +179,10 @@ export const TaskChatTurn = memo(function TaskChatTurn({
   onOpenWebPreview,
   onReviewEditedFile,
   onUndoEditedFiles,
-  fileUndoDisabled = false,
   onLoadHistoricalActivity,
-  planExpanded,
-  editedFilesExpanded,
   onPlanDisclosureChange,
   onPendingInteractionPageChange,
-}: {
-  entry: TaskChatEntry;
-  editable: boolean;
-  editing: boolean;
-  editingPrompt: string;
-  onEditingPromptChange: (prompt: string) => void;
-  onSubmitEdit: (entry: TaskChatEntry, prompt: string) => void;
-  onCancelEdit: () => void;
-  onStartEdit: (entry: TaskChatEntry) => void;
-  onResolveRequest: ApprovalResolutionHandler;
-  onAnswerUserInput?: Props["onAnswerUserInput"];
-  onImplementPlan?: Props["onImplementPlan"];
-  onRevisePlan?: Props["onRevisePlan"];
-  onCancelPlan?: Props["onCancelPlan"];
-  onOpenFileLink?: (href: string) => boolean;
-  onOpenWebPreview?: Props["onOpenWebPreview"];
-  onReviewEditedFile?: Props["onReviewEditedFile"];
-  onUndoEditedFiles?: Props["onUndoEditedFiles"];
-  fileUndoDisabled?: boolean;
-  onLoadHistoricalActivity?: (entry: TaskChatEntry) => void;
-  planExpanded?: boolean;
-  editedFilesExpanded?: boolean;
-  onPlanDisclosureChange?: NativePlanDisclosureChangeHandler;
-  onPendingInteractionPageChange?: PendingInteractionPageChangeHandler;
-}) {
+  } = actions;
   return (
     <div className="task-chat-run">
       <div
@@ -1557,12 +306,6 @@ function isRunActiveStatus(status: RunViewState["status"]) {
   return status === "connecting" || status === "running";
 }
 
-function isScrolledNearBottom(element: HTMLElement) {
-  const remainingScroll =
-    element.scrollHeight - element.clientHeight - element.scrollTop;
-  return remainingScroll <= AUTO_SCROLL_BOTTOM_THRESHOLD_PX;
-}
-
 const SubmittedImageAttachments = memo(function SubmittedImageAttachments({
   files,
   delivery,
@@ -1596,6 +339,7 @@ const SubmittedImageAttachment = memo(function SubmittedImageAttachment({
   file: ComposerContextFile;
   delivery: TaskChatEntry["imageAttachmentDelivery"];
 }) {
+  const { imageAttachments } = useAppServices();
   const [preview, setPreview] = useState<{
     status: "loading" | "ready" | "unavailable";
     dataUrl: string | null;
@@ -1604,7 +348,10 @@ const SubmittedImageAttachment = memo(function SubmittedImageAttachment({
   useEffect(() => {
     let active = true;
     setPreview({ status: "loading", dataUrl: null });
-    void loadImageAttachmentPreview(file.canonicalPath ?? file.path)
+    void loadImageAttachmentPreview(
+      file.canonicalPath ?? file.path,
+      imageAttachments,
+    )
       .then((result) => {
         if (!active) return;
         setPreview(
@@ -1621,7 +368,7 @@ const SubmittedImageAttachment = memo(function SubmittedImageAttachment({
     return () => {
       active = false;
     };
-  }, [file.canonicalPath, file.path]);
+  }, [file.canonicalPath, file.path, imageAttachments]);
 
   const state =
     delivery?.status === "failed"
@@ -1728,14 +475,14 @@ const AssistantRunOutput = memo(function AssistantRunOutput({
   entry: TaskChatEntry;
   runView: RunViewState;
   onResolveRequest: ApprovalResolutionHandler;
-  onAnswerUserInput?: Props["onAnswerUserInput"];
-  onImplementPlan?: Props["onImplementPlan"];
-  onRevisePlan?: Props["onRevisePlan"];
-  onCancelPlan?: Props["onCancelPlan"];
+  onAnswerUserInput?: TranscriptTurnActions["onAnswerUserInput"];
+  onImplementPlan?: TranscriptTurnActions["onImplementPlan"];
+  onRevisePlan?: TranscriptTurnActions["onRevisePlan"];
+  onCancelPlan?: TranscriptTurnActions["onCancelPlan"];
   onOpenFileLink?: (href: string) => boolean;
-  onOpenWebPreview?: Props["onOpenWebPreview"];
-  onReviewEditedFile?: Props["onReviewEditedFile"];
-  onUndoEditedFiles?: Props["onUndoEditedFiles"];
+  onOpenWebPreview?: TranscriptTurnActions["onOpenWebPreview"];
+  onReviewEditedFile?: TranscriptTurnActions["onReviewEditedFile"];
+  onUndoEditedFiles?: TranscriptTurnActions["onUndoEditedFiles"];
   fileUndoDisabled?: boolean;
   onLoadHistoricalActivity?: (entry: TaskChatEntry) => void;
   planExpanded?: boolean;
@@ -1853,7 +600,7 @@ const WebPreviewCard = memo(function WebPreviewCard({
 }: {
   entry: TaskChatEntry;
   preview: RunWebPreview | null;
-  onOpen?: Props["onOpenWebPreview"];
+  onOpen?: TranscriptTurnActions["onOpenWebPreview"];
 }) {
   const [opening, setOpening] = useState(false);
   const [unavailable, setUnavailable] = useState(
@@ -1940,8 +687,8 @@ const EditedFilesSummary = memo(function EditedFilesSummary({
   expanded?: boolean;
   undoDisabled: boolean;
   onDisclosureChange?: NativePlanDisclosureChangeHandler;
-  onReviewFile?: Props["onReviewEditedFile"];
-  onUndo?: Props["onUndoEditedFiles"];
+  onReviewFile?: TranscriptTurnActions["onReviewEditedFile"];
+  onUndo?: TranscriptTurnActions["onUndoEditedFiles"];
 }) {
   const files = entry.runView.editedFiles;
   const listId = useId();
@@ -2815,9 +1562,9 @@ const NativePlanCard = memo(function NativePlanCard({
   onDisclosureChange,
 }: {
   entry: TaskChatEntry;
-  onImplementPlan?: Props["onImplementPlan"];
-  onRevisePlan?: Props["onRevisePlan"];
-  onCancelPlan?: Props["onCancelPlan"];
+  onImplementPlan?: TranscriptTurnActions["onImplementPlan"];
+  onRevisePlan?: TranscriptTurnActions["onRevisePlan"];
+  onCancelPlan?: TranscriptTurnActions["onCancelPlan"];
   expanded?: boolean;
   onDisclosureChange?: NativePlanDisclosureChangeHandler;
 }) {
@@ -3357,7 +2104,7 @@ export const RunApprovalRequests = memo(function RunApprovalRequests({
   entry: TaskChatEntry;
   runView: RunViewState;
   onResolveRequest: ApprovalResolutionHandler;
-  onAnswerUserInput?: Props["onAnswerUserInput"];
+  onAnswerUserInput?: TranscriptTurnActions["onAnswerUserInput"];
   onPendingInteractionPageChange?: PendingInteractionPageChangeHandler;
 }) {
   const pages = useMemo(

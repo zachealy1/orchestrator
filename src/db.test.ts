@@ -17,39 +17,52 @@ vi.mock("@tauri-apps/plugin-sql", () => ({
   },
 }));
 
+import { FrontendDatabase } from "./data/database";
 import {
+  createAppRepositories,
+  type RunEventInput,
+} from "./data/repositories";
+import { createQueuedPromptSnapshot } from "./lib/promptQueue";
+import { createRunExecutionSettings } from "./lib/runExecutionSettings";
+
+const repositories = createAppRepositories(new FrontendDatabase());
+const {
   activateChatAccountHandoff,
-  appendRunEvents,
   chatHasPendingPlanReview,
   claimChatTitleGeneration,
   completeChatTitleGeneration,
   createChat,
-  createChatWithQueuedPrompt,
-  createRun,
   failChatTitleGeneration,
-  holdRestoredPromptQueueItems,
-  listLocalChatTranscript,
-  listRestoredPromptQueueItems,
-  listWorkspaceChats,
-  recordTokenUsage,
   recoverAbandonedRuns,
-  recoverInterruptedPromptQueueItems,
   recoverInterruptedChatTitleGenerations,
   renameChat,
-  setPromptQueueItemAutoSend,
-  softDeleteChat,
-  softDeleteWorkspace,
-  updateRun,
   upsertExternalCodexChats,
-  type RunEventInput,
-} from "./db";
-import { createQueuedPromptSnapshot } from "./lib/promptQueue";
-import { createRunExecutionSettings } from "./lib/runExecutionSettings";
+} = repositories.chats;
+const {
+  createChatWithQueuedPrompt,
+  holdRestoredPromptQueueItems,
+  listRestoredPromptQueueItems,
+  recoverInterruptedPromptQueueItems,
+  setPromptQueueItemAutoSend,
+} = repositories.promptQueue;
+const {
+  appendRunEvents,
+  createRun,
+  recordTokenUsage,
+  updateRun,
+} = repositories.runs;
+const {
+  listLocalChatTranscript,
+  listWorkspaceChats,
+  softDeleteChat,
+} = repositories.transcripts;
+const { softDeleteWorkspace } = repositories.workspaces;
 
 beforeEach(() => {
   mocks.execute.mockReset();
   mocks.execute.mockResolvedValue({ rowsAffected: 1 });
   mocks.invoke.mockReset();
+  mocks.invoke.mockResolvedValue(null);
   mocks.load.mockReset();
   mocks.select.mockReset();
   mocks.select.mockResolvedValue([]);
@@ -300,20 +313,19 @@ describe("prompt queue persistence", () => {
   it("removes durable queue items when a chat is soft-deleted", async () => {
     await softDeleteChat(42);
 
-    expect(mocks.execute.mock.calls[0]?.[0]).toContain(
-      "DELETE FROM prompt_queue_items",
+    expect(mocks.invoke).toHaveBeenCalledWith(
+      "soft_delete_chat_transaction",
+      { chatId: 42 },
     );
-    expect(mocks.execute.mock.calls[0]?.[1]).toEqual([42]);
   });
 
   it("removes durable queue items when a workspace is soft-deleted", async () => {
     await softDeleteWorkspace(7);
 
-    expect(mocks.execute.mock.calls[0]?.[0]).toContain(
-      "DELETE FROM prompt_queue_items",
+    expect(mocks.invoke).toHaveBeenCalledWith(
+      "soft_delete_workspace_transaction",
+      { workspaceId: 7 },
     );
-    expect(mocks.execute.mock.calls[0]?.[1]).toEqual([7]);
-    expect(mocks.execute.mock.calls[1]?.[0]).toContain("UPDATE workspaces");
   });
 
   it("checks plan-review blocking without loading the chat transcript", async () => {
@@ -420,10 +432,7 @@ describe("chat title generation persistence", () => {
 
 describe("abandoned run recovery", () => {
   it("marks process-owned run state interrupted before history loads", async () => {
-    mocks.execute
-      .mockResolvedValueOnce({ rowsAffected: 3 })
-      .mockResolvedValueOnce({ rowsAffected: 2 })
-      .mockResolvedValueOnce({ rowsAffected: 1 });
+    mocks.invoke.mockResolvedValueOnce({ runs: 3, tasks: 2, chats: 1 });
 
     await expect(recoverAbandonedRuns()).resolves.toEqual({
       runs: 3,
@@ -431,19 +440,14 @@ describe("abandoned run recovery", () => {
       chats: 1,
     });
 
-    const [runsQuery] = mocks.execute.mock.calls[0] ?? [];
-    const [tasksQuery] = mocks.execute.mock.calls[1] ?? [];
-    const [chatsQuery] = mocks.execute.mock.calls[2] ?? [];
-    expect(runsQuery).toContain("status IN ('starting', 'connecting', 'running')");
-    expect(runsQuery).not.toContain("completed_at =");
-    expect(tasksQuery).toContain("SET status = 'interrupted'");
-    expect(chatsQuery).toContain("origin = 'orchestrator'");
-    expect(chatsQuery).toContain("SET status = 'interrupted'");
+    expect(mocks.invoke).toHaveBeenCalledWith(
+      "recover_abandoned_runs_transaction",
+    );
   });
 });
 
 describe("run event persistence", () => {
-  it("persists high-volume run events in bounded multi-row inserts", async () => {
+  it("sends high-volume run events through one atomic native write", async () => {
     const events: RunEventInput[] = Array.from({ length: 101 }, (_, index) => ({
       runId: 7,
       sequence: index + 1,
@@ -454,28 +458,11 @@ describe("run event persistence", () => {
 
     await appendRunEvents(events);
 
-    expect(mocks.execute).toHaveBeenCalledTimes(2);
-    const [firstQuery, firstValues] = mocks.execute.mock.calls[0] ?? [];
-    const [secondQuery, secondValues] = mocks.execute.mock.calls[1] ?? [];
-
-    expect(firstQuery).toContain("VALUES ($1, $2, $3, $4, $5)");
-    expect(firstQuery).toContain("($496, $497, $498, $499, $500)");
-    expect(firstValues).toHaveLength(500);
-    expect(firstValues?.slice(0, 5)).toEqual([
-      7,
-      1,
-      "notification",
-      "item/agentMessage/delta",
-      JSON.stringify(events[0]?.payload),
-    ]);
-    expect(secondQuery).toContain("VALUES ($1, $2, $3, $4, $5)");
-    expect(secondValues).toEqual([
-      7,
-      101,
-      "notification",
-      "item/agentMessage/delta",
-      JSON.stringify(events[100]?.payload),
-    ]);
+    expect(mocks.invoke).toHaveBeenCalledTimes(1);
+    expect(mocks.invoke).toHaveBeenCalledWith(
+      "append_run_events_transaction",
+      { events },
+    );
   });
 
   it("persists active context separately from cumulative token usage", async () => {
@@ -583,19 +570,7 @@ describe("run web preview persistence", () => {
 });
 
 describe("external chat metadata", () => {
-  it("preserves the known source version when a sync omits updatedAt", async () => {
-    mocks.select.mockResolvedValueOnce([
-      {
-        id: 34,
-        account_id: null,
-        profile_key: "default",
-        sync_status: "synced",
-        deleted_at: null,
-        external_created_at: "2026-07-01T10:00:00Z",
-        external_updated_at: "2026-07-19T08:00:00Z",
-      },
-    ]);
-
+  it("forwards source metadata to the atomic external-chat upsert", async () => {
     await upsertExternalCodexChats([
       {
         workspaceId: 3,
@@ -610,28 +585,20 @@ describe("external chat metadata", () => {
       },
     ]);
 
-    expect(mocks.execute).toHaveBeenCalledTimes(1);
-    expect(mocks.execute.mock.calls[0]?.[1]).toContain(
-      "2026-07-19T08:00:00Z",
-    );
-    expect(mocks.execute.mock.calls[0]?.[0]).not.toContain(
-      "DELETE FROM external_chat_history_indexes",
+    expect(mocks.invoke).toHaveBeenCalledWith(
+      "upsert_external_codex_chats_transaction",
+      {
+        chats: [
+          expect.objectContaining({
+            externalThreadId: "thread-large",
+            updatedAt: null,
+          }),
+        ],
+      },
     );
   });
 
-  it("does not overwrite an external chat after it is adopted", async () => {
-    mocks.select.mockResolvedValueOnce([
-      {
-        id: 34,
-        account_id: 8,
-        profile_key: "account:8",
-        sync_status: "adopted",
-        deleted_at: null,
-        external_created_at: "2026-07-01T10:00:00Z",
-        external_updated_at: "2026-07-19T08:00:00Z",
-      },
-    ]);
-
+  it("delegates adopted-chat protection to the atomic native upsert", async () => {
     await upsertExternalCodexChats([
       {
         workspaceId: 3,
@@ -646,7 +613,10 @@ describe("external chat metadata", () => {
       },
     ]);
 
-    expect(mocks.execute).not.toHaveBeenCalled();
+    expect(mocks.invoke).toHaveBeenCalledWith(
+      "upsert_external_codex_chats_transaction",
+      { chats: [expect.objectContaining({ externalThreadId: "thread-large" })] },
+    );
   });
 
   it("atomically activates a chat account handoff", async () => {

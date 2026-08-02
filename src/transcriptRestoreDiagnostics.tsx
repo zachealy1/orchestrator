@@ -1,12 +1,12 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { emptyRunView } from "./lib/codexEventReducer";
 import {
-  clearTranscriptStateCache,
   VirtuosoTaskChatTranscript,
   type TranscriptViewportSnapshot,
   type VirtuosoTaskChatTranscriptHandle,
 } from "./components/VirtuosoTaskChatTranscript";
-import type { TaskChatEntry } from "./components/TaskChatTranscript";
+import type { TaskChatEntry } from "./components/TaskChatTurn";
+import { useAppServices } from "./runtime/AppServices";
 
 const RESTORE_TURN_COUNT = 120;
 const RESTORE_SAMPLE_FRAMES = 40;
@@ -109,6 +109,7 @@ function writeResult(result: RestoreDiagnosticResult) {
 }
 
 export default function TranscriptRestoreDiagnostics() {
+  const { transcriptStates } = useAppServices();
   const [phase, setPhase] = useState<RestorePhase>("source");
   const phaseRef = useRef<RestorePhase>(phase);
   const transcriptRef = useRef<VirtuosoTaskChatTranscriptHandle | null>(null);
@@ -131,7 +132,7 @@ export default function TranscriptRestoreDiagnostics() {
     let cancelled = false;
 
     void (async () => {
-      clearTranscriptStateCache();
+      transcriptStates.clear();
       await new Promise((resolve) => window.setTimeout(resolve, 500));
       let scroller = findDisplayedScroller();
       if (!scroller || cancelled || generationRef.current !== generation) return;
@@ -235,19 +236,25 @@ export default function TranscriptRestoreDiagnostics() {
       <section className="task-hero has-chat" style={{ height: "100%" }}>
         <VirtuosoTaskChatTranscript
           ref={transcriptRef}
-          entries={activeEntries}
-          transcriptIdentity={identity}
-          transcriptVersion="v1"
-          restoredViewportSnapshot={restoredSnapshot}
-          onViewportSnapshotChange={(snapshot) => {
-            if (phaseRef.current === "source") sourceSnapshotRef.current = snapshot;
+          model={{
+            entries: activeEntries,
+            transcriptIdentity: identity,
+            transcriptVersion: "v1",
+            restoredViewportSnapshot: restoredSnapshot,
+            viewportWidth: 1_180,
+            viewportStable: true,
+            firstItemIndex: 1_000_000 - activeEntries.length,
+            openAtLatestRequest: null,
+            liveFollow: false,
           }}
-          viewportWidth={1_180}
-          viewportStable
-          firstItemIndex={1_000_000 - activeEntries.length}
-          openAtLatestRequest={null}
-          liveFollow={false}
-          onResolveRequest={() => undefined}
+          actions={{
+            onViewportSnapshotChange: (snapshot) => {
+              if (phaseRef.current === "source") {
+                sourceSnapshotRef.current = snapshot;
+              }
+            },
+            onResolveRequest: () => undefined,
+          }}
         />
       </section>
       <pre id="transcript-restore-result" hidden />

@@ -1,5 +1,3 @@
-import type { RunViewState } from "./codexEventReducer";
-
 export type RunPlanStepStatus =
   | "pending"
   | "in_progress"
@@ -36,6 +34,17 @@ export type PlanProgressIndicatorModel = {
   steps: RunPlanStep[];
 };
 
+export type PlanProgressRunState = {
+  status: "idle" | "connecting" | "running" | "completed" | "failed" | "interrupted";
+  planProgress: RunPlanProgress | null;
+  nativePlan: {
+    phase: string;
+    threadActiveFlags: string[];
+  };
+  approvalRequests: Array<{ status: string }>;
+  serverRequests: unknown[];
+};
+
 export function parseRunPlanProgress(value: unknown): RunPlanProgress | null {
   if (!Array.isArray(value) || value.length === 0) return null;
 
@@ -51,7 +60,7 @@ export function parseRunPlanProgress(value: unknown): RunPlanProgress | null {
 }
 
 export function derivePlanProgressIndicator(
-  runView: RunViewState | null,
+  runView: PlanProgressRunState | null,
 ): PlanProgressIndicatorModel | null {
   const steps = runView?.planProgress?.steps ?? [];
   if (!runView || steps.length < 2) return null;
@@ -91,7 +100,7 @@ export function derivePlanProgressIndicator(
 }
 
 function deriveIndicatorState(
-  runView: RunViewState,
+  runView: PlanProgressRunState,
   currentStatus: RunPlanStepStatus | undefined,
 ): PlanProgressIndicatorState | null {
   if (

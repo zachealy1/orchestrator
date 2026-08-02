@@ -7,6 +7,10 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc && vite build",
+    "generate:bindings": "cargo run --quiet --manifest-path src-tauri/Cargo.toml --no-default-features --bin generate-bindings -- src/generated/tauri.ts",
+    "check:bindings": "node scripts/check-generated-bindings.mjs",
+    "check:architecture": "node scripts/check-architecture.mjs",
+    "lint": "tsc --noEmit && npm run check:architecture && npm run check:bindings",
     "build:tauri": "npm run prepare:playwright-runtime && npm run build",
     "prepare:playwright-runtime": "node scripts/prepare-playwright-runtime.mjs",
     "test": "vitest run",

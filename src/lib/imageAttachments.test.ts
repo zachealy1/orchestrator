@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
   buildCodexTurnInput,
-  clearImageAttachmentPreviewCache,
+  ImageAttachmentPreviewCache,
   loadImageAttachmentPreview,
   prepareContextImageFiles,
 } from "./imageAttachments";
@@ -13,8 +13,10 @@ vi.mock("../codexClient", () => ({
 }));
 
 describe("image attachments", () => {
+  let cache: ImageAttachmentPreviewCache;
+
   beforeEach(() => {
-    clearImageAttachmentPreviewCache();
+    cache = new ImageAttachmentPreviewCache();
     prepareImageAttachmentMock.mockReset();
   });
 
@@ -35,7 +37,7 @@ describe("image attachments", () => {
           source: "picker",
           status: "ready",
         },
-      ]),
+      ], cache),
     ).resolves.toEqual([
       expect.objectContaining({
         path: "/workspace/reference",
@@ -60,7 +62,7 @@ describe("image attachments", () => {
           source: "picker",
           status: "ready",
         },
-      ]),
+      ], cache),
     ).resolves.toEqual([
       expect.objectContaining({
         path: "/workspace/README.md",
@@ -112,7 +114,7 @@ describe("image attachments", () => {
           source: "picker",
           mediaKind: "image",
         },
-      ]),
+      ], cache),
     ).rejects.toThrow(
       "Unable to prepare broken.png: Selected image could not be decoded",
     );
@@ -129,7 +131,7 @@ describe("image attachments", () => {
       })
       .mockRejectedValueOnce(new Error("Selected image could not be decoded"));
 
-    await loadImageAttachmentPreview("/workspace/reference.png");
+    await loadImageAttachmentPreview("/workspace/reference.png", cache);
 
     await expect(
       prepareContextImageFiles([
@@ -139,7 +141,7 @@ describe("image attachments", () => {
           source: "picker",
           mediaKind: "image",
         },
-      ]),
+      ], cache),
     ).rejects.toThrow(
       "Unable to prepare reference.png: Selected image could not be decoded",
     );

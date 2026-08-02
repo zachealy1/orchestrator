@@ -1,21 +1,79 @@
-import { act, fireEvent, render, screen } from "@testing-library/react";
-import { createRef } from "react";
+import { act, fireEvent, screen } from "@testing-library/react";
+import { createRef, forwardRef, type ReactElement } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { emptyRunView } from "../lib/codexEventReducer";
 import { isNativeUserInputRequest } from "../lib/nativePlanMode";
+import { getCachedTranscriptRowHeight } from "../lib/transcriptVirtualization";
+import { AppServices } from "../runtime/AppServices";
+import { renderWithAppServices } from "../test/renderWithAppServices";
+import type { TaskChatEntry } from "./TaskChatTurn";
 import {
-  clearTranscriptMeasurementCache,
-  getCachedTranscriptRowHeight,
-} from "../lib/transcriptVirtualization";
-import type { TaskChatEntry } from "./TaskChatTranscript";
-import {
-  clearTranscriptStateCache,
   TRANSCRIPT_MIN_OVERSCAN_ITEMS,
   TRANSCRIPT_RENDER_AHEAD_PX,
   TRANSCRIPT_SCROLL_IDLE_MS,
-  VirtuosoTaskChatTranscript,
+  VirtuosoTaskChatTranscript as ProductionVirtuosoTaskChatTranscript,
+  type TranscriptActions,
+  type TranscriptModel,
   type VirtuosoTaskChatTranscriptHandle,
 } from "./VirtuosoTaskChatTranscript";
+
+let services: AppServices;
+
+function render(ui: ReactElement) {
+  return renderWithAppServices(ui, {}, services);
+}
+
+type FlatTranscriptProps = TranscriptModel & TranscriptActions;
+
+const VirtuosoTaskChatTranscript = forwardRef<
+  VirtuosoTaskChatTranscriptHandle,
+  FlatTranscriptProps
+>(function TestVirtuosoTaskChatTranscript(props, ref) {
+  const {
+    onViewportSnapshotChange,
+    onOpenAtLatestApplied,
+    onOpenAtLatestCancelled,
+    onResolveRequest,
+    onAnswerUserInput,
+    onImplementPlan,
+    onRevisePlan,
+    onCancelPlan,
+    onOpenFileLink,
+    onOpenWebPreview,
+    onReviewEditedFile,
+    onUndoEditedFiles,
+    onEditPrompt,
+    onLoadHistoricalActivity,
+    onScrollActivityChange,
+    onNotificationFocusApplied,
+    ...model
+  } = props;
+
+  return (
+    <ProductionVirtuosoTaskChatTranscript
+      ref={ref}
+      model={model}
+      actions={{
+        onViewportSnapshotChange,
+        onOpenAtLatestApplied,
+        onOpenAtLatestCancelled,
+        onResolveRequest,
+        onAnswerUserInput,
+        onImplementPlan,
+        onRevisePlan,
+        onCancelPlan,
+        onOpenFileLink,
+        onOpenWebPreview,
+        onReviewEditedFile,
+        onUndoEditedFiles,
+        onEditPrompt,
+        onLoadHistoricalActivity,
+        onScrollActivityChange,
+        onNotificationFocusApplied,
+      }}
+    />
+  );
+});
 
 const virtuosoMock = vi.hoisted(() => ({
   lastProps: null as any,
@@ -269,8 +327,7 @@ function reportLatestTurnVisible(entryCount: number, firstItemIndex: number) {
 
 describe("VirtuosoTaskChatTranscript", () => {
   beforeEach(() => {
-    clearTranscriptStateCache();
-    clearTranscriptMeasurementCache();
+    services = new AppServices();
     virtuosoMock.lastProps = null;
     virtuosoMock.scrollBy.mockClear();
     virtuosoMock.scrollToIndex.mockClear();
@@ -278,6 +335,7 @@ describe("VirtuosoTaskChatTranscript", () => {
 
   afterEach(() => {
     vi.useRealTimers();
+    services.dispose();
   });
 
   it("keeps a 300-turn transcript in the virtual model while mounting bounded rows", () => {
@@ -553,6 +611,7 @@ describe("VirtuosoTaskChatTranscript", () => {
         entry,
         640,
         "chat:deferred-measurement:v1",
+        services.transcriptGeometry,
       ),
     ).toBeUndefined();
   });

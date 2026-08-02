@@ -1,7 +1,13 @@
-import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { fireEvent, screen, waitFor, within } from "@testing-library/react";
+import type { ReactElement } from "react";
 import { describe, expect, it } from "vitest";
 import { DiffPreview } from "./DiffPreview";
-import type { WorkspaceGitDiffSection } from "../types";
+import type { WorkspaceGitDiffSection } from "../features/workspaces/types";
+import { renderWithAppServices } from "../test/renderWithAppServices";
+
+function render(ui: ReactElement) {
+  return renderWithAppServices(ui);
+}
 
 const section: WorkspaceGitDiffSection = {
   kind: "unstaged",

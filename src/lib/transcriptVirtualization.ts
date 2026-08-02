@@ -1,5 +1,6 @@
 import type { RunViewState } from "./codexEventReducer";
-import type { HistoryTurnHint } from "../types";
+import type { HistoryTurnHint } from "../features/conversations/types";
+import { BoundedLruCache } from "../shared/cache/BoundedLruCache";
 
 const TRANSCRIPT_WIDTH_BUCKET_PX = 32;
 const TRANSCRIPT_MEASUREMENT_CACHE_LIMIT = 4_000;
@@ -15,8 +16,37 @@ export type TranscriptGeometryEntry = {
   runView: RunViewState;
 };
 
-const transcriptMeasurementCache = new Map<string, number>();
-let transcriptEntryFingerprints = new WeakMap<TranscriptGeometryEntry, string>();
+export class TranscriptGeometryCache {
+  readonly #measurements = new BoundedLruCache<string, number>(
+    TRANSCRIPT_MEASUREMENT_CACHE_LIMIT,
+  );
+  #entryFingerprints = new WeakMap<TranscriptGeometryEntry, string>();
+
+  getMeasurement(key: string) {
+    return this.#measurements.get(key);
+  }
+
+  setMeasurement(key: string, height: number) {
+    this.#measurements.set(key, height);
+  }
+
+  getFingerprint(entry: TranscriptGeometryEntry) {
+    return this.#entryFingerprints.get(entry);
+  }
+
+  setFingerprint(entry: TranscriptGeometryEntry, fingerprint: string) {
+    this.#entryFingerprints.set(entry, fingerprint);
+  }
+
+  invalidateScope(scope: string) {
+    this.#measurements.deleteWhere((key) => key.startsWith(`${scope}:`));
+  }
+
+  clear() {
+    this.#measurements.clear();
+    this.#entryFingerprints = new WeakMap<TranscriptGeometryEntry, string>();
+  }
+}
 
 export function getTranscriptWidthBucket(width: number) {
   const safeWidth = Number.isFinite(width) && width > 0 ? width : 1_024;
@@ -31,12 +61,13 @@ export function buildTranscriptMeasurementKey(
   entry: TranscriptGeometryEntry,
   width: number,
   scope = "global",
+  cache?: TranscriptGeometryCache,
 ) {
   return [
     scope,
     entry.clientId,
     getTranscriptWidthBucket(width),
-    getTranscriptEntryFingerprint(entry),
+    getTranscriptEntryFingerprint(entry, cache),
   ].join(":");
 }
 
@@ -44,16 +75,11 @@ export function getCachedTranscriptRowHeight(
   entry: TranscriptGeometryEntry,
   width: number,
   scope = "global",
+  cache?: TranscriptGeometryCache,
 ) {
-  const key = buildTranscriptMeasurementKey(entry, width, scope);
-  const cached = transcriptMeasurementCache.get(key);
-  if (cached === undefined) {
-    return undefined;
-  }
-
-  transcriptMeasurementCache.delete(key);
-  transcriptMeasurementCache.set(key, cached);
-  return cached;
+  if (!cache) return undefined;
+  const key = buildTranscriptMeasurementKey(entry, width, scope, cache);
+  return cache.getMeasurement(key);
 }
 
 export function cacheTranscriptRowHeight(
@@ -61,30 +87,23 @@ export function cacheTranscriptRowHeight(
   width: number,
   height: number,
   scope = "global",
+  cache?: TranscriptGeometryCache,
 ) {
-  if (!Number.isFinite(height) || height <= 0) {
+  if (!cache || !Number.isFinite(height) || height <= 0) {
     return;
   }
 
-  const key = buildTranscriptMeasurementKey(entry, width, scope);
-  transcriptMeasurementCache.delete(key);
-  transcriptMeasurementCache.set(key, Math.ceil(height));
-
-  while (transcriptMeasurementCache.size > TRANSCRIPT_MEASUREMENT_CACHE_LIMIT) {
-    const oldestKey = transcriptMeasurementCache.keys().next().value;
-    if (typeof oldestKey !== "string") {
-      break;
-    }
-    transcriptMeasurementCache.delete(oldestKey);
-  }
+  const key = buildTranscriptMeasurementKey(entry, width, scope, cache);
+  cache.setMeasurement(key, Math.ceil(height));
 }
 
 export function estimateTranscriptRowHeight(
   entry: TranscriptGeometryEntry,
   width: number,
   scope = "global",
+  cache?: TranscriptGeometryCache,
 ) {
-  const cached = getCachedTranscriptRowHeight(entry, width, scope);
+  const cached = getCachedTranscriptRowHeight(entry, width, scope, cache);
   if (cached !== undefined) {
     return cached;
   }
@@ -134,13 +153,14 @@ export function calculateTranscriptDefaultItemHeight(
   entries: TranscriptGeometryEntry[],
   width: number,
   scope = "global",
+  cache?: TranscriptGeometryCache,
 ) {
   if (entries.length === 0) {
     return MIN_TRANSCRIPT_ROW_HEIGHT_PX;
   }
 
   const estimates = entries
-    .map((entry) => estimateTranscriptRowHeight(entry, width, scope))
+    .map((entry) => estimateTranscriptRowHeight(entry, width, scope, cache))
     .sort((left, right) => left - right);
   const trimCount = estimates.length >= 10 ? Math.floor(estimates.length * 0.1) : 0;
   const trimmed = estimates.slice(trimCount, estimates.length - trimCount);
@@ -201,13 +221,11 @@ export function estimateHistoryPlaceholderHeight(
   );
 }
 
-export function clearTranscriptMeasurementCache() {
-  transcriptMeasurementCache.clear();
-  transcriptEntryFingerprints = new WeakMap<TranscriptGeometryEntry, string>();
-}
-
-function getTranscriptEntryFingerprint(entry: TranscriptGeometryEntry) {
-  const existing = transcriptEntryFingerprints.get(entry);
+function getTranscriptEntryFingerprint(
+  entry: TranscriptGeometryEntry,
+  cache?: TranscriptGeometryCache,
+) {
+  const existing = cache?.getFingerprint(entry);
   if (existing !== undefined) {
     return existing;
   }
@@ -258,7 +276,7 @@ function getTranscriptEntryFingerprint(entry: TranscriptGeometryEntry) {
     hash = Math.imul(hash, 16_777_619);
   });
   const fingerprint = (hash >>> 0).toString(36);
-  transcriptEntryFingerprints.set(entry, fingerprint);
+  cache?.setFingerprint(entry, fingerprint);
   return fingerprint;
 }
 

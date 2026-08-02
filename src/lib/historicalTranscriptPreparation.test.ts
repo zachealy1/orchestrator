@@ -1,8 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import type {
-  HistoricalMarkdownWorkerRequest,
-  HistoricalMarkdownWorkerResponse,
-} from "../types";
+import type { HistoricalMarkdownWorkerRequest, HistoricalMarkdownWorkerResponse } from "../features/conversations/types";
 import { HistoricalTranscriptPreparer } from "./historicalTranscriptPreparation";
 
 class FakeHistoricalMarkdownWorker {

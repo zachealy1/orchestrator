@@ -1,8 +1,4 @@
-import type {
-  CodexMessage,
-  CodexProfileKey,
-  RunInteractionMode,
-} from "../types";
+import type { CodexMessage, CodexProfileKey, RunInteractionMode } from "../features/codex/types";
 
 export type CommandApprovalDecision =
   | "accept"

@@ -1,12 +1,13 @@
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { memo, startTransition, useEffect, useMemo, useRef, useState } from "react";
-import type { ResolvedTheme } from "../types";
+import type { ResolvedTheme } from "../shared/types";
 import {
   codePreviewTheme,
   detectPreviewLanguage,
   highlightPreviewContent,
   type PreviewSemanticToken,
 } from "../lib/codePreview";
+import { useAppServices } from "../runtime/AppServices";
 
 type Token = {
   content: string;
@@ -39,6 +40,7 @@ export const CodePreview = memo(function CodePreview({
   truncated,
   languageOverride,
 }: Props) {
+  const { codePreview } = useAppServices();
   const scrollRef = useRef<HTMLPreElement | null>(null);
   const language = useMemo(
     () => languageOverride ?? detectPreviewLanguage(path),
@@ -69,12 +71,15 @@ export const CodePreview = memo(function CodePreview({
       };
     }
 
-    void highlightPreviewContent({
-      path,
-      content,
-      language,
-      resolvedTheme,
-    })
+    void highlightPreviewContent(
+      {
+        path,
+        content,
+        language,
+        resolvedTheme,
+      },
+      codePreview,
+    )
       .then((lines) => {
         if (disposed) {
           return;
@@ -105,7 +110,7 @@ export const CodePreview = memo(function CodePreview({
     return () => {
       disposed = true;
     };
-  }, [content, language, path, resolvedTheme, theme]);
+  }, [codePreview, content, language, path, resolvedTheme, theme]);
 
   const lines: Token[][] = tokenLines ?? fallbackTokenLines;
   const rowVirtualizer = useVirtualizer({

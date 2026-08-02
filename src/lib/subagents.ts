@@ -1,5 +1,5 @@
 import { useSyncExternalStore } from "react";
-import type { CodexMessage } from "../types";
+import type { CodexMessage } from "../features/codex/types";
 
 export type SubagentLifecycleStatus =
   | "starting"
@@ -118,9 +118,6 @@ export type ParsedLegacySubagentActivity = {
 };
 
 const EMPTY_SUBAGENTS: readonly SubagentRecord[] = Object.freeze([]);
-const conversationSnapshots = new Map<string, readonly SubagentRecord[]>();
-const conversationListeners = new Map<string, Set<() => void>>();
-const childThreadIndex = new Map<string, SubagentRecord>();
 
 function recordIndexKey(profileKey: string, threadId: string) {
   return `${profileKey}:${threadId}`;
@@ -140,132 +137,167 @@ function recordConversationKey(record: SubagentRecord) {
   return subagentConversationKey(record) ?? `run:${record.runId ?? record.id}`;
 }
 
-function emitConversation(key: string) {
-  conversationListeners.get(key)?.forEach((listener) => listener());
-}
+export class SubagentStore {
+  readonly #conversationSnapshots = new Map<
+    string,
+    readonly SubagentRecord[]
+  >();
+  readonly #conversationListeners = new Map<string, Set<() => void>>();
+  readonly #childThreadIndex = new Map<string, SubagentRecord>();
 
-function indexRecords(records: readonly SubagentRecord[]) {
-  records.forEach((record) => {
-    childThreadIndex.set(
+  replaceConversation(conversationKey: string, records: SubagentRecord[]) {
+    const previous =
+      this.#conversationSnapshots.get(conversationKey) ?? EMPTY_SUBAGENTS;
+    previous.forEach((record) => {
+      const key = recordIndexKey(record.profileKey, record.childThreadId);
+      if (this.#childThreadIndex.get(key)?.id === record.id) {
+        this.#childThreadIndex.delete(key);
+      }
+    });
+    const next = [...records].sort(compareSubagents);
+    this.#conversationSnapshots.set(conversationKey, next);
+    next.forEach((record) => {
+      this.#childThreadIndex.set(
+        recordIndexKey(record.profileKey, record.childThreadId),
+        record,
+      );
+    });
+    this.#emitConversation(conversationKey);
+  }
+
+  upsert(record: SubagentRecord) {
+    const conversationKey = recordConversationKey(record);
+    const current =
+      this.#conversationSnapshots.get(conversationKey) ?? EMPTY_SUBAGENTS;
+    const existingIndex = current.findIndex(
+      (candidate) => candidate.id === record.id,
+    );
+    const next =
+      existingIndex >= 0
+        ? current.map((candidate, index) =>
+            index === existingIndex ? record : candidate,
+          )
+        : [...current, record];
+    next.sort(compareSubagents);
+    this.#conversationSnapshots.set(conversationKey, next);
+    this.#childThreadIndex.set(
       recordIndexKey(record.profileKey, record.childThreadId),
       record,
     );
-  });
-}
+    this.#emitConversation(conversationKey);
+  }
 
-export function replaceConversationSubagents(
-  conversationKey: string,
-  records: SubagentRecord[],
-) {
-  const previous = conversationSnapshots.get(conversationKey) ?? EMPTY_SUBAGENTS;
-  previous.forEach((record) => {
-    const key = recordIndexKey(record.profileKey, record.childThreadId);
-    if (childThreadIndex.get(key)?.id === record.id) {
-      childThreadIndex.delete(key);
+  promoteConversation(ownerClientId: string, chatId: number) {
+    const draftKey = subagentConversationKey({ ownerClientId });
+    const chatKey = subagentConversationKey({ chatId });
+    if (!draftKey || !chatKey) return;
+    const draft = this.#conversationSnapshots.get(draftKey);
+    if (!draft || draft.length === 0) return;
+    const existing =
+      this.#conversationSnapshots.get(chatKey) ?? EMPTY_SUBAGENTS;
+    this.replaceConversation(chatKey, [
+      ...existing,
+      ...draft.map((record) => ({ ...record, chatId })),
+    ]);
+    this.#conversationSnapshots.delete(draftKey);
+    this.#emitConversation(draftKey);
+  }
+
+  findByThread(profileKey: string, threadId: string | null | undefined) {
+    if (!threadId) return null;
+    return (
+      this.#childThreadIndex.get(recordIndexKey(profileKey, threadId)) ?? null
+    );
+  }
+
+  updateByThread(
+    profileKey: string,
+    threadId: string,
+    updater: (record: SubagentRecord) => SubagentRecord,
+  ) {
+    const current = this.findByThread(profileKey, threadId);
+    if (!current) return null;
+    const next = updater(current);
+    this.upsert(next);
+    return next;
+  }
+
+  getConversation(conversationKey: string | null) {
+    return conversationKey
+      ? this.#conversationSnapshots.get(conversationKey) ?? EMPTY_SUBAGENTS
+      : EMPTY_SUBAGENTS;
+  }
+
+  subscribe(conversationKey: string | null, listener: () => void) {
+    if (!conversationKey) return () => undefined;
+    const listeners =
+      this.#conversationListeners.get(conversationKey) ?? new Set<() => void>();
+    listeners.add(listener);
+    this.#conversationListeners.set(conversationKey, listeners);
+    return () => {
+      listeners.delete(listener);
+      if (listeners.size === 0) {
+        this.#conversationListeners.delete(conversationKey);
+      }
+    };
+  }
+
+  removeConversation(conversationKey: string) {
+    const records =
+      this.#conversationSnapshots.get(conversationKey) ?? EMPTY_SUBAGENTS;
+    records.forEach((record) => {
+      const key = recordIndexKey(record.profileKey, record.childThreadId);
+      if (this.#childThreadIndex.get(key)?.id === record.id) {
+        this.#childThreadIndex.delete(key);
+      }
+    });
+    this.#conversationSnapshots.delete(conversationKey);
+    this.#emitConversation(conversationKey);
+  }
+
+  removeWorkspace(workspaceId: number) {
+    for (const [conversationKey, records] of this.#conversationSnapshots) {
+      if (records.some((record) => record.workspaceId === workspaceId)) {
+        this.removeConversation(conversationKey);
+      }
     }
-  });
-  const next = [...records].sort(compareSubagents);
-  conversationSnapshots.set(conversationKey, next);
-  indexRecords(next);
-  emitConversation(conversationKey);
+  }
+
+  getWorkspaceRecords(workspaceId: number) {
+    return [...this.#conversationSnapshots.values()]
+      .flat()
+      .filter((record) => record.workspaceId === workspaceId);
+  }
+
+  clear() {
+    const keys = new Set([
+      ...this.#conversationSnapshots.keys(),
+      ...this.#conversationListeners.keys(),
+    ]);
+    this.#conversationSnapshots.clear();
+    this.#childThreadIndex.clear();
+    keys.forEach((key) => this.#emitConversation(key));
+  }
+
+  dispose() {
+    this.clear();
+    this.#conversationListeners.clear();
+  }
+
+  #emitConversation(key: string) {
+    this.#conversationListeners.get(key)?.forEach((listener) => listener());
+  }
 }
 
-export function upsertConversationSubagent(record: SubagentRecord) {
-  const conversationKey = recordConversationKey(record);
-  const current = conversationSnapshots.get(conversationKey) ?? EMPTY_SUBAGENTS;
-  const existingIndex = current.findIndex(
-    (candidate) => candidate.id === record.id,
-  );
-  const next =
-    existingIndex >= 0
-      ? current.map((candidate, index) =>
-          index === existingIndex ? record : candidate,
-        )
-      : [...current, record];
-  next.sort(compareSubagents);
-  conversationSnapshots.set(conversationKey, next);
-  childThreadIndex.set(
-    recordIndexKey(record.profileKey, record.childThreadId),
-    record,
-  );
-  emitConversation(conversationKey);
-}
-
-export function promoteSubagentConversation(
-  ownerClientId: string,
-  chatId: number,
-) {
-  const draftKey = subagentConversationKey({ ownerClientId });
-  const chatKey = subagentConversationKey({ chatId });
-  if (!draftKey || !chatKey) return;
-  const draft = conversationSnapshots.get(draftKey);
-  if (!draft || draft.length === 0) return;
-  const existing = conversationSnapshots.get(chatKey) ?? EMPTY_SUBAGENTS;
-  replaceConversationSubagents(
-    chatKey,
-    [...existing, ...draft.map((record) => ({ ...record, chatId }))],
-  );
-  conversationSnapshots.delete(draftKey);
-  emitConversation(draftKey);
-}
-
-export function findSubagentByThread(
-  profileKey: string,
-  threadId: string | null | undefined,
-) {
-  if (!threadId) return null;
-  return childThreadIndex.get(recordIndexKey(profileKey, threadId)) ?? null;
-}
-
-export function updateSubagentByThread(
-  profileKey: string,
-  threadId: string,
-  updater: (record: SubagentRecord) => SubagentRecord,
-) {
-  const current = findSubagentByThread(profileKey, threadId);
-  if (!current) return null;
-  const next = updater(current);
-  upsertConversationSubagent(next);
-  return next;
-}
-
-export function getConversationSubagents(conversationKey: string | null) {
-  return conversationKey
-    ? conversationSnapshots.get(conversationKey) ?? EMPTY_SUBAGENTS
-    : EMPTY_SUBAGENTS;
-}
-
-export function subscribeConversationSubagents(
+export function useConversationSubagents(
+  store: SubagentStore,
   conversationKey: string | null,
-  listener: () => void,
 ) {
-  if (!conversationKey) return () => undefined;
-  const listeners =
-    conversationListeners.get(conversationKey) ?? new Set<() => void>();
-  listeners.add(listener);
-  conversationListeners.set(conversationKey, listeners);
-  return () => {
-    listeners.delete(listener);
-    if (listeners.size === 0) conversationListeners.delete(conversationKey);
-  };
-}
-
-export function useConversationSubagents(conversationKey: string | null) {
   return useSyncExternalStore(
-    (listener) => subscribeConversationSubagents(conversationKey, listener),
-    () => getConversationSubagents(conversationKey),
+    (listener) => store.subscribe(conversationKey, listener),
+    () => store.getConversation(conversationKey),
     () => EMPTY_SUBAGENTS,
   );
-}
-
-export function clearSubagentStore() {
-  const keys = new Set([
-    ...conversationSnapshots.keys(),
-    ...conversationListeners.keys(),
-  ]);
-  conversationSnapshots.clear();
-  childThreadIndex.clear();
-  keys.forEach(emitConversation);
 }
 
 export function deriveSubagentComposerModel(

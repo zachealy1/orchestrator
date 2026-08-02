@@ -28,14 +28,14 @@ import { Virtuoso } from "react-virtuoso";
 import type { ApprovalResolutionHandler } from "../lib/codexApprovals";
 import { emptyRunView, type RunViewState } from "../lib/codexEventReducer";
 import {
-  getConversationSubagents,
   isActiveSubagentStatus,
-  subscribeConversationSubagents,
+  useConversationSubagents,
   type SubagentRecord,
   type SubagentTranscript,
   type SubagentTranscriptItem,
   type SubagentTranscriptTurn,
 } from "../lib/subagents";
+import { useAppServices } from "../runtime/AppServices";
 import type {
   NativeUserInputRequest,
   UserInputResponse,
@@ -44,7 +44,7 @@ import { requestKey } from "../lib/nativePlanMode";
 import {
   RunApprovalRequests,
   type TaskChatEntry,
-} from "./TaskChatTranscript";
+} from "./TaskChatTurn";
 import { statusLabel, SubagentStatusIcon } from "./SubagentStatus";
 
 type Props = {
@@ -77,8 +77,6 @@ type TranscriptState =
       error: string;
     };
 
-const transcriptCache = new Map<string, SubagentTranscript>();
-const TRANSCRIPT_CACHE_LIMIT = 5;
 const ACTIVE_TRANSCRIPT_REFRESH_MS = 700;
 
 export const SubagentInspector = memo(function SubagentInspector({
@@ -93,9 +91,8 @@ export const SubagentInspector = memo(function SubagentInspector({
   onSteer,
   onStop,
 }: Props) {
-  const [records, setRecords] = useState(() =>
-    getConversationSubagents(conversationKey),
-  );
+  const { subagents, subagentTranscripts } = useAppServices();
+  const records = useConversationSubagents(subagents, conversationKey);
   const record =
     records.find((candidate) => candidate.id === subagentId) ?? null;
   const [transcriptState, setTranscriptState] = useState<TranscriptState>({
@@ -116,19 +113,11 @@ export const SubagentInspector = memo(function SubagentInspector({
   const steeringLockRef = useRef(false);
   recordRef.current = record;
 
-  useEffect(
-    () =>
-      subscribeConversationSubagents(conversationKey, () => {
-        setRecords(getConversationSubagents(conversationKey));
-      }),
-    [conversationKey],
-  );
-
   useEffect(() => {
     if (!record) return;
     const generation = ++loadGenerationRef.current;
     const cacheKey = transcriptCacheKey(record);
-    const cached = transcriptCache.get(cacheKey) ?? null;
+    const cached = subagentTranscripts.get(cacheKey) ?? null;
     const requestedRevision = record.updatedAt;
     setTranscriptState({
       status: cached ? "loaded" : "loading",
@@ -140,7 +129,7 @@ export const SubagentInspector = memo(function SubagentInspector({
       void onLoadTranscript(record)
         .then((transcript) => {
           if (loadGenerationRef.current !== generation) return;
-          rememberTranscript(cacheKey, transcript);
+          subagentTranscripts.set(cacheKey, transcript);
           loadedRecordRevisionRef.current = requestedRevision;
           setTranscriptState({
             status: "loaded",
@@ -172,6 +161,7 @@ export const SubagentInspector = memo(function SubagentInspector({
     record?.childTurnId,
     record?.completedAt,
     record?.id,
+    subagentTranscripts,
   ]);
 
   useEffect(() => {
@@ -200,7 +190,7 @@ export const SubagentInspector = memo(function SubagentInspector({
           ) {
             return;
           }
-          rememberTranscript(cacheKey, transcript);
+          subagentTranscripts.set(cacheKey, transcript);
           loadedRecordRevisionRef.current = requestedRevision;
           setTranscriptState({
             status: "loaded",
@@ -220,7 +210,7 @@ export const SubagentInspector = memo(function SubagentInspector({
         });
     }, ACTIVE_TRANSCRIPT_REFRESH_MS);
     return () => window.clearInterval(timer);
-  }, [onLoadTranscript, record?.id, record?.status]);
+  }, [onLoadTranscript, record?.id, record?.status, subagentTranscripts]);
 
   const interactionRunView = useMemo(
     () =>
@@ -325,7 +315,7 @@ export const SubagentInspector = memo(function SubagentInspector({
             onClick={() => {
               const generation = ++loadGenerationRef.current;
               const requestedRevision = record.updatedAt;
-              transcriptCache.delete(transcriptCacheKey(record));
+              subagentTranscripts.delete(transcriptCacheKey(record));
               setTranscriptState({
                 status: "loading",
                 transcript: transcriptState.transcript,
@@ -335,7 +325,10 @@ export const SubagentInspector = memo(function SubagentInspector({
               void onLoadTranscript(record)
                 .then((transcript) => {
                   if (loadGenerationRef.current !== generation) return;
-                  rememberTranscript(transcriptCacheKey(record), transcript);
+                  subagentTranscripts.set(
+                    transcriptCacheKey(record),
+                    transcript,
+                  );
                   loadedRecordRevisionRef.current = requestedRevision;
                   setTranscriptState({
                     status: "loaded",
@@ -685,16 +678,6 @@ function transcriptCacheKey(record: SubagentRecord) {
   return `${record.profileKey}:${record.childThreadId}:${
     record.completedAt ?? "active"
   }`;
-}
-
-function rememberTranscript(key: string, transcript: SubagentTranscript) {
-  transcriptCache.delete(key);
-  transcriptCache.set(key, transcript);
-  while (transcriptCache.size > TRANSCRIPT_CACHE_LIMIT) {
-    const oldest = transcriptCache.keys().next().value;
-    if (typeof oldest !== "string") break;
-    transcriptCache.delete(oldest);
-  }
 }
 
 function InspectorIconButton({

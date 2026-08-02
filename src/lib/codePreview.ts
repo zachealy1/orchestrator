@@ -1,5 +1,6 @@
 import type { HighlighterCore, ThemedToken } from "shiki/types";
-import type { ResolvedTheme } from "../types";
+import type { ResolvedTheme } from "../shared/types";
+import { BoundedLruCache } from "../shared/cache/BoundedLruCache";
 
 export const CODE_PREVIEW_THEMES = {
   light: "github-light",
@@ -51,8 +52,37 @@ export type PreviewSemanticToken = ThemedToken & {
   semantic?: "json-key" | "json-value";
 };
 
-let highlighterPromise: Promise<CodePreviewHighlighter> | null = null;
-const previewHighlightCache = new Map<string, Promise<PreviewSemanticToken[][]>>();
+const PREVIEW_HIGHLIGHT_CACHE_LIMIT = 128;
+
+export class CodePreviewCache {
+  #highlighterPromise: Promise<CodePreviewHighlighter> | null = null;
+  readonly #highlights = new BoundedLruCache<
+    string,
+    Promise<PreviewSemanticToken[][]>
+  >(PREVIEW_HIGHLIGHT_CACHE_LIMIT);
+
+  loadHighlighter() {
+    this.#highlighterPromise ??= createCodeHighlighter();
+    return this.#highlighterPromise;
+  }
+
+  get(key: string) {
+    return this.#highlights.get(key);
+  }
+
+  set(key: string, value: Promise<PreviewSemanticToken[][]>) {
+    this.#highlights.set(key, value);
+  }
+
+  delete(key: string) {
+    this.#highlights.delete(key);
+  }
+
+  clear() {
+    this.#highlights.clear();
+    this.#highlighterPromise = null;
+  }
+}
 
 export function detectPreviewLanguage(path: string) {
   const basename = path.split(/[\\/]/).pop()?.toLowerCase() ?? "";
@@ -73,9 +103,8 @@ export function codePreviewTheme(theme: ResolvedTheme) {
   return CODE_PREVIEW_THEMES[theme];
 }
 
-export function loadCodeHighlighter() {
-  highlighterPromise ??= createCodeHighlighter();
-  return highlighterPromise;
+export function loadCodeHighlighter(cache: CodePreviewCache) {
+  return cache.loadHighlighter();
 }
 
 export function previewHighlightCacheKey(input: {
@@ -87,16 +116,12 @@ export function previewHighlightCacheKey(input: {
   return `${input.path}\u0000${input.language}\u0000${input.theme}\u0000${input.content}`;
 }
 
-export function clearPreviewHighlightCache() {
-  previewHighlightCache.clear();
-}
-
 export async function highlightPreviewContent(input: {
   path: string;
   content: string;
   language: string;
   resolvedTheme: ResolvedTheme;
-}) {
+}, cache: CodePreviewCache) {
   const theme = codePreviewTheme(input.resolvedTheme);
   const cacheKey = previewHighlightCacheKey({
     path: input.path,
@@ -104,12 +129,12 @@ export async function highlightPreviewContent(input: {
     language: input.language,
     theme,
   });
-  const cached = previewHighlightCache.get(cacheKey);
+  const cached = cache.get(cacheKey);
   if (cached) {
     return cached;
   }
 
-  const highlighted = loadCodeHighlighter()
+  const highlighted = loadCodeHighlighter(cache)
     .then((highlighter) =>
       highlighter.codeToTokens(input.content, {
         lang: input.language as never,
@@ -118,11 +143,11 @@ export async function highlightPreviewContent(input: {
     )
     .then((result) => applyPreviewSemanticTokenColors(input.language, result.tokens))
     .catch((error) => {
-      previewHighlightCache.delete(cacheKey);
+      cache.delete(cacheKey);
       throw error;
     });
 
-  previewHighlightCache.set(cacheKey, highlighted);
+  cache.set(cacheKey, highlighted);
   return highlighted;
 }
 

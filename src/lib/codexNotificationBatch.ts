@@ -1,4 +1,4 @@
-import type { CodexMessage } from "../types";
+import type { CodexMessage } from "../features/codex/types";
 
 const FRAME_BATCHED_METHODS = new Set([
   "item/agentMessage/delta",

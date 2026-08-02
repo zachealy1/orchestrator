@@ -1,9 +1,4 @@
-import type {
-  CodexAccount,
-  CodexLoginResponse,
-  CodexLoginState,
-  CodexPlanType,
-} from "../types";
+import type { CodexAccount, CodexLoginResponse, CodexLoginState, CodexPlanType } from "../features/codex/types";
 
 type AuthMessageInput = {
   connected: boolean;

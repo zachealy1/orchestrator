@@ -1,0 +1,435 @@
+:root {
+  font-family:
+    Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI",
+    sans-serif;
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  -webkit-text-size-adjust: 100%;
+  --radius: 8px;
+}
+
+@property --history-active-drawer-width {
+  syntax: "<length>";
+  inherits: true;
+  initial-value: 0px;
+}
+
+@property --history-chat-content-max-width {
+  syntax: "<length>";
+  inherits: true;
+  initial-value: 1040px;
+}
+
+.native-plan-card {
+  display: grid;
+  gap: 12px;
+  margin: 8px 0 14px;
+  padding: 14px;
+  border: 1px solid var(--color-divider);
+  border-radius: var(--radius);
+  background: var(--color-component-background);
+  box-shadow: 0 12px 40px rgb(var(--shadow-rgb) / 0.1);
+}
+
+.native-plan-card > header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.native-plan-card > header > div {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.native-plan-card header span {
+  color: var(--color-text-secondary);
+  font-size: 12px;
+}
+
+.native-plan-mode {
+  padding: 2px 7px;
+  border: 1px solid var(--color-divider);
+  border-radius: 999px;
+  text-transform: capitalize;
+}
+
+.native-plan-markdown {
+  min-width: 0;
+  max-width: 100%;
+  line-height: 1.55;
+  overflow-wrap: anywhere;
+}
+
+.native-plan-markdown.collapsed {
+  max-block-size: 320px;
+  overflow: clip;
+  -webkit-mask-image: linear-gradient(
+    to bottom,
+    rgb(var(--shadow-rgb)) 0%,
+    rgb(var(--shadow-rgb)) 88%,
+    transparent 100%
+  );
+  mask-image: linear-gradient(
+    to bottom,
+    rgb(var(--shadow-rgb)) 0%,
+    rgb(var(--shadow-rgb)) 88%,
+    transparent 100%
+  );
+}
+
+.native-plan-markdown pre {
+  max-width: 100%;
+  overflow: visible;
+  border-radius: var(--radius);
+  background: var(--color-surface-soft);
+  padding: 12px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
+.native-plan-markdown li {
+  min-width: 0;
+}
+
+.native-plan-markdown.markdown-summary li > :where(p, ul, ol, blockquote, pre) +
+  :where(p, ul, ol, blockquote, pre) {
+  margin-top: 14px;
+  padding-top: 0;
+}
+
+.native-plan-markdown pre code {
+  border-radius: 0;
+  background: transparent;
+  padding: 0;
+  white-space: inherit;
+  overflow-wrap: inherit;
+  word-break: inherit;
+}
+
+.native-plan-markdown table {
+  width: 100%;
+  max-width: 100%;
+  border-collapse: collapse;
+  table-layout: fixed;
+}
+
+.native-plan-markdown th,
+.native-plan-markdown td {
+  border: 1px solid var(--color-divider);
+  padding: 7px 9px;
+  text-align: left;
+  vertical-align: top;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
+.native-plan-markdown th {
+  background: var(--color-surface-soft);
+}
+
+.native-plan-markdown > :first-child,
+.native-plan-markdown > :first-child > :first-child {
+  margin-top: 0;
+}
+
+.native-plan-markdown > :last-child,
+.native-plan-markdown > :last-child > :last-child {
+  margin-bottom: 0;
+}
+
+.native-plan-actions {
+  flex-wrap: wrap;
+  align-items: center;
+}
+
+button.native-plan-disclosure {
+  justify-self: center;
+  min-height: 30px;
+  background: transparent;
+  box-shadow: none;
+  color: var(--color-text-secondary);
+  transform: none;
+  transition: color 140ms ease;
+}
+
+button.native-plan-disclosure:hover:not(:disabled),
+button.native-plan-disclosure:focus-visible {
+  background: transparent;
+  box-shadow: none;
+  color: var(--color-text);
+  transform: none;
+}
+
+button.native-plan-disclosure:active:not(:disabled) {
+  background: transparent;
+  color: var(--color-text);
+  transform: none;
+}
+
+button.native-plan-icon-action {
+  position: relative;
+  z-index: 1;
+  display: inline-grid;
+  width: 30px;
+  min-width: 30px;
+  height: 30px;
+  min-height: 30px;
+  place-items: center;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  box-shadow: none;
+  color: var(--color-text-secondary);
+  padding: 0;
+  transform: none;
+  transition:
+    background-color 140ms ease,
+    color 140ms ease;
+}
+
+button.native-plan-icon-action.implement {
+  color: var(--color-primary);
+}
+
+button.native-plan-icon-action.cancel {
+  color: var(--color-error);
+}
+
+button.native-plan-icon-action:hover:not(:disabled),
+button.native-plan-icon-action:focus-visible {
+  background: var(--panel-strong);
+  box-shadow: none;
+  outline: none;
+  transform: none;
+}
+
+button.native-plan-icon-action:active:not(:disabled) {
+  background: var(--panel-strong);
+  transform: none;
+}
+
+button.native-plan-icon-action[data-tooltip]::after {
+  position: absolute;
+  right: 0;
+  bottom: calc(100% + 8px);
+  z-index: 20;
+  width: max-content;
+  max-width: min(240px, 72vw);
+  border: 0;
+  border-radius: 7px;
+  background: var(--color-component-background);
+  box-shadow: 0 12px 32px rgb(var(--shadow-rgb) / 0.24);
+  color: var(--color-text);
+  content: attr(data-tooltip);
+  font-size: 0.76rem;
+  font-weight: 500;
+  line-height: 1.35;
+  opacity: 0;
+  padding: 7px 9px;
+  pointer-events: none;
+  text-align: left;
+  transform: translateY(3px);
+  transition:
+    opacity 120ms ease,
+    transform 120ms ease,
+    visibility 120ms ease;
+  visibility: hidden;
+  white-space: nowrap;
+}
+
+button.native-plan-icon-action[data-tooltip]:hover:not(:disabled)::after,
+button.native-plan-icon-action[data-tooltip]:focus-visible::after {
+  opacity: 1;
+  transform: translateY(0);
+  visibility: visible;
+}
+
+.native-plan-revision {
+  display: grid;
+  gap: 8px;
+}
+
+.native-plan-revision textarea {
+  min-height: 84px;
+  resize: vertical;
+}
+
+.native-plan-revision textarea:focus,
+.native-plan-revision textarea:focus-visible {
+  border-color: var(--color-divider);
+  box-shadow: none;
+  outline: none;
+}
+
+.native-user-input {
+  display: grid;
+  gap: 14px;
+}
+
+.native-user-input.has-navigator {
+  position: relative;
+}
+
+.approval.native-user-input {
+  border-color: var(--color-divider);
+  background: var(--color-component-background);
+}
+
+.native-user-input fieldset {
+  display: grid;
+  gap: 12px;
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+
+.native-user-input legend {
+  box-sizing: border-box;
+  width: 100%;
+  color: var(--color-text);
+  font-size: 1rem;
+  font-weight: 700;
+  line-height: 1.35;
+  padding: 0;
+}
+
+.native-user-input.has-navigator legend {
+  padding-right: 112px;
+}
+
+.native-user-input > .pending-interaction-navigator {
+  position: absolute;
+  top: 12px;
+  right: 12px;
+}
+
+.native-user-input-options {
+  display: grid;
+  gap: 6px;
+  margin-top: 12px;
+}
+
+.native-user-input-options > .native-user-input-option {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 42px;
+  box-sizing: border-box;
+  padding: 8px;
+  border: 1px solid var(--color-divider);
+  border-radius: 8px;
+  background: transparent;
+  cursor: pointer;
+  transition: background-color 140ms ease;
+}
+
+.native-user-input-control {
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  opacity: 0;
+  cursor: pointer;
+}
+
+.native-user-input-control:disabled {
+  cursor: not-allowed;
+}
+
+.native-user-input-option-label {
+  min-width: 0;
+  font-weight: 400;
+  line-height: 1.35;
+}
+
+.native-user-input-options > .native-user-input-option:hover,
+.native-user-input-options > .native-user-input-option:focus-within {
+  background: var(--color-button-active);
+}
+
+.native-user-input-options > .native-user-input-option.selected {
+  background: var(--color-component-background);
+}
+
+.native-user-input input[type="text"],
+.native-user-input input[type="password"],
+.native-user-input textarea,
+.native-plan-revision textarea {
+  box-sizing: border-box;
+  width: 100%;
+  padding: 8px 10px;
+  border: 1px solid var(--color-divider);
+  border-radius: 8px;
+  color: inherit;
+  background: var(--color-component-background);
+  font: inherit;
+}
+
+.native-user-input-other {
+  min-width: 0;
+  min-height: 24px;
+  padding: 2px 0 0;
+  border: 0;
+  border-radius: 0;
+  outline: 0;
+  background: transparent;
+  font-weight: 400;
+  line-height: 1.35;
+  resize: none;
+}
+
+.native-user-input-other::placeholder {
+  color: var(--color-text);
+  opacity: 1;
+}
+
+.native-user-input-other-option .native-user-input-other,
+.native-user-input-other-option .native-user-input-other:hover,
+.native-user-input-other-option .native-user-input-other:focus {
+  padding: 2px 0 0;
+  border: 0;
+  background: transparent;
+  box-shadow: none;
+}
+
+.native-user-input-radio {
+  position: relative;
+  flex: 0 0 13px;
+  width: 13px;
+  height: 13px;
+  box-sizing: border-box;
+  border: 2px solid var(--color-icon-muted);
+  border-radius: 50%;
+  background: var(--color-component-background);
+  margin: 3px;
+}
+
+.native-user-input-option.selected .native-user-input-radio {
+  border-color: var(--color-icon-muted);
+}
+
+.native-user-input-option.selected .native-user-input-radio::after {
+  position: absolute;
+  inset: 2px;
+  border-radius: 50%;
+  background: var(--color-icon-muted);
+  content: "";
+}
+
+.native-user-input-error {
+  margin: 0;
+  color: var(--color-error);
+  font-size: 13px;
+}
+

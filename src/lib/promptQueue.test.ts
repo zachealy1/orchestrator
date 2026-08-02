@@ -1,8 +1,5 @@
 import { describe, expect, it } from "vitest";
-import type {
-  PromptQueueContextFingerprint,
-  PromptQueueItem,
-} from "../types";
+import type { PromptQueueContextFingerprint, PromptQueueItem } from "../features/queue/types";
 import { createRunExecutionSettings } from "./runExecutionSettings";
 import {
   comparePromptQueueDisplayOrder,

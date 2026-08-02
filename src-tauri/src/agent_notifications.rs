@@ -6,7 +6,7 @@ const ACTIVATION_EVENT: &str = "orchestrator:agent-notification-activated";
 const MAX_EVENT_KEY_BYTES: usize = 512;
 const MAX_COPY_BYTES: usize = 280;
 
-#[derive(Clone, Debug, Deserialize, PartialEq, Eq, Serialize)]
+#[derive(Clone, Debug, Deserialize, PartialEq, Eq, Serialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct AgentNotificationTarget {
     pub event_key: String,
@@ -24,7 +24,7 @@ pub struct AgentNotificationTarget {
     pub subagent_thread_id: Option<String>,
 }
 
-#[derive(Clone, Debug, Deserialize)]
+#[derive(Clone, Debug, Deserialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct AgentNotificationRequest {
     pub title: String,
@@ -33,7 +33,7 @@ pub struct AgentNotificationRequest {
     pub target: AgentNotificationTarget,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct AgentNotificationSendResult {
     pub delivered: bool,
@@ -136,11 +136,13 @@ async fn permission_status() -> String {
 }
 
 #[tauri::command]
+#[specta::specta]
 pub async fn agent_notification_permission_status() -> String {
     permission_status().await
 }
 
 #[tauri::command]
+#[specta::specta]
 pub async fn agent_notification_request_permission() -> String {
     #[cfg(target_os = "macos")]
     {
@@ -162,6 +164,7 @@ pub async fn agent_notification_request_permission() -> String {
 }
 
 #[tauri::command]
+#[specta::specta]
 pub async fn agent_notification_send(
     app: AppHandle,
     state: State<'_, AgentNotificationState>,
@@ -232,6 +235,7 @@ pub async fn agent_notification_send(
 }
 
 #[tauri::command]
+#[specta::specta]
 pub async fn agent_notification_remove(
     state: State<'_, AgentNotificationState>,
     event_key: String,
@@ -257,6 +261,7 @@ pub async fn agent_notification_remove(
 }
 
 #[tauri::command]
+#[specta::specta]
 pub fn agent_notification_take_pending_activation(
     state: State<'_, AgentNotificationState>,
 ) -> Option<AgentNotificationTarget> {
@@ -268,6 +273,7 @@ pub fn agent_notification_take_pending_activation(
 }
 
 #[tauri::command]
+#[specta::specta]
 pub fn agent_notification_open_settings() -> Result<(), String> {
     #[cfg(target_os = "macos")]
     {

@@ -1,4 +1,4 @@
-import type { CodexMessage } from "../types";
+import type { CodexMessage } from "../features/codex/types";
 
 const ANSI_ESCAPE_PATTERN =
   // eslint-disable-next-line no-control-regex

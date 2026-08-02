@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef } from "react";
 import { emptyRunView } from "./lib/codexEventReducer";
 import { VirtuosoTaskChatTranscript } from "./components/VirtuosoTaskChatTranscript";
-import type { TaskChatEntry } from "./components/TaskChatTranscript";
+import type { TaskChatEntry } from "./components/TaskChatTurn";
 
 const PROFILE_TURN_COUNT = 300;
 const PROFILE_FRAME_COUNT = 150;
@@ -160,15 +160,17 @@ export default function TranscriptScrollDiagnostics() {
     <main style={{ width: "100vw", height: "100vh" }}>
       <section className="task-hero has-chat" style={{ height: "100%" }}>
         <VirtuosoTaskChatTranscript
-          entries={entries}
-          transcriptIdentity="scroll-profile"
-          transcriptVersion="v1"
-          viewportWidth={1_180}
-          viewportStable
-          firstItemIndex={1_000_000 - entries.length}
-          openAtLatestRequest={null}
-          liveFollow={false}
-          onResolveRequest={() => undefined}
+          model={{
+            entries,
+            transcriptIdentity: "scroll-profile",
+            transcriptVersion: "v1",
+            viewportWidth: 1_180,
+            viewportStable: true,
+            firstItemIndex: 1_000_000 - entries.length,
+            openAtLatestRequest: null,
+            liveFollow: false,
+          }}
+          actions={{ onResolveRequest: () => undefined }}
         />
       </section>
       <pre id="transcript-profile-result" hidden />

@@ -1,4 +1,4 @@
-import { invoke } from "@tauri-apps/api/core";
+import { commands } from "./generated/tauri";
 import type {
   RunCommandActivity,
   RunEditedFile,
@@ -10,135 +10,135 @@ import type {
   AgentNotificationTarget,
 } from "./lib/agentNotifications";
 import type { WorkspaceCommitIntentContext } from "./lib/commitMessage";
-import type {
-  ActiveCodexLogin,
-  CodexAccountResponse,
-  BrowserRuntimeStatus,
-  BrowserSessionState,
-  BrowserSessionTarget,
-  CodexConnectResult,
-  CodexLoginResponse,
-  CodexModel,
-  CodexSkillSummary,
-  ComposerContextFile,
-  DroppedContextPathInspection,
-  ExternalTranscriptSnapshot,
-  ExternalThreadHistoryIndex,
-  GitBranchList,
-  ImageAttachmentPreview,
-  ModelListResponse,
-  OssProvider,
-  PreflightReport,
-  PromptQueueContextInspection,
-  PreparedBrowserSession,
-  Workspace,
-  WorkspaceFilePreview,
-  WorkspaceGitActionResult,
-  WorkspaceGitDiff,
-  WorkspaceGitOverview,
-  WorkspaceGitRepository,
-  WorkspaceTreeEntry,
-} from "./types";
+import type { ActiveCodexLogin, CodexAccountResponse, CodexConnectResult, CodexLoginResponse, CodexModel, ModelListResponse, OssProvider } from "./features/codex/types";
+import type { BrowserRuntimeStatus, BrowserSessionState, BrowserSessionTarget, PreparedBrowserSession } from "./features/browser/types";
+import type { CodexSkillSummary, ComposerContextFile, DroppedContextPathInspection, ImageAttachmentPreview } from "./features/composer/types";
+import type { ExternalTranscriptSnapshot, ExternalThreadHistoryIndex } from "./features/conversations/types";
+import type { GitBranchList, Workspace, WorkspaceFilePreview, WorkspaceGitActionResult, WorkspaceGitDiff, WorkspaceGitOverview, WorkspaceGitRepository, WorkspaceTreeEntry } from "./features/workspaces/types";
+import type { PreflightReport } from "./features/runs/types";
+import type { PromptQueueContextInspection } from "./features/queue/types";
 import type { LocalWebPreviewProbeResult } from "./lib/webPreview";
 import type { ThreadGoalSetResponse } from "./lib/goalProgress";
 import type { SubagentTranscript } from "./lib/subagents";
 
+function commandResult<T>(result: Promise<unknown>): Promise<T> {
+  return result as Promise<T>;
+}
+
 export function readBrowserRuntimeStatus() {
-  return invoke<BrowserRuntimeStatus>("browser_runtime_status");
+  return commandResult<BrowserRuntimeStatus>(commands.browserRuntimeStatus());
 }
 
 export function prepareBrowserSession(target: BrowserSessionTarget) {
-  return invoke<PreparedBrowserSession>("browser_session_prepare", { target });
+  return commandResult<PreparedBrowserSession>(commands.browserSessionPrepare(target));
 }
 
 export function readBrowserSessionStatus(token: string) {
-  return invoke<BrowserSessionState>("browser_session_status", { token });
+  return commandResult<BrowserSessionState>(commands.browserSessionStatus(token));
 }
 
 export function focusBrowserSession(token: string) {
-  return invoke<BrowserSessionState>("browser_session_focus", { token });
+  return commandResult<BrowserSessionState>(commands.browserSessionFocus(token));
 }
 
 export function updateBrowserSessionTarget(
   token: string,
   target: BrowserSessionTarget,
 ) {
-  return invoke<BrowserSessionState>("browser_session_update_target", {
-    token,
-    target,
-  });
+  return commandResult<BrowserSessionState>(
+    commands.browserSessionUpdateTarget(token, target),
+  );
 }
 
 export function stopBrowserSession(token: string) {
-  return invoke<BrowserSessionState>("browser_session_stop", { token });
+  return commandResult<BrowserSessionState>(commands.browserSessionStop(token));
 }
 
 export function probeLocalWebPreview(url: string) {
-  return invoke<LocalWebPreviewProbeResult>("probe_local_web_preview", { url });
+  return commandResult<LocalWebPreviewProbeResult>(commands.probeLocalWebPreview(url));
 }
 
 export function connectCodex(accountId: number) {
-  return invoke<CodexConnectResult>("codex_connect", { accountId });
+  return commandResult<CodexConnectResult>(commands.codexConnect(accountId));
 }
 
 export function connectDefaultCodexProfile() {
-  return invoke<CodexConnectResult>("codex_default_profile_connect");
+  return commandResult<CodexConnectResult>(commands.codexDefaultProfileConnect());
 }
 
 export function stopCodex(accountId: number) {
-  return invoke<void>("codex_stop", { accountId });
+  return commandResult<void>(commands.codexStop(accountId));
 }
 
 export function readActiveCodexLogin() {
-  return invoke<ActiveCodexLogin | null>("codex_active_login");
+  return commandResult<ActiveCodexLogin | null>(commands.codexActiveLogin());
 }
 
 export function stopDefaultCodexProfile() {
-  return invoke<void>("codex_default_profile_stop");
+  return commandResult<void>(commands.codexDefaultProfileStop());
 }
 
 export function readAgentNotificationPermissionStatus() {
-  return invoke<AgentNotificationPermissionStatus>(
-    "agent_notification_permission_status",
+  return commandResult<AgentNotificationPermissionStatus>(
+    commands.agentNotificationPermissionStatus(),
   );
 }
 
 export function requestAgentNotificationPermission() {
-  return invoke<AgentNotificationPermissionStatus>(
-    "agent_notification_request_permission",
+  return commandResult<AgentNotificationPermissionStatus>(
+    commands.agentNotificationRequestPermission(),
   );
 }
 
 export function sendAgentNotification(request: AgentNotificationRequest) {
-  return invoke<AgentNotificationSendResult>("agent_notification_send", {
-    request,
-  });
+  return commandResult<AgentNotificationSendResult>(
+    commands.agentNotificationSend({
+      title: request.title,
+      body: request.body,
+      groupKey: request.groupKey ?? null,
+      target: {
+        eventKey: request.target.eventKey,
+        kind: request.target.kind,
+        workspaceId: request.target.workspaceId ?? null,
+        chatId: request.target.chatId ?? null,
+        runId: request.target.runId ?? null,
+        entryClientId: request.target.entryClientId ?? null,
+        requestId: request.target.requestId ?? null,
+        planItemId: request.target.planItemId ?? null,
+        accountId: request.target.accountId ?? null,
+        profileKey: request.target.profileKey ?? null,
+        threadId: request.target.threadId ?? null,
+        turnId: request.target.turnId ?? null,
+        subagentThreadId: request.target.subagentThreadId ?? null,
+      },
+    }),
+  );
 }
 
 export function removeAgentNotification(eventKey: string) {
-  return invoke<void>("agent_notification_remove", { eventKey });
+  return commandResult<void>(commands.agentNotificationRemove(eventKey));
 }
 
 export function takePendingAgentNotificationActivation() {
-  return invoke<AgentNotificationTarget | null>(
-    "agent_notification_take_pending_activation",
+  return commandResult<AgentNotificationTarget | null>(
+    commands.agentNotificationTakePendingActivation(),
   );
 }
 
 export function openAgentNotificationSettings() {
-  return invoke<void>("agent_notification_open_settings");
+  return commandResult<void>(commands.agentNotificationOpenSettings());
 }
 
 export function deleteCodexProfile(accountId: number) {
-  return invoke<void>("codex_delete_profile", { accountId });
+  return commandResult<void>(commands.codexDeleteProfile(accountId));
 }
 
 export function codexRpc<T>(accountId: number, method: string, params: unknown = {}) {
-  return invoke<T>("codex_rpc", { accountId, method, params });
+  return commandResult<T>(commands.codexRpc(accountId, method, params));
 }
 
 export function codexDefaultProfileRpc<T>(method: string, params: unknown = {}) {
-  return invoke<T>("codex_default_profile_rpc", { method, params });
+  return commandResult<T>(commands.codexDefaultProfileRpc(method, params));
 }
 
 export function readProjectedSubagentThread(input: {
@@ -146,11 +146,13 @@ export function readProjectedSubagentThread(input: {
   profileKey: string;
   threadId: string;
 }) {
-  return invoke<SubagentTranscript>("codex_projected_subagent_thread_read", {
-    accountId: input.accountId,
-    profileKey: input.profileKey,
-    threadId: input.threadId,
-  });
+  return commandResult<SubagentTranscript>(
+    commands.codexProjectedSubagentThreadRead(
+      input.accountId,
+      input.profileKey,
+      input.threadId,
+    ),
+  );
 }
 
 export type HistoricalTurnActivityResponse = {
@@ -165,14 +167,13 @@ export function loadDefaultProfileTurnActivity(input: {
   cursor?: string | null;
   limit?: number;
 }) {
-  return invoke<HistoricalTurnActivityResponse>(
-    "codex_default_profile_turn_activity",
-    {
-      threadId: input.threadId,
-      turnId: input.turnId,
-      cursor: input.cursor ?? null,
-      limit: input.limit ?? 50,
-    },
+  return commandResult<HistoricalTurnActivityResponse>(
+    commands.codexDefaultProfileTurnActivity(
+      input.threadId,
+      input.turnId,
+      input.cursor ?? null,
+      input.limit ?? 50,
+    ),
   );
 }
 
@@ -182,21 +183,18 @@ export function indexDefaultProfileThread(input: {
   pageSize?: number;
   requestId: string;
 }) {
-  return invoke<ExternalThreadHistoryIndex>(
-    "codex_default_profile_thread_index",
-    {
-      threadId: input.threadId,
-      sourceVersion: input.sourceVersion,
-      pageSize: input.pageSize ?? 20,
-      requestId: input.requestId,
-    },
+  return commandResult<ExternalThreadHistoryIndex>(
+    commands.codexDefaultProfileThreadIndex(
+      input.threadId,
+      input.sourceVersion,
+      input.pageSize ?? 20,
+      input.requestId,
+    ),
   );
 }
 
 export function cancelDefaultProfileThreadIndex(requestId: string) {
-  return invoke<void>("codex_default_profile_thread_index_cancel", {
-    requestId,
-  });
+  return commandResult<void>(commands.codexDefaultProfileThreadIndexCancel(requestId));
 }
 
 export function syncDefaultProfileThreadTranscript(input: {
@@ -205,21 +203,20 @@ export function syncDefaultProfileThreadTranscript(input: {
   pageSize?: number;
   requestId: string;
 }) {
-  return invoke<ExternalTranscriptSnapshot>(
-    "codex_default_profile_thread_transcript_sync",
-    {
-      threadId: input.threadId,
-      sourceVersion: input.sourceVersion,
-      pageSize: input.pageSize ?? 20,
-      requestId: input.requestId,
-    },
+  return commandResult<ExternalTranscriptSnapshot>(
+    commands.codexDefaultProfileThreadTranscriptSync(
+      input.threadId,
+      input.sourceVersion,
+      input.pageSize ?? 20,
+      input.requestId,
+    ),
   );
 }
 
 export function cancelDefaultProfileThreadTranscript(requestId: string) {
-  return invoke<void>("codex_default_profile_thread_transcript_cancel", {
-    requestId,
-  });
+  return commandResult<void>(
+    commands.codexDefaultProfileThreadTranscriptCancel(requestId),
+  );
 }
 
 export function resolveCodexServerRequest(
@@ -228,12 +225,9 @@ export function resolveCodexServerRequest(
   requestToken: string,
   result: unknown,
 ) {
-  return invoke<void>("codex_resolve_server_request", {
-    accountId,
-    id,
-    requestToken,
-    result,
-  });
+  return commandResult<void>(
+    commands.codexResolveServerRequest(accountId, id, requestToken, result),
+  );
 }
 
 export function resolveDefaultCodexServerRequest(
@@ -241,18 +235,15 @@ export function resolveDefaultCodexServerRequest(
   requestToken: string,
   result: unknown,
 ) {
-  return invoke<void>("codex_default_profile_resolve_server_request", {
-    id,
-    requestToken,
-    result,
-  });
+  return commandResult<void>(
+    commands.codexDefaultProfileResolveServerRequest(id, requestToken, result),
+  );
 }
 
 export function listGitBranches(path: string, repositoryPath?: string | null) {
-  return invoke<GitBranchList>("list_git_branches", {
-    path,
-    repositoryPath: repositoryPath ?? null,
-  });
+  return commandResult<GitBranchList>(
+    commands.listGitBranches(path, repositoryPath ?? null),
+  );
 }
 
 export function checkoutGitBranch(
@@ -260,11 +251,13 @@ export function checkoutGitBranch(
   branch: string,
   repositoryPath?: string | null,
 ) {
-  return invoke<{ branch: string }>("checkout_git_branch_in_workspace", {
-    workspacePath,
-    repositoryPath: repositoryPath ?? null,
-    branch,
-  });
+  return commandResult<{ branch: string }>(
+    commands.checkoutGitBranchInWorkspace(
+      workspacePath,
+      repositoryPath ?? null,
+      branch,
+    ),
+  );
 }
 
 export function createGitBranch(
@@ -272,11 +265,13 @@ export function createGitBranch(
   branch: string,
   repositoryPath?: string | null,
 ) {
-  return invoke<{ branch: string }>("create_git_branch_in_workspace", {
-    workspacePath,
-    repositoryPath: repositoryPath ?? null,
-    branch,
-  });
+  return commandResult<{ branch: string }>(
+    commands.createGitBranchInWorkspace(
+      workspacePath,
+      repositoryPath ?? null,
+      branch,
+    ),
+  );
 }
 
 export function commitWorkspaceChanges(
@@ -285,12 +280,14 @@ export function commitWorkspaceChanges(
   includeUnstaged: boolean,
   repositoryPath?: string | null,
 ) {
-  return invoke<WorkspaceGitActionResult>("commit_workspace_changes", {
-    workspacePath,
-    repositoryPath: repositoryPath ?? null,
-    message,
-    includeUnstaged,
-  });
+  return commandResult<WorkspaceGitActionResult>(
+    commands.commitWorkspaceChanges(
+      workspacePath,
+      repositoryPath ?? null,
+      message,
+      includeUnstaged,
+    ),
+  );
 }
 
 export function generateWorkspaceCommitMessage(input: {
@@ -301,16 +298,15 @@ export function generateWorkspaceCommitMessage(input: {
   model: string | null;
   intentContext?: WorkspaceCommitIntentContext | null;
 }) {
-  return invoke<{ message: string; source: "codex" }>(
-    "generate_workspace_commit_message",
-    {
-      workspacePath: input.workspacePath,
-      repositoryPath: input.repositoryPath ?? null,
-      accountId: input.accountId,
-      includeUnstaged: input.includeUnstaged,
-      model: input.model,
-      intentContext: input.intentContext ?? null,
-    },
+  return commandResult<{ message: string; source: "codex" }>(
+    commands.generateWorkspaceCommitMessage(
+      input.workspacePath,
+      input.repositoryPath ?? null,
+      input.accountId,
+      input.includeUnstaged,
+      input.model,
+      input.intentContext ?? null,
+    ),
   );
 }
 
@@ -320,28 +316,28 @@ export function generateChatTitle(input: {
   model: string | null;
   initialPrompt: string;
 }) {
-  return invoke<{ title: string }>("generate_chat_title", {
-    workspacePath: input.workspacePath,
-    accountId: input.accountId,
-    model: input.model,
-    initialPrompt: input.initialPrompt,
-  });
+  return commandResult<{ title: string }>(
+    commands.generateChatTitle(
+      input.workspacePath,
+      input.accountId,
+      input.model,
+      input.initialPrompt,
+    ),
+  );
 }
 
 export function pushWorkspaceBranch(
   workspacePath: string,
   repositoryPath?: string | null,
 ) {
-  return invoke<WorkspaceGitActionResult>("push_workspace_branch", {
-    workspacePath,
-    repositoryPath: repositoryPath ?? null,
-  });
+  return commandResult<WorkspaceGitActionResult>(
+    commands.pushWorkspaceBranch(workspacePath, repositoryPath ?? null),
+  );
 }
 
 export function discoverWorkspaceGitRepositories(workspacePath: string) {
-  return invoke<WorkspaceGitRepository[]>(
-    "discover_workspace_git_repositories",
-    { workspacePath },
+  return commandResult<WorkspaceGitRepository[]>(
+    commands.discoverWorkspaceGitRepositories(workspacePath),
   );
 }
 
@@ -349,10 +345,9 @@ export function listWorkspaceGitStatus(
   workspacePath: string,
   forceDiscovery = false,
 ) {
-  return invoke<WorkspaceGitOverview>("list_workspace_git_status", {
-    workspacePath,
-    forceDiscovery,
-  });
+  return commandResult<WorkspaceGitOverview>(
+    commands.listWorkspaceGitStatus(workspacePath, forceDiscovery),
+  );
 }
 
 export function readWorkspaceGitDiff(
@@ -360,57 +355,55 @@ export function readWorkspaceGitDiff(
   filePath: string,
   repositoryPath?: string | null,
 ) {
-  return invoke<WorkspaceGitDiff>("read_workspace_git_diff", {
-    workspacePath,
-    repositoryPath: repositoryPath ?? null,
-    filePath,
-  });
+  return commandResult<WorkspaceGitDiff>(
+    commands.readWorkspaceGitDiff(
+      workspacePath,
+      repositoryPath ?? null,
+      filePath,
+    ),
+  );
 }
 
 export function undoWorkspaceGitDiff(workspacePath: string, diff: string) {
-  return invoke<WorkspaceGitActionResult>("undo_workspace_git_diff", {
-    workspacePath,
-    diff,
-  });
+  return commandResult<WorkspaceGitActionResult>(
+    commands.undoWorkspaceGitDiff(workspacePath, diff),
+  );
 }
 
 export function listWorkspaceDirectory(
   workspacePath: string,
   directoryPath: string,
 ) {
-  return invoke<WorkspaceTreeEntry[]>("list_workspace_directory", {
-    workspacePath,
-    directoryPath,
-  });
+  return commandResult<WorkspaceTreeEntry[]>(
+    commands.listWorkspaceDirectory(workspacePath, directoryPath),
+  );
 }
 
 export function readWorkspaceFilePreview(workspacePath: string, filePath: string) {
-  return invoke<WorkspaceFilePreview>("read_workspace_file_preview", {
-    workspacePath,
-    filePath,
-  });
+  return commandResult<WorkspaceFilePreview>(
+    commands.readWorkspaceFilePreview(workspacePath, filePath),
+  );
 }
 
 export function prepareImageAttachment(path: string) {
-  return invoke<ImageAttachmentPreview | null>("prepare_image_attachment", {
-    path,
-  });
+  return commandResult<ImageAttachmentPreview | null>(
+    commands.prepareImageAttachment(path),
+  );
 }
 
 export function inspectDroppedContextPaths(paths: string[]) {
-  return invoke<DroppedContextPathInspection>("inspect_dropped_context_paths", {
-    paths,
-  });
+  return commandResult<DroppedContextPathInspection>(
+    commands.inspectDroppedContextPaths(paths),
+  );
 }
 
 export function inspectPromptQueueContext(
   workspacePath: string,
   paths: string[],
 ) {
-  return invoke<PromptQueueContextInspection>("inspect_prompt_queue_context", {
-    workspacePath,
-    paths,
-  });
+  return commandResult<PromptQueueContextInspection>(
+    commands.inspectPromptQueueContext(workspacePath, paths),
+  );
 }
 
 export function runPreflight(input: {
@@ -419,12 +412,14 @@ export function runPreflight(input: {
   useOss: boolean;
   ossProvider: OssProvider;
 }) {
-  return invoke<PreflightReport>("run_preflight", {
-    path: input.workspace.path,
-    prompt: input.prompt,
-    useOss: input.useOss,
-    ossProvider: input.ossProvider,
-  });
+  return commandResult<PreflightReport>(
+    commands.runPreflight(
+      input.workspace.path,
+      input.prompt,
+      input.useOss,
+      input.ossProvider,
+    ),
+  );
 }
 
 export async function readCodexAccount(

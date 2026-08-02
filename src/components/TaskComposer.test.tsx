@@ -1,34 +1,132 @@
 import {
   act,
+  cleanup,
   fireEvent,
-  render,
   screen,
   waitFor,
   within,
 } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { afterEach, describe, expect, it, vi } from "vitest";
-import { TaskComposer } from "./TaskComposer";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import {
+  TaskComposer as ProductionTaskComposer,
+  type ComposerActions,
+  type ComposerModel,
+} from "./TaskComposer";
 import { useState } from "react";
-import type { ComponentProps } from "react";
 import {
   createQueuedPromptSnapshot,
 } from "../lib/promptQueue";
 import { createRunExecutionSettings } from "../lib/runExecutionSettings";
 import {
-  clearSubagentStore,
-  replaceConversationSubagents,
   type SubagentRecord,
 } from "../lib/subagents";
-import {
-  ORCHESTRATOR_PROMPT_CONTEXT_MIME,
-  type PromptQueueItem,
-} from "../types";
+import { AppServices } from "../runtime/AppServices";
+import { renderWithAppServices } from "../test/renderWithAppServices";
+import { ORCHESTRATOR_PROMPT_CONTEXT_MIME } from "../features/composer/types";
+import type { PromptQueueItem } from "../features/queue/types";
 
-type TaskComposerProps = ComponentProps<typeof TaskComposer>;
+type TaskComposerProps = ComposerModel & ComposerActions;
+
+function TaskComposer(props: TaskComposerProps) {
+  const {
+    onAccountChange,
+    onPromptChange,
+    onModelChange,
+    onReasoningEffortChange,
+    onGoalModeChange,
+    onPlanModeChange,
+    onPauseGoal,
+    onResumeGoal,
+    onEditGoal,
+    onStopGoal,
+    onInspectSubagent,
+    onQueueEdit,
+    onQueueRemove,
+    onQueueRetry,
+    onQueueAutoSendChange,
+    onQueueSendNow,
+    onQueueReorder,
+    onQueueEditCancel,
+    onDispatchQueued,
+    onAccessModeChange,
+    onAddFiles,
+    onMentionSearch,
+    onMentionFileSelect,
+    onMentionClose,
+    onSlashCommandSearch,
+    onSlashCommandSelect,
+    onSlashCommandClose,
+    onContextFilesDrop,
+    onContextFilesDropError,
+    onDropSurfaceElementChange,
+    onPromptElementChange,
+    hasContextFileDropFallback,
+    getContextFileDropFallback,
+    onContextFileDropHandled,
+    onRemoveFile,
+    onRemoveSkill,
+    onRun,
+    onStop,
+    ...model
+  } = props;
+
+  return (
+    <ProductionTaskComposer
+      model={model}
+      actions={{
+        onAccountChange,
+        onPromptChange,
+        onModelChange,
+        onReasoningEffortChange,
+        onGoalModeChange,
+        onPlanModeChange,
+        onPauseGoal,
+        onResumeGoal,
+        onEditGoal,
+        onStopGoal,
+        onInspectSubagent,
+        onQueueEdit,
+        onQueueRemove,
+        onQueueRetry,
+        onQueueAutoSendChange,
+        onQueueSendNow,
+        onQueueReorder,
+        onQueueEditCancel,
+        onDispatchQueued,
+        onAccessModeChange,
+        onAddFiles,
+        onMentionSearch,
+        onMentionFileSelect,
+        onMentionClose,
+        onSlashCommandSearch,
+        onSlashCommandSelect,
+        onSlashCommandClose,
+        onContextFilesDrop,
+        onContextFilesDropError,
+        onDropSurfaceElementChange,
+        onPromptElementChange,
+        hasContextFileDropFallback,
+        getContextFileDropFallback,
+        onContextFileDropHandled,
+        onRemoveFile,
+        onRemoveSkill,
+        onRun,
+        onStop,
+      }}
+    />
+  );
+}
+
+let services: AppServices;
+
+beforeEach(() => {
+  services = new AppServices();
+});
 
 afterEach(() => {
-  act(clearSubagentStore);
+  cleanup();
+  services?.dispose();
 });
 
 const models: TaskComposerProps["models"] = [
@@ -214,7 +312,7 @@ function renderComposer(overrides: Partial<TaskComposerProps> = {}) {
   return {
     props,
     user: userEvent.setup(),
-    ...render(<TaskComposer {...props} />),
+    ...renderWithAppServices(<TaskComposer {...props} />, {}, services),
   };
 }
 
@@ -282,7 +380,7 @@ function renderControlledComposer(overrides: Partial<TaskComposerProps> = {}) {
   return {
     user,
     onPromptChange,
-    ...render(<ControlledComposer />),
+    ...renderWithAppServices(<ControlledComposer />, {}, services),
   };
 }
 
@@ -434,7 +532,7 @@ describe("TaskComposer", () => {
       actionPending: null,
     };
     const queueItems = [queuedPrompt()];
-    replaceConversationSubagents("chat:2", [activeSubagent(2)]);
+    services.subagents.replaceConversation("chat:2", [activeSubagent(2)]);
     const { container, props, rerender } = renderComposer({
       prompt: "Keep this draft",
       goalProgress,
@@ -480,8 +578,8 @@ describe("TaskComposer", () => {
   });
 
   it("closes the subagent popover when the selected chat changes", async () => {
-    replaceConversationSubagents("chat:2", [activeSubagent(2)]);
-    replaceConversationSubagents("chat:3", [activeSubagent(3)]);
+    services.subagents.replaceConversation("chat:2", [activeSubagent(2)]);
+    services.subagents.replaceConversation("chat:3", [activeSubagent(3)]);
     const onInspectSubagent = vi.fn();
     const { props, rerender, user } = renderComposer({
       subagentConversationKey: "chat:2",

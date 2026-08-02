@@ -1,5 +1,5 @@
 import { setTheme as setNativeTheme } from "@tauri-apps/api/app";
-import type { ResolvedTheme, ThemePreference } from "../types";
+import type { ResolvedTheme, ThemePreference } from "../shared/types";
 
 export const THEME_STORAGE_KEY = "orchestrator.theme";
 export const SYSTEM_DARK_QUERY = "(prefers-color-scheme: dark)";

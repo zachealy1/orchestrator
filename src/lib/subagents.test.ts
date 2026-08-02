@@ -1,20 +1,21 @@
 import { beforeEach, describe, expect, it } from "vitest";
 import {
-  clearSubagentStore,
   deriveSubagentComposerModel,
-  getConversationSubagents,
   lifecycleFromChildTurn,
   lifecycleFromCollabToolCall,
   parseCollabToolCall,
   parseCollabToolCalls,
   parseLegacySubagentActivity,
-  replaceConversationSubagents,
-  upsertConversationSubagent,
+  SubagentStore,
   type SubagentRecord,
 } from "./subagents";
 
 describe("subagent protocol", () => {
-  beforeEach(() => clearSubagentStore());
+  let store: SubagentStore;
+
+  beforeEach(() => {
+    store = new SubagentStore();
+  });
 
   it("parses modern spawn events without relying on display text", () => {
     const parsed = parseCollabToolCall({
@@ -217,17 +218,18 @@ describe("subagent protocol", () => {
       updatedAt: "2026-07-29T10:01:01.000Z",
     };
 
-    replaceConversationSubagents("chat:2", [older, newer]);
-    expect(
-      getConversationSubagents("chat:2").map((record) => record.id),
-    ).toEqual(["newer", "older"]);
+    store.replaceConversation("chat:2", [older, newer]);
+    expect(store.getConversation("chat:2").map((record) => record.id)).toEqual([
+      "newer",
+      "older",
+    ]);
 
-    upsertConversationSubagent({
+    store.upsert({
       ...older,
       updatedAt: "2026-07-29T10:10:00.000Z",
     });
     expect(
-      getConversationSubagents("chat:2").map((record) => record.id),
+      store.getConversation("chat:2").map((record) => record.id),
     ).toEqual(["newer", "older"]);
   });
 });

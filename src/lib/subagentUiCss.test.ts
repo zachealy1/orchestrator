@@ -1,10 +1,8 @@
-// @ts-expect-error Vitest runs in Node; the app typecheck intentionally omits Node types.
-import { readFileSync } from "node:fs";
+import { readAppStyles } from "../test/readAppStyles";
 import { describe, expect, it } from "vitest";
 
-declare const process: { cwd(): string };
 
-const css = readFileSync(`${process.cwd()}/src/App.css`, "utf8");
+const css = readAppStyles();
 
 describe("subagent UI styles", () => {
   it("uses the specific app-surface hover rule instead of the global blue button hover", () => {

@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { CodePreview } from "./CodePreview";
 
 const mocks = vi.hoisted(() => ({
+  codePreviewCache: {},
   codeToTokens: vi.fn(),
   codePreviewTheme: vi.fn((theme: "light" | "dark") =>
     theme === "light" ? "github-light" : "github-dark",
@@ -54,6 +55,10 @@ vi.mock("../lib/codePreview", () => ({
   detectPreviewLanguage: mocks.detectPreviewLanguage,
   highlightPreviewContent: mocks.highlightPreviewContent,
   loadCodeHighlighter: mocks.loadCodeHighlighter,
+}));
+
+vi.mock("../runtime/AppServices", () => ({
+  useAppServices: () => ({ codePreview: mocks.codePreviewCache }),
 }));
 
 describe("CodePreview", () => {
