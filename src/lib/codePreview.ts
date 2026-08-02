@@ -51,8 +51,110 @@ export type PreviewSemanticToken = ThemedToken & {
   semantic?: "json-key" | "json-value";
 };
 
+export type CodePreviewHighlightInput = {
+  path: string;
+  content: string;
+  language: string;
+  resolvedTheme: ResolvedTheme;
+};
+
+type PreviewHighlightCacheEntry<T> = {
+  sourceCharacters: number;
+  value: T;
+};
+
+export const PREVIEW_HIGHLIGHT_CACHE_MAX_ENTRIES = 8;
+export const PREVIEW_HIGHLIGHT_CACHE_MAX_SOURCE_CHARACTERS = 2_000_000;
+
+export class BoundedPreviewHighlightCache<T> {
+  private readonly entries = new Map<string, PreviewHighlightCacheEntry<T>>();
+  private sourceCharacters = 0;
+
+  constructor(
+    private readonly maxEntries = PREVIEW_HIGHLIGHT_CACHE_MAX_ENTRIES,
+    private readonly maxSourceCharacters =
+      PREVIEW_HIGHLIGHT_CACHE_MAX_SOURCE_CHARACTERS,
+  ) {}
+
+  get(key: string) {
+    const entry = this.entries.get(key);
+    if (!entry) {
+      return undefined;
+    }
+
+    // Refresh insertion order so eviction behaves as a small LRU cache.
+    this.entries.delete(key);
+    this.entries.set(key, entry);
+    return entry.value;
+  }
+
+  set(key: string, value: T, sourceCharacters: number) {
+    const existing = this.entries.get(key);
+    if (existing) {
+      this.entries.delete(key);
+      this.sourceCharacters -= existing.sourceCharacters;
+    }
+
+    if (
+      this.maxEntries <= 0 ||
+      this.maxSourceCharacters <= 0 ||
+      sourceCharacters > this.maxSourceCharacters
+    ) {
+      return;
+    }
+
+    const entry = {
+      sourceCharacters: Math.max(0, sourceCharacters),
+      value,
+    };
+    this.entries.set(key, entry);
+    this.sourceCharacters += entry.sourceCharacters;
+    this.evictOverflow();
+  }
+
+  deleteIfValue(key: string, value: T) {
+    const entry = this.entries.get(key);
+    if (!entry || entry.value !== value) {
+      return false;
+    }
+
+    this.entries.delete(key);
+    this.sourceCharacters -= entry.sourceCharacters;
+    return true;
+  }
+
+  clear() {
+    this.entries.clear();
+    this.sourceCharacters = 0;
+  }
+
+  getStats() {
+    return {
+      entries: this.entries.size,
+      sourceCharacters: this.sourceCharacters,
+    };
+  }
+
+  private evictOverflow() {
+    while (
+      this.entries.size > this.maxEntries ||
+      this.sourceCharacters > this.maxSourceCharacters
+    ) {
+      const oldestKey = this.entries.keys().next().value;
+      if (oldestKey === undefined) {
+        break;
+      }
+      const oldest = this.entries.get(oldestKey);
+      this.entries.delete(oldestKey);
+      this.sourceCharacters -= oldest?.sourceCharacters ?? 0;
+    }
+  }
+}
+
 let highlighterPromise: Promise<CodePreviewHighlighter> | null = null;
-const previewHighlightCache = new Map<string, Promise<PreviewSemanticToken[][]>>();
+const previewHighlightCache = new BoundedPreviewHighlightCache<
+  Promise<PreviewSemanticToken[][]>
+>();
 
 export function detectPreviewLanguage(path: string) {
   const basename = path.split(/[\\/]/).pop()?.toLowerCase() ?? "";
@@ -84,19 +186,34 @@ export function previewHighlightCacheKey(input: {
   language: string;
   theme: string;
 }) {
-  return `${input.path}\u0000${input.language}\u0000${input.theme}\u0000${input.content}`;
+  return `${input.path}\u0000${input.language}\u0000${input.theme}\u0000${previewContentFingerprint(input.content)}`;
+}
+
+export function previewContentFingerprint(content: string) {
+  let first = 0x811c9dc5;
+  let second = 0x9e3779b9;
+
+  for (let index = 0; index < content.length; index += 1) {
+    const codeUnit = content.charCodeAt(index);
+    first = Math.imul(first ^ codeUnit, 0x01000193);
+    second = Math.imul(second ^ (codeUnit + index), 0x85ebca6b);
+    second ^= second >>> 13;
+  }
+
+  return `${content.length.toString(36)}-${(first >>> 0).toString(36)}-${(
+    second >>> 0
+  ).toString(36)}`;
 }
 
 export function clearPreviewHighlightCache() {
   previewHighlightCache.clear();
 }
 
-export async function highlightPreviewContent(input: {
-  path: string;
-  content: string;
-  language: string;
-  resolvedTheme: ResolvedTheme;
-}) {
+export function getPreviewHighlightCacheStats() {
+  return previewHighlightCache.getStats();
+}
+
+export async function highlightPreviewContent(input: CodePreviewHighlightInput) {
   const theme = codePreviewTheme(input.resolvedTheme);
   const cacheKey = previewHighlightCacheKey({
     path: input.path,
@@ -118,11 +235,11 @@ export async function highlightPreviewContent(input: {
     )
     .then((result) => applyPreviewSemanticTokenColors(input.language, result.tokens))
     .catch((error) => {
-      previewHighlightCache.delete(cacheKey);
+      previewHighlightCache.deleteIfValue(cacheKey, highlighted);
       throw error;
     });
 
-  previewHighlightCache.set(cacheKey, highlighted);
+  previewHighlightCache.set(cacheKey, highlighted, input.content.length);
   return highlighted;
 }
 
@@ -136,27 +253,27 @@ export function applyPreviewSemanticTokenColors(
     );
   }
 
-  const flatTokens = tokenLines.flatMap((line, lineIndex) =>
-    line.map((token, tokenIndex) => ({ lineIndex, tokenIndex, token })),
+  const flatTokens = tokenLines.flat();
+  const nextSignificantTokens: Array<string | null> = Array.from(
+    { length: flatTokens.length },
+    () => null,
   );
-
-  const nextSignificantToken = (index: number) => {
-    for (let nextIndex = index + 1; nextIndex < flatTokens.length; nextIndex += 1) {
-      const candidate = flatTokens[nextIndex].token.content.trim();
-      if (candidate) {
-        return candidate;
-      }
+  let nextSignificantToken: string | null = null;
+  for (let index = flatTokens.length - 1; index >= 0; index -= 1) {
+    nextSignificantTokens[index] = nextSignificantToken;
+    const content = flatTokens[index].content.trim();
+    if (content) {
+      nextSignificantToken = content;
     }
-    return null;
-  };
+  }
 
-  return tokenLines.map((line, lineIndex) =>
-    line.map((token, tokenIndex) => {
-      const flatIndex = flatTokens.findIndex(
-        (entry) => entry.lineIndex === lineIndex && entry.tokenIndex === tokenIndex,
-      );
+  let flatIndex = 0;
+
+  return tokenLines.map((line) =>
+    line.map((token) => {
       const content = token.content.trim();
-      const nextToken = flatIndex >= 0 ? nextSignificantToken(flatIndex) : null;
+      const nextToken = nextSignificantTokens[flatIndex] ?? null;
+      flatIndex += 1;
       const isKey = isJsonStringToken(content) && nextToken?.startsWith(":");
       const isValue = !isKey && isJsonValueToken(content);
 

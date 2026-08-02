@@ -1,10 +1,13 @@
 import { describe, expect, it } from "vitest";
 import {
   applyPreviewSemanticTokenColors,
+  BoundedPreviewHighlightCache,
   clearPreviewHighlightCache,
   codePreviewTheme,
   detectPreviewLanguage,
   highlightPreviewContent,
+  previewContentFingerprint,
+  previewHighlightCacheKey,
 } from "./codePreview";
 
 describe("codePreview", () => {
@@ -28,6 +31,42 @@ describe("codePreview", () => {
   it("maps app themes to Shiki themes", () => {
     expect(codePreviewTheme("light")).toBe("github-light");
     expect(codePreviewTheme("dark")).toBe("github-dark");
+  });
+
+  it("uses compact content fingerprints instead of source text in cache keys", () => {
+    const content = "export const uniquelyNamedPreviewValue = 42;";
+    const key = previewHighlightCacheKey({
+      path: "/repo/src/App.ts",
+      content,
+      language: "typescript",
+      theme: "github-dark",
+    });
+
+    expect(key).not.toContain(content);
+    expect(previewContentFingerprint(content)).toBe(
+      previewContentFingerprint(content),
+    );
+    expect(previewContentFingerprint(`${content}\n`)).not.toBe(
+      previewContentFingerprint(content),
+    );
+  });
+
+  it("bounds preview highlight cache entries and source characters with LRU eviction", () => {
+    const cache = new BoundedPreviewHighlightCache<number>(2, 6);
+    cache.set("first", 1, 3);
+    cache.set("second", 2, 3);
+    expect(cache.get("first")).toBe(1);
+
+    cache.set("third", 3, 3);
+
+    expect(cache.get("second")).toBeUndefined();
+    expect(cache.get("first")).toBe(1);
+    expect(cache.get("third")).toBe(3);
+    expect(cache.getStats()).toEqual({ entries: 2, sourceCharacters: 6 });
+
+    cache.set("oversized", 4, 7);
+    expect(cache.get("oversized")).toBeUndefined();
+    expect(cache.getStats()).toEqual({ entries: 2, sourceCharacters: 6 });
   });
 
   it("applies shared semantic token colors for JSON previews and diffs", () => {

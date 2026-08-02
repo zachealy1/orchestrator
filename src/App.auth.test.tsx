@@ -53,6 +53,8 @@ const mocks = vi.hoisted(() => ({
   undoWorkspaceGitDiffMock: vi.fn(),
   listWorkspaceDirectoryMock: vi.fn(),
   readWorkspaceFilePreviewMock: vi.fn(),
+  readWorkspaceFilePreviewChunkMock: vi.fn(),
+  readWorkspaceFilePreviewVersionMock: vi.fn(),
   prepareImageAttachmentMock: vi.fn(),
   inspectDroppedContextPathsMock: vi.fn(),
   inspectPromptQueueContextMock: vi.fn(),
@@ -283,6 +285,8 @@ vi.mock("./codexClient", () => ({
   readCodexFile: mocks.readCodexFileMock,
   readDefaultCodexFile: mocks.readDefaultCodexFileMock,
   readWorkspaceFilePreview: mocks.readWorkspaceFilePreviewMock,
+  readWorkspaceFilePreviewChunk: mocks.readWorkspaceFilePreviewChunkMock,
+  readWorkspaceFilePreviewVersion: mocks.readWorkspaceFilePreviewVersionMock,
   prepareImageAttachment: mocks.prepareImageAttachmentMock,
   inspectDroppedContextPaths: mocks.inspectDroppedContextPathsMock,
   inspectPromptQueueContext: mocks.inspectPromptQueueContextMock,
@@ -818,6 +822,7 @@ function prepareDefaults() {
     truncated: false,
     isBinary: false,
   });
+  mocks.readWorkspaceFilePreviewVersionMock.mockResolvedValue("preview-version");
   mocks.prepareImageAttachmentMock.mockImplementation(async (path: string) =>
     /\.(?:gif|jpe?g|png|webp)$/i.test(path)
       ? {
@@ -1792,6 +1797,61 @@ describe("App Codex auth", () => {
     expect(screen.getByLabelText("Prompt")).toHaveValue("Remember this draft");
   });
 
+  it("does not reopen a removed workspace when its pending preview finishes", async () => {
+    const entry = {
+      name: "pending.txt",
+      path: "/repo/orchestrator/pending.txt",
+      relativePath: "pending.txt",
+      kind: "file" as const,
+    };
+    let resolvePreview: (preview: unknown) => void = () => undefined;
+    mocks.listWorkspaceDirectoryMock.mockResolvedValue([entry]);
+    mocks.readWorkspaceFilePreviewMock.mockReturnValue(
+      new Promise((resolve) => {
+        resolvePreview = resolve;
+      }),
+    );
+
+    const { user } = await renderApp();
+    const workspaceNav = screen.getByRole("navigation", { name: "Workspaces" });
+    await user.click(
+      within(workspaceNav).getByRole("button", { name: "Expand orchestrator" }),
+    );
+    await user.click(
+      await within(workspaceNav).findByRole("button", { name: "pending.txt" }),
+    );
+    expect(screen.getByRole("complementary", { name: "File preview" })).toHaveTextContent(
+      "Loading preview",
+    );
+
+    fireEvent.contextMenu(
+      within(workspaceNav).getByRole("button", { name: "orchestrator" }),
+      { clientX: 60, clientY: 140 },
+    );
+    await user.click(
+      screen.getByRole("menuitem", { name: "Remove from Orchestrator" }),
+    );
+    await user.click(
+      within(screen.getByRole("dialog", { name: "Remove workspace?" })).getByRole(
+        "button",
+        { name: "Remove workspace" },
+      ),
+    );
+
+    await act(async () => {
+      resolvePreview({
+        path: entry.path,
+        relativePath: entry.relativePath,
+        content: "must stay closed",
+        truncated: false,
+        isBinary: false,
+      });
+    });
+
+    expect(screen.queryByRole("complementary", { name: "File preview" })).toBeNull();
+    expect(screen.queryByText("must stay closed")).not.toBeInTheDocument();
+  });
+
   it("opens and closes the workspace context menu from the keyboard", async () => {
     const { user } = await renderApp();
     const workspaceNav = screen.getByRole("navigation", {
@@ -1923,6 +1983,383 @@ describe("App Codex auth", () => {
       isBinary: false,
     });
     expect(await screen.findByText("# Cached preview")).toBeInTheDocument();
+  });
+
+  it("publishes the first chunk when a file is reopened before its request resolves", async () => {
+    const firstEntry = {
+      name: "first.txt",
+      path: "/repo/orchestrator/first.txt",
+      relativePath: "first.txt",
+      kind: "file" as const,
+    };
+    const secondEntry = {
+      name: "second.txt",
+      path: "/repo/orchestrator/second.txt",
+      relativePath: "second.txt",
+      kind: "file" as const,
+    };
+    let resolveFirstChunk: (preview: unknown) => void = () => undefined;
+    let resolveFinalChunk: (preview: unknown) => void = () => undefined;
+    const firstChunk = new Promise((resolve) => {
+      resolveFirstChunk = resolve;
+    });
+    const finalChunk = new Promise((resolve) => {
+      resolveFinalChunk = resolve;
+    });
+    mocks.listWorkspaceDirectoryMock.mockResolvedValue([firstEntry, secondEntry]);
+    mocks.readWorkspaceFilePreviewMock.mockImplementation(
+      (_workspacePath: string, filePath: string) =>
+        filePath === firstEntry.path
+          ? firstChunk
+          : Promise.resolve({
+              path: secondEntry.path,
+              relativePath: secondEntry.relativePath,
+              content: "second file",
+              truncated: false,
+              isBinary: false,
+            }),
+    );
+    mocks.readWorkspaceFilePreviewChunkMock.mockReturnValue(finalChunk);
+
+    const { user } = await renderApp();
+    const workspaceNav = screen.getByRole("navigation", { name: "Workspaces" });
+    await user.click(
+      within(workspaceNav).getByRole("button", { name: "Expand orchestrator" }),
+    );
+    const firstButton = await within(workspaceNav).findByRole("button", {
+      name: "first.txt",
+    });
+    await user.click(firstButton);
+    await user.click(
+      within(workspaceNav).getByRole("button", { name: "second.txt" }),
+    );
+    expect(await screen.findByText("second file")).toBeInTheDocument();
+    await user.click(firstButton);
+
+    await act(async () => {
+      resolveFirstChunk({
+        path: firstEntry.path,
+        relativePath: firstEntry.relativePath,
+        content: "first partial\n",
+        truncated: false,
+        isBinary: false,
+        complete: false,
+        nextOffset: 14,
+        totalBytes: 24,
+        version: "first-v1",
+      });
+    });
+
+    expect(await screen.findByText("first partial")).toBeInTheDocument();
+    expect(screen.getByText("Loading complete file…")).toBeInTheDocument();
+    expect(mocks.readWorkspaceFilePreviewMock).toHaveBeenCalledTimes(2);
+
+    await act(async () => {
+      resolveFinalChunk({
+        path: firstEntry.path,
+        relativePath: firstEntry.relativePath,
+        content: "first tail",
+        truncated: false,
+        isBinary: false,
+        complete: true,
+        nextOffset: 24,
+        totalBytes: 24,
+        version: "first-v1",
+      });
+    });
+    expect(await screen.findByText("first tail")).toBeInTheDocument();
+  });
+
+  it("shows a bounded first chunk immediately and then exposes the complete file", async () => {
+    const largeTotalBytes = 2 * 1024 * 1024 + 1;
+    const entry = {
+      name: "large.txt",
+      path: "/repo/orchestrator/large.txt",
+      relativePath: "large.txt",
+      kind: "file" as const,
+    };
+    let resolveFinalChunk: (preview: unknown) => void = () => undefined;
+    const finalChunk = new Promise((resolve) => {
+      resolveFinalChunk = resolve;
+    });
+    mocks.listWorkspaceDirectoryMock.mockResolvedValue([entry]);
+    mocks.readWorkspaceFilePreviewMock.mockResolvedValue({
+      path: entry.path,
+      relativePath: entry.relativePath,
+      content: "one\r",
+      truncated: false,
+      isBinary: false,
+      complete: false,
+      nextOffset: 4,
+      totalBytes: largeTotalBytes,
+      version: "13-1",
+    });
+    mocks.readWorkspaceFilePreviewChunkMock.mockReturnValue(finalChunk);
+
+    const { user } = await renderApp();
+    const workspaceNav = screen.getByRole("navigation", { name: "Workspaces" });
+    await user.click(
+      within(workspaceNav).getByRole("button", { name: "Expand orchestrator" }),
+    );
+    await user.click(
+      await within(workspaceNav).findByRole("button", { name: "large.txt" }),
+    );
+
+    expect(await screen.findByText("one")).toBeInTheDocument();
+    expect(screen.getByText("Loading complete file…")).toBeInTheDocument();
+    expect(screen.queryByText("Truncated")).not.toBeInTheDocument();
+    expect(mocks.readWorkspaceFilePreviewChunkMock).toHaveBeenCalledWith(
+      workspace.path,
+      entry.path,
+      4,
+      "13-1",
+    );
+
+    await act(async () => {
+      resolveFinalChunk({
+        path: entry.path,
+        relativePath: entry.relativePath,
+        content: "\ntwo\nthree",
+        truncated: false,
+        isBinary: false,
+        complete: true,
+        nextOffset: largeTotalBytes,
+        totalBytes: largeTotalBytes,
+        version: "13-1",
+      });
+    });
+
+    expect(await screen.findByText("three")).toBeInTheDocument();
+    expect(
+      screen.getByLabelText("Highlighted file preview").closest(".code-preview"),
+    ).toHaveAttribute("data-indexed-lines", "true");
+    expect(
+      screen.getByLabelText("Highlighted file preview").closest(".code-preview"),
+    ).toHaveAttribute("data-line-count", "3");
+    expect(screen.queryByText("Loading complete file…")).not.toBeInTheDocument();
+    expect(screen.queryByText("Truncated")).not.toBeInTheDocument();
+  });
+
+  it("stops a stale large-file transfer after switching files", async () => {
+    const largeEntry = {
+      name: "large.txt",
+      path: "/repo/orchestrator/large.txt",
+      relativePath: "large.txt",
+      kind: "file" as const,
+    };
+    const otherEntry = {
+      name: "other.txt",
+      path: "/repo/orchestrator/other.txt",
+      relativePath: "other.txt",
+      kind: "file" as const,
+    };
+    let largeReads = 0;
+    let resolveStaleChunk: (preview: unknown) => void = () => undefined;
+    mocks.listWorkspaceDirectoryMock.mockResolvedValue([largeEntry, otherEntry]);
+    mocks.readWorkspaceFilePreviewMock.mockImplementation(
+      (_workspacePath: string, filePath: string) => {
+        if (filePath === otherEntry.path) {
+          return Promise.resolve({
+            path: otherEntry.path,
+            relativePath: otherEntry.relativePath,
+            content: "other file",
+            truncated: false,
+            isBinary: false,
+          });
+        }
+        largeReads += 1;
+        return Promise.resolve(
+          largeReads === 1
+            ? {
+                path: largeEntry.path,
+                relativePath: largeEntry.relativePath,
+                content: "partial large\n",
+                truncated: false,
+                isBinary: false,
+                complete: false,
+                nextOffset: 14,
+                totalBytes: 24,
+                version: "large-v1",
+              }
+            : {
+                path: largeEntry.path,
+                relativePath: largeEntry.relativePath,
+                content: "restarted complete file",
+                truncated: false,
+                isBinary: false,
+              },
+        );
+      },
+    );
+    mocks.readWorkspaceFilePreviewChunkMock.mockReturnValue(
+      new Promise((resolve) => {
+        resolveStaleChunk = resolve;
+      }),
+    );
+
+    const { user } = await renderApp();
+    const workspaceNav = screen.getByRole("navigation", { name: "Workspaces" });
+    await user.click(
+      within(workspaceNav).getByRole("button", { name: "Expand orchestrator" }),
+    );
+    await user.click(
+      await within(workspaceNav).findByRole("button", { name: "large.txt" }),
+    );
+    expect(await screen.findByText("partial large")).toBeInTheDocument();
+
+    await user.click(
+      within(workspaceNav).getByRole("button", { name: "other.txt" }),
+    );
+    expect(await screen.findByText("other file")).toBeInTheDocument();
+    await act(async () => {
+      resolveStaleChunk({
+        path: largeEntry.path,
+        relativePath: largeEntry.relativePath,
+        content: "stale tail",
+        truncated: false,
+        isBinary: false,
+        complete: true,
+        nextOffset: 24,
+        totalBytes: 24,
+        version: "large-v1",
+      });
+      await Promise.resolve();
+    });
+    expect(screen.queryByText("stale tail")).not.toBeInTheDocument();
+
+    await user.click(
+      within(workspaceNav).getByRole("button", { name: "large.txt" }),
+    );
+    expect(await screen.findByText("restarted complete file")).toBeInTheDocument();
+    expect(largeReads).toBe(2);
+  });
+
+  it("validates a cached preview version before reopening a file", async () => {
+    const entry = {
+      name: "changing.txt",
+      path: "/repo/orchestrator/changing.txt",
+      relativePath: "changing.txt",
+      kind: "file" as const,
+    };
+    mocks.listWorkspaceDirectoryMock.mockResolvedValue([entry]);
+    mocks.readWorkspaceFilePreviewMock
+      .mockResolvedValueOnce({
+        path: entry.path,
+        relativePath: entry.relativePath,
+        content: "old contents",
+        truncated: false,
+        isBinary: false,
+        complete: true,
+        nextOffset: 12,
+        totalBytes: 12,
+        version: "12-old",
+      })
+      .mockResolvedValueOnce({
+        path: entry.path,
+        relativePath: entry.relativePath,
+        content: "fresh contents",
+        truncated: false,
+        isBinary: false,
+        complete: true,
+        nextOffset: 14,
+        totalBytes: 14,
+        version: "14-new",
+      });
+    mocks.readWorkspaceFilePreviewVersionMock.mockResolvedValue("14-new");
+
+    const { user } = await renderApp();
+    const workspaceNav = screen.getByRole("navigation", { name: "Workspaces" });
+    await user.click(
+      within(workspaceNav).getByRole("button", { name: "Expand orchestrator" }),
+    );
+    const fileButton = await within(workspaceNav).findByRole("button", {
+      name: "changing.txt",
+    });
+    await user.click(fileButton);
+    expect(await screen.findByText("old contents")).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Close file preview" }));
+
+    await user.click(fileButton);
+
+    expect(await screen.findByText("fresh contents")).toBeInTheDocument();
+    expect(mocks.readWorkspaceFilePreviewVersionMock).toHaveBeenCalledWith(
+      workspace.path,
+      entry.path,
+    );
+    expect(mocks.readWorkspaceFilePreviewMock).toHaveBeenCalledTimes(2);
+  });
+
+  it("ignores a stale file preview response after switching files", async () => {
+    const firstEntry = {
+      name: "first.txt",
+      path: "/repo/orchestrator/first.txt",
+      relativePath: "first.txt",
+      kind: "file" as const,
+    };
+    const secondEntry = {
+      name: "second.txt",
+      path: "/repo/orchestrator/second.txt",
+      relativePath: "second.txt",
+      kind: "file" as const,
+    };
+    let resolveFirst: (preview: unknown) => void = () => undefined;
+    let resolveSecond: (preview: unknown) => void = () => undefined;
+    const firstPreview = new Promise((resolve) => {
+      resolveFirst = resolve;
+    });
+    const secondPreview = new Promise((resolve) => {
+      resolveSecond = resolve;
+    });
+    mocks.listWorkspaceDirectoryMock.mockResolvedValue([firstEntry, secondEntry]);
+    mocks.readWorkspaceFilePreviewMock.mockImplementation(
+      (_workspacePath: string, filePath: string) =>
+        filePath === firstEntry.path ? firstPreview : secondPreview,
+    );
+
+    const { user } = await renderApp();
+    const workspaceNav = screen.getByRole("navigation", {
+      name: "Workspaces",
+    });
+
+    await user.click(
+      within(workspaceNav).getByRole("button", { name: "Expand orchestrator" }),
+    );
+    await user.click(
+      await within(workspaceNav).findByRole("button", { name: "first.txt" }),
+    );
+    await user.click(within(workspaceNav).getByRole("button", { name: "second.txt" }));
+
+    await act(async () => {
+      resolveSecond({
+        path: secondEntry.path,
+        relativePath: secondEntry.relativePath,
+        content: "current second file",
+        truncated: false,
+        isBinary: false,
+      });
+    });
+    expect(await screen.findByText("current second file")).toBeInTheDocument();
+
+    await act(async () => {
+      resolveFirst({
+        path: firstEntry.path,
+        relativePath: firstEntry.relativePath,
+        content: "stale first file",
+        truncated: false,
+        isBinary: false,
+      });
+    });
+
+    const drawer = screen.getByRole("complementary", { name: "File preview" });
+    expect(drawer).toHaveTextContent("second.txt");
+    expect(drawer).toHaveTextContent("current second file");
+    expect(drawer).not.toHaveTextContent("stale first file");
+
+    await user.click(
+      within(workspaceNav).getByRole("button", { name: "first.txt" }),
+    );
+    expect(await screen.findByText("stale first file")).toBeInTheDocument();
+    expect(mocks.readWorkspaceFilePreviewMock).toHaveBeenCalledTimes(2);
   });
 
   it("loads git status for the selected workspace", async () => {
@@ -7498,7 +7935,7 @@ describe("App Codex auth", () => {
     expect(mocks.readWorkspaceGitDiffMock).toHaveBeenCalledTimes(1);
   });
 
-  it("shows binary and truncated file preview states", async () => {
+  it("shows binary files and complete large text previews", async () => {
     const binaryEntry = {
       name: "image.png",
       path: "/repo/orchestrator/image.png",
@@ -7506,11 +7943,15 @@ describe("App Codex auth", () => {
       kind: "file" as const,
     };
     const largeEntry = {
-      name: "large.ts",
-      path: "/repo/orchestrator/large.ts",
-      relativePath: "large.ts",
+      name: "large.txt",
+      path: "/repo/orchestrator/large.txt",
+      relativePath: "large.txt",
       kind: "file" as const,
     };
+    const largeContent = Array.from(
+      { length: 10_001 },
+      (_, index) => `complete line ${index + 1}`,
+    ).join("\n");
     mocks.listWorkspaceDirectoryMock.mockResolvedValue([binaryEntry, largeEntry]);
     mocks.readWorkspaceFilePreviewMock.mockImplementation(
       async (_workspacePath: string, filePath: string) => {
@@ -7527,8 +7968,8 @@ describe("App Codex auth", () => {
         return {
           path: largeEntry.path,
           relativePath: largeEntry.relativePath,
-          content: "const value = 1;",
-          truncated: true,
+          content: largeContent,
+          truncated: false,
           isBinary: false,
         };
       },
@@ -7549,13 +7990,17 @@ describe("App Codex auth", () => {
       screen.queryByLabelText("Highlighted file preview"),
     ).not.toBeInTheDocument();
 
-    await user.click(within(workspaceNav).getByRole("button", { name: "large.ts" }));
+    await user.click(within(workspaceNav).getByRole("button", { name: "large.txt" }));
 
-    expect(await screen.findByText("Preview truncated to 512 KB.")).toBeInTheDocument();
-    expect(await screen.findByText("Truncated")).toBeInTheDocument();
-    expect(screen.getByLabelText("Highlighted file preview")).toHaveTextContent(
-      "const value = 1;",
+    const preview = await screen.findByLabelText("Highlighted file preview");
+    expect(screen.queryByText("Preview truncated to 512 KB.")).not.toBeInTheDocument();
+    expect(screen.queryByText("Truncated")).not.toBeInTheDocument();
+    expect(preview.closest(".code-preview")).toHaveAttribute("data-line-count", "10001");
+    expect(preview.closest(".code-preview")).toHaveAttribute(
+      "data-line-number-digits",
+      "5",
     );
+    expect(preview).toHaveTextContent("complete line 1");
   });
 
   it("resizes the file preview drawer horizontally", async () => {

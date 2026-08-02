@@ -169,6 +169,8 @@ import {
   readProjectedSubagentThread,
   readWorkspaceGitDiff,
   readWorkspaceFilePreview,
+  readWorkspaceFilePreviewChunk,
+  readWorkspaceFilePreviewVersion,
   resolveCodexServerRequest,
   resolveDefaultCodexServerRequest,
   removeAgentNotification,
@@ -454,6 +456,9 @@ const PREVIEW_DRAWER_RESIZE_STEP = 40;
 const PREVIEW_DRAWER_RESIZE_LARGE_STEP = 80;
 const DIFF_DRAWER_PREFERRED_WIDTH = 860;
 const DIFF_SIDE_BY_SIDE_MIN_WIDTH = 760;
+const FILE_PREVIEW_CACHE_MAX_ENTRIES = 8;
+const FILE_PREVIEW_CACHE_MAX_CHARACTERS = 12_000_000;
+const FILE_PREVIEW_MONOLITHIC_MAX_BYTES = 2 * 1024 * 1024;
 const DEFAULT_CONTEXT_WINDOW = 258_400;
 const GIT_STATUS_AUTO_REFRESH_INTERVAL_MS = 3000;
 const BACKGROUND_REFRESH_RETRY_MS = 500;
@@ -1409,6 +1414,244 @@ function workspaceCacheKey(workspacePath: string, childPath: string) {
   return `${workspacePath}\u0000${childPath}`;
 }
 
+function readCachedFilePreview(
+  cache: Map<string, WorkspaceFilePreview>,
+  key: string,
+) {
+  const preview = cache.get(key) ?? null;
+  if (!preview) {
+    return null;
+  }
+
+  cache.delete(key);
+  cache.set(key, preview);
+  return preview;
+}
+
+function cacheFilePreview(
+  cache: Map<string, WorkspaceFilePreview>,
+  key: string,
+  preview: WorkspaceFilePreview,
+) {
+  cache.delete(key);
+  const sourceCharacters = previewFileSourceCharacters(preview);
+  if (
+    !workspaceFilePreviewIsComplete(preview) ||
+    sourceCharacters > FILE_PREVIEW_CACHE_MAX_CHARACTERS
+  ) {
+    return;
+  }
+
+  cache.set(key, preview);
+  let cachedCharacters = [...cache.values()].reduce(
+    (total, cached) => total + previewFileSourceCharacters(cached),
+    0,
+  );
+  while (
+    cache.size > FILE_PREVIEW_CACHE_MAX_ENTRIES ||
+    cachedCharacters > FILE_PREVIEW_CACHE_MAX_CHARACTERS
+  ) {
+    const oldestKey = cache.keys().next().value;
+    if (typeof oldestKey !== "string") {
+      break;
+    }
+    const removed = cache.get(oldestKey);
+    cache.delete(oldestKey);
+    cachedCharacters -= removed ? previewFileSourceCharacters(removed) : 0;
+  }
+}
+
+function previewFileSourceCharacters(preview: WorkspaceFilePreview) {
+  return preview.sourceCharacters ?? preview.content.length;
+}
+
+function workspaceFilePreviewIsComplete(preview: WorkspaceFilePreview) {
+  return preview.complete !== false;
+}
+
+function filePreviewLoadCancelledError() {
+  const error = new Error("File preview loading was cancelled.");
+  error.name = "AbortError";
+  return error;
+}
+
+type IncrementalPreviewLineIndex = {
+  lines: string[];
+  remainderSegments: string[];
+  pendingCarriageReturn: boolean;
+  sourceCharacters: number;
+};
+
+function appendPreviewLineChunk(
+  index: IncrementalPreviewLineIndex,
+  chunk: string,
+  complete = false,
+) {
+  index.sourceCharacters += chunk.length;
+  let cursor = 0;
+  const finishLine = () => {
+    index.lines.push(index.remainderSegments.join(""));
+    index.remainderSegments = [];
+  };
+
+  if (index.pendingCarriageReturn) {
+    finishLine();
+    index.pendingCarriageReturn = false;
+    if (chunk.startsWith("\n")) {
+      cursor = 1;
+    }
+  }
+
+  for (let indexInChunk = cursor; indexInChunk < chunk.length; indexInChunk += 1) {
+    const character = chunk.charCodeAt(indexInChunk);
+    if (character !== 10 && character !== 13) {
+      continue;
+    }
+    if (indexInChunk > cursor) {
+      index.remainderSegments.push(chunk.slice(cursor, indexInChunk));
+    }
+    if (character === 13 && indexInChunk + 1 === chunk.length && !complete) {
+      index.pendingCarriageReturn = true;
+      return;
+    }
+
+    finishLine();
+    if (character === 13 && chunk.charCodeAt(indexInChunk + 1) === 10) {
+      indexInChunk += 1;
+    }
+    cursor = indexInChunk + 1;
+  }
+
+  if (cursor < chunk.length) {
+    index.remainderSegments.push(chunk.slice(cursor));
+  }
+}
+
+function finishPreviewLineIndex(index: IncrementalPreviewLineIndex) {
+  appendPreviewLineChunk(index, "", true);
+  index.lines.push(index.remainderSegments.join(""));
+  index.remainderSegments = [];
+  return index.lines;
+}
+
+async function readCompleteWorkspaceFilePreview(
+  workspacePath: string,
+  filePath: string,
+  onInitialChunk: (preview: WorkspaceFilePreview) => void,
+  shouldContinue: () => boolean,
+) {
+  // Retry the whole bounded transfer once if a file changes between chunks.
+  // Native version validation prevents content from two revisions being joined.
+  let lastError: unknown;
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    if (attempt > 0 && !shouldContinue()) {
+      throw filePreviewLoadCancelledError();
+    }
+    try {
+      const initial = await readWorkspaceFilePreview(workspacePath, filePath);
+      onInitialChunk(initial);
+      if (initial.isBinary || workspaceFilePreviewIsComplete(initial)) {
+        return initial;
+      }
+      if (!shouldContinue()) {
+        throw filePreviewLoadCancelledError();
+      }
+
+      const totalBytes = initial.totalBytes;
+      const version = initial.version;
+      let nextOffset = initial.nextOffset;
+      if (
+        !Number.isSafeInteger(totalBytes) ||
+        !Number.isSafeInteger(nextOffset) ||
+        typeof version !== "string" ||
+        !version ||
+        (nextOffset ?? 0) <= 0 ||
+        (totalBytes ?? -1) < (nextOffset ?? 0)
+      ) {
+        throw new Error("File preview returned invalid chunk metadata.");
+      }
+
+      const useIncrementalLineIndex =
+        (totalBytes as number) > FILE_PREVIEW_MONOLITHIC_MAX_BYTES;
+      const lineIndex: IncrementalPreviewLineIndex | null =
+        useIncrementalLineIndex
+          ? {
+              lines: [],
+              remainderSegments: [],
+              pendingCarriageReturn: false,
+              sourceCharacters: 0,
+            }
+          : null;
+      const chunks = lineIndex ? null : [initial.content];
+      if (lineIndex) {
+        appendPreviewLineChunk(lineIndex, initial.content);
+      }
+      while ((nextOffset as number) < (totalBytes as number)) {
+        if (!shouldContinue()) {
+          throw filePreviewLoadCancelledError();
+        }
+        const chunk = await readWorkspaceFilePreviewChunk(
+          workspacePath,
+          filePath,
+          nextOffset as number,
+          version,
+        );
+        if (!shouldContinue()) {
+          throw filePreviewLoadCancelledError();
+        }
+        if (chunk.version !== version) {
+          throw new Error("File changed while its preview was loading.");
+        }
+        if (chunk.isBinary) {
+          return {
+            ...initial,
+            ...chunk,
+            content: "",
+            truncated: false,
+            complete: true,
+          };
+        }
+
+        const chunkNextOffset = chunk.nextOffset;
+        if (
+          !Number.isSafeInteger(chunkNextOffset) ||
+          (chunkNextOffset ?? 0) <= (nextOffset as number) ||
+          (chunkNextOffset ?? 0) > (totalBytes as number)
+        ) {
+          throw new Error("File preview did not advance to the next chunk.");
+        }
+        if (lineIndex) {
+          appendPreviewLineChunk(lineIndex, chunk.content);
+        } else {
+          chunks?.push(chunk.content);
+        }
+        nextOffset = chunkNextOffset;
+      }
+
+      const indexedLines = lineIndex ? finishPreviewLineIndex(lineIndex) : undefined;
+      return {
+        ...initial,
+        content: chunks?.join("") ?? "",
+        truncated: false,
+        isBinary: false,
+        complete: true,
+        nextOffset: totalBytes,
+        lines: indexedLines,
+        sourceCharacters:
+          lineIndex?.sourceCharacters ??
+          chunks?.reduce((total, chunk) => total + chunk.length, 0),
+      };
+    } catch (error) {
+      if (error instanceof Error && error.name === "AbortError") {
+        throw error;
+      }
+      lastError = error;
+    }
+  }
+
+  throw lastError;
+}
+
 function gitStatusSnapshotKey(snapshot: WorkspaceGitOverview | null) {
   if (!snapshot) {
     return "";
@@ -1731,9 +1974,11 @@ function App() {
   });
   const previewStateRef = useRef<WorkspacePreviewState>(previewState);
   const filePreviewCache = useRef(new Map<string, WorkspaceFilePreview>());
+  const filePreviewPartialCache = useRef(new Map<string, WorkspaceFilePreview>());
   const filePreviewRequestCache = useRef(
     new Map<string, Promise<WorkspaceFilePreview>>(),
   );
+  const filePreviewRequestGenerations = useRef(new Map<string, number>());
   const fileDiffCache = useRef(new Map<string, WorkspaceGitDiff>());
   const fileDiffRequestCache = useRef(
     new Map<string, Promise<WorkspaceGitDiff>>(),
@@ -2097,6 +2342,7 @@ function App() {
   const modelsRef = useRef<CodexModel[]>([]);
   const modelLoadErrorRef = useRef<string | null>(null);
   const previewRequestId = useRef(0);
+  const activePreviewCacheKeyRef = useRef<string | null>(null);
   const gitStatusRefreshCache = useRef(new Map<number, Promise<void>>());
   const workspaceFileIndexCache = useRef(new Map<number, WorkspaceTreeEntry[]>());
   const workspaceFileIndexRequestCache = useRef(
@@ -8818,6 +9064,12 @@ function App() {
       const normalized = normalizeWorkspacePath(path);
       return normalized === workspaceRoot || normalized.startsWith(workspacePrefix);
     };
+    const previewCachePrefix = `${workspace.path}\u0000`;
+    if (activePreviewCacheKeyRef.current?.startsWith(previewCachePrefix)) {
+      previewRequestId.current += 1;
+      activePreviewCacheKeyRef.current = null;
+    }
+    invalidateWorkspacePreviewCaches(workspace);
 
     setExpandedWorkspaceIds((current) => {
       const next = new Set(current);
@@ -9020,6 +9272,9 @@ function App() {
         dialog.repositoryPath,
       );
       preflightRef.current = null;
+      invalidateWorkspacePreviewCaches(dialog.workspace, undefined, {
+        reloadOpenPreview: true,
+      });
       await Promise.allSettled([
         refreshBranches(dialog.workspace, dialog.repositoryPath),
         refreshWorkspaceGitStatus(dialog.workspace, {
@@ -9065,6 +9320,9 @@ function App() {
     preflightRef.current = null;
     try {
       await checkoutGitBranch(selectedWorkspace.path, branch, repositoryPath);
+      invalidateWorkspacePreviewCaches(selectedWorkspace, undefined, {
+        reloadOpenPreview: true,
+      });
       await refreshBranches(selectedWorkspace, repositoryPath);
       await refreshWorkspaceGitStatus(selectedWorkspace);
       setStatusMessage(`Working on ${selectedWorkspace.label} at ${branch}.`);
@@ -16227,20 +16485,60 @@ function App() {
     if (options.forceRefresh) {
       invalidateWorkspacePreviewCaches(workspace, file.path);
     }
-    const cachedPreview = filePreviewCache.current.get(cacheKey) ?? null;
+    activePreviewCacheKeyRef.current = cacheKey;
+    let cachedPreview = readCachedFilePreview(filePreviewCache.current, cacheKey);
+    if (cachedPreview?.version) {
+      setPreviewState({
+        status: "loading",
+        mode,
+        file,
+        preview: null,
+        error: null,
+        diffStatus: mode === "diff" ? "loading" : "idle",
+        diff: null,
+        diffError: null,
+      });
+      try {
+        const currentVersion = await readWorkspaceFilePreviewVersion(
+          workspace.path,
+          file.path,
+        );
+        if (
+          previewRequestId.current !== requestId ||
+          activePreviewCacheKeyRef.current !== cacheKey
+        ) {
+          return;
+        }
+        if (currentVersion !== cachedPreview.version) {
+          invalidateWorkspacePreviewCaches(workspace, file.path);
+          cachedPreview = null;
+        }
+      } catch {
+        if (
+          previewRequestId.current !== requestId ||
+          activePreviewCacheKeyRef.current !== cacheKey
+        ) {
+          return;
+        }
+        invalidateWorkspacePreviewCaches(workspace, file.path);
+        cachedPreview = null;
+      }
+    }
+    const partialPreview = filePreviewPartialCache.current.get(cacheKey) ?? null;
+    const visiblePreview = cachedPreview ?? partialPreview;
     const cachedDiff = fileDiffCache.current.get(cacheKey) ?? null;
     setPreviewState({
       status:
         mode === "preview"
-          ? cachedPreview
+          ? visiblePreview
             ? "loaded"
             : "loading"
-          : cachedPreview
+          : visiblePreview
             ? "loaded"
             : "idle",
       mode,
       file,
-      preview: cachedPreview,
+      preview: visiblePreview,
       error: null,
       diffStatus:
         mode === "diff"
@@ -16364,7 +16662,35 @@ function App() {
     filePath?: string,
     options: { reloadOpenPreview?: boolean } = {},
   ) {
+    const prefix = `${workspace.path}\u0000`;
+    const targetKey = filePath
+      ? workspaceCacheKey(workspace.path, filePath)
+      : null;
+    const invalidatedPreviewKeys = new Set<string>();
+    for (const cache of [
+      filePreviewCache.current,
+      filePreviewPartialCache.current,
+      filePreviewRequestCache.current,
+      filePreviewRequestGenerations.current,
+    ]) {
+      for (const key of cache.keys()) {
+        if (key === targetKey || (!targetKey && key.startsWith(prefix))) {
+          invalidatedPreviewKeys.add(key);
+        }
+      }
+    }
+    if (targetKey) {
+      invalidatedPreviewKeys.add(targetKey);
+    }
+    for (const key of invalidatedPreviewKeys) {
+      filePreviewRequestGenerations.current.set(
+        key,
+        (filePreviewRequestGenerations.current.get(key) ?? 0) + 1,
+      );
+    }
+
     deletePreviewCacheEntries(filePreviewCache.current, workspace, filePath);
+    deletePreviewCacheEntries(filePreviewPartialCache.current, workspace, filePath);
     deletePreviewCacheEntries(filePreviewRequestCache.current, workspace, filePath);
     deletePreviewCacheEntries(fileDiffCache.current, workspace, filePath);
     deletePreviewCacheEntries(fileDiffRequestCache.current, workspace, filePath);
@@ -16417,38 +16743,91 @@ function App() {
     requestId = previewRequestId.current,
   ) {
     const cacheKey = workspaceCacheKey(workspace.path, file.path);
-    const cachedPreview = filePreviewCache.current.get(cacheKey);
+    const canUpdateVisiblePreview = () =>
+      previewRequestId.current === requestId &&
+      activePreviewCacheKeyRef.current === cacheKey;
+    const cachedPreview = readCachedFilePreview(filePreviewCache.current, cacheKey);
     if (cachedPreview) {
-      setPreviewState((current) => ({
-        ...current,
-        status: "loaded",
-        file,
-        preview: cachedPreview,
-        error: null,
-      }));
+      if (canUpdateVisiblePreview()) {
+        setPreviewState((current) => ({
+          ...current,
+          status: "loaded",
+          file,
+          preview: cachedPreview,
+          error: null,
+        }));
+      }
       return;
     }
 
-    setPreviewState((current) => ({
-      ...current,
-      status: "loading",
-      error: null,
-    }));
+    const partialPreview = filePreviewPartialCache.current.get(cacheKey) ?? null;
+    if (canUpdateVisiblePreview()) {
+      setPreviewState((current) => ({
+        ...current,
+        status: partialPreview ? "loaded" : "loading",
+        preview: partialPreview ?? current.preview,
+        error: null,
+      }));
+    }
 
+    const requestGeneration =
+      filePreviewRequestGenerations.current.get(cacheKey) ?? 0;
     try {
       const existingRequest = filePreviewRequestCache.current.get(cacheKey);
       const request =
         existingRequest ??
-        readWorkspaceFilePreview(workspace.path, file.path).finally(() => {
-          filePreviewRequestCache.current.delete(cacheKey);
-        });
+        readCompleteWorkspaceFilePreview(
+          workspace.path,
+          file.path,
+          (initialPreview) => {
+            if (
+              (filePreviewRequestGenerations.current.get(cacheKey) ?? 0) !==
+              requestGeneration
+            ) {
+              return;
+            }
+
+            if (workspaceFilePreviewIsComplete(initialPreview)) {
+              filePreviewPartialCache.current.delete(cacheKey);
+            } else {
+              filePreviewPartialCache.current.set(cacheKey, initialPreview);
+            }
+            if (activePreviewCacheKeyRef.current === cacheKey) {
+              setPreviewState((current) => ({
+                ...current,
+                status: "loaded",
+                file,
+                preview: initialPreview,
+                error: null,
+              }));
+            }
+          },
+          () =>
+            activePreviewCacheKeyRef.current === cacheKey &&
+            (filePreviewRequestGenerations.current.get(cacheKey) ?? 0) ===
+              requestGeneration,
+        );
       if (!existingRequest) {
         filePreviewRequestCache.current.set(cacheKey, request);
+        void request
+          .finally(() => {
+            if (filePreviewRequestCache.current.get(cacheKey) === request) {
+              filePreviewRequestCache.current.delete(cacheKey);
+            }
+          })
+          .catch(() => undefined);
       }
 
       const preview = await request;
-      filePreviewCache.current.set(cacheKey, preview);
-      if (previewRequestId.current !== requestId) {
+      if (
+        (filePreviewRequestGenerations.current.get(cacheKey) ?? 0) !==
+        requestGeneration
+      ) {
+        return;
+      }
+      filePreviewPartialCache.current.delete(cacheKey);
+      cacheFilePreview(filePreviewCache.current, cacheKey, preview);
+      if (!canUpdateVisiblePreview()) {
         return;
       }
       setPreviewState((current) => ({
@@ -16459,7 +16838,15 @@ function App() {
         error: null,
       }));
     } catch (error) {
-      if (previewRequestId.current !== requestId) {
+      if (error instanceof Error && error.name === "AbortError") {
+        filePreviewPartialCache.current.delete(cacheKey);
+        return;
+      }
+      if (
+        !canUpdateVisiblePreview() ||
+        (filePreviewRequestGenerations.current.get(cacheKey) ?? 0) !==
+          requestGeneration
+      ) {
         return;
       }
       setPreviewState((current) => ({
@@ -16546,6 +16933,7 @@ function App() {
 
   const closeWorkspaceFilePreview = useCallback(() => {
     previewRequestId.current += 1;
+    activePreviewCacheKeyRef.current = null;
     setPreviewState({
       status: "idle",
       mode: "preview",
@@ -16881,7 +17269,7 @@ function App() {
 
     setPreviewState((current) => ({ ...current, mode }));
     const cacheKey = workspaceCacheKey(workspace.path, file.path);
-    const cachedPreview = filePreviewCache.current.get(cacheKey);
+    const cachedPreview = readCachedFilePreview(filePreviewCache.current, cacheKey);
     const cachedDiff = fileDiffCache.current.get(cacheKey);
     if (mode === "preview" && cachedPreview) {
       setPreviewState((current) => ({

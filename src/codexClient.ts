@@ -391,6 +391,30 @@ export function readWorkspaceFilePreview(workspacePath: string, filePath: string
   });
 }
 
+export function readWorkspaceFilePreviewChunk(
+  workspacePath: string,
+  filePath: string,
+  offset: number,
+  version: string,
+) {
+  return invoke<WorkspaceFilePreview>("read_workspace_file_preview_chunk", {
+    workspacePath,
+    filePath,
+    offset,
+    version,
+  });
+}
+
+export function readWorkspaceFilePreviewVersion(
+  workspacePath: string,
+  filePath: string,
+) {
+  return invoke<string>("read_workspace_file_preview_version", {
+    workspacePath,
+    filePath,
+  });
+}
+
 export function prepareImageAttachment(path: string) {
   return invoke<ImageAttachmentPreview | null>("prepare_image_attachment", {
     path,
