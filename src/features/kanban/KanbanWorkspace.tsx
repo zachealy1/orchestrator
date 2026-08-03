@@ -6,13 +6,23 @@ import {
   useState,
   type ReactNode,
 } from "react";
+import {
+  AlertCircle,
+  CheckCircle2,
+  FilterX,
+  Loader2,
+  Plus,
+} from "lucide-react";
 import type { CodexAccountProfile } from "../accounts/types";
 import type { CodexAccessMode, CodexModel } from "../codex/types";
+import { formatReasoningEffort } from "../composer/promptHelpers";
 import type { HistoryRunSummary } from "../conversations/types";
 import type {
   Workspace,
   WorkspaceGitRepositoryStatus,
 } from "../workspaces/types";
+import type { ResolvedTheme } from "../../shared/types";
+import { trapDialogFocus } from "../../shared/dialogFocus";
 import {
   approveKanbanCard,
   archiveKanbanCard,
@@ -74,6 +84,11 @@ import {
   type KanbanReviewData,
   type KanbanTransitionKind,
 } from "./components";
+import {
+  KanbanActionIcon,
+  STATE_LABELS,
+} from "./components/KanbanCardTile";
+import { selectUnifiedDiffForFile } from "./unifiedDiff";
 import "./kanban.css";
 
 export type KanbanLaunchKind = KanbanAttemptRecord["kind"];
@@ -87,6 +102,7 @@ type Props = {
   defaultAccessMode: CodexAccessMode;
   defaultModel: string | null;
   defaultReasoningLevel: string | null;
+  resolvedTheme: ResolvedTheme;
   refreshToken: number;
   listChatTranscript: (chatId: number) => Promise<HistoryRunSummary[]>;
   conversation?: ReactNode;
@@ -124,6 +140,14 @@ type GitDialogState = {
   action: "commit" | "commit-and-push" | "merge";
   cardId: string;
   message: string;
+};
+
+type GitDialogProps = {
+  dialog: GitDialogState;
+  busy: boolean;
+  onMessageChange: (message: string) => void;
+  onCancel: () => void;
+  onConfirm: () => void;
 };
 
 type ReviewState = KanbanReviewData & {
@@ -182,6 +206,152 @@ const COLUMN_COPY: Record<
   in_review: { title: "In review", description: "Inspect results and Git changes" },
   done: { title: "Done", description: "Explicitly approved results" },
 };
+
+const GIT_DIALOG_COPY: Record<
+  GitDialogState["action"],
+  { title: string; confirm: string; busy: string }
+> = {
+  commit: {
+    title: "Commit changes?",
+    confirm: "Commit changes",
+    busy: "Committing…",
+  },
+  "commit-and-push": {
+    title: "Commit and push changes?",
+    confirm: "Commit and push",
+    busy: "Committing and pushing…",
+  },
+  merge: {
+    title: "Merge card branches?",
+    confirm: "Merge branches",
+    busy: "Merging…",
+  },
+};
+
+function GitDialogActionIcon({
+  action,
+  busy,
+}: {
+  action: GitDialogState["action"];
+  busy: boolean;
+}) {
+  if (busy) return <Loader2 className="spin" size={15} aria-hidden="true" />;
+  return <KanbanActionIcon action={action} size={15} />;
+}
+
+function KanbanGitDialog({
+  dialog,
+  busy,
+  onMessageChange,
+  onCancel,
+  onConfirm,
+}: GitDialogProps) {
+  const dialogRef = useRef<HTMLFormElement>(null);
+  const inputRef = useRef<HTMLInputElement>(null);
+  const confirmRef = useRef<HTMLButtonElement>(null);
+  const returnFocusRef = useRef<HTMLElement | null>(
+    typeof document !== "undefined" && document.activeElement instanceof HTMLElement
+      ? document.activeElement
+      : null,
+  );
+  const copy = GIT_DIALOG_COPY[dialog.action];
+  const messageRequired = dialog.action !== "merge";
+
+  useEffect(() => {
+    const frame = window.requestAnimationFrame(() => {
+      const target = messageRequired ? inputRef.current : confirmRef.current;
+      target?.focus({ preventScroll: true });
+      if (messageRequired) inputRef.current?.select();
+    });
+    return () => {
+      window.cancelAnimationFrame(frame);
+      const returnTarget = returnFocusRef.current;
+      window.requestAnimationFrame(() => {
+        if (returnTarget?.isConnected) {
+          returnTarget.focus({ preventScroll: true });
+        }
+      });
+    };
+  }, [dialog.action, dialog.cardId, messageRequired]);
+
+  useEffect(() => {
+    if (busy) return;
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") onCancel();
+    };
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [busy, onCancel]);
+
+  useEffect(() => {
+    if (busy) dialogRef.current?.focus({ preventScroll: true });
+  }, [busy]);
+
+  const confirmDisabled = busy || (messageRequired && !dialog.message.trim());
+
+  return (
+    <div
+      className="modal-backdrop"
+      role="presentation"
+      onMouseDown={(event) => {
+        if (event.target === event.currentTarget && !busy) onCancel();
+      }}
+    >
+      <form
+        ref={dialogRef}
+        className="confirmation-dialog"
+        role="dialog"
+        aria-modal="true"
+        aria-busy={busy}
+        aria-labelledby="kanban-git-dialog-title"
+        aria-describedby="kanban-git-dialog-description"
+        tabIndex={-1}
+        onKeyDown={trapDialogFocus}
+        onSubmit={(event) => {
+          event.preventDefault();
+          if (!confirmDisabled) onConfirm();
+        }}
+      >
+        <div>
+          <p className="eyebrow">Git</p>
+          <h2 id="kanban-git-dialog-title">{copy.title}</h2>
+          <p id="kanban-git-dialog-description">
+            Each repository is handled independently. Partial results are
+            reported and never mark the card Done.
+          </p>
+        </div>
+        {messageRequired ? (
+          <label className="field kanban-field">
+            <span>Commit message</span>
+            <input
+              ref={inputRef}
+              type="text"
+              value={dialog.message}
+              autoComplete="off"
+              spellCheck={false}
+              disabled={busy}
+              onChange={(event) => onMessageChange(event.currentTarget.value)}
+            />
+          </label>
+        ) : null}
+        <div className="confirmation-actions">
+          <button
+            type="button"
+            className="secondary"
+            disabled={busy}
+            onClick={onCancel}
+          >
+            Cancel
+          </button>
+          <button ref={confirmRef} type="submit" disabled={confirmDisabled}>
+            <GitDialogActionIcon action={dialog.action} busy={busy} />
+            {busy ? copy.busy : copy.confirm}
+          </button>
+        </div>
+      </form>
+    </div>
+  );
+}
 
 function parsePreferences(value: string): StoredPreferences {
   try {
@@ -314,6 +484,28 @@ function errorMessage(error: unknown) {
   return error instanceof Error ? error.message : String(error);
 }
 
+function bindingForChangedFile(
+  bindings: KanbanGitBinding[],
+  file: KanbanChangedFile,
+) {
+  if (file.repositoryId) {
+    return bindings.find(
+      (binding) => binding.sourceRepositoryPath === file.repositoryId,
+    );
+  }
+  return bindings.find(
+    (binding) => binding.relativePath === file.repositoryLabel,
+  );
+}
+
+async function readChangedFileDiff(
+  binding: KanbanGitBinding,
+  file: KanbanChangedFile,
+) {
+  const result = await readKanbanGitDiff(binding);
+  return selectUnifiedDiffForFile(result.content, file.path);
+}
+
 function inheritedConversationContext(
   runs: HistoryRunSummary[],
 ) {
@@ -349,6 +541,7 @@ export function KanbanWorkspace({
   defaultAccessMode,
   defaultModel,
   defaultReasoningLevel,
+  resolvedTheme,
   refreshToken,
   listChatTranscript,
   conversation,
@@ -556,6 +749,18 @@ export function KanbanWorkspace({
       ),
     [models],
   );
+  const reasoningLabels = useMemo(
+    () =>
+      new Map(
+        models.flatMap((model) =>
+          model.supportedReasoningEfforts.map((option) => [
+            option.reasoningEffort,
+            formatReasoningEffort(option.reasoningEffort),
+          ] as const),
+        ),
+      ),
+    [models],
+  );
 
   const toViewCard = useCallback(
     (card: DomainKanbanCard): ViewKanbanCard => {
@@ -586,7 +791,11 @@ export function KanbanWorkspace({
           card.config.model === null
             ? "Account default"
             : modelLabels.get(card.config.model) ?? card.config.model,
-        reasoningLevel: card.config.reasoningLevel ?? "Model default",
+        reasoningLevel: card.config.reasoningLevel ?? "",
+        reasoningLevelLabel: card.config.reasoningLevel
+          ? reasoningLabels.get(card.config.reasoningLevel) ??
+            formatReasoningEffort(card.config.reasoningLevel)
+          : "Model default",
         includeDirtyChanges: card.config.repositories.some(
           (repository) => repository.includeDirtyChanges,
         ),
@@ -619,7 +828,7 @@ export function KanbanWorkspace({
         lastActivityAt: card.updatedAt,
       };
     },
-    [accountLabels, bindingsByCard, modelLabels],
+    [accountLabels, bindingsByCard, modelLabels, reasoningLabels],
   );
 
   const activeFilter = useMemo(
@@ -641,8 +850,16 @@ export function KanbanWorkspace({
         ),
         accounts: Object.fromEntries(accounts.map((account) => [account.id, account.label])),
         models: Object.fromEntries(modelLabels),
+        reasoningLevels: Object.fromEntries(reasoningLabels),
       }),
-    [accounts, modelLabels, preferences.groupBy, repositories, visibleDomainCards],
+    [
+      accounts,
+      modelLabels,
+      preferences.groupBy,
+      reasoningLabels,
+      repositories,
+      visibleDomainCards,
+    ],
   );
   const archivedCards = useMemo(
     () =>
@@ -729,7 +946,10 @@ export function KanbanWorkspace({
         options: options(
           activeCards.map((card) => [
             card.config.reasoningLevel ?? "",
-            card.config.reasoningLevel ?? "Model default",
+            card.config.reasoningLevel
+              ? reasoningLabels.get(card.config.reasoningLevel) ??
+                formatReasoningEffort(card.config.reasoningLevel)
+              : "Model default",
           ]),
         ),
       },
@@ -739,12 +959,12 @@ export function KanbanWorkspace({
         options: options(
           activeCards.map((card) => {
             const view = viewExecutionState(card);
-            return [view, view.replace(/-/g, " ")];
+            return [view, STATE_LABELS[view]];
           }),
         ),
       },
     ];
-  }, [accountLabels, domainCards, modelLabels, repositories]);
+  }, [accountLabels, domainCards, modelLabels, reasoningLabels, repositories]);
 
   function schedulePreferenceSave(next: StoredPreferences) {
     preferenceSavePending.current = true;
@@ -941,12 +1161,13 @@ export function KanbanWorkspace({
         status: file.kind,
       })),
     );
-    let diff: string | null = null;
-    if (bindings[0]) {
-      diff = await readKanbanGitDiff(bindings[0])
-        .then((result) => result.content || null)
-        .catch(() => null);
-    }
+    const selectedFile = files[0] ?? null;
+    const selectedBinding = selectedFile
+      ? bindingForChangedFile(bindings, selectedFile)
+      : undefined;
+    const diff = selectedBinding
+      ? await readChangedFileDiff(selectedBinding, selectedFile).catch(() => null)
+      : null;
     const transcript = await transcriptPromise;
     const finalSummary = [...transcript]
       .reverse()
@@ -973,8 +1194,8 @@ export function KanbanWorkspace({
           ? "Codex completed this card. Inspect the conversation and repository changes before approving."
           : "Review the card conversation and current repository state."),
       files,
-      selectedFilePath: files[0]
-        ? `${files[0].repositoryId ?? files[0].repositoryLabel ?? ""}:${files[0].path}`
+      selectedFilePath: selectedFile
+        ? `${selectedFile.repositoryId ?? selectedFile.repositoryLabel ?? ""}:${selectedFile.path}`
         : null,
       diff,
       gitBusy: false,
@@ -1010,27 +1231,15 @@ export function KanbanWorkspace({
     const cardId = selectedCardId;
     if (!cardId) return;
     const request = ++reviewFileRequestSequence.current;
-    const card = domainCardsById.get(cardId);
-    const binding = (bindingsByCard[cardId] ?? []).find((candidate) => {
-      if (file.repositoryId) {
-        return candidate.sourceRepositoryPath === file.repositoryId;
-      }
-      const label =
-        card?.config.repositories.find(
-          (repository) =>
-            repository.repositoryPath === candidate.sourceRepositoryPath,
-        )?.label ?? candidate.relativePath;
-      return label === file.repositoryLabel;
-    });
+    const binding = bindingForChangedFile(bindingsByCard[cardId] ?? [], file);
     setReview((current) => ({
       ...current,
       selectedFilePath: `${file.repositoryId ?? file.repositoryLabel ?? ""}:${file.path}`,
+      diff: null,
       gitBusy: true,
     }));
     const diff = binding
-      ? await readKanbanGitDiff(binding)
-          .then((result) => result.content || null)
-          .catch(() => null)
+      ? await readChangedFileDiff(binding, file).catch(() => null)
       : null;
     if (
       request !== reviewFileRequestSequence.current ||
@@ -1396,11 +1605,22 @@ export function KanbanWorkspace({
     repositoryIds: repositories.map((repository) => repository.repository.rootPath),
     includeDirtyChanges: false,
   };
+  const hasBoardConstraints =
+    Boolean(preferences.search.trim()) ||
+    Object.values(preferences.filters).some((values) => values.length > 0);
+
+  function clearBoardConstraints() {
+    schedulePreferenceSave({
+      ...preferencesRef.current,
+      search: "",
+      filters: {},
+    });
+  }
 
   if (loading && !snapshot) {
     return (
-      <section className="kanban-loading" aria-live="polite">
-        <span className="kanban-loading-spinner" aria-hidden="true" />
+      <section className="kanban-loading" role="status" aria-live="polite">
+        <Loader2 className="spin" size={18} aria-hidden="true" />
         <p>Loading Kanban board…</p>
       </section>
     );
@@ -1408,29 +1628,30 @@ export function KanbanWorkspace({
 
   if (selectedViewCard) {
     return (
-      <div className="kanban-workspace-view">
-        {error ? <div className="kanban-workspace-alert error" role="alert">{error}</div> : null}
+      <div className="kanban-workspace-view" aria-busy={busy}>
+        {error ? (
+          <div className="kanban-workspace-alert error" role="alert">
+            <AlertCircle size={15} aria-hidden="true" />
+            <span>{error}</span>
+          </div>
+        ) : null}
+        {notice ? (
+          <div className="kanban-workspace-alert" role="status">
+            <CheckCircle2 size={15} aria-hidden="true" />
+            <span>{notice}</span>
+          </div>
+        ) : null}
         <KanbanDetailShell
           card={selectedViewCard}
-          conversation={
-            conversation ?? (
-              <div className="kanban-conversation-bridge">
-                <p>This card’s conversation is stored separately from regular workspace chat history.</p>
-                <button
-                  type="button"
-                  className="kanban-primary-button"
-                  onClick={() => {
-                    const card = cardsById.get(selectedViewCard.id);
-                    if (card) void (onShowConversation ?? onOpenConversation)(card);
-                  }}
-                >
-                  Open card conversation
-                </button>
-              </div>
-            )
-          }
+          conversation={conversation}
           review={review}
+          resolvedTheme={resolvedTheme}
+          disabled={busy}
           initialTab={selectedDomainCard?.stage === "in_review" ? "review" : "conversation"}
+          onShowConversation={() => {
+            const card = cardsById.get(selectedViewCard.id);
+            if (card) void (onShowConversation ?? onOpenConversation)(card);
+          }}
           onBack={() => {
             selectedCardIdRef.current = null;
             reviewRequestSequence.current += 1;
@@ -1441,43 +1662,17 @@ export function KanbanWorkspace({
           onSelectReviewFile={(file) => void selectReviewFile(file)}
         />
         {gitDialog ? (
-          <div className="kanban-modal-backdrop" role="presentation">
-            <section className="kanban-git-dialog" role="dialog" aria-modal="true" aria-labelledby="kanban-git-dialog-title">
-              <header>
-                <div>
-                  <span className="kanban-eyebrow">Per-repository Git operation</span>
-                  <h2 id="kanban-git-dialog-title">
-                    {gitDialog.action === "merge"
-                      ? "Merge card branches?"
-                      : gitDialog.action === "commit-and-push"
-                        ? "Commit and push changes?"
-                        : "Commit changes?"}
-                  </h2>
-                </div>
-              </header>
-              <p>Each repository is handled independently. Partial results are reported and never mark the card Done.</p>
-              {gitDialog.action !== "merge" ? (
-                <label className="kanban-field">
-                  <span>Commit message</span>
-                  <input
-                    value={gitDialog.message}
-                    onChange={(event) => setGitDialog({ ...gitDialog, message: event.target.value })}
-                  />
-                </label>
-              ) : null}
-              <footer>
-                <button type="button" className="secondary" disabled={busy} onClick={() => setGitDialog(null)}>Cancel</button>
-                <button
-                  type="button"
-                  className="kanban-primary-button"
-                  disabled={busy || (gitDialog.action !== "merge" && !gitDialog.message.trim())}
-                  onClick={() => void performGitAction()}
-                >
-                  {busy ? "Working…" : "Continue"}
-                </button>
-              </footer>
-            </section>
-          </div>
+          <KanbanGitDialog
+            dialog={gitDialog}
+            busy={busy}
+            onMessageChange={(message) =>
+              setGitDialog((current) =>
+                current ? { ...current, message } : current,
+              )
+            }
+            onCancel={() => setGitDialog(null)}
+            onConfirm={() => void performGitAction()}
+          />
         ) : null}
         {transition && transitionViewCard ? (
           <KanbanTransitionDialog
@@ -1513,9 +1708,19 @@ export function KanbanWorkspace({
   }
 
   return (
-    <div className="kanban-workspace-view">
-      {error ? <div className="kanban-workspace-alert error" role="alert">{error}</div> : null}
-      {notice ? <div className="kanban-workspace-alert" role="status">{notice}</div> : null}
+    <div className="kanban-workspace-view" aria-busy={busy}>
+      {error ? (
+        <div className="kanban-workspace-alert error" role="alert">
+          <AlertCircle size={15} aria-hidden="true" />
+          <span>{error}</span>
+        </div>
+      ) : null}
+      {notice ? (
+        <div className="kanban-workspace-alert" role="status">
+          <CheckCircle2 size={15} aria-hidden="true" />
+          <span>{notice}</span>
+        </div>
+      ) : null}
       <KanbanToolbar
         search={preferences.search}
         filters={preferences.filters}
@@ -1524,6 +1729,7 @@ export function KanbanWorkspace({
         visibleCardCount={visibleDomainCards.length}
         totalCardCount={domainCards.filter((card) => card.archivedAt === null && card.deletedAt === null).length}
         archivedOpen={archivedOpen}
+        disabled={busy}
         onSearchChange={(search) => schedulePreferenceSave({ ...preferencesRef.current, search })}
         onFiltersChange={(filters) => schedulePreferenceSave({ ...preferencesRef.current, filters })}
         onGroupByChange={(groupBy) => schedulePreferenceSave({ ...preferencesRef.current, groupBy })}
@@ -1533,6 +1739,7 @@ export function KanbanWorkspace({
       {archivedOpen ? (
         <KanbanArchivedView
           cards={archivedCards}
+          disabled={busy}
           onClose={() => setArchivedOpen(false)}
           onOpenCard={openCard}
           onRestoreCard={(card) => {
@@ -1570,9 +1777,27 @@ export function KanbanWorkspace({
         </div>
       ) : (
         <section className="kanban-empty-board">
-          <h2>No matching cards</h2>
-          <p>Create a card or clear the current filters.</p>
-          <button type="button" className="kanban-primary-button" onClick={() => setCardDialog({ mode: "create", cardId: null })}>Create card</button>
+          <h2>{hasBoardConstraints ? "No matching cards" : "No cards yet"}</h2>
+          <p>
+            {hasBoardConstraints
+              ? "Try changing or clearing the current filters."
+              : "Create a card to start planning work for this workspace."}
+          </p>
+          <button
+            type="button"
+            disabled={busy}
+            onClick={() => {
+              if (hasBoardConstraints) clearBoardConstraints();
+              else setCardDialog({ mode: "create", cardId: null });
+            }}
+          >
+            {hasBoardConstraints ? (
+              <FilterX size={15} aria-hidden="true" />
+            ) : (
+              <Plus size={15} aria-hidden="true" />
+            )}
+            {hasBoardConstraints ? "Clear filters" : "Create card"}
+          </button>
         </section>
       )}
 
@@ -1588,11 +1813,25 @@ export function KanbanWorkspace({
         }))}
         accountOptions={accounts.map((account) => ({ value: String(account.id), label: account.label, disabled: account.status !== "signed_in" }))}
         modelOptions={models.filter((model) => !model.hidden).map((model) => ({ value: model.model, label: model.displayName }))}
+        modelReasoningOptions={Object.fromEntries(
+          models
+            .filter((model) => !model.hidden)
+            .map((model) => [
+              model.model,
+              model.supportedReasoningEfforts.map((effort) => ({
+                value: effort.reasoningEffort,
+                label: formatReasoningEffort(effort.reasoningEffort),
+              })),
+            ]),
+        )}
         reasoningOptions={[
           ...new Map(
             models.flatMap((model) => model.supportedReasoningEfforts.map((effort) => [effort.reasoningEffort, effort.reasoningEffort] as const)),
           ).entries(),
-        ].map(([value, label]) => ({ value, label }))}
+        ].map(([value]) => ({
+          value,
+          label: formatReasoningEffort(value),
+        }))}
         executionSettingsLocked={
           cardDialog?.mode === "edit" &&
           cardDialog.cardId !== null &&

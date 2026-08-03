@@ -488,35 +488,7 @@ button.history-run-item.disabled {
 }
 
 .file-preview-mode-toggle {
-  position: relative;
-  display: inline-flex;
-  height: 32px;
-  flex: 0 0 auto;
-  align-items: center;
-  isolation: isolate;
-  overflow: hidden;
-  border: 1px solid var(--color-divider);
-  border-radius: 7px;
-  background: var(--color-component-background);
-  padding: 2px;
-}
-
-.file-preview-mode-toggle::before {
-  position: absolute;
-  z-index: 0;
-  top: 2px;
-  bottom: 2px;
-  left: 2px;
-  width: calc((100% - 4px) / 2);
-  border-radius: 5px;
-  background: var(--color-surface-soft);
-  box-shadow: inset 0 0 0 1px rgb(var(--surface-muted-rgb) / 0.35);
-  content: "";
-  transform: translateX(0);
-  transition:
-    transform 180ms cubic-bezier(0.2, 0.8, 0.2, 1),
-    background 160ms ease,
-    box-shadow 160ms ease;
+  color: var(--text);
 }
 
 .file-preview-mode-toggle.mode-diff::before {
@@ -524,40 +496,8 @@ button.history-run-item.disabled {
 }
 
 .file-preview-mode-toggle button {
-  position: relative;
-  z-index: 1;
   width: 58px;
-  height: 26px;
-  min-height: 0;
-  border: 0;
-  border-radius: 5px;
-  background: transparent;
-  color: var(--text);
   padding: 0 9px;
-  font-size: 0.76rem;
-  font-weight: 650;
-}
-
-.file-preview-mode-toggle button:hover:not(:disabled),
-.file-preview-mode-toggle button:focus-visible:not(:disabled) {
-  background: transparent;
-  color: var(--text);
-}
-
-.file-preview-mode-toggle button.active {
-  background: transparent;
-  color: var(--text);
-}
-
-.file-preview-mode-toggle button.active:hover:not(:disabled),
-.file-preview-mode-toggle button.active:focus-visible:not(:disabled) {
-  background: transparent;
-  color: var(--text);
-}
-
-.file-preview-mode-toggle button:disabled {
-  cursor: not-allowed;
-  opacity: 0.45;
 }
 
 .file-preview-close {

@@ -1,4 +1,4 @@
-import { render, screen } from "@testing-library/react";
+import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 import { KanbanCardDialog } from "./KanbanCardDialog";
@@ -51,6 +51,17 @@ function dialogProps(onSubmit = vi.fn()) {
   };
 }
 
+async function selectComposerOption(
+  user: ReturnType<typeof userEvent.setup>,
+  label: string,
+  option: string,
+) {
+  const trigger = screen.getByRole("combobox", { name: label });
+  await user.click(trigger);
+  await user.click(screen.getByRole("option", { name: option }));
+  expect(trigger).toHaveAttribute("aria-expanded", "false");
+}
+
 describe("KanbanCardDialog", () => {
   it("validates required fields and selected repository scope before submitting", async () => {
     const user = userEvent.setup();
@@ -58,29 +69,51 @@ describe("KanbanCardDialog", () => {
     render(<KanbanCardDialog {...dialogProps(onSubmit)} />);
 
     await user.click(screen.getByRole("button", { name: "Create card" }));
-    expect(screen.getByRole("alert")).toHaveTextContent("Enter a card title.");
+    const titleInput = screen.getByLabelText("Title");
+    const titleError = screen.getByRole("alert");
+    expect(titleError).toHaveTextContent("Enter a card title.");
+    expect(titleInput).toHaveFocus();
+    expect(titleInput).toHaveAttribute("aria-invalid", "true");
+    expect(titleInput).toHaveAttribute("aria-describedby", titleError.id);
 
-    await user.type(screen.getByLabelText("Title"), "  Build board  ");
+    await user.type(titleInput, "  Build board  ");
     await user.click(screen.getByRole("button", { name: "Create card" }));
-    expect(screen.getByRole("alert")).toHaveTextContent(
+    const descriptionInput = screen.getByLabelText("Description");
+    const descriptionError = screen.getByRole("alert");
+    expect(descriptionError).toHaveTextContent(
       "Describe the work for the agent.",
     );
+    expect(descriptionInput).toHaveFocus();
+    expect(descriptionInput).toHaveAttribute("aria-invalid", "true");
+    expect(descriptionInput).toHaveAttribute(
+      "aria-describedby",
+      descriptionError.id,
+    );
 
-    await user.type(screen.getByLabelText("Description"), "  Implement and verify it.  ");
+    await user.type(descriptionInput, "  Implement and verify it.  ");
     expect(
       screen.getByRole("checkbox", { name: /Include current uncommitted changes/ }),
     ).not.toBeChecked();
     await user.click(screen.getByRole("radio", { name: "Selected repositories" }));
     await user.click(screen.getByRole("button", { name: "Create card" }));
-    expect(screen.getByRole("alert")).toHaveTextContent(
+    const repositoryError = screen.getByRole("alert");
+    const repositoryGroup = screen.getByRole("group", { name: "Repositories" });
+    const repositoryOption = screen.getByRole("checkbox", { name: /orchestrator/ });
+    expect(repositoryError).toHaveTextContent(
       "Choose at least one repository",
     );
+    expect(repositoryGroup).toHaveAttribute("aria-invalid", "true");
+    expect(repositoryGroup).toHaveAttribute(
+      "aria-describedby",
+      repositoryError.id,
+    );
+    expect(repositoryOption).toHaveFocus();
 
-    await user.click(screen.getByRole("checkbox", { name: /orchestrator/ }));
-    await user.selectOptions(screen.getByLabelText("Account"), "account-1");
-    await user.selectOptions(screen.getByLabelText("Access mode"), "full-access");
-    await user.selectOptions(screen.getByLabelText("Model"), "gpt-5");
-    await user.selectOptions(screen.getByLabelText("Reasoning level"), "high");
+    await user.click(repositoryOption);
+    await selectComposerOption(user, "Account", "Work");
+    await selectComposerOption(user, "Access mode", "Full access");
+    await selectComposerOption(user, "Model", "GPT-5");
+    await selectComposerOption(user, "Reasoning level", "High");
     await user.click(screen.getByRole("button", { name: "Create card" }));
 
     expect(onSubmit).toHaveBeenCalledWith({
@@ -95,6 +128,80 @@ describe("KanbanCardDialog", () => {
       includeDirtyChanges: false,
       includeConversationHistory: false,
     });
+  });
+
+  it("contains keyboard focus and resets model-dependent execution choices", async () => {
+    const user = userEvent.setup();
+    const onSubmit = vi.fn();
+    const onCancel = vi.fn();
+    render(
+      <KanbanCardDialog
+        {...dialogProps(onSubmit)}
+        onCancel={onCancel}
+        defaults={{
+          title: "Plan a release",
+          description: "Prepare and verify the release.",
+          accountId: "account-1",
+          model: "gpt-5",
+          reasoningLevel: "high",
+        }}
+        accountOptions={[
+          { value: "account-1", label: "Work" },
+          { value: "account-2", label: "Personal" },
+        ]}
+        modelOptions={[
+          { value: "gpt-5", label: "GPT-5" },
+          { value: "gpt-6", label: "GPT-6" },
+        ]}
+        modelReasoningOptions={{
+          "gpt-5": [{ value: "high", label: "High" }],
+          "gpt-6": [],
+        }}
+      />,
+    );
+
+    await waitFor(() => expect(screen.getByLabelText("Title")).toHaveFocus());
+    const closeButton = screen.getByRole("button", { name: "Close card dialog" });
+    const submitButton = screen.getByRole("button", { name: "Create card" });
+    closeButton.focus();
+    await user.tab({ shift: true });
+    expect(submitButton).toHaveFocus();
+    await user.tab();
+    expect(closeButton).toHaveFocus();
+
+    await user.click(screen.getByRole("combobox", { name: "Model" }));
+    await user.keyboard("{Escape}");
+    expect(onCancel).not.toHaveBeenCalled();
+    expect(
+      screen.queryByRole("listbox", { name: "Model options" }),
+    ).not.toBeInTheDocument();
+
+    await selectComposerOption(user, "Account", "Personal");
+    expect(screen.getByRole("combobox", { name: "Model" })).toHaveTextContent(
+      "Account default",
+    );
+    expect(
+      screen.getByRole("combobox", { name: "Reasoning level" }),
+    ).toBeDisabled();
+
+    await selectComposerOption(user, "Model", "GPT-5");
+    expect(
+      screen.getByRole("combobox", { name: "Reasoning level" }),
+    ).toBeEnabled();
+    await selectComposerOption(user, "Reasoning level", "High");
+    await selectComposerOption(user, "Model", "GPT-6");
+    expect(
+      screen.getByRole("combobox", { name: "Reasoning level" }),
+    ).toBeDisabled();
+
+    await user.click(submitButton);
+    expect(onSubmit).toHaveBeenCalledWith(
+      expect.objectContaining({
+        accountId: "account-2",
+        model: "gpt-6",
+        reasoningLevel: "",
+      }),
+    );
   });
 
   it("duplicates into an independent draft and does not reset edits on equivalent rerenders", async () => {
@@ -153,6 +260,7 @@ describe("KanbanCardDialog", () => {
         {...dialogProps(onSubmit)}
         mode="edit"
         card={existingCard()}
+        modelReasoningOptions={{}}
         executionSettingsLocked
       />,
     );
@@ -176,6 +284,8 @@ describe("KanbanCardDialog", () => {
       expect.objectContaining({
         title: "Updated metadata",
         accountId: "account-1",
+        model: "gpt-5",
+        reasoningLevel: "high",
         repositoryIds: ["repo-1"],
       }),
     );

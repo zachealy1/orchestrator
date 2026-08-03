@@ -1,18 +1,23 @@
 import {
   AlertCircle,
+  Columns3,
   Folder,
   FolderOpen,
   GitBranch,
   GitBranchPlus,
   GitCommitHorizontal,
   Loader2,
+  MessageSquare,
   Monitor,
   PanelRight,
   SquarePen,
   X,
 } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
-import type { CSSProperties } from "react";
+import type {
+  CSSProperties,
+  KeyboardEvent as ReactKeyboardEvent,
+} from "react";
 import { ComposerSelect } from "../../components/ComposerSelect";
 import { getContextUsageDisplay } from "../../lib/contextUsage";
 import type { RunViewState } from "../../lib/codexEventReducer";
@@ -90,6 +95,8 @@ export function WorkspaceContextBanner({
 }) {
   const [browserMenuOpen, setBrowserMenuOpen] = useState(false);
   const browserMenuRef = useRef<HTMLDivElement>(null);
+  const chatSurfaceButtonRef = useRef<HTMLButtonElement>(null);
+  const kanbanSurfaceButtonRef = useRef<HTMLButtonElement>(null);
   const deepWindowDragRegion = windowDragRegionValue(
     windowDragRegionsEnabled,
     "deep",
@@ -193,6 +200,29 @@ export function WorkspaceContextBanner({
           ? "Pushing branch"
           : null;
 
+  function handleSurfaceModeKeyDown(event: ReactKeyboardEvent<HTMLDivElement>) {
+    let nextMode: "chat" | "kanban" | null = null;
+    if (
+      event.key === "ArrowLeft" ||
+      event.key === "ArrowUp" ||
+      event.key === "Home"
+    ) {
+      nextMode = "chat";
+    } else if (
+      event.key === "ArrowRight" ||
+      event.key === "ArrowDown" ||
+      event.key === "End"
+    ) {
+      nextMode = "kanban";
+    }
+    if (!nextMode) return;
+    event.preventDefault();
+    if (nextMode !== surfaceMode) onSurfaceModeChange(nextMode);
+    const targetRef =
+      nextMode === "chat" ? chatSurfaceButtonRef : kanbanSurfaceButtonRef;
+    window.requestAnimationFrame(() => targetRef.current?.focus());
+  }
+
   return (
     <section
       className="workspace-context-banner"
@@ -209,68 +239,77 @@ export function WorkspaceContextBanner({
             <span title={workspace.path}>{workspace.path}</span>
           </div>
         </div>
-        <div
-          className="workspace-context-chips"
-          aria-label="Selected folder status"
-          data-tauri-drag-region="false"
-        >
-          {gitOperationRunning ? (
-            <span
-              className="workspace-context-chip git-operation-running"
-              role="status"
-              aria-label={gitBusyLabel ?? "Git operation in progress"}
-            >
-              <Loader2 className="spin" size={14} aria-hidden="true" />
-              <span className="sr-only">
-                {gitActionStatus === "committing" ? "Committing" : "Pushing"}
+        {surfaceMode === "chat" ? (
+          <div
+            className="workspace-context-chips"
+            aria-label="Selected folder status"
+            data-tauri-drag-region="false"
+          >
+            {gitOperationRunning ? (
+              <span
+                className="workspace-context-chip git-operation-running"
+                role="status"
+                aria-label={gitBusyLabel ?? "Git operation in progress"}
+              >
+                <Loader2 className="spin" size={14} aria-hidden="true" />
+                <span className="sr-only">
+                  {gitActionStatus === "committing" ? "Committing" : "Pushing"}
+                </span>
               </span>
-            </span>
-          ) : null}
-          {!gitOperationRunning && gitLoading ? (
-            <span className="workspace-context-chip">Checking git</span>
-          ) : null}
-          {!gitOperationRunning && gitError ? (
-            <span className="workspace-context-chip warning">Git unavailable</span>
-          ) : null}
-          {!gitOperationRunning && gitClean ? (
-            <span className="workspace-context-chip clean">Clean</span>
-          ) : null}
-          {!gitOperationRunning &&
-          !gitLoading &&
-          !gitError &&
-          gitSummary.total > 0 ? (
-            <WorkspaceContextGitSummaryChip gitSummary={gitSummary} />
-          ) : null}
-          <WorkspaceContextMeter
-            tokenUsage={contextUsage}
-            contextWindow={contextWindow}
-          />
-        </div>
+            ) : null}
+            {!gitOperationRunning && gitLoading ? (
+              <span className="workspace-context-chip">Checking git</span>
+            ) : null}
+            {!gitOperationRunning && gitError ? (
+              <span className="workspace-context-chip warning">Git unavailable</span>
+            ) : null}
+            {!gitOperationRunning && gitClean ? (
+              <span className="workspace-context-chip clean">Clean</span>
+            ) : null}
+            {!gitOperationRunning &&
+            !gitLoading &&
+            !gitError &&
+            gitSummary.total > 0 ? (
+              <WorkspaceContextGitSummaryChip gitSummary={gitSummary} />
+            ) : null}
+            <WorkspaceContextMeter
+              tokenUsage={contextUsage}
+              contextWindow={contextWindow}
+            />
+          </div>
+        ) : null}
       </div>
 
       <div className="workspace-context-actions" data-tauri-drag-region="false">
         <div
-          className="workspace-surface-toggle"
+          className={`segmented-mode-toggle workspace-surface-toggle mode-${surfaceMode}`}
           role="radiogroup"
           aria-label="Workspace mode"
+          onKeyDown={handleSurfaceModeKeyDown}
         >
           <button
+            ref={chatSurfaceButtonRef}
             type="button"
             role="radio"
             aria-checked={surfaceMode === "chat"}
             className={surfaceMode === "chat" ? "active" : ""}
+            tabIndex={surfaceMode === "chat" ? 0 : -1}
             onClick={() => onSurfaceModeChange("chat")}
           >
-            Chat
+            <MessageSquare size={13} aria-hidden="true" />
+            <span>Chat</span>
           </button>
           <button
+            ref={kanbanSurfaceButtonRef}
             type="button"
             role="radio"
             aria-checked={surfaceMode === "kanban"}
             className={surfaceMode === "kanban" ? "active" : ""}
+            tabIndex={surfaceMode === "kanban" ? 0 : -1}
             onClick={() => onSurfaceModeChange("kanban")}
           >
-            Kanban
+            <Columns3 size={13} aria-hidden="true" />
+            <span>Kanban</span>
           </button>
         </div>
         {surfaceMode === "chat" ? (

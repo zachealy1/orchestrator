@@ -1,5 +1,24 @@
-import { Copy, Plus, X } from "lucide-react";
-import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
+import {
+  AlertCircle,
+  Bot,
+  CircleUserRound,
+  Copy,
+  Gauge,
+  Loader2,
+  Plus,
+  ShieldCheck,
+  X,
+} from "lucide-react";
+import {
+  useEffect,
+  useId,
+  useMemo,
+  useRef,
+  useState,
+  type FormEvent,
+} from "react";
+import { ComposerSelect } from "../../../components/ComposerSelect";
+import { trapDialogFocus } from "../../../shared/dialogFocus";
 import "../kanban.css";
 import type {
   KanbanAccessMode,
@@ -21,6 +40,7 @@ export type KanbanCardDialogProps = {
   accessModeOptions?: KanbanSelectOption[];
   modelOptions: KanbanSelectOption[];
   reasoningOptions: KanbanSelectOption[];
+  modelReasoningOptions?: Record<string, KanbanSelectOption[]>;
   executionSettingsLocked?: boolean;
   saving?: boolean;
   error?: string | null;
@@ -69,6 +89,7 @@ export function KanbanCardDialog({
   accessModeOptions = DEFAULT_ACCESS_OPTIONS,
   modelOptions,
   reasoningOptions,
+  modelReasoningOptions,
   executionSettingsLocked = false,
   saving = false,
   error,
@@ -80,12 +101,29 @@ export function KanbanCardDialog({
     initialDraft(card, mode, defaults),
   );
   const [validationError, setValidationError] = useState<string | null>(null);
+  const [invalidField, setInvalidField] = useState<
+    "title" | "description" | "repositories" | null
+  >(null);
+  const dialogRef = useRef<HTMLElement>(null);
   const titleRef = useRef<HTMLInputElement>(null);
+  const descriptionRef = useRef<HTMLTextAreaElement>(null);
+  const repositoryScopeRef = useRef<HTMLInputElement>(null);
+  const repositoryOptionsRef = useRef<HTMLDivElement>(null);
+  const previousFocusRef = useRef<HTMLElement | null>(null);
+  const validationErrorId = useId();
+
+  useEffect(() => {
+    if (!open) return;
+    previousFocusRef.current =
+      document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    return () => previousFocusRef.current?.focus({ preventScroll: true });
+  }, [open]);
 
   useEffect(() => {
     if (!open) return;
     setDraft(initialDraft(card, mode, defaults));
     setValidationError(null);
+    setInvalidField(null);
     const frame = window.requestAnimationFrame(() => titleRef.current?.focus());
     return () => window.cancelAnimationFrame(frame);
   }, [card?.id, defaultsKey, mode, open]);
@@ -93,11 +131,17 @@ export function KanbanCardDialog({
   useEffect(() => {
     if (!open) return;
     const handleKeyDown = (event: KeyboardEvent) => {
-      if (event.key === "Escape" && !saving) onCancel();
+      if (event.key === "Escape" && !event.defaultPrevented && !saving) {
+        onCancel();
+      }
     };
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
   }, [onCancel, open, saving]);
+
+  useEffect(() => {
+    if (saving) dialogRef.current?.focus({ preventScroll: true });
+  }, [saving]);
 
   if (!open) return null;
 
@@ -107,10 +151,29 @@ export function KanbanCardDialog({
     mode === "create" ? "Create card" : mode === "duplicate" ? "Duplicate" : "Save changes";
   const executionFieldsDisabled =
     saving || (mode === "edit" && executionSettingsLocked);
+  const modelOptionsForReasoning = modelReasoningOptions
+    ? (modelReasoningOptions[draft.model] ?? [])
+    : reasoningOptions;
+  const selectedReasoningOptions =
+    draft.reasoningLevel &&
+    !modelOptionsForReasoning.some(
+      (option) => option.value === draft.reasoningLevel,
+    )
+      ? [
+          reasoningOptions.find(
+            (option) => option.value === draft.reasoningLevel,
+          ) ?? {
+            value: draft.reasoningLevel,
+            label: draft.reasoningLevel,
+          },
+          ...modelOptionsForReasoning,
+        ]
+      : modelOptionsForReasoning;
 
   function patchDraft(patch: Partial<KanbanCardDraft>) {
     setDraft((current) => ({ ...current, ...patch }));
     setValidationError(null);
+    setInvalidField(null);
   }
 
   function toggleRepository(repositoryId: string, checked: boolean) {
@@ -127,15 +190,24 @@ export function KanbanCardDialog({
     const description = draft.description.trim();
     if (!titleValue) {
       setValidationError("Enter a card title.");
+      setInvalidField("title");
       titleRef.current?.focus();
       return;
     }
     if (!description) {
       setValidationError("Describe the work for the agent.");
+      setInvalidField("description");
+      descriptionRef.current?.focus();
       return;
     }
     if (draft.repositoryScope === "selected" && draft.repositoryIds.length === 0) {
       setValidationError("Choose at least one repository or use all repositories.");
+      setInvalidField("repositories");
+      const repositoryOption =
+        repositoryOptionsRef.current?.querySelector<HTMLInputElement>(
+          'input:not([disabled])',
+        );
+      (repositoryOption ?? repositoryScopeRef.current)?.focus();
       return;
     }
     void onSubmit({ ...draft, title: titleValue, description });
@@ -143,22 +215,26 @@ export function KanbanCardDialog({
 
   return (
     <div
-      className="kanban-modal-backdrop"
+      className="modal-backdrop"
       role="presentation"
       onMouseDown={(event) => {
         if (event.target === event.currentTarget && !saving) onCancel();
       }}
     >
       <section
-        className="kanban-card-dialog"
+        ref={dialogRef}
+        className="confirmation-dialog kanban-card-dialog"
         role="dialog"
         aria-modal="true"
+        aria-busy={saving}
         aria-labelledby="kanban-card-dialog-title"
         aria-describedby="kanban-card-dialog-description"
+        tabIndex={-1}
+        onKeyDown={trapDialogFocus}
       >
         <header>
           <div>
-            <span className="kanban-eyebrow">
+            <span className="eyebrow">
               {mode === "duplicate" ? "New independent workflow" : "Kanban task"}
             </span>
             <h2 id="kanban-card-dialog-title">{title}</h2>
@@ -178,7 +254,8 @@ export function KanbanCardDialog({
         </header>
 
         <form onSubmit={handleSubmit}>
-          <div className="kanban-dialog-fields">
+          <div className="kanban-card-dialog-scroll">
+            <div className="kanban-dialog-fields">
             <label className="kanban-field kanban-field-wide">
               <span>Title</span>
               <input
@@ -186,15 +263,24 @@ export function KanbanCardDialog({
                 value={draft.title}
                 maxLength={160}
                 disabled={saving}
+                aria-invalid={invalidField === "title"}
+                aria-describedby={
+                  invalidField === "title" ? validationErrorId : undefined
+                }
                 onChange={(event) => patchDraft({ title: event.target.value })}
               />
             </label>
             <label className="kanban-field kanban-field-wide">
               <span>Description</span>
               <textarea
+                ref={descriptionRef}
                 value={draft.description}
                 rows={7}
                 disabled={saving}
+                aria-invalid={invalidField === "description"}
+                aria-describedby={
+                  invalidField === "description" ? validationErrorId : undefined
+                }
                 placeholder="Describe the desired outcome, constraints, and verification."
                 onChange={(event) => patchDraft({ description: event.target.value })}
               />
@@ -203,11 +289,16 @@ export function KanbanCardDialog({
             <fieldset
               className="kanban-repository-picker kanban-field-wide"
               disabled={executionFieldsDisabled}
+              aria-invalid={invalidField === "repositories"}
+              aria-describedby={
+                invalidField === "repositories" ? validationErrorId : undefined
+              }
             >
               <legend>Repositories</legend>
               <div className="kanban-segmented-control">
                 <label>
                   <input
+                    ref={repositoryScopeRef}
                     type="radio"
                     name="repository-scope"
                     value="all"
@@ -230,7 +321,10 @@ export function KanbanCardDialog({
                 </label>
               </div>
               {draft.repositoryScope === "selected" ? (
-                <div className="kanban-repository-options">
+                <div
+                  ref={repositoryOptionsRef}
+                  className="kanban-repository-options"
+                >
                   {repositories.length > 0 ? (
                     repositories.map((repository) => (
                       <label key={repository.id}>
@@ -280,71 +374,84 @@ export function KanbanCardDialog({
               ) : null}
             </fieldset>
 
-            <label className="kanban-field">
+            <div className="kanban-field">
               <span>Account</span>
-              <select
+              <ComposerSelect
+                ariaLabel="Account"
                 value={draft.accountId ?? ""}
+                options={[
+                  { value: "", label: "Workspace default" },
+                  ...accountOptions,
+                ]}
+                placeholder="Workspace default"
+                icon={<CircleUserRound size={16} />}
+                className="kanban-field-select"
                 disabled={executionFieldsDisabled}
-                onChange={(event) =>
-                  patchDraft({ accountId: event.target.value || null })
-                }
-              >
-                <option value="">Workspace default</option>
-                {accountOptions.map((option) => (
-                  <option key={option.value} value={option.value} disabled={option.disabled}>
-                    {option.label}
-                  </option>
-                ))}
-              </select>
-            </label>
-            <label className="kanban-field">
+                onChange={(value) => {
+                  const accountId = value || null;
+                  patchDraft(
+                    accountId === draft.accountId
+                      ? { accountId }
+                      : { accountId, model: "", reasoningLevel: "" },
+                  );
+                }}
+              />
+            </div>
+            <div className="kanban-field">
               <span>Access mode</span>
-              <select
+              <ComposerSelect
+                ariaLabel="Access mode"
                 value={draft.accessMode}
+                options={accessModeOptions}
+                placeholder="Ask for approval"
+                icon={<ShieldCheck size={16} />}
+                className="kanban-field-select"
                 disabled={executionFieldsDisabled}
-                onChange={(event) =>
-                  patchDraft({ accessMode: event.target.value as KanbanAccessMode })
+                onChange={(value) =>
+                  patchDraft({ accessMode: value as KanbanAccessMode })
                 }
-              >
-                {accessModeOptions.map((option) => (
-                  <option key={option.value} value={option.value} disabled={option.disabled}>
-                    {option.label}
-                  </option>
-                ))}
-              </select>
-            </label>
-            <label className="kanban-field">
+              />
+            </div>
+            <div className="kanban-field">
               <span>Model</span>
-              <select
+              <ComposerSelect
+                ariaLabel="Model"
                 value={draft.model}
+                options={[
+                  { value: "", label: "Account default" },
+                  ...modelOptions,
+                ]}
+                placeholder="Account default"
+                icon={<Bot size={16} />}
+                className="kanban-field-select"
                 disabled={executionFieldsDisabled}
-                onChange={(event) => patchDraft({ model: event.target.value })}
-              >
-                <option value="">Account default</option>
-                {modelOptions.map((option) => (
-                  <option key={option.value} value={option.value} disabled={option.disabled}>
-                    {option.label}
-                  </option>
-                ))}
-              </select>
-            </label>
-            <label className="kanban-field">
-              <span>Reasoning level</span>
-              <select
-                value={draft.reasoningLevel}
-                disabled={executionFieldsDisabled}
-                onChange={(event) =>
-                  patchDraft({ reasoningLevel: event.target.value })
+                onChange={(value) =>
+                  patchDraft(
+                    value === draft.model
+                      ? { model: value }
+                      : { model: value, reasoningLevel: "" },
+                  )
                 }
-              >
-                <option value="">Model default</option>
-                {reasoningOptions.map((option) => (
-                  <option key={option.value} value={option.value} disabled={option.disabled}>
-                    {option.label}
-                  </option>
-                ))}
-              </select>
-            </label>
+              />
+            </div>
+            <div className="kanban-field">
+              <span>Reasoning level</span>
+              <ComposerSelect
+                ariaLabel="Reasoning level"
+                value={draft.reasoningLevel}
+                options={[
+                  { value: "", label: "Model default" },
+                  ...selectedReasoningOptions,
+                ]}
+                placeholder="Model default"
+                icon={<Gauge size={16} />}
+                className="kanban-field-select"
+                disabled={
+                  executionFieldsDisabled || selectedReasoningOptions.length === 0
+                }
+                onChange={(value) => patchDraft({ reasoningLevel: value })}
+              />
+            </div>
 
             {mode === "duplicate" ? (
               <label className="kanban-duplicate-history kanban-field-wide">
@@ -364,20 +471,28 @@ export function KanbanCardDialog({
                 </span>
               </label>
             ) : null}
+            </div>
+
+            {validationError || error ? (
+              <p
+                className="kanban-form-error"
+                id={validationError ? validationErrorId : undefined}
+                role="alert"
+              >
+                <AlertCircle size={15} aria-hidden="true" />
+                <span>{validationError ?? error}</span>
+              </p>
+            ) : null}
           </div>
 
-          {validationError || error ? (
-            <p className="kanban-form-error" role="alert">
-              {validationError ?? error}
-            </p>
-          ) : null}
-
-          <footer>
+          <footer className="confirmation-actions">
             <button type="button" className="secondary" disabled={saving} onClick={onCancel}>
               Cancel
             </button>
-            <button type="submit" className="kanban-primary-button" disabled={saving}>
-              {mode === "duplicate" ? (
+            <button type="submit" disabled={saving}>
+              {saving ? (
+                <Loader2 className="spin" size={15} aria-hidden="true" />
+              ) : mode === "duplicate" ? (
                 <Copy size={15} aria-hidden="true" />
               ) : (
                 <Plus size={15} aria-hidden="true" />

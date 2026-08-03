@@ -15392,6 +15392,7 @@ function App() {
                   defaultAccessMode={accessMode}
                   defaultModel={selectedModel?.model ?? null}
                   defaultReasoningLevel={selectedReasoningEffort}
+                  resolvedTheme={resolvedTheme}
                   refreshToken={kanbanRefreshToken}
                   listChatTranscript={listLocalChatTranscript}
                   onOpenConversation={kanbanRuntime.openConversation}

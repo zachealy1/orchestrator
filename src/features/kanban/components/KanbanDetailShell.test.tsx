@@ -1,8 +1,22 @@
-import { render, screen } from "@testing-library/react";
+import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { KanbanDetailShell } from "./KanbanDetailShell";
 import type { KanbanCard, KanbanReviewData } from "./types";
+
+const codePreviewMock = vi.hoisted(() => vi.fn());
+
+vi.mock("../../../components/CodePreview", () => ({
+  CodePreview: (props: {
+    path: string;
+    content: string;
+    resolvedTheme: "light" | "dark";
+    languageOverride?: string;
+  }) => {
+    codePreviewMock(props);
+    return <pre data-path={props.path}>{props.content}</pre>;
+  },
+}));
 
 const card: KanbanCard = {
   id: "card-1",
@@ -38,6 +52,7 @@ const review: KanbanReviewData = {
     {
       path: "src/features/kanban/Kanban.tsx",
       repositoryLabel: "orchestrator",
+      status: "modified",
       additions: 42,
       deletions: 3,
     },
@@ -47,8 +62,11 @@ const review: KanbanReviewData = {
   canCommit: true,
   canPush: true,
   canMerge: true,
+  canRequestChanges: true,
   canApprove: true,
 };
+
+beforeEach(() => codePreviewMock.mockClear());
 
 describe("KanbanDetailShell", () => {
   it("keeps navigation separate from execution and routes review actions explicitly", async () => {
@@ -61,6 +79,7 @@ describe("KanbanDetailShell", () => {
         card={card}
         conversation={<div>Conversation transcript</div>}
         review={review}
+        resolvedTheme="dark"
         onBack={onBack}
         onAction={onAction}
         onSelectReviewFile={onSelectReviewFile}
@@ -72,10 +91,30 @@ describe("KanbanDetailShell", () => {
     await user.click(screen.getByRole("button", { name: "Back to board" }));
     expect(onBack).toHaveBeenCalledOnce();
 
-    await user.click(screen.getByRole("tab", { name: /Review/ }));
+    const conversationTab = screen.getByRole("tab", { name: "Conversation" });
+    const reviewTab = screen.getByRole("tab", { name: /Review/ });
+    expect(conversationTab).toHaveAttribute("tabindex", "0");
+    expect(reviewTab).toHaveAttribute("tabindex", "-1");
+    conversationTab.focus();
+    await user.keyboard("{End}");
+    await waitFor(() => expect(reviewTab).toHaveFocus());
+    expect(reviewTab).toHaveAttribute("aria-selected", "true");
+    expect(reviewTab).toHaveAttribute("tabindex", "0");
+    await user.keyboard("{Home}");
+    await waitFor(() => expect(conversationTab).toHaveFocus());
+    await user.keyboard("{ArrowRight}");
+    await waitFor(() => expect(reviewTab).toHaveFocus());
+
     const reviewPanel = screen.getByRole("tabpanel", { name: /Review/ });
     expect(reviewPanel).toBeVisible();
     expect(reviewPanel.querySelector("pre")?.textContent).toBe(review.diff);
+    expect(codePreviewMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        path: "src/features/kanban/Kanban.tsx",
+        resolvedTheme: "dark",
+        languageOverride: "diff",
+      }),
+    );
     expect(
       screen.getByText(/Git commit, push, and merge actions never do so automatically/),
     ).toBeInTheDocument();
@@ -96,21 +135,58 @@ describe("KanbanDetailShell", () => {
   it("only renders execution actions supplied by the card", async () => {
     const user = userEvent.setup();
     const onAction = vi.fn();
+    const onShowConversation = vi.fn();
     render(
       <KanbanDetailShell
         card={card}
         conversation={null}
         review={{ ...review, canApprove: false }}
+        resolvedTheme="light"
         onBack={vi.fn()}
+        onShowConversation={onShowConversation}
         onAction={onAction}
       />,
     );
 
+    expect(screen.queryByRole("tablist")).not.toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Open in Chat" }));
+    expect(onShowConversation).toHaveBeenCalledOnce();
     expect(screen.queryByRole("button", { name: "Start" })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Pause" })).not.toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "Retry" }));
     expect(onAction).toHaveBeenCalledWith("retry", card);
-    await user.click(screen.getByRole("tab", { name: /Review/ }));
     expect(screen.getByRole("button", { name: "Approve result" })).toBeDisabled();
+  });
+
+  it("shows a review loading state without rendering stale diff content", () => {
+    const props = {
+      card,
+      conversation: null,
+      review: { ...review, gitBusy: true },
+      resolvedTheme: "dark" as const,
+      initialTab: "review" as const,
+      onBack: vi.fn(),
+      onAction: vi.fn(),
+    };
+    const { rerender } = render(<KanbanDetailShell {...props} />);
+
+    expect(screen.getByRole("status")).toHaveTextContent(
+      "Loading file changes…",
+    );
+    expect(screen.queryByText(review.diff ?? "")).not.toBeInTheDocument();
+    expect(codePreviewMock).not.toHaveBeenCalled();
+    expect(screen.getByRole("button", { name: "Commit" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Approve result" })).toBeDisabled();
+
+    rerender(
+      <KanbanDetailShell
+        {...props}
+        review={{ ...review, gitBusy: false }}
+      />,
+    );
+    expect(screen.queryByRole("status")).not.toBeInTheDocument();
+    expect(codePreviewMock).toHaveBeenCalledWith(
+      expect.objectContaining({ resolvedTheme: "dark" }),
+    );
   });
 });

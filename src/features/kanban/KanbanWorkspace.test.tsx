@@ -37,6 +37,9 @@ const transcriptMocks = vi.hoisted(() => ({
 }));
 
 vi.mock("./api", () => apiMocks);
+vi.mock("../../components/CodePreview", () => ({
+  CodePreview: ({ content }: { content: string }) => <pre>{content}</pre>,
+}));
 
 const workspace: Workspace = {
   id: 1,
@@ -157,6 +160,7 @@ function status(
 function renderWorkspace() {
   const props = {
     onOpenConversation: vi.fn(),
+    onShowConversation: vi.fn(),
     onLaunch: vi.fn().mockResolvedValue(undefined),
     onPause: vi.fn().mockResolvedValue(undefined),
     onStop: vi.fn().mockResolvedValue(undefined),
@@ -172,6 +176,7 @@ function renderWorkspace() {
       defaultAccessMode="ask-for-approval"
       defaultModel={null}
       defaultReasoningLevel={null}
+      resolvedTheme="light"
       refreshToken={0}
       listChatTranscript={transcriptMocks.listLocalChatTranscript}
       {...props}
@@ -181,12 +186,25 @@ function renderWorkspace() {
   return props;
 }
 
+async function openCommitDialog(user: ReturnType<typeof userEvent.setup>) {
+  await user.click(
+    await screen.findByRole("button", { name: /^Controller card/ }),
+  );
+  const commitButton = screen.getByRole("button", { name: "Commit" });
+  await waitFor(() => expect(commitButton).toBeEnabled());
+  await user.click(commitButton);
+  return {
+    commitButton,
+    dialog: screen.getByRole("dialog", { name: "Commit changes?" }),
+  };
+}
+
 async function confirmDeleteWithWorktreeCleanup(
   user: ReturnType<typeof userEvent.setup>,
 ) {
   const tile = await screen.findByRole("article", { name: /Controller card/ });
   await user.click(within(tile).getByLabelText("Actions for Controller card"));
-  await user.click(within(tile).getByRole("menuitem", { name: "Delete card" }));
+  await user.click(screen.getByRole("menuitem", { name: "Delete card" }));
 
   const dialog = await screen.findByRole("alertdialog", {
     name: "Delete this card?",
@@ -344,7 +362,10 @@ describe("KanbanWorkspace controller", () => {
     await user.click(
       await screen.findByRole("button", { name: /^Controller card/ }),
     );
-    await user.click(screen.getByRole("tab", { name: /Review/ }));
+
+    expect(callbacks.onOpenConversation).toHaveBeenCalledWith(runningCard);
+    await user.click(screen.getByRole("button", { name: "Open in Chat" }));
+    expect(callbacks.onShowConversation).toHaveBeenCalledWith(runningCard);
 
     await waitFor(() => expect(apiMocks.readKanbanGitStatus).toHaveBeenCalled());
 
@@ -377,5 +398,207 @@ describe("KanbanWorkspace controller", () => {
     });
     await user.click(within(dialog).getByRole("button", { name: "Stop agent" }));
     await waitFor(() => expect(callbacks.onStop).toHaveBeenCalledTimes(1));
+  });
+
+  it("uses the shared modal interactions for Git confirmation", async () => {
+    const user = userEvent.setup();
+    renderWorkspace();
+
+    const { commitButton, dialog } = await openCommitDialog(user);
+    expect(dialog).toHaveClass("confirmation-dialog");
+    expect(dialog).toHaveAccessibleDescription(
+      /Each repository is handled independently/,
+    );
+    const message = within(dialog).getByRole("textbox", {
+      name: "Commit message",
+    });
+    await waitFor(() => expect(message).toHaveFocus());
+    expect(message).toHaveValue("Controller card");
+    expect(
+      within(dialog).getByRole("button", { name: "Commit changes" }),
+    ).toBeEnabled();
+    await user.tab({ shift: true });
+    expect(
+      within(dialog).getByRole("button", { name: "Commit changes" }),
+    ).toHaveFocus();
+    await user.tab();
+    expect(message).toHaveFocus();
+
+    await user.keyboard("{Escape}");
+    expect(
+      screen.queryByRole("dialog", { name: "Commit changes?" }),
+    ).not.toBeInTheDocument();
+    await waitFor(() => expect(commitButton).toHaveFocus());
+  });
+
+  it("keeps the Git dialog modal while its action is running", async () => {
+    const user = userEvent.setup();
+    apiMocks.commitKanbanGit.mockReturnValue(new Promise(() => undefined));
+    renderWorkspace();
+
+    const { dialog } = await openCommitDialog(user);
+    await user.click(
+      within(dialog).getByRole("button", { name: "Commit changes" }),
+    );
+
+    expect(
+      within(dialog).getByRole("button", { name: "Committing…" }),
+    ).toBeDisabled();
+    await user.keyboard("{Escape}");
+    expect(
+      screen.getByRole("dialog", { name: "Commit changes?" }),
+    ).toBeInTheDocument();
+  });
+
+  it("does not show a previous file's diff while the next diff loads", async () => {
+    const user = userEvent.setup();
+    const gitBinding = binding();
+    apiMocks.readKanbanGitStatus.mockResolvedValue(
+      status(gitBinding, {
+        files: [
+          {
+            path: "src/first.ts",
+            originalPath: null,
+            indexStatus: " ",
+            worktreeStatus: "M",
+            kind: "modified",
+          },
+          {
+            path: "src/second.ts",
+            originalPath: null,
+            indexStatus: " ",
+            worktreeStatus: "M",
+            kind: "modified",
+          },
+        ],
+      }),
+    );
+    const repositoryDiff = [
+      "diff --git a/src/first.ts b/src/first.ts",
+      "--- a/src/first.ts",
+      "+++ b/src/first.ts",
+      "@@ -1 +1 @@",
+      "-first",
+      "+updated first",
+      "diff --git a/src/second.ts b/src/second.ts",
+      "--- a/src/second.ts",
+      "+++ b/src/second.ts",
+      "@@ -1 +1 @@",
+      "-second",
+      "+updated second",
+      "",
+    ].join("\n");
+    const firstDiff = {
+      binding: gitBinding,
+      baseCommit: "base-commit",
+      headCommit: "head-commit",
+      content: repositoryDiff,
+      untrackedPaths: [],
+      isEmpty: false,
+    };
+    const secondDiff = { ...firstDiff };
+    let resolveSecondDiff: ((value: typeof secondDiff) => void) | undefined;
+    const pendingSecondDiff = new Promise<typeof secondDiff>((resolve) => {
+      resolveSecondDiff = resolve;
+    });
+    apiMocks.readKanbanGitDiff
+      .mockResolvedValueOnce(firstDiff)
+      .mockReturnValueOnce(pendingSecondDiff);
+    renderWorkspace();
+
+    await user.click(
+      await screen.findByRole("button", { name: /^Controller card/ }),
+    );
+    expect(await screen.findByText(/\+updated first/)).toBeInTheDocument();
+    expect(screen.queryByText(/\+updated second/)).not.toBeInTheDocument();
+    await user.click(
+      screen.getByRole("button", { name: /src\/second\.ts/ }),
+    );
+
+    expect(screen.queryByText(/\+updated first/)).not.toBeInTheDocument();
+    resolveSecondDiff?.(secondDiff);
+    expect(await screen.findByText(/\+updated second/)).toBeInTheDocument();
+    expect(screen.queryByText(/\+updated first/)).not.toBeInTheDocument();
+  });
+
+  it("reads each changed file from its owning repository", async () => {
+    const user = userEvent.setup();
+    const firstBinding = binding();
+    const secondBinding = binding({
+      sourceRepositoryPath: "/workspace/other",
+      relativePath: "other",
+      worktreePath: "/workspace/.codex/card-1/other",
+    });
+    apiMocks.loadKanbanGitBindings.mockResolvedValue([
+      firstBinding,
+      secondBinding,
+    ]);
+    apiMocks.readKanbanGitStatus.mockImplementation(
+      async (gitBinding: KanbanGitBinding) =>
+        status(gitBinding, {
+          files: [
+            {
+              path:
+                gitBinding.sourceRepositoryPath === "/workspace/repo"
+                  ? "src/first.ts"
+                  : "src/second.ts",
+              originalPath: null,
+              indexStatus: " ",
+              worktreeStatus: "M",
+              kind: "modified",
+            },
+          ],
+        }),
+    );
+    apiMocks.readKanbanGitDiff.mockImplementation(
+      async (gitBinding: KanbanGitBinding) => ({
+        binding: gitBinding,
+        baseCommit: "base-commit",
+        headCommit: "head-commit",
+        content:
+          gitBinding.sourceRepositoryPath === "/workspace/repo"
+            ? "diff --git a/src/first.ts b/src/first.ts\n+first repository\n"
+            : "diff --git a/src/second.ts b/src/second.ts\n+second repository\n",
+        untrackedPaths: [],
+        isEmpty: false,
+      }),
+    );
+    renderWorkspace();
+
+    await user.click(
+      await screen.findByRole("button", { name: /^Controller card/ }),
+    );
+    expect(await screen.findByText(/\+first repository/)).toBeInTheDocument();
+    expect(apiMocks.readKanbanGitDiff).toHaveBeenLastCalledWith(firstBinding);
+
+    await user.click(screen.getByRole("button", { name: /src\/second\.ts/ }));
+    expect(await screen.findByText(/\+second repository/)).toBeInTheDocument();
+    expect(screen.queryByText(/\+first repository/)).not.toBeInTheDocument();
+    expect(apiMocks.readKanbanGitDiff).toHaveBeenLastCalledWith(secondBinding);
+  });
+
+  it("offers to clear active filters when the board has no matches", async () => {
+    const user = userEvent.setup();
+    const filteredSnapshot = snapshot([]);
+    filteredSnapshot.preferencesJson = JSON.stringify({
+      search: "missing card",
+      filters: { repository: ["/workspace/repo"] },
+      groupBy: "none",
+      columnOrder: ["todo", "in_progress", "in_review", "done"],
+    });
+    apiMocks.loadKanbanBoard.mockResolvedValue(filteredSnapshot);
+    renderWorkspace();
+
+    expect(
+      await screen.findByRole("heading", { name: "No matching cards" }),
+    ).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Clear filters" }));
+
+    expect(
+      screen.getByRole("heading", { name: "No cards yet" }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "Create card" }),
+    ).toBeInTheDocument();
   });
 });

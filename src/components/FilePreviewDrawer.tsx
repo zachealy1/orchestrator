@@ -79,7 +79,7 @@ export const FilePreviewDrawer = memo(function FilePreviewDrawer({
         <div className="file-preview-actions">
           {previewGitStatus ? (
             <div
-              className={`file-preview-mode-toggle mode-${previewState.mode}`}
+              className={`segmented-mode-toggle file-preview-mode-toggle mode-${previewState.mode}`}
               role="group"
               aria-label="File preview mode"
             >

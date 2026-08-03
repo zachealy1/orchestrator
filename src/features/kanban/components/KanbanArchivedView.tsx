@@ -5,6 +5,7 @@ import type { KanbanCard } from "./types";
 
 export type KanbanArchivedViewProps = {
   cards: KanbanCard[];
+  disabled?: boolean;
   onClose?: () => void;
   onOpenCard: (card: KanbanCard) => void;
   onRestoreCard: (card: KanbanCard) => void;
@@ -24,6 +25,7 @@ function archivedDate(value: string | null | undefined) {
 
 export function KanbanArchivedView({
   cards,
+  disabled = false,
   onClose,
   onOpenCard,
   onRestoreCard,
@@ -42,14 +44,20 @@ export function KanbanArchivedView({
     <section className="kanban-archived-view" aria-labelledby="kanban-archive-title">
       <header>
         <div>
-          <span className="kanban-eyebrow">Preserved workflows</span>
+          <span className="eyebrow">Preserved workflows</span>
           <h1 id="kanban-archive-title">Archived cards</h1>
           <p>
             Archive keeps conversations, branches, worktrees, and review artifacts without running an agent.
           </p>
         </div>
         {onClose ? (
-          <button type="button" className="kanban-icon-button" aria-label="Close archived cards" onClick={onClose}>
+          <button
+            type="button"
+            className="kanban-icon-button"
+            aria-label="Close archived cards"
+            disabled={disabled}
+            onClick={onClose}
+          >
             <X size={18} aria-hidden="true" />
           </button>
         ) : null}
@@ -61,16 +69,32 @@ export function KanbanArchivedView({
         <input
           type="search"
           value={search}
+          disabled={disabled}
           placeholder="Search archived cards"
           onChange={(event) => setSearch(event.target.value)}
         />
+        {search ? (
+          <button
+            type="button"
+            aria-label="Clear archived card search"
+            disabled={disabled}
+            onClick={() => setSearch("")}
+          >
+            <X size={14} aria-hidden="true" />
+          </button>
+        ) : null}
       </label>
 
       {visibleCards.length > 0 ? (
         <div className="kanban-archive-list">
           {visibleCards.map((card) => (
             <article key={card.id}>
-              <button type="button" className="kanban-archive-card-open" onClick={() => onOpenCard(card)}>
+              <button
+                type="button"
+                className="kanban-archive-card-open"
+                disabled={disabled}
+                onClick={() => onOpenCard(card)}
+              >
                 <span className="kanban-archive-icon" aria-hidden="true">
                   <Archive size={17} />
                 </span>
@@ -88,14 +112,28 @@ export function KanbanArchivedView({
                         card.repositories.length === 1 ? "repository" : "repositories"
                       }`}
                 </span>
-                {card.branches?.length ? <span>{card.branches.length} preserved branches</span> : null}
+                {card.branches?.length ? (
+                  <span>
+                    {card.branches.length} preserved {card.branches.length === 1 ? "branch" : "branches"}
+                  </span>
+                ) : null}
               </div>
               <div className="kanban-archive-actions">
-                <button type="button" className="secondary" onClick={() => onRestoreCard(card)}>
+                <button
+                  type="button"
+                  className="secondary"
+                  disabled={disabled}
+                  onClick={() => onRestoreCard(card)}
+                >
                   <RotateCcw size={14} aria-hidden="true" />
                   Restore
                 </button>
-                <button type="button" className="danger" onClick={() => onDeleteCard(card)}>
+                <button
+                  type="button"
+                  className="danger"
+                  disabled={disabled}
+                  onClick={() => onDeleteCard(card)}
+                >
                   <Trash2 size={14} aria-hidden="true" />
                   Delete…
                 </button>

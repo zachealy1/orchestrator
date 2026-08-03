@@ -68,6 +68,7 @@ export type KanbanCard = {
   model: string;
   modelLabel: string;
   reasoningLevel: string;
+  reasoningLevelLabel?: string;
   includeDirtyChanges?: boolean;
   executionState: KanbanExecutionState;
   branches?: KanbanBranchBinding[];

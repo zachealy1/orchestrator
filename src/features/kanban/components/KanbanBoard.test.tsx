@@ -1,4 +1,4 @@
-import { render, screen, within } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 import { KanbanBoard, activeAttemptRequiresStop } from "./KanbanBoard";
@@ -73,8 +73,8 @@ describe("KanbanBoard", () => {
       within(todo)
         .getAllByRole("button")
         .filter((button) => button.classList.contains("kanban-card-open"))
-        .map((button) => button.textContent),
-    ).toEqual(["First cardBuild the board experience", "Second cardBuild the board experience"]);
+        .map((button) => button.querySelector("strong")?.textContent),
+    ).toEqual(["First card", "Second card"]);
 
     await user.click(within(todo).getByRole("button", { name: /^First card/ }));
     expect(onOpenCard).toHaveBeenCalledWith(
@@ -83,7 +83,7 @@ describe("KanbanBoard", () => {
 
     const firstCard = within(todo).getByRole("article", { name: /First card/ });
     await user.click(within(firstCard).getByLabelText("Actions for First card"));
-    await user.click(within(firstCard).getByRole("menuitem", { name: "Edit card" }));
+    await user.click(screen.getByRole("menuitem", { name: "Edit card" }));
     expect(onCardAction).toHaveBeenCalledWith(
       "edit",
       expect.objectContaining({ id: "card-first" }),
@@ -91,6 +91,52 @@ describe("KanbanBoard", () => {
 
     await user.click(screen.getByRole("button", { name: "Create card in In progress" }));
     expect(onCreateCard).toHaveBeenCalledWith("in-progress");
+  });
+
+  it("dismisses the portalled card menu consistently", async () => {
+    const user = userEvent.setup();
+    const onCardAction = vi.fn();
+    render(
+      <KanbanBoard
+        columns={columns()}
+        onMoveCard={vi.fn()}
+        onReorderColumns={vi.fn()}
+        onCardAction={onCardAction}
+      />,
+    );
+
+    const trigger = screen.getByRole("button", {
+      name: "Actions for First card",
+    });
+    await user.click(trigger);
+    expect(trigger).toHaveAttribute("aria-expanded", "true");
+    const editAction = screen.getByRole("menuitem", { name: "Edit card" });
+    const duplicateAction = screen.getByRole("menuitem", {
+      name: "Duplicate card",
+    });
+    await waitFor(() => expect(editAction).toHaveFocus());
+    await user.keyboard("{ArrowDown}");
+    expect(duplicateAction).toHaveFocus();
+    await user.keyboard("{Home}");
+    expect(editAction).toHaveFocus();
+    await user.keyboard("{End}");
+    expect(duplicateAction).toHaveFocus();
+    await user.keyboard("{Escape}");
+    expect(screen.queryByRole("menu")).not.toBeInTheDocument();
+    await waitFor(() => expect(trigger).toHaveFocus());
+
+    await user.click(trigger);
+    expect(screen.getByRole("menu")).toBeInTheDocument();
+    fireEvent.pointerDown(document.body);
+    expect(screen.queryByRole("menu")).not.toBeInTheDocument();
+
+    await user.click(trigger);
+    await user.click(screen.getByRole("menuitem", { name: "Edit card" }));
+    expect(screen.queryByRole("menu")).not.toBeInTheDocument();
+    expect(onCardAction).toHaveBeenCalledWith(
+      "edit",
+      expect.objectContaining({ id: "card-first" }),
+    );
   });
 
   it("provides keyboard-focusable drag handles and disables every drag surface", () => {
@@ -116,6 +162,11 @@ describe("KanbanBoard", () => {
 
     expect(screen.getByRole("button", { name: "Move First card" })).toBeDisabled();
     expect(screen.getByRole("button", { name: "Move To do column" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: /^First card/ })).toBeDisabled();
+    expect(
+      screen.getByRole("button", { name: "Actions for First card" }),
+    ).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Drop cards here" })).toBeDisabled();
   });
 
   it("flags stop-and-move for active attempts only", () => {

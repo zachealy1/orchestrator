@@ -1,4 +1,4 @@
-import { fireEvent, render, screen } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 import { KanbanArchivedView } from "./KanbanArchivedView";
@@ -73,12 +73,23 @@ describe("Kanban controls", () => {
     });
     expect(onSearchChange).toHaveBeenLastCalledWith("reviewed");
 
-    await user.click(screen.getByText("Filters"));
+    const filterTrigger = screen.getByRole("button", { name: /^Filters/ });
+    await user.click(filterTrigger);
     await user.click(screen.getByRole("checkbox", { name: /^Failed/ }));
     expect(onFiltersChange).toHaveBeenCalledWith({
       state: ["running", "failed"],
     });
-    await user.selectOptions(screen.getByLabelText("Group by"), "repository");
+    await user.keyboard("{Escape}");
+    expect(screen.queryByRole("dialog", { name: "Filter cards" })).not.toBeInTheDocument();
+    await waitFor(() => expect(filterTrigger).toHaveFocus());
+
+    await user.click(filterTrigger);
+    expect(screen.getByRole("dialog", { name: "Filter cards" })).toBeInTheDocument();
+    fireEvent.pointerDown(document.body);
+    expect(screen.queryByRole("dialog", { name: "Filter cards" })).not.toBeInTheDocument();
+
+    await user.click(screen.getByRole("combobox", { name: "Group cards by" }));
+    await user.click(screen.getByRole("option", { name: "Repository" }));
     expect(onGroupByChange).toHaveBeenCalledWith("repository");
 
     await user.click(screen.getByRole("button", { name: "Archived" }));
@@ -120,9 +131,20 @@ describe("Kanban controls", () => {
     expect(screen.getByRole("alertdialog")).toHaveTextContent(
       "Uncommitted work is never discarded",
     );
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: "Cancel" })).toHaveFocus(),
+    );
+    const closeButton = screen.getByRole("button", { name: "Close confirmation" });
+    const confirmButton = screen.getByRole("button", { name: "Delete card" });
+    expect(confirmButton).not.toHaveFocus();
+    closeButton.focus();
+    await user.tab({ shift: true });
+    expect(confirmButton).toHaveFocus();
+    await user.tab();
+    expect(closeButton).toHaveFocus();
     await user.click(screen.getByRole("checkbox", { name: /Delete branch/ }));
     expect(onCleanupOptionChange).toHaveBeenCalledWith("delete-branch", true);
-    await user.click(screen.getByRole("button", { name: "Delete card" }));
+    await user.click(confirmButton);
     expect(onConfirm).toHaveBeenCalledOnce();
   });
 
@@ -140,7 +162,7 @@ describe("Kanban controls", () => {
       />,
     );
 
-    expect(screen.getByText("1 preserved branches")).toBeInTheDocument();
+    expect(screen.getByText("1 preserved branch")).toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: /Archived workflow/ }));
     await user.click(screen.getByRole("button", { name: "Restore" }));
     await user.click(screen.getByRole("button", { name: "Delete…" }));

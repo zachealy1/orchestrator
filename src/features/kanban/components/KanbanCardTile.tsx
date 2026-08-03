@@ -6,15 +6,31 @@ import {
   GitBranch,
   GitCommitHorizontal,
   GitMerge,
+  GripVertical,
+  MessageSquare,
   MoreHorizontal,
   Pause,
   Pencil,
   Play,
   RefreshCw,
-  Rocket,
   Trash2,
+  UploadCloud,
 } from "lucide-react";
-import type { ButtonHTMLAttributes, CSSProperties, MouseEvent } from "react";
+import {
+  useCallback,
+  useEffect,
+  useId,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+  type ButtonHTMLAttributes,
+  type CSSProperties,
+  type KeyboardEvent,
+  type MouseEvent,
+} from "react";
+import { createPortal } from "react-dom";
+import { useDismissibleContextMenu } from "../../../shared/useDismissibleContextMenu";
 import type {
   KanbanCard,
   KanbanCardAction,
@@ -26,10 +42,13 @@ export type KanbanCardTileProps = {
   style?: CSSProperties;
   dragging?: boolean;
   overlay?: boolean;
+  actionsDisabled?: boolean;
   dragHandleProps?: ButtonHTMLAttributes<HTMLButtonElement>;
   onOpen?: (card: KanbanCard) => void;
   onAction?: (action: KanbanCardAction, card: KanbanCard) => void;
 };
+
+type KanbanMenuAction = Exclude<KanbanCardAction, "open">;
 
 const STATE_LABELS: Record<KanbanExecutionState, string> = {
   idle: "Ready",
@@ -65,37 +84,43 @@ const ACTION_LABELS: Record<KanbanCardAction, string> = {
   approve: "Approve result",
 };
 
-function ActionIcon({ action }: { action: KanbanCardAction }) {
+export function KanbanActionIcon({
+  action,
+  size = 14,
+}: {
+  action: KanbanCardAction;
+  size?: number;
+}) {
   switch (action) {
     case "start":
     case "resume":
-      return <Play size={14} aria-hidden="true" />;
+      return <Play size={size} aria-hidden="true" />;
     case "pause":
-      return <Pause size={14} aria-hidden="true" />;
+      return <Pause size={size} aria-hidden="true" />;
     case "stop":
-      return <CircleStop size={14} aria-hidden="true" />;
+      return <CircleStop size={size} aria-hidden="true" />;
     case "retry":
-      return <RefreshCw size={14} aria-hidden="true" />;
+      return <RefreshCw size={size} aria-hidden="true" />;
     case "edit":
-      return <Pencil size={14} aria-hidden="true" />;
+      return <Pencil size={size} aria-hidden="true" />;
     case "duplicate":
-      return <Copy size={14} aria-hidden="true" />;
+      return <Copy size={size} aria-hidden="true" />;
     case "archive":
-      return <Archive size={14} aria-hidden="true" />;
+      return <Archive size={size} aria-hidden="true" />;
     case "delete":
-      return <Trash2 size={14} aria-hidden="true" />;
+      return <Trash2 size={size} aria-hidden="true" />;
     case "commit":
-      return <GitCommitHorizontal size={14} aria-hidden="true" />;
+      return <GitCommitHorizontal size={size} aria-hidden="true" />;
     case "commit-and-push":
-      return <Rocket size={14} aria-hidden="true" />;
+      return <UploadCloud size={size} aria-hidden="true" />;
     case "merge":
-      return <GitMerge size={14} aria-hidden="true" />;
+      return <GitMerge size={size} aria-hidden="true" />;
     case "request-changes":
-      return <RefreshCw size={14} aria-hidden="true" />;
+      return <RefreshCw size={size} aria-hidden="true" />;
     case "approve":
-      return <Check size={14} aria-hidden="true" />;
+      return <Check size={size} aria-hidden="true" />;
     case "open":
-      return <Play size={14} aria-hidden="true" />;
+      return <MessageSquare size={size} aria-hidden="true" />;
   }
 }
 
@@ -107,12 +132,19 @@ function repositoryLabel(card: KanbanCard) {
   return `${labels.slice(0, 2).join(", ")} +${labels.length - 2}`;
 }
 
-function stateTone(state: KanbanExecutionState) {
+export function stateTone(state: KanbanExecutionState) {
   if (state === "failed" || state === "blocked") return "danger";
   if (state === "waiting-for-approval" || state === "waiting-for-input") {
     return "attention";
   }
-  if (state === "running" || state === "starting") return "active";
+  if (
+    state === "running" ||
+    state === "starting" ||
+    state === "pause-requested" ||
+    state === "stopping"
+  ) {
+    return "active";
+  }
   if (state === "completed-awaiting-review") return "review";
   if (state === "paused" || state === "interrupted" || state === "stopped") {
     return "muted";
@@ -125,18 +157,92 @@ export function KanbanCardTile({
   style,
   dragging = false,
   overlay = false,
+  actionsDisabled = false,
   dragHandleProps,
   onOpen,
   onAction,
 }: KanbanCardTileProps) {
+  const [menuOpen, setMenuOpen] = useState(false);
+  const [menuStyle, setMenuStyle] = useState<CSSProperties>({});
+  const menuId = useId();
+  const menuRef = useRef<HTMLDivElement>(null);
+  const menuTriggerRef = useRef<HTMLButtonElement>(null);
+  const menuItemRefs = useRef(new Map<KanbanMenuAction, HTMLButtonElement>());
+  const dismissMenu = useCallback(() => setMenuOpen(false), []);
+  useDismissibleContextMenu(menuOpen, menuRef, dismissMenu, menuTriggerRef);
   const branch = card.branches?.[0];
-  const menuActions = (card.availableActions ?? []).filter(
-    (action) => action !== "open",
+  const menuActions = useMemo<KanbanMenuAction[]>(
+    () =>
+      (card.availableActions ?? []).filter(
+        (action): action is KanbanMenuAction => action !== "open",
+      ),
+    [card.availableActions],
   );
+
+  useLayoutEffect(() => {
+    if (!menuOpen) return;
+    const trigger = menuTriggerRef.current;
+    if (!trigger) return;
+    const rect = trigger.getBoundingClientRect();
+    const viewportPadding = 8;
+    const menuGap = 6;
+    const width = 190;
+    const estimatedHeight = Math.min(menuActions.length * 34 + 10, 420);
+    const left = Math.max(
+      viewportPadding,
+      Math.min(rect.right - width, window.innerWidth - width - viewportPadding),
+    );
+    const below = rect.bottom + menuGap;
+    const top =
+      below + estimatedHeight <= window.innerHeight - viewportPadding
+        ? below
+        : Math.max(viewportPadding, rect.top - menuGap - estimatedHeight);
+    setMenuStyle({ left, top, width });
+  }, [menuActions.length, menuOpen]);
+
+  useEffect(() => {
+    if (actionsDisabled) setMenuOpen(false);
+  }, [actionsDisabled]);
+
+  useEffect(() => {
+    if (!menuOpen) return;
+    const frame = window.requestAnimationFrame(() => {
+      const firstAction = menuActions[0];
+      if (firstAction) menuItemRefs.current.get(firstAction)?.focus();
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, [menuActions, menuOpen]);
 
   function runAction(event: MouseEvent, action: KanbanCardAction) {
     event.stopPropagation();
+    if (actionsDisabled) return;
+    setMenuOpen(false);
     onAction?.(action, card);
+  }
+
+  function handleMenuKeyDown(
+    event: KeyboardEvent<HTMLButtonElement>,
+    action: KanbanMenuAction,
+  ) {
+    if (event.key === "Tab") {
+      setMenuOpen(false);
+      return;
+    }
+    const index = menuActions.indexOf(action);
+    let nextIndex: number | null = null;
+    if (event.key === "ArrowDown") {
+      nextIndex = (index + 1) % menuActions.length;
+    } else if (event.key === "ArrowUp") {
+      nextIndex = (index - 1 + menuActions.length) % menuActions.length;
+    } else if (event.key === "Home") {
+      nextIndex = 0;
+    } else if (event.key === "End") {
+      nextIndex = menuActions.length - 1;
+    }
+    if (nextIndex === null) return;
+    event.preventDefault();
+    const nextAction = menuActions[nextIndex];
+    if (nextAction) menuItemRefs.current.get(nextAction)?.focus();
   }
 
   return (
@@ -162,25 +268,55 @@ export function KanbanCardTile({
             <span className="kanban-unread-dot" aria-label="Unread activity" />
           ) : null}
           {menuActions.length > 0 ? (
-            <details className="kanban-card-menu">
-              <summary aria-label={`Actions for ${card.title}`}>
+            <div className="kanban-card-menu">
+              <button
+                ref={menuTriggerRef}
+                type="button"
+                className="kanban-card-menu-trigger"
+                aria-label={`Actions for ${card.title}`}
+                aria-haspopup="menu"
+                aria-expanded={menuOpen}
+                aria-controls={menuOpen ? menuId : undefined}
+                disabled={actionsDisabled}
+                onClick={(event) => {
+                  event.stopPropagation();
+                  if (actionsDisabled) return;
+                  setMenuOpen((current) => !current);
+                }}
+              >
                 <MoreHorizontal size={16} aria-hidden="true" />
-              </summary>
-              <div className="kanban-card-menu-popover" role="menu">
-                {menuActions.map((action) => (
-                  <button
-                    key={action}
-                    type="button"
-                    role="menuitem"
-                    className={action === "delete" ? "danger" : undefined}
-                    onClick={(event) => runAction(event, action)}
-                  >
-                    <ActionIcon action={action} />
-                    <span>{ACTION_LABELS[action]}</span>
-                  </button>
-                ))}
-              </div>
-            </details>
+              </button>
+              {menuOpen
+                ? createPortal(
+                    <div
+                      ref={menuRef}
+                      className="kanban-card-menu-popover"
+                      id={menuId}
+                      role="menu"
+                      style={menuStyle}
+                    >
+                      {menuActions.map((action) => (
+                        <button
+                          ref={(element) => {
+                            if (element) menuItemRefs.current.set(action, element);
+                            else menuItemRefs.current.delete(action);
+                          }}
+                          key={action}
+                          type="button"
+                          role="menuitem"
+                          className={action === "delete" ? "danger" : undefined}
+                          onClick={(event) => runAction(event, action)}
+                          onKeyDown={(event) => handleMenuKeyDown(event, action)}
+                        >
+                          <KanbanActionIcon action={action} />
+                          <span>{ACTION_LABELS[action]}</span>
+                        </button>
+                      ))}
+                    </div>,
+                    document.body,
+                  )
+                : null}
+            </div>
           ) : null}
           {dragHandleProps ? (
             <button
@@ -189,7 +325,7 @@ export function KanbanCardTile({
               aria-label={`Move ${card.title}`}
               {...dragHandleProps}
             >
-              <span aria-hidden="true">⠿</span>
+              <GripVertical size={14} aria-hidden="true" />
             </button>
           ) : null}
         </div>
@@ -198,41 +334,46 @@ export function KanbanCardTile({
       <button
         type="button"
         className="kanban-card-open"
+        disabled={actionsDisabled}
         onClick={() => onOpen?.(card)}
       >
         <strong>{card.title}</strong>
-        {card.description ? <span>{card.description}</span> : null}
-      </button>
-
-      <div className="kanban-card-metadata">
-        <span title={card.repositories.map((repository) => repository.path).join("\n")}>
-          {repositoryLabel(card)}
+        {card.description ? (
+          <span className="kanban-card-description">{card.description}</span>
+        ) : null}
+        <span className="kanban-card-metadata">
+          <span title={card.repositories.map((repository) => repository.path).join("\n")}>
+            {repositoryLabel(card)}
+          </span>
+          <span>{card.accountLabel}</span>
+          <span>{card.modelLabel}</span>
+          <span>
+            {card.reasoningLevelLabel ??
+              (card.reasoningLevel || "Model default")}
+          </span>
         </span>
-        <span>{card.accountLabel}</span>
-        <span>{card.modelLabel}</span>
-        <span>{card.reasoningLevel}</span>
-      </div>
 
-      {branch || card.changedFileCount ? (
-        <div className="kanban-card-footer">
-          {branch ? (
-            <span className="kanban-branch-label" title={branch.branch}>
-              <GitBranch size={13} aria-hidden="true" />
-              {branch.branch}
-              {(card.branches?.length ?? 0) > 1
-                ? ` +${(card.branches?.length ?? 1) - 1}`
-                : ""}
-            </span>
-          ) : (
-            <span />
-          )}
-          {card.changedFileCount ? (
-            <span>
-              {card.changedFileCount} changed {card.changedFileCount === 1 ? "file" : "files"}
-            </span>
-          ) : null}
-        </div>
-      ) : null}
+        {branch || card.changedFileCount ? (
+          <span className="kanban-card-footer">
+            {branch ? (
+              <span className="kanban-branch-label" title={branch.branch}>
+                <GitBranch size={13} aria-hidden="true" />
+                {branch.branch}
+                {(card.branches?.length ?? 0) > 1
+                  ? ` +${(card.branches?.length ?? 1) - 1}`
+                  : ""}
+              </span>
+            ) : (
+              <span />
+            )}
+            {card.changedFileCount ? (
+              <span>
+                {card.changedFileCount} changed {card.changedFileCount === 1 ? "file" : "files"}
+              </span>
+            ) : null}
+          </span>
+        ) : null}
+      </button>
     </article>
   );
 }

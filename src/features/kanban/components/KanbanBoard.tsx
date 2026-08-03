@@ -110,6 +110,7 @@ function SortableCard({
         card={card}
         style={style}
         dragging={isDragging}
+        actionsDisabled={disabled}
         dragHandleProps={dragHandleProps}
         onOpen={onOpen}
         onAction={onAction}
@@ -169,7 +170,13 @@ function SortableColumn({
       <header className="kanban-column-header">
         <div>
           <h2 id={`kanban-column-title-${column.id}`}>{column.title}</h2>
-          <span aria-label={`${column.cards.length} cards`}>{column.cards.length}</span>
+          <span
+            aria-label={`${column.cards.length} ${
+              column.cards.length === 1 ? "card" : "cards"
+            }`}
+          >
+            {column.cards.length}
+          </span>
         </div>
         <div className="kanban-column-actions">
           {onCreateCard ? (
@@ -177,6 +184,7 @@ function SortableColumn({
               type="button"
               className="kanban-icon-button"
               aria-label={`Create card in ${column.title}`}
+              disabled={disabled}
               onClick={() => onCreateCard(column.id)}
             >
               <Plus size={16} aria-hidden="true" />
@@ -220,7 +228,7 @@ function SortableColumn({
               type="button"
               className="kanban-column-empty"
               onClick={() => onCreateCard?.(column.id)}
-              disabled={!onCreateCard}
+              disabled={disabled || !onCreateCard}
             >
               <span>Drop cards here</span>
               {onCreateCard ? <small>or create a card</small> : null}
@@ -394,7 +402,10 @@ export function KanbanBoard({
           ) : activeColumn ? (
             <div className="kanban-column-overlay">
               <strong>{activeColumn.title}</strong>
-              <span>{activeColumn.cards.length} cards</span>
+              <span>
+                {activeColumn.cards.length}{" "}
+                {activeColumn.cards.length === 1 ? "card" : "cards"}
+              </span>
             </div>
           ) : null}
         </DragOverlay>

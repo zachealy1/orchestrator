@@ -1,5 +1,15 @@
-import { Archive, Check, CircleStop, RefreshCw, Trash2, X } from "lucide-react";
+import {
+  AlertCircle,
+  Archive,
+  Check,
+  CircleStop,
+  Loader2,
+  RefreshCw,
+  Trash2,
+  X,
+} from "lucide-react";
 import { useEffect, useRef } from "react";
+import { trapDialogFocus } from "../../../shared/dialogFocus";
 import "../kanban.css";
 import type {
   KanbanCard,
@@ -115,41 +125,63 @@ export function KanbanTransitionDialog({
   onConfirm,
 }: KanbanTransitionDialogProps) {
   const confirmRef = useRef<HTMLButtonElement>(null);
+  const cancelRef = useRef<HTMLButtonElement>(null);
+  const dialogRef = useRef<HTMLElement>(null);
+  const previousFocusRef = useRef<HTMLElement | null>(null);
   const copy = COPY[kind];
 
   useEffect(() => {
     if (!open) return;
-    const frame = window.requestAnimationFrame(() => confirmRef.current?.focus());
+    previousFocusRef.current =
+      document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    return () => previousFocusRef.current?.focus({ preventScroll: true });
+  }, [open]);
+
+  useEffect(() => {
+    if (!open) return;
+    const frame = window.requestAnimationFrame(() =>
+      (copy.danger ? cancelRef.current : confirmRef.current)?.focus(),
+    );
     const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === "Escape" && !busy) onCancel();
+      if (event.key === "Escape" && !event.defaultPrevented && !busy) {
+        onCancel();
+      }
     };
     window.addEventListener("keydown", onKeyDown);
     return () => {
       window.cancelAnimationFrame(frame);
       window.removeEventListener("keydown", onKeyDown);
     };
-  }, [busy, onCancel, open]);
+  }, [busy, copy.danger, onCancel, open]);
+
+  useEffect(() => {
+    if (busy) dialogRef.current?.focus({ preventScroll: true });
+  }, [busy]);
 
   if (!open) return null;
 
   return (
     <div
-      className="kanban-modal-backdrop"
+      className="modal-backdrop"
       role="presentation"
       onMouseDown={(event) => {
         if (event.target === event.currentTarget && !busy) onCancel();
       }}
     >
       <section
-        className="kanban-transition-dialog"
+        ref={dialogRef}
+        className="confirmation-dialog kanban-transition-dialog"
         role="alertdialog"
         aria-modal="true"
+        aria-busy={busy}
         aria-labelledby="kanban-transition-title"
         aria-describedby="kanban-transition-description"
+        tabIndex={-1}
+        onKeyDown={trapDialogFocus}
       >
         <header>
           <div>
-            <span className="kanban-eyebrow">{copy.eyebrow}</span>
+            <span className="eyebrow">{copy.eyebrow}</span>
             <h2 id="kanban-transition-title">{copy.title}</h2>
           </div>
           <button
@@ -209,21 +241,32 @@ export function KanbanTransitionDialog({
 
         {error ? (
           <p className="kanban-form-error" role="alert">
-            {error}
+            <AlertCircle size={15} aria-hidden="true" />
+            <span>{error}</span>
           </p>
         ) : null}
-        <footer>
-          <button type="button" className="secondary" disabled={busy} onClick={onCancel}>
+        <footer className="confirmation-actions">
+          <button
+            ref={cancelRef}
+            type="button"
+            className="secondary"
+            disabled={busy}
+            onClick={onCancel}
+          >
             Cancel
           </button>
           <button
             ref={confirmRef}
             type="button"
-            className={copy.danger ? "kanban-danger-button" : "kanban-primary-button"}
+            className={copy.danger ? "danger" : undefined}
             disabled={busy || confirmDisabled}
             onClick={() => void onConfirm()}
           >
-            <ConfirmIcon kind={kind} />
+            {busy ? (
+              <Loader2 className="spin" size={16} aria-hidden="true" />
+            ) : (
+              <ConfirmIcon kind={kind} />
+            )}
             {busy ? "Working…" : copy.confirm}
           </button>
         </footer>

@@ -1,4 +1,4 @@
-import { render, screen } from "@testing-library/react";
+import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 import { WorkspaceContextBanner } from "./WorkspaceContextBanner";
@@ -93,5 +93,20 @@ describe("WorkspaceContextBanner surface switch", () => {
     expect(
       screen.queryByText("Card agents run in isolated worktrees"),
     ).not.toBeInTheDocument();
+  });
+
+  it("supports the app's roving keyboard pattern", async () => {
+    const user = userEvent.setup();
+    const onSurfaceModeChange = renderBanner("chat");
+    const chat = screen.getByRole("radio", { name: "Chat" });
+    const kanban = screen.getByRole("radio", { name: "Kanban" });
+
+    expect(chat).toHaveAttribute("tabindex", "0");
+    expect(kanban).toHaveAttribute("tabindex", "-1");
+    chat.focus();
+    await user.keyboard("{ArrowRight}");
+
+    expect(onSurfaceModeChange).toHaveBeenCalledWith("kanban");
+    await waitFor(() => expect(kanban).toHaveFocus());
   });
 });
