@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from "react";
+import React from "react";
 import ReactDOM from "react-dom/client";
 import App from "./App";
 import DrawerSyncDiagnostics from "./drawerSyncDiagnostics";
@@ -10,11 +10,19 @@ import { AppServices, AppServicesProvider } from "./runtime/AppServices";
 
 initializeTheme();
 
+const services = new AppServices();
+let servicesDisposed = false;
+
+function disposeServices() {
+  if (servicesDisposed) return;
+  servicesDisposed = true;
+  services.dispose();
+}
+
+window.addEventListener("beforeunload", disposeServices, { once: true });
+import.meta.hot?.dispose(disposeServices);
+
 function ApplicationRoot() {
-  const [services] = useState(() => new AppServices());
-
-  useEffect(() => () => services.dispose(), [services]);
-
   return (
     <AppServicesProvider services={services}>
     {import.meta.env.VITE_TRANSCRIPT_RESTORE_PROFILE === "1" ? (

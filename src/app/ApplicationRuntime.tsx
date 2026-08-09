@@ -475,6 +475,10 @@ import type {
   CommitMessageGenerationSnapshot,
   RefreshWorkspaceGitStatusOptions,
 } from "../features/workspaces/runtimeState";
+import {
+  collectStartupWarnings,
+  withStartupFallback,
+} from "./bootstrapRecovery";
 
 function App() {
   const appServices = useAppServices();
@@ -2007,7 +2011,7 @@ function App() {
       : null;
   const shouldSuspendTaskChatTranscript =
     visibleTaskChatEntries.length === 0 &&
-    (retainTranscriptDuringWorkspaceSwitch || selectedHistoryChatLoading !== null);
+    retainTranscriptDuringWorkspaceSwitch;
   const shouldRenderTaskChatTranscript =
     visibleTaskChatEntries.length > 0 ||
     (taskChatTranscriptHasMountedRef.current && shouldSuspendTaskChatTranscript);
@@ -2141,7 +2145,11 @@ function App() {
     requiresOpenaiAuth,
   ]);
   useEffect(() => {
-    void bootstrap();
+    void bootstrap().catch((error) => {
+      bootstrapCompleteRef.current = true;
+      const message = error instanceof Error ? error.message : String(error);
+      setStatusMessage(`Orchestrator could not finish starting: ${message}`);
+    });
   }, []);
 
   useEffect(() => {
@@ -2653,13 +2661,17 @@ function App() {
   ]);
 
   async function bootstrap() {
-    await Promise.all([
+    const startupWarnings = await collectStartupWarnings([
       recoverAbandonedRuns(),
       recoverInterruptedChatTitleGenerations(),
       recoverInterruptedPromptQueueItems(),
       recoverInterruptedKanbanAttempts(),
     ]);
-    const restoredQueueItems = await holdRestoredPromptQueueItems();
+    const restoredQueueItems = await withStartupFallback(
+      holdRestoredPromptQueueItems(),
+      [],
+      startupWarnings,
+    );
     const restoredQueues = restoredQueueItems.reduce<
       Record<number, PromptQueueItem[]>
     >((queues, item) => {
@@ -2675,7 +2687,11 @@ function App() {
       [...restoredPausedChatIds].map((chatId) => [chatId, "restart"]),
     );
     setPromptQueuesByChat(restoredQueues);
-    const duplicateProfileIds = await listDuplicateProfilesPendingCleanup();
+    const duplicateProfileIds = await withStartupFallback(
+      listDuplicateProfilesPendingCleanup(),
+      [],
+      startupWarnings,
+    );
     await Promise.allSettled(
       duplicateProfileIds.map(async (accountId) => {
         await deleteCodexProfile(accountId);
@@ -2683,11 +2699,12 @@ function App() {
       }),
     );
 
-    const [workspaceRows, storedAccountRows, nativeActiveLogin] = await Promise.all([
-      listWorkspaces(),
-      listCodexAccounts(),
-      readActiveCodexLogin().catch(() => null),
-    ]);
+    const [workspaceRows, storedAccountRows, nativeActiveLogin] =
+      await Promise.all([
+        withStartupFallback(listWorkspaces(), [], startupWarnings),
+        withStartupFallback(listCodexAccounts(), [], startupWarnings),
+        withStartupFallback(readActiveCodexLogin(), null, startupWarnings),
+      ]);
     const strandedAccounts = nativeActiveLogin
       ? []
       : storedAccountRows.filter(
@@ -2778,6 +2795,11 @@ function App() {
     const pendingActivation = pendingNotificationActivationRef.current;
     pendingNotificationActivationRef.current = null;
     dispatchAgentNotificationActivation(pendingActivation);
+    if (startupWarnings.length > 0) {
+      setStatusMessage(
+        "Orchestrator started, but some interrupted work could not be recovered.",
+      );
+    }
   }
 
   async function syncExternalCodexChats(workspace: Workspace) {
@@ -3511,31 +3533,48 @@ function App() {
   }
 
   async function chooseWorkspace() {
-    const selected = await open({
-      directory: true,
-      multiple: false,
-      title: "Choose a repository workspace",
-    });
+    try {
+      const selected = await open({
+        directory: true,
+        multiple: false,
+        title: "Choose a repository workspace",
+      });
 
-    if (typeof selected !== "string") {
-      return;
+      if (typeof selected !== "string") {
+        return;
+      }
+
+      cancelAgentNotificationNavigation();
+      const workspace = await upsertWorkspace(selected);
+      const workspaceRows = await listWorkspaces();
+      historyChatLoadIdRef.current += 1;
+      cancelActiveExternalTranscriptSync();
+      cancelActiveHistoricalTranscriptPreparation();
+      resetTranscriptInteraction();
+      historicalTranscriptRef.current = null;
+      workspacesRef.current = workspaceRows;
+      selectedWorkspaceRef.current = workspace;
+      workspaceTaskMemories.records[workspace.id] ??=
+        createEmptyWorkspaceTaskMemory();
+      flushSync(() => {
+        setHistoryChatLoadState(null);
+        setHistoryOpenRequest(null);
+        setHistoricalTranscript(null);
+        setWorkspaces(workspaceRows);
+        setBranches([]);
+        setSelectedBranch(null);
+        setSelectedWorkspace(workspace);
+        setSelectedDraftChat(null);
+        setSelectedHistoryChatId(null);
+        setWorkspaceChatSession(workspace.id, undefined);
+        setSelectedRunAliases(null);
+        setActiveView("task");
+      });
+      setStatusMessage(`Selected ${workspace.label}`);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      setStatusMessage(`Could not add workspace: ${message}`);
     }
-
-    cancelAgentNotificationNavigation();
-    const workspace = await upsertWorkspace(selected);
-    historyChatLoadIdRef.current += 1;
-    cancelActiveExternalTranscriptSync();
-    cancelActiveHistoricalTranscriptPreparation();
-    resetTranscriptInteraction();
-    setHistoryChatLoadState(null);
-    setHistoryOpenRequest(null);
-    setHistoricalTranscript(null);
-    setWorkspaces(await listWorkspaces());
-    setBranches([]);
-    setSelectedBranch(null);
-    setSelectedWorkspace(workspace);
-    setActiveView("task");
-    setStatusMessage(`Selected ${workspace.label}`);
   }
 
   function createEmptyWorkspaceTaskMemory(): WorkspaceTaskMemory {

@@ -1263,6 +1263,24 @@ describe("Application runtime scenarios 5", () => {
       expect(mocks.generateChatTitleMock).not.toHaveBeenCalled();
     });
 
+  it("hydrates persisted workspaces when optional startup recovery fails", async () => {
+      mocks.recoverInterruptedKanbanAttemptsMock.mockRejectedValueOnce(
+        new Error("Kanban recovery unavailable"),
+      );
+
+      await renderApp();
+
+      const workspaceNav = screen.getByRole("navigation", {
+        name: "Workspaces",
+      });
+      expect(
+        within(workspaceNav).getByRole("button", { name: workspace.label }),
+      ).toHaveAttribute("aria-current", "page");
+      expect(
+        screen.getByLabelText(/Codex account|Sign in to Codex/),
+      ).toBeInTheDocument();
+    });
+
   it("falls back once when AI title generation fails", async () => {
       const warning = vi
         .spyOn(console, "warn")

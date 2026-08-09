@@ -1713,4 +1713,96 @@ describe("Application runtime scenarios 2", () => {
       expect(screen.getByText("Fast chat result.")).toBeInTheDocument();
       expect(screen.queryByText("Slow chat result.")).not.toBeInTheDocument();
     });
+
+  it("removes the previous transcript immediately while another chat loads", async () => {
+      const firstChat = workspaceChatFixture({ id: 463, title: "First chat" });
+      const secondChat = workspaceChatFixture({ id: 464, title: "Second chat" });
+      const thirdChat = workspaceChatFixture({ id: 465, title: "Third chat" });
+      let resolveSecondChat:
+        | ((runs: ReturnType<typeof workspaceRunFixture>[]) => void)
+        | null = null;
+      const secondChatRuns = new Promise<ReturnType<typeof workspaceRunFixture>[]>(
+        (resolve) => {
+          resolveSecondChat = resolve;
+        },
+      );
+      mocks.listWorkspaceChatsMock.mockResolvedValue([
+        firstChat,
+        secondChat,
+        thirdChat,
+      ]);
+      mocks.listLocalChatTranscriptMock.mockImplementation(async (chatId: number) => {
+        if (chatId === secondChat.id) return secondChatRuns;
+        return [
+          workspaceRunFixture({
+            id: chatId + 1_000,
+            chat_id: chatId,
+            original_prompt: `${chatId} prompt`,
+            final_message:
+              chatId === firstChat.id
+                ? "First conversation result."
+                : "Third conversation result.",
+          }),
+        ];
+      });
+
+      const { user } = await renderApp();
+      const banner = screen.getByRole("region", { name: "Selected folder" });
+      const historyButton = within(banner).getByRole("button", {
+        name: /open chat history/i,
+      });
+
+      await user.click(historyButton);
+      let drawer = await screen.findByRole("complementary", {
+        name: "Workspace chat history",
+      });
+      await user.click(
+        within(drawer).getByRole("button", { name: /first chat/i }),
+      );
+      expect(await screen.findByText("First conversation result.")).toBeInTheDocument();
+
+      await user.click(historyButton);
+      drawer = await screen.findByRole("complementary", {
+        name: "Workspace chat history",
+      });
+      const firstRow = within(drawer).getByRole("button", { name: /first chat/i });
+      const secondRow = within(drawer).getByRole("button", {
+        name: /second chat/i,
+      });
+      await user.click(secondRow);
+
+      expect(secondRow).toHaveAttribute("aria-pressed", "true");
+      expect(firstRow).toHaveAttribute("aria-pressed", "false");
+      expect(screen.getByLabelText("Loading chat")).toHaveTextContent(
+        "Loading Second chat",
+      );
+      expect(screen.queryByText("First conversation result.")).not.toBeInTheDocument();
+      expect(
+        document.querySelector(".task-chat-transcript-switcher.is-suspended"),
+      ).toBeNull();
+
+      await user.click(historyButton);
+      drawer = await screen.findByRole("complementary", {
+        name: "Workspace chat history",
+      });
+      await user.click(
+        within(drawer).getByRole("button", { name: /third chat/i }),
+      );
+      expect(await screen.findByText("Third conversation result.")).toBeInTheDocument();
+
+      await act(async () => {
+        resolveSecondChat?.([
+          workspaceRunFixture({
+            id: 1_464,
+            chat_id: secondChat.id,
+            original_prompt: "Second prompt",
+            final_message: "Second conversation result.",
+          }),
+        ]);
+        await Promise.resolve();
+      });
+
+      expect(screen.getByText("Third conversation result.")).toBeInTheDocument();
+      expect(screen.queryByText("Second conversation result.")).not.toBeInTheDocument();
+    });
 });

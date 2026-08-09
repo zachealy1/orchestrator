@@ -116,6 +116,38 @@ describe("Application runtime scenarios 1", () => {
       );
     });
 
+  it("selects a newly added workspace after it is persisted", async () => {
+      const newWorkspace = {
+        ...workspace,
+        id: 9,
+        path: "/repo/new-workspace",
+        label: "new-workspace",
+        default_account_id: null,
+      };
+      mocks.openDialogMock.mockResolvedValueOnce(newWorkspace.path);
+      mocks.upsertWorkspaceMock.mockResolvedValueOnce(newWorkspace);
+      mocks.listWorkspacesMock
+        .mockResolvedValueOnce([workspace])
+        .mockResolvedValue([newWorkspace, workspace]);
+
+      const { user } = await renderApp();
+      await user.click(screen.getByRole("button", { name: "Add workspace" }));
+
+      const workspaceNav = screen.getByRole("navigation", {
+        name: "Workspaces",
+      });
+      await waitFor(() =>
+        expect(
+          within(workspaceNav).getByRole("button", {
+            name: newWorkspace.label,
+          }),
+        ).toHaveAttribute("aria-current", "page"),
+      );
+      expect(screen.getByLabelText("Selected folder")).toHaveTextContent(
+        newWorkspace.label,
+      );
+    });
+
   it("opens a workspace context menu and cancels workspace removal", async () => {
       const { user } = await renderApp();
       const workspaceNav = screen.getByRole("navigation", {
