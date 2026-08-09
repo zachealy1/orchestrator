@@ -666,6 +666,31 @@
   accent-color: var(--accent-2);
 }
 
+.kanban-card-dialog .kanban-repository-options input[type="checkbox"],
+.kanban-card-dialog .kanban-duplicate-history input[type="checkbox"],
+.kanban-card-dialog .kanban-include-dirty-option input[type="checkbox"] {
+  position: relative;
+  flex: 0 0 13px;
+  width: 13px;
+  height: 13px;
+  box-sizing: border-box;
+  appearance: none;
+  border: 2px solid var(--color-icon-muted);
+  border-radius: 50%;
+  background: var(--color-component-background);
+  margin: 3px;
+}
+
+.kanban-card-dialog .kanban-repository-options input[type="checkbox"]:checked::after,
+.kanban-card-dialog .kanban-duplicate-history input[type="checkbox"]:checked::after,
+.kanban-card-dialog .kanban-include-dirty-option input[type="checkbox"]:checked::after {
+  position: absolute;
+  inset: 2px;
+  border-radius: 50%;
+  background: var(--color-icon-muted);
+  content: "";
+}
+
 .kanban-filter-groups fieldset > label small {
   color: var(--color-text-secondary);
 }
@@ -1415,10 +1440,25 @@
   color: var(--color-text);
 }
 
-.kanban-cleanup-disclosure .kanban-cleanup-options > label > input {
-  width: 18px;
-  height: 18px;
-  margin-top: 1px;
+.kanban-cleanup-disclosure .kanban-cleanup-options > label > input[type="checkbox"] {
+  position: relative;
+  flex: 0 0 13px;
+  width: 13px;
+  height: 13px;
+  box-sizing: border-box;
+  appearance: none;
+  border: 2px solid var(--color-icon-muted);
+  border-radius: 50%;
+  background: var(--color-component-background);
+  margin: 3px;
+}
+
+.kanban-cleanup-disclosure .kanban-cleanup-options > label > input[type="checkbox"]:checked::after {
+  position: absolute;
+  inset: 2px;
+  border-radius: 50%;
+  background: var(--color-icon-muted);
+  content: "";
 }
 
 .kanban-cleanup-disclosure .kanban-cleanup-options > label > span {
