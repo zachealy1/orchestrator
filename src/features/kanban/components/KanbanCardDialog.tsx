@@ -447,7 +447,7 @@ export function KanbanCardDialog({
                       />
                       <span>
                         <strong>Include current uncommitted changes</strong>
-                        <small>Off by default. Selected source changes are copied into the isolated worktree at first start.</small>
+                        <small>Selected source changes are copied into the isolated worktree at first start.</small>
                       </span>
                     </label>
                     {mode === "edit" && executionSettingsLocked ? (
@@ -464,7 +464,7 @@ export function KanbanCardDialog({
                     />
                     <span>
                       <strong>Include current uncommitted changes</strong>
-                      <small>Off by default. Selected source changes are copied into the isolated worktree at first start.</small>
+                      <small>Selected source changes are copied into the isolated worktree at first start.</small>
                     </span>
                   </label>
                 ) : null}
