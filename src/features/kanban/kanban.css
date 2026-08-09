@@ -129,7 +129,6 @@
 .kanban-icon-button:focus-visible,
 .kanban-drag-handle:focus-visible,
 .kanban-card-menu-trigger:focus-visible,
-.kanban-card-open:focus-visible,
 .kanban-column-empty:focus-visible,
 .kanban-archive-card-open:focus-visible {
   outline: 2px solid var(--color-primary);
@@ -334,7 +333,7 @@
   box-shadow: 0 0 0 3px rgb(var(--primary-rgb) / 0.12);
 }
 
-.kanban-card-open {
+.kanban-card-content {
   display: grid;
   width: 100%;
   min-height: 0;
@@ -342,21 +341,11 @@
   margin: 0;
   padding: 0;
   border: 0;
-  border-radius: 4px;
-  background: transparent;
-  box-shadow: none;
   color: inherit;
   text-align: left;
-  transform: none;
 }
 
-.kanban-card-open:hover:not(:disabled) {
-  background: transparent;
-  box-shadow: none;
-  transform: none;
-}
-
-.kanban-card-open strong {
+.kanban-card-content strong {
   display: -webkit-box;
   overflow: hidden;
   font-size: 0.86rem;

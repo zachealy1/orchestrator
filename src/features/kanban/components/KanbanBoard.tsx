@@ -33,7 +33,6 @@ export type KanbanBoardProps = {
   columns: KanbanColumn[];
   disabled?: boolean;
   onMoveCard: (request: KanbanMoveRequest) => void;
-  onOpenCard?: (card: KanbanCard) => void;
   onCardAction?: (action: KanbanCardAction, card: KanbanCard) => void;
 };
 
@@ -69,12 +68,10 @@ function sortedColumns(columns: KanbanColumn[]) {
 function SortableCard({
   card,
   disabled,
-  onOpen,
   onAction,
 }: {
   card: KanbanCard;
   disabled: boolean;
-  onOpen?: (card: KanbanCard) => void;
   onAction?: (action: KanbanCardAction, card: KanbanCard) => void;
 }) {
   const {
@@ -107,7 +104,6 @@ function SortableCard({
         dragging={isDragging}
         actionsDisabled={disabled}
         dragHandleProps={dragHandleProps}
-        onOpen={onOpen}
         onAction={onAction}
       />
     </div>
@@ -118,13 +114,11 @@ function SortableColumn({
   column,
   disabled,
   target,
-  onOpenCard,
   onCardAction,
 }: {
   column: KanbanColumn;
   disabled: boolean;
   target: boolean;
-  onOpenCard?: (card: KanbanCard) => void;
   onCardAction?: (action: KanbanCardAction, card: KanbanCard) => void;
 }) {
   const { setNodeRef: setDropRef, isOver } = useDroppable({
@@ -168,7 +162,6 @@ function SortableColumn({
                   key={card.id}
                   card={card}
                   disabled={disabled}
-                  onOpen={onOpenCard}
                   onAction={onCardAction}
                 />
               ))}
@@ -196,7 +189,6 @@ export function KanbanBoard({
   columns,
   disabled = false,
   onMoveCard,
-  onOpenCard,
   onCardAction,
 }: KanbanBoardProps) {
   const orderedColumns = useMemo(() => sortedColumns(columns), [columns]);
@@ -298,7 +290,6 @@ export function KanbanBoard({
               column={column}
               disabled={disabled}
               target={dropTargetColumn === column.id}
-              onOpenCard={onOpenCard}
               onCardAction={onCardAction}
             />
           ))}

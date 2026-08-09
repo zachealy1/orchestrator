@@ -1773,7 +1773,6 @@ export function KanbanWorkspace({
                 columns={buildColumns(group.cards)}
                 disabled={busy}
                 onMoveCard={(request) => void handleMove(request)}
-                onOpenCard={openCard}
                 onCardAction={(action, card) => void handleCardAction(action, card)}
               />
             </section>
@@ -1797,7 +1796,6 @@ export function KanbanWorkspace({
           columns={buildColumns([])}
           disabled={busy}
           onMoveCard={(request) => void handleMove(request)}
-          onOpenCard={openCard}
           onCardAction={(action, card) => void handleCardAction(action, card)}
         />
       )}

@@ -183,10 +183,19 @@ function renderWorkspace(toolbarHost?: HTMLElement | null) {
   return props;
 }
 
-async function openCommitDialog(user: ReturnType<typeof userEvent.setup>) {
+async function openCardDetails(user: ReturnType<typeof userEvent.setup>) {
   await user.click(
-    await screen.findByRole("button", { name: /^Controller card/ }),
+    await screen.findByRole("button", {
+      name: "Actions for Controller card",
+    }),
   );
+  await user.click(
+    await screen.findByRole("menuitem", { name: "Open conversation" }),
+  );
+}
+
+async function openCommitDialog(user: ReturnType<typeof userEvent.setup>) {
+  await openCardDetails(user);
   const commitButton = screen.getByRole("button", { name: "Commit" });
   await waitFor(() => expect(commitButton).toBeEnabled());
   await user.click(commitButton);
@@ -373,9 +382,7 @@ describe("KanbanWorkspace controller", () => {
     apiMocks.readKanbanGitStatus.mockResolvedValue(status(gitBinding));
 
     const callbacks = renderWorkspace();
-    await user.click(
-      await screen.findByRole("button", { name: /^Controller card/ }),
-    );
+    await openCardDetails(user);
 
     expect(callbacks.onOpenConversation).toHaveBeenCalledWith(runningCard);
     await user.click(screen.getByRole("button", { name: "Open in Chat" }));
@@ -401,9 +408,7 @@ describe("KanbanWorkspace controller", () => {
     apiMocks.loadKanbanGitBindings.mockResolvedValue([binding()]);
 
     const callbacks = renderWorkspace();
-    await user.click(
-      await screen.findByRole("button", { name: /^Controller card/ }),
-    );
+    await openCardDetails(user);
     await user.click(screen.getByRole("button", { name: "Stop" }));
 
     expect(callbacks.onStop).not.toHaveBeenCalled();
@@ -520,9 +525,7 @@ describe("KanbanWorkspace controller", () => {
       .mockReturnValueOnce(pendingSecondDiff);
     renderWorkspace();
 
-    await user.click(
-      await screen.findByRole("button", { name: /^Controller card/ }),
-    );
+    await openCardDetails(user);
     expect(await screen.findByText(/\+updated first/)).toBeInTheDocument();
     expect(screen.queryByText(/\+updated second/)).not.toBeInTheDocument();
     await user.click(
@@ -579,9 +582,7 @@ describe("KanbanWorkspace controller", () => {
     );
     renderWorkspace();
 
-    await user.click(
-      await screen.findByRole("button", { name: /^Controller card/ }),
-    );
+    await openCardDetails(user);
     expect(await screen.findByText(/\+first repository/)).toBeInTheDocument();
     expect(apiMocks.readKanbanGitDiff).toHaveBeenLastCalledWith(firstBinding);
 

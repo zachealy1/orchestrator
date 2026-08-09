@@ -51,14 +51,12 @@ function columns(): KanbanColumn[] {
 describe("KanbanBoard", () => {
   it("orders columns and cards, and exposes scoped card controls", async () => {
     const user = userEvent.setup();
-    const onOpenCard = vi.fn();
     const onCardAction = vi.fn();
 
     render(
       <KanbanBoard
         columns={columns()}
         onMoveCard={vi.fn()}
-        onOpenCard={onOpenCard}
         onCardAction={onCardAction}
       />,
     );
@@ -69,18 +67,22 @@ describe("KanbanBoard", () => {
     const todo = screen.getByRole("region", { name: "To do" });
     expect(
       within(todo)
-        .getAllByRole("button")
-        .filter((button) => button.classList.contains("kanban-card-open"))
-        .map((button) => button.querySelector("strong")?.textContent),
+        .getAllByRole("article")
+        .map((article) => article.querySelector("strong")?.textContent),
     ).toEqual(["First card", "Second card"]);
 
-    await user.click(within(todo).getByRole("button", { name: /^First card/ }));
-    expect(onOpenCard).toHaveBeenCalledWith(
+    const firstCard = within(todo).getByRole("article", { name: /First card/ });
+    expect(
+      within(firstCard).queryByRole("button", { name: /^First card/ }),
+    ).not.toBeInTheDocument();
+    expect(within(firstCard).getByText("Plan")).toBeInTheDocument();
+    await user.click(within(firstCard).getByLabelText("Actions for First card"));
+    await user.click(screen.getByRole("menuitem", { name: "Open conversation" }));
+    expect(onCardAction).toHaveBeenCalledWith(
+      "open",
       expect.objectContaining({ id: "card-first" }),
     );
 
-    const firstCard = within(todo).getByRole("article", { name: /First card/ });
-    expect(within(firstCard).getByText("Plan")).toBeInTheDocument();
     await user.click(within(firstCard).getByLabelText("Actions for First card"));
     await user.click(screen.getByRole("menuitem", { name: "Edit card" }));
     expect(onCardAction).toHaveBeenCalledWith(
@@ -115,15 +117,18 @@ describe("KanbanBoard", () => {
     });
     await user.click(trigger);
     expect(trigger).toHaveAttribute("aria-expanded", "true");
+    const openAction = screen.getByRole("menuitem", {
+      name: "Open conversation",
+    });
     const editAction = screen.getByRole("menuitem", { name: "Edit card" });
     const duplicateAction = screen.getByRole("menuitem", {
       name: "Duplicate card",
     });
-    await waitFor(() => expect(editAction).toHaveFocus());
+    await waitFor(() => expect(openAction).toHaveFocus());
     await user.keyboard("{ArrowDown}");
-    expect(duplicateAction).toHaveFocus();
-    await user.keyboard("{Home}");
     expect(editAction).toHaveFocus();
+    await user.keyboard("{Home}");
+    expect(openAction).toHaveFocus();
     await user.keyboard("{End}");
     expect(duplicateAction).toHaveFocus();
     await user.keyboard("{Escape}");
@@ -163,7 +168,6 @@ describe("KanbanBoard", () => {
     );
 
     expect(screen.getByRole("button", { name: "Move First card" })).toBeDisabled();
-    expect(screen.getByRole("button", { name: /^First card/ })).toBeDisabled();
     expect(
       screen.getByRole("button", { name: "Actions for First card" }),
     ).toBeDisabled();

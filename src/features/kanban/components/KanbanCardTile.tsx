@@ -46,11 +46,10 @@ export type KanbanCardTileProps = {
   overlay?: boolean;
   actionsDisabled?: boolean;
   dragHandleProps?: ButtonHTMLAttributes<HTMLButtonElement>;
-  onOpen?: (card: KanbanCard) => void;
   onAction?: (action: KanbanCardAction, card: KanbanCard) => void;
 };
 
-type KanbanMenuAction = Exclude<KanbanCardAction, "open">;
+type KanbanMenuAction = KanbanCardAction;
 
 const STATE_LABELS: Record<KanbanExecutionState, string> = {
   idle: "Ready",
@@ -173,7 +172,6 @@ export function KanbanCardTile({
   overlay = false,
   actionsDisabled = false,
   dragHandleProps,
-  onOpen,
   onAction,
 }: KanbanCardTileProps) {
   const [menuOpen, setMenuOpen] = useState(false);
@@ -187,10 +185,7 @@ export function KanbanCardTile({
   const branch = card.branches?.[0];
   const submissionMode = card.submissionMode ?? "normal";
   const menuActions = useMemo<KanbanMenuAction[]>(
-    () =>
-      (card.availableActions ?? []).filter(
-        (action): action is KanbanMenuAction => action !== "open",
-      ),
+    () => card.availableActions ?? [],
     [card.availableActions],
   );
 
@@ -352,12 +347,7 @@ export function KanbanCardTile({
         </div>
       </div>
 
-      <button
-        type="button"
-        className="kanban-card-open"
-        disabled={actionsDisabled}
-        onClick={() => onOpen?.(card)}
-      >
+      <div className="kanban-card-content">
         <strong>{card.title}</strong>
         {card.description ? (
           <span className="kanban-card-description">{card.description}</span>
@@ -394,7 +384,7 @@ export function KanbanCardTile({
             ) : null}
           </span>
         ) : null}
-      </button>
+      </div>
     </article>
   );
 }
