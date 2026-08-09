@@ -10269,9 +10269,6 @@ function App() {
       ossProvider,
     }),
     listModels: listCodexModelsForProfile,
-    loadConversation: getChatWithRuns,
-    selectConversation: (chat, workspace) =>
-      selectHistoryChat(chat, { workspace }),
     loadChat: getChatRecord,
     updateChat,
     getNextTurnIndex: getNextChatTurnIndex,
@@ -15589,11 +15586,6 @@ function App() {
                   resolvedTheme={resolvedTheme}
                   refreshToken={kanbanRefreshToken}
                   listChatTranscript={listLocalChatTranscript}
-                  onOpenConversation={kanbanRuntime.openConversation}
-                  onShowConversation={async (card) => {
-                    await kanbanRuntime.openConversation(card);
-                    changeWorkspaceSurfaceMode("chat");
-                  }}
                   onLaunch={kanbanRuntime.launchCard}
                   onPause={kanbanRuntime.pauseCard}
                   onStop={kanbanRuntime.stopCard}

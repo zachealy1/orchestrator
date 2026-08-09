@@ -23,7 +23,7 @@ function card(overrides: Partial<KanbanCard> = {}): KanbanCard {
     reasoningLevel: "high",
     submissionMode: "plan",
     executionState: "idle",
-    availableActions: ["open", "edit", "duplicate"],
+    availableActions: ["edit", "duplicate"],
     ...overrides,
   };
 }
@@ -52,12 +52,14 @@ describe("KanbanBoard", () => {
   it("orders columns and cards, and exposes scoped card controls", async () => {
     const user = userEvent.setup();
     const onCardAction = vi.fn();
+    const onCardSelect = vi.fn();
 
     render(
       <KanbanBoard
         columns={columns()}
         onMoveCard={vi.fn()}
         onCardAction={onCardAction}
+        onCardSelect={onCardSelect}
       />,
     );
 
@@ -73,20 +75,15 @@ describe("KanbanBoard", () => {
 
     const firstCard = within(todo).getByRole("article", { name: /First card/ });
     const openCard = within(firstCard).getByRole("button", {
-      name: "Open First card",
+      name: "View details for First card",
     });
     expect(within(firstCard).getByText("Plan")).toBeInTheDocument();
     await user.click(openCard);
-    expect(onCardAction).toHaveBeenCalledWith(
-      "open",
+    expect(onCardSelect).toHaveBeenCalledWith(
       expect.objectContaining({ id: "card-first" }),
     );
 
     await user.click(within(firstCard).getByLabelText("Actions for First card"));
-    expect(
-      screen.queryByRole("menuitem", { name: "Open conversation" }),
-    ).not.toBeInTheDocument();
-
     await user.click(screen.getByRole("menuitem", { name: "Edit card" }));
     expect(onCardAction).toHaveBeenCalledWith(
       "edit",
@@ -124,9 +121,6 @@ describe("KanbanBoard", () => {
     const duplicateAction = screen.getByRole("menuitem", {
       name: "Duplicate card",
     });
-    expect(
-      screen.queryByRole("menuitem", { name: "Open conversation" }),
-    ).not.toBeInTheDocument();
     await waitFor(() => expect(editAction).toHaveFocus());
     await user.keyboard("{ArrowDown}");
     expect(duplicateAction).toHaveFocus();

@@ -1,11 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import type { CodexAccountProfile } from "../accounts/types";
 import type { CodexModel } from "../codex/types";
-import type {
-  ChatListItem,
-  ChatRecord,
-  ChatWithRuns,
-} from "../conversations/types";
+import type { ChatRecord } from "../conversations/types";
 import type { Workspace } from "../workspaces/types";
 import type { RunSetupSnapshot } from "../runs/runtimeTypes";
 import {
@@ -123,20 +119,6 @@ function chatRecord(overrides: Partial<ChatRecord> = {}): ChatRecord {
   };
 }
 
-function chatListItem(overrides: Partial<ChatListItem> = {}): ChatListItem {
-  return {
-    ...chatRecord(),
-    account_label: null,
-    account_email: null,
-    latest_activity_at: "2026-08-02T10:00:00Z",
-    turn_count: 0,
-    total_tokens: null,
-    duration_ms: null,
-    latest_model: null,
-    ...overrides,
-  };
-}
-
 function attempt(): KanbanAttemptRecord {
   return {
     id: "attempt-1",
@@ -196,7 +178,6 @@ function runControl(): TestRunControl {
 
 function harness() {
   const control = runControl();
-  const conversation: ChatWithRuns = { chat: chatListItem(), runs: [] };
   const dependencies = {
     getState: vi.fn(() => ({
       workspaces: [workspace],
@@ -206,8 +187,6 @@ function harness() {
       ossProvider: "ollama" as const,
     })),
     listModels: vi.fn(async () => [model]),
-    loadConversation: vi.fn(async () => conversation),
-    selectConversation: vi.fn(async () => undefined),
     loadChat: vi.fn(async () => chatRecord()),
     updateChat: vi.fn(async () => undefined),
     getNextTurnIndex: vi.fn(async () => 2),
@@ -247,35 +226,6 @@ function harness() {
 }
 
 describe("Kanban runtime controller", () => {
-  it("opens a card conversation in its owning workspace", async () => {
-    const { controller, dependencies } = harness();
-    const target = card();
-
-    await controller.openConversation(target);
-
-    expect(dependencies.loadConversation).toHaveBeenCalledWith(target.chatId);
-    expect(dependencies.selectConversation).toHaveBeenCalledWith(
-      expect.objectContaining({ id: target.chatId, surface: "kanban" }),
-      workspace,
-    );
-  });
-
-  it("validates that the card workspace still exists before opening", async () => {
-    const { controller, dependencies } = harness();
-    dependencies.getState.mockReturnValue({
-      workspaces: [],
-      accounts: [account],
-      selectedAccountId: account.id,
-      computerUseEnabled: true,
-      ossProvider: "ollama",
-    });
-
-    await expect(controller.openConversation(card())).rejects.toThrow(
-      "The card workspace is no longer available.",
-    );
-    expect(dependencies.loadConversation).not.toHaveBeenCalled();
-  });
-
   it("claims, provisions, and schedules an isolated card run", async () => {
     const { controller, control, dependencies, native } = harness();
     const target = card();

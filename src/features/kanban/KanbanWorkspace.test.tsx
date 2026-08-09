@@ -159,8 +159,6 @@ function status(
 
 function renderWorkspace(toolbarHost?: HTMLElement | null) {
   const props = {
-    onOpenConversation: vi.fn(),
-    onShowConversation: vi.fn(),
     onLaunch: vi.fn().mockResolvedValue(undefined),
     onPause: vi.fn().mockResolvedValue(undefined),
     onStop: vi.fn().mockResolvedValue(undefined),
@@ -186,7 +184,7 @@ function renderWorkspace(toolbarHost?: HTMLElement | null) {
 async function openCardDetails(user: ReturnType<typeof userEvent.setup>) {
   await user.click(
     await screen.findByRole("button", {
-      name: "Open Controller card",
+      name: "View details for Controller card",
     }),
   );
 }
@@ -380,10 +378,6 @@ describe("KanbanWorkspace controller", () => {
 
     const callbacks = renderWorkspace();
     await openCardDetails(user);
-
-    expect(callbacks.onOpenConversation).toHaveBeenCalledWith(runningCard);
-    await user.click(screen.getByRole("button", { name: "Open in Chat" }));
-    expect(callbacks.onShowConversation).toHaveBeenCalledWith(runningCard);
 
     await waitFor(() => expect(apiMocks.readKanbanGitStatus).toHaveBeenCalled());
 

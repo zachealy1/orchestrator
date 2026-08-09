@@ -12,10 +12,7 @@ export type {
   KanbanCardDialogProps,
 } from "./KanbanCardDialog";
 export type { KanbanCardTileProps } from "./KanbanCardTile";
-export type {
-  KanbanDetailShellProps,
-  KanbanDetailTab,
-} from "./KanbanDetailShell";
+export type { KanbanDetailShellProps } from "./KanbanDetailShell";
 export type { KanbanToolbarProps } from "./KanbanToolbar";
 export type { KanbanTransitionDialogProps } from "./KanbanTransitionDialog";
 export type * from "./types";

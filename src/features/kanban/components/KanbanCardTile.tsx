@@ -47,6 +47,7 @@ export type KanbanCardTileProps = {
   actionsDisabled?: boolean;
   dragHandleProps?: ButtonHTMLAttributes<HTMLButtonElement>;
   onAction?: (action: KanbanCardAction, card: KanbanCard) => void;
+  onSelect?: (card: KanbanCard) => void;
 };
 
 type KanbanMenuAction = KanbanCardAction;
@@ -68,7 +69,6 @@ const STATE_LABELS: Record<KanbanExecutionState, string> = {
 };
 
 const ACTION_LABELS: Record<KanbanCardAction, string> = {
-  open: "Open conversation",
   start: "Start agent",
   pause: "Pause agent",
   resume: "Resume agent",
@@ -132,8 +132,6 @@ export function KanbanActionIcon({
       return <RefreshCw size={size} aria-hidden="true" />;
     case "approve":
       return <Check size={size} aria-hidden="true" />;
-    case "open":
-      return <MessageSquare size={size} aria-hidden="true" />;
   }
 }
 
@@ -173,6 +171,7 @@ export function KanbanCardTile({
   actionsDisabled = false,
   dragHandleProps,
   onAction,
+  onSelect,
 }: KanbanCardTileProps) {
   const [menuOpen, setMenuOpen] = useState(false);
   const [menuStyle, setMenuStyle] = useState<CSSProperties>({});
@@ -184,9 +183,8 @@ export function KanbanCardTile({
   useDismissibleContextMenu(menuOpen, menuRef, dismissMenu, menuTriggerRef);
   const branch = card.branches?.[0];
   const submissionMode = card.submissionMode ?? "normal";
-  const canOpen = card.availableActions?.includes("open") ?? false;
   const menuActions = useMemo<KanbanMenuAction[]>(
-    () => (card.availableActions ?? []).filter((action) => action !== "open"),
+    () => card.availableActions ?? [],
     [card.availableActions],
   );
 
@@ -348,13 +346,16 @@ export function KanbanCardTile({
         </div>
       </div>
 
-      {canOpen ? (
+      {onSelect ? (
         <button
           type="button"
           className="kanban-card-content kanban-card-open"
-          aria-label={`Open ${card.title}`}
+          aria-label={`View details for ${card.title}`}
           disabled={actionsDisabled}
-          onClick={(event) => runAction(event, "open")}
+          onClick={(event) => {
+            event.stopPropagation();
+            if (!actionsDisabled) onSelect(card);
+          }}
         >
           <KanbanCardContent card={card} branch={branch} />
         </button>

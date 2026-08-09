@@ -140,7 +140,6 @@ export type KanbanGroupLabels = {
 };
 
 export type KanbanCardAction =
-  | "open_conversation"
   | "start"
   | "pause"
   | "resume"
@@ -260,7 +259,6 @@ export function deriveCardCapabilities(
     card.reviewState === "awaiting_review";
 
   return {
-    open_conversation: capability(!deleted, "This card has been deleted."),
     start: capability(
       available && card.stage === "todo" && card.executionState === "idle",
       "Only an idle To do card can be started.",

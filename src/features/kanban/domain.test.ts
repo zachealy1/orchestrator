@@ -116,7 +116,7 @@ describe("deriveCardCapabilities", () => {
     });
   });
 
-  it("locks mutations but keeps the dedicated conversation available while running", () => {
+  it("locks mutations while running", () => {
     const capabilities = deriveCardCapabilities(
       card({
         stage: "in_progress",
@@ -125,7 +125,6 @@ describe("deriveCardCapabilities", () => {
       }),
     );
 
-    expect(capabilities.open_conversation.enabled).toBe(true);
     expect(capabilities.pause.enabled).toBe(true);
     expect(capabilities.stop).toMatchObject({
       enabled: true,
@@ -205,8 +204,6 @@ describe("deriveCardCapabilities", () => {
 
     expect(archived.restore.enabled).toBe(true);
     expect(archived.start.enabled).toBe(false);
-    expect(archived.open_conversation.enabled).toBe(true);
-    expect(deleted.open_conversation.enabled).toBe(false);
     expect(deleted.duplicate.enabled).toBe(false);
   });
 });

@@ -4,7 +4,6 @@ import {
   useMemo,
   useRef,
   useState,
-  type ReactNode,
 } from "react";
 import { createPortal } from "react-dom";
 import {
@@ -111,9 +110,6 @@ type Props = {
   resolvedTheme: ResolvedTheme;
   refreshToken: number;
   listChatTranscript: (chatId: number) => Promise<HistoryRunSummary[]>;
-  conversation?: ReactNode;
-  onOpenConversation: (card: KanbanCardRecord) => void | Promise<void>;
-  onShowConversation?: (card: KanbanCardRecord) => void | Promise<void>;
   onLaunch: (
     card: KanbanCardRecord,
     kind: KanbanLaunchKind,
@@ -440,7 +436,6 @@ function viewExecutionState(card: DomainKanbanCard): ViewKanbanCard["executionSt
 function viewActions(card: DomainKanbanCard): KanbanCardAction[] {
   const capabilities = deriveCardCapabilities(card);
   const pairs: Array<[keyof typeof capabilities, KanbanCardAction]> = [
-    ["open_conversation", "open"],
     ["start", "start"],
     ["pause", "pause"],
     ["resume", "resume"],
@@ -557,9 +552,6 @@ export function KanbanWorkspace({
   resolvedTheme,
   refreshToken,
   listChatTranscript,
-  conversation,
-  onOpenConversation,
-  onShowConversation,
   onLaunch,
   onPause,
   onStop,
@@ -1186,15 +1178,9 @@ export function KanbanWorkspace({
     await runAction(() => onLaunch(card, kind, prompt), "Agent turn started.");
   }
 
-  function openCard(card: ViewKanbanCard) {
+  function viewCardDetails(card: ViewKanbanCard) {
     selectedCardIdRef.current = card.id;
     setSelectedCardId(card.id);
-    const persisted = cardsById.get(card.id);
-    if (persisted) {
-      void Promise.resolve(onOpenConversation(persisted)).catch((openError) => {
-        if (selectedCardIdRef.current === card.id) setError(errorMessage(openError));
-      });
-    }
   }
 
   async function loadReview(
@@ -1613,7 +1599,6 @@ export function KanbanWorkspace({
   async function handleCardAction(action: KanbanCardAction, card: ViewKanbanCard) {
     const persisted = cardsById.get(card.id);
     if (!persisted) return;
-    if (action === "open") return openCard(card);
     if (action === "start") return launchCard(persisted, "start");
     if (action === "retry") return launchCard(persisted, "retry");
     if (action === "resume") {
@@ -1700,15 +1685,9 @@ export function KanbanWorkspace({
         ) : null}
         <KanbanDetailShell
           card={selectedViewCard}
-          conversation={conversation}
           review={review}
           resolvedTheme={resolvedTheme}
           disabled={busy}
-          initialTab={selectedDomainCard?.stage === "in_review" ? "review" : "conversation"}
-          onShowConversation={() => {
-            const card = cardsById.get(selectedViewCard.id);
-            if (card) void (onShowConversation ?? onOpenConversation)(card);
-          }}
           onBack={() => {
             selectedCardIdRef.current = null;
             reviewRequestSequence.current += 1;
@@ -1813,7 +1792,7 @@ export function KanbanWorkspace({
           cards={archivedCards}
           disabled={busy}
           onClose={() => setArchivedOpen(false)}
-          onOpenCard={openCard}
+          onOpenCard={viewCardDetails}
           onRestoreCard={(card) => {
             const persisted = cardsById.get(card.id);
             if (persisted) void runAction(() => archiveKanbanCard(persisted, false), "Card restored.");
@@ -1836,6 +1815,7 @@ export function KanbanWorkspace({
                 disabled={busy}
                 onMoveCard={(request) => void handleMove(request)}
                 onCardAction={(action, card) => void handleCardAction(action, card)}
+                onCardSelect={viewCardDetails}
               />
             </section>
           ))}
@@ -1859,6 +1839,7 @@ export function KanbanWorkspace({
           disabled={busy}
           onMoveCard={(request) => void handleMove(request)}
           onCardAction={(action, card) => void handleCardAction(action, card)}
+          onCardSelect={viewCardDetails}
         />
       )}
 

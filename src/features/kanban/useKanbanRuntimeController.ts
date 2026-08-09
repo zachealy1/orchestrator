@@ -5,11 +5,7 @@ import type {
   CodexProfileKey,
   OssProvider,
 } from "../codex/types";
-import type {
-  ChatListItem,
-  ChatRecord,
-  ChatWithRuns,
-} from "../conversations/types";
+import type { ChatRecord } from "../conversations/types";
 import type {
   RunSetupSnapshot,
   StopActiveRunResult,
@@ -56,11 +52,6 @@ export type KanbanRuntimeControllerDependencies<
     profileKey: CodexProfileKey,
     accountId: number,
   ) => Promise<CodexModel[]>;
-  loadConversation: (chatId: number) => Promise<ChatWithRuns>;
-  selectConversation: (
-    chat: ChatListItem,
-    workspace: Workspace,
-  ) => unknown | Promise<unknown>;
   loadChat: (chatId: number) => Promise<ChatRecord | null>;
   updateChat: (
     chatId: number,
@@ -95,7 +86,6 @@ const nativeDependencies: KanbanRuntimeNativeDependencies = {
 
 export type KanbanRuntimeController = {
   isLaunchReserved: (workspaceId: number, chatId: number) => boolean;
-  openConversation: (card: KanbanCardRecord) => Promise<void>;
   launchCard: (
     card: KanbanCardRecord,
     kind: KanbanLaunchKind,
@@ -134,13 +124,6 @@ export function createKanbanRuntimeController<
   native: KanbanRuntimeNativeDependencies = nativeDependencies,
 ): KanbanRuntimeController {
   const launchReservations = new Set<string>();
-
-  async function openConversation(card: KanbanCardRecord) {
-    const dependencies = getDependencies();
-    const workspace = workspaceForCard(dependencies.getState(), card);
-    const conversation = await dependencies.loadConversation(card.chatId);
-    await dependencies.selectConversation(conversation.chat, workspace);
-  }
 
   async function launchCard(
     card: KanbanCardRecord,
@@ -390,7 +373,6 @@ export function createKanbanRuntimeController<
   return {
     isLaunchReserved: (workspaceId, chatId) =>
       launchReservations.has(`${workspaceId}:${chatId}`),
-    openConversation,
     launchCard,
     pauseCard,
     stopCard,

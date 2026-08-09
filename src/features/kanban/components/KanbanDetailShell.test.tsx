@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from "@testing-library/react";
+import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { KanbanDetailShell } from "./KanbanDetailShell";
@@ -78,7 +78,6 @@ describe("KanbanDetailShell", () => {
     render(
       <KanbanDetailShell
         card={card}
-        conversation={<div>Conversation transcript</div>}
         review={review}
         resolvedTheme="dark"
         onBack={onBack}
@@ -88,26 +87,12 @@ describe("KanbanDetailShell", () => {
     );
 
     expect(screen.getByText("Returning to the board does not interrupt this agent.")).toBeInTheDocument();
-    expect(screen.getByText("Conversation transcript")).toBeVisible();
     expect(screen.getByText("Goal mode")).toBeVisible();
     await user.click(screen.getByRole("button", { name: "Back to board" }));
     expect(onBack).toHaveBeenCalledOnce();
 
-    const conversationTab = screen.getByRole("tab", { name: "Conversation" });
-    const reviewTab = screen.getByRole("tab", { name: /Review/ });
-    expect(conversationTab).toHaveAttribute("tabindex", "0");
-    expect(reviewTab).toHaveAttribute("tabindex", "-1");
-    conversationTab.focus();
-    await user.keyboard("{End}");
-    await waitFor(() => expect(reviewTab).toHaveFocus());
-    expect(reviewTab).toHaveAttribute("aria-selected", "true");
-    expect(reviewTab).toHaveAttribute("tabindex", "0");
-    await user.keyboard("{Home}");
-    await waitFor(() => expect(conversationTab).toHaveFocus());
-    await user.keyboard("{ArrowRight}");
-    await waitFor(() => expect(reviewTab).toHaveFocus());
-
-    const reviewPanel = screen.getByRole("tabpanel", { name: /Review/ });
+    expect(screen.queryByRole("tablist")).not.toBeInTheDocument();
+    const reviewPanel = screen.getByLabelText("Review");
     expect(reviewPanel).toBeVisible();
     expect(reviewPanel.querySelector("pre")?.textContent).toBe(review.diff);
     expect(codePreviewMock).toHaveBeenCalledWith(
@@ -137,22 +122,18 @@ describe("KanbanDetailShell", () => {
   it("only renders execution actions supplied by the card", async () => {
     const user = userEvent.setup();
     const onAction = vi.fn();
-    const onShowConversation = vi.fn();
     render(
       <KanbanDetailShell
         card={card}
-        conversation={null}
         review={{ ...review, canApprove: false }}
         resolvedTheme="light"
         onBack={vi.fn()}
-        onShowConversation={onShowConversation}
         onAction={onAction}
       />,
     );
 
     expect(screen.queryByRole("tablist")).not.toBeInTheDocument();
-    await user.click(screen.getByRole("button", { name: "Open in Chat" }));
-    expect(onShowConversation).toHaveBeenCalledOnce();
+    expect(screen.queryByRole("button", { name: "Open in Chat" })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Start" })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Pause" })).not.toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "Retry" }));

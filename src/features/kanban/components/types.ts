@@ -24,7 +24,6 @@ export type KanbanAccessMode = "ask-for-approval" | "full-access";
 export type KanbanSubmissionMode = "normal" | "plan" | "goal";
 
 export type KanbanCardAction =
-  | "open"
   | "start"
   | "pause"
   | "resume"

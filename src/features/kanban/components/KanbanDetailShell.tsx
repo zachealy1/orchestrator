@@ -3,7 +3,6 @@ import {
   FileCode2,
   GitBranch,
   Loader2,
-  MessageSquare,
 } from "lucide-react";
 import {
   useCallback,
@@ -11,8 +10,6 @@ import {
   useId,
   useRef,
   useState,
-  type KeyboardEvent,
-  type ReactNode,
 } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
@@ -32,17 +29,12 @@ import type {
   KanbanReviewData,
 } from "./types";
 
-export type KanbanDetailTab = "conversation" | "review";
-
 export type KanbanDetailShellProps = {
   card: KanbanCard;
-  conversation?: ReactNode;
   review: KanbanReviewData;
   resolvedTheme: ResolvedTheme;
   disabled?: boolean;
-  initialTab?: KanbanDetailTab;
   onBack: () => void;
-  onShowConversation?: () => void;
   onAction: (action: KanbanCardAction, card: KanbanCard) => void;
   onSelectReviewFile?: (file: KanbanChangedFile) => void;
 };
@@ -275,29 +267,17 @@ export function KanbanReviewPanel({
 
 export function KanbanDetailShell({
   card,
-  conversation,
   review,
   resolvedTheme,
   disabled = false,
-  initialTab = "conversation",
   onBack,
-  onShowConversation,
   onAction,
   onSelectReviewFile,
 }: KanbanDetailShellProps) {
-  const hasEmbeddedConversation = conversation !== null && conversation !== undefined;
-  const [tab, setTab] = useState<KanbanDetailTab>(
-    hasEmbeddedConversation ? initialTab : "review",
-  );
   const [branchesOpen, setBranchesOpen] = useState(false);
   const branchesId = useId();
   const branchesRef = useRef<HTMLDivElement>(null);
   const branchesTriggerRef = useRef<HTMLButtonElement>(null);
-  const tabIdPrefix = useId();
-  const conversationTabId = `${tabIdPrefix}-conversation-tab`;
-  const reviewTabId = `${tabIdPrefix}-review-tab`;
-  const conversationPanelId = `${tabIdPrefix}-conversation-panel`;
-  const reviewPanelId = `${tabIdPrefix}-review-panel`;
   const dismissBranches = useCallback(() => setBranchesOpen(false), []);
   useDismissibleContextMenu(
     branchesOpen,
@@ -308,33 +288,8 @@ export function KanbanDetailShell({
   const actions = new Set(card.availableActions ?? []);
 
   useEffect(() => {
-    setTab(hasEmbeddedConversation ? initialTab : "review");
     setBranchesOpen(false);
-  }, [card.id, hasEmbeddedConversation, initialTab]);
-
-  function selectTab(nextTab: KanbanDetailTab, focus = false) {
-    setTab(nextTab);
-    if (focus) {
-      const id = nextTab === "conversation" ? conversationTabId : reviewTabId;
-      window.requestAnimationFrame(() => document.getElementById(id)?.focus());
-    }
-  }
-
-  function handleTabKeyDown(event: KeyboardEvent<HTMLButtonElement>) {
-    let nextTab: KanbanDetailTab | null = null;
-    if (event.key === "ArrowRight" || event.key === "ArrowDown") {
-      nextTab = tab === "conversation" ? "review" : "conversation";
-    } else if (event.key === "ArrowLeft" || event.key === "ArrowUp") {
-      nextTab = tab === "conversation" ? "review" : "conversation";
-    } else if (event.key === "Home") {
-      nextTab = "conversation";
-    } else if (event.key === "End") {
-      nextTab = "review";
-    }
-    if (!nextTab) return;
-    event.preventDefault();
-    selectTab(nextTab, true);
-  }
+  }, [card.id]);
 
   return (
     <section className="kanban-detail-shell" aria-labelledby="kanban-detail-title">
@@ -351,16 +306,6 @@ export function KanbanDetailShell({
           <p>Returning to the board does not interrupt this agent.</p>
         </div>
         <div className="kanban-detail-header-actions">
-          {!hasEmbeddedConversation && onShowConversation ? (
-            <button
-              type="button"
-              className="kanban-detail-action"
-              onClick={onShowConversation}
-            >
-              <MessageSquare size={15} aria-hidden="true" />
-              <span>Open in Chat</span>
-            </button>
-          ) : null}
           {actions.has("start") ? (
             <HeaderAction action="start" label="Start" card={card} onAction={onAction} disabled={disabled} />
           ) : null}
@@ -447,76 +392,16 @@ export function KanbanDetailShell({
         ) : null}
       </div>
 
-      {hasEmbeddedConversation ? (
-        <>
-          <div className="kanban-detail-tabs" role="tablist" aria-label="Card detail">
-            <button
-              type="button"
-              role="tab"
-              id={conversationTabId}
-              aria-controls={conversationPanelId}
-              aria-selected={tab === "conversation"}
-              tabIndex={tab === "conversation" ? 0 : -1}
-              onClick={() => selectTab("conversation")}
-              onKeyDown={handleTabKeyDown}
-            >
-              <MessageSquare size={15} aria-hidden="true" />
-              Conversation
-            </button>
-            <button
-              type="button"
-              role="tab"
-              id={reviewTabId}
-              aria-controls={reviewPanelId}
-              aria-selected={tab === "review"}
-              tabIndex={tab === "review" ? 0 : -1}
-              onClick={() => selectTab("review")}
-              onKeyDown={handleTabKeyDown}
-            >
-              <FileCode2 size={15} aria-hidden="true" />
-              Review
-              {review.files.length > 0 ? <span>{review.files.length}</span> : null}
-            </button>
-          </div>
-
-          <div
-            id={conversationPanelId}
-            role="tabpanel"
-            aria-labelledby={conversationTabId}
-            hidden={tab !== "conversation"}
-            className="kanban-conversation-panel"
-          >
-            {conversation}
-          </div>
-          <div
-            id={reviewPanelId}
-            role="tabpanel"
-            aria-labelledby={reviewTabId}
-            hidden={tab !== "review"}
-            className="kanban-review-tabpanel"
-          >
-            <KanbanReviewPanel
-              card={card}
-              review={review}
-              resolvedTheme={resolvedTheme}
-              disabled={disabled}
-              onAction={onAction}
-              onSelectFile={onSelectReviewFile}
-            />
-          </div>
-        </>
-      ) : (
-        <div className="kanban-review-tabpanel" aria-label="Review">
-          <KanbanReviewPanel
-            card={card}
-            review={review}
-            resolvedTheme={resolvedTheme}
-            disabled={disabled}
-            onAction={onAction}
-            onSelectFile={onSelectReviewFile}
-          />
-        </div>
-      )}
+      <div className="kanban-review-tabpanel" aria-label="Review">
+        <KanbanReviewPanel
+          card={card}
+          review={review}
+          resolvedTheme={resolvedTheme}
+          disabled={disabled}
+          onAction={onAction}
+          onSelectFile={onSelectReviewFile}
+        />
+      </div>
     </section>
   );
 }
