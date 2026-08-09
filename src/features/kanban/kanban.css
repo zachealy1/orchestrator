@@ -838,7 +838,7 @@
 .kanban-card-dialog > header {
   flex: 0 0 auto;
   padding: 20px 24px 16px;
-  border-bottom: 0;
+  border-bottom: 1px solid var(--color-divider);
 }
 
 .kanban-card-dialog h2,
@@ -894,7 +894,6 @@
   display: grid;
   min-height: 520px;
   grid-template-columns: minmax(0, 1.9fr) minmax(300px, 1fr);
-  column-gap: 16px;
 }
 
 .kanban-card-editor-task,
@@ -907,7 +906,7 @@
 }
 
 .kanban-card-editor-settings {
-  border-left: 0;
+  border-left: 1px solid var(--color-divider);
 }
 
 .kanban-card-editor-task > h3,
@@ -1313,9 +1312,9 @@
 
 .kanban-card-dialog form > footer {
   flex: 0 0 auto;
-  margin-top: 12px;
+  margin-top: 0;
   padding: 14px 24px 18px;
-  border-top: 0;
+  border-top: 1px solid var(--color-divider);
   background: var(--color-component-background);
 }
 
