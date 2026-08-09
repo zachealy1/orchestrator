@@ -887,8 +887,8 @@ button.account-switcher-item:hover:not(:disabled) {
 }
 
 .workspace-surface-toggle {
-  border-color: var(--line);
-  background: var(--panel);
+  border: 0;
+  background: rgb(var(--text-secondary-rgb) / 0.1);
 }
 
 .workspace-surface-toggle::before {
