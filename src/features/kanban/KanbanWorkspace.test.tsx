@@ -612,11 +612,10 @@ describe("KanbanWorkspace controller", () => {
     ).toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "Clear filters" }));
 
-    expect(
-      screen.getByRole("heading", { name: "No cards yet" }),
-    ).toBeInTheDocument();
-    expect(
-      screen.getByRole("button", { name: "Create card" }),
-    ).toBeInTheDocument();
+    expect(screen.queryByText("No cards yet")).not.toBeInTheDocument();
+    expect(screen.getByRole("region", { name: "To do" })).toBeInTheDocument();
+    expect(screen.getByRole("region", { name: "In progress" })).toBeInTheDocument();
+    expect(screen.getByRole("region", { name: "In review" })).toBeInTheDocument();
+    expect(screen.getByRole("region", { name: "Done" })).toBeInTheDocument();
   });
 });

@@ -12,7 +12,6 @@ import {
   CheckCircle2,
   FilterX,
   Loader2,
-  Plus,
 } from "lucide-react";
 import type { CodexAccountProfile } from "../accounts/types";
 import type { CodexAccessMode, CodexModel } from "../codex/types";
@@ -1794,30 +1793,34 @@ export function KanbanWorkspace({
             </section>
           ))}
         </div>
-      ) : (
+      ) : hasBoardConstraints ? (
         <section className="kanban-empty-board">
-          <h2>{hasBoardConstraints ? "No matching cards" : "No cards yet"}</h2>
-          <p>
-            {hasBoardConstraints
-              ? "Try changing or clearing the current filters."
-              : "Create a card to start planning work for this workspace."}
-          </p>
+          <h2>No matching cards</h2>
+          <p>Try changing or clearing the current filters.</p>
           <button
             type="button"
             disabled={busy}
-            onClick={() => {
-              if (hasBoardConstraints) clearBoardConstraints();
-              else setCardDialog({ mode: "create", cardId: null });
-            }}
+            onClick={clearBoardConstraints}
           >
-            {hasBoardConstraints ? (
-              <FilterX size={15} aria-hidden="true" />
-            ) : (
-              <Plus size={15} aria-hidden="true" />
-            )}
-            {hasBoardConstraints ? "Clear filters" : "Create card"}
+            <FilterX size={15} aria-hidden="true" />
+            Clear filters
           </button>
         </section>
+      ) : (
+        <KanbanBoard
+          columns={buildColumns([])}
+          disabled={busy}
+          onMoveCard={(request) => void handleMove(request)}
+          onReorderColumns={(ids) => {
+            const columnOrder = ids.map((id) => VIEW_TO_STAGE[id]).filter(Boolean);
+            if (columnOrder.length === 4) {
+              schedulePreferenceSave({ ...preferencesRef.current, columnOrder });
+            }
+          }}
+          onOpenCard={openCard}
+          onCardAction={(action, card) => void handleCardAction(action, card)}
+          onCreateCard={() => setCardDialog({ mode: "create", cardId: null })}
+        />
       )}
 
       <KanbanCardDialog
