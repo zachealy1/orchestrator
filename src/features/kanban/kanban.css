@@ -27,7 +27,7 @@
   min-height: 240px;
   border: 1px solid var(--color-divider);
   border-radius: var(--radius);
-  background: var(--color-surface-soft);
+  background: var(--color-component-background);
   transition:
     border-color 140ms ease,
     background 140ms ease,
