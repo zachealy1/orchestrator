@@ -1,6 +1,7 @@
 import {
   AlertCircle,
   Bot,
+  Check,
   CircleUserRound,
   Copy,
   FileText,
@@ -584,18 +585,34 @@ export function KanbanCardDialog({
           </div>
 
           <footer className="confirmation-actions">
-            <button type="button" className="secondary" disabled={saving} onClick={onCancel}>
-              Cancel
+            <button
+              type="button"
+              className="native-plan-icon-action cancel"
+              aria-label="Cancel"
+              title="Cancel"
+              data-tooltip="Cancel"
+              disabled={saving}
+              onClick={onCancel}
+            >
+              <X size={16} aria-hidden="true" />
             </button>
-            <button type="submit" disabled={saving}>
+            <button
+              type="submit"
+              className="native-plan-icon-action implement"
+              aria-label={saving ? "Saving card" : submitLabel}
+              title={saving ? "Saving card" : submitLabel}
+              data-tooltip={saving ? "Saving card" : submitLabel}
+              disabled={saving}
+            >
               {saving ? (
-                <Loader2 className="spin" size={15} aria-hidden="true" />
+                <Loader2 className="spin" size={16} aria-hidden="true" />
               ) : mode === "duplicate" ? (
-                <Copy size={15} aria-hidden="true" />
+                <Copy size={16} aria-hidden="true" />
+              ) : mode === "create" ? (
+                <Plus size={16} aria-hidden="true" />
               ) : (
-                <Plus size={15} aria-hidden="true" />
+                <Check size={16} aria-hidden="true" />
               )}
-              {saving ? "Saving…" : submitLabel}
             </button>
           </footer>
         </form>

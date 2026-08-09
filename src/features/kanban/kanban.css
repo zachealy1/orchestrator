@@ -1961,6 +1961,16 @@
   transform: none;
 }
 
+.kanban-card-dialog footer button.native-plan-icon-action {
+  display: inline-grid;
+  width: 30px;
+  min-width: 30px;
+  height: 30px;
+  min-height: 30px;
+  gap: 0;
+  padding: 0;
+}
+
 .kanban-review-actions > p {
   grid-column: 1 / -1;
   margin: 0;

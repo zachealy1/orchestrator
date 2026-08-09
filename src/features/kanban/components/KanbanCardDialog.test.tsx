@@ -380,10 +380,18 @@ describe("KanbanCardDialog", () => {
         name: /Include current uncommitted changes/,
       }),
     ).toBeDisabled();
+    const cancel = screen.getByRole("button", { name: "Cancel" });
+    const save = screen.getByRole("button", { name: "Save changes" });
+    expect(cancel).toHaveClass("native-plan-icon-action", "cancel");
+    expect(save).toHaveClass("native-plan-icon-action", "implement");
+    expect(cancel).toHaveAttribute("title", "Cancel");
+    expect(save).toHaveAttribute("title", "Save changes");
+    expect(cancel).not.toHaveTextContent("Cancel");
+    expect(save).not.toHaveTextContent("Save changes");
 
     await user.clear(screen.getByLabelText("Title"));
     await user.type(screen.getByLabelText("Title"), "Updated metadata");
-    await user.click(screen.getByRole("button", { name: "Save changes" }));
+    await user.click(save);
     expect(onSubmit).toHaveBeenCalledWith(
       expect.objectContaining({
         title: "Updated metadata",
