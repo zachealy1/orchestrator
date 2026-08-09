@@ -157,7 +157,7 @@ function status(
   };
 }
 
-function renderWorkspace() {
+function renderWorkspace(toolbarHost?: HTMLElement | null) {
   const props = {
     onOpenConversation: vi.fn(),
     onShowConversation: vi.fn(),
@@ -179,6 +179,7 @@ function renderWorkspace() {
       resolvedTheme="light"
       refreshToken={0}
       listChatTranscript={transcriptMocks.listLocalChatTranscript}
+      toolbarHost={toolbarHost}
       {...props}
     />,
   );
@@ -256,6 +257,23 @@ beforeEach(() => {
 });
 
 describe("KanbanWorkspace controller", () => {
+  it("renders the board controls in the provided workspace-header host", async () => {
+    const toolbarHost = document.createElement("div");
+    toolbarHost.dataset.testid = "kanban-toolbar-host";
+    document.body.append(toolbarHost);
+
+    renderWorkspace(toolbarHost);
+
+    const toolbar = await screen.findByRole("toolbar", {
+      name: "Kanban controls",
+    });
+    expect(toolbarHost).toContainElement(toolbar);
+    expect(screen.getByPlaceholderText("Search cards")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "New card" })).toBeInTheDocument();
+
+    toolbarHost.remove();
+  });
+
   it.each(["blocked", "partial"] as const)(
     "persists a fulfilled %s cleanup result and keeps the card",
     async (cleanupStatus) => {

@@ -822,6 +822,8 @@ function App() {
   const [activeView, setActiveView] = useState<AppView>("task");
   const [workspaceSurfaceMode, setWorkspaceSurfaceMode] =
     useState<WorkspaceSurfaceMode>(readWorkspaceSurfaceMode);
+  const [kanbanToolbarHost, setKanbanToolbarHost] =
+    useState<HTMLDivElement | null>(null);
   const [kanbanRefreshToken, setKanbanRefreshToken] = useState(0);
   const [retainTranscriptDuringWorkspaceSwitch, setRetainTranscriptDuringWorkspaceSwitch] =
     useState(false);
@@ -15387,6 +15389,7 @@ function App() {
               workspace={selectedWorkspace}
               surfaceMode={workspaceSurfaceMode}
               onSurfaceModeChange={setWorkspaceSurfaceMode}
+              kanbanToolbarHostRef={setKanbanToolbarHost}
               repositories={selectedGitOverview?.repositories ?? []}
               repositoryPath={
                 selectedGitRepository?.repository.rootPath ?? null
@@ -15451,6 +15454,7 @@ function App() {
                   onLaunch={kanbanRuntime.launchCard}
                   onPause={kanbanRuntime.pauseCard}
                   onStop={kanbanRuntime.stopCard}
+                  toolbarHost={kanbanToolbarHost}
                 />
               </div>
             ) : null}

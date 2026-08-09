@@ -17,6 +17,7 @@ import { useEffect, useRef, useState } from "react";
 import type {
   CSSProperties,
   KeyboardEvent as ReactKeyboardEvent,
+  RefCallback,
 } from "react";
 import { ComposerSelect } from "../../components/ComposerSelect";
 import { getContextUsageDisplay } from "../../lib/contextUsage";
@@ -38,6 +39,7 @@ export function WorkspaceContextBanner({
   workspace,
   surfaceMode,
   onSurfaceModeChange,
+  kanbanToolbarHostRef,
   repositories,
   repositoryPath,
   branch,
@@ -67,6 +69,7 @@ export function WorkspaceContextBanner({
   workspace: Workspace | null;
   surfaceMode: "chat" | "kanban";
   onSurfaceModeChange: (mode: "chat" | "kanban") => void;
+  kanbanToolbarHostRef?: RefCallback<HTMLDivElement>;
   repositories: WorkspaceGitRepositoryStatus[];
   repositoryPath: string | null;
   branch: string | null;
@@ -225,7 +228,7 @@ export function WorkspaceContextBanner({
 
   return (
     <section
-      className="workspace-context-banner"
+      className={`workspace-context-banner mode-${surfaceMode}`}
       aria-label="Selected folder"
       data-tauri-drag-region={deepWindowDragRegion}
     >
@@ -239,6 +242,12 @@ export function WorkspaceContextBanner({
             <span title={workspace.path}>{workspace.path}</span>
           </div>
         </div>
+        {surfaceMode === "kanban" ? (
+          <div
+            className="workspace-kanban-header-controls"
+            ref={kanbanToolbarHostRef}
+          />
+        ) : null}
         {surfaceMode === "chat" ? (
           <div
             className="workspace-context-chips"

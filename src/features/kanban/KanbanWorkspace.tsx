@@ -6,6 +6,7 @@ import {
   useState,
   type ReactNode,
 } from "react";
+import { createPortal } from "react-dom";
 import {
   AlertCircle,
   CheckCircle2,
@@ -115,6 +116,7 @@ type Props = {
   ) => Promise<void>;
   onPause: (card: KanbanCardRecord) => Promise<void>;
   onStop: (card: KanbanCardRecord) => Promise<void>;
+  toolbarHost?: HTMLElement | null;
 };
 
 type StoredPreferences = {
@@ -550,6 +552,7 @@ export function KanbanWorkspace({
   onLaunch,
   onPause,
   onStop,
+  toolbarHost,
 }: Props) {
   const [snapshot, setSnapshot] = useState<KanbanBoardSnapshotRecord | null>(null);
   const snapshotRef = useRef<KanbanBoardSnapshotRecord | null>(null);
@@ -1707,6 +1710,32 @@ export function KanbanWorkspace({
     );
   }
 
+  const toolbar = (
+    <KanbanToolbar
+      search={preferences.search}
+      filters={preferences.filters}
+      filterGroups={filterGroups}
+      groupBy={preferences.groupBy}
+      visibleCardCount={visibleDomainCards.length}
+      totalCardCount={domainCards.filter(
+        (card) => card.archivedAt === null && card.deletedAt === null,
+      ).length}
+      archivedOpen={archivedOpen}
+      disabled={busy}
+      onSearchChange={(search) =>
+        schedulePreferenceSave({ ...preferencesRef.current, search })
+      }
+      onFiltersChange={(filters) =>
+        schedulePreferenceSave({ ...preferencesRef.current, filters })
+      }
+      onGroupByChange={(groupBy) =>
+        schedulePreferenceSave({ ...preferencesRef.current, groupBy })
+      }
+      onCreateCard={() => setCardDialog({ mode: "create", cardId: null })}
+      onToggleArchived={() => setArchivedOpen((current) => !current)}
+    />
+  );
+
   return (
     <div className="kanban-workspace-view" aria-busy={busy}>
       {error ? (
@@ -1721,21 +1750,11 @@ export function KanbanWorkspace({
           <span>{notice}</span>
         </div>
       ) : null}
-      <KanbanToolbar
-        search={preferences.search}
-        filters={preferences.filters}
-        filterGroups={filterGroups}
-        groupBy={preferences.groupBy}
-        visibleCardCount={visibleDomainCards.length}
-        totalCardCount={domainCards.filter((card) => card.archivedAt === null && card.deletedAt === null).length}
-        archivedOpen={archivedOpen}
-        disabled={busy}
-        onSearchChange={(search) => schedulePreferenceSave({ ...preferencesRef.current, search })}
-        onFiltersChange={(filters) => schedulePreferenceSave({ ...preferencesRef.current, filters })}
-        onGroupByChange={(groupBy) => schedulePreferenceSave({ ...preferencesRef.current, groupBy })}
-        onCreateCard={() => setCardDialog({ mode: "create", cardId: null })}
-        onToggleArchived={() => setArchivedOpen((current) => !current)}
-      />
+      {toolbarHost === undefined
+        ? toolbar
+        : toolbarHost
+          ? createPortal(toolbar, toolbarHost)
+          : null}
       {archivedOpen ? (
         <KanbanArchivedView
           cards={archivedCards}

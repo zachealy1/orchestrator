@@ -874,6 +874,47 @@ button.account-switcher-item:hover:not(:disabled) {
   overflow: hidden;
 }
 
+.workspace-kanban-header-controls {
+  display: flex;
+  width: min(720px, 62cqw);
+  min-width: 0;
+  align-items: center;
+}
+
+.workspace-context-banner.mode-kanban .workspace-context-left {
+  overflow: visible;
+}
+
+.workspace-kanban-header-controls:empty {
+  display: none;
+}
+
+.workspace-kanban-header-controls .kanban-toolbar {
+  width: 100%;
+  flex-wrap: nowrap;
+  padding: 0;
+  border: 0;
+  background: transparent;
+}
+
+.workspace-kanban-header-controls .kanban-search-field,
+.workspace-kanban-header-controls .kanban-group-control,
+.workspace-kanban-header-controls .composer-select.kanban-group-select,
+.workspace-kanban-header-controls .kanban-group-select button.composer-select-trigger,
+.workspace-kanban-header-controls .kanban-filter-trigger,
+.workspace-kanban-header-controls .kanban-toolbar-button,
+.workspace-kanban-header-controls .kanban-create-button {
+  height: 30px;
+  min-height: 30px;
+}
+
+.workspace-kanban-header-controls .kanban-search-field {
+  width: auto;
+  min-width: 120px;
+  max-width: 260px;
+  flex: 1 1 180px;
+}
+
 .workspace-context-actions {
   position: relative;
   display: flex;
@@ -884,6 +925,30 @@ button.account-switcher-item:hover:not(:disabled) {
   gap: var(--workspace-header-gap);
   align-items: center;
   justify-content: flex-end;
+}
+
+@container (max-width: 980px) {
+  .workspace-kanban-header-controls {
+    width: min(430px, 56cqw);
+  }
+
+  .workspace-kanban-header-controls .kanban-results-count,
+  .workspace-kanban-header-controls .kanban-filter-trigger > span:not(.kanban-filter-count),
+  .workspace-kanban-header-controls .kanban-toolbar-button > span,
+  .workspace-kanban-header-controls .kanban-create-button > span {
+    display: none;
+  }
+
+  .workspace-kanban-header-controls .kanban-filter-trigger,
+  .workspace-kanban-header-controls .kanban-toolbar-button,
+  .workspace-kanban-header-controls .kanban-create-button {
+    width: 30px;
+    padding: 0;
+  }
+
+  .workspace-kanban-header-controls .composer-select.kanban-group-select {
+    width: 120px;
+  }
 }
 
 .workspace-surface-toggle {
