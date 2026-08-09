@@ -1824,7 +1824,8 @@ export function KanbanWorkspace({
         <div className="kanban-board-groups">
           {groups.map((group) => (
             <section key={group.key} className="kanban-board-group" aria-label={group.label}>
-              {preferences.groupBy !== "none" ? (
+              {preferences.groupBy !== "none" &&
+              group.key !== "repository:multiple" ? (
                 <header className="kanban-group-header">
                   <h2>{group.label}</h2>
                   <span>{group.cards.length}</span>

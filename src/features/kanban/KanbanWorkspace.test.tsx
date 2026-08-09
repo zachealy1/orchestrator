@@ -615,4 +615,39 @@ describe("KanbanWorkspace controller", () => {
     expect(screen.getByRole("region", { name: "In review" })).toBeInTheDocument();
     expect(screen.getByRole("region", { name: "Done" })).toBeInTheDocument();
   });
+
+  it("does not render the multiple-repositories group heading", async () => {
+    const groupedSnapshot = snapshot([
+      card({
+        repositories: [
+          {
+            repositoryPath: "/workspace/repo",
+            relativePath: "repo",
+            label: "repo",
+            includeDirtyChanges: false,
+          },
+          {
+            repositoryPath: "/workspace/docs",
+            relativePath: "docs",
+            label: "docs",
+            includeDirtyChanges: false,
+          },
+        ],
+      }),
+    ]);
+    groupedSnapshot.preferencesJson = JSON.stringify({
+      search: "",
+      filters: {},
+      groupBy: "repository",
+      columnOrder: ["todo", "in_progress", "in_review", "done"],
+    });
+    apiMocks.loadKanbanBoard.mockResolvedValue(groupedSnapshot);
+
+    renderWorkspace();
+
+    expect(await screen.findByText("Controller card")).toBeInTheDocument();
+    expect(screen.queryByText("Multiple repositories")).not.toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "Multiple repositories" }))
+      .not.toBeInTheDocument();
+  });
 });
