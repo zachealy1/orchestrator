@@ -17,7 +17,7 @@ describe("context usage CSS", () => {
   it("keeps the meter width independent of token count and fill percentage", () => {
     const meter = rule(".workspace-context-meter");
 
-    expect(meter).toContain("--context-meter-width: 188px");
+    expect(meter).toContain("--context-meter-width: 172px");
     expect(meter).toContain("width: var(--context-meter-width)");
     expect(meter).toContain("min-width: var(--context-meter-width)");
     expect(meter).toContain("max-width: var(--context-meter-width)");

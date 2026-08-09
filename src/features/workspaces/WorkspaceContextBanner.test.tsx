@@ -88,6 +88,8 @@ describe("WorkspaceContextBanner surface switch", () => {
     renderBanner("chat");
 
     expect(screen.getByRole("radio", { name: "Chat" })).toBeChecked();
+    expect(screen.queryByText("Chat")).not.toBeInTheDocument();
+    expect(screen.queryByText("Kanban")).not.toBeInTheDocument();
     expect(screen.getByLabelText("Branch")).toBeInTheDocument();
     expect(screen.getByLabelText("New chat")).toBeInTheDocument();
     expect(

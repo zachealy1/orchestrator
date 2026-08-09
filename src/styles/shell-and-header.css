@@ -900,9 +900,8 @@ button.account-switcher-item:hover:not(:disabled) {
 }
 
 .workspace-surface-toggle button {
-  width: 78px;
-  gap: 5px;
-  padding: 0 8px;
+  width: 34px;
+  padding: 0;
   color: var(--muted);
 }
 
@@ -946,12 +945,12 @@ button.account-switcher-item:hover:not(:disabled) {
 }
 
 .composer-select.workspace-branch-select {
-  width: clamp(96px, 11vw, 180px);
+  width: clamp(88px, 10vw, 160px);
   height: 30px;
   min-height: 30px;
-  flex: 0 1 180px;
-  min-width: 96px;
-  max-width: 180px;
+  flex: 0 1 160px;
+  min-width: 88px;
+  max-width: 160px;
   border-radius: 7px;
   background: rgb(var(--text-secondary-rgb) / 0.1);
   transition:
@@ -1170,7 +1169,7 @@ button.account-switcher-item:hover:not(:disabled) {
 
 .workspace-context-meter {
   --context-meter-fill: 0%;
-  --context-meter-width: 188px;
+  --context-meter-width: 172px;
   position: relative;
   display: inline-flex;
   overflow: hidden;

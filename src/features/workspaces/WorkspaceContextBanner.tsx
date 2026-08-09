@@ -292,24 +292,26 @@ export function WorkspaceContextBanner({
             type="button"
             role="radio"
             aria-checked={surfaceMode === "chat"}
+            aria-label="Chat"
+            title="Chat"
             className={surfaceMode === "chat" ? "active" : ""}
             tabIndex={surfaceMode === "chat" ? 0 : -1}
             onClick={() => onSurfaceModeChange("chat")}
           >
-            <MessageSquare size={13} aria-hidden="true" />
-            <span>Chat</span>
+            <MessageSquare size={15} aria-hidden="true" />
           </button>
           <button
             ref={kanbanSurfaceButtonRef}
             type="button"
             role="radio"
             aria-checked={surfaceMode === "kanban"}
+            aria-label="Kanban"
+            title="Kanban"
             className={surfaceMode === "kanban" ? "active" : ""}
             tabIndex={surfaceMode === "kanban" ? 0 : -1}
             onClick={() => onSurfaceModeChange("kanban")}
           >
-            <Columns3 size={13} aria-hidden="true" />
-            <span>Kanban</span>
+            <Columns3 size={15} aria-hidden="true" />
           </button>
         </div>
         {surfaceMode === "chat" ? (
