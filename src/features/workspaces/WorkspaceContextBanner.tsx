@@ -232,16 +232,50 @@ export function WorkspaceContextBanner({
       aria-label="Selected folder"
       data-tauri-drag-region={deepWindowDragRegion}
     >
-      <div className="workspace-context-left">
-        <div className="workspace-context-main">
-          <span className="workspace-context-icon" aria-hidden="true">
-            <Folder size={17} />
-          </span>
-          <div data-tauri-drag-region="false">
-            <strong>{workspace.label}</strong>
-            <span title={workspace.path}>{workspace.path}</span>
-          </div>
+      <div className="workspace-context-main">
+        <span className="workspace-context-icon" aria-hidden="true">
+          <Folder size={17} />
+        </span>
+        <div data-tauri-drag-region="false">
+          <strong>{workspace.label}</strong>
+          <span title={workspace.path}>{workspace.path}</span>
         </div>
+      </div>
+      <div className="workspace-header-control-rail">
+        <div
+          className={`segmented-mode-toggle workspace-surface-toggle mode-${surfaceMode}`}
+          role="radiogroup"
+          aria-label="Workspace mode"
+          onKeyDown={handleSurfaceModeKeyDown}
+        >
+          <button
+            ref={chatSurfaceButtonRef}
+            type="button"
+            role="radio"
+            aria-checked={surfaceMode === "chat"}
+            aria-label="Chat"
+            title="Chat"
+            className={surfaceMode === "chat" ? "active" : ""}
+            tabIndex={surfaceMode === "chat" ? 0 : -1}
+            onClick={() => onSurfaceModeChange("chat")}
+          >
+            <MessageSquare size={15} aria-hidden="true" />
+          </button>
+          <button
+            ref={kanbanSurfaceButtonRef}
+            type="button"
+            role="radio"
+            aria-checked={surfaceMode === "kanban"}
+            aria-label="Kanban"
+            title="Kanban"
+            className={surfaceMode === "kanban" ? "active" : ""}
+            tabIndex={surfaceMode === "kanban" ? 0 : -1}
+            onClick={() => onSurfaceModeChange("kanban")}
+          >
+            <Columns3 size={15} aria-hidden="true" />
+          </button>
+        </div>
+        <div className="workspace-mode-controls">
         {surfaceMode === "kanban" ? (
           <div
             className="workspace-kanban-header-controls"
@@ -287,42 +321,8 @@ export function WorkspaceContextBanner({
             />
           </div>
         ) : null}
-      </div>
 
-      <div className="workspace-context-actions" data-tauri-drag-region="false">
-        <div
-          className={`segmented-mode-toggle workspace-surface-toggle mode-${surfaceMode}`}
-          role="radiogroup"
-          aria-label="Workspace mode"
-          onKeyDown={handleSurfaceModeKeyDown}
-        >
-          <button
-            ref={chatSurfaceButtonRef}
-            type="button"
-            role="radio"
-            aria-checked={surfaceMode === "chat"}
-            aria-label="Chat"
-            title="Chat"
-            className={surfaceMode === "chat" ? "active" : ""}
-            tabIndex={surfaceMode === "chat" ? 0 : -1}
-            onClick={() => onSurfaceModeChange("chat")}
-          >
-            <MessageSquare size={15} aria-hidden="true" />
-          </button>
-          <button
-            ref={kanbanSurfaceButtonRef}
-            type="button"
-            role="radio"
-            aria-checked={surfaceMode === "kanban"}
-            aria-label="Kanban"
-            title="Kanban"
-            className={surfaceMode === "kanban" ? "active" : ""}
-            tabIndex={surfaceMode === "kanban" ? 0 : -1}
-            onClick={() => onSurfaceModeChange("kanban")}
-          >
-            <Columns3 size={15} aria-hidden="true" />
-          </button>
-        </div>
+        <div className="workspace-context-actions" data-tauri-drag-region="false">
         {surfaceMode === "chat" ? (
           <>
             {repositories.length > 1 ? (
@@ -497,6 +497,8 @@ export function WorkspaceContextBanner({
             </button>
           </>
         ) : null}
+        </div>
+        </div>
       </div>
     </section>
   );
