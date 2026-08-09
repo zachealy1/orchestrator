@@ -900,7 +900,8 @@ button.account-switcher-item:hover:not(:disabled) {
 .workspace-kanban-header-controls .kanban-filter-menu,
 .workspace-kanban-header-controls .kanban-group-control,
 .workspace-kanban-header-controls .kanban-results-count,
-.workspace-kanban-header-controls .kanban-clear-button {
+.workspace-kanban-header-controls .kanban-clear-button,
+.workspace-kanban-header-controls .kanban-toolbar-spacer {
   display: none;
 }
 
