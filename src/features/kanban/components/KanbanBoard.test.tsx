@@ -52,7 +52,6 @@ describe("KanbanBoard", () => {
     const user = userEvent.setup();
     const onOpenCard = vi.fn();
     const onCardAction = vi.fn();
-    const onCreateCard = vi.fn();
 
     render(
       <KanbanBoard
@@ -60,7 +59,6 @@ describe("KanbanBoard", () => {
         onMoveCard={vi.fn()}
         onOpenCard={onOpenCard}
         onCardAction={onCardAction}
-        onCreateCard={onCreateCard}
       />,
     );
 
@@ -88,8 +86,12 @@ describe("KanbanBoard", () => {
       expect.objectContaining({ id: "card-first" }),
     );
 
-    await user.click(screen.getByRole("button", { name: "Create card in In progress" }));
-    expect(onCreateCard).toHaveBeenCalledWith("in-progress");
+    expect(
+      within(screen.getByRole("region", { name: "In progress" })).getByText(
+        "Drop cards here",
+      ),
+    ).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /Create card in/ })).not.toBeInTheDocument();
     expect(
       screen.queryByRole("button", { name: /Move .* column/ }),
     ).not.toBeInTheDocument();
@@ -163,7 +165,9 @@ describe("KanbanBoard", () => {
     expect(
       screen.getByRole("button", { name: "Actions for First card" }),
     ).toBeDisabled();
-    expect(screen.getByRole("button", { name: "Drop cards here" })).toBeDisabled();
+    expect(screen.getByLabelText("In progress is empty")).toHaveTextContent(
+      "Drop cards here",
+    );
   });
 
   it("flags stop-and-move for active attempts only", () => {

@@ -40,7 +40,6 @@ describe("Kanban controls", () => {
     const onFiltersChange = vi.fn();
     const onGroupByChange = vi.fn();
     const onToggleArchived = vi.fn();
-    const onCreateCard = vi.fn();
 
     render(
       <KanbanToolbar
@@ -63,7 +62,6 @@ describe("Kanban controls", () => {
         onFiltersChange={onFiltersChange}
         onGroupByChange={onGroupByChange}
         onToggleArchived={onToggleArchived}
-        onCreateCard={onCreateCard}
       />,
     );
 
@@ -93,9 +91,8 @@ describe("Kanban controls", () => {
     expect(onGroupByChange).toHaveBeenCalledWith("repository");
 
     await user.click(screen.getByRole("button", { name: "Archived" }));
-    await user.click(screen.getByRole("button", { name: "New card" }));
     expect(onToggleArchived).toHaveBeenCalledOnce();
-    expect(onCreateCard).toHaveBeenCalledOnce();
+    expect(screen.queryByRole("button", { name: "New card" })).not.toBeInTheDocument();
   });
 
   it("makes destructive transition scope and cleanup choices explicit", async () => {

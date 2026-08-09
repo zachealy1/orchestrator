@@ -28,7 +28,7 @@ fn resolved_plugin_migrator(
 }
 
 #[test]
-fn existing_versions_one_through_twenty_five_upgrade_through_thirty() {
+fn existing_versions_one_through_twenty_five_upgrade_through_thirty_one() {
     tauri::async_runtime::block_on(async {
         let mut connection = SqliteConnection::connect("sqlite::memory:")
             .await
@@ -58,12 +58,72 @@ fn existing_versions_one_through_twenty_five_upgrade_through_thirty() {
         .fetch_one(&mut connection)
         .await
         .expect("count upgraded migrations");
-        assert_eq!(applied_count, 30);
+        assert_eq!(applied_count, 31);
 
         resolved_plugin_migrator(MIGRATION_DEFINITIONS)
             .run_direct(&mut connection)
             .await
             .expect("all extracted migrations must resolve against the upgraded database");
+    });
+}
+
+#[test]
+fn kanban_execution_settings_and_chat_titles_are_persisted_together() {
+    tauri::async_runtime::block_on(async {
+        let mut connection = SqliteConnection::connect("sqlite::memory:")
+            .await
+            .expect("open Kanban migration database");
+        resolved_plugin_migrator(MIGRATION_DEFINITIONS)
+            .run_direct(&mut connection)
+            .await
+            .expect("apply migrations");
+
+        sqlx::query("INSERT INTO workspaces (path, label) VALUES ('/workspace', 'Workspace')")
+            .execute(&mut connection)
+            .await
+            .expect("insert workspace");
+        sqlx::query("INSERT INTO chats (workspace_id, title, status, surface) VALUES (1, 'Generating title...', 'draft', 'kanban')")
+            .execute(&mut connection)
+            .await
+            .expect("insert chat");
+        sqlx::query("INSERT INTO kanban_boards (workspace_id) VALUES (1)")
+            .execute(&mut connection)
+            .await
+            .expect("insert board");
+        sqlx::query(
+            "INSERT INTO kanban_cards (
+                id, workspace_id, chat_id, title, description, access_mode,
+                repository_scope, stage, sort_position, execution_state,
+                review_state, execution_settings_json
+             ) VALUES (
+                'card-1', 1, 1, 'Generating title...', 'Build it',
+                'ask-for-approval', 'selected', 'todo', 1024, 'idle', 'none',
+                '{\"version\":2}'
+             )",
+        )
+        .execute(&mut connection)
+        .await
+        .expect("insert card");
+
+        sqlx::query("UPDATE chats SET title = 'Build Kanban composer' WHERE id = 1")
+            .execute(&mut connection)
+            .await
+            .expect("complete title generation");
+
+        let (title, settings): (String, Option<String>) = sqlx::query_as(
+            "SELECT title, execution_settings_json FROM kanban_cards WHERE id = 'card-1'",
+        )
+        .fetch_one(&mut connection)
+        .await
+        .expect("read synchronized card");
+        let revision: i64 =
+            sqlx::query_scalar("SELECT revision FROM kanban_boards WHERE workspace_id = 1")
+                .fetch_one(&mut connection)
+                .await
+                .expect("read board revision");
+        assert_eq!(title, "Build Kanban composer");
+        assert_eq!(settings.as_deref(), Some("{\"version\":2}"));
+        assert_eq!(revision, 1);
     });
 }
 

@@ -189,6 +189,12 @@ pub(crate) const MIGRATION_DEFINITIONS: &[MigrationDefinition] = &[
         sql: include_str!("../migrations/030_harden_kanban_operation_and_event_ordering.sql"),
         checksum: 0x08aa98ad8752da6e,
     },
+    MigrationDefinition {
+        version: 31,
+        description: "persist_kanban_execution_settings",
+        sql: include_str!("../migrations/031_persist_kanban_execution_settings.sql"),
+        checksum: 0xbd6fb3f458dfbe30,
+    },
 ];
 
 pub(crate) fn migration_sql(definition: &MigrationDefinition) -> &'static str {

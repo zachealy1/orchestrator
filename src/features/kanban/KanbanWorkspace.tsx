@@ -98,10 +98,6 @@ type Props = {
   repositories: WorkspaceGitRepositoryStatus[];
   accounts: CodexAccountProfile[];
   models: CodexModel[];
-  defaultAccountId: number | null;
-  defaultAccessMode: CodexAccessMode;
-  defaultModel: string | null;
-  defaultReasoningLevel: string | null;
   resolvedTheme: ResolvedTheme;
   refreshToken: number;
   listChatTranscript: (chatId: number) => Promise<HistoryRunSummary[]>;
@@ -126,7 +122,7 @@ type StoredPreferences = {
 };
 
 type CardDialogState = {
-  mode: "create" | "edit" | "duplicate";
+  mode: "edit" | "duplicate";
   cardId: string | null;
 };
 
@@ -538,10 +534,6 @@ export function KanbanWorkspace({
   repositories,
   accounts,
   models,
-  defaultAccountId,
-  defaultAccessMode,
-  defaultModel,
-  defaultReasoningLevel,
   resolvedTheme,
   refreshToken,
   listChatTranscript,
@@ -1598,15 +1590,6 @@ export function KanbanWorkspace({
   const transitionViewCard = transitionDomainCard
     ? toViewCard(transitionDomainCard)
     : null;
-  const defaultDraft: Partial<KanbanCardDraft> = {
-    accountId: defaultAccountId === null ? null : String(defaultAccountId),
-    accessMode: defaultAccessMode,
-    model: defaultModel ?? "",
-    reasoningLevel: defaultReasoningLevel ?? "",
-    repositoryScope: "all",
-    repositoryIds: repositories.map((repository) => repository.repository.rootPath),
-    includeDirtyChanges: false,
-  };
   const hasBoardConstraints =
     Boolean(preferences.search.trim()) ||
     Object.values(preferences.filters).some((values) => values.length > 0);
@@ -1730,7 +1713,6 @@ export function KanbanWorkspace({
       onGroupByChange={(groupBy) =>
         schedulePreferenceSave({ ...preferencesRef.current, groupBy })
       }
-      onCreateCard={() => setCardDialog({ mode: "create", cardId: null })}
       onToggleArchived={() => setArchivedOpen((current) => !current)}
     />
   );
@@ -1782,7 +1764,6 @@ export function KanbanWorkspace({
                 onMoveCard={(request) => void handleMove(request)}
                 onOpenCard={openCard}
                 onCardAction={(action, card) => void handleCardAction(action, card)}
-                onCreateCard={() => setCardDialog({ mode: "create", cardId: null })}
               />
             </section>
           ))}
@@ -1807,15 +1788,13 @@ export function KanbanWorkspace({
           onMoveCard={(request) => void handleMove(request)}
           onOpenCard={openCard}
           onCardAction={(action, card) => void handleCardAction(action, card)}
-          onCreateCard={() => setCardDialog({ mode: "create", cardId: null })}
         />
       )}
 
       <KanbanCardDialog
         open={cardDialog !== null}
-        mode={cardDialog?.mode ?? "create"}
+        mode={cardDialog?.mode ?? "edit"}
         card={dialogViewCard}
-        defaults={cardDialog?.mode === "create" ? defaultDraft : undefined}
         repositories={repositories.map((repository) => ({
           id: repository.repository.rootPath,
           label: repository.repository.label,

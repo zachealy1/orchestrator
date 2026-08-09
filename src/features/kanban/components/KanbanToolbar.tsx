@@ -1,4 +1,4 @@
-import { Archive, Filter, Layers3, Plus, Search, X } from "lucide-react";
+import { Archive, Filter, Layers3, Search, X } from "lucide-react";
 import {
   useCallback,
   useEffect,
@@ -28,7 +28,6 @@ export type KanbanToolbarProps = {
   onSearchChange: (value: string) => void;
   onFiltersChange: (filters: KanbanFilterSelection) => void;
   onGroupByChange: (value: KanbanGroupBy) => void;
-  onCreateCard: () => void;
   onToggleArchived?: () => void;
 };
 
@@ -54,7 +53,6 @@ export function KanbanToolbar({
   onSearchChange,
   onFiltersChange,
   onGroupByChange,
-  onCreateCard,
   onToggleArchived,
 }: KanbanToolbarProps) {
   const [filtersOpen, setFiltersOpen] = useState(false);
@@ -242,15 +240,6 @@ export function KanbanToolbar({
           <span>Archived</span>
         </button>
       ) : null}
-      <button
-        type="button"
-        className="kanban-create-button"
-        disabled={disabled}
-        onClick={onCreateCard}
-      >
-        <Plus size={16} aria-hidden="true" />
-        <span>New card</span>
-      </button>
     </div>
   );
 }

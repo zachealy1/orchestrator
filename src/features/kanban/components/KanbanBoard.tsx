@@ -18,7 +18,6 @@ import {
   verticalListSortingStrategy,
 } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
-import { Plus } from "lucide-react";
 import { useMemo, useState, type ButtonHTMLAttributes, type CSSProperties } from "react";
 import "../kanban.css";
 import { KanbanCardTile } from "./KanbanCardTile";
@@ -36,7 +35,6 @@ export type KanbanBoardProps = {
   onMoveCard: (request: KanbanMoveRequest) => void;
   onOpenCard?: (card: KanbanCard) => void;
   onCardAction?: (action: KanbanCardAction, card: KanbanCard) => void;
-  onCreateCard?: (columnId: KanbanColumnId) => void;
 };
 
 type DragKind = "card";
@@ -122,14 +120,12 @@ function SortableColumn({
   target,
   onOpenCard,
   onCardAction,
-  onCreateCard,
 }: {
   column: KanbanColumn;
   disabled: boolean;
   target: boolean;
   onOpenCard?: (card: KanbanCard) => void;
   onCardAction?: (action: KanbanCardAction, card: KanbanCard) => void;
-  onCreateCard?: (columnId: KanbanColumnId) => void;
 }) {
   const { setNodeRef: setDropRef, isOver } = useDroppable({
     id: columnDropId(column.id),
@@ -155,19 +151,6 @@ function SortableColumn({
             {column.cards.length}
           </span>
         </div>
-        <div className="kanban-column-actions">
-          {onCreateCard ? (
-            <button
-              type="button"
-              className="kanban-icon-button"
-              aria-label={`Create card in ${column.title}`}
-              disabled={disabled}
-              onClick={() => onCreateCard(column.id)}
-            >
-              <Plus size={16} aria-hidden="true" />
-            </button>
-          ) : null}
-        </div>
       </header>
       {column.description ? (
         <p className="kanban-column-description">{column.description}</p>
@@ -191,15 +174,9 @@ function SortableColumn({
               ))}
             </div>
           ) : (
-            <button
-              type="button"
-              className="kanban-column-empty"
-              onClick={() => onCreateCard?.(column.id)}
-              disabled={disabled || !onCreateCard}
-            >
+            <div className="kanban-column-empty" aria-label={`${column.title} is empty`}>
               <span>Drop cards here</span>
-              {onCreateCard ? <small>or create a card</small> : null}
-            </button>
+            </div>
           )}
         </SortableContext>
       </div>
@@ -221,7 +198,6 @@ export function KanbanBoard({
   onMoveCard,
   onOpenCard,
   onCardAction,
-  onCreateCard,
 }: KanbanBoardProps) {
   const orderedColumns = useMemo(() => sortedColumns(columns), [columns]);
   const [activeCard, setActiveCard] = useState<KanbanCard | null>(null);
@@ -324,7 +300,6 @@ export function KanbanBoard({
               target={dropTargetColumn === column.id}
               onOpenCard={onOpenCard}
               onCardAction={onCardAction}
-              onCreateCard={onCreateCard}
             />
           ))}
         </div>

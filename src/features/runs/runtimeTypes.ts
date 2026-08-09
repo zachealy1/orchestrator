@@ -155,6 +155,7 @@ export type ChatTitleGenerationRequest = {
   model: string | null;
   initialPrompt: string;
   fallbackTitle: string;
+  onSettled?: () => void;
 };
 export type RunPreparationStageResult = {
   report: PreflightReport;

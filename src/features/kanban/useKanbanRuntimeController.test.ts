@@ -8,6 +8,10 @@ import type {
 } from "../conversations/types";
 import type { Workspace } from "../workspaces/types";
 import type { RunSetupSnapshot } from "../runs/runtimeTypes";
+import {
+  createRunExecutionSettings,
+  serializeRunExecutionSettings,
+} from "../../lib/runExecutionSettings";
 import type {
   KanbanAttemptRecord,
   KanbanAttemptResult,
@@ -328,6 +332,65 @@ describe("Kanban runtime controller", () => {
     });
     expect(dependencies.scheduleRun).toHaveBeenCalledWith(control, snapshot);
     expect(dependencies.refreshBoards).toHaveBeenCalledOnce();
+  });
+
+  it("replays captured composer settings for newly created cards", async () => {
+    const { controller, dependencies } = harness();
+    const executionSettings = createRunExecutionSettings({
+      accountId: account.id,
+      profileKey: "account:3",
+      selectedRepositoryPath: "/workspace/repo",
+      selectedBranch: "feature/board",
+      mode: "plan",
+      intent: "plan",
+      accessMode: "full-access",
+      computerUseEnabled: false,
+      model: model.model,
+      reasoningEffort: "high",
+      useOss: false,
+      ossProvider: "ollama",
+      contextFiles: [
+        {
+          path: "/workspace/repo/spec.md",
+          name: "spec.md",
+          source: "picker",
+        },
+      ],
+      selectedSkills: [
+        {
+          id: "skill-1",
+          name: "Board skill",
+          description: "Build boards",
+        },
+      ],
+      goalMode: false,
+    });
+    const target = card({
+      accountId: account.id,
+      executionSettingsJson: serializeRunExecutionSettings(executionSettings),
+    });
+
+    await controller.launchCard(target, "start", target.description);
+
+    const [snapshot] = dependencies.beginRun.mock.calls[0]!;
+    expect(snapshot).toMatchObject({
+      mode: "plan",
+      intent: "plan",
+      computerUseEnabled: false,
+      selectedRepositoryPath: "/cards/card-1/root/repo",
+      selectedBranch: "codex/card-1",
+      contextFiles: [expect.objectContaining({ name: "spec.md" })],
+      selectedSkills: [expect.objectContaining({ id: "skill-1" })],
+      goalMode: false,
+    });
+    expect(snapshot.access.accessMode).toBe("full-access");
+    expect(snapshot.executionSettings).toEqual(
+      expect.objectContaining({
+        ...executionSettings,
+        selectedRepositoryPath: "/cards/card-1/root/repo",
+        selectedBranch: "codex/card-1",
+      }),
+    );
   });
 
   it("prevents concurrent launches for the same card conversation", async () => {

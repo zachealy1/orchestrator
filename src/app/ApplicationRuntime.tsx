@@ -91,6 +91,7 @@ import {
 } from "../codexClient";
 import {
   fallbackChatTitle,
+  GENERATING_CHAT_TITLE,
   sanitizeGeneratedChatTitle,
 } from "../lib/chatTitles";
 import { AnalyticsSummary } from "../components/AnalyticsSummary";
@@ -107,7 +108,10 @@ import { TaskTranscriptErrorBoundary } from "../components/TaskTranscriptErrorBo
 import { TaskComposer } from "../components/TaskComposer";
 import { SubagentInspector } from "../components/SubagentInspector";
 import { KanbanWorkspace } from "../features/kanban/KanbanWorkspace";
-import { recoverInterruptedKanbanAttempts } from "../features/kanban/api";
+import {
+  createKanbanCard,
+  recoverInterruptedKanbanAttempts,
+} from "../features/kanban/api";
 import {
   KanbanAttemptStateController,
   acknowledgeKanbanStopWithTurn,
@@ -825,6 +829,8 @@ function App() {
   const [kanbanToolbarHost, setKanbanToolbarHost] =
     useState<HTMLDivElement | null>(null);
   const [kanbanRefreshToken, setKanbanRefreshToken] = useState(0);
+  const [kanbanCardCreatePending, setKanbanCardCreatePending] = useState(false);
+  const kanbanCardCreatePendingRef = useRef(false);
   const [retainTranscriptDuringWorkspaceSwitch, setRetainTranscriptDuringWorkspaceSwitch] =
     useState(false);
   const kanbanAttempts = useMemo(
@@ -1225,6 +1231,12 @@ function App() {
       });
     }
   });
+  const changeWorkspaceSurfaceMode = useStableEvent(
+    (nextMode: WorkspaceSurfaceMode) => {
+      replaceComposerPrompt(promptRef.current);
+      setWorkspaceSurfaceMode(nextMode);
+    },
+  );
   const selectComposerAccount = useStableEvent((accountId: number) => {
     requestCodexAccountSelection(accountId);
   });
@@ -1263,6 +1275,9 @@ function App() {
       return;
     }
     void launchRun(nextPrompt);
+  });
+  const runKanbanComposerPrompt = useStableEvent((nextPrompt: string) => {
+    void createCardFromKanbanPrompt(nextPrompt);
   });
   const dispatchSelectedPromptQueue = useStableEvent(() => {
     const chatId =
@@ -2940,6 +2955,7 @@ function App() {
         }
       } finally {
         chatTitleGenerationsInFlightRef.current.delete(request.chatId);
+        request.onSettled?.();
       }
     })();
   }
@@ -10674,6 +10690,144 @@ function App() {
     }
   }
 
+  async function createCardFromKanbanPrompt(
+    composerPrompt = promptRef.current,
+  ) {
+    if (kanbanCardCreatePendingRef.current) return;
+    const workspace = selectedWorkspaceRef.current;
+    const repository = selectedGitRepository;
+    const promptText = serializePromptInlineFileReferences(
+      composerPrompt.trim(),
+      contextFilesRef.current.filter((file) => file.source === "search"),
+    );
+    if (!workspace || !promptText) return;
+    if (!repository) {
+      setStatusMessage(
+        "Select a Git repository before creating a Kanban card.",
+      );
+      return;
+    }
+
+    const session = workspaceChatSessionsRef.current[workspace.id] ?? null;
+    const pendingHandoff = session
+      ? pendingAccountHandoffsRef.current[session.chatId] ?? null
+      : null;
+    const profileKey: CodexProfileKey =
+      pendingHandoff?.targetProfileKey ??
+      session?.profileKey ??
+      (`account:${selectedAccountIdRef.current}` as CodexProfileKey);
+    const accountId =
+      profileKey === DEFAULT_CODEX_PROFILE_KEY
+        ? 0
+        : accountIdFromProfileKey(profileKey);
+    const account =
+      accountId && accountId !== 0
+        ? codexAccountsRef.current.find((candidate) => candidate.id === accountId) ??
+          null
+        : null;
+    if (
+      profileKey !== DEFAULT_CODEX_PROFILE_KEY &&
+      (!accountId || !account || account.status !== "signed_in")
+    ) {
+      setStatusMessage("Sign in to a Codex account before creating a card.");
+      return;
+    }
+
+    const selectedCardModel =
+      modelsRef.current.find((model) => model.id === selectedModelId) ??
+      modelsRef.current[0] ??
+      null;
+    const mode = planMode ? "plan" : "run";
+    const executionSettings = createRunExecutionSettings({
+      accountId: accountId ?? 0,
+      profileKey,
+      selectedRepositoryPath: repository.repository.rootPath,
+      selectedBranch,
+      mode,
+      intent: planMode ? "plan" : "normal",
+      accessMode,
+      computerUseEnabled,
+      model:
+        useOss || modelLoadErrorRef.current
+          ? null
+          : selectedCardModel?.model ?? null,
+      reasoningEffort:
+        useOss || modelLoadErrorRef.current
+          ? null
+          : selectedReasoningEffort,
+      useOss,
+      ossProvider,
+      contextFiles: contextFilesRef.current,
+      selectedSkills: selectedSkillsRef.current,
+      goalMode,
+    });
+    const initialPrompt = restorePromptInlineFileReferencesForComposer(
+      promptText,
+      executionSettings.contextFiles.filter((file) => file.source === "search"),
+    );
+    const fallbackTitle = fallbackChatTitle(initialPrompt);
+
+    kanbanCardCreatePendingRef.current = true;
+    setKanbanCardCreatePending(true);
+    try {
+      const card = await createKanbanCard(workspace.id, {
+        title: GENERATING_CHAT_TITLE,
+        description: promptText,
+        accountId:
+          profileKey === DEFAULT_CODEX_PROFILE_KEY ? null : accountId ?? null,
+        accessMode,
+        model: executionSettings.model,
+        reasoningLevel: executionSettings.reasoningEffort,
+        repositoryScope: "selected",
+        repositories: [
+          {
+            repositoryPath: repository.repository.rootPath,
+            relativePath: repository.repository.relativePath,
+            label: repository.repository.label,
+            includeDirtyChanges: false,
+          },
+        ],
+        executionSettingsJson: serializeRunExecutionSettings(executionSettings),
+        generateTitle: true,
+        titleFallback: fallbackTitle,
+      });
+
+      const composerStillMatchesSubmission =
+        selectedWorkspaceRef.current?.id === workspace.id &&
+        promptRef.current.trim() === composerPrompt.trim();
+      flushSync(() => {
+        if (composerStillMatchesSubmission) {
+          updateRememberedWorkspaceComposer(workspace.id, { prompt: "" });
+          removeSubmittedImagesFromWorkspaceComposer(
+            workspace.id,
+            executionSettings.contextFiles,
+          );
+        }
+        if (executionSettings.mode === "plan" && planMode) setPlanMode(false);
+        setKanbanRefreshToken((current) => current + 1);
+      });
+      startChatTitleGeneration({
+        chatId: card.chatId,
+        workspacePath: workspace.path,
+        accountId: accountId ?? 0,
+        model: executionSettings.model,
+        initialPrompt,
+        fallbackTitle,
+        onSettled: () => setKanbanRefreshToken((current) => current + 1),
+      });
+      setStatusMessage("Card added to To do.");
+    } catch (error) {
+      setStatusMessage(
+        `Could not create card: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+      );
+    } finally {
+      kanbanCardCreatePendingRef.current = false;
+      setKanbanCardCreatePending(false);
+    }
+  }
+
   function restorePromptQueueComposer(edit: PromptQueueComposerEditState) {
     updateRememberedWorkspaceComposer(edit.item.workspaceId, {
       prompt: edit.previousComposer.prompt,
@@ -15388,7 +15542,7 @@ function App() {
             <WorkspaceContextBanner
               workspace={selectedWorkspace}
               surfaceMode={workspaceSurfaceMode}
-              onSurfaceModeChange={setWorkspaceSurfaceMode}
+              onSurfaceModeChange={changeWorkspaceSurfaceMode}
               kanbanToolbarHostRef={setKanbanToolbarHost}
               repositories={selectedGitOverview?.repositories ?? []}
               repositoryPath={
@@ -15422,40 +15576,112 @@ function App() {
               onStopBrowser={() => void stopSelectedBrowserSession()}
               windowDragRegionsEnabled={macOsWindowDragRegionsEnabled}
             />
-            {selectedWorkspace ? (
-              <div
-                className="kanban-workspace-mount"
-                style={
-                  workspaceSurfaceMode === "kanban"
-                    ? undefined
-                    : { display: "none" }
-                }
-              >
+            {selectedWorkspace && workspaceSurfaceMode === "kanban" ? (
+              <div className="kanban-workspace-mount">
                 <KanbanWorkspace
                   key={selectedWorkspace.id}
                   workspace={selectedWorkspace}
                   repositories={selectedGitOverview?.repositories ?? []}
                   accounts={signedInAccounts}
                   models={models}
-                  defaultAccountId={
-                    selectedWorkspace.default_account_id ?? selectedAccountId
-                  }
-                  defaultAccessMode={accessMode}
-                  defaultModel={selectedModel?.model ?? null}
-                  defaultReasoningLevel={selectedReasoningEffort}
                   resolvedTheme={resolvedTheme}
                   refreshToken={kanbanRefreshToken}
                   listChatTranscript={listLocalChatTranscript}
                   onOpenConversation={kanbanRuntime.openConversation}
                   onShowConversation={async (card) => {
                     await kanbanRuntime.openConversation(card);
-                    setWorkspaceSurfaceMode("chat");
+                    changeWorkspaceSurfaceMode("chat");
                   }}
                   onLaunch={kanbanRuntime.launchCard}
                   onPause={kanbanRuntime.pauseCard}
                   onStop={kanbanRuntime.stopCard}
                   toolbarHost={kanbanToolbarHost}
                 />
+                <div className="kanban-composer-shell">
+                  <TaskComposer
+                    model={{
+                      disabled: !canRun || kanbanCardCreatePending,
+                      runActive: false,
+                      prompt,
+                      promptRevision,
+                      submitLabel: "Create Kanban card",
+                      accounts: signedInAccounts,
+                      selectedAccountId: selectedComposerAccountId,
+                      accountPlaceholder: selectedComposerAccountPlaceholder,
+                      accountSelectionDisabled: kanbanCardCreatePending,
+                      modelSelectionDisabled: kanbanCardCreatePending,
+                      models,
+                      modelLoadError,
+                      selectedModelId,
+                      selectedReasoningEffort,
+                      goalMode,
+                      planMode,
+                      goalProgress: null,
+                      planProgress: null,
+                      subagentConversationKey: null,
+                      queueItems: [],
+                      queueActionPendingItemId: null,
+                      queueEditActive: false,
+                      queueEditSaving: false,
+                      queueEditError: null,
+                      accessMode,
+                      contextFiles,
+                      selectedSkills,
+                      mentionResults,
+                      mentionSearchStatus,
+                      mentionSearchError,
+                      slashCommandResults,
+                      slashCommandSearchStatus,
+                      slashCommandSearchError,
+                      contextDropActive: taskContextDropActive,
+                    }}
+                    actions={{
+                      onAccountChange: selectComposerAccount,
+                      onPromptChange: changeComposerPrompt,
+                      onModelChange: setSelectedModelId,
+                      onReasoningEffortChange: setSelectedReasoningEffort,
+                      onGoalModeChange: handleGoalModeChange,
+                      onPlanModeChange: handlePlanModeChange,
+                      onPauseGoal: () => undefined,
+                      onResumeGoal: () => undefined,
+                      onEditGoal: () => undefined,
+                      onStopGoal: () => undefined,
+                      onQueueEdit: () => undefined,
+                      onQueueRemove: () => undefined,
+                      onQueueRetry: () => undefined,
+                      onQueueAutoSendChange: () => undefined,
+                      onQueueSendNow: () => undefined,
+                      onQueueReorder: () => undefined,
+                      onInspectSubagent: () => undefined,
+                      onQueueEditCancel: () => undefined,
+                      onDispatchQueued: () => undefined,
+                      onAccessModeChange: handleAccessModeChange,
+                      onAddFiles: chooseComposerContextFiles,
+                      onMentionSearch: searchComposerMentionFiles,
+                      onMentionFileSelect: selectComposerMentionFile,
+                      onMentionClose: closeComposerMentionSearch,
+                      onSlashCommandSearch: searchComposerSlashCommands,
+                      onSlashCommandSelect: selectComposerSlashCommand,
+                      onSlashCommandClose: closeComposerSlashSearch,
+                      onContextFilesDrop: dropComposerContextFiles,
+                      onContextFilesDropError: setStatusMessage,
+                      onDropSurfaceElementChange:
+                        handleTaskComposerDropSurfaceElementChange,
+                      onPromptElementChange:
+                        handleTaskComposerPromptElementChange,
+                      hasContextFileDropFallback:
+                        hasComposerContextFileDropFallback,
+                      getContextFileDropFallback:
+                        getComposerContextFileDropFallback,
+                      onContextFileDropHandled:
+                        completeComposerContextFileDrop,
+                      onRemoveFile: removeComposerContextFile,
+                      onRemoveSkill: removeComposerSkill,
+                      onRun: runKanbanComposerPrompt,
+                      onStop: () => undefined,
+                    }}
+                  />
+                </div>
               </div>
             ) : null}
             <div
@@ -15563,7 +15789,7 @@ function App() {
                     <span>{editedPromptNotice.message}</span>
                   </div>
                 ) : null}
-                <TaskComposer
+                {workspaceSurfaceMode === "chat" ? <TaskComposer
                   model={{
                     disabled: !canRun || selectedGoalTerminationPending,
                     runActive: runIsActive,
@@ -15654,7 +15880,7 @@ function App() {
                     onRun: runComposerPrompt,
                     onStop: stopComposerRun,
                   }}
-                />
+                /> : null}
               </section>
               <WorkspaceHistoryDrawer
                 phase={historyDrawerPhase}

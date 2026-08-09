@@ -69,6 +69,7 @@ export type ComposerModel = {
   runActive: boolean;
   prompt: string;
   promptRevision?: number;
+  submitLabel?: string;
   accounts: CodexAccountProfile[];
   selectedAccountId: number | null;
   accountPlaceholder?: string;
@@ -861,7 +862,7 @@ export const TaskComposer = memo(function TaskComposer({ model, actions }: Props
   const queueDraftWhileRunning = runActive && hasDraftPrompt;
   const primaryActionIsStop =
     !queueEditActive && runActive && !queueDraftWhileRunning;
-  const primaryActionLabel = queueEditActive
+  const primaryActionLabel = model.submitLabel ?? (queueEditActive
     ? "Save queued prompt"
     : primaryActionIsStop
       ? "Stop Codex"
@@ -871,7 +872,7 @@ export const TaskComposer = memo(function TaskComposer({ model, actions }: Props
           ? "Run Codex"
           : queueItems.length > 0
             ? "Run next queued prompt"
-            : "Run Codex";
+            : "Run Codex");
 
   return (
     <section

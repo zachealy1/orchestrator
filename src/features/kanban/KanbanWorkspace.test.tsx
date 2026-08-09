@@ -172,10 +172,6 @@ function renderWorkspace(toolbarHost?: HTMLElement | null) {
       repositories={[]}
       accounts={[]}
       models={[]}
-      defaultAccountId={null}
-      defaultAccessMode="ask-for-approval"
-      defaultModel={null}
-      defaultReasoningLevel={null}
       resolvedTheme="light"
       refreshToken={0}
       listChatTranscript={transcriptMocks.listLocalChatTranscript}
@@ -269,7 +265,7 @@ describe("KanbanWorkspace controller", () => {
     });
     expect(toolbarHost).toContainElement(toolbar);
     expect(screen.getByPlaceholderText("Search cards")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "New card" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "New card" })).not.toBeInTheDocument();
 
     toolbarHost.remove();
   });

@@ -36,6 +36,7 @@ export type KanbanCardRecord = {
   accessMode: "ask-for-approval" | "full-access";
   model: string | null;
   reasoningLevel: string | null;
+  executionSettingsJson?: string | null;
   repositoryScope: "all" | "selected";
   stage: KanbanColumnKey;
   sortPosition: number;
@@ -98,6 +99,9 @@ export type KanbanCardDraft = {
   reasoningLevel: string | null;
   repositoryScope: "all" | "selected";
   repositories: KanbanRepositorySelectionRecord[];
+  executionSettingsJson?: string | null;
+  generateTitle?: boolean;
+  titleFallback?: string | null;
 };
 
 export type KanbanGitRepositoryRequest = {
@@ -235,6 +239,9 @@ export function createKanbanCard(
     id: ids.cardId ?? createKanbanId("card"),
     workspaceId,
     ...draft,
+    executionSettingsJson: draft.executionSettingsJson ?? null,
+    generateTitle: draft.generateTitle ?? false,
+    titleFallback: draft.titleFallback ?? null,
     operationId: ids.operationId ?? createKanbanId("op"),
   }) as Promise<KanbanCardRecord>;
 }

@@ -16,7 +16,10 @@ import type {
 } from "../runs/runtimeTypes";
 import type { Workspace } from "../workspaces/types";
 import { accessSettings } from "../../lib/codexAccess";
-import { createRunExecutionSettings } from "../../lib/runExecutionSettings";
+import {
+  createRunExecutionSettings,
+  parseRunExecutionSettings,
+} from "../../lib/runExecutionSettings";
 import { improvePrompt } from "../../lib/taskAnalysis";
 import {
   claimKanbanAttempt,
@@ -147,7 +150,11 @@ export function createKanbanRuntimeController<
     const dependencies = getDependencies();
     const state = dependencies.getState();
     const workspace = workspaceForCard(state, card);
+    const capturedSettings = parseRunExecutionSettings(
+      card.executionSettingsJson,
+    );
     const accountId =
+      capturedSettings?.accountId ??
       card.accountId ??
       workspace.default_account_id ??
       state.selectedAccountId;
@@ -162,17 +169,26 @@ export function createKanbanRuntimeController<
       throw new Error("The card's Codex account is unavailable or signed out.");
     }
 
-    const profileKey = `account:${accountId}` as CodexProfileKey;
+    const profileKey =
+      capturedSettings?.profileKey ??
+      (`account:${accountId}` as CodexProfileKey);
     const availableModels = await dependencies.listModels(profileKey, accountId);
-    const selectedModel = modelForCard(card, availableModels);
-    if (card.model && !selectedModel) {
+    const requestedModel = capturedSettings?.model ?? card.model;
+    const selectedModel = requestedModel
+      ? availableModels.find(
+          (model) => model.id === requestedModel || model.model === requestedModel,
+        ) ?? null
+      : modelForCard(card, availableModels);
+    if (requestedModel && !selectedModel) {
       throw new Error("The model saved on this card is no longer available.");
     }
+    const requestedReasoning =
+      capturedSettings?.reasoningEffort ?? card.reasoningLevel;
     if (
-      card.reasoningLevel &&
+      requestedReasoning &&
       selectedModel &&
       !selectedModel.supportedReasoningEfforts.some(
-        (option) => option.reasoningEffort === card.reasoningLevel,
+        (option) => option.reasoningEffort === requestedReasoning,
       )
     ) {
       throw new Error(
@@ -185,25 +201,26 @@ export function createKanbanRuntimeController<
       );
     }
 
-    const access = accessSettings({ accessMode: card.accessMode });
-    const executionSettings = createRunExecutionSettings({
-      accountId,
-      profileKey,
-      selectedRepositoryPath: null,
-      selectedBranch: null,
-      mode: "run",
-      intent: "normal",
-      accessMode: card.accessMode,
-      computerUseEnabled: state.computerUseEnabled,
-      model: selectedModel?.model ?? card.model,
-      reasoningEffort:
-        card.reasoningLevel ?? selectedModel?.defaultReasoningEffort ?? null,
-      useOss: false,
-      ossProvider: state.ossProvider,
-      contextFiles: [],
-      selectedSkills: [],
-      goalMode: true,
-    });
+    const executionSettings = capturedSettings ??
+      createRunExecutionSettings({
+        accountId,
+        profileKey,
+        selectedRepositoryPath: null,
+        selectedBranch: null,
+        mode: "run",
+        intent: "normal",
+        accessMode: card.accessMode,
+        computerUseEnabled: state.computerUseEnabled,
+        model: selectedModel?.model ?? card.model,
+        reasoningEffort:
+          card.reasoningLevel ?? selectedModel?.defaultReasoningEffort ?? null,
+        useOss: false,
+        ossProvider: state.ossProvider,
+        contextFiles: [],
+        selectedSkills: [],
+        goalMode: true,
+      });
+    const access = accessSettings({ accessMode: executionSettings.accessMode });
     const reservationKey = `${card.workspaceId}:${card.chatId}`;
     if (
       launchReservations.has(reservationKey) ||
@@ -225,7 +242,7 @@ export function createKanbanRuntimeController<
           cardId: card.id,
           title: card.title,
           accountId,
-          accessMode: card.accessMode,
+          accessMode: executionSettings.accessMode,
           model: executionSettings.model,
           reasoningLevel: executionSettings.reasoningEffort,
           repositories: card.repositories,
@@ -243,6 +260,19 @@ export function createKanbanRuntimeController<
           },
         });
         executionRoot = repositoryExecution.executionRoot;
+        const selectedBinding =
+          repositoryExecution.bindings.find(
+            (binding) =>
+              binding.sourceRepositoryPath ===
+              executionSettings.selectedRepositoryPath,
+          ) ?? repositoryExecution.bindings[0] ?? null;
+        const runExecutionSettings = capturedSettings && selectedBinding
+          ? createRunExecutionSettings({
+              ...executionSettings,
+              selectedRepositoryPath: selectedBinding.worktreePath,
+              selectedBranch: selectedBinding.cardBranch,
+            })
+          : executionSettings;
 
         const chat = await dependencies.loadChat(card.chatId);
         if (!chat) {
@@ -267,21 +297,21 @@ export function createKanbanRuntimeController<
           profileKey,
           chatOrigin: "orchestrator",
           externalThreadId: null,
-          selectedRepositoryPath: null,
-          selectedBranch: null,
+          selectedRepositoryPath: runExecutionSettings.selectedRepositoryPath,
+          selectedBranch: runExecutionSettings.selectedBranch,
           cachedPreflight: null,
-          mode: "run",
-          intent: "normal",
+          mode: runExecutionSettings.mode,
+          intent: runExecutionSettings.intent,
           access,
-          computerUseEnabled: state.computerUseEnabled,
-          model: executionSettings.model,
-          effort: executionSettings.reasoningEffort,
-          useOss: false,
-          ossProvider: state.ossProvider,
+          computerUseEnabled: runExecutionSettings.computerUseEnabled,
+          model: runExecutionSettings.model,
+          effort: runExecutionSettings.reasoningEffort,
+          useOss: runExecutionSettings.useOss,
+          ossProvider: runExecutionSettings.ossProvider,
           improvedPrompt: improvePrompt(promptText),
-          contextFiles: [],
-          selectedSkills: [],
-          goalMode: true,
+          contextFiles: runExecutionSettings.contextFiles,
+          selectedSkills: runExecutionSettings.selectedSkills,
+          goalMode: runExecutionSettings.goalMode,
           loginState: "idle",
           chatId: chat.id,
           threadId: currentThreadId,
@@ -290,7 +320,7 @@ export function createKanbanRuntimeController<
             ? { kind: "resume" }
             : { kind: "fresh" },
           previousChatContext: inheritedContext,
-          executionSettings,
+          executionSettings: runExecutionSettings,
           restorePromptOnSetupFailure: false,
           kanbanAttempt: {
             cardId: card.id,

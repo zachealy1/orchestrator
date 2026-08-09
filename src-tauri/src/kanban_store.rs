@@ -48,6 +48,7 @@ pub struct KanbanCardDto {
     pub access_mode: String,
     pub model: Option<String>,
     pub reasoning_level: Option<String>,
+    pub execution_settings_json: Option<String>,
     pub repository_scope: String,
     pub stage: String,
     pub sort_position: i64,
@@ -98,6 +99,12 @@ pub struct CreateKanbanCardRequest {
     pub access_mode: String,
     pub model: Option<String>,
     pub reasoning_level: Option<String>,
+    #[serde(default)]
+    pub execution_settings_json: Option<String>,
+    #[serde(default)]
+    pub generate_title: bool,
+    #[serde(default)]
+    pub title_fallback: Option<String>,
     pub repository_scope: String,
     #[serde(default)]
     pub repositories: Vec<KanbanRepositorySelectionInput>,
@@ -499,7 +506,8 @@ async fn load_card(
 ) -> Result<KanbanCardDto, String> {
     let row = sqlx::query(
         "SELECT id, workspace_id, chat_id, title, description, account_id,
-            access_mode, model, reasoning_level, repository_scope, stage,
+            access_mode, model, reasoning_level, execution_settings_json,
+            repository_scope, stage,
             sort_position, execution_state, review_state, current_attempt_id,
             state_version, archived_at, deleted_at, approved_at, last_error,
             created_at, updated_at, inherited_context
@@ -521,6 +529,7 @@ async fn load_card(
         access_mode: row.get("access_mode"),
         model: row.get("model"),
         reasoning_level: row.get("reasoning_level"),
+        execution_settings_json: row.get("execution_settings_json"),
         repository_scope: row.get("repository_scope"),
         stage: row.get("stage"),
         sort_position: row.get("sort_position"),
@@ -767,6 +776,21 @@ pub async fn kanban_create_card(
     validate_access(&request.access_mode)?;
     validate_repository_scope(&request.repository_scope)?;
     validate_repositories(&request.repository_scope, &request.repositories)?;
+    if let Some(settings) = request.execution_settings_json.as_deref() {
+        let value: serde_json::Value = serde_json::from_str(settings)
+            .map_err(|_| "The card execution settings are not valid JSON.".to_string())?;
+        if !value.is_object() {
+            return Err("The card execution settings must be a JSON object.".to_string());
+        }
+    }
+    let fallback_title = request
+        .title_fallback
+        .as_deref()
+        .map(str::trim)
+        .filter(|title| !title.is_empty());
+    if request.generate_title && fallback_title.is_none() {
+        return Err("A fallback title is required while generating a card title.".to_string());
+    }
     let request_fingerprint = operation_fingerprint(&request)?;
     let mut connection = open_database(&app).await?;
     ensure_board(&mut connection, request.workspace_id).await?;
@@ -796,13 +820,23 @@ pub async fn kanban_create_card(
     let chat = sqlx::query(
         "INSERT INTO chats (
             workspace_id, account_id, title, status, origin, profile_key, surface,
-            title_generation_state
-         ) VALUES (?1, ?2, ?3, 'draft', 'orchestrator', ?4, 'kanban', 'complete')",
+            title_generation_state, title_fallback
+         ) VALUES (?1, ?2, ?3, 'draft', 'orchestrator', ?4, 'kanban', ?5, ?6)",
     )
     .bind(request.workspace_id)
     .bind(request.account_id)
     .bind(request.title.trim())
     .bind(profile_key)
+    .bind(if request.generate_title {
+        "pending"
+    } else {
+        "complete"
+    })
+    .bind(if request.generate_title {
+        fallback_title
+    } else {
+        None
+    })
     .execute(&mut *transaction)
     .await
     .map_err(|error| format!("The card conversation could not be created: {error}"))?;
@@ -820,11 +854,12 @@ pub async fn kanban_create_card(
     sqlx::query(
         "INSERT INTO kanban_cards (
             id, workspace_id, chat_id, title, description, account_id,
-            access_mode, model, reasoning_level, repository_scope, stage,
+            access_mode, model, reasoning_level, execution_settings_json,
+            repository_scope, stage,
             sort_position, execution_state, review_state
          ) VALUES (
-            ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10,
-            'todo', ?11, 'idle', 'none'
+            ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11,
+            'todo', ?12, 'idle', 'none'
          )",
     )
     .bind(&request.id)
@@ -836,6 +871,7 @@ pub async fn kanban_create_card(
     .bind(&request.access_mode)
     .bind(request.model.as_deref())
     .bind(request.reasoning_level.as_deref())
+    .bind(request.execution_settings_json.as_deref())
     .bind(&request.repository_scope)
     .bind(next_position)
     .execute(&mut *transaction)
