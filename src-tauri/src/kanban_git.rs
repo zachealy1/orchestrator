@@ -10,7 +10,7 @@ use std::{
 use tauri::{AppHandle, Manager};
 use uuid::Uuid;
 
-const CARD_BRANCH_PREFIX: &str = "codex/kanban-";
+const CARD_BRANCH_PREFIX: &str = "codex/";
 const MAX_CARD_ID_LENGTH: usize = 128;
 const MAX_BRANCH_ATTEMPTS: usize = 1_000;
 
@@ -966,14 +966,13 @@ fn provision_blocking(
     fs::create_dir_all(&execution_root)
         .map_err(|error| format!("Unable to create card execution root: {error}"))?;
 
-    let id_component = branch_component(&request.card_id, 12);
     let slug_component = request
         .card_slug
         .as_deref()
         .map(|slug| branch_component(slug, 32))
         .filter(|slug| !slug.is_empty())
         .unwrap_or_else(|| "card".to_string());
-    let branch_base = format!("{CARD_BRANCH_PREFIX}{id_component}-{slug_component}");
+    let branch_base = format!("{CARD_BRANCH_PREFIX}{slug_component}");
 
     let mut bindings = Vec::with_capacity(repositories.len());
     for repository in &repositories {
@@ -2044,7 +2043,7 @@ mod tests {
         assert_eq!(result.repositories.len(), 1);
         let binding = &result.repositories[0];
         assert_eq!(binding.base_branch, "main");
-        assert!(binding.card_branch.starts_with("codex/kanban-card-123-"));
+        assert_eq!(binding.card_branch, "codex/implement-feature");
         assert!(Path::new(&binding.worktree_path).is_dir());
         assert_eq!(
             current_branch(Path::new(&binding.worktree_path)).unwrap(),
@@ -2066,15 +2065,12 @@ mod tests {
     fn provisioning_uses_collision_safe_branch_suffix() {
         let repo = init_repository("collision-source");
         let cards = temp_directory("collision-cards");
-        run(
-            &repo,
-            &["branch", "codex/kanban-card-456-implement-feature"],
-        );
+        run(&repo, &["branch", "codex/implement-feature"]);
         let result = provision(&cards, &repo, "card-456", false);
         assert!(result.complete);
         assert_eq!(
             result.repositories[0].card_branch,
-            "codex/kanban-card-456-implement-feature-2"
+            "codex/implement-feature-2"
         );
         cleanup_blocking(KanbanGitCleanupRequest {
             binding: result.repositories[0].clone(),
@@ -2082,10 +2078,7 @@ mod tests {
             force: true,
         })
         .expect("cleanup");
-        run(
-            &repo,
-            &["branch", "-D", "codex/kanban-card-456-implement-feature"],
-        );
+        run(&repo, &["branch", "-D", "codex/implement-feature"]);
         remove_test_directory(&repo);
         remove_test_directory(&cards);
     }
