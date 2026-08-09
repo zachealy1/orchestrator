@@ -915,6 +915,44 @@ button.account-switcher-item:hover:not(:disabled) {
   flex: 1 1 180px;
 }
 
+.workspace-kanban-header-controls .kanban-search-field:focus-within {
+  border-color: var(--color-divider);
+  box-shadow: 0 0 0 2px rgb(var(--text-secondary-rgb) / 0.22);
+}
+
+.workspace-kanban-header-controls .kanban-search-field input:focus-visible {
+  border: 0;
+  box-shadow: none;
+}
+
+.workspace-kanban-header-controls .kanban-create-button {
+  background: var(--color-button-secondary);
+  color: var(--color-button-secondary-text);
+}
+
+.workspace-kanban-header-controls .kanban-filter-trigger:hover:not(:disabled),
+.workspace-kanban-header-controls .kanban-toolbar-button:hover:not(:disabled),
+.workspace-kanban-header-controls .kanban-create-button:hover:not(:disabled),
+.workspace-kanban-header-controls .kanban-filter-trigger:focus-visible,
+.workspace-kanban-header-controls .kanban-toolbar-button:focus-visible,
+.workspace-kanban-header-controls .kanban-create-button:focus-visible,
+.workspace-kanban-header-controls .kanban-filter-trigger.is-active,
+.workspace-kanban-header-controls .kanban-filter-trigger[aria-expanded="true"],
+.workspace-kanban-header-controls .kanban-toolbar-button.is-active,
+.workspace-kanban-header-controls .kanban-group-select button.composer-select-trigger:hover:not(:disabled),
+.workspace-kanban-header-controls .kanban-group-select button.composer-select-trigger:focus-visible,
+.workspace-kanban-header-controls .kanban-group-select.open button.composer-select-trigger {
+  background: rgb(var(--text-secondary-rgb) / 0.18);
+  color: var(--color-button-secondary-text);
+}
+
+.workspace-kanban-header-controls .kanban-filter-trigger:focus-visible,
+.workspace-kanban-header-controls .kanban-toolbar-button:focus-visible,
+.workspace-kanban-header-controls .kanban-create-button:focus-visible,
+.workspace-kanban-header-controls .kanban-group-control:focus-within {
+  box-shadow: 0 0 0 2px rgb(var(--text-secondary-rgb) / 0.22);
+}
+
 .workspace-context-actions {
   position: relative;
   display: flex;
