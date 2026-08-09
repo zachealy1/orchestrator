@@ -1,4 +1,5 @@
 import { commands } from "../../generated/tauri";
+import { DEFAULT_CODEX_ACCOUNT_LABEL } from "../../features/accounts/abandonedProfiles";
 import type { CodexAccountProfile, CodexAccountStatus } from "../../features/accounts/types";
 import { FrontendDatabase } from "../database";
 
@@ -41,7 +42,7 @@ export function createAccountRepository(database: FrontendDatabase) {
     );
   }
 
-  async function createCodexAccount(label = "New Codex account") {
+  async function createCodexAccount(label = DEFAULT_CODEX_ACCOUNT_LABEL) {
     const db = await getDatabase();
     const result = await db.execute(
       `INSERT INTO codex_accounts (label, status)

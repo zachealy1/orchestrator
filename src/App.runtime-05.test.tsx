@@ -277,6 +277,26 @@ describe("Application runtime scenarios 5", () => {
       expect(mocks.completeDuplicateProfileCleanupMock).toHaveBeenCalledWith(11);
     });
 
+  it("removes abandoned identity-less account profiles during startup", async () => {
+      const abandonedAccount = {
+        ...pendingAccount,
+        id: 10,
+        status: "signed_out" as const,
+      };
+      mocks.listCodexAccountsMock.mockResolvedValue([
+        signedInAccount,
+        abandonedAccount,
+      ]);
+
+      await renderApp();
+
+      await waitFor(() =>
+        expect(mocks.softDeleteCodexAccountMock).toHaveBeenCalledWith(10),
+      );
+      expect(mocks.deleteCodexProfileMock).toHaveBeenCalledWith(10);
+      expect(screen.queryByText("Local profile 10")).not.toBeInTheDocument();
+    });
+
   it("maps account/read into signed-in auth UI", async () => {
       mocks.listCodexAccountsMock.mockResolvedValue([signedInAccount]);
       mocks.readCodexAccountMock.mockResolvedValue({

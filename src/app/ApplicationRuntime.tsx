@@ -306,6 +306,7 @@ import {
 import { SettingsView } from "../features/settings/SettingsView";
 import type { BrowserSessionState } from "../features/browser/types";
 import { useComputerUseController } from "../features/browser/useComputerUseController";
+import { cleanupAbandonedCodexProfiles } from "../features/accounts/abandonedProfiles";
 import type {
   CodexAccountProfile,
   CodexAccountStatus,
@@ -2699,12 +2700,20 @@ function App() {
       }),
     );
 
-    const [workspaceRows, storedAccountRows, nativeActiveLogin] =
+    const [workspaceRows, loadedAccountRows, nativeActiveLogin] =
       await Promise.all([
         withStartupFallback(listWorkspaces(), [], startupWarnings),
         withStartupFallback(listCodexAccounts(), [], startupWarnings),
         withStartupFallback(readActiveCodexLogin(), null, startupWarnings),
       ]);
+    const abandonedProfileCleanup = await cleanupAbandonedCodexProfiles(
+      loadedAccountRows,
+      nativeActiveLogin?.accountId ?? null,
+      softDeleteCodexAccount,
+      deleteCodexProfile,
+    );
+    startupWarnings.push(...abandonedProfileCleanup.warnings);
+    const storedAccountRows = abandonedProfileCleanup.accounts;
     const strandedAccounts = nativeActiveLogin
       ? []
       : storedAccountRows.filter(
