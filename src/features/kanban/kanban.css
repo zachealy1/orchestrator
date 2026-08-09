@@ -964,13 +964,18 @@
 }
 
 .kanban-field-select button.composer-select-trigger {
-  min-height: 40px;
+  min-height: 42px;
   font-size: 0.86rem;
 }
 
 .kanban-field-select:hover:not(.disabled),
 .kanban-field-select.open {
-  background: var(--dropdown-bg);
+  background: var(--color-button-active);
+}
+
+.kanban-field-select button.composer-select-trigger:hover:not(:disabled),
+.kanban-field-select button.composer-select-trigger:active:not(:disabled) {
+  background: transparent;
 }
 
 .kanban-field-select:focus-within {
@@ -1001,7 +1006,11 @@
 }
 
 .kanban-field input:focus-visible,
-.kanban-field textarea:focus-visible,
+.kanban-field textarea:focus-visible {
+  background: var(--color-button-active);
+  box-shadow: none;
+}
+
 .kanban-field select:focus-visible {
   box-shadow: 0 0 0 3px var(--dropdown-focus-ring);
 }
