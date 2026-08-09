@@ -168,6 +168,7 @@ export function KanbanCardDialog({
     mode === "create" ? "Create card" : mode === "duplicate" ? "Duplicate" : "Save changes";
   const executionFieldsDisabled =
     saving || (mode === "edit" && executionSettingsLocked);
+  const showsRepositoryScope = repositories.length > 1;
   const modelOptionsForReasoning = modelReasoningOptions
     ? (modelReasoningOptions[draft.model] ?? [])
     : reasoningOptions;
@@ -220,6 +221,14 @@ export function KanbanCardDialog({
     event.preventDefault();
     const titleValue = draft.title.trim();
     const description = draft.description.trim();
+    const submittedDraft =
+      repositories.length === 1 && !executionSettingsLocked
+        ? {
+            ...draft,
+            repositoryScope: "selected" as const,
+            repositoryIds: [repositories[0]!.id],
+          }
+        : draft;
     if (!titleValue) {
       setValidationError("Enter a card title.");
       setInvalidField("title");
@@ -232,7 +241,10 @@ export function KanbanCardDialog({
       descriptionRef.current?.focus();
       return;
     }
-    if (draft.repositoryScope === "selected" && draft.repositoryIds.length === 0) {
+    if (
+      submittedDraft.repositoryScope === "selected" &&
+      submittedDraft.repositoryIds.length === 0
+    ) {
       setValidationError("Choose at least one repository or use all repositories.");
       setInvalidField("repositories");
       const repositoryOption =
@@ -242,7 +254,7 @@ export function KanbanCardDialog({
       (repositoryOption ?? repositoryScopeRef.current)?.focus();
       return;
     }
-    void onSubmit({ ...draft, title: titleValue, description });
+    void onSubmit({ ...submittedDraft, title: titleValue, description });
   }
 
   return (
@@ -373,58 +385,76 @@ export function KanbanCardDialog({
                   </div>
                 </section>
 
-                <fieldset
-                  className="kanban-repository-picker"
-                  disabled={executionFieldsDisabled}
-                  aria-invalid={invalidField === "repositories"}
-                  aria-describedby={invalidField === "repositories" ? validationErrorId : undefined}
-                >
-                  <legend>Repository scope</legend>
-                  <div className="kanban-segmented-control">
-                    <label>
-                      <input
-                        ref={repositoryScopeRef}
-                        type="radio"
-                        name="repository-scope"
-                        value="all"
-                        checked={draft.repositoryScope === "all"}
-                        disabled={executionFieldsDisabled}
-                        onChange={() => patchDraft({ repositoryScope: "all" })}
-                      />
-                      <span>All in workspace</span>
-                    </label>
-                    <label>
-                      <input
-                        type="radio"
-                        name="repository-scope"
-                        value="selected"
-                        checked={draft.repositoryScope === "selected"}
-                        disabled={executionFieldsDisabled}
-                        onChange={() => patchDraft({ repositoryScope: "selected" })}
-                      />
-                      <span>Selected repositories</span>
-                    </label>
-                  </div>
-                  {draft.repositoryScope === "selected" ? (
-                    <div ref={repositoryOptionsRef} className="kanban-repository-options">
-                      {repositories.length > 0 ? repositories.map((repository) => (
-                        <label key={repository.id}>
-                          <input
-                            type="checkbox"
-                            checked={draft.repositoryIds.includes(repository.id)}
-                            disabled={executionFieldsDisabled}
-                            onChange={(event) => toggleRepository(repository.id, event.target.checked)}
-                          />
-                          <span>
-                            <strong>{repository.label}</strong>
-                            <small title={repository.path}>{repository.path}</small>
-                          </span>
-                        </label>
-                      )) : <p>No Git repositories were found in this workspace.</p>}
+                {showsRepositoryScope ? (
+                  <fieldset
+                    className="kanban-repository-picker"
+                    disabled={executionFieldsDisabled}
+                    aria-invalid={invalidField === "repositories"}
+                    aria-describedby={invalidField === "repositories" ? validationErrorId : undefined}
+                  >
+                    <legend>Repository scope</legend>
+                    <div className="kanban-segmented-control">
+                      <label>
+                        <input
+                          ref={repositoryScopeRef}
+                          type="radio"
+                          name="repository-scope"
+                          value="all"
+                          checked={draft.repositoryScope === "all"}
+                          disabled={executionFieldsDisabled}
+                          onChange={() => patchDraft({ repositoryScope: "all" })}
+                        />
+                        <span>All in workspace</span>
+                      </label>
+                      <label>
+                        <input
+                          type="radio"
+                          name="repository-scope"
+                          value="selected"
+                          checked={draft.repositoryScope === "selected"}
+                          disabled={executionFieldsDisabled}
+                          onChange={() => patchDraft({ repositoryScope: "selected" })}
+                        />
+                        <span>Selected repositories</span>
+                      </label>
                     </div>
-                  ) : (
-                    <p className="kanban-field-help">The repository set is captured when this card first starts.</p>
-                  )}
+                    {draft.repositoryScope === "selected" ? (
+                      <div ref={repositoryOptionsRef} className="kanban-repository-options">
+                        {repositories.map((repository) => (
+                          <label key={repository.id}>
+                            <input
+                              type="checkbox"
+                              checked={draft.repositoryIds.includes(repository.id)}
+                              disabled={executionFieldsDisabled}
+                              onChange={(event) => toggleRepository(repository.id, event.target.checked)}
+                            />
+                            <span>
+                              <strong>{repository.label}</strong>
+                              <small title={repository.path}>{repository.path}</small>
+                            </span>
+                          </label>
+                        ))}
+                      </div>
+                    ) : (
+                      <p className="kanban-field-help">The repository set is captured when this card first starts.</p>
+                    )}
+                    <label className="kanban-include-dirty-option">
+                      <input
+                        type="checkbox"
+                        checked={draft.includeDirtyChanges}
+                        disabled={executionFieldsDisabled}
+                        onChange={(event) => patchDraft({ includeDirtyChanges: event.target.checked })}
+                      />
+                      <span>
+                        <strong>Include current uncommitted changes</strong>
+                        <small>Off by default. Selected source changes are copied into the isolated worktree at first start.</small>
+                      </span>
+                    </label>
+                    {mode === "edit" && executionSettingsLocked ? (
+                      <p className="kanban-field-help">Repository, mode, context, and execution settings are locked after isolated worktrees are provisioned. Title and description remain editable.</p>
+                    ) : null}
+                  </fieldset>
+                ) : repositories.length === 1 ? (
                   <label className="kanban-include-dirty-option">
                     <input
                       type="checkbox"
@@ -437,10 +467,11 @@ export function KanbanCardDialog({
                       <small>Off by default. Selected source changes are copied into the isolated worktree at first start.</small>
                     </span>
                   </label>
-                  {mode === "edit" && executionSettingsLocked ? (
-                    <p className="kanban-field-help">Repository, mode, context, and execution settings are locked after isolated worktrees are provisioned. Title and description remain editable.</p>
-                  ) : null}
-                </fieldset>
+                ) : null}
+
+                {!showsRepositoryScope && mode === "edit" && executionSettingsLocked ? (
+                  <p className="kanban-field-help">Repository, mode, context, and execution settings are locked after isolated worktrees are provisioned. Title and description remain editable.</p>
+                ) : null}
 
                 {mode === "duplicate" ? (
                   <label className="kanban-duplicate-history">

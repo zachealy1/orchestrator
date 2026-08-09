@@ -261,6 +261,47 @@ describe("KanbanCardDialog", () => {
     );
   });
 
+  it("hides repository scope and targets the sole repository automatically", async () => {
+    const user = userEvent.setup();
+    const onSubmit = vi.fn();
+    render(
+      <KanbanCardDialog
+        {...dialogProps(onSubmit)}
+        repositories={[repositories[0]!]}
+        defaults={{
+          title: "Update documentation",
+          description: "Refresh the project documentation.",
+          repositoryScope: "all",
+          repositoryIds: [],
+        }}
+      />,
+    );
+
+    expect(
+      screen.queryByRole("group", { name: "Repository scope" }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("radio", { name: "Selected repositories" }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("checkbox", { name: /orchestrator/ }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.getByRole("checkbox", {
+        name: /Include current uncommitted changes/,
+      }),
+    ).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "Create card" }));
+
+    expect(onSubmit).toHaveBeenCalledWith(
+      expect.objectContaining({
+        repositoryScope: "selected",
+        repositoryIds: ["repo-1"],
+      }),
+    );
+  });
+
   it("duplicates into an independent draft and does not reset edits on equivalent rerenders", async () => {
     const user = userEvent.setup();
     const onSubmit = vi.fn();
