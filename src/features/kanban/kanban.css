@@ -838,7 +838,7 @@
 .kanban-card-dialog > header {
   flex: 0 0 auto;
   padding: 20px 24px 16px;
-  border-bottom: 1px solid var(--color-divider);
+  border-bottom: 0;
 }
 
 .kanban-card-dialog h2,
@@ -894,6 +894,7 @@
   display: grid;
   min-height: 520px;
   grid-template-columns: minmax(0, 1.9fr) minmax(300px, 1fr);
+  column-gap: 16px;
 }
 
 .kanban-card-editor-task,
@@ -906,7 +907,7 @@
 }
 
 .kanban-card-editor-settings {
-  border-left: 1px solid var(--color-divider);
+  border-left: 0;
 }
 
 .kanban-card-editor-task > h3,
@@ -946,7 +947,7 @@
 .kanban-field select {
   width: 100%;
   min-width: 0;
-  border: 1px solid var(--color-divider);
+  border: 0;
   border-radius: var(--radius);
   outline: 0;
   background: var(--dropdown-bg);
@@ -958,7 +959,7 @@
 .composer-select.kanban-field-select {
   width: 100%;
   min-height: 42px;
-  border: 1px solid var(--color-divider);
+  border: 0;
   border-radius: var(--radius);
   background: var(--dropdown-bg);
 }
@@ -1003,7 +1004,6 @@
 .kanban-field input:focus-visible,
 .kanban-field textarea:focus-visible,
 .kanban-field select:focus-visible {
-  border-color: var(--color-divider);
   box-shadow: 0 0 0 3px var(--dropdown-focus-ring);
 }
 
@@ -1033,7 +1033,7 @@
   gap: 4px;
   margin-top: 8px;
   padding: 3px;
-  border: 1px solid var(--color-divider);
+  border: 0;
   border-radius: var(--radius);
   background: var(--dropdown-bg);
 }
@@ -1061,14 +1061,13 @@
   justify-content: center;
   gap: 6px;
   padding: 0 7px;
-  border: 1px solid transparent;
+  border: 0;
   border-radius: 6px;
   color: var(--color-text-secondary);
   font-size: 0.76rem;
 }
 
 .kanban-mode-options input:checked + span {
-  border-color: var(--color-divider);
   background: var(--color-component-background);
   color: var(--color-text);
 }
@@ -1100,8 +1099,10 @@
 }
 
 .kanban-agent-context-drop {
+  display: grid;
+  gap: 2px;
   overflow: hidden;
-  border: 1px solid var(--color-divider);
+  border: 0;
   border-radius: var(--radius);
   background: var(--dropdown-bg);
 }
@@ -1119,7 +1120,7 @@
 }
 
 .kanban-agent-context-file + .kanban-agent-context-file {
-  border-top: 1px solid var(--color-divider);
+  border-top: 0;
 }
 
 .kanban-agent-context-file > span {
@@ -1133,7 +1134,7 @@
   width: 100%;
   min-height: 34px;
   border: 0;
-  border-top: 1px solid var(--color-divider);
+  border-top: 0;
   border-radius: 0;
   background: transparent;
   color: var(--color-text-secondary);
@@ -1182,7 +1183,7 @@
   min-height: 31px;
   place-items: center;
   padding: 0 8px;
-  border: 1px solid transparent;
+  border: 0;
   border-radius: 6px;
   color: var(--color-text-secondary);
   font-size: 0.76rem;
@@ -1190,9 +1191,8 @@
 }
 
 .kanban-segmented-control input:checked + span {
-  border-color: var(--color-divider);
   background: var(--color-component-background);
-  box-shadow: 0 1px 3px rgb(var(--shadow-rgb) / 0.12);
+  box-shadow: none;
   color: var(--color-text);
 }
 
@@ -1219,7 +1219,7 @@
   align-items: flex-start;
   gap: 8px;
   padding: 8px;
-  border: 1px solid var(--color-divider);
+  border: 0;
   border-radius: 7px;
   cursor: pointer;
   font-size: 0.76rem;
@@ -1247,7 +1247,6 @@
 .kanban-duplicate-history:has(input:checked),
 .kanban-include-dirty-option:has(input:checked),
 .kanban-cleanup-options > label:has(input:checked) {
-  border-color: var(--color-divider);
   background: var(--color-selected-background);
 }
 
@@ -1316,7 +1315,7 @@
   flex: 0 0 auto;
   margin-top: 12px;
   padding: 14px 24px 18px;
-  border-top: 1px solid var(--color-divider);
+  border-top: 0;
   background: var(--color-component-background);
 }
 
