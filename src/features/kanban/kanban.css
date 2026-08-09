@@ -213,8 +213,16 @@
 
 .kanban-card-tile:hover {
   border-color: var(--color-divider);
-  background: var(--dropdown-bg-hover);
+  background: var(--color-component-background);
   box-shadow: none;
+}
+
+.kanban-column .kanban-icon-button:hover:not(:disabled),
+.kanban-column .kanban-drag-handle:hover:not(:disabled),
+.kanban-column .kanban-card-menu-trigger:hover:not(:disabled),
+.kanban-column .kanban-card-menu-trigger[aria-expanded="true"] {
+  background: var(--color-surface-muted);
+  color: var(--color-text);
 }
 
 .kanban-card-tile.is-dragging {
