@@ -7,7 +7,6 @@ export type KanbanArchivedViewProps = {
   cards: KanbanCard[];
   disabled?: boolean;
   onClose?: () => void;
-  onOpenCard: (card: KanbanCard) => void;
   onRestoreCard: (card: KanbanCard) => void;
   onDeleteCard: (card: KanbanCard) => void;
 };
@@ -27,7 +26,6 @@ export function KanbanArchivedView({
   cards,
   disabled = false,
   onClose,
-  onOpenCard,
   onRestoreCard,
   onDeleteCard,
 }: KanbanArchivedViewProps) {
@@ -89,12 +87,7 @@ export function KanbanArchivedView({
         <div className="kanban-archive-list">
           {visibleCards.map((card) => (
             <article key={card.id}>
-              <button
-                type="button"
-                className="kanban-archive-card-open"
-                disabled={disabled}
-                onClick={() => onOpenCard(card)}
-              >
+              <div className="kanban-archive-card-content">
                 <span className="kanban-archive-icon" aria-hidden="true">
                   <Archive size={17} />
                 </span>
@@ -102,7 +95,7 @@ export function KanbanArchivedView({
                   <strong>{card.title}</strong>
                   <small>{card.description}</small>
                 </span>
-              </button>
+              </div>
               <div className="kanban-archive-metadata">
                 <span>{archivedDate(card.archivedAt)}</span>
                 <span>

@@ -25,7 +25,6 @@ import type {
   Workspace,
   WorkspaceGitRepositoryStatus,
 } from "../workspaces/types";
-import type { ResolvedTheme } from "../../shared/types";
 import { trapDialogFocus } from "../../shared/dialogFocus";
 import {
   createRunExecutionSettings,
@@ -44,8 +43,6 @@ import {
   mergeKanbanGit,
   moveKanbanCard,
   pushKanbanGit,
-  readKanbanGitDiff,
-  readKanbanGitStatus,
   reconcileKanbanGit,
   reopenKanbanCard,
   saveKanbanGitBindings,
@@ -58,7 +55,6 @@ import {
   type KanbanCardRecord,
   type KanbanColumnKey,
   type KanbanGitBinding,
-  type KanbanGitStatusResult,
 } from "./api";
 import {
   DEFAULT_KANBAN_FILTER_STATE,
@@ -76,13 +72,11 @@ import {
   KanbanArchivedView,
   KanbanBoard,
   KanbanCardDialog,
-  KanbanDetailShell,
   KanbanToolbar,
   KanbanTransitionDialog,
   type KanbanCard as ViewKanbanCard,
   type KanbanCardAction,
   type KanbanCardDraft,
-  type KanbanChangedFile,
   type KanbanCleanupOption,
   type KanbanColumn,
   type KanbanColumnId,
@@ -90,14 +84,12 @@ import {
   type KanbanFilterSelection,
   type KanbanGroupBy,
   type KanbanMoveRequest,
-  type KanbanReviewData,
   type KanbanTransitionKind,
 } from "./components";
 import {
   KanbanActionIcon,
   STATE_LABELS,
 } from "./components/KanbanCardTile";
-import { selectUnifiedDiffForFile } from "./unifiedDiff";
 import "./kanban.css";
 
 export type KanbanLaunchKind = KanbanAttemptRecord["kind"];
@@ -107,7 +99,6 @@ type Props = {
   repositories: WorkspaceGitRepositoryStatus[];
   accounts: CodexAccountProfile[];
   models: CodexModel[];
-  resolvedTheme: ResolvedTheme;
   refreshToken: number;
   listChatTranscript: (chatId: number) => Promise<HistoryRunSummary[]>;
   onLaunch: (
@@ -154,10 +145,6 @@ type GitDialogProps = {
   onConfirm: () => void;
 };
 
-type ReviewState = KanbanReviewData & {
-  statuses: KanbanGitStatusResult[];
-};
-
 type BindingReconcileCacheEntry = {
   fingerprint: string;
   binding: KanbanGitBinding;
@@ -172,20 +159,6 @@ const DEFAULT_COLUMN_ORDER: KanbanColumnKey[] = [
 ];
 
 const BINDING_RECONCILE_TTL_MS = 10_000;
-
-const EMPTY_REVIEW: ReviewState = {
-  summary: "",
-  files: [],
-  selectedFilePath: null,
-  diff: null,
-  gitBusy: false,
-  canCommit: false,
-  canPush: false,
-  canMerge: false,
-  canRequestChanges: false,
-  canApprove: false,
-  statuses: [],
-};
 
 const STAGE_TO_VIEW: Record<KanbanStage, KanbanColumnId> = {
   todo: "todo",
@@ -496,28 +469,6 @@ function errorMessage(error: unknown) {
   return error instanceof Error ? error.message : String(error);
 }
 
-function bindingForChangedFile(
-  bindings: KanbanGitBinding[],
-  file: KanbanChangedFile,
-) {
-  if (file.repositoryId) {
-    return bindings.find(
-      (binding) => binding.sourceRepositoryPath === file.repositoryId,
-    );
-  }
-  return bindings.find(
-    (binding) => binding.relativePath === file.repositoryLabel,
-  );
-}
-
-async function readChangedFileDiff(
-  binding: KanbanGitBinding,
-  file: KanbanChangedFile,
-) {
-  const result = await readKanbanGitDiff(binding);
-  return selectUnifiedDiffForFile(result.content, file.path);
-}
-
 function inheritedConversationContext(
   runs: HistoryRunSummary[],
 ) {
@@ -549,7 +500,6 @@ export function KanbanWorkspace({
   repositories,
   accounts,
   models,
-  resolvedTheme,
   refreshToken,
   listChatTranscript,
   onLaunch,
@@ -572,7 +522,6 @@ export function KanbanWorkspace({
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [archivedOpen, setArchivedOpen] = useState(false);
-  const [selectedCardId, setSelectedCardId] = useState<string | null>(null);
   const [cardDialog, setCardDialog] = useState<CardDialogState | null>(null);
   const [cardDialogError, setCardDialogError] = useState<string | null>(null);
   const [transition, setTransition] = useState<PendingTransition | null>(null);
@@ -580,11 +529,7 @@ export function KanbanWorkspace({
   const [requestChangesText, setRequestChangesText] = useState("");
   const [cleanupOptions, setCleanupOptions] = useState<KanbanCleanupOption[]>([]);
   const [gitDialog, setGitDialog] = useState<GitDialogState | null>(null);
-  const [review, setReview] = useState<ReviewState>(EMPTY_REVIEW);
   const requestSequence = useRef(0);
-  const reviewRequestSequence = useRef(0);
-  const reviewFileRequestSequence = useRef(0);
-  const selectedCardIdRef = useRef<string | null>(null);
   const preferenceTimer = useRef<number | null>(null);
   const preferenceSavePending = useRef(false);
   const bindingReconcileCache = useRef(
@@ -593,7 +538,6 @@ export function KanbanWorkspace({
 
   snapshotRef.current = snapshot;
   preferencesRef.current = preferences;
-  selectedCardIdRef.current = selectedCardId;
 
   const loadBoard = useCallback(async () => {
     const request = ++requestSequence.current;
@@ -669,10 +613,7 @@ export function KanbanWorkspace({
 
   useEffect(() => {
     requestSequence.current += 1;
-    reviewRequestSequence.current += 1;
-    reviewFileRequestSequence.current += 1;
     snapshotRef.current = null;
-    selectedCardIdRef.current = null;
     setSnapshot(null);
     setPreferences(parsePreferences("{}"));
     preferenceSavePending.current = false;
@@ -682,11 +623,9 @@ export function KanbanWorkspace({
     setError(null);
     setNotice(null);
     setArchivedOpen(false);
-    setSelectedCardId(null);
     setCardDialog(null);
     setTransition(null);
     setGitDialog(null);
-    setReview(EMPTY_REVIEW);
   }, [workspace.id]);
 
   useEffect(() => {
@@ -1178,130 +1117,6 @@ export function KanbanWorkspace({
     await runAction(() => onLaunch(card, kind, prompt), "Agent turn started.");
   }
 
-  function viewCardDetails(card: ViewKanbanCard) {
-    selectedCardIdRef.current = card.id;
-    setSelectedCardId(card.id);
-  }
-
-  async function loadReview(
-    cardId: string,
-    explicitBindings?: KanbanGitBinding[],
-  ) {
-    const request = ++reviewRequestSequence.current;
-    const fileRequest = ++reviewFileRequestSequence.current;
-    const card = domainCardsById.get(cardId);
-    if (!card) return;
-    const bindings = explicitBindings ?? bindingsByCard[cardId] ?? [];
-    setReview((current) => ({ ...current, gitBusy: true }));
-    const transcriptPromise = listChatTranscript(card.chatId).catch(() => []);
-    const results = await Promise.allSettled(
-      bindings.map((binding) => readKanbanGitStatus(binding)),
-    );
-    const statuses = results.flatMap((result) =>
-      result.status === "fulfilled" ? [result.value] : [],
-    );
-    const statusFailureCount = results.length - statuses.length;
-    const files: KanbanChangedFile[] = statuses.flatMap((status) =>
-      status.files.map((file) => ({
-        path: file.path,
-        repositoryId: status.binding.sourceRepositoryPath,
-        repositoryLabel:
-          card.config.repositories.find(
-            (repository) =>
-              repository.repositoryPath === status.binding.sourceRepositoryPath,
-          )?.label ?? status.binding.relativePath,
-        status: file.kind,
-      })),
-    );
-    const selectedFile = files[0] ?? null;
-    const selectedBinding = selectedFile
-      ? bindingForChangedFile(bindings, selectedFile)
-      : undefined;
-    const diff = selectedBinding
-      ? await readChangedFileDiff(selectedBinding, selectedFile).catch(() => null)
-      : null;
-    const transcript = await transcriptPromise;
-    const finalSummary = [...transcript]
-      .reverse()
-      .map((run) => run.final_message?.trim() ?? "")
-      .find(Boolean);
-    if (
-      request !== reviewRequestSequence.current ||
-      fileRequest !== reviewFileRequestSequence.current ||
-      selectedCardIdRef.current !== cardId
-    ) {
-      return;
-    }
-    const capabilities = deriveCardCapabilities(card);
-    if (statusFailureCount > 0) {
-      setError(
-        `Git status could not be read for ${statusFailureCount} repositor${statusFailureCount === 1 ? "y" : "ies"}. Repository actions are disabled until it can be reconciled.`,
-      );
-    }
-    setReview({
-      summary:
-        card.lastError ??
-        finalSummary ??
-        (card.executionState === "completed"
-          ? "Codex completed this card. Inspect the conversation and repository changes before approving."
-          : "Review the card conversation and current repository state."),
-      files,
-      selectedFilePath: selectedFile
-        ? `${selectedFile.repositoryId ?? selectedFile.repositoryLabel ?? ""}:${selectedFile.path}`
-        : null,
-      diff,
-      gitBusy: false,
-      canCommit:
-        capabilities.commit.enabled &&
-        statusFailureCount === 0 &&
-        statuses.some((status) => status.hasChanges),
-      canPush:
-        capabilities.commit_and_push.enabled &&
-        bindings.length > 0 &&
-        statusFailureCount === 0,
-      canMerge:
-        capabilities.merge.enabled &&
-        bindings.length > 0 &&
-        statusFailureCount === 0,
-      canRequestChanges: capabilities.request_changes.enabled,
-      canApprove: capabilities.approve_result.enabled,
-      statuses,
-    });
-  }
-
-  useEffect(() => {
-    if (!selectedCardId) {
-      setReview(EMPTY_REVIEW);
-      return;
-    }
-    void loadReview(selectedCardId);
-    // Binding/card refreshes are represented by refreshToken and snapshot revision.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selectedCardId, refreshToken, snapshot?.revision]);
-
-  async function selectReviewFile(file: KanbanChangedFile) {
-    const cardId = selectedCardId;
-    if (!cardId) return;
-    const request = ++reviewFileRequestSequence.current;
-    const binding = bindingForChangedFile(bindingsByCard[cardId] ?? [], file);
-    setReview((current) => ({
-      ...current,
-      selectedFilePath: `${file.repositoryId ?? file.repositoryLabel ?? ""}:${file.path}`,
-      diff: null,
-      gitBusy: true,
-    }));
-    const diff = binding
-      ? await readChangedFileDiff(binding, file).catch(() => null)
-      : null;
-    if (
-      request !== reviewFileRequestSequence.current ||
-      selectedCardIdRef.current !== cardId
-    ) {
-      return;
-    }
-    setReview((current) => ({ ...current, diff, gitBusy: false }));
-  }
-
   async function handleMove(request: KanbanMoveRequest) {
     const card = domainCardsById.get(request.cardId);
     const persisted = cardsById.get(request.cardId);
@@ -1485,7 +1300,6 @@ export function KanbanWorkspace({
           }
         }
         await deleteKanbanCard(cardForDelete);
-        if (selectedCardId === persisted.id) setSelectedCardId(null);
       }
       setTransition(null);
       await loadBoard();
@@ -1573,7 +1387,6 @@ export function KanbanWorkspace({
       }
       setBindingsByCard((current) => ({ ...current, [gitDialog.cardId]: nextBindings }));
       setGitDialog(null);
-      await loadReview(gitDialog.cardId, nextBindings);
       await loadBoard();
       if (failures.length > 0) {
         setError(`Some repositories failed: ${failures.join(" ")}`);
@@ -1633,10 +1446,6 @@ export function KanbanWorkspace({
     }
   }
 
-  const selectedDomainCard = selectedCardId
-    ? domainCardsById.get(selectedCardId) ?? null
-    : null;
-  const selectedViewCard = selectedDomainCard ? toViewCard(selectedDomainCard) : null;
   const dialogDomainCard = cardDialog?.cardId
     ? domainCardsById.get(cardDialog.cardId) ?? null
     : null;
@@ -1665,81 +1474,6 @@ export function KanbanWorkspace({
         <Loader2 className="spin" size={18} aria-hidden="true" />
         <p>Loading Kanban board…</p>
       </section>
-    );
-  }
-
-  if (selectedViewCard) {
-    return (
-      <div className="kanban-workspace-view" aria-busy={busy}>
-        {error ? (
-          <div className="kanban-workspace-alert error" role="alert">
-            <AlertCircle size={15} aria-hidden="true" />
-            <span>{error}</span>
-          </div>
-        ) : null}
-        {notice ? (
-          <div className="kanban-workspace-alert" role="status">
-            <CheckCircle2 size={15} aria-hidden="true" />
-            <span>{notice}</span>
-          </div>
-        ) : null}
-        <KanbanDetailShell
-          card={selectedViewCard}
-          review={review}
-          resolvedTheme={resolvedTheme}
-          disabled={busy}
-          onBack={() => {
-            selectedCardIdRef.current = null;
-            reviewRequestSequence.current += 1;
-            reviewFileRequestSequence.current += 1;
-            setSelectedCardId(null);
-          }}
-          onAction={(action, card) => void handleCardAction(action, card)}
-          onSelectReviewFile={(file) => void selectReviewFile(file)}
-        />
-        {gitDialog ? (
-          <KanbanGitDialog
-            dialog={gitDialog}
-            busy={busy}
-            onMessageChange={(message) =>
-              setGitDialog((current) =>
-                current ? { ...current, message } : current,
-              )
-            }
-            onCancel={() => setGitDialog(null)}
-            onConfirm={() => void performGitAction()}
-          />
-        ) : null}
-        {transition && transitionViewCard ? (
-          <KanbanTransitionDialog
-            open
-            kind={transition.kind}
-            card={transitionViewCard}
-            destinationLabel={transition.destination ? COLUMN_COPY[transition.destination].title : undefined}
-            cleanupOptions={cleanupOptions}
-            busy={busy}
-            error={transitionError}
-            messageLabel={transition.kind === "request-changes" ? "Requested changes" : undefined}
-            messageValue={requestChangesText}
-            messagePlaceholder="Describe what Codex should change before the next review."
-            onMessageChange={setRequestChangesText}
-            confirmDisabled={transition.kind === "request-changes" && !requestChangesText.trim()}
-            onCleanupOptionChange={(optionId, selected) => {
-              setCleanupOptions((current) =>
-                current.map((option) => {
-                  if (option.id === optionId) return { ...option, selected };
-                  if (option.id === "delete-branches" && optionId === "remove-worktrees") {
-                    return { ...option, disabled: !selected, selected: selected ? option.selected : false };
-                  }
-                  return option;
-                }),
-              );
-            }}
-            onCancel={() => setTransition(null)}
-            onConfirm={confirmTransition}
-          />
-        ) : null}
-      </div>
     );
   }
 
@@ -1792,7 +1526,6 @@ export function KanbanWorkspace({
           cards={archivedCards}
           disabled={busy}
           onClose={() => setArchivedOpen(false)}
-          onOpenCard={viewCardDetails}
           onRestoreCard={(card) => {
             const persisted = cardsById.get(card.id);
             if (persisted) void runAction(() => archiveKanbanCard(persisted, false), "Card restored.");
@@ -1815,7 +1548,6 @@ export function KanbanWorkspace({
                 disabled={busy}
                 onMoveCard={(request) => void handleMove(request)}
                 onCardAction={(action, card) => void handleCardAction(action, card)}
-                onCardSelect={viewCardDetails}
               />
             </section>
           ))}
@@ -1839,7 +1571,6 @@ export function KanbanWorkspace({
           disabled={busy}
           onMoveCard={(request) => void handleMove(request)}
           onCardAction={(action, card) => void handleCardAction(action, card)}
-          onCardSelect={viewCardDetails}
         />
       )}
 
@@ -1884,6 +1615,19 @@ export function KanbanWorkspace({
         onCancel={() => setCardDialog(null)}
         onSubmit={submitCard}
       />
+      {gitDialog ? (
+        <KanbanGitDialog
+          dialog={gitDialog}
+          busy={busy}
+          onMessageChange={(message) =>
+            setGitDialog((current) =>
+              current ? { ...current, message } : current,
+            )
+          }
+          onCancel={() => setGitDialog(null)}
+          onConfirm={() => void performGitAction()}
+        />
+      ) : null}
       {transition && transitionViewCard ? (
         <KanbanTransitionDialog
           open

@@ -47,7 +47,6 @@ export type KanbanCardTileProps = {
   actionsDisabled?: boolean;
   dragHandleProps?: ButtonHTMLAttributes<HTMLButtonElement>;
   onAction?: (action: KanbanCardAction, card: KanbanCard) => void;
-  onSelect?: (card: KanbanCard) => void;
 };
 
 type KanbanMenuAction = KanbanCardAction;
@@ -171,7 +170,6 @@ export function KanbanCardTile({
   actionsDisabled = false,
   dragHandleProps,
   onAction,
-  onSelect,
 }: KanbanCardTileProps) {
   const [menuOpen, setMenuOpen] = useState(false);
   const [menuStyle, setMenuStyle] = useState<CSSProperties>({});
@@ -226,6 +224,7 @@ export function KanbanCardTile({
     event.stopPropagation();
     if (actionsDisabled) return;
     setMenuOpen(false);
+    menuTriggerRef.current?.focus({ preventScroll: true });
     onAction?.(action, card);
   }
 
@@ -346,24 +345,9 @@ export function KanbanCardTile({
         </div>
       </div>
 
-      {onSelect ? (
-        <button
-          type="button"
-          className="kanban-card-content kanban-card-open"
-          aria-label={`View details for ${card.title}`}
-          disabled={actionsDisabled}
-          onClick={(event) => {
-            event.stopPropagation();
-            if (!actionsDisabled) onSelect(card);
-          }}
-        >
-          <KanbanCardContent card={card} branch={branch} />
-        </button>
-      ) : (
-        <div className="kanban-card-content">
-          <KanbanCardContent card={card} branch={branch} />
-        </div>
-      )}
+      <div className="kanban-card-content">
+        <KanbanCardContent card={card} branch={branch} />
+      </div>
     </article>
   );
 }

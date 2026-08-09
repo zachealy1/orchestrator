@@ -52,14 +52,12 @@ describe("KanbanBoard", () => {
   it("orders columns and cards, and exposes scoped card controls", async () => {
     const user = userEvent.setup();
     const onCardAction = vi.fn();
-    const onCardSelect = vi.fn();
 
     render(
       <KanbanBoard
         columns={columns()}
         onMoveCard={vi.fn()}
         onCardAction={onCardAction}
-        onCardSelect={onCardSelect}
       />,
     );
 
@@ -74,14 +72,14 @@ describe("KanbanBoard", () => {
     ).toEqual(["First card", "Second card"]);
 
     const firstCard = within(todo).getByRole("article", { name: /First card/ });
-    const openCard = within(firstCard).getByRole("button", {
-      name: "View details for First card",
-    });
+    expect(
+      within(firstCard).queryByRole("button", {
+        name: "View details for First card",
+      }),
+    ).not.toBeInTheDocument();
     expect(within(firstCard).getByText("Plan")).toBeInTheDocument();
-    await user.click(openCard);
-    expect(onCardSelect).toHaveBeenCalledWith(
-      expect.objectContaining({ id: "card-first" }),
-    );
+    await user.click(within(firstCard).getByText("First card"));
+    expect(onCardAction).not.toHaveBeenCalled();
 
     await user.click(within(firstCard).getByLabelText("Actions for First card"));
     await user.click(screen.getByRole("menuitem", { name: "Edit card" }));

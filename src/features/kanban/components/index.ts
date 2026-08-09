@@ -2,7 +2,6 @@ export { KanbanArchivedView } from "./KanbanArchivedView";
 export { KanbanBoard, activeAttemptRequiresStop } from "./KanbanBoard";
 export { KanbanCardDialog } from "./KanbanCardDialog";
 export { ACTION_LABELS, STATE_LABELS, KanbanCardTile } from "./KanbanCardTile";
-export { KanbanDetailShell, KanbanReviewPanel } from "./KanbanDetailShell";
 export { KanbanToolbar } from "./KanbanToolbar";
 export { KanbanTransitionDialog } from "./KanbanTransitionDialog";
 export type { KanbanArchivedViewProps } from "./KanbanArchivedView";
@@ -12,7 +11,6 @@ export type {
   KanbanCardDialogProps,
 } from "./KanbanCardDialog";
 export type { KanbanCardTileProps } from "./KanbanCardTile";
-export type { KanbanDetailShellProps } from "./KanbanDetailShell";
 export type { KanbanToolbarProps } from "./KanbanToolbar";
 export type { KanbanTransitionDialogProps } from "./KanbanTransitionDialog";
 export type * from "./types";

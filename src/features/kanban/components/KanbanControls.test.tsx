@@ -155,25 +155,22 @@ describe("Kanban controls", () => {
     expect(onConfirm).toHaveBeenCalledOnce();
   });
 
-  it("searches archived cards and exposes restore/delete without losing open access", async () => {
+  it("searches archived cards and exposes restore/delete actions", async () => {
     const user = userEvent.setup();
-    const onOpenCard = vi.fn();
     const onRestoreCard = vi.fn();
     const onDeleteCard = vi.fn();
     render(
       <KanbanArchivedView
         cards={[card]}
-        onOpenCard={onOpenCard}
         onRestoreCard={onRestoreCard}
         onDeleteCard={onDeleteCard}
       />,
     );
 
     expect(screen.getByText("1 preserved branch")).toBeInTheDocument();
-    await user.click(screen.getByRole("button", { name: /Archived workflow/ }));
+    expect(screen.getByText("Archived workflow")).toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "Restore" }));
     await user.click(screen.getByRole("button", { name: "Delete…" }));
-    expect(onOpenCard).toHaveBeenCalledWith(card);
     expect(onRestoreCard).toHaveBeenCalledWith(card);
     expect(onDeleteCard).toHaveBeenCalledWith(card);
 

@@ -15583,7 +15583,6 @@ function App() {
                   repositories={selectedGitOverview?.repositories ?? []}
                   accounts={signedInAccounts}
                   models={models}
-                  resolvedTheme={resolvedTheme}
                   refreshToken={kanbanRefreshToken}
                   listChatTranscript={listLocalChatTranscript}
                   onLaunch={kanbanRuntime.launchCard}

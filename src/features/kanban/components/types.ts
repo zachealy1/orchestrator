@@ -139,28 +139,6 @@ export type KanbanGroupBy =
   | "reasoning-level"
   | "execution-state";
 
-export type KanbanChangedFile = {
-  path: string;
-  repositoryId?: string;
-  repositoryLabel?: string;
-  additions?: number;
-  deletions?: number;
-  status?: string;
-};
-
-export type KanbanReviewData = {
-  summary: string;
-  files: KanbanChangedFile[];
-  selectedFilePath?: string | null;
-  diff?: string | null;
-  gitBusy?: boolean;
-  canCommit?: boolean;
-  canPush?: boolean;
-  canMerge?: boolean;
-  canRequestChanges?: boolean;
-  canApprove?: boolean;
-};
-
 export type KanbanTransitionKind =
   | "stop"
   | "stop-and-move"
