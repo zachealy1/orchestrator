@@ -71,6 +71,7 @@ export type KanbanCard = {
   reasoningLevel: string;
   reasoningLevelLabel?: string;
   submissionMode?: KanbanSubmissionMode;
+  contextFiles?: import("../../composer/types").ComposerContextFile[];
   includeDirtyChanges?: boolean;
   executionState: KanbanExecutionState;
   branches?: KanbanBranchBinding[];
@@ -106,6 +107,8 @@ export type KanbanCardDraft = {
   accessMode: KanbanAccessMode;
   model: string;
   reasoningLevel: string;
+  submissionMode: KanbanSubmissionMode;
+  contextFiles: import("../../composer/types").ComposerContextFile[];
   includeDirtyChanges: boolean;
   includeConversationHistory: boolean;
 };

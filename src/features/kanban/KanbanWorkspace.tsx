@@ -14,7 +14,12 @@ import {
   Loader2,
 } from "lucide-react";
 import type { CodexAccountProfile } from "../accounts/types";
-import type { CodexAccessMode, CodexModel } from "../codex/types";
+import {
+  type CodexAccessMode,
+  type CodexModel,
+  type CodexProfileKey,
+} from "../codex/types";
+import type { ComposerContextFile } from "../composer/types";
 import { formatReasoningEffort } from "../composer/promptHelpers";
 import type { HistoryRunSummary } from "../conversations/types";
 import type {
@@ -23,7 +28,11 @@ import type {
 } from "../workspaces/types";
 import type { ResolvedTheme } from "../../shared/types";
 import { trapDialogFocus } from "../../shared/dialogFocus";
-import { parseRunExecutionSettings } from "../../lib/runExecutionSettings";
+import {
+  createRunExecutionSettings,
+  parseRunExecutionSettings,
+  serializeRunExecutionSettings,
+} from "../../lib/runExecutionSettings";
 import {
   approveKanbanCard,
   archiveKanbanCard,
@@ -112,6 +121,7 @@ type Props = {
   ) => Promise<void>;
   onPause: (card: KanbanCardRecord) => Promise<void>;
   onStop: (card: KanbanCardRecord) => Promise<void>;
+  onPickContextFiles?: () => Promise<ComposerContextFile[]>;
   toolbarHost?: HTMLElement | null;
 };
 
@@ -553,6 +563,7 @@ export function KanbanWorkspace({
   onLaunch,
   onPause,
   onStop,
+  onPickContextFiles,
   toolbarHost,
 }: Props) {
   const [snapshot, setSnapshot] = useState<KanbanBoardSnapshotRecord | null>(null);
@@ -801,6 +812,8 @@ export function KanbanWorkspace({
             formatReasoningEffort(card.config.reasoningLevel)
           : "Model default",
         submissionMode: submissionMode(card),
+        contextFiles:
+          parseRunExecutionSettings(card.config.executionSettingsJson)?.contextFiles ?? [],
         includeDirtyChanges: card.config.repositories.some(
           (repository) => repository.includeDirtyChanges,
         ),
@@ -1029,13 +1042,56 @@ export function KanbanWorkspace({
     }
   }
 
-  function persistedDraft(draft: KanbanCardDraft): PersistedKanbanCardDraft {
+  function persistedDraft(
+    draft: KanbanCardDraft,
+    sourceCard: KanbanCardRecord | null,
+  ): PersistedKanbanCardDraft {
     const selectedRepositories =
       draft.repositoryScope === "all"
         ? repositories
         : repositories.filter((repository) =>
             draft.repositoryIds.includes(repository.repository.rootPath),
           );
+    const existingSettings = parseRunExecutionSettings(
+      sourceCard?.executionSettingsJson,
+    );
+    const accountId = draft.accountId
+      ? Number(draft.accountId)
+      : existingSettings?.accountId ?? workspace.default_account_id ?? 0;
+    const profileKey: CodexProfileKey =
+      existingSettings?.accountId === accountId
+        ? existingSettings.profileKey
+        : accountId === 0
+          ? ("default" as CodexProfileKey)
+          : (`account:${accountId}` as CodexProfileKey);
+    const selectedRepository =
+      selectedRepositories.find(
+        (repository) =>
+          repository.repository.rootPath ===
+          existingSettings?.selectedRepositoryPath,
+      ) ?? selectedRepositories[0] ?? null;
+    const executionSettings = createRunExecutionSettings({
+      accountId,
+      profileKey,
+      selectedRepositoryPath:
+        selectedRepository?.repository.rootPath ?? null,
+      selectedBranch:
+        selectedRepository?.repository.rootPath ===
+        existingSettings?.selectedRepositoryPath
+          ? existingSettings.selectedBranch
+          : selectedRepository?.currentBranch ?? null,
+      mode: draft.submissionMode === "plan" ? "plan" : "run",
+      intent: draft.submissionMode === "plan" ? "plan" : "normal",
+      accessMode: draft.accessMode,
+      computerUseEnabled: existingSettings?.computerUseEnabled ?? false,
+      model: draft.model || null,
+      reasoningEffort: draft.reasoningLevel || null,
+      useOss: existingSettings?.useOss ?? false,
+      ossProvider: existingSettings?.ossProvider ?? "ollama",
+      contextFiles: draft.contextFiles,
+      selectedSkills: existingSettings?.selectedSkills ?? [],
+      goalMode: draft.submissionMode === "goal",
+    });
     return {
       title: draft.title,
       description: draft.description,
@@ -1043,6 +1099,7 @@ export function KanbanWorkspace({
       accessMode: draft.accessMode,
       model: draft.model || null,
       reasoningLevel: draft.reasoningLevel || null,
+      executionSettingsJson: serializeRunExecutionSettings(executionSettings),
       repositoryScope: draft.repositoryScope,
       repositories: selectedRepositories.map((repository) => ({
         repositoryPath: repository.repository.rootPath,
@@ -1058,7 +1115,10 @@ export function KanbanWorkspace({
     setBusy(true);
     setCardDialogError(null);
     try {
-      let input = persistedDraft(draft);
+      const sourceCard = cardDialog.cardId
+        ? cardsById.get(cardDialog.cardId) ?? null
+        : null;
+      let input = persistedDraft(draft, sourceCard);
       if (cardDialog.mode === "edit" && cardDialog.cardId) {
         const card = cardsById.get(cardDialog.cardId);
         if (!card) throw new Error("The card changed before it could be edited.");
@@ -1076,6 +1136,7 @@ export function KanbanWorkspace({
             accessMode: card.accessMode,
             model: card.model,
             reasoningLevel: card.reasoningLevel,
+            executionSettingsJson: card.executionSettingsJson,
             repositoryScope: card.repositoryScope,
             repositories: card.repositories,
           };
@@ -1837,6 +1898,7 @@ export function KanbanWorkspace({
         }
         saving={busy}
         error={cardDialogError}
+        onPickContextFiles={onPickContextFiles}
         onCancel={() => setCardDialog(null)}
         onSubmit={submitCard}
       />

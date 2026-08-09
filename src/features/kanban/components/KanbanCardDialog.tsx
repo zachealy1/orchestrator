@@ -3,10 +3,16 @@ import {
   Bot,
   CircleUserRound,
   Copy,
+  FileText,
   Gauge,
+  Image as ImageIcon,
+  ListTodo,
   Loader2,
+  MessageCircle,
+  Paperclip,
   Plus,
   ShieldCheck,
+  Target,
   X,
 } from "lucide-react";
 import {
@@ -18,6 +24,9 @@ import {
   type FormEvent,
 } from "react";
 import { ComposerSelect } from "../../../components/ComposerSelect";
+import type { ComposerContextFile } from "../../composer/types";
+import { hasContextFilePayload, readDroppedContextFiles } from "../../../lib/contextFiles";
+import { mergeContextFiles } from "../../composer/promptHelpers";
 import { trapDialogFocus } from "../../../shared/dialogFocus";
 import "../kanban.css";
 import type {
@@ -44,6 +53,7 @@ export type KanbanCardDialogProps = {
   executionSettingsLocked?: boolean;
   saving?: boolean;
   error?: string | null;
+  onPickContextFiles?: () => Promise<ComposerContextFile[]>;
   onCancel: () => void;
   onSubmit: (draft: KanbanCardDraft) => void | Promise<void>;
 };
@@ -73,6 +83,12 @@ function initialDraft(
     model: defaults?.model ?? card?.model ?? "",
     reasoningLevel:
       defaults?.reasoningLevel ?? card?.reasoningLevel ?? "",
+    submissionMode:
+      defaults?.submissionMode ?? card?.submissionMode ?? "normal",
+    contextFiles:
+      defaults?.contextFiles?.map((file) => ({ ...file })) ??
+      card?.contextFiles?.map((file) => ({ ...file })) ??
+      [],
     includeDirtyChanges:
       defaults?.includeDirtyChanges ?? card?.includeDirtyChanges ?? false,
     includeConversationHistory: false,
@@ -93,6 +109,7 @@ export function KanbanCardDialog({
   executionSettingsLocked = false,
   saving = false,
   error,
+  onPickContextFiles,
   onCancel,
   onSubmit,
 }: KanbanCardDialogProps) {
@@ -184,6 +201,21 @@ export function KanbanCardDialog({
     });
   }
 
+  function addContextFiles(files: ComposerContextFile[]) {
+    patchDraft({ contextFiles: mergeContextFiles(draft.contextFiles, files) });
+  }
+
+  async function chooseContextFiles() {
+    if (!onPickContextFiles || executionFieldsDisabled) return;
+    addContextFiles(await onPickContextFiles());
+  }
+
+  function removeContextFile(path: string) {
+    patchDraft({
+      contextFiles: draft.contextFiles.filter((file) => file.path !== path),
+    });
+  }
+
   function handleSubmit(event: FormEvent) {
     event.preventDefault();
     const titleValue = draft.title.trim();
@@ -234,9 +266,6 @@ export function KanbanCardDialog({
       >
         <header>
           <div>
-            <span className="eyebrow">
-              {mode === "duplicate" ? "New independent workflow" : "Kanban task"}
-            </span>
             <h2 id="kanban-card-dialog-title">{title}</h2>
             <p id="kanban-card-dialog-description">
               Saving a card does not start an agent. Start it explicitly or move it to In progress.
@@ -255,222 +284,260 @@ export function KanbanCardDialog({
 
         <form onSubmit={handleSubmit}>
           <div className="kanban-card-dialog-scroll">
-            <div className="kanban-dialog-fields">
-            <label className="kanban-field kanban-field-wide">
-              <span>Title</span>
-              <input
-                ref={titleRef}
-                value={draft.title}
-                maxLength={160}
-                disabled={saving}
-                aria-invalid={invalidField === "title"}
-                aria-describedby={
-                  invalidField === "title" ? validationErrorId : undefined
-                }
-                onChange={(event) => patchDraft({ title: event.target.value })}
-              />
-            </label>
-            <label className="kanban-field kanban-field-wide">
-              <span>Description</span>
-              <textarea
-                ref={descriptionRef}
-                value={draft.description}
-                rows={7}
-                disabled={saving}
-                aria-invalid={invalidField === "description"}
-                aria-describedby={
-                  invalidField === "description" ? validationErrorId : undefined
-                }
-                placeholder="Describe the desired outcome, constraints, and verification."
-                onChange={(event) => patchDraft({ description: event.target.value })}
-              />
-            </label>
+            <div className="kanban-card-editor-layout">
+              <div className="kanban-card-editor-task">
+                <h3>Task</h3>
+                <label className="kanban-field">
+                  <span>Title</span>
+                  <input
+                    ref={titleRef}
+                    value={draft.title}
+                    maxLength={160}
+                    disabled={saving}
+                    aria-invalid={invalidField === "title"}
+                    aria-describedby={invalidField === "title" ? validationErrorId : undefined}
+                    onChange={(event) => patchDraft({ title: event.target.value })}
+                  />
+                </label>
+                <label className="kanban-field">
+                  <span>Description</span>
+                  <textarea
+                    ref={descriptionRef}
+                    value={draft.description}
+                    rows={5}
+                    disabled={saving}
+                    aria-invalid={invalidField === "description"}
+                    aria-describedby={invalidField === "description" ? validationErrorId : undefined}
+                    placeholder="Describe the desired outcome, constraints, and verification."
+                    onChange={(event) => patchDraft({ description: event.target.value })}
+                  />
+                </label>
 
-            <fieldset
-              className="kanban-repository-picker kanban-field-wide"
-              disabled={executionFieldsDisabled}
-              aria-invalid={invalidField === "repositories"}
-              aria-describedby={
-                invalidField === "repositories" ? validationErrorId : undefined
-              }
-            >
-              <legend>Repositories</legend>
-              <div className="kanban-segmented-control">
-                <label>
-                  <input
-                    ref={repositoryScopeRef}
-                    type="radio"
-                    name="repository-scope"
-                    value="all"
-                    checked={draft.repositoryScope === "all"}
-                    disabled={executionFieldsDisabled}
-                    onChange={() => patchDraft({ repositoryScope: "all" })}
-                  />
-                  <span>All in workspace</span>
-                </label>
-                <label>
-                  <input
-                    type="radio"
-                    name="repository-scope"
-                    value="selected"
-                    checked={draft.repositoryScope === "selected"}
-                    disabled={executionFieldsDisabled}
-                    onChange={() => patchDraft({ repositoryScope: "selected" })}
-                  />
-                  <span>Selected repositories</span>
-                </label>
-              </div>
-              {draft.repositoryScope === "selected" ? (
-                <div
-                  ref={repositoryOptionsRef}
-                  className="kanban-repository-options"
-                >
-                  {repositories.length > 0 ? (
-                    repositories.map((repository) => (
-                      <label key={repository.id}>
-                        <input
-                          type="checkbox"
-                          checked={draft.repositoryIds.includes(repository.id)}
+                <section className="kanban-agent-context" aria-labelledby="kanban-agent-context-title">
+                  <div className="kanban-agent-context-heading">
+                    <h4 id="kanban-agent-context-title">Agent context</h4>
+                    <button
+                      type="button"
+                      className="kanban-icon-button"
+                      aria-label="Add files to agent context"
+                      title="Add files"
+                      disabled={executionFieldsDisabled || !onPickContextFiles}
+                      onClick={() => void chooseContextFiles()}
+                    >
+                      <Paperclip size={16} aria-hidden="true" />
+                    </button>
+                  </div>
+                  <div
+                    className={`kanban-agent-context-drop${draft.contextFiles.length === 0 ? " empty" : ""}`}
+                    onDragOver={(event) => {
+                      if (!executionFieldsDisabled && hasContextFilePayload(event.dataTransfer)) {
+                        event.preventDefault();
+                        event.dataTransfer.dropEffect = "copy";
+                      }
+                    }}
+                    onDrop={(event) => {
+                      if (executionFieldsDisabled || !hasContextFilePayload(event.dataTransfer)) return;
+                      event.preventDefault();
+                      const dropped = readDroppedContextFiles(event.dataTransfer);
+                      if (dropped.files.length > 0) addContextFiles(dropped.files);
+                    }}
+                  >
+                    {draft.contextFiles.map((file) => (
+                      <div className="kanban-agent-context-file" key={file.canonicalPath ?? file.path}>
+                        {file.mediaKind === "image" ? (
+                          <ImageIcon size={15} aria-hidden="true" />
+                        ) : (
+                          <FileText size={15} aria-hidden="true" />
+                        )}
+                        <span title={file.path}>{file.name}</span>
+                        <button
+                          type="button"
+                          className="kanban-icon-button"
+                          aria-label={`Remove ${file.name}`}
+                          title={`Remove ${file.name}`}
                           disabled={executionFieldsDisabled}
-                          onChange={(event) =>
-                            toggleRepository(repository.id, event.target.checked)
-                          }
-                        />
-                        <span>
-                          <strong>{repository.label}</strong>
-                          <small>{repository.path}</small>
-                        </span>
-                      </label>
-                    ))
-                  ) : (
-                    <p>No Git repositories were found in this workspace.</p>
-                  )}
-                </div>
-              ) : (
-                <p className="kanban-field-help">
-                  The repository set is captured when this card first starts.
-                </p>
-              )}
-              <label className="kanban-include-dirty-option">
-                <input
-                  type="checkbox"
-                  checked={draft.includeDirtyChanges}
+                          onClick={() => removeContextFile(file.path)}
+                        >
+                          <X size={14} aria-hidden="true" />
+                        </button>
+                      </div>
+                    ))}
+                    <button
+                      type="button"
+                      className="kanban-agent-context-add"
+                      disabled={executionFieldsDisabled || !onPickContextFiles}
+                      onClick={() => void chooseContextFiles()}
+                    >
+                      {draft.contextFiles.length === 0 ? "Drop files here or add files" : "Add more files"}
+                    </button>
+                  </div>
+                </section>
+
+                <fieldset
+                  className="kanban-repository-picker"
                   disabled={executionFieldsDisabled}
-                  onChange={(event) =>
-                    patchDraft({ includeDirtyChanges: event.target.checked })
-                  }
-                />
-                <span>
-                  <strong>Include current uncommitted changes</strong>
-                  <small>
-                    Off by default. When enabled, the selected source changes are copied into the isolated worktree at first start.
-                  </small>
-                </span>
-              </label>
-              {mode === "edit" && executionSettingsLocked ? (
-                <p className="kanban-field-help">
-                  Repository and execution settings are locked after isolated worktrees are provisioned. Title and description remain editable.
-                </p>
-              ) : null}
-            </fieldset>
+                  aria-invalid={invalidField === "repositories"}
+                  aria-describedby={invalidField === "repositories" ? validationErrorId : undefined}
+                >
+                  <legend>Repository scope</legend>
+                  <div className="kanban-segmented-control">
+                    <label>
+                      <input
+                        ref={repositoryScopeRef}
+                        type="radio"
+                        name="repository-scope"
+                        value="all"
+                        checked={draft.repositoryScope === "all"}
+                        disabled={executionFieldsDisabled}
+                        onChange={() => patchDraft({ repositoryScope: "all" })}
+                      />
+                      <span>All in workspace</span>
+                    </label>
+                    <label>
+                      <input
+                        type="radio"
+                        name="repository-scope"
+                        value="selected"
+                        checked={draft.repositoryScope === "selected"}
+                        disabled={executionFieldsDisabled}
+                        onChange={() => patchDraft({ repositoryScope: "selected" })}
+                      />
+                      <span>Selected repositories</span>
+                    </label>
+                  </div>
+                  {draft.repositoryScope === "selected" ? (
+                    <div ref={repositoryOptionsRef} className="kanban-repository-options">
+                      {repositories.length > 0 ? repositories.map((repository) => (
+                        <label key={repository.id}>
+                          <input
+                            type="checkbox"
+                            checked={draft.repositoryIds.includes(repository.id)}
+                            disabled={executionFieldsDisabled}
+                            onChange={(event) => toggleRepository(repository.id, event.target.checked)}
+                          />
+                          <span>
+                            <strong>{repository.label}</strong>
+                            <small title={repository.path}>{repository.path}</small>
+                          </span>
+                        </label>
+                      )) : <p>No Git repositories were found in this workspace.</p>}
+                    </div>
+                  ) : (
+                    <p className="kanban-field-help">The repository set is captured when this card first starts.</p>
+                  )}
+                  <label className="kanban-include-dirty-option">
+                    <input
+                      type="checkbox"
+                      checked={draft.includeDirtyChanges}
+                      disabled={executionFieldsDisabled}
+                      onChange={(event) => patchDraft({ includeDirtyChanges: event.target.checked })}
+                    />
+                    <span>
+                      <strong>Include current uncommitted changes</strong>
+                      <small>Off by default. Selected source changes are copied into the isolated worktree at first start.</small>
+                    </span>
+                  </label>
+                  {mode === "edit" && executionSettingsLocked ? (
+                    <p className="kanban-field-help">Repository, mode, context, and execution settings are locked after isolated worktrees are provisioned. Title and description remain editable.</p>
+                  ) : null}
+                </fieldset>
 
-            <div className="kanban-field">
-              <span>Account</span>
-              <ComposerSelect
-                ariaLabel="Account"
-                value={draft.accountId ?? ""}
-                options={[
-                  { value: "", label: "Workspace default" },
-                  ...accountOptions,
-                ]}
-                placeholder="Workspace default"
-                icon={<CircleUserRound size={16} />}
-                className="kanban-field-select"
-                disabled={executionFieldsDisabled}
-                onChange={(value) => {
-                  const accountId = value || null;
-                  patchDraft(
-                    accountId === draft.accountId
-                      ? { accountId }
-                      : { accountId, model: "", reasoningLevel: "" },
-                  );
-                }}
-              />
-            </div>
-            <div className="kanban-field">
-              <span>Access mode</span>
-              <ComposerSelect
-                ariaLabel="Access mode"
-                value={draft.accessMode}
-                options={accessModeOptions}
-                placeholder="Ask for approval"
-                icon={<ShieldCheck size={16} />}
-                className="kanban-field-select"
-                disabled={executionFieldsDisabled}
-                onChange={(value) =>
-                  patchDraft({ accessMode: value as KanbanAccessMode })
-                }
-              />
-            </div>
-            <div className="kanban-field">
-              <span>Model</span>
-              <ComposerSelect
-                ariaLabel="Model"
-                value={draft.model}
-                options={[
-                  { value: "", label: "Account default" },
-                  ...modelOptions,
-                ]}
-                placeholder="Account default"
-                icon={<Bot size={16} />}
-                className="kanban-field-select"
-                disabled={executionFieldsDisabled}
-                onChange={(value) =>
-                  patchDraft(
-                    value === draft.model
-                      ? { model: value }
-                      : { model: value, reasoningLevel: "" },
-                  )
-                }
-              />
-            </div>
-            <div className="kanban-field">
-              <span>Reasoning level</span>
-              <ComposerSelect
-                ariaLabel="Reasoning level"
-                value={draft.reasoningLevel}
-                options={[
-                  { value: "", label: "Model default" },
-                  ...selectedReasoningOptions,
-                ]}
-                placeholder="Model default"
-                icon={<Gauge size={16} />}
-                className="kanban-field-select"
-                disabled={
-                  executionFieldsDisabled || selectedReasoningOptions.length === 0
-                }
-                onChange={(value) => patchDraft({ reasoningLevel: value })}
-              />
-            </div>
+                {mode === "duplicate" ? (
+                  <label className="kanban-duplicate-history">
+                    <input
+                      type="checkbox"
+                      checked={draft.includeConversationHistory}
+                      disabled={saving}
+                      onChange={(event) => patchDraft({ includeConversationHistory: event.target.checked })}
+                    />
+                    <span>
+                      <strong>Include conversation context</strong>
+                      <small>Prior prompts and final responses are copied as historical context. Process state and approvals are not copied.</small>
+                    </span>
+                  </label>
+                ) : null}
+              </div>
 
-            {mode === "duplicate" ? (
-              <label className="kanban-duplicate-history kanban-field-wide">
-                <input
-                  type="checkbox"
-                  checked={draft.includeConversationHistory}
-                  disabled={saving}
-                  onChange={(event) =>
-                    patchDraft({ includeConversationHistory: event.target.checked })
-                  }
-                />
-                <span>
-                  <strong>Include conversation context</strong>
-                  <small>
-                    Prior prompts and final responses are supplied as historical context on the first turn. The process, execution state, branches, worktrees, and approvals are never copied.
-                  </small>
-                </span>
-              </label>
-            ) : null}
+              <aside className="kanban-card-editor-settings" aria-labelledby="kanban-run-settings-title">
+                <h3 id="kanban-run-settings-title">Run settings</h3>
+                <fieldset className="kanban-mode-picker" disabled={executionFieldsDisabled}>
+                  <legend>Mode</legend>
+                  <div className="kanban-mode-options">
+                    {([
+                      ["normal", "Chat", MessageCircle],
+                      ["plan", "Plan", ListTodo],
+                      ["goal", "Goal", Target],
+                    ] as const).map(([value, label, Icon]) => (
+                      <label key={value}>
+                        <input
+                          type="radio"
+                          name="submission-mode"
+                          value={value}
+                          checked={draft.submissionMode === value}
+                          onChange={() => patchDraft({ submissionMode: value })}
+                        />
+                        <span><Icon size={15} aria-hidden="true" />{label}</span>
+                      </label>
+                    ))}
+                  </div>
+                </fieldset>
+
+                <div className="kanban-field">
+                  <span>Account</span>
+                  <ComposerSelect
+                    ariaLabel="Account"
+                    value={draft.accountId ?? ""}
+                    options={[{ value: "", label: "Workspace default" }, ...accountOptions]}
+                    placeholder="Workspace default"
+                    icon={<CircleUserRound size={16} />}
+                    className="kanban-field-select"
+                    disabled={executionFieldsDisabled}
+                    onChange={(value) => {
+                      const accountId = value || null;
+                      patchDraft(accountId === draft.accountId ? { accountId } : { accountId, model: "", reasoningLevel: "" });
+                    }}
+                  />
+                </div>
+                <div className="kanban-field">
+                  <span>Access</span>
+                  <ComposerSelect
+                    ariaLabel="Access mode"
+                    value={draft.accessMode}
+                    options={accessModeOptions}
+                    placeholder="Ask for approval"
+                    icon={<ShieldCheck size={16} />}
+                    className="kanban-field-select"
+                    disabled={executionFieldsDisabled}
+                    onChange={(value) => patchDraft({ accessMode: value as KanbanAccessMode })}
+                  />
+                </div>
+                <div className="kanban-field">
+                  <span>Model</span>
+                  <ComposerSelect
+                    ariaLabel="Model"
+                    value={draft.model}
+                    options={[{ value: "", label: "Account default" }, ...modelOptions]}
+                    placeholder="Account default"
+                    icon={<Bot size={16} />}
+                    className="kanban-field-select"
+                    disabled={executionFieldsDisabled}
+                    onChange={(value) => patchDraft(value === draft.model ? { model: value } : { model: value, reasoningLevel: "" })}
+                  />
+                </div>
+                <div className="kanban-field">
+                  <span>Reasoning</span>
+                  <ComposerSelect
+                    ariaLabel="Reasoning level"
+                    value={draft.reasoningLevel}
+                    options={[{ value: "", label: "Model default" }, ...selectedReasoningOptions]}
+                    placeholder="Model default"
+                    icon={<Gauge size={16} />}
+                    className="kanban-field-select"
+                    disabled={executionFieldsDisabled || selectedReasoningOptions.length === 0}
+                    onChange={(value) => patchDraft({ reasoningLevel: value })}
+                  />
+                </div>
+              </aside>
             </div>
 
             {validationError || error ? (

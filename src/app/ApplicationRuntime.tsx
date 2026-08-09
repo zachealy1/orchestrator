@@ -1243,6 +1243,7 @@ function App() {
   const chooseComposerContextFiles = useStableEvent(() => {
     void chooseContextFiles();
   });
+  const pickKanbanCardContextFiles = useStableEvent(() => pickContextFiles());
   const searchComposerMentionFiles = useStableEvent((query: string) => {
     void searchMentionFiles(query);
   });
@@ -7066,19 +7067,20 @@ function App() {
     }
   }
 
-  async function chooseContextFiles() {
+  async function pickContextFiles() {
     const selected = await open({
       directory: false,
       multiple: true,
       title: "Add files to context",
     });
     const paths = normalizeDialogSelection(selected);
+    return paths.map(contextFileFromPath);
+  }
 
-    if (paths.length === 0) {
-      return;
-    }
-
-    setContextFiles((current) => mergeContextFiles(current, paths.map(contextFileFromPath)));
+  async function chooseContextFiles() {
+    const files = await pickContextFiles();
+    if (files.length === 0) return;
+    setContextFiles((current) => mergeContextFiles(current, files));
   }
 
   async function getWorkspaceFileIndex(workspace: Workspace) {
@@ -15595,6 +15597,7 @@ function App() {
                   onLaunch={kanbanRuntime.launchCard}
                   onPause={kanbanRuntime.pauseCard}
                   onStop={kanbanRuntime.stopCard}
+                  onPickContextFiles={pickKanbanCardContextFiles}
                   toolbarHost={kanbanToolbarHost}
                 />
                 <div className="kanban-composer-shell">

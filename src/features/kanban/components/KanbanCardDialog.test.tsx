@@ -97,7 +97,9 @@ describe("KanbanCardDialog", () => {
     await user.click(screen.getByRole("radio", { name: "Selected repositories" }));
     await user.click(screen.getByRole("button", { name: "Create card" }));
     const repositoryError = screen.getByRole("alert");
-    const repositoryGroup = screen.getByRole("group", { name: "Repositories" });
+    const repositoryGroup = screen.getByRole("group", {
+      name: "Repository scope",
+    });
     const repositoryOption = screen.getByRole("checkbox", { name: /orchestrator/ });
     expect(repositoryError).toHaveTextContent(
       "Choose at least one repository",
@@ -125,6 +127,8 @@ describe("KanbanCardDialog", () => {
       accessMode: "full-access",
       model: "gpt-5",
       reasoningLevel: "high",
+      submissionMode: "normal",
+      contextFiles: [],
       includeDirtyChanges: false,
       includeConversationHistory: false,
     });
@@ -204,6 +208,59 @@ describe("KanbanCardDialog", () => {
     );
   });
 
+  it("edits the agent mode and adds and removes context files", async () => {
+    const user = userEvent.setup();
+    const onSubmit = vi.fn();
+    const onPickContextFiles = vi.fn().mockResolvedValue([
+      {
+        path: "/workspace/spec.md",
+        name: "spec.md",
+        source: "picker" as const,
+        mediaKind: "file" as const,
+        status: "ready" as const,
+      },
+      {
+        path: "/workspace/reference.png",
+        name: "reference.png",
+        source: "picker" as const,
+        mediaKind: "image" as const,
+        status: "ready" as const,
+      },
+    ]);
+    render(
+      <KanbanCardDialog
+        {...dialogProps(onSubmit)}
+        defaults={{
+          title: "Plan a release",
+          description: "Prepare and verify the release.",
+        }}
+        onPickContextFiles={onPickContextFiles}
+      />,
+    );
+
+    await user.click(screen.getByRole("radio", { name: "Plan" }));
+    await user.click(
+      screen.getByRole("button", { name: "Add files to agent context" }),
+    );
+    expect(await screen.findByText("spec.md")).toBeInTheDocument();
+    expect(screen.getByText("reference.png")).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "Remove spec.md" }));
+    await user.click(screen.getByRole("button", { name: "Create card" }));
+
+    expect(onSubmit).toHaveBeenCalledWith(
+      expect.objectContaining({
+        submissionMode: "plan",
+        contextFiles: [
+          expect.objectContaining({
+            path: "/workspace/reference.png",
+            mediaKind: "image",
+          }),
+        ],
+      }),
+    );
+  });
+
   it("duplicates into an independent draft and does not reset edits on equivalent rerenders", async () => {
     const user = userEvent.setup();
     const onSubmit = vi.fn();
@@ -223,7 +280,9 @@ describe("KanbanCardDialog", () => {
       name: /Include conversation context/,
     });
     expect(history).not.toBeChecked();
-    expect(screen.getByText(/process, execution state, branches/)).toBeInTheDocument();
+    expect(
+      screen.getByText(/Process state and approvals are not copied/),
+    ).toBeInTheDocument();
 
     await user.clear(title);
     await user.type(title, "Independent follow-up");
@@ -271,6 +330,10 @@ describe("KanbanCardDialog", () => {
     expect(screen.getByLabelText("Access mode")).toBeDisabled();
     expect(screen.getByLabelText("Model")).toBeDisabled();
     expect(screen.getByLabelText("Reasoning level")).toBeDisabled();
+    expect(screen.getByRole("radio", { name: "Chat" })).toBeDisabled();
+    expect(
+      screen.getByRole("button", { name: "Add files to agent context" }),
+    ).toBeDisabled();
     expect(
       screen.getByRole("checkbox", {
         name: /Include current uncommitted changes/,

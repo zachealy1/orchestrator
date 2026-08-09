@@ -122,6 +122,8 @@ pub struct UpdateKanbanCardRequest {
     pub access_mode: String,
     pub model: Option<String>,
     pub reasoning_level: Option<String>,
+    #[serde(default)]
+    pub execution_settings_json: Option<String>,
     pub repository_scope: String,
     #[serde(default)]
     pub repositories: Vec<KanbanRepositorySelectionInput>,
@@ -910,6 +912,13 @@ pub async fn kanban_update_card(
     validate_access(&request.access_mode)?;
     validate_repository_scope(&request.repository_scope)?;
     validate_repositories(&request.repository_scope, &request.repositories)?;
+    if let Some(settings) = request.execution_settings_json.as_deref() {
+        let value: serde_json::Value = serde_json::from_str(settings)
+            .map_err(|_| "The card execution settings are not valid JSON.".to_string())?;
+        if !value.is_object() {
+            return Err("The card execution settings must be a JSON object.".to_string());
+        }
+    }
     let request_fingerprint = operation_fingerprint(&request)?;
     let mut connection = open_database(&app).await?;
     let workspace_id = card_workspace_id(&mut connection, &request.card_id).await?;
@@ -931,7 +940,8 @@ pub async fn kanban_update_card(
         return load_card(&mut connection, &request.card_id).await;
     }
     let bound_configuration = sqlx::query(
-        "SELECT account_id, access_mode, model, reasoning_level, repository_scope
+        "SELECT account_id, access_mode, model, reasoning_level, execution_settings_json,
+                repository_scope
          FROM kanban_cards
          WHERE id = ?1 AND EXISTS (
            SELECT 1 FROM kanban_repository_bindings binding
@@ -948,6 +958,8 @@ pub async fn kanban_update_card(
             && configuration.get::<String, _>("access_mode") == request.access_mode
             && configuration.get::<Option<String>, _>("model") == request.model
             && configuration.get::<Option<String>, _>("reasoning_level") == request.reasoning_level
+            && configuration.get::<Option<String>, _>("execution_settings_json")
+                == request.execution_settings_json
             && configuration.get::<String, _>("repository_scope") == request.repository_scope;
         let existing_repositories = sqlx::query(
             "SELECT repository_path, relative_path, label, include_dirty
@@ -1007,9 +1019,10 @@ pub async fn kanban_update_card(
     let sql = format!(
         "UPDATE kanban_cards
          SET title = ?1, description = ?2, account_id = ?3, access_mode = ?4,
-             model = ?5, reasoning_level = ?6, repository_scope = ?7,
+             model = ?5, reasoning_level = ?6, execution_settings_json = ?7,
+             repository_scope = ?8,
              state_version = state_version + 1, updated_at = CURRENT_TIMESTAMP
-         WHERE id = ?8 AND state_version = ?9 AND archived_at IS NULL AND deleted_at IS NULL
+         WHERE id = ?9 AND state_version = ?10 AND archived_at IS NULL AND deleted_at IS NULL
            AND execution_state NOT IN ({active_states})"
     );
     let result = sqlx::query(&sql)
@@ -1019,6 +1032,7 @@ pub async fn kanban_update_card(
         .bind(&request.access_mode)
         .bind(request.model.as_deref())
         .bind(request.reasoning_level.as_deref())
+        .bind(request.execution_settings_json.as_deref())
         .bind(&request.repository_scope)
         .bind(&request.card_id)
         .bind(request.expected_version)

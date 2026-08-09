@@ -97,9 +97,9 @@ export type KanbanCardDraft = {
   accessMode: "ask-for-approval" | "full-access";
   model: string | null;
   reasoningLevel: string | null;
+  executionSettingsJson?: string | null;
   repositoryScope: "all" | "selected";
   repositories: KanbanRepositorySelectionRecord[];
-  executionSettingsJson?: string | null;
   generateTitle?: boolean;
   titleFallback?: string | null;
 };
@@ -255,6 +255,7 @@ export function updateKanbanCard(
     cardId: card.id,
     expectedVersion: card.stateVersion,
     ...draft,
+    executionSettingsJson: draft.executionSettingsJson ?? null,
     operationId,
   }) as Promise<KanbanCardRecord>;
 }
