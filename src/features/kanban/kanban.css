@@ -372,13 +372,17 @@
 }
 
 .kanban-card-metadata > span {
+  display: inline-flex;
   max-width: 100%;
   overflow: hidden;
+  align-items: center;
+  justify-content: center;
   padding: 2px 6px;
   border: 1px solid var(--color-divider);
   border-radius: 999px;
   color: var(--color-text-secondary);
   font-size: 0.72rem;
+  line-height: 1.2;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
