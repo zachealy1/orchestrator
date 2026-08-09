@@ -100,7 +100,7 @@ describe("Kanban controls", () => {
     expect(screen.queryByRole("button", { name: "New card" })).not.toBeInTheDocument();
   });
 
-  it("makes destructive transition scope and cleanup choices explicit", async () => {
+  it("uses progressive cleanup controls for card deletion", async () => {
     const user = userEvent.setup();
     const onCleanupOptionChange = vi.fn();
     const onConfirm = vi.fn();
@@ -130,9 +130,14 @@ describe("Kanban controls", () => {
       />,
     );
 
-    expect(screen.getByRole("alertdialog")).toHaveTextContent(
-      "Uncommitted work is never discarded",
+    const dialog = screen.getByRole("alertdialog", {
+      name: "Delete Archived workflow?",
+    });
+    expect(dialog).toHaveTextContent(
+      "The card will be removed. Worktrees and branches stay on disk.",
     );
+    expect(dialog).not.toHaveTextContent("A preserved card with review artifacts");
+    expect(screen.getByText("Cleanup options")).toBeInTheDocument();
     await waitFor(() =>
       expect(screen.getByRole("button", { name: "Cancel" })).toHaveFocus(),
     );

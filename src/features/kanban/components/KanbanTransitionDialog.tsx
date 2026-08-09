@@ -8,7 +8,7 @@ import {
   Trash2,
   X,
 } from "lucide-react";
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import { trapDialogFocus } from "../../../shared/dialogFocus";
 import "../kanban.css";
 import type {
@@ -128,7 +128,13 @@ export function KanbanTransitionDialog({
   const cancelRef = useRef<HTMLButtonElement>(null);
   const dialogRef = useRef<HTMLElement>(null);
   const previousFocusRef = useRef<HTMLElement | null>(null);
+  const [cleanupOpen, setCleanupOpen] = useState(true);
   const copy = COPY[kind];
+  const isDelete = kind === "delete";
+  const title = isDelete ? `Delete ${card.title}?` : copy.title;
+  const description = isDelete
+    ? "The card will be removed. Worktrees and branches stay on disk."
+    : copy.description;
 
   useEffect(() => {
     if (!open) return;
@@ -136,6 +142,10 @@ export function KanbanTransitionDialog({
       document.activeElement instanceof HTMLElement ? document.activeElement : null;
     return () => previousFocusRef.current?.focus({ preventScroll: true });
   }, [open]);
+
+  useEffect(() => {
+    if (open && kind === "delete") setCleanupOpen(true);
+  }, [kind, open]);
 
   useEffect(() => {
     if (!open) return;
@@ -179,10 +189,14 @@ export function KanbanTransitionDialog({
         tabIndex={-1}
         onKeyDown={trapDialogFocus}
       >
-        <header>
-          <div>
-            <span className="eyebrow">{copy.eyebrow}</span>
-            <h2 id="kanban-transition-title">{copy.title}</h2>
+        <header className={isDelete ? "kanban-delete-header" : undefined}>
+          <div className={isDelete ? "kanban-delete-heading" : undefined}>
+            {isDelete ? (
+              <Trash2 className="kanban-delete-heading-icon" size={22} aria-hidden="true" />
+            ) : (
+              <span className="eyebrow">{copy.eyebrow}</span>
+            )}
+            <h2 id="kanban-transition-title">{title}</h2>
           </div>
           <button
             type="button"
@@ -194,12 +208,14 @@ export function KanbanTransitionDialog({
             <X size={17} aria-hidden="true" />
           </button>
         </header>
-        <p id="kanban-transition-description">{copy.description}</p>
-        <div className="kanban-transition-card">
-          <strong>{card.title}</strong>
-          <span>{card.description}</span>
-          {destinationLabel ? <small>Destination: {destinationLabel}</small> : null}
-        </div>
+        <p id="kanban-transition-description">{description}</p>
+        {!isDelete ? (
+          <div className="kanban-transition-card">
+            <strong>{card.title}</strong>
+            <span>{card.description}</span>
+            {destinationLabel ? <small>Destination: {destinationLabel}</small> : null}
+          </div>
+        ) : null}
 
         {messageLabel ? (
           <label className="kanban-field kanban-transition-message">
@@ -215,28 +231,34 @@ export function KanbanTransitionDialog({
         ) : null}
 
         {cleanupOptions.length > 0 ? (
-          <fieldset className="kanban-cleanup-options">
-            <legend>Artifact cleanup</legend>
-            {cleanupOptions.map((option) => (
-              <label
-                key={option.id}
-                className={option.destructive ? "is-destructive" : undefined}
-              >
-                <input
-                  type="checkbox"
-                  checked={option.selected}
-                  disabled={busy || option.disabled}
-                  onChange={(event) =>
-                    onCleanupOptionChange?.(option.id, event.target.checked)
-                  }
-                />
-                <span>
-                  <strong>{option.label}</strong>
-                  <small>{option.description}</small>
-                </span>
-              </label>
-            ))}
-          </fieldset>
+          <details
+            className="kanban-cleanup-disclosure"
+            open={cleanupOpen}
+            onToggle={(event) => setCleanupOpen(event.currentTarget.open)}
+          >
+            <summary>Cleanup options</summary>
+            <div className="kanban-cleanup-options">
+              {cleanupOptions.map((option) => (
+                <label
+                  key={option.id}
+                  className={option.destructive ? "is-destructive" : undefined}
+                >
+                  <input
+                    type="checkbox"
+                    checked={option.selected}
+                    disabled={busy || option.disabled}
+                    onChange={(event) =>
+                      onCleanupOptionChange?.(option.id, event.target.checked)
+                    }
+                  />
+                  <span>
+                    <strong>{option.label}</strong>
+                    <small>{option.description}</small>
+                  </span>
+                </label>
+              ))}
+            </div>
+          </details>
         ) : null}
 
         {error ? (
@@ -249,16 +271,22 @@ export function KanbanTransitionDialog({
           <button
             ref={cancelRef}
             type="button"
-            className="secondary"
+            className={isDelete ? "kanban-transition-icon-action" : "secondary"}
+            aria-label={isDelete ? "Cancel" : undefined}
+            title={isDelete ? "Cancel" : undefined}
             disabled={busy}
             onClick={onCancel}
           >
-            Cancel
+            {isDelete ? <X size={17} aria-hidden="true" /> : "Cancel"}
           </button>
           <button
             ref={confirmRef}
             type="button"
-            className={copy.danger ? "danger" : undefined}
+            className={`${copy.danger ? "danger" : ""}${
+              isDelete ? " kanban-transition-icon-action" : ""
+            }`.trim() || undefined}
+            aria-label={isDelete ? copy.confirm : undefined}
+            title={isDelete ? copy.confirm : undefined}
             disabled={busy || confirmDisabled}
             onClick={() => void onConfirm()}
           >
@@ -267,7 +295,7 @@ export function KanbanTransitionDialog({
             ) : (
               <ConfirmIcon kind={kind} />
             )}
-            {busy ? "Working…" : copy.confirm}
+            {isDelete ? null : busy ? "Working…" : copy.confirm}
           </button>
         </footer>
       </section>

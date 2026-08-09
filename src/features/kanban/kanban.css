@@ -796,6 +796,10 @@
   width: min(520px, 100%);
 }
 
+.kanban-transition-dialog:has(.kanban-delete-header) {
+  gap: 24px;
+}
+
 .kanban-card-dialog > header,
 .kanban-transition-dialog > header,
 .kanban-archived-view > header {
@@ -817,6 +821,24 @@
   margin: 4px 0 0;
   font-size: 1.18rem;
   line-height: 1.25;
+}
+
+.kanban-delete-heading {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 12px;
+}
+
+.kanban-delete-heading h2 {
+  min-width: 0;
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.kanban-delete-heading-icon {
+  flex: 0 0 auto;
+  color: var(--color-error);
 }
 
 .kanban-card-dialog > header p,
@@ -1107,6 +1129,11 @@
   margin-top: 0;
 }
 
+.kanban-transition-dialog:has(.kanban-delete-header) > footer {
+  padding-top: 14px;
+  border-top: 1px solid var(--color-divider);
+}
+
 .kanban-transition-dialog > p {
   margin: 0;
   color: var(--color-text-secondary);
@@ -1141,6 +1168,126 @@
   display: grid;
   gap: 6px;
   margin-top: 14px;
+}
+
+.kanban-cleanup-disclosure {
+  min-width: 0;
+}
+
+.kanban-cleanup-disclosure > summary {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  color: var(--color-text-secondary);
+  cursor: pointer;
+  font-size: 0.82rem;
+  font-weight: 600;
+  list-style: none;
+}
+
+.kanban-cleanup-disclosure > summary::-webkit-details-marker {
+  display: none;
+}
+
+.kanban-cleanup-disclosure > summary::before {
+  width: 7px;
+  height: 7px;
+  border-right: 2px solid currentColor;
+  border-bottom: 2px solid currentColor;
+  content: "";
+  transform: rotate(-45deg);
+  transition: transform 140ms ease;
+}
+
+.kanban-cleanup-disclosure[open] > summary::before {
+  transform: rotate(45deg) translate(-1px, -1px);
+}
+
+.kanban-cleanup-disclosure > summary::after {
+  min-width: 20px;
+  height: 1px;
+  flex: 1 1 auto;
+  background: var(--color-divider);
+  content: "";
+}
+
+.kanban-cleanup-disclosure > summary:focus-visible {
+  border-radius: 4px;
+  outline: 2px solid var(--color-primary);
+  outline-offset: 3px;
+}
+
+.kanban-cleanup-disclosure .kanban-cleanup-options {
+  gap: 18px;
+  margin-top: 18px;
+  padding: 0 8px;
+  border: 0;
+}
+
+.kanban-cleanup-disclosure .kanban-cleanup-options > label {
+  gap: 12px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+}
+
+.kanban-cleanup-disclosure .kanban-cleanup-options > label:not(:has(input:disabled)):hover,
+.kanban-cleanup-disclosure .kanban-cleanup-options > label:has(input:checked) {
+  border: 0;
+  background: transparent;
+}
+
+.kanban-cleanup-disclosure .kanban-cleanup-options > label.is-destructive {
+  border: 0;
+}
+
+.kanban-cleanup-disclosure .kanban-cleanup-options > label.is-destructive strong {
+  color: var(--color-text);
+}
+
+.kanban-cleanup-disclosure .kanban-cleanup-options > label > input {
+  width: 18px;
+  height: 18px;
+  margin-top: 1px;
+}
+
+.kanban-cleanup-disclosure .kanban-cleanup-options > label > span {
+  gap: 4px;
+}
+
+.kanban-cleanup-disclosure .kanban-cleanup-options strong {
+  color: var(--color-text);
+  font-size: 0.82rem;
+}
+
+.kanban-cleanup-disclosure .kanban-cleanup-options small {
+  font-size: 0.75rem;
+}
+
+.kanban-transition-dialog footer .kanban-transition-icon-action {
+  width: 30px;
+  min-width: 30px;
+  height: 30px;
+  min-height: 30px;
+  padding: 0;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  box-shadow: none;
+}
+
+.kanban-transition-dialog footer .kanban-transition-icon-action:hover:not(:disabled) {
+  background: var(--color-button-active);
+  color: var(--color-button-active-text);
+}
+
+.kanban-transition-dialog footer .kanban-transition-icon-action.danger {
+  color: var(--color-error);
+}
+
+.kanban-transition-dialog footer .kanban-transition-icon-action.danger:hover:not(:disabled) {
+  background: rgb(var(--error-rgb) / 0.16);
+  color: var(--color-error);
 }
 
 .kanban-cleanup-options > label.is-destructive {

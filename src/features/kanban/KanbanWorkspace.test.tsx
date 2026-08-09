@@ -213,7 +213,7 @@ async function confirmDeleteWithWorktreeCleanup(
   await user.click(screen.getByRole("menuitem", { name: "Delete card" }));
 
   const dialog = await screen.findByRole("alertdialog", {
-    name: "Delete this card?",
+    name: "Delete Controller card?",
   });
   await user.click(
     within(dialog).getByRole("checkbox", {
