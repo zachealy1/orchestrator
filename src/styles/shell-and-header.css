@@ -908,6 +908,11 @@ button.account-switcher-item:hover:not(:disabled) {
   min-height: 30px;
 }
 
+.workspace-kanban-header-controls .kanban-search-field,
+.workspace-kanban-header-controls .kanban-group-control {
+  border: 0;
+}
+
 .workspace-kanban-header-controls .kanban-search-field {
   width: auto;
   min-width: 120px;
@@ -916,7 +921,7 @@ button.account-switcher-item:hover:not(:disabled) {
 }
 
 .workspace-kanban-header-controls .kanban-search-field:focus-within {
-  border-color: var(--color-divider);
+  border: 0;
   box-shadow: 0 0 0 2px rgb(var(--text-secondary-rgb) / 0.22);
 }
 
