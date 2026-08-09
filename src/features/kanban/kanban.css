@@ -40,10 +40,6 @@
   box-shadow: 0 0 0 3px var(--dropdown-focus-ring);
 }
 
-.kanban-column.is-dragging {
-  opacity: 0.3;
-}
-
 .kanban-column-header {
   display: flex;
   align-items: center;
@@ -99,7 +95,6 @@
 }
 
 .kanban-icon-button,
-.kanban-column-drag-handle,
 .kanban-drag-handle,
 .kanban-search-field button,
 .kanban-card-menu-trigger {
@@ -121,7 +116,6 @@
 }
 
 .kanban-icon-button:hover:not(:disabled),
-.kanban-column-drag-handle:hover:not(:disabled),
 .kanban-drag-handle:hover:not(:disabled),
 .kanban-search-field button:hover:not(:disabled),
 .kanban-card-menu-trigger:hover:not(:disabled),
@@ -132,7 +126,6 @@
 }
 
 .kanban-icon-button:focus-visible,
-.kanban-column-drag-handle:focus-visible,
 .kanban-drag-handle:focus-visible,
 .kanban-card-menu-trigger:focus-visible,
 .kanban-card-open:focus-visible,
@@ -142,13 +135,11 @@
   outline-offset: 1px;
 }
 
-.kanban-column-drag-handle,
 .kanban-drag-handle {
   cursor: grab;
   touch-action: none;
 }
 
-.kanban-column-drag-handle:active,
 .kanban-drag-handle:active {
   cursor: grabbing;
 }
@@ -441,25 +432,8 @@
   color: var(--color-error);
 }
 
-.kanban-card-overlay,
-.kanban-column-overlay {
+.kanban-card-overlay {
   pointer-events: none;
-}
-
-.kanban-column-overlay {
-  display: grid;
-  width: 320px;
-  gap: 4px;
-  padding: 14px;
-  border: 1px solid var(--color-primary);
-  border-radius: var(--radius);
-  background: var(--color-component-background);
-  box-shadow: 0 18px 48px rgb(var(--shadow-rgb) / 0.28);
-}
-
-.kanban-column-overlay span {
-  color: var(--color-text-secondary);
-  font-size: 0.76rem;
 }
 
 /* Toolbar */

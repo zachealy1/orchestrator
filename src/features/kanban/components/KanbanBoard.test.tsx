@@ -58,7 +58,6 @@ describe("KanbanBoard", () => {
       <KanbanBoard
         columns={columns()}
         onMoveCard={vi.fn()}
-        onReorderColumns={vi.fn()}
         onOpenCard={onOpenCard}
         onCardAction={onCardAction}
         onCreateCard={onCreateCard}
@@ -91,6 +90,9 @@ describe("KanbanBoard", () => {
 
     await user.click(screen.getByRole("button", { name: "Create card in In progress" }));
     expect(onCreateCard).toHaveBeenCalledWith("in-progress");
+    expect(
+      screen.queryByRole("button", { name: /Move .* column/ }),
+    ).not.toBeInTheDocument();
   });
 
   it("dismisses the portalled card menu consistently", async () => {
@@ -100,7 +102,6 @@ describe("KanbanBoard", () => {
       <KanbanBoard
         columns={columns()}
         onMoveCard={vi.fn()}
-        onReorderColumns={vi.fn()}
         onCardAction={onCardAction}
       />,
     );
@@ -139,29 +140,25 @@ describe("KanbanBoard", () => {
     );
   });
 
-  it("provides keyboard-focusable drag handles and disables every drag surface", () => {
+  it("provides keyboard-focusable card drag handles and disables every drag surface", () => {
     const { rerender } = render(
       <KanbanBoard
         columns={columns()}
         onMoveCard={vi.fn()}
-        onReorderColumns={vi.fn()}
       />,
     );
 
     expect(screen.getByRole("button", { name: "Move First card" })).toBeEnabled();
-    expect(screen.getByRole("button", { name: "Move To do column" })).toBeEnabled();
 
     rerender(
       <KanbanBoard
         columns={columns()}
         disabled
         onMoveCard={vi.fn()}
-        onReorderColumns={vi.fn()}
       />,
     );
 
     expect(screen.getByRole("button", { name: "Move First card" })).toBeDisabled();
-    expect(screen.getByRole("button", { name: "Move To do column" })).toBeDisabled();
     expect(screen.getByRole("button", { name: /^First card/ })).toBeDisabled();
     expect(
       screen.getByRole("button", { name: "Actions for First card" }),

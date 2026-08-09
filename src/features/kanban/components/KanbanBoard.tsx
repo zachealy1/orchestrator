@@ -13,13 +13,12 @@ import {
 } from "@dnd-kit/core";
 import {
   SortableContext,
-  horizontalListSortingStrategy,
   sortableKeyboardCoordinates,
   useSortable,
   verticalListSortingStrategy,
 } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
-import { GripHorizontal, Plus } from "lucide-react";
+import { Plus } from "lucide-react";
 import { useMemo, useState, type ButtonHTMLAttributes, type CSSProperties } from "react";
 import "../kanban.css";
 import { KanbanCardTile } from "./KanbanCardTile";
@@ -35,16 +34,14 @@ export type KanbanBoardProps = {
   columns: KanbanColumn[];
   disabled?: boolean;
   onMoveCard: (request: KanbanMoveRequest) => void;
-  onReorderColumns: (columnIds: KanbanColumnId[]) => void;
   onOpenCard?: (card: KanbanCard) => void;
   onCardAction?: (action: KanbanCardAction, card: KanbanCard) => void;
   onCreateCard?: (columnId: KanbanColumnId) => void;
 };
 
-type DragKind = "card" | "column";
+type DragKind = "card";
 
 const cardDragId = (id: string) => `kanban-card:${id}`;
-const columnDragId = (id: string) => `kanban-column:${id}`;
 const columnDropId = (id: string) => `kanban-column-drop:${id}`;
 
 function activeAttemptRequiresStop(card: KanbanCard) {
@@ -134,36 +131,16 @@ function SortableColumn({
   onCardAction?: (action: KanbanCardAction, card: KanbanCard) => void;
   onCreateCard?: (columnId: KanbanColumnId) => void;
 }) {
-  const {
-    attributes,
-    listeners,
-    setNodeRef,
-    transform,
-    transition,
-    isDragging,
-  } = useSortable({
-    id: columnDragId(column.id),
-    disabled,
-    data: { kind: "column" satisfies DragKind, columnId: column.id },
-  });
   const { setNodeRef: setDropRef, isOver } = useDroppable({
     id: columnDropId(column.id),
     disabled,
     data: { kind: "column-drop", columnId: column.id },
   });
-  const style: CSSProperties = {
-    transform: CSS.Transform.toString(transform),
-    transition,
-  };
   const cardIds = column.cards.map((card) => cardDragId(card.id));
 
   return (
     <section
-      ref={setNodeRef}
-      className={`kanban-column${isDragging ? " is-dragging" : ""}${
-        target || isOver ? " is-drop-target" : ""
-      }`}
-      style={style}
+      className={`kanban-column${target || isOver ? " is-drop-target" : ""}`}
       aria-labelledby={`kanban-column-title-${column.id}`}
       data-column-id={column.id}
     >
@@ -190,16 +167,6 @@ function SortableColumn({
               <Plus size={16} aria-hidden="true" />
             </button>
           ) : null}
-          <button
-            type="button"
-            className="kanban-column-drag-handle"
-            aria-label={`Move ${column.title} column`}
-            disabled={disabled}
-            {...attributes}
-            {...listeners}
-          >
-            <GripHorizontal size={17} aria-hidden="true" />
-          </button>
         </div>
       </header>
       {column.description ? (
@@ -252,14 +219,12 @@ export function KanbanBoard({
   columns,
   disabled = false,
   onMoveCard,
-  onReorderColumns,
   onOpenCard,
   onCardAction,
   onCreateCard,
 }: KanbanBoardProps) {
   const orderedColumns = useMemo(() => sortedColumns(columns), [columns]);
   const [activeCard, setActiveCard] = useState<KanbanCard | null>(null);
-  const [activeColumn, setActiveColumn] = useState<KanbanColumn | null>(null);
   const [dropTargetColumn, setDropTargetColumn] = useState<KanbanColumnId | null>(
     null,
   );
@@ -271,7 +236,6 @@ export function KanbanBoard({
 
   function clearDragState() {
     setActiveCard(null);
-    setActiveColumn(null);
     setDropTargetColumn(null);
   }
 
@@ -279,12 +243,6 @@ export function KanbanBoard({
     const data = event.active.data.current;
     if (data?.kind === "card") {
       setActiveCard(allCards.find((card) => card.id === data.cardId) ?? null);
-      return;
-    }
-    if (data?.kind === "column") {
-      setActiveColumn(
-        orderedColumns.find((column) => column.id === data.columnId) ?? null,
-      );
     }
   }
 
@@ -296,24 +254,6 @@ export function KanbanBoard({
     const activeData = event.active.data.current;
     const overData = event.over?.data.current;
     if (!activeData || !overData || !event.over) {
-      clearDragState();
-      return;
-    }
-
-    if (activeData.kind === "column") {
-      const fromIndex = orderedColumns.findIndex(
-        (column) => column.id === activeData.columnId,
-      );
-      const overColumnId = targetColumnId(event);
-      const toIndex = orderedColumns.findIndex(
-        (column) => column.id === overColumnId,
-      );
-      if (fromIndex >= 0 && toIndex >= 0 && fromIndex !== toIndex) {
-        const next = [...orderedColumns];
-        const [moved] = next.splice(fromIndex, 1);
-        if (moved) next.splice(toIndex, 0, moved);
-        onReorderColumns(next.map((column) => column.id));
-      }
       clearDragState();
       return;
     }
@@ -370,42 +310,28 @@ export function KanbanBoard({
         accessibility={{
           screenReaderInstructions: {
             draggable:
-              "Press space to pick up a card or column. Use arrow keys to move it, then press space again to drop. Press escape to cancel.",
+              "Press space to pick up a card. Use arrow keys to move it, then press space again to drop. Press escape to cancel.",
           },
         }}
         autoScroll
       >
-        <SortableContext
-          items={orderedColumns.map((column) => columnDragId(column.id))}
-          strategy={horizontalListSortingStrategy}
-          disabled={disabled}
-        >
-          <div className="kanban-board-columns">
-            {orderedColumns.map((column) => (
-              <SortableColumn
-                key={column.id}
-                column={column}
-                disabled={disabled}
-                target={dropTargetColumn === column.id}
-                onOpenCard={onOpenCard}
-                onCardAction={onCardAction}
-                onCreateCard={onCreateCard}
-              />
-            ))}
-          </div>
-        </SortableContext>
+        <div className="kanban-board-columns">
+          {orderedColumns.map((column) => (
+            <SortableColumn
+              key={column.id}
+              column={column}
+              disabled={disabled}
+              target={dropTargetColumn === column.id}
+              onOpenCard={onOpenCard}
+              onCardAction={onCardAction}
+              onCreateCard={onCreateCard}
+            />
+          ))}
+        </div>
         <DragOverlay dropAnimation={null}>
           {activeCard ? (
             <div className="kanban-card-overlay">
               <KanbanCardTile card={activeCard} overlay />
-            </div>
-          ) : activeColumn ? (
-            <div className="kanban-column-overlay">
-              <strong>{activeColumn.title}</strong>
-              <span>
-                {activeColumn.cards.length}{" "}
-                {activeColumn.cards.length === 1 ? "card" : "cards"}
-              </span>
             </div>
           ) : null}
         </DragOverlay>

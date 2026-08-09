@@ -1780,12 +1780,6 @@ export function KanbanWorkspace({
                 columns={buildColumns(group.cards)}
                 disabled={busy}
                 onMoveCard={(request) => void handleMove(request)}
-                onReorderColumns={(ids) => {
-                  const columnOrder = ids.map((id) => VIEW_TO_STAGE[id]).filter(Boolean);
-                  if (columnOrder.length === 4) {
-                    schedulePreferenceSave({ ...preferencesRef.current, columnOrder });
-                  }
-                }}
                 onOpenCard={openCard}
                 onCardAction={(action, card) => void handleCardAction(action, card)}
                 onCreateCard={() => setCardDialog({ mode: "create", cardId: null })}
@@ -1811,12 +1805,6 @@ export function KanbanWorkspace({
           columns={buildColumns([])}
           disabled={busy}
           onMoveCard={(request) => void handleMove(request)}
-          onReorderColumns={(ids) => {
-            const columnOrder = ids.map((id) => VIEW_TO_STAGE[id]).filter(Boolean);
-            if (columnOrder.length === 4) {
-              schedulePreferenceSave({ ...preferencesRef.current, columnOrder });
-            }
-          }}
           onOpenCard={openCard}
           onCardAction={(action, card) => void handleCardAction(action, card)}
           onCreateCard={() => setCardDialog({ mode: "create", cardId: null })}
