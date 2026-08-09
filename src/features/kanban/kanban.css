@@ -535,6 +535,11 @@
   white-space: nowrap;
 }
 
+.kanban-toolbar-button.kanban-archive-button {
+  width: 34px;
+  padding: 0;
+}
+
 .kanban-filter-trigger:hover:not(:disabled),
 .kanban-toolbar-button:hover:not(:disabled),
 .kanban-clear-button:hover:not(:disabled),

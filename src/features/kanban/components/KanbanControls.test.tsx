@@ -90,7 +90,12 @@ describe("Kanban controls", () => {
     await user.click(screen.getByRole("option", { name: "Repository" }));
     expect(onGroupByChange).toHaveBeenCalledWith("repository");
 
-    await user.click(screen.getByRole("button", { name: "Archived" }));
+    const archivedButton = screen.getByRole("button", {
+      name: "Archived cards",
+    });
+    expect(archivedButton).toHaveAttribute("title", "Archived cards");
+    expect(archivedButton).not.toHaveTextContent("Archived");
+    await user.click(archivedButton);
     expect(onToggleArchived).toHaveBeenCalledOnce();
     expect(screen.queryByRole("button", { name: "New card" })).not.toBeInTheDocument();
   });

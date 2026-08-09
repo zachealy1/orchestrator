@@ -944,6 +944,13 @@ button.account-switcher-item:hover:not(:disabled) {
   color: var(--color-button-primary-text);
 }
 
+.workspace-kanban-header-controls
+  .kanban-toolbar-button.kanban-archive-button {
+  width: 30px;
+  min-width: 30px;
+  padding: 0;
+}
+
 .workspace-kanban-header-controls .kanban-search-field {
   width: auto;
   min-width: 120px;

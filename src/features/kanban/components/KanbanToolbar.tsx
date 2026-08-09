@@ -231,13 +231,18 @@ export function KanbanToolbar({
       {onToggleArchived ? (
         <button
           type="button"
-          className={archivedOpen ? "kanban-toolbar-button is-active" : "kanban-toolbar-button"}
+          className={
+            archivedOpen
+              ? "kanban-toolbar-button kanban-archive-button is-active"
+              : "kanban-toolbar-button kanban-archive-button"
+          }
+          aria-label="Archived cards"
+          title="Archived cards"
           aria-pressed={archivedOpen}
           disabled={disabled}
           onClick={onToggleArchived}
         >
           <Archive size={15} aria-hidden="true" />
-          <span>Archived</span>
         </button>
       ) : null}
     </div>
