@@ -34,6 +34,7 @@ const card: KanbanCard = {
   model: "gpt-5",
   modelLabel: "GPT-5",
   reasoningLevel: "high",
+  submissionMode: "goal",
   executionState: "completed-awaiting-review",
   branches: [
     {
@@ -88,6 +89,7 @@ describe("KanbanDetailShell", () => {
 
     expect(screen.getByText("Returning to the board does not interrupt this agent.")).toBeInTheDocument();
     expect(screen.getByText("Conversation transcript")).toBeVisible();
+    expect(screen.getByText("Goal mode")).toBeVisible();
     await user.click(screen.getByRole("button", { name: "Back to board" }));
     expect(onBack).toHaveBeenCalledOnce();
 

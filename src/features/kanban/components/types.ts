@@ -21,6 +21,7 @@ export type KanbanExecutionState =
   | "completed-awaiting-review";
 
 export type KanbanAccessMode = "ask-for-approval" | "full-access";
+export type KanbanSubmissionMode = "normal" | "plan" | "goal";
 
 export type KanbanCardAction =
   | "open"
@@ -69,6 +70,7 @@ export type KanbanCard = {
   modelLabel: string;
   reasoningLevel: string;
   reasoningLevelLabel?: string;
+  submissionMode?: KanbanSubmissionMode;
   includeDirtyChanges?: boolean;
   executionState: KanbanExecutionState;
   branches?: KanbanBranchBinding[];

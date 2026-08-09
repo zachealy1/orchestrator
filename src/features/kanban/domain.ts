@@ -44,6 +44,7 @@ export type KanbanCardConfig = {
   accessMode: CodexAccessMode;
   model: string | null;
   reasoningLevel: string | null;
+  executionSettingsJson?: string | null;
   repositoryScope: "all" | "selected";
   repositories: readonly KanbanRepositorySelection[];
 };

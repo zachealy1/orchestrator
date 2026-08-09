@@ -23,6 +23,7 @@ import type {
 } from "../workspaces/types";
 import type { ResolvedTheme } from "../../shared/types";
 import { trapDialogFocus } from "../../shared/dialogFocus";
+import { parseRunExecutionSettings } from "../../lib/runExecutionSettings";
 import {
   approveKanbanCard,
   archiveKanbanCard,
@@ -392,6 +393,7 @@ function toDomainCard(card: KanbanCardRecord): DomainKanbanCard {
       accessMode: card.accessMode,
       model: card.model,
       reasoningLevel: card.reasoningLevel,
+      executionSettingsJson: card.executionSettingsJson,
       repositoryScope: card.repositoryScope,
       repositories: card.repositories,
     },
@@ -408,6 +410,14 @@ function toDomainCard(card: KanbanCardRecord): DomainKanbanCard {
     createdAt: card.createdAt,
     updatedAt: card.updatedAt,
   };
+}
+
+function submissionMode(card: DomainKanbanCard) {
+  const settings = parseRunExecutionSettings(card.config.executionSettingsJson);
+  if (!settings) return "normal" as const;
+  if (settings.goalMode) return "goal" as const;
+  if (settings.mode === "plan") return "plan" as const;
+  return "normal" as const;
 }
 
 function viewExecutionState(card: DomainKanbanCard): ViewKanbanCard["executionState"] {
@@ -790,6 +800,7 @@ export function KanbanWorkspace({
           ? reasoningLabels.get(card.config.reasoningLevel) ??
             formatReasoningEffort(card.config.reasoningLevel)
           : "Model default",
+        submissionMode: submissionMode(card),
         includeDirtyChanges: card.config.repositories.some(
           (repository) => repository.includeDirtyChanges,
         ),

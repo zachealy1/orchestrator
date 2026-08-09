@@ -21,6 +21,7 @@ function card(overrides: Partial<KanbanCard> = {}): KanbanCard {
     model: "gpt-5",
     modelLabel: "GPT-5",
     reasoningLevel: "high",
+    submissionMode: "plan",
     executionState: "idle",
     availableActions: ["open", "edit", "duplicate"],
     ...overrides,
@@ -79,6 +80,7 @@ describe("KanbanBoard", () => {
     );
 
     const firstCard = within(todo).getByRole("article", { name: /First card/ });
+    expect(within(firstCard).getByText("Plan")).toBeInTheDocument();
     await user.click(within(firstCard).getByLabelText("Actions for First card"));
     await user.click(screen.getByRole("menuitem", { name: "Edit card" }));
     expect(onCardAction).toHaveBeenCalledWith(

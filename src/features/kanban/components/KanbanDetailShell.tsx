@@ -408,6 +408,16 @@ export function KanbanDetailShell({
                 (card.reasoningLevel || "Model default")}
             </dd>
           </div>
+          <div>
+            <dt>Mode</dt>
+            <dd>
+              {card.submissionMode === "goal"
+                ? "Goal mode"
+                : card.submissionMode === "plan"
+                  ? "Plan mode"
+                  : "Normal chat"}
+            </dd>
+          </div>
         </dl>
         {card.branches?.length ? (
           <div className="kanban-detail-branches" ref={branchesRef}>

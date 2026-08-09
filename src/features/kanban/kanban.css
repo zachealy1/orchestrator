@@ -253,6 +253,24 @@
   gap: 7px;
 }
 
+.kanban-card-badges {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 5px;
+}
+
+.kanban-mode-badge {
+  display: inline-flex;
+  min-width: 0;
+  align-items: center;
+  gap: 4px;
+  color: var(--color-text-secondary);
+  font-size: 0.68rem;
+  line-height: 1;
+  white-space: nowrap;
+}
+
 .kanban-state-badge {
   display: inline-flex;
   min-width: 0;

@@ -1,5 +1,6 @@
 import {
   Archive,
+  BrainCircuit,
   Check,
   CircleStop,
   Copy,
@@ -7,6 +8,7 @@ import {
   GitCommitHorizontal,
   GitMerge,
   GripVertical,
+  Flag,
   MessageSquare,
   MoreHorizontal,
   Pause,
@@ -83,6 +85,18 @@ const ACTION_LABELS: Record<KanbanCardAction, string> = {
   "request-changes": "Request changes",
   approve: "Approve result",
 };
+
+const SUBMISSION_MODE_LABELS = {
+  normal: "Chat",
+  plan: "Plan",
+  goal: "Goal",
+} as const;
+
+function SubmissionModeIcon({ mode }: { mode: "normal" | "plan" | "goal" }) {
+  if (mode === "plan") return <BrainCircuit size={12} aria-hidden="true" />;
+  if (mode === "goal") return <Flag size={12} aria-hidden="true" />;
+  return <MessageSquare size={12} aria-hidden="true" />;
+}
 
 export function KanbanActionIcon({
   action,
@@ -171,6 +185,7 @@ export function KanbanCardTile({
   const dismissMenu = useCallback(() => setMenuOpen(false), []);
   useDismissibleContextMenu(menuOpen, menuRef, dismissMenu, menuTriggerRef);
   const branch = card.branches?.[0];
+  const submissionMode = card.submissionMode ?? "normal";
   const menuActions = useMemo<KanbanMenuAction[]>(
     () =>
       (card.availableActions ?? []).filter(
@@ -256,13 +271,19 @@ export function KanbanCardTile({
       aria-label={`${card.title}, ${STATE_LABELS[card.executionState]}`}
     >
       <div className="kanban-card-topline">
-        <span
-          className="kanban-state-badge"
-          data-tone={stateTone(card.executionState)}
-        >
-          <span className="kanban-state-dot" aria-hidden="true" />
-          {STATE_LABELS[card.executionState]}
-        </span>
+        <div className="kanban-card-badges">
+          <span
+            className="kanban-state-badge"
+            data-tone={stateTone(card.executionState)}
+          >
+            <span className="kanban-state-dot" aria-hidden="true" />
+            {STATE_LABELS[card.executionState]}
+          </span>
+          <span className="kanban-mode-badge">
+            <SubmissionModeIcon mode={submissionMode} />
+            {SUBMISSION_MODE_LABELS[submissionMode]}
+          </span>
+        </div>
         <div className="kanban-card-top-actions">
           {card.hasUnreadActivity ? (
             <span className="kanban-unread-dot" aria-label="Unread activity" />
