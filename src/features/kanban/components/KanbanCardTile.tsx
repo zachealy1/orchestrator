@@ -184,8 +184,9 @@ export function KanbanCardTile({
   useDismissibleContextMenu(menuOpen, menuRef, dismissMenu, menuTriggerRef);
   const branch = card.branches?.[0];
   const submissionMode = card.submissionMode ?? "normal";
+  const canOpen = card.availableActions?.includes("open") ?? false;
   const menuActions = useMemo<KanbanMenuAction[]>(
-    () => card.availableActions ?? [],
+    () => (card.availableActions ?? []).filter((action) => action !== "open"),
     [card.availableActions],
   );
 
@@ -347,7 +348,34 @@ export function KanbanCardTile({
         </div>
       </div>
 
-      <div className="kanban-card-content">
+      {canOpen ? (
+        <button
+          type="button"
+          className="kanban-card-content kanban-card-open"
+          aria-label={`Open ${card.title}`}
+          disabled={actionsDisabled}
+          onClick={(event) => runAction(event, "open")}
+        >
+          <KanbanCardContent card={card} branch={branch} />
+        </button>
+      ) : (
+        <div className="kanban-card-content">
+          <KanbanCardContent card={card} branch={branch} />
+        </div>
+      )}
+    </article>
+  );
+}
+
+function KanbanCardContent({
+  card,
+  branch,
+}: {
+  card: KanbanCard;
+  branch: NonNullable<KanbanCard["branches"]>[number] | undefined;
+}) {
+  return (
+    <>
         <strong>{card.title}</strong>
         {card.description ? (
           <span className="kanban-card-description">{card.description}</span>
@@ -384,8 +412,7 @@ export function KanbanCardTile({
             ) : null}
           </span>
         ) : null}
-      </div>
-    </article>
+    </>
   );
 }
 

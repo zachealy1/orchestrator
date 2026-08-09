@@ -186,11 +186,8 @@ function renderWorkspace(toolbarHost?: HTMLElement | null) {
 async function openCardDetails(user: ReturnType<typeof userEvent.setup>) {
   await user.click(
     await screen.findByRole("button", {
-      name: "Actions for Controller card",
+      name: "Open Controller card",
     }),
-  );
-  await user.click(
-    await screen.findByRole("menuitem", { name: "Open conversation" }),
   );
 }
 

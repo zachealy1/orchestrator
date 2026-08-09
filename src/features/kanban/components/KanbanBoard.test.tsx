@@ -72,18 +72,21 @@ describe("KanbanBoard", () => {
     ).toEqual(["First card", "Second card"]);
 
     const firstCard = within(todo).getByRole("article", { name: /First card/ });
-    expect(
-      within(firstCard).queryByRole("button", { name: /^First card/ }),
-    ).not.toBeInTheDocument();
+    const openCard = within(firstCard).getByRole("button", {
+      name: "Open First card",
+    });
     expect(within(firstCard).getByText("Plan")).toBeInTheDocument();
-    await user.click(within(firstCard).getByLabelText("Actions for First card"));
-    await user.click(screen.getByRole("menuitem", { name: "Open conversation" }));
+    await user.click(openCard);
     expect(onCardAction).toHaveBeenCalledWith(
       "open",
       expect.objectContaining({ id: "card-first" }),
     );
 
     await user.click(within(firstCard).getByLabelText("Actions for First card"));
+    expect(
+      screen.queryByRole("menuitem", { name: "Open conversation" }),
+    ).not.toBeInTheDocument();
+
     await user.click(screen.getByRole("menuitem", { name: "Edit card" }));
     expect(onCardAction).toHaveBeenCalledWith(
       "edit",
@@ -117,18 +120,18 @@ describe("KanbanBoard", () => {
     });
     await user.click(trigger);
     expect(trigger).toHaveAttribute("aria-expanded", "true");
-    const openAction = screen.getByRole("menuitem", {
-      name: "Open conversation",
-    });
     const editAction = screen.getByRole("menuitem", { name: "Edit card" });
     const duplicateAction = screen.getByRole("menuitem", {
       name: "Duplicate card",
     });
-    await waitFor(() => expect(openAction).toHaveFocus());
+    expect(
+      screen.queryByRole("menuitem", { name: "Open conversation" }),
+    ).not.toBeInTheDocument();
+    await waitFor(() => expect(editAction).toHaveFocus());
     await user.keyboard("{ArrowDown}");
-    expect(editAction).toHaveFocus();
+    expect(duplicateAction).toHaveFocus();
     await user.keyboard("{Home}");
-    expect(openAction).toHaveFocus();
+    expect(editAction).toHaveFocus();
     await user.keyboard("{End}");
     expect(duplicateAction).toHaveFocus();
     await user.keyboard("{Escape}");
