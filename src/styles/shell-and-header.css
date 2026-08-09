@@ -897,6 +897,13 @@ button.account-switcher-item:hover:not(:disabled) {
   background: transparent;
 }
 
+.workspace-kanban-header-controls .kanban-filter-menu,
+.workspace-kanban-header-controls .kanban-group-control,
+.workspace-kanban-header-controls .kanban-results-count,
+.workspace-kanban-header-controls .kanban-clear-button {
+  display: none;
+}
+
 .workspace-kanban-header-controls .kanban-search-field,
 .workspace-kanban-header-controls .kanban-group-control,
 .workspace-kanban-header-controls .composer-select.kanban-group-select,
@@ -909,8 +916,13 @@ button.account-switcher-item:hover:not(:disabled) {
 }
 
 .workspace-kanban-header-controls .kanban-search-field,
-.workspace-kanban-header-controls .kanban-group-control {
+.workspace-kanban-header-controls .kanban-group-control,
+.workspace-kanban-header-controls .kanban-filter-trigger,
+.workspace-kanban-header-controls .kanban-toolbar-button,
+.workspace-kanban-header-controls .kanban-create-button {
   border: 0;
+  background: rgb(var(--text-secondary-rgb) / 0.1);
+  color: var(--color-button-primary-text);
 }
 
 .workspace-kanban-header-controls .kanban-search-field {
@@ -922,7 +934,8 @@ button.account-switcher-item:hover:not(:disabled) {
 
 .workspace-kanban-header-controls .kanban-search-field:focus-within {
   border: 0;
-  box-shadow: 0 0 0 2px rgb(var(--text-secondary-rgb) / 0.22);
+  background: rgb(var(--text-secondary-rgb) / 0.1);
+  box-shadow: none;
 }
 
 .workspace-kanban-header-controls .kanban-search-field input:focus-visible {
@@ -930,9 +943,18 @@ button.account-switcher-item:hover:not(:disabled) {
   box-shadow: none;
 }
 
-.workspace-kanban-header-controls .kanban-create-button {
-  background: var(--color-button-secondary);
-  color: var(--color-button-secondary-text);
+.workspace-kanban-header-controls .kanban-search-field input {
+  color: var(--color-button-primary-text);
+}
+
+.workspace-kanban-header-controls .kanban-group-select button.composer-select-trigger,
+.workspace-kanban-header-controls .kanban-group-select .composer-select-icon,
+.workspace-kanban-header-controls .kanban-group-select .select-chevron {
+  color: var(--color-button-primary-text);
+}
+
+.workspace-kanban-header-controls .kanban-search-field:hover {
+  background: rgb(var(--text-secondary-rgb) / 0.1);
 }
 
 .workspace-kanban-header-controls .kanban-filter-trigger:hover:not(:disabled),
@@ -947,8 +969,8 @@ button.account-switcher-item:hover:not(:disabled) {
 .workspace-kanban-header-controls .kanban-group-select button.composer-select-trigger:hover:not(:disabled),
 .workspace-kanban-header-controls .kanban-group-select button.composer-select-trigger:focus-visible,
 .workspace-kanban-header-controls .kanban-group-select.open button.composer-select-trigger {
-  background: rgb(var(--text-secondary-rgb) / 0.18);
-  color: var(--color-button-secondary-text);
+  background: var(--panel-strong);
+  color: var(--color-button-primary-text);
 }
 
 .workspace-kanban-header-controls .kanban-filter-trigger:focus-visible,
