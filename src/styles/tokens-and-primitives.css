@@ -201,6 +201,31 @@ button.danger:hover:not(:disabled) {
   background: rgb(var(--error-rgb) / 0.2);
 }
 
+/* X glyphs keep their semantic color when shared button hovers change foregrounds. */
+button:has(svg.lucide-x):hover:not(:disabled) svg.lucide-x,
+button:has(svg.lucide-x):focus-visible:not(:disabled) svg.lucide-x,
+button:has(svg.lucide-circle-x):hover:not(:disabled) svg.lucide-circle-x,
+button:has(svg.lucide-circle-x):focus-visible:not(:disabled) svg.lucide-circle-x,
+button:has(svg.lucide-x-circle):hover:not(:disabled) svg.lucide-x-circle,
+button:has(svg.lucide-x-circle):focus-visible:not(:disabled) svg.lucide-x-circle {
+  color: var(--color-text-secondary);
+}
+
+button:is(.danger, .cancel, .approval-choice-danger):has(svg.lucide-x):hover:not(:disabled)
+  svg.lucide-x,
+button:is(.danger, .cancel, .approval-choice-danger):has(svg.lucide-x):focus-visible:not(:disabled)
+  svg.lucide-x,
+button:is(.danger, .cancel, .approval-choice-danger):has(svg.lucide-circle-x):hover:not(:disabled)
+  svg.lucide-circle-x,
+button:is(.danger, .cancel, .approval-choice-danger):has(svg.lucide-circle-x):focus-visible:not(:disabled)
+  svg.lucide-circle-x,
+button:is(.danger, .cancel, .approval-choice-danger):has(svg.lucide-x-circle):hover:not(:disabled)
+  svg.lucide-x-circle,
+button:is(.danger, .cancel, .approval-choice-danger):has(svg.lucide-x-circle):focus-visible:not(:disabled)
+  svg.lucide-x-circle {
+  color: var(--color-error);
+}
+
 .modal-backdrop {
   position: fixed;
   inset: 0;
