@@ -487,11 +487,7 @@ export function WorkspaceContextBanner({
               ) : null}
             </button>
           </>
-        ) : (
-          <span className="workspace-kanban-scope-note">
-            Card agents run in isolated worktrees
-          </span>
-        )}
+        ) : null}
       </div>
     </section>
   );

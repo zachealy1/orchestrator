@@ -75,8 +75,8 @@ describe("WorkspaceContextBanner surface switch", () => {
 
     expect(screen.getByRole("radio", { name: "Kanban" })).toBeChecked();
     expect(
-      screen.getByText("Card agents run in isolated worktrees"),
-    ).toBeInTheDocument();
+      screen.queryByText("Card agents run in isolated worktrees"),
+    ).not.toBeInTheDocument();
     expect(screen.queryByLabelText("Branch")).not.toBeInTheDocument();
     expect(screen.queryByLabelText("New chat")).not.toBeInTheDocument();
 
