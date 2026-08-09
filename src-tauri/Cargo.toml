@@ -36,6 +36,8 @@ sha2 = "0.10"
 base64 = "0.22"
 image = { version = "0.25", default-features = false, features = ["gif", "jpeg", "png", "webp"] }
 url = "2"
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
 
 [target.'cfg(target_os = "macos")'.dependencies]
 mac-usernotifications = "0.3.1"
+security-framework = "3"

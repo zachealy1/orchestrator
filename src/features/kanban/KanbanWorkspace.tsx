@@ -9,8 +9,10 @@ import { createPortal } from "react-dom";
 import {
   AlertCircle,
   CheckCircle2,
+  ExternalLink,
   FilterX,
   Loader2,
+  X,
 } from "lucide-react";
 import type { CodexAccountProfile } from "../accounts/types";
 import {
@@ -19,6 +21,13 @@ import {
   type CodexProfileKey,
 } from "../codex/types";
 import type { ComposerContextFile } from "../composer/types";
+import {
+  completeKanbanWithoutPullRequest,
+  openPullRequest,
+  publishKanbanCard,
+  syncKanbanPullRequests,
+  type KanbanPullRequestRecord,
+} from "../github/api";
 import { formatReasoningEffort } from "../composer/promptHelpers";
 import type { HistoryRunSummary } from "../conversations/types";
 import type {
@@ -137,6 +146,11 @@ type GitDialogState = {
   message: string;
 };
 
+type PullRequestChooserState = {
+  cardTitle: string;
+  pullRequests: KanbanPullRequestRecord[];
+};
+
 type GitDialogProps = {
   dialog: GitDialogState;
   busy: boolean;
@@ -180,8 +194,8 @@ const COLUMN_COPY: Record<
 > = {
   todo: { title: "To do", description: "Ready to start" },
   in_progress: { title: "In progress", description: "Agent work and attention" },
-  in_review: { title: "In review", description: "Inspect results and Git changes" },
-  done: { title: "Done", description: "Explicitly approved results" },
+  in_review: { title: "In review", description: "Review and merge on GitHub" },
+  done: { title: "Done", description: "Merged or explicitly completed work" },
 };
 
 const GIT_DIALOG_COPY: Record<
@@ -330,6 +344,99 @@ function KanbanGitDialog({
   );
 }
 
+function PullRequestChooser({
+  chooser,
+  onClose,
+  onOpen,
+}: {
+  chooser: PullRequestChooserState;
+  onClose: () => void;
+  onOpen: (pullRequest: KanbanPullRequestRecord) => void;
+}) {
+  const dialogRef = useRef<HTMLDivElement>(null);
+  const returnFocusRef = useRef<HTMLElement | null>(
+    typeof document !== "undefined" && document.activeElement instanceof HTMLElement
+      ? document.activeElement
+      : null,
+  );
+
+  useEffect(() => {
+    const frame = window.requestAnimationFrame(() => {
+      dialogRef.current
+        ?.querySelector<HTMLButtonElement>(".kanban-pr-chooser-option")
+        ?.focus({ preventScroll: true });
+    });
+    return () => {
+      window.cancelAnimationFrame(frame);
+      const returnTarget = returnFocusRef.current;
+      window.requestAnimationFrame(() => {
+        if (returnTarget?.isConnected) returnTarget.focus({ preventScroll: true });
+      });
+    };
+  }, []);
+
+  useEffect(() => {
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") onClose();
+    };
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [onClose]);
+
+  return (
+    <div
+      className="modal-backdrop"
+      role="presentation"
+      onMouseDown={(event) => {
+        if (event.target === event.currentTarget) onClose();
+      }}
+    >
+      <div
+        ref={dialogRef}
+        className="confirmation-dialog kanban-pr-chooser"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="kanban-pr-chooser-title"
+        aria-describedby="kanban-pr-chooser-description"
+        tabIndex={-1}
+        onKeyDown={trapDialogFocus}
+      >
+        <header>
+          <div>
+            <h2 id="kanban-pr-chooser-title">Open pull request</h2>
+            <p id="kanban-pr-chooser-description">{chooser.cardTitle}</p>
+          </div>
+          <button
+            type="button"
+            className="native-plan-icon-action"
+            aria-label="Close pull request chooser"
+            title="Close"
+            onClick={onClose}
+          >
+            <X size={16} aria-hidden="true" />
+          </button>
+        </header>
+        <div className="kanban-pr-chooser-options">
+          {chooser.pullRequests.map((pullRequest) => (
+            <button
+              key={pullRequest.sourceRepositoryPath}
+              type="button"
+              className="kanban-pr-chooser-option"
+              onClick={() => onOpen(pullRequest)}
+            >
+              <span>
+                <strong>{pullRequest.relativePath || pullRequest.repository}</strong>
+                <small>#{pullRequest.number} · {pullRequest.baseBranch}</small>
+              </span>
+              <ExternalLink size={16} aria-hidden="true" />
+            </button>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function parsePreferences(value: string): StoredPreferences {
   try {
     const parsed = JSON.parse(value) as Partial<StoredPreferences>;
@@ -388,6 +495,7 @@ function toDomainCard(card: KanbanCardRecord): DomainKanbanCard {
     lastError: card.lastError,
     createdAt: card.createdAt,
     updatedAt: card.updatedAt,
+    pullRequests: card.pullRequests,
   };
 }
 
@@ -418,11 +526,9 @@ function viewActions(card: DomainKanbanCard): KanbanCardAction[] {
     ["duplicate", "duplicate"],
     ["archive", "archive"],
     ["delete", "delete"],
-    ["commit", "commit"],
-    ["commit_and_push", "commit-and-push"],
-    ["merge", "merge"],
-    ["request_changes", "request-changes"],
-    ["approve_result", "approve"],
+    ["open_pull_request", "open-pull-request"],
+    ["retry_publication", "retry-publication"],
+    ["complete_without_pr", "complete-without-pr"],
   ];
   return pairs
     .filter(([capability]) => capabilities[capability].enabled)
@@ -529,6 +635,8 @@ export function KanbanWorkspace({
   const [requestChangesText, setRequestChangesText] = useState("");
   const [cleanupOptions, setCleanupOptions] = useState<KanbanCleanupOption[]>([]);
   const [gitDialog, setGitDialog] = useState<GitDialogState | null>(null);
+  const [pullRequestChooser, setPullRequestChooser] =
+    useState<PullRequestChooserState | null>(null);
   const requestSequence = useRef(0);
   const preferenceTimer = useRef<number | null>(null);
   const preferenceSavePending = useRef(false);
@@ -626,11 +734,38 @@ export function KanbanWorkspace({
     setCardDialog(null);
     setTransition(null);
     setGitDialog(null);
+    setPullRequestChooser(null);
   }, [workspace.id]);
 
   useEffect(() => {
     void loadBoard().catch(() => undefined);
   }, [loadBoard, refreshToken]);
+
+  useEffect(() => {
+    let cancelled = false;
+    const hasPendingPublication = snapshot?.cards.some((card) =>
+      card.pullRequests?.some((pullRequest) =>
+        pullRequest.publicationStatus === "queued" ||
+        pullRequest.publicationStatus === "publishing",
+      ),
+    );
+    async function sync() {
+      try {
+        const updated = await syncKanbanPullRequests(workspace.id);
+        if (!cancelled && updated > 0) await loadBoard();
+      } catch {
+        // A disconnected GitHub account is represented by the persisted card state.
+      }
+    }
+    void sync();
+    const interval = window.setInterval(() => {
+      if (document.visibilityState === "visible") void sync();
+    }, hasPendingPublication ? 2_000 : 60_000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(interval);
+    };
+  }, [loadBoard, snapshot?.cards, workspace.id]);
 
   useEffect(
     () => () => {
@@ -766,8 +901,9 @@ export function KanbanWorkspace({
                 ? "merged"
                 : ["ready", "targetMoved"].includes(binding.status)
                   ? "ready"
-                  : "missing",
+                : "missing",
         })),
+        pullRequests: [...(card.pullRequests ?? [])],
         availableActions: viewActions(card).filter(
           (action) =>
             action !== "edit" ||
@@ -1225,6 +1361,8 @@ export function KanbanWorkspace({
         });
       } else if (transition.kind === "approve-done") {
         await approveKanbanCard(persisted);
+      } else if (transition.kind === "complete-without-pr") {
+        await completeKanbanWithoutPullRequest(persisted.id);
       } else if (transition.kind === "request-changes") {
         const prompt = requestChangesText.trim();
         if (!prompt) throw new Error("Describe the changes you want Codex to make.");
@@ -1437,6 +1575,33 @@ export function KanbanWorkspace({
     }
     if (action === "archive") return openTransition("archive", card.id);
     if (action === "delete") return openTransition("delete", card.id);
+    if (action === "open-pull-request") {
+      const pullRequests = (persisted.pullRequests ?? []).filter(
+        (pullRequest) => pullRequest.url,
+      );
+      if (pullRequests.length === 1 && pullRequests[0].url) {
+        await openPullRequest(pullRequests[0].url);
+      } else if (pullRequests.length > 1) {
+        setPullRequestChooser({
+          cardTitle: persisted.title,
+          pullRequests,
+        });
+      }
+      return;
+    }
+    if (action === "retry-publication") {
+      await runAction(
+        async () => {
+          await publishKanbanCard(card.id);
+        },
+        "Pull request publication restarted.",
+      );
+      return;
+    }
+    if (action === "complete-without-pr") {
+      setTransition({ kind: "complete-without-pr", cardId: card.id });
+      return;
+    }
     if (action === "request-changes") {
       return openTransition("request-changes", card.id);
     }
@@ -1626,6 +1791,17 @@ export function KanbanWorkspace({
           }
           onCancel={() => setGitDialog(null)}
           onConfirm={() => void performGitAction()}
+        />
+      ) : null}
+      {pullRequestChooser ? (
+        <PullRequestChooser
+          chooser={pullRequestChooser}
+          onClose={() => setPullRequestChooser(null)}
+          onOpen={(pullRequest) => {
+            if (!pullRequest.url) return;
+            setPullRequestChooser(null);
+            void openPullRequest(pullRequest.url);
+          }}
         />
       ) : null}
       {transition && transitionViewCard ? (

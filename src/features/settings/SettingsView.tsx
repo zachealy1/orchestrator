@@ -2,6 +2,7 @@ import {
   AlertCircle,
   Bell,
   BellOff,
+  GitPullRequest,
   LogIn,
   LogOut,
   Monitor,
@@ -23,6 +24,7 @@ import type { BrowserRuntimeStatus } from "../browser/types";
 import type { CodexLoginState, OssProvider } from "../codex/types";
 import type { CodexAccountProfile } from "../accounts/types";
 import type { ThemePreference } from "../../shared/types";
+import type { GithubConnectionStatus } from "../github/api";
 
 const THEME_OPTIONS: Array<{
   value: ThemePreference;
@@ -39,6 +41,8 @@ export type SettingsViewModel = {
   themePreference: ThemePreference;
   computerUseEnabled: boolean;
   browserRuntimeStatus: BrowserRuntimeStatus | null;
+  githubConnection: GithubConnectionStatus | null;
+  githubConnectionPending: boolean;
   notificationPreferences: AgentNotificationPreferences;
   notificationPermission: AgentNotificationPermissionStatus;
   codexConnected: boolean;
@@ -58,6 +62,8 @@ export type SettingsViewModel = {
 export type SettingsViewActions = {
   setThemePreference: (preference: ThemePreference) => void;
   setComputerUseEnabled: (enabled: boolean) => void;
+  connectGithub: () => void;
+  disconnectGithub: () => void;
   setNotificationPreference: (
     key: keyof AgentNotificationPreferences,
     enabled: boolean,
@@ -183,6 +189,77 @@ export const SettingsView = memo(function SettingsView({
       </section>
 
       <NotificationSettings model={model} actions={actions} />
+
+      <section className="surface settings-panel github-settings-panel" aria-label="GitHub settings">
+        <div className="surface-header">
+          <div>
+            <p className="eyebrow">Source control</p>
+            <h2>GitHub</h2>
+          </div>
+          <span
+            className={`run-status ${model.githubConnection?.connected ? "completed" : "interrupted"}`}
+          >
+            {model.githubConnection?.connected ? "connected" : "disconnected"}
+          </span>
+        </div>
+        <div className="setting-list">
+          <div className="setting-row">
+            <div>
+              <strong>
+                {model.githubConnection?.connected
+                  ? model.githubConnection.displayName ?? model.githubConnection.login
+                  : "GitHub App connection"}
+              </strong>
+              <span>
+                {model.githubConnection?.connected
+                  ? `${model.githubConnection.repositories.length} accessible ${
+                      model.githubConnection.repositories.length === 1
+                        ? "repository"
+                        : "repositories"
+                    }`
+                  : model.githubConnection?.message ??
+                    "Connect to publish completed Kanban work as draft pull requests."}
+              </span>
+            </div>
+            <div className="button-row compact">
+              {model.githubConnection?.connected ? (
+                <button
+                  className="secondary"
+                  type="button"
+                  onClick={actions.disconnectGithub}
+                  disabled={model.githubConnectionPending}
+                >
+                  <LogOut size={16} aria-hidden="true" />
+                  Disconnect
+                </button>
+              ) : (
+                <button
+                  className="secondary"
+                  type="button"
+                  onClick={actions.connectGithub}
+                  disabled={
+                    model.githubConnectionPending ||
+                    model.githubConnection?.available === false
+                  }
+                >
+                  <GitPullRequest size={16} aria-hidden="true" />
+                  {model.githubConnectionPending ? "Connecting" : "Connect"}
+                </button>
+              )}
+            </div>
+          </div>
+          {model.githubConnection?.connected &&
+          model.githubConnection.repositories.length > 0 ? (
+            <div className="github-repository-list" aria-label="Accessible GitHub repositories">
+              {model.githubConnection.repositories.map((repository) => (
+                <span key={`${repository.installationId}:${repository.fullName}`}>
+                  {repository.fullName}
+                </span>
+              ))}
+            </div>
+          ) : null}
+        </div>
+      </section>
 
       <section className="surface settings-panel" aria-label="Codex settings">
         <div className="surface-header">

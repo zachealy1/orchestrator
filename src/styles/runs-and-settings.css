@@ -719,6 +719,29 @@ button.pending-interaction-nav:disabled {
   line-height: 1.45;
 }
 
+.github-settings-panel .setting-row {
+  align-items: start;
+}
+
+.github-repository-list {
+  display: grid;
+  gap: 6px;
+}
+
+.github-repository-list > span {
+  display: block;
+  min-width: 0;
+  overflow: hidden;
+  padding: 8px 10px;
+  border-radius: 6px;
+  background: var(--color-surface-soft);
+  color: var(--color-text);
+  font-size: 0.8rem;
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .managed-account-row:focus-visible {
   outline: 2px solid rgb(var(--primary-rgb) / 0.7);
   outline-offset: 2px;

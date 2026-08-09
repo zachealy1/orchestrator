@@ -87,6 +87,13 @@ export const commands = {
 	kanbanListGitBindings: (cardId: string) => __TAURI_INVOKE<PersistedKanbanGitBinding[]>("kanban_list_git_bindings", { cardId }),
 	kanbanSetInheritedContext: (request: SetKanbanInheritedContextRequest) => __TAURI_INVOKE<null>("kanban_set_inherited_context", { request }),
 	kanbanGetInheritedContext: (cardId: string) => __TAURI_INVOKE<string | null>("kanban_get_inherited_context", { cardId }),
+	githubConnectionStatus: () => __TAURI_INVOKE<GithubConnectionStatus>("github_connection_status"),
+	githubBeginDeviceAuthorization: () => __TAURI_INVOKE<GithubDeviceAuthorization>("github_begin_device_authorization"),
+	githubPollDeviceAuthorization: () => __TAURI_INVOKE<GithubConnectionStatus>("github_poll_device_authorization"),
+	githubDisconnect: () => __TAURI_INVOKE<null>("github_disconnect"),
+	githubPublishKanbanCard: (cardId: string) => __TAURI_INVOKE<GithubPublicationResult>("github_publish_kanban_card", { cardId }),
+	githubSyncKanbanPullRequests: (workspaceId: number | null) => __TAURI_INVOKE<number>("github_sync_kanban_pull_requests", { workspaceId }),
+	githubCompleteKanbanWithoutPullRequest: (cardId: string) => __TAURI_INVOKE<null>("github_complete_kanban_without_pull_request", { cardId }),
 	kanbanGitProvision: (request: KanbanGitProvisionRequest) => __TAURI_INVOKE<KanbanGitProvisionResult>("kanban_git_provision", { request }),
 	kanbanGitReconcile: (request: KanbanGitBindingRequest) => __TAURI_INVOKE<KanbanGitReconcileResult>("kanban_git_reconcile", { request }),
 	kanbanGitStatus: (request: KanbanGitBindingRequest) => __TAURI_INVOKE<KanbanGitStatusResult>("kanban_git_status", { request }),
@@ -326,6 +333,37 @@ export type GitCheckoutResult = {
 	branch: string,
 };
 
+export type GithubConnectionStatus = {
+	available: boolean,
+	connected: boolean,
+	login: string | null,
+	displayName: string | null,
+	avatarUrl: string | null,
+	status: string,
+	message: string | null,
+	repositories: GithubRepositoryAccess[],
+};
+
+export type GithubDeviceAuthorization = {
+	userCode: string,
+	verificationUri: string,
+	expiresInSeconds: number,
+	intervalSeconds: number,
+};
+
+export type GithubPublicationResult = {
+	cardId: string,
+	pullRequests: KanbanPullRequestDto[],
+};
+
+export type GithubRepositoryAccess = {
+	installationId: number,
+	owner: string,
+	name: string,
+	fullName: string,
+	private: boolean,
+};
+
 export type HistoricalCommandActivity = {
 	id: string,
 	command: string,
@@ -425,6 +463,7 @@ export type KanbanCardDto = {
 	createdAt: string,
 	updatedAt: string,
 	repositories: KanbanRepositorySelectionDto[],
+	pullRequests: KanbanPullRequestDto[],
 };
 
 export type KanbanColumnDto = {
@@ -570,6 +609,22 @@ export type KanbanGitStatusResult = {
 	unstagedCount: number,
 	untrackedCount: number,
 	files: KanbanGitFileStatus[],
+};
+
+export type KanbanPullRequestDto = {
+	sourceRepositoryPath: string,
+	relativePath: string,
+	owner: string | null,
+	repository: string | null,
+	number: number | null,
+	url: string | null,
+	baseBranch: string,
+	headBranch: string,
+	draft: boolean,
+	state: string,
+	publicationStatus: string,
+	error: string | null,
+	updatedAt: string,
 };
 
 export type KanbanRepositorySelectionDto = {

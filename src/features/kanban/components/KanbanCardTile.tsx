@@ -17,6 +17,7 @@ import {
   RefreshCw,
   Trash2,
   UploadCloud,
+  ExternalLink,
 } from "lucide-react";
 import {
   useCallback,
@@ -82,6 +83,9 @@ const ACTION_LABELS: Record<KanbanCardAction, string> = {
   merge: "Merge branch",
   "request-changes": "Request changes",
   approve: "Approve result",
+  "open-pull-request": "Open pull request",
+  "retry-publication": "Retry publication",
+  "complete-without-pr": "Complete without pull request",
 };
 
 const SUBMISSION_MODE_LABELS = {
@@ -130,6 +134,12 @@ export function KanbanActionIcon({
     case "request-changes":
       return <RefreshCw size={size} aria-hidden="true" />;
     case "approve":
+      return <Check size={size} aria-hidden="true" />;
+    case "open-pull-request":
+      return <ExternalLink size={size} aria-hidden="true" />;
+    case "retry-publication":
+      return <RefreshCw size={size} aria-hidden="true" />;
+    case "complete-without-pr":
       return <Check size={size} aria-hidden="true" />;
   }
 }
@@ -395,6 +405,36 @@ function KanbanCardContent({
                 {card.changedFileCount} changed {card.changedFileCount === 1 ? "file" : "files"}
               </span>
             ) : null}
+          </span>
+        ) : null}
+        {card.pullRequests?.length ? (
+          <span className="kanban-pr-status-list" aria-label="Pull request publication status">
+            {card.pullRequests.map((pullRequest) => (
+              <span
+                key={pullRequest.sourceRepositoryPath}
+                data-status={pullRequest.publicationStatus}
+                title={pullRequest.error ?? pullRequest.url ?? undefined}
+              >
+                {pullRequest.relativePath === "."
+                  ? "Pull request"
+                  : pullRequest.relativePath}
+                {": "}
+                {pullRequest.publicationStatus === "queued" ||
+                pullRequest.publicationStatus === "publishing"
+                  ? "Publishing"
+                  : pullRequest.publicationStatus === "draft"
+                    ? "Draft PR"
+                    : pullRequest.publicationStatus === "ready"
+                      ? "Ready for review"
+                      : pullRequest.publicationStatus === "nothing_to_publish"
+                        ? "Nothing to publish"
+                        : pullRequest.publicationStatus === "failed"
+                          ? "Publication failed"
+                          : pullRequest.publicationStatus === "merged"
+                            ? "Merged"
+                            : "Closed"}
+              </span>
+            ))}
           </span>
         ) : null}
     </>

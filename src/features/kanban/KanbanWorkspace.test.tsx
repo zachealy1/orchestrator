@@ -32,8 +32,15 @@ const apiMocks = vi.hoisted(() => ({
 const transcriptMocks = vi.hoisted(() => ({
   listLocalChatTranscript: vi.fn(),
 }));
+const githubMocks = vi.hoisted(() => ({
+  completeKanbanWithoutPullRequest: vi.fn(),
+  openPullRequest: vi.fn(),
+  publishKanbanCard: vi.fn(),
+  syncKanbanPullRequests: vi.fn(),
+}));
 
 vi.mock("./api", () => apiMocks);
+vi.mock("../github/api", () => githubMocks);
 const workspace: Workspace = {
   id: 1,
   path: "/workspace",
@@ -143,17 +150,6 @@ function renderWorkspace(toolbarHost?: HTMLElement | null) {
   return props;
 }
 
-async function openCommitDialog(user: ReturnType<typeof userEvent.setup>) {
-  const tile = await screen.findByRole("article", { name: /Controller card/ });
-  const trigger = within(tile).getByLabelText("Actions for Controller card");
-  await user.click(trigger);
-  await user.click(screen.getByRole("menuitem", { name: "Commit changes" }));
-  return {
-    trigger,
-    dialog: screen.getByRole("dialog", { name: "Commit changes?" }),
-  };
-}
-
 async function confirmDeleteWithWorktreeCleanup(
   user: ReturnType<typeof userEvent.setup>,
 ) {
@@ -175,6 +171,10 @@ async function confirmDeleteWithWorktreeCleanup(
 
 beforeEach(() => {
   vi.resetAllMocks();
+  githubMocks.syncKanbanPullRequests.mockResolvedValue(0);
+  githubMocks.publishKanbanCard.mockResolvedValue({ cardId: "card-1", pullRequests: [] });
+  githubMocks.openPullRequest.mockResolvedValue(undefined);
+  githubMocks.completeKanbanWithoutPullRequest.mockResolvedValue(undefined);
   transcriptMocks.listLocalChatTranscript.mockResolvedValue([]);
   const initialCard = card();
   const initialBinding = binding();
@@ -331,54 +331,117 @@ describe("KanbanWorkspace controller", () => {
     await waitFor(() => expect(callbacks.onStop).toHaveBeenCalledTimes(1));
   });
 
-  it("uses the shared modal interactions for Git confirmation", async () => {
+  it("opens the card pull request from its action menu", async () => {
     const user = userEvent.setup();
+    const reviewCard = card({
+      pullRequests: [
+        {
+          sourceRepositoryPath: "/workspace/repo",
+          relativePath: "repo",
+          owner: "owner",
+          repository: "repo",
+          number: 12,
+          url: "https://github.com/owner/repo/pull/12",
+          baseBranch: "main",
+          headBranch: "codex/controller-card",
+          draft: true,
+          state: "open",
+          publicationStatus: "draft",
+          error: null,
+          updatedAt: "2026-08-09T12:00:00Z",
+        },
+      ],
+    });
+    apiMocks.loadKanbanBoard.mockResolvedValue(snapshot([reviewCard]));
     renderWorkspace();
 
-    const { trigger, dialog } = await openCommitDialog(user);
-    expect(dialog).toHaveClass("confirmation-dialog");
-    expect(dialog).toHaveAccessibleDescription(
-      /Each repository is handled independently/,
+    const tile = await screen.findByRole("article", { name: /Controller card/ });
+    await user.click(within(tile).getByLabelText("Actions for Controller card"));
+    await user.click(screen.getByRole("menuitem", { name: "Open pull request" }));
+    expect(githubMocks.openPullRequest).toHaveBeenCalledWith(
+      "https://github.com/owner/repo/pull/12",
     );
-    const message = within(dialog).getByRole("textbox", {
-      name: "Commit message",
-    });
-    await waitFor(() => expect(message).toHaveFocus());
-    expect(message).toHaveValue("Controller card");
-    expect(
-      within(dialog).getByRole("button", { name: "Commit changes" }),
-    ).toBeEnabled();
-    await user.tab({ shift: true });
-    expect(
-      within(dialog).getByRole("button", { name: "Commit changes" }),
-    ).toHaveFocus();
-    await user.tab();
-    expect(message).toHaveFocus();
-
-    await user.keyboard("{Escape}");
-    expect(
-      screen.queryByRole("dialog", { name: "Commit changes?" }),
-    ).not.toBeInTheDocument();
-    await waitFor(() => expect(trigger).toHaveFocus());
   });
 
-  it("keeps the Git dialog modal while its action is running", async () => {
+  it("lets the user choose a repository when a card has multiple pull requests", async () => {
     const user = userEvent.setup();
-    apiMocks.commitKanbanGit.mockReturnValue(new Promise(() => undefined));
+    const reviewCard = card({
+      pullRequests: [
+        {
+          sourceRepositoryPath: "/workspace/frontend",
+          relativePath: "frontend",
+          owner: "owner",
+          repository: "frontend",
+          number: 21,
+          url: "https://github.com/owner/frontend/pull/21",
+          baseBranch: "main",
+          headBranch: "codex/controller-card",
+          draft: true,
+          state: "open",
+          publicationStatus: "draft",
+          error: null,
+          updatedAt: "2026-08-09T12:00:00Z",
+        },
+        {
+          sourceRepositoryPath: "/workspace/backend",
+          relativePath: "backend",
+          owner: "owner",
+          repository: "backend",
+          number: 34,
+          url: "https://github.com/owner/backend/pull/34",
+          baseBranch: "develop",
+          headBranch: "codex/controller-card",
+          draft: true,
+          state: "open",
+          publicationStatus: "draft",
+          error: null,
+          updatedAt: "2026-08-09T12:00:00Z",
+        },
+      ],
+    });
+    apiMocks.loadKanbanBoard.mockResolvedValue(snapshot([reviewCard]));
     renderWorkspace();
 
-    const { dialog } = await openCommitDialog(user);
-    await user.click(
-      within(dialog).getByRole("button", { name: "Commit changes" }),
-    );
+    const tile = await screen.findByRole("article", { name: /Controller card/ });
+    await user.click(within(tile).getByLabelText("Actions for Controller card"));
+    await user.click(screen.getByRole("menuitem", { name: "Open pull request" }));
 
-    expect(
-      within(dialog).getByRole("button", { name: "Committing…" }),
-    ).toBeDisabled();
-    await user.keyboard("{Escape}");
-    expect(
-      screen.getByRole("dialog", { name: "Commit changes?" }),
-    ).toBeInTheDocument();
+    const chooser = screen.getByRole("dialog", { name: "Open pull request" });
+    await user.click(within(chooser).getByRole("button", { name: /backend/ }));
+    expect(githubMocks.openPullRequest).toHaveBeenCalledWith(
+      "https://github.com/owner/backend/pull/34",
+    );
+    expect(screen.queryByRole("dialog", { name: "Open pull request" })).not.toBeInTheDocument();
+  });
+
+  it("offers retry when publication has failed", async () => {
+    const user = userEvent.setup();
+    const failedCard = card({
+      pullRequests: [
+        {
+          sourceRepositoryPath: "/workspace/repo",
+          relativePath: "repo",
+          owner: null,
+          repository: null,
+          number: null,
+          url: null,
+          baseBranch: "main",
+          headBranch: "codex/controller-card",
+          draft: true,
+          state: "open",
+          publicationStatus: "failed",
+          error: "Reconnect GitHub and retry.",
+          updatedAt: "2026-08-09T12:00:00Z",
+        },
+      ],
+    });
+    apiMocks.loadKanbanBoard.mockResolvedValue(snapshot([failedCard]));
+    renderWorkspace();
+
+    const tile = await screen.findByRole("article", { name: /Controller card/ });
+    await user.click(within(tile).getByLabelText("Actions for Controller card"));
+    await user.click(screen.getByRole("menuitem", { name: "Retry publication" }));
+    expect(githubMocks.publishKanbanCard).toHaveBeenCalledWith("card-1");
   });
 
   it("offers to clear active filters when the board has no matches", async () => {

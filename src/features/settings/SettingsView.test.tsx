@@ -10,6 +10,8 @@ function actions(): SettingsViewActions {
   return {
     setThemePreference: vi.fn(),
     setComputerUseEnabled: vi.fn(),
+    connectGithub: vi.fn(),
+    disconnectGithub: vi.fn(),
     setNotificationPreference: vi.fn(),
     openNotificationSettings: vi.fn(),
     enableNotifications: vi.fn(),
@@ -31,6 +33,8 @@ function model(overrides: Partial<SettingsViewModel> = {}): SettingsViewModel {
     themePreference: "system",
     computerUseEnabled: true,
     browserRuntimeStatus: { available: true, message: null },
+    githubConnection: null,
+    githubConnectionPending: false,
     notificationPreferences: {
       responseCompleted: true,
       approvalRequired: true,

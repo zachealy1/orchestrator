@@ -64,6 +64,7 @@ pub struct KanbanCardDto {
     pub created_at: String,
     pub updated_at: String,
     pub repositories: Vec<KanbanRepositorySelectionDto>,
+    pub pull_requests: Vec<crate::github::KanbanPullRequestDto>,
 }
 
 #[derive(Debug, Clone, Serialize, specta::Type)]
@@ -521,6 +522,7 @@ async fn load_card(
     .map_err(|error| format!("The Kanban card could not be loaded: {error}"))?
     .ok_or_else(|| "The Kanban card no longer exists.".to_string())?;
     let repositories = load_repositories(connection, card_id).await?;
+    let pull_requests = crate::github::load_card_pull_requests(connection, card_id).await?;
     Ok(KanbanCardDto {
         id: row.get("id"),
         workspace_id: row.get("workspace_id"),
@@ -549,6 +551,7 @@ async fn load_card(
         created_at: row.get("created_at"),
         updated_at: row.get("updated_at"),
         repositories,
+        pull_requests,
     })
 }
 
@@ -1598,6 +1601,13 @@ pub async fn kanban_update_attempt(
         .commit()
         .await
         .map_err(|error| format!("The card attempt could not be saved: {error}"))?;
+    if request.status == "completed" {
+        let app_for_publication = app.clone();
+        let card_id = request.card_id.clone();
+        tauri::async_runtime::spawn(async move {
+            let _ = crate::github::enqueue_card_publication(app_for_publication, card_id).await;
+        });
+    }
     Ok(ClaimKanbanAttemptResult {
         card: load_card(&mut connection, &request.card_id).await?,
         attempt: load_attempt(&mut connection, &request.attempt_id).await?,

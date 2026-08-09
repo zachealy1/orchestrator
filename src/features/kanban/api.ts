@@ -1,4 +1,5 @@
 import { commands } from "../../generated/tauri";
+import type { KanbanPullRequestRecord } from "../github/api";
 
 export type KanbanColumnKey = "todo" | "in_progress" | "in_review" | "done";
 export type KanbanExecutionStateValue =
@@ -52,6 +53,7 @@ export type KanbanCardRecord = {
   createdAt: string;
   updatedAt: string;
   repositories: KanbanRepositorySelectionRecord[];
+  pullRequests?: KanbanPullRequestRecord[];
 };
 
 export type KanbanColumnRecord = {

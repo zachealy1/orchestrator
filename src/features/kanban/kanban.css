@@ -389,6 +389,100 @@
   font-size: 0.72rem;
 }
 
+.kanban-pr-status-list {
+  display: grid;
+  gap: 3px;
+  padding-top: 2px;
+  color: var(--color-text-secondary);
+  font-size: 0.72rem;
+  line-height: 1.35;
+}
+
+.kanban-pr-chooser {
+  width: min(480px, calc(100vw - 32px));
+  gap: 16px;
+}
+
+.kanban-pr-chooser > header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.kanban-pr-chooser > header h2,
+.kanban-pr-chooser > header p {
+  margin: 0;
+}
+
+.kanban-pr-chooser > header p {
+  margin-top: 4px;
+  color: var(--color-text-secondary);
+}
+
+.kanban-pr-chooser-options {
+  display: grid;
+  gap: 8px;
+}
+
+.kanban-pr-chooser-option {
+  display: flex;
+  width: 100%;
+  min-width: 0;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 12px;
+  border: 1px solid var(--color-divider);
+  border-radius: var(--radius);
+  background: var(--color-component-background);
+  color: var(--color-text);
+  text-align: left;
+}
+
+.kanban-pr-chooser-option:hover,
+.kanban-pr-chooser-option:focus-visible {
+  background: var(--color-surface-soft);
+}
+
+.kanban-pr-chooser-option > span {
+  display: grid;
+  min-width: 0;
+  gap: 3px;
+}
+
+.kanban-pr-chooser-option strong,
+.kanban-pr-chooser-option small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.kanban-pr-chooser-option strong {
+  font-weight: 500;
+}
+
+.kanban-pr-chooser-option small {
+  color: var(--color-text-secondary);
+}
+
+.kanban-pr-status-list > span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.kanban-pr-status-list > span[data-status="draft"],
+.kanban-pr-status-list > span[data-status="ready"],
+.kanban-pr-status-list > span[data-status="merged"] {
+  color: var(--color-success);
+}
+
+.kanban-pr-status-list > span[data-status="failed"],
+.kanban-pr-status-list > span[data-status="closed"] {
+  color: var(--color-error);
+}
+
 .kanban-branch-label {
   display: inline-flex;
   min-width: 0;

@@ -120,6 +120,13 @@ import {
 } from "../features/kanban/attemptLifecycle";
 import { useKanbanRuntimeController } from "../features/kanban/useKanbanRuntimeController";
 import {
+  beginGithubConnection,
+  disconnectGithub,
+  loadGithubConnection,
+  pollGithubConnection,
+  type GithubConnectionStatus,
+} from "../features/github/api";
+import {
   persistWorkspaceSurfaceMode,
   readWorkspaceSurfaceMode,
   type WorkspaceSurfaceMode,
@@ -829,6 +836,9 @@ function App() {
   const [kanbanToolbarHost, setKanbanToolbarHost] =
     useState<HTMLDivElement | null>(null);
   const [kanbanRefreshToken, setKanbanRefreshToken] = useState(0);
+  const [githubConnection, setGithubConnection] =
+    useState<GithubConnectionStatus | null>(null);
+  const [githubConnectionPending, setGithubConnectionPending] = useState(false);
   const [kanbanCardCreatePending, setKanbanCardCreatePending] = useState(false);
   const kanbanCardCreatePendingRef = useRef(false);
   const [retainTranscriptDuringWorkspaceSwitch, setRetainTranscriptDuringWorkspaceSwitch] =
@@ -14866,6 +14876,86 @@ function App() {
     [],
   );
 
+  useEffect(() => {
+    let cancelled = false;
+    void loadGithubConnection()
+      .then((connection) => {
+        if (!cancelled) setGithubConnection(connection);
+      })
+      .catch((error) => {
+        if (!cancelled) {
+          setGithubConnection({
+            available: false,
+            connected: false,
+            login: null,
+            displayName: null,
+            avatarUrl: null,
+            status: "unavailable",
+            message: error instanceof Error ? error.message : String(error),
+            repositories: [],
+          });
+        }
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const handleConnectGithub = useCallback(async () => {
+    if (githubConnectionPending) return;
+    setGithubConnectionPending(true);
+    try {
+      const authorization = await beginGithubConnection();
+      await openUrl(authorization.verificationUri);
+      setStatusMessage(
+        `Enter GitHub code ${authorization.userCode} in the browser to connect.`,
+      );
+      const deadline = Date.now() + authorization.expiresInSeconds * 1_000;
+      while (Date.now() < deadline) {
+        await new Promise((resolve) =>
+          window.setTimeout(resolve, authorization.intervalSeconds * 1_000),
+        );
+        try {
+          const connection = await pollGithubConnection();
+          setGithubConnection(connection);
+          setStatusMessage(`Connected GitHub as ${connection.login ?? "your account"}.`);
+          return;
+        } catch (error) {
+          const message = error instanceof Error ? error.message : String(error);
+          if (message === "authorization_pending") continue;
+          throw error;
+        }
+      }
+      throw new Error("GitHub authorization expired. Try again.");
+    } catch (error) {
+      setStatusMessage(
+        `Could not connect GitHub: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+      );
+    } finally {
+      setGithubConnectionPending(false);
+    }
+  }, [githubConnectionPending]);
+
+  const handleDisconnectGithub = useCallback(async () => {
+    if (githubConnectionPending) return;
+    setGithubConnectionPending(true);
+    try {
+      await disconnectGithub();
+      setGithubConnection(await loadGithubConnection());
+      setStatusMessage("GitHub disconnected.");
+    } catch (error) {
+      setStatusMessage(
+        `Could not disconnect GitHub: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+      );
+    } finally {
+      setGithubConnectionPending(false);
+    }
+  }, [githubConnectionPending]);
+
   const handleEnableAgentNotifications = useCallback(async () => {
     try {
       const permission = await requestAgentNotificationPermission();
@@ -15986,6 +16076,8 @@ function App() {
                 themePreference,
                 computerUseEnabled,
                 browserRuntimeStatus,
+                githubConnection,
+                githubConnectionPending,
                 notificationPreferences: agentNotificationPreferences,
                 notificationPermission: agentNotificationPermission,
                 codexConnected,
@@ -16004,6 +16096,8 @@ function App() {
               actions={{
                 setThemePreference,
                 setComputerUseEnabled,
+                connectGithub: () => void handleConnectGithub(),
+                disconnectGithub: () => void handleDisconnectGithub(),
                 setNotificationPreference: handleAgentNotificationPreferenceChange,
                 openNotificationSettings: () =>
                   void handleOpenAgentNotificationSettings(),

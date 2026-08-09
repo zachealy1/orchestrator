@@ -28,7 +28,7 @@ fn resolved_plugin_migrator(
 }
 
 #[test]
-fn existing_versions_one_through_twenty_five_upgrade_through_thirty_one() {
+fn existing_versions_one_through_twenty_five_upgrade_through_thirty_two() {
     tauri::async_runtime::block_on(async {
         let mut connection = SqliteConnection::connect("sqlite::memory:")
             .await
@@ -58,7 +58,7 @@ fn existing_versions_one_through_twenty_five_upgrade_through_thirty_one() {
         .fetch_one(&mut connection)
         .await
         .expect("count upgraded migrations");
-        assert_eq!(applied_count, 31);
+        assert_eq!(applied_count, 32);
 
         resolved_plugin_migrator(MIGRATION_DEFINITIONS)
             .run_direct(&mut connection)
@@ -218,6 +218,28 @@ fn kanban_schema_migrations_apply_from_a_clean_database() {
         assert!(operation_columns
             .iter()
             .any(|column| column == "request_fingerprint"));
+
+        let github_tables: Vec<String> = sqlx::query_scalar(
+            "SELECT name FROM sqlite_master
+             WHERE type = 'table' AND name IN (
+               'github_connections', 'github_installations',
+               'github_installation_repositories', 'kanban_pull_requests'
+             ) ORDER BY name",
+        )
+        .fetch_all(&mut connection)
+        .await
+        .expect("read GitHub publication tables");
+        assert_eq!(github_tables.len(), 4);
+
+        let publication_columns: Vec<String> =
+            sqlx::query_scalar("SELECT name FROM pragma_table_info('kanban_pull_requests')")
+                .fetch_all(&mut connection)
+                .await
+                .expect("read pull request publication columns");
+        assert!(publication_columns
+            .iter()
+            .any(|column| column == "publication_status"));
+        assert!(publication_columns.iter().any(|column| column == "etag"));
     });
 }
 

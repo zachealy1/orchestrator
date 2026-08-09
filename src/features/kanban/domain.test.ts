@@ -166,32 +166,38 @@ describe("deriveCardCapabilities", () => {
     expect(capabilities.resume.enabled).toBe(true);
   });
 
-  it("enables review and Git actions without treating Git as approval", () => {
+  it("uses GitHub pull requests as the review authority", () => {
     const capabilities = deriveCardCapabilities(
       card({
         stage: "in_review",
         executionState: "completed",
         reviewState: "awaiting_review",
+        pullRequests: [
+          {
+            sourceRepositoryPath: "/workspace/repo",
+            relativePath: "repo",
+            owner: "owner",
+            repository: "repo",
+            number: 12,
+            url: "https://github.com/owner/repo/pull/12",
+            baseBranch: "main",
+            headBranch: "codex/card",
+            draft: true,
+            state: "open",
+            publicationStatus: "draft",
+            error: null,
+            updatedAt: "2026-08-09T12:00:00Z",
+          },
+        ],
       }),
     );
 
-    expect(capabilities.commit.enabled).toBe(true);
-    expect(capabilities.commit_and_push.enabled).toBe(true);
-    expect(capabilities.merge.enabled).toBe(true);
-    expect(capabilities.request_changes.enabled).toBe(true);
-    expect(capabilities.approve_result).toMatchObject({
-      enabled: true,
-      requiresConfirmation: true,
-    });
-    expect(
-      deriveCardCapabilities(
-        card({
-          stage: "in_review",
-          executionState: "stopped",
-          reviewState: "awaiting_review",
-        }),
-      ).request_changes.enabled,
-    ).toBe(false);
+    expect(capabilities.open_pull_request.enabled).toBe(true);
+    expect(capabilities.commit.enabled).toBe(false);
+    expect(capabilities.commit_and_push.enabled).toBe(false);
+    expect(capabilities.merge.enabled).toBe(false);
+    expect(capabilities.request_changes.enabled).toBe(false);
+    expect(capabilities.approve_result.enabled).toBe(false);
   });
 
   it("restricts archived and deleted cards", () => {
@@ -288,22 +294,16 @@ describe("Kanban lifecycle transitions", () => {
     ).toBe(true);
   });
 
-  it("requires explicit request-changes and result-approval workflows", () => {
+  it("prevents local review transitions while GitHub owns review", () => {
     const review = card({
       stage: "in_review",
       executionState: "completed",
       reviewState: "awaiting_review",
     });
 
-    expect(deriveCardTransition(review, "in_progress")).toMatchObject({
-      action: "request_changes",
-      requiresConfirmation: true,
-    });
-    expect(deriveCardTransition(review, "done")).toMatchObject({
-      action: "approve_result",
-      requiresConfirmation: true,
-    });
-    expect(canTransitionCard(review, "done", "approve_result")).toBe(true);
+    expect(deriveCardTransition(review, "in_progress").allowed).toBe(false);
+    expect(deriveCardTransition(review, "done").allowed).toBe(false);
+    expect(canTransitionCard(review, "done", "approve_result")).toBe(false);
   });
 
   it("only reopens an approved Done card into review", () => {

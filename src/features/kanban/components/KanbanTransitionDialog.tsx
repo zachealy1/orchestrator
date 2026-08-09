@@ -63,6 +63,14 @@ const COPY: Record<
     confirm: "Approve and mark Done",
     danger: false,
   },
+  "complete-without-pr": {
+    eyebrow: "No repository changes",
+    title: "Complete without a pull request?",
+    description:
+      "Git found no changes or commits to publish. This marks the card Done without creating a pull request.",
+    confirm: "Mark Done",
+    danger: false,
+  },
   "request-changes": {
     eyebrow: "Continue work",
     title: "Return this card to In progress?",
@@ -101,7 +109,9 @@ function ConfirmIcon({ kind }: { kind: KanbanTransitionKind }) {
   if (kind === "stop" || kind === "stop-and-move") {
     return <CircleStop size={16} aria-hidden="true" />;
   }
-  if (kind === "approve-done") return <Check size={16} aria-hidden="true" />;
+  if (kind === "approve-done" || kind === "complete-without-pr") {
+    return <Check size={16} aria-hidden="true" />;
+  }
   if (kind === "request-changes") return <RefreshCw size={16} aria-hidden="true" />;
   if (kind === "archive") return <Archive size={16} aria-hidden="true" />;
   return <Trash2 size={16} aria-hidden="true" />;

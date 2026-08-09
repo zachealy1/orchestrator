@@ -37,7 +37,10 @@ export type KanbanCardAction =
   | "commit-and-push"
   | "merge"
   | "request-changes"
-  | "approve";
+  | "approve"
+  | "open-pull-request"
+  | "retry-publication"
+  | "complete-without-pr";
 
 export type KanbanRepository = {
   id: string;
@@ -79,6 +82,7 @@ export type KanbanCard = {
   hasUnreadActivity?: boolean;
   archivedAt?: string | null;
   lastActivityAt?: string | null;
+  pullRequests?: import("../../github/api").KanbanPullRequestRecord[];
 };
 
 export type KanbanColumn = {
@@ -143,6 +147,7 @@ export type KanbanTransitionKind =
   | "stop"
   | "stop-and-move"
   | "approve-done"
+  | "complete-without-pr"
   | "request-changes"
   | "archive"
   | "delete"

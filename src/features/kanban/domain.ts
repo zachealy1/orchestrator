@@ -1,4 +1,5 @@
 import type { CodexAccessMode } from "../codex/types";
+import type { KanbanPullRequestRecord } from "../github/api";
 
 export const KANBAN_STAGES = [
   "todo",
@@ -68,6 +69,7 @@ export type KanbanCard = {
   lastError: string | null;
   createdAt: string;
   updatedAt: string;
+  pullRequests?: readonly KanbanPullRequestRecord[];
 };
 
 export type KanbanColumn = {
@@ -158,7 +160,10 @@ export type KanbanCardAction =
   | "merge"
   | "request_changes"
   | "approve_result"
-  | "reopen_review";
+  | "reopen_review"
+  | "open_pull_request"
+  | "retry_publication"
+  | "complete_without_pr";
 
 export type KanbanCapability = {
   enabled: boolean;
@@ -251,12 +256,16 @@ export function deriveCardCapabilities(
     card.executionState === "paused" ||
     card.executionState === "blocked" ||
     card.executionState === "interrupted";
-  const reviewable =
-    (card.stage === "in_review" || card.stage === "done") && !locked;
-  const awaitingReview =
-    card.stage === "in_review" &&
-    card.executionState === "completed" &&
-    card.reviewState === "awaiting_review";
+  const pullRequests = card.pullRequests ?? [];
+  const hasPullRequest = pullRequests.some((pullRequest) => pullRequest.url);
+  const publicationFailed = pullRequests.some(
+    (pullRequest) => pullRequest.publicationStatus === "failed",
+  );
+  const nothingToPublish =
+    pullRequests.length > 0 &&
+    pullRequests.every(
+      (pullRequest) => pullRequest.publicationStatus === "nothing_to_publish",
+    );
 
   return {
     start: capability(
@@ -308,34 +317,23 @@ export function deriveCardCapabilities(
       "Stop the active attempt before deleting this card.",
       true,
     ),
-    commit: capability(
-      available && reviewable,
-      "Git actions are available after execution reaches review.",
-    ),
-    push: capability(
-      available && reviewable,
-      "Git actions are available after execution reaches review.",
-    ),
+    commit: capability(false, "Completed Kanban work is published automatically."),
+    push: capability(false, "Completed Kanban work is published automatically."),
     commit_and_push: capability(
-      available && reviewable,
-      "Git actions are available after execution reaches review.",
+      false,
+      "Completed Kanban work is published automatically.",
     ),
     merge: capability(
-      available && reviewable,
-      "Git actions are available after execution reaches review.",
+      false,
+      "Review and merging take place on GitHub.",
     ),
     request_changes: capability(
-      available &&
-        card.stage === "in_review" &&
-        card.executionState === "completed" &&
-        card.reviewState === "awaiting_review" &&
-        !locked,
-      "Changes can only be requested for a result awaiting review.",
+      false,
+      "Request changes on GitHub.",
     ),
     approve_result: capability(
-      available && awaitingReview,
-      "Only a completed result awaiting review can be approved.",
-      true,
+      false,
+      "Approve and merge the pull request on GitHub.",
     ),
     reopen_review: capability(
       available &&
@@ -343,6 +341,19 @@ export function deriveCardCapabilities(
         card.reviewState === "approved" &&
         !locked,
       "Only an approved Done card can be reopened.",
+    ),
+    open_pull_request: capability(
+      available && hasPullRequest,
+      "This card does not have a pull request yet.",
+    ),
+    retry_publication: capability(
+      available && card.stage === "in_review" && publicationFailed,
+      "This card has no failed publication to retry.",
+    ),
+    complete_without_pr: capability(
+      available && card.stage === "in_review" && nothingToPublish,
+      "Only cards with nothing to publish can be completed without a pull request.",
+      true,
     ),
   };
 }
@@ -420,11 +431,7 @@ export function deriveCardTransition(
     );
   }
   if (trigger === "approve_result") {
-    return transition(
-      target === "done" && capabilities.approve_result.enabled,
-      "approve_result",
-      true,
-    );
+    return transition(false, "none", false, "Merge the card pull request on GitHub to complete it.");
   }
   if (trigger === "reopen_review") {
     return transition(
