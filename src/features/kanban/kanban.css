@@ -180,6 +180,14 @@
   opacity: 1;
 }
 
+.kanban-column-empty:hover:not(:disabled) {
+  border-color: var(--color-divider);
+  background: transparent;
+  box-shadow: none;
+  color: var(--color-text-secondary);
+  transform: none;
+}
+
 .kanban-column-empty span {
   font-size: 0.82rem;
   font-weight: 650;
