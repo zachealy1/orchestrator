@@ -1891,16 +1891,19 @@ button.kanban-card-content {
 }
 
 .kanban-local-review-drawer {
-  position: absolute;
-  z-index: 24;
-  inset: 0 0 0 auto;
+  position: fixed;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 40;
   display: grid;
-  width: min(720px, 48vw);
-  min-width: 440px;
+  width: 520px;
+  min-width: 360px;
+  max-width: calc(100vw - 360px);
   grid-template-rows: auto auto auto minmax(0, 1fr) auto;
   border-left: 1px solid var(--color-divider);
   background: var(--color-component-background);
-  box-shadow: var(--shadow);
+  box-shadow: -18px 0 48px rgb(var(--shadow-rgb) / 0.18);
 }
 
 .kanban-local-review-drawer > header,
@@ -2132,6 +2135,7 @@ button.kanban-card-content {
   .kanban-local-review-drawer {
     width: 100%;
     min-width: 0;
+    max-width: none;
   }
 }
 

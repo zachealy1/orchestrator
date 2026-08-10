@@ -20,7 +20,9 @@ function rule(selector: string) {
 
 describe("Kanban local review styles", () => {
   it("uses opaque shared application surfaces for the drawer and diff", () => {
-    expect(rule(".kanban-local-review-drawer")).toContain(
+    const drawer = rule(".kanban-local-review-drawer");
+
+    expect(drawer).toContain(
       "background: var(--color-component-background)",
     );
     expect(rule(".kanban-local-review-diff")).toContain(
@@ -28,5 +30,17 @@ describe("Kanban local review styles", () => {
     );
     expect(css).not.toContain("background: var(--color-surface);");
     expect(css).not.toContain("background: var(--color-component);");
+  });
+
+  it("owns the full viewport edge like the file preview drawer", () => {
+    const drawer = rule(".kanban-local-review-drawer");
+
+    expect(drawer).toContain("position: fixed");
+    expect(drawer).toContain("top: 0");
+    expect(drawer).toContain("right: 0");
+    expect(drawer).toContain("bottom: 0");
+    expect(drawer).toContain("z-index: 40");
+    expect(drawer).toContain("width: 520px");
+    expect(drawer).toContain("max-width: calc(100vw - 360px)");
   });
 });
