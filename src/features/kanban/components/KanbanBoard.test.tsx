@@ -7,6 +7,8 @@ import type { KanbanCard, KanbanColumn } from "./types";
 function card(overrides: Partial<KanbanCard> = {}): KanbanCard {
   return {
     id: "card-1",
+    chatId: 11,
+    hasStartedTurn: false,
     title: "Add Kanban mode",
     description: "Build the board experience",
     columnId: "todo",
@@ -96,6 +98,51 @@ describe("KanbanBoard", () => {
     expect(screen.queryByRole("button", { name: /Create card in/ })).not.toBeInTheDocument();
     expect(
       screen.queryByRole("button", { name: /Move .* column/ }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("opens only cards whose first Codex turn was accepted", async () => {
+    const user = userEvent.setup();
+    const onOpenConversation = vi.fn();
+    const startedColumns = columns().map((column) => ({
+      ...column,
+      cards: column.cards.map((item) =>
+        item.id === "card-first"
+          ? { ...item, hasStartedTurn: true }
+          : item,
+      ),
+    }));
+
+    render(
+      <KanbanBoard
+        columns={startedColumns}
+        onMoveCard={vi.fn()}
+        onOpenConversation={onOpenConversation}
+      />,
+    );
+
+    const openButton = screen.getByRole("button", {
+      name: "Open conversation for First card",
+    });
+    await user.click(openButton);
+    expect(onOpenConversation).toHaveBeenCalledWith(
+      expect.objectContaining({ id: "card-first", chatId: 11 }),
+    );
+
+    onOpenConversation.mockClear();
+    openButton.focus();
+    await user.keyboard("{Enter}");
+    await user.keyboard(" ");
+    expect(onOpenConversation).toHaveBeenCalledTimes(2);
+
+    await user.click(
+      screen.getByRole("button", { name: "Actions for First card" }),
+    );
+    expect(onOpenConversation).toHaveBeenCalledTimes(2);
+    expect(
+      screen.queryByRole("button", {
+        name: "Open conversation for Second card",
+      }),
     ).not.toBeInTheDocument();
   });
 

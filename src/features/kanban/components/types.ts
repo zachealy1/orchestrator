@@ -59,6 +59,8 @@ export type KanbanBranchBinding = {
 
 export type KanbanCard = {
   id: string;
+  chatId: number;
+  hasStartedTurn: boolean;
   title: string;
   description: string;
   columnId: KanbanColumnId;

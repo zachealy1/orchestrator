@@ -61,6 +61,7 @@ pub struct KanbanCardDto {
     pub approved_at: Option<String>,
     pub last_error: Option<String>,
     pub has_inherited_context: bool,
+    pub has_started_turn: bool,
     pub created_at: String,
     pub updated_at: String,
     pub repositories: Vec<KanbanRepositorySelectionDto>,
@@ -513,7 +514,12 @@ async fn load_card(
             repository_scope, stage,
             sort_position, execution_state, review_state, current_attempt_id,
             state_version, archived_at, deleted_at, approved_at, last_error,
-            created_at, updated_at, inherited_context
+            created_at, updated_at, inherited_context,
+            EXISTS(
+                SELECT 1 FROM kanban_attempts
+                WHERE kanban_attempts.card_id = kanban_cards.id
+                  AND kanban_attempts.turn_id IS NOT NULL
+            ) AS has_started_turn
          FROM kanban_cards WHERE id = ?1",
     )
     .bind(card_id)
@@ -548,11 +554,38 @@ async fn load_card(
         has_inherited_context: row
             .get::<Option<String>, _>("inherited_context")
             .is_some_and(|context| !context.trim().is_empty()),
+        has_started_turn: row.get::<i64, _>("has_started_turn") != 0,
         created_at: row.get("created_at"),
         updated_at: row.get("updated_at"),
         repositories,
         pull_requests,
     })
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn kanban_card_for_chat(
+    app: AppHandle,
+    chat_id: i64,
+) -> Result<Option<KanbanCardDto>, String> {
+    if chat_id <= 0 {
+        return Err("The Kanban chat identifier is invalid.".to_string());
+    }
+    let mut connection = open_database(&app).await?;
+    let card_id = sqlx::query_scalar::<_, String>(
+        "SELECT id FROM kanban_cards
+         WHERE chat_id = ?1 AND deleted_at IS NULL
+         ORDER BY created_at DESC, id DESC
+         LIMIT 1",
+    )
+    .bind(chat_id)
+    .fetch_optional(&mut *connection)
+    .await
+    .map_err(|error| format!("The Kanban card conversation could not be loaded: {error}"))?;
+    match card_id {
+        Some(card_id) => load_card(&mut *connection, &card_id).await.map(Some),
+        None => Ok(None),
+    }
 }
 
 async fn load_attempt(
@@ -1465,6 +1498,36 @@ pub async fn kanban_claim_attempt(
     })
 }
 
+async fn card_has_pending_follow_up(
+    transaction: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
+    card_id: &str,
+    current_run_id: Option<i64>,
+    current_turn_id: Option<&str>,
+) -> Result<bool, String> {
+    sqlx::query_scalar::<_, bool>(
+        "SELECT EXISTS(
+            SELECT 1
+            FROM prompt_queue_items AS queue
+            JOIN kanban_cards AS queued_card ON queued_card.chat_id = queue.chat_id
+            WHERE queued_card.id = ?1
+              AND queue.status IN (
+                'queued','scheduled-next','starting','steering','active','stale'
+              )
+              AND (queue.auto_send_enabled = 1 OR queue.send_now_priority IS NOT NULL)
+              AND NOT (
+                (?2 IS NOT NULL AND COALESCE(queue.linked_run_id = ?2, 0))
+                OR (?3 IS NOT NULL AND COALESCE(queue.linked_turn_id = ?3, 0))
+              )
+        )",
+    )
+    .bind(card_id)
+    .bind(current_run_id)
+    .bind(current_turn_id)
+    .fetch_one(&mut **transaction)
+    .await
+    .map_err(|error| format!("The card follow-up queue could not be checked: {error}"))
+}
+
 #[tauri::command]
 #[specta::specta]
 pub async fn kanban_update_attempt(
@@ -1591,6 +1654,14 @@ pub async fn kanban_update_attempt(
     .execute(&mut *transaction)
     .await
     .map_err(|error| format!("The card attempt event could not be saved: {error}"))?;
+    let publication_deferred = request.status == "completed"
+        && card_has_pending_follow_up(
+            &mut transaction,
+            &request.card_id,
+            request.run_id,
+            request.turn_id.as_deref(),
+        )
+        .await?;
     sqlx::query("UPDATE kanban_boards SET revision = revision + 1, updated_at = CURRENT_TIMESTAMP WHERE workspace_id = ?1")
         .bind(workspace_id)
         .execute(&mut *transaction)
@@ -1601,7 +1672,7 @@ pub async fn kanban_update_attempt(
         .commit()
         .await
         .map_err(|error| format!("The card attempt could not be saved: {error}"))?;
-    if request.status == "completed" {
+    if request.status == "completed" && !publication_deferred {
         let app_for_publication = app.clone();
         let card_id = request.card_id.clone();
         tauri::async_runtime::spawn(async move {
@@ -2437,6 +2508,78 @@ mod tests {
         assert!(!attempt_status_transition_allowed("blocked", "running"));
         assert!(attempt_status_transition_allowed("blocked", "interrupted"));
         assert!(!attempt_status_transition_allowed("completed", "running"));
+    }
+
+    #[test]
+    fn publication_waits_for_another_eligible_card_follow_up() {
+        tauri::async_runtime::block_on(async {
+            let mut connection = SqliteConnection::connect("sqlite::memory:")
+                .await
+                .expect("open queue database");
+            sqlx::query("CREATE TABLE kanban_cards (id TEXT PRIMARY KEY, chat_id INTEGER NOT NULL)")
+                .execute(&mut connection)
+                .await
+                .expect("create cards table");
+            sqlx::query(
+                "CREATE TABLE prompt_queue_items (
+                    id TEXT PRIMARY KEY,
+                    chat_id INTEGER NOT NULL,
+                    status TEXT NOT NULL,
+                    auto_send_enabled INTEGER NOT NULL,
+                    send_now_priority INTEGER,
+                    linked_run_id INTEGER,
+                    linked_turn_id TEXT
+                )",
+            )
+            .execute(&mut connection)
+            .await
+            .expect("create queue table");
+            sqlx::query("INSERT INTO kanban_cards (id, chat_id) VALUES ('card-1', 11)")
+                .execute(&mut connection)
+                .await
+                .expect("insert card");
+            sqlx::query(
+                "INSERT INTO prompt_queue_items (
+                    id, chat_id, status, auto_send_enabled, linked_run_id, linked_turn_id
+                ) VALUES
+                    ('current', 11, 'active', 1, 7, 'turn-current'),
+                    ('next', 11, 'queued', 1, NULL, NULL)",
+            )
+            .execute(&mut connection)
+            .await
+            .expect("insert queue items");
+
+            let mut transaction = connection.begin().await.expect("begin check");
+            assert!(
+                card_has_pending_follow_up(
+                    &mut transaction,
+                    "card-1",
+                    Some(7),
+                    Some("turn-current"),
+                )
+                .await
+                .expect("check pending follow-up")
+            );
+            transaction.rollback().await.expect("rollback check");
+
+            sqlx::query(
+                "UPDATE prompt_queue_items SET auto_send_enabled = 0 WHERE id = 'next'",
+            )
+            .execute(&mut connection)
+            .await
+            .expect("hold next item");
+            let mut transaction = connection.begin().await.expect("begin held check");
+            assert!(
+                !card_has_pending_follow_up(
+                    &mut transaction,
+                    "card-1",
+                    Some(7),
+                    Some("turn-current"),
+                )
+                .await
+                .expect("check held follow-up")
+            );
+        });
     }
 
     #[test]

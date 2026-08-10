@@ -74,6 +74,7 @@ function card(overrides: Partial<KanbanCardRecord> = {}): KanbanCardRecord {
     approvedAt: null,
     lastError: null,
     hasInheritedContext: false,
+    hasStartedTurn: true,
     createdAt: "2026-08-02T10:00:00Z",
     updatedAt: "2026-08-02T10:01:00Z",
     repositories: [
@@ -132,6 +133,7 @@ function renderWorkspace(toolbarHost?: HTMLElement | null) {
     onLaunch: vi.fn().mockResolvedValue(undefined),
     onPause: vi.fn().mockResolvedValue(undefined),
     onStop: vi.fn().mockResolvedValue(undefined),
+    onOpenConversation: vi.fn().mockResolvedValue(undefined),
   };
 
   render(

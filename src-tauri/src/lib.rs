@@ -106,6 +106,7 @@ fn command_builder() -> tauri_specta::Builder<tauri::Wry> {
             save_preflight_report_transaction,
             upsert_external_codex_chats_transaction,
             kanban_store::kanban_board_snapshot,
+            kanban_store::kanban_card_for_chat,
             kanban_store::kanban_create_card,
             kanban_store::kanban_update_card,
             kanban_store::kanban_move_card,

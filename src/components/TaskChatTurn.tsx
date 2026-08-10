@@ -232,6 +232,8 @@ export const TaskChatTurn = memo(function TaskChatTurn({
             <article
               className="submitted-prompt"
               aria-label="Submitted prompt"
+              tabIndex={-1}
+              data-agent-notification-target="prompt"
               onCopy={(event) => {
                 writeSubmittedPromptClipboard(
                   event,

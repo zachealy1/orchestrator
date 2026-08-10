@@ -32,6 +32,7 @@ function card(overrides: Partial<KanbanCardRecord> = {}): KanbanCardRecord {
     approvedAt: null,
     lastError: null,
     hasInheritedContext: false,
+    hasStartedTurn: true,
     createdAt: "2026-08-02T10:00:00Z",
     updatedAt: "2026-08-02T10:01:00Z",
     repositories: [

@@ -117,6 +117,7 @@ type Props = {
   ) => Promise<void>;
   onPause: (card: KanbanCardRecord) => Promise<void>;
   onStop: (card: KanbanCardRecord) => Promise<void>;
+  onOpenConversation: (card: KanbanCardRecord) => Promise<void>;
   onPickContextFiles?: () => Promise<ComposerContextFile[]>;
   toolbarHost?: HTMLElement | null;
 };
@@ -493,6 +494,7 @@ function toDomainCard(card: KanbanCardRecord): DomainKanbanCard {
     deletedAt: card.deletedAt,
     approvedAt: card.approvedAt,
     lastError: card.lastError,
+    hasStartedTurn: card.hasStartedTurn,
     createdAt: card.createdAt,
     updatedAt: card.updatedAt,
     pullRequests: card.pullRequests,
@@ -611,6 +613,7 @@ export function KanbanWorkspace({
   onLaunch,
   onPause,
   onStop,
+  onOpenConversation,
   onPickContextFiles,
   toolbarHost,
 }: Props) {
@@ -849,6 +852,8 @@ export function KanbanWorkspace({
       const bindings = loadedBindings ?? [];
       return {
         id: card.id,
+        chatId: card.chatId,
+        hasStartedTurn: card.hasStartedTurn,
         title: card.title,
         description: card.description,
         columnId: STAGE_TO_VIEW[card.stage],
@@ -1713,6 +1718,10 @@ export function KanbanWorkspace({
                 disabled={busy}
                 onMoveCard={(request) => void handleMove(request)}
                 onCardAction={(action, card) => void handleCardAction(action, card)}
+                onOpenConversation={(card) => {
+                  const persisted = cardsById.get(card.id);
+                  if (persisted) void onOpenConversation(persisted);
+                }}
               />
             </section>
           ))}
@@ -1736,6 +1745,10 @@ export function KanbanWorkspace({
           disabled={busy}
           onMoveCard={(request) => void handleMove(request)}
           onCardAction={(action, card) => void handleCardAction(action, card)}
+          onOpenConversation={(card) => {
+            const persisted = cardsById.get(card.id);
+            if (persisted) void onOpenConversation(persisted);
+          }}
         />
       )}
 

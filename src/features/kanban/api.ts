@@ -50,6 +50,7 @@ export type KanbanCardRecord = {
   approvedAt: string | null;
   lastError: string | null;
   hasInheritedContext: boolean;
+  hasStartedTurn: boolean;
   createdAt: string;
   updatedAt: string;
   repositories: KanbanRepositorySelectionRecord[];
@@ -230,6 +231,10 @@ export function loadKanbanBoard(
     workspaceId,
     options.includeArchived ?? false,
   ) as Promise<KanbanBoardSnapshotRecord>;
+}
+
+export function getKanbanCardForChat(chatId: number) {
+  return commands.kanbanCardForChat(chatId) as Promise<KanbanCardRecord | null>;
 }
 
 export function createKanbanCard(

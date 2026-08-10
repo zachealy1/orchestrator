@@ -34,6 +34,7 @@ export type KanbanBoardProps = {
   disabled?: boolean;
   onMoveCard: (request: KanbanMoveRequest) => void;
   onCardAction?: (action: KanbanCardAction, card: KanbanCard) => void;
+  onOpenConversation?: (card: KanbanCard) => void;
 };
 
 type DragKind = "card";
@@ -69,10 +70,12 @@ function SortableCard({
   card,
   disabled,
   onAction,
+  onOpenConversation,
 }: {
   card: KanbanCard;
   disabled: boolean;
   onAction?: (action: KanbanCardAction, card: KanbanCard) => void;
+  onOpenConversation?: (card: KanbanCard) => void;
 }) {
   const {
     attributes,
@@ -105,6 +108,7 @@ function SortableCard({
         actionsDisabled={disabled}
         dragHandleProps={dragHandleProps}
         onAction={onAction}
+        onOpenConversation={onOpenConversation}
       />
     </div>
   );
@@ -115,11 +119,13 @@ function SortableColumn({
   disabled,
   target,
   onCardAction,
+  onOpenConversation,
 }: {
   column: KanbanColumn;
   disabled: boolean;
   target: boolean;
   onCardAction?: (action: KanbanCardAction, card: KanbanCard) => void;
+  onOpenConversation?: (card: KanbanCard) => void;
 }) {
   const { setNodeRef: setDropRef, isOver } = useDroppable({
     id: columnDropId(column.id),
@@ -163,6 +169,7 @@ function SortableColumn({
                   card={card}
                   disabled={disabled}
                   onAction={onCardAction}
+                  onOpenConversation={onOpenConversation}
                 />
               ))}
             </div>
@@ -190,6 +197,7 @@ export function KanbanBoard({
   disabled = false,
   onMoveCard,
   onCardAction,
+  onOpenConversation,
 }: KanbanBoardProps) {
   const orderedColumns = useMemo(() => sortedColumns(columns), [columns]);
   const [activeCard, setActiveCard] = useState<KanbanCard | null>(null);
@@ -291,6 +299,7 @@ export function KanbanBoard({
               disabled={disabled}
               target={dropTargetColumn === column.id}
               onCardAction={onCardAction}
+              onOpenConversation={onOpenConversation}
             />
           ))}
         </div>

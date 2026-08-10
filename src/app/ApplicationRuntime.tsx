@@ -110,7 +110,10 @@ import { SubagentInspector } from "../components/SubagentInspector";
 import { KanbanWorkspace } from "../features/kanban/KanbanWorkspace";
 import {
   createKanbanCard,
+  getKanbanCardForChat,
   recoverInterruptedKanbanAttempts,
+  reopenKanbanCard,
+  type KanbanCardRecord,
 } from "../features/kanban/api";
 import {
   KanbanAttemptStateController,
@@ -841,6 +844,7 @@ function App() {
   const [githubConnectionPending, setGithubConnectionPending] = useState(false);
   const [kanbanCardCreatePending, setKanbanCardCreatePending] = useState(false);
   const kanbanCardCreatePendingRef = useRef(false);
+  const kanbanConversationNavigationIdRef = useRef(0);
   const [retainTranscriptDuringWorkspaceSwitch, setRetainTranscriptDuringWorkspaceSwitch] =
     useState(false);
   const kanbanAttempts = useMemo(
@@ -3939,6 +3943,7 @@ function App() {
       return;
     }
 
+    kanbanConversationNavigationIdRef.current += 1;
     cancelAgentNotificationNavigation();
     const previousWorkspaceId = selectedWorkspaceRef.current?.id ?? null;
     if (previousWorkspaceId === workspace.id) {
@@ -6312,6 +6317,9 @@ function App() {
     chat: ChatListItem,
     options: SelectHistoryChatOptions = {},
   ): Promise<boolean> {
+    if (options.source !== "kanban") {
+      kanbanConversationNavigationIdRef.current += 1;
+    }
     if (options.source !== "notification") {
       cancelAgentNotificationNavigation();
     }
@@ -6370,6 +6378,9 @@ function App() {
     if (runningControl) {
       const liveEntry = runningControl.entry;
       flushSync(() => {
+        if (options.source === "kanban") {
+          setWorkspaceSurfaceMode("chat");
+        }
         applyWorkspaceForChatNavigation(targetWorkspace);
         setChatHistoryContextMenu(null);
         setSelectedDraftChat(null);
@@ -6412,6 +6423,9 @@ function App() {
     }
 
     flushSync(() => {
+      if (options.source === "kanban") {
+        setWorkspaceSurfaceMode("chat");
+      }
       applyWorkspaceForChatNavigation(targetWorkspace);
       setChatHistoryContextMenu(null);
       setSelectedDraftChat(null);
@@ -6502,6 +6516,59 @@ function App() {
         `Could not open chat: ${message}`,
       );
       return false;
+    }
+  }
+
+  async function openKanbanCardConversation(card: KanbanCardRecord) {
+    if (!card.hasStartedTurn) return;
+    const targetWorkspace = workspacesRef.current.find(
+      (workspace) => workspace.id === card.workspaceId,
+    );
+    if (!targetWorkspace) {
+      setStatusMessage("The workspace for that card is no longer available.");
+      return;
+    }
+
+    const navigationId = kanbanConversationNavigationIdRef.current + 1;
+    kanbanConversationNavigationIdRef.current = navigationId;
+    try {
+      const chatWithRuns = await getChatWithRuns(card.chatId);
+      if (kanbanConversationNavigationIdRef.current !== navigationId) return;
+      if (!chatWithRuns) {
+        setStatusMessage("The conversation for that card is no longer available.");
+        return;
+      }
+      const opened = await selectHistoryChat(chatWithRuns.chat, {
+        source: "kanban",
+        workspace: targetWorkspace,
+        positionIntent: "latest",
+      });
+      if (
+        opened &&
+        kanbanConversationNavigationIdRef.current === navigationId
+      ) {
+        const latestRun =
+          chatWithRuns.runs[chatWithRuns.runs.length - 1] ?? null;
+        if (latestRun) {
+          notificationFocusSequenceRef.current += 1;
+          setTranscriptNotificationFocusRequest({
+            requestId: notificationFocusSequenceRef.current,
+            kind: "prompt",
+            runId: latestRun.id,
+            turnId: latestRun.codex_turn_id,
+          });
+        }
+      }
+      if (
+        !opened &&
+        kanbanConversationNavigationIdRef.current === navigationId
+      ) {
+        setWorkspaceSurfaceMode("kanban");
+      }
+    } catch (error) {
+      if (kanbanConversationNavigationIdRef.current !== navigationId) return;
+      const message = error instanceof Error ? error.message : String(error);
+      setStatusMessage(`Could not open the card conversation: ${message}`);
     }
   }
 
@@ -10197,6 +10264,38 @@ function App() {
       throw new Error(
         "The queued prompt's reasoning level is no longer available.",
       );
+    }
+    let kanbanCard = await getKanbanCardForChat(chat.id);
+    if (kanbanCard?.hasStartedTurn) {
+      if (
+        ["starting", "running", "waiting_user", "waiting_approval"].includes(
+          kanbanCard.executionState,
+        )
+      ) {
+        throw new Error("The card still has an active workflow.");
+      }
+      if (kanbanCard.stage === "done") {
+        kanbanCard = await reopenKanbanCard(kanbanCard);
+        refreshKanbanBoards();
+      }
+      const continuationKind = ["paused", "blocked", "interrupted"].includes(
+        kanbanCard.executionState,
+      )
+        ? "resume"
+        : ["failed", "stopped"].includes(kanbanCard.executionState)
+          ? "retry"
+          : "request_changes";
+      await kanbanRuntime.launchCard(
+        kanbanCard,
+        continuationKind,
+        item.prompt,
+        {
+          executionSettings: settings,
+          queueItemId: item.id,
+          clientUserMessageId: item.clientMessageId,
+        },
+      );
+      return;
     }
     const currentProfileKey =
       (chat.profile_key as CodexProfileKey | null) ?? profileKey;
@@ -15678,6 +15777,7 @@ function App() {
                   onLaunch={kanbanRuntime.launchCard}
                   onPause={kanbanRuntime.pauseCard}
                   onStop={kanbanRuntime.stopCard}
+                  onOpenConversation={openKanbanCardConversation}
                   onPickContextFiles={pickKanbanCardContextFiles}
                   toolbarHost={kanbanToolbarHost}
                 />

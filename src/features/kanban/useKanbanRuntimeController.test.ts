@@ -80,6 +80,7 @@ function card(overrides: Partial<KanbanCardRecord> = {}): KanbanCardRecord {
     approvedAt: null,
     lastError: null,
     hasInheritedContext: false,
+    hasStartedTurn: false,
     createdAt: "2026-08-02T10:00:00Z",
     updatedAt: "2026-08-02T10:00:00Z",
     repositories: [
@@ -341,6 +342,60 @@ describe("Kanban runtime controller", () => {
         selectedBranch: "codex/card-1",
       }),
     );
+  });
+
+  it("keeps queued continuations inside the card attempt and worktree", async () => {
+    const { controller, dependencies, native } = harness();
+    const executionSettings = createRunExecutionSettings({
+      accountId: account.id,
+      profileKey: "account:3",
+      selectedRepositoryPath: "/workspace/repo",
+      selectedBranch: "main",
+      mode: "run",
+      intent: "normal",
+      accessMode: "ask-for-approval",
+      computerUseEnabled: true,
+      model: model.model,
+      reasoningEffort: "high",
+      useOss: false,
+      ossProvider: "ollama",
+      contextFiles: [],
+      selectedSkills: [],
+      goalMode: false,
+    });
+    dependencies.loadChat.mockResolvedValue(
+      chatRecord({ codex_thread_id: "thread-card" }),
+    );
+
+    await controller.launchCard(
+      card({ hasStartedTurn: true, executionState: "completed" }),
+      "request_changes",
+      "Add another validation case",
+      {
+        executionSettings,
+        queueItemId: "queue-1",
+        clientUserMessageId: "message-1",
+      },
+    );
+
+    expect(native.claimAttempt).toHaveBeenCalledWith(
+      expect.objectContaining({
+        kind: "request_changes",
+        prompt: "Add another validation case",
+      }),
+    );
+    const [snapshot] = dependencies.beginRun.mock.calls[0]!;
+    expect(snapshot).toMatchObject({
+      workspace: { path: "/cards/card-1/root" },
+      threadId: "thread-card",
+      threadStrategy: { kind: "resume" },
+      queueItemId: "queue-1",
+      fromQueue: true,
+      clientUserMessageId: "message-1",
+      selectedRepositoryPath: "/cards/card-1/root/repo",
+      selectedBranch: "codex/card-1",
+      kanbanAttempt: { cardId: "card-1" },
+    });
   });
 
   it("prevents concurrent launches for the same card conversation", async () => {

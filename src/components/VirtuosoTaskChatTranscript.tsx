@@ -201,7 +201,7 @@ export type VirtuosoTaskChatTranscriptHandle = {
 
 export type TranscriptNotificationFocusRequest = {
   requestId: number;
-  kind: "response" | "approval" | "user-input" | "plan";
+  kind: "response" | "prompt" | "approval" | "user-input" | "plan";
   entryClientId?: string | null;
   runId?: number | null;
   turnId?: string | null;

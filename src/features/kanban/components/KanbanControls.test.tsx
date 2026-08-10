@@ -8,6 +8,8 @@ import type { KanbanCard } from "./types";
 
 const card: KanbanCard = {
   id: "card-1",
+  chatId: 11,
+  hasStartedTurn: true,
   title: "Archived workflow",
   description: "A preserved card with review artifacts",
   columnId: "done",

@@ -10,6 +10,7 @@ import type {
   RunSetupSnapshot,
   StopActiveRunResult,
 } from "../runs/runtimeTypes";
+import type { RunExecutionSettings } from "../runs/types";
 import type { Workspace } from "../workspaces/types";
 import { accessSettings } from "../../lib/codexAccess";
 import {
@@ -90,9 +91,16 @@ export type KanbanRuntimeController = {
     card: KanbanCardRecord,
     kind: KanbanLaunchKind,
     promptText: string,
+    options?: KanbanContinuationOptions,
   ) => Promise<void>;
   pauseCard: (card: KanbanCardRecord) => Promise<void>;
   stopCard: (card: KanbanCardRecord) => Promise<void>;
+};
+
+export type KanbanContinuationOptions = {
+  executionSettings: RunExecutionSettings;
+  queueItemId: string;
+  clientUserMessageId: string;
 };
 
 function errorMessage(error: unknown) {
@@ -129,13 +137,14 @@ export function createKanbanRuntimeController<
     card: KanbanCardRecord,
     kind: KanbanLaunchKind,
     promptText: string,
+    options?: KanbanContinuationOptions,
   ) {
     const dependencies = getDependencies();
     const state = dependencies.getState();
     const workspace = workspaceForCard(state, card);
-    const capturedSettings = parseRunExecutionSettings(
-      card.executionSettingsJson,
-    );
+    const capturedSettings =
+      options?.executionSettings ??
+      parseRunExecutionSettings(card.executionSettingsJson);
     const accountId =
       capturedSettings?.accountId ??
       card.accountId ??
@@ -249,7 +258,7 @@ export function createKanbanRuntimeController<
               binding.sourceRepositoryPath ===
               executionSettings.selectedRepositoryPath,
           ) ?? repositoryExecution.bindings[0] ?? null;
-        const runExecutionSettings = capturedSettings && selectedBinding
+        const runExecutionSettings = selectedBinding
           ? createRunExecutionSettings({
               ...executionSettings,
               selectedRepositoryPath: selectedBinding.worktreePath,
@@ -268,7 +277,10 @@ export function createKanbanRuntimeController<
         });
         const turnIndex = await dependencies.getNextTurnIndex(chat.id);
         const currentThreadId = chat.codex_thread_id;
-        const inheritedContext = currentThreadId
+        const profileChanged = Boolean(
+          chat.profile_key && chat.profile_key !== profileKey,
+        );
+        const inheritedContext = currentThreadId && !profileChanged
           ? null
           : await native.loadInheritedContext(card.id);
         const snapshot: RunSetupSnapshot = {
@@ -297,14 +309,30 @@ export function createKanbanRuntimeController<
           goalMode: runExecutionSettings.goalMode,
           loginState: "idle",
           chatId: chat.id,
-          threadId: currentThreadId,
+          threadId: profileChanged ? null : currentThreadId,
           turnIndex,
-          threadStrategy: currentThreadId
-            ? { kind: "resume" }
-            : { kind: "fresh" },
+          threadStrategy: profileChanged
+            ? {
+                kind: "handoff",
+                handoff: {
+                  workspaceId: workspace.id,
+                  chatId: chat.id,
+                  fromProfileKey: chat.profile_key as CodexProfileKey,
+                  fromThreadId: currentThreadId,
+                  targetAccountId: accountId,
+                  targetProfileKey: profileKey,
+                  adoptingExternalChat: false,
+                },
+              }
+            : currentThreadId
+              ? { kind: "resume" }
+              : { kind: "fresh" },
           previousChatContext: inheritedContext,
           executionSettings: runExecutionSettings,
           restorePromptOnSetupFailure: false,
+          queueItemId: options?.queueItemId ?? null,
+          fromQueue: Boolean(options),
+          clientUserMessageId: options?.clientUserMessageId,
           kanbanAttempt: {
             cardId: card.id,
             attemptId: claimed.attempt.id,

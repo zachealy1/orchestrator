@@ -14,6 +14,8 @@ const options = [{ value: "gpt-5", label: "GPT-5" }];
 function existingCard(): KanbanCard {
   return {
     id: "card-1",
+    chatId: 11,
+    hasStartedTurn: true,
     title: "Original task",
     description: "Preserve this task description",
     columnId: "in-review",

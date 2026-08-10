@@ -342,6 +342,37 @@
   text-align: left;
 }
 
+button.kanban-card-content {
+  appearance: none;
+  background: transparent;
+  box-shadow: none;
+  font: inherit;
+  transform: none;
+}
+
+.kanban-card-content.is-conversation-link {
+  cursor: pointer;
+}
+
+.kanban-card-content.is-conversation-link:hover:not(:disabled),
+.kanban-card-content.is-conversation-link:active:not(:disabled),
+.kanban-card-content.is-conversation-link:focus-visible {
+  background: transparent;
+  box-shadow: none;
+  color: inherit;
+  transform: none;
+}
+
+.kanban-card-content.is-conversation-link:focus-visible {
+  border-radius: calc(var(--radius) - 2px);
+  outline: 2px solid var(--color-divider);
+  outline-offset: 3px;
+}
+
+.kanban-card-content.is-conversation-link:disabled {
+  cursor: default;
+}
+
 .kanban-card-content strong {
   display: -webkit-box;
   overflow: hidden;

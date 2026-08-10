@@ -67,6 +67,7 @@ export type KanbanCard = {
   deletedAt: string | null;
   approvedAt: string | null;
   lastError: string | null;
+  hasStartedTurn: boolean;
   createdAt: string;
   updatedAt: string;
   pullRequests?: readonly KanbanPullRequestRecord[];

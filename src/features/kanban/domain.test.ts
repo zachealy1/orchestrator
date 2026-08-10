@@ -26,6 +26,7 @@ function card(overrides: Partial<KanbanCard> = {}): KanbanCard {
     id: "card-a",
     workspaceId: 3,
     chatId: 11,
+    hasStartedTurn: false,
     title: "Add search",
     description: "Implement fuzzy repository search",
     config: {

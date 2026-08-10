@@ -48,6 +48,7 @@ export type KanbanCardTileProps = {
   actionsDisabled?: boolean;
   dragHandleProps?: ButtonHTMLAttributes<HTMLButtonElement>;
   onAction?: (action: KanbanCardAction, card: KanbanCard) => void;
+  onOpenConversation?: (card: KanbanCard) => void;
 };
 
 type KanbanMenuAction = KanbanCardAction;
@@ -180,6 +181,7 @@ export function KanbanCardTile({
   actionsDisabled = false,
   dragHandleProps,
   onAction,
+  onOpenConversation,
 }: KanbanCardTileProps) {
   const [menuOpen, setMenuOpen] = useState(false);
   const [menuStyle, setMenuStyle] = useState<CSSProperties>({});
@@ -195,6 +197,8 @@ export function KanbanCardTile({
     () => card.availableActions ?? [],
     [card.availableActions],
   );
+  const conversationAvailable =
+    card.hasStartedTurn && !overlay && Boolean(onOpenConversation);
 
   useLayoutEffect(() => {
     if (!menuOpen) return;
@@ -355,9 +359,21 @@ export function KanbanCardTile({
         </div>
       </div>
 
-      <div className="kanban-card-content">
-        <KanbanCardContent card={card} branch={branch} />
-      </div>
+      {conversationAvailable ? (
+        <button
+          type="button"
+          className="kanban-card-content is-conversation-link"
+          aria-label={`Open conversation for ${card.title}`}
+          disabled={actionsDisabled}
+          onClick={() => onOpenConversation?.(card)}
+        >
+          <KanbanCardContent card={card} branch={branch} />
+        </button>
+      ) : (
+        <div className="kanban-card-content">
+          <KanbanCardContent card={card} branch={branch} />
+        </div>
+      )}
     </article>
   );
 }

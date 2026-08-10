@@ -13,7 +13,7 @@ export type LoadWorkspaceHistoryOptions = {
 };
 
 export type SelectHistoryChatOptions = {
-  source?: "drawer" | "notification" | "workspace";
+  source?: "drawer" | "notification" | "workspace" | "kanban";
   workspace?: Workspace;
   positionIntent?: HistoricalTranscriptState["positionIntent"];
 };
