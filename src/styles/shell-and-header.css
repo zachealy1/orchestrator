@@ -811,6 +811,14 @@ button.account-switcher-item:hover:not(:disabled) {
   overflow: hidden;
 }
 
+.workspace-header-leading {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: var(--workspace-header-gap);
+  overflow: hidden;
+}
+
 .workspace-context-main {
   display: flex;
   min-width: 0;
@@ -818,6 +826,26 @@ button.account-switcher-item:hover:not(:disabled) {
   gap: var(--workspace-header-gap);
   align-items: center;
   overflow: hidden;
+}
+
+.workspace-context-main-compact {
+  width: auto;
+  max-width: min(320px, 32vw);
+  flex: 0 1 auto;
+  gap: 6px;
+}
+
+.workspace-context-main-compact .workspace-context-icon {
+  width: 22px;
+  height: 30px;
+  border-radius: 0;
+  background: transparent;
+  color: var(--color-text-secondary);
+}
+
+.workspace-context-main-compact strong {
+  font-size: 0.82rem;
+  font-weight: 680;
 }
 
 .workspace-context-main > div {
@@ -875,13 +903,11 @@ button.account-switcher-item:hover:not(:disabled) {
 }
 
 .workspace-header-control-rail {
-  display: grid;
+  display: flex;
   width: auto;
   min-width: 0;
   grid-column: 2;
-  grid-template-columns: max-content minmax(0, 1fr);
   align-items: center;
-  gap: var(--workspace-header-gap);
   justify-self: end;
 }
 

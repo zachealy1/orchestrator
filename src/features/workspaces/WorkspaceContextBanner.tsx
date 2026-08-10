@@ -232,16 +232,18 @@ export function WorkspaceContextBanner({
       aria-label="Selected folder"
       data-tauri-drag-region={deepWindowDragRegion}
     >
-      <div className="workspace-context-main">
-        <span className="workspace-context-icon" aria-hidden="true">
-          <Folder size={17} />
-        </span>
-        <div data-tauri-drag-region="false">
-          <strong>{workspace.label}</strong>
-          <span title={workspace.path}>{workspace.path}</span>
+      <div className="workspace-header-leading">
+        <div
+          className="workspace-context-main workspace-context-main-compact"
+          title={workspace.path}
+        >
+          <span className="workspace-context-icon" aria-hidden="true">
+            <Folder size={17} />
+          </span>
+          <div data-tauri-drag-region="false">
+            <strong>{workspace.label}</strong>
+          </div>
         </div>
-      </div>
-      <div className="workspace-header-control-rail">
         <div
           className={`segmented-mode-toggle workspace-surface-toggle mode-${surfaceMode}`}
           role="radiogroup"
@@ -275,6 +277,8 @@ export function WorkspaceContextBanner({
             <Columns3 size={15} aria-hidden="true" />
           </button>
         </div>
+      </div>
+      <div className="workspace-header-control-rail">
         <div className="workspace-mode-controls">
         {surfaceMode === "kanban" ? (
           <div

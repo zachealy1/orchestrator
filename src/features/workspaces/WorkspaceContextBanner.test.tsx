@@ -73,6 +73,19 @@ function renderBanner(
 }
 
 describe("WorkspaceContextBanner surface switch", () => {
+  it("places the compact switcher directly beside the workspace identity", () => {
+    renderBanner("chat");
+
+    const leadingGroup = document.querySelector(".workspace-header-leading");
+    const switcher = screen.getByRole("radiogroup", { name: "Workspace mode" });
+    expect(leadingGroup).toContainElement(switcher);
+    expect(leadingGroup).toHaveTextContent("Workspace");
+    expect(screen.queryByText("/workspace")).not.toBeInTheDocument();
+    expect(
+      document.querySelector(".workspace-header-control-rail"),
+    ).not.toContainElement(switcher);
+  });
+
   it("provides a toolbar host only while the Kanban surface is visible", () => {
     const hostRef = vi.fn();
     const { unmount } = render(
