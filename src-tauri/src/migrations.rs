@@ -205,7 +205,13 @@ pub(crate) const MIGRATION_DEFINITIONS: &[MigrationDefinition] = &[
         version: 33,
         description: "add_local_kanban_review",
         sql: include_str!("../migrations/033_add_local_kanban_review.sql"),
-        checksum: 0x8f10a10ecd7c8c89,
+        checksum: 0x1936deacf486df28,
+    },
+    MigrationDefinition {
+        version: 34,
+        description: "add_local_review_merge_lifecycle",
+        sql: include_str!("../migrations/034_add_local_review_merge_lifecycle.sql"),
+        checksum: 0xc7319e33ce0d47df,
     },
 ];
 

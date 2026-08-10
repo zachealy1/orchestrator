@@ -7,7 +7,6 @@ CREATE TABLE kanban_local_reviews (
     relative_path TEXT NOT NULL,
     status TEXT NOT NULL DEFAULT 'pending'
         CHECK (status IN ('pending', 'committing', 'merging', 'merged', 'nothing_to_merge', 'failed')),
-    merge_started INTEGER NOT NULL DEFAULT 0 CHECK (merge_started IN (0, 1)),
     last_error TEXT,
     updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
     PRIMARY KEY (card_id, source_repository_path),
@@ -20,10 +19,6 @@ SET review_channel = CASE
         SELECT 1 FROM kanban_pull_requests pr
         WHERE pr.card_id = kanban_cards.id
           AND pr.pull_request_number IS NOT NULL
-    ) THEN 'github'
-    WHEN EXISTS (
-        SELECT 1 FROM github_connections connection
-        WHERE connection.id = 1 AND connection.status = 'connected'
     ) THEN 'github'
     ELSE 'local'
 END
