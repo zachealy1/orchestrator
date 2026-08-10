@@ -15117,7 +15117,7 @@ function App() {
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [workspaceSurfaceMode]);
 
   const handleConnectGithub = useCallback(async () => {
     if (githubConnectionPending) return;
@@ -15904,6 +15904,9 @@ function App() {
                   onStop={kanbanRuntime.stopCard}
                   onOpenConversation={openKanbanCardConversation}
                   onPickContextFiles={pickKanbanCardContextFiles}
+                  githubConnection={githubConnection}
+                  githubConnectionPending={githubConnectionPending}
+                  onConnectGithub={() => void handleConnectGithub()}
                   toolbarHost={kanbanToolbarHost}
                 />
                 <div className="kanban-composer-shell">

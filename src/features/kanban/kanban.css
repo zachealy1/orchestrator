@@ -1901,6 +1901,32 @@ button.kanban-card-content {
   color: var(--color-icon);
 }
 
+.kanban-workspace-alert.github-warning {
+  align-items: center;
+}
+
+.kanban-workspace-alert-copy {
+  display: flex;
+  min-width: 0;
+  flex: 1;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 4px 10px;
+}
+
+.kanban-workspace-alert-copy strong {
+  color: var(--color-text);
+  font-weight: 600;
+}
+
+.kanban-workspace-alert-copy > span {
+  color: var(--color-text-secondary);
+}
+
+.kanban-workspace-alert.github-warning .kanban-icon-button {
+  flex: 0 0 auto;
+}
+
 .kanban-workspace-alert.error {
   border-color: rgb(var(--error-rgb) / 0.35);
   background: rgb(var(--error-rgb) / 0.11);

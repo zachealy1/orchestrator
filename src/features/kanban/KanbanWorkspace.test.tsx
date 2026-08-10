@@ -2,6 +2,7 @@ import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { Workspace } from "../workspaces/types";
+import type { GithubConnectionStatus } from "../github/api";
 import type {
   KanbanBoardSnapshotRecord,
   KanbanCardRecord,
@@ -128,12 +129,25 @@ function snapshot(
   };
 }
 
-function renderWorkspace(toolbarHost?: HTMLElement | null) {
+function renderWorkspace(
+  toolbarHost?: HTMLElement | null,
+  githubConnection: GithubConnectionStatus = {
+    available: true,
+    connected: true,
+    login: "octocat",
+    displayName: "Octocat",
+    avatarUrl: null,
+    status: "connected",
+    message: null,
+    repositories: [],
+  },
+) {
   const props = {
     onLaunch: vi.fn().mockResolvedValue(undefined),
     onPause: vi.fn().mockResolvedValue(undefined),
     onStop: vi.fn().mockResolvedValue(undefined),
     onOpenConversation: vi.fn().mockResolvedValue(undefined),
+    onConnectGithub: vi.fn(),
   };
 
   render(
@@ -144,6 +158,8 @@ function renderWorkspace(toolbarHost?: HTMLElement | null) {
       models={[]}
       refreshToken={0}
       listChatTranscript={transcriptMocks.listLocalChatTranscript}
+      githubConnection={githubConnection}
+      githubConnectionPending={false}
       toolbarHost={toolbarHost}
       {...props}
     />,
@@ -204,6 +220,36 @@ beforeEach(() => {
 });
 
 describe("KanbanWorkspace controller", () => {
+  it("warns disconnected users and starts GitHub connection from Kanban", async () => {
+    const user = userEvent.setup();
+    const callbacks = renderWorkspace(undefined, {
+      available: true,
+      connected: false,
+      login: null,
+      displayName: null,
+      avatarUrl: null,
+      status: "disconnected",
+      message: null,
+      repositories: [],
+    });
+
+    const warning = await screen.findByTestId("kanban-github-warning");
+    expect(warning).toHaveTextContent("GitHub not connected");
+    expect(warning).toHaveTextContent(
+      "Connect GitHub to publish completed cards as draft pull requests.",
+    );
+
+    await user.click(within(warning).getByRole("button", { name: "Connect GitHub" }));
+    expect(callbacks.onConnectGithub).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not show the GitHub warning when connected", async () => {
+    renderWorkspace();
+
+    expect(await screen.findByText("Controller card")).toBeInTheDocument();
+    expect(screen.queryByTestId("kanban-github-warning")).not.toBeInTheDocument();
+  });
+
   it("renders the board controls in the provided workspace-header host", async () => {
     const toolbarHost = document.createElement("div");
     toolbarHost.dataset.testid = "kanban-toolbar-host";

@@ -11,6 +11,8 @@ import {
   CheckCircle2,
   ExternalLink,
   FilterX,
+  GitPullRequest,
+  LogIn,
   Loader2,
   X,
 } from "lucide-react";
@@ -26,6 +28,7 @@ import {
   openPullRequest,
   publishKanbanCard,
   syncKanbanPullRequests,
+  type GithubConnectionStatus,
   type KanbanPullRequestRecord,
 } from "../github/api";
 import { formatReasoningEffort } from "../composer/promptHelpers";
@@ -119,6 +122,9 @@ type Props = {
   onStop: (card: KanbanCardRecord) => Promise<void>;
   onOpenConversation: (card: KanbanCardRecord) => Promise<void>;
   onPickContextFiles?: () => Promise<ComposerContextFile[]>;
+  githubConnection: GithubConnectionStatus | null;
+  githubConnectionPending: boolean;
+  onConnectGithub: () => void;
   toolbarHost?: HTMLElement | null;
 };
 
@@ -615,6 +621,9 @@ export function KanbanWorkspace({
   onStop,
   onOpenConversation,
   onPickContextFiles,
+  githubConnection,
+  githubConnectionPending,
+  onConnectGithub,
   toolbarHost,
 }: Props) {
   const [snapshot, setSnapshot] = useState<KanbanBoardSnapshotRecord | null>(null);
@@ -1674,6 +1683,44 @@ export function KanbanWorkspace({
 
   return (
     <div className="kanban-workspace-view" aria-busy={busy}>
+      {githubConnection && !githubConnection.connected ? (
+        <div
+          className="kanban-workspace-alert github-warning"
+          role="status"
+          data-testid="kanban-github-warning"
+        >
+          <GitPullRequest size={16} aria-hidden="true" />
+          <span className="kanban-workspace-alert-copy">
+            <strong>
+              {githubConnection.available
+                ? "GitHub not connected"
+                : "GitHub integration unavailable"}
+            </strong>
+            <span>
+              {githubConnection.available
+                ? "Connect GitHub to publish completed cards as draft pull requests."
+                : githubConnection.message ??
+                  "This build cannot publish completed cards to GitHub."}
+            </span>
+          </span>
+          {githubConnection.available ? (
+            <button
+              type="button"
+              className="kanban-icon-button"
+              aria-label="Connect GitHub"
+              title="Connect GitHub"
+              disabled={githubConnectionPending}
+              onClick={onConnectGithub}
+            >
+              {githubConnectionPending ? (
+                <Loader2 className="spin" size={16} aria-hidden="true" />
+              ) : (
+                <LogIn size={16} aria-hidden="true" />
+              )}
+            </button>
+          ) : null}
+        </div>
+      ) : null}
       {error ? (
         <div className="kanban-workspace-alert error" role="alert">
           <AlertCircle size={15} aria-hidden="true" />
