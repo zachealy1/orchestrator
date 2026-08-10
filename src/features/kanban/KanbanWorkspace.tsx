@@ -37,6 +37,7 @@ import type {
   Workspace,
   WorkspaceGitRepositoryStatus,
 } from "../workspaces/types";
+import type { ResolvedTheme } from "../../shared/types";
 import { trapDialogFocus } from "../../shared/dialogFocus";
 import {
   createRunExecutionSettings,
@@ -132,6 +133,7 @@ type Props = {
   githubConnectionPending: boolean;
   onConnectGithub: () => void;
   toolbarHost?: HTMLElement | null;
+  resolvedTheme: ResolvedTheme;
 };
 
 type StoredPreferences = {
@@ -640,6 +642,7 @@ export function KanbanWorkspace({
   githubConnectionPending,
   onConnectGithub,
   toolbarHost,
+  resolvedTheme,
 }: Props) {
   const [snapshot, setSnapshot] = useState<KanbanBoardSnapshotRecord | null>(null);
   const snapshotRef = useRef<KanbanBoardSnapshotRecord | null>(null);
@@ -1933,6 +1936,8 @@ export function KanbanWorkspace({
       {localReview ? (
         <KanbanLocalReviewDrawer
           review={localReview.review}
+          bindings={bindingsByCard[localReview.cardId] ?? []}
+          resolvedTheme={resolvedTheme}
           loading={localReview.loading}
           busy={busy}
           error={localReview.error}

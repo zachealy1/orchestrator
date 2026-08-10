@@ -1,4 +1,4 @@
-import { render, screen, waitFor, within } from "@testing-library/react";
+import { screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { Workspace } from "../workspaces/types";
@@ -10,6 +10,7 @@ import type {
   KanbanGitCleanupResult,
 } from "./api";
 import { KanbanWorkspace } from "./KanbanWorkspace";
+import { renderWithAppServices as render } from "../../test/renderWithAppServices";
 
 const apiMocks = vi.hoisted(() => ({
   approveKanbanCard: vi.fn(),
@@ -22,6 +23,7 @@ const apiMocks = vi.hoisted(() => ({
   loadKanbanBoard: vi.fn(),
   loadKanbanGitBindings: vi.fn(),
   loadKanbanLocalReview: vi.fn(),
+  readKanbanGitFileDiff: vi.fn(),
   mergeKanbanGit: vi.fn(),
   moveKanbanCard: vi.fn(),
   pushKanbanGit: vi.fn(),
@@ -165,6 +167,7 @@ function renderWorkspace(
       githubConnection={githubConnection}
       githubConnectionPending={false}
       toolbarHost={toolbarHost}
+      resolvedTheme="dark"
       {...props}
     />,
   );
@@ -523,6 +526,24 @@ describe("KanbanWorkspace controller", () => {
         },
       ],
     });
+    apiMocks.readKanbanGitFileDiff.mockResolvedValue({
+      path: "/workspace/.codex/card-1/repo/src/controller.ts",
+      relativePath: "src/controller.ts",
+      sections: [
+        {
+          kind: "unstaged",
+          title: "Card changes",
+          baseLabel: "main:src/controller.ts",
+          headLabel: "codex/controller-card:src/controller.ts",
+          baseContent: "",
+          headContent: "export {};\n",
+          baseTruncated: false,
+          headTruncated: false,
+          content: "+export {};\n",
+          isBinary: false,
+        },
+      ],
+    });
     renderWorkspace();
 
     const tile = await screen.findByRole("article", { name: /Controller card/ });
@@ -531,6 +552,13 @@ describe("KanbanWorkspace controller", () => {
 
     expect(await screen.findByRole("complementary", { name: "Local card review" })).toBeInTheDocument();
     expect(screen.getByText("Implemented the controller.")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "controller.ts" })).toBeInTheDocument();
+    await waitFor(() =>
+      expect(apiMocks.readKanbanGitFileDiff).toHaveBeenCalledWith(
+        expect.objectContaining({ sourceRepositoryPath: "/workspace/repo" }),
+        "src/controller.ts",
+      ),
+    );
     expect(screen.getByRole("button", { name: "Approve and merge locally" })).toBeInTheDocument();
   });
 

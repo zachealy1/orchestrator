@@ -138,6 +138,7 @@ fn command_builder() -> tauri_specta::Builder<tauri::Wry> {
             kanban_git::kanban_git_reconcile,
             kanban_git::kanban_git_status,
             kanban_git::kanban_git_diff,
+            kanban_git::kanban_git_file_diff,
             kanban_git::kanban_git_commit,
             kanban_git::kanban_git_push,
             kanban_git::kanban_git_merge,

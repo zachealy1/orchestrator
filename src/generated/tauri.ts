@@ -132,6 +132,7 @@ export const commands = {
 	kanbanGitReconcile: (request: KanbanGitBindingRequest) => __TAURI_INVOKE<KanbanGitReconcileResult>("kanban_git_reconcile", { request }),
 	kanbanGitStatus: (request: KanbanGitBindingRequest) => __TAURI_INVOKE<KanbanGitStatusResult>("kanban_git_status", { request }),
 	kanbanGitDiff: (request: KanbanGitDiffRequest) => __TAURI_INVOKE<KanbanGitDiffResult>("kanban_git_diff", { request }),
+	kanbanGitFileDiff: (request: KanbanGitFileDiffRequest) => __TAURI_INVOKE<WorkspaceGitDiff>("kanban_git_file_diff", { request }),
 	kanbanGitCommit: (request: KanbanGitCommitRequest) => __TAURI_INVOKE<KanbanGitActionResult>("kanban_git_commit", { request }),
 	kanbanGitPush: (request: KanbanGitBindingRequest) => __TAURI_INVOKE<KanbanGitActionResult>("kanban_git_push", { request }),
 	kanbanGitMerge: (request: KanbanGitMergeRequest) => __TAURI_INVOKE<KanbanGitMergeResult>("kanban_git_merge", { request }),
@@ -557,6 +558,11 @@ export type KanbanGitDiffResult = {
 	content: string,
 	untrackedPaths: string[],
 	isEmpty: boolean,
+};
+
+export type KanbanGitFileDiffRequest = {
+	binding: KanbanGitRepositoryBinding,
+	filePath: string,
 };
 
 export type KanbanGitFileStatus = {

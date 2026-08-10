@@ -1,4 +1,5 @@
 import { commands } from "../../generated/tauri";
+import type { WorkspaceGitDiff } from "../workspaces/types";
 import type { KanbanPullRequestRecord } from "../github/api";
 
 export type KanbanColumnKey = "todo" | "in_progress" | "in_review" | "done";
@@ -463,6 +464,13 @@ export function readKanbanGitDiff(
   includeBinary = true,
 ) {
   return commands.kanbanGitDiff({ binding, includeBinary }) as Promise<KanbanGitDiffResult>;
+}
+
+export function readKanbanGitFileDiff(
+  binding: KanbanGitBinding,
+  filePath: string,
+) {
+  return commands.kanbanGitFileDiff({ binding, filePath }) as Promise<WorkspaceGitDiff>;
 }
 
 export function commitKanbanGit(input: {

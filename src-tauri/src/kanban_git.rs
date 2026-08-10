@@ -10,6 +10,12 @@ use std::{
 use tauri::{AppHandle, Manager};
 use uuid::Uuid;
 
+use crate::{
+    git::{git_diff_is_binary, read_git_object_preview},
+    models::{WorkspaceGitDiff, WorkspaceGitDiffSection},
+    paths::{empty_preview_text, read_workspace_file_preview_text},
+};
+
 const CARD_BRANCH_PREFIX: &str = "codex/";
 const MAX_CARD_ID_LENGTH: usize = 128;
 const MAX_BRANCH_ATTEMPTS: usize = 1_000;
@@ -132,6 +138,13 @@ pub(crate) struct KanbanGitDiffResult {
     pub content: String,
     pub untracked_paths: Vec<String>,
     pub is_empty: bool,
+}
+
+#[derive(Clone, Debug, Deserialize, specta::Type)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub(crate) struct KanbanGitFileDiffRequest {
+    pub binding: KanbanGitRepositoryBinding,
+    pub file_path: String,
 }
 
 #[derive(Clone, Debug, Deserialize, specta::Type)]
@@ -1407,6 +1420,76 @@ fn diff_blocking(request: KanbanGitDiffRequest) -> Result<KanbanGitDiffResult, S
     })
 }
 
+fn file_diff_blocking(request: KanbanGitFileDiffRequest) -> Result<WorkspaceGitDiff, String> {
+    let relative_path = validate_snapshot_path(request.file_path.trim())?;
+    if relative_path.as_os_str().is_empty() {
+        return Err("A file must be selected before its changes can be reviewed.".into());
+    }
+
+    let (_, worktree) = validate_live_binding(&request.binding, true)?;
+    let canonical_worktree = fs::canonicalize(&worktree)
+        .map_err(|error| format!("Unable to resolve the Kanban worktree: {error}"))?;
+    let file_path = canonical_worktree.join(&relative_path);
+    let git_path = relative_path.to_string_lossy().replace('\\', "/");
+    let output = git_output(
+        &worktree,
+        &[
+            "diff",
+            "--no-ext-diff",
+            "--find-renames",
+            "--find-copies",
+            request.binding.base_commit.as_str(),
+            "--",
+            git_path.as_str(),
+        ],
+    )?;
+    if !output.status.success() {
+        return Err(format!(
+            "Unable to read the selected Kanban file diff: {}",
+            output_detail(&output)
+        ));
+    }
+
+    let mut content = String::from_utf8_lossy(&output.stdout).to_string();
+    let base = read_git_object_preview(
+        &worktree,
+        &format!("{}:{git_path}", request.binding.base_commit),
+    )?
+    .unwrap_or_else(empty_preview_text);
+    let head = if file_path.exists() {
+        read_workspace_file_preview_text(&canonical_worktree, &file_path)?
+    } else {
+        empty_preview_text()
+    };
+    let is_untracked = content.trim().is_empty() && file_path.exists() && base.content.is_empty();
+    if is_untracked {
+        content = diff_untracked_file(&worktree, &git_path, true)?;
+    }
+    let is_binary = git_diff_is_binary(&content) || base.is_binary || head.is_binary;
+    let kind = if is_untracked {
+        "untracked"
+    } else {
+        "unstaged"
+    };
+
+    Ok(WorkspaceGitDiff {
+        path: file_path.to_string_lossy().to_string(),
+        relative_path: git_path.clone(),
+        sections: vec![WorkspaceGitDiffSection {
+            kind: kind.to_string(),
+            title: "Card changes".to_string(),
+            base_label: format!("{}:{git_path}", request.binding.base_branch),
+            head_label: format!("{}:{git_path}", request.binding.card_branch),
+            base_content: base.content,
+            head_content: head.content,
+            base_truncated: base.truncated,
+            head_truncated: head.truncated,
+            content,
+            is_binary,
+        }],
+    })
+}
+
 fn commit_blocking(request: KanbanGitCommitRequest) -> Result<KanbanGitActionResult, String> {
     let (_, worktree) = validate_live_binding(&request.binding, true)?;
     let message = request.message.trim();
@@ -1928,6 +2011,20 @@ pub(crate) async fn kanban_git_diff(
 
 #[tauri::command]
 #[specta::specta]
+pub(crate) async fn kanban_git_file_diff(
+    app: AppHandle,
+    request: KanbanGitFileDiffRequest,
+) -> Result<WorkspaceGitDiff, String> {
+    let root = cards_root(&app)?;
+    validate_command_binding(&root, &request.binding)?;
+    run_blocking("read a Kanban file diff", move || {
+        file_diff_blocking(request)
+    })
+    .await
+}
+
+#[tauri::command]
+#[specta::specta]
 pub(crate) async fn kanban_git_commit(
     app: AppHandle,
     request: KanbanGitCommitRequest,
@@ -2183,6 +2280,23 @@ mod tests {
         assert!(diff.content.contains("new file"));
         assert_eq!(diff.untracked_paths, vec!["new.txt"]);
 
+        let tracked_file_diff = file_diff_blocking(KanbanGitFileDiffRequest {
+            binding: binding.clone(),
+            file_path: "README.md".to_string(),
+        })
+        .expect("read tracked file diff");
+        assert_eq!(tracked_file_diff.relative_path, "README.md");
+        assert_eq!(tracked_file_diff.sections[0].head_content, "updated\n");
+        assert!(tracked_file_diff.sections[0].content.contains("updated"));
+
+        let untracked_file_diff = file_diff_blocking(KanbanGitFileDiffRequest {
+            binding: binding.clone(),
+            file_path: "new.txt".to_string(),
+        })
+        .expect("read untracked file diff");
+        assert_eq!(untracked_file_diff.sections[0].kind, "untracked");
+        assert_eq!(untracked_file_diff.sections[0].head_content, "new file\n");
+
         let committed = commit_blocking(KanbanGitCommitRequest {
             binding: binding.clone(),
             message: "Update review files".to_string(),
@@ -2194,6 +2308,12 @@ mod tests {
         assert_eq!(committed_status.ahead_of_base, 1);
         assert!(committed_status.has_changes);
         assert!(committed_status.files.is_empty());
+        let committed_file_diff = file_diff_blocking(KanbanGitFileDiffRequest {
+            binding: binding.clone(),
+            file_path: "README.md".to_string(),
+        })
+        .expect("read committed file diff");
+        assert!(committed_file_diff.sections[0].content.contains("updated"));
         let reconciled = reconcile_blocking(binding.clone());
         assert_eq!(reconciled.binding.status, "ready");
         assert!(reconciled.has_changes);

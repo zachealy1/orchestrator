@@ -43,4 +43,14 @@ describe("Kanban local review styles", () => {
     expect(drawer).toContain("width: 520px");
     expect(drawer).toContain("max-width: calc(100vw - 360px)");
   });
+
+  it("uses explorer-style file rows and the shared diff preview surface", () => {
+    const fileRow = rule(".kanban-local-review-files button");
+
+    expect(fileRow).toContain("grid-template-columns: 20px 16px minmax(0, 1fr)");
+    expect(fileRow).toContain("border-radius: 4px");
+    expect(rule(".kanban-local-review-diff")).toContain("display: flex");
+    expect(css).toContain(".kanban-local-review-diff > .diff-preview");
+    expect(css).not.toContain(".kanban-local-review-diff-line {");
+  });
 });

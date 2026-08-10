@@ -15892,6 +15892,7 @@ function App() {
             {selectedWorkspace && workspaceSurfaceMode === "kanban" ? (
               <div className="kanban-workspace-mount">
                 <KanbanWorkspace
+                  resolvedTheme={resolvedTheme}
                   key={selectedWorkspace.id}
                   workspace={selectedWorkspace}
                   repositories={selectedGitOverview?.repositories ?? []}
