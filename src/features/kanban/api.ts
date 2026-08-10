@@ -43,6 +43,7 @@ export type KanbanCardRecord = {
   sortPosition: number;
   executionState: KanbanExecutionStateValue;
   reviewState: KanbanReviewStateValue;
+  reviewChannel?: "github" | "local" | null;
   currentAttemptId: string | null;
   stateVersion: number;
   archivedAt: string | null;
@@ -55,6 +56,30 @@ export type KanbanCardRecord = {
   updatedAt: string;
   repositories: KanbanRepositorySelectionRecord[];
   pullRequests?: KanbanPullRequestRecord[];
+};
+
+export type KanbanLocalReviewRepository = {
+  sourceRepositoryPath: string;
+  relativePath: string;
+  baseBranch: string;
+  cardBranch: string;
+  status: string;
+  error: string | null;
+  additions: number;
+  deletions: number;
+  files: string[];
+  diff: string;
+  isEmpty: boolean;
+};
+
+export type KanbanLocalReview = {
+  cardId: string;
+  title: string;
+  objective: string;
+  summary: string | null;
+  reviewChannel: string;
+  canPublishGithub: boolean;
+  repositories: KanbanLocalReviewRepository[];
 };
 
 export type KanbanColumnRecord = {
@@ -493,6 +518,28 @@ export function saveKanbanGitBindings(
 
 export function loadKanbanGitBindings(cardId: string) {
   return commands.kanbanListGitBindings(cardId) as Promise<KanbanGitBinding[]>;
+}
+
+export function loadKanbanLocalReview(cardId: string) {
+  return commands.kanbanLocalReview(cardId) as Promise<KanbanLocalReview>;
+}
+
+export function useKanbanLocalReview(cardId: string) {
+  return commands.kanbanUseLocalReview(cardId) as Promise<KanbanLocalReview>;
+}
+
+export function approveKanbanLocalReview(
+  cardId: string,
+  operationId = createKanbanId("op"),
+) {
+  return commands.kanbanApproveLocalReview({
+    cardId,
+    operationId,
+  }) as Promise<KanbanLocalReview>;
+}
+
+export function completeKanbanLocalReviewWithoutChanges(cardId: string) {
+  return commands.kanbanCompleteLocalReviewWithoutChanges(cardId) as Promise<KanbanCardRecord>;
 }
 
 export function saveKanbanInheritedContext(input: {

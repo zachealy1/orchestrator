@@ -87,6 +87,7 @@ export const commands = {
 	sortPosition: number,
 	executionState: string,
 	reviewState: string,
+	reviewChannel: string | null,
 	currentAttemptId: string | null,
 	stateVersion: number,
 	archivedAt: string | null,
@@ -114,6 +115,10 @@ export const commands = {
 	kanbanRecoverInterrupted: () => __TAURI_INVOKE<number>("kanban_recover_interrupted"),
 	kanbanSaveGitBindings: (request: SaveKanbanGitBindingsRequest) => __TAURI_INVOKE<PersistedKanbanGitBinding[]>("kanban_save_git_bindings", { request }),
 	kanbanListGitBindings: (cardId: string) => __TAURI_INVOKE<PersistedKanbanGitBinding[]>("kanban_list_git_bindings", { cardId }),
+	kanbanLocalReview: (cardId: string) => __TAURI_INVOKE<KanbanLocalReviewDto>("kanban_local_review", { cardId }),
+	kanbanUseLocalReview: (cardId: string) => __TAURI_INVOKE<KanbanLocalReviewDto>("kanban_use_local_review", { cardId }),
+	kanbanApproveLocalReview: (request: ApproveKanbanLocalReviewRequest) => __TAURI_INVOKE<KanbanLocalReviewDto>("kanban_approve_local_review", { request }),
+	kanbanCompleteLocalReviewWithoutChanges: (cardId: string) => __TAURI_INVOKE<KanbanCardDto>("kanban_complete_local_review_without_changes", { cardId }),
 	kanbanSetInheritedContext: (request: SetKanbanInheritedContextRequest) => __TAURI_INVOKE<null>("kanban_set_inherited_context", { request }),
 	kanbanGetInheritedContext: (cardId: string) => __TAURI_INVOKE<string | null>("kanban_get_inherited_context", { cardId }),
 	githubConnectionStatus: () => __TAURI_INVOKE<GithubConnectionStatus>("github_connection_status"),
@@ -199,6 +204,11 @@ export type AgentNotificationTarget = {
 	threadId: string | null,
 	turnId: string | null,
 	subagentThreadId: string | null,
+};
+
+export type ApproveKanbanLocalReviewRequest = {
+	cardId: string,
+	operationId: string,
 };
 
 export type ArchiveKanbanCardRequest = {
@@ -482,6 +492,7 @@ export type KanbanCardDto = {
 	sortPosition: number,
 	executionState: string,
 	reviewState: string,
+	reviewChannel: string | null,
 	currentAttemptId: string | null,
 	stateVersion: number,
 	archivedAt: string | null,
@@ -639,6 +650,30 @@ export type KanbanGitStatusResult = {
 	unstagedCount: number,
 	untrackedCount: number,
 	files: KanbanGitFileStatus[],
+};
+
+export type KanbanLocalReviewDto = {
+	cardId: string,
+	title: string,
+	objective: string,
+	summary: string | null,
+	reviewChannel: string,
+	canPublishGithub: boolean,
+	repositories: KanbanLocalReviewRepositoryDto[],
+};
+
+export type KanbanLocalReviewRepositoryDto = {
+	sourceRepositoryPath: string,
+	relativePath: string,
+	baseBranch: string,
+	cardBranch: string,
+	status: string,
+	error: string | null,
+	additions: number,
+	deletions: number,
+	files: string[],
+	diff: string,
+	isEmpty: boolean,
 };
 
 export type KanbanPullRequestDto = {

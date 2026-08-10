@@ -1,4 +1,13 @@
-use crate::DatabaseState;
+use crate::{
+    git::generate_workspace_repository_commit_message_blocking,
+    kanban_git::{
+        kanban_git_commit, kanban_git_diff, kanban_git_merge, kanban_git_status,
+        KanbanGitBindingRequest, KanbanGitCommitRequest, KanbanGitDiffRequest,
+        KanbanGitMergeRequest, KanbanGitRepositoryBinding,
+    },
+    models::WorkspaceCommitIntentContext,
+    DatabaseState,
+};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use sqlx::{pool::PoolConnection, sqlite::SqliteConnection, Connection, Row, Sqlite};
@@ -54,6 +63,7 @@ pub struct KanbanCardDto {
     pub sort_position: i64,
     pub execution_state: String,
     pub review_state: String,
+    pub review_channel: Option<String>,
     pub current_attempt_id: Option<String>,
     pub state_version: i64,
     pub archived_at: Option<String>,
@@ -66,6 +76,41 @@ pub struct KanbanCardDto {
     pub updated_at: String,
     pub repositories: Vec<KanbanRepositorySelectionDto>,
     pub pull_requests: Vec<crate::github::KanbanPullRequestDto>,
+}
+
+#[derive(Debug, Clone, Serialize, specta::Type)]
+#[serde(rename_all = "camelCase")]
+pub struct KanbanLocalReviewRepositoryDto {
+    pub source_repository_path: String,
+    pub relative_path: String,
+    pub base_branch: String,
+    pub card_branch: String,
+    pub status: String,
+    pub error: Option<String>,
+    pub additions: u64,
+    pub deletions: u64,
+    pub files: Vec<String>,
+    pub diff: String,
+    pub is_empty: bool,
+}
+
+#[derive(Debug, Clone, Serialize, specta::Type)]
+#[serde(rename_all = "camelCase")]
+pub struct KanbanLocalReviewDto {
+    pub card_id: String,
+    pub title: String,
+    pub objective: String,
+    pub summary: Option<String>,
+    pub review_channel: String,
+    pub can_publish_github: bool,
+    pub repositories: Vec<KanbanLocalReviewRepositoryDto>,
+}
+
+#[derive(Debug, Deserialize, Serialize, specta::Type)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ApproveKanbanLocalReviewRequest {
+    pub card_id: String,
+    pub operation_id: String,
 }
 
 #[derive(Debug, Clone, Serialize, specta::Type)]
@@ -512,7 +557,7 @@ async fn load_card(
         "SELECT id, workspace_id, chat_id, title, description, account_id,
             access_mode, model, reasoning_level, execution_settings_json,
             repository_scope, stage,
-            sort_position, execution_state, review_state, current_attempt_id,
+            sort_position, execution_state, review_state, review_channel, current_attempt_id,
             state_version, archived_at, deleted_at, approved_at, last_error,
             created_at, updated_at, inherited_context,
             EXISTS(
@@ -545,6 +590,7 @@ async fn load_card(
         sort_position: row.get("sort_position"),
         execution_state: row.get("execution_state"),
         review_state: row.get("review_state"),
+        review_channel: row.get("review_channel"),
         current_attempt_id: row.get("current_attempt_id"),
         state_version: row.get("state_version"),
         archived_at: row.get("archived_at"),
@@ -1543,6 +1589,8 @@ pub async fn kanban_update_attempt(
     if request.sequence <= 0 {
         return Err("The card attempt event sequence is invalid.".to_string());
     }
+    let github_review_available =
+        request.status == "completed" && crate::github::github_review_available(&app).await;
     let request_fingerprint = operation_fingerprint(&request)?;
     let mut connection = open_database(&app).await?;
     let workspace_id = card_workspace_id(&mut connection, &request.card_id).await?;
@@ -1616,17 +1664,28 @@ pub async fn kanban_update_attempt(
         transaction.rollback().await.ok();
         return Err("A stale card attempt tried to update this card.".to_string());
     }
+    let review_channel = if request.status == "completed" {
+        Some(if github_review_available {
+            "github"
+        } else {
+            "local"
+        })
+    } else {
+        None
+    };
     let card = sqlx::query(
         "UPDATE kanban_cards
          SET execution_state = ?1,
              stage = CASE WHEN ?2 = 'completed' THEN 'in_review' ELSE stage END,
              review_state = CASE WHEN ?2 = 'completed' THEN 'awaiting_review' ELSE review_state END,
-             last_error = ?3, state_version = state_version + 1,
+             review_channel = CASE WHEN ?2 = 'completed' THEN ?3 ELSE review_channel END,
+             last_error = ?4, state_version = state_version + 1,
              updated_at = CURRENT_TIMESTAMP
-         WHERE id = ?4 AND current_attempt_id = ?5 AND deleted_at IS NULL",
+         WHERE id = ?5 AND current_attempt_id = ?6 AND deleted_at IS NULL",
     )
     .bind(execution_state)
     .bind(&request.status)
+    .bind(review_channel)
     .bind(request.error.as_deref())
     .bind(&request.card_id)
     .bind(&request.attempt_id)
@@ -1672,7 +1731,7 @@ pub async fn kanban_update_attempt(
         .commit()
         .await
         .map_err(|error| format!("The card attempt could not be saved: {error}"))?;
-    if request.status == "completed" && !publication_deferred {
+    if request.status == "completed" && review_channel == Some("github") && !publication_deferred {
         let app_for_publication = app.clone();
         let card_id = request.card_id.clone();
         tauri::async_runtime::spawn(async move {
@@ -2271,6 +2330,625 @@ pub async fn kanban_list_git_bindings(
         .collect()
 }
 
+fn runtime_git_binding(
+    binding: PersistedKanbanGitBinding,
+) -> Result<KanbanGitRepositoryBinding, String> {
+    serde_json::from_value(
+        serde_json::to_value(binding)
+            .map_err(|_| "The saved Kanban Git binding could not be read.".to_string())?,
+    )
+    .map_err(|_| "The saved Kanban Git binding is incompatible with local review.".to_string())
+}
+
+async fn upsert_local_review_state(
+    app: &AppHandle,
+    card_id: &str,
+    binding: &KanbanGitRepositoryBinding,
+    status: &str,
+    error: Option<&str>,
+) -> Result<(), String> {
+    let mut connection = open_database(app).await?;
+    let binding_json = serde_json::to_string(binding)
+        .map_err(|_| "The Kanban Git binding could not be saved.".to_string())?;
+    let binding_error = binding.error.as_ref().map(|value| value.message.as_str());
+    let mut transaction = connection
+        .begin()
+        .await
+        .map_err(|error| format!("Local review state could not be saved: {error}"))?;
+    sqlx::query(
+        "INSERT INTO kanban_local_reviews (
+             card_id, source_repository_path, relative_path, status, merge_started, last_error
+         ) VALUES (?1, ?2, ?3, ?4,
+             CASE WHEN ?4 IN ('merging','merged') THEN 1 ELSE 0 END, ?5)
+         ON CONFLICT(card_id, source_repository_path) DO UPDATE SET
+             relative_path = excluded.relative_path, status = excluded.status,
+             merge_started = CASE
+                 WHEN excluded.status IN ('merging','merged') THEN 1
+                 ELSE kanban_local_reviews.merge_started
+             END,
+             last_error = excluded.last_error, updated_at = CURRENT_TIMESTAMP",
+    )
+    .bind(card_id)
+    .bind(&binding.source_repository_path)
+    .bind(&binding.relative_path)
+    .bind(status)
+    .bind(error)
+    .execute(&mut *transaction)
+    .await
+    .map_err(|error| format!("Local review state could not be saved: {error}"))?;
+    sqlx::query(
+        "UPDATE kanban_repository_bindings
+         SET base_commit = ?1, state = ?2, last_error = ?3,
+             binding_json = ?4, updated_at = CURRENT_TIMESTAMP
+         WHERE card_id = ?5 AND repository_path = ?6",
+    )
+    .bind(&binding.base_commit)
+    .bind(persisted_binding_state(&binding.status))
+    .bind(binding_error)
+    .bind(binding_json)
+    .bind(card_id)
+    .bind(&binding.source_repository_path)
+    .execute(&mut *transaction)
+    .await
+    .map_err(|error| format!("The Kanban Git binding could not be saved: {error}"))?;
+    transaction
+        .commit()
+        .await
+        .map_err(|error| format!("Local review state could not be saved: {error}"))
+}
+
+fn diff_totals(content: &str) -> (u64, u64) {
+    content
+        .lines()
+        .fold((0, 0), |(additions, deletions), line| {
+            if line.starts_with('+') && !line.starts_with("+++") {
+                (additions + 1, deletions)
+            } else if line.starts_with('-') && !line.starts_with("---") {
+                (additions, deletions + 1)
+            } else {
+                (additions, deletions)
+            }
+        })
+}
+
+async fn local_review_projection(
+    app: &AppHandle,
+    card_id: &str,
+) -> Result<KanbanLocalReviewDto, String> {
+    let mut connection = open_database(app).await?;
+    let card = sqlx::query(
+        "SELECT card.title, card.description, card.chat_id, card.review_channel,
+                EXISTS(SELECT 1 FROM github_connections
+                       WHERE id = 1 AND status = 'connected') AS github_connected,
+                EXISTS(SELECT 1 FROM kanban_pull_requests
+                       WHERE card_id = card.id AND pull_request_number IS NOT NULL) AS has_pr,
+                EXISTS(SELECT 1 FROM kanban_local_reviews
+                       WHERE card_id = card.id AND merge_started = 1)
+                    AS local_started
+         FROM kanban_cards card
+         WHERE card.id = ?1 AND card.deleted_at IS NULL",
+    )
+    .bind(card_id)
+    .fetch_optional(&mut *connection)
+    .await
+    .map_err(|error| format!("Local review could not be loaded: {error}"))?
+    .ok_or_else(|| "The Kanban card no longer exists.".to_string())?;
+    let title: String = card.get("title");
+    let objective: String = card.get("description");
+    let chat_id: i64 = card.get("chat_id");
+    let review_channel: Option<String> = card.get("review_channel");
+    let github_connected = card.get::<i64, _>("github_connected") != 0;
+    let has_pr = card.get::<i64, _>("has_pr") != 0;
+    let local_started = card.get::<i64, _>("local_started") != 0;
+    let summary: Option<String> = sqlx::query_scalar(
+        "SELECT final_message FROM runs WHERE chat_id = ?1 AND final_message IS NOT NULL
+         ORDER BY turn_index DESC, id DESC LIMIT 1",
+    )
+    .bind(chat_id)
+    .fetch_optional(&mut *connection)
+    .await
+    .unwrap_or(None);
+    let state_rows = sqlx::query(
+        "SELECT source_repository_path, status, last_error
+         FROM kanban_local_reviews WHERE card_id = ?1",
+    )
+    .bind(card_id)
+    .fetch_all(&mut *connection)
+    .await
+    .map_err(|error| format!("Local review state could not be loaded: {error}"))?;
+    let states = state_rows
+        .into_iter()
+        .map(|row| {
+            (
+                row.get::<String, _>("source_repository_path"),
+                (
+                    row.get::<String, _>("status"),
+                    row.get::<Option<String>, _>("last_error"),
+                ),
+            )
+        })
+        .collect::<std::collections::HashMap<_, _>>();
+    let binding_rows: Vec<String> = sqlx::query_scalar(
+        "SELECT binding_json FROM kanban_repository_bindings
+         WHERE card_id = ?1 AND state != 'removed' ORDER BY relative_path, repository_path",
+    )
+    .bind(card_id)
+    .fetch_all(&mut *connection)
+    .await
+    .map_err(|error| format!("Local review repositories could not be loaded: {error}"))?;
+    drop(connection);
+
+    let mut repositories = Vec::with_capacity(binding_rows.len());
+    for value in binding_rows {
+        let persisted: PersistedKanbanGitBinding = serde_json::from_str(&value)
+            .map_err(|_| "A persisted Kanban Git binding is invalid.".to_string())?;
+        let binding = runtime_git_binding(persisted)?;
+        let stored = states.get(&binding.source_repository_path);
+        let status = stored
+            .map(|state| state.0.clone())
+            .unwrap_or_else(|| "pending".to_string());
+        let error = stored.and_then(|state| state.1.clone());
+        let result = kanban_git_diff(
+            app.clone(),
+            KanbanGitDiffRequest {
+                binding: binding.clone(),
+                include_binary: true,
+            },
+        )
+        .await;
+        match result {
+            Ok(diff) => {
+                let (additions, deletions) = diff_totals(&diff.content);
+                let files = kanban_git_status(
+                    app.clone(),
+                    KanbanGitBindingRequest {
+                        binding: binding.clone(),
+                    },
+                )
+                .await
+                .map(|value| value.files.into_iter().map(|file| file.path).collect())
+                .unwrap_or_default();
+                let mut content = diff.content;
+                if content.chars().count() > 2_000_000 {
+                    content = content.chars().take(2_000_000).collect();
+                    content.push_str("\n\nDiff truncated by Orchestrator.\n");
+                }
+                repositories.push(KanbanLocalReviewRepositoryDto {
+                    source_repository_path: binding.source_repository_path,
+                    relative_path: binding.relative_path,
+                    base_branch: binding.base_branch,
+                    card_branch: binding.card_branch,
+                    status,
+                    error,
+                    additions,
+                    deletions,
+                    files,
+                    diff: content,
+                    is_empty: diff.is_empty,
+                });
+            }
+            Err(load_error) => repositories.push(KanbanLocalReviewRepositoryDto {
+                source_repository_path: binding.source_repository_path,
+                relative_path: binding.relative_path,
+                base_branch: binding.base_branch,
+                card_branch: binding.card_branch,
+                status: "failed".to_string(),
+                error: Some(load_error),
+                additions: 0,
+                deletions: 0,
+                files: Vec::new(),
+                diff: String::new(),
+                is_empty: true,
+            }),
+        }
+    }
+    Ok(KanbanLocalReviewDto {
+        card_id: card_id.to_string(),
+        title,
+        objective,
+        summary,
+        review_channel: review_channel.unwrap_or_else(|| "local".to_string()),
+        can_publish_github: github_connected && !has_pr && !local_started,
+        repositories,
+    })
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn kanban_local_review(
+    app: AppHandle,
+    card_id: String,
+) -> Result<KanbanLocalReviewDto, String> {
+    validate_identifier(&card_id, "card")?;
+    local_review_projection(&app, &card_id).await
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn kanban_use_local_review(
+    app: AppHandle,
+    card_id: String,
+) -> Result<KanbanLocalReviewDto, String> {
+    validate_identifier(&card_id, "card")?;
+    let mut connection = open_database(&app).await?;
+    let actual_pull_requests: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM kanban_pull_requests
+         WHERE card_id = ?1 AND pull_request_number IS NOT NULL",
+    )
+    .bind(&card_id)
+    .fetch_one(&mut *connection)
+    .await
+    .map_err(|error| format!("Pull request state could not be checked: {error}"))?;
+    if actual_pull_requests > 0 {
+        return Err(
+            "This card already has a GitHub pull request and must remain in GitHub review."
+                .to_string(),
+        );
+    }
+    let updated = sqlx::query(
+        "UPDATE kanban_cards SET review_channel = 'local',
+             state_version = state_version + 1, updated_at = CURRENT_TIMESTAMP
+         WHERE id = ?1 AND stage = 'in_review' AND deleted_at IS NULL",
+    )
+    .bind(&card_id)
+    .execute(&mut *connection)
+    .await
+    .map_err(|error| format!("The local review could not be selected: {error}"))?;
+    if updated.rows_affected() != 1 {
+        return Err("Only a completed card in review can use local review.".to_string());
+    }
+    sqlx::query(
+        "DELETE FROM kanban_pull_requests
+         WHERE card_id = ?1 AND pull_request_number IS NULL",
+    )
+    .bind(&card_id)
+    .execute(&mut *connection)
+    .await
+    .map_err(|error| format!("Failed publication state could not be cleared: {error}"))?;
+    let workspace_id = card_workspace_id(&mut connection, &card_id).await?;
+    sqlx::query(
+        "UPDATE kanban_boards SET revision = revision + 1,
+         updated_at = CURRENT_TIMESTAMP WHERE workspace_id = ?1",
+    )
+    .bind(workspace_id)
+    .execute(&mut *connection)
+    .await
+    .map_err(|error| format!("The Kanban board could not be updated: {error}"))?;
+    drop(connection);
+    local_review_projection(&app, &card_id).await
+}
+
+async fn mark_local_review_failure(
+    app: &AppHandle,
+    card_id: &str,
+    binding: &KanbanGitRepositoryBinding,
+    error: &str,
+) {
+    let _ = upsert_local_review_state(app, card_id, binding, "failed", Some(error)).await;
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn kanban_approve_local_review(
+    app: AppHandle,
+    request: ApproveKanbanLocalReviewRequest,
+) -> Result<KanbanLocalReviewDto, String> {
+    validate_identifier(&request.card_id, "card")?;
+    validate_identifier(&request.operation_id, "operation")?;
+    let mut connection = open_database(&app).await?;
+    let card = sqlx::query(
+        "SELECT workspace_id, chat_id, description, account_id, model, stage,
+                execution_state, review_channel, review_state
+         FROM kanban_cards WHERE id = ?1 AND deleted_at IS NULL",
+    )
+    .bind(&request.card_id)
+    .fetch_optional(&mut *connection)
+    .await
+    .map_err(|error| format!("Local review could not start: {error}"))?
+    .ok_or_else(|| "The Kanban card no longer exists.".to_string())?;
+    let stage: String = card.get("stage");
+    if stage == "done" && card.get::<String, _>("review_state") == "approved" {
+        drop(connection);
+        return local_review_projection(&app, &request.card_id).await;
+    }
+    if stage != "in_review"
+        || card.get::<String, _>("execution_state") != "completed"
+        || card.get::<Option<String>, _>("review_channel").as_deref() != Some("local")
+    {
+        return Err("Only a completed card in local review can be approved.".to_string());
+    }
+    let existing: Option<String> =
+        sqlx::query_scalar("SELECT status FROM kanban_operations WHERE operation_id = ?1")
+            .bind(&request.operation_id)
+            .fetch_optional(&mut *connection)
+            .await
+            .map_err(|error| format!("Local review state could not be checked: {error}"))?;
+    if existing.as_deref() == Some("completed") {
+        drop(connection);
+        return local_review_projection(&app, &request.card_id).await;
+    }
+    if existing.is_some() {
+        return Err("This local review operation is already running.".to_string());
+    }
+    let workspace_id: i64 = card.get("workspace_id");
+    let objective: String = card.get("description");
+    let account_id: Option<i64> = card.get("account_id");
+    let model: Option<String> = card.get("model");
+    let chat_id: i64 = card.get("chat_id");
+    let summary: Option<String> = sqlx::query_scalar(
+        "SELECT final_message FROM runs WHERE chat_id = ?1 AND final_message IS NOT NULL
+         ORDER BY turn_index DESC, id DESC LIMIT 1",
+    )
+    .bind(chat_id)
+    .fetch_optional(&mut *connection)
+    .await
+    .unwrap_or(None);
+    sqlx::query(
+        "INSERT INTO kanban_operations (
+             operation_id, card_id, workspace_id, action, request_hash, status
+         ) VALUES (?1, ?2, ?3, 'approve_local_review', ?1, 'pending')",
+    )
+    .bind(&request.operation_id)
+    .bind(&request.card_id)
+    .bind(workspace_id)
+    .execute(&mut *connection)
+    .await
+    .map_err(|error| format!("Local review state could not be saved: {error}"))?;
+    let binding_rows: Vec<String> = sqlx::query_scalar(
+        "SELECT binding_json FROM kanban_repository_bindings
+         WHERE card_id = ?1 AND state != 'removed' ORDER BY relative_path, repository_path",
+    )
+    .bind(&request.card_id)
+    .fetch_all(&mut *connection)
+    .await
+    .map_err(|error| format!("Local review repositories could not be loaded: {error}"))?;
+    drop(connection);
+    if binding_rows.is_empty() {
+        return Err("This card has no repository worktrees to review.".to_string());
+    }
+
+    let mut merged_count = 0_usize;
+    let mut nothing_count = 0_usize;
+    let mut failures = Vec::new();
+    for value in binding_rows {
+        let persisted: PersistedKanbanGitBinding = serde_json::from_str(&value)
+            .map_err(|_| "A persisted Kanban Git binding is invalid.".to_string())?;
+        let mut binding = runtime_git_binding(persisted)?;
+        let existing_status: Option<String> = {
+            let mut connection = open_database(&app).await?;
+            sqlx::query_scalar(
+                "SELECT status FROM kanban_local_reviews
+                 WHERE card_id = ?1 AND source_repository_path = ?2",
+            )
+            .bind(&request.card_id)
+            .bind(&binding.source_repository_path)
+            .fetch_optional(&mut *connection)
+            .await
+            .unwrap_or(None)
+        };
+        if existing_status.as_deref() == Some("merged") {
+            merged_count += 1;
+            continue;
+        }
+        upsert_local_review_state(&app, &request.card_id, &binding, "committing", None).await?;
+        let status = match kanban_git_status(
+            app.clone(),
+            KanbanGitBindingRequest {
+                binding: binding.clone(),
+            },
+        )
+        .await
+        {
+            Ok(status) => status,
+            Err(error) => {
+                mark_local_review_failure(&app, &request.card_id, &binding, &error).await;
+                failures.push(format!("{}: {error}", binding.relative_path));
+                continue;
+            }
+        };
+        if status.has_changes {
+            let context = WorkspaceCommitIntentContext {
+                objective: Some(objective.clone()),
+                approved_plan: None,
+                implementation_outcome: summary.clone(),
+            };
+            let app_for_generation = app.clone();
+            let worktree = binding.worktree_path.clone();
+            let generation_model = model.clone();
+            let generated = tauri::async_runtime::spawn_blocking(move || {
+                generate_workspace_repository_commit_message_blocking(
+                    app_for_generation,
+                    worktree.clone(),
+                    Some(worktree),
+                    account_id,
+                    Some(true),
+                    generation_model,
+                    Some(context),
+                )
+            })
+            .await
+            .map_err(|_| "Commit message generation stopped unexpectedly.".to_string())?;
+            let message = match generated {
+                Ok(message) => message.message,
+                Err(error) => {
+                    mark_local_review_failure(&app, &request.card_id, &binding, &error).await;
+                    failures.push(format!("{}: {error}", binding.relative_path));
+                    continue;
+                }
+            };
+            match kanban_git_commit(
+                app.clone(),
+                KanbanGitCommitRequest {
+                    binding,
+                    message,
+                    stage_all: true,
+                },
+            )
+            .await
+            {
+                Ok(result) => binding = result.binding,
+                Err(error) => {
+                    mark_local_review_failure(&app, &request.card_id, &status.binding, &error)
+                        .await;
+                    failures.push(format!("{}: {error}", status.binding.relative_path));
+                    continue;
+                }
+            }
+        }
+        let refreshed = match kanban_git_status(
+            app.clone(),
+            KanbanGitBindingRequest {
+                binding: binding.clone(),
+            },
+        )
+        .await
+        {
+            Ok(status) => status,
+            Err(error) => {
+                mark_local_review_failure(&app, &request.card_id, &binding, &error).await;
+                failures.push(format!("{}: {error}", binding.relative_path));
+                continue;
+            }
+        };
+        if refreshed.ahead_of_base == 0 {
+            upsert_local_review_state(&app, &request.card_id, &binding, "nothing_to_merge", None)
+                .await?;
+            nothing_count += 1;
+            continue;
+        }
+        upsert_local_review_state(&app, &request.card_id, &binding, "merging", None).await?;
+        match kanban_git_merge(
+            app.clone(),
+            KanbanGitMergeRequest {
+                binding: binding.clone(),
+                message: None,
+            },
+        )
+        .await
+        {
+            Ok(result) if result.status == "merged" => {
+                binding = result.binding;
+                upsert_local_review_state(&app, &request.card_id, &binding, "merged", None).await?;
+                merged_count += 1;
+            }
+            Ok(result) => {
+                let error = result.message;
+                mark_local_review_failure(&app, &request.card_id, &result.binding, &error).await;
+                failures.push(format!("{}: {error}", result.binding.relative_path));
+            }
+            Err(error) => {
+                mark_local_review_failure(&app, &request.card_id, &binding, &error).await;
+                failures.push(format!("{}: {error}", binding.relative_path));
+            }
+        }
+    }
+
+    let mut connection = open_database(&app).await?;
+    if failures.is_empty() && merged_count > 0 {
+        let mut transaction = connection
+            .begin()
+            .await
+            .map_err(|error| format!("The local review could not be completed: {error}"))?;
+        sqlx::query(
+            "UPDATE kanban_cards SET stage = 'done', review_state = 'approved',
+                 approved_at = CURRENT_TIMESTAMP, state_version = state_version + 1,
+                 updated_at = CURRENT_TIMESTAMP
+             WHERE id = ?1 AND stage = 'in_review' AND review_channel = 'local'",
+        )
+        .bind(&request.card_id)
+        .execute(&mut *transaction)
+        .await
+        .map_err(|error| format!("The card could not be approved: {error}"))?;
+        sqlx::query(
+            "INSERT INTO kanban_review_decisions (card_id, attempt_id, decision)
+             VALUES (?1, (SELECT current_attempt_id FROM kanban_cards WHERE id = ?1), 'approved')",
+        )
+        .bind(&request.card_id)
+        .execute(&mut *transaction)
+        .await
+        .map_err(|error| format!("The review decision could not be recorded: {error}"))?;
+        sqlx::query(
+            "UPDATE kanban_boards SET revision = revision + 1,
+             updated_at = CURRENT_TIMESTAMP WHERE workspace_id = ?1",
+        )
+        .bind(workspace_id)
+        .execute(&mut *transaction)
+        .await
+        .map_err(|error| format!("The Kanban board could not be updated: {error}"))?;
+        sqlx::query(
+            "UPDATE kanban_operations SET status = 'completed', completed_at = CURRENT_TIMESTAMP
+             WHERE operation_id = ?1",
+        )
+        .bind(&request.operation_id)
+        .execute(&mut *transaction)
+        .await
+        .map_err(|error| format!("Local review state could not be completed: {error}"))?;
+        transaction
+            .commit()
+            .await
+            .map_err(|error| format!("The local review could not be completed: {error}"))?;
+    } else {
+        sqlx::query(
+            "UPDATE kanban_operations SET status = 'failed', completed_at = CURRENT_TIMESTAMP
+             WHERE operation_id = ?1",
+        )
+        .bind(&request.operation_id)
+        .execute(&mut *connection)
+        .await
+        .ok();
+    }
+    drop(connection);
+    if !failures.is_empty() {
+        return Err(format!(
+            "Some repositories could not be merged: {}",
+            failures.join(" ")
+        ));
+    }
+    if merged_count == 0 && nothing_count > 0 {
+        return Err("No repository changes are available to merge. Complete this card without changes instead.".to_string());
+    }
+    local_review_projection(&app, &request.card_id).await
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn kanban_complete_local_review_without_changes(
+    app: AppHandle,
+    card_id: String,
+) -> Result<KanbanCardDto, String> {
+    validate_identifier(&card_id, "card")?;
+    let projection = local_review_projection(&app, &card_id).await?;
+    if projection.repositories.is_empty()
+        || projection
+            .repositories
+            .iter()
+            .any(|repository| !repository.is_empty && repository.status != "nothing_to_merge")
+    {
+        return Err("This card still has repository changes to review.".to_string());
+    }
+    let mut connection = open_database(&app).await?;
+    let workspace_id = card_workspace_id(&mut connection, &card_id).await?;
+    sqlx::query(
+        "UPDATE kanban_cards SET stage = 'done', review_state = 'approved',
+             approved_at = CURRENT_TIMESTAMP, state_version = state_version + 1,
+             updated_at = CURRENT_TIMESTAMP
+         WHERE id = ?1 AND stage = 'in_review' AND review_channel = 'local'",
+    )
+    .bind(&card_id)
+    .execute(&mut *connection)
+    .await
+    .map_err(|error| format!("The card could not be completed: {error}"))?;
+    sqlx::query(
+        "UPDATE kanban_boards SET revision = revision + 1,
+         updated_at = CURRENT_TIMESTAMP WHERE workspace_id = ?1",
+    )
+    .bind(workspace_id)
+    .execute(&mut *connection)
+    .await
+    .map_err(|error| format!("The Kanban board could not be updated: {error}"))?;
+    load_card(&mut connection, &card_id).await
+}
+
 #[tauri::command]
 #[specta::specta]
 pub async fn kanban_set_inherited_context(
@@ -2433,6 +3111,12 @@ mod tests {
     use super::*;
 
     #[test]
+    fn local_review_diff_totals_ignore_file_headers() {
+        let diff = "diff --git a/file.txt b/file.txt\n--- a/file.txt\n+++ b/file.txt\n@@ -1 +1,2 @@\n-old\n+new\n+extra\n";
+        assert_eq!(diff_totals(diff), (2, 1));
+    }
+
+    #[test]
     fn attempt_claims_follow_the_persisted_lifecycle() {
         assert!(claim_transition_allowed("start", "todo", "idle", "none"));
         assert!(!claim_transition_allowed(
@@ -2516,10 +3200,12 @@ mod tests {
             let mut connection = SqliteConnection::connect("sqlite::memory:")
                 .await
                 .expect("open queue database");
-            sqlx::query("CREATE TABLE kanban_cards (id TEXT PRIMARY KEY, chat_id INTEGER NOT NULL)")
-                .execute(&mut connection)
-                .await
-                .expect("create cards table");
+            sqlx::query(
+                "CREATE TABLE kanban_cards (id TEXT PRIMARY KEY, chat_id INTEGER NOT NULL)",
+            )
+            .execute(&mut connection)
+            .await
+            .expect("create cards table");
             sqlx::query(
                 "CREATE TABLE prompt_queue_items (
                     id TEXT PRIMARY KEY,
@@ -2550,35 +3236,29 @@ mod tests {
             .expect("insert queue items");
 
             let mut transaction = connection.begin().await.expect("begin check");
-            assert!(
-                card_has_pending_follow_up(
-                    &mut transaction,
-                    "card-1",
-                    Some(7),
-                    Some("turn-current"),
-                )
-                .await
-                .expect("check pending follow-up")
-            );
+            assert!(card_has_pending_follow_up(
+                &mut transaction,
+                "card-1",
+                Some(7),
+                Some("turn-current"),
+            )
+            .await
+            .expect("check pending follow-up"));
             transaction.rollback().await.expect("rollback check");
 
-            sqlx::query(
-                "UPDATE prompt_queue_items SET auto_send_enabled = 0 WHERE id = 'next'",
-            )
-            .execute(&mut connection)
-            .await
-            .expect("hold next item");
-            let mut transaction = connection.begin().await.expect("begin held check");
-            assert!(
-                !card_has_pending_follow_up(
-                    &mut transaction,
-                    "card-1",
-                    Some(7),
-                    Some("turn-current"),
-                )
+            sqlx::query("UPDATE prompt_queue_items SET auto_send_enabled = 0 WHERE id = 'next'")
+                .execute(&mut connection)
                 .await
-                .expect("check held follow-up")
-            );
+                .expect("hold next item");
+            let mut transaction = connection.begin().await.expect("begin held check");
+            assert!(!card_has_pending_follow_up(
+                &mut transaction,
+                "card-1",
+                Some(7),
+                Some("turn-current"),
+            )
+            .await
+            .expect("check held follow-up"));
         });
     }
 

@@ -45,6 +45,7 @@ import {
 } from "../../lib/runExecutionSettings";
 import {
   approveKanbanCard,
+  approveKanbanLocalReview,
   archiveKanbanCard,
   cleanupKanbanGit,
   commitKanbanGit,
@@ -52,6 +53,7 @@ import {
   deleteKanbanCard,
   loadKanbanBoard,
   loadKanbanGitBindings,
+  loadKanbanLocalReview,
   mergeKanbanGit,
   moveKanbanCard,
   pushKanbanGit,
@@ -61,12 +63,15 @@ import {
   saveKanbanInheritedContext,
   saveKanbanPreferences,
   updateKanbanCard,
+  useKanbanLocalReview,
+  completeKanbanLocalReviewWithoutChanges,
   type KanbanAttemptRecord,
   type KanbanBoardSnapshotRecord,
   type KanbanCardDraft as PersistedKanbanCardDraft,
   type KanbanCardRecord,
   type KanbanColumnKey,
   type KanbanGitBinding,
+  type KanbanLocalReview,
 } from "./api";
 import {
   DEFAULT_KANBAN_FILTER_STATE,
@@ -86,6 +91,7 @@ import {
   KanbanCardDialog,
   KanbanToolbar,
   KanbanTransitionDialog,
+  KanbanLocalReviewDrawer,
   type KanbanCard as ViewKanbanCard,
   type KanbanCardAction,
   type KanbanCardDraft,
@@ -156,6 +162,13 @@ type GitDialogState = {
 type PullRequestChooserState = {
   cardTitle: string;
   pullRequests: KanbanPullRequestRecord[];
+};
+
+type LocalReviewState = {
+  cardId: string;
+  review: KanbanLocalReview | null;
+  loading: boolean;
+  error: string | null;
 };
 
 type GitDialogProps = {
@@ -494,6 +507,7 @@ function toDomainCard(card: KanbanCardRecord): DomainKanbanCard {
     sortPosition: card.sortPosition,
     executionState: card.executionState,
     reviewState: card.reviewState,
+    reviewChannel: card.reviewChannel,
     currentAttemptId: card.currentAttemptId,
     stateVersion: card.stateVersion,
     archivedAt: card.archivedAt,
@@ -537,6 +551,7 @@ function viewActions(card: DomainKanbanCard): KanbanCardAction[] {
     ["open_pull_request", "open-pull-request"],
     ["retry_publication", "retry-publication"],
     ["complete_without_pr", "complete-without-pr"],
+    ["review_changes", "review-changes"],
   ];
   return pairs
     .filter(([capability]) => capabilities[capability].enabled)
@@ -647,6 +662,7 @@ export function KanbanWorkspace({
   const [requestChangesText, setRequestChangesText] = useState("");
   const [cleanupOptions, setCleanupOptions] = useState<KanbanCleanupOption[]>([]);
   const [gitDialog, setGitDialog] = useState<GitDialogState | null>(null);
+  const [localReview, setLocalReview] = useState<LocalReviewState | null>(null);
   const [pullRequestChooser, setPullRequestChooser] =
     useState<PullRequestChooserState | null>(null);
   const requestSequence = useRef(0);
@@ -747,6 +763,7 @@ export function KanbanWorkspace({
     setTransition(null);
     setGitDialog(null);
     setPullRequestChooser(null);
+    setLocalReview(null);
   }, [workspace.id]);
 
   useEffect(() => {
@@ -918,16 +935,28 @@ export function KanbanWorkspace({
                 : "missing",
         })),
         pullRequests: [...(card.pullRequests ?? [])],
-        availableActions: viewActions(card).filter(
-          (action) =>
-            action !== "edit" ||
-            loadedBindings !== undefined,
-        ),
+        reviewChannel: card.reviewChannel,
+        availableActions: (() => {
+          const actions = viewActions(card).filter(
+            (action) => action !== "edit" || loadedBindings !== undefined,
+          );
+          const hasPullRequest = card.pullRequests?.some((pullRequest) => pullRequest.url);
+          if (
+            !githubConnection?.connected &&
+            card.stage === "in_review" &&
+            card.executionState === "completed" &&
+            !hasPullRequest &&
+            !actions.includes("review-changes")
+          ) {
+            actions.push("review-changes");
+          }
+          return actions;
+        })(),
         archivedAt: card.archivedAt,
         lastActivityAt: card.updatedAt,
       };
     },
-    [accountLabels, bindingsByCard, modelLabels, reasoningLabels],
+    [accountLabels, bindingsByCard, githubConnection?.connected, modelLabels, reasoningLabels],
   );
 
   const activeFilter = useMemo(
@@ -1375,8 +1404,16 @@ export function KanbanWorkspace({
         });
       } else if (transition.kind === "approve-done") {
         await approveKanbanCard(persisted);
+      } else if (transition.kind === "approve-local") {
+        await approveKanbanLocalReview(persisted.id);
+        setLocalReview(null);
       } else if (transition.kind === "complete-without-pr") {
-        await completeKanbanWithoutPullRequest(persisted.id);
+        if (persisted.reviewChannel === "local") {
+          await completeKanbanLocalReviewWithoutChanges(persisted.id);
+          setLocalReview(null);
+        } else {
+          await completeKanbanWithoutPullRequest(persisted.id);
+        }
       } else if (transition.kind === "request-changes") {
         const prompt = requestChangesText.trim();
         if (!prompt) throw new Error("Describe the changes you want Codex to make.");
@@ -1561,6 +1598,31 @@ export function KanbanWorkspace({
     }
   }
 
+  async function openLocalReview(card: KanbanCardRecord) {
+    setLocalReview({ cardId: card.id, review: null, loading: true, error: null });
+    try {
+      const review =
+        card.reviewChannel === "local"
+          ? await loadKanbanLocalReview(card.id)
+          : await useKanbanLocalReview(card.id);
+      setLocalReview({ cardId: card.id, review, loading: false, error: null });
+      if (card.reviewChannel !== "local") await loadBoard();
+    } catch (reviewError) {
+      setLocalReview({
+        cardId: card.id,
+        review: null,
+        loading: false,
+        error: errorMessage(reviewError),
+      });
+    }
+  }
+
+  async function refreshLocalReview() {
+    if (!localReview) return;
+    const card = cardsById.get(localReview.cardId);
+    if (card) await openLocalReview(card);
+  }
+
   async function handleCardAction(action: KanbanCardAction, card: ViewKanbanCard) {
     const persisted = cardsById.get(card.id);
     if (!persisted) return;
@@ -1610,6 +1672,10 @@ export function KanbanWorkspace({
         },
         "Pull request publication restarted.",
       );
+      return;
+    }
+    if (action === "review-changes") {
+      await openLocalReview(persisted);
       return;
     }
     if (action === "complete-without-pr") {
@@ -1698,9 +1764,9 @@ export function KanbanWorkspace({
             </strong>
             <span>
               {githubConnection.available
-                ? "Connect GitHub to publish completed cards as draft pull requests."
+                ? "Completed cards will use local review until GitHub is connected."
                 : githubConnection.message ??
-                  "This build cannot publish completed cards to GitHub."}
+                  "Completed cards will use local review in this build."}
             </span>
           </span>
           {githubConnection.available ? (
@@ -1862,6 +1928,36 @@ export function KanbanWorkspace({
             setPullRequestChooser(null);
             void openPullRequest(pullRequest.url);
           }}
+        />
+      ) : null}
+      {localReview ? (
+        <KanbanLocalReviewDrawer
+          review={localReview.review}
+          loading={localReview.loading}
+          busy={busy}
+          error={localReview.error}
+          githubConnected={Boolean(githubConnection?.connected)}
+          onRetry={() => void refreshLocalReview()}
+          onApprove={() => openTransition("approve-local", localReview.cardId)}
+          onCompleteNoChanges={() =>
+            openTransition("complete-without-pr", localReview.cardId)
+          }
+          onRequestChanges={() => {
+            const card = cardsById.get(localReview.cardId);
+            setLocalReview(null);
+            if (card) void onOpenConversation(card);
+          }}
+          onPublishGithub={() => {
+            const cardId = localReview.cardId;
+            void runAction(
+              async () => {
+                await publishKanbanCard(cardId);
+                setLocalReview(null);
+              },
+              "Draft pull request publication started.",
+            );
+          }}
+          onClose={() => setLocalReview(null)}
         />
       ) : null}
       {transition && transitionViewCard ? (

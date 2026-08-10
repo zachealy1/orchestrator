@@ -61,6 +61,7 @@ export type KanbanCard = {
   sortPosition: number;
   executionState: KanbanExecutionState;
   reviewState: KanbanReviewState;
+  reviewChannel?: "github" | "local" | null;
   currentAttemptId: string | null;
   stateVersion: number;
   archivedAt: string | null;
@@ -164,7 +165,8 @@ export type KanbanCardAction =
   | "reopen_review"
   | "open_pull_request"
   | "retry_publication"
-  | "complete_without_pr";
+  | "complete_without_pr"
+  | "review_changes";
 
 export type KanbanCapability = {
   enabled: boolean;
@@ -324,10 +326,7 @@ export function deriveCardCapabilities(
       false,
       "Completed Kanban work is published automatically.",
     ),
-    merge: capability(
-      false,
-      "Review and merging take place on GitHub.",
-    ),
+    merge: capability(false, "Use the card review workflow."),
     request_changes: capability(
       false,
       "Request changes on GitHub.",
@@ -355,6 +354,13 @@ export function deriveCardCapabilities(
       available && card.stage === "in_review" && nothingToPublish,
       "Only cards with nothing to publish can be completed without a pull request.",
       true,
+    ),
+    review_changes: capability(
+      available &&
+        card.stage === "in_review" &&
+        card.executionState === "completed" &&
+        card.reviewChannel === "local",
+      "This card is not available for local review.",
     ),
   };
 }

@@ -27,6 +27,25 @@ const GITHUB_TOKEN_URL: &str = "https://github.com/login/oauth/access_token";
 const KEYCHAIN_SERVICE: &str = "com.orchestrator.github";
 const KEYCHAIN_ACCOUNT: &str = "github-app-user-token";
 
+pub(crate) async fn github_review_available(app: &AppHandle) -> bool {
+    let Ok(mut connection) = open_database(app).await else {
+        return false;
+    };
+    let connected: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM github_connections WHERE id = 1 AND status = 'connected'",
+    )
+    .fetch_one(&mut *connection)
+    .await
+    .unwrap_or(0);
+    if connected == 0 {
+        return false;
+    }
+    let Ok(token) = access_token().await else {
+        return false;
+    };
+    github_get::<GithubUser>("/user", &token).await.is_ok()
+}
+
 #[derive(Default)]
 pub(crate) struct GithubState {
     pending_device_flow: Mutex<Option<PendingDeviceFlow>>,
@@ -1165,6 +1184,51 @@ pub(crate) async fn github_publish_kanban_card(
     app: AppHandle,
     card_id: String,
 ) -> Result<GithubPublicationResult, String> {
+    let mut connection = open_database(&app).await?;
+    let card = sqlx::query(
+        "SELECT review_channel,
+                EXISTS(SELECT 1 FROM kanban_pull_requests
+                       WHERE card_id = kanban_cards.id AND pull_request_number IS NOT NULL)
+                    AS has_pr,
+                EXISTS(SELECT 1 FROM kanban_local_reviews
+                       WHERE card_id = kanban_cards.id
+                         AND merge_started = 1) AS local_started
+         FROM kanban_cards WHERE id = ?1 AND stage = 'in_review' AND deleted_at IS NULL",
+    )
+    .bind(&card_id)
+    .fetch_optional(&mut *connection)
+    .await
+    .map_err(|error| format!("The review destination could not be checked: {error}"))?
+    .ok_or_else(|| "Only a completed card in review can be published.".to_string())?;
+    let has_pr = card.get::<i64, _>("has_pr") != 0;
+    let local_started = card.get::<i64, _>("local_started") != 0;
+    if card.get::<Option<String>, _>("review_channel").as_deref() == Some("local") {
+        if local_started {
+            return Err(
+                "Local merging has already started, so this card cannot switch to GitHub review."
+                    .to_string(),
+            );
+        }
+        if has_pr {
+            return Err("This card already has a pull request.".to_string());
+        }
+        access_token().await?;
+        sqlx::query(
+            "UPDATE kanban_cards SET review_channel = 'github',
+                 state_version = state_version + 1, updated_at = CURRENT_TIMESTAMP
+             WHERE id = ?1 AND review_channel = 'local'",
+        )
+        .bind(&card_id)
+        .execute(&mut *connection)
+        .await
+        .map_err(|error| format!("GitHub review could not be selected: {error}"))?;
+        sqlx::query("DELETE FROM kanban_local_reviews WHERE card_id = ?1")
+            .bind(&card_id)
+            .execute(&mut *connection)
+            .await
+            .map_err(|error| format!("Local review state could not be cleared: {error}"))?;
+    }
+    drop(connection);
     enqueue_card_publication(app.clone(), card_id.clone()).await?;
     let mut connection = open_database(&app).await?;
     Ok(GithubPublicationResult {

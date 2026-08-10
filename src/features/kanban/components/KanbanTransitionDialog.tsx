@@ -63,6 +63,14 @@ const COPY: Record<
     confirm: "Approve and mark Done",
     danger: false,
   },
+  "approve-local": {
+    eyebrow: "Local review",
+    title: "Approve and merge locally?",
+    description:
+      "Orchestrator will commit outstanding card changes and merge each card branch into its captured local target. Nothing will be pushed.",
+    confirm: "Approve and merge locally",
+    danger: false,
+  },
   "complete-without-pr": {
     eyebrow: "No repository changes",
     title: "Complete without a pull request?",
@@ -109,7 +117,11 @@ function ConfirmIcon({ kind }: { kind: KanbanTransitionKind }) {
   if (kind === "stop" || kind === "stop-and-move") {
     return <CircleStop size={16} aria-hidden="true" />;
   }
-  if (kind === "approve-done" || kind === "complete-without-pr") {
+  if (
+    kind === "approve-done" ||
+    kind === "approve-local" ||
+    kind === "complete-without-pr"
+  ) {
     return <Check size={16} aria-hidden="true" />;
   }
   if (kind === "request-changes") return <RefreshCw size={16} aria-hidden="true" />;

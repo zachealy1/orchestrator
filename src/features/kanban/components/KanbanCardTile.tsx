@@ -18,6 +18,7 @@ import {
   Trash2,
   UploadCloud,
   ExternalLink,
+  Eye,
 } from "lucide-react";
 import {
   useCallback,
@@ -87,6 +88,7 @@ const ACTION_LABELS: Record<KanbanCardAction, string> = {
   "open-pull-request": "Open pull request",
   "retry-publication": "Retry publication",
   "complete-without-pr": "Complete without pull request",
+  "review-changes": "Review changes",
 };
 
 const SUBMISSION_MODE_LABELS = {
@@ -142,6 +144,8 @@ export function KanbanActionIcon({
       return <RefreshCw size={size} aria-hidden="true" />;
     case "complete-without-pr":
       return <Check size={size} aria-hidden="true" />;
+    case "review-changes":
+      return <Eye size={size} aria-hidden="true" />;
   }
 }
 
@@ -452,6 +456,10 @@ function KanbanCardContent({
               </span>
             ))}
           </span>
+        ) : null}
+        {card.reviewChannel === "local" &&
+        card.executionState === "completed-awaiting-review" ? (
+          <span className="kanban-local-review-status">Local review</span>
         ) : null}
     </>
   );

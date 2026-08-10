@@ -13,6 +13,7 @@ import { KanbanWorkspace } from "./KanbanWorkspace";
 
 const apiMocks = vi.hoisted(() => ({
   approveKanbanCard: vi.fn(),
+  approveKanbanLocalReview: vi.fn(),
   archiveKanbanCard: vi.fn(),
   cleanupKanbanGit: vi.fn(),
   commitKanbanGit: vi.fn(),
@@ -20,6 +21,7 @@ const apiMocks = vi.hoisted(() => ({
   deleteKanbanCard: vi.fn(),
   loadKanbanBoard: vi.fn(),
   loadKanbanGitBindings: vi.fn(),
+  loadKanbanLocalReview: vi.fn(),
   mergeKanbanGit: vi.fn(),
   moveKanbanCard: vi.fn(),
   pushKanbanGit: vi.fn(),
@@ -29,6 +31,8 @@ const apiMocks = vi.hoisted(() => ({
   saveKanbanInheritedContext: vi.fn(),
   saveKanbanPreferences: vi.fn(),
   updateKanbanCard: vi.fn(),
+  useKanbanLocalReview: vi.fn(),
+  completeKanbanLocalReviewWithoutChanges: vi.fn(),
 }));
 const transcriptMocks = vi.hoisted(() => ({
   listLocalChatTranscript: vi.fn(),
@@ -236,7 +240,7 @@ describe("KanbanWorkspace controller", () => {
     const warning = await screen.findByTestId("kanban-github-warning");
     expect(warning).toHaveTextContent("GitHub not connected");
     expect(warning).toHaveTextContent(
-      "Connect GitHub to publish completed cards as draft pull requests.",
+      "Completed cards will use local review until GitHub is connected.",
     );
 
     await user.click(within(warning).getByRole("button", { name: "Connect GitHub" }));
@@ -490,6 +494,44 @@ describe("KanbanWorkspace controller", () => {
     await user.click(within(tile).getByLabelText("Actions for Controller card"));
     await user.click(screen.getByRole("menuitem", { name: "Retry publication" }));
     expect(githubMocks.publishKanbanCard).toHaveBeenCalledWith("card-1");
+  });
+
+  it("opens the local review drawer for a disconnected completed card", async () => {
+    const user = userEvent.setup();
+    const localCard = card({ reviewChannel: "local", pullRequests: [] });
+    apiMocks.loadKanbanBoard.mockResolvedValue(snapshot([localCard]));
+    apiMocks.loadKanbanLocalReview.mockResolvedValue({
+      cardId: localCard.id,
+      title: localCard.title,
+      objective: localCard.description,
+      summary: "Implemented the controller.",
+      reviewChannel: "local",
+      canPublishGithub: false,
+      repositories: [
+        {
+          sourceRepositoryPath: "/workspace/repo",
+          relativePath: "repo",
+          baseBranch: "main",
+          cardBranch: "codex/controller-card",
+          status: "pending",
+          error: null,
+          additions: 1,
+          deletions: 0,
+          files: ["src/controller.ts"],
+          diff: "diff --git a/src/controller.ts b/src/controller.ts\n--- a/src/controller.ts\n+++ b/src/controller.ts\n@@ -0,0 +1 @@\n+export {};\n",
+          isEmpty: false,
+        },
+      ],
+    });
+    renderWorkspace();
+
+    const tile = await screen.findByRole("article", { name: /Controller card/ });
+    await user.click(within(tile).getByLabelText("Actions for Controller card"));
+    await user.click(screen.getByRole("menuitem", { name: "Review changes" }));
+
+    expect(await screen.findByRole("complementary", { name: "Local card review" })).toBeInTheDocument();
+    expect(screen.getByText("Implemented the controller.")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Approve and merge locally" })).toBeInTheDocument();
   });
 
   it("offers to clear active filters when the board has no matches", async () => {

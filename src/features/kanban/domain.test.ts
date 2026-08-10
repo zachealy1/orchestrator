@@ -201,6 +201,21 @@ describe("deriveCardCapabilities", () => {
     expect(capabilities.approve_result.enabled).toBe(false);
   });
 
+  it("offers local review for a completed disconnected card", () => {
+    const capabilities = deriveCardCapabilities(
+      card({
+        stage: "in_review",
+        executionState: "completed",
+        reviewState: "awaiting_review",
+        reviewChannel: "local",
+      }),
+    );
+
+    expect(capabilities.review_changes.enabled).toBe(true);
+    expect(capabilities.open_pull_request.enabled).toBe(false);
+    expect(capabilities.merge.enabled).toBe(false);
+  });
+
   it("restricts archived and deleted cards", () => {
     const archived = deriveCardCapabilities(
       card({ archivedAt: "2026-08-02T11:00:00.000Z" }),
