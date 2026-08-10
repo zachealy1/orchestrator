@@ -1018,6 +1018,10 @@ button.account-switcher-item:hover:not(:disabled) {
   justify-content: flex-end;
 }
 
+.workspace-context-actions:empty {
+  display: none;
+}
+
 @container (max-width: 980px) {
   .workspace-kanban-header-controls {
     max-width: 430px;
