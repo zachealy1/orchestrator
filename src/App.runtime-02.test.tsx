@@ -834,6 +834,87 @@ describe("Application runtime scenarios 2", () => {
       expect(within(transcript).getByText("640 tokens")).toBeInTheDocument();
     });
 
+  it("uses a Kanban chat's isolated worktree branch in the header", async () => {
+      const historicalChat = workspaceChatFixture({
+        id: 402,
+        title: "Add Batman file",
+      });
+      const historicalRun = workspaceRunFixture({
+        id: 302,
+        chat_id: historicalChat.id,
+        original_prompt: "Add batman.txt",
+        final_message:
+          "Added [batman.txt](/repo/.codex-kanban/card-batman/orchestrator/batman.txt).",
+      });
+      mocks.listWorkspaceChatsMock.mockResolvedValue([historicalChat]);
+      mocks.getChatWithRunsMock.mockResolvedValue(
+        workspaceChatWithRunsFixture(historicalChat, [historicalRun]),
+      );
+      mocks.getKanbanCardForChatMock.mockResolvedValue({
+        id: "card-batman",
+        hasStartedTurn: true,
+      });
+      mocks.loadKanbanGitBindingsMock.mockResolvedValue([
+        {
+          sourceRepositoryPath: workspace.path,
+          relativePath: ".",
+          executionRoot: "/repo/.codex-kanban/card-batman",
+          sourceBranch: "main",
+          baseBranch: "main",
+          baseCommit: "0123456789abcdef",
+          cardBranch: "codex/add-batman-file",
+          worktreePath: "/repo/.codex-kanban/card-batman/orchestrator",
+          status: "ready",
+          error: null,
+        },
+      ]);
+      mocks.readWorkspaceFilePreviewMock.mockResolvedValue({
+        path: "/repo/.codex-kanban/card-batman/orchestrator/batman.txt",
+        relativePath: "batman.txt",
+        content: "I am Batman.",
+        truncated: false,
+        isBinary: false,
+      });
+
+      const { user } = await renderApp();
+      const banner = screen.getByRole("region", { name: "Selected folder" });
+      await user.click(
+        within(banner).getByRole("button", { name: /open chat history/i }),
+      );
+      const drawer = await screen.findByRole("complementary", {
+        name: "Workspace chat history",
+      });
+      await user.click(
+        within(drawer).getByRole("button", { name: /add batman file/i }),
+      );
+
+      const branchSelect = within(banner).getByRole("combobox", {
+        name: "Branch",
+      });
+      await waitFor(() =>
+        expect(branchSelect).toHaveTextContent("codex/add-batman-file"),
+      );
+      await user.click(branchSelect);
+      expect(
+        screen.getByRole("option", { name: "codex/add-batman-file" }),
+      ).toBeInTheDocument();
+      expect(
+        screen.queryByRole("option", { name: "Create branch..." }),
+      ).not.toBeInTheDocument();
+      expect(mocks.checkoutGitBranchMock).not.toHaveBeenCalled();
+
+      await user.keyboard("{Escape}");
+      await user.click(
+        await screen.findByRole("link", { name: "batman.txt" }),
+      );
+      await waitFor(() =>
+        expect(mocks.readWorkspaceFilePreviewMock).toHaveBeenCalledWith(
+          "/repo/.codex-kanban/card-batman/orchestrator",
+          "/repo/.codex-kanban/card-batman/orchestrator/batman.txt",
+        ),
+      );
+    });
+
   it("restores a held queue item after restart and keeps the chat queue paused", async () => {
       const historicalChat = workspaceChatFixture({
         id: 409,

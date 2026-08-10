@@ -348,16 +348,19 @@ button.kanban-card-content {
   box-shadow: none;
   font: inherit;
   transform: none;
+  -webkit-tap-highlight-color: transparent;
 }
 
 .kanban-card-content.is-conversation-link {
   cursor: pointer;
 }
 
-.kanban-card-content.is-conversation-link:hover:not(:disabled),
-.kanban-card-content.is-conversation-link:active:not(:disabled),
-.kanban-card-content.is-conversation-link:focus-visible {
+.kanban-card-tile .kanban-card-content.is-conversation-link:hover:not(:disabled),
+.kanban-card-tile .kanban-card-content.is-conversation-link:active:not(:disabled),
+.kanban-card-tile .kanban-card-content.is-conversation-link:focus:not(:disabled),
+.kanban-card-tile .kanban-card-content.is-conversation-link:focus-visible {
   background: transparent;
+  background-color: transparent;
   box-shadow: none;
   color: inherit;
   transform: none;

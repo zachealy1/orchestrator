@@ -7,7 +7,7 @@ import {
 const DEFAULT_PREPARED_CHAT_LIMIT = 5;
 const DEFAULT_SOURCE_CHARACTER_BUDGET = 2_000_000;
 const DEFAULT_WORKER_TIMEOUT_MS = 5_000;
-export const HISTORICAL_RENDER_PIPELINE_VERSION = "prepared-html-v1";
+export const HISTORICAL_RENDER_PIPELINE_VERSION = "prepared-html-v2";
 
 type HistoricalPreparationEntry = {
   clientId: string;

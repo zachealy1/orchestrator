@@ -111,9 +111,11 @@ import { KanbanWorkspace } from "../features/kanban/KanbanWorkspace";
 import {
   createKanbanCard,
   getKanbanCardForChat,
+  loadKanbanGitBindings,
   recoverInterruptedKanbanAttempts,
   reopenKanbanCard,
   type KanbanCardRecord,
+  type KanbanGitBinding,
 } from "../features/kanban/api";
 import {
   KanbanAttemptStateController,
@@ -495,6 +497,12 @@ import {
   withStartupFallback,
 } from "./bootstrapRecovery";
 
+type KanbanChatGitContext = {
+  chatId: number;
+  cardId: string;
+  bindings: KanbanGitBinding[];
+};
+
 function App() {
   const appServices = useAppServices();
   const {
@@ -730,6 +738,8 @@ function App() {
     workspaceFileIndexCache,
     workspaceFileIndexRequestCache,
   } = useWorkspaceController();
+  const [kanbanChatGitContext, setKanbanChatGitContext] =
+    useState<KanbanChatGitContext | null>(null);
   const {
     taskChatEntries,
     setTaskChatEntries,
@@ -1592,6 +1602,75 @@ function App() {
     selectedGitOverview,
     selectedWorkspace?.selected_git_repository_path,
   );
+  const selectedKanbanGitBinding = useMemo(() => {
+    if (
+      !kanbanChatGitContext ||
+      kanbanChatGitContext.chatId !== selectedWorkspaceChatSession?.chatId
+    ) {
+      return null;
+    }
+    const selectedRepositoryPath =
+      selectedGitRepository?.repository.rootPath ?? null;
+    return (
+      kanbanChatGitContext.bindings.find(
+        (binding) => binding.sourceRepositoryPath === selectedRepositoryPath,
+      ) ?? kanbanChatGitContext.bindings[0] ?? null
+    );
+  }, [
+    kanbanChatGitContext,
+    selectedGitRepository?.repository.rootPath,
+    selectedWorkspaceChatSession?.chatId,
+  ]);
+  useEffect(() => {
+    const chatId = selectedWorkspaceChatSession?.chatId ?? null;
+    if (chatId === null) {
+      setKanbanChatGitContext(null);
+      return;
+    }
+
+    let disposed = false;
+    void (async () => {
+      try {
+        const card = await getKanbanCardForChat(chatId);
+        if (disposed) return;
+        if (!card?.hasStartedTurn) {
+          setKanbanChatGitContext(null);
+          return;
+        }
+        const bindings = await loadKanbanGitBindings(card.id);
+        if (disposed) return;
+        setKanbanChatGitContext({ chatId, cardId: card.id, bindings });
+        const workspace = selectedWorkspaceRef.current;
+        const firstBinding = bindings[0];
+        if (
+          workspace &&
+          firstBinding &&
+          workspace.selected_git_repository_path !==
+            firstBinding.sourceRepositoryPath &&
+          !bindings.some(
+            (binding) =>
+              binding.sourceRepositoryPath ===
+              workspace.selected_git_repository_path,
+          )
+        ) {
+          rememberWorkspaceGitRepository(
+            workspace.id,
+            firstBinding.sourceRepositoryPath,
+          );
+          void updateWorkspaceSelectedGitRepository(
+            workspace.id,
+            firstBinding.sourceRepositoryPath,
+          ).catch(() => undefined);
+        }
+      } catch {
+        if (!disposed) setKanbanChatGitContext(null);
+      }
+    })();
+
+    return () => {
+      disposed = true;
+    };
+  }, [selectedWorkspaceChatSession?.chatId]);
   const gitStatusByWorkspaceId = useMemo(() => {
     const maps = new Map<number, Map<string, WorkspaceGitFileStatus>>();
     Object.entries(gitStatusStates).forEach(([workspaceId, state]) => {
@@ -1641,7 +1720,31 @@ function App() {
     closeWorkspaceFilePreview,
     removeWorkspacePreview,
   } = workspacePreview;
-  const openTranscriptFileLink = openTaskResponseFileLink;
+  const openTranscriptFileLink = useStableEvent((href: string) => {
+    const cardGitContext = kanbanChatGitContext;
+    if (
+      selectedWorkspace &&
+      cardGitContext &&
+      cardGitContext.chatId === selectedWorkspaceChatSession?.chatId
+    ) {
+      for (const binding of cardGitContext.bindings) {
+        const worktreeWorkspace = {
+          ...selectedWorkspace,
+          path: binding.worktreePath,
+        };
+        const file = workspaceFileEntryFromResponseLink(
+          href,
+          worktreeWorkspace,
+        );
+        if (!file) continue;
+        void openWorkspaceFilePreview(worktreeWorkspace, file, {
+          forceRefresh: true,
+        });
+        return true;
+      }
+    }
+    return openTaskResponseFileLink(href);
+  });
   useEffect(() => {
     persistWorkspaceSurfaceMode(workspaceSurfaceMode);
     if (workspaceSurfaceMode === "kanban") {
@@ -7078,6 +7181,22 @@ function App() {
         `Could not switch to ${branch}: ${error instanceof Error ? error.message : String(error)}`,
       );
     }
+  }
+
+  async function selectVisibleBranch(branch: string) {
+    if (selectedKanbanGitBinding) {
+      if (branch !== selectedKanbanGitBinding.cardBranch) {
+        setStatusMessage(
+          "Card conversations remain scoped to their isolated worktree branch.",
+        );
+        return;
+      }
+      setStatusMessage(
+        `Working in the card branch ${selectedKanbanGitBinding.cardBranch}.`,
+      );
+      return;
+    }
+    await selectBranch(branch);
   }
 
   async function selectGitRepository(repositoryPath: string) {
@@ -15736,8 +15855,12 @@ function App() {
               repositoryPath={
                 selectedGitRepository?.repository.rootPath ?? null
               }
-              branch={selectedBranch}
-              branches={branches}
+              branch={selectedKanbanGitBinding?.cardBranch ?? selectedBranch}
+              branches={
+                selectedKanbanGitBinding
+                  ? [selectedKanbanGitBinding.cardBranch]
+                  : branches
+              }
               gitState={selectedGitStatusState}
               gitSummary={selectedGitSummary}
               gitAction={headerGitAction}
@@ -15749,9 +15872,11 @@ function App() {
               onRepositoryChange={(repositoryPath) =>
                 void selectGitRepository(repositoryPath)
               }
-              onBranchChange={(branch) => void selectBranch(branch)}
+              onBranchChange={(branch) => void selectVisibleBranch(branch)}
               branchCreationBusy={branchCreationPendingWorkspaceId !== null}
-              onCreateBranch={openBranchCreationDialog}
+              onCreateBranch={
+                selectedKanbanGitBinding ? undefined : openBranchCreationDialog
+              }
               newChatDisabled={false}
               onNewChat={startNewWorkspaceChat}
               historyOpen={historyDrawerOpen}

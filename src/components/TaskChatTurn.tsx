@@ -71,7 +71,10 @@ import {
 } from "../lib/imageAttachments";
 import type { RunWebPreview } from "../lib/webPreview";
 import { useAppServices } from "../runtime/AppServices";
-import { isPreviewableSummaryLink } from "../lib/summaryLinks";
+import {
+  isPreviewableSummaryLink,
+  normalizePreviewableMarkdownLinks,
+} from "../lib/summaryLinks";
 import { ORCHESTRATOR_PROMPT_CONTEXT_MIME } from "../features/composer/types";
 import type { ComposerContextFile } from "../features/composer/types";
 import type { CodexMessage } from "../features/codex/types";
@@ -509,6 +512,7 @@ const AssistantRunOutput = memo(function AssistantRunOutput({
             entry={entry}
             runView={runView}
             onLoadHistoricalActivity={onLoadHistoricalActivity}
+            onOpenFileLink={onOpenFileLink}
           />
         ) : (
           <RunMetrics runView={runView} />
@@ -567,7 +571,7 @@ const AssistantRunOutput = memo(function AssistantRunOutput({
     <div className="run-output-surface running" aria-label="Live run output">
       <RunMetrics runView={runView} />
       {hasTimeline ? (
-        <RunTimeline runView={runView} />
+        <RunTimeline runView={runView} onOpenFileLink={onOpenFileLink} />
       ) : hasPlanPreview ? null : runView.status === "connecting" ? (
         <PreparingRunStatus />
       ) : (
@@ -994,10 +998,12 @@ const RunTraceDropdown = memo(function RunTraceDropdown({
   entry,
   runView,
   onLoadHistoricalActivity,
+  onOpenFileLink,
 }: {
   entry: TaskChatEntry;
   runView: RunViewState;
   onLoadHistoricalActivity?: (entry: TaskChatEntry) => void;
+  onOpenFileLink?: (href: string) => boolean;
 }) {
   const [open, setOpen] = useState(false);
 
@@ -1041,7 +1047,7 @@ const RunTraceDropdown = memo(function RunTraceDropdown({
               </button>
             </div>
           ) : null}
-          <RunTimeline runView={runView} />
+          <RunTimeline runView={runView} onOpenFileLink={onOpenFileLink} />
           {entry.historicalActivity?.status === "loaded" &&
           entry.historicalActivity.nextCursor ? (
             <button
@@ -1074,16 +1080,10 @@ const RunMetrics = memo(function RunMetrics({
   );
 });
 
-const RunSummary = memo(function RunSummary({
-  runView,
-  preparedSummary,
-  onOpenFileLink,
-}: {
-  runView: RunViewState;
-  preparedSummary?: PreparedHistoricalSummary;
-  onOpenFileLink?: (href: string) => boolean;
-}) {
-  const markdownComponents = useMemo<Components>(
+function usePreviewableMarkdownComponents(
+  onOpenFileLink?: (href: string) => boolean,
+) {
+  return useMemo<Components>(
     () => ({
       a: ({ href, children, node: _node, ...props }) => {
         const previewable = Boolean(
@@ -1116,6 +1116,18 @@ const RunSummary = memo(function RunSummary({
     }),
     [onOpenFileLink],
   );
+}
+
+const RunSummary = memo(function RunSummary({
+  runView,
+  preparedSummary,
+  onOpenFileLink,
+}: {
+  runView: RunViewState;
+  preparedSummary?: PreparedHistoricalSummary;
+  onOpenFileLink?: (href: string) => boolean;
+}) {
+  const markdownComponents = usePreviewableMarkdownComponents(onOpenFileLink);
 
   if (runView.status === "failed" && runView.error) {
     return (
@@ -1175,7 +1187,7 @@ const RunSummary = memo(function RunSummary({
   return (
     <div className="run-summary markdown-summary" aria-label="Run summary">
       <ReactMarkdown components={markdownComponents}>
-        {runView.finalMessage}
+        {normalizePreviewableMarkdownLinks(runView.finalMessage)}
       </ReactMarkdown>
     </div>
   );
@@ -1343,8 +1355,10 @@ function isFileNameBoundaryCharacter(value: string) {
 
 const RunTimeline = memo(function RunTimeline({
   runView,
+  onOpenFileLink,
 }: {
   runView: RunViewState;
+  onOpenFileLink?: (href: string) => boolean;
 }) {
   const items = buildTimelineItems(runView);
 
@@ -1363,7 +1377,13 @@ const RunTimeline = memo(function RunTimeline({
           );
         }
 
-        return <StreamEventRow event={item.event} key={item.event.id} />;
+        return (
+          <StreamEventRow
+            event={item.event}
+            key={item.event.id}
+            onOpenFileLink={onOpenFileLink}
+          />
+        );
       })}
     </div>
   );
@@ -1511,11 +1531,20 @@ const CommandsGroup = memo(function CommandsGroup({
   );
 });
 
-function StreamEventRow({ event }: { event: StreamEvent }) {
+const StreamEventRow = memo(function StreamEventRow({
+  event,
+  onOpenFileLink,
+}: {
+  event: StreamEvent;
+  onOpenFileLink?: (href: string) => boolean;
+}) {
+  const markdownComponents = usePreviewableMarkdownComponents(onOpenFileLink);
   if (event.kind === "message") {
     return (
       <div className="stream-message" key={event.id}>
-        {event.text}
+        <ReactMarkdown components={markdownComponents}>
+          {normalizePreviewableMarkdownLinks(event.text)}
+        </ReactMarkdown>
       </div>
     );
   }
@@ -1526,7 +1555,7 @@ function StreamEventRow({ event }: { event: StreamEvent }) {
       <span>{event.text}</span>
     </div>
   );
-}
+});
 
 function streamEventIcon(kind: StreamEvent["kind"]) {
   switch (kind) {

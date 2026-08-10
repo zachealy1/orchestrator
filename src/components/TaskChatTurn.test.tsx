@@ -174,6 +174,50 @@ it("delegates prepared historical file links to the preview handler", () => {
     expect(onOpenFileLink).toHaveBeenCalledWith("/repo/App.tsx");
   });
 
+it("renders live app-server file links as Markdown", () => {
+    const onOpenFileLink = vi.fn(() => true);
+    const entry: TaskChatEntry = {
+      ...historyEntry(1),
+      status: "running",
+      runView: {
+        ...emptyRunView,
+        status: "running",
+        streamEvents: [
+          {
+            id: "message-1",
+            kind: "message",
+            text:
+              "Added [batman.txt](/Users/test/Library/Application Support/com.example/card/batman.txt).",
+            timestamp: "2026-08-10T10:00:00.000Z",
+          },
+        ],
+      },
+    };
+
+    render(
+      <TestTaskChatTurn
+        entry={entry}
+        editable={false}
+        editing={false}
+        editingPrompt=""
+        onEditingPromptChange={vi.fn()}
+        onSubmitEdit={vi.fn()}
+        onCancelEdit={vi.fn()}
+        onStartEdit={vi.fn()}
+        onResolveRequest={vi.fn()}
+        onOpenFileLink={onOpenFileLink}
+      />,
+    );
+
+    const link = screen.getByRole("link", { name: "batman.txt" });
+    expect(link).toHaveClass("markdown-preview-link");
+    expect(screen.queryByText(/\[batman\.txt\]/)).toBeNull();
+    fireEvent.click(link);
+    expect(onOpenFileLink).toHaveBeenCalledWith(
+      "/Users/test/Library/Application%20Support/com.example/card/batman.txt",
+    );
+  });
+
 it("renders a completed web preview between the summary and edited files", async () => {
     const onOpenWebPreview = vi.fn().mockResolvedValue(undefined);
     const entry: TaskChatEntry = {

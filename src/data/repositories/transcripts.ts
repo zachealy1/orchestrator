@@ -67,7 +67,19 @@ export function createTranscriptRepository(database: FrontendDatabase) {
        )
        WHERE chats.workspace_id = $1
          AND chats.deleted_at IS NULL
-         AND chats.surface = 'chat'
+         AND (
+           chats.surface = 'chat'
+           OR (
+             chats.surface = 'kanban'
+             AND EXISTS (
+               SELECT 1
+               FROM runs accepted_runs
+               WHERE accepted_runs.chat_id = chats.id
+                 AND accepted_runs.deleted_at IS NULL
+                 AND accepted_runs.codex_turn_id IS NOT NULL
+             )
+           )
+         )
        GROUP BY chats.id
        ORDER BY julianday(latest_activity_at) DESC, chats.id DESC
        LIMIT 50`,

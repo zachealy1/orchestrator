@@ -85,7 +85,7 @@ export function WorkspaceContextBanner({
   onRepositoryChange: (repositoryPath: string) => void;
   onBranchChange: (branch: string) => void;
   branchCreationBusy: boolean;
-  onCreateBranch: () => void;
+  onCreateBranch?: () => void;
   newChatDisabled: boolean;
   onNewChat: () => void;
   historyOpen: boolean;
@@ -354,13 +354,17 @@ export function WorkspaceContextBanner({
                   value: candidate,
                   label: candidate,
                 })),
-                {
-                  id: "create-branch",
-                  value: "",
-                  label: "Create branch...",
-                  action: true,
-                  icon: <GitBranchPlus size={14} />,
-                },
+                ...(onCreateBranch
+                  ? [
+                      {
+                        id: "create-branch",
+                        value: "",
+                        label: "Create branch...",
+                        action: true,
+                        icon: <GitBranchPlus size={14} />,
+                      },
+                    ]
+                  : []),
               ]}
               placeholder="No branch"
               icon={<GitBranch size={14} />}
@@ -368,7 +372,7 @@ export function WorkspaceContextBanner({
               disabled={branchSelectorDisabled}
               onChange={onBranchChange}
               onAction={(actionId) => {
-                if (actionId === "create-branch") onCreateBranch();
+                if (actionId === "create-branch") onCreateBranch?.();
               }}
             />
             {browserVisible ? (

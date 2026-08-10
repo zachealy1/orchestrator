@@ -43,4 +43,16 @@ describe("renderHistoricalMarkdown", () => {
     expect(html).toContain('href="file:///Users/test/project/src/App.tsx"');
     expect(html).toContain('class="markdown-preview-link"');
   });
+
+  it("repairs absolute macOS file links containing spaces", async () => {
+    const html = await renderHistoricalMarkdown(
+      "Added [batman.txt](/Users/test/Library/Application Support/com.example/card/batman.txt).",
+    );
+
+    expect(html).toContain(
+      'href="/Users/test/Library/Application%20Support/com.example/card/batman.txt"',
+    );
+    expect(html).toContain('class="markdown-preview-link"');
+    expect(html).not.toContain("[batman.txt](");
+  });
 });

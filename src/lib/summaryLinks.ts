@@ -21,3 +21,23 @@ export function isPreviewableSummaryLink(href: string) {
     return !/^[a-z][a-z\d+.-]*:/i.test(value);
   }
 }
+
+export function normalizePreviewableMarkdownLinks(markdown: string) {
+  return markdown.replace(
+    /\[([^\]\n]+)\]\(([^)\n]+)\)/gu,
+    (match, label: string, rawDestination: string) => {
+      const destination = rawDestination.trim();
+      if (
+        !/\s/u.test(destination) ||
+        !isPreviewableSummaryLink(destination)
+      ) {
+        return match;
+      }
+
+      const encodedDestination = destination.replace(/\s/gu, (character) =>
+        encodeURIComponent(character),
+      );
+      return `[${label}](${encodedDestination})`;
+    },
+  );
+}

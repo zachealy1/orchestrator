@@ -89,13 +89,15 @@ describe("conversation surface repositories", () => {
     );
   });
 
-  it("keeps Kanban-owned conversations out of regular workspace history", async () => {
+  it("includes Kanban conversations in history only after Codex accepts a turn", async () => {
     const repository = createTranscriptRepository(database);
 
     await repository.listWorkspaceChats(7);
 
     expect(connection.select).toHaveBeenCalledWith(
-      expect.stringContaining("AND chats.surface = 'chat'"),
+      expect.stringMatching(
+        /chats\.surface = 'chat'[\s\S]+chats\.surface = 'kanban'[\s\S]+accepted_runs\.codex_turn_id IS NOT NULL/,
+      ),
       [7],
     );
   });

@@ -5,7 +5,10 @@ import remarkParse from "remark-parse";
 import remarkRehype from "remark-rehype";
 import { unified } from "unified";
 import { visit } from "unist-util-visit";
-import { isPreviewableSummaryLink } from "./summaryLinks";
+import {
+  isPreviewableSummaryLink,
+  normalizePreviewableMarkdownLinks,
+} from "./summaryLinks";
 
 const historicalMarkdownSchema = {
   ...defaultSchema,
@@ -45,7 +48,9 @@ const historicalMarkdownProcessor = unified()
   .use(rehypeStringify);
 
 export async function renderHistoricalMarkdown(markdown: string) {
-  const result = await historicalMarkdownProcessor.process(markdown);
+  const result = await historicalMarkdownProcessor.process(
+    normalizePreviewableMarkdownLinks(markdown),
+  );
   return String(result);
 }
 

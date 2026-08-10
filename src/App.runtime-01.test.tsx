@@ -453,7 +453,10 @@ describe("Application runtime scenarios 1", () => {
 
       const banner = screen.getByRole("region", { name: "Selected folder" });
       expect(within(banner).getByText("orchestrator")).toBeInTheDocument();
-      expect(within(banner).getByText(workspace.path)).toBeInTheDocument();
+      expect(within(banner).queryByText(workspace.path)).not.toBeInTheDocument();
+      expect(
+        banner.querySelector(`[title="${workspace.path}"]`),
+      ).not.toBeNull();
       const branchSelect = await within(banner).findByRole("combobox", {
         name: "Branch",
       });
