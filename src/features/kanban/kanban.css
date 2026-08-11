@@ -355,9 +355,12 @@ button.kanban-card-content {
   cursor: pointer;
 }
 
-.kanban-card-tile .kanban-card-content.is-conversation-link:hover:not(:disabled),
-.kanban-card-tile .kanban-card-content.is-conversation-link:active:not(:disabled),
-.kanban-card-tile .kanban-card-content.is-conversation-link:focus:not(:disabled),
+.kanban-card-tile
+  .kanban-card-content.is-conversation-link:hover:not(:disabled),
+.kanban-card-tile
+  .kanban-card-content.is-conversation-link:active:not(:disabled),
+.kanban-card-tile
+  .kanban-card-content.is-conversation-link:focus:not(:disabled),
 .kanban-card-tile .kanban-card-content.is-conversation-link:focus-visible {
   background: transparent;
   background-color: transparent;
@@ -802,9 +805,15 @@ button.kanban-card-content {
   margin: 3px;
 }
 
-.kanban-card-dialog .kanban-repository-options input[type="checkbox"]:checked::after,
-.kanban-card-dialog .kanban-duplicate-history input[type="checkbox"]:checked::after,
-.kanban-card-dialog .kanban-include-dirty-option input[type="checkbox"]:checked::after {
+.kanban-card-dialog
+  .kanban-repository-options
+  input[type="checkbox"]:checked::after,
+.kanban-card-dialog
+  .kanban-duplicate-history
+  input[type="checkbox"]:checked::after,
+.kanban-card-dialog
+  .kanban-include-dirty-option
+  input[type="checkbox"]:checked::after {
   position: absolute;
   inset: 2px;
   border-radius: 50%;
@@ -1554,7 +1563,9 @@ button.kanban-card-content {
   background: transparent;
 }
 
-.kanban-cleanup-disclosure .kanban-cleanup-options > label:not(:has(input:disabled)):hover,
+.kanban-cleanup-disclosure
+  .kanban-cleanup-options
+  > label:not(:has(input:disabled)):hover,
 .kanban-cleanup-disclosure .kanban-cleanup-options > label:has(input:checked) {
   border: 0;
   background: transparent;
@@ -1564,11 +1575,17 @@ button.kanban-card-content {
   border: 0;
 }
 
-.kanban-cleanup-disclosure .kanban-cleanup-options > label.is-destructive strong {
+.kanban-cleanup-disclosure
+  .kanban-cleanup-options
+  > label.is-destructive
+  strong {
   color: var(--color-text);
 }
 
-.kanban-cleanup-disclosure .kanban-cleanup-options > label > input[type="checkbox"] {
+.kanban-cleanup-disclosure
+  .kanban-cleanup-options
+  > label
+  > input[type="checkbox"] {
   position: relative;
   flex: 0 0 13px;
   width: 13px;
@@ -1581,7 +1598,10 @@ button.kanban-card-content {
   margin: 3px;
 }
 
-.kanban-cleanup-disclosure .kanban-cleanup-options > label > input[type="checkbox"]:checked::after {
+.kanban-cleanup-disclosure
+  .kanban-cleanup-options
+  > label
+  > input[type="checkbox"]:checked::after {
   position: absolute;
   inset: 2px;
   border-radius: 50%;
@@ -1614,7 +1634,9 @@ button.kanban-card-content {
   box-shadow: none;
 }
 
-.kanban-transition-dialog footer .kanban-transition-icon-action:hover:not(:disabled) {
+.kanban-transition-dialog
+  footer
+  .kanban-transition-icon-action:hover:not(:disabled) {
   background: var(--color-button-active);
   color: var(--color-button-active-text);
 }
@@ -1623,7 +1645,9 @@ button.kanban-card-content {
   color: var(--color-error);
 }
 
-.kanban-transition-dialog footer .kanban-transition-icon-action.danger:hover:not(:disabled) {
+.kanban-transition-dialog
+  footer
+  .kanban-transition-icon-action.danger:hover:not(:disabled) {
   background: rgb(var(--error-rgb) / 0.16);
   color: var(--color-error);
 }
@@ -1800,7 +1824,6 @@ button.kanban-card-content {
   .kanban-filter-groups {
     grid-template-columns: repeat(2, minmax(140px, 1fr));
   }
-
 }
 
 @media (max-width: 620px) {
@@ -1898,9 +1921,9 @@ button.kanban-card-content {
   z-index: 40;
   display: flex;
   flex-direction: column;
-  width: 520px;
-  min-width: 360px;
-  max-width: calc(100vw - 360px);
+  width: clamp(760px, 72vw, 1120px);
+  min-width: 680px;
+  max-width: calc(100vw - 72px);
   border-left: 1px solid var(--color-divider);
   background: var(--color-component-background);
   box-shadow: -18px 0 48px rgb(var(--shadow-rgb) / 0.18);
@@ -1912,7 +1935,7 @@ button.kanban-card-content {
   align-items: center;
   justify-content: space-between;
   gap: 10px;
-  padding: 14px 16px;
+  padding: 14px 18px;
   border-bottom: 1px solid var(--color-divider);
 }
 
@@ -1922,9 +1945,45 @@ button.kanban-card-content {
   margin: 0;
 }
 
+.kanban-local-review-drawer > header {
+  min-height: 76px;
+}
+
+.kanban-local-review-heading {
+  display: grid;
+  min-width: 0;
+  gap: 5px;
+}
+
 .kanban-local-review-drawer > header h2 {
-  margin-top: 2px;
-  font-size: 1rem;
+  overflow: hidden;
+  color: var(--color-text);
+  font-size: 1.06rem;
+  line-height: 1.2;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.kanban-local-review-heading-meta {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--color-text-secondary);
+  font-size: 0.76rem;
+  text-transform: capitalize;
+}
+
+.kanban-local-review-heading-meta > span:first-child {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--color-icon);
+}
+
+.kanban-local-review-heading-meta i {
+  width: 1px;
+  height: 13px;
+  background: var(--color-divider);
 }
 
 .kanban-local-review-drawer > footer {
@@ -1933,21 +1992,14 @@ button.kanban-card-content {
   border-bottom: 0;
 }
 
-.kanban-local-review-context {
-  flex: 0 0 auto;
-  border-bottom: 1px solid var(--color-divider);
-}
-
 .kanban-local-review-context > summary {
   display: grid;
-  min-height: 38px;
-  grid-template-columns: auto minmax(0, 1fr) auto;
-  align-items: center;
-  gap: 8px;
-  padding: 0 16px;
+  width: 44px;
+  height: 44px;
+  place-items: center;
+  padding: 0;
   color: var(--color-text-secondary);
   cursor: pointer;
-  font-size: 0.8rem;
   list-style: none;
 }
 
@@ -1961,18 +2013,21 @@ button.kanban-card-content {
   color: var(--color-text);
 }
 
-.kanban-local-review-context > summary svg:last-child {
-  transition: transform 140ms ease;
-}
-
-.kanban-local-review-context[open] > summary svg:last-child {
-  transform: rotate(90deg);
-}
-
 .kanban-local-review-context > div {
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 8px;
+  z-index: 3;
   display: grid;
+  width: min(460px, calc(100vw - 32px));
+  max-height: 48vh;
   gap: 6px;
-  padding: 4px 16px 14px;
+  overflow: auto;
+  padding: 13px 14px;
+  border: 1px solid var(--color-divider);
+  border-radius: var(--radius);
+  background: var(--color-component-background);
+  box-shadow: 0 12px 30px rgb(var(--shadow-rgb) / 0.24);
 }
 
 .kanban-local-review-context h3 {
@@ -2053,29 +2108,35 @@ button.kanban-card-content {
   min-height: 0;
 }
 
+.kanban-local-review-summary {
+  position: relative;
+  z-index: 2;
+  display: grid;
+  min-height: 44px;
+  grid-template-columns: auto minmax(0, 1fr) 44px;
+  align-items: stretch;
+  border-bottom: 1px solid var(--color-divider);
+}
+
+.kanban-local-review-change-count,
 .kanban-local-review-branch {
   display: flex;
   min-width: 0;
   align-items: center;
   gap: 7px;
-  padding: 9px 12px;
+  padding: 0 14px;
   color: var(--color-text-secondary);
   font-size: 0.76rem;
 }
 
-.kanban-local-review-repository-name {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
+.kanban-local-review-change-count {
+  border-right: 1px solid var(--color-divider);
   color: var(--color-text);
+  white-space: nowrap;
 }
 
-.kanban-local-review-repository-name::after {
-  width: 1px;
-  height: 14px;
-  margin-left: 2px;
-  background: var(--color-divider);
-  content: "";
+.kanban-local-review-context {
+  border-left: 1px solid var(--color-divider);
 }
 
 .kanban-local-review-branch > span {
@@ -2084,14 +2145,15 @@ button.kanban-card-content {
   white-space: nowrap;
 }
 
-.kanban-local-review-branch strong {
-  margin-left: auto;
-  color: var(--color-text-secondary);
-  font-weight: 500;
-  text-transform: capitalize;
+.kanban-local-review-change-count .additions,
+.kanban-local-review-files .additions,
+.kanban-local-review-selected-file .additions {
+  color: var(--color-success);
 }
 
-.kanban-local-review-branch strong[data-status="failed"] {
+.kanban-local-review-change-count .deletions,
+.kanban-local-review-files .deletions,
+.kanban-local-review-selected-file .deletions {
   color: var(--color-error);
 }
 
@@ -2112,8 +2174,49 @@ button.kanban-card-content {
   display: grid;
   flex: 1;
   min-height: 0;
-  grid-template-columns: 190px minmax(0, 1fr);
-  border-top: 1px solid var(--color-divider);
+  grid-template-columns: 232px minmax(0, 1fr);
+}
+
+.kanban-local-review-diff-layout.files-collapsed {
+  grid-template-columns: 44px minmax(0, 1fr);
+}
+
+.kanban-local-review-explorer {
+  display: grid;
+  min-width: 0;
+  min-height: 0;
+  grid-template-rows: 42px 34px minmax(0, 1fr);
+  border-right: 1px solid var(--color-divider);
+  background: var(--color-component-background);
+}
+
+.kanban-local-review-diff-layout.files-collapsed .kanban-local-review-explorer {
+  grid-template-rows: 42px minmax(0, 1fr);
+}
+
+.kanban-local-review-explorer-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  padding: 0 6px;
+  border-bottom: 1px solid var(--color-divider);
+}
+
+.kanban-local-review-explorer-root {
+  display: grid;
+  min-width: 0;
+  grid-template-columns: 16px 16px minmax(0, 1fr);
+  align-items: center;
+  gap: 5px;
+  padding: 0 9px;
+  color: var(--color-text);
+  font-size: 0.78rem;
+}
+
+.kanban-local-review-explorer-root > span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .kanban-local-review-files,
@@ -2123,12 +2226,12 @@ button.kanban-card-content {
 }
 
 .kanban-local-review-files {
-  border-right: 1px solid var(--color-divider);
+  overflow: auto;
 }
 
 .kanban-local-review-files button {
   display: grid;
-  grid-template-columns: 20px 16px minmax(0, 1fr);
+  grid-template-columns: 20px 16px minmax(0, 1fr) auto;
   align-items: center;
   gap: 3px;
   padding: 0 6px 0 3px;
@@ -2137,6 +2240,15 @@ button.kanban-card-content {
   background: transparent;
   color: var(--color-text-secondary);
   text-align: left;
+}
+
+.kanban-local-review-files button small,
+.kanban-local-review-selected-file small {
+  display: inline-flex;
+  gap: 5px;
+  font-size: 0.68rem;
+  font-weight: 500;
+  white-space: nowrap;
 }
 
 .kanban-local-review-files button:hover,
@@ -2157,8 +2269,80 @@ button.kanban-card-content {
   white-space: nowrap;
 }
 
+.kanban-local-review-diff-column {
+  display: grid;
+  min-width: 0;
+  min-height: 0;
+  grid-template-rows: 42px minmax(0, 1fr);
+}
+
+.kanban-local-review-diff-toolbar {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 0 8px 0 13px;
+  border-bottom: 1px solid var(--color-divider);
+}
+
+.kanban-local-review-selected-file,
+.kanban-local-review-diff-actions {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 7px;
+}
+
+.kanban-local-review-selected-file strong {
+  overflow: hidden;
+  color: var(--color-text);
+  font-size: 0.8rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.kanban-local-review-diff-actions {
+  flex: 0 0 auto;
+  gap: 3px;
+}
+
+.kanban-local-review-layout-toggle {
+  display: inline-flex;
+  overflow: hidden;
+  margin-left: 4px;
+  border: 1px solid var(--color-divider);
+  border-radius: 6px;
+}
+
+.kanban-local-review-layout-toggle button {
+  display: grid;
+  width: 30px;
+  height: 30px;
+  place-items: center;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  color: var(--color-text-secondary);
+}
+
+.kanban-local-review-layout-toggle button + button {
+  border-left: 1px solid var(--color-divider);
+}
+
+.kanban-local-review-layout-toggle button:hover,
+.kanban-local-review-layout-toggle button:focus-visible,
+.kanban-local-review-layout-toggle button[aria-pressed="true"] {
+  background: var(--color-surface-muted);
+  color: var(--color-text);
+}
+
 .kanban-local-review-diff {
   display: flex;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
   background: var(--color-component-background);
 }
 
@@ -2169,11 +2353,23 @@ button.kanban-card-content {
   flex: 1;
 }
 
-@media (max-width: 920px) {
+@media (max-width: 840px) {
   .kanban-local-review-drawer {
     width: 100%;
     min-width: 0;
     max-width: none;
+  }
+
+  .kanban-local-review-diff-layout {
+    grid-template-columns: 190px minmax(0, 1fr);
+  }
+
+  .kanban-local-review-summary {
+    grid-template-columns: minmax(0, 1fr) 44px;
+  }
+
+  .kanban-local-review-change-count {
+    display: none;
   }
 }
 

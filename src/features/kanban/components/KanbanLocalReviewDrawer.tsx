@@ -2,12 +2,18 @@ import { useVirtualizer } from "@tanstack/react-virtual";
 import {
   AlertCircle,
   Check,
+  ChevronLeft,
   ChevronRight,
+  Columns2,
   FileText,
+  Folder,
   GitBranch,
   GitPullRequest,
   Info,
+  List,
   Loader2,
+  PanelLeftClose,
+  PanelLeftOpen,
   RefreshCw,
   X,
 } from "lucide-react";
@@ -43,6 +49,18 @@ function fileName(path: string) {
   return parts[parts.length - 1] ?? path;
 }
 
+function patchStats(content: string) {
+  let additions = 0;
+  let deletions = 0;
+
+  for (const line of content.split(/\r?\n/)) {
+    if (line.startsWith("+") && !line.startsWith("+++")) additions += 1;
+    if (line.startsWith("-") && !line.startsWith("---")) deletions += 1;
+  }
+
+  return { additions, deletions };
+}
+
 export function KanbanLocalReviewDrawer({
   review,
   bindings,
@@ -63,6 +81,10 @@ export function KanbanLocalReviewDrawer({
   const [fileDiff, setFileDiff] = useState<WorkspaceGitDiff | null>(null);
   const [fileDiffLoading, setFileDiffLoading] = useState(false);
   const [fileDiffError, setFileDiffError] = useState<string | null>(null);
+  const [filesCollapsed, setFilesCollapsed] = useState(false);
+  const [diffLayout, setDiffLayout] = useState<"inline" | "side-by-side">(
+    "inline",
+  );
   const fileDiffRequest = useRef(0);
   const fileScrollRef = useRef<HTMLDivElement>(null);
   const repositories = review?.repositories ?? [];
@@ -71,11 +93,12 @@ export function KanbanLocalReviewDrawer({
     repositories.every(
       (item) => item.isEmpty || item.status === "nothing_to_merge",
     );
-  const repository = repositories[Math.min(repositoryIndex, repositories.length - 1)] ?? null;
+  const repository =
+    repositories[Math.min(repositoryIndex, repositories.length - 1)] ?? null;
   const binding = repository
-    ? bindings.find(
+    ? (bindings.find(
         (item) => item.sourceRepositoryPath === repository.sourceRepositoryPath,
-      ) ?? null
+      ) ?? null)
     : null;
   const patches = useMemo(
     () => (repository ? extractUnifiedDiffFilePatches(repository.diff) : []),
@@ -85,10 +108,22 @@ export function KanbanLocalReviewDrawer({
     () =>
       repository?.files.length
         ? repository.files
-        : patches.map((patch) => patch.newPath ?? patch.oldPath ?? "Changed file"),
+        : patches.map(
+            (patch) => patch.newPath ?? patch.oldPath ?? "Changed file",
+          ),
     [patches, repository],
   );
-  const selectedFile = fileRows[Math.min(fileIndex, fileRows.length - 1)] ?? null;
+  const selectedFile =
+    fileRows[Math.min(fileIndex, fileRows.length - 1)] ?? null;
+  const selectedPatch = selectedFile
+    ? (patches.find(
+        (patch) =>
+          patch.newPath === selectedFile || patch.oldPath === selectedFile,
+      ) ?? null)
+    : null;
+  const selectedFileStats = selectedPatch
+    ? patchStats(selectedPatch.content)
+    : { additions: 0, deletions: 0 };
   const fileVirtualizer = useVirtualizer({
     count: fileRows.length,
     getScrollElement: () => fileScrollRef.current,
@@ -109,18 +144,23 @@ export function KanbanLocalReviewDrawer({
     fileVirtualizer.getTotalSize(),
     visibleFileRows.length * 30,
   );
-  const binaryDiff = fileDiff?.sections.some((section) => section.isBinary) ?? false;
-  const renderableSections = fileDiff?.sections.filter((section) => !section.isBinary) ?? [];
+  const binaryDiff =
+    fileDiff?.sections.some((section) => section.isBinary) ?? false;
+  const renderableSections =
+    fileDiff?.sections.filter((section) => !section.isBinary) ?? [];
   const emptyDiff =
     Boolean(fileDiff) &&
     !binaryDiff &&
     renderableSections.every(
-      (section) => section.baseContent === section.headContent && !section.content.trim(),
+      (section) =>
+        section.baseContent === section.headContent && !section.content.trim(),
     );
 
   useEffect(() => {
     setRepositoryIndex(0);
     setFileIndex(0);
+    setFilesCollapsed(false);
+    setDiffLayout("inline");
   }, [review?.cardId]);
 
   useEffect(() => {
@@ -134,7 +174,9 @@ export function KanbanLocalReviewDrawer({
     if (!selectedFile || !binding) {
       setFileDiffLoading(false);
       if (selectedFile && !binding) {
-        setFileDiffError("The card worktree is unavailable for this repository.");
+        setFileDiffError(
+          "The card worktree is unavailable for this repository.",
+        );
       }
       return;
     }
@@ -157,11 +199,23 @@ export function KanbanLocalReviewDrawer({
   }, [binding, selectedFile]);
 
   return (
-    <aside className="kanban-local-review-drawer" aria-label="Local card review">
+    <aside
+      className="kanban-local-review-drawer"
+      aria-label="Local card review"
+    >
       <header>
-        <div>
-          <span className="eyebrow">Local review</span>
+        <div className="kanban-local-review-heading">
           <h2>{review?.title ?? "Review changes"}</h2>
+          <div className="kanban-local-review-heading-meta">
+            <span aria-hidden="true" />
+            <span>Local review</span>
+            {repository ? (
+              <>
+                <i aria-hidden="true" />
+                <span>{repository.status.replace(/_/g, " ")}</span>
+              </>
+            ) : null}
+          </div>
         </div>
         <button
           type="button"
@@ -196,26 +250,12 @@ export function KanbanLocalReviewDrawer({
         </div>
       ) : review ? (
         <>
-          <details className="kanban-local-review-context">
-            <summary>
-              <Info size={15} aria-hidden="true" />
-              <span>Review context</span>
-              <ChevronRight size={15} aria-hidden="true" />
-            </summary>
-            <div>
-              <h3>Objective</h3>
-              <p>{review.objective}</p>
-              {review.summary ? (
-                <>
-                  <h3>Agent summary</h3>
-                  <p>{review.summary}</p>
-                </>
-              ) : null}
-            </div>
-          </details>
-
           {repositories.length > 1 ? (
-            <div className="kanban-local-review-repositories" role="tablist" aria-label="Repositories">
+            <div
+              className="kanban-local-review-repositories"
+              role="tablist"
+              aria-label="Repositories"
+            >
               {repositories.map((item, index) => (
                 <button
                   key={item.sourceRepositoryPath}
@@ -225,8 +265,14 @@ export function KanbanLocalReviewDrawer({
                   onClick={() => setRepositoryIndex(index)}
                 >
                   <GitBranch size={14} aria-hidden="true" />
-                  <span>{item.relativePath === "." ? "Workspace repository" : item.relativePath}</span>
-                  <small>+{item.additions} -{item.deletions}</small>
+                  <span>
+                    {item.relativePath === "."
+                      ? "Workspace repository"
+                      : item.relativePath}
+                  </span>
+                  <small>
+                    +{item.additions} -{item.deletions}
+                  </small>
                 </button>
               ))}
             </div>
@@ -234,91 +280,278 @@ export function KanbanLocalReviewDrawer({
 
           {repository ? (
             <section className="kanban-local-review-repository">
-              <div className="kanban-local-review-branch">
-                {repositories.length === 1 ? (
-                  <span className="kanban-local-review-repository-name">
-                    <GitBranch size={14} aria-hidden="true" />
-                    {repository.relativePath === "." ? "Workspace repository" : repository.relativePath}
+              <div className="kanban-local-review-summary">
+                <div className="kanban-local-review-change-count">
+                  <span>
+                    {fileRows.length} {fileRows.length === 1 ? "file" : "files"}{" "}
+                    changed
                   </span>
-                ) : null}
-                <span>{repository.cardBranch}</span>
-                <span aria-hidden="true">→</span>
-                <span>{repository.baseBranch}</span>
-                <strong data-status={repository.status}>{repository.status.replace(/_/g, " ")}</strong>
+                  <span className="additions">+{repository.additions}</span>
+                  <span className="deletions">-{repository.deletions}</span>
+                </div>
+                <div className="kanban-local-review-branch">
+                  <GitBranch size={14} aria-hidden="true" />
+                  <span>{repository.cardBranch}</span>
+                  <span aria-hidden="true">→</span>
+                  <span>{repository.baseBranch}</span>
+                </div>
+                <details className="kanban-local-review-context">
+                  <summary aria-label="Review context" title="Review context">
+                    <Info size={16} aria-hidden="true" />
+                  </summary>
+                  <div>
+                    <h3>Objective</h3>
+                    <p>{review.objective}</p>
+                    {review.summary ? (
+                      <>
+                        <h3>Agent summary</h3>
+                        <p>{review.summary}</p>
+                      </>
+                    ) : null}
+                  </div>
+                </details>
               </div>
               {repository.error ? (
-                <p className="kanban-local-review-repository-error" role="alert">
+                <p
+                  className="kanban-local-review-repository-error"
+                  role="alert"
+                >
                   {repository.error}
                 </p>
               ) : null}
               {repository.isEmpty && repository.status !== "merged" ? (
-                <div className="kanban-local-review-empty">No changed files were found.</div>
+                <div className="kanban-local-review-empty">
+                  No changed files were found.
+                </div>
               ) : (
-                <div className="kanban-local-review-diff-layout">
-                  <div ref={fileScrollRef} className="kanban-local-review-files" aria-label="Changed files">
-                    <div style={{ height: fileListHeight, position: "relative" }}>
-                      {visibleFileRows.map((item) => {
-                        const path = fileRows[item.index];
-                        return (
-                          <button
-                            key={path}
-                            type="button"
-                            className={item.index === fileIndex ? "selected" : undefined}
-                            aria-pressed={item.index === fileIndex}
-                            style={{
-                              position: "absolute",
-                              top: 0,
-                              left: 0,
-                              width: "100%",
-                              height: item.size,
-                              transform: `translateY(${item.start}px)`,
-                            }}
-                            onClick={() => setFileIndex(item.index)}
-                          >
-                            <span className="workspace-tree-chevron-placeholder" aria-hidden="true" />
-                            <FileText size={14} aria-hidden="true" />
-                            <span className="kanban-local-review-file-copy" title={path}>
-                              <span>{fileName(path)}</span>
-                            </span>
-                          </button>
-                        );
-                      })}
+                <div
+                  className={`kanban-local-review-diff-layout ${filesCollapsed ? "files-collapsed" : ""}`}
+                >
+                  <aside
+                    className="kanban-local-review-explorer"
+                    aria-label="Changed files explorer"
+                  >
+                    <div className="kanban-local-review-explorer-toolbar">
+                      <button
+                        type="button"
+                        className="kanban-icon-button"
+                        aria-label={
+                          filesCollapsed
+                            ? "Show changed files"
+                            : "Hide changed files"
+                        }
+                        title={
+                          filesCollapsed
+                            ? "Show changed files"
+                            : "Hide changed files"
+                        }
+                        onClick={() =>
+                          setFilesCollapsed((collapsed) => !collapsed)
+                        }
+                      >
+                        {filesCollapsed ? (
+                          <PanelLeftOpen size={16} aria-hidden="true" />
+                        ) : (
+                          <PanelLeftClose size={16} aria-hidden="true" />
+                        )}
+                      </button>
                     </div>
-                  </div>
-                  <div className="kanban-local-review-diff">
-                    {fileDiffLoading ? (
-                      <div className="file-preview-state" role="status">
-                        <Loader2 className="file-preview-spinner" size={16} aria-hidden="true" />
-                        <span>Loading diff</span>
+                    {!filesCollapsed ? (
+                      <>
+                        <div className="kanban-local-review-explorer-root">
+                          <ChevronRight size={14} aria-hidden="true" />
+                          <Folder size={14} aria-hidden="true" />
+                          <span title={repository.sourceRepositoryPath}>
+                            {repository.relativePath === "."
+                              ? "Workspace repository"
+                              : repository.relativePath}
+                          </span>
+                        </div>
+                        <div
+                          ref={fileScrollRef}
+                          className="kanban-local-review-files"
+                          aria-label="Changed files"
+                        >
+                          <div
+                            style={{
+                              height: fileListHeight,
+                              position: "relative",
+                            }}
+                          >
+                            {visibleFileRows.map((item) => {
+                              const path = fileRows[item.index];
+                              const patch = patches.find(
+                                (candidate) =>
+                                  candidate.newPath === path ||
+                                  candidate.oldPath === path,
+                              );
+                              const stats = patch
+                                ? patchStats(patch.content)
+                                : null;
+                              return (
+                                <button
+                                  key={path}
+                                  type="button"
+                                  className={
+                                    item.index === fileIndex
+                                      ? "selected"
+                                      : undefined
+                                  }
+                                  aria-pressed={item.index === fileIndex}
+                                  aria-label={fileName(path)}
+                                  style={{
+                                    position: "absolute",
+                                    top: 0,
+                                    left: 0,
+                                    width: "100%",
+                                    height: item.size,
+                                    transform: `translateY(${item.start}px)`,
+                                  }}
+                                  onClick={() => setFileIndex(item.index)}
+                                >
+                                  <span
+                                    className="workspace-tree-chevron-placeholder"
+                                    aria-hidden="true"
+                                  />
+                                  <FileText size={14} aria-hidden="true" />
+                                  <span
+                                    className="kanban-local-review-file-copy"
+                                    title={path}
+                                  >
+                                    <span>{fileName(path)}</span>
+                                  </span>
+                                  {stats ? (
+                                    <small
+                                      aria-label={`${stats.additions} additions, ${stats.deletions} deletions`}
+                                    >
+                                      <span className="additions">
+                                        +{stats.additions}
+                                      </span>
+                                      <span className="deletions">
+                                        -{stats.deletions}
+                                      </span>
+                                    </small>
+                                  ) : null}
+                                </button>
+                              );
+                            })}
+                          </div>
+                        </div>
+                      </>
+                    ) : null}
+                  </aside>
+                  <div className="kanban-local-review-diff-column">
+                    <div className="kanban-local-review-diff-toolbar">
+                      <div className="kanban-local-review-selected-file">
+                        <FileText size={15} aria-hidden="true" />
+                        <strong title={selectedFile ?? undefined}>
+                          {selectedFile
+                            ? fileName(selectedFile)
+                            : "Select a file"}
+                        </strong>
+                        {selectedFile ? (
+                          <small>
+                            <span className="additions">
+                              +{selectedFileStats.additions}
+                            </span>
+                            <span className="deletions">
+                              -{selectedFileStats.deletions}
+                            </span>
+                          </small>
+                        ) : null}
                       </div>
-                    ) : fileDiffError ? (
-                      <div className="file-preview-state error" role="alert">
-                        <AlertCircle size={16} aria-hidden="true" />
-                        <span>{fileDiffError}</span>
+                      <div className="kanban-local-review-diff-actions">
+                        <button
+                          type="button"
+                          className="kanban-icon-button"
+                          aria-label="Previous changed file"
+                          title="Previous file"
+                          disabled={fileIndex <= 0}
+                          onClick={() =>
+                            setFileIndex((index) => Math.max(0, index - 1))
+                          }
+                        >
+                          <ChevronLeft size={16} aria-hidden="true" />
+                        </button>
+                        <button
+                          type="button"
+                          className="kanban-icon-button"
+                          aria-label="Next changed file"
+                          title="Next file"
+                          disabled={fileIndex >= fileRows.length - 1}
+                          onClick={() =>
+                            setFileIndex((index) =>
+                              Math.min(fileRows.length - 1, index + 1),
+                            )
+                          }
+                        >
+                          <ChevronRight size={16} aria-hidden="true" />
+                        </button>
+                        <div
+                          className="kanban-local-review-layout-toggle"
+                          role="group"
+                          aria-label="Diff layout"
+                        >
+                          <button
+                            type="button"
+                            aria-label="Side-by-side diff"
+                            title="Side-by-side diff"
+                            aria-pressed={diffLayout === "side-by-side"}
+                            onClick={() => setDiffLayout("side-by-side")}
+                          >
+                            <Columns2 size={16} aria-hidden="true" />
+                          </button>
+                          <button
+                            type="button"
+                            aria-label="Inline diff"
+                            title="Inline diff"
+                            aria-pressed={diffLayout === "inline"}
+                            onClick={() => setDiffLayout("inline")}
+                          >
+                            <List size={16} aria-hidden="true" />
+                          </button>
+                        </div>
                       </div>
-                    ) : binaryDiff ? (
-                      <div className="file-preview-state">
-                        <FileText size={16} aria-hidden="true" />
-                        <span>Binary diff is not available.</span>
-                      </div>
-                    ) : emptyDiff ? (
-                      <div className="file-preview-state">
-                        <FileText size={16} aria-hidden="true" />
-                        <span>No diff available for this file.</span>
-                      </div>
-                    ) : fileDiff && renderableSections.length > 0 ? (
-                      <DiffPreview
-                        path={fileDiff.relativePath}
-                        sections={renderableSections}
-                        resolvedTheme={resolvedTheme}
-                        layout="inline"
-                      />
-                    ) : (
-                      <div className="file-preview-state">
-                        <FileText size={16} aria-hidden="true" />
-                        <span>Select a file to inspect its diff.</span>
-                      </div>
-                    )}
+                    </div>
+                    <div className="kanban-local-review-diff">
+                      {fileDiffLoading ? (
+                        <div className="file-preview-state" role="status">
+                          <Loader2
+                            className="file-preview-spinner"
+                            size={16}
+                            aria-hidden="true"
+                          />
+                          <span>Loading diff</span>
+                        </div>
+                      ) : fileDiffError ? (
+                        <div className="file-preview-state error" role="alert">
+                          <AlertCircle size={16} aria-hidden="true" />
+                          <span>{fileDiffError}</span>
+                        </div>
+                      ) : binaryDiff ? (
+                        <div className="file-preview-state">
+                          <FileText size={16} aria-hidden="true" />
+                          <span>Binary diff is not available.</span>
+                        </div>
+                      ) : emptyDiff ? (
+                        <div className="file-preview-state">
+                          <FileText size={16} aria-hidden="true" />
+                          <span>No diff available for this file.</span>
+                        </div>
+                      ) : fileDiff && renderableSections.length > 0 ? (
+                        <DiffPreview
+                          path={fileDiff.relativePath}
+                          sections={renderableSections}
+                          resolvedTheme={resolvedTheme}
+                          layout={diffLayout}
+                        />
+                      ) : (
+                        <div className="file-preview-state">
+                          <FileText size={16} aria-hidden="true" />
+                          <span>Select a file to inspect its diff.</span>
+                        </div>
+                      )}
+                    </div>
                   </div>
                 </div>
               )}
@@ -353,8 +586,16 @@ export function KanbanLocalReviewDrawer({
         <button
           type="button"
           className="kanban-icon-button primary"
-          aria-label={nothingToMerge ? "Complete without changes" : "Approve and merge locally"}
-          title={nothingToMerge ? "Complete without changes" : "Approve and merge locally"}
+          aria-label={
+            nothingToMerge
+              ? "Complete without changes"
+              : "Approve and merge locally"
+          }
+          title={
+            nothingToMerge
+              ? "Complete without changes"
+              : "Approve and merge locally"
+          }
           disabled={busy || !review || repositories.length === 0}
           onClick={nothingToMerge ? onCompleteNoChanges : onApprove}
         >

@@ -553,6 +553,17 @@ describe("KanbanWorkspace controller", () => {
     expect(await screen.findByRole("complementary", { name: "Local card review" })).toBeInTheDocument();
     expect(screen.getByText("Implemented the controller.")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "controller.ts" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Previous changed file" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Next changed file" })).toBeDisabled();
+    const inlineLayout = screen.getByRole("button", { name: "Inline diff" });
+    const sideBySideLayout = screen.getByRole("button", { name: "Side-by-side diff" });
+    expect(inlineLayout).toHaveAttribute("aria-pressed", "true");
+    await user.click(sideBySideLayout);
+    expect(sideBySideLayout).toHaveAttribute("aria-pressed", "true");
+    await user.click(screen.getByRole("button", { name: "Hide changed files" }));
+    expect(screen.queryByRole("button", { name: "controller.ts" })).not.toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Show changed files" }));
+    expect(screen.getByRole("button", { name: "controller.ts" })).toBeInTheDocument();
     await waitFor(() =>
       expect(apiMocks.readKanbanGitFileDiff).toHaveBeenCalledWith(
         expect.objectContaining({ sourceRepositoryPath: "/workspace/repo" }),

@@ -40,8 +40,8 @@ describe("Kanban local review styles", () => {
     expect(drawer).toContain("right: 0");
     expect(drawer).toContain("bottom: 0");
     expect(drawer).toContain("z-index: 40");
-    expect(drawer).toContain("width: 520px");
-    expect(drawer).toContain("max-width: calc(100vw - 360px)");
+    expect(drawer).toContain("width: clamp(760px, 72vw, 1120px)");
+    expect(drawer).toContain("max-width: calc(100vw - 72px)");
   });
 
   it("uses explorer-style file rows and the shared diff preview surface", () => {
