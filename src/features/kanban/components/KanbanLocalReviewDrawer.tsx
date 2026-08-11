@@ -2,14 +2,12 @@ import { useVirtualizer } from "@tanstack/react-virtual";
 import {
   AlertCircle,
   Check,
-  ChevronLeft,
   ChevronRight,
   Columns2,
   FileText,
   Folder,
   GitBranch,
   GitPullRequest,
-  Info,
   List,
   Loader2,
   PanelLeftClose,
@@ -295,21 +293,6 @@ export function KanbanLocalReviewDrawer({
                   <span aria-hidden="true">→</span>
                   <span>{repository.baseBranch}</span>
                 </div>
-                <details className="kanban-local-review-context">
-                  <summary aria-label="Review context" title="Review context">
-                    <Info size={16} aria-hidden="true" />
-                  </summary>
-                  <div>
-                    <h3>Objective</h3>
-                    <p>{review.objective}</p>
-                    {review.summary ? (
-                      <>
-                        <h3>Agent summary</h3>
-                        <p>{review.summary}</p>
-                      </>
-                    ) : null}
-                  </div>
-                </details>
               </div>
               {repository.error ? (
                 <p
@@ -461,32 +444,6 @@ export function KanbanLocalReviewDrawer({
                         ) : null}
                       </div>
                       <div className="kanban-local-review-diff-actions">
-                        <button
-                          type="button"
-                          className="kanban-icon-button"
-                          aria-label="Previous changed file"
-                          title="Previous file"
-                          disabled={fileIndex <= 0}
-                          onClick={() =>
-                            setFileIndex((index) => Math.max(0, index - 1))
-                          }
-                        >
-                          <ChevronLeft size={16} aria-hidden="true" />
-                        </button>
-                        <button
-                          type="button"
-                          className="kanban-icon-button"
-                          aria-label="Next changed file"
-                          title="Next file"
-                          disabled={fileIndex >= fileRows.length - 1}
-                          onClick={() =>
-                            setFileIndex((index) =>
-                              Math.min(fileRows.length - 1, index + 1),
-                            )
-                          }
-                        >
-                          <ChevronRight size={16} aria-hidden="true" />
-                        </button>
                         <div
                           className="kanban-local-review-layout-toggle"
                           role="group"

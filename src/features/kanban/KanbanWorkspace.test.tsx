@@ -197,7 +197,10 @@ async function confirmDeleteWithWorktreeCleanup(
 beforeEach(() => {
   vi.resetAllMocks();
   githubMocks.syncKanbanPullRequests.mockResolvedValue(0);
-  githubMocks.publishKanbanCard.mockResolvedValue({ cardId: "card-1", pullRequests: [] });
+  githubMocks.publishKanbanCard.mockResolvedValue({
+    cardId: "card-1",
+    pullRequests: [],
+  });
   githubMocks.openPullRequest.mockResolvedValue(undefined);
   githubMocks.completeKanbanWithoutPullRequest.mockResolvedValue(undefined);
   transcriptMocks.listLocalChatTranscript.mockResolvedValue([]);
@@ -246,7 +249,9 @@ describe("KanbanWorkspace controller", () => {
       "Completed cards will use local review until GitHub is connected.",
     );
 
-    await user.click(within(warning).getByRole("button", { name: "Connect GitHub" }));
+    await user.click(
+      within(warning).getByRole("button", { name: "Connect GitHub" }),
+    );
     expect(callbacks.onConnectGithub).toHaveBeenCalledTimes(1);
   });
 
@@ -254,7 +259,9 @@ describe("KanbanWorkspace controller", () => {
     renderWorkspace();
 
     expect(await screen.findByText("Controller card")).toBeInTheDocument();
-    expect(screen.queryByTestId("kanban-github-warning")).not.toBeInTheDocument();
+    expect(
+      screen.queryByTestId("kanban-github-warning"),
+    ).not.toBeInTheDocument();
   });
 
   it("renders the board controls in the provided workspace-header host", async () => {
@@ -269,7 +276,9 @@ describe("KanbanWorkspace controller", () => {
     });
     expect(toolbarHost).toContainElement(toolbar);
     expect(screen.getByPlaceholderText("Search cards")).toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "New card" })).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "New card" }),
+    ).not.toBeInTheDocument();
 
     toolbarHost.remove();
   });
@@ -318,7 +327,9 @@ describe("KanbanWorkspace controller", () => {
           name: "",
         }),
       ).toHaveTextContent(/cleanup is incomplete.*card was kept for retry/i);
-      expect(screen.getByRole("article", { name: /Controller card/ })).toBeInTheDocument();
+      expect(
+        screen.getByRole("article", { name: /Controller card/ }),
+      ).toBeInTheDocument();
     },
   );
 
@@ -350,7 +361,9 @@ describe("KanbanWorkspace controller", () => {
     renderWorkspace();
     await confirmDeleteWithWorktreeCleanup(user);
 
-    await waitFor(() => expect(apiMocks.deleteKanbanCard).toHaveBeenCalledTimes(1));
+    await waitFor(() =>
+      expect(apiMocks.deleteKanbanCard).toHaveBeenCalledTimes(1),
+    );
     expect(apiMocks.saveKanbanGitBindings).toHaveBeenCalledWith(
       expect.objectContaining({ id: originalCard.id, stateVersion: 4 }),
       [cleanedBinding],
@@ -358,9 +371,9 @@ describe("KanbanWorkspace controller", () => {
     expect(apiMocks.deleteKanbanCard).toHaveBeenCalledWith(
       expect.objectContaining({ id: refreshedCard.id, stateVersion: 5 }),
     );
-    expect(apiMocks.saveKanbanGitBindings.mock.invocationCallOrder[0]).toBeLessThan(
-      apiMocks.deleteKanbanCard.mock.invocationCallOrder[0],
-    );
+    expect(
+      apiMocks.saveKanbanGitBindings.mock.invocationCallOrder[0],
+    ).toBeLessThan(apiMocks.deleteKanbanCard.mock.invocationCallOrder[0]);
   });
 
   it("requires confirmation before stopping an active card", async () => {
@@ -374,15 +387,21 @@ describe("KanbanWorkspace controller", () => {
     apiMocks.loadKanbanGitBindings.mockResolvedValue([binding()]);
 
     const callbacks = renderWorkspace();
-    const tile = await screen.findByRole("article", { name: /Controller card/ });
-    await user.click(within(tile).getByLabelText("Actions for Controller card"));
+    const tile = await screen.findByRole("article", {
+      name: /Controller card/,
+    });
+    await user.click(
+      within(tile).getByLabelText("Actions for Controller card"),
+    );
     await user.click(screen.getByRole("menuitem", { name: "Stop agent" }));
 
     expect(callbacks.onStop).not.toHaveBeenCalled();
     const dialog = screen.getByRole("alertdialog", {
       name: "Stop this agent?",
     });
-    await user.click(within(dialog).getByRole("button", { name: "Stop agent" }));
+    await user.click(
+      within(dialog).getByRole("button", { name: "Stop agent" }),
+    );
     await waitFor(() => expect(callbacks.onStop).toHaveBeenCalledTimes(1));
   });
 
@@ -410,9 +429,15 @@ describe("KanbanWorkspace controller", () => {
     apiMocks.loadKanbanBoard.mockResolvedValue(snapshot([reviewCard]));
     renderWorkspace();
 
-    const tile = await screen.findByRole("article", { name: /Controller card/ });
-    await user.click(within(tile).getByLabelText("Actions for Controller card"));
-    await user.click(screen.getByRole("menuitem", { name: "Open pull request" }));
+    const tile = await screen.findByRole("article", {
+      name: /Controller card/,
+    });
+    await user.click(
+      within(tile).getByLabelText("Actions for Controller card"),
+    );
+    await user.click(
+      screen.getByRole("menuitem", { name: "Open pull request" }),
+    );
     expect(githubMocks.openPullRequest).toHaveBeenCalledWith(
       "https://github.com/owner/repo/pull/12",
     );
@@ -457,16 +482,24 @@ describe("KanbanWorkspace controller", () => {
     apiMocks.loadKanbanBoard.mockResolvedValue(snapshot([reviewCard]));
     renderWorkspace();
 
-    const tile = await screen.findByRole("article", { name: /Controller card/ });
-    await user.click(within(tile).getByLabelText("Actions for Controller card"));
-    await user.click(screen.getByRole("menuitem", { name: "Open pull request" }));
+    const tile = await screen.findByRole("article", {
+      name: /Controller card/,
+    });
+    await user.click(
+      within(tile).getByLabelText("Actions for Controller card"),
+    );
+    await user.click(
+      screen.getByRole("menuitem", { name: "Open pull request" }),
+    );
 
     const chooser = screen.getByRole("dialog", { name: "Open pull request" });
     await user.click(within(chooser).getByRole("button", { name: /backend/ }));
     expect(githubMocks.openPullRequest).toHaveBeenCalledWith(
       "https://github.com/owner/backend/pull/34",
     );
-    expect(screen.queryByRole("dialog", { name: "Open pull request" })).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("dialog", { name: "Open pull request" }),
+    ).not.toBeInTheDocument();
   });
 
   it("offers retry when publication has failed", async () => {
@@ -493,9 +526,15 @@ describe("KanbanWorkspace controller", () => {
     apiMocks.loadKanbanBoard.mockResolvedValue(snapshot([failedCard]));
     renderWorkspace();
 
-    const tile = await screen.findByRole("article", { name: /Controller card/ });
-    await user.click(within(tile).getByLabelText("Actions for Controller card"));
-    await user.click(screen.getByRole("menuitem", { name: "Retry publication" }));
+    const tile = await screen.findByRole("article", {
+      name: /Controller card/,
+    });
+    await user.click(
+      within(tile).getByLabelText("Actions for Controller card"),
+    );
+    await user.click(
+      screen.getByRole("menuitem", { name: "Retry publication" }),
+    );
     expect(githubMocks.publishKanbanCard).toHaveBeenCalledWith("card-1");
   });
 
@@ -546,31 +585,58 @@ describe("KanbanWorkspace controller", () => {
     });
     renderWorkspace();
 
-    const tile = await screen.findByRole("article", { name: /Controller card/ });
-    await user.click(within(tile).getByLabelText("Actions for Controller card"));
+    const tile = await screen.findByRole("article", {
+      name: /Controller card/,
+    });
+    await user.click(
+      within(tile).getByLabelText("Actions for Controller card"),
+    );
     await user.click(screen.getByRole("menuitem", { name: "Review changes" }));
 
-    expect(await screen.findByRole("complementary", { name: "Local card review" })).toBeInTheDocument();
-    expect(screen.getByText("Implemented the controller.")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "controller.ts" })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Previous changed file" })).toBeDisabled();
-    expect(screen.getByRole("button", { name: "Next changed file" })).toBeDisabled();
+    expect(
+      await screen.findByRole("complementary", { name: "Local card review" }),
+    ).toBeInTheDocument();
+    expect(screen.queryByText("Implemented the controller.")).not.toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "controller.ts" }),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "Review context" }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "Previous changed file" }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "Next changed file" }),
+    ).not.toBeInTheDocument();
     const inlineLayout = screen.getByRole("button", { name: "Inline diff" });
-    const sideBySideLayout = screen.getByRole("button", { name: "Side-by-side diff" });
+    const sideBySideLayout = screen.getByRole("button", {
+      name: "Side-by-side diff",
+    });
     expect(inlineLayout).toHaveAttribute("aria-pressed", "true");
     await user.click(sideBySideLayout);
     expect(sideBySideLayout).toHaveAttribute("aria-pressed", "true");
-    await user.click(screen.getByRole("button", { name: "Hide changed files" }));
-    expect(screen.queryByRole("button", { name: "controller.ts" })).not.toBeInTheDocument();
-    await user.click(screen.getByRole("button", { name: "Show changed files" }));
-    expect(screen.getByRole("button", { name: "controller.ts" })).toBeInTheDocument();
+    await user.click(
+      screen.getByRole("button", { name: "Hide changed files" }),
+    );
+    expect(
+      screen.queryByRole("button", { name: "controller.ts" }),
+    ).not.toBeInTheDocument();
+    await user.click(
+      screen.getByRole("button", { name: "Show changed files" }),
+    );
+    expect(
+      screen.getByRole("button", { name: "controller.ts" }),
+    ).toBeInTheDocument();
     await waitFor(() =>
       expect(apiMocks.readKanbanGitFileDiff).toHaveBeenCalledWith(
         expect.objectContaining({ sourceRepositoryPath: "/workspace/repo" }),
         "src/controller.ts",
       ),
     );
-    expect(screen.getByRole("button", { name: "Approve and merge locally" })).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "Approve and merge locally" }),
+    ).toBeInTheDocument();
   });
 
   it("offers to clear active filters when the board has no matches", async () => {
@@ -592,8 +658,12 @@ describe("KanbanWorkspace controller", () => {
 
     expect(screen.queryByText("No cards yet")).not.toBeInTheDocument();
     expect(screen.getByRole("region", { name: "To do" })).toBeInTheDocument();
-    expect(screen.getByRole("region", { name: "In progress" })).toBeInTheDocument();
-    expect(screen.getByRole("region", { name: "In review" })).toBeInTheDocument();
+    expect(
+      screen.getByRole("region", { name: "In progress" }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("region", { name: "In review" }),
+    ).toBeInTheDocument();
     expect(screen.getByRole("region", { name: "Done" })).toBeInTheDocument();
   });
 
@@ -628,7 +698,8 @@ describe("KanbanWorkspace controller", () => {
 
     expect(await screen.findByText("Controller card")).toBeInTheDocument();
     expect(screen.queryByText("Multiple repositories")).not.toBeInTheDocument();
-    expect(screen.queryByRole("heading", { name: "Multiple repositories" }))
-      .not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("heading", { name: "Multiple repositories" }),
+    ).not.toBeInTheDocument();
   });
 });

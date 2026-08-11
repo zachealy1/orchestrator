@@ -1939,9 +1939,7 @@ button.kanban-card-content {
   border-bottom: 1px solid var(--color-divider);
 }
 
-.kanban-local-review-drawer > header h2,
-.kanban-local-review-context h3,
-.kanban-local-review-context p {
+.kanban-local-review-drawer > header h2 {
   margin: 0;
 }
 
@@ -1990,57 +1988,6 @@ button.kanban-card-content {
   justify-content: flex-end;
   border-top: 1px solid var(--color-divider);
   border-bottom: 0;
-}
-
-.kanban-local-review-context > summary {
-  display: grid;
-  width: 44px;
-  height: 44px;
-  place-items: center;
-  padding: 0;
-  color: var(--color-text-secondary);
-  cursor: pointer;
-  list-style: none;
-}
-
-.kanban-local-review-context > summary::-webkit-details-marker {
-  display: none;
-}
-
-.kanban-local-review-context > summary:hover,
-.kanban-local-review-context > summary:focus-visible {
-  background: var(--color-surface-soft);
-  color: var(--color-text);
-}
-
-.kanban-local-review-context > div {
-  position: absolute;
-  top: calc(100% + 6px);
-  right: 8px;
-  z-index: 3;
-  display: grid;
-  width: min(460px, calc(100vw - 32px));
-  max-height: 48vh;
-  gap: 6px;
-  overflow: auto;
-  padding: 13px 14px;
-  border: 1px solid var(--color-divider);
-  border-radius: var(--radius);
-  background: var(--color-component-background);
-  box-shadow: 0 12px 30px rgb(var(--shadow-rgb) / 0.24);
-}
-
-.kanban-local-review-context h3 {
-  color: var(--color-text-secondary);
-  font-size: 0.76rem;
-  font-weight: 600;
-}
-
-.kanban-local-review-context p {
-  color: var(--color-text);
-  font-size: 0.84rem;
-  line-height: 1.45;
-  white-space: pre-wrap;
 }
 
 .kanban-local-review-state {
@@ -2113,7 +2060,7 @@ button.kanban-card-content {
   z-index: 2;
   display: grid;
   min-height: 44px;
-  grid-template-columns: auto minmax(0, 1fr) 44px;
+  grid-template-columns: auto minmax(0, 1fr);
   align-items: stretch;
   border-bottom: 1px solid var(--color-divider);
 }
@@ -2133,10 +2080,6 @@ button.kanban-card-content {
   border-right: 1px solid var(--color-divider);
   color: var(--color-text);
   white-space: nowrap;
-}
-
-.kanban-local-review-context {
-  border-left: 1px solid var(--color-divider);
 }
 
 .kanban-local-review-branch > span {
@@ -2365,7 +2308,7 @@ button.kanban-card-content {
   }
 
   .kanban-local-review-summary {
-    grid-template-columns: minmax(0, 1fr) 44px;
+    grid-template-columns: minmax(0, 1fr);
   }
 
   .kanban-local-review-change-count {
