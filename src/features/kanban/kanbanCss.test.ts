@@ -19,6 +19,13 @@ function rule(selector: string) {
 }
 
 describe("Kanban local review styles", () => {
+  it("spaces workspace warnings evenly between the header and swim lanes", () => {
+    expect(rule(".kanban-workspace-alert")).toContain("margin: 14px 16px 0");
+    expect(rule(".kanban-board-columns")).toContain(
+      "padding: 14px 16px 24px",
+    );
+  });
+
   it("uses opaque shared application surfaces for the drawer and diff", () => {
     const drawer = rule(".kanban-local-review-drawer");
 
