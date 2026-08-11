@@ -2158,7 +2158,7 @@ button.kanban-card-content {
   grid-template-columns: 20px minmax(0, 1fr);
   align-items: center;
   padding: 0 6px;
-  border-radius: 4px;
+  border-radius: 0;
   color: var(--color-text);
 }
 
@@ -2179,7 +2179,7 @@ button.kanban-card-content {
 .kanban-local-review-files .workspace-tree-row {
   min-height: 30px;
   padding-left: calc(6px + (var(--depth, 0) * 12px));
-  border-radius: 4px;
+  border-radius: 0;
 }
 
 .kanban-local-review-files .workspace-tree-label {

@@ -49,7 +49,10 @@ describe("Kanban local review styles", () => {
 
     expect(fileRow).toContain("min-height: 30px");
     expect(fileRow).toContain("var(--depth, 0) * 12px");
-    expect(fileRow).toContain("border-radius: 4px");
+    expect(fileRow).toContain("border-radius: 0");
+    expect(rule(".kanban-local-review-explorer-root")).toContain(
+      "border-radius: 0",
+    );
     expect(rule(".kanban-local-review-diff")).toContain("display: flex");
     expect(css).toContain(".kanban-local-review-diff > .diff-preview");
     expect(css).not.toContain(".kanban-local-review-diff-line {");
