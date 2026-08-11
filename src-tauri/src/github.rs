@@ -15,7 +15,7 @@ use std::{
     fs,
     path::{Path, PathBuf},
     process::{Command, Stdio},
-    sync::Mutex,
+    sync::{Mutex, OnceLock, RwLock},
     time::{Duration, Instant},
 };
 use tauri::{AppHandle, Manager, State};
@@ -26,6 +26,9 @@ const GITHUB_DEVICE_URL: &str = "https://github.com/login/device/code";
 const GITHUB_TOKEN_URL: &str = "https://github.com/login/oauth/access_token";
 const KEYCHAIN_SERVICE: &str = "com.orchestrator.github";
 const KEYCHAIN_ACCOUNT: &str = "github-app-user-token";
+const KEYCHAIN_CLIENT_ID_ACCOUNT: &str = "github-app-client-id";
+
+static GITHUB_CLIENT_ID: OnceLock<RwLock<Option<String>>> = OnceLock::new();
 
 pub(crate) async fn github_review_available(app: &AppHandle) -> bool {
     let Ok(mut connection) = open_database(app).await else {
@@ -206,8 +209,66 @@ struct CreatePullRequest<'a> {
     draft: bool,
 }
 
-fn github_client_id() -> Option<&'static str> {
-    option_env!("ORCHESTRATOR_GITHUB_CLIENT_ID").filter(|value| !value.trim().is_empty())
+fn validate_github_client_id(value: &str) -> Result<String, String> {
+    let value = value.trim();
+    if !(16..=128).contains(&value.len())
+        || !value
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || byte == b'.')
+    {
+        return Err("Enter a valid GitHub App client ID.".to_string());
+    }
+    Ok(value.to_string())
+}
+
+#[cfg(target_os = "macos")]
+fn load_client_id() -> Option<String> {
+    security_framework::passwords::get_generic_password(
+        KEYCHAIN_SERVICE,
+        KEYCHAIN_CLIENT_ID_ACCOUNT,
+    )
+    .ok()
+    .and_then(|value| String::from_utf8(value).ok())
+    .and_then(|value| validate_github_client_id(&value).ok())
+}
+
+#[cfg(not(target_os = "macos"))]
+fn load_client_id() -> Option<String> {
+    None
+}
+
+#[cfg(target_os = "macos")]
+fn store_client_id(client_id: &str) -> Result<(), String> {
+    security_framework::passwords::set_generic_password(
+        KEYCHAIN_SERVICE,
+        KEYCHAIN_CLIENT_ID_ACCOUNT,
+        client_id.as_bytes(),
+    )
+    .map_err(|_| "The GitHub App client ID could not be saved in macOS Keychain.".to_string())
+}
+
+#[cfg(not(target_os = "macos"))]
+fn store_client_id(_client_id: &str) -> Result<(), String> {
+    Err("GitHub connection setup is unavailable on this platform.".to_string())
+}
+
+fn configured_github_client_id() -> Option<String> {
+    std::env::var("ORCHESTRATOR_GITHUB_CLIENT_ID")
+        .ok()
+        .and_then(|value| validate_github_client_id(&value).ok())
+        .or_else(|| {
+            option_env!("ORCHESTRATOR_GITHUB_CLIENT_ID")
+                .and_then(|value| validate_github_client_id(value).ok())
+        })
+        .or_else(load_client_id)
+}
+
+fn github_client_id() -> Option<String> {
+    GITHUB_CLIENT_ID
+        .get_or_init(|| RwLock::new(configured_github_client_id()))
+        .read()
+        .ok()
+        .and_then(|value| value.clone())
 }
 
 fn github_client_secret() -> Option<&'static str> {
@@ -288,7 +349,7 @@ async fn access_token() -> Result<String, String> {
             .post(GITHUB_TOKEN_URL)
             .header(header::ACCEPT, "application/json")
             .form(&[
-                ("client_id", client_id),
+                ("client_id", client_id.as_str()),
                 ("client_secret", client_secret),
                 ("grant_type", "refresh_token"),
                 ("refresh_token", refresh_token),
@@ -492,7 +553,8 @@ pub(crate) async fn github_connection_status(
             }
             .to_string(),
             message: (!available).then(|| {
-                "This build does not include an Orchestrator GitHub App client ID.".to_string()
+                "Enter the public client ID for your Orchestrator GitHub App to connect this local build."
+                    .to_string()
             }),
             repositories,
         },
@@ -501,16 +563,35 @@ pub(crate) async fn github_connection_status(
 
 #[tauri::command]
 #[specta::specta]
+pub(crate) async fn github_configure_client_id(
+    app: AppHandle,
+    client_id: String,
+) -> Result<GithubConnectionStatus, String> {
+    if !cfg!(target_os = "macos") {
+        return Err("GitHub connection setup is unavailable on this platform.".to_string());
+    }
+    let client_id = validate_github_client_id(&client_id)?;
+    store_client_id(&client_id)?;
+    let configured = GITHUB_CLIENT_ID.get_or_init(|| RwLock::new(None));
+    *configured
+        .write()
+        .map_err(|_| "GitHub connection setup could not be updated.".to_string())? =
+        Some(client_id);
+    github_connection_status(app).await
+}
+
+#[tauri::command]
+#[specta::specta]
 pub(crate) async fn github_begin_device_authorization(
     state: State<'_, GithubState>,
 ) -> Result<GithubDeviceAuthorization, String> {
     let client_id = github_client_id().ok_or_else(|| {
-        "This build does not include an Orchestrator GitHub App client ID.".to_string()
+        "Configure the Orchestrator GitHub App client ID in Settings first.".to_string()
     })?;
     let response = github_client()?
         .post(GITHUB_DEVICE_URL)
         .header(header::ACCEPT, "application/json")
-        .form(&[("client_id", client_id)])
+        .form(&[("client_id", client_id.as_str())])
         .send()
         .await
         .map_err(|_| "GitHub device authorization could not be started.".to_string())?;
@@ -563,7 +644,7 @@ pub(crate) async fn github_poll_device_authorization(
         .post(GITHUB_TOKEN_URL)
         .header(header::ACCEPT, "application/json")
         .form(&[
-            ("client_id", client_id),
+            ("client_id", client_id.as_str()),
             ("device_code", device_code.as_str()),
             ("grant_type", "urn:ietf:params:oauth:grant-type:device_code"),
         ])
@@ -1454,7 +1535,21 @@ pub(crate) async fn github_complete_kanban_without_pull_request(
 
 #[cfg(test)]
 mod tests {
-    use super::{parse_github_remote, safe_pull_request_text};
+    use super::{parse_github_remote, safe_pull_request_text, validate_github_client_id};
+
+    #[test]
+    fn validates_public_github_client_ids() {
+        assert_eq!(
+            validate_github_client_id("  Iv1.0000000000000000  ").unwrap(),
+            "Iv1.0000000000000000"
+        );
+        assert_eq!(
+            validate_github_client_id("Iv10000000000000000").unwrap(),
+            "Iv10000000000000000"
+        );
+        assert!(validate_github_client_id("too-short").is_err());
+        assert!(validate_github_client_id("Iv1_invalid_client_id").is_err());
+    }
 
     #[test]
     fn parses_supported_github_remotes() {

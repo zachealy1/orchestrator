@@ -128,6 +128,7 @@ fn command_builder() -> tauri_specta::Builder<tauri::Wry> {
             kanban_store::kanban_set_inherited_context,
             kanban_store::kanban_get_inherited_context,
             github::github_connection_status,
+            github::github_configure_client_id,
             github::github_begin_device_authorization,
             github::github_poll_device_authorization,
             github::github_disconnect,

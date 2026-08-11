@@ -122,6 +122,7 @@ export const commands = {
 	kanbanSetInheritedContext: (request: SetKanbanInheritedContextRequest) => __TAURI_INVOKE<null>("kanban_set_inherited_context", { request }),
 	kanbanGetInheritedContext: (cardId: string) => __TAURI_INVOKE<string | null>("kanban_get_inherited_context", { cardId }),
 	githubConnectionStatus: () => __TAURI_INVOKE<GithubConnectionStatus>("github_connection_status"),
+	githubConfigureClientId: (clientId: string) => __TAURI_INVOKE<GithubConnectionStatus>("github_configure_client_id", { clientId }),
 	githubBeginDeviceAuthorization: () => __TAURI_INVOKE<GithubDeviceAuthorization>("github_begin_device_authorization"),
 	githubPollDeviceAuthorization: () => __TAURI_INVOKE<GithubConnectionStatus>("github_poll_device_authorization"),
 	githubDisconnect: () => __TAURI_INVOKE<null>("github_disconnect"),

@@ -126,6 +126,7 @@ import {
 import { useKanbanRuntimeController } from "../features/kanban/useKanbanRuntimeController";
 import {
   beginGithubConnection,
+  configureGithubClientId,
   disconnectGithub,
   loadGithubConnection,
   pollGithubConnection,
@@ -15119,10 +15120,13 @@ function App() {
     };
   }, [workspaceSurfaceMode]);
 
-  const handleConnectGithub = useCallback(async () => {
+  const handleConnectGithub = useCallback(async (clientId?: string) => {
     if (githubConnectionPending) return;
     setGithubConnectionPending(true);
     try {
+      if (clientId?.trim()) {
+        setGithubConnection(await configureGithubClientId(clientId));
+      }
       const authorization = await beginGithubConnection();
       await openUrl(authorization.verificationUri);
       setStatusMessage(
@@ -16325,7 +16329,7 @@ function App() {
               actions={{
                 setThemePreference,
                 setComputerUseEnabled,
-                connectGithub: () => void handleConnectGithub(),
+                connectGithub: (clientId) => void handleConnectGithub(clientId),
                 disconnectGithub: () => void handleDisconnectGithub(),
                 setNotificationPreference: handleAgentNotificationPreferenceChange,
                 openNotificationSettings: () =>

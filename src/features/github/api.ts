@@ -55,6 +55,10 @@ export function loadGithubConnection() {
   return commands.githubConnectionStatus() as Promise<GithubConnectionStatus>;
 }
 
+export function configureGithubClientId(clientId: string) {
+  return commands.githubConfigureClientId(clientId) as Promise<GithubConnectionStatus>;
+}
+
 export function beginGithubConnection() {
   return commands.githubBeginDeviceAuthorization() as Promise<GithubDeviceAuthorization>;
 }

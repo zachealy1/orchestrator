@@ -13,7 +13,7 @@ import {
   Trash2,
   UserPlus,
 } from "lucide-react";
-import { memo } from "react";
+import { memo, useState } from "react";
 import orchestratorMark from "../../assets/brand/orchestrator-mark.png";
 import { ComposerSelect } from "../../components/ComposerSelect";
 import type {
@@ -62,7 +62,7 @@ export type SettingsViewModel = {
 export type SettingsViewActions = {
   setThemePreference: (preference: ThemePreference) => void;
   setComputerUseEnabled: (enabled: boolean) => void;
-  connectGithub: () => void;
+  connectGithub: (clientId?: string) => void;
   disconnectGithub: () => void;
   setNotificationPreference: (
     key: keyof AgentNotificationPreferences,
@@ -89,6 +89,11 @@ export const SettingsView = memo(function SettingsView({
   model: SettingsViewModel;
   actions: SettingsViewActions;
 }) {
+  const [githubClientId, setGithubClientId] = useState("");
+  const requiresGithubClientId =
+    model.githubConnection?.available === false &&
+    !model.githubConnection.connected;
+
   return (
     <>
       <section
@@ -236,10 +241,14 @@ export const SettingsView = memo(function SettingsView({
                 <button
                   className="secondary"
                   type="button"
-                  onClick={actions.connectGithub}
+                  onClick={() =>
+                    actions.connectGithub(
+                      requiresGithubClientId ? githubClientId : undefined,
+                    )
+                  }
                   disabled={
                     model.githubConnectionPending ||
-                    model.githubConnection?.available === false
+                    (requiresGithubClientId && githubClientId.trim().length === 0)
                   }
                 >
                   <GitPullRequest size={16} aria-hidden="true" />
@@ -248,6 +257,26 @@ export const SettingsView = memo(function SettingsView({
               )}
             </div>
           </div>
+          {requiresGithubClientId ? (
+            <label className="github-client-id-setting">
+              <span>
+                <strong>GitHub App client ID</strong>
+                <small>
+                  Enter the public client ID from your GitHub App. Orchestrator
+                  never asks for a PAT or client secret.
+                </small>
+              </span>
+              <input
+                type="text"
+                value={githubClientId}
+                autoComplete="off"
+                spellCheck={false}
+                placeholder="Iv1.0123456789abcdef"
+                onChange={(event) => setGithubClientId(event.currentTarget.value)}
+                disabled={model.githubConnectionPending}
+              />
+            </label>
+          ) : null}
           {model.githubConnection?.connected &&
           model.githubConnection.repositories.length > 0 ? (
             <div className="github-repository-list" aria-label="Accessible GitHub repositories">

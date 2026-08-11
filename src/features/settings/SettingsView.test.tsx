@@ -1,4 +1,4 @@
-import { fireEvent, render, screen } from "@testing-library/react";
+import { fireEvent, render, screen, within } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import {
   SettingsView,
@@ -84,5 +84,37 @@ describe("SettingsView", () => {
       "approvalRequired",
       false,
     );
+  });
+
+  it("allows a local build to configure its GitHub App before connecting", () => {
+    const handlers = actions();
+    render(
+      <SettingsView
+        model={model({
+          githubConnection: {
+            available: false,
+            connected: false,
+            login: null,
+            displayName: null,
+            avatarUrl: null,
+            status: "unavailable",
+            message: "Configure a GitHub App client ID.",
+            repositories: [],
+          },
+        })}
+        actions={handlers}
+      />,
+    );
+
+    const githubSettings = screen.getByRole("region", { name: "GitHub settings" });
+    const connect = within(githubSettings).getByRole("button", { name: "Connect" });
+    expect(connect).toBeDisabled();
+    fireEvent.change(screen.getByRole("textbox", { name: /github app client id/i }), {
+      target: { value: "Iv1.0000000000000000" },
+    });
+    expect(connect).toBeEnabled();
+    fireEvent.click(connect);
+
+    expect(handlers.connectGithub).toHaveBeenCalledWith("Iv1.0000000000000000");
   });
 });
