@@ -177,6 +177,7 @@ function renderWorkspace(
 
 async function confirmDeleteWithWorktreeCleanup(
   user: ReturnType<typeof userEvent.setup>,
+  deleteBranches = false,
 ) {
   const tile = await screen.findByRole("article", { name: /Controller card/ });
   await user.click(within(tile).getByLabelText("Actions for Controller card"));
@@ -190,6 +191,13 @@ async function confirmDeleteWithWorktreeCleanup(
       name: /Remove isolated worktrees/,
     }),
   );
+  if (deleteBranches) {
+    await user.click(
+      within(dialog).getByRole("checkbox", {
+        name: /Delete card branches/,
+      }),
+    );
+  }
   await user.click(within(dialog).getByRole("button", { name: "Delete card" }));
   return dialog;
 }
@@ -374,6 +382,33 @@ describe("KanbanWorkspace controller", () => {
     expect(
       apiMocks.saveKanbanGitBindings.mock.invocationCallOrder[0],
     ).toBeLessThan(apiMocks.deleteKanbanCard.mock.invocationCallOrder[0]);
+  });
+
+  it("discards uncommitted worktree changes when deleting card branches", async () => {
+    const user = userEvent.setup();
+    const persisted = card();
+    const cleanedBinding = binding({ status: "cleaned" });
+    apiMocks.loadKanbanBoard.mockResolvedValue(snapshot([persisted]));
+    apiMocks.cleanupKanbanGit.mockResolvedValue({
+      binding: cleanedBinding,
+      status: "cleaned",
+      worktreeRemoved: true,
+      branchDeleted: true,
+      executionRootRemoved: true,
+      errors: [],
+    } satisfies KanbanGitCleanupResult);
+    apiMocks.saveKanbanGitBindings.mockResolvedValue([cleanedBinding]);
+
+    renderWorkspace();
+    await confirmDeleteWithWorktreeCleanup(user, true);
+
+    await waitFor(() =>
+      expect(apiMocks.cleanupKanbanGit).toHaveBeenCalledWith({
+        binding: expect.objectContaining({ sourceRepositoryPath: "/workspace/repo" }),
+        deleteBranch: true,
+        force: true,
+      }),
+    );
   });
 
   it("requires confirmation before stopping an active card", async () => {

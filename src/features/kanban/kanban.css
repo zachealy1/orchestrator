@@ -1440,6 +1440,17 @@ button.kanban-card-content {
   font-size: 0.76rem;
 }
 
+.kanban-transition-dialog .kanban-form-error {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: start;
+  gap: 7px;
+}
+
+.kanban-transition-dialog .kanban-form-error svg {
+  margin-top: 2px;
+}
+
 .kanban-card-dialog form > footer,
 .kanban-transition-dialog > footer {
   display: flex;

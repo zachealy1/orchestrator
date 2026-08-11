@@ -1375,7 +1375,8 @@ export function KanbanWorkspace({
         {
           id: "delete-branches",
           label: "Delete card branches",
-          description: "Only available when removing worktrees; unmerged commits may be lost.",
+          description:
+            "Removes the worktrees and discards their uncommitted changes before deleting the branches.",
           selected: false,
           disabled: true,
           destructive: true,
@@ -1438,7 +1439,7 @@ export function KanbanWorkspace({
               cleanupKanbanGit({
                 binding,
                 deleteBranch: deleteBranches,
-                force: false,
+                force: Boolean(deleteBranches),
               }),
             ),
           );

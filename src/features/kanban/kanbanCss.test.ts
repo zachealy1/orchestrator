@@ -74,4 +74,12 @@ describe("Kanban local review styles", () => {
     expect(hoverRule).toContain("color: var(--color-text)");
     expect(hoverRule).not.toContain("var(--color-button-active)");
   });
+
+  it("aligns transition errors with their warning icon", () => {
+    const errorRule = rule(".kanban-transition-dialog .kanban-form-error");
+
+    expect(errorRule).toContain("display: grid");
+    expect(errorRule).toContain("grid-template-columns: auto minmax(0, 1fr)");
+    expect(errorRule).toContain("align-items: start");
+  });
 });
