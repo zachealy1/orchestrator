@@ -350,7 +350,10 @@ export const DiffPreview = memo(function DiffPreview({
   );
 
   return (
-    <div className={`diff-preview ${layout}`} aria-label="Full file diff preview">
+    <div
+      className={`diff-preview ${layout}${overviewViewport.scrollable ? " overview-visible" : ""}`}
+      aria-label="Full file diff preview"
+    >
       {layout === "side-by-side" ? <DiffPinnedColumnHeader /> : null}
       <div className="diff-preview-body">
         <div className="diff-preview-scroll" ref={scrollRef}>

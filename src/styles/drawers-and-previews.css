@@ -697,8 +697,12 @@ button.history-run-item.disabled {
   overflow: auto;
   height: 100%;
   min-height: 0;
-  padding-right: var(--diff-overview-width);
+  padding-right: 0;
   scrollbar-width: none;
+}
+
+.diff-preview.overview-visible .diff-preview-scroll {
+  padding-right: var(--diff-overview-width);
 }
 
 .diff-preview-scroll::-webkit-scrollbar {
@@ -709,12 +713,16 @@ button.history-run-item.disabled {
 .diff-preview-pinned-column-header {
   display: grid;
   min-width: 0;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  border-bottom: 1px solid var(--color-divider);
+  background: var(--color-background);
+}
+
+.diff-preview.overview-visible .diff-preview-pinned-column-header {
   grid-template-columns:
     minmax(0, 1fr)
     minmax(0, 1fr)
     var(--diff-overview-width);
-  border-bottom: 1px solid var(--color-divider);
-  background: var(--color-background);
 }
 
 .diff-preview-pinned-column-title {

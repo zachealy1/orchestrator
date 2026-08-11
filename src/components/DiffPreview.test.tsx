@@ -176,6 +176,9 @@ describe("DiffPreview", () => {
     const ruler = await screen.findByRole("scrollbar", {
       name: "Diff overview scroller",
     });
+    expect(container.querySelector(".diff-preview")).toHaveClass(
+      "overview-visible",
+    );
     const maxScrollTop = virtualMaxScrollTop(container);
     expect(ruler).toHaveAttribute("aria-valuemax", String(Math.round(maxScrollTop)));
 
@@ -290,7 +293,7 @@ describe("DiffPreview", () => {
   });
 
   it("does not render the overview ruler when the diff does not overflow", async () => {
-    render(
+    const { container } = render(
       <DiffPreview
         path="README.txt"
         sections={[section]}
@@ -303,6 +306,9 @@ describe("DiffPreview", () => {
       expect(
         screen.queryByRole("scrollbar", { name: "Diff overview scroller" }),
       ).not.toBeInTheDocument(),
+    );
+    expect(container.querySelector(".diff-preview")).not.toHaveClass(
+      "overview-visible",
     );
   });
 
