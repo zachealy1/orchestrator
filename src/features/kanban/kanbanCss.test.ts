@@ -45,12 +45,30 @@ describe("Kanban local review styles", () => {
   });
 
   it("uses explorer-style file rows and the shared diff preview surface", () => {
-    const fileRow = rule(".kanban-local-review-files button");
+    const fileRow = rule(".kanban-local-review-files .workspace-tree-row");
 
-    expect(fileRow).toContain("grid-template-columns: 20px 16px minmax(0, 1fr)");
+    expect(fileRow).toContain("min-height: 30px");
+    expect(fileRow).toContain("var(--depth, 0) * 12px");
     expect(fileRow).toContain("border-radius: 4px");
     expect(rule(".kanban-local-review-diff")).toContain("display: flex");
     expect(css).toContain(".kanban-local-review-diff > .diff-preview");
     expect(css).not.toContain(".kanban-local-review-diff-line {");
+  });
+
+  it("keeps the diff layout switch clear of the surrounding dividers", () => {
+    const toggleButton = rule(".kanban-local-review-layout-toggle button");
+
+    expect(toggleButton).toContain("height: 26px");
+    expect(toggleButton).toContain("min-height: 0");
+  });
+
+  it("uses neutral hover styling for local review icon controls", () => {
+    const hoverRule = rule(
+      ".kanban-local-review-drawer .kanban-icon-button:hover:not(:disabled),",
+    );
+
+    expect(hoverRule).toContain("background: var(--color-surface-muted)");
+    expect(hoverRule).toContain("color: var(--color-text)");
+    expect(hoverRule).not.toContain("var(--color-button-active)");
   });
 });

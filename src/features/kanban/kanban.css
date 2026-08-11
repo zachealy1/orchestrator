@@ -1990,6 +1990,12 @@ button.kanban-card-content {
   border-bottom: 0;
 }
 
+.kanban-local-review-drawer .kanban-icon-button:hover:not(:disabled),
+.kanban-local-review-drawer .kanban-icon-button:active:not(:disabled) {
+  background: var(--color-surface-muted);
+  color: var(--color-text);
+}
+
 .kanban-local-review-state {
   display: flex;
   align-items: center;
@@ -2148,18 +2154,16 @@ button.kanban-card-content {
 .kanban-local-review-explorer-root {
   display: grid;
   min-width: 0;
-  grid-template-columns: 16px 16px minmax(0, 1fr);
+  min-height: 32px;
+  grid-template-columns: 20px minmax(0, 1fr);
   align-items: center;
-  gap: 5px;
-  padding: 0 9px;
+  padding: 0 6px;
+  border-radius: 4px;
   color: var(--color-text);
-  font-size: 0.78rem;
 }
 
-.kanban-local-review-explorer-root > span {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+.kanban-local-review-explorer-root:hover {
+  background: var(--color-surface-soft);
 }
 
 .kanban-local-review-files,
@@ -2172,44 +2176,36 @@ button.kanban-card-content {
   overflow: auto;
 }
 
-.kanban-local-review-files button {
-  display: grid;
-  grid-template-columns: 20px 16px minmax(0, 1fr) auto;
-  align-items: center;
-  gap: 3px;
-  padding: 0 6px 0 3px;
-  border: 0;
+.kanban-local-review-files .workspace-tree-row {
+  min-height: 30px;
+  padding-left: calc(6px + (var(--depth, 0) * 12px));
   border-radius: 4px;
-  background: transparent;
-  color: var(--color-text-secondary);
-  text-align: left;
 }
 
-.kanban-local-review-files button small,
+.kanban-local-review-files .workspace-tree-label {
+  gap: 7px;
+  padding-right: 8px;
+}
+
+.kanban-local-review-files .workspace-tree-label small,
 .kanban-local-review-selected-file small {
   display: inline-flex;
+  margin-left: auto;
   gap: 5px;
   font-size: 0.68rem;
   font-weight: 500;
   white-space: nowrap;
 }
 
-.kanban-local-review-files button:hover,
-.kanban-local-review-files button:focus-visible {
+.kanban-local-review-files .workspace-tree-row:hover,
+.kanban-local-review-files .workspace-tree-row:focus-within {
   background: var(--color-surface-soft);
   color: var(--color-text);
 }
 
-.kanban-local-review-files button.selected {
+.kanban-local-review-files .workspace-tree-row.selected {
   background: var(--color-surface-muted);
   color: var(--color-text);
-}
-
-.kanban-local-review-file-copy,
-.kanban-local-review-file-copy > span {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
 }
 
 .kanban-local-review-diff-column {
@@ -2261,7 +2257,8 @@ button.kanban-card-content {
 .kanban-local-review-layout-toggle button {
   display: grid;
   width: 30px;
-  height: 30px;
+  height: 26px;
+  min-height: 0;
   place-items: center;
   padding: 0;
   border: 0;

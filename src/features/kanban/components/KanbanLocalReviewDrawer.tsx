@@ -2,10 +2,12 @@ import { useVirtualizer } from "@tanstack/react-virtual";
 import {
   AlertCircle,
   Check,
+  ChevronDown,
   ChevronRight,
   Columns2,
   FileText,
   Folder,
+  FolderOpen,
   GitBranch,
   GitPullRequest,
   List,
@@ -16,6 +18,7 @@ import {
   X,
 } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
+import type { CSSProperties } from "react";
 import { DiffPreview } from "../../../components/DiffPreview";
 import type { ResolvedTheme } from "../../../shared/types";
 import type { WorkspaceGitDiff } from "../../workspaces/types";
@@ -59,6 +62,99 @@ function patchStats(content: string) {
   return { additions, deletions };
 }
 
+type ReviewTreeNode =
+  | {
+      kind: "directory";
+      name: string;
+      path: string;
+      children: ReviewTreeNode[];
+    }
+  | {
+      kind: "file";
+      name: string;
+      path: string;
+      fileIndex: number;
+    };
+
+type ReviewTreeRow = ReviewTreeNode & { depth: number };
+
+function compareReviewTreeNodes(left: ReviewTreeNode, right: ReviewTreeNode) {
+  if (left.kind !== right.kind) return left.kind === "directory" ? -1 : 1;
+  return left.name.localeCompare(right.name, undefined, {
+    numeric: true,
+    sensitivity: "base",
+  });
+}
+
+export function buildReviewFileTree(paths: string[]): ReviewTreeNode[] {
+  const root: Extract<ReviewTreeNode, { kind: "directory" }> = {
+    kind: "directory",
+    name: "",
+    path: "",
+    children: [],
+  };
+
+  paths.forEach((originalPath, fileIndex) => {
+    const parts = originalPath.split("/").filter(Boolean);
+    if (parts.length === 0) return;
+    let parent = root;
+
+    parts.slice(0, -1).forEach((part) => {
+      const path = parent.path ? `${parent.path}/${part}` : part;
+      let directory = parent.children.find(
+        (node): node is Extract<ReviewTreeNode, { kind: "directory" }> =>
+          node.kind === "directory" && node.path === path,
+      );
+      if (!directory) {
+        directory = { kind: "directory", name: part, path, children: [] };
+        parent.children.push(directory);
+      }
+      parent = directory;
+    });
+
+    parent.children.push({
+      kind: "file",
+      name: parts[parts.length - 1],
+      path: originalPath,
+      fileIndex,
+    });
+  });
+
+  const sortTree = (nodes: ReviewTreeNode[]) => {
+    nodes.sort(compareReviewTreeNodes);
+    nodes.forEach((node) => {
+      if (node.kind === "directory") sortTree(node.children);
+    });
+  };
+  sortTree(root.children);
+  return root.children;
+}
+
+export function flattenReviewFileTree(
+  nodes: ReviewTreeNode[],
+  expandedPaths: ReadonlySet<string>,
+  depth = 0,
+): ReviewTreeRow[] {
+  return nodes.flatMap((node) => {
+    const row = { ...node, depth } as ReviewTreeRow;
+    if (node.kind !== "directory" || !expandedPaths.has(node.path)) {
+      return [row];
+    }
+    return [
+      row,
+      ...flattenReviewFileTree(node.children, expandedPaths, depth + 1),
+    ];
+  });
+}
+
+function reviewDirectoryPaths(nodes: ReviewTreeNode[]): string[] {
+  return nodes.flatMap((node) =>
+    node.kind === "directory"
+      ? [node.path, ...reviewDirectoryPaths(node.children)]
+      : [],
+  );
+}
+
 export function KanbanLocalReviewDrawer({
   review,
   bindings,
@@ -80,6 +176,10 @@ export function KanbanLocalReviewDrawer({
   const [fileDiffLoading, setFileDiffLoading] = useState(false);
   const [fileDiffError, setFileDiffError] = useState<string | null>(null);
   const [filesCollapsed, setFilesCollapsed] = useState(false);
+  const [repositoryExpanded, setRepositoryExpanded] = useState(true);
+  const [expandedDirectoryPaths, setExpandedDirectoryPaths] = useState<
+    Set<string>
+  >(new Set());
   const [diffLayout, setDiffLayout] = useState<"inline" | "side-by-side">(
     "inline",
   );
@@ -122,8 +222,16 @@ export function KanbanLocalReviewDrawer({
   const selectedFileStats = selectedPatch
     ? patchStats(selectedPatch.content)
     : { additions: 0, deletions: 0 };
+  const fileTree = useMemo(() => buildReviewFileTree(fileRows), [fileRows]);
+  const visibleTreeRows = useMemo(
+    () =>
+      repositoryExpanded
+        ? flattenReviewFileTree(fileTree, expandedDirectoryPaths)
+        : [],
+    [expandedDirectoryPaths, fileTree, repositoryExpanded],
+  );
   const fileVirtualizer = useVirtualizer({
-    count: fileRows.length,
+    count: visibleTreeRows.length,
     getScrollElement: () => fileScrollRef.current,
     estimateSize: () => 30,
     overscan: 8,
@@ -132,9 +240,9 @@ export function KanbanLocalReviewDrawer({
   const visibleFileRows =
     measuredFileRows.length > 0
       ? measuredFileRows
-      : fileRows.slice(0, 40).map((_, index) => ({
+      : visibleTreeRows.slice(0, 40).map((row, index) => ({
           index,
-          key: fileRows[index],
+          key: row.path,
           size: 30,
           start: index * 30,
         }));
@@ -158,12 +266,18 @@ export function KanbanLocalReviewDrawer({
     setRepositoryIndex(0);
     setFileIndex(0);
     setFilesCollapsed(false);
+    setRepositoryExpanded(true);
     setDiffLayout("inline");
   }, [review?.cardId]);
 
   useEffect(() => {
     setFileIndex(0);
+    setRepositoryExpanded(true);
   }, [repositoryIndex]);
+
+  useEffect(() => {
+    setExpandedDirectoryPaths(new Set(reviewDirectoryPaths(fileTree)));
+  }, [fileTree]);
 
   useEffect(() => {
     const request = ++fileDiffRequest.current;
@@ -341,14 +455,45 @@ export function KanbanLocalReviewDrawer({
                     </div>
                     {!filesCollapsed ? (
                       <>
-                        <div className="kanban-local-review-explorer-root">
-                          <ChevronRight size={14} aria-hidden="true" />
-                          <Folder size={14} aria-hidden="true" />
-                          <span title={repository.sourceRepositoryPath}>
-                            {repository.relativePath === "."
-                              ? "Workspace repository"
-                              : repository.relativePath}
-                          </span>
+                        <div className="kanban-local-review-explorer-root workspace-tree-row directory">
+                          <button
+                            type="button"
+                            className="workspace-tree-chevron"
+                            aria-label={`${repositoryExpanded ? "Collapse" : "Expand"} ${
+                              repository.relativePath === "."
+                                ? "Workspace repository"
+                                : repository.relativePath
+                            }`}
+                            aria-expanded={repositoryExpanded}
+                            onClick={() =>
+                              setRepositoryExpanded((expanded) => !expanded)
+                            }
+                          >
+                            {repositoryExpanded ? (
+                              <ChevronDown size={14} aria-hidden="true" />
+                            ) : (
+                              <ChevronRight size={14} aria-hidden="true" />
+                            )}
+                          </button>
+                          <button
+                            type="button"
+                            className="workspace-tree-label"
+                            title={repository.sourceRepositoryPath}
+                            onClick={() =>
+                              setRepositoryExpanded((expanded) => !expanded)
+                            }
+                          >
+                            {repositoryExpanded ? (
+                              <FolderOpen size={15} aria-hidden="true" />
+                            ) : (
+                              <Folder size={15} aria-hidden="true" />
+                            )}
+                            <span className="workspace-entry-name">
+                              {repository.relativePath === "."
+                                ? "Workspace repository"
+                                : repository.relativePath}
+                            </span>
+                          </button>
                         </div>
                         <div
                           ref={fileScrollRef}
@@ -362,7 +507,11 @@ export function KanbanLocalReviewDrawer({
                             }}
                           >
                             {visibleFileRows.map((item) => {
-                              const path = fileRows[item.index];
+                              const row = visibleTreeRows[item.index];
+                              const path = row.path;
+                              const directory = row.kind === "directory";
+                              const expanded =
+                                directory && expandedDirectoryPaths.has(path);
                               const patch = patches.find(
                                 (candidate) =>
                                   candidate.newPath === path ||
@@ -372,16 +521,13 @@ export function KanbanLocalReviewDrawer({
                                 ? patchStats(patch.content)
                                 : null;
                               return (
-                                <button
+                                <div
                                   key={path}
-                                  type="button"
-                                  className={
-                                    item.index === fileIndex
-                                      ? "selected"
-                                      : undefined
-                                  }
-                                  aria-pressed={item.index === fileIndex}
-                                  aria-label={fileName(path)}
+                                  className={`workspace-tree-row ${directory ? "directory" : "file"}${
+                                    !directory && row.fileIndex === fileIndex
+                                      ? " selected"
+                                      : ""
+                                  }`}
                                   style={{
                                     position: "absolute",
                                     top: 0,
@@ -389,33 +535,85 @@ export function KanbanLocalReviewDrawer({
                                     width: "100%",
                                     height: item.size,
                                     transform: `translateY(${item.start}px)`,
-                                  }}
-                                  onClick={() => setFileIndex(item.index)}
+                                    "--depth": row.depth,
+                                  } as CSSProperties}
                                 >
-                                  <span
-                                    className="workspace-tree-chevron-placeholder"
-                                    aria-hidden="true"
-                                  />
-                                  <FileText size={14} aria-hidden="true" />
-                                  <span
-                                    className="kanban-local-review-file-copy"
-                                    title={path}
-                                  >
-                                    <span>{fileName(path)}</span>
-                                  </span>
-                                  {stats ? (
-                                    <small
-                                      aria-label={`${stats.additions} additions, ${stats.deletions} deletions`}
+                                  {directory ? (
+                                    <button
+                                      type="button"
+                                      className="workspace-tree-chevron"
+                                      aria-label={`${expanded ? "Collapse" : "Expand"} ${row.name}`}
+                                      aria-expanded={expanded}
+                                      onClick={() =>
+                                        setExpandedDirectoryPaths((current) => {
+                                          const next = new Set(current);
+                                          if (expanded) next.delete(path);
+                                          else next.add(path);
+                                          return next;
+                                        })
+                                      }
                                     >
+                                      {expanded ? (
+                                        <ChevronDown size={14} aria-hidden="true" />
+                                      ) : (
+                                        <ChevronRight size={14} aria-hidden="true" />
+                                      )}
+                                    </button>
+                                  ) : (
+                                    <span
+                                      className="workspace-tree-chevron-placeholder"
+                                      aria-hidden="true"
+                                    />
+                                  )}
+                                  <button
+                                    type="button"
+                                    className="workspace-tree-label"
+                                    title={path}
+                                    aria-label={directory ? undefined : row.name}
+                                    aria-current={
+                                      !directory && row.fileIndex === fileIndex
+                                        ? "true"
+                                        : undefined
+                                    }
+                                    onClick={() => {
+                                      if (directory) {
+                                        setExpandedDirectoryPaths((current) => {
+                                          const next = new Set(current);
+                                          if (expanded) next.delete(path);
+                                          else next.add(path);
+                                          return next;
+                                        });
+                                      } else {
+                                        setFileIndex(row.fileIndex);
+                                      }
+                                    }}
+                                  >
+                                    {directory ? (
+                                      expanded ? (
+                                        <FolderOpen size={15} aria-hidden="true" />
+                                      ) : (
+                                        <Folder size={15} aria-hidden="true" />
+                                      )
+                                    ) : (
+                                      <FileText size={15} aria-hidden="true" />
+                                    )}
+                                    <span className="workspace-entry-name">
+                                      {row.name}
+                                    </span>
+                                    {stats ? (
+                                      <small
+                                        aria-label={`${stats.additions} additions, ${stats.deletions} deletions`}
+                                      >
                                       <span className="additions">
                                         +{stats.additions}
                                       </span>
                                       <span className="deletions">
                                         -{stats.deletions}
                                       </span>
-                                    </small>
-                                  ) : null}
-                                </button>
+                                      </small>
+                                    ) : null}
+                                  </button>
+                                </div>
                               );
                             })}
                           </div>

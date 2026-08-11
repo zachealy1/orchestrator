@@ -601,6 +601,25 @@ describe("KanbanWorkspace controller", () => {
       screen.getByRole("button", { name: "controller.ts" }),
     ).toBeInTheDocument();
     expect(
+      screen.getByRole("button", { name: "Collapse src" }),
+    ).toHaveAttribute("aria-expanded", "true");
+    await user.click(screen.getByRole("button", { name: "Collapse src" }));
+    expect(
+      screen.queryByRole("button", { name: "controller.ts" }),
+    ).not.toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Expand src" }));
+    expect(
+      screen.getByRole("button", { name: "controller.ts" }),
+    ).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Collapse repo" }));
+    expect(
+      screen.queryByRole("button", { name: "controller.ts" }),
+    ).not.toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Expand repo" }));
+    expect(
+      screen.getByRole("button", { name: "controller.ts" }),
+    ).toBeInTheDocument();
+    expect(
       screen.queryByRole("button", { name: "Review context" }),
     ).not.toBeInTheDocument();
     expect(
