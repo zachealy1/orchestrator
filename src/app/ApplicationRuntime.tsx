@@ -5,6 +5,9 @@ import {
   AlertCircle,
   BarChart3,
   FileText,
+  GitBranchPlus,
+  MessageSquarePlus,
+  Pencil,
   RefreshCw,
   Settings,
   Trash2,
@@ -111,9 +114,11 @@ import { KanbanWorkspace } from "../features/kanban/KanbanWorkspace";
 import { KanbanComposerOverlay } from "../features/kanban/components/KanbanComposerOverlay";
 import {
   commitKanbanGit,
+  cleanupKanbanGit,
   createKanbanCard,
   getKanbanCardForChat,
   loadKanbanGitBindings,
+  provisionKanbanGit,
   pushKanbanGit,
   readKanbanGitDiff,
   readKanbanGitStatus,
@@ -181,6 +186,8 @@ import {
 } from "../lib/codexAccess";
 import {
   createRunExecutionSettings,
+  parseRunExecutionSettings,
+  resolveStoredRunExecutionSettings,
   serializeRunExecutionSettings,
 } from "../lib/runExecutionSettings";
 import {
@@ -250,13 +257,16 @@ import {
 } from "../features/conversations/WorkspaceHistoryDrawer";
 import {
   buildPreviousChatContext,
+  boundChatContinuationTurns,
   createTaskChatEntriesFromExternalTranscriptSnapshot,
   createTaskChatEntryFromHistoryRun,
+  createTaskChatEntriesFromContinuationSnapshot,
   formatHistoryTimestamp,
   historyActivityTime,
   historyChatVersion,
   isAdoptedExternalChat,
   normalizeHistoricalProposedPlan,
+  parseChatContinuationSnapshot,
 } from "../features/conversations/historyProjection";
 import {
   buildRunPrompt,
@@ -301,9 +311,14 @@ import {
 import type { ActiveCodexLogin, AccountLoginCompletedNotification, AccountUpdatedNotification, CodexAccessMode, CodexMessage, CodexLoginState, CodexModel, CodexProcessEvent, CodexProfileKey, RunInteractionMode } from "../features/codex/types";
 import type { AdditionalContextEntry, PreflightReport, RunExecutionSettings } from "../features/runs/types";
 import { useAnalyticsController } from "../features/analytics/useAnalyticsController";
-import type { ChatListItem, ChatRecord, HistoricalChatOpenRequest, HistoricalTranscriptState, WorkspaceChatSession } from "../features/conversations/types";
+import type { ChatContinuationSnapshot, ChatContinuationTurn, ChatListItem, ChatRecord, HistoricalChatOpenRequest, HistoricalTranscriptState, WorkspaceChatSession } from "../features/conversations/types";
 import { useConversationController } from "../features/conversations/useConversationController";
 import { ChatDeleteDialog } from "../features/conversations/ChatDeleteDialog";
+import { ChatRenameDialog } from "../features/conversations/ChatRenameDialog";
+import {
+  ChatWorktreeContinuationDialog,
+  type ChatContinuationRepository,
+} from "../features/conversations/ChatWorktreeContinuationDialog";
 import {
   createTaskChatClientId,
   mergeCommandActivities,
@@ -574,8 +589,11 @@ function App() {
     failChatTitleGeneration,
     getChatRecord,
     getNextChatTurnIndex,
+    listChatWorktreeBindings,
     recoverAbandonedRuns,
     recoverInterruptedChatTitleGenerations,
+    renameChat,
+    saveChatWorktreeBindings,
     updateChat,
     upsertExternalCodexChats,
   } = repositories.chats;
@@ -911,6 +929,21 @@ function App() {
   const kanbanConversationNavigationIdRef = useRef(0);
   const [retainTranscriptDuringWorkspaceSwitch, setRetainTranscriptDuringWorkspaceSwitch] =
     useState(false);
+  const [chatRenameDialog, setChatRenameDialog] = useState<{
+    chat: ChatListItem;
+    title: string;
+    pending: boolean;
+    error: string | null;
+  } | null>(null);
+  const [chatWorktreeDialog, setChatWorktreeDialog] = useState<{
+    chat: ChatListItem;
+    snapshot: ChatContinuationSnapshot;
+    settingsJson: string | null;
+    repositories: ChatContinuationRepository[];
+    includeDirtyChanges: boolean;
+    pending: boolean;
+    error: string | null;
+  } | null>(null);
   const kanbanAttempts = useMemo(
     () =>
       new KanbanAttemptStateController({
@@ -1726,6 +1759,58 @@ function App() {
     });
     void (async () => {
       try {
+        const continuationBindings = await listChatWorktreeBindings(chatId);
+        if (disposed) return;
+        if (continuationBindings.length > 0) {
+          setKanbanChatGitContext({
+            chatId,
+            kind: "kanban",
+            cardId: `chat-${chatId}`,
+            repositories: continuationBindings.map((binding) => ({
+              status: "loading",
+              binding,
+              repository: null,
+              error: null,
+            })),
+          });
+          const workspace = selectedWorkspaceRef.current;
+          const repositories = await Promise.all(
+            continuationBindings.map(async (binding): Promise<KanbanChatGitRepositoryState> => {
+              try {
+                const [status, diff] = await Promise.all([
+                  readKanbanGitStatus(binding),
+                  readKanbanGitDiff(binding),
+                ]);
+                return {
+                  status: "loaded",
+                  binding: status.binding,
+                  repository: kanbanStatusToWorkspaceRepository(
+                    workspace?.path ?? binding.executionRoot,
+                    status,
+                    diff,
+                  ),
+                  error: null,
+                };
+              } catch (error) {
+                return {
+                  status: "error",
+                  binding,
+                  repository: null,
+                  error: error instanceof Error ? error.message : String(error),
+                };
+              }
+            }),
+          );
+          if (!disposed) {
+            setKanbanChatGitContext({
+              chatId,
+              kind: "kanban",
+              cardId: `chat-${chatId}`,
+              repositories,
+            });
+          }
+          return;
+        }
         const card = await getKanbanCardForChat(chatId);
         if (disposed) return;
         if (!card?.hasStartedTurn) {
@@ -6178,6 +6263,35 @@ function App() {
       chat,
       ...contextMenuPosition(event),
     });
+    window.requestAnimationFrame(() => {
+      chatHistoryContextMenuRef.current
+        ?.querySelector<HTMLButtonElement>('button[role="menuitem"]:not(:disabled)')
+        ?.focus({ preventScroll: true });
+    });
+  }
+
+  function handleChatHistoryContextMenuKeyDown(
+    event: ReactKeyboardEvent<HTMLDivElement>,
+  ) {
+    const items = Array.from(
+      event.currentTarget.querySelectorAll<HTMLButtonElement>(
+        'button[role="menuitem"]:not(:disabled)',
+      ),
+    );
+    if (items.length === 0) return;
+    const currentIndex = items.indexOf(
+      document.activeElement as HTMLButtonElement,
+    );
+    let nextIndex: number | null = null;
+    if (event.key === "ArrowDown") nextIndex = (currentIndex + 1) % items.length;
+    if (event.key === "ArrowUp") {
+      nextIndex = (currentIndex - 1 + items.length) % items.length;
+    }
+    if (event.key === "Home") nextIndex = 0;
+    if (event.key === "End") nextIndex = items.length - 1;
+    if (nextIndex === null) return;
+    event.preventDefault();
+    items[nextIndex]?.focus({ preventScroll: true });
   }
 
   function requestChatHistoryDelete(chat: ChatListItem) {
@@ -6188,6 +6302,303 @@ function App() {
     }
 
     setChatHistoryDeleteCandidate(chat);
+  }
+
+  function requestChatHistoryRename(chat: ChatListItem) {
+    setChatHistoryContextMenu(null);
+    setChatRenameDialog({
+      chat,
+      title: chat.title,
+      pending: false,
+      error: null,
+    });
+  }
+
+  async function confirmChatHistoryRename() {
+    const dialog = chatRenameDialog;
+    if (!dialog || dialog.pending) return;
+    const title = dialog.title.trim();
+    if (!title) {
+      setChatRenameDialog({ ...dialog, error: "Enter a chat title." });
+      return;
+    }
+    setChatRenameDialog({ ...dialog, pending: true, error: null });
+    try {
+      await renameChat(dialog.chat.id, title);
+      setHistoryState((current) => ({
+        ...current,
+        chats: current.chats.map((chat) =>
+          chat.id === dialog.chat.id
+            ? {
+                ...chat,
+                title,
+                title_manually_edited: 1,
+                title_generation_state: "complete",
+              }
+            : chat,
+        ),
+      }));
+      setChatRenameDialog(null);
+      setStatusMessage("Chat renamed.");
+    } catch (error) {
+      setChatRenameDialog({
+        ...dialog,
+        pending: false,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+  }
+
+  async function prepareChatContinuation(chat: ChatListItem) {
+    const workspace = workspacesRef.current.find(
+      (candidate) => candidate.id === chat.workspace_id,
+    );
+    if (!workspace) throw new Error("The chat workspace is unavailable.");
+    const chatWithRuns = await getChatWithRuns(chat.id);
+    const inherited =
+      parseChatContinuationSnapshot(chat.continuation_snapshot_json)?.turns ?? [];
+    const completedRuns = chatWithRuns.runs.filter(
+      (run) => run.status === "completed" && Boolean(run.codex_turn_id),
+    );
+    const localTurns: ChatContinuationTurn[] = completedRuns.map((run, index) => {
+      const normalized = normalizeHistoricalProposedPlan(
+        run.final_message ?? "",
+        run.completed_plan_text,
+      );
+      return {
+        turnIndex:
+          run.turn_index ??
+          inherited.length + index + 1,
+        prompt: run.original_prompt,
+        finalMessage: normalized.finalMessage,
+        completedPlan: normalized.planText,
+        status: "completed",
+        startedAt: run.started_at,
+        completedAt: run.completed_at,
+        durationMs: run.duration_ms,
+      };
+    });
+    let externalTurns: ChatContinuationTurn[] = [];
+    if (chat.origin === "codex_external") {
+      const external = await readExternalTranscriptSnapshot(chat.id);
+      externalTurns = (external?.turns ?? [])
+        .filter((turn) =>
+          ["complete", "completed"].includes(turn.status.toLowerCase()),
+        )
+        .map((turn) => {
+          const normalized = normalizeHistoricalProposedPlan(turn.finalMessage);
+          return {
+            turnIndex: turn.slotIndex + 1,
+            prompt: turn.prompt,
+            finalMessage: normalized.finalMessage,
+            completedPlan: normalized.planText,
+            status: "completed" as const,
+            startedAt: turn.startedAt ?? chat.created_at,
+            completedAt: turn.completedAt,
+            durationMs: turn.durationMs,
+          };
+        });
+    }
+    const turns = boundChatContinuationTurns(
+      [...inherited, ...externalTurns, ...localTurns]
+      .sort((left, right) => left.turnIndex - right.turnIndex)
+      .map((turn, index) => ({ ...turn, turnIndex: index + 1 })),
+    ).map((turn, index) => ({ ...turn, turnIndex: index + 1 }));
+    if (turns.length === 0) {
+      throw new Error("This chat does not have a completed turn to continue yet.");
+    }
+    const contextTurns: AccountHandoffContextTurn[] = turns.map((turn) => ({
+      turnIndex: turn.turnIndex,
+      prompt: turn.prompt,
+      finalMessage: turn.finalMessage,
+      completedPlan: turn.completedPlan,
+      intent: turn.completedPlan ? "plan" : "normal",
+      planReviewState: turn.completedPlan ? "superseded" : null,
+    }));
+    const latestPlan = [...turns]
+      .reverse()
+      .find((turn) => turn.completedPlan)?.completedPlan ?? "";
+    const snapshot: ChatContinuationSnapshot = {
+      version: 1,
+      sourceChatId: chat.id,
+      context: buildBoundedAccountHandoffContext(
+        contextTurns,
+        latestPlan,
+        16_000,
+      ),
+      turns,
+    };
+    const latestRun = completedRuns[completedRuns.length - 1] ?? null;
+    const settingsJson =
+      latestRun?.execution_settings_json ?? chat.continuation_settings_json ?? null;
+
+    let bindings = await listChatWorktreeBindings(chat.id);
+    if (bindings.length === 0) {
+      const card = await getKanbanCardForChat(chat.id);
+      if (card?.hasStartedTurn) bindings = await loadKanbanGitBindings(card.id);
+    }
+    let repositories: ChatContinuationRepository[];
+    if (bindings.length > 0) {
+      repositories = bindings.map((binding) => ({
+        path: binding.worktreePath,
+        relativePath: binding.relativePath,
+        label: binding.relativePath || workspace.label,
+        branch: binding.cardBranch,
+      }));
+    } else {
+      const overview = await listWorkspaceGitStatus(workspace.path, true);
+      const associatedPaths = new Set<string>();
+      completedRuns.forEach((run) => {
+        const resolved = resolveStoredRunExecutionSettings(
+          run.execution_settings_json,
+          run,
+        );
+        if (resolved.settings.selectedRepositoryPath) {
+          associatedPaths.add(resolved.settings.selectedRepositoryPath);
+        }
+      });
+      const selected = overview.repositories.filter(
+        (repository) =>
+          associatedPaths.size === 0 ||
+          associatedPaths.has(repository.repository.rootPath),
+      );
+      repositories = selected.map((repository) => ({
+        path: repository.repository.rootPath,
+        relativePath: repository.repository.relativePath || repository.repository.label,
+        label: repository.repository.label,
+        branch: repository.currentBranch ?? "HEAD",
+      }));
+    }
+    return { workspace, snapshot, settingsJson, repositories };
+  }
+
+  async function openCreatedContinuation(chatId: number, workspace: Workspace) {
+    const chats = await listWorkspaceChats(workspace.id);
+    const chat = chats.find((candidate) => candidate.id === chatId);
+    if (!chat) throw new Error("The continuation chat could not be loaded.");
+    setHistoryState({ status: "loaded", chats, error: null });
+    await selectHistoryChat(chat, { workspace, positionIntent: "latest" });
+  }
+
+  async function continueChatInNewChat(chat: ChatListItem) {
+    setChatHistoryContextMenu(null);
+    try {
+      const prepared = await prepareChatContinuation(chat);
+      const created = await createChat({
+        workspaceId: chat.workspace_id,
+        accountId: chat.account_id,
+        title: `${chat.title} continuation`,
+        status: "completed",
+        continuedFromChatId: chat.id,
+        continuationKind: "chat",
+        continuationSnapshot: prepared.snapshot,
+        continuationSettingsJson: prepared.settingsJson,
+      });
+      await openCreatedContinuation(created.id, prepared.workspace);
+      setStatusMessage("Continued in a new chat.");
+    } catch (error) {
+      setStatusMessage(
+        `Could not continue chat: ${error instanceof Error ? error.message : String(error)}`,
+      );
+    }
+  }
+
+  async function requestChatWorktreeContinuation(chat: ChatListItem) {
+    setChatHistoryContextMenu(null);
+    try {
+      const prepared = await prepareChatContinuation(chat);
+      if (prepared.repositories.length === 0) {
+        throw new Error("This chat has no available Git repositories.");
+      }
+      setChatWorktreeDialog({
+        chat,
+        snapshot: prepared.snapshot,
+        settingsJson: prepared.settingsJson,
+        repositories: prepared.repositories,
+        includeDirtyChanges: false,
+        pending: false,
+        error: null,
+      });
+    } catch (error) {
+      setStatusMessage(
+        `Could not prepare worktrees: ${error instanceof Error ? error.message : String(error)}`,
+      );
+    }
+  }
+
+  async function confirmChatWorktreeContinuation() {
+    const dialog = chatWorktreeDialog;
+    if (!dialog || dialog.pending) return;
+    const workspace = workspacesRef.current.find(
+      (candidate) => candidate.id === dialog.chat.workspace_id,
+    );
+    if (!workspace) return;
+    setChatWorktreeDialog({ ...dialog, pending: true, error: null });
+    let createdChatId: number | null = null;
+    let incompleteBindings: KanbanGitBinding[] = [];
+    try {
+      const created = await createChat({
+        workspaceId: dialog.chat.workspace_id,
+        accountId: dialog.chat.account_id,
+        title: `${dialog.chat.title} continuation`,
+        status: "starting",
+        continuedFromChatId: dialog.chat.id,
+        continuationKind: "worktree",
+        continuationSnapshot: dialog.snapshot,
+        continuationSettingsJson: dialog.settingsJson,
+      });
+      createdChatId = created.id;
+      const includeDirtyChanges =
+        dialog.includeDirtyChanges &&
+        !findRunControlByChat(dialog.chat.workspace_id, dialog.chat.id);
+      const result = await provisionKanbanGit({
+        cardId: `chat-${created.id}`,
+        cardSlug: dialog.chat.title,
+        includeDirty: includeDirtyChanges,
+        repositories: dialog.repositories.map((repository) => ({
+          repositoryPath: repository.path,
+          relativePath: repository.relativePath,
+          includeDirtyChanges,
+        })),
+      });
+      if (!result.complete || result.repositories.length === 0) {
+        incompleteBindings = result.repositories.filter(
+          (binding) => binding.status === "cleanupRequired",
+        );
+        throw new Error(
+          result.errors[0]?.message ?? "Worktree provisioning did not complete.",
+        );
+      }
+      await saveChatWorktreeBindings(created.id, result.repositories);
+      await updateChat(created.id, { status: "completed" });
+      setChatWorktreeDialog(null);
+      await openCreatedContinuation(created.id, workspace);
+      setStatusMessage("Continued in isolated worktrees.");
+    } catch (error) {
+      if (createdChatId !== null) {
+        if (incompleteBindings.length > 0) {
+          await saveChatWorktreeBindings(createdChatId, incompleteBindings).catch(
+            () => undefined,
+          );
+          await updateChat(createdChatId, { status: "error" }).catch(
+            () => undefined,
+          );
+          if (historyDrawerOpen) {
+            void loadWorkspaceRunHistory(workspace, {
+              syncExternal: false,
+              showLoading: false,
+            });
+          }
+        } else {
+          await softDeleteChat(createdChatId).catch(() => undefined);
+        }
+      }
+      setChatWorktreeDialog({
+        ...dialog,
+        pending: false,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
   }
 
   function cacheStableHistoryChat(
@@ -6930,7 +7341,10 @@ function App() {
     if (historyChatLoadIdRef.current !== loadId) {
       return;
     }
-    const entries = runs.map(createTaskChatEntryFromHistoryRun);
+    const entries = [
+      ...createTaskChatEntriesFromContinuationSnapshot(chat),
+      ...runs.map(createTaskChatEntryFromHistoryRun),
+    ];
     const transcript: HistoricalTranscriptState = {
       chatId: chat.id,
       sourceVersion: historyChatVersion(chat),
@@ -7079,6 +7493,26 @@ function App() {
       return;
     }
 
+    if (chat.continuation_kind === "worktree") {
+      try {
+        const bindings = await listChatWorktreeBindings(chat.id);
+        for (const binding of bindings) {
+          const result = await cleanupKanbanGit({
+            binding,
+            deleteBranch: true,
+            force: true,
+          });
+          if (result.errors.length > 0) {
+            throw new Error(result.errors[0].message);
+          }
+        }
+      } catch (error) {
+        setStatusMessage(
+          `Could not remove continuation worktrees: ${error instanceof Error ? error.message : String(error)}`,
+        );
+        return;
+      }
+    }
     await softDeleteChat(chat.id);
     const queueDispatchTimer =
       promptQueueDispatchTimersRef.current.get(chat.id);
@@ -10755,7 +11189,7 @@ function App() {
     chat: ChatRecord,
     workspace: Workspace,
   ) {
-    const settings = item.snapshot.executionSettings;
+    let settings = item.snapshot.executionSettings;
     const profileKey = settings.profileKey;
     const accountId = settings.accountId;
     const account =
@@ -10845,13 +11279,33 @@ function App() {
               currentProfileKey === DEFAULT_CODEX_PROFILE_KEY,
           }
         : null;
+    const continuationBindings = await listChatWorktreeBindings(chat.id);
+    const executionWorkspace =
+      continuationBindings[0]?.executionRoot
+        ? { ...workspace, path: continuationBindings[0].executionRoot }
+        : workspace;
+    if (continuationBindings.length > 0) {
+      const selectedBinding =
+        continuationBindings.find(
+          (binding) =>
+            binding.sourceRepositoryPath === settings.selectedRepositoryPath,
+        ) ?? continuationBindings[0];
+      settings = createRunExecutionSettings({
+        ...settings,
+        selectedRepositoryPath: selectedBinding.worktreePath,
+        selectedBranch: selectedBinding.cardBranch,
+      });
+    }
+    const continuationSnapshot = parseChatContinuationSnapshot(
+      chat.continuation_snapshot_json,
+    );
     const mode = settings.mode;
     const intent = settings.intent;
     const turnIndex = await getNextChatTurnIndex(chat.id);
     const snapshot: RunSetupSnapshot = {
       promptText: item.prompt,
       promptFallback: item.prompt,
-      workspace: { ...workspace },
+      workspace: { ...executionWorkspace },
       accountId,
       account: account ? { ...account } : null,
       profileKey,
@@ -10882,6 +11336,10 @@ function App() {
         : currentThreadId
           ? { kind: "resume" }
           : { kind: "fresh" },
+      previousChatContext:
+        !currentThreadId && !accountHandoff
+          ? continuationSnapshot?.context ?? null
+          : undefined,
       handoffContextBudgetTokens: Math.max(
         1,
         Math.floor(
@@ -11238,15 +11696,44 @@ function App() {
         if (!chat) {
           throw new Error("The conversation could not be prepared.");
         }
+        const inheritedSettings =
+          chat.codex_thread_id === null
+            ? parseRunExecutionSettings(chat.continuation_settings_json)
+            : null;
+        const queuedExecutionSettings = inheritedSettings
+          ? createRunExecutionSettings({
+              ...inheritedSettings,
+              contextFiles: mergeContextFiles(
+                inheritedSettings.contextFiles,
+                executionSettings.contextFiles,
+              ),
+              selectedSkills: [
+                ...new Map(
+                  [
+                    ...inheritedSettings.selectedSkills,
+                    ...executionSettings.selectedSkills,
+                  ].map((skill) => [skill.id, skill]),
+                ).values(),
+              ],
+            })
+          : executionSettings;
+        const continuationValidationError = validatePromptQueueDraft({
+          prompt: promptText,
+          attachmentCount: queuedExecutionSettings.contextFiles.length,
+          currentQueueSize,
+        });
+        if (continuationValidationError) {
+          throw new Error(continuationValidationError);
+        }
         const contextFingerprint =
           await capturePromptQueueContextFingerprint({
             workspace,
             chat,
-            executionSettings,
+            executionSettings: queuedExecutionSettings,
           });
         const snapshot = createQueuedPromptSnapshot({
           prompt: promptText,
-          executionSettings,
+          executionSettings: queuedExecutionSettings,
           contextFingerprint,
         });
         queuedItem = await enqueuePromptQueueItem({
@@ -16274,6 +16761,49 @@ function App() {
         />
       ) : null}
 
+      {chatRenameDialog ? (
+        <ChatRenameDialog
+          chat={chatRenameDialog.chat}
+          title={chatRenameDialog.title}
+          pending={chatRenameDialog.pending}
+          error={chatRenameDialog.error}
+          onTitleChange={(title) =>
+            setChatRenameDialog((current) =>
+              current ? { ...current, title, error: null } : current,
+            )
+          }
+          onCancel={() => {
+            if (!chatRenameDialog.pending) setChatRenameDialog(null);
+          }}
+          onConfirm={() => void confirmChatHistoryRename()}
+        />
+      ) : null}
+
+      {chatWorktreeDialog ? (
+        <ChatWorktreeContinuationDialog
+          title={chatWorktreeDialog.chat.title}
+          repositories={chatWorktreeDialog.repositories}
+          includeDirtyChanges={chatWorktreeDialog.includeDirtyChanges}
+          includeDirtyDisabled={Boolean(
+            findRunControlByChat(
+              chatWorktreeDialog.chat.workspace_id,
+              chatWorktreeDialog.chat.id,
+            ),
+          )}
+          pending={chatWorktreeDialog.pending}
+          error={chatWorktreeDialog.error}
+          onIncludeDirtyChanges={(includeDirtyChanges) =>
+            setChatWorktreeDialog((current) =>
+              current ? { ...current, includeDirtyChanges } : current,
+            )
+          }
+          onCancel={() => {
+            if (!chatWorktreeDialog.pending) setChatWorktreeDialog(null);
+          }}
+          onConfirm={() => void confirmChatWorktreeContinuation()}
+        />
+      ) : null}
+
       {commitDialogOpen ? (
         <GitActionDialog
           model={{
@@ -16753,11 +17283,40 @@ function App() {
                   ref={chatHistoryContextMenuRef}
                   role="menu"
                   aria-label={`${chatHistoryContextMenu.chat.title} chat actions`}
+                  onKeyDown={handleChatHistoryContextMenuKeyDown}
                   style={{
                     left: chatHistoryContextMenu.x,
                     top: chatHistoryContextMenu.y,
                   }}
                 >
+                  <button
+                    className="workspace-context-menu-item"
+                    type="button"
+                    role="menuitem"
+                    onClick={() => requestChatHistoryRename(chatHistoryContextMenu.chat)}
+                  >
+                    <Pencil size={15} aria-hidden="true" />
+                    <span>Rename chat</span>
+                  </button>
+                  <button
+                    className="workspace-context-menu-item"
+                    type="button"
+                    role="menuitem"
+                    onClick={() => void continueChatInNewChat(chatHistoryContextMenu.chat)}
+                  >
+                    <MessageSquarePlus size={15} aria-hidden="true" />
+                    <span>Continue in new chat</span>
+                  </button>
+                  <button
+                    className="workspace-context-menu-item"
+                    type="button"
+                    role="menuitem"
+                    onClick={() => void requestChatWorktreeContinuation(chatHistoryContextMenu.chat)}
+                  >
+                    <GitBranchPlus size={15} aria-hidden="true" />
+                    <span>Continue in new worktree</span>
+                  </button>
+                  <div className="workspace-context-menu-separator" role="separator" />
                   <button
                     className="workspace-context-menu-item danger"
                     type="button"
@@ -16949,7 +17508,7 @@ function contextMenuPosition(
 function clampContextMenuPosition(x: number, y: number) {
   const gutter = 8;
   const estimatedWidth = 220;
-  const estimatedHeight = 52;
+  const estimatedHeight = 190;
   return {
     x: Math.max(gutter, Math.min(x, window.innerWidth - estimatedWidth - gutter)),
     y: Math.max(gutter, Math.min(y, window.innerHeight - estimatedHeight - gutter)),

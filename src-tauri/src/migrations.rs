@@ -213,6 +213,12 @@ pub(crate) const MIGRATION_DEFINITIONS: &[MigrationDefinition] = &[
         sql: include_str!("../migrations/034_add_local_review_merge_lifecycle.sql"),
         checksum: 0xc7319e33ce0d47df,
     },
+    MigrationDefinition {
+        version: 35,
+        description: "add_chat_continuations",
+        sql: include_str!("../migrations/035_add_chat_continuations.sql"),
+        checksum: 0x3260bd2173e147fe,
+    },
 ];
 
 pub(crate) fn migration_sql(definition: &MigrationDefinition) -> &'static str {

@@ -74,6 +74,9 @@ const mocks = vi.hoisted(() => ({
   listDuplicateProfilesPendingCleanupMock: vi.fn(),
   completeDuplicateProfileCleanupMock: vi.fn(),
   createChatMock: vi.fn(),
+  listChatWorktreeBindingsMock: vi.fn(),
+  renameChatMock: vi.fn(),
+  saveChatWorktreeBindingsMock: vi.fn(),
   createChatWithQueuedPromptMock: vi.fn(),
   claimChatTitleGenerationMock: vi.fn(),
   completeChatTitleGenerationMock: vi.fn(),
@@ -451,10 +454,12 @@ vi.mock("../data/repositories", () => ({
       failChatTitleGeneration: mocks.failChatTitleGenerationMock,
       getChatRecord: mocks.getChatRecordMock,
       getNextChatTurnIndex: mocks.getNextChatTurnIndexMock,
+      listChatWorktreeBindings: mocks.listChatWorktreeBindingsMock,
       recoverAbandonedRuns: mocks.recoverAbandonedRunsMock,
       recoverInterruptedChatTitleGenerations:
         mocks.recoverInterruptedChatTitleGenerationsMock,
-      renameChat: vi.fn(),
+      renameChat: mocks.renameChatMock,
+      saveChatWorktreeBindings: mocks.saveChatWorktreeBindingsMock,
       updateChat: mocks.updateChatMock,
       upsertExternalCodexChats: mocks.upsertExternalCodexChatsMock,
     },
@@ -1277,6 +1282,9 @@ export function prepareDefaults() {
     deleted_at: null,
     conversation_revision: 0,
   });
+  mocks.listChatWorktreeBindingsMock.mockResolvedValue([]);
+  mocks.renameChatMock.mockResolvedValue(undefined);
+  mocks.saveChatWorktreeBindingsMock.mockResolvedValue(undefined);
   mocks.createChatWithQueuedPromptMock.mockImplementation(async (input) => {
     const created = await mocks.createChatMock({
       workspaceId: input.workspaceId,

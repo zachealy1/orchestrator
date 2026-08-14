@@ -8,7 +8,7 @@ type ChatDeleteDialogProps = {
 };
 
 export function ChatDeleteDialog({
-  chat: _chat,
+  chat,
   onCancel,
   onConfirm,
 }: ChatDeleteDialogProps) {
@@ -39,8 +39,9 @@ export function ChatDeleteDialog({
           <p className="eyebrow">Chat</p>
           <h2 id="chat-delete-title">Remove chat?</h2>
           <p id="chat-delete-description">
-            This removes the chat from Orchestrator history, but it is not
-            permanently deleted.
+            {chat.continuation_kind === "worktree"
+              ? "This removes the chat, discards its isolated worktree changes, and deletes its local continuation branches. Remote branches are not changed."
+              : "This removes the chat from Orchestrator history, but it is not permanently deleted."}
           </p>
         </div>
         <div className="confirmation-actions">

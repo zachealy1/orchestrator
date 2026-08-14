@@ -28,7 +28,7 @@ fn resolved_plugin_migrator(
 }
 
 #[test]
-fn existing_versions_one_through_twenty_five_upgrade_through_thirty_four() {
+fn existing_versions_one_through_twenty_five_upgrade_through_thirty_five() {
     tauri::async_runtime::block_on(async {
         let mut connection = SqliteConnection::connect("sqlite::memory:")
             .await
@@ -58,7 +58,7 @@ fn existing_versions_one_through_twenty_five_upgrade_through_thirty_four() {
         .fetch_one(&mut connection)
         .await
         .expect("count upgraded migrations");
-        assert_eq!(applied_count, 34);
+        assert_eq!(applied_count, 35);
 
         resolved_plugin_migrator(MIGRATION_DEFINITIONS)
             .run_direct(&mut connection)
@@ -260,6 +260,27 @@ fn kanban_schema_migrations_apply_from_a_clean_database() {
         assert!(local_review_columns
             .iter()
             .any(|column| column == "merge_started"));
+
+        let continuation_columns: Vec<String> =
+            sqlx::query_scalar("SELECT name FROM pragma_table_info('chats') ORDER BY cid")
+                .fetch_all(&mut connection)
+                .await
+                .expect("read chat continuation columns");
+        assert!(continuation_columns
+            .iter()
+            .any(|column| column == "continuation_snapshot_json"));
+        assert!(continuation_columns
+            .iter()
+            .any(|column| column == "continuation_turn_count"));
+
+        let continuation_binding_tables: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM sqlite_master
+             WHERE type = 'table' AND name = 'chat_worktree_bindings'",
+        )
+        .fetch_one(&mut connection)
+        .await
+        .expect("read chat continuation binding table");
+        assert_eq!(continuation_binding_tables, 1);
     });
 }
 

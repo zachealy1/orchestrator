@@ -210,6 +210,11 @@ export type ChatRecord = {
   title_manually_edited?: number;
   title_generation_started_at?: string | null;
   conversation_revision?: number;
+  continued_from_chat_id?: number | null;
+  continuation_kind?: "chat" | "worktree" | null;
+  continuation_snapshot_json?: string | null;
+  continuation_settings_json?: string | null;
+  continuation_turn_count?: number;
   created_at: string;
   updated_at: string;
   deleted_at: string | null;
@@ -240,6 +245,24 @@ export type ChatHistoryContextMenuState = {
   chat: ChatListItem;
   x: number;
   y: number;
+};
+
+export type ChatContinuationTurn = {
+  turnIndex: number;
+  prompt: string;
+  finalMessage: string;
+  completedPlan: string;
+  status: "completed";
+  startedAt: string;
+  completedAt: string | null;
+  durationMs: number | null;
+};
+
+export type ChatContinuationSnapshot = {
+  version: 1;
+  sourceChatId: number;
+  context: string;
+  turns: ChatContinuationTurn[];
 };
 
 export type HistoryChatLoadState = {

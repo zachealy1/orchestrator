@@ -587,6 +587,12 @@ describe("Application runtime scenarios 3", () => {
       expect(
         screen.getByRole("menu", { name: /fix the app header chat actions/i }),
       ).toHaveClass("workspace-context-menu");
+      expect(screen.getAllByRole("menuitem").map((item) => item.textContent)).toEqual([
+        "Rename chat",
+        "Continue in new chat",
+        "Continue in new worktree",
+        "Remove chat",
+      ]);
       fireEvent.keyDown(window, { key: "Escape" });
       await waitFor(() =>
         expect(
@@ -628,6 +634,44 @@ describe("Application runtime scenarios 3", () => {
       await waitFor(() =>
         expect(within(drawer).queryByText("Fix the app header")).not.toBeInTheDocument(),
       );
+    });
+
+  it("renames the chat targeted by the history context menu", async () => {
+      const chat = workspaceChatFixture({
+        id: 405,
+        title: "Original title",
+      });
+      mocks.listWorkspaceChatsMock.mockResolvedValue([chat]);
+
+      const { user } = await renderApp();
+      const banner = screen.getByRole("region", { name: "Selected folder" });
+      await user.click(
+        within(banner).getByRole("button", { name: /open chat history/i }),
+      );
+      const drawer = await screen.findByRole("complementary", {
+        name: "Workspace chat history",
+      });
+      const row = within(drawer)
+        .getByText("Original title")
+        .closest(".history-run-item");
+
+      fireEvent.contextMenu(row as HTMLElement, { clientX: 120, clientY: 140 });
+      await user.click(screen.getByRole("menuitem", { name: "Rename chat" }));
+      const dialog = screen.getByRole("dialog", { name: "Rename chat" });
+      const input = within(dialog).getByRole("textbox", { name: "Title" });
+      await user.clear(input);
+      await user.type(input, "Focused continuation work");
+      await user.click(
+        within(dialog).getByRole("button", { name: "Save chat title" }),
+      );
+
+      await waitFor(() =>
+        expect(mocks.renameChatMock).toHaveBeenCalledWith(
+          405,
+          "Focused continuation work",
+        ),
+      );
+      expect(within(drawer).getByText("Focused continuation work")).toBeInTheDocument();
     });
 
   it("switches to another history chat while a run remains active", async () => {

@@ -9,6 +9,8 @@ import { parseProposedPlanEnvelope } from "../../lib/proposedPlan";
 import { resolveStoredRunExecutionSettings } from "../../lib/runExecutionSettings";
 import { parsePersistedRunWebPreview } from "../../lib/webPreview";
 import type {
+  ChatContinuationSnapshot,
+  ChatContinuationTurn,
   ChatListItem,
   ChatRecord,
   ExternalTranscriptSnapshot,
@@ -16,6 +18,73 @@ import type {
 } from "./types";
 
 const DEFAULT_CODEX_PROFILE_KEY = "default";
+const MAX_CONTINUATION_TRANSCRIPT_CHARACTERS = 250_000;
+const CONTINUATION_TRUNCATION_MARKER = "\n\n[Truncated in continuation]";
+
+function continuationTurnCharacters(turn: ChatContinuationTurn) {
+  return turn.prompt.length + turn.finalMessage.length + turn.completedPlan.length;
+}
+
+function truncateContinuationText(value: string, limit: number) {
+  if (value.length <= limit) return value;
+  if (limit <= CONTINUATION_TRUNCATION_MARKER.length) {
+    return CONTINUATION_TRUNCATION_MARKER.slice(0, limit);
+  }
+  return `${value.slice(0, limit - CONTINUATION_TRUNCATION_MARKER.length)}${CONTINUATION_TRUNCATION_MARKER}`;
+}
+
+function truncateContinuationTurn(
+  turn: ChatContinuationTurn,
+  limit: number,
+): ChatContinuationTurn {
+  const promptLimit = Math.min(50_000, Math.max(1, Math.floor(limit * 0.25)));
+  const prompt = truncateContinuationText(turn.prompt, promptLimit);
+  const remaining = Math.max(0, limit - prompt.length);
+  const populatedResponses = Number(Boolean(turn.finalMessage)) + Number(Boolean(turn.completedPlan));
+  const responseLimit = populatedResponses > 0 ? Math.floor(remaining / populatedResponses) : 0;
+  return {
+    ...turn,
+    prompt,
+    finalMessage: turn.finalMessage
+      ? truncateContinuationText(turn.finalMessage, responseLimit)
+      : "",
+    completedPlan: turn.completedPlan
+      ? truncateContinuationText(turn.completedPlan, responseLimit)
+      : "",
+  };
+}
+
+export function boundChatContinuationTurns(
+  turns: ChatContinuationTurn[],
+  limit = MAX_CONTINUATION_TRANSCRIPT_CHARACTERS,
+) {
+  if (turns.length === 0 || limit <= 0) return [];
+  const total = turns.reduce(
+    (characters, turn) => characters + continuationTurnCharacters(turn),
+    0,
+  );
+  if (total <= limit) return turns;
+  if (turns.length === 1) return [truncateContinuationTurn(turns[0], limit)];
+
+  const first = truncateContinuationTurn(
+    turns[0],
+    Math.min(50_000, Math.max(1, Math.floor(limit * 0.2))),
+  );
+  let remaining = Math.max(0, limit - continuationTurnCharacters(first));
+  const newest: ChatContinuationTurn[] = [];
+  for (let index = turns.length - 1; index > 0 && remaining > 0; index -= 1) {
+    const turn = turns[index];
+    const characters = continuationTurnCharacters(turn);
+    if (characters <= remaining) {
+      newest.unshift(turn);
+      remaining -= characters;
+      continue;
+    }
+    newest.unshift(truncateContinuationTurn(turn, remaining));
+    break;
+  }
+  return [first, ...newest];
+}
 
 export function historyChatVersion(chat: ChatListItem) {
   return [
@@ -23,7 +92,96 @@ export function historyChatVersion(chat: ChatListItem) {
     chat.latest_activity_at,
     chat.updated_at,
     chat.turn_count,
+    chat.continuation_turn_count ?? 0,
   ].join(":");
+}
+
+export function parseChatContinuationSnapshot(
+  value: string | null | undefined,
+): ChatContinuationSnapshot | null {
+  if (!value) return null;
+  try {
+    const parsed = JSON.parse(value) as ChatContinuationSnapshot;
+    if (
+      parsed.version !== 1 ||
+      !Number.isInteger(parsed.sourceChatId) ||
+      typeof parsed.context !== "string" ||
+      !Array.isArray(parsed.turns)
+    ) {
+      return null;
+    }
+    const turns = parsed.turns.filter(
+      (turn) =>
+        Number.isInteger(turn.turnIndex) &&
+        typeof turn.prompt === "string" &&
+        typeof turn.finalMessage === "string" &&
+        typeof turn.completedPlan === "string" &&
+        turn.status === "completed" &&
+        typeof turn.startedAt === "string",
+    );
+    if (turns.length !== parsed.turns.length) return null;
+    return { ...parsed, turns };
+  } catch {
+    return null;
+  }
+}
+
+export function createTaskChatEntriesFromContinuationSnapshot(
+  chat: ChatListItem,
+): TaskChatEntry[] {
+  const snapshot = parseChatContinuationSnapshot(
+    chat.continuation_snapshot_json,
+  );
+  if (!snapshot) return [];
+  return snapshot.turns.map((turn) => {
+    const finalMessageItemId = turn.finalMessage
+      ? `continuation-final-${chat.id}-${turn.turnIndex}`
+      : null;
+    const planItemId = turn.completedPlan
+      ? `continuation-plan-${chat.id}-${turn.turnIndex}`
+      : null;
+    return {
+      clientId: `continuation-${chat.id}-turn-${turn.turnIndex}`,
+      workspaceId: chat.workspace_id,
+      chatId: chat.id,
+      turnIndex: turn.turnIndex,
+      runId: null,
+      taskId: null,
+      prompt: turn.prompt,
+      submittedAt: turn.startedAt,
+      status: "completed",
+      runView: {
+        ...emptyRunView,
+        status: "completed",
+        startedAt: turn.startedAt,
+        completedAt: turn.completedAt,
+        elapsedMs: turn.durationMs ?? 0,
+        finalMessage: turn.finalMessage,
+        finalMessageItemId,
+        agentMessagesById: finalMessageItemId
+          ? {
+              [finalMessageItemId]: {
+                text: turn.finalMessage,
+                phase: "final_answer" as const,
+              },
+            }
+          : {},
+        latestPlan: turn.completedPlan,
+        nativePlan: turn.completedPlan
+          ? {
+              ...emptyRunView.nativePlan,
+              intent: "plan" as const,
+              mode: "plan" as const,
+              phase: "completed" as const,
+              planItemId,
+              previewText: turn.completedPlan,
+              completedText: turn.completedPlan,
+              reviewState: "superseded" as const,
+            }
+          : emptyRunView.nativePlan,
+      },
+    };
+  });
 }
 
 export function historyActivityTime(value: string | null | undefined) {

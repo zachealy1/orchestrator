@@ -150,6 +150,63 @@ button.workspace-context-menu-item svg {
   color: currentColor;
 }
 
+.workspace-context-menu-separator {
+  height: 1px;
+  margin: 5px 7px;
+  background: var(--divider);
+}
+
+.chat-worktree-dialog {
+  width: min(560px, calc(100vw - 32px));
+}
+
+.chat-worktree-repositories {
+  display: grid;
+  gap: 1px;
+  max-height: 220px;
+  overflow: auto;
+  border-block: 1px solid var(--divider);
+}
+
+.chat-worktree-repository {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 10px 2px;
+}
+
+.chat-worktree-repository span,
+.chat-worktree-repository small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.chat-worktree-repository small {
+  color: var(--text-muted);
+}
+
+.chat-worktree-dirty-option {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+}
+
+.chat-worktree-dirty-option > span {
+  display: grid;
+  gap: 3px;
+}
+
+.chat-worktree-dirty-option small {
+  color: var(--text-muted);
+}
+
+.chat-worktree-dirty-option.disabled {
+  opacity: 0.55;
+}
+
 .workspace-tree-branch {
   display: grid;
   min-width: 0;

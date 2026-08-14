@@ -1,9 +1,12 @@
 import { describe, expect, it } from "vitest";
 import {
   buildPreviousChatContext,
+  boundChatContinuationTurns,
+  createTaskChatEntriesFromContinuationSnapshot,
   historyActivityTime,
   isAdoptedExternalChat,
   normalizeHistoricalProposedPlan,
+  parseChatContinuationSnapshot,
   sortHistoryChatsByActivity,
 } from "./historyProjection";
 import type { TaskChatEntry } from "../../components/TaskChatTurn";
@@ -126,5 +129,77 @@ describe("historyProjection", () => {
       "User prompt:\nAdd a health endpoint\nAssistant result:\nAdded `/health` with tests.",
     );
     expect(buildPreviousChatContext([])).toBeNull();
+  });
+
+  it("validates and projects inherited continuation turns without live actions", () => {
+    const source = chat(9, "2026-07-01 12:00:00");
+    source.continuation_snapshot_json = JSON.stringify({
+      version: 1,
+      sourceChatId: 4,
+      context: "Previous visible conversation",
+      turns: [
+        {
+          turnIndex: 1,
+          prompt: "Plan the endpoint",
+          finalMessage: "",
+          completedPlan: "# Endpoint plan",
+          status: "completed",
+          startedAt: "2026-07-01T10:00:00Z",
+          completedAt: "2026-07-01T10:01:00Z",
+          durationMs: 60_000,
+        },
+      ],
+    });
+
+    expect(parseChatContinuationSnapshot(source.continuation_snapshot_json)).not.toBeNull();
+    const entries = createTaskChatEntriesFromContinuationSnapshot(source);
+    expect(entries).toHaveLength(1);
+    expect(entries[0]).toMatchObject({
+      chatId: 9,
+      prompt: "Plan the endpoint",
+      status: "completed",
+      runId: null,
+    });
+    expect(entries[0]?.runView.nativePlan).toMatchObject({
+      completedText: "# Endpoint plan",
+      reviewState: "superseded",
+    });
+  });
+
+  it("rejects malformed inherited continuation snapshots", () => {
+    expect(
+      parseChatContinuationSnapshot(
+        JSON.stringify({
+          version: 1,
+          sourceChatId: 4,
+          context: "context",
+          turns: [{ prompt: "missing required fields" }],
+        }),
+      ),
+    ).toBeNull();
+  });
+
+  it("bounds continuation transcripts while retaining the objective and newest turn", () => {
+    const turns = ["first", "middle", "newest"].map((prompt, index) => ({
+      turnIndex: index + 1,
+      prompt,
+      finalMessage: "x".repeat(80),
+      completedPlan: "",
+      status: "completed" as const,
+      startedAt: `2026-07-01T10:0${index}:00Z`,
+      completedAt: null,
+      durationMs: null,
+    }));
+
+    const bounded = boundChatContinuationTurns(turns, 100);
+    expect(bounded[0]?.prompt).toBe("first");
+    expect(bounded[bounded.length - 1]?.prompt).toBe("newest");
+    expect(
+      bounded.reduce(
+        (total, turn) =>
+          total + turn.prompt.length + turn.finalMessage.length + turn.completedPlan.length,
+        0,
+      ),
+    ).toBeLessThanOrEqual(100);
   });
 });

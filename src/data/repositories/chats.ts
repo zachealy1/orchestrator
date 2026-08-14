@@ -1,11 +1,28 @@
 import { commands } from "../../generated/tauri";
-import type { ChatRecord } from "../../features/conversations/types";
+import type {
+  ChatContinuationSnapshot,
+  ChatRecord,
+} from "../../features/conversations/types";
+import type { KanbanGitBinding } from "../../features/kanban/api";
 import { FrontendDatabase } from "../database";
 
 export function createChatRepository(database: FrontendDatabase) {
   const getDatabase = () => database.get();
   const selectOne = <T>(query: string, bindValues: unknown[] = []) =>
     database.selectOne<T>(query, bindValues);
+  const parseBindingError = (value: string | null) => {
+    if (!value) return null;
+    try {
+      const parsed = JSON.parse(value) as KanbanGitBinding["error"];
+      return parsed &&
+        typeof parsed.code === "string" &&
+        typeof parsed.message === "string"
+        ? parsed
+        : null;
+    } catch {
+      return null;
+    }
+  };
 
   async function createChat(input: {
     workspaceId: number;
@@ -14,6 +31,10 @@ export function createChatRepository(database: FrontendDatabase) {
     status: string;
     generateTitle?: boolean;
     surface?: "chat" | "kanban";
+    continuedFromChatId?: number | null;
+    continuationKind?: "chat" | "worktree" | null;
+    continuationSnapshot?: ChatContinuationSnapshot | null;
+    continuationSettingsJson?: string | null;
   }) {
     const db = await getDatabase();
     const profileKey = input.accountId === null ? null : `account:${input.accountId}`;
@@ -22,9 +43,11 @@ export function createChatRepository(database: FrontendDatabase) {
     const result = await db.execute(
       `INSERT INTO chats (
          workspace_id, account_id, title, status, surface, origin, profile_key,
-         title_generation_state, title_fallback
+         title_generation_state, title_fallback, continued_from_chat_id,
+         continuation_kind, continuation_snapshot_json,
+         continuation_settings_json, continuation_turn_count
        )
-       VALUES ($1, $2, $3, $4, $5, 'orchestrator', $6, $7, $8)`,
+       VALUES ($1, $2, $3, $4, $5, 'orchestrator', $6, $7, $8, $9, $10, $11, $12, $13)`,
       [
         input.workspaceId,
         input.accountId,
@@ -34,6 +57,13 @@ export function createChatRepository(database: FrontendDatabase) {
         profileKey,
         input.generateTitle ? "pending" : "complete",
         input.generateTitle ? fallbackTitle : null,
+        input.continuedFromChatId ?? null,
+        input.continuationKind ?? null,
+        input.continuationSnapshot
+          ? JSON.stringify(input.continuationSnapshot)
+          : null,
+        input.continuationSettingsJson ?? null,
+        input.continuationSnapshot?.turns.length ?? 0,
       ],
     );
 
@@ -43,6 +73,8 @@ export function createChatRepository(database: FrontendDatabase) {
         external_cwd, external_created_at, external_updated_at, last_synced_at,
         title_generation_state, title_fallback, title_manually_edited,
         title_generation_started_at, conversation_revision,
+        continued_from_chat_id, continuation_kind, continuation_snapshot_json,
+        continuation_settings_json, continuation_turn_count,
         created_at, updated_at, deleted_at
        FROM chats WHERE id = $1`,
       [result.lastInsertId],
@@ -55,7 +87,6 @@ export function createChatRepository(database: FrontendDatabase) {
     return chat;
   }
 
-
   async function getChatRecord(chatId: number) {
     return selectOne<ChatRecord>(
       `SELECT id, workspace_id, account_id, title, codex_thread_id, status, surface,
@@ -64,6 +95,8 @@ export function createChatRepository(database: FrontendDatabase) {
         collaboration_mode, saved_default_collaboration_mode_json,
         title_generation_state, title_fallback, title_manually_edited,
         title_generation_started_at, conversation_revision,
+        continued_from_chat_id, continuation_kind, continuation_snapshot_json,
+        continuation_settings_json, continuation_turn_count,
         created_at, updated_at, deleted_at
        FROM chats
        WHERE id = $1 AND deleted_at IS NULL`,
@@ -73,7 +106,10 @@ export function createChatRepository(database: FrontendDatabase) {
 
   async function getNextChatTurnIndex(chatId: number) {
     const row = await selectOne<{ next_turn_index: number }>(
-      `SELECT COALESCE(MAX(turn_index), 0) + 1 AS next_turn_index
+      `SELECT MAX(
+         COALESCE((SELECT continuation_turn_count FROM chats WHERE id = $1), 0),
+         COALESCE(MAX(turn_index), 0)
+       ) + 1 AS next_turn_index
        FROM (
          SELECT turn_index FROM runs
          WHERE chat_id = $1 AND deleted_at IS NULL
@@ -84,6 +120,83 @@ export function createChatRepository(database: FrontendDatabase) {
       [chatId],
     );
     return Math.max(1, Number(row?.next_turn_index ?? 1));
+  }
+
+  async function saveChatWorktreeBindings(
+    chatId: number,
+    bindings: KanbanGitBinding[],
+  ) {
+    const db = await getDatabase();
+    await db.execute("DELETE FROM chat_worktree_bindings WHERE chat_id = $1", [
+      chatId,
+    ]);
+    try {
+      for (const binding of bindings) {
+        await db.execute(
+          `INSERT INTO chat_worktree_bindings (
+             chat_id, source_repository_path, relative_path, execution_root,
+             source_branch, base_branch, base_commit, continuation_branch,
+             worktree_path, status, error_json
+           ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`,
+          [
+            chatId,
+            binding.sourceRepositoryPath,
+            binding.relativePath,
+            binding.executionRoot,
+            binding.sourceBranch,
+            binding.baseBranch,
+            binding.baseCommit,
+            binding.cardBranch,
+            binding.worktreePath,
+            binding.status,
+            binding.error ? JSON.stringify(binding.error) : null,
+          ],
+        );
+      }
+    } catch (error) {
+      await db
+        .execute("DELETE FROM chat_worktree_bindings WHERE chat_id = $1", [
+          chatId,
+        ])
+        .catch(() => undefined);
+      throw error;
+    }
+  }
+
+  async function listChatWorktreeBindings(chatId: number) {
+    const db = await getDatabase();
+    const rows = await db.select<Array<{
+      source_repository_path: string;
+      relative_path: string;
+      execution_root: string;
+      source_branch: string;
+      base_branch: string;
+      base_commit: string;
+      continuation_branch: string;
+      worktree_path: string;
+      status: string;
+      error_json: string | null;
+    }>>(
+      `SELECT source_repository_path, relative_path, execution_root,
+        source_branch, base_branch, base_commit, continuation_branch,
+        worktree_path, status, error_json
+       FROM chat_worktree_bindings
+       WHERE chat_id = $1
+       ORDER BY relative_path, source_repository_path`,
+      [chatId],
+    );
+    return rows.map((row): KanbanGitBinding => ({
+      sourceRepositoryPath: row.source_repository_path,
+      relativePath: row.relative_path,
+      executionRoot: row.execution_root,
+      sourceBranch: row.source_branch,
+      baseBranch: row.base_branch,
+      baseCommit: row.base_commit,
+      cardBranch: row.continuation_branch,
+      worktreePath: row.worktree_path,
+      status: row.status,
+      error: parseBindingError(row.error_json),
+    }));
   }
 
   async function chatHasPendingPlanReview(chatId: number) {
@@ -99,7 +212,6 @@ export function createChatRepository(database: FrontendDatabase) {
     );
     return Number(row?.has_pending_review ?? 0) === 1;
   }
-
 
   async function recoverInterruptedChatTitleGenerations() {
     const db = await getDatabase();
@@ -297,6 +409,8 @@ export function createChatRepository(database: FrontendDatabase) {
     completeChatTitleGeneration,
     failChatTitleGeneration,
     renameChat,
+    saveChatWorktreeBindings,
+    listChatWorktreeBindings,
     upsertExternalCodexChats,
     updateChat,
     activateChatAccountHandoff,

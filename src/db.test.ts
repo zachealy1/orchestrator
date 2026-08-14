@@ -389,6 +389,11 @@ describe("chat title generation persistence", () => {
       "account:7",
       "pending",
       "Fix OAuth callback failures",
+      null,
+      null,
+      null,
+      null,
+      0,
     ]);
   });
 

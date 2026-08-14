@@ -68,6 +68,11 @@ describe("conversation surface repositories", () => {
         "account:3",
         "complete",
         null,
+        null,
+        null,
+        null,
+        null,
+        0,
       ],
     );
   });

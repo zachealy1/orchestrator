@@ -20,7 +20,9 @@ export function createTranscriptRepository(database: FrontendDatabase) {
         chats.collaboration_mode, chats.saved_default_collaboration_mode_json,
         chats.title_generation_state, chats.title_fallback,
         chats.title_manually_edited, chats.title_generation_started_at,
-        chats.conversation_revision,
+        chats.conversation_revision, chats.continued_from_chat_id,
+        chats.continuation_kind, chats.continuation_snapshot_json,
+        chats.continuation_settings_json, chats.continuation_turn_count,
         latest_run.account_label,
         latest_run.account_email,
         MAX(
@@ -41,7 +43,7 @@ export function createTranscriptRepository(database: FrontendDatabase) {
         CASE
           WHEN chats.origin = 'codex_external'
             THEN COALESCE(MAX(external_snapshot.turn_count), 0) + COUNT(runs.id)
-          ELSE COUNT(runs.id)
+          ELSE COALESCE(chats.continuation_turn_count, 0) + COUNT(runs.id)
         END AS turn_count,
         COALESCE(SUM(latest_tokens.run_tokens), 0) AS total_tokens,
         COALESCE(SUM(runs.duration_ms), 0) AS duration_ms,
@@ -97,7 +99,9 @@ export function createTranscriptRepository(database: FrontendDatabase) {
         chats.collaboration_mode, chats.saved_default_collaboration_mode_json,
         chats.title_generation_state, chats.title_fallback,
         chats.title_manually_edited, chats.title_generation_started_at,
-        chats.conversation_revision,
+        chats.conversation_revision, chats.continued_from_chat_id,
+        chats.continuation_kind, chats.continuation_snapshot_json,
+        chats.continuation_settings_json, chats.continuation_turn_count,
         latest_run.account_label,
         latest_run.account_email,
         MAX(
@@ -118,7 +122,7 @@ export function createTranscriptRepository(database: FrontendDatabase) {
         CASE
           WHEN chats.origin = 'codex_external'
             THEN COALESCE(MAX(external_snapshot.turn_count), 0) + COUNT(runs.id)
-          ELSE COUNT(runs.id)
+          ELSE COALESCE(chats.continuation_turn_count, 0) + COUNT(runs.id)
         END AS turn_count,
         COALESCE(SUM(latest_tokens.run_tokens), 0) AS total_tokens,
         COALESCE(SUM(runs.duration_ms), 0) AS duration_ms,
