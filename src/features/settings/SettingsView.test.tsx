@@ -11,6 +11,7 @@ function actions(): SettingsViewActions {
     setThemePreference: vi.fn(),
     setComputerUseEnabled: vi.fn(),
     connectGithub: vi.fn(),
+    cancelGithubConnection: vi.fn(),
     disconnectGithub: vi.fn(),
     setNotificationPreference: vi.fn(),
     openNotificationSettings: vi.fn(),
@@ -86,7 +87,7 @@ describe("SettingsView", () => {
     );
   });
 
-  it("allows a local build to configure its GitHub App before connecting", () => {
+  it("shows bundled CLI availability without requesting app credentials", () => {
     const handlers = actions();
     render(
       <SettingsView
@@ -98,8 +99,8 @@ describe("SettingsView", () => {
             displayName: null,
             avatarUrl: null,
             status: "unavailable",
-            message: "Configure a GitHub App client ID.",
-            repositories: [],
+            message: "The bundled GitHub CLI runtime is unavailable.",
+            cliVersion: null,
           },
         })}
         actions={handlers}
@@ -109,12 +110,31 @@ describe("SettingsView", () => {
     const githubSettings = screen.getByRole("region", { name: "GitHub settings" });
     const connect = within(githubSettings).getByRole("button", { name: "Connect" });
     expect(connect).toBeDisabled();
-    fireEvent.change(screen.getByRole("textbox", { name: /github app client id/i }), {
-      target: { value: "Iv1.0000000000000000" },
-    });
-    expect(connect).toBeEnabled();
-    fireEvent.click(connect);
+    expect(screen.queryByRole("textbox", { name: /github app client id/i })).toBeNull();
+  });
 
-    expect(handlers.connectGithub).toHaveBeenCalledWith("Iv1.0000000000000000");
+  it("allows an in-progress CLI login to be cancelled", () => {
+    const handlers = actions();
+    render(
+      <SettingsView
+        model={model({
+          githubConnectionPending: true,
+          githubConnection: {
+            available: true,
+            connected: false,
+            login: null,
+            displayName: null,
+            avatarUrl: null,
+            status: "connecting",
+            message: "Complete sign-in in your browser.",
+            cliVersion: "2.96.0",
+          },
+        })}
+        actions={handlers}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+    expect(handlers.cancelGithubConnection).toHaveBeenCalledOnce();
   });
 });

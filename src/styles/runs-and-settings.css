@@ -723,65 +723,6 @@ button.pending-interaction-nav:disabled {
   align-items: start;
 }
 
-.github-client-id-setting {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(240px, 360px);
-  gap: 18px;
-  align-items: center;
-  padding: 12px;
-}
-
-.github-client-id-setting > span {
-  display: grid;
-  gap: 4px;
-}
-
-.github-client-id-setting small {
-  color: var(--color-text-muted);
-  font-size: 0.8rem;
-  line-height: 1.4;
-}
-
-.github-client-id-setting input {
-  width: 100%;
-  min-width: 0;
-  border: 1px solid var(--color-divider);
-  border-radius: var(--radius);
-  background: var(--color-surface-soft);
-  color: var(--color-text);
-  font: inherit;
-  padding: 9px 11px;
-}
-
-.github-client-id-setting input:focus {
-  border-color: var(--color-divider);
-  outline: none;
-}
-
-@media (max-width: 720px) {
-  .github-client-id-setting {
-    grid-template-columns: 1fr;
-  }
-}
-
-.github-repository-list {
-  display: grid;
-  gap: 6px;
-}
-
-.github-repository-list > span {
-  display: block;
-  min-width: 0;
-  overflow: hidden;
-  padding: 8px 10px;
-  border-radius: 6px;
-  background: var(--color-surface-soft);
-  color: var(--color-text);
-  font-size: 0.8rem;
-  font-weight: 600;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
 
 .managed-account-row:focus-visible {
   outline: 2px solid rgb(var(--primary-rgb) / 0.7);

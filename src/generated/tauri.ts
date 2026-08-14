@@ -122,9 +122,8 @@ export const commands = {
 	kanbanSetInheritedContext: (request: SetKanbanInheritedContextRequest) => __TAURI_INVOKE<null>("kanban_set_inherited_context", { request }),
 	kanbanGetInheritedContext: (cardId: string) => __TAURI_INVOKE<string | null>("kanban_get_inherited_context", { cardId }),
 	githubConnectionStatus: () => __TAURI_INVOKE<GithubConnectionStatus>("github_connection_status"),
-	githubConfigureClientId: (clientId: string) => __TAURI_INVOKE<GithubConnectionStatus>("github_configure_client_id", { clientId }),
-	githubBeginDeviceAuthorization: () => __TAURI_INVOKE<GithubDeviceAuthorization>("github_begin_device_authorization"),
-	githubPollDeviceAuthorization: () => __TAURI_INVOKE<GithubConnectionStatus>("github_poll_device_authorization"),
+	githubConnect: () => __TAURI_INVOKE<GithubConnectionStatus>("github_connect"),
+	githubCancelConnection: () => __TAURI_INVOKE<null>("github_cancel_connection"),
 	githubDisconnect: () => __TAURI_INVOKE<null>("github_disconnect"),
 	githubPublishKanbanCard: (cardId: string) => __TAURI_INVOKE<GithubPublicationResult>("github_publish_kanban_card", { cardId }),
 	githubSyncKanbanPullRequests: (workspaceId: number | null) => __TAURI_INVOKE<number>("github_sync_kanban_pull_requests", { workspaceId }),
@@ -382,27 +381,12 @@ export type GithubConnectionStatus = {
 	avatarUrl: string | null,
 	status: string,
 	message: string | null,
-	repositories: GithubRepositoryAccess[],
-};
-
-export type GithubDeviceAuthorization = {
-	userCode: string,
-	verificationUri: string,
-	expiresInSeconds: number,
-	intervalSeconds: number,
+	cliVersion: string | null,
 };
 
 export type GithubPublicationResult = {
 	cardId: string,
 	pullRequests: KanbanPullRequestDto[],
-};
-
-export type GithubRepositoryAccess = {
-	installationId: number,
-	owner: string,
-	name: string,
-	fullName: string,
-	private: boolean,
 };
 
 export type HistoricalCommandActivity = {

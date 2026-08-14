@@ -145,7 +145,7 @@ function renderWorkspace(
     avatarUrl: null,
     status: "connected",
     message: null,
-    repositories: [],
+    cliVersion: "2.96.0",
   },
 ) {
   const props = {
@@ -248,7 +248,7 @@ describe("KanbanWorkspace controller", () => {
       avatarUrl: null,
       status: "disconnected",
       message: null,
-      repositories: [],
+      cliVersion: "2.96.0",
     });
 
     const warning = await screen.findByTestId("kanban-github-warning");

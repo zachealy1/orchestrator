@@ -12,8 +12,9 @@ import {
   Sun,
   Trash2,
   UserPlus,
+  X,
 } from "lucide-react";
-import { memo, useState } from "react";
+import { memo } from "react";
 import orchestratorMark from "../../assets/brand/orchestrator-mark.png";
 import { ComposerSelect } from "../../components/ComposerSelect";
 import type {
@@ -62,7 +63,8 @@ export type SettingsViewModel = {
 export type SettingsViewActions = {
   setThemePreference: (preference: ThemePreference) => void;
   setComputerUseEnabled: (enabled: boolean) => void;
-  connectGithub: (clientId?: string) => void;
+  connectGithub: () => void;
+  cancelGithubConnection: () => void;
   disconnectGithub: () => void;
   setNotificationPreference: (
     key: keyof AgentNotificationPreferences,
@@ -89,11 +91,6 @@ export const SettingsView = memo(function SettingsView({
   model: SettingsViewModel;
   actions: SettingsViewActions;
 }) {
-  const [githubClientId, setGithubClientId] = useState("");
-  const requiresGithubClientId =
-    model.githubConnection?.available === false &&
-    !model.githubConnection.connected;
-
   return (
     <>
       <section
@@ -202,9 +199,21 @@ export const SettingsView = memo(function SettingsView({
             <h2>GitHub</h2>
           </div>
           <span
-            className={`run-status ${model.githubConnection?.connected ? "completed" : "interrupted"}`}
+            className={`run-status ${
+              model.githubConnectionPending
+                ? "running"
+                : model.githubConnection?.connected
+                  ? "completed"
+                  : "interrupted"
+            }`}
           >
-            {model.githubConnection?.connected ? "connected" : "disconnected"}
+            {model.githubConnectionPending
+              ? "connecting"
+              : model.githubConnection?.connected
+                ? "connected"
+                : model.githubConnection?.available === false
+                  ? "unavailable"
+                  : "disconnected"}
           </span>
         </div>
         <div className="setting-list">
@@ -213,21 +222,28 @@ export const SettingsView = memo(function SettingsView({
               <strong>
                 {model.githubConnection?.connected
                   ? model.githubConnection.displayName ?? model.githubConnection.login
-                  : "GitHub App connection"}
+                  : "Bundled GitHub CLI"}
               </strong>
               <span>
-                {model.githubConnection?.connected
-                  ? `${model.githubConnection.repositories.length} accessible ${
-                      model.githubConnection.repositories.length === 1
-                        ? "repository"
-                        : "repositories"
-                    }`
-                  : model.githubConnection?.message ??
-                    "Connect to publish completed Kanban work as draft pull requests."}
+                {model.githubConnection?.cliVersion
+                  ? `GitHub CLI ${model.githubConnection.cliVersion}`
+                  : "GitHub CLI runtime not detected"}
+                {model.githubConnection?.message
+                  ? ` · ${model.githubConnection.message}`
+                  : ""}
               </span>
             </div>
             <div className="button-row compact">
-              {model.githubConnection?.connected ? (
+              {model.githubConnectionPending ? (
+                <button
+                  className="secondary"
+                  type="button"
+                  onClick={actions.cancelGithubConnection}
+                >
+                  <X size={16} aria-hidden="true" />
+                  Cancel
+                </button>
+              ) : model.githubConnection?.connected ? (
                 <button
                   className="secondary"
                   type="button"
@@ -241,52 +257,17 @@ export const SettingsView = memo(function SettingsView({
                 <button
                   className="secondary"
                   type="button"
-                  onClick={() =>
-                    actions.connectGithub(
-                      requiresGithubClientId ? githubClientId : undefined,
-                    )
-                  }
-                  disabled={
-                    model.githubConnectionPending ||
-                    (requiresGithubClientId && githubClientId.trim().length === 0)
-                  }
+                  onClick={actions.connectGithub}
+                  disabled={model.githubConnection?.available === false}
                 >
                   <GitPullRequest size={16} aria-hidden="true" />
-                  {model.githubConnectionPending ? "Connecting" : "Connect"}
+                  {model.githubConnection?.status === "reconnect_required"
+                    ? "Reconnect"
+                    : "Connect"}
                 </button>
               )}
             </div>
           </div>
-          {requiresGithubClientId ? (
-            <label className="github-client-id-setting">
-              <span>
-                <strong>GitHub App client ID</strong>
-                <small>
-                  Enter the public client ID from your GitHub App. Orchestrator
-                  never asks for a PAT or client secret.
-                </small>
-              </span>
-              <input
-                type="text"
-                value={githubClientId}
-                autoComplete="off"
-                spellCheck={false}
-                placeholder="Iv1.0123456789abcdef"
-                onChange={(event) => setGithubClientId(event.currentTarget.value)}
-                disabled={model.githubConnectionPending}
-              />
-            </label>
-          ) : null}
-          {model.githubConnection?.connected &&
-          model.githubConnection.repositories.length > 0 ? (
-            <div className="github-repository-list" aria-label="Accessible GitHub repositories">
-              {model.githubConnection.repositories.map((repository) => (
-                <span key={`${repository.installationId}:${repository.fullName}`}>
-                  {repository.fullName}
-                </span>
-              ))}
-            </div>
-          ) : null}
         </div>
       </section>
 

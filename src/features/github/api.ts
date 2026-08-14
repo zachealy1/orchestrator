@@ -1,14 +1,6 @@
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { commands } from "../../generated/tauri";
 
-export type GithubRepositoryAccess = {
-  installationId: number;
-  owner: string;
-  name: string;
-  fullName: string;
-  private: boolean;
-};
-
 export type GithubConnectionStatus = {
   available: boolean;
   connected: boolean;
@@ -17,14 +9,7 @@ export type GithubConnectionStatus = {
   avatarUrl: string | null;
   status: string;
   message: string | null;
-  repositories: GithubRepositoryAccess[];
-};
-
-export type GithubDeviceAuthorization = {
-  userCode: string;
-  verificationUri: string;
-  expiresInSeconds: number;
-  intervalSeconds: number;
+  cliVersion: string | null;
 };
 
 export type KanbanPullRequestRecord = {
@@ -55,16 +40,12 @@ export function loadGithubConnection() {
   return commands.githubConnectionStatus() as Promise<GithubConnectionStatus>;
 }
 
-export function configureGithubClientId(clientId: string) {
-  return commands.githubConfigureClientId(clientId) as Promise<GithubConnectionStatus>;
-}
-
 export function beginGithubConnection() {
-  return commands.githubBeginDeviceAuthorization() as Promise<GithubDeviceAuthorization>;
+  return commands.githubConnect() as Promise<GithubConnectionStatus>;
 }
 
-export function pollGithubConnection() {
-  return commands.githubPollDeviceAuthorization() as Promise<GithubConnectionStatus>;
+export function cancelGithubConnection() {
+  return commands.githubCancelConnection();
 }
 
 export function disconnectGithub() {

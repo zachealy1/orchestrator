@@ -1,0 +1,1138 @@
+use crate::DatabaseState;
+use serde::{Deserialize, Serialize};
+use serde_json::Value;
+use sha2::{Digest, Sha256};
+use sqlx::Connection;
+use std::{
+    fs,
+    io::{Read, Write},
+    path::{Path, PathBuf},
+    process::{Command, Stdio},
+    sync::{
+        atomic::{AtomicU64, Ordering},
+        Arc, Mutex, OnceLock,
+    },
+    time::{Duration, Instant},
+};
+use tauri::{AppHandle, Manager, State};
+
+const GH_VERSION: &str = "2.96.0";
+const COMMAND_TIMEOUT: Duration = Duration::from_secs(45);
+const LOGIN_TIMEOUT: Duration = Duration::from_secs(10 * 60);
+const MAX_STDOUT_BYTES: u64 = 2 * 1024 * 1024;
+const MAX_STDERR_BYTES: u64 = 256 * 1024;
+static GITHUB_CLI_RUNTIME: OnceLock<Result<GithubCliRuntime, String>> = OnceLock::new();
+static LEGACY_GITHUB_CREDENTIALS_CLEARED: OnceLock<()> = OnceLock::new();
+
+#[derive(Clone)]
+pub(crate) struct GithubCliRuntime {
+    pub executable: PathBuf,
+    pub config_dir: PathBuf,
+    pub version: String,
+}
+
+#[derive(Clone, Default)]
+pub(crate) struct GithubState {
+    login: Arc<Mutex<Option<ActiveGithubLogin>>>,
+    generation: Arc<AtomicU64>,
+}
+
+#[derive(Clone)]
+struct ActiveGithubLogin {
+    generation: u64,
+    pid: u32,
+}
+
+impl Drop for GithubState {
+    fn drop(&mut self) {
+        if Arc::strong_count(&self.login) == 1 {
+            if let Ok(login) = self.login.lock() {
+                if let Some(login) = login.as_ref() {
+                    terminate_process(login.pid);
+                }
+            }
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, specta::Type)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct GithubConnectionStatus {
+    pub available: bool,
+    pub connected: bool,
+    pub login: Option<String>,
+    pub display_name: Option<String>,
+    pub avatar_url: Option<String>,
+    pub status: String,
+    pub message: Option<String>,
+    pub cli_version: Option<String>,
+}
+
+#[derive(Clone, Debug)]
+pub(crate) struct GithubPullRequest {
+    pub number: i64,
+    pub url: String,
+    pub state: String,
+    pub draft: bool,
+    pub merged_at: Option<String>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct RuntimeManifest {
+    version: u32,
+    architecture: String,
+    gh_version: String,
+    executable_sha256: String,
+    executable: String,
+}
+
+#[derive(Deserialize)]
+struct GithubUser {
+    id: i64,
+    login: String,
+    name: Option<String>,
+    avatar_url: Option<String>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct GhPullRequest {
+    number: i64,
+    url: String,
+    state: String,
+    is_draft: bool,
+    merged_at: Option<String>,
+}
+
+struct CommandOutput {
+    success: bool,
+    stdout: String,
+    stderr: String,
+}
+
+pub(crate) fn resolve_github_cli_runtime(app: &AppHandle) -> Result<GithubCliRuntime, String> {
+    GITHUB_CLI_RUNTIME
+        .get_or_init(|| resolve_github_cli_runtime_uncached(app))
+        .clone()
+}
+
+fn resolve_github_cli_runtime_uncached(app: &AppHandle) -> Result<GithubCliRuntime, String> {
+    let architecture = if cfg!(target_arch = "aarch64") {
+        "arm64"
+    } else if cfg!(target_arch = "x86_64") {
+        "x64"
+    } else {
+        return Err("The bundled GitHub CLI does not support this Mac architecture.".to_string());
+    };
+    let resource_dir = app
+        .path()
+        .resource_dir()
+        .map_err(|error| format!("Could not resolve Orchestrator resources: {error}"))?;
+    let mut roots = vec![
+        resource_dir
+            .join("resources")
+            .join("github-cli")
+            .join(format!("darwin-{architecture}")),
+        resource_dir
+            .join("github-cli")
+            .join(format!("darwin-{architecture}")),
+    ];
+    if tauri::is_dev() {
+        roots.push(
+            Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("resources")
+                .join("github-cli")
+                .join(format!("darwin-{architecture}")),
+        );
+    }
+    let root = roots
+        .into_iter()
+        .find(|root| root.join("runtime.json").is_file())
+        .ok_or_else(|| {
+            "The bundled GitHub CLI runtime is unavailable. Run `npm run prepare:github-cli-runtime` and rebuild Orchestrator."
+                .to_string()
+        })?;
+    let manifest: RuntimeManifest = serde_json::from_slice(
+        &fs::read(root.join("runtime.json"))
+            .map_err(|error| format!("Could not read the GitHub CLI manifest: {error}"))?,
+    )
+    .map_err(|error| format!("The GitHub CLI manifest is invalid: {error}"))?;
+    if manifest.version != 1
+        || manifest.architecture != architecture
+        || manifest.gh_version != GH_VERSION
+    {
+        return Err(
+            "The bundled GitHub CLI runtime does not match this Orchestrator build.".to_string(),
+        );
+    }
+    let canonical_root = root
+        .canonicalize()
+        .map_err(|error| format!("Could not resolve the GitHub CLI runtime: {error}"))?;
+    let executable = root
+        .join(&manifest.executable)
+        .canonicalize()
+        .map_err(|error| format!("Could not resolve the bundled GitHub CLI: {error}"))?;
+    if !executable.starts_with(&canonical_root) || !executable.is_file() {
+        return Err("The GitHub CLI manifest referenced an unsafe executable.".to_string());
+    }
+    let executable_hash = format!(
+        "{:x}",
+        Sha256::digest(
+            fs::read(&executable)
+                .map_err(|error| format!("Could not verify the bundled GitHub CLI: {error}"))?
+        )
+    );
+    if executable_hash != manifest.executable_sha256 {
+        return Err(
+            "The bundled GitHub CLI failed its integrity check. Rebuild Orchestrator.".to_string(),
+        );
+    }
+    let config_dir = app
+        .path()
+        .app_data_dir()
+        .map_err(|error| format!("Could not resolve Orchestrator app data: {error}"))?
+        .join("github-cli");
+    secure_directory(&config_dir)?;
+    let runtime = GithubCliRuntime {
+        executable,
+        config_dir,
+        version: manifest.gh_version,
+    };
+    let output = run_command(
+        &runtime,
+        &["--version"],
+        None,
+        Duration::from_secs(5),
+        false,
+    )?;
+    if !output.success
+        || !output
+            .stdout
+            .starts_with(&format!("gh version {GH_VERSION} "))
+    {
+        return Err(
+            "The bundled GitHub CLI failed its integrity check. Rebuild Orchestrator.".to_string(),
+        );
+    }
+    Ok(runtime)
+}
+
+pub(crate) async fn github_review_available(app: &AppHandle) -> bool {
+    let app = app.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        let runtime = resolve_github_cli_runtime(&app)?;
+        active_login(&runtime).map(|login| login.is_some())
+    })
+    .await
+    .ok()
+    .and_then(Result::ok)
+    .unwrap_or(false)
+}
+
+#[tauri::command]
+#[specta::specta]
+pub(crate) async fn github_connection_status(
+    app: AppHandle,
+    state: State<'_, GithubState>,
+) -> Result<GithubConnectionStatus, String> {
+    connection_status(app, state.inner().clone()).await
+}
+
+async fn connection_status(
+    app: AppHandle,
+    state: GithubState,
+) -> Result<GithubConnectionStatus, String> {
+    clear_legacy_credentials();
+    let connecting = state
+        .login
+        .lock()
+        .map(|login| login.is_some())
+        .unwrap_or(false);
+    let app_for_probe = app.clone();
+    let result = tauri::async_runtime::spawn_blocking(move || {
+        let runtime = resolve_github_cli_runtime(&app_for_probe)?;
+        let identity = active_login(&runtime);
+        Ok::<_, String>((runtime, identity))
+    })
+    .await
+    .map_err(|error| format!("GitHub CLI status stopped unexpectedly: {error}"))?;
+    let (runtime, identity) = match result {
+        Ok(result) => result,
+        Err(error) => {
+            clear_legacy_connection_metadata(&app).await;
+            return Ok(GithubConnectionStatus {
+                available: false,
+                connected: false,
+                login: None,
+                display_name: None,
+                avatar_url: None,
+                status: "unavailable".to_string(),
+                message: Some(error),
+                cli_version: None,
+            });
+        }
+    };
+    match identity {
+        Ok(Some(identity)) => {
+            persist_connection_metadata(&app, &identity).await?;
+            Ok(GithubConnectionStatus {
+                available: true,
+                connected: true,
+                login: Some(identity.login),
+                display_name: identity.name,
+                avatar_url: identity.avatar_url,
+                status: "connected".to_string(),
+                message: None,
+                cli_version: Some(runtime.version),
+            })
+        }
+        Err(error) => {
+            clear_legacy_connection_metadata(&app).await;
+            Ok(GithubConnectionStatus {
+                available: true,
+                connected: false,
+                login: None,
+                display_name: None,
+                avatar_url: None,
+                status: "reconnect_required".to_string(),
+                message: Some(error),
+                cli_version: Some(runtime.version),
+            })
+        }
+        Ok(None) => {
+            clear_legacy_connection_metadata(&app).await;
+            Ok(GithubConnectionStatus {
+                available: true,
+                connected: false,
+                login: None,
+                display_name: None,
+                avatar_url: None,
+                status: if connecting {
+                    "connecting"
+                } else {
+                    "disconnected"
+                }
+                .to_string(),
+                message: Some(if connecting {
+                    "Complete GitHub sign-in in your browser.".to_string()
+                } else {
+                    "Connect GitHub CLI to publish completed Kanban work as draft pull requests."
+                        .to_string()
+                }),
+                cli_version: Some(runtime.version),
+            })
+        }
+    }
+}
+
+fn clear_legacy_credentials() {
+    LEGACY_GITHUB_CREDENTIALS_CLEARED.get_or_init(|| {
+        #[cfg(target_os = "macos")]
+        for account in ["github-app-user-token", "github-app-client-id"] {
+            let _ = Command::new("/usr/bin/security")
+                .args([
+                    "delete-generic-password",
+                    "-s",
+                    "com.orchestrator.github",
+                    "-a",
+                    account,
+                ])
+                .stdin(Stdio::null())
+                .stdout(Stdio::null())
+                .stderr(Stdio::null())
+                .status();
+        }
+    });
+}
+
+#[tauri::command]
+#[specta::specta]
+pub(crate) async fn github_connect(
+    app: AppHandle,
+    state: State<'_, GithubState>,
+) -> Result<GithubConnectionStatus, String> {
+    let state = state.inner().clone();
+    let app_for_login = app.clone();
+    let state_for_login = state.clone();
+    tauri::async_runtime::spawn_blocking(move || run_login(&app_for_login, &state_for_login))
+        .await
+        .map_err(|error| format!("GitHub sign-in stopped unexpectedly: {error}"))??;
+    connection_status(app, state).await
+}
+
+#[tauri::command]
+#[specta::specta]
+pub(crate) async fn github_cancel_connection(state: State<'_, GithubState>) -> Result<(), String> {
+    let active = state.login.lock().ok().and_then(|mut login| login.take());
+    if let Some(active) = active {
+        terminate_process(active.pid);
+    }
+    Ok(())
+}
+
+#[tauri::command]
+#[specta::specta]
+pub(crate) async fn github_disconnect(
+    app: AppHandle,
+    state: State<'_, GithubState>,
+) -> Result<(), String> {
+    github_cancel_connection(state).await?;
+    let app_for_logout = app.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        let runtime = resolve_github_cli_runtime(&app_for_logout)?;
+        let login = active_login(&runtime)?;
+        if let Some(login) = login {
+            let output = run_command(
+                &runtime,
+                &[
+                    "auth",
+                    "logout",
+                    "--hostname",
+                    "github.com",
+                    "--user",
+                    &login.login,
+                ],
+                Some("Y\n"),
+                COMMAND_TIMEOUT,
+                false,
+            )?;
+            if !output.success {
+                return Err(map_cli_error("GitHub could not be disconnected", &output));
+            }
+        }
+        Ok(())
+    })
+    .await
+    .map_err(|error| format!("GitHub disconnect stopped unexpectedly: {error}"))??;
+    clear_legacy_connection_metadata(&app).await;
+    Ok(())
+}
+
+pub(crate) async fn ensure_repository_access(
+    app: &AppHandle,
+    owner: &str,
+    repository: &str,
+) -> Result<(), String> {
+    let app = app.clone();
+    let repository = format!("{owner}/{repository}");
+    tauri::async_runtime::spawn_blocking(move || {
+        let runtime = resolve_github_cli_runtime(&app)?;
+        ensure_authenticated(&runtime)?;
+        let output = run_command(
+            &runtime,
+            &["repo", "view", &repository, "--json", "nameWithOwner"],
+            None,
+            COMMAND_TIMEOUT,
+            false,
+        )?;
+        if output.success {
+            Ok(())
+        } else {
+            Err(map_cli_error(
+                &format!("GitHub repository {repository} is not accessible"),
+                &output,
+            ))
+        }
+    })
+    .await
+    .map_err(|error| format!("GitHub repository validation stopped unexpectedly: {error}"))?
+}
+
+pub(crate) async fn find_pull_request(
+    app: &AppHandle,
+    owner: &str,
+    repository: &str,
+    head: &str,
+    base: &str,
+) -> Result<Option<GithubPullRequest>, String> {
+    let app = app.clone();
+    let repository = format!("{owner}/{repository}");
+    let head = head.to_string();
+    let base = base.to_string();
+    tauri::async_runtime::spawn_blocking(move || {
+        let runtime = resolve_github_cli_runtime(&app)?;
+        let output = run_command(
+            &runtime,
+            &[
+                "pr",
+                "list",
+                "--repo",
+                &repository,
+                "--head",
+                &head,
+                "--base",
+                &base,
+                "--state",
+                "all",
+                "--limit",
+                "1",
+                "--json",
+                "number,url,state,isDraft,mergedAt",
+            ],
+            None,
+            COMMAND_TIMEOUT,
+            false,
+        )?;
+        if !output.success {
+            return Err(map_cli_error(
+                "GitHub could not check existing pull requests",
+                &output,
+            ));
+        }
+        let records: Vec<GhPullRequest> = serde_json::from_str(&output.stdout)
+            .map_err(|_| "GitHub CLI returned invalid pull request data.".to_string())?;
+        Ok(records.into_iter().next().map(Into::into))
+    })
+    .await
+    .map_err(|error| format!("Pull request lookup stopped unexpectedly: {error}"))?
+}
+
+pub(crate) async fn create_pull_request(
+    app: &AppHandle,
+    owner: &str,
+    repository: &str,
+    head: &str,
+    base: &str,
+    title: &str,
+    body: &str,
+) -> Result<GithubPullRequest, String> {
+    let app = app.clone();
+    let repository = format!("{owner}/{repository}");
+    let head = head.to_string();
+    let base = base.to_string();
+    let title = title.to_string();
+    let body = body.to_string();
+    tauri::async_runtime::spawn_blocking(move || {
+        let runtime = resolve_github_cli_runtime(&app)?;
+        let output = run_command(
+            &runtime,
+            &[
+                "pr",
+                "create",
+                "--repo",
+                &repository,
+                "--head",
+                &head,
+                "--base",
+                &base,
+                "--draft",
+                "--title",
+                &title,
+                "--body-file",
+                "-",
+            ],
+            Some(&body),
+            COMMAND_TIMEOUT,
+            false,
+        )?;
+        if !output.success {
+            return Err(map_cli_error(
+                "GitHub could not create the pull request",
+                &output,
+            ));
+        }
+        let lookup = run_command(
+            &runtime,
+            &[
+                "pr",
+                "list",
+                "--repo",
+                &repository,
+                "--head",
+                &head,
+                "--base",
+                &base,
+                "--state",
+                "all",
+                "--limit",
+                "1",
+                "--json",
+                "number,url,state,isDraft,mergedAt",
+            ],
+            None,
+            COMMAND_TIMEOUT,
+            false,
+        )?;
+        if !lookup.success {
+            return Err(map_cli_error(
+                "The new pull request could not be verified",
+                &lookup,
+            ));
+        }
+        serde_json::from_str::<Vec<GhPullRequest>>(&lookup.stdout)
+            .map_err(|_| "GitHub CLI returned invalid pull request data.".to_string())?
+            .into_iter()
+            .next()
+            .map(Into::into)
+            .ok_or_else(|| "GitHub created the pull request but it could not be found.".to_string())
+    })
+    .await
+    .map_err(|error| format!("Pull request creation stopped unexpectedly: {error}"))?
+}
+
+pub(crate) async fn view_pull_request(
+    app: &AppHandle,
+    owner: &str,
+    repository: &str,
+    number: i64,
+) -> Result<GithubPullRequest, String> {
+    let app = app.clone();
+    let repository = format!("{owner}/{repository}");
+    tauri::async_runtime::spawn_blocking(move || {
+        let runtime = resolve_github_cli_runtime(&app)?;
+        let number = number.to_string();
+        let output = run_command(
+            &runtime,
+            &[
+                "pr",
+                "view",
+                &number,
+                "--repo",
+                &repository,
+                "--json",
+                "number,url,state,isDraft,mergedAt",
+            ],
+            None,
+            COMMAND_TIMEOUT,
+            false,
+        )?;
+        if !output.success {
+            return Err(map_cli_error(
+                "GitHub pull request status could not be refreshed",
+                &output,
+            ));
+        }
+        serde_json::from_str::<GhPullRequest>(&output.stdout)
+            .map(Into::into)
+            .map_err(|_| "GitHub CLI returned invalid pull request data.".to_string())
+    })
+    .await
+    .map_err(|error| format!("Pull request synchronization stopped unexpectedly: {error}"))?
+}
+
+pub(crate) async fn push_branch(
+    app: &AppHandle,
+    worktree: &Path,
+    remote: &str,
+    owner: &str,
+    repository: &str,
+    branch: &str,
+) -> Result<(), String> {
+    let app = app.clone();
+    let worktree = worktree.to_path_buf();
+    let remote = remote.to_string();
+    let owner = owner.to_string();
+    let repository = repository.to_string();
+    let branch = branch.to_string();
+    tauri::async_runtime::spawn_blocking(move || {
+        let runtime = resolve_github_cli_runtime(&app)?;
+        ensure_authenticated(&runtime)?;
+        let refspec = format!("{branch}:refs/heads/{branch}");
+        let mut command = Command::new("git");
+        command.arg("-C").arg(&worktree);
+        let helper = if is_ssh_remote(&remote) {
+            None
+        } else {
+            let helper = credential_helper(&runtime)?;
+            command
+                .args(["-c", "credential.helper="])
+                .arg("-c")
+                .arg(format!("credential.helper={}", helper.to_string_lossy()));
+            Some(helper)
+        };
+        let destination = if is_ssh_remote(&remote) {
+            remote.clone()
+        } else {
+            format!("https://github.com/{owner}/{repository}.git")
+        };
+        let output = command
+            .args(["push", "--porcelain"])
+            .arg(destination)
+            .arg(refspec)
+            .env("GH_CONFIG_DIR", &runtime.config_dir)
+            .env("GIT_TERMINAL_PROMPT", "0")
+            .env_remove("GH_TOKEN")
+            .env_remove("GITHUB_TOKEN")
+            .stdin(Stdio::null())
+            .output()
+            .map_err(|error| format!("Git push could not be started: {error}"));
+        if let Some(helper) = helper {
+            let _ = fs::remove_file(helper);
+        }
+        let output = output?;
+        if output.status.success() {
+            Ok(())
+        } else {
+            let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+            Err(map_error_text("GitHub rejected the branch push", &stderr))
+        }
+    })
+    .await
+    .map_err(|error| format!("Git push stopped unexpectedly: {error}"))?
+}
+
+fn run_login(app: &AppHandle, state: &GithubState) -> Result<(), String> {
+    let runtime = resolve_github_cli_runtime(app)?;
+    match active_login(&runtime) {
+        Ok(Some(_)) => return Ok(()),
+        Err(_) => {
+            let _ = fs::remove_file(runtime.config_dir.join("hosts.yml"));
+        }
+        Ok(None) => {}
+    }
+    {
+        let login = state
+            .login
+            .lock()
+            .map_err(|_| "GitHub sign-in state is unavailable.".to_string())?;
+        if login.is_some() {
+            return Err("A GitHub sign-in is already active.".to_string());
+        }
+    }
+    let generation = state.generation.fetch_add(1, Ordering::SeqCst) + 1;
+    let mut command = Command::new(&runtime.executable);
+    command
+        .args([
+            "auth",
+            "login",
+            "--hostname",
+            "github.com",
+            "--git-protocol",
+            "https",
+            "--web",
+        ])
+        .env("GH_CONFIG_DIR", &runtime.config_dir)
+        .env("GH_PAGER", "cat")
+        .env("NO_COLOR", "1")
+        .env_remove("GH_TOKEN")
+        .env_remove("GITHUB_TOKEN")
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    let mut child = command
+        .spawn()
+        .map_err(|error| format!("GitHub sign-in could not be started: {error}"))?;
+    let pid = child.id();
+    *state.login.lock().unwrap() = Some(ActiveGithubLogin { generation, pid });
+    let stdout = child
+        .stdout
+        .take()
+        .ok_or_else(|| "Could not read GitHub sign-in output.".to_string())?;
+    let stderr = child
+        .stderr
+        .take()
+        .ok_or_else(|| "Could not read GitHub sign-in errors.".to_string())?;
+    let stdout_reader = std::thread::spawn(move || read_limited(stdout, MAX_STDOUT_BYTES));
+    let stderr_reader = std::thread::spawn(move || read_limited(stderr, MAX_STDERR_BYTES));
+    let started = Instant::now();
+    let status = loop {
+        if let Some(status) = child
+            .try_wait()
+            .map_err(|error| format!("Could not inspect GitHub sign-in: {error}"))?
+        {
+            break status;
+        }
+        if started.elapsed() >= LOGIN_TIMEOUT {
+            let _ = child.kill();
+            let _ = child.wait();
+            clear_login(state, generation);
+            return Err("GitHub sign-in timed out. Try again.".to_string());
+        }
+        std::thread::sleep(Duration::from_millis(100));
+    };
+    let stdout = String::from_utf8_lossy(
+        &stdout_reader
+            .join()
+            .ok()
+            .and_then(Result::ok)
+            .unwrap_or_default(),
+    )
+    .trim()
+    .to_string();
+    let stderr = String::from_utf8_lossy(
+        &stderr_reader
+            .join()
+            .ok()
+            .and_then(Result::ok)
+            .unwrap_or_default(),
+    )
+    .trim()
+    .to_string();
+    let was_cancelled = state
+        .login
+        .lock()
+        .map(|login| {
+            !login
+                .as_ref()
+                .is_some_and(|active| active.generation == generation)
+        })
+        .unwrap_or(true);
+    clear_login(state, generation);
+    if was_cancelled {
+        return Err("GitHub sign-in cancelled.".to_string());
+    }
+    if status.success() {
+        Ok(())
+    } else {
+        Err(map_error_text(
+            "GitHub sign-in did not complete",
+            if stderr.is_empty() { &stdout } else { &stderr },
+        ))
+    }
+}
+
+fn active_login(runtime: &GithubCliRuntime) -> Result<Option<GithubUser>, String> {
+    let status = run_command(
+        runtime,
+        &[
+            "auth",
+            "status",
+            "--active",
+            "--hostname",
+            "github.com",
+            "--json",
+            "hosts",
+        ],
+        None,
+        Duration::from_secs(10),
+        false,
+    )?;
+    let value: Value = serde_json::from_str(&status.stdout)
+        .map_err(|_| "GitHub CLI returned invalid authentication status.".to_string())?;
+    if !has_active_authentication(&value)? {
+        return Ok(None);
+    }
+    let user = run_command(runtime, &["api", "user"], None, COMMAND_TIMEOUT, false)?;
+    if !user.success {
+        return Err(map_cli_error(
+            "The GitHub connection could not be verified",
+            &user,
+        ));
+    }
+    serde_json::from_str(&user.stdout)
+        .map(Some)
+        .map_err(|_| "GitHub CLI returned invalid account information.".to_string())
+}
+
+fn has_active_authentication(value: &Value) -> Result<bool, String> {
+    let Some(hosts) = value.get("hosts").and_then(Value::as_object) else {
+        return Err("GitHub CLI returned invalid authentication status.".to_string());
+    };
+    let Some(accounts) = hosts.get("github.com") else {
+        return Ok(false);
+    };
+    let Some(accounts) = accounts.as_array() else {
+        return Err("GitHub CLI returned invalid authentication status.".to_string());
+    };
+    if accounts.iter().any(|account| {
+        account.get("active").and_then(Value::as_bool) == Some(true)
+            && account.get("state").and_then(Value::as_str) != Some("failure")
+    }) {
+        return Ok(true);
+    }
+    if accounts.is_empty() {
+        Ok(false)
+    } else {
+        Err("GitHub CLI authentication needs to be refreshed. Reconnect to continue.".to_string())
+    }
+}
+
+fn ensure_authenticated(runtime: &GithubCliRuntime) -> Result<(), String> {
+    if active_login(runtime)?.is_some() {
+        Ok(())
+    } else {
+        Err("Connect GitHub in Settings to continue.".to_string())
+    }
+}
+
+fn run_command(
+    runtime: &GithubCliRuntime,
+    args: &[&str],
+    stdin: Option<&str>,
+    timeout: Duration,
+    login: bool,
+) -> Result<CommandOutput, String> {
+    let mut command = Command::new(&runtime.executable);
+    command
+        .args(args)
+        .env("GH_CONFIG_DIR", &runtime.config_dir)
+        .env("GH_PAGER", "cat")
+        .env("NO_COLOR", "1")
+        .env_remove("GH_TOKEN")
+        .env_remove("GITHUB_TOKEN")
+        .env_remove("GH_ENTERPRISE_TOKEN")
+        .env_remove("GITHUB_ENTERPRISE_TOKEN")
+        .stdin(if stdin.is_some() {
+            Stdio::piped()
+        } else {
+            Stdio::null()
+        })
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    if !login {
+        command.env("GH_PROMPT_DISABLED", "1");
+    }
+    let mut child = command
+        .spawn()
+        .map_err(|error| format!("GitHub CLI could not be started: {error}"))?;
+    let stdout = child
+        .stdout
+        .take()
+        .ok_or_else(|| "Could not read GitHub CLI output.".to_string())?;
+    let stderr = child
+        .stderr
+        .take()
+        .ok_or_else(|| "Could not read GitHub CLI errors.".to_string())?;
+    let stdout_reader = std::thread::spawn(move || read_limited(stdout, MAX_STDOUT_BYTES));
+    let stderr_reader = std::thread::spawn(move || read_limited(stderr, MAX_STDERR_BYTES));
+    if let (Some(input), Some(mut writer)) = (stdin, child.stdin.take()) {
+        writer
+            .write_all(input.as_bytes())
+            .map_err(|error| format!("Could not send input to GitHub CLI: {error}"))?;
+    }
+    let started = Instant::now();
+    let status = loop {
+        if let Some(status) = child
+            .try_wait()
+            .map_err(|error| format!("Could not inspect GitHub CLI: {error}"))?
+        {
+            break status;
+        }
+        if started.elapsed() >= timeout {
+            let _ = child.kill();
+            let _ = child.wait();
+            return Err("GitHub CLI timed out. Try again.".to_string());
+        }
+        std::thread::sleep(Duration::from_millis(50));
+    };
+    let stdout = stdout_reader
+        .join()
+        .map_err(|_| "Could not read GitHub CLI output.".to_string())??;
+    let stderr = stderr_reader
+        .join()
+        .map_err(|_| "Could not read GitHub CLI errors.".to_string())??;
+    Ok(CommandOutput {
+        success: status.success(),
+        stdout: String::from_utf8_lossy(&stdout).trim().to_string(),
+        stderr: String::from_utf8_lossy(&stderr).trim().to_string(),
+    })
+}
+
+fn read_limited(reader: impl Read, limit: u64) -> Result<Vec<u8>, String> {
+    let mut bytes = Vec::new();
+    reader
+        .take(limit + 1)
+        .read_to_end(&mut bytes)
+        .map_err(|error| format!("Could not read GitHub CLI output: {error}"))?;
+    if bytes.len() as u64 > limit {
+        return Err("GitHub CLI returned too much output.".to_string());
+    }
+    Ok(bytes)
+}
+
+fn credential_helper(runtime: &GithubCliRuntime) -> Result<PathBuf, String> {
+    let path = std::env::temp_dir().join(format!(
+        "orchestrator-gh-credential-{}",
+        uuid::Uuid::new_v4().simple()
+    ));
+    let script = format!(
+        "#!/bin/sh\nGH_CONFIG_DIR={} exec {} auth git-credential \"$@\"\n",
+        shell_quote(&runtime.config_dir),
+        shell_quote(&runtime.executable),
+    );
+    fs::write(&path, script)
+        .map_err(|error| format!("Could not create the GitHub credential helper: {error}"))?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        fs::set_permissions(&path, fs::Permissions::from_mode(0o700))
+            .map_err(|error| format!("Could not secure the GitHub credential helper: {error}"))?;
+    }
+    Ok(path)
+}
+
+fn shell_quote(path: &Path) -> String {
+    format!("'{}'", path.to_string_lossy().replace('\'', "'\\''"))
+}
+
+fn is_ssh_remote(remote: &str) -> bool {
+    let value = remote.trim();
+    value.starts_with("git@github.com:") || value.starts_with("ssh://git@github.com/")
+}
+
+fn clear_login(state: &GithubState, generation: u64) {
+    if let Ok(mut login) = state.login.lock() {
+        if login
+            .as_ref()
+            .is_some_and(|active| active.generation == generation)
+        {
+            *login = None;
+        }
+    }
+}
+
+fn terminate_process(pid: u32) {
+    let _ = Command::new("/bin/kill")
+        .args(["-TERM", &pid.to_string()])
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status();
+}
+
+fn secure_directory(path: &Path) -> Result<(), String> {
+    fs::create_dir_all(path)
+        .map_err(|error| format!("Could not prepare GitHub CLI storage: {error}"))?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        fs::set_permissions(path, fs::Permissions::from_mode(0o700))
+            .map_err(|error| format!("Could not secure GitHub CLI storage: {error}"))?;
+    }
+    Ok(())
+}
+
+async fn persist_connection_metadata(app: &AppHandle, user: &GithubUser) -> Result<(), String> {
+    let mut connection = app.state::<DatabaseState>().acquire().await?;
+    let mut transaction = connection
+        .begin()
+        .await
+        .map_err(|error| format!("GitHub connection state could not be saved: {error}"))?;
+    sqlx::query(
+        "INSERT INTO github_connections (
+            id, github_user_id, login, display_name, avatar_url, token_key, status
+         ) VALUES (1, ?1, ?2, ?3, ?4, 'gh-cli', 'connected')
+         ON CONFLICT(id) DO UPDATE SET github_user_id = excluded.github_user_id,
+            login = excluded.login, display_name = excluded.display_name,
+            avatar_url = excluded.avatar_url, token_key = 'gh-cli', status = 'connected',
+            updated_at = CURRENT_TIMESTAMP",
+    )
+    .bind(user.id)
+    .bind(&user.login)
+    .bind(&user.name)
+    .bind(&user.avatar_url)
+    .execute(&mut *transaction)
+    .await
+    .map_err(|error| format!("GitHub connection state could not be saved: {error}"))?;
+    sqlx::query("DELETE FROM github_installation_repositories")
+        .execute(&mut *transaction)
+        .await
+        .map_err(|error| format!("Old GitHub access metadata could not be cleared: {error}"))?;
+    sqlx::query("DELETE FROM github_installations")
+        .execute(&mut *transaction)
+        .await
+        .map_err(|error| {
+            format!("Old GitHub installation metadata could not be cleared: {error}")
+        })?;
+    transaction
+        .commit()
+        .await
+        .map_err(|error| format!("GitHub connection state could not be saved: {error}"))
+}
+
+async fn clear_legacy_connection_metadata(app: &AppHandle) {
+    let Ok(mut connection) = app.state::<DatabaseState>().acquire().await else {
+        return;
+    };
+    let _ = sqlx::query("DELETE FROM github_connections WHERE id = 1")
+        .execute(&mut *connection)
+        .await;
+    let _ = sqlx::query("DELETE FROM github_installation_repositories")
+        .execute(&mut *connection)
+        .await;
+    let _ = sqlx::query("DELETE FROM github_installations")
+        .execute(&mut *connection)
+        .await;
+}
+
+fn map_cli_error(operation: &str, output: &CommandOutput) -> String {
+    let detail = if output.stderr.is_empty() {
+        output.stdout.as_str()
+    } else {
+        output.stderr.as_str()
+    };
+    map_error_text(operation, detail)
+}
+
+fn map_error_text(operation: &str, detail: &str) -> String {
+    let lower = detail.to_ascii_lowercase();
+    let reason = if lower.contains("not logged") || lower.contains("authentication required") {
+        "Connect GitHub in Settings and try again."
+    } else if lower.contains("saml") || lower.contains("sso") {
+        "Authorize GitHub CLI for your organization, then try again."
+    } else if lower.contains("rate limit") {
+        "GitHub rate limits are temporarily preventing this action. Try again later."
+    } else if lower.contains("could not resolve host") || lower.contains("connection") {
+        "GitHub could not be reached. Check your connection and try again."
+    } else if lower.contains("non-fast-forward") || lower.contains("fetch first") {
+        "GitHub rejected the push because the remote branch changed. Review it and retry."
+    } else if detail.trim().is_empty() {
+        "Try again."
+    } else {
+        detail.trim()
+    };
+    format!("{operation}. {reason}")
+}
+
+impl From<GhPullRequest> for GithubPullRequest {
+    fn from(value: GhPullRequest) -> Self {
+        Self {
+            number: value.number,
+            url: value.url,
+            state: value.state.to_ascii_lowercase(),
+            draft: value.is_draft,
+            merged_at: value.merged_at,
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{has_active_authentication, is_ssh_remote, map_error_text, shell_quote};
+    use serde_json::json;
+    use std::path::Path;
+
+    #[test]
+    fn identifies_ssh_remotes() {
+        assert!(is_ssh_remote("git@github.com:openai/codex.git"));
+        assert!(is_ssh_remote("ssh://git@github.com/openai/codex.git"));
+        assert!(!is_ssh_remote("https://github.com/openai/codex.git"));
+    }
+
+    #[test]
+    fn quotes_credential_helper_paths() {
+        assert_eq!(shell_quote(Path::new("/tmp/a b")), "'/tmp/a b'");
+        assert_eq!(shell_quote(Path::new("/tmp/a'b")), "'/tmp/a'\\''b'");
+    }
+
+    #[test]
+    fn maps_authentication_errors_without_tokens() {
+        let error = map_error_text("Publication failed", "not logged into github.com");
+        assert!(error.contains("Connect GitHub"));
+        assert!(!error.contains("token"));
+    }
+
+    #[test]
+    fn parses_disconnected_and_active_authentication() {
+        assert!(!has_active_authentication(&json!({ "hosts": {} })).unwrap());
+        assert!(has_active_authentication(&json!({
+            "hosts": {
+                "github.com": [{ "active": true, "state": "success" }]
+            }
+        }))
+        .unwrap());
+    }
+
+    #[test]
+    fn rejects_expired_or_malformed_authentication() {
+        assert!(has_active_authentication(&json!({
+            "hosts": {
+                "github.com": [{ "active": true, "state": "failure" }]
+            }
+        }))
+        .is_err());
+        assert!(has_active_authentication(&json!({ "hosts": [] })).is_err());
+        assert!(has_active_authentication(&json!({})).is_err());
+    }
+}

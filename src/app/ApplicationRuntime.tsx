@@ -126,10 +126,9 @@ import {
 import { useKanbanRuntimeController } from "../features/kanban/useKanbanRuntimeController";
 import {
   beginGithubConnection,
-  configureGithubClientId,
+  cancelGithubConnection,
   disconnectGithub,
   loadGithubConnection,
-  pollGithubConnection,
   type GithubConnectionStatus,
 } from "../features/github/api";
 import {
@@ -15099,7 +15098,10 @@ function App() {
     let cancelled = false;
     void loadGithubConnection()
       .then((connection) => {
-        if (!cancelled) setGithubConnection(connection);
+        if (!cancelled) {
+          setGithubConnection(connection);
+          setGithubConnectionPending(connection.status === "connecting");
+        }
       })
       .catch((error) => {
         if (!cancelled) {
@@ -15111,7 +15113,7 @@ function App() {
             avatarUrl: null,
             status: "unavailable",
             message: error instanceof Error ? error.message : String(error),
-            repositories: [],
+            cliVersion: null,
           });
         }
       });
@@ -15120,45 +15122,55 @@ function App() {
     };
   }, [workspaceSurfaceMode]);
 
-  const handleConnectGithub = useCallback(async (clientId?: string) => {
+  useEffect(() => {
+    if (githubConnection?.status !== "connecting") return;
+    const interval = window.setInterval(() => {
+      void loadGithubConnection()
+        .then((connection) => {
+          setGithubConnection(connection);
+          if (connection.status !== "connecting") {
+            setGithubConnectionPending(false);
+          }
+        })
+        .catch(() => undefined);
+    }, 1_000);
+    return () => window.clearInterval(interval);
+  }, [githubConnection?.status]);
+
+  const handleConnectGithub = useCallback(async () => {
     if (githubConnectionPending) return;
     setGithubConnectionPending(true);
+    setStatusMessage("Complete GitHub sign-in in your browser.");
     try {
-      if (clientId?.trim()) {
-        setGithubConnection(await configureGithubClientId(clientId));
-      }
-      const authorization = await beginGithubConnection();
-      await openUrl(authorization.verificationUri);
-      setStatusMessage(
-        `Enter GitHub code ${authorization.userCode} in the browser to connect.`,
-      );
-      const deadline = Date.now() + authorization.expiresInSeconds * 1_000;
-      while (Date.now() < deadline) {
-        await new Promise((resolve) =>
-          window.setTimeout(resolve, authorization.intervalSeconds * 1_000),
-        );
-        try {
-          const connection = await pollGithubConnection();
-          setGithubConnection(connection);
-          setStatusMessage(`Connected GitHub as ${connection.login ?? "your account"}.`);
-          return;
-        } catch (error) {
-          const message = error instanceof Error ? error.message : String(error);
-          if (message === "authorization_pending") continue;
-          throw error;
-        }
-      }
-      throw new Error("GitHub authorization expired. Try again.");
+      const connection = await beginGithubConnection();
+      setGithubConnection(connection);
+      setStatusMessage(`Connected GitHub as ${connection.login ?? "your account"}.`);
     } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
       setStatusMessage(
-        `Could not connect GitHub: ${
-          error instanceof Error ? error.message : String(error)
-        }`,
+        message === "GitHub sign-in cancelled."
+          ? message
+          : `Could not connect GitHub: ${message}`,
       );
     } finally {
       setGithubConnectionPending(false);
     }
   }, [githubConnectionPending]);
+
+  const handleCancelGithubConnection = useCallback(async () => {
+    try {
+      await cancelGithubConnection();
+      setGithubConnectionPending(false);
+      setGithubConnection(await loadGithubConnection());
+      setStatusMessage("GitHub sign-in cancelled.");
+    } catch (error) {
+      setStatusMessage(
+        `Could not cancel GitHub sign-in: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+      );
+    }
+  }, []);
 
   const handleDisconnectGithub = useCallback(async () => {
     if (githubConnectionPending) return;
@@ -16329,7 +16341,8 @@ function App() {
               actions={{
                 setThemePreference,
                 setComputerUseEnabled,
-                connectGithub: (clientId) => void handleConnectGithub(clientId),
+                connectGithub: () => void handleConnectGithub(),
+                cancelGithubConnection: () => void handleCancelGithubConnection(),
                 disconnectGithub: () => void handleDisconnectGithub(),
                 setNotificationPreference: handleAgentNotificationPreferenceChange,
                 openNotificationSettings: () =>

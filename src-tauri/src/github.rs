@@ -1,5 +1,6 @@
 use crate::{
     git::generate_workspace_repository_commit_message_blocking,
+    github_cli,
     kanban_git::{
         kanban_git_commit, kanban_git_status, KanbanGitBindingRequest, KanbanGitCommitRequest,
         KanbanGitRepositoryBinding,
@@ -7,90 +8,17 @@ use crate::{
     models::WorkspaceCommitIntentContext,
     DatabaseState,
 };
-use reqwest::{header, Client, StatusCode};
-use serde::{Deserialize, Serialize};
-use sqlx::{pool::PoolConnection, Connection, Row, Sqlite};
+use serde::Serialize;
+use sqlx::{pool::PoolConnection, Row, Sqlite};
 use std::{
     collections::HashSet,
-    fs,
-    path::{Path, PathBuf},
+    path::Path,
     process::{Command, Stdio},
-    sync::{Mutex, OnceLock, RwLock},
-    time::{Duration, Instant},
 };
-use tauri::{AppHandle, Manager, State};
-use uuid::Uuid;
-
-const GITHUB_API: &str = "https://api.github.com";
-const GITHUB_DEVICE_URL: &str = "https://github.com/login/device/code";
-const GITHUB_TOKEN_URL: &str = "https://github.com/login/oauth/access_token";
-const KEYCHAIN_SERVICE: &str = "com.orchestrator.github";
-const KEYCHAIN_ACCOUNT: &str = "github-app-user-token";
-const KEYCHAIN_CLIENT_ID_ACCOUNT: &str = "github-app-client-id";
-
-static GITHUB_CLIENT_ID: OnceLock<RwLock<Option<String>>> = OnceLock::new();
+use tauri::{AppHandle, Manager};
 
 pub(crate) async fn github_review_available(app: &AppHandle) -> bool {
-    let Ok(mut connection) = open_database(app).await else {
-        return false;
-    };
-    let connected: i64 = sqlx::query_scalar(
-        "SELECT COUNT(*) FROM github_connections WHERE id = 1 AND status = 'connected'",
-    )
-    .fetch_one(&mut *connection)
-    .await
-    .unwrap_or(0);
-    if connected == 0 {
-        return false;
-    }
-    let Ok(token) = access_token().await else {
-        return false;
-    };
-    github_get::<GithubUser>("/user", &token).await.is_ok()
-}
-
-#[derive(Default)]
-pub(crate) struct GithubState {
-    pending_device_flow: Mutex<Option<PendingDeviceFlow>>,
-}
-
-struct PendingDeviceFlow {
-    device_code: String,
-    expires_at: Instant,
-    interval: Duration,
-    next_poll_at: Instant,
-}
-
-#[derive(Debug, Clone, Serialize, specta::Type)]
-#[serde(rename_all = "camelCase")]
-pub(crate) struct GithubRepositoryAccess {
-    pub installation_id: i64,
-    pub owner: String,
-    pub name: String,
-    pub full_name: String,
-    pub private: bool,
-}
-
-#[derive(Debug, Clone, Serialize, specta::Type)]
-#[serde(rename_all = "camelCase")]
-pub(crate) struct GithubConnectionStatus {
-    pub available: bool,
-    pub connected: bool,
-    pub login: Option<String>,
-    pub display_name: Option<String>,
-    pub avatar_url: Option<String>,
-    pub status: String,
-    pub message: Option<String>,
-    pub repositories: Vec<GithubRepositoryAccess>,
-}
-
-#[derive(Debug, Clone, Serialize, specta::Type)]
-#[serde(rename_all = "camelCase")]
-pub(crate) struct GithubDeviceAuthorization {
-    pub user_code: String,
-    pub verification_uri: String,
-    pub expires_in_seconds: u64,
-    pub interval_seconds: u64,
+    github_cli::github_review_available(app).await
 }
 
 #[derive(Debug, Clone, Serialize, specta::Type)]
@@ -118,352 +46,8 @@ pub(crate) struct GithubPublicationResult {
     pub pull_requests: Vec<KanbanPullRequestDto>,
 }
 
-#[derive(Debug, Clone, Deserialize, Serialize)]
-struct StoredToken {
-    access_token: String,
-    refresh_token: Option<String>,
-    expires_at_unix: Option<u64>,
-    refresh_token_expires_at_unix: Option<u64>,
-}
-
-#[derive(Deserialize)]
-struct DeviceCodeResponse {
-    device_code: String,
-    user_code: String,
-    verification_uri: String,
-    expires_in: u64,
-    interval: Option<u64>,
-}
-
-#[derive(Deserialize)]
-struct TokenResponse {
-    access_token: Option<String>,
-    refresh_token: Option<String>,
-    expires_in: Option<u64>,
-    refresh_token_expires_in: Option<u64>,
-    error: Option<String>,
-    error_description: Option<String>,
-}
-
-#[derive(Deserialize)]
-struct GithubUser {
-    id: i64,
-    login: String,
-    name: Option<String>,
-    avatar_url: Option<String>,
-}
-
-#[derive(Deserialize)]
-struct GithubInstallationAccount {
-    login: String,
-    #[serde(rename = "type")]
-    account_type: String,
-}
-
-#[derive(Deserialize)]
-struct GithubInstallation {
-    id: i64,
-    account: GithubInstallationAccount,
-    repository_selection: String,
-}
-
-#[derive(Deserialize)]
-struct InstallationsResponse {
-    installations: Vec<GithubInstallation>,
-}
-
-#[derive(Deserialize)]
-struct GithubRepositoryOwner {
-    login: String,
-}
-
-#[derive(Deserialize)]
-struct GithubRepository {
-    id: i64,
-    name: String,
-    full_name: String,
-    private: bool,
-    owner: GithubRepositoryOwner,
-}
-
-#[derive(Deserialize)]
-struct RepositoriesResponse {
-    repositories: Vec<GithubRepository>,
-}
-
-#[derive(Deserialize)]
-struct GithubPullRequest {
-    number: i64,
-    html_url: String,
-    state: String,
-    draft: Option<bool>,
-    merged_at: Option<String>,
-}
-
-#[derive(Serialize)]
-struct CreatePullRequest<'a> {
-    title: &'a str,
-    head: &'a str,
-    base: &'a str,
-    body: &'a str,
-    draft: bool,
-}
-
-fn validate_github_client_id(value: &str) -> Result<String, String> {
-    let value = value.trim();
-    if !(16..=128).contains(&value.len())
-        || !value
-            .bytes()
-            .all(|byte| byte.is_ascii_alphanumeric() || byte == b'.')
-    {
-        return Err("Enter a valid GitHub App client ID.".to_string());
-    }
-    Ok(value.to_string())
-}
-
-#[cfg(target_os = "macos")]
-fn load_client_id() -> Option<String> {
-    security_framework::passwords::get_generic_password(
-        KEYCHAIN_SERVICE,
-        KEYCHAIN_CLIENT_ID_ACCOUNT,
-    )
-    .ok()
-    .and_then(|value| String::from_utf8(value).ok())
-    .and_then(|value| validate_github_client_id(&value).ok())
-}
-
-#[cfg(not(target_os = "macos"))]
-fn load_client_id() -> Option<String> {
-    None
-}
-
-#[cfg(target_os = "macos")]
-fn store_client_id(client_id: &str) -> Result<(), String> {
-    security_framework::passwords::set_generic_password(
-        KEYCHAIN_SERVICE,
-        KEYCHAIN_CLIENT_ID_ACCOUNT,
-        client_id.as_bytes(),
-    )
-    .map_err(|_| "The GitHub App client ID could not be saved in macOS Keychain.".to_string())
-}
-
-#[cfg(not(target_os = "macos"))]
-fn store_client_id(_client_id: &str) -> Result<(), String> {
-    Err("GitHub connection setup is unavailable on this platform.".to_string())
-}
-
-fn configured_github_client_id() -> Option<String> {
-    std::env::var("ORCHESTRATOR_GITHUB_CLIENT_ID")
-        .ok()
-        .and_then(|value| validate_github_client_id(&value).ok())
-        .or_else(|| {
-            option_env!("ORCHESTRATOR_GITHUB_CLIENT_ID")
-                .and_then(|value| validate_github_client_id(value).ok())
-        })
-        .or_else(load_client_id)
-}
-
-fn github_client_id() -> Option<String> {
-    GITHUB_CLIENT_ID
-        .get_or_init(|| RwLock::new(configured_github_client_id()))
-        .read()
-        .ok()
-        .and_then(|value| value.clone())
-}
-
-fn github_client_secret() -> Option<&'static str> {
-    option_env!("ORCHESTRATOR_GITHUB_CLIENT_SECRET").filter(|value| !value.trim().is_empty())
-}
-
-fn github_client() -> Result<Client, String> {
-    Client::builder()
-        .user_agent("Orchestrator/0.1")
-        .timeout(Duration::from_secs(30))
-        .build()
-        .map_err(|_| "GitHub networking could not be initialized.".to_string())
-}
-
 async fn open_database(app: &AppHandle) -> Result<PoolConnection<Sqlite>, String> {
     app.state::<DatabaseState>().acquire().await
-}
-
-#[cfg(target_os = "macos")]
-fn store_token(token: &StoredToken) -> Result<(), String> {
-    let value = serde_json::to_vec(token)
-        .map_err(|_| "The GitHub credential could not be encoded.".to_string())?;
-    security_framework::passwords::set_generic_password(KEYCHAIN_SERVICE, KEYCHAIN_ACCOUNT, &value)
-        .map_err(|_| "The GitHub credential could not be saved in macOS Keychain.".to_string())
-}
-
-#[cfg(not(target_os = "macos"))]
-fn store_token(_token: &StoredToken) -> Result<(), String> {
-    Err("Secure GitHub credential storage is unavailable on this platform.".to_string())
-}
-
-#[cfg(target_os = "macos")]
-fn load_token() -> Result<StoredToken, String> {
-    let value =
-        security_framework::passwords::get_generic_password(KEYCHAIN_SERVICE, KEYCHAIN_ACCOUNT)
-            .map_err(|_| "Reconnect GitHub to continue.".to_string())?;
-    serde_json::from_slice(&value)
-        .map_err(|_| "The stored GitHub credential is invalid. Reconnect GitHub.".to_string())
-}
-
-#[cfg(not(target_os = "macos"))]
-fn load_token() -> Result<StoredToken, String> {
-    Err("Secure GitHub credential storage is unavailable on this platform.".to_string())
-}
-
-#[cfg(target_os = "macos")]
-fn delete_token() {
-    let _ =
-        security_framework::passwords::delete_generic_password(KEYCHAIN_SERVICE, KEYCHAIN_ACCOUNT);
-}
-
-#[cfg(not(target_os = "macos"))]
-fn delete_token() {}
-
-fn unix_now() -> u64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_secs()
-}
-
-async fn access_token() -> Result<String, String> {
-    let mut token = load_token()?;
-    if token
-        .expires_at_unix
-        .is_some_and(|expires| expires <= unix_now() + 60)
-    {
-        let refresh_token = token.refresh_token.as_deref().ok_or_else(|| {
-            "The GitHub connection expired. Reconnect GitHub in Settings.".to_string()
-        })?;
-        let client_id = github_client_id().ok_or_else(|| {
-            "The GitHub connection cannot be refreshed in this build.".to_string()
-        })?;
-        let client_secret = github_client_secret().ok_or_else(|| {
-            "The GitHub connection expired. Reconnect GitHub in Settings.".to_string()
-        })?;
-        let response: TokenResponse = github_client()?
-            .post(GITHUB_TOKEN_URL)
-            .header(header::ACCEPT, "application/json")
-            .form(&[
-                ("client_id", client_id.as_str()),
-                ("client_secret", client_secret),
-                ("grant_type", "refresh_token"),
-                ("refresh_token", refresh_token),
-            ])
-            .send()
-            .await
-            .map_err(|_| "The GitHub connection could not be refreshed.".to_string())?
-            .json()
-            .await
-            .map_err(|_| "GitHub returned an invalid refresh response.".to_string())?;
-        if let Some(error) = response.error {
-            return Err(response.error_description.unwrap_or(error));
-        }
-        let now = unix_now();
-        token = StoredToken {
-            access_token: response
-                .access_token
-                .ok_or_else(|| "GitHub did not return a refreshed access token.".to_string())?,
-            refresh_token: response.refresh_token.or(token.refresh_token),
-            expires_at_unix: response.expires_in.map(|seconds| now + seconds),
-            refresh_token_expires_at_unix: response
-                .refresh_token_expires_in
-                .map(|seconds| now + seconds)
-                .or(token.refresh_token_expires_at_unix),
-        };
-        store_token(&token)?;
-    }
-    Ok(token.access_token)
-}
-
-async fn github_get<T: for<'de> Deserialize<'de>>(path: &str, token: &str) -> Result<T, String> {
-    let response = github_client()?
-        .get(format!("{GITHUB_API}{path}"))
-        .bearer_auth(token)
-        .header(header::ACCEPT, "application/vnd.github+json")
-        .header("X-GitHub-Api-Version", "2022-11-28")
-        .send()
-        .await
-        .map_err(|_| "GitHub could not be reached.".to_string())?;
-    if response.status() == StatusCode::UNAUTHORIZED {
-        return Err(
-            "The GitHub connection is no longer authorized. Reconnect in Settings.".to_string(),
-        );
-    }
-    if !response.status().is_success() {
-        return Err(format!(
-            "GitHub returned HTTP {}.",
-            response.status().as_u16()
-        ));
-    }
-    response
-        .json()
-        .await
-        .map_err(|_| "GitHub returned an invalid response.".to_string())
-}
-
-async fn refresh_installations(app: &AppHandle, token: &str) -> Result<(), String> {
-    let installations: InstallationsResponse =
-        github_get("/user/installations?per_page=100", token).await?;
-    let mut connection = open_database(app).await?;
-    let mut transaction = connection
-        .begin()
-        .await
-        .map_err(|error| format!("GitHub access could not be saved: {error}"))?;
-    sqlx::query("DELETE FROM github_installation_repositories")
-        .execute(&mut *transaction)
-        .await
-        .map_err(|error| format!("GitHub repositories could not be refreshed: {error}"))?;
-    sqlx::query("DELETE FROM github_installations")
-        .execute(&mut *transaction)
-        .await
-        .map_err(|error| format!("GitHub installations could not be refreshed: {error}"))?;
-    for installation in installations.installations {
-        sqlx::query(
-            "INSERT INTO github_installations (
-                installation_id, account_login, account_type, repository_selection
-             ) VALUES (?1, ?2, ?3, ?4)",
-        )
-        .bind(installation.id)
-        .bind(&installation.account.login)
-        .bind(&installation.account.account_type)
-        .bind(&installation.repository_selection)
-        .execute(&mut *transaction)
-        .await
-        .map_err(|error| format!("GitHub installation access could not be saved: {error}"))?;
-        let repositories: RepositoriesResponse = github_get(
-            &format!(
-                "/user/installations/{}/repositories?per_page=100",
-                installation.id
-            ),
-            token,
-        )
-        .await?;
-        for repository in repositories.repositories {
-            sqlx::query(
-                "INSERT INTO github_installation_repositories (
-                    installation_id, repository_id, owner, name, full_name, private
-                 ) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
-            )
-            .bind(installation.id)
-            .bind(repository.id)
-            .bind(repository.owner.login)
-            .bind(repository.name)
-            .bind(repository.full_name)
-            .bind(repository.private)
-            .execute(&mut *transaction)
-            .await
-            .map_err(|error| format!("GitHub repository access could not be saved: {error}"))?;
-        }
-    }
-    transaction
-        .commit()
-        .await
-        .map_err(|error| format!("GitHub access could not be saved: {error}"))
 }
 
 pub(crate) async fn load_card_pull_requests(
@@ -498,224 +82,6 @@ pub(crate) async fn load_card_pull_requests(
             updated_at: row.get("updated_at"),
         })
         .collect())
-}
-
-#[tauri::command]
-#[specta::specta]
-pub(crate) async fn github_connection_status(
-    app: AppHandle,
-) -> Result<GithubConnectionStatus, String> {
-    let mut connection = open_database(&app).await?;
-    let row = sqlx::query(
-        "SELECT login, display_name, avatar_url, status FROM github_connections WHERE id = 1",
-    )
-    .fetch_optional(&mut *connection)
-    .await
-    .map_err(|error| format!("GitHub connection state could not be loaded: {error}"))?;
-    let repositories = sqlx::query(
-        "SELECT installation_id, owner, name, full_name, private
-         FROM github_installation_repositories ORDER BY full_name",
-    )
-    .fetch_all(&mut *connection)
-    .await
-    .map_err(|error| format!("GitHub repository access could not be loaded: {error}"))?
-    .into_iter()
-    .map(|row| GithubRepositoryAccess {
-        installation_id: row.get("installation_id"),
-        owner: row.get("owner"),
-        name: row.get("name"),
-        full_name: row.get("full_name"),
-        private: row.get::<i64, _>("private") != 0,
-    })
-    .collect();
-    let available = github_client_id().is_some() && cfg!(target_os = "macos");
-    Ok(match row {
-        Some(row) => GithubConnectionStatus {
-            available,
-            connected: row.get::<String, _>("status") == "connected" && load_token().is_ok(),
-            login: row.get("login"),
-            display_name: row.get("display_name"),
-            avatar_url: row.get("avatar_url"),
-            status: row.get("status"),
-            message: None,
-            repositories,
-        },
-        None => GithubConnectionStatus {
-            available,
-            connected: false,
-            login: None,
-            display_name: None,
-            avatar_url: None,
-            status: if available {
-                "disconnected"
-            } else {
-                "unavailable"
-            }
-            .to_string(),
-            message: (!available).then(|| {
-                "Enter the public client ID for your Orchestrator GitHub App to connect this local build."
-                    .to_string()
-            }),
-            repositories,
-        },
-    })
-}
-
-#[tauri::command]
-#[specta::specta]
-pub(crate) async fn github_configure_client_id(
-    app: AppHandle,
-    client_id: String,
-) -> Result<GithubConnectionStatus, String> {
-    if !cfg!(target_os = "macos") {
-        return Err("GitHub connection setup is unavailable on this platform.".to_string());
-    }
-    let client_id = validate_github_client_id(&client_id)?;
-    store_client_id(&client_id)?;
-    let configured = GITHUB_CLIENT_ID.get_or_init(|| RwLock::new(None));
-    *configured
-        .write()
-        .map_err(|_| "GitHub connection setup could not be updated.".to_string())? =
-        Some(client_id);
-    github_connection_status(app).await
-}
-
-#[tauri::command]
-#[specta::specta]
-pub(crate) async fn github_begin_device_authorization(
-    state: State<'_, GithubState>,
-) -> Result<GithubDeviceAuthorization, String> {
-    let client_id = github_client_id().ok_or_else(|| {
-        "Configure the Orchestrator GitHub App client ID in Settings first.".to_string()
-    })?;
-    let response = github_client()?
-        .post(GITHUB_DEVICE_URL)
-        .header(header::ACCEPT, "application/json")
-        .form(&[("client_id", client_id.as_str())])
-        .send()
-        .await
-        .map_err(|_| "GitHub device authorization could not be started.".to_string())?;
-    if !response.status().is_success() {
-        return Err("GitHub device authorization could not be started.".to_string());
-    }
-    let response: DeviceCodeResponse = response
-        .json()
-        .await
-        .map_err(|_| "GitHub returned an invalid device authorization response.".to_string())?;
-    let interval = Duration::from_secs(response.interval.unwrap_or(5).max(1));
-    *state.pending_device_flow.lock().unwrap() = Some(PendingDeviceFlow {
-        device_code: response.device_code,
-        expires_at: Instant::now() + Duration::from_secs(response.expires_in),
-        interval,
-        next_poll_at: Instant::now(),
-    });
-    Ok(GithubDeviceAuthorization {
-        user_code: response.user_code,
-        verification_uri: response.verification_uri,
-        expires_in_seconds: response.expires_in,
-        interval_seconds: interval.as_secs(),
-    })
-}
-
-#[tauri::command]
-#[specta::specta]
-pub(crate) async fn github_poll_device_authorization(
-    app: AppHandle,
-    state: State<'_, GithubState>,
-) -> Result<GithubConnectionStatus, String> {
-    let client_id =
-        github_client_id().ok_or_else(|| "GitHub is unavailable in this build.".to_string())?;
-    let device_code = {
-        let mut pending = state.pending_device_flow.lock().unwrap();
-        let flow = pending
-            .as_mut()
-            .ok_or_else(|| "Start GitHub connection again.".to_string())?;
-        if Instant::now() >= flow.expires_at {
-            *pending = None;
-            return Err("GitHub authorization expired. Try again.".to_string());
-        }
-        if Instant::now() < flow.next_poll_at {
-            return Err("authorization_pending".to_string());
-        }
-        flow.next_poll_at = Instant::now() + flow.interval;
-        flow.device_code.clone()
-    };
-    let response: TokenResponse = github_client()?
-        .post(GITHUB_TOKEN_URL)
-        .header(header::ACCEPT, "application/json")
-        .form(&[
-            ("client_id", client_id.as_str()),
-            ("device_code", device_code.as_str()),
-            ("grant_type", "urn:ietf:params:oauth:grant-type:device_code"),
-        ])
-        .send()
-        .await
-        .map_err(|_| "GitHub authorization could not be checked.".to_string())?
-        .json()
-        .await
-        .map_err(|_| "GitHub returned an invalid authorization response.".to_string())?;
-    if let Some(error) = response.error {
-        if error == "authorization_pending" || error == "slow_down" {
-            return Err("authorization_pending".to_string());
-        }
-        return Err(response.error_description.unwrap_or(error));
-    }
-    let access_token = response
-        .access_token
-        .ok_or_else(|| "GitHub did not return an access token.".to_string())?;
-    let now = unix_now();
-    let stored = StoredToken {
-        access_token: access_token.clone(),
-        refresh_token: response.refresh_token,
-        expires_at_unix: response.expires_in.map(|seconds| now + seconds),
-        refresh_token_expires_at_unix: response
-            .refresh_token_expires_in
-            .map(|seconds| now + seconds),
-    };
-    store_token(&stored)?;
-    let user: GithubUser = github_get("/user", &access_token).await?;
-    let mut connection = open_database(&app).await?;
-    sqlx::query(
-        "INSERT INTO github_connections (
-            id, github_user_id, login, display_name, avatar_url, token_key, status
-         ) VALUES (1, ?1, ?2, ?3, ?4, ?5, 'connected')
-         ON CONFLICT(id) DO UPDATE SET github_user_id = excluded.github_user_id,
-            login = excluded.login, display_name = excluded.display_name,
-            avatar_url = excluded.avatar_url, token_key = excluded.token_key,
-            status = 'connected', updated_at = CURRENT_TIMESTAMP",
-    )
-    .bind(user.id)
-    .bind(user.login)
-    .bind(user.name)
-    .bind(user.avatar_url)
-    .bind(KEYCHAIN_ACCOUNT)
-    .execute(&mut *connection)
-    .await
-    .map_err(|error| format!("GitHub connection state could not be saved: {error}"))?;
-    drop(connection);
-    refresh_installations(&app, &access_token).await?;
-    *state.pending_device_flow.lock().unwrap() = None;
-    github_connection_status(app).await
-}
-
-#[tauri::command]
-#[specta::specta]
-pub(crate) async fn github_disconnect(
-    app: AppHandle,
-    state: State<'_, GithubState>,
-) -> Result<(), String> {
-    *state.pending_device_flow.lock().unwrap() = None;
-    delete_token();
-    let mut connection = open_database(&app).await?;
-    sqlx::query("DELETE FROM github_connections WHERE id = 1")
-        .execute(&mut *connection)
-        .await
-        .map_err(|error| format!("GitHub could not be disconnected: {error}"))?;
-    sqlx::query("DELETE FROM github_installations")
-        .execute(&mut *connection)
-        .await
-        .map_err(|error| format!("GitHub access metadata could not be removed: {error}"))?;
-    Ok(())
 }
 
 fn git_output(path: &Path, args: &[&str]) -> Result<String, String> {
@@ -765,89 +131,26 @@ fn parse_github_remote(remote: &str) -> Result<(String, String), String> {
     Ok((owner.to_string(), repository.to_string()))
 }
 
-fn credential_helper_path() -> Result<PathBuf, String> {
-    let path =
-        std::env::temp_dir().join(format!("orchestrator-github-credential-{}", Uuid::new_v4()));
-    fs::write(
-        &path,
-        "#!/bin/sh\nif [ \"$1\" = get ]; then\n  printf 'username=x-access-token\\npassword=%s\\n' \"$ORCHESTRATOR_GITHUB_TOKEN\"\nfi\n",
-    )
-    .map_err(|_| "The temporary GitHub credential helper could not be created.".to_string())?;
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        fs::set_permissions(&path, fs::Permissions::from_mode(0o700)).map_err(|_| {
-            "The temporary GitHub credential helper could not be secured.".to_string()
-        })?;
-    }
-    Ok(path)
-}
-
-fn push_with_token(
+async fn push_with_github_cli(
+    app: &AppHandle,
     binding: &KanbanGitRepositoryBinding,
-    token: &str,
+    remote: &str,
     owner: &str,
     repository: &str,
 ) -> Result<String, String> {
-    let helper = credential_helper_path()?;
-    let helper_config = format!("credential.helper={}", helper.to_string_lossy());
-    let remote = format!("https://github.com/{owner}/{repository}.git");
-    let refspec = format!("{}:refs/heads/{}", binding.card_branch, binding.card_branch);
-    let output = Command::new("git")
-        .arg("-C")
-        .arg(&binding.worktree_path)
-        .args([
-            "-c",
-            "credential.helper=",
-            "-c",
-            &helper_config,
-            "push",
-            "--porcelain",
-            &remote,
-            &refspec,
-        ])
-        .env("ORCHESTRATOR_GITHUB_TOKEN", token)
-        .env("GIT_TERMINAL_PROMPT", "0")
-        .stdin(Stdio::null())
-        .output()
-        .map_err(|error| format!("Git push could not be started: {error}"));
-    let _ = fs::remove_file(&helper);
-    let output = output?;
-    if !output.status.success() {
-        let detail = String::from_utf8_lossy(&output.stderr).trim().to_string();
-        return Err(if detail.is_empty() {
-            "GitHub rejected the branch push.".to_string()
-        } else {
-            detail
-        });
-    }
-    Ok(git_output(
+    github_cli::push_branch(
+        app,
+        Path::new(&binding.worktree_path),
+        remote,
+        owner,
+        repository,
+        &binding.card_branch,
+    )
+    .await?;
+    git_output(
         Path::new(&binding.worktree_path),
         &["rev-parse", "HEAD^{commit}"],
-    )?)
-}
-
-async fn ensure_repository_access(
-    app: &AppHandle,
-    owner: &str,
-    repository: &str,
-) -> Result<(), String> {
-    let mut connection = open_database(app).await?;
-    let allowed: i64 = sqlx::query_scalar(
-        "SELECT COUNT(*) FROM github_installation_repositories
-         WHERE lower(owner) = lower(?1) AND lower(name) = lower(?2)",
     )
-    .bind(owner)
-    .bind(repository)
-    .fetch_one(&mut *connection)
-    .await
-    .map_err(|error| format!("GitHub repository access could not be checked: {error}"))?;
-    if allowed == 0 {
-        return Err(format!(
-            "Install the Orchestrator GitHub App for {owner}/{repository}, then reconnect."
-        ));
-    }
-    Ok(())
 }
 
 async fn upsert_publication_error(app: &AppHandle, card_id: &str, source_path: &str, error: &str) {
@@ -959,13 +262,12 @@ async fn publish_record(
     card_id: String,
     binding: KanbanGitRepositoryBinding,
 ) -> Result<(), String> {
-    let token = access_token().await?;
     let remote = git_output(
         Path::new(&binding.source_repository_path),
         &["remote", "get-url", "origin"],
     )?;
     let (owner, repository) = parse_github_remote(&remote)?;
-    ensure_repository_access(&app, &owner, &repository).await?;
+    github_cli::ensure_repository_access(&app, &owner, &repository).await?;
     let mut connection = open_database(&app).await?;
     let card = sqlx::query(
         "SELECT card.title, card.description, card.account_id, card.model, card.chat_id,
@@ -1076,31 +378,17 @@ async fn publish_record(
         touch_card_board(&app, &card_id).await?;
         return Ok(());
     }
-    let head_commit = push_with_token(&next_binding, &token, &owner, &repository)?;
-    let client = github_client()?;
-    let existing_url = format!(
-        "{GITHUB_API}/repos/{owner}/{repository}/pulls?state=all&head={owner}:{}&base={}",
-        next_binding.card_branch, next_binding.base_branch
-    );
-    let response = client
-        .get(existing_url)
-        .bearer_auth(&token)
-        .header(header::ACCEPT, "application/vnd.github+json")
-        .header("X-GitHub-Api-Version", "2022-11-28")
-        .send()
-        .await
-        .map_err(|_| "GitHub could not be reached while checking pull requests.".to_string())?;
-    if !response.status().is_success() {
-        return Err(format!(
-            "GitHub could not check existing pull requests (HTTP {}).",
-            response.status().as_u16()
-        ));
-    }
-    let existing: Vec<GithubPullRequest> = response
-        .json()
-        .await
-        .map_err(|_| "GitHub returned an invalid pull request response.".to_string())?;
-    let pull_request = if let Some(existing) = existing.into_iter().next() {
+    let head_commit =
+        push_with_github_cli(&app, &next_binding, &remote, &owner, &repository).await?;
+    let pull_request = if let Some(existing) = github_cli::find_pull_request(
+        &app,
+        &owner,
+        &repository,
+        &next_binding.card_branch,
+        &next_binding.base_branch,
+    )
+    .await?
+    {
         existing
     } else {
         let summary = implementation_outcome
@@ -1118,33 +406,16 @@ async fn publish_record(
             deletions,
             card_id,
         );
-        let response = client
-            .post(format!("{GITHUB_API}/repos/{owner}/{repository}/pulls"))
-            .bearer_auth(&token)
-            .header(header::ACCEPT, "application/vnd.github+json")
-            .header("X-GitHub-Api-Version", "2022-11-28")
-            .json(&CreatePullRequest {
-                title: &title,
-                head: &next_binding.card_branch,
-                base: &next_binding.base_branch,
-                body: &body,
-                draft: true,
-            })
-            .send()
-            .await
-            .map_err(|_| {
-                "GitHub could not be reached while creating the pull request.".to_string()
-            })?;
-        if !response.status().is_success() {
-            return Err(format!(
-                "GitHub could not create the pull request (HTTP {}).",
-                response.status().as_u16()
-            ));
-        }
-        response
-            .json()
-            .await
-            .map_err(|_| "GitHub returned an invalid pull request response.".to_string())?
+        github_cli::create_pull_request(
+            &app,
+            &owner,
+            &repository,
+            &next_binding.card_branch,
+            &next_binding.base_branch,
+            &title,
+            &body,
+        )
+        .await?
     };
     let state = if pull_request.merged_at.is_some() {
         "merged"
@@ -1155,7 +426,7 @@ async fn publish_record(
         "merged"
     } else if state == "closed" {
         "closed"
-    } else if pull_request.draft.unwrap_or(false) {
+    } else if pull_request.draft {
         "draft"
     } else {
         "ready"
@@ -1169,9 +440,9 @@ async fn publish_record(
          WHERE card_id = ?7 AND source_repository_path = ?8",
     )
     .bind(pull_request.number)
-    .bind(pull_request.html_url)
+    .bind(pull_request.url)
     .bind(head_commit)
-    .bind(pull_request.draft.unwrap_or(false))
+    .bind(pull_request.draft)
     .bind(state)
     .bind(publication)
     .bind(&card_id)
@@ -1293,7 +564,9 @@ pub(crate) async fn github_publish_kanban_card(
         if has_pr {
             return Err("This card already has a pull request.".to_string());
         }
-        access_token().await?;
+        if !github_cli::github_review_available(&app).await {
+            return Err("Connect GitHub in Settings to publish this card.".to_string());
+        }
         sqlx::query(
             "UPDATE kanban_cards SET review_channel = 'github',
                  state_version = state_version + 1, updated_at = CURRENT_TIMESTAMP
@@ -1318,46 +591,11 @@ pub(crate) async fn github_publish_kanban_card(
     })
 }
 
-async fn sync_pull_request(
-    app: &AppHandle,
-    token: &str,
-    row: &sqlx::sqlite::SqliteRow,
-) -> Result<bool, String> {
+async fn sync_pull_request(app: &AppHandle, row: &sqlx::sqlite::SqliteRow) -> Result<bool, String> {
     let owner: String = row.get("owner");
     let repository: String = row.get("repository");
     let number: i64 = row.get("pull_request_number");
-    let mut request = github_client()?
-        .get(format!(
-            "{GITHUB_API}/repos/{owner}/{repository}/pulls/{number}"
-        ))
-        .bearer_auth(token)
-        .header(header::ACCEPT, "application/vnd.github+json")
-        .header("X-GitHub-Api-Version", "2022-11-28");
-    if let Some(etag) = row.get::<Option<String>, _>("etag") {
-        request = request.header(header::IF_NONE_MATCH, etag);
-    }
-    let response = request
-        .send()
-        .await
-        .map_err(|_| "GitHub pull request status could not be refreshed.".to_string())?;
-    if response.status() == StatusCode::NOT_MODIFIED {
-        return Ok(false);
-    }
-    if !response.status().is_success() {
-        return Err(format!(
-            "GitHub returned HTTP {} while refreshing a pull request.",
-            response.status().as_u16()
-        ));
-    }
-    let etag = response
-        .headers()
-        .get(header::ETAG)
-        .and_then(|value| value.to_str().ok())
-        .map(str::to_string);
-    let pull_request: GithubPullRequest = response
-        .json()
-        .await
-        .map_err(|_| "GitHub returned an invalid pull request response.".to_string())?;
+    let pull_request = github_cli::view_pull_request(app, &owner, &repository, number).await?;
     let state = if pull_request.merged_at.is_some() {
         "merged"
     } else {
@@ -1367,7 +605,7 @@ async fn sync_pull_request(
         "merged"
     } else if state == "closed" {
         "closed"
-    } else if pull_request.draft.unwrap_or(false) {
+    } else if pull_request.draft {
         "draft"
     } else {
         "ready"
@@ -1379,11 +617,11 @@ async fn sync_pull_request(
                 etag = ?5, last_synced_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP
          WHERE id = ?6",
     )
-    .bind(pull_request.draft.unwrap_or(false))
+    .bind(pull_request.draft)
     .bind(state)
     .bind(publication)
-    .bind(pull_request.html_url)
-    .bind(etag)
+    .bind(pull_request.url)
+    .bind(Option::<String>::None)
     .bind(row.get::<i64, _>("id"))
     .execute(&mut *connection)
     .await
@@ -1433,7 +671,9 @@ pub(crate) async fn github_sync_kanban_pull_requests(
     app: AppHandle,
     workspace_id: Option<i64>,
 ) -> Result<u64, String> {
-    let token = access_token().await?;
+    if !github_cli::github_review_available(&app).await {
+        return Err("Connect GitHub in Settings to refresh pull requests.".to_string());
+    }
     let mut connection = open_database(&app).await?;
     let stale_publications = sqlx::query(
         "SELECT pr.card_id, pr.source_repository_path, binding.binding_json
@@ -1490,7 +730,7 @@ pub(crate) async fn github_sync_kanban_pull_requests(
         synced += 1;
     }
     for row in &rows {
-        if matches!(sync_pull_request(&app, &token, row).await, Ok(true)) {
+        if matches!(sync_pull_request(&app, row).await, Ok(true)) {
             synced += 1;
         }
     }
@@ -1535,21 +775,7 @@ pub(crate) async fn github_complete_kanban_without_pull_request(
 
 #[cfg(test)]
 mod tests {
-    use super::{parse_github_remote, safe_pull_request_text, validate_github_client_id};
-
-    #[test]
-    fn validates_public_github_client_ids() {
-        assert_eq!(
-            validate_github_client_id("  Iv1.0000000000000000  ").unwrap(),
-            "Iv1.0000000000000000"
-        );
-        assert_eq!(
-            validate_github_client_id("Iv10000000000000000").unwrap(),
-            "Iv10000000000000000"
-        );
-        assert!(validate_github_client_id("too-short").is_err());
-        assert!(validate_github_client_id("Iv1_invalid_client_id").is_err());
-    }
+    use super::{parse_github_remote, safe_pull_request_text};
 
     #[test]
     fn parses_supported_github_remotes() {

@@ -29,6 +29,7 @@ mod codex;
 mod database;
 mod git;
 mod github;
+mod github_cli;
 mod kanban_git;
 mod kanban_store;
 mod migrations;
@@ -127,11 +128,10 @@ fn command_builder() -> tauri_specta::Builder<tauri::Wry> {
             kanban_store::kanban_complete_local_review_without_changes,
             kanban_store::kanban_set_inherited_context,
             kanban_store::kanban_get_inherited_context,
-            github::github_connection_status,
-            github::github_configure_client_id,
-            github::github_begin_device_authorization,
-            github::github_poll_device_authorization,
-            github::github_disconnect,
+            github_cli::github_connection_status,
+            github_cli::github_connect,
+            github_cli::github_cancel_connection,
+            github_cli::github_disconnect,
             github::github_publish_kanban_card,
             github::github_sync_kanban_pull_requests,
             github::github_complete_kanban_without_pull_request,
@@ -177,7 +177,7 @@ pub fn run() {
         .manage(CodexState::default())
         .manage(AgentNotificationState::default())
         .manage(BrowserSessionRegistry::default())
-        .manage(github::GithubState::default())
+        .manage(github_cli::GithubState::default())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
         .plugin(
