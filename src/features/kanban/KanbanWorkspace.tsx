@@ -1825,7 +1825,6 @@ export function KanbanWorkspace({
         <KanbanArchivedView
           cards={archivedCards}
           disabled={busy}
-          onClose={() => setArchivedOpen(false)}
           onRestoreCard={(card) => {
             const persisted = cardsById.get(card.id);
             if (persisted) void runAction(() => archiveKanbanCard(persisted, false), "Card restored.");

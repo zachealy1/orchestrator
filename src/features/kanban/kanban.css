@@ -959,8 +959,7 @@ button.kanban-card-content {
 }
 
 .kanban-card-dialog > header,
-.kanban-transition-dialog > header,
-.kanban-archived-view > header {
+.kanban-transition-dialog > header {
   display: flex;
   align-items: flex-start;
   justify-content: space-between;
@@ -974,8 +973,7 @@ button.kanban-card-content {
 }
 
 .kanban-card-dialog h2,
-.kanban-transition-dialog h2,
-.kanban-archived-view h1 {
+.kanban-transition-dialog h2 {
   margin: 0;
   font-size: 1.18rem;
   line-height: 1.25;
@@ -1017,8 +1015,7 @@ button.kanban-card-content {
   color: var(--color-error);
 }
 
-.kanban-card-dialog > header p,
-.kanban-archived-view > header p {
+.kanban-card-dialog > header p {
   max-width: 720px;
   margin: 5px 0 0;
   color: var(--color-text-secondary);
@@ -1755,17 +1752,6 @@ button.kanban-card-content {
   height: 100%;
   flex-direction: column;
   background: var(--color-background);
-}
-
-.kanban-archived-view > header {
-  flex: 0 0 auto;
-  padding: 18px 18px 14px;
-}
-
-.kanban-archive-search {
-  flex: 0 0 auto;
-  width: min(420px, 100%);
-  margin: 0 18px 1px;
 }
 
 .kanban-archive-board {

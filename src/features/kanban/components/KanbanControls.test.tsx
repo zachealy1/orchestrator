@@ -229,11 +229,7 @@ describe("Kanban controls", () => {
     expect(onRestoreCard).toHaveBeenCalledWith(card);
     expect(onDeleteCard).toHaveBeenCalledWith(card);
 
-    await user.type(
-      screen.getByRole("searchbox", { name: "Search archived cards" }),
-      "missing",
-    );
-    expect(screen.getAllByText("No matching cards")).toHaveLength(4);
-    expect(screen.getByRole("heading", { name: "Done" })).toBeInTheDocument();
+    expect(screen.queryByText("Preserved workflows")).not.toBeInTheDocument();
+    expect(screen.queryByRole("searchbox")).not.toBeInTheDocument();
   });
 });
