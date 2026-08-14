@@ -69,9 +69,12 @@ export function ChatWorktreeContinuationDialog({
           ))}
         </div>
         <label
-          className={`chat-worktree-dirty-option ${includeDirtyDisabled ? "disabled" : ""}`}
+          className={`chat-worktree-dirty-option native-user-input-option${
+            includeDirtyChanges ? " selected" : ""
+          }${includeDirtyDisabled ? " disabled" : ""}`}
         >
           <input
+            className="native-user-input-control"
             type="checkbox"
             checked={includeDirtyChanges}
             disabled={pending || includeDirtyDisabled}
@@ -79,6 +82,7 @@ export function ChatWorktreeContinuationDialog({
               onIncludeDirtyChanges(event.currentTarget.checked)
             }
           />
+          <span className="native-user-input-radio" aria-hidden="true" />
           <span>
             <strong>Include current uncommitted changes</strong>
             <small>

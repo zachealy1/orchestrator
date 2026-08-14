@@ -191,9 +191,19 @@ button.workspace-context-menu-item svg {
 }
 
 .chat-worktree-dirty-option {
+  position: relative;
+  z-index: 1;
   display: flex;
-  align-items: flex-start;
-  gap: 10px;
+  min-height: 42px;
+  box-sizing: border-box;
+  align-items: center;
+  gap: 8px;
+  border: 1px solid var(--color-divider);
+  border-radius: 8px;
+  background: transparent;
+  cursor: pointer;
+  padding: 8px;
+  transition: background-color 140ms ease;
 }
 
 .chat-worktree-dirty-option > span {
@@ -205,7 +215,17 @@ button.workspace-context-menu-item svg {
   color: var(--text-muted);
 }
 
+.chat-worktree-dirty-option:hover,
+.chat-worktree-dirty-option:focus-within {
+  background: var(--color-button-active);
+}
+
+.chat-worktree-dirty-option.selected {
+  background: var(--color-component-background);
+}
+
 .chat-worktree-dirty-option.disabled {
+  cursor: not-allowed;
   opacity: 0.55;
 }
 
