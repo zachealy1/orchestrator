@@ -86,6 +86,10 @@ const mocks = vi.hoisted(() => ({
   cleanupKanbanGitMock: vi.fn(),
   loadKanbanBoardMock: vi.fn(),
   loadKanbanGitBindingsMock: vi.fn(),
+  readKanbanGitStatusMock: vi.fn(),
+  readKanbanGitDiffMock: vi.fn(),
+  commitKanbanGitMock: vi.fn(),
+  pushKanbanGitMock: vi.fn(),
   loadKanbanInheritedContextMock: vi.fn(),
   provisionKanbanGitMock: vi.fn(),
   reconcileKanbanGitMock: vi.fn(),
@@ -407,6 +411,10 @@ vi.mock("../features/kanban/api", async () => {
     cleanupKanbanGit: mocks.cleanupKanbanGitMock,
     loadKanbanBoard: mocks.loadKanbanBoardMock,
     loadKanbanGitBindings: mocks.loadKanbanGitBindingsMock,
+    readKanbanGitStatus: mocks.readKanbanGitStatusMock,
+    readKanbanGitDiff: mocks.readKanbanGitDiffMock,
+    commitKanbanGit: mocks.commitKanbanGitMock,
+    pushKanbanGit: mocks.pushKanbanGitMock,
     loadKanbanInheritedContext: mocks.loadKanbanInheritedContextMock,
     provisionKanbanGit: mocks.provisionKanbanGitMock,
     reconcileKanbanGit: mocks.reconcileKanbanGitMock,
@@ -801,6 +809,10 @@ export function prepareDefaults() {
     mocks.cleanupKanbanGitMock,
     mocks.loadKanbanBoardMock,
     mocks.loadKanbanGitBindingsMock,
+    mocks.readKanbanGitStatusMock,
+    mocks.readKanbanGitDiffMock,
+    mocks.commitKanbanGitMock,
+    mocks.pushKanbanGitMock,
     mocks.loadKanbanInheritedContextMock,
     mocks.provisionKanbanGitMock,
     mocks.reconcileKanbanGitMock,
@@ -895,6 +907,45 @@ export function prepareDefaults() {
     },
   ]);
   mocks.loadKanbanInheritedContextMock.mockResolvedValue(null);
+  mocks.readKanbanGitStatusMock.mockImplementation(async (binding) => ({
+    binding,
+    headCommit: binding.baseCommit,
+    baseBranchHead: binding.baseCommit,
+    aheadOfBase: 0,
+    behindBase: 0,
+    aheadOfTarget: 0,
+    behindTarget: 0,
+    hasChanges: false,
+    hasConflicts: false,
+    stagedCount: 0,
+    unstagedCount: 0,
+    untrackedCount: 0,
+    files: [],
+  }));
+  mocks.readKanbanGitDiffMock.mockImplementation(async (binding) => ({
+    binding,
+    baseCommit: binding.baseCommit,
+    headCommit: binding.baseCommit,
+    content: "",
+    untrackedPaths: [],
+    isEmpty: true,
+  }));
+  mocks.commitKanbanGitMock.mockImplementation(
+    async ({ binding, message }) => ({
+      binding,
+      status: "committed",
+      message,
+      branch: binding.cardBranch,
+      headCommit: binding.baseCommit,
+    }),
+  );
+  mocks.pushKanbanGitMock.mockImplementation(async (binding) => ({
+    binding,
+    status: "pushed",
+    message: `Pushed ${binding.cardBranch}`,
+    branch: binding.cardBranch,
+    headCommit: binding.baseCommit,
+  }));
   mocks.reconcileKanbanGitMock.mockImplementation(async (binding) => ({
     binding,
     sourceAvailable: true,

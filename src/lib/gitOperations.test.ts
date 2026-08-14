@@ -20,6 +20,7 @@ const pushRequest: WorkspaceGitOperationRequest = {
   commitMessage: null,
   includeUnstaged: true,
   changeKey: null,
+  target: { kind: "workspace", branch: "main" },
 };
 
 describe("git operations", () => {

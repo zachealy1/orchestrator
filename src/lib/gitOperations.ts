@@ -1,3 +1,5 @@
+import type { KanbanGitBinding } from "../features/kanban/api";
+
 export type GitOperationKind = "commit" | "push" | "commit-and-push";
 
 export type GitOperationPhase = "generating" | "committing" | "pushing";
@@ -12,6 +14,14 @@ export type WorkspaceGitOperationRequest = {
   commitMessage: string | null;
   includeUnstaged: boolean;
   changeKey: string | null;
+  target:
+    | { kind: "workspace"; branch: string | null }
+    | {
+        kind: "kanban-card";
+        chatId: number;
+        cardId: string;
+        binding: KanbanGitBinding;
+      };
 };
 
 export type WorkspaceGitOperationState = {
@@ -25,7 +35,7 @@ export type WorkspaceGitOperationState = {
 };
 
 export const GIT_OPERATION_RECOVERY_STORAGE_KEY =
-  "orchestrator.git-operations.v2";
+  "orchestrator.git-operations.v3";
 
 export function gitOperationRunningCopy(
   kind: GitOperationKind,
@@ -238,6 +248,17 @@ function isRecoveryMarker(value: unknown): value is GitOperationRecoveryMarker {
   const request = marker.request as
     | Partial<WorkspaceGitOperationRequest>
     | undefined;
+  const target = request?.target as
+    | Partial<WorkspaceGitOperationRequest["target"]>
+    | undefined;
+  const validTarget =
+    (target?.kind === "workspace" &&
+      (target.branch === null || typeof target.branch === "string")) ||
+    (target?.kind === "kanban-card" &&
+      Number.isInteger(target.chatId) &&
+      typeof target.cardId === "string" &&
+      target.cardId.length > 0 &&
+      isPersistedKanbanBinding(target.binding));
   return (
     (marker.phase === "generating" ||
       marker.phase === "committing" ||
@@ -256,6 +277,27 @@ function isRecoveryMarker(value: unknown): value is GitOperationRecoveryMarker {
     (request.commitMessage === null ||
       typeof request.commitMessage === "string") &&
     typeof request.includeUnstaged === "boolean" &&
-    (request.changeKey === null || typeof request.changeKey === "string")
+    (request.changeKey === null || typeof request.changeKey === "string") &&
+    validTarget
+  );
+}
+
+function isPersistedKanbanBinding(value: unknown): value is KanbanGitBinding {
+  if (!value || typeof value !== "object") return false;
+  const binding = value as Partial<KanbanGitBinding>;
+  return (
+    typeof binding.sourceRepositoryPath === "string" &&
+    binding.sourceRepositoryPath.length > 0 &&
+    typeof binding.relativePath === "string" &&
+    typeof binding.executionRoot === "string" &&
+    binding.executionRoot.length > 0 &&
+    typeof binding.sourceBranch === "string" &&
+    typeof binding.baseBranch === "string" &&
+    typeof binding.baseCommit === "string" &&
+    typeof binding.cardBranch === "string" &&
+    binding.cardBranch.length > 0 &&
+    typeof binding.worktreePath === "string" &&
+    binding.worktreePath.length > 0 &&
+    typeof binding.status === "string"
   );
 }

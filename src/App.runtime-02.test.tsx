@@ -124,6 +124,7 @@ describe("Application runtime scenarios 2", () => {
           commitMessage: "Do not retain this message",
           includeUnstaged: true,
           changeKey: "old-change",
+          target: { kind: "workspace", branch: "main" },
         },
         "pushing",
       );
@@ -868,6 +869,41 @@ describe("Application runtime scenarios 2", () => {
           error: null,
         },
       ]);
+      mocks.readKanbanGitStatusMock.mockImplementation(async (binding) => ({
+        binding,
+        headCommit: binding.baseCommit,
+        baseBranchHead: binding.baseCommit,
+        aheadOfBase: 0,
+        behindBase: 0,
+        aheadOfTarget: 0,
+        behindTarget: 0,
+        hasChanges: true,
+        hasConflicts: false,
+        stagedCount: 0,
+        unstagedCount: 0,
+        untrackedCount: 1,
+        files: [
+          {
+            path: "batman.txt",
+            originalPath: null,
+            indexStatus: "?",
+            worktreeStatus: "?",
+            kind: "untracked",
+          },
+        ],
+      }));
+      mocks.readKanbanGitDiffMock.mockImplementation(async (binding) => ({
+        binding,
+        baseCommit: binding.baseCommit,
+        headCommit: binding.baseCommit,
+        content: "diff --git a/batman.txt b/batman.txt\n+I am Batman.\n",
+        untrackedPaths: ["batman.txt"],
+        isEmpty: false,
+      }));
+      mocks.generateWorkspaceCommitMessageMock.mockResolvedValue({
+        message: "Add Batman file",
+        source: "codex",
+      });
       mocks.readWorkspaceFilePreviewMock.mockResolvedValue({
         path: "/repo/.codex-kanban/card-batman/orchestrator/batman.txt",
         relativePath: "batman.txt",
@@ -904,6 +940,45 @@ describe("Application runtime scenarios 2", () => {
       expect(mocks.checkoutGitBranchMock).not.toHaveBeenCalled();
 
       await user.keyboard("{Escape}");
+      await user.click(
+        within(banner).getByRole("button", { name: /commit or push/i }),
+      );
+      const gitDialog = screen.getByRole("dialog", { name: "Commit or push" });
+      expect(gitDialog).toHaveTextContent("codex/add-batman-file");
+      expect(gitDialog).not.toHaveTextContent(/^main$/);
+      await user.click(
+        within(gitDialog).getByRole("button", { name: "Commit and push" }),
+      );
+      await waitFor(() =>
+        expect(mocks.generateWorkspaceCommitMessageMock).toHaveBeenCalledWith(
+          expect.objectContaining({
+            workspacePath: "/repo/.codex-kanban/card-batman/orchestrator",
+            repositoryPath: "/repo/.codex-kanban/card-batman/orchestrator",
+            includeUnstaged: true,
+          }),
+        ),
+      );
+      await waitFor(() =>
+        expect(mocks.commitKanbanGitMock).toHaveBeenCalledWith({
+          binding: expect.objectContaining({
+            cardBranch: "codex/add-batman-file",
+            worktreePath: "/repo/.codex-kanban/card-batman/orchestrator",
+          }),
+          message: "Add Batman file",
+          stageAll: true,
+        }),
+      );
+      await waitFor(() =>
+        expect(mocks.pushKanbanGitMock).toHaveBeenCalledWith(
+          expect.objectContaining({
+            cardBranch: "codex/add-batman-file",
+            worktreePath: "/repo/.codex-kanban/card-batman/orchestrator",
+          }),
+        ),
+      );
+      expect(mocks.commitWorkspaceChangesMock).not.toHaveBeenCalled();
+      expect(mocks.pushWorkspaceBranchMock).not.toHaveBeenCalled();
+
       await user.click(
         await screen.findByRole("link", { name: "batman.txt" }),
       );

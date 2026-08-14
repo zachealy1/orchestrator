@@ -2,6 +2,7 @@ import type { WorkspaceCommitIntentContext } from "../../lib/commitMessage";
 import type { WorkspaceGitFileStatus } from "./types";
 
 export type CommitMessageGenerationSnapshot = {
+  workspacePath: string;
   repositoryPath: string;
   accountId: number | null;
   includeUnstaged: boolean;
