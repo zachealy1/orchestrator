@@ -116,7 +116,9 @@
   position: fixed;
   z-index: 80;
   display: grid;
-  min-width: 220px;
+  box-sizing: border-box;
+  width: min(248px, calc(100vw - 16px));
+  max-width: calc(100vw - 16px);
   border: 0;
   border-radius: 8px;
   background: var(--color-background);

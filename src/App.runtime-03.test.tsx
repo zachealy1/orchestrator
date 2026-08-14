@@ -587,6 +587,10 @@ describe("Application runtime scenarios 3", () => {
       expect(
         screen.getByRole("menu", { name: /fix the app header chat actions/i }),
       ).toHaveClass("workspace-context-menu");
+      expect(
+        screen.getByRole("menu", { name: /fix the app header chat actions/i })
+          .parentElement,
+      ).toBe(document.body);
       expect(screen.getAllByRole("menuitem").map((item) => item.textContent)).toEqual([
         "Rename chat",
         "Continue in new chat",
@@ -599,6 +603,18 @@ describe("Application runtime scenarios 3", () => {
           screen.queryByRole("menu", { name: /fix the app header chat actions/i }),
         ).not.toBeInTheDocument(),
       );
+
+      fireEvent.contextMenu(row as HTMLElement, {
+        clientX: window.innerWidth - 1,
+        clientY: window.innerHeight - 1,
+      });
+      expect(
+        screen.getByRole("menu", { name: /fix the app header chat actions/i }),
+      ).toHaveStyle({
+        left: `${window.innerWidth - 248 - 8}px`,
+        top: `${window.innerHeight - 190 - 8}px`,
+      });
+      fireEvent.keyDown(window, { key: "Escape" });
 
       fireEvent.contextMenu(row as HTMLElement, { clientX: 120, clientY: 140 });
       fireEvent.pointerDown(document.body);

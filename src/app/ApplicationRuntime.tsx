@@ -16,12 +16,13 @@ import {
   startTransition,
   useCallback,
   useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
   useSyncExternalStore,
 } from "react";
-import { flushSync } from "react-dom";
+import { createPortal, flushSync } from "react-dom";
 import type {
   KeyboardEvent as ReactKeyboardEvent,
   MouseEvent as ReactMouseEvent,
@@ -43,6 +44,7 @@ import {
   type WorkspaceGitOperationState,
 } from "../lib/gitOperations";
 import type { RunEventInput } from "../data/repositories";
+import { clampFloatingMenuPosition } from "../lib/contextMenuPosition";
 import {
   cancelCodexLogin,
   cancelDefaultProfileThreadTranscript,
@@ -839,6 +841,42 @@ function App() {
     setChatHistoryDeleteCandidate,
     historyChatLoadIdRef,
   } = useConversationController();
+  useLayoutEffect(() => {
+    if (!chatHistoryContextMenu) return;
+
+    const clampRenderedMenu = () => {
+      const menu = chatHistoryContextMenuRef.current;
+      if (!menu) return;
+      const rect = menu.getBoundingClientRect();
+      const position = clampFloatingMenuPosition({
+        x: chatHistoryContextMenu.x,
+        y: chatHistoryContextMenu.y,
+        width: rect.width,
+        height: rect.height,
+        viewportWidth: window.innerWidth,
+        viewportHeight: window.innerHeight,
+      });
+      if (
+        position.x === chatHistoryContextMenu.x &&
+        position.y === chatHistoryContextMenu.y
+      ) {
+        return;
+      }
+      setChatHistoryContextMenu((current) =>
+        current?.chat.id === chatHistoryContextMenu.chat.id
+          ? { ...current, ...position }
+          : current,
+      );
+    };
+
+    clampRenderedMenu();
+    window.addEventListener("resize", clampRenderedMenu);
+    return () => window.removeEventListener("resize", clampRenderedMenu);
+  }, [
+    chatHistoryContextMenu,
+    chatHistoryContextMenuRef,
+    setChatHistoryContextMenu,
+  ]);
   const {
     promptQueuesByChat,
     setPromptQueuesByChat,
@@ -17277,63 +17315,79 @@ function App() {
                   onStop={stopSubagent}
                 />
               ) : null}
-              {chatHistoryContextMenu ? (
-                <div
-                  className="workspace-context-menu"
-                  ref={chatHistoryContextMenuRef}
-                  role="menu"
-                  aria-label={`${chatHistoryContextMenu.chat.title} chat actions`}
-                  onKeyDown={handleChatHistoryContextMenuKeyDown}
-                  style={{
-                    left: chatHistoryContextMenu.x,
-                    top: chatHistoryContextMenu.y,
-                  }}
-                >
-                  <button
-                    className="workspace-context-menu-item"
-                    type="button"
-                    role="menuitem"
-                    onClick={() => requestChatHistoryRename(chatHistoryContextMenu.chat)}
-                  >
-                    <Pencil size={15} aria-hidden="true" />
-                    <span>Rename chat</span>
-                  </button>
-                  <button
-                    className="workspace-context-menu-item"
-                    type="button"
-                    role="menuitem"
-                    onClick={() => void continueChatInNewChat(chatHistoryContextMenu.chat)}
-                  >
-                    <MessageSquarePlus size={15} aria-hidden="true" />
-                    <span>Continue in new chat</span>
-                  </button>
-                  <button
-                    className="workspace-context-menu-item"
-                    type="button"
-                    role="menuitem"
-                    onClick={() => void requestChatWorktreeContinuation(chatHistoryContextMenu.chat)}
-                  >
-                    <GitBranchPlus size={15} aria-hidden="true" />
-                    <span>Continue in new worktree</span>
-                  </button>
-                  <div className="workspace-context-menu-separator" role="separator" />
-                  <button
-                    className="workspace-context-menu-item danger"
-                    type="button"
-                    role="menuitem"
-                    onClick={() => requestChatHistoryDelete(chatHistoryContextMenu.chat)}
-                    disabled={
-                      findRunControlByChat(
-                        chatHistoryContextMenu.chat.workspace_id,
-                        chatHistoryContextMenu.chat.id,
-                      ) !== null
-                    }
-                  >
-                    <Trash2 size={15} aria-hidden="true" />
-                    <span>Remove chat</span>
-                  </button>
-                </div>
-              ) : null}
+              {chatHistoryContextMenu
+                ? createPortal(
+                    <div
+                      className="workspace-context-menu"
+                      ref={chatHistoryContextMenuRef}
+                      role="menu"
+                      aria-label={`${chatHistoryContextMenu.chat.title} chat actions`}
+                      onKeyDown={handleChatHistoryContextMenuKeyDown}
+                      style={{
+                        left: chatHistoryContextMenu.x,
+                        top: chatHistoryContextMenu.y,
+                      }}
+                    >
+                      <button
+                        className="workspace-context-menu-item"
+                        type="button"
+                        role="menuitem"
+                        onClick={() =>
+                          requestChatHistoryRename(chatHistoryContextMenu.chat)
+                        }
+                      >
+                        <Pencil size={15} aria-hidden="true" />
+                        <span>Rename chat</span>
+                      </button>
+                      <button
+                        className="workspace-context-menu-item"
+                        type="button"
+                        role="menuitem"
+                        onClick={() =>
+                          void continueChatInNewChat(chatHistoryContextMenu.chat)
+                        }
+                      >
+                        <MessageSquarePlus size={15} aria-hidden="true" />
+                        <span>Continue in new chat</span>
+                      </button>
+                      <button
+                        className="workspace-context-menu-item"
+                        type="button"
+                        role="menuitem"
+                        onClick={() =>
+                          void requestChatWorktreeContinuation(
+                            chatHistoryContextMenu.chat,
+                          )
+                        }
+                      >
+                        <GitBranchPlus size={15} aria-hidden="true" />
+                        <span>Continue in new worktree</span>
+                      </button>
+                      <div
+                        className="workspace-context-menu-separator"
+                        role="separator"
+                      />
+                      <button
+                        className="workspace-context-menu-item danger"
+                        type="button"
+                        role="menuitem"
+                        onClick={() =>
+                          requestChatHistoryDelete(chatHistoryContextMenu.chat)
+                        }
+                        disabled={
+                          findRunControlByChat(
+                            chatHistoryContextMenu.chat.workspace_id,
+                            chatHistoryContextMenu.chat.id,
+                          ) !== null
+                        }
+                      >
+                        <Trash2 size={15} aria-hidden="true" />
+                        <span>Remove chat</span>
+                      </button>
+                    </div>,
+                    document.body,
+                  )
+                : null}
             </div>
             <FilePreviewDrawer
               {...workspacePreview.drawerProps}
@@ -17506,13 +17560,14 @@ function contextMenuPosition(
 }
 
 function clampContextMenuPosition(x: number, y: number) {
-  const gutter = 8;
-  const estimatedWidth = 220;
-  const estimatedHeight = 190;
-  return {
-    x: Math.max(gutter, Math.min(x, window.innerWidth - estimatedWidth - gutter)),
-    y: Math.max(gutter, Math.min(y, window.innerHeight - estimatedHeight - gutter)),
-  };
+  return clampFloatingMenuPosition({
+    x,
+    y,
+    width: 248,
+    height: 190,
+    viewportWidth: window.innerWidth,
+    viewportHeight: window.innerHeight,
+  });
 }
 
 export default App;
