@@ -117,6 +117,9 @@ describe("Kanban local review styles", () => {
     const actions = rule(".kanban-card-top-actions");
     const stateLabel = rule(".kanban-state-label,");
     const footer = rule(".kanban-card-footer");
+    const branch = rule(".kanban-branch-label");
+    const branchText = rule(".kanban-branch-text");
+    const changedFiles = rule(".kanban-changed-file-count");
 
     expect(badges).toContain("flex: 1 1 auto");
     expect(badges).toContain("min-width: 0");
@@ -125,5 +128,13 @@ describe("Kanban local review styles", () => {
     expect(stateLabel).toContain("overflow: hidden");
     expect(stateLabel).toContain("text-overflow: ellipsis");
     expect(footer).toContain("flex-wrap: wrap");
+    expect(branch).toContain("flex: 1 1 90px");
+    expect(branch).toContain("max-width: 100%");
+    expect(branchText).toContain("overflow: hidden");
+    expect(branchText).toContain("text-overflow: ellipsis");
+    expect(changedFiles).toContain("flex: 0 0 auto");
+    expect(changedFiles).toContain("max-width: 100%");
+    expect(changedFiles).toContain("text-overflow: ellipsis");
+    expect(css).not.toContain(".kanban-card-footer > :last-child");
   });
 });

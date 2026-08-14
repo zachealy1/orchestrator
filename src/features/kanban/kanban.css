@@ -448,9 +448,13 @@ button.kanban-card-content {
   font-size: 0.72rem;
 }
 
-.kanban-card-footer > :last-child {
+.kanban-changed-file-count {
   flex: 0 0 auto;
+  max-width: 100%;
   margin-left: auto;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .kanban-pr-status-list {
@@ -549,9 +553,19 @@ button.kanban-card-content {
 
 .kanban-branch-label {
   display: inline-flex;
+  flex: 1 1 90px;
+  max-width: 100%;
   min-width: 0;
   align-items: center;
   gap: 4px;
+}
+
+.kanban-branch-label > svg {
+  flex: 0 0 auto;
+}
+
+.kanban-branch-text {
+  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;

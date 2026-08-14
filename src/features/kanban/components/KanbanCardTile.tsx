@@ -440,16 +440,18 @@ function KanbanCardContent({
             {branch ? (
               <span className="kanban-branch-label" title={branch.branch}>
                 <GitBranch size={13} aria-hidden="true" />
-                {branch.branch}
-                {(card.branches?.length ?? 0) > 1
-                  ? ` +${(card.branches?.length ?? 1) - 1}`
-                  : ""}
+                <span className="kanban-branch-text">
+                  {branch.branch}
+                  {(card.branches?.length ?? 0) > 1
+                    ? ` +${(card.branches?.length ?? 1) - 1}`
+                    : ""}
+                </span>
               </span>
             ) : (
               <span />
             )}
             {card.changedFileCount ? (
-              <span>
+              <span className="kanban-changed-file-count">
                 {card.changedFileCount} changed {card.changedFileCount === 1 ? "file" : "files"}
               </span>
             ) : null}
