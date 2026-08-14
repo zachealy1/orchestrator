@@ -155,18 +155,26 @@ describe("Kanban local review styles", () => {
 
     expect(groups).toContain("overflow-x: hidden");
     expect(groups).toContain("overflow-y: auto");
-    expect(groups).toContain("padding-bottom: 32px");
-    expect(groups).toContain("scroll-padding-bottom: 32px");
+    expect(groups).toContain(
+      "padding-bottom: calc(var(--kanban-composer-clearance, 220px) + 16px)",
+    );
+    expect(groups).toContain(
+      "scroll-padding-bottom: calc(var(--kanban-composer-clearance, 220px) + 16px)",
+    );
     expect(groups).toContain("scrollbar-gutter: stable");
     expect(nestedBoard).toContain("overflow: visible");
     expect(nestedBoard).toContain("scrollbar-gutter: auto");
+    expect(mount).toContain("position: relative");
     expect(mount).toContain("overflow: hidden");
-    expect(composer).toContain("position: relative");
-    expect(composer).toContain("z-index: 2");
-    expect(composer).toContain("border-top: 1px solid var(--color-divider)");
-    expect(composer).toContain(
-      "background: var(--color-component-background)",
+    expect(composer).toContain("position: absolute");
+    expect(composer).toContain("bottom: 0");
+    expect(composer).toContain("border: 0");
+    expect(composer).toContain("pointer-events: none");
+    expect(composer).toContain("background: transparent");
+    expect(composer).not.toContain("z-index");
+    expect(composer).not.toContain("border-top");
+    expect(sourceRule(shellCss, ".kanban-composer-shell > .composer-panel")).toContain(
+      "pointer-events: auto",
     );
-    expect(composer).not.toContain("background: var(--bg)");
   });
 });

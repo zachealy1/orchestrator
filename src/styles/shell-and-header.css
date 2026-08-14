@@ -1095,6 +1095,7 @@ button.account-switcher-item:hover:not(:disabled) {
 }
 
 .kanban-workspace-mount {
+  position: relative;
   display: flex;
   min-width: 0;
   min-height: 0;
@@ -1104,15 +1105,21 @@ button.account-switcher-item:hover:not(:disabled) {
 }
 
 .kanban-composer-shell {
-  position: relative;
-  z-index: 2;
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  left: 0;
   display: flex;
   width: 100%;
-  flex: 0 0 auto;
   justify-content: center;
-  border-top: 1px solid var(--color-divider);
+  border: 0;
+  pointer-events: none;
   padding: 0 16px 16px;
-  background: var(--color-component-background);
+  background: transparent;
+}
+
+.kanban-composer-shell > .composer-panel {
+  pointer-events: auto;
 }
 
 .workspace-context-chip {

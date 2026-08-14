@@ -108,6 +108,7 @@ import { TaskTranscriptErrorBoundary } from "../components/TaskTranscriptErrorBo
 import { TaskComposer } from "../components/TaskComposer";
 import { SubagentInspector } from "../components/SubagentInspector";
 import { KanbanWorkspace } from "../features/kanban/KanbanWorkspace";
+import { KanbanComposerOverlay } from "../features/kanban/components/KanbanComposerOverlay";
 import {
   commitKanbanGit,
   createKanbanCard,
@@ -16433,7 +16434,7 @@ function App() {
                   onShowGithubLogin={() => setGithubLoginDialogOpen(true)}
                   toolbarHost={kanbanToolbarHost}
                 />
-                <div className="kanban-composer-shell">
+                <KanbanComposerOverlay>
                   <TaskComposer
                     model={{
                       disabled: !canRun || kanbanCardCreatePending,
@@ -16517,7 +16518,7 @@ function App() {
                       onStop: () => undefined,
                     }}
                   />
-                </div>
+                </KanbanComposerOverlay>
               </div>
             ) : null}
             <div

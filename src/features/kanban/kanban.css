@@ -2379,8 +2379,8 @@ button.kanban-card-content {
   gap: 16px;
   overflow-x: hidden;
   overflow-y: auto;
-  padding-bottom: 32px;
-  scroll-padding-bottom: 32px;
+  padding-bottom: calc(var(--kanban-composer-clearance, 220px) + 16px);
+  scroll-padding-bottom: calc(var(--kanban-composer-clearance, 220px) + 16px);
   scrollbar-gutter: stable;
 }
 
@@ -2391,6 +2391,12 @@ button.kanban-card-content {
 .kanban-board-group .kanban-board {
   overflow: visible;
   scrollbar-gutter: auto;
+}
+
+.kanban-workspace-view > .kanban-board .kanban-board-columns,
+.kanban-archived-view .kanban-board-columns {
+  padding-bottom: calc(var(--kanban-composer-clearance, 220px) + 16px);
+  scroll-padding-bottom: calc(var(--kanban-composer-clearance, 220px) + 16px);
 }
 
 .kanban-group-header {
