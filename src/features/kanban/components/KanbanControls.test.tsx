@@ -201,7 +201,7 @@ describe("Kanban controls", () => {
     expect(onConfirm).toHaveBeenCalledOnce();
   });
 
-  it("searches archived cards and exposes restore/delete actions", async () => {
+  it("groups archived cards into swim lanes and exposes restore/delete actions", async () => {
     const user = userEvent.setup();
     const onRestoreCard = vi.fn();
     const onDeleteCard = vi.fn();
@@ -213,10 +213,19 @@ describe("Kanban controls", () => {
       />,
     );
 
-    expect(screen.getByText("1 preserved branch")).toBeInTheDocument();
+    expect(
+      screen.getByRole("region", { name: "Archived Kanban board" }),
+    ).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "To do" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "In progress" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "In review" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Done" })).toBeInTheDocument();
     expect(screen.getByText("Archived workflow")).toBeInTheDocument();
-    await user.click(screen.getByRole("button", { name: "Restore" }));
-    await user.click(screen.getByRole("button", { name: "Delete…" }));
+    await user.click(
+      screen.getByRole("button", { name: "Restore Archived workflow to board" }),
+    );
+    await user.click(screen.getByRole("button", { name: "Actions for Archived workflow" }));
+    await user.click(screen.getByRole("menuitem", { name: "Delete card" }));
     expect(onRestoreCard).toHaveBeenCalledWith(card);
     expect(onDeleteCard).toHaveBeenCalledWith(card);
 
@@ -224,6 +233,7 @@ describe("Kanban controls", () => {
       screen.getByRole("searchbox", { name: "Search archived cards" }),
       "missing",
     );
-    expect(screen.getByText("No matching cards")).toBeInTheDocument();
+    expect(screen.getAllByText("No matching cards")).toHaveLength(4);
+    expect(screen.getByRole("heading", { name: "Done" })).toBeInTheDocument();
   });
 });

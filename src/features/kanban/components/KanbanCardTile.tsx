@@ -32,6 +32,7 @@ import {
   type CSSProperties,
   type KeyboardEvent,
   type MouseEvent,
+  type ReactNode,
 } from "react";
 import { createPortal } from "react-dom";
 import { useDismissibleContextMenu } from "../../../shared/useDismissibleContextMenu";
@@ -50,6 +51,11 @@ export type KanbanCardTileProps = {
   dragHandleProps?: ButtonHTMLAttributes<HTMLButtonElement>;
   onAction?: (action: KanbanCardAction, card: KanbanCard) => void;
   onOpenConversation?: (card: KanbanCard) => void;
+  primaryAction?: {
+    label: string;
+    icon: ReactNode;
+    onClick: () => void;
+  };
 };
 
 type KanbanMenuAction = KanbanCardAction;
@@ -188,6 +194,7 @@ export function KanbanCardTile({
   dragHandleProps,
   onAction,
   onOpenConversation,
+  primaryAction,
 }: KanbanCardTileProps) {
   const [menuOpen, setMenuOpen] = useState(false);
   const [menuStyle, setMenuStyle] = useState<CSSProperties>({});
@@ -300,6 +307,21 @@ export function KanbanCardTile({
         <div className="kanban-card-top-actions">
           {card.hasUnreadActivity ? (
             <span className="kanban-unread-dot" aria-label="Unread activity" />
+          ) : null}
+          {primaryAction && !overlay ? (
+            <button
+              type="button"
+              className="kanban-icon-button"
+              aria-label={primaryAction.label}
+              title={primaryAction.label}
+              disabled={actionsDisabled}
+              onClick={(event) => {
+                event.stopPropagation();
+                if (!actionsDisabled) primaryAction.onClick();
+              }}
+            >
+              {primaryAction.icon}
+            </button>
           ) : null}
           {menuActions.length > 0 ? (
             <div className="kanban-card-menu">

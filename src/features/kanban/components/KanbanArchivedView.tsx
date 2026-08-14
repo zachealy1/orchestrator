@@ -1,7 +1,8 @@
-import { Archive, RotateCcw, Search, Trash2, X } from "lucide-react";
+import { Archive, RotateCcw, Search, X } from "lucide-react";
 import { useMemo, useState } from "react";
 import "../kanban.css";
-import type { KanbanCard } from "./types";
+import { KanbanCardTile } from "./KanbanCardTile";
+import type { KanbanCard, KanbanColumnId } from "./types";
 
 export type KanbanArchivedViewProps = {
   cards: KanbanCard[];
@@ -11,16 +12,28 @@ export type KanbanArchivedViewProps = {
   onDeleteCard: (card: KanbanCard) => void;
 };
 
-function archivedDate(value: string | null | undefined) {
-  if (!value) return "Archived";
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return "Archived";
-  return `Archived ${new Intl.DateTimeFormat(undefined, {
-    month: "short",
-    day: "numeric",
-    year: "numeric",
-  }).format(date)}`;
-}
+const ARCHIVE_COLUMNS: Array<{
+  id: KanbanColumnId;
+  title: string;
+  description: string;
+}> = [
+  { id: "todo", title: "To do", description: "Ready to start" },
+  {
+    id: "in-progress",
+    title: "In progress",
+    description: "Agent work and attention",
+  },
+  {
+    id: "in-review",
+    title: "In review",
+    description: "Review and merge on GitHub",
+  },
+  {
+    id: "done",
+    title: "Done",
+    description: "Merged or explicitly completed work",
+  },
+];
 
 export function KanbanArchivedView({
   cards,
@@ -37,6 +50,19 @@ export function KanbanArchivedView({
       `${card.title}\n${card.description}`.toLocaleLowerCase().includes(query),
     );
   }, [cards, search]);
+  const cardsByColumn = useMemo(() => {
+    const grouped = new Map<KanbanColumnId, KanbanCard[]>(
+      ARCHIVE_COLUMNS.map((column) => [column.id, []]),
+    );
+    visibleCards.forEach((card) => {
+      const target = grouped.get(card.columnId) ?? grouped.get("todo");
+      target?.push(card);
+    });
+    grouped.forEach((columnCards) =>
+      columnCards.sort((left, right) => left.position - right.position),
+    );
+    return grouped;
+  }, [visibleCards]);
 
   return (
     <section className="kanban-archived-view" aria-labelledby="kanban-archive-title">
@@ -83,68 +109,76 @@ export function KanbanArchivedView({
         ) : null}
       </label>
 
-      {visibleCards.length > 0 ? (
-        <div className="kanban-archive-list">
-          {visibleCards.map((card) => (
-            <article key={card.id}>
-              <div className="kanban-archive-card-content">
-                <span className="kanban-archive-icon" aria-hidden="true">
-                  <Archive size={17} />
-                </span>
-                <span>
-                  <strong>{card.title}</strong>
-                  <small>{card.description}</small>
-                </span>
-              </div>
-              <div className="kanban-archive-metadata">
-                <span>{archivedDate(card.archivedAt)}</span>
-                <span>
-                  {card.repositoryScope === "all"
-                    ? "All repositories"
-                    : `${card.repositories.length} selected ${
-                        card.repositories.length === 1 ? "repository" : "repositories"
+      <div
+        className="kanban-board kanban-archive-board"
+        role="region"
+        aria-label="Archived Kanban board"
+      >
+        <div className="kanban-board-columns">
+          {ARCHIVE_COLUMNS.map((column) => {
+            const columnCards = cardsByColumn.get(column.id) ?? [];
+            return (
+              <section
+                key={column.id}
+                className="kanban-column"
+                aria-labelledby={`kanban-archive-column-${column.id}`}
+              >
+                <header className="kanban-column-header">
+                  <div>
+                    <h2 id={`kanban-archive-column-${column.id}`}>{column.title}</h2>
+                    <span
+                      aria-label={`${columnCards.length} ${
+                        columnCards.length === 1 ? "archived card" : "archived cards"
                       }`}
-                </span>
-                {card.branches?.length ? (
-                  <span>
-                    {card.branches.length} preserved {card.branches.length === 1 ? "branch" : "branches"}
-                  </span>
-                ) : null}
-              </div>
-              <div className="kanban-archive-actions">
-                <button
-                  type="button"
-                  className="secondary"
-                  disabled={disabled}
-                  onClick={() => onRestoreCard(card)}
-                >
-                  <RotateCcw size={14} aria-hidden="true" />
-                  Restore
-                </button>
-                <button
-                  type="button"
-                  className="danger"
-                  disabled={disabled}
-                  onClick={() => onDeleteCard(card)}
-                >
-                  <Trash2 size={14} aria-hidden="true" />
-                  Delete…
-                </button>
-              </div>
-            </article>
-          ))}
+                    >
+                      {columnCards.length}
+                    </span>
+                  </div>
+                </header>
+                <p className="kanban-column-description">{column.description}</p>
+                <div className="kanban-column-dropzone">
+                  {columnCards.length > 0 ? (
+                    <div className="kanban-card-list">
+                      {columnCards.map((card) => (
+                        <KanbanCardTile
+                          key={card.id}
+                          card={{
+                            ...card,
+                            hasStartedTurn: false,
+                            hasUnreadActivity: false,
+                            availableActions: ["delete"],
+                          }}
+                          actionsDisabled={disabled}
+                          primaryAction={{
+                            label: `Restore ${card.title} to board`,
+                            icon: <RotateCcw size={16} aria-hidden="true" />,
+                            onClick: () => onRestoreCard(card),
+                          }}
+                          onAction={(action) => {
+                            if (action === "delete") onDeleteCard(card);
+                          }}
+                        />
+                      ))}
+                    </div>
+                  ) : (
+                    <div
+                      className="kanban-column-empty kanban-archive-column-empty"
+                      aria-label={`${column.title} has no archived cards`}
+                    >
+                      <Archive size={18} aria-hidden="true" />
+                      <span>
+                        {cards.length > 0 && visibleCards.length === 0
+                          ? "No matching cards"
+                          : "No archived cards"}
+                      </span>
+                    </div>
+                  )}
+                </div>
+              </section>
+            );
+          })}
         </div>
-      ) : (
-        <div className="kanban-archive-empty">
-          <Archive size={28} aria-hidden="true" />
-          <strong>{cards.length === 0 ? "No archived cards" : "No matching cards"}</strong>
-          <p>
-            {cards.length === 0
-              ? "Cards you archive will appear here with their artifacts preserved."
-              : "Try a different title or description."}
-          </p>
-        </div>
-      )}
+      </div>
     </section>
   );
 }

@@ -1750,124 +1750,30 @@ button.kanban-card-content {
 
 /* Archived cards */
 .kanban-archived-view {
-  min-height: 100%;
-  padding: 18px;
+  display: flex;
+  min-height: 0;
+  height: 100%;
+  flex-direction: column;
   background: var(--color-background);
 }
 
 .kanban-archived-view > header {
-  margin-bottom: 14px;
+  flex: 0 0 auto;
+  padding: 18px 18px 14px;
 }
 
 .kanban-archive-search {
+  flex: 0 0 auto;
   width: min(420px, 100%);
-  margin-bottom: 13px;
+  margin: 0 18px 1px;
 }
 
-.kanban-archive-list {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
-  gap: 10px;
+.kanban-archive-board {
+  min-height: 0;
 }
 
-.kanban-archive-list > article {
-  display: grid;
-  gap: 10px;
-  padding: 12px;
-  border: 1px solid var(--color-divider);
-  border-radius: var(--radius);
-  background: var(--color-component-background);
-  box-shadow: none;
-}
-
-.kanban-archive-card-content {
-  display: grid;
-  min-width: 0;
-  grid-template-columns: auto minmax(0, 1fr);
-  align-items: start;
-  gap: 9px;
-  padding: 0;
-  border: 0;
-  background: transparent;
-  box-shadow: none;
-  color: var(--color-text);
-  text-align: left;
-  transform: none;
-}
-
-.kanban-archive-icon {
-  display: inline-grid;
-  width: 30px;
-  height: 30px;
-  place-items: center;
-  border-radius: 8px;
-  background: var(--color-surface-soft);
-  color: var(--color-primary);
-}
-
-.kanban-archive-card-content > span:last-child {
-  display: grid;
-  min-width: 0;
-  gap: 4px;
-}
-
-.kanban-archive-card-content strong,
-.kanban-archive-card-content small {
-  display: -webkit-box;
-  overflow: hidden;
-  -webkit-box-orient: vertical;
-}
-
-.kanban-archive-card-content strong {
-  font-size: 0.86rem;
-  -webkit-line-clamp: 2;
-}
-
-.kanban-archive-card-content small {
-  color: var(--color-text-secondary);
-  font-size: 0.76rem;
-  line-height: 1.4;
-  -webkit-line-clamp: 2;
-}
-
-.kanban-archive-metadata {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 5px;
-}
-
-.kanban-archive-metadata span {
-  padding: 2px 6px;
-  border-radius: 999px;
-  background: var(--color-surface-soft);
-  color: var(--color-text-secondary);
-  font-size: 0.72rem;
-}
-
-.kanban-archive-actions {
-  justify-content: flex-end;
-}
-
-.kanban-archive-empty {
-  display: grid;
-  min-height: 300px;
-  place-content: center;
-  justify-items: center;
-  gap: 6px;
-  color: var(--color-text-secondary);
-  text-align: center;
-}
-
-.kanban-archive-empty strong {
-  color: var(--color-text);
-  font-size: 0.86rem;
-}
-
-.kanban-archive-empty p {
-  max-width: 360px;
-  margin: 0;
-  font-size: 0.82rem;
-  line-height: 1.5;
+.kanban-archive-column-empty {
+  gap: 7px;
 }
 
 @media (max-width: 920px) {
@@ -1922,9 +1828,6 @@ button.kanban-card-content {
     grid-template-columns: 1fr;
   }
 
-  .kanban-archive-list {
-    grid-template-columns: 1fr;
-  }
 }
 
 @media (max-width: 840px) {
