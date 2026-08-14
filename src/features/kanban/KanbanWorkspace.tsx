@@ -132,6 +132,7 @@ type Props = {
   githubConnection: GithubConnectionStatus | null;
   githubConnectionPending: boolean;
   onConnectGithub: () => void;
+  onCancelGithub: () => void;
   toolbarHost?: HTMLElement | null;
   resolvedTheme: ResolvedTheme;
 };
@@ -641,6 +642,7 @@ export function KanbanWorkspace({
   githubConnection,
   githubConnectionPending,
   onConnectGithub,
+  onCancelGithub,
   toolbarHost,
   resolvedTheme,
 }: Props) {
@@ -1767,8 +1769,20 @@ export function KanbanWorkspace({
                 : "GitHub integration unavailable"}
             </strong>
             <span>
-              {githubConnection.available
-                ? "Completed cards will use local review until GitHub is connected."
+              {githubConnectionPending
+                ? githubConnection.deviceCode
+                  ? (
+                      <>
+                        Enter code{" "}
+                        <code className="github-device-code">
+                          {githubConnection.deviceCode}
+                        </code>{" "}
+                        in GitHub. The code has also been copied to your clipboard.
+                      </>
+                    )
+                  : "Preparing a GitHub device code..."
+                : githubConnection.available
+                  ? "Completed cards will use local review until GitHub is connected."
                 : githubConnection.message ??
                   "Completed cards will use local review in this build."}
             </span>
@@ -1777,13 +1791,22 @@ export function KanbanWorkspace({
             <button
               type="button"
               className="kanban-icon-button"
-              aria-label="Connect GitHub"
-              title="Connect GitHub"
-              disabled={githubConnectionPending}
-              onClick={onConnectGithub}
+              aria-label={
+                githubConnectionPending
+                  ? "Cancel GitHub sign-in"
+                  : "Connect GitHub"
+              }
+              title={
+                githubConnectionPending
+                  ? "Cancel GitHub sign-in"
+                  : "Connect GitHub"
+              }
+              onClick={
+                githubConnectionPending ? onCancelGithub : onConnectGithub
+              }
             >
               {githubConnectionPending ? (
-                <Loader2 className="spin" size={16} aria-hidden="true" />
+                <X size={16} aria-hidden="true" />
               ) : (
                 <LogIn size={16} aria-hidden="true" />
               )}

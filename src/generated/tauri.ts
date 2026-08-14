@@ -382,6 +382,8 @@ export type GithubConnectionStatus = {
 	status: string,
 	message: string | null,
 	cliVersion: string | null,
+	deviceCode: string | null,
+	verificationUri: string | null,
 };
 
 export type GithubPublicationResult = {

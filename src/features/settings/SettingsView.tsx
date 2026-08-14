@@ -231,6 +231,15 @@ export const SettingsView = memo(function SettingsView({
                 {model.githubConnection?.message
                   ? ` · ${model.githubConnection.message}`
                   : ""}
+                {model.githubConnectionPending && model.githubConnection?.deviceCode ? (
+                  <>
+                    {" · Device code "}
+                    <code className="github-device-code">
+                      {model.githubConnection.deviceCode}
+                    </code>
+                    {" (copied to clipboard)"}
+                  </>
+                ) : null}
               </span>
             </div>
             <div className="button-row compact">

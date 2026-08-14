@@ -15114,6 +15114,8 @@ function App() {
             status: "unavailable",
             message: error instanceof Error ? error.message : String(error),
             cliVersion: null,
+            deviceCode: null,
+            verificationUri: null,
           });
         }
       });
@@ -15140,6 +15142,18 @@ function App() {
   const handleConnectGithub = useCallback(async () => {
     if (githubConnectionPending) return;
     setGithubConnectionPending(true);
+    setGithubConnection((current) => ({
+      available: current?.available ?? true,
+      connected: false,
+      login: null,
+      displayName: null,
+      avatarUrl: null,
+      status: "connecting",
+      message: "Complete GitHub sign-in in your browser.",
+      cliVersion: current?.cliVersion ?? null,
+      deviceCode: null,
+      verificationUri: null,
+    }));
     setStatusMessage("Complete GitHub sign-in in your browser.");
     try {
       const connection = await beginGithubConnection();
@@ -15152,6 +15166,11 @@ function App() {
           ? message
           : `Could not connect GitHub: ${message}`,
       );
+      try {
+        setGithubConnection(await loadGithubConnection());
+      } catch {
+        // Preserve the actionable sign-in error when status recovery is unavailable.
+      }
     } finally {
       setGithubConnectionPending(false);
     }
@@ -15924,6 +15943,7 @@ function App() {
                   githubConnection={githubConnection}
                   githubConnectionPending={githubConnectionPending}
                   onConnectGithub={() => void handleConnectGithub()}
+                  onCancelGithub={() => void handleCancelGithubConnection()}
                   toolbarHost={kanbanToolbarHost}
                 />
                 <div className="kanban-composer-shell">

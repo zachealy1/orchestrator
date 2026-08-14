@@ -146,7 +146,10 @@ function renderWorkspace(
     status: "connected",
     message: null,
     cliVersion: "2.96.0",
+    deviceCode: null,
+    verificationUri: null,
   },
+  githubConnectionPending = false,
 ) {
   const props = {
     onLaunch: vi.fn().mockResolvedValue(undefined),
@@ -154,6 +157,7 @@ function renderWorkspace(
     onStop: vi.fn().mockResolvedValue(undefined),
     onOpenConversation: vi.fn().mockResolvedValue(undefined),
     onConnectGithub: vi.fn(),
+    onCancelGithub: vi.fn(),
   };
 
   render(
@@ -165,7 +169,7 @@ function renderWorkspace(
       refreshToken={0}
       listChatTranscript={transcriptMocks.listLocalChatTranscript}
       githubConnection={githubConnection}
-      githubConnectionPending={false}
+      githubConnectionPending={githubConnectionPending}
       toolbarHost={toolbarHost}
       resolvedTheme="dark"
       {...props}
@@ -249,6 +253,8 @@ describe("KanbanWorkspace controller", () => {
       status: "disconnected",
       message: null,
       cliVersion: "2.96.0",
+      deviceCode: null,
+      verificationUri: null,
     });
 
     const warning = await screen.findByTestId("kanban-github-warning");
@@ -261,6 +267,35 @@ describe("KanbanWorkspace controller", () => {
       within(warning).getByRole("button", { name: "Connect GitHub" }),
     );
     expect(callbacks.onConnectGithub).toHaveBeenCalledTimes(1);
+  });
+
+  it("shows the device code and cancels an in-progress GitHub connection", async () => {
+    const user = userEvent.setup();
+    const callbacks = renderWorkspace(
+      undefined,
+      {
+        available: true,
+        connected: false,
+        login: null,
+        displayName: null,
+        avatarUrl: null,
+        status: "connecting",
+        message: "Complete GitHub sign-in in your browser.",
+        cliVersion: "2.96.0",
+        deviceCode: "ABCD-1234",
+        verificationUri: "https://github.com/login/device",
+      },
+      true,
+    );
+
+    const warning = await screen.findByTestId("kanban-github-warning");
+    expect(warning).toHaveTextContent("ABCD-1234");
+    await user.click(
+      within(warning).getByRole("button", { name: "Cancel GitHub sign-in" }),
+    );
+
+    expect(callbacks.onCancelGithub).toHaveBeenCalledTimes(1);
+    expect(callbacks.onConnectGithub).not.toHaveBeenCalled();
   });
 
   it("does not show the GitHub warning when connected", async () => {

@@ -101,6 +101,8 @@ describe("SettingsView", () => {
             status: "unavailable",
             message: "The bundled GitHub CLI runtime is unavailable.",
             cliVersion: null,
+            deviceCode: null,
+            verificationUri: null,
           },
         })}
         actions={handlers}
@@ -128,6 +130,8 @@ describe("SettingsView", () => {
             status: "connecting",
             message: "Complete sign-in in your browser.",
             cliVersion: "2.96.0",
+            deviceCode: "ABCD-1234",
+            verificationUri: "https://github.com/login/device",
           },
         })}
         actions={handlers}
@@ -136,5 +140,6 @@ describe("SettingsView", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
     expect(handlers.cancelGithubConnection).toHaveBeenCalledOnce();
+    expect(screen.getByText("ABCD-1234")).toBeInTheDocument();
   });
 });
