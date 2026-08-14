@@ -321,6 +321,13 @@ button.danger:hover:not(:disabled) {
   box-shadow: 0 0 0 3px var(--dropdown-focus-ring);
 }
 
+.chat-rename-dialog .branch-creation-field input,
+.chat-rename-dialog .branch-creation-field input:focus,
+.chat-rename-dialog .branch-creation-field input:focus-visible {
+  border: 0;
+  box-shadow: none;
+}
+
 .confirmation-dialog p.confirmation-error {
   display: flex;
   align-items: flex-start;
