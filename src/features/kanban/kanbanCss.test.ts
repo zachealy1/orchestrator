@@ -8,14 +8,23 @@ const css = readFileSync(
   `${process.cwd()}/src/features/kanban/kanban.css`,
   "utf8",
 );
+const shellCss = readFileSync(
+  `${process.cwd()}/src/styles/shell-and-header.css`,
+  "utf8",
+);
+
+function sourceRule(source: string, selector: string) {
+  const exactStart = source.lastIndexOf(`\n${selector} {`);
+  const selectorStart =
+    exactStart >= 0 ? exactStart + 1 : source.indexOf(selector);
+  if (selectorStart < 0) throw new Error(`Missing CSS rule: ${selector}`);
+  const blockStart = source.indexOf("{", selectorStart);
+  const blockEnd = source.indexOf("}", blockStart);
+  return source.slice(selectorStart, blockEnd + 1);
+}
 
 function rule(selector: string) {
-  const exactStart = css.lastIndexOf(`\n${selector} {`);
-  const selectorStart = exactStart >= 0 ? exactStart + 1 : css.indexOf(selector);
-  if (selectorStart < 0) throw new Error(`Missing CSS rule: ${selector}`);
-  const blockStart = css.indexOf("{", selectorStart);
-  const blockEnd = css.indexOf("}", blockStart);
-  return css.slice(selectorStart, blockEnd + 1);
+  return sourceRule(css, selector);
 }
 
 describe("Kanban local review styles", () => {
@@ -136,5 +145,28 @@ describe("Kanban local review styles", () => {
     expect(changedFiles).toContain("max-width: 100%");
     expect(changedFiles).toContain("text-overflow: ellipsis");
     expect(css).not.toContain(".kanban-card-footer > :last-child");
+  });
+
+  it("keeps grouped cards in one scroll viewport above the composer", () => {
+    const groups = rule(".kanban-board-groups");
+    const nestedBoard = rule(".kanban-board-group .kanban-board");
+    const mount = sourceRule(shellCss, ".kanban-workspace-mount");
+    const composer = sourceRule(shellCss, ".kanban-composer-shell");
+
+    expect(groups).toContain("overflow-x: hidden");
+    expect(groups).toContain("overflow-y: auto");
+    expect(groups).toContain("padding-bottom: 32px");
+    expect(groups).toContain("scroll-padding-bottom: 32px");
+    expect(groups).toContain("scrollbar-gutter: stable");
+    expect(nestedBoard).toContain("overflow: visible");
+    expect(nestedBoard).toContain("scrollbar-gutter: auto");
+    expect(mount).toContain("overflow: hidden");
+    expect(composer).toContain("position: relative");
+    expect(composer).toContain("z-index: 2");
+    expect(composer).toContain("border-top: 1px solid var(--color-divider)");
+    expect(composer).toContain(
+      "background: var(--color-component-background)",
+    );
+    expect(composer).not.toContain("background: var(--bg)");
   });
 });

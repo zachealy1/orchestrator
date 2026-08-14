@@ -2377,12 +2377,20 @@ button.kanban-card-content {
   flex: 1;
   flex-direction: column;
   gap: 16px;
-  overflow: auto;
-  padding-bottom: 18px;
+  overflow-x: hidden;
+  overflow-y: auto;
+  padding-bottom: 32px;
+  scroll-padding-bottom: 32px;
+  scrollbar-gutter: stable;
 }
 
 .kanban-board-group {
   min-width: 0;
+}
+
+.kanban-board-group .kanban-board {
+  overflow: visible;
+  scrollbar-gutter: auto;
 }
 
 .kanban-group-header {

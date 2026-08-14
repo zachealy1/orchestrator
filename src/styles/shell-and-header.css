@@ -1100,15 +1100,19 @@ button.account-switcher-item:hover:not(:disabled) {
   min-height: 0;
   flex: 1;
   flex-direction: column;
+  overflow: hidden;
 }
 
 .kanban-composer-shell {
+  position: relative;
+  z-index: 2;
   display: flex;
   width: 100%;
   flex: 0 0 auto;
   justify-content: center;
+  border-top: 1px solid var(--color-divider);
   padding: 0 16px 16px;
-  background: var(--bg);
+  background: var(--color-component-background);
 }
 
 .workspace-context-chip {
