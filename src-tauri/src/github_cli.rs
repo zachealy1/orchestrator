@@ -5,12 +5,12 @@ use sha2::{Digest, Sha256};
 use sqlx::Connection;
 use std::{
     fs,
-    io::{Read, Write},
+    io::{BufRead, BufReader, Read, Write},
     path::{Path, PathBuf},
     process::{Command, Stdio},
     sync::{
         atomic::{AtomicU64, Ordering},
-        Arc, Mutex, OnceLock,
+        mpsc, Arc, Mutex, OnceLock,
     },
     time::{Duration, Instant},
 };
@@ -21,6 +21,7 @@ const COMMAND_TIMEOUT: Duration = Duration::from_secs(45);
 const LOGIN_TIMEOUT: Duration = Duration::from_secs(10 * 60);
 const MAX_STDOUT_BYTES: u64 = 2 * 1024 * 1024;
 const MAX_STDERR_BYTES: u64 = 256 * 1024;
+const GITHUB_DEVICE_LOGIN_URL: &str = "https://github.com/login/device";
 static GITHUB_CLI_RUNTIME: OnceLock<Result<GithubCliRuntime, String>> = OnceLock::new();
 static LEGACY_GITHUB_CREDENTIALS_CLEARED: OnceLock<()> = OnceLock::new();
 
@@ -691,25 +692,7 @@ fn run_login(app: &AppHandle, state: &GithubState) -> Result<(), String> {
         }
     }
     let generation = state.generation.fetch_add(1, Ordering::SeqCst) + 1;
-    let mut command = Command::new(&runtime.executable);
-    command
-        .args([
-            "auth",
-            "login",
-            "--hostname",
-            "github.com",
-            "--git-protocol",
-            "https",
-            "--web",
-        ])
-        .env("GH_CONFIG_DIR", &runtime.config_dir)
-        .env("GH_PAGER", "cat")
-        .env("NO_COLOR", "1")
-        .env_remove("GH_TOKEN")
-        .env_remove("GITHUB_TOKEN")
-        .stdin(Stdio::null())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped());
+    let mut command = github_login_command(&runtime);
     let mut child = command
         .spawn()
         .map_err(|error| format!("GitHub sign-in could not be started: {error}"))?;
@@ -724,9 +707,23 @@ fn run_login(app: &AppHandle, state: &GithubState) -> Result<(), String> {
         .take()
         .ok_or_else(|| "Could not read GitHub sign-in errors.".to_string())?;
     let stdout_reader = std::thread::spawn(move || read_limited(stdout, MAX_STDOUT_BYTES));
-    let stderr_reader = std::thread::spawn(move || read_limited(stderr, MAX_STDERR_BYTES));
+    let (browser_sender, browser_receiver) = mpsc::channel();
+    let stderr_reader = std::thread::spawn(move || {
+        read_login_stderr(stderr, MAX_STDERR_BYTES, || {
+            let result = tauri_plugin_opener::open_url(GITHUB_DEVICE_LOGIN_URL, None::<&str>)
+                .map_err(|error| format!("GitHub sign-in could not open your browser: {error}"));
+            let _ = browser_sender.send(result.clone());
+            result
+        })
+    });
     let started = Instant::now();
     let status = loop {
+        if let Ok(Err(error)) = browser_receiver.try_recv() {
+            let _ = child.kill();
+            let _ = child.wait();
+            clear_login(state, generation);
+            return Err(error);
+        }
         if let Some(status) = child
             .try_wait()
             .map_err(|error| format!("Could not inspect GitHub sign-in: {error}"))?
@@ -780,6 +777,34 @@ fn run_login(app: &AppHandle, state: &GithubState) -> Result<(), String> {
             if stderr.is_empty() { &stdout } else { &stderr },
         ))
     }
+}
+
+fn github_login_command(runtime: &GithubCliRuntime) -> Command {
+    let mut command = Command::new(&runtime.executable);
+    command
+        .args([
+            "auth",
+            "login",
+            "--hostname",
+            "github.com",
+            "--git-protocol",
+            "https",
+            "--web",
+            "--clipboard",
+        ])
+        .env("GH_CONFIG_DIR", &runtime.config_dir)
+        .env("GH_PAGER", "cat")
+        .env("NO_COLOR", "1")
+        .env_remove("GH_TOKEN")
+        .env_remove("GITHUB_TOKEN")
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    #[cfg(target_os = "macos")]
+    command
+        .env("GH_BROWSER", "/usr/bin/open")
+        .env("BROWSER", "/usr/bin/open");
+    command
 }
 
 fn active_login(runtime: &GithubCliRuntime) -> Result<Option<GithubUser>, String> {
@@ -929,6 +954,42 @@ fn read_limited(reader: impl Read, limit: u64) -> Result<Vec<u8>, String> {
         return Err("GitHub CLI returned too much output.".to_string());
     }
     Ok(bytes)
+}
+
+fn read_login_stderr(
+    reader: impl Read,
+    limit: u64,
+    open_browser: impl FnOnce() -> Result<(), String>,
+) -> Result<Vec<u8>, String> {
+    let mut reader = BufReader::new(reader);
+    let mut bytes = Vec::new();
+    let mut open_browser = Some(open_browser);
+    loop {
+        let mut line = Vec::new();
+        let read = reader
+            .read_until(b'\n', &mut line)
+            .map_err(|error| format!("Could not read GitHub CLI output: {error}"))?;
+        if read == 0 {
+            break;
+        }
+        if bytes.len() as u64 + line.len() as u64 > limit {
+            return Err("GitHub CLI returned too much output.".to_string());
+        }
+        if is_device_login_line(&line) {
+            if let Some(open_browser) = open_browser.take() {
+                open_browser()?;
+            }
+        }
+        bytes.extend_from_slice(&line);
+    }
+    Ok(bytes)
+}
+
+fn is_device_login_line(line: &[u8]) -> bool {
+    std::str::from_utf8(line).is_ok_and(|line| {
+        line.trim()
+            == format!("Open this URL to continue in your web browser: {GITHUB_DEVICE_LOGIN_URL}")
+    })
 }
 
 fn credential_helper(runtime: &GithubCliRuntime) -> Result<PathBuf, String> {
@@ -1089,9 +1150,68 @@ impl From<GhPullRequest> for GithubPullRequest {
 
 #[cfg(test)]
 mod tests {
-    use super::{has_active_authentication, is_ssh_remote, map_error_text, shell_quote};
+    use super::{
+        github_login_command, has_active_authentication, is_device_login_line, is_ssh_remote,
+        map_error_text, read_login_stderr, shell_quote, GithubCliRuntime,
+    };
     use serde_json::json;
-    use std::path::Path;
+    use std::{cell::Cell, ffi::OsStr, io::Cursor, path::Path, rc::Rc};
+
+    #[test]
+    fn configures_browser_login_for_macos() {
+        let runtime = GithubCliRuntime {
+            executable: "/tmp/gh".into(),
+            config_dir: "/tmp/orchestrator-gh".into(),
+            version: "test".to_string(),
+        };
+        let command = github_login_command(&runtime);
+        let args = command.get_args().collect::<Vec<_>>();
+
+        assert!(args.windows(2).any(|args| args == ["--web", "--clipboard"]));
+        assert_eq!(
+            command
+                .get_envs()
+                .find(|(name, _)| *name == OsStr::new("GH_CONFIG_DIR"))
+                .and_then(|(_, value)| value),
+            Some(OsStr::new("/tmp/orchestrator-gh")),
+        );
+        #[cfg(target_os = "macos")]
+        for name in ["GH_BROWSER", "BROWSER"] {
+            assert_eq!(
+                command
+                    .get_envs()
+                    .find(|(key, _)| *key == OsStr::new(name))
+                    .and_then(|(_, value)| value),
+                Some(OsStr::new("/usr/bin/open")),
+            );
+        }
+    }
+
+    #[test]
+    fn opens_only_the_pinned_github_device_login_url() {
+        let opened = Rc::new(Cell::new(0));
+        let opened_for_callback = opened.clone();
+        let output = read_login_stderr(
+            Cursor::new(
+                "! One-time code (<redacted>) copied to clipboard\n\
+                 Open this URL to continue in your web browser: https://github.com/login/device\n",
+            ),
+            1_024,
+            move || {
+                opened_for_callback.set(opened_for_callback.get() + 1);
+                Ok(())
+            },
+        )
+        .unwrap();
+
+        assert_eq!(opened.get(), 1);
+        assert!(String::from_utf8(output)
+            .unwrap()
+            .contains("github.com/login/device"));
+        assert!(!is_device_login_line(
+            b"Open this URL to continue in your web browser: https://example.com/login/device\n"
+        ));
+    }
 
     #[test]
     fn identifies_ssh_remotes() {
