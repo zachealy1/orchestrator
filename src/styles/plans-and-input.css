@@ -162,13 +162,11 @@ button.native-plan-disclosure:hover:not(:disabled),
 button.native-plan-disclosure:focus-visible {
   background: transparent;
   box-shadow: none;
-  color: var(--color-text);
   transform: none;
 }
 
 button.native-plan-disclosure:active:not(:disabled) {
   background: transparent;
-  color: var(--color-text);
   transform: none;
 }
 

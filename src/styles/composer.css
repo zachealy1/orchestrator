@@ -400,7 +400,6 @@ button.subagent-status-item:hover:not(:disabled),
 button.subagent-status-item:focus-visible {
   background: var(--color-surface-soft);
   box-shadow: none;
-  color: var(--color-text);
   transform: none;
 }
 
@@ -552,7 +551,6 @@ button.subagent-status-item:focus-visible {
 .prompt-queue-drag-handle:focus-visible {
   background: var(--panel-strong);
   box-shadow: none;
-  color: var(--color-text);
   transform: none;
 }
 
@@ -711,7 +709,6 @@ button.composer-status-action:focus-visible,
 button.composer-status-action:active {
   background: var(--color-button-active);
   box-shadow: none;
-  color: inherit;
   transform: none;
 }
 
@@ -1069,7 +1066,6 @@ button.mention-search-option:hover:not(:disabled),
 button.mention-search-option:focus-visible,
 button.mention-search-option.active {
   background: rgb(var(--text-secondary-rgb) / 0.16);
-  color: var(--text);
 }
 
 .mention-search-option svg {
@@ -1447,7 +1443,6 @@ button.composer-select-option.action:not(:first-child)::before {
 
 .send-button.stop:hover:not(:disabled) {
   background: var(--color-surface-muted);
-  color: var(--color-button-active-text);
 }
 
 .send-button:disabled {
@@ -1517,7 +1512,6 @@ button.composer-select-option.action:not(:first-child)::before {
 
 .context-mention button:hover:not(:disabled) {
   background: var(--color-button-active);
-  color: var(--color-text);
 }
 
 .context-attachment {
@@ -1611,7 +1605,6 @@ button.composer-select-option.action:not(:first-child)::before {
 
 .context-attachment > button:hover:not(:disabled) {
   background: var(--color-button-secondary);
-  color: var(--color-button-secondary-text);
 }
 
 .context-chip {

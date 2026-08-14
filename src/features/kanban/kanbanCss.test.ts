@@ -78,7 +78,7 @@ describe("Kanban local review styles", () => {
     );
 
     expect(hoverRule).toContain("background: var(--color-surface-muted)");
-    expect(hoverRule).toContain("color: var(--color-text)");
+    expect(hoverRule).not.toContain("color:");
     expect(hoverRule).not.toContain("var(--color-button-active)");
   });
 

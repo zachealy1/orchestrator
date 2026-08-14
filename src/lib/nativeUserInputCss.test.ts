@@ -76,6 +76,6 @@ describe("native user input CSS", () => {
     expect(button).toContain("background: transparent");
     expect(button).toContain("color: var(--color-primary)");
     expect(hover).toContain("background: var(--color-button-active)");
-    expect(hover).toContain("color: var(--color-primary)");
+    expect(hover).not.toContain("color:");
   });
 });

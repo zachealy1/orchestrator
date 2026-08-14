@@ -280,7 +280,6 @@ button.pending-interaction-nav:focus-visible {
   border: 0;
   background: var(--color-button-active);
   box-shadow: none;
-  color: var(--color-primary);
   outline: none;
   transform: none;
 }

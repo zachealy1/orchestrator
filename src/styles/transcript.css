@@ -138,7 +138,6 @@
 .task-transcript-error button:hover,
 .task-transcript-error button:focus-visible {
   background: var(--color-surface-soft);
-  color: var(--color-text);
 }
 
 .task-chat-jump-latest {
@@ -161,7 +160,6 @@
 .task-chat-jump-latest:hover:not(:disabled),
 .task-chat-jump-latest:focus-visible:not(:disabled) {
   background: var(--color-button-active);
-  color: var(--color-button-secondary-text);
   transform: translateX(-50%);
 }
 
@@ -239,7 +237,6 @@
 .historical-activity-status button:hover,
 .historical-activity-more:hover {
   background: var(--color-button-active);
-  color: var(--color-button-secondary-text);
   box-shadow: none;
   transform: none;
 }
@@ -355,7 +352,6 @@
 .history-turn-skeleton-retry:hover,
 .history-turn-skeleton-retry:focus-visible {
   background: var(--color-button-secondary);
-  color: var(--color-icon-muted);
   box-shadow: none;
   transform: none;
 }
@@ -478,7 +474,6 @@ button.submitted-prompt-edit-button {
 button.submitted-prompt-edit-button:hover:not(:disabled),
 button.submitted-prompt-edit-button:focus-visible {
   background: var(--panel-strong);
-  color: var(--color-text);
   outline: none;
 }
 
@@ -536,7 +531,6 @@ button.submitted-prompt-edit-button:focus-visible {
 .submitted-prompt-edit-actions button:hover:not(:disabled),
 .submitted-prompt-edit-actions button:focus-visible {
   background: var(--panel-strong);
-  color: var(--color-text-secondary);
   outline: none;
 }
 
@@ -913,7 +907,6 @@ button.edited-files-path {
 button.edited-files-path:hover:not(:disabled),
 button.edited-files-path:focus-visible:not(:disabled) {
   background: transparent;
-  color: var(--color-primary);
   box-shadow: none;
   text-decoration: underline;
   text-underline-offset: 3px;
@@ -947,7 +940,6 @@ button.edited-files-disclosure {
 button.edited-files-disclosure:hover:not(:disabled),
 button.edited-files-disclosure:focus-visible:not(:disabled) {
   background: var(--dropdown-bg-hover);
-  color: var(--color-text);
   box-shadow: none;
   transform: none;
 }

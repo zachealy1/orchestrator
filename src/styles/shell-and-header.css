@@ -1022,7 +1022,6 @@ button.account-switcher-item:hover:not(:disabled) {
 .workspace-kanban-header-controls .kanban-group-select button.composer-select-trigger:focus-visible,
 .workspace-kanban-header-controls .kanban-group-select.open button.composer-select-trigger {
   background: var(--panel-strong);
-  color: var(--color-button-primary-text);
 }
 
 .workspace-kanban-header-controls .kanban-filter-trigger:focus-visible,
@@ -1261,7 +1260,6 @@ button.account-switcher-item:hover:not(:disabled) {
 .workspace-header-button:hover:not(:disabled),
 .workspace-header-button:focus-visible:not(:disabled) {
   background: var(--panel-strong);
-  color: var(--color-button-primary-text);
   box-shadow: none;
 }
 
@@ -1328,7 +1326,6 @@ button.account-switcher-item:hover:not(:disabled) {
 .workspace-header-button.history-panel-button:focus-visible:not(:disabled) {
   background: var(--panel-strong);
   box-shadow: none;
-  color: var(--color-button-primary-text);
 }
 
 .workspace-header-button.history-panel-button.active {
@@ -1341,12 +1338,10 @@ button.account-switcher-item:hover:not(:disabled) {
 .workspace-header-button.history-panel-button.active:focus-visible:not(:disabled) {
   background: var(--panel-strong);
   box-shadow: none;
-  color: var(--color-button-primary-text);
 }
 
 .icon-button.history-panel-button:hover:not(:disabled),
 .icon-button.history-panel-button:focus-visible:not(:disabled) {
-  color: var(--color-button-primary-text);
   box-shadow: none;
 }
 

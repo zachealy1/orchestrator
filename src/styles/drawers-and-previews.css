@@ -358,7 +358,6 @@ button.history-run-item:hover,
 button.history-run-item:focus-visible {
   background: var(--panel-strong);
   box-shadow: none;
-  color: var(--text);
   transform: none;
 }
 
@@ -519,7 +518,6 @@ button.history-run-item.disabled {
 .file-preview-drawer .file-preview-close:hover:not(:disabled),
 .file-preview-drawer .file-preview-close:focus-visible:not(:disabled) {
   background: var(--color-surface-soft);
-  color: var(--text);
 }
 
 @keyframes file-preview-spinner-rotate {
