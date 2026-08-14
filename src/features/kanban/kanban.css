@@ -1759,7 +1759,14 @@ button.kanban-card-content {
 }
 
 .kanban-archive-column-empty {
+  display: flex;
+  align-items: center;
+  justify-content: center;
   gap: 7px;
+}
+
+.kanban-archive-column-empty > svg {
+  flex: 0 0 auto;
 }
 
 @media (max-width: 920px) {

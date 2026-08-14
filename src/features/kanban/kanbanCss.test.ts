@@ -103,4 +103,12 @@ describe("Kanban local review styles", () => {
     expect(actions).toContain("height: 30px");
     expect(actions).toContain("border: 0");
   });
+
+  it("aligns archived empty-state icons and labels in one row", () => {
+    const emptyState = rule(".kanban-archive-column-empty");
+
+    expect(emptyState).toContain("display: flex");
+    expect(emptyState).toContain("align-items: center");
+    expect(emptyState).toContain("justify-content: center");
+  });
 });
