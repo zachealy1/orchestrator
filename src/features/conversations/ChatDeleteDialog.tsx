@@ -1,3 +1,4 @@
+import { Trash2, X } from "lucide-react";
 import type { ChatListItem } from "./types";
 import { useEffect } from "react";
 
@@ -45,11 +46,23 @@ export function ChatDeleteDialog({
           </p>
         </div>
         <div className="confirmation-actions">
-          <button className="secondary" type="button" onClick={onCancel}>
-            Cancel
+          <button
+            className="native-plan-icon-action"
+            type="button"
+            aria-label="Cancel"
+            data-tooltip="Cancel"
+            onClick={onCancel}
+          >
+            <X size={15} aria-hidden="true" />
           </button>
-          <button className="danger" type="button" onClick={onConfirm}>
-            Remove chat
+          <button
+            className="native-plan-icon-action cancel"
+            type="button"
+            aria-label="Remove chat"
+            data-tooltip="Remove chat"
+            onClick={onConfirm}
+          >
+            <Trash2 size={15} aria-hidden="true" />
           </button>
         </div>
       </section>
