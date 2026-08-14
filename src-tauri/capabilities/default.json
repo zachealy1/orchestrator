@@ -8,6 +8,7 @@
     "core:app:allow-set-app-theme",
     "core:window:allow-start-dragging",
     "dialog:default",
+    "clipboard-manager:allow-write-text",
     "opener:default",
     "sql:default",
     "sql:allow-execute"

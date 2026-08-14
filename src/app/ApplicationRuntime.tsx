@@ -127,10 +127,12 @@ import { useKanbanRuntimeController } from "../features/kanban/useKanbanRuntimeC
 import {
   beginGithubConnection,
   cancelGithubConnection,
+  continueGithubConnection,
   disconnectGithub,
   loadGithubConnection,
   type GithubConnectionStatus,
 } from "../features/github/api";
+import { GithubDeviceLoginDialog } from "../features/github/GithubDeviceLoginDialog";
 import {
   persistWorkspaceSurfaceMode,
   readWorkspaceSurfaceMode,
@@ -851,7 +853,14 @@ function App() {
   const [kanbanRefreshToken, setKanbanRefreshToken] = useState(0);
   const [githubConnection, setGithubConnection] =
     useState<GithubConnectionStatus | null>(null);
-  const [githubConnectionPending, setGithubConnectionPending] = useState(false);
+  const [githubLoginDialogOpen, setGithubLoginDialogOpen] = useState(false);
+  const [githubLoginStarting, setGithubLoginStarting] = useState(false);
+  const [githubLoginOpening, setGithubLoginOpening] = useState(false);
+  const [githubLoginCopied, setGithubLoginCopied] = useState(false);
+  const [githubLoginError, setGithubLoginError] = useState<string | null>(null);
+  const githubConnectRequestRef = useRef(false);
+  const githubConnectionPending =
+    githubLoginStarting || githubConnection?.status === "connecting";
   const [kanbanCardCreatePending, setKanbanCardCreatePending] = useState(false);
   const kanbanCardCreatePendingRef = useRef(false);
   const kanbanConversationNavigationIdRef = useRef(0);
@@ -15100,7 +15109,9 @@ function App() {
       .then((connection) => {
         if (!cancelled) {
           setGithubConnection(connection);
-          setGithubConnectionPending(connection.status === "connecting");
+          if (connection.status === "connecting") {
+            setGithubLoginDialogOpen(true);
+          }
         }
       })
       .catch((error) => {
@@ -15116,6 +15127,8 @@ function App() {
             cliVersion: null,
             deviceCode: null,
             verificationUri: null,
+            loginGeneration: null,
+            browserOpened: false,
           });
         }
       });
@@ -15125,23 +15138,40 @@ function App() {
   }, [workspaceSurfaceMode]);
 
   useEffect(() => {
-    if (githubConnection?.status !== "connecting") return;
+    if (!githubLoginStarting && githubConnection?.status !== "connecting") return;
     const interval = window.setInterval(() => {
       void loadGithubConnection()
         .then((connection) => {
           setGithubConnection(connection);
-          if (connection.status !== "connecting") {
-            setGithubConnectionPending(false);
+          if (connection.status === "connecting") {
+            setGithubLoginStarting(false);
+          }
+          if (connection.connected) {
+            setGithubLoginDialogOpen(false);
+            setGithubLoginOpening(false);
+            setGithubLoginError(null);
+            setStatusMessage(
+              `Connected GitHub as ${connection.login ?? "your account"}.`,
+            );
           }
         })
         .catch(() => undefined);
     }, 1_000);
     return () => window.clearInterval(interval);
-  }, [githubConnection?.status]);
+  }, [githubConnection?.status, githubLoginStarting]);
 
   const handleConnectGithub = useCallback(async () => {
-    if (githubConnectionPending) return;
-    setGithubConnectionPending(true);
+    if (githubConnection?.status === "connecting") {
+      setGithubLoginDialogOpen(true);
+      return;
+    }
+    if (githubConnectRequestRef.current) return;
+    githubConnectRequestRef.current = true;
+    setGithubLoginStarting(true);
+    setGithubLoginDialogOpen(true);
+    setGithubLoginOpening(false);
+    setGithubLoginCopied(false);
+    setGithubLoginError(null);
     setGithubConnection((current) => ({
       available: current?.available ?? true,
       connected: false,
@@ -15149,37 +15179,77 @@ function App() {
       displayName: null,
       avatarUrl: null,
       status: "connecting",
-      message: "Complete GitHub sign-in in your browser.",
+      message: "Preparing a GitHub device code.",
       cliVersion: current?.cliVersion ?? null,
       deviceCode: null,
       verificationUri: null,
+      loginGeneration: null,
+      browserOpened: false,
     }));
-    setStatusMessage("Complete GitHub sign-in in your browser.");
+    setStatusMessage("Preparing a GitHub device code.");
     try {
       const connection = await beginGithubConnection();
       setGithubConnection(connection);
-      setStatusMessage(`Connected GitHub as ${connection.login ?? "your account"}.`);
+      if (connection.connected) {
+        setGithubLoginDialogOpen(false);
+        setStatusMessage(
+          `Connected GitHub as ${connection.login ?? "your account"}.`,
+        );
+      }
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
+      const cancelled = message === "GitHub sign-in cancelled.";
       setStatusMessage(
-        message === "GitHub sign-in cancelled."
-          ? message
-          : `Could not connect GitHub: ${message}`,
+        cancelled ? message : `Could not connect GitHub: ${message}`,
       );
+      setGithubLoginOpening(false);
+      setGithubLoginDialogOpen(!cancelled);
+      setGithubLoginError(cancelled ? null : message);
       try {
         setGithubConnection(await loadGithubConnection());
       } catch {
         // Preserve the actionable sign-in error when status recovery is unavailable.
       }
     } finally {
-      setGithubConnectionPending(false);
+      githubConnectRequestRef.current = false;
+      setGithubLoginStarting(false);
     }
-  }, [githubConnectionPending]);
+  }, [githubConnection?.status]);
+
+  const handleContinueGithubConnection = useCallback(
+    async (copyCode: boolean) => {
+      const generation = githubConnection?.loginGeneration;
+      if (generation == null || githubLoginOpening) return;
+      setGithubLoginOpening(true);
+      setGithubLoginError(null);
+      try {
+        const connection = await continueGithubConnection(generation, copyCode);
+        setGithubConnection(connection);
+        setGithubLoginCopied(copyCode);
+        setStatusMessage(
+          copyCode
+            ? "GitHub device code copied. Complete sign-in in your browser."
+            : "Complete GitHub sign-in in your browser.",
+        );
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        setGithubLoginError(message);
+        setStatusMessage(`Could not open GitHub sign-in: ${message}`);
+      } finally {
+        setGithubLoginOpening(false);
+      }
+    },
+    [githubConnection?.loginGeneration, githubLoginOpening],
+  );
 
   const handleCancelGithubConnection = useCallback(async () => {
     try {
       await cancelGithubConnection();
-      setGithubConnectionPending(false);
+      setGithubLoginDialogOpen(false);
+      setGithubLoginStarting(false);
+      setGithubLoginOpening(false);
+      setGithubLoginCopied(false);
+      setGithubLoginError(null);
       setGithubConnection(await loadGithubConnection());
       setStatusMessage("GitHub sign-in cancelled.");
     } catch (error) {
@@ -15193,7 +15263,6 @@ function App() {
 
   const handleDisconnectGithub = useCallback(async () => {
     if (githubConnectionPending) return;
-    setGithubConnectionPending(true);
     try {
       await disconnectGithub();
       setGithubConnection(await loadGithubConnection());
@@ -15204,8 +15273,6 @@ function App() {
           error instanceof Error ? error.message : String(error)
         }`,
       );
-    } finally {
-      setGithubConnectionPending(false);
     }
   }, [githubConnectionPending]);
 
@@ -15723,6 +15790,19 @@ function App() {
         />
       </aside>
 
+      {githubLoginDialogOpen ? (
+        <GithubDeviceLoginDialog
+          connection={githubConnection}
+          opening={githubLoginOpening}
+          copied={githubLoginCopied}
+          error={githubLoginError}
+          onCopyAndOpen={() => void handleContinueGithubConnection(true)}
+          onOpen={() => void handleContinueGithubConnection(false)}
+          onCancel={() => void handleCancelGithubConnection()}
+          onRetry={() => void handleConnectGithub()}
+        />
+      ) : null}
+
       {accountHandoffCandidate ? (
         <AccountHandoffDialog
           candidate={accountHandoffCandidate}
@@ -15943,7 +16023,7 @@ function App() {
                   githubConnection={githubConnection}
                   githubConnectionPending={githubConnectionPending}
                   onConnectGithub={() => void handleConnectGithub()}
-                  onCancelGithub={() => void handleCancelGithubConnection()}
+                  onShowGithubLogin={() => setGithubLoginDialogOpen(true)}
                   toolbarHost={kanbanToolbarHost}
                 />
                 <div className="kanban-composer-shell">
@@ -16362,7 +16442,7 @@ function App() {
                 setThemePreference,
                 setComputerUseEnabled,
                 connectGithub: () => void handleConnectGithub(),
-                cancelGithubConnection: () => void handleCancelGithubConnection(),
+                showGithubLogin: () => setGithubLoginDialogOpen(true),
                 disconnectGithub: () => void handleDisconnectGithub(),
                 setNotificationPreference: handleAgentNotificationPreferenceChange,
                 openNotificationSettings: () =>

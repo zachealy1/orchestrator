@@ -12,6 +12,8 @@ export type GithubConnectionStatus = {
   cliVersion: string | null;
   deviceCode: string | null;
   verificationUri: string | null;
+  loginGeneration: number | null;
+  browserOpened: boolean;
 };
 
 export type KanbanPullRequestRecord = {
@@ -44,6 +46,13 @@ export function loadGithubConnection() {
 
 export function beginGithubConnection() {
   return commands.githubConnect() as Promise<GithubConnectionStatus>;
+}
+
+export function continueGithubConnection(generation: number, copyCode: boolean) {
+  return commands.githubContinueConnection(
+    generation,
+    copyCode,
+  ) as Promise<GithubConnectionStatus>;
 }
 
 export function cancelGithubConnection() {

@@ -12,7 +12,6 @@ import {
   Sun,
   Trash2,
   UserPlus,
-  X,
 } from "lucide-react";
 import { memo } from "react";
 import orchestratorMark from "../../assets/brand/orchestrator-mark.png";
@@ -64,7 +63,7 @@ export type SettingsViewActions = {
   setThemePreference: (preference: ThemePreference) => void;
   setComputerUseEnabled: (enabled: boolean) => void;
   connectGithub: () => void;
-  cancelGithubConnection: () => void;
+  showGithubLogin: () => void;
   disconnectGithub: () => void;
   setNotificationPreference: (
     key: keyof AgentNotificationPreferences,
@@ -231,15 +230,6 @@ export const SettingsView = memo(function SettingsView({
                 {model.githubConnection?.message
                   ? ` · ${model.githubConnection.message}`
                   : ""}
-                {model.githubConnectionPending && model.githubConnection?.deviceCode ? (
-                  <>
-                    {" · Device code "}
-                    <code className="github-device-code">
-                      {model.githubConnection.deviceCode}
-                    </code>
-                    {" (copied to clipboard)"}
-                  </>
-                ) : null}
               </span>
             </div>
             <div className="button-row compact">
@@ -247,10 +237,10 @@ export const SettingsView = memo(function SettingsView({
                 <button
                   className="secondary"
                   type="button"
-                  onClick={actions.cancelGithubConnection}
+                  onClick={actions.showGithubLogin}
                 >
-                  <X size={16} aria-hidden="true" />
-                  Cancel
+                  <LogIn size={16} aria-hidden="true" />
+                  View sign-in
                 </button>
               ) : model.githubConnection?.connected ? (
                 <button

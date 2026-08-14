@@ -148,6 +148,8 @@ function renderWorkspace(
     cliVersion: "2.96.0",
     deviceCode: null,
     verificationUri: null,
+    loginGeneration: null,
+    browserOpened: false,
   },
   githubConnectionPending = false,
 ) {
@@ -157,7 +159,7 @@ function renderWorkspace(
     onStop: vi.fn().mockResolvedValue(undefined),
     onOpenConversation: vi.fn().mockResolvedValue(undefined),
     onConnectGithub: vi.fn(),
-    onCancelGithub: vi.fn(),
+    onShowGithubLogin: vi.fn(),
   };
 
   render(
@@ -255,6 +257,8 @@ describe("KanbanWorkspace controller", () => {
       cliVersion: "2.96.0",
       deviceCode: null,
       verificationUri: null,
+      loginGeneration: null,
+      browserOpened: false,
     });
 
     const warning = await screen.findByTestId("kanban-github-warning");
@@ -269,7 +273,7 @@ describe("KanbanWorkspace controller", () => {
     expect(callbacks.onConnectGithub).toHaveBeenCalledTimes(1);
   });
 
-  it("shows the device code and cancels an in-progress GitHub connection", async () => {
+  it("returns an in-progress GitHub connection to the shared modal", async () => {
     const user = userEvent.setup();
     const callbacks = renderWorkspace(
       undefined,
@@ -284,17 +288,20 @@ describe("KanbanWorkspace controller", () => {
         cliVersion: "2.96.0",
         deviceCode: "ABCD-1234",
         verificationUri: "https://github.com/login/device",
+        loginGeneration: 4,
+        browserOpened: false,
       },
       true,
     );
 
     const warning = await screen.findByTestId("kanban-github-warning");
-    expect(warning).toHaveTextContent("ABCD-1234");
+    expect(warning).toHaveTextContent("GitHub sign-in is in progress");
+    expect(warning).not.toHaveTextContent("ABCD-1234");
     await user.click(
-      within(warning).getByRole("button", { name: "Cancel GitHub sign-in" }),
+      within(warning).getByRole("button", { name: "Show GitHub sign-in" }),
     );
 
-    expect(callbacks.onCancelGithub).toHaveBeenCalledTimes(1);
+    expect(callbacks.onShowGithubLogin).toHaveBeenCalledTimes(1);
     expect(callbacks.onConnectGithub).not.toHaveBeenCalled();
   });
 

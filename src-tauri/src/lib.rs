@@ -130,6 +130,7 @@ fn command_builder() -> tauri_specta::Builder<tauri::Wry> {
             kanban_store::kanban_get_inherited_context,
             github_cli::github_connection_status,
             github_cli::github_connect,
+            github_cli::github_continue_connection,
             github_cli::github_cancel_connection,
             github_cli::github_disconnect,
             github::github_publish_kanban_card,
@@ -179,6 +180,7 @@ pub fn run() {
         .manage(BrowserSessionRegistry::default())
         .manage(github_cli::GithubState::default())
         .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_clipboard_manager::init())
         .plugin(tauri_plugin_opener::init())
         .plugin(
             tauri_plugin_sql::Builder::default()

@@ -11,7 +11,7 @@ function actions(): SettingsViewActions {
     setThemePreference: vi.fn(),
     setComputerUseEnabled: vi.fn(),
     connectGithub: vi.fn(),
-    cancelGithubConnection: vi.fn(),
+    showGithubLogin: vi.fn(),
     disconnectGithub: vi.fn(),
     setNotificationPreference: vi.fn(),
     openNotificationSettings: vi.fn(),
@@ -103,6 +103,8 @@ describe("SettingsView", () => {
             cliVersion: null,
             deviceCode: null,
             verificationUri: null,
+            loginGeneration: null,
+            browserOpened: false,
           },
         })}
         actions={handlers}
@@ -115,7 +117,7 @@ describe("SettingsView", () => {
     expect(screen.queryByRole("textbox", { name: /github app client id/i })).toBeNull();
   });
 
-  it("allows an in-progress CLI login to be cancelled", () => {
+  it("returns an in-progress CLI login to the shared modal", () => {
     const handlers = actions();
     render(
       <SettingsView
@@ -132,14 +134,16 @@ describe("SettingsView", () => {
             cliVersion: "2.96.0",
             deviceCode: "ABCD-1234",
             verificationUri: "https://github.com/login/device",
+            loginGeneration: 4,
+            browserOpened: false,
           },
         })}
         actions={handlers}
       />,
     );
 
-    fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
-    expect(handlers.cancelGithubConnection).toHaveBeenCalledOnce();
-    expect(screen.getByText("ABCD-1234")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "View sign-in" }));
+    expect(handlers.showGithubLogin).toHaveBeenCalledOnce();
+    expect(screen.queryByText("ABCD-1234")).not.toBeInTheDocument();
   });
 });

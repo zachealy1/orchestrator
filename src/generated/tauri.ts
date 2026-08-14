@@ -123,6 +123,7 @@ export const commands = {
 	kanbanGetInheritedContext: (cardId: string) => __TAURI_INVOKE<string | null>("kanban_get_inherited_context", { cardId }),
 	githubConnectionStatus: () => __TAURI_INVOKE<GithubConnectionStatus>("github_connection_status"),
 	githubConnect: () => __TAURI_INVOKE<GithubConnectionStatus>("github_connect"),
+	githubContinueConnection: (generation: number, copyCode: boolean) => __TAURI_INVOKE<GithubConnectionStatus>("github_continue_connection", { generation, copyCode }),
 	githubCancelConnection: () => __TAURI_INVOKE<null>("github_cancel_connection"),
 	githubDisconnect: () => __TAURI_INVOKE<null>("github_disconnect"),
 	githubPublishKanbanCard: (cardId: string) => __TAURI_INVOKE<GithubPublicationResult>("github_publish_kanban_card", { cardId }),
@@ -384,6 +385,8 @@ export type GithubConnectionStatus = {
 	cliVersion: string | null,
 	deviceCode: string | null,
 	verificationUri: string | null,
+	loginGeneration: number | null,
+	browserOpened: boolean,
 };
 
 export type GithubPublicationResult = {

@@ -10,15 +10,17 @@ use std::{
     process::{Command, Stdio},
     sync::{
         atomic::{AtomicU64, Ordering},
-        mpsc, Arc, Mutex, OnceLock,
+        Arc, Mutex, OnceLock,
     },
     time::{Duration, Instant},
 };
 use tauri::{AppHandle, Manager, State};
+use tauri_plugin_clipboard_manager::ClipboardExt;
 
 const GH_VERSION: &str = "2.96.0";
 const COMMAND_TIMEOUT: Duration = Duration::from_secs(45);
 const LOGIN_TIMEOUT: Duration = Duration::from_secs(10 * 60);
+const LOGIN_PROMPT_TIMEOUT: Duration = Duration::from_secs(45);
 const MAX_STDOUT_BYTES: u64 = 2 * 1024 * 1024;
 const MAX_STDERR_BYTES: u64 = 256 * 1024;
 const GITHUB_DEVICE_LOGIN_URL: &str = "https://github.com/login/device";
@@ -45,6 +47,7 @@ struct ActiveGithubLogin {
     pid: u32,
     device_code: Option<String>,
     verification_uri: Option<String>,
+    browser_opened: bool,
 }
 
 struct LoginProcessGuard {
@@ -84,6 +87,8 @@ pub(crate) struct GithubConnectionStatus {
     pub cli_version: Option<String>,
     pub device_code: Option<String>,
     pub verification_uri: Option<String>,
+    pub login_generation: Option<u64>,
+    pub browser_opened: bool,
 }
 
 #[derive(Clone, Debug)]
@@ -271,6 +276,10 @@ async fn connection_status(
     let verification_uri = active_login_state
         .as_ref()
         .and_then(|login| login.verification_uri.clone());
+    let login_generation = active_login_state.as_ref().map(|login| login.generation);
+    let browser_opened = active_login_state
+        .as_ref()
+        .is_some_and(|login| login.browser_opened);
     let app_for_probe = app.clone();
     let result = tauri::async_runtime::spawn_blocking(move || {
         let runtime = resolve_github_cli_runtime(&app_for_probe)?;
@@ -294,6 +303,8 @@ async fn connection_status(
                 cli_version: None,
                 device_code: None,
                 verification_uri: None,
+                login_generation: None,
+                browser_opened: false,
             });
         }
     };
@@ -311,6 +322,8 @@ async fn connection_status(
                 cli_version: Some(runtime.version),
                 device_code: None,
                 verification_uri: None,
+                login_generation: None,
+                browser_opened: false,
             })
         }
         Err(error) => {
@@ -326,6 +339,8 @@ async fn connection_status(
                 cli_version: Some(runtime.version),
                 device_code: None,
                 verification_uri: None,
+                login_generation: None,
+                browser_opened: false,
             })
         }
         Ok(None) => {
@@ -343,7 +358,13 @@ async fn connection_status(
                 }
                 .to_string(),
                 message: Some(if connecting {
-                    "Complete GitHub sign-in in your browser.".to_string()
+                    if browser_opened {
+                        "Complete GitHub sign-in in your browser.".to_string()
+                    } else if device_code.is_some() {
+                        "Review the GitHub device code to continue.".to_string()
+                    } else {
+                        "Preparing a GitHub device code.".to_string()
+                    }
                 } else {
                     "Connect GitHub CLI to publish completed Kanban work as draft pull requests."
                         .to_string()
@@ -351,6 +372,8 @@ async fn connection_status(
                 cli_version: Some(runtime.version),
                 device_code,
                 verification_uri,
+                login_generation,
+                browser_opened,
             })
         }
     }
@@ -389,6 +412,61 @@ pub(crate) async fn github_connect(
         .await
         .map_err(|error| format!("GitHub sign-in stopped unexpectedly: {error}"))??;
     connection_status(app, state).await
+}
+
+#[tauri::command]
+#[specta::specta]
+pub(crate) async fn github_continue_connection(
+    app: AppHandle,
+    state: State<'_, GithubState>,
+    generation: u64,
+    copy_code: bool,
+) -> Result<GithubConnectionStatus, String> {
+    let (device_code, verification_uri) = {
+        let login = state
+            .login
+            .lock()
+            .map_err(|_| "GitHub sign-in state is unavailable.".to_string())?;
+        let active = login
+            .as_ref()
+            .filter(|active| active.generation == generation)
+            .ok_or_else(|| "This GitHub sign-in attempt is no longer active.".to_string())?;
+        let device_code = active
+            .device_code
+            .clone()
+            .ok_or_else(|| "The GitHub device code is not ready yet.".to_string())?;
+        let verification_uri = active
+            .verification_uri
+            .clone()
+            .ok_or_else(|| "The GitHub verification address is not ready yet.".to_string())?;
+        (device_code, verification_uri)
+    };
+
+    if verification_uri != GITHUB_DEVICE_LOGIN_URL {
+        return Err("GitHub returned an unsupported verification address.".to_string());
+    }
+    if copy_code {
+        app.clipboard()
+            .write_text(device_code)
+            .map_err(|error| format!("The GitHub code could not be copied: {error}"))?;
+    }
+    ensure_login_generation(state.inner(), generation)?;
+    tauri_plugin_opener::open_url(GITHUB_DEVICE_LOGIN_URL, None::<&str>)
+        .map_err(|error| format!("GitHub sign-in could not open your browser: {error}"))?;
+
+    {
+        let mut login = state
+            .login
+            .lock()
+            .map_err(|_| "GitHub sign-in state is unavailable.".to_string())?;
+        let active = login
+            .as_mut()
+            .filter(|active| active.generation == generation)
+            .ok_or_else(|| "This GitHub sign-in attempt is no longer active.".to_string())?;
+        active.browser_opened = true;
+    }
+
+    connection_status(app, state.inner().clone()).await
 }
 
 #[tauri::command]
@@ -737,6 +815,7 @@ fn run_login(app: &AppHandle, state: &GithubState) -> Result<(), String> {
         pid,
         device_code: None,
         verification_uri: None,
+        browser_opened: false,
     });
     let stdout = child
         .stdout
@@ -747,9 +826,8 @@ fn run_login(app: &AppHandle, state: &GithubState) -> Result<(), String> {
         .take()
         .ok_or_else(|| "Could not read GitHub sign-in errors.".to_string())?;
     let stdout_reader = std::thread::spawn(move || read_limited(stdout, MAX_STDOUT_BYTES));
-    let (browser_sender, browser_receiver) = mpsc::channel();
     let state_for_device_code = state.clone();
-    let state_for_browser = state.clone();
+    let state_for_verification_uri = state.clone();
     let stderr_reader = std::thread::spawn(move || {
         read_login_stderr(
             stderr,
@@ -757,31 +835,18 @@ fn run_login(app: &AppHandle, state: &GithubState) -> Result<(), String> {
             move |device_code| {
                 update_login_prompt(&state_for_device_code, generation, Some(device_code), None)
             },
-            move || {
-                let result = update_login_prompt(
-                    &state_for_browser,
+            move |verification_uri| {
+                update_login_prompt(
+                    &state_for_verification_uri,
                     generation,
                     None,
-                    Some(GITHUB_DEVICE_LOGIN_URL.to_string()),
+                    Some(verification_uri),
                 )
-                .and_then(|_| {
-                    tauri_plugin_opener::open_url(GITHUB_DEVICE_LOGIN_URL, None::<&str>).map_err(
-                        |error| format!("GitHub sign-in could not open your browser: {error}"),
-                    )
-                });
-                let _ = browser_sender.send(result.clone());
-                result
             },
         )
     });
     let started = Instant::now();
     let status = loop {
-        if let Ok(Err(error)) = browser_receiver.try_recv() {
-            let _ = child.kill();
-            let _ = child.wait();
-            clear_login(state, generation);
-            return Err(error);
-        }
         if let Some(status) = child
             .try_wait()
             .map_err(|error| format!("Could not inspect GitHub sign-in: {error}"))?
@@ -793,6 +858,12 @@ fn run_login(app: &AppHandle, state: &GithubState) -> Result<(), String> {
             let _ = child.wait();
             clear_login(state, generation);
             return Err("GitHub sign-in timed out. Try again.".to_string());
+        }
+        if started.elapsed() >= LOGIN_PROMPT_TIMEOUT && !login_prompt_ready(state, generation) {
+            let _ = child.kill();
+            let _ = child.wait();
+            clear_login(state, generation);
+            return Err("GitHub CLI did not provide a valid device code. Try again.".to_string());
         }
         std::thread::sleep(Duration::from_millis(100));
     };
@@ -830,6 +901,8 @@ fn run_login(app: &AppHandle, state: &GithubState) -> Result<(), String> {
     if status.success() {
         Ok(())
     } else {
+        let stderr = sanitize_login_error(&stderr);
+        let stdout = sanitize_login_error(&stdout);
         Err(map_error_text(
             "GitHub sign-in did not complete",
             if stderr.is_empty() { &stdout } else { &stderr },
@@ -848,7 +921,6 @@ fn github_login_command(runtime: &GithubCliRuntime) -> Command {
             "--git-protocol",
             "https",
             "--web",
-            "--clipboard",
         ])
         .env("GH_CONFIG_DIR", &runtime.config_dir)
         .env("GH_PAGER", "cat")
@@ -860,8 +932,8 @@ fn github_login_command(runtime: &GithubCliRuntime) -> Command {
         .stderr(Stdio::piped());
     #[cfg(target_os = "macos")]
     command
-        .env("GH_BROWSER", "/usr/bin/open")
-        .env("BROWSER", "/usr/bin/open");
+        .env("GH_BROWSER", "/usr/bin/true")
+        .env("BROWSER", "/usr/bin/true");
     command
 }
 
@@ -1018,11 +1090,10 @@ fn read_login_stderr(
     reader: impl Read,
     limit: u64,
     mut receive_device_code: impl FnMut(String) -> Result<(), String>,
-    open_browser: impl FnOnce() -> Result<(), String>,
+    mut receive_verification_uri: impl FnMut(String) -> Result<(), String>,
 ) -> Result<Vec<u8>, String> {
     let mut reader = BufReader::new(reader);
     let mut bytes = Vec::new();
-    let mut open_browser = Some(open_browser);
     loop {
         let mut line = Vec::new();
         let read = reader
@@ -1037,9 +1108,7 @@ fn read_login_stderr(
         if let Some(device_code) = parse_device_code_line(&line) {
             receive_device_code(device_code)?;
         } else if is_device_login_line(&line) {
-            if let Some(open_browser) = open_browser.take() {
-                open_browser()?;
-            }
+            receive_verification_uri(GITHUB_DEVICE_LOGIN_URL.to_string())?;
         }
         bytes.extend_from_slice(&line);
     }
@@ -1049,8 +1118,11 @@ fn read_login_stderr(
 fn parse_device_code_line(line: &[u8]) -> Option<String> {
     let line = std::str::from_utf8(line).ok()?.trim();
     let code = line
-        .strip_prefix("! One-time code (")?
-        .strip_suffix(") copied to clipboard")?;
+        .strip_prefix("! First copy your one-time code: ")
+        .or_else(|| {
+            line.strip_prefix("! One-time code (")
+                .and_then(|value| value.strip_suffix(") copied to clipboard"))
+        })?;
     let bytes = code.as_bytes();
     if bytes.len() == 9
         && bytes[4] == b'-'
@@ -1070,6 +1142,19 @@ fn is_device_login_line(line: &[u8]) -> bool {
         line.trim()
             == format!("Open this URL to continue in your web browser: {GITHUB_DEVICE_LOGIN_URL}")
     })
+}
+
+fn sanitize_login_error(value: &str) -> String {
+    value
+        .lines()
+        .filter(|line| {
+            parse_device_code_line(line.as_bytes()).is_none()
+                && !is_device_login_line(line.as_bytes())
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+        .trim()
+        .to_string()
 }
 
 fn credential_helper(runtime: &GithubCliRuntime) -> Result<PathBuf, String> {
@@ -1111,6 +1196,31 @@ fn clear_login(state: &GithubState, generation: u64) {
             *login = None;
         }
     }
+}
+
+fn ensure_login_generation(state: &GithubState, generation: u64) -> Result<(), String> {
+    let login = state
+        .login
+        .lock()
+        .map_err(|_| "GitHub sign-in state is unavailable.".to_string())?;
+    if login
+        .as_ref()
+        .is_some_and(|active| active.generation == generation)
+    {
+        Ok(())
+    } else {
+        Err("This GitHub sign-in attempt is no longer active.".to_string())
+    }
+}
+
+fn login_prompt_ready(state: &GithubState, generation: u64) -> bool {
+    state.login.lock().is_ok_and(|login| {
+        login.as_ref().is_some_and(|active| {
+            active.generation == generation
+                && active.device_code.is_some()
+                && active.verification_uri.as_deref() == Some(GITHUB_DEVICE_LOGIN_URL)
+        })
+    })
 }
 
 fn write_login_pid(path: &Path, pid: u32) -> Result<(), String> {
@@ -1301,10 +1411,11 @@ impl From<GhPullRequest> for GithubPullRequest {
 mod tests {
     use super::{
         github_login_command, has_active_authentication, is_device_login_line, is_ssh_remote,
-        map_error_text, parse_device_code_line, read_login_stderr, shell_quote, GithubCliRuntime,
+        map_error_text, parse_device_code_line, read_login_stderr, sanitize_login_error,
+        shell_quote, GithubCliRuntime, GITHUB_DEVICE_LOGIN_URL,
     };
     use serde_json::json;
-    use std::{cell::Cell, ffi::OsStr, io::Cursor, path::Path, rc::Rc};
+    use std::{ffi::OsStr, io::Cursor, path::Path};
 
     #[test]
     fn configures_browser_login_for_macos() {
@@ -1316,7 +1427,8 @@ mod tests {
         let command = github_login_command(&runtime);
         let args = command.get_args().collect::<Vec<_>>();
 
-        assert!(args.windows(2).any(|args| args == ["--web", "--clipboard"]));
+        assert!(args.iter().any(|arg| *arg == "--web"));
+        assert!(!args.iter().any(|arg| *arg == "--clipboard"));
         assert_eq!(
             command
                 .get_envs()
@@ -1331,30 +1443,29 @@ mod tests {
                     .get_envs()
                     .find(|(key, _)| *key == OsStr::new(name))
                     .and_then(|(_, value)| value),
-                Some(OsStr::new("/usr/bin/open")),
+                Some(OsStr::new("/usr/bin/true")),
             );
         }
     }
 
     #[test]
-    fn opens_only_the_pinned_github_device_login_url() {
-        let opened = Rc::new(Cell::new(0));
-        let opened_for_callback = opened.clone();
+    fn captures_only_the_pinned_github_device_login_url() {
+        let mut verification_uri = None;
         let output = read_login_stderr(
             Cursor::new(
-                "! One-time code (<redacted>) copied to clipboard\n\
+                "! First copy your one-time code: ABCD-1234\n\
                  Open this URL to continue in your web browser: https://github.com/login/device\n",
             ),
             1_024,
             |_| Ok(()),
-            move || {
-                opened_for_callback.set(opened_for_callback.get() + 1);
+            |uri| {
+                verification_uri = Some(uri);
                 Ok(())
             },
         )
         .unwrap();
 
-        assert_eq!(opened.get(), 1);
+        assert_eq!(verification_uri.as_deref(), Some(GITHUB_DEVICE_LOGIN_URL));
         assert!(String::from_utf8(output)
             .unwrap()
             .contains("github.com/login/device"));
@@ -1365,6 +1476,10 @@ mod tests {
 
     #[test]
     fn extracts_only_valid_ephemeral_device_codes() {
+        assert_eq!(
+            parse_device_code_line(b"! First copy your one-time code: ABCD-1234\n"),
+            Some("ABCD-1234".to_string()),
+        );
         assert_eq!(
             parse_device_code_line(b"! One-time code (ABCD-1234) copied to clipboard\n"),
             Some("ABCD-1234".to_string()),
@@ -1377,6 +1492,18 @@ mod tests {
             parse_device_code_line(b"Open https://example.com with ABCD-1234\n"),
             None,
         );
+    }
+
+    #[test]
+    fn removes_device_prompts_from_login_errors() {
+        let error = sanitize_login_error(
+            "! First copy your one-time code: ABCD-1234\n\
+             Open this URL to continue in your web browser: https://github.com/login/device\n\
+             authentication failed",
+        );
+
+        assert_eq!(error, "authentication failed");
+        assert!(!error.contains("ABCD-1234"));
     }
 
     #[test]

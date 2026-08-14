@@ -132,7 +132,7 @@ type Props = {
   githubConnection: GithubConnectionStatus | null;
   githubConnectionPending: boolean;
   onConnectGithub: () => void;
-  onCancelGithub: () => void;
+  onShowGithubLogin: () => void;
   toolbarHost?: HTMLElement | null;
   resolvedTheme: ResolvedTheme;
 };
@@ -642,7 +642,7 @@ export function KanbanWorkspace({
   githubConnection,
   githubConnectionPending,
   onConnectGithub,
-  onCancelGithub,
+  onShowGithubLogin,
   toolbarHost,
   resolvedTheme,
 }: Props) {
@@ -1770,17 +1770,7 @@ export function KanbanWorkspace({
             </strong>
             <span>
               {githubConnectionPending
-                ? githubConnection.deviceCode
-                  ? (
-                      <>
-                        Enter code{" "}
-                        <code className="github-device-code">
-                          {githubConnection.deviceCode}
-                        </code>{" "}
-                        in GitHub. The code has also been copied to your clipboard.
-                      </>
-                    )
-                  : "Preparing a GitHub device code..."
+                ? "GitHub sign-in is in progress. Return to the sign-in window to continue."
                 : githubConnection.available
                   ? "Completed cards will use local review until GitHub is connected."
                 : githubConnection.message ??
@@ -1793,23 +1783,19 @@ export function KanbanWorkspace({
               className="kanban-icon-button"
               aria-label={
                 githubConnectionPending
-                  ? "Cancel GitHub sign-in"
+                  ? "Show GitHub sign-in"
                   : "Connect GitHub"
               }
               title={
                 githubConnectionPending
-                  ? "Cancel GitHub sign-in"
+                  ? "Show GitHub sign-in"
                   : "Connect GitHub"
               }
               onClick={
-                githubConnectionPending ? onCancelGithub : onConnectGithub
+                githubConnectionPending ? onShowGithubLogin : onConnectGithub
               }
             >
-              {githubConnectionPending ? (
-                <X size={16} aria-hidden="true" />
-              ) : (
-                <LogIn size={16} aria-hidden="true" />
-              )}
+              <LogIn size={16} aria-hidden="true" />
             </button>
           ) : null}
         </div>
