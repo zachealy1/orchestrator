@@ -297,11 +297,15 @@ export function KanbanCardTile({
             data-tone={stateTone(card.executionState)}
           >
             <span className="kanban-state-dot" aria-hidden="true" />
-            {STATE_LABELS[card.executionState]}
+            <span className="kanban-state-label">
+              {STATE_LABELS[card.executionState]}
+            </span>
           </span>
           <span className="kanban-mode-badge">
             <SubmissionModeIcon mode={submissionMode} />
-            {SUBMISSION_MODE_LABELS[submissionMode]}
+            <span className="kanban-mode-label">
+              {SUBMISSION_MODE_LABELS[submissionMode]}
+            </span>
           </span>
         </div>
         <div className="kanban-card-top-actions">

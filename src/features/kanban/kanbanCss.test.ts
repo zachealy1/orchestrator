@@ -111,4 +111,19 @@ describe("Kanban local review styles", () => {
     expect(emptyState).toContain("align-items: center");
     expect(emptyState).toContain("justify-content: center");
   });
+
+  it("wraps and truncates narrow card status content without overlap", () => {
+    const badges = rule(".kanban-card-badges");
+    const actions = rule(".kanban-card-top-actions");
+    const stateLabel = rule(".kanban-state-label,");
+    const footer = rule(".kanban-card-footer");
+
+    expect(badges).toContain("flex: 1 1 auto");
+    expect(badges).toContain("min-width: 0");
+    expect(badges).toContain("flex-wrap: wrap");
+    expect(actions).toContain("flex: 0 0 auto");
+    expect(stateLabel).toContain("overflow: hidden");
+    expect(stateLabel).toContain("text-overflow: ellipsis");
+    expect(footer).toContain("flex-wrap: wrap");
+  });
 });

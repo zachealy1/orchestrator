@@ -241,20 +241,27 @@
 .kanban-card-footer {
   display: flex;
   min-width: 0;
-  align-items: center;
+  align-items: flex-start;
   justify-content: space-between;
   gap: 7px;
 }
 
 .kanban-card-badges {
   display: flex;
+  flex: 1 1 auto;
   min-width: 0;
+  flex-wrap: wrap;
   align-items: center;
   gap: 5px;
 }
 
+.kanban-card-top-actions {
+  flex: 0 0 auto;
+}
+
 .kanban-mode-badge {
   display: inline-flex;
+  max-width: 100%;
   min-width: 0;
   align-items: center;
   gap: 4px;
@@ -266,6 +273,7 @@
 
 .kanban-state-badge {
   display: inline-flex;
+  max-width: 100%;
   min-width: 0;
   align-items: center;
   gap: 5px;
@@ -276,6 +284,14 @@
   font-size: 0.7rem;
   font-weight: 700;
   line-height: 1.2;
+  white-space: nowrap;
+}
+
+.kanban-state-label,
+.kanban-mode-label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
   white-space: nowrap;
 }
 
@@ -426,9 +442,15 @@ button.kanban-card-content {
 }
 
 .kanban-card-footer {
+  flex-wrap: wrap;
   padding-top: 1px;
   color: var(--color-text-secondary);
   font-size: 0.72rem;
+}
+
+.kanban-card-footer > :last-child {
+  flex: 0 0 auto;
+  margin-left: auto;
 }
 
 .kanban-pr-status-list {
