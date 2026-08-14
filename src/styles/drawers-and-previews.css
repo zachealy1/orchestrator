@@ -509,7 +509,7 @@ button.history-run-item.disabled {
   flex: 0 0 auto;
   gap: 0;
   place-items: center;
-  border: 1px solid var(--color-divider);
+  border: 0;
   border-radius: 7px;
   background: transparent;
   color: var(--text);
@@ -519,7 +519,6 @@ button.history-run-item.disabled {
 .file-preview-drawer .file-preview-close:hover:not(:disabled),
 .file-preview-drawer .file-preview-close:focus-visible:not(:disabled) {
   background: var(--color-surface-soft);
-  border-color: var(--color-divider);
   color: var(--text);
 }
 
