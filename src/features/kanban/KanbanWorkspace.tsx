@@ -535,7 +535,11 @@ function submissionMode(card: DomainKanbanCard) {
 function viewExecutionState(card: DomainKanbanCard): ViewKanbanCard["executionState"] {
   if (card.executionState === "waiting_user") return "waiting-for-input";
   if (card.executionState === "waiting_approval") return "waiting-for-approval";
-  if (card.executionState === "completed") return "completed-awaiting-review";
+  if (card.executionState === "completed") {
+    return card.stage === "done"
+      ? "completed"
+      : "completed-awaiting-review";
+  }
   return card.executionState;
 }
 

@@ -317,6 +317,11 @@
   color: var(--color-diff-addition);
 }
 
+.kanban-state-badge[data-tone="success"] {
+  background: rgb(var(--diff-addition-rgb) / 0.1);
+  color: var(--color-diff-addition);
+}
+
 .kanban-state-badge[data-tone="muted"] {
   background: var(--color-surface-muted);
   color: var(--color-text-secondary);

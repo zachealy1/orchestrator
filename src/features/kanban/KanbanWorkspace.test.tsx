@@ -314,6 +314,30 @@ describe("KanbanWorkspace controller", () => {
     ).not.toBeInTheDocument();
   });
 
+  it("shows completed instead of awaiting review after a card reaches Done", async () => {
+    apiMocks.loadKanbanBoard.mockResolvedValue(
+      snapshot([
+        card({
+          stage: "done",
+          executionState: "completed",
+          reviewState: "approved",
+          approvedAt: "2026-08-14T08:00:00Z",
+        }),
+      ]),
+    );
+    apiMocks.loadKanbanGitBindings.mockResolvedValue([
+      binding({ status: "merged" }),
+    ]);
+
+    renderWorkspace();
+
+    const tile = await screen.findByRole("article", {
+      name: "Controller card, Completed",
+    });
+    expect(within(tile).getByText("Completed")).toBeInTheDocument();
+    expect(within(tile).queryByText("Awaiting review")).not.toBeInTheDocument();
+  });
+
   it("renders the board controls in the provided workspace-header host", async () => {
     const toolbarHost = document.createElement("div");
     toolbarHost.dataset.testid = "kanban-toolbar-host";

@@ -18,6 +18,7 @@ export type KanbanExecutionState =
   | "stopping"
   | "stopped"
   | "interrupted"
+  | "completed"
   | "completed-awaiting-review";
 
 export type KanbanAccessMode = "ask-for-approval" | "full-access";

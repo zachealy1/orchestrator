@@ -67,6 +67,7 @@ const STATE_LABELS: Record<KanbanExecutionState, string> = {
   stopping: "Stopping",
   stopped: "Stopped",
   interrupted: "Interrupted",
+  completed: "Completed",
   "completed-awaiting-review": "Awaiting review",
 };
 
@@ -170,6 +171,7 @@ export function stateTone(state: KanbanExecutionState) {
   ) {
     return "active";
   }
+  if (state === "completed") return "success";
   if (state === "completed-awaiting-review") return "review";
   if (state === "paused" || state === "interrupted" || state === "stopped") {
     return "muted";
