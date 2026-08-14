@@ -957,6 +957,10 @@ button.kanban-card-content {
   width: min(520px, 100%);
 }
 
+.kanban-transition-dialog.is-archive {
+  width: min(720px, 100%);
+}
+
 .kanban-transition-dialog:has(.kanban-delete-header) {
   gap: 24px;
 }
@@ -989,6 +993,24 @@ button.kanban-card-content {
   min-width: 0;
   align-items: center;
   gap: 12px;
+}
+
+.kanban-archive-transition-heading {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 12px;
+}
+
+.kanban-archive-transition-heading h2 {
+  min-width: 0;
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.kanban-archive-transition-heading-icon {
+  flex: 0 0 auto;
+  color: var(--color-text-secondary);
 }
 
 .kanban-delete-heading h2 {
@@ -1512,6 +1534,33 @@ button.kanban-card-content {
   color: var(--color-primary);
 }
 
+.kanban-archive-transition-card {
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: center;
+  gap: 12px;
+  padding: 14px 4px;
+  border-width: 1px 0;
+  border-radius: 0;
+  background: transparent;
+}
+
+.kanban-archive-transition-card > svg {
+  color: var(--color-text-secondary);
+}
+
+.kanban-archive-transition-card > div {
+  display: grid;
+  min-width: 0;
+  gap: 4px;
+}
+
+.kanban-archive-transition-card strong,
+.kanban-archive-transition-card span,
+.kanban-archive-transition-card small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
 .kanban-cleanup-options {
   display: grid;
   gap: 6px;
@@ -1696,6 +1745,17 @@ button.kanban-card-content {
   min-height: 30px;
   gap: 0;
   padding: 0;
+}
+
+.kanban-transition-dialog footer button.native-plan-icon-action {
+  display: inline-grid;
+  width: 30px;
+  min-width: 30px;
+  height: 30px;
+  min-height: 30px;
+  gap: 0;
+  padding: 0;
+  border: 0;
 }
 
 /* Archived cards */

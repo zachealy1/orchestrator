@@ -3,6 +3,7 @@ import {
   Archive,
   Check,
   CircleStop,
+  FileText,
   Loader2,
   RefreshCw,
   Trash2,
@@ -153,6 +154,8 @@ export function KanbanTransitionDialog({
   const [cleanupOpen, setCleanupOpen] = useState(true);
   const copy = COPY[kind];
   const isDelete = kind === "delete";
+  const isArchive = kind === "archive";
+  const iconOnlyActions = isDelete || isArchive;
   const title = isDelete ? `Delete ${card.title}?` : copy.title;
   const description = isDelete
     ? "The card will be removed. Worktrees and branches stay on disk."
@@ -202,7 +205,9 @@ export function KanbanTransitionDialog({
     >
       <section
         ref={dialogRef}
-        className="confirmation-dialog kanban-transition-dialog"
+        className={`confirmation-dialog kanban-transition-dialog${
+          isArchive ? " is-archive" : ""
+        }`}
         role="alertdialog"
         aria-modal="true"
         aria-busy={busy}
@@ -212,9 +217,23 @@ export function KanbanTransitionDialog({
         onKeyDown={trapDialogFocus}
       >
         <header className={isDelete ? "kanban-delete-header" : undefined}>
-          <div className={isDelete ? "kanban-delete-heading" : undefined}>
+          <div
+            className={
+              isDelete
+                ? "kanban-delete-heading"
+                : isArchive
+                  ? "kanban-archive-transition-heading"
+                  : undefined
+            }
+          >
             {isDelete ? (
               <Trash2 className="kanban-delete-heading-icon" size={22} aria-hidden="true" />
+            ) : isArchive ? (
+              <Archive
+                className="kanban-archive-transition-heading-icon"
+                size={22}
+                aria-hidden="true"
+              />
             ) : (
               <span className="eyebrow">{copy.eyebrow}</span>
             )}
@@ -231,7 +250,16 @@ export function KanbanTransitionDialog({
           </button>
         </header>
         <p id="kanban-transition-description">{description}</p>
-        {!isDelete ? (
+        {isArchive ? (
+          <div className="kanban-transition-card kanban-archive-transition-card">
+            <FileText size={20} aria-hidden="true" />
+            <div>
+              <strong>{card.title}</strong>
+              <span>{card.description}</span>
+              {destinationLabel ? <small>Destination: {destinationLabel}</small> : null}
+            </div>
+          </div>
+        ) : !isDelete ? (
           <div className="kanban-transition-card">
             <strong>{card.title}</strong>
             <span>{card.description}</span>
@@ -293,22 +321,34 @@ export function KanbanTransitionDialog({
           <button
             ref={cancelRef}
             type="button"
-            className={isDelete ? "kanban-transition-icon-action" : "secondary"}
-            aria-label={isDelete ? "Cancel" : undefined}
-            title={isDelete ? "Cancel" : undefined}
+            className={
+              isArchive
+                ? "native-plan-icon-action cancel"
+                : isDelete
+                  ? "kanban-transition-icon-action"
+                  : "secondary"
+            }
+            aria-label={iconOnlyActions ? "Cancel" : undefined}
+            title={iconOnlyActions ? "Cancel" : undefined}
+            data-tooltip={isArchive ? "Cancel" : undefined}
             disabled={busy}
             onClick={onCancel}
           >
-            {isDelete ? <X size={17} aria-hidden="true" /> : "Cancel"}
+            {iconOnlyActions ? <X size={17} aria-hidden="true" /> : "Cancel"}
           </button>
           <button
             ref={confirmRef}
             type="button"
-            className={`${copy.danger ? "danger" : ""}${
-              isDelete ? " kanban-transition-icon-action" : ""
-            }`.trim() || undefined}
-            aria-label={isDelete ? copy.confirm : undefined}
-            title={isDelete ? copy.confirm : undefined}
+            className={
+              isArchive
+                ? "native-plan-icon-action implement"
+                : `${copy.danger ? "danger" : ""}${
+                    isDelete ? " kanban-transition-icon-action" : ""
+                  }`.trim() || undefined
+            }
+            aria-label={iconOnlyActions ? copy.confirm : undefined}
+            title={iconOnlyActions ? copy.confirm : undefined}
+            data-tooltip={isArchive ? copy.confirm : undefined}
             disabled={busy || confirmDisabled}
             onClick={() => void onConfirm()}
           >
@@ -317,7 +357,7 @@ export function KanbanTransitionDialog({
             ) : (
               <ConfirmIcon kind={kind} />
             )}
-            {isDelete ? null : busy ? "Working…" : copy.confirm}
+            {iconOnlyActions ? null : busy ? "Working…" : copy.confirm}
           </button>
         </footer>
       </section>

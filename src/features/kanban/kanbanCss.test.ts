@@ -89,4 +89,18 @@ describe("Kanban local review styles", () => {
     expect(errorRule).toContain("grid-template-columns: auto minmax(0, 1fr)");
     expect(errorRule).toContain("align-items: start");
   });
+
+  it("uses a flat archive summary and borderless icon-only actions", () => {
+    const summary = rule(".kanban-archive-transition-card");
+    const actions = rule(
+      ".kanban-transition-dialog footer button.native-plan-icon-action",
+    );
+
+    expect(summary).toContain("border-width: 1px 0");
+    expect(summary).toContain("border-radius: 0");
+    expect(summary).toContain("background: transparent");
+    expect(actions).toContain("width: 30px");
+    expect(actions).toContain("height: 30px");
+    expect(actions).toContain("border: 0");
+  });
 });

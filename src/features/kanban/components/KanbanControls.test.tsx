@@ -157,6 +157,50 @@ describe("Kanban controls", () => {
     expect(onConfirm).toHaveBeenCalledOnce();
   });
 
+  it("uses the archive-specific layout and borderless icon actions", async () => {
+    const user = userEvent.setup();
+    const onCancel = vi.fn();
+    const onConfirm = vi.fn();
+
+    render(
+      <KanbanTransitionDialog
+        open
+        kind="archive"
+        card={card}
+        onCancel={onCancel}
+        onConfirm={onConfirm}
+      />,
+    );
+
+    const dialog = screen.getByRole("alertdialog", {
+      name: "Archive this card?",
+    });
+    expect(dialog).toHaveClass("is-archive");
+    expect(dialog.querySelector(".eyebrow")).not.toBeInTheDocument();
+    expect(
+      dialog.querySelector(".kanban-archive-transition-heading-icon"),
+    ).toBeInTheDocument();
+
+    const cardSummary = dialog.querySelector(".kanban-archive-transition-card");
+    expect(cardSummary).toHaveTextContent("Archived workflow");
+    expect(cardSummary).toHaveTextContent("A preserved card with review artifacts");
+
+    const cancelButton = screen.getByRole("button", { name: "Cancel" });
+    const archiveButton = screen.getByRole("button", { name: "Archive card" });
+    expect(cancelButton).toHaveClass("native-plan-icon-action", "cancel");
+    expect(cancelButton).toHaveAttribute("data-tooltip", "Cancel");
+    expect(cancelButton).toHaveTextContent("");
+    expect(archiveButton).toHaveClass("native-plan-icon-action", "implement");
+    expect(archiveButton).toHaveAttribute("data-tooltip", "Archive card");
+    expect(archiveButton).toHaveTextContent("");
+    await waitFor(() => expect(archiveButton).toHaveFocus());
+
+    await user.click(cancelButton);
+    await user.click(archiveButton);
+    expect(onCancel).toHaveBeenCalledOnce();
+    expect(onConfirm).toHaveBeenCalledOnce();
+  });
+
   it("searches archived cards and exposes restore/delete actions", async () => {
     const user = userEvent.setup();
     const onRestoreCard = vi.fn();
