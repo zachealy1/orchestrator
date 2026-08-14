@@ -658,6 +658,9 @@ describe("Application runtime scenarios 3", () => {
         title: "Original title",
       });
       mocks.listWorkspaceChatsMock.mockResolvedValue([chat]);
+      mocks.renameChatMock.mockImplementationOnce(async (_chatId, title) => {
+        mocks.listWorkspaceChatsMock.mockResolvedValue([{ ...chat, title }]);
+      });
 
       const { user } = await renderApp();
       const banner = screen.getByRole("region", { name: "Selected folder" });

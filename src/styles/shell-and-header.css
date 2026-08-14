@@ -154,7 +154,7 @@ button.workspace-context-menu-item svg {
 
 .workspace-context-menu-separator {
   height: 1px;
-  margin: 5px 7px;
+  margin: 0 7px;
   background: var(--divider);
 }
 
