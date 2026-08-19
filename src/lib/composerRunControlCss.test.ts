@@ -50,15 +50,18 @@ describe("composer active-run control CSS", () => {
     const fallbackPromptTextarea = nthRule(".prompt-field textarea", 1);
     const nativePromptMirror = nthRule(".prompt-autosize-mirror", 1);
     const nativePromptTextarea = nthRule(".prompt-field textarea", 2);
+    const promptInlineHighlight = rule(".prompt-inline-highlight");
 
     expect(promptField).toContain("display: grid");
     expect(fallbackPromptMirror).toContain("visibility: hidden");
     expect(sharedPromptSizing).toContain("grid-area: 1 / 1");
+    expect(sharedPromptSizing).toContain("line-height: 1.25");
     expect(fallbackPromptTextarea).toContain("height: 100%");
     expect(fallbackPromptTextarea).toContain("overflow-y: auto");
     expect(nativePromptMirror).toContain("display: none");
     expect(nativePromptTextarea).toContain("field-sizing: content");
     expect(nativePromptTextarea).toContain("height: auto");
     expect(nativePromptTextarea).not.toContain("transition:");
+    expect(promptInlineHighlight).toContain("line-height: 1.25");
   });
 });
