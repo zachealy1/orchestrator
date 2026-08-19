@@ -11,7 +11,7 @@ use tauri::{AppHandle, Manager};
 use uuid::Uuid;
 
 use crate::{
-    git::{git_diff_is_binary, read_git_object_preview},
+    git::{git_diff_is_binary, read_git_object_preview, stage_case_only_renames},
     models::{WorkspaceGitDiff, WorkspaceGitDiffSection},
     paths::{empty_preview_text, read_workspace_file_preview_text},
 };
@@ -1581,6 +1581,7 @@ fn commit_blocking(request: KanbanGitCommitRequest) -> Result<KanbanGitActionRes
         return Err("Commit message must contain between 1 and 10,000 characters".into());
     }
     if request.stage_all {
+        stage_case_only_renames(&worktree, None)?;
         git_checked(
             &worktree,
             &["add", "--all", "--"],
@@ -2447,6 +2448,38 @@ mod tests {
         let reconciled = reconcile_blocking(binding.clone());
         assert_eq!(reconciled.binding.status, "ready");
         assert!(reconciled.has_changes);
+
+        cleanup_blocking(KanbanGitCleanupRequest {
+            binding,
+            delete_branch: true,
+            force: true,
+        })
+        .expect("cleanup");
+        remove_test_directory(&repo);
+        remove_test_directory(&cards);
+    }
+
+    #[test]
+    fn commit_handles_case_only_renames_in_card_worktrees() {
+        let repo = init_repository("case-only-rename-source");
+        let cards = temp_directory("case-only-rename-cards");
+        let result = provision(&cards, &repo, "case-only-rename-card", false);
+        let binding = result.repositories[0].clone();
+        let worktree = Path::new(&binding.worktree_path);
+        fs::rename(worktree.join("README.md"), worktree.join("readme.md"))
+            .expect("rename tracked file casing");
+
+        commit_blocking(KanbanGitCommitRequest {
+            binding: binding.clone(),
+            message: "Normalize readme casing".to_string(),
+            stage_all: true,
+        })
+        .expect("commit case-only rename");
+
+        let tracked = run(worktree, &["ls-tree", "--name-only", "HEAD"]);
+        assert!(tracked.lines().any(|path| path == "readme.md"));
+        assert!(!tracked.lines().any(|path| path == "README.md"));
+        assert!(run(worktree, &["status", "--porcelain"]).is_empty());
 
         cleanup_blocking(KanbanGitCleanupRequest {
             binding,

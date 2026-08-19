@@ -244,6 +244,10 @@ pub(crate) fn commit_workspace_repository_changes_blocking(
     let git_root = repository.root.clone();
     let pathspecs = discover_repository_pathspecs(&workspace, &repository)?;
 
+    if include_unstaged {
+        stage_case_only_renames(&git_root, Some(&pathspecs))?;
+    }
+
     let status_probe = git_status_for_pathspecs(&git_root, &pathspecs);
     if !status_probe.ok {
         return Err(output_detail(&status_probe)
@@ -273,7 +277,24 @@ pub(crate) fn commit_workspace_repository_changes_blocking(
         });
     }
 
-    let commit_probe = if include_unstaged {
+    let has_case_only_rename = staged_case_only_rename(&git_root, Some(&pathspecs))?;
+    let commit_probe = if include_unstaged && has_case_only_rename {
+        let inside_paths: HashSet<&str> =
+            staged_inside_workspace.iter().map(String::as_str).collect();
+        let staged_outside_workspace = git_staged_paths(&git_root, None)?
+            .into_iter()
+            .any(|path| !inside_paths.contains(path.as_str()));
+        if staged_outside_workspace {
+            return Err(
+                "Staged changes outside the selected workspace must be committed separately"
+                    .to_string(),
+            );
+        }
+        run_command(
+            "git",
+            &["-C", root_arg.as_ref(), "commit", "-m", trimmed_message],
+        )
+    } else if include_unstaged {
         let mut commit_args = vec![
             "-C",
             root_arg.as_ref(),
@@ -720,6 +741,166 @@ pub(crate) fn git_staged_paths_for_pathspecs(
         .filter(|path| !path.is_empty())
         .map(str::to_string)
         .collect())
+}
+
+fn actual_case_relative_path(
+    git_root: &Path,
+    tracked_path: &str,
+) -> Result<Option<String>, String> {
+    let mut current = git_root.to_path_buf();
+    let mut actual_parts = Vec::new();
+
+    for expected_part in tracked_path.split('/') {
+        if expected_part.is_empty() || matches!(expected_part, "." | "..") {
+            return Ok(None);
+        }
+
+        let entries = fs::read_dir(&current).map_err(|error| {
+            format!(
+                "Unable to inspect Git path casing in {}: {error}",
+                current.display()
+            )
+        })?;
+        let mut case_insensitive_match = None;
+        let mut ambiguous = false;
+        let mut exact_match = None;
+        for entry in entries {
+            let entry = entry.map_err(|error| {
+                format!(
+                    "Unable to inspect Git path casing in {}: {error}",
+                    current.display()
+                )
+            })?;
+            let name = entry.file_name().to_string_lossy().to_string();
+            if name == expected_part {
+                exact_match = Some(name);
+                break;
+            }
+            if name.eq_ignore_ascii_case(expected_part) {
+                if case_insensitive_match.is_some() {
+                    ambiguous = true;
+                } else {
+                    case_insensitive_match = Some(name);
+                }
+            }
+        }
+
+        let actual_part = exact_match.or_else(|| {
+            if ambiguous {
+                None
+            } else {
+                case_insensitive_match
+            }
+        });
+        let Some(actual_part) = actual_part else {
+            return Ok(None);
+        };
+        current.push(&actual_part);
+        actual_parts.push(actual_part);
+    }
+
+    let actual_path = actual_parts.join("/");
+    Ok(
+        (actual_path != tracked_path && actual_path.eq_ignore_ascii_case(tracked_path))
+            .then_some(actual_path),
+    )
+}
+
+/// Stages path-casing corrections before `git add` encounters an index alias on macOS.
+pub(crate) fn stage_case_only_renames(
+    git_root: &Path,
+    pathspecs: Option<&[String]>,
+) -> Result<(), String> {
+    let root_arg = git_root.to_string_lossy();
+    let mut list_args = vec!["-C", root_arg.as_ref(), "ls-files", "-z"];
+    if let Some(pathspecs) = pathspecs {
+        list_args.push("--");
+        list_args.extend(pathspecs.iter().map(String::as_str));
+    }
+    let tracked_probe = run_command_raw("git", &list_args);
+    if !tracked_probe.ok {
+        return Err(output_detail(&tracked_probe)
+            .unwrap_or_else(|| "Unable to inspect tracked Git paths".to_string()));
+    }
+
+    for tracked_path in tracked_probe
+        .stdout
+        .split('\0')
+        .filter(|path| !path.is_empty())
+    {
+        let Some(actual_path) = actual_case_relative_path(git_root, tracked_path)? else {
+            continue;
+        };
+        let remove_probe = run_command(
+            "git",
+            &[
+                "-C",
+                root_arg.as_ref(),
+                "update-index",
+                "--force-remove",
+                "--",
+                tracked_path,
+            ],
+        );
+        if !remove_probe.ok {
+            return Err(output_detail(&remove_probe).unwrap_or_else(|| {
+                format!("Unable to stage the case-only rename to `{actual_path}`")
+            }));
+        }
+    }
+
+    Ok(())
+}
+
+fn staged_case_only_rename(git_root: &Path, pathspecs: Option<&[String]>) -> Result<bool, String> {
+    let root_arg = git_root.to_string_lossy();
+    let mut args = vec![
+        "-C",
+        root_arg.as_ref(),
+        "diff",
+        "--cached",
+        "--name-status",
+        "-z",
+        "--find-renames",
+    ];
+    if let Some(pathspecs) = pathspecs {
+        args.push("--");
+        args.extend(pathspecs.iter().map(String::as_str));
+    }
+    let probe = run_command_raw("git", &args);
+    if !probe.ok {
+        return Err(output_detail(&probe)
+            .unwrap_or_else(|| "Unable to inspect staged Git renames".to_string()));
+    }
+
+    let records = probe
+        .stdout
+        .split('\0')
+        .filter(|record| !record.is_empty())
+        .collect::<Vec<_>>();
+    let mut index = 0;
+    while index < records.len() {
+        let status = records[index];
+        index += 1;
+        let path_count = if status.starts_with('R') || status.starts_with('C') {
+            2
+        } else {
+            1
+        };
+        if index + path_count > records.len() {
+            return Err("Git returned an incomplete staged rename".to_string());
+        }
+        if status.starts_with('R') {
+            let old_path = records[index];
+            let new_path = records[index + 1];
+            if old_path != new_path && old_path.eq_ignore_ascii_case(new_path) {
+                return Ok(true);
+            }
+        }
+        index += path_count;
+    }
+
+    Ok(false)
 }
 
 #[cfg(test)]

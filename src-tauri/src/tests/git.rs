@@ -518,6 +518,28 @@ fn commit_workspace_changes_stages_and_commits_all_changes() {
 }
 
 #[test]
+fn commit_workspace_changes_handles_case_only_renames() {
+    let workspace = git_test_directory("git-commit-case-only-rename");
+    fs::write(workspace.join("readme.md"), "documentation\n").unwrap();
+    git(&workspace, &["add", "readme.md"]);
+    git(&workspace, &["commit", "-m", "Add readme"]);
+    fs::rename(workspace.join("readme.md"), workspace.join("README.md")).unwrap();
+
+    commit_workspace_changes_blocking(
+        workspace.to_string_lossy().to_string(),
+        "Normalize README casing".to_string(),
+        Some(true),
+    )
+    .unwrap();
+
+    let tracked = git_stdout(&workspace, &["ls-tree", "--name-only", "HEAD"]);
+    assert!(tracked.lines().any(|path| path == "README.md"));
+    assert!(!tracked.lines().any(|path| path == "readme.md"));
+    assert!(git_stdout(&workspace, &["status", "--porcelain"]).is_empty());
+    remove_test_directory(workspace);
+}
+
+#[test]
 fn commit_workspace_changes_can_commit_only_staged_changes() {
     let workspace = git_test_directory("git-commit-staged-only");
     let app_file = workspace.join("app.ts");
