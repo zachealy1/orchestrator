@@ -10,7 +10,12 @@ use crate::{
 };
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
-use sqlx::{pool::PoolConnection, sqlite::SqliteConnection, Connection, Row, Sqlite};
+use sqlx::{
+    pool::PoolConnection,
+    sqlite::{SqliteConnection, SqliteRow},
+    Connection, Row, Sqlite,
+};
+use std::collections::HashMap;
 use tauri::{AppHandle, Manager};
 use uuid::Uuid;
 
@@ -121,6 +126,20 @@ pub struct KanbanBoardSnapshotDto {
     pub preferences_json: String,
     pub columns: Vec<KanbanColumnDto>,
     pub cards: Vec<KanbanCardDto>,
+}
+
+#[derive(Debug, Clone, Serialize, specta::Type)]
+#[serde(rename_all = "camelCase")]
+pub struct KanbanCardGitBindingsDto {
+    pub card_id: String,
+    pub bindings: Vec<PersistedKanbanGitBinding>,
+}
+
+#[derive(Debug, Clone, Serialize, specta::Type)]
+#[serde(rename_all = "camelCase")]
+pub struct KanbanWorkspaceBootstrapDto {
+    pub snapshot: KanbanBoardSnapshotDto,
+    pub bindings: Vec<KanbanCardGitBindingsDto>,
 }
 
 #[derive(Debug, Deserialize, Serialize, specta::Type)]
@@ -700,7 +719,15 @@ async fn load_card(
     .ok_or_else(|| "The Kanban card no longer exists.".to_string())?;
     let repositories = load_repositories(connection, card_id).await?;
     let pull_requests = crate::github::load_card_pull_requests(connection, card_id).await?;
-    Ok(KanbanCardDto {
+    Ok(card_dto_from_row(row, repositories, pull_requests))
+}
+
+fn card_dto_from_row(
+    row: SqliteRow,
+    repositories: Vec<KanbanRepositorySelectionDto>,
+    pull_requests: Vec<crate::github::KanbanPullRequestDto>,
+) -> KanbanCardDto {
+    KanbanCardDto {
         id: row.get("id"),
         workspace_id: row.get("workspace_id"),
         chat_id: row.get("chat_id"),
@@ -731,7 +758,117 @@ async fn load_card(
         updated_at: row.get("updated_at"),
         repositories,
         pull_requests,
-    })
+    }
+}
+
+async fn load_workspace_cards(
+    connection: &mut SqliteConnection,
+    workspace_id: i64,
+    include_archived: bool,
+) -> Result<Vec<KanbanCardDto>, String> {
+    let card_rows = sqlx::query(
+        "SELECT id, workspace_id, chat_id, title, description, account_id,
+            access_mode, model, reasoning_level, execution_settings_json,
+            repository_scope, stage,
+            sort_position, execution_state, review_state, review_channel, current_attempt_id,
+            state_version, archived_at, deleted_at, approved_at, last_error,
+            created_at, updated_at, inherited_context,
+            EXISTS(
+                SELECT 1 FROM kanban_attempts
+                WHERE kanban_attempts.card_id = kanban_cards.id
+                  AND kanban_attempts.turn_id IS NOT NULL
+            ) AS has_started_turn
+         FROM kanban_cards
+         WHERE workspace_id = ?1 AND deleted_at IS NULL
+           AND (?2 = 1 OR archived_at IS NULL)
+         ORDER BY stage, sort_position, created_at, id",
+    )
+    .bind(workspace_id)
+    .bind(include_archived)
+    .fetch_all(&mut *connection)
+    .await
+    .map_err(|error| format!("The Kanban cards could not be loaded: {error}"))?;
+
+    let repository_rows = sqlx::query(
+        "SELECT selections.card_id, selections.repository_path,
+                selections.relative_path, selections.label, selections.include_dirty
+         FROM kanban_card_repository_selections selections
+         JOIN kanban_cards cards ON cards.id = selections.card_id
+         WHERE cards.workspace_id = ?1 AND cards.deleted_at IS NULL
+           AND (?2 = 1 OR cards.archived_at IS NULL)
+         ORDER BY selections.card_id, selections.relative_path, selections.repository_path",
+    )
+    .bind(workspace_id)
+    .bind(include_archived)
+    .fetch_all(&mut *connection)
+    .await
+    .map_err(|error| format!("The card repositories could not be loaded: {error}"))?;
+    let mut repositories_by_card: HashMap<String, Vec<KanbanRepositorySelectionDto>> =
+        HashMap::new();
+    for row in repository_rows {
+        repositories_by_card
+            .entry(row.get("card_id"))
+            .or_default()
+            .push(KanbanRepositorySelectionDto {
+                repository_path: row.get("repository_path"),
+                relative_path: row.get("relative_path"),
+                label: row.get("label"),
+                include_dirty_changes: row.get::<i64, _>("include_dirty") != 0,
+            });
+    }
+
+    let pull_request_rows = sqlx::query(
+        "SELECT requests.card_id, requests.source_repository_path,
+                requests.relative_path, requests.owner, requests.repository,
+                requests.pull_request_number, requests.pull_request_url,
+                requests.base_branch, requests.head_branch, requests.draft,
+                requests.pull_request_state, requests.publication_status,
+                requests.last_error, requests.updated_at
+         FROM kanban_pull_requests requests
+         JOIN kanban_cards cards ON cards.id = requests.card_id
+         WHERE cards.workspace_id = ?1 AND cards.deleted_at IS NULL
+           AND (?2 = 1 OR cards.archived_at IS NULL)
+         ORDER BY requests.card_id, requests.relative_path",
+    )
+    .bind(workspace_id)
+    .bind(include_archived)
+    .fetch_all(&mut *connection)
+    .await
+    .map_err(|error| format!("Pull request state could not be loaded: {error}"))?;
+    let mut pull_requests_by_card: HashMap<String, Vec<crate::github::KanbanPullRequestDto>> =
+        HashMap::new();
+    for row in pull_request_rows {
+        pull_requests_by_card
+            .entry(row.get("card_id"))
+            .or_default()
+            .push(crate::github::KanbanPullRequestDto {
+                source_repository_path: row.get("source_repository_path"),
+                relative_path: row.get("relative_path"),
+                owner: row.get("owner"),
+                repository: row.get("repository"),
+                number: row.get("pull_request_number"),
+                url: row.get("pull_request_url"),
+                base_branch: row.get("base_branch"),
+                head_branch: row.get("head_branch"),
+                draft: row.get::<i64, _>("draft") != 0,
+                state: row.get("pull_request_state"),
+                publication_status: row.get("publication_status"),
+                error: row.get("last_error"),
+                updated_at: row.get("updated_at"),
+            });
+    }
+
+    Ok(card_rows
+        .into_iter()
+        .map(|row| {
+            let card_id: String = row.get("id");
+            card_dto_from_row(
+                row,
+                repositories_by_card.remove(&card_id).unwrap_or_default(),
+                pull_requests_by_card.remove(&card_id).unwrap_or_default(),
+            )
+        })
+        .collect())
 }
 
 #[tauri::command]
@@ -912,6 +1049,41 @@ async fn card_workspace_id(
         .ok_or_else(|| "The Kanban card no longer exists.".to_string())
 }
 
+async fn load_board_snapshot(
+    connection: &mut SqliteConnection,
+    workspace_id: i64,
+    include_archived: bool,
+) -> Result<KanbanBoardSnapshotDto, String> {
+    let board =
+        sqlx::query("SELECT revision, preferences_json FROM kanban_boards WHERE workspace_id = ?1")
+            .bind(workspace_id)
+            .fetch_one(&mut *connection)
+            .await
+            .map_err(|error| format!("The Kanban board could not be loaded: {error}"))?;
+    let column_rows = sqlx::query(
+        "SELECT column_key, position FROM kanban_columns
+         WHERE workspace_id = ?1 ORDER BY position, column_key",
+    )
+    .bind(workspace_id)
+    .fetch_all(&mut *connection)
+    .await
+    .map_err(|error| format!("The Kanban columns could not be loaded: {error}"))?;
+    let cards = load_workspace_cards(connection, workspace_id, include_archived).await?;
+    Ok(KanbanBoardSnapshotDto {
+        workspace_id,
+        revision: board.get("revision"),
+        preferences_json: board.get("preferences_json"),
+        columns: column_rows
+            .into_iter()
+            .map(|row| KanbanColumnDto {
+                key: row.get("column_key"),
+                position: row.get("position"),
+            })
+            .collect(),
+        cards,
+    })
+}
+
 #[tauri::command]
 #[specta::specta]
 pub async fn kanban_board_snapshot(
@@ -925,54 +1097,71 @@ pub async fn kanban_board_snapshot(
         .begin()
         .await
         .map_err(|error| format!("The Kanban board snapshot could not start: {error}"))?;
-    let board =
-        sqlx::query("SELECT revision, preferences_json FROM kanban_boards WHERE workspace_id = ?1")
-            .bind(workspace_id)
-            .fetch_one(&mut *transaction)
-            .await
-            .map_err(|error| format!("The Kanban board could not be loaded: {error}"))?;
-    let column_rows = sqlx::query(
-        "SELECT column_key, position FROM kanban_columns
-         WHERE workspace_id = ?1 ORDER BY position, column_key",
-    )
-    .bind(workspace_id)
-    .fetch_all(&mut *transaction)
-    .await
-    .map_err(|error| format!("The Kanban columns could not be loaded: {error}"))?;
-    let card_rows = sqlx::query(
-        "SELECT id FROM kanban_cards
-         WHERE workspace_id = ?1 AND deleted_at IS NULL
-           AND (?2 = 1 OR archived_at IS NULL)
-         ORDER BY stage, sort_position, created_at, id",
-    )
-    .bind(workspace_id)
-    .bind(include_archived.unwrap_or(false))
-    .fetch_all(&mut *transaction)
-    .await
-    .map_err(|error| format!("The Kanban cards could not be loaded: {error}"))?;
-    let mut cards = Vec::with_capacity(card_rows.len());
-    for row in card_rows {
-        let card_id: String = row.get("id");
-        cards.push(load_card(&mut transaction, &card_id).await?);
-    }
-    let snapshot = KanbanBoardSnapshotDto {
+    let snapshot = load_board_snapshot(
+        &mut transaction,
         workspace_id,
-        revision: board.get("revision"),
-        preferences_json: board.get("preferences_json"),
-        columns: column_rows
-            .into_iter()
-            .map(|row| KanbanColumnDto {
-                key: row.get("column_key"),
-                position: row.get("position"),
-            })
-            .collect(),
-        cards,
-    };
+        include_archived.unwrap_or(false),
+    )
+    .await?;
     transaction
         .commit()
         .await
         .map_err(|error| format!("The Kanban board snapshot could not finish: {error}"))?;
     Ok(snapshot)
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn kanban_workspace_bootstrap(
+    app: AppHandle,
+    workspace_id: i64,
+    include_archived: Option<bool>,
+) -> Result<KanbanWorkspaceBootstrapDto, String> {
+    let include_archived = include_archived.unwrap_or(false);
+    let mut connection = open_database(&app).await?;
+    ensure_board(&mut connection, workspace_id).await?;
+    let mut transaction = connection
+        .begin()
+        .await
+        .map_err(|error| format!("The Kanban workspace could not start loading: {error}"))?;
+    let snapshot = load_board_snapshot(&mut transaction, workspace_id, include_archived).await?;
+    let rows = sqlx::query(
+        "SELECT bindings.card_id, bindings.binding_json
+         FROM kanban_repository_bindings bindings
+         JOIN kanban_cards cards ON cards.id = bindings.card_id
+         WHERE cards.workspace_id = ?1 AND cards.deleted_at IS NULL
+           AND (?2 = 1 OR cards.archived_at IS NULL)
+           AND bindings.state != 'removed'
+         ORDER BY bindings.card_id, bindings.repository_path",
+    )
+    .bind(workspace_id)
+    .bind(include_archived)
+    .fetch_all(&mut *transaction)
+    .await
+    .map_err(|error| format!("The Kanban Git bindings could not be loaded: {error}"))?;
+    let mut bindings_by_card: HashMap<String, Vec<PersistedKanbanGitBinding>> = HashMap::new();
+    for row in rows {
+        let value: String = row.get("binding_json");
+        let binding = serde_json::from_str(&value)
+            .map_err(|_| "A persisted Kanban Git binding is invalid.".to_string())?;
+        bindings_by_card
+            .entry(row.get("card_id"))
+            .or_default()
+            .push(binding);
+    }
+    let bindings = snapshot
+        .cards
+        .iter()
+        .map(|card| KanbanCardGitBindingsDto {
+            card_id: card.id.clone(),
+            bindings: bindings_by_card.remove(&card.id).unwrap_or_default(),
+        })
+        .collect();
+    transaction
+        .commit()
+        .await
+        .map_err(|error| format!("The Kanban workspace could not finish loading: {error}"))?;
+    Ok(KanbanWorkspaceBootstrapDto { snapshot, bindings })
 }
 
 #[tauri::command]

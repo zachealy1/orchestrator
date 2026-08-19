@@ -8,6 +8,7 @@ const commandMocks = vi.hoisted(() => ({
   kanbanRejectPlan: vi.fn(),
   kanbanSaveGitBindings: vi.fn(),
   kanbanUpdateAttempt: vi.fn(),
+  kanbanWorkspaceBootstrap: vi.fn(),
 }));
 
 vi.mock("../../generated/tauri", () => ({
@@ -18,6 +19,7 @@ import {
   claimKanbanAttempt,
   cleanupKanbanGit,
   commitKanbanGit,
+  loadKanbanWorkspaceBootstrap,
   provisionKanbanGit,
   rejectKanbanPlan,
   saveKanbanGitBindings,
@@ -44,6 +46,22 @@ describe("Kanban native API", () => {
       command.mockReset();
       command.mockResolvedValue(null);
     });
+  });
+
+  it("loads active cards and persisted bindings through one bootstrap command", async () => {
+    await loadKanbanWorkspaceBootstrap(7);
+    await loadKanbanWorkspaceBootstrap(7, { includeArchived: true });
+
+    expect(commandMocks.kanbanWorkspaceBootstrap).toHaveBeenNthCalledWith(
+      1,
+      7,
+      false,
+    );
+    expect(commandMocks.kanbanWorkspaceBootstrap).toHaveBeenNthCalledWith(
+      2,
+      7,
+      true,
+    );
   });
 
   it("passes dirty-change consent per repository during provisioning", async () => {

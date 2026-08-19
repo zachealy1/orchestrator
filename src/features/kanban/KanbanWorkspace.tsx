@@ -1,6 +1,7 @@
 import {
   useCallback,
   useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -55,6 +56,7 @@ import {
   loadKanbanBoard,
   loadKanbanGitBindings,
   loadKanbanLocalReview,
+  loadKanbanWorkspaceBootstrap,
   mergeKanbanGit,
   moveKanbanCard,
   pushKanbanGit,
@@ -109,11 +111,19 @@ import {
   KanbanActionIcon,
   STATE_LABELS,
 } from "./components/KanbanCardTile";
+import {
+  readKanbanWorkspaceCache,
+  readReconciledKanbanBinding,
+  writeKanbanWorkspaceCache,
+  writeKanbanWorkspaceScroll,
+  writeReconciledKanbanBinding,
+} from "./workspaceCache";
 import "./kanban.css";
 
 export type KanbanLaunchKind = KanbanAttemptRecord["kind"];
 
 type Props = {
+  active?: boolean;
   workspace: Workspace;
   repositories: WorkspaceGitRepositoryStatus[];
   accounts: CodexAccountProfile[];
@@ -182,20 +192,12 @@ type GitDialogProps = {
   onConfirm: () => void;
 };
 
-type BindingReconcileCacheEntry = {
-  fingerprint: string;
-  binding: KanbanGitBinding;
-  checkedAt: number;
-};
-
 const DEFAULT_COLUMN_ORDER: KanbanColumnKey[] = [
   "todo",
   "in_progress",
   "in_review",
   "done",
 ];
-
-const BINDING_RECONCILE_TTL_MS = 10_000;
 
 const STAGE_TO_VIEW: Record<KanbanStage, KanbanColumnId> = {
   todo: "todo",
@@ -633,6 +635,7 @@ function inheritedConversationContext(
 }
 
 export function KanbanWorkspace({
+  active = true,
   workspace,
   repositories,
   accounts,
@@ -651,18 +654,29 @@ export function KanbanWorkspace({
   toolbarHost,
   resolvedTheme,
 }: Props) {
-  const [snapshot, setSnapshot] = useState<KanbanBoardSnapshotRecord | null>(null);
+  const initialCacheRef = useRef(readKanbanWorkspaceCache(workspace.id));
+  const [snapshot, setSnapshot] = useState<KanbanBoardSnapshotRecord | null>(
+    initialCacheRef.current?.snapshot ?? null,
+  );
   const snapshotRef = useRef<KanbanBoardSnapshotRecord | null>(null);
   const [preferences, setPreferences] = useState<StoredPreferences>(() =>
-    parsePreferences("{}"),
+    parsePreferences(initialCacheRef.current?.snapshot.preferencesJson ?? "{}"),
   );
   const preferencesRef = useRef(preferences);
   const [bindingsByCard, setBindingsByCard] = useState<
     Record<string, KanbanGitBinding[] | undefined>
-  >({});
-  const [loading, setLoading] = useState(true);
+  >(initialCacheRef.current?.bindingsByCard ?? {});
+  const bindingsByCardRef = useRef(bindingsByCard);
+  const [loading, setLoading] = useState(initialCacheRef.current === null);
+  const [archivedLoaded, setArchivedLoaded] = useState(
+    initialCacheRef.current?.includesArchived ?? false,
+  );
+  const archivedLoadedRef = useRef(archivedLoaded);
+  const [archivedLoading, setArchivedLoading] = useState(false);
+  const [bindingHydrationVersion, setBindingHydrationVersion] = useState(0);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [bindingError, setBindingError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [archivedOpen, setArchivedOpen] = useState(false);
   const [cardDialog, setCardDialog] = useState<CardDialogState | null>(null);
@@ -676,97 +690,190 @@ export function KanbanWorkspace({
   const [pullRequestChooser, setPullRequestChooser] =
     useState<PullRequestChooserState | null>(null);
   const requestSequence = useRef(0);
+  const reconcileSequence = useRef(0);
+  const boardLoadInFlightRef = useRef<Promise<KanbanBoardSnapshotRecord> | null>(
+    null,
+  );
+  const boardReloadQueuedRef = useRef(false);
+  const boardReloadNeedsArchivedRef = useRef(false);
   const preferenceTimer = useRef<number | null>(null);
   const preferenceSavePending = useRef(false);
-  const bindingReconcileCache = useRef(
-    new Map<string, BindingReconcileCacheEntry>(),
-  );
+  const workspaceViewRef = useRef<HTMLDivElement | null>(null);
+  const scrollRestorePendingRef = useRef(true);
 
   snapshotRef.current = snapshot;
   preferencesRef.current = preferences;
+  bindingsByCardRef.current = bindingsByCard;
+  archivedLoadedRef.current = archivedLoaded;
 
-  const loadBoard = useCallback(async () => {
+  const performBoardLoad = useCallback(async (includeArchived: boolean) => {
     const request = ++requestSequence.current;
-    setLoading(true);
+    if (!snapshotRef.current) setLoading(true);
+    if (includeArchived && !archivedLoadedRef.current) setArchivedLoading(true);
     try {
-      const next = await loadKanbanBoard(workspace.id, { includeArchived: true });
+      const bootstrap = await loadKanbanWorkspaceBootstrap(workspace.id, {
+        includeArchived,
+      });
+      const next = bootstrap.snapshot;
       if (request !== requestSequence.current) return next;
       const nextPreferences = preferenceSavePending.current
         ? preferencesRef.current
         : parsePreferences(next.preferencesJson);
-      const liveCards = next.cards.filter((card) => card.deletedAt === null);
-      const bindingResults: PromiseSettledResult<
-        readonly [string, KanbanGitBinding[]]
-      >[] = [];
-      for (let offset = 0; offset < liveCards.length; offset += 4) {
-        const chunk = await Promise.allSettled(
-          liveCards.slice(offset, offset + 4).map(async (card) => {
-            const storedBindings = await loadKanbanGitBindings(card.id);
-            const bindings: KanbanGitBinding[] = [];
-            for (const binding of storedBindings) {
-              const key = `${binding.sourceRepositoryPath}\u0000${binding.worktreePath}`;
-              const fingerprint = JSON.stringify(binding);
-              const cached = bindingReconcileCache.current.get(key);
-              if (
-                cached &&
-                cached.fingerprint === fingerprint &&
-                Date.now() - cached.checkedAt < BINDING_RECONCILE_TTL_MS
-              ) {
-                bindings.push(cached.binding);
-                continue;
-              }
-              const reconciled = await reconcileKanbanGit(binding);
-              bindingReconcileCache.current.set(key, {
-                fingerprint,
-                binding: reconciled.binding,
-                checkedAt: Date.now(),
-              });
-              bindings.push(reconciled.binding);
-            }
-            return [card.id, bindings] as const;
-          }),
-        );
-        bindingResults.push(...chunk);
-        if (request !== requestSequence.current) return next;
-      }
-      if (request !== requestSequence.current) return next;
-      const bindingEntries = bindingResults.map((result, index) =>
-        result.status === "fulfilled"
-          ? result.value
-          : ([liveCards[index].id, undefined] as const),
+      const nextBindings = Object.fromEntries(
+        bootstrap.bindings.map(({ cardId, bindings }) => [
+          cardId,
+          bindings.map(
+            (binding) => readReconciledKanbanBinding(binding) ?? binding,
+          ),
+        ]),
       );
-      const bindingFailureCount = bindingResults.filter(
-        (result) => result.status === "rejected",
-      ).length;
       snapshotRef.current = next;
       setSnapshot(next);
       preferencesRef.current = nextPreferences;
       setPreferences(nextPreferences);
-      setBindingsByCard(Object.fromEntries(bindingEntries));
-      setError(
-        bindingFailureCount > 0
-          ? `Git state could not be loaded for ${bindingFailureCount} card${bindingFailureCount === 1 ? "" : "s"}. Binding-sensitive actions are disabled until the board refreshes.`
-          : null,
-      );
+      bindingsByCardRef.current = nextBindings;
+      setBindingsByCard(nextBindings);
+      if (includeArchived) {
+        archivedLoadedRef.current = true;
+        setArchivedLoaded(true);
+      }
+      const cached = readKanbanWorkspaceCache(workspace.id);
+      writeKanbanWorkspaceCache(workspace.id, {
+        snapshot: next,
+        bindingsByCard: nextBindings,
+        includesArchived: includeArchived,
+        scrollTop: cached?.scrollTop ?? 0,
+      });
+      setBindingHydrationVersion((current) => current + 1);
+      setError(null);
       return next;
     } catch (loadError) {
       if (request === requestSequence.current) setError(errorMessage(loadError));
       throw loadError;
     } finally {
-      if (request === requestSequence.current) setLoading(false);
+      if (request === requestSequence.current) {
+        setLoading(false);
+        setArchivedLoading(false);
+      }
     }
+  }, [workspace.id]);
+
+  const loadBoard = useCallback(
+    async (options?: {
+      includeArchived?: boolean;
+    }): Promise<KanbanBoardSnapshotRecord> => {
+      const includeArchived =
+        options?.includeArchived ?? archivedLoadedRef.current;
+      const inFlight = boardLoadInFlightRef.current;
+      if (inFlight) {
+        boardReloadQueuedRef.current = true;
+        boardReloadNeedsArchivedRef.current ||= includeArchived;
+        await inFlight.catch(() => undefined);
+        const current = snapshotRef.current;
+        if (current) return current;
+      }
+
+      const operation = performBoardLoad(includeArchived);
+      boardLoadInFlightRef.current = operation;
+      let result: KanbanBoardSnapshotRecord;
+      try {
+        result = await operation;
+      } finally {
+        if (boardLoadInFlightRef.current === operation) {
+          boardLoadInFlightRef.current = null;
+        }
+      }
+      if (boardReloadQueuedRef.current) {
+        const queuedIncludeArchived =
+          archivedLoadedRef.current || boardReloadNeedsArchivedRef.current;
+        boardReloadQueuedRef.current = false;
+        boardReloadNeedsArchivedRef.current = false;
+        return loadBoard({ includeArchived: queuedIncludeArchived });
+      }
+      return result;
+    },
+    [performBoardLoad],
+  );
+
+  const reconcileBindings = useCallback(async () => {
+    const request = ++reconcileSequence.current;
+    const entries = Object.entries(bindingsByCardRef.current);
+    let failureCount = 0;
+    for (let offset = 0; offset < entries.length; offset += 4) {
+      const chunk = entries.slice(offset, offset + 4);
+      const results = await Promise.allSettled(
+        chunk.map(async ([cardId, storedBindings]) => {
+          const reconciledBindings: KanbanGitBinding[] = [];
+          for (const binding of storedBindings ?? []) {
+            const cached = readReconciledKanbanBinding(binding);
+            if (cached) {
+              reconciledBindings.push(cached);
+              continue;
+            }
+            const reconciled = await reconcileKanbanGit(binding);
+            writeReconciledKanbanBinding(binding, reconciled.binding);
+            reconciledBindings.push(reconciled.binding);
+          }
+          return [cardId, reconciledBindings] as const;
+        }),
+      );
+      if (request !== reconcileSequence.current) return;
+      const updates = results.flatMap((result) => {
+        if (result.status === "fulfilled") return [result.value];
+        failureCount += 1;
+        return [];
+      });
+      if (updates.length > 0) {
+        setBindingsByCard((current) => {
+          const next = { ...current, ...Object.fromEntries(updates) };
+          bindingsByCardRef.current = next;
+          const currentSnapshot = snapshotRef.current;
+          if (currentSnapshot) {
+            const cached = readKanbanWorkspaceCache(workspace.id);
+            writeKanbanWorkspaceCache(workspace.id, {
+              snapshot: currentSnapshot,
+              bindingsByCard: next,
+              includesArchived: archivedLoadedRef.current,
+              scrollTop: cached?.scrollTop ?? 0,
+            });
+          }
+          return next;
+        });
+      }
+    }
+    if (request !== reconcileSequence.current) return;
+    setBindingError(
+      failureCount > 0
+        ? `Git state could not be refreshed for ${failureCount} card${failureCount === 1 ? "" : "s"}. Stored card details remain available.`
+        : null,
+    );
   }, [workspace.id]);
 
   useEffect(() => {
     requestSequence.current += 1;
-    snapshotRef.current = null;
-    setSnapshot(null);
-    setPreferences(parsePreferences("{}"));
+    reconcileSequence.current += 1;
+    boardLoadInFlightRef.current = null;
+    boardReloadQueuedRef.current = false;
+    boardReloadNeedsArchivedRef.current = false;
+    const cached = readKanbanWorkspaceCache(workspace.id);
+    snapshotRef.current = cached?.snapshot ?? null;
+    setSnapshot(cached?.snapshot ?? null);
+    const nextPreferences = parsePreferences(
+      cached?.snapshot.preferencesJson ?? "{}",
+    );
+    preferencesRef.current = nextPreferences;
+    setPreferences(nextPreferences);
     preferenceSavePending.current = false;
-    bindingReconcileCache.current.clear();
-    setBindingsByCard({});
-    setLoading(true);
+    const nextBindings = cached?.bindingsByCard ?? {};
+    bindingsByCardRef.current = nextBindings;
+    setBindingsByCard(nextBindings);
+    const includesArchived = cached?.includesArchived ?? false;
+    archivedLoadedRef.current = includesArchived;
+    setArchivedLoaded(includesArchived);
+    setLoading(cached === null);
+    setArchivedLoading(false);
     setError(null);
+    setBindingError(null);
     setNotice(null);
     setArchivedOpen(false);
     setCardDialog(null);
@@ -781,13 +888,27 @@ export function KanbanWorkspace({
   }, [loadBoard, refreshToken]);
 
   useEffect(() => {
-    let cancelled = false;
-    const hasPendingPublication = snapshot?.cards.some((card) =>
-      card.pullRequests?.some((pullRequest) =>
-        pullRequest.publicationStatus === "queued" ||
-        pullRequest.publicationStatus === "publishing",
+    if (!active || bindingHydrationVersion === 0) return;
+    void reconcileBindings();
+    return () => {
+      reconcileSequence.current += 1;
+    };
+  }, [active, bindingHydrationVersion, reconcileBindings]);
+
+  const boardReady = snapshot !== null;
+  const hasPendingPublication = Boolean(
+    snapshot?.cards.some((card) =>
+      card.pullRequests?.some(
+        (pullRequest) =>
+          pullRequest.publicationStatus === "queued" ||
+          pullRequest.publicationStatus === "publishing",
       ),
-    );
+    ),
+  );
+
+  useEffect(() => {
+    if (!active || !boardReady) return;
+    let cancelled = false;
     async function sync() {
       try {
         const updated = await syncKanbanPullRequests(workspace.id);
@@ -804,10 +925,53 @@ export function KanbanWorkspace({
       cancelled = true;
       window.clearInterval(interval);
     };
-  }, [loadBoard, snapshot?.cards, workspace.id]);
+  }, [active, boardReady, hasPendingPublication, loadBoard, workspace.id]);
+
+  useEffect(() => {
+    if (!active || !archivedOpen || archivedLoadedRef.current) return;
+    void loadBoard({ includeArchived: true }).catch(() => undefined);
+  }, [active, archivedOpen, loadBoard]);
+
+  useEffect(() => {
+    if (active) return;
+    const scrollElement = workspaceViewRef.current?.querySelector<HTMLElement>(
+      ".kanban-board-groups, .kanban-board",
+    );
+    if (scrollElement) {
+      writeKanbanWorkspaceScroll(workspace.id, scrollElement.scrollTop);
+    }
+    setCardDialog(null);
+    setTransition(null);
+    setGitDialog(null);
+    setPullRequestChooser(null);
+    setLocalReview(null);
+  }, [active, workspace.id]);
+
+  useLayoutEffect(() => {
+    if (!active) {
+      scrollRestorePendingRef.current = true;
+      return;
+    }
+    if (!snapshot || !scrollRestorePendingRef.current) return;
+    scrollRestorePendingRef.current = false;
+    const cached = readKanbanWorkspaceCache(workspace.id);
+    if (!cached?.scrollTop) return;
+    const scrollElement = workspaceViewRef.current?.querySelector<HTMLElement>(
+      ".kanban-board-groups, .kanban-board",
+    );
+    if (scrollElement) scrollElement.scrollTop = cached.scrollTop;
+  }, [active, snapshot, workspace.id]);
 
   useEffect(
     () => () => {
+      requestSequence.current += 1;
+      reconcileSequence.current += 1;
+      const scrollElement = workspaceViewRef.current?.querySelector<HTMLElement>(
+        ".kanban-board-groups, .kanban-board",
+      );
+      if (scrollElement) {
+        writeKanbanWorkspaceScroll(workspace.id, scrollElement.scrollTop);
+      }
       if (preferenceTimer.current !== null) {
         window.clearTimeout(preferenceTimer.current);
         preferenceTimer.current = null;
@@ -1109,6 +1273,19 @@ export function KanbanWorkspace({
     preferenceSavePending.current = true;
     preferencesRef.current = next;
     setPreferences(next);
+    const currentSnapshot = snapshotRef.current;
+    if (currentSnapshot) {
+      const cached = readKanbanWorkspaceCache(workspace.id);
+      writeKanbanWorkspaceCache(workspace.id, {
+        snapshot: {
+          ...currentSnapshot,
+          preferencesJson: JSON.stringify(next),
+        },
+        bindingsByCard: bindingsByCardRef.current,
+        includesArchived: archivedLoadedRef.current,
+        scrollTop: cached?.scrollTop ?? 0,
+      });
+    }
     if (preferenceTimer.current !== null) {
       window.clearTimeout(preferenceTimer.current);
     }
@@ -1757,12 +1934,23 @@ export function KanbanWorkspace({
       onGroupByChange={(groupBy) =>
         schedulePreferenceSave({ ...preferencesRef.current, groupBy })
       }
-      onToggleArchived={() => setArchivedOpen((current) => !current)}
+      onToggleArchived={() =>
+        setArchivedOpen((current) => {
+          const next = !current;
+          if (next && !archivedLoadedRef.current) setArchivedLoading(true);
+          return next;
+        })
+      }
     />
   );
 
   return (
-    <div className="kanban-workspace-view" aria-busy={busy}>
+    <div
+      ref={workspaceViewRef}
+      className="kanban-workspace-view"
+      aria-busy={busy}
+      data-active={active ? "true" : "false"}
+    >
       {githubConnection && !githubConnection.connected ? (
         <div
           className="kanban-workspace-alert github-warning"
@@ -1808,10 +1996,10 @@ export function KanbanWorkspace({
           ) : null}
         </div>
       ) : null}
-      {error ? (
+      {error ?? bindingError ? (
         <div className="kanban-workspace-alert error" role="alert">
           <AlertCircle size={15} aria-hidden="true" />
-          <span>{error}</span>
+          <span>{error ?? bindingError}</span>
         </div>
       ) : null}
       {notice ? (
@@ -1820,12 +2008,19 @@ export function KanbanWorkspace({
           <span>{notice}</span>
         </div>
       ) : null}
-      {toolbarHost === undefined
-        ? toolbar
-        : toolbarHost
-          ? createPortal(toolbar, toolbarHost)
-          : null}
-      {archivedOpen ? (
+      {active
+        ? toolbarHost === undefined
+          ? toolbar
+          : toolbarHost
+            ? createPortal(toolbar, toolbarHost)
+            : null
+        : null}
+      {archivedOpen && archivedLoading ? (
+        <section className="kanban-loading" role="status" aria-live="polite">
+          <Loader2 className="spin" size={18} aria-hidden="true" />
+          <p>Loading archived cards…</p>
+        </section>
+      ) : archivedOpen ? (
         <KanbanArchivedView
           cards={archivedCards}
           disabled={busy}

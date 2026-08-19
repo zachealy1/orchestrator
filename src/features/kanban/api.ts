@@ -96,6 +96,16 @@ export type KanbanBoardSnapshotRecord = {
   cards: KanbanCardRecord[];
 };
 
+export type KanbanCardGitBindingsRecord = {
+  cardId: string;
+  bindings: KanbanGitBinding[];
+};
+
+export type KanbanWorkspaceBootstrapRecord = {
+  snapshot: KanbanBoardSnapshotRecord;
+  bindings: KanbanCardGitBindingsRecord[];
+};
+
 export type KanbanAttemptRecord = {
   id: string;
   cardId: string;
@@ -262,6 +272,16 @@ export function loadKanbanBoard(
     workspaceId,
     options.includeArchived ?? false,
   ) as Promise<KanbanBoardSnapshotRecord>;
+}
+
+export function loadKanbanWorkspaceBootstrap(
+  workspaceId: number,
+  options: { includeArchived?: boolean } = {},
+) {
+  return commands.kanbanWorkspaceBootstrap(
+    workspaceId,
+    options.includeArchived ?? false,
+  ) as Promise<KanbanWorkspaceBootstrapRecord>;
 }
 
 export function getKanbanCardForChat(chatId: number) {

@@ -1,4 +1,4 @@
-import { screen, waitFor, within } from "@testing-library/react";
+import { act, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { Workspace } from "../workspaces/types";
@@ -10,6 +10,7 @@ import type {
   KanbanGitCleanupResult,
 } from "./api";
 import { KanbanWorkspace } from "./KanbanWorkspace";
+import { clearKanbanWorkspaceCaches } from "./workspaceCache";
 import { renderWithAppServices as render } from "../../test/renderWithAppServices";
 
 const apiMocks = vi.hoisted(() => ({
@@ -23,6 +24,7 @@ const apiMocks = vi.hoisted(() => ({
   loadKanbanBoard: vi.fn(),
   loadKanbanGitBindings: vi.fn(),
   loadKanbanLocalReview: vi.fn(),
+  loadKanbanWorkspaceBootstrap: vi.fn(),
   readKanbanGitFileDiff: vi.fn(),
   mergeKanbanGit: vi.fn(),
   moveKanbanCard: vi.fn(),
@@ -162,7 +164,7 @@ function renderWorkspace(
     onShowGithubLogin: vi.fn(),
   };
 
-  render(
+  const view = render(
     <KanbanWorkspace
       workspace={workspace}
       repositories={[]}
@@ -178,7 +180,7 @@ function renderWorkspace(
     />,
   );
 
-  return props;
+  return { ...props, ...view };
 }
 
 async function confirmDeleteWithWorktreeCleanup(
@@ -210,6 +212,7 @@ async function confirmDeleteWithWorktreeCleanup(
 
 beforeEach(() => {
   vi.resetAllMocks();
+  clearKanbanWorkspaceCaches();
   githubMocks.syncKanbanPullRequests.mockResolvedValue(0);
   githubMocks.publishKanbanCard.mockResolvedValue({
     cardId: "card-1",
@@ -224,6 +227,20 @@ beforeEach(() => {
 
   apiMocks.loadKanbanBoard.mockResolvedValue(initialSnapshot);
   apiMocks.loadKanbanGitBindings.mockResolvedValue([initialBinding]);
+  apiMocks.loadKanbanWorkspaceBootstrap.mockImplementation(
+    async (workspaceId: number, options?: { includeArchived?: boolean }) => {
+      const board = await apiMocks.loadKanbanBoard(workspaceId, options);
+      return {
+        snapshot: board,
+        bindings: await Promise.all(
+          board.cards.map(async (boardCard: KanbanCardRecord) => ({
+            cardId: boardCard.id,
+            bindings: await apiMocks.loadKanbanGitBindings(boardCard.id),
+          })),
+        ),
+      };
+    },
+  );
   apiMocks.reconcileKanbanGit.mockImplementation(
     async (gitBinding: KanbanGitBinding) => ({
       binding: gitBinding,
@@ -244,6 +261,139 @@ beforeEach(() => {
 });
 
 describe("KanbanWorkspace controller", () => {
+  it("renders persisted cards before live Git reconciliation completes", async () => {
+    let finishReconciliation!: (value: unknown) => void;
+    apiMocks.reconcileKanbanGit.mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          finishReconciliation = resolve;
+        }),
+    );
+
+    renderWorkspace();
+
+    expect(
+      await screen.findByRole("article", { name: /Controller card/ }),
+    ).toBeInTheDocument();
+    await waitFor(() => expect(apiMocks.reconcileKanbanGit).toHaveBeenCalled());
+    expect(screen.queryByText("Loading Kanban board…")).not.toBeInTheDocument();
+
+    await act(async () => {
+      finishReconciliation({
+        binding: binding(),
+        sourceAvailable: true,
+        worktreeAvailable: true,
+        branchAvailable: true,
+        branchMatches: true,
+        baseBranchHead: "base-commit",
+        headCommit: "base-commit",
+        targetMoved: false,
+        hasChanges: false,
+        hasConflicts: false,
+      });
+      await Promise.resolve();
+    });
+  });
+
+  it("paints a cached board immediately while remount revalidation is pending", async () => {
+    const firstView = renderWorkspace();
+    await screen.findByRole("article", { name: /Controller card/ });
+    firstView.unmount();
+
+    let finishBootstrap!: (value: unknown) => void;
+    apiMocks.loadKanbanWorkspaceBootstrap.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          finishBootstrap = resolve;
+        }),
+    );
+    renderWorkspace();
+
+    expect(
+      screen.getByRole("article", { name: /Controller card/ }),
+    ).toBeInTheDocument();
+    expect(screen.queryByText("Loading Kanban board…")).not.toBeInTheDocument();
+
+    await act(async () => {
+      finishBootstrap({
+        snapshot: snapshot([card()]),
+        bindings: [{ cardId: "card-1", bindings: [binding()] }],
+      });
+      await Promise.resolve();
+    });
+  });
+
+  it("suspends polling, reconciliation, and toolbar portals while inactive", async () => {
+    const toolbarHost = document.createElement("div");
+    document.body.append(toolbarHost);
+    const props = {
+      active: false,
+      workspace,
+      repositories: [],
+      accounts: [],
+      models: [],
+      refreshToken: 0,
+      listChatTranscript: transcriptMocks.listLocalChatTranscript,
+      onLaunch: vi.fn().mockResolvedValue(undefined),
+      onPause: vi.fn().mockResolvedValue(undefined),
+      onStop: vi.fn().mockResolvedValue(undefined),
+      onOpenConversation: vi.fn().mockResolvedValue(undefined),
+      githubConnection: {
+        available: true,
+        connected: true,
+        login: "octocat",
+        displayName: "Octocat",
+        avatarUrl: null,
+        status: "connected",
+        message: null,
+        cliVersion: "2.96.0",
+        deviceCode: null,
+        verificationUri: null,
+        loginGeneration: null,
+        browserOpened: false,
+      } satisfies GithubConnectionStatus,
+      githubConnectionPending: false,
+      onConnectGithub: vi.fn(),
+      onShowGithubLogin: vi.fn(),
+      toolbarHost,
+      resolvedTheme: "dark" as const,
+    };
+    const view = render(<KanbanWorkspace {...props} />);
+
+    await waitFor(() =>
+      expect(apiMocks.loadKanbanWorkspaceBootstrap).toHaveBeenCalledTimes(1),
+    );
+    expect(githubMocks.syncKanbanPullRequests).not.toHaveBeenCalled();
+    expect(apiMocks.reconcileKanbanGit).not.toHaveBeenCalled();
+    expect(toolbarHost).toBeEmptyDOMElement();
+
+    view.rerender(<KanbanWorkspace {...props} active />);
+    expect(
+      await screen.findByRole("toolbar", { name: "Kanban controls" }),
+    ).toBeInTheDocument();
+    await waitFor(() => expect(apiMocks.reconcileKanbanGit).toHaveBeenCalled());
+    expect(githubMocks.syncKanbanPullRequests).toHaveBeenCalledTimes(1);
+
+    toolbarHost.remove();
+  });
+
+  it("loads archived cards only when the archived board is opened", async () => {
+    const user = userEvent.setup();
+    renderWorkspace();
+
+    await screen.findByRole("article", { name: /Controller card/ });
+    expect(apiMocks.loadKanbanWorkspaceBootstrap).toHaveBeenCalledWith(1, {
+      includeArchived: false,
+    });
+
+    await user.click(screen.getByRole("button", { name: "Archived cards" }));
+    await waitFor(() =>
+      expect(apiMocks.loadKanbanWorkspaceBootstrap).toHaveBeenCalledWith(1, {
+        includeArchived: true,
+      }),
+    );
+  });
+
   it("warns disconnected users and starts GitHub connection from Kanban", async () => {
     const user = userEvent.setup();
     const callbacks = renderWorkspace(undefined, {

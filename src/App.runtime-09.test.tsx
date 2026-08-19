@@ -26,6 +26,27 @@ describe("Application runtime scenarios 9", () => {
     prepareDefaults();
   });
 
+  it("retains the mounted Kanban surface while switching through Chat", async () => {
+    const { user } = await renderApp();
+    await user.click(await screen.findByRole("radio", { name: "Kanban" }));
+    const mountedBoard = await screen.findByRole("region", {
+      name: "Kanban run-control test harness",
+    });
+
+    await user.click(screen.getByRole("radio", { name: "Chat" }));
+    expect(document.body.contains(mountedBoard)).toBe(true);
+    expect(mountedBoard.closest(".kanban-workspace-mount")).toHaveClass(
+      "is-suspended",
+    );
+
+    await user.click(screen.getByRole("radio", { name: "Kanban" }));
+    expect(
+      await screen.findByRole("region", {
+        name: "Kanban run-control test harness",
+      }),
+    ).toBe(mountedBoard);
+  });
+
   it("keeps a Kanban run active when its pause interrupt is rejected", async () => {
     prepareKanbanRun();
     mocks.codexRpcMock.mockImplementation(

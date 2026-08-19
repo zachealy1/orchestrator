@@ -974,6 +974,8 @@ function App() {
     useState(false);
   const [workspaceSurfaceMode, setWorkspaceSurfaceMode] =
     useState<WorkspaceSurfaceMode>(readWorkspaceSurfaceMode);
+  const [kanbanMountedWorkspaceId, setKanbanMountedWorkspaceId] =
+    useState<number | null>(null);
   const [kanbanToolbarHost, setKanbanToolbarHost] =
     useState<HTMLDivElement | null>(null);
   const [kanbanRefreshToken, setKanbanRefreshToken] = useState(0);
@@ -1415,6 +1417,9 @@ function App() {
   const changeWorkspaceSurfaceMode = useStableEvent(
     (nextMode: WorkspaceSurfaceMode) => {
       replaceComposerPrompt(promptRef.current);
+      if (nextMode === "kanban") {
+        setKanbanMountedWorkspaceId(selectedWorkspaceRef.current?.id ?? null);
+      }
       setWorkspaceSurfaceMode(nextMode);
     },
   );
@@ -2074,6 +2079,23 @@ function App() {
       closeWorkspaceFilePreview();
     }
   }, [closeHistoryDrawer, closeWorkspaceFilePreview, workspaceSurfaceMode]);
+  useEffect(() => {
+    if (!selectedWorkspace) {
+      setKanbanMountedWorkspaceId(null);
+      return;
+    }
+    if (workspaceSurfaceMode === "kanban") {
+      setKanbanMountedWorkspaceId(selectedWorkspace.id);
+      return;
+    }
+    const workspaceId = selectedWorkspace.id;
+    const timer = window.setTimeout(() => {
+      if (selectedWorkspaceRef.current?.id === workspaceId) {
+        setKanbanMountedWorkspaceId(workspaceId);
+      }
+    }, 120);
+    return () => window.clearTimeout(timer);
+  }, [selectedWorkspace?.id, workspaceSurfaceMode]);
   const selectedGitSummary = useMemo(
     () => summarizeWorkspaceGitStatus(selectedGitStatusState?.snapshot ?? null),
     [selectedGitStatusState?.snapshot],
@@ -17971,9 +17993,18 @@ function App() {
               onStopBrowser={() => void stopSelectedBrowserSession()}
               windowDragRegionsEnabled={macOsWindowDragRegionsEnabled}
             />
-            {selectedWorkspace && workspaceSurfaceMode === "kanban" ? (
-              <div className="kanban-workspace-mount">
+            {selectedWorkspace &&
+            (workspaceSurfaceMode === "kanban" ||
+              kanbanMountedWorkspaceId === selectedWorkspace.id) ? (
+              <div
+                className={`kanban-workspace-mount${
+                  workspaceSurfaceMode === "kanban" ? "" : " is-suspended"
+                }`}
+                aria-hidden={workspaceSurfaceMode !== "kanban"}
+                inert={workspaceSurfaceMode !== "kanban" || undefined}
+              >
                 <KanbanWorkspace
+                  active={workspaceSurfaceMode === "kanban"}
                   resolvedTheme={resolvedTheme}
                   key={selectedWorkspace.id}
                   workspace={selectedWorkspace}
@@ -17993,92 +18024,94 @@ function App() {
                   onShowGithubLogin={() => setGithubLoginDialogOpen(true)}
                   toolbarHost={kanbanToolbarHost}
                 />
-                <KanbanComposerOverlay>
-                  <TaskComposer
-                    model={{
-                      disabled: !canRun || kanbanCardCreatePending,
-                      runActive: false,
-                      prompt,
-                      promptRevision,
-                      submitLabel: "Create Kanban card",
-                      accounts: signedInAccounts,
-                      sharedCodexProfileAvailable: defaultProfileAuthenticated,
-                      selectedAccountId: selectedComposerAccountId,
-                      accountPlaceholder: selectedComposerAccountPlaceholder,
-                      accountSelectionDisabled: kanbanCardCreatePending,
-                      modelSelectionDisabled: kanbanCardCreatePending,
-                      models,
-                      modelLoadError,
-                      selectedModelId,
-                      selectedReasoningEffort,
-                      goalMode,
-                      planMode,
-                      goalProgress: null,
-                      planProgress: null,
-                      subagentConversationKey: null,
-                      queueItems: [],
-                      queueActionPendingItemId: null,
-                      queueEditActive: false,
-                      queueEditSaving: false,
-                      queueEditError: null,
-                      accessMode,
-                      contextFiles,
-                      selectedSkills,
-                      mentionResults,
-                      mentionSearchStatus,
-                      mentionSearchError,
-                      slashCommandResults,
-                      slashCommandSearchStatus,
-                      slashCommandSearchError,
-                      contextDropActive: taskContextDropActive,
-                    }}
-                    actions={{
-                      onAccountChange: selectComposerAccount,
-                      onPromptChange: changeComposerPrompt,
-                      onModelChange: setSelectedModelId,
-                      onReasoningEffortChange: setSelectedReasoningEffort,
-                      onGoalModeChange: handleGoalModeChange,
-                      onPlanModeChange: handlePlanModeChange,
-                      onPauseGoal: () => undefined,
-                      onResumeGoal: () => undefined,
-                      onEditGoal: () => undefined,
-                      onStopGoal: () => undefined,
-                      onQueueEdit: () => undefined,
-                      onQueueRemove: () => undefined,
-                      onQueueRetry: () => undefined,
-                      onQueueAutoSendChange: () => undefined,
-                      onQueueSendNow: () => undefined,
-                      onQueueReorder: () => undefined,
-                      onInspectSubagent: () => undefined,
-                      onQueueEditCancel: () => undefined,
-                      onDispatchQueued: () => undefined,
-                      onAccessModeChange: handleAccessModeChange,
-                      onAddFiles: chooseComposerContextFiles,
-                      onMentionSearch: searchComposerMentionFiles,
-                      onMentionFileSelect: selectComposerMentionFile,
-                      onMentionClose: closeComposerMentionSearch,
-                      onSlashCommandSearch: searchComposerSlashCommands,
-                      onSlashCommandSelect: selectComposerSlashCommand,
-                      onSlashCommandClose: closeComposerSlashSearch,
-                      onContextFilesDrop: dropComposerContextFiles,
-                      onContextFilesDropError: setStatusMessage,
-                      onDropSurfaceElementChange:
-                        handleTaskComposerDropSurfaceElementChange,
-                      onPromptElementChange:
-                        handleTaskComposerPromptElementChange,
-                      hasContextFileDropFallback:
-                        hasComposerContextFileDropFallback,
-                      getContextFileDropFallback:
-                        getComposerContextFileDropFallback,
-                      onContextFileDropHandled:
-                        completeComposerContextFileDrop,
-                      onRemoveFile: removeComposerContextFile,
-                      onRemoveSkill: removeComposerSkill,
-                      onRun: runKanbanComposerPrompt,
-                      onStop: () => undefined,
-                    }}
-                  />
-                </KanbanComposerOverlay>
+                {workspaceSurfaceMode === "kanban" ? (
+                  <KanbanComposerOverlay>
+                    <TaskComposer
+                      model={{
+                        disabled: !canRun || kanbanCardCreatePending,
+                        runActive: false,
+                        prompt,
+                        promptRevision,
+                        submitLabel: "Create Kanban card",
+                        accounts: signedInAccounts,
+                        sharedCodexProfileAvailable: defaultProfileAuthenticated,
+                        selectedAccountId: selectedComposerAccountId,
+                        accountPlaceholder: selectedComposerAccountPlaceholder,
+                        accountSelectionDisabled: kanbanCardCreatePending,
+                        modelSelectionDisabled: kanbanCardCreatePending,
+                        models,
+                        modelLoadError,
+                        selectedModelId,
+                        selectedReasoningEffort,
+                        goalMode,
+                        planMode,
+                        goalProgress: null,
+                        planProgress: null,
+                        subagentConversationKey: null,
+                        queueItems: [],
+                        queueActionPendingItemId: null,
+                        queueEditActive: false,
+                        queueEditSaving: false,
+                        queueEditError: null,
+                        accessMode,
+                        contextFiles,
+                        selectedSkills,
+                        mentionResults,
+                        mentionSearchStatus,
+                        mentionSearchError,
+                        slashCommandResults,
+                        slashCommandSearchStatus,
+                        slashCommandSearchError,
+                        contextDropActive: taskContextDropActive,
+                      }}
+                      actions={{
+                        onAccountChange: selectComposerAccount,
+                        onPromptChange: changeComposerPrompt,
+                        onModelChange: setSelectedModelId,
+                        onReasoningEffortChange: setSelectedReasoningEffort,
+                        onGoalModeChange: handleGoalModeChange,
+                        onPlanModeChange: handlePlanModeChange,
+                        onPauseGoal: () => undefined,
+                        onResumeGoal: () => undefined,
+                        onEditGoal: () => undefined,
+                        onStopGoal: () => undefined,
+                        onQueueEdit: () => undefined,
+                        onQueueRemove: () => undefined,
+                        onQueueRetry: () => undefined,
+                        onQueueAutoSendChange: () => undefined,
+                        onQueueSendNow: () => undefined,
+                        onQueueReorder: () => undefined,
+                        onInspectSubagent: () => undefined,
+                        onQueueEditCancel: () => undefined,
+                        onDispatchQueued: () => undefined,
+                        onAccessModeChange: handleAccessModeChange,
+                        onAddFiles: chooseComposerContextFiles,
+                        onMentionSearch: searchComposerMentionFiles,
+                        onMentionFileSelect: selectComposerMentionFile,
+                        onMentionClose: closeComposerMentionSearch,
+                        onSlashCommandSearch: searchComposerSlashCommands,
+                        onSlashCommandSelect: selectComposerSlashCommand,
+                        onSlashCommandClose: closeComposerSlashSearch,
+                        onContextFilesDrop: dropComposerContextFiles,
+                        onContextFilesDropError: setStatusMessage,
+                        onDropSurfaceElementChange:
+                          handleTaskComposerDropSurfaceElementChange,
+                        onPromptElementChange:
+                          handleTaskComposerPromptElementChange,
+                        hasContextFileDropFallback:
+                          hasComposerContextFileDropFallback,
+                        getContextFileDropFallback:
+                          getComposerContextFileDropFallback,
+                        onContextFileDropHandled:
+                          completeComposerContextFileDrop,
+                        onRemoveFile: removeComposerContextFile,
+                        onRemoveSkill: removeComposerSkill,
+                        onRun: runKanbanComposerPrompt,
+                        onStop: () => undefined,
+                      }}
+                    />
+                  </KanbanComposerOverlay>
+                ) : null}
               </div>
             ) : null}
             <div

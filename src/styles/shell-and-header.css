@@ -1176,6 +1176,10 @@ button.account-switcher-item:hover:not(:disabled) {
   overflow: hidden;
 }
 
+.kanban-workspace-mount.is-suspended {
+  display: none;
+}
+
 .kanban-composer-shell {
   position: absolute;
   right: 0;

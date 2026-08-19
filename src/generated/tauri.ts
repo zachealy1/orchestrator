@@ -71,6 +71,7 @@ export const commands = {
 	savePreflightReportTransaction: (workspaceId: number, taskId: number | null, report: PreflightReport) => __TAURI_INVOKE<null>("save_preflight_report_transaction", { workspaceId, taskId, report }),
 	upsertExternalCodexChatsTransaction: (chats: ExternalCodexChatUpsert[]) => __TAURI_INVOKE<null>("upsert_external_codex_chats_transaction", { chats }),
 	kanbanBoardSnapshot: (workspaceId: number, includeArchived: boolean | null) => __TAURI_INVOKE<KanbanBoardSnapshotDto>("kanban_board_snapshot", { workspaceId, includeArchived }),
+	kanbanWorkspaceBootstrap: (workspaceId: number, includeArchived: boolean | null) => __TAURI_INVOKE<KanbanWorkspaceBootstrapDto>("kanban_workspace_bootstrap", { workspaceId, includeArchived }),
 	kanbanCardForChat: (chatId: number) => __TAURI_INVOKE<{
 	id: string,
 	workspaceId: number,
@@ -544,6 +545,11 @@ export type KanbanCardDto = {
 	pullRequests: KanbanPullRequestDto[],
 };
 
+export type KanbanCardGitBindingsDto = {
+	cardId: string,
+	bindings: PersistedKanbanGitBinding[],
+};
+
 export type KanbanColumnDto = {
 	key: string,
 	position: number,
@@ -746,6 +752,11 @@ export type KanbanRepositorySelectionInput = {
 	relativePath?: string,
 	label?: string,
 	includeDirtyChanges?: boolean,
+};
+
+export type KanbanWorkspaceBootstrapDto = {
+	snapshot: KanbanBoardSnapshotDto,
+	bindings: KanbanCardGitBindingsDto[],
 };
 
 export type LocalWebPreviewProbeResult = {
