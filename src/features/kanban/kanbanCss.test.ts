@@ -122,6 +122,7 @@ describe("Kanban local review styles", () => {
   });
 
   it("wraps and truncates narrow card status content without overlap", () => {
+    const topline = rule(".kanban-card-topline");
     const badges = rule(".kanban-card-badges");
     const actions = rule(".kanban-card-top-actions");
     const stateLabel = rule(".kanban-state-label,");
@@ -130,6 +131,7 @@ describe("Kanban local review styles", () => {
     const branchText = rule(".kanban-branch-text");
     const changedFiles = rule(".kanban-changed-file-count");
 
+    expect(topline).toContain("align-items: center");
     expect(badges).toContain("flex: 1 1 auto");
     expect(badges).toContain("min-width: 0");
     expect(badges).toContain("flex-wrap: wrap");
@@ -147,8 +149,10 @@ describe("Kanban local review styles", () => {
     expect(css).not.toContain(".kanban-card-footer > :last-child");
   });
 
-  it("keeps ticket content vertically compact", () => {
+  it("keeps ticket content compact with a uniform vertical rhythm", () => {
     const card = rule(".kanban-card-tile");
+    const cardRows = rule(".kanban-card-topline,");
+    const badges = rule(".kanban-card-badges");
     const content = rule(".kanban-card-content");
     const title = rule(".kanban-card-content strong");
     const description = rule(".kanban-card-description");
@@ -157,15 +161,18 @@ describe("Kanban local review styles", () => {
     const footer = rule(".kanban-card-footer");
     const pullRequests = rule(".kanban-pr-status-list");
 
-    expect(card).toContain("gap: 5px");
+    expect(card).toContain("--kanban-card-vertical-gap: 3px");
+    expect(card).toContain("row-gap: var(--kanban-card-vertical-gap)");
     expect(card).toContain("padding: 8px 10px");
-    expect(content).toContain("gap: 3px");
+    expect(cardRows).toContain("row-gap: var(--kanban-card-vertical-gap)");
+    expect(badges).toContain("row-gap: var(--kanban-card-vertical-gap)");
+    expect(content).toContain("row-gap: var(--kanban-card-vertical-gap)");
     expect(title).toContain("line-height: 1.3");
     expect(description).toContain("line-height: 1.35");
-    expect(metadata).toContain("gap: 3px 4px");
+    expect(metadata).toContain("row-gap: var(--kanban-card-vertical-gap)");
     expect(metadataItem).toContain("padding: 1px 6px");
     expect(footer).toContain("padding-top: 0");
-    expect(pullRequests).toContain("gap: 2px");
+    expect(pullRequests).toContain("row-gap: var(--kanban-card-vertical-gap)");
     expect(pullRequests).toContain("padding-top: 0");
   });
 
