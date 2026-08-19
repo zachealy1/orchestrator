@@ -102,6 +102,17 @@ describe("history drawer animation CSS", () => {
     expect(spacer).toContain("pointer-events: none");
   });
 
+  it("uses the header notification color without resizing unread rows", () => {
+    const indicators = rule(".history-run-indicators");
+    const unreadDot = rule(".history-run-list span.history-run-unread-dot");
+
+    expect(indicators).toContain("display: inline-flex");
+    expect(indicators).toContain("flex: 0 0 auto");
+    expect(unreadDot).toContain("width: 7px");
+    expect(unreadDot).toContain("height: 7px");
+    expect(unreadDot).toContain("background: var(--color-primary)");
+  });
+
   it("balances completed-response spacing above and below the review card", () => {
     const chatLayout = rule(".task-hero.has-chat");
     const composer = rule(".task-hero.has-chat .composer-panel");

@@ -1,5 +1,5 @@
 import { Loader2 } from "lucide-react";
-import { memo } from "react";
+import { memo, useMemo } from "react";
 import type {
   KeyboardEvent as ReactKeyboardEvent,
   MouseEvent as ReactMouseEvent,
@@ -50,6 +50,7 @@ export const WorkspaceHistoryDrawer = memo(function WorkspaceHistoryDrawer({
   historyState,
   selectedChatId,
   runningChatActivity,
+  unreadChatIds,
   onSelectChat,
   onOpenChatContextMenu,
   onTransitionEnd,
@@ -59,6 +60,7 @@ export const WorkspaceHistoryDrawer = memo(function WorkspaceHistoryDrawer({
   historyState: WorkspaceHistoryState;
   selectedChatId: number | null;
   runningChatActivity: ReadonlyMap<number, string>;
+  unreadChatIds?: readonly number[];
   onSelectChat: (chat: ChatListItem) => void;
   onOpenChatContextMenu: (
     chat: ChatListItem,
@@ -70,6 +72,10 @@ export const WorkspaceHistoryDrawer = memo(function WorkspaceHistoryDrawer({
   const orderedChats = sortHistoryChatsByActivity(
     historyState.chats,
     runningChatActivity,
+  );
+  const unreadChatIdSet = useMemo(
+    () => new Set(unreadChatIds ?? []),
+    [unreadChatIds],
   );
   return (
     <aside
@@ -104,6 +110,7 @@ export const WorkspaceHistoryDrawer = memo(function WorkspaceHistoryDrawer({
               chat={chat}
               selected={selectedChatId === chat.id}
               running={runningChatActivity.has(chat.id)}
+              unread={unreadChatIdSet.has(chat.id)}
               onSelect={onSelectChat}
               onOpenContextMenu={onOpenChatContextMenu}
             />
@@ -118,12 +125,14 @@ const WorkspaceHistoryRow = memo(function WorkspaceHistoryRow({
   chat,
   selected,
   running,
+  unread,
   onSelect,
   onOpenContextMenu,
 }: {
   chat: ChatListItem;
   selected: boolean;
   running: boolean;
+  unread: boolean;
   onSelect: (chat: ChatListItem) => void;
   onOpenContextMenu: (
     chat: ChatListItem,
@@ -135,6 +144,11 @@ const WorkspaceHistoryRow = memo(function WorkspaceHistoryRow({
       className={`history-run-item ${selected ? "selected" : ""}`}
       type="button"
       aria-pressed={selected}
+      aria-label={
+        unread
+          ? `${chat.title}, unread activity${running ? ", agent running" : ""}`
+          : undefined
+      }
       title={chat.title}
       onClick={() => onSelect(chat)}
       onContextMenu={(event) => onOpenContextMenu(chat, event)}
@@ -149,12 +163,17 @@ const WorkspaceHistoryRow = memo(function WorkspaceHistoryRow({
     >
       <span className="history-run-title-row">
         <strong>{chat.title}</strong>
-        {running ? (
-          <Loader2
-            className="history-run-spinner spin"
-            size={15}
-            aria-label="Agent running"
-          />
+        {unread || running ? (
+          <span className="history-run-indicators" aria-hidden={unread || undefined}>
+            {unread ? <span className="history-run-unread-dot" /> : null}
+            {running ? (
+              <Loader2
+                className="history-run-spinner spin"
+                size={15}
+                aria-label="Agent running"
+              />
+            ) : null}
+          </span>
         ) : null}
       </span>
       <span>{formatHistoryChatMeta(chat)}</span>

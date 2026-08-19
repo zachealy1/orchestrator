@@ -1125,6 +1125,24 @@ describe("Application runtime scenarios 3", () => {
       expect(screen.queryByText("Run in mobile client")).not.toBeInTheDocument();
       expect(screen.getByRole("button", { name: /run codex/i })).toBeInTheDocument();
 
+      const unreadBanner = screen.getByRole("region", { name: "Selected folder" });
+      await user.click(
+        within(unreadBanner).getByRole("button", { name: /open chat history/i }),
+      );
+      const unreadDrawer = await screen.findByRole("complementary", {
+        name: "Workspace chat history",
+      });
+      const unreadChat = within(unreadDrawer).getByRole("button", {
+        name: /run in orchestrator, unread activity/i,
+      });
+      expect(unreadChat.querySelector(".history-run-unread-dot")).not.toBeNull();
+      expect(screen.getByLabelText("1 completed chat")).toBeInTheDocument();
+
+      await user.click(unreadChat);
+      await waitFor(() =>
+        expect(screen.queryByLabelText("1 completed chat")).not.toBeInTheDocument(),
+      );
+
       await user.click(
         within(workspaceNav).getByRole("button", { name: "mobile-client" }),
       );

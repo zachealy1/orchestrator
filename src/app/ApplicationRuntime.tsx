@@ -18478,6 +18478,11 @@ function App() {
                 historyState={historyState}
                 selectedChatId={selectedHistoryChatId ?? selectedWorkspaceChatSession?.chatId ?? null}
                 runningChatActivity={selectedWorkspaceRunningChatActivity}
+                unreadChatIds={
+                  selectedWorkspace
+                    ? unreadCompletedChats[selectedWorkspace.id]
+                    : undefined
+                }
                 onSelectChat={selectHistoryChatFromDrawer}
                 onOpenChatContextMenu={openChatHistoryContextMenuFromDrawer}
                 onTransitionEnd={handleHistoryDrawerTransitionEnd}

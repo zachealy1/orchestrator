@@ -407,6 +407,22 @@ button.history-run-item.disabled {
   color: var(--color-primary);
 }
 
+.history-run-indicators {
+  display: inline-flex;
+  flex: 0 0 auto;
+  gap: 6px;
+  align-items: center;
+}
+
+.history-run-list span.history-run-unread-dot {
+  width: 7px;
+  min-width: 7px;
+  height: 7px;
+  flex: 0 0 7px;
+  border-radius: 50%;
+  background: var(--color-primary);
+}
+
 .file-preview-drawer.resizing {
   user-select: none;
 }
