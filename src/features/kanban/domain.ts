@@ -165,6 +165,7 @@ export type KanbanCardAction =
   | "reopen_review"
   | "open_pull_request"
   | "retry_publication"
+  | "review_locally"
   | "complete_without_pr"
   | "review_changes";
 
@@ -349,6 +350,15 @@ export function deriveCardCapabilities(
     retry_publication: capability(
       available && card.stage === "in_review" && publicationFailed,
       "This card has no failed publication to retry.",
+    ),
+    review_locally: capability(
+      available &&
+        card.stage === "in_review" &&
+        card.executionState === "completed" &&
+        card.reviewChannel === "github" &&
+        publicationFailed &&
+        !hasPullRequest,
+      "Only failed publications without a pull request can switch to local review.",
     ),
     complete_without_pr: capability(
       available && card.stage === "in_review" && nothingToPublish,

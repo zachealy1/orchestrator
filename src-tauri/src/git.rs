@@ -386,11 +386,7 @@ pub(crate) fn generate_workspace_repository_commit_message_blocking(
     }
 
     let intent_context = intent_context.filter(has_commit_intent_context);
-    let account_id = account_id
-        .ok_or_else(|| "Sign in to Codex or enter a commit message manually".to_string())?;
-    if account_id < 0 {
-        return Err("The selected Codex account is unavailable".to_string());
-    }
+    let account_id = commit_message_account_id(account_id)?;
     let codex_binary = resolve_codex_binary().map_err(|_| {
         "Codex is unavailable; enter a commit message manually or try again".to_string()
     })?;
@@ -454,6 +450,14 @@ pub(crate) fn generate_workspace_repository_commit_message_blocking(
         message,
         source: "codex".to_string(),
     })
+}
+
+pub(crate) fn commit_message_account_id(account_id: Option<i64>) -> Result<i64, String> {
+    let account_id = account_id.unwrap_or(0);
+    if account_id < 0 {
+        return Err("The selected Codex account is unavailable".to_string());
+    }
+    Ok(account_id)
 }
 
 #[tauri::command]

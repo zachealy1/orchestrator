@@ -94,6 +94,7 @@ const ACTION_LABELS: Record<KanbanCardAction, string> = {
   approve: "Approve result",
   "open-pull-request": "Open pull request",
   "retry-publication": "Retry publication",
+  "review-locally": "Review locally",
   "complete-without-pr": "Complete without pull request",
   "review-changes": "Review changes",
 };
@@ -149,6 +150,8 @@ export function KanbanActionIcon({
       return <ExternalLink size={size} aria-hidden="true" />;
     case "retry-publication":
       return <RefreshCw size={size} aria-hidden="true" />;
+    case "review-locally":
+      return <Eye size={size} aria-hidden="true" />;
     case "complete-without-pr":
       return <Check size={size} aria-hidden="true" />;
     case "review-changes":

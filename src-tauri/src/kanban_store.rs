@@ -3129,6 +3129,47 @@ pub async fn kanban_use_local_review(
                 .to_string(),
         );
     }
+    let review_channel: Option<String> = sqlx::query_scalar(
+        "SELECT review_channel FROM kanban_cards
+         WHERE id = ?1 AND stage = 'in_review' AND deleted_at IS NULL",
+    )
+    .bind(&card_id)
+    .fetch_optional(&mut *connection)
+    .await
+    .map_err(|error| format!("The review destination could not be checked: {error}"))?
+    .flatten();
+    let failed_publications: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM kanban_pull_requests
+         WHERE card_id = ?1 AND pull_request_number IS NULL
+           AND publication_status = 'failed'",
+    )
+    .bind(&card_id)
+    .fetch_one(&mut *connection)
+    .await
+    .map_err(|error| format!("Failed publication state could not be checked: {error}"))?;
+    let pending_publications: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM kanban_pull_requests
+         WHERE card_id = ?1 AND pull_request_number IS NULL
+           AND publication_status IN ('queued', 'publishing')",
+    )
+    .bind(&card_id)
+    .fetch_one(&mut *connection)
+    .await
+    .map_err(|error| format!("Active publication state could not be checked: {error}"))?;
+    if review_channel.as_deref() != Some("local") {
+        if pending_publications > 0 {
+            return Err(
+                "GitHub publication is still running. Wait for it to finish before switching to local review."
+                    .to_string(),
+            );
+        }
+        if failed_publications == 0 && crate::github::github_review_available(&app).await {
+            return Err(
+                "Local review is available after GitHub publication fails or while GitHub is disconnected."
+                    .to_string(),
+            );
+        }
+    }
     let updated = sqlx::query(
         "UPDATE kanban_cards SET review_channel = 'local',
              state_version = state_version + 1, updated_at = CURRENT_TIMESTAMP

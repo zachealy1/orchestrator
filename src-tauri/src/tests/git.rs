@@ -1027,6 +1027,14 @@ fn commit_message_generation_uses_a_minimal_bounded_codex_session() {
 }
 
 #[test]
+fn commit_message_generation_uses_the_shared_profile_when_account_is_unset() {
+    assert_eq!(commit_message_account_id(None).unwrap(), 0);
+    assert_eq!(commit_message_account_id(Some(0)).unwrap(), 0);
+    assert_eq!(commit_message_account_id(Some(7)).unwrap(), 7);
+    assert!(commit_message_account_id(Some(-1)).is_err());
+}
+
+#[test]
 fn commit_context_balances_large_diffs_and_untracked_sources() {
     let workspace = git_test_directory("git-commit-context");
     let tracked_file = workspace.join("src/app.js");

@@ -639,6 +639,54 @@ describe("KanbanWorkspace controller", () => {
     expect(githubMocks.publishKanbanCard).toHaveBeenCalledWith("card-1");
   });
 
+  it("lets a connected user switch a failed publication to local review", async () => {
+    const user = userEvent.setup();
+    const failedCard = card({
+      reviewChannel: "github",
+      pullRequests: [
+        {
+          sourceRepositoryPath: "/workspace/repo",
+          relativePath: "repo",
+          owner: "owner",
+          repository: "repo",
+          number: null,
+          url: null,
+          baseBranch: "main",
+          headBranch: "codex/controller-card",
+          draft: true,
+          state: "open",
+          publicationStatus: "failed",
+          error: "Commit message generation failed.",
+          updatedAt: "2026-08-19T14:24:07Z",
+        },
+      ],
+    });
+    apiMocks.loadKanbanBoard.mockResolvedValue(snapshot([failedCard]));
+    apiMocks.useKanbanLocalReview.mockResolvedValue({
+      cardId: failedCard.id,
+      title: failedCard.title,
+      objective: failedCard.description,
+      summary: "Implemented the controller.",
+      reviewChannel: "local",
+      canPublishGithub: true,
+      repositories: [],
+    });
+    renderWorkspace();
+
+    const tile = await screen.findByRole("article", {
+      name: /Controller card/,
+    });
+    await user.click(
+      within(tile).getByLabelText("Actions for Controller card"),
+    );
+    await user.click(screen.getByRole("menuitem", { name: "Review locally" }));
+
+    expect(apiMocks.useKanbanLocalReview).toHaveBeenCalledWith("card-1");
+    expect(
+      await screen.findByRole("complementary", { name: "Local card review" }),
+    ).toBeInTheDocument();
+  });
+
   it("opens the local review drawer for a disconnected completed card", async () => {
     const user = userEvent.setup();
     const localCard = card({ reviewChannel: "local", pullRequests: [] });

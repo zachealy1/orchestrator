@@ -557,6 +557,7 @@ function viewActions(card: DomainKanbanCard): KanbanCardAction[] {
     ["delete", "delete"],
     ["open_pull_request", "open-pull-request"],
     ["retry_publication", "retry-publication"],
+    ["review_locally", "review-locally"],
     ["complete_without_pr", "complete-without-pr"],
     ["review_changes", "review-changes"],
   ];
@@ -955,6 +956,7 @@ export function KanbanWorkspace({
             card.stage === "in_review" &&
             card.executionState === "completed" &&
             !hasPullRequest &&
+            !actions.includes("review-locally") &&
             !actions.includes("review-changes")
           ) {
             actions.push("review-changes");
@@ -1680,6 +1682,10 @@ export function KanbanWorkspace({
         },
         "Pull request publication restarted.",
       );
+      return;
+    }
+    if (action === "review-locally") {
+      await openLocalReview(persisted);
       return;
     }
     if (action === "review-changes") {

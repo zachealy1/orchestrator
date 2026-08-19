@@ -216,6 +216,68 @@ describe("deriveCardCapabilities", () => {
     expect(capabilities.merge.enabled).toBe(false);
   });
 
+  it("offers local review after GitHub publication fails before creating a pull request", () => {
+    const capabilities = deriveCardCapabilities(
+      card({
+        stage: "in_review",
+        executionState: "completed",
+        reviewState: "awaiting_review",
+        reviewChannel: "github",
+        pullRequests: [
+          {
+            sourceRepositoryPath: "/workspace/api",
+            relativePath: "api",
+            owner: "example",
+            repository: "api",
+            number: null,
+            url: null,
+            baseBranch: "main",
+            headBranch: "codex/add-search",
+            draft: false,
+            state: "open",
+            publicationStatus: "failed",
+            error: "Commit message generation failed",
+            updatedAt: "2026-08-19T14:24:07Z",
+          },
+        ],
+      }),
+    );
+
+    expect(capabilities.retry_publication.enabled).toBe(true);
+    expect(capabilities.review_locally.enabled).toBe(true);
+    expect(capabilities.review_changes.enabled).toBe(false);
+  });
+
+  it("does not offer local review when any GitHub pull request exists", () => {
+    const capabilities = deriveCardCapabilities(
+      card({
+        stage: "in_review",
+        executionState: "completed",
+        reviewState: "awaiting_review",
+        reviewChannel: "github",
+        pullRequests: [
+          {
+            sourceRepositoryPath: "/workspace/api",
+            relativePath: "api",
+            owner: "example",
+            repository: "api",
+            number: 42,
+            url: "https://github.com/example/api/pull/42",
+            baseBranch: "main",
+            headBranch: "codex/add-search",
+            draft: true,
+            state: "open",
+            publicationStatus: "draft",
+            error: null,
+            updatedAt: "2026-08-19T14:24:07Z",
+          },
+        ],
+      }),
+    );
+
+    expect(capabilities.review_locally.enabled).toBe(false);
+  });
+
   it("restricts archived and deleted cards", () => {
     const archived = deriveCardCapabilities(
       card({ archivedAt: "2026-08-02T11:00:00.000Z" }),

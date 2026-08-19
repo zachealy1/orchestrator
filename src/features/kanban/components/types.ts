@@ -41,6 +41,7 @@ export type KanbanCardAction =
   | "approve"
   | "open-pull-request"
   | "retry-publication"
+  | "review-locally"
   | "complete-without-pr"
   | "review-changes";
 
