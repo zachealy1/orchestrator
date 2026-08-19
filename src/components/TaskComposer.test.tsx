@@ -746,6 +746,20 @@ describe("TaskComposer", () => {
     expect(onAccountChange).toHaveBeenCalledWith(7);
   });
 
+  it("offers the authenticated Codex app account as a shared profile", async () => {
+    const onAccountChange = vi.fn();
+    const { user } = renderComposer({
+      sharedCodexProfileAvailable: true,
+      onAccountChange,
+    });
+
+    await user.click(screen.getByRole("combobox", { name: "Run account" }));
+    await user.click(
+      screen.getByRole("option", { name: "Codex app account (shared)" }),
+    );
+    expect(onAccountChange).toHaveBeenCalledWith(0);
+  });
+
   it("renders source-specific context files above the prompt and removes files", async () => {
     const onRemoveFile = vi.fn();
     const { user } = renderComposer({

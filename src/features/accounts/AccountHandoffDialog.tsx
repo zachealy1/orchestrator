@@ -15,6 +15,7 @@ export function AccountHandoffDialog({
   onConfirm,
 }: AccountHandoffDialogProps) {
   const isIdle = candidate.status === "idle";
+  const continuesInCodex = candidate.targetProfileKey === "default";
 
   useEffect(() => {
     if (!isIdle) return;
@@ -41,13 +42,18 @@ export function AccountHandoffDialog({
         aria-describedby="account-handoff-description"
       >
         <div>
-          <p className="eyebrow">Codex account</p>
-          <h2 id="account-handoff-title">Switch account for this chat?</h2>
+          <p className="eyebrow">
+            {continuesInCodex ? "Codex continuation" : "Codex account"}
+          </p>
+          <h2 id="account-handoff-title">
+            {continuesInCodex
+              ? "Continue this chat in Codex?"
+              : "Switch account for this chat?"}
+          </h2>
           <p id="account-handoff-description">
-            Continue from {candidate.fromLabel} with {candidate.targetLabel}. The
-            next turn starts a fresh Codex thread. Visible messages remain, but
-            token usage resets and hidden reasoning or tool state cannot be
-            transferred.
+            {continuesInCodex
+              ? "The next turn starts a fresh native Codex task with a safe copy of the visible conversation. Token usage resets, and hidden reasoning or tool state is not transferred."
+              : `Continue from ${candidate.fromLabel} with ${candidate.targetLabel}. The next turn starts a fresh Codex thread. Visible messages remain, but token usage resets and hidden reasoning or tool state cannot be transferred.`}
           </p>
           {candidate.error ? (
             <p className="account-handoff-error" role="alert">
@@ -70,8 +76,8 @@ export function AccountHandoffDialog({
           <button
             className="native-plan-icon-action implement"
             type="button"
-            aria-label="Switch account"
-            data-tooltip="Switch account"
+            aria-label={continuesInCodex ? "Continue in Codex" : "Switch account"}
+            data-tooltip={continuesInCodex ? "Continue in Codex" : "Switch account"}
             disabled={!isIdle}
             onClick={onConfirm}
           >

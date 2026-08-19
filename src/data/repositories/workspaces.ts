@@ -15,7 +15,8 @@ export function createWorkspaceRepository(database: FrontendDatabase) {
   async function listWorkspaces() {
     const db = await getDatabase();
     return db.select<Workspace[]>(
-      `SELECT id, path, label, default_account_id, selected_git_repository_path,
+      `SELECT id, path, label, default_account_id, default_profile_key,
+        selected_git_repository_path,
         last_opened_at, created_at
        FROM workspaces
        WHERE deleted_at IS NULL
@@ -38,7 +39,8 @@ export function createWorkspaceRepository(database: FrontendDatabase) {
     );
 
     const workspace = await selectOne<Workspace>(
-      `SELECT id, path, label, default_account_id, selected_git_repository_path,
+      `SELECT id, path, label, default_account_id, default_profile_key,
+        selected_git_repository_path,
         last_opened_at, created_at
        FROM workspaces
        WHERE path = $1 AND deleted_at IS NULL`,

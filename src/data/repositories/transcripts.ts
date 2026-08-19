@@ -17,6 +17,8 @@ export function createTranscriptRepository(database: FrontendDatabase) {
         chats.deleted_at, chats.surface, chats.origin, chats.profile_key, chats.external_thread_id,
         chats.source_kind, chats.sync_status, chats.external_cwd,
         chats.external_created_at, chats.external_updated_at, chats.last_synced_at,
+        chats.native_thread_updated_at, chats.native_last_synced_at,
+        chats.native_sync_status,
         chats.collaboration_mode, chats.saved_default_collaboration_mode_json,
         chats.title_generation_state, chats.title_fallback,
         chats.title_manually_edited, chats.title_generation_started_at,
@@ -43,6 +45,11 @@ export function createTranscriptRepository(database: FrontendDatabase) {
         CASE
           WHEN chats.origin = 'codex_external'
             THEN COALESCE(MAX(external_snapshot.turn_count), 0) + COUNT(runs.id)
+          WHEN chats.profile_key = 'default' AND chats.codex_thread_id IS NOT NULL
+            THEN MAX(
+              COALESCE(MAX(external_snapshot.turn_count), 0),
+              COALESCE(chats.continuation_turn_count, 0) + COUNT(runs.id)
+            )
           ELSE COALESCE(chats.continuation_turn_count, 0) + COUNT(runs.id)
         END AS turn_count,
         COALESCE(SUM(latest_tokens.run_tokens), 0) AS total_tokens,
@@ -96,6 +103,8 @@ export function createTranscriptRepository(database: FrontendDatabase) {
         chats.deleted_at, chats.surface, chats.origin, chats.profile_key, chats.external_thread_id,
         chats.source_kind, chats.sync_status, chats.external_cwd,
         chats.external_created_at, chats.external_updated_at, chats.last_synced_at,
+        chats.native_thread_updated_at, chats.native_last_synced_at,
+        chats.native_sync_status,
         chats.collaboration_mode, chats.saved_default_collaboration_mode_json,
         chats.title_generation_state, chats.title_fallback,
         chats.title_manually_edited, chats.title_generation_started_at,
@@ -122,6 +131,11 @@ export function createTranscriptRepository(database: FrontendDatabase) {
         CASE
           WHEN chats.origin = 'codex_external'
             THEN COALESCE(MAX(external_snapshot.turn_count), 0) + COUNT(runs.id)
+          WHEN chats.profile_key = 'default' AND chats.codex_thread_id IS NOT NULL
+            THEN MAX(
+              COALESCE(MAX(external_snapshot.turn_count), 0),
+              COALESCE(chats.continuation_turn_count, 0) + COUNT(runs.id)
+            )
           ELSE COALESCE(chats.continuation_turn_count, 0) + COUNT(runs.id)
         END AS turn_count,
         COALESCE(SUM(latest_tokens.run_tokens), 0) AS total_tokens,

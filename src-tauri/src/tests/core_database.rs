@@ -163,6 +163,20 @@ fn first_queued_prompt_creation_is_atomic() {
             .await
             .expect("count chats after rollback");
         assert_eq!(chat_count_after_failure, 1);
+
+        let mut shared_request = queued_chat_request("queue-shared", "message-shared");
+        shared_request.account_id = None;
+        let shared_chat_id =
+            create_chat_with_queued_prompt_transaction(&mut connection, &shared_request)
+                .await
+                .expect("create shared queued conversation");
+        let shared_profile: String =
+            sqlx::query_scalar("SELECT profile_key FROM chats WHERE id = ?1")
+                .bind(shared_chat_id)
+                .fetch_one(&mut connection)
+                .await
+                .expect("load shared queued conversation profile");
+        assert_eq!(shared_profile, "default");
     });
 }
 

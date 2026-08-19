@@ -40,7 +40,12 @@ export const EMPTY_GIT_STATUS_BY_PATH = new Map<
   WorkspaceGitFileStatus
 >();
 export const DEFAULT_CODEX_PROFILE_KEY: CodexProfileKey = "default";
-export const EXTERNAL_CODEX_SOURCE_KINDS = ["vscode", "appServer", "cli"];
+export const EXTERNAL_CODEX_SOURCE_KINDS = [
+  "vscode",
+  "appServer",
+  "cli",
+  "orchestrator",
+];
 
 export const TASK_QUOTES = [
   "You prompting me?",

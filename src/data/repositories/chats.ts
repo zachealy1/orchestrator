@@ -35,9 +35,12 @@ export function createChatRepository(database: FrontendDatabase) {
     continuationKind?: "chat" | "worktree" | null;
     continuationSnapshot?: ChatContinuationSnapshot | null;
     continuationSettingsJson?: string | null;
+    profileKey?: string | null;
   }) {
     const db = await getDatabase();
-    const profileKey = input.accountId === null ? null : `account:${input.accountId}`;
+    const profileKey =
+      input.profileKey ??
+      (input.accountId === null ? "default" : `account:${input.accountId}`);
     const fallbackTitle = input.title.trim() || "Untitled conversation";
     const title = input.generateTitle ? "Generating title..." : fallbackTitle;
     const result = await db.execute(
@@ -71,6 +74,7 @@ export function createChatRepository(database: FrontendDatabase) {
       `SELECT id, workspace_id, account_id, title, codex_thread_id, status, surface,
         origin, profile_key, external_thread_id, source_kind, sync_status,
         external_cwd, external_created_at, external_updated_at, last_synced_at,
+        native_thread_updated_at, native_last_synced_at, native_sync_status,
         title_generation_state, title_fallback, title_manually_edited,
         title_generation_started_at, conversation_revision,
         continued_from_chat_id, continuation_kind, continuation_snapshot_json,
@@ -92,6 +96,7 @@ export function createChatRepository(database: FrontendDatabase) {
       `SELECT id, workspace_id, account_id, title, codex_thread_id, status, surface,
         origin, profile_key, external_thread_id, source_kind, sync_status,
         external_cwd, external_created_at, external_updated_at, last_synced_at,
+        native_thread_updated_at, native_last_synced_at, native_sync_status,
         collaboration_mode, saved_default_collaboration_mode_json,
         title_generation_state, title_fallback, title_manually_edited,
         title_generation_started_at, conversation_revision,
@@ -101,6 +106,27 @@ export function createChatRepository(database: FrontendDatabase) {
        FROM chats
        WHERE id = $1 AND deleted_at IS NULL`,
       [chatId],
+    );
+  }
+
+  async function getSharedChatByThreadId(threadId: string) {
+    return selectOne<ChatRecord>(
+      `SELECT id, workspace_id, account_id, title, codex_thread_id, status, surface,
+        origin, profile_key, external_thread_id, source_kind, sync_status,
+        external_cwd, external_created_at, external_updated_at, last_synced_at,
+        native_thread_updated_at, native_last_synced_at, native_sync_status,
+        collaboration_mode, saved_default_collaboration_mode_json,
+        title_generation_state, title_fallback, title_manually_edited,
+        title_generation_started_at, conversation_revision,
+        continued_from_chat_id, continuation_kind, continuation_snapshot_json,
+        continuation_settings_json, continuation_turn_count,
+        created_at, updated_at, deleted_at
+       FROM chats
+       WHERE profile_key = 'default'
+         AND codex_thread_id = $1
+         AND deleted_at IS NULL
+       LIMIT 1`,
+      [threadId],
     );
   }
 
@@ -303,6 +329,54 @@ export function createChatRepository(database: FrontendDatabase) {
     );
   }
 
+  type SharedNativeThreadInput = {
+    threadId: string;
+    title: string;
+    status: string;
+    updatedAt: string | null;
+  };
+
+  async function reconcileSharedNativeThreads(
+    workspaceId: number,
+    threads: SharedNativeThreadInput[],
+  ) {
+    if (threads.length === 0) return [] as string[];
+    const db = await getDatabase();
+    const matched: string[] = [];
+    for (const thread of threads) {
+      const result = await db.execute(
+        `UPDATE chats
+         SET title = CASE
+               WHEN title_manually_edited = 0 THEN $1
+               ELSE title
+             END,
+             native_thread_updated_at = $2,
+             native_last_synced_at = CURRENT_TIMESTAMP,
+             native_sync_status = 'synced'
+         WHERE workspace_id = $3
+           AND profile_key = 'default'
+           AND codex_thread_id = $4
+           AND deleted_at IS NULL`,
+        [thread.title, thread.updatedAt, workspaceId, thread.threadId],
+      );
+      if (result.rowsAffected > 0) matched.push(thread.threadId);
+    }
+    return matched;
+  }
+
+  async function markSharedNativeThreadUnavailable(chatId: number) {
+    const db = await getDatabase();
+    await db.execute(
+      `UPDATE chats
+       SET native_sync_status = 'unavailable',
+           native_last_synced_at = CURRENT_TIMESTAMP
+       WHERE id = $1
+         AND profile_key = 'default'
+         AND deleted_at IS NULL`,
+      [chatId],
+    );
+  }
+
   type ExternalCodexChatInput = {
     workspaceId: number;
     profileKey: "default";
@@ -363,7 +437,7 @@ export function createChatRepository(database: FrontendDatabase) {
     chatId: number;
     expectedProfileKey: string | null;
     expectedThreadId: string | null;
-    accountId: number;
+    accountId: number | null;
     profileKey: string;
     codexThreadId: string;
     status: string;
@@ -378,6 +452,14 @@ export function createChatRepository(database: FrontendDatabase) {
            sync_status = CASE
              WHEN origin = 'codex_external' THEN 'adopted'
              ELSE sync_status
+           END,
+           native_sync_status = CASE
+             WHEN $2 = 'default' THEN 'synced'
+             ELSE NULL
+           END,
+           native_last_synced_at = CASE
+             WHEN $2 = 'default' THEN CURRENT_TIMESTAMP
+             ELSE NULL
            END,
            updated_at = CURRENT_TIMESTAMP
        WHERE id = $5
@@ -401,6 +483,7 @@ export function createChatRepository(database: FrontendDatabase) {
   return {
     createChat,
     getChatRecord,
+    getSharedChatByThreadId,
     getNextChatTurnIndex,
     chatHasPendingPlanReview,
     recoverInterruptedChatTitleGenerations,
@@ -409,6 +492,8 @@ export function createChatRepository(database: FrontendDatabase) {
     completeChatTitleGeneration,
     failChatTitleGeneration,
     renameChat,
+    reconcileSharedNativeThreads,
+    markSharedNativeThreadUnavailable,
     saveChatWorktreeBindings,
     listChatWorktreeBindings,
     upsertExternalCodexChats,

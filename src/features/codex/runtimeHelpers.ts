@@ -48,6 +48,34 @@ export function accountIdFromProfileKey(
   return Number.isFinite(accountId) && accountId > 0 ? accountId : null;
 }
 
+export function profileKeyForAccountId(
+  accountId: number | null | undefined,
+): CodexProfileKey {
+  return accountId && accountId > 0
+    ? (`account:${accountId}` as CodexProfileKey)
+    : "default";
+}
+
+const TERMINAL_TURN_STATUSES = new Set([
+  "completed",
+  "failed",
+  "interrupted",
+  "cancelled",
+  "canceled",
+]);
+
+export function readActiveCodexTurnId(threadValue: unknown) {
+  const thread = readObject(threadValue);
+  const turns = readArray(thread.turns).map(readObject);
+  for (let index = turns.length - 1; index >= 0; index -= 1) {
+    const turn = turns[index];
+    const id = readString(turn.id);
+    const status = readString(turn.status)?.toLowerCase();
+    if (id && status && !TERMINAL_TURN_STATUSES.has(status)) return id;
+  }
+  return null;
+}
+
 export function readAccountLoginCompleted(
   params: Record<string, unknown>,
 ): AccountLoginCompletedNotification {

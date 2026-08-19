@@ -900,7 +900,8 @@ pub async fn kanban_create_card(
     }
     let profile_key = request
         .account_id
-        .map(|account_id| format!("account:{account_id}"));
+        .map(|account_id| format!("account:{account_id}"))
+        .unwrap_or_else(|| "default".to_string());
     let chat = sqlx::query(
         "INSERT INTO chats (
             workspace_id, account_id, title, status, origin, profile_key, surface,
@@ -1128,7 +1129,8 @@ pub async fn kanban_update_card(
     replace_repositories(&mut transaction, &request.card_id, &request.repositories).await?;
     let profile_key = request
         .account_id
-        .map(|account_id| format!("account:{account_id}"));
+        .map(|account_id| format!("account:{account_id}"))
+        .unwrap_or_else(|| "default".to_string());
     sqlx::query(
         "UPDATE chats SET title = ?1, account_id = ?2, profile_key = ?3,
             updated_at = CURRENT_TIMESTAMP

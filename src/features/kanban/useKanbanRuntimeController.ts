@@ -19,6 +19,10 @@ import {
 } from "../../lib/runExecutionSettings";
 import { improvePrompt } from "../../lib/taskAnalysis";
 import {
+  accountIdFromProfileKey,
+  profileKeyForAccountId,
+} from "../codex/runtimeHelpers";
+import {
   claimKanbanAttempt,
   loadKanbanInheritedContext,
   stopInactiveKanbanCard,
@@ -145,25 +149,30 @@ export function createKanbanRuntimeController<
     const capturedSettings =
       options?.executionSettings ??
       parseRunExecutionSettings(card.executionSettingsJson);
-    const accountId =
-      capturedSettings?.accountId ??
-      card.accountId ??
-      workspace.default_account_id ??
-      state.selectedAccountId;
-    if (!accountId) {
+    const profileKey = (
+      capturedSettings?.profileKey ??
+      workspace.default_profile_key ??
+      profileKeyForAccountId(
+        card.accountId ?? workspace.default_account_id ?? state.selectedAccountId,
+      )
+    ) as CodexProfileKey;
+    const accountId = profileKey === "default"
+      ? 0
+      : capturedSettings?.accountId ??
+        card.accountId ??
+        accountIdFromProfileKey(profileKey) ??
+        workspace.default_account_id ??
+        state.selectedAccountId;
+    if (accountId === null || accountId === undefined) {
       throw new Error(
         "Choose a signed-in Codex account before starting this card.",
       );
     }
     const account =
       state.accounts.find((candidate) => candidate.id === accountId) ?? null;
-    if (!account || account.status !== "signed_in") {
+    if (profileKey !== "default" && (!account || account.status !== "signed_in")) {
       throw new Error("The card's Codex account is unavailable or signed out.");
     }
-
-    const profileKey =
-      capturedSettings?.profileKey ??
-      (`account:${accountId}` as CodexProfileKey);
     const availableModels = await dependencies.listModels(profileKey, accountId);
     const requestedModel = capturedSettings?.model ?? card.model;
     const selectedModel = requestedModel
@@ -288,7 +297,7 @@ export function createKanbanRuntimeController<
           promptFallback: promptText,
           workspace: { ...workspace, path: executionRoot },
           accountId,
-          account: { ...account },
+          account,
           profileKey,
           chatOrigin: "orchestrator",
           externalThreadId: null,

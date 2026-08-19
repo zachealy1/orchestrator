@@ -513,6 +513,26 @@ export async function listCodexSkills(accountId: number) {
     : new Error("Unable to load Codex skills.");
 }
 
+export async function listDefaultCodexSkills() {
+  const methods = ["skill/list", "skills/list"];
+  let lastError: unknown = null;
+
+  for (const method of methods) {
+    try {
+      const response = await codexDefaultProfileRpc<unknown>(method, {
+        includeHidden: false,
+      });
+      return extractCodexSkills(response);
+    } catch (error) {
+      lastError = error;
+    }
+  }
+
+  throw lastError instanceof Error
+    ? lastError
+    : new Error("Unable to load Codex skills.");
+}
+
 export async function readCodexFile(accountId: number, path: string) {
   const response = await codexRpc<{ dataBase64: string }>(accountId, "fs/readFile", {
     path,

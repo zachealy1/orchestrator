@@ -28,7 +28,7 @@ fn resolved_plugin_migrator(
 }
 
 #[test]
-fn existing_versions_one_through_twenty_five_upgrade_through_thirty_five() {
+fn existing_versions_one_through_twenty_five_upgrade_through_thirty_six() {
     tauri::async_runtime::block_on(async {
         let mut connection = SqliteConnection::connect("sqlite::memory:")
             .await
@@ -58,7 +58,7 @@ fn existing_versions_one_through_twenty_five_upgrade_through_thirty_five() {
         .fetch_one(&mut connection)
         .await
         .expect("count upgraded migrations");
-        assert_eq!(applied_count, 35);
+        assert_eq!(applied_count, 36);
 
         resolved_plugin_migrator(MIGRATION_DEFINITIONS)
             .run_direct(&mut connection)
@@ -219,6 +219,24 @@ fn kanban_schema_migrations_apply_from_a_clean_database() {
         assert!(operation_columns
             .iter()
             .any(|column| column == "request_fingerprint"));
+
+        let workspace_columns: Vec<String> =
+            sqlx::query_scalar("SELECT name FROM pragma_table_info('workspaces')")
+                .fetch_all(&mut connection)
+                .await
+                .expect("read workspace columns");
+        assert!(workspace_columns
+            .iter()
+            .any(|column| column == "default_profile_key"));
+
+        let chat_columns: Vec<String> =
+            sqlx::query_scalar("SELECT name FROM pragma_table_info('chats')")
+                .fetch_all(&mut connection)
+                .await
+                .expect("read chat columns");
+        assert!(chat_columns
+            .iter()
+            .any(|column| column == "native_sync_status"));
 
         let github_tables: Vec<String> = sqlx::query_scalar(
             "SELECT name FROM sqlite_master

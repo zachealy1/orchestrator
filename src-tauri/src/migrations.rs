@@ -219,6 +219,12 @@ pub(crate) const MIGRATION_DEFINITIONS: &[MigrationDefinition] = &[
         sql: include_str!("../migrations/035_add_chat_continuations.sql"),
         checksum: 0x3260bd2173e147fe,
     },
+    MigrationDefinition {
+        version: 36,
+        description: "share_default_codex_threads",
+        sql: include_str!("../migrations/036_share_default_codex_threads.sql"),
+        checksum: 0xc9bf9cb5a7622fe1,
+    },
 ];
 
 pub(crate) fn migration_sql(definition: &MigrationDefinition) -> &'static str {

@@ -76,6 +76,7 @@ const mocks = vi.hoisted(() => ({
   createChatMock: vi.fn(),
   listChatWorktreeBindingsMock: vi.fn(),
   renameChatMock: vi.fn(),
+  reconcileSharedNativeThreadsMock: vi.fn(),
   saveChatWorktreeBindingsMock: vi.fn(),
   createChatWithQueuedPromptMock: vi.fn(),
   claimChatTitleGenerationMock: vi.fn(),
@@ -439,6 +440,7 @@ vi.mock("../data/repositories", () => ({
         mocks.listDuplicateProfilesPendingCleanupMock,
       renameCodexAccount: mocks.renameCodexAccountMock,
       setWorkspaceDefaultAccount: vi.fn(),
+      setWorkspaceDefaultProfile: vi.fn(),
       softDeleteCodexAccount: mocks.softDeleteCodexAccountMock,
       updateCodexAccount: mocks.updateCodexAccountMock,
     },
@@ -453,12 +455,14 @@ vi.mock("../data/repositories", () => ({
       createChat: mocks.createChatMock,
       failChatTitleGeneration: mocks.failChatTitleGenerationMock,
       getChatRecord: mocks.getChatRecordMock,
+      getSharedChatByThreadId: vi.fn().mockResolvedValue(null),
       getNextChatTurnIndex: mocks.getNextChatTurnIndexMock,
       listChatWorktreeBindings: mocks.listChatWorktreeBindingsMock,
       recoverAbandonedRuns: mocks.recoverAbandonedRunsMock,
       recoverInterruptedChatTitleGenerations:
         mocks.recoverInterruptedChatTitleGenerationsMock,
       renameChat: mocks.renameChatMock,
+      reconcileSharedNativeThreads: mocks.reconcileSharedNativeThreadsMock,
       saveChatWorktreeBindings: mocks.saveChatWorktreeBindingsMock,
       updateChat: mocks.updateChatMock,
       upsertExternalCodexChats: mocks.upsertExternalCodexChatsMock,
@@ -1600,6 +1604,7 @@ export function prepareDefaults() {
   mocks.recordTokenUsageMock.mockResolvedValue(undefined);
   mocks.softDeleteChatMock.mockResolvedValue(undefined);
   mocks.softDeleteRunMock.mockResolvedValue(undefined);
+  mocks.reconcileSharedNativeThreadsMock.mockResolvedValue([]);
   mocks.upsertExternalCodexChatsMock.mockResolvedValue(undefined);
   mocks.upsertWorkspaceMock.mockResolvedValue(workspace);
   mocks.openDialogMock.mockResolvedValue(null);

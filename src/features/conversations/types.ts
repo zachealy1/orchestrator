@@ -203,6 +203,9 @@ export type ChatRecord = {
   external_created_at: string | null;
   external_updated_at: string | null;
   last_synced_at: string | null;
+  native_thread_updated_at?: string | null;
+  native_last_synced_at?: string | null;
+  native_sync_status?: "synced" | "unavailable" | "error" | null;
   collaboration_mode?: "plan" | "default" | null;
   saved_default_collaboration_mode_json?: string | null;
   title_generation_state?: "pending" | "generating" | "complete" | "failed";

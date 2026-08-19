@@ -71,6 +71,7 @@ export type ComposerModel = {
   promptRevision?: number;
   submitLabel?: string;
   accounts: CodexAccountProfile[];
+  sharedCodexProfileAvailable?: boolean;
   selectedAccountId: number | null;
   accountPlaceholder?: string;
   accountSelectionDisabled: boolean;
@@ -197,6 +198,7 @@ export const TaskComposer = memo(function TaskComposer({ model, actions }: Props
   prompt,
   promptRevision = 0,
   accounts,
+  sharedCodexProfileAvailable = false,
   selectedAccountId,
   accountPlaceholder = "Sign in required",
   accountSelectionDisabled,
@@ -1102,6 +1104,7 @@ export const TaskComposer = memo(function TaskComposer({ model, actions }: Props
             accountSelectionDisabled || queueEditActive
           }
           accounts={accounts}
+          sharedCodexProfileAvailable={sharedCodexProfileAvailable}
           controlsDisabled={controlsDisabled}
           modelLoadError={modelLoadError}
           modelSelectionDisabled={
@@ -1203,6 +1206,7 @@ const ComposerOptionsRow = memo(function ComposerOptionsRow({
   accessMode,
   accountSelectionDisabled,
   accounts,
+  sharedCodexProfileAvailable,
   controlsDisabled,
   modelLoadError,
   modelSelectionDisabled,
@@ -1221,6 +1225,7 @@ const ComposerOptionsRow = memo(function ComposerOptionsRow({
   accessMode: CodexAccessMode;
   accountSelectionDisabled: boolean;
   accounts: CodexAccountProfile[];
+  sharedCodexProfileAvailable: boolean;
   controlsDisabled: boolean;
   modelLoadError: string | null;
   modelSelectionDisabled: boolean;
@@ -1237,12 +1242,16 @@ const ComposerOptionsRow = memo(function ComposerOptionsRow({
   settingsSelectionDisabled: boolean;
 }) {
   const accountOptions = useMemo(
-    () =>
-      accounts.map((account) => ({
+    () => [
+      ...(sharedCodexProfileAvailable
+        ? [{ value: "0", label: "Codex app account (shared)" }]
+        : []),
+      ...accounts.map((account) => ({
         value: account.id.toString(),
         label: account.label,
       })),
-    [accounts],
+    ],
+    [accounts, sharedCodexProfileAvailable],
   );
   const modelOptions = useMemo(
     () =>
@@ -1279,7 +1288,7 @@ const ComposerOptionsRow = memo(function ComposerOptionsRow({
           placeholder={accountPlaceholder}
           icon={<CircleUserRound size={16} />}
           className="account-select"
-          disabled={accounts.length === 0 || accountSelectionDisabled}
+          disabled={accountOptions.length === 0 || accountSelectionDisabled}
           onChange={handleAccountChange}
         />
       </div>

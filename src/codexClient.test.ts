@@ -6,7 +6,11 @@ vi.mock("@tauri-apps/api/core", () => ({
   invoke: invokeMock,
 }));
 
-import { readActiveCodexLogin, startCodexLogin } from "./codexClient";
+import {
+  listDefaultCodexSkills,
+  readActiveCodexLogin,
+  startCodexLogin,
+} from "./codexClient";
 
 describe("Codex account login client", () => {
   beforeEach(() => {
@@ -39,5 +43,19 @@ describe("Codex account login client", () => {
     await readActiveCodexLogin();
 
     expect(invokeMock).toHaveBeenCalledWith("codex_active_login");
+  });
+
+  it("loads skills through the shared default profile", async () => {
+    invokeMock.mockResolvedValue({
+      data: [{ id: "review", name: "Code review" }],
+    });
+
+    await expect(listDefaultCodexSkills()).resolves.toEqual([
+      expect.objectContaining({ id: "review", name: "Code review" }),
+    ]);
+    expect(invokeMock).toHaveBeenCalledWith("codex_default_profile_rpc", {
+      method: "skill/list",
+      params: { includeHidden: false },
+    });
   });
 });

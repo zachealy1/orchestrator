@@ -44,6 +44,17 @@ pub(crate) fn ensure_codex_home(app: &AppHandle, account_id: i64) -> Result<Path
     Ok(codex_home)
 }
 
+pub(crate) fn ensure_codex_home_for_account(
+    app: &AppHandle,
+    account_id: i64,
+) -> Result<PathBuf, String> {
+    if account_id == 0 {
+        ensure_default_codex_home()
+    } else {
+        ensure_codex_home(app, account_id)
+    }
+}
+
 pub(crate) fn default_codex_home_from_home(home: &Path) -> PathBuf {
     home.join(".codex")
 }

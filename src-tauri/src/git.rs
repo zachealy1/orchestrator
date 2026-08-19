@@ -388,12 +388,13 @@ pub(crate) fn generate_workspace_repository_commit_message_blocking(
     let intent_context = intent_context.filter(has_commit_intent_context);
     let account_id = account_id
         .ok_or_else(|| "Sign in to Codex or enter a commit message manually".to_string())?;
-    validate_account_id(account_id)
-        .map_err(|_| "The selected Codex account is unavailable".to_string())?;
+    if account_id < 0 {
+        return Err("The selected Codex account is unavailable".to_string());
+    }
     let codex_binary = resolve_codex_binary().map_err(|_| {
         "Codex is unavailable; enter a commit message manually or try again".to_string()
     })?;
-    let codex_home = ensure_codex_home(&app, account_id).map_err(|_| {
+    let codex_home = ensure_codex_home_for_account(&app, account_id).map_err(|_| {
         "The selected Codex profile is unavailable; enter a commit message manually".to_string()
     })?;
     let args = commit_message_generation_args(&workspace, model.as_deref());
@@ -529,10 +530,12 @@ pub(crate) fn generate_chat_title_blocking(
     model: Option<String>,
     initial_prompt: String,
 ) -> Result<ChatTitleGenerationResult, String> {
-    validate_account_id(account_id)?;
+    if account_id < 0 {
+        return Err("The selected Codex account is unavailable".to_string());
+    }
     let workspace = canonical_workspace(&workspace_path)?;
     let codex_binary = resolve_codex_binary()?;
-    let codex_home = ensure_codex_home(&app, account_id)?;
+    let codex_home = ensure_codex_home_for_account(&app, account_id)?;
     let args = chat_title_generation_args(&workspace, model.as_deref());
 
     let output = run_command_with_stdin_timeout(

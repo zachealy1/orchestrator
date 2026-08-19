@@ -111,6 +111,21 @@ export function createAccountRepository(database: FrontendDatabase) {
     );
   }
 
+  async function setWorkspaceDefaultProfile(
+    workspaceId: number,
+    profileKey: string,
+    accountId: number | null,
+  ) {
+    const db = await getDatabase();
+    await db.execute(
+      `UPDATE workspaces
+       SET default_profile_key = $1,
+           default_account_id = $2
+       WHERE id = $3`,
+      [profileKey, accountId, workspaceId],
+    );
+  }
+
   async function softDeleteCodexAccount(accountId: number) {
     await commands.softDeleteCodexAccountTransaction(accountId);
   }
@@ -124,6 +139,7 @@ export function createAccountRepository(database: FrontendDatabase) {
     updateCodexAccount,
     renameCodexAccount,
     setWorkspaceDefaultAccount,
+    setWorkspaceDefaultProfile,
     softDeleteCodexAccount,
   };
 }

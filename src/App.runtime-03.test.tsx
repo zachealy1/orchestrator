@@ -285,6 +285,83 @@ describe("Application runtime scenarios 3", () => {
       );
     });
 
+  it("starts new shared chats as persistent default-profile Codex threads", async () => {
+      const sharedWorkspace = {
+        ...workspace,
+        default_account_id: null,
+        default_profile_key: "default",
+      };
+      mocks.listWorkspacesMock.mockResolvedValue([sharedWorkspace]);
+      mocks.createChatMock.mockResolvedValue({
+        ...workspaceChatFixture({
+          id: 511,
+          title: "Share a new task",
+          status: "starting",
+        }),
+        account_id: null,
+        profile_key: "default",
+        codex_thread_id: null,
+      });
+      mocks.codexDefaultProfileRpcMock.mockImplementation(
+        async (method: string) => {
+          if (method === "account/read") {
+            return {
+              account: {
+                type: "chatgpt",
+                email: "shared@example.com",
+                planType: "pro",
+              },
+              requiresOpenaiAuth: false,
+            };
+          }
+          if (method === "model/list") {
+            return { data: [defaultCodexModel], nextCursor: null };
+          }
+          if (method === "thread/list") {
+            return { threads: [] };
+          }
+          if (method === "thread/start") {
+            return { thread: { id: "shared-thread-1" } };
+          }
+          if (method === "turn/start") {
+            return { turn: { id: "shared-turn-1" } };
+          }
+          return {};
+        },
+      );
+
+      const { user } = await renderApp();
+      await user.type(screen.getByLabelText("Prompt"), "Share this task with Codex");
+      await user.click(screen.getByRole("button", { name: /run codex/i }));
+
+      await waitFor(() =>
+        expect(mocks.codexDefaultProfileRpcMock).toHaveBeenCalledWith(
+          "thread/start",
+          expect.objectContaining({
+            cwd: sharedWorkspace.path,
+            ephemeral: false,
+            historyMode: "paginated",
+            threadSource: "orchestrator",
+          }),
+        ),
+      );
+      expect(mocks.codexDefaultProfileRpcMock).toHaveBeenCalledWith(
+        "turn/start",
+        expect.objectContaining({ threadId: "shared-thread-1" }),
+      );
+      expect(mocks.createChatMock).toHaveBeenCalledWith(
+        expect.objectContaining({ accountId: null }),
+      );
+      expect(mocks.createChatWithQueuedPromptMock).toHaveBeenCalledWith(
+        expect.objectContaining({
+          accountId: null,
+          snapshot: expect.objectContaining({
+            executionSettings: expect.objectContaining({ profileKey: "default" }),
+          }),
+        }),
+      );
+    });
+
   it("adopts an external chat into a managed account without losing imported turns", async () => {
       prepareSignedInRun();
       mocks.listCodexAccountsMock.mockResolvedValue([
@@ -595,6 +672,7 @@ describe("Application runtime scenarios 3", () => {
         "Rename chat",
         "Continue in new chat",
         "Continue in new worktree",
+        "Continue in Codex",
         "Remove chat",
       ]);
       fireEvent.keyDown(window, { key: "Escape" });

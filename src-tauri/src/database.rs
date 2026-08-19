@@ -251,7 +251,8 @@ pub(crate) async fn create_chat_with_queued_prompt_transaction(
     };
     let profile_key = request
         .account_id
-        .map(|account_id| format!("account:{account_id}"));
+        .map(|account_id| format!("account:{account_id}"))
+        .unwrap_or_else(|| "default".to_string());
     let title_generation_state = if request.generate_title {
         "pending"
     } else {

@@ -3,6 +3,7 @@ export type Workspace = {
   path: string;
   label: string;
   default_account_id: number | null;
+  default_profile_key?: string | null;
   selected_git_repository_path: string | null;
   last_opened_at: string;
   created_at: string;

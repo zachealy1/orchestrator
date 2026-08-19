@@ -89,6 +89,7 @@ export function boundChatContinuationTurns(
 export function historyChatVersion(chat: ChatListItem) {
   return [
     chat.external_updated_at ?? "",
+    chat.native_thread_updated_at ?? "",
     chat.latest_activity_at,
     chat.updated_at,
     chat.turn_count,
