@@ -219,6 +219,7 @@ describe("Kanban local review styles", () => {
 
   it("keeps grouped cards in one scroll viewport above the composer", () => {
     const groups = rule(".kanban-board-groups");
+    const clearance = rule(".kanban-composer-scroll-clearance");
     const nestedBoard = rule(".kanban-board-group .kanban-board");
     const mount = sourceRule(shellCss, ".kanban-workspace-mount");
     const composer = sourceRule(shellCss, ".kanban-composer-shell");
@@ -229,12 +230,16 @@ describe("Kanban local review styles", () => {
     expect(groups).toContain("overflow-y: auto");
     expect(groups).toContain("overscroll-behavior-y: contain");
     expect(groups).toContain(
-      "padding-bottom: calc(var(--kanban-composer-clearance, 220px) + 16px)",
-    );
-    expect(groups).toContain(
       "scroll-padding-bottom: calc(var(--kanban-composer-clearance, 220px) + 16px)",
     );
     expect(groups).toContain("scrollbar-gutter: stable");
+    expect(clearance).toContain(
+      "min-height: calc(var(--kanban-composer-clearance, 220px) + 16px)",
+    );
+    expect(clearance).toContain(
+      "flex: 0 0 calc(var(--kanban-composer-clearance, 220px) + 16px)",
+    );
+    expect(clearance).toContain("pointer-events: none");
     expect(nestedBoard).toContain("overflow: visible");
     expect(nestedBoard).toContain("scrollbar-gutter: auto");
     expect(mount).toContain("position: relative");

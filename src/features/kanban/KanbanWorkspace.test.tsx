@@ -275,6 +275,14 @@ describe("KanbanWorkspace controller", () => {
     expect(
       await screen.findByRole("article", { name: /Controller card/ }),
     ).toBeInTheDocument();
+    const boardGroups = document.querySelector(".kanban-board-groups");
+    expect(boardGroups?.lastElementChild).toHaveClass(
+      "kanban-composer-scroll-clearance",
+    );
+    expect(boardGroups?.lastElementChild).toHaveAttribute(
+      "aria-hidden",
+      "true",
+    );
     await waitFor(() => expect(apiMocks.reconcileKanbanGit).toHaveBeenCalled());
     expect(screen.queryByText("Loading Kanban board…")).not.toBeInTheDocument();
 

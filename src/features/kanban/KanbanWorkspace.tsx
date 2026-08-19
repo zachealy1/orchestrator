@@ -2140,6 +2140,10 @@ export function KanbanWorkspace({
               />
             </section>
           ))}
+          <div
+            className="kanban-composer-scroll-clearance"
+            aria-hidden="true"
+          />
         </div>
       ) : hasBoardConstraints ? (
         <section className="kanban-empty-board">

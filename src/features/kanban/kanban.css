@@ -2609,9 +2609,15 @@ button.kanban-card-content {
   overflow-x: hidden;
   overflow-y: auto;
   overscroll-behavior-y: contain;
-  padding-bottom: calc(var(--kanban-composer-clearance, 220px) + 16px);
   scroll-padding-bottom: calc(var(--kanban-composer-clearance, 220px) + 16px);
   scrollbar-gutter: stable;
+}
+
+.kanban-composer-scroll-clearance {
+  width: 100%;
+  min-height: calc(var(--kanban-composer-clearance, 220px) + 16px);
+  flex: 0 0 calc(var(--kanban-composer-clearance, 220px) + 16px);
+  pointer-events: none;
 }
 
 .kanban-board-group {
