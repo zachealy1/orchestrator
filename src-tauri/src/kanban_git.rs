@@ -212,6 +212,7 @@ struct ProvisioningRepository {
     relative_path: String,
     source_branch: String,
     base_commit: String,
+    source_unborn: bool,
     include_dirty_changes: bool,
     staged_patch: Vec<u8>,
     unstaged_patch: Vec<u8>,
@@ -479,6 +480,58 @@ fn rev_parse(repo: &Path, revision: &str) -> Result<String, String> {
     )
 }
 
+fn optional_revision(repo: &Path, revision: &str) -> Result<Option<String>, String> {
+    let output = git_output(repo, &["rev-parse", "--verify", "--quiet", revision])?;
+    match output.status.code() {
+        Some(0) => Ok(Some(output_text(&output.stdout))),
+        Some(1) => Ok(None),
+        _ => Err(format!(
+            "Unable to resolve Git revision: {}",
+            output_detail(&output)
+        )),
+    }
+}
+
+fn optional_head_commit(repo: &Path) -> Result<Option<String>, String> {
+    optional_revision(repo, "HEAD^{commit}")
+}
+
+fn create_unborn_base_commit(repo: &Path) -> Result<String, String> {
+    let empty_tree = git_checked(repo, &["mktree"], "Unable to create an empty Git tree")?;
+    let mut child = Command::new("git")
+        .arg("-C")
+        .arg(repo)
+        .args(["commit-tree", empty_tree.as_str()])
+        .env("GIT_TERMINAL_PROMPT", "0")
+        .env("GIT_AUTHOR_NAME", "Orchestrator")
+        .env("GIT_AUTHOR_EMAIL", "orchestrator@localhost")
+        .env("GIT_COMMITTER_NAME", "Orchestrator")
+        .env("GIT_COMMITTER_EMAIL", "orchestrator@localhost")
+        .env("GIT_AUTHOR_DATE", "1970-01-01T00:00:00Z")
+        .env("GIT_COMMITTER_DATE", "1970-01-01T00:00:00Z")
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .map_err(|error| format!("Unable to create an empty Kanban base commit: {error}"))?;
+    child
+        .stdin
+        .take()
+        .ok_or_else(|| "Unable to open Git commit input".to_string())?
+        .write_all(b"Initialize empty Kanban base\n")
+        .map_err(|error| format!("Unable to write the empty Kanban base commit: {error}"))?;
+    let output = child
+        .wait_with_output()
+        .map_err(|error| format!("Unable to read the empty Kanban base commit: {error}"))?;
+    if !output.status.success() {
+        return Err(format!(
+            "Unable to create an empty Kanban base commit: {}",
+            output_detail(&output)
+        ));
+    }
+    Ok(output_text(&output.stdout))
+}
+
 fn common_git_directory(repo: &Path) -> Result<PathBuf, String> {
     let value = git_checked(
         repo,
@@ -568,7 +621,12 @@ fn prepare_repositories(
         }
 
         let source_branch = current_branch(&source_root)?;
-        let base_commit = rev_parse(&source_root, "HEAD^{commit}")?;
+        let source_head = optional_head_commit(&source_root)?;
+        let source_unborn = source_head.is_none();
+        let base_commit = match source_head {
+            Some(commit) => commit,
+            None => create_unborn_base_commit(&source_root)?,
+        };
         let source_status_snapshot = git_checked_bytes(
             &source_root,
             &["status", "--porcelain=v1", "-z", "--untracked-files=all"],
@@ -580,7 +638,11 @@ fn prepare_repositories(
             (
                 git_checked_bytes(
                     &source_root,
-                    &["diff", "--cached", "--binary", "--full-index", "HEAD", "--"],
+                    if source_unborn {
+                        &["diff", "--cached", "--binary", "--full-index", "--"]
+                    } else {
+                        &["diff", "--cached", "--binary", "--full-index", "HEAD", "--"]
+                    },
                     "Unable to snapshot staged source changes",
                 )?,
                 git_checked_bytes(
@@ -611,6 +673,7 @@ fn prepare_repositories(
             relative_path,
             source_branch,
             base_commit,
+            source_unborn,
             include_dirty_changes: selection.include_dirty_changes,
             staged_patch,
             unstaged_patch,
@@ -715,7 +778,7 @@ fn create_worktree(
     }
 
     let target_reference = format!("refs/heads/{}^{{commit}}", repository.source_branch);
-    let current_target = rev_parse(&repository.source_root, &target_reference);
+    let current_target = optional_revision(&repository.source_root, &target_reference);
     let source_unchanged = if repository.include_dirty_changes {
         git_checked_bytes(
             &repository.source_root,
@@ -727,7 +790,12 @@ fn create_worktree(
         Ok(true)
     };
     let verification_error = match (current_target, source_unchanged) {
-        (Ok(target), Ok(true)) if target == repository.base_commit => None,
+        (Ok(None), Ok(true)) if repository.source_unborn => None,
+        (Ok(Some(target)), Ok(true))
+            if !repository.source_unborn && target == repository.base_commit =>
+        {
+            None
+        }
         (Ok(_), Ok(true)) => {
             Some("The captured target branch moved during provisioning".to_string())
         }
@@ -1149,6 +1217,20 @@ fn base_branch_head(source: &Path, binding: &KanbanGitRepositoryBinding) -> Opti
     rev_parse(source, &reference).ok()
 }
 
+fn is_empty_root_commit(repo: &Path, commit: &str) -> Result<bool, String> {
+    let revision = git_checked(
+        repo,
+        &["rev-list", "--parents", "-n", "1", commit],
+        "Unable to inspect the Kanban base commit",
+    )?;
+    if revision.split_whitespace().count() != 1 {
+        return Ok(false);
+    }
+    let commit_tree = rev_parse(repo, &format!("{commit}^{{tree}}"))?;
+    let empty_tree = git_checked(repo, &["mktree"], "Unable to inspect the empty Git tree")?;
+    Ok(commit_tree == empty_tree)
+}
+
 fn reconcile_blocking(binding: KanbanGitRepositoryBinding) -> KanbanGitReconcileResult {
     let mut result_binding = binding.clone();
     let mut result = KanbanGitReconcileResult {
@@ -1195,6 +1277,8 @@ fn reconcile_blocking(binding: KanbanGitRepositoryBinding) -> KanbanGitReconcile
         }
     };
     result.base_branch_head = base_branch_head(&source, &binding);
+    let target_is_unborn = result.base_branch_head.is_none()
+        && is_empty_root_commit(&source, &binding.base_commit).unwrap_or(false);
     result.target_moved = result
         .base_branch_head
         .as_deref()
@@ -1299,7 +1383,7 @@ fn reconcile_blocking(binding: KanbanGitRepositoryBinding) -> KanbanGitReconcile
     result.has_conflicts = files.iter().any(|file| file.kind == "conflicted");
     result_binding.status = if result.has_conflicts {
         "conflicted"
-    } else if result.base_branch_head.is_none() {
+    } else if result.base_branch_head.is_none() && !target_is_unborn {
         "targetMissing"
     } else if result.target_moved {
         "targetMoved"
@@ -2106,6 +2190,12 @@ mod tests {
         repo
     }
 
+    fn init_unborn_repository(label: &str) -> PathBuf {
+        let repo = temp_directory(label);
+        run(&repo, &["init", "-b", "main"]);
+        repo
+    }
+
     fn provision(
         root: &Path,
         repo: &Path,
@@ -2147,6 +2237,46 @@ mod tests {
             binding.card_branch
         );
         assert_eq!(current_branch(&repo).unwrap(), "main");
+
+        cleanup_blocking(KanbanGitCleanupRequest {
+            binding: binding.clone(),
+            delete_branch: true,
+            force: true,
+        })
+        .expect("cleanup");
+        remove_test_directory(&repo);
+        remove_test_directory(&cards);
+    }
+
+    #[test]
+    fn provisioning_supports_an_unborn_source_without_committing_to_it() {
+        let repo = init_unborn_repository("unborn-source");
+        let cards = temp_directory("unborn-cards");
+        let result = provision(&cards, &repo, "unborn-card", false);
+
+        assert!(result.complete);
+        assert!(result.errors.is_empty());
+        assert_eq!(result.repositories.len(), 1);
+        let binding = &result.repositories[0];
+        let worktree = Path::new(&binding.worktree_path);
+        assert_eq!(binding.base_branch, "main");
+        assert_eq!(binding.card_branch, "codex/implement-feature");
+        assert_eq!(current_branch(worktree).unwrap(), binding.card_branch);
+        assert_eq!(
+            rev_parse(worktree, "HEAD^{commit}").unwrap(),
+            binding.base_commit
+        );
+        assert_eq!(optional_head_commit(&repo).unwrap(), None);
+        assert_eq!(current_branch(&repo).unwrap(), "main");
+        assert!(!repository_is_dirty(worktree).unwrap());
+        let reconciled = reconcile_blocking(binding.clone());
+        assert_eq!(reconciled.binding.status, "ready");
+        assert!(reconciled.worktree_available);
+        assert!(!reconciled.target_moved);
+        let status = status_blocking(binding.clone()).expect("read unborn card status");
+        assert_eq!(status.head_commit, binding.base_commit);
+        assert_eq!(status.base_branch_head, None);
+        assert!(!status.has_changes);
 
         cleanup_blocking(KanbanGitCleanupRequest {
             binding: binding.clone(),
