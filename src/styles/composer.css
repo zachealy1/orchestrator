@@ -777,6 +777,10 @@ button.composer-status-action:focus-visible {
   color: var(--color-diff-addition);
 }
 
+.composer-status-notice[data-tone] .composer-status-dismiss > svg {
+  color: var(--color-text);
+}
+
 .composer-status-notice strong {
   flex: 0 0 auto;
   color: var(--color-text);

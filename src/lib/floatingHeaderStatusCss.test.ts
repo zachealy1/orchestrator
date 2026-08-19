@@ -36,4 +36,12 @@ describe("floating header status CSS", () => {
     expect(hiddenBubble).toContain("opacity: 0");
     expect(hiddenBubble).toContain("pointer-events: none");
   });
+
+  it("keeps the dismiss icon legible instead of inheriting the notice tone", () => {
+    const dismissIcon = rule(
+      '.composer-status-notice[data-tone] .composer-status-dismiss > svg',
+    );
+
+    expect(dismissIcon).toContain("color: var(--color-text)");
+  });
 });
