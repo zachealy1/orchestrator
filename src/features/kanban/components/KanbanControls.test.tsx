@@ -144,7 +144,12 @@ describe("Kanban controls", () => {
       expect(screen.getByRole("button", { name: "Cancel" })).toHaveFocus(),
     );
     const closeButton = screen.getByRole("button", { name: "Close confirmation" });
+    const cancelButton = screen.getByRole("button", { name: "Cancel" });
     const confirmButton = screen.getByRole("button", { name: "Delete card" });
+    expect(cancelButton).toHaveAttribute("data-tooltip", "Cancel");
+    expect(confirmButton).toHaveAttribute("data-tooltip", "Delete card");
+    expect(cancelButton).not.toHaveAttribute("title");
+    expect(confirmButton).not.toHaveAttribute("title");
     expect(confirmButton).not.toHaveFocus();
     closeButton.focus();
     await user.tab({ shift: true });
@@ -189,9 +194,11 @@ describe("Kanban controls", () => {
     const archiveButton = screen.getByRole("button", { name: "Archive card" });
     expect(cancelButton).toHaveClass("native-plan-icon-action", "cancel");
     expect(cancelButton).toHaveAttribute("data-tooltip", "Cancel");
+    expect(cancelButton).not.toHaveAttribute("title");
     expect(cancelButton).toHaveTextContent("");
     expect(archiveButton).toHaveClass("native-plan-icon-action", "implement");
     expect(archiveButton).toHaveAttribute("data-tooltip", "Archive card");
+    expect(archiveButton).not.toHaveAttribute("title");
     expect(archiveButton).toHaveTextContent("");
     await waitFor(() => expect(archiveButton).toHaveFocus());
 

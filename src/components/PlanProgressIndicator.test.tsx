@@ -54,6 +54,7 @@ describe("PlanProgressIndicator", () => {
     expect(indicator).toHaveTextContent("Step 2 / 4");
     expect(indicator).toHaveTextContent("Run focused tests");
     expect(indicator).toHaveTextContent("In progress");
+    expect(indicator.querySelector("[title]")).not.toBeInTheDocument();
     expect(indicatorShell).toHaveAttribute("data-state", "in-progress");
     expect(container.querySelector(".plan-progress-marker")).toBeNull();
     expect(container.querySelector(".plan-progress-pulse")).toBeNull();
@@ -159,8 +160,6 @@ describe("PlanProgressIndicator", () => {
     expect(screen.getByText("Step 12 / 24")).toHaveClass(
       "composer-strip-title",
     );
-    expect(screen.getByTitle(stepLabel)).toHaveClass(
-      "composer-strip-description",
-    );
+    expect(screen.getAllByText(stepLabel)[0]).toHaveClass("composer-strip-description");
   });
 });

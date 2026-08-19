@@ -386,8 +386,10 @@ describe("KanbanCardDialog", () => {
     const save = screen.getByRole("button", { name: "Save changes" });
     expect(cancel).toHaveClass("native-plan-icon-action", "cancel");
     expect(save).toHaveClass("native-plan-icon-action", "implement");
-    expect(cancel).toHaveAttribute("title", "Cancel");
-    expect(save).toHaveAttribute("title", "Save changes");
+    expect(cancel).toHaveAttribute("data-tooltip", "Cancel");
+    expect(save).toHaveAttribute("data-tooltip", "Save changes");
+    expect(cancel).not.toHaveAttribute("title");
+    expect(save).not.toHaveAttribute("title");
     expect(cancel).not.toHaveTextContent("Cancel");
     expect(save).not.toHaveTextContent("Save changes");
 

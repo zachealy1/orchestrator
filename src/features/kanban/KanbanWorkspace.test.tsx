@@ -594,6 +594,11 @@ describe("KanbanWorkspace controller", () => {
     );
 
     const chooser = screen.getByRole("dialog", { name: "Open pull request" });
+    const closeChooser = within(chooser).getByRole("button", {
+      name: "Close pull request chooser",
+    });
+    expect(closeChooser).toHaveAttribute("data-tooltip", "Close");
+    expect(closeChooser).not.toHaveAttribute("title");
     await user.click(within(chooser).getByRole("button", { name: /backend/ }));
     expect(githubMocks.openPullRequest).toHaveBeenCalledWith(
       "https://github.com/owner/backend/pull/34",

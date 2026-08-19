@@ -154,10 +154,15 @@ describe("GoalProgressIndicator", () => {
 
     const edit = screen.getByRole("button", { name: "Edit goal" });
     const stop = screen.getByRole("button", { name: "Stop goal" });
+    const pause = screen.getByRole("button", { name: "Pause goal" });
     expect(edit).toHaveClass("native-plan-icon-action");
     expect(stop).toHaveClass("native-plan-icon-action", "cancel");
+    expect(pause).toHaveAttribute("data-tooltip", "Pause goal");
     expect(edit).toHaveAttribute("data-tooltip", "Edit goal");
     expect(stop).toHaveAttribute("data-tooltip", "Stop goal");
+    expect(pause).not.toHaveAttribute("title");
+    expect(edit).not.toHaveAttribute("title");
+    expect(stop).not.toHaveAttribute("title");
     expect(edit).not.toHaveTextContent("Edit goal");
     expect(stop).not.toHaveTextContent("Stop goal");
 
