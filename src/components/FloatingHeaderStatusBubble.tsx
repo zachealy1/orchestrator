@@ -21,7 +21,7 @@ export type FloatingStatusNotice = {
   revisionKey: string;
   tone: "approval" | "warning" | "success";
   title: string;
-  detail: string;
+  detail?: string;
   actionLabel?: string;
   timeoutMs: number | null;
 };
@@ -286,7 +286,9 @@ function FloatingStatusRow({
         <CircleAlert size={15} aria-hidden="true" />
       )}
       <strong>{notice.title}</strong>
-      <span className="composer-status-detail">{notice.detail}</span>
+      {notice.detail ? (
+        <span className="composer-status-detail">{notice.detail}</span>
+      ) : null}
       {actionable ? (
         <ChevronRight
           className="composer-status-chevron"

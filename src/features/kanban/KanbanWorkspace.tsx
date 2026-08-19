@@ -8,8 +8,6 @@ import {
 } from "react";
 import { createPortal } from "react-dom";
 import {
-  AlertCircle,
-  CheckCircle2,
   ExternalLink,
   FilterX,
   GitPullRequest,
@@ -118,6 +116,11 @@ import {
   writeKanbanWorkspaceScroll,
   writeReconciledKanbanBinding,
 } from "./workspaceCache";
+import {
+  FLOATING_STATUS_NOTICE_TIMEOUT_MS,
+  FloatingHeaderStatusBubble,
+  type FloatingStatusNotice,
+} from "../../components/FloatingHeaderStatusBubble";
 import "./kanban.css";
 
 export type KanbanLaunchKind = KanbanAttemptRecord["kind"];
@@ -182,6 +185,12 @@ type LocalReviewState = {
   review: KanbanLocalReview | null;
   loading: boolean;
   error: string | null;
+};
+
+type KanbanStatusMessage = {
+  workspaceId: number;
+  message: string;
+  revision: number;
 };
 
 type GitDialogProps = {
@@ -675,9 +684,58 @@ export function KanbanWorkspace({
   const [archivedLoading, setArchivedLoading] = useState(false);
   const [bindingHydrationVersion, setBindingHydrationVersion] = useState(0);
   const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [bindingError, setBindingError] = useState<string | null>(null);
-  const [notice, setNotice] = useState<string | null>(null);
+  const [errorStatus, setErrorStatus] = useState<KanbanStatusMessage | null>(
+    null,
+  );
+  const [bindingErrorStatus, setBindingErrorStatus] =
+    useState<KanbanStatusMessage | null>(null);
+  const [successStatus, setSuccessStatus] =
+    useState<KanbanStatusMessage | null>(null);
+  const statusRevisionRef = useRef(0);
+  const setError = useCallback(
+    (message: string | null) => {
+      setErrorStatus(
+        message === null
+          ? null
+          : {
+              workspaceId: workspace.id,
+              message,
+              revision: ++statusRevisionRef.current,
+            },
+      );
+    },
+    [workspace.id],
+  );
+  const setBindingError = useCallback(
+    (message: string | null) => {
+      setBindingErrorStatus(
+        message === null
+          ? null
+          : {
+              workspaceId: workspace.id,
+              message,
+              revision: ++statusRevisionRef.current,
+            },
+      );
+    },
+    [workspace.id],
+  );
+  const setNotice = useCallback(
+    (message: string | null) => {
+      setSuccessStatus(
+        message === null
+          ? null
+          : {
+              workspaceId: workspace.id,
+              message,
+              revision: ++statusRevisionRef.current,
+            },
+      );
+    },
+    [workspace.id],
+  );
+  const [statusAnchorElement, setStatusAnchorElement] =
+    useState<HTMLDivElement | null>(null);
   const [archivedOpen, setArchivedOpen] = useState(false);
   const [cardDialog, setCardDialog] = useState<CardDialogState | null>(null);
   const [cardDialogError, setCardDialogError] = useState<string | null>(null);
@@ -705,6 +763,38 @@ export function KanbanWorkspace({
   preferencesRef.current = preferences;
   bindingsByCardRef.current = bindingsByCard;
   archivedLoadedRef.current = archivedLoaded;
+
+  const floatingStatusNotices = useMemo<FloatingStatusNotice[]>(() => {
+    const notices: FloatingStatusNotice[] = [];
+    if (errorStatus?.workspaceId === workspace.id) {
+      notices.push({
+        id: `kanban-action-error-${workspace.id}`,
+        revisionKey: String(errorStatus.revision),
+        tone: "warning",
+        title: errorStatus.message,
+        timeoutMs: FLOATING_STATUS_NOTICE_TIMEOUT_MS,
+      });
+    }
+    if (bindingErrorStatus?.workspaceId === workspace.id) {
+      notices.push({
+        id: `kanban-binding-error-${workspace.id}`,
+        revisionKey: String(bindingErrorStatus.revision),
+        tone: "warning",
+        title: bindingErrorStatus.message,
+        timeoutMs: FLOATING_STATUS_NOTICE_TIMEOUT_MS,
+      });
+    }
+    if (successStatus?.workspaceId === workspace.id) {
+      notices.push({
+        id: `kanban-action-success-${workspace.id}`,
+        revisionKey: String(successStatus.revision),
+        tone: "success",
+        title: successStatus.message,
+        timeoutMs: FLOATING_STATUS_NOTICE_TIMEOUT_MS,
+      });
+    }
+    return notices;
+  }, [bindingErrorStatus, errorStatus, successStatus, workspace.id]);
 
   const performBoardLoad = useCallback(async (includeArchived: boolean) => {
     const request = ++requestSequence.current;
@@ -1996,18 +2086,15 @@ export function KanbanWorkspace({
           ) : null}
         </div>
       ) : null}
-      {error ?? bindingError ? (
-        <div className="kanban-workspace-alert error" role="alert">
-          <AlertCircle size={15} aria-hidden="true" />
-          <span>{error ?? bindingError}</span>
-        </div>
-      ) : null}
-      {notice ? (
-        <div className="kanban-workspace-alert" role="status">
-          <CheckCircle2 size={15} aria-hidden="true" />
-          <span>{notice}</span>
-        </div>
-      ) : null}
+      <div
+        ref={setStatusAnchorElement}
+        className="kanban-floating-status-anchor"
+      />
+      <FloatingHeaderStatusBubble
+        notices={floatingStatusNotices}
+        anchorElement={statusAnchorElement}
+        active={active}
+      />
       {active
         ? toolbarHost === undefined
           ? toolbar

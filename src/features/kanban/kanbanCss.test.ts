@@ -28,11 +28,27 @@ function rule(selector: string) {
 }
 
 describe("Kanban local review styles", () => {
-  it("spaces workspace warnings evenly between the header and swim lanes", () => {
+  it("keeps the persistent GitHub warning in the workspace flow", () => {
     expect(rule(".kanban-workspace-alert")).toContain("margin: 14px 16px 0");
     expect(rule(".kanban-board-columns")).toContain(
       "padding: 14px 16px 24px",
     );
+  });
+
+  it("floats transient status notices without reserving board space", () => {
+    const anchor = rule(".kanban-floating-status-anchor");
+    const bubble = rule(
+      ".kanban-floating-status-anchor .floating-header-status-bubble",
+    );
+
+    expect(anchor).toContain("position: relative");
+    expect(anchor).toContain("height: 0");
+    expect(anchor).toContain("flex: 0 0 0");
+    expect(anchor).toContain("pointer-events: none");
+    expect(bubble).toContain("right: 16px");
+    expect(bubble).toContain("left: 16px");
+    expect(bubble).toContain("max-width: none");
+    expect(bubble).toContain("pointer-events: auto");
   });
 
   it("uses opaque shared application surfaces for the drawer and diff", () => {
