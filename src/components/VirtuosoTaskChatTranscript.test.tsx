@@ -1072,6 +1072,84 @@ describe("VirtuosoTaskChatTranscript", () => {
     ).toBeNull();
   });
 
+  it("reveals an incoming transcript when exact positioning never settles", async () => {
+    const outgoingEntry = {
+      ...historyEntry(1),
+      clientId: "settled-outgoing-entry",
+    };
+    const entry = {
+      ...runningMultiQuestionEntry(),
+      clientId: "unsettled-question-entry",
+    };
+    const view = render(
+      <VirtuosoTaskChatTranscript
+        entries={[outgoingEntry]}
+        transcriptIdentity="chat:settled-outgoing"
+        transcriptVersion="v1"
+        firstItemIndex={999_999}
+        openAtLatestRequest={null}
+        liveFollow={false}
+        onResolveRequest={vi.fn()}
+      />,
+    );
+    await act(async () => {
+      await new Promise((resolve) => window.setTimeout(resolve, 40));
+    });
+
+    const geometry = vi
+      .spyOn(HTMLElement.prototype, "getBoundingClientRect")
+      .mockImplementation(function mockTranscriptGeometry(this: HTMLElement) {
+        const isRow = this.hasAttribute("data-transcript-entry-id");
+        const top = isRow ? 700 : 0;
+        const bottom = isRow ? 900 : 600;
+        return {
+          x: 0,
+          y: top,
+          width: 900,
+          height: bottom - top,
+          top,
+          right: 900,
+          bottom,
+          left: 0,
+          toJSON: () => ({}),
+        };
+      });
+    vi.useFakeTimers();
+    try {
+      view.rerender(
+        <VirtuosoTaskChatTranscript
+          entries={[entry]}
+          transcriptIdentity="chat:unsettled-question"
+          transcriptVersion="v1"
+          firstItemIndex={999_999}
+          openAtLatestRequest={latestRequest(91)}
+          liveFollow={false}
+          onResolveRequest={vi.fn()}
+        />,
+      );
+
+      expect(
+        screen.getByRole("region", { name: "Task chat transcript" }),
+      ).toHaveTextContent("Loading conversation");
+
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(3_100);
+      });
+
+      expect(
+        view.container.querySelector(".task-chat-transcript-layer.is-visible"),
+      ).toHaveTextContent("Which scope?");
+      expect(
+        view.container.querySelector(".task-chat-transcript-layer.is-preparing"),
+      ).toBeNull();
+      expect(virtuosoMock.scrollToIndex).toHaveBeenCalledWith(
+        expect.objectContaining({ index: 999_999, align: "end" }),
+      );
+    } finally {
+      geometry.mockRestore();
+    }
+  });
+
   it("keeps an initially restored transcript hidden until its saved position is ready", async () => {
     const entry = {
       ...historyEntry(1),

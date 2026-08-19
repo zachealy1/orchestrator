@@ -16,6 +16,8 @@ export type SelectHistoryChatOptions = {
   source?: "drawer" | "notification" | "workspace" | "kanban";
   workspace?: Workspace;
   positionIntent?: HistoricalTranscriptState["positionIntent"];
+  kanbanCardId?: string;
+  kanbanInteractionPending?: boolean;
 };
 
 export type WorkspaceTaskSelection =

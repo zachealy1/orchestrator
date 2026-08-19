@@ -419,6 +419,7 @@ import {
 import {
   RunStoppedError,
   isActiveRunControl,
+  isNavigableRunControl,
   type AccountHandoffRunStrategy,
   type ActiveRunControl,
   type ChatTitleGenerationRequest,
@@ -510,6 +511,7 @@ import {
   HISTORY_VIRTUOSO_BASE_INDEX,
   RUN_NOTIFICATION_BINDING_BUFFER_LIMIT,
   RUN_NOTIFICATION_BINDING_TTL_MS,
+  SHARED_TRANSCRIPT_SYNC_TIMEOUT_MS,
   TASK_QUOTES,
   WEB_PREVIEW_PROBE_RETRY_DELAYS_MS,
 } from "./runtimeConstants";
@@ -5271,6 +5273,40 @@ function App() {
     );
   }
 
+  function findNavigableRunControlByChat(
+    workspaceId: number,
+    chatId: number,
+    options: {
+      kanbanCardId?: string;
+      kanbanInteractionPending?: boolean;
+    } = {},
+  ) {
+    const candidates = [...activeRunRegistry.values()].filter((control) => {
+      if (
+        control.workspaceId !== workspaceId ||
+        control.chatId !== chatId ||
+        control.stopped
+      ) {
+        return false;
+      }
+      if (
+        options.kanbanCardId &&
+        control.kanbanAttempt?.cardId !== options.kanbanCardId
+      ) {
+        return false;
+      }
+      return (
+        isNavigableRunControl(control) ||
+        Boolean(options.kanbanInteractionPending && control.kanbanAttempt)
+      );
+    });
+    return (
+      candidates.sort(
+        (left, right) => right.eventSequence - left.eventSequence,
+      )[0] ?? null
+    );
+  }
+
   function findRunControlForMessage(
     profileKey: CodexProfileKey,
     message: CodexMessage,
@@ -6958,6 +6994,7 @@ function App() {
     entries: TaskChatEntry[],
     transcript: HistoricalTranscriptState,
   ) {
+    if (transcript.syncStatus === "syncing") return;
     const cacheableTranscript: HistoricalTranscriptState = {
       ...transcript,
       positionIntent: "preserve",
@@ -7483,7 +7520,14 @@ function App() {
           console.error("Could not restore chat subagents", error);
         });
     }
-    const runningControl = findRunControlByChat(chat.workspace_id, chat.id);
+    const runningControl = findNavigableRunControlByChat(
+      chat.workspace_id,
+      chat.id,
+      {
+        kanbanCardId: options.kanbanCardId,
+        kanbanInteractionPending: options.kanbanInteractionPending,
+      },
+    );
     const positionIntent = options.positionIntent ?? "latest";
 
     markWorkspaceChatRead(chat.workspace_id, chat.id);
@@ -7660,6 +7704,9 @@ function App() {
 
     const navigationId = kanbanConversationNavigationIdRef.current + 1;
     kanbanConversationNavigationIdRef.current = navigationId;
+    const interactionPending =
+      card.executionState === "waiting_user" ||
+      card.executionState === "waiting_approval";
     try {
       const chatWithRuns = await getChatWithRuns(card.chatId);
       if (kanbanConversationNavigationIdRef.current !== navigationId) return;
@@ -7671,21 +7718,55 @@ function App() {
         source: "kanban",
         workspace: targetWorkspace,
         positionIntent: "latest",
+        kanbanCardId: card.id,
+        kanbanInteractionPending: interactionPending,
       });
       if (
         opened &&
         kanbanConversationNavigationIdRef.current === navigationId
       ) {
+        const liveControl = findNavigableRunControlByChat(
+          card.workspaceId,
+          card.chatId,
+          {
+            kanbanCardId: card.id,
+            kanbanInteractionPending: interactionPending,
+          },
+        );
         const latestRun =
           chatWithRuns.runs[chatWithRuns.runs.length - 1] ?? null;
-        if (latestRun) {
+        const userInputRequest = liveControl?.runView.serverRequests
+          .filter(isNativeUserInputRequest)
+          .find(
+            (request) =>
+              !liveControl.threadId ||
+              request.params.threadId === liveControl.threadId,
+          );
+        const approvalRequest = liveControl?.runView.approvalRequests.find(
+          (request) => request.status === "pending",
+        );
+        if (liveControl?.entry || latestRun) {
           notificationFocusSequenceRef.current += 1;
           setTranscriptNotificationFocusRequest({
             requestId: notificationFocusSequenceRef.current,
-            kind: "prompt",
-            runId: latestRun.id,
-            turnId: latestRun.codex_turn_id,
+            kind: userInputRequest
+              ? "user-input"
+              : approvalRequest
+                ? "approval"
+                : "prompt",
+            entryClientId: liveControl?.entry?.clientId ?? null,
+            runId: liveControl?.runId ?? latestRun?.id ?? null,
+            turnId:
+              liveControl?.turnId ?? latestRun?.codex_turn_id ?? null,
+            targetId: userInputRequest
+              ? requestKey(userInputRequest)
+              : approvalRequest?.key ?? null,
           });
+        }
+        if (interactionPending && !liveControl) {
+          setStatusMessage(
+            "The pending interaction is no longer available. The saved conversation is still open.",
+          );
         }
       }
       if (
@@ -7752,79 +7833,152 @@ function App() {
     }
     const localRuns = await listLocalChatTranscript(chat.id);
     if (historyChatLoadIdRef.current !== loadId) return;
+    const localEntries = [
+      ...createTaskChatEntriesFromContinuationSnapshot(chat),
+      ...localRuns.map(createTaskChatEntryFromHistoryRun),
+    ];
     const localTurnIds = new Set(
       localRuns.flatMap((run) => run.codex_turn_id ? [run.codex_turn_id] : []),
     );
-    let nativeEntries: TaskChatEntry[] = [];
-    let syncStatus: HistoricalTranscriptState["syncStatus"] = "complete";
-    try {
-      await ensureCodexProfileConnected(DEFAULT_CODEX_PROFILE_KEY, 0);
-      const sourceVersion =
-        chat.native_thread_updated_at ?? chat.updated_at;
-      const requestId = `shared-transcript-${chat.id}-${Date.now().toString(36)}`;
-      const snapshot = await syncDefaultProfileThreadTranscript({
-        threadId,
-        sourceVersion,
-        pageSize: HISTORY_CHAT_PAGE_SIZE,
-        requestId,
-      });
-      if (historyChatLoadIdRef.current !== loadId) return;
-      await activateExternalTranscriptSnapshot(chat.id, snapshot);
-      nativeEntries = createTaskChatEntriesFromExternalTranscriptSnapshot(
-        chat,
-        snapshot,
-      ).filter(
-        (entry) =>
-          !entry.runView.turnId || !localTurnIds.has(entry.runView.turnId),
-      );
-    } catch (error) {
-      syncStatus = "error";
-      if (isCodexThreadNotFoundError(error)) {
-        await markSharedNativeThreadUnavailable(chat.id).catch(() => undefined);
-        setStatusMessage(
-          "This shared task is no longer available in Codex. Orchestrator history is still available.",
-        );
-      } else {
-        setStatusMessage(
-          `Opened Orchestrator history, but Codex synchronization failed: ${
-            error instanceof Error ? error.message : String(error)
-          }`,
-        );
-      }
-    }
-    const entries = [
-      ...createTaskChatEntriesFromContinuationSnapshot(chat),
-      ...nativeEntries,
-      ...localRuns.map(createTaskChatEntryFromHistoryRun),
-    ].sort(
-      (left, right) =>
-        (left.turnIndex ?? Number.MAX_SAFE_INTEGER) -
-          (right.turnIndex ?? Number.MAX_SAFE_INTEGER) ||
-        left.submittedAt.localeCompare(right.submittedAt),
-    );
-    const transcript: HistoricalTranscriptState = {
+    const sourceVersion = chat.native_thread_updated_at ?? chat.updated_at;
+    const localTranscript: HistoricalTranscriptState = {
       chatId: chat.id,
       sourceVersion: historyChatVersion(chat),
       complete: true,
       firstItemIndex: HISTORY_VIRTUOSO_BASE_INDEX,
       positionIntent,
       openAtLatestRequest: null,
-      syncStatus,
+      syncStatus: "syncing",
     };
-    const preparedEntries = await prepareHistoryChatEntries(
-      chat,
-      entries,
-      transcript,
-      loadId,
-    );
-    if (!preparedEntries) return;
-    publishStableHistoryChat(
-      chat,
-      preparedEntries,
-      transcript,
-      loadId,
-      positionIntent,
-    );
+    const hasLocalContent = localEntries.length > 0;
+    if (hasLocalContent) {
+      const preparedLocalEntries = await prepareHistoryChatEntries(
+        chat,
+        localEntries,
+        localTranscript,
+        loadId,
+      );
+      if (!preparedLocalEntries) return;
+      publishStableHistoryChat(
+        chat,
+        preparedLocalEntries,
+        localTranscript,
+        loadId,
+        positionIntent,
+      );
+    }
+
+    const synchronizeNativeHistory = async () => {
+      const requestId = `shared-transcript-${chat.id}-${Date.now().toString(36)}`;
+      activeExternalTranscriptSyncRef.current = { chatId: chat.id, requestId };
+      let nativeEntries: TaskChatEntry[] = [];
+      let syncStatus: HistoricalTranscriptState["syncStatus"] = "complete";
+      try {
+        await ensureCodexProfileConnected(DEFAULT_CODEX_PROFILE_KEY, 0);
+        let timeoutId: number | null = null;
+        const timeoutPromise = new Promise<never>((_resolve, reject) => {
+          timeoutId = window.setTimeout(() => {
+            void cancelDefaultProfileThreadTranscript(requestId).catch(
+              () => undefined,
+            );
+            reject(new Error("Codex transcript synchronization timed out."));
+          }, SHARED_TRANSCRIPT_SYNC_TIMEOUT_MS);
+        });
+        let snapshot;
+        try {
+          snapshot = await Promise.race([
+            syncDefaultProfileThreadTranscript({
+              threadId,
+              sourceVersion,
+              pageSize: HISTORY_CHAT_PAGE_SIZE,
+              requestId,
+            }),
+            timeoutPromise,
+          ]);
+        } finally {
+          if (timeoutId !== null) window.clearTimeout(timeoutId);
+        }
+        if (activeExternalTranscriptSyncRef.current?.requestId !== requestId) {
+          return;
+        }
+        if (historyChatLoadIdRef.current !== loadId) return;
+        await activateExternalTranscriptSnapshot(chat.id, snapshot);
+        nativeEntries = createTaskChatEntriesFromExternalTranscriptSnapshot(
+          chat,
+          snapshot,
+        ).filter(
+          (entry) =>
+            !entry.runView.turnId || !localTurnIds.has(entry.runView.turnId),
+        );
+      } catch (error) {
+        if (
+          activeExternalTranscriptSyncRef.current?.requestId !== requestId ||
+          historyChatLoadIdRef.current !== loadId
+        ) {
+          return;
+        }
+        syncStatus = "error";
+        if (isCodexThreadNotFoundError(error)) {
+          await markSharedNativeThreadUnavailable(chat.id).catch(() => undefined);
+          setStatusMessage(
+            "This shared task is no longer available in Codex. Orchestrator history is still available.",
+          );
+        } else {
+          setStatusMessage(
+            `Opened Orchestrator history, but Codex synchronization failed: ${
+              error instanceof Error ? error.message : String(error)
+            }`,
+          );
+        }
+      } finally {
+        if (activeExternalTranscriptSyncRef.current?.requestId === requestId) {
+          activeExternalTranscriptSyncRef.current = null;
+        }
+      }
+      if (historyChatLoadIdRef.current !== loadId) return;
+      const entries = [...nativeEntries, ...localEntries].sort(
+        (left, right) =>
+          (left.turnIndex ?? Number.MAX_SAFE_INTEGER) -
+            (right.turnIndex ?? Number.MAX_SAFE_INTEGER) ||
+          left.submittedAt.localeCompare(right.submittedAt),
+      );
+      const transcript: HistoricalTranscriptState = {
+        chatId: chat.id,
+        sourceVersion: historyChatVersion(chat),
+        complete: true,
+        firstItemIndex: HISTORY_VIRTUOSO_BASE_INDEX,
+        positionIntent: hasLocalContent ? "preserve" : positionIntent,
+        openAtLatestRequest: null,
+        syncStatus,
+      };
+      const preparedEntries = await prepareHistoryChatEntries(
+        chat,
+        entries,
+        transcript,
+        loadId,
+      );
+      if (!preparedEntries) return;
+      publishStableHistoryChat(
+        chat,
+        preparedEntries,
+        transcript,
+        loadId,
+        hasLocalContent ? "preserve" : positionIntent,
+      );
+    };
+
+    if (hasLocalContent) {
+      void synchronizeNativeHistory().catch((error) => {
+        if (historyChatLoadIdRef.current !== loadId) return;
+        setStatusMessage(
+          `Opened Orchestrator history, but Codex synchronization failed: ${
+            error instanceof Error ? error.message : String(error)
+          }`,
+        );
+      });
+      return;
+    }
+    await synchronizeNativeHistory();
   }
 
   async function loadHistoricalActivity(entry: TaskChatEntry) {

@@ -1021,6 +1021,7 @@ pub(crate) async fn build_external_thread_transcript(
     request_id: &str,
 ) -> Result<ExternalTranscriptSnapshot, String> {
     let mut cursor: Option<String> = None;
+    let mut seen_cursors = HashSet::new();
     let mut pages: Vec<Vec<ExternalTranscriptTurnSummary>> = Vec::new();
 
     loop {
@@ -1057,10 +1058,19 @@ pub(crate) async fn build_external_thread_transcript(
                 .filter_map(project_external_transcript_turn)
                 .collect(),
         );
-        cursor = response
+        let next_cursor = response
             .get("nextCursor")
             .and_then(Value::as_str)
             .map(str::to_string);
+        if let Some(next_cursor) = next_cursor.as_ref() {
+            if !seen_cursors.insert(next_cursor.clone()) {
+                return Err(
+                    "Codex returned a repeated transcript cursor; synchronization stopped."
+                        .to_string(),
+                );
+            }
+        }
+        cursor = next_cursor;
         if cursor.is_none() {
             break;
         }

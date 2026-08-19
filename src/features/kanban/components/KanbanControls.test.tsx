@@ -208,6 +208,59 @@ describe("Kanban controls", () => {
     expect(onConfirm).toHaveBeenCalledOnce();
   });
 
+  it("uses the stop-and-move transition layout and icon-only actions", async () => {
+    const user = userEvent.setup();
+    const onCancel = vi.fn();
+    const onConfirm = vi.fn();
+
+    render(
+      <KanbanTransitionDialog
+        open
+        kind="stop-and-move"
+        card={{ ...card, columnId: "in_progress", executionState: "running" }}
+        destinationLabel="To do"
+        onCancel={onCancel}
+        onConfirm={onConfirm}
+      />,
+    );
+
+    const dialog = screen.getByRole("alertdialog", {
+      name: "Stop this agent and move the card?",
+    });
+    expect(dialog).toHaveClass("is-stop-and-move");
+    expect(dialog.querySelector(".eyebrow")).not.toBeInTheDocument();
+    expect(dialog.querySelector(".kanban-stop-move-heading-icon")).toBeInTheDocument();
+    expect(dialog).toHaveTextContent("In progress");
+    expect(dialog).toHaveTextContent("To do");
+    expect(dialog).not.toHaveTextContent("Destination:");
+    expect(
+      screen.queryByRole("button", { name: "Close confirmation" }),
+    ).not.toBeInTheDocument();
+
+    const cancelButton = screen.getByRole("button", { name: "Cancel" });
+    const confirmButton = screen.getByRole("button", {
+      name: "Stop agent and move",
+    });
+    expect(cancelButton).toHaveClass(
+      "native-plan-icon-action",
+      "kanban-stop-move-cancel",
+    );
+    expect(confirmButton).toHaveClass(
+      "native-plan-icon-action",
+      "kanban-stop-move-confirm",
+    );
+    expect(cancelButton).toHaveAttribute("data-tooltip", "Cancel");
+    expect(confirmButton).toHaveAttribute("data-tooltip", "Stop agent and move");
+    expect(cancelButton).toHaveTextContent("");
+    expect(confirmButton).toHaveTextContent("");
+    await waitFor(() => expect(cancelButton).toHaveFocus());
+
+    await user.click(cancelButton);
+    await user.click(confirmButton);
+    expect(onCancel).toHaveBeenCalledOnce();
+    expect(onConfirm).toHaveBeenCalledOnce();
+  });
+
   it("uses a review-style layout and borderless icon actions for no-change completion", async () => {
     const user = userEvent.setup();
     const onCancel = vi.fn();

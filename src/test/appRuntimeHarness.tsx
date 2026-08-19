@@ -235,6 +235,7 @@ vi.mock("../features/kanban/KanbanWorkspace", async () => {
     approvedAt: null,
     lastError: null,
     hasInheritedContext: false,
+    hasStartedTurn: true,
     createdAt: "2026-06-30T09:00:00Z",
     updatedAt: "2026-06-30T09:00:00Z",
     repositories: [
@@ -248,7 +249,7 @@ vi.mock("../features/kanban/KanbanWorkspace", async () => {
   };
 
   return {
-    KanbanWorkspace: ({ onLaunch, onPause }: any) => {
+    KanbanWorkspace: ({ onLaunch, onPause, onOpenConversation }: any) => {
       const [result, setResult] = React.useState("idle");
       const run = (
         action: () => Promise<void>,
@@ -281,6 +282,9 @@ vi.mock("../features/kanban/KanbanWorkspace", async () => {
             onClick={() => run(() => onPause(card), "pausing", "paused")}
           >
             Pause test Kanban agent
+          </button>
+          <button type="button" onClick={() => onOpenConversation(card)}>
+            Open test Kanban conversation
           </button>
           <output aria-label="Kanban test result">{result}</output>
         </section>

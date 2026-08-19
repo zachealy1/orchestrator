@@ -1,7 +1,9 @@
 import {
   AlertCircle,
   Archive,
+  ArrowRight,
   Check,
+  Circle,
   CircleStop,
   FileText,
   GitPullRequest,
@@ -53,7 +55,7 @@ const COPY: Record<
     eyebrow: "Active agent",
     title: "Stop this agent and move the card?",
     description:
-      "The current turn will be interrupted before the card moves. Its conversation, branch, worktree, and completed output are preserved.",
+      "The current turn will be interrupted. The conversation, branch, worktree, and completed output will be preserved.",
     confirm: "Stop agent and move",
     danger: true,
   },
@@ -156,9 +158,10 @@ export function KanbanTransitionDialog({
   const copy = COPY[kind];
   const isDelete = kind === "delete";
   const isArchive = kind === "archive";
+  const isStopAndMove = kind === "stop-and-move";
   const isCompleteWithoutPullRequest = kind === "complete-without-pr";
   const usesSummaryLayout = isArchive || isCompleteWithoutPullRequest;
-  const iconOnlyActions = isDelete || usesSummaryLayout;
+  const iconOnlyActions = isDelete || usesSummaryLayout || isStopAndMove;
   const title = isDelete ? `Delete ${card.title}?` : copy.title;
   const description = isDelete
     ? "The card will be removed. Worktrees and branches stay on disk."
@@ -210,7 +213,9 @@ export function KanbanTransitionDialog({
         ref={dialogRef}
         className={`confirmation-dialog kanban-transition-dialog${
           isArchive ? " is-archive" : ""
-        }${isCompleteWithoutPullRequest ? " is-no-changes" : ""}`}
+        }${isCompleteWithoutPullRequest ? " is-no-changes" : ""}${
+          isStopAndMove ? " is-stop-and-move" : ""
+        }`}
         role="alertdialog"
         aria-modal="true"
         aria-busy={busy}
@@ -224,9 +229,11 @@ export function KanbanTransitionDialog({
             className={
               isDelete
                 ? "kanban-delete-heading"
-                : usesSummaryLayout
-                  ? "kanban-summary-transition-heading"
-                  : undefined
+                : isStopAndMove
+                  ? "kanban-stop-move-heading"
+                  : usesSummaryLayout
+                    ? "kanban-summary-transition-heading"
+                    : undefined
             }
           >
             {isDelete ? (
@@ -243,23 +250,52 @@ export function KanbanTransitionDialog({
                 size={28}
                 aria-hidden="true"
               />
+            ) : isStopAndMove ? (
+              <CircleStop
+                className="kanban-stop-move-heading-icon"
+                size={28}
+                aria-hidden="true"
+              />
             ) : (
               <span className="eyebrow">{copy.eyebrow}</span>
             )}
             <h2 id="kanban-transition-title">{title}</h2>
           </div>
-          <button
-            type="button"
-            className="kanban-icon-button"
-            aria-label="Close confirmation"
-            disabled={busy}
-            onClick={onCancel}
-          >
-            <X size={17} aria-hidden="true" />
-          </button>
+          {!isStopAndMove ? (
+            <button
+              type="button"
+              className="kanban-icon-button"
+              aria-label="Close confirmation"
+              disabled={busy}
+              onClick={onCancel}
+            >
+              <X size={17} aria-hidden="true" />
+            </button>
+          ) : null}
         </header>
         <p id="kanban-transition-description">{description}</p>
-        {usesSummaryLayout ? (
+        {isStopAndMove ? (
+          <div className="kanban-stop-move-content">
+            <div className="kanban-stop-move-task">
+              <strong>{card.title}</strong>
+              <span>{card.description}</span>
+            </div>
+            <div
+              className="kanban-stop-move-route"
+              aria-label={`Move card from In progress to ${destinationLabel ?? "the selected lane"}`}
+            >
+              <span className="kanban-stop-move-state is-current">
+                <Loader2 className="spin" size={16} aria-hidden="true" />
+                <span>In progress</span>
+              </span>
+              <ArrowRight size={18} aria-hidden="true" />
+              <span className="kanban-stop-move-state is-destination">
+                <Circle size={16} aria-hidden="true" />
+                <span>{destinationLabel ?? "Selected lane"}</span>
+              </span>
+            </div>
+          </div>
+        ) : usesSummaryLayout ? (
           <div
             className={`kanban-transition-card kanban-summary-transition-card${
               isArchive ? " kanban-archive-transition-card" : ""
@@ -335,7 +371,9 @@ export function KanbanTransitionDialog({
             ref={cancelRef}
             type="button"
             className={
-              usesSummaryLayout
+              isStopAndMove
+                ? "native-plan-icon-action kanban-stop-move-cancel"
+                : usesSummaryLayout
                 ? "native-plan-icon-action cancel"
                 : isDelete
                   ? "native-plan-icon-action kanban-transition-icon-action"
@@ -352,7 +390,9 @@ export function KanbanTransitionDialog({
             ref={confirmRef}
             type="button"
             className={
-              usesSummaryLayout
+              isStopAndMove
+                ? "native-plan-icon-action kanban-stop-move-confirm"
+                : usesSummaryLayout
                 ? "native-plan-icon-action implement"
                 : `${copy.danger ? "danger" : ""}${
                     isDelete

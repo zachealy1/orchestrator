@@ -2,6 +2,7 @@ import { act, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
   emitCodexNotification,
+  emitCodexServerRequest,
   getMocks,
   prepareDefaults,
   prepareKanbanRun,
@@ -45,6 +46,76 @@ describe("Application runtime scenarios 9", () => {
         name: "Kanban run-control test harness",
       }),
     ).toBe(mountedBoard);
+  });
+
+  it("opens a Kanban conversation while its turn awaits user input", async () => {
+    prepareKanbanRun();
+    mocks.codexRpcMock.mockImplementation(
+      async (_accountId: number, method: string) => {
+        if (method === "thread/start") {
+          return { thread: { id: "thread-kanban-question" } };
+        }
+        if (method === "turn/start") {
+          return { turn: { id: "turn-kanban-question" } };
+        }
+        return {};
+      },
+    );
+
+    const { user } = await renderApp();
+    await user.click(await screen.findByRole("radio", { name: "Kanban" }));
+    await user.click(
+      screen.getByRole("button", { name: "Start test Kanban agent" }),
+    );
+    await waitFor(() =>
+      expect(mocks.updateKanbanAttemptMock).toHaveBeenCalledWith(
+        expect.objectContaining({
+          status: "running",
+          turnId: "turn-kanban-question",
+        }),
+      ),
+    );
+
+    await emitCodexServerRequest({
+      id: "kanban-input-1",
+      method: "item/tool/requestUserInput",
+      params: {
+        threadId: "thread-kanban-question",
+        turnId: "turn-kanban-question",
+        itemId: "question-item-1",
+        questions: [
+          {
+            id: "scope",
+            header: "Scope",
+            question: "Which deployment scope should be used?",
+            isOther: false,
+            isSecret: false,
+            options: [
+              {
+                label: "Focused",
+                description: "Deploy only the changed service.",
+              },
+            ],
+          },
+        ],
+      },
+    });
+
+    await user.click(
+      screen.getByRole("button", { name: "Open test Kanban conversation" }),
+    );
+
+    expect(await screen.findByText("Which deployment scope should be used?"))
+      .toBeInTheDocument();
+    expect(screen.getByRole("radio", { name: "Chat" })).toBeChecked();
+    expect(screen.queryByText("Loading conversation")).not.toBeInTheDocument();
+    await waitFor(() =>
+      expect(
+        screen
+          .getByText("Which deployment scope should be used?")
+          .closest('[data-agent-notification-target="user-input"]'),
+      ).toHaveFocus(),
+    );
   });
 
   it("keeps a Kanban run active when its pause interrupt is rejected", async () => {

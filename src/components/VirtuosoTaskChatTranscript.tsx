@@ -64,6 +64,7 @@ export const LATEST_TURN_POSITION_RETRY_MS = 80;
 export const LATEST_TURN_POSITION_MAX_ATTEMPTS = 8;
 export const COMPLETION_FOLLOW_MAX_ATTEMPTS = 4;
 const INITIAL_POSITION_READY_MAX_FRAMES = 180;
+const INITIAL_POSITION_READY_TIMEOUT_MS = 3_000;
 const INITIAL_POSITION_OFFSET_TOLERANCE_PX = 2;
 
 const transcriptIncreaseViewportBy = {
@@ -355,6 +356,7 @@ const VirtuosoTaskChatTranscriptImpl = forwardRef<
     const suppressInteractionFollowRef = useRef(false);
     const notificationFocusTimerRef = useRef<number | null>(null);
     const initialPositionFrameRef = useRef<number | null>(null);
+    const initialPositionTimeoutRef = useRef<number | null>(null);
     const initialPositionAttemptCountRef = useRef(0);
     const initialPositionReadyRef = useRef(false);
     const latestPositionAttemptCountRef = useRef(0);
@@ -570,12 +572,47 @@ const VirtuosoTaskChatTranscriptImpl = forwardRef<
       window.cancelAnimationFrame(initialPositionFrameRef.current);
       initialPositionFrameRef.current = null;
     }, []);
+    const clearInitialPositionTimeout = useCallback(() => {
+      if (initialPositionTimeoutRef.current === null) return;
+      window.clearTimeout(initialPositionTimeoutRef.current);
+      initialPositionTimeoutRef.current = null;
+    }, []);
     const reportInitialPositionReady = useCallback(() => {
       if (initialPositionReadyRef.current) return;
       initialPositionReadyRef.current = true;
       clearInitialPositionSchedule();
+      clearInitialPositionTimeout();
       onInitialPositionReady?.();
-    }, [clearInitialPositionSchedule, onInitialPositionReady]);
+    }, [
+      clearInitialPositionSchedule,
+      clearInitialPositionTimeout,
+      onInitialPositionReady,
+    ]);
+    const revealAtBestAvailablePosition = useCallback(() => {
+      if (initialPositionReadyRef.current) return;
+      if (entries.length > 0) {
+        if (initialPosition.kind === "latest") {
+          virtuosoRef.current?.scrollToIndex({
+            index: firstItemIndex + entries.length - 1,
+            align: "end",
+            behavior: "auto",
+          });
+        } else if (initialPosition.kind === "restore") {
+          virtuosoRef.current?.scrollToIndex({
+            index: firstItemIndex + initialPosition.location.index,
+            align: initialPosition.location.align,
+            offset: initialPosition.location.offset,
+            behavior: "auto",
+          });
+        }
+      }
+      reportInitialPositionReady();
+    }, [
+      entries.length,
+      firstItemIndex,
+      initialPosition,
+      reportInitialPositionReady,
+    ]);
     const initialPositionIsReady = useCallback(() => {
       const scroller = scrollerRef.current;
       if (!scroller || entries.length === 0) return false;
@@ -644,10 +681,16 @@ const VirtuosoTaskChatTranscriptImpl = forwardRef<
           INITIAL_POSITION_READY_MAX_FRAMES
         ) {
           initialPositionFrameRef.current = window.requestAnimationFrame(check);
+        } else {
+          revealAtBestAvailablePosition();
         }
       };
       initialPositionFrameRef.current = window.requestAnimationFrame(check);
-    }, [initialPositionIsReady, reportInitialPositionReady]);
+    }, [
+      initialPositionIsReady,
+      reportInitialPositionReady,
+      revealAtBestAvailablePosition,
+    ]);
 
     useEffect(() => {
       queueInitialPositionCheck();
@@ -657,6 +700,16 @@ const VirtuosoTaskChatTranscriptImpl = forwardRef<
       queueInitialPositionCheck,
       viewportStable,
     ]);
+
+    useEffect(() => {
+      if (initialPositionReadyRef.current) return;
+      clearInitialPositionTimeout();
+      initialPositionTimeoutRef.current = window.setTimeout(
+        revealAtBestAvailablePosition,
+        INITIAL_POSITION_READY_TIMEOUT_MS,
+      );
+      return clearInitialPositionTimeout;
+    }, [clearInitialPositionTimeout, revealAtBestAvailablePosition]);
 
     const publishViewportSnapshot = useCallback(
       (metadata: TranscriptCacheMetadata, snapshot: StateSnapshot) => {

@@ -987,8 +987,23 @@ button.kanban-card-content {
 }
 
 .kanban-transition-dialog.is-archive,
-.kanban-transition-dialog.is-no-changes {
+.kanban-transition-dialog.is-no-changes,
+.kanban-transition-dialog.is-stop-and-move {
   width: min(720px, 100%);
+}
+
+.kanban-transition-dialog.is-stop-and-move {
+  gap: 22px;
+  padding: 28px;
+}
+
+.kanban-transition-dialog.is-stop-and-move > header {
+  align-items: center;
+}
+
+.kanban-transition-dialog.is-stop-and-move h2 {
+  margin-top: 0;
+  font-size: 1.34rem;
 }
 
 .kanban-transition-dialog.is-no-changes {
@@ -1046,6 +1061,23 @@ button.kanban-card-content {
   min-width: 0;
   align-items: center;
   gap: 12px;
+}
+
+.kanban-stop-move-heading {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 16px;
+}
+
+.kanban-stop-move-heading h2 {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.kanban-stop-move-heading-icon {
+  flex: 0 0 auto;
+  color: var(--color-error);
 }
 
 .kanban-transition-dialog.is-no-changes .kanban-summary-transition-heading {
@@ -1563,6 +1595,79 @@ button.kanban-card-content {
   line-height: 1.5;
 }
 
+.kanban-transition-dialog.is-stop-and-move > p {
+  max-width: 620px;
+  font-size: 0.9rem;
+}
+
+.kanban-stop-move-content {
+  display: grid;
+  border-top: 1px solid var(--color-divider);
+  border-bottom: 1px solid var(--color-divider);
+}
+
+.kanban-stop-move-task {
+  display: grid;
+  min-width: 0;
+  gap: 5px;
+  padding: 20px 0;
+  border-bottom: 1px solid var(--color-divider);
+}
+
+.kanban-stop-move-task strong,
+.kanban-stop-move-task span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.kanban-stop-move-task strong {
+  font-size: 0.98rem;
+}
+
+.kanban-stop-move-task span {
+  display: -webkit-box;
+  color: var(--color-text-secondary);
+  font-size: 0.82rem;
+  line-height: 1.45;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+}
+
+.kanban-stop-move-route {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 20px;
+  padding: 18px 0;
+  color: var(--color-text-secondary);
+}
+
+.kanban-stop-move-state {
+  display: inline-flex;
+  min-width: 0;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 11px;
+  border-radius: 7px;
+  background: var(--color-surface-soft);
+  color: var(--color-text);
+  font-size: 0.82rem;
+}
+
+.kanban-stop-move-state > span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.kanban-stop-move-state.is-current svg {
+  color: var(--color-primary);
+}
+
+.kanban-stop-move-state.is-destination svg {
+  color: var(--color-icon-muted);
+}
+
 .kanban-transition-card {
   display: grid;
   gap: 4px;
@@ -1635,6 +1740,56 @@ button.kanban-card-content {
 
 .kanban-transition-dialog.is-no-changes > footer {
   gap: 12px;
+}
+
+.kanban-transition-dialog.is-stop-and-move > footer {
+  gap: 16px;
+}
+
+.kanban-transition-dialog.is-stop-and-move
+  > footer
+  .kanban-stop-move-cancel {
+  color: var(--color-text-secondary);
+}
+
+.kanban-transition-dialog.is-stop-and-move
+  > footer
+  .kanban-stop-move-confirm {
+  color: var(--color-error);
+}
+
+.kanban-transition-dialog.is-stop-and-move
+  > footer
+  .kanban-stop-move-cancel:hover:not(:disabled),
+.kanban-transition-dialog.is-stop-and-move
+  > footer
+  .kanban-stop-move-cancel:focus-visible {
+  background: var(--panel-strong);
+  color: var(--color-text-secondary);
+}
+
+.kanban-transition-dialog.is-stop-and-move
+  > footer
+  .kanban-stop-move-confirm:hover:not(:disabled),
+.kanban-transition-dialog.is-stop-and-move
+  > footer
+  .kanban-stop-move-confirm:focus-visible {
+  background: rgb(var(--error-rgb) / 0.16);
+  color: var(--color-error);
+}
+
+@media (max-width: 560px) {
+  .kanban-transition-dialog.is-stop-and-move {
+    padding: 22px;
+  }
+
+  .kanban-stop-move-route {
+    gap: 10px;
+  }
+
+  .kanban-stop-move-state {
+    flex: 1 1 0;
+  }
 }
 
 .kanban-cleanup-options {

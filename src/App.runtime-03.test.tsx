@@ -89,6 +89,60 @@ describe("Application runtime scenarios 3", () => {
       expect(transcript).toHaveTextContent("History button added.");
     });
 
+  it("opens persisted shared-chat turns without waiting for native synchronization", async () => {
+      const sharedChat = {
+        ...workspaceChatFixture({
+          id: 406,
+          title: "Shared task awaiting input",
+          codex_thread_id: "shared-thread-pending",
+          profile_key: "default",
+          status: "running",
+          turn_count: 1,
+        }),
+        account_id: null,
+        account_label: null,
+        account_email: null,
+      };
+      const localRun = workspaceRunFixture({
+        id: 307,
+        chat_id: sharedChat.id,
+        codex_thread_id: "shared-thread-pending",
+        codex_turn_id: "shared-turn-pending",
+        original_prompt: "Choose the deployment target",
+        final_message: "Waiting for your deployment choice.",
+      });
+      mocks.listWorkspaceChatsMock.mockResolvedValue([sharedChat]);
+      mocks.getChatWithRunsMock.mockResolvedValue({
+        chat: sharedChat,
+        runs: [localRun],
+      });
+      mocks.syncDefaultProfileThreadTranscriptMock.mockReturnValue(
+        new Promise(() => undefined),
+      );
+
+      const { user } = await renderApp();
+      const banner = screen.getByRole("region", { name: "Selected folder" });
+      await user.click(
+        within(banner).getByRole("button", { name: /open chat history/i }),
+      );
+      const drawer = await screen.findByRole("complementary", {
+        name: "Workspace chat history",
+      });
+      await user.click(
+        within(drawer).getByRole("button", {
+          name: /shared task awaiting input/i,
+        }),
+      );
+
+      expect(
+        await screen.findByText("Waiting for your deployment choice."),
+      ).toBeInTheDocument();
+      expect(screen.queryByLabelText("Loading chat")).not.toBeInTheDocument();
+      await waitFor(() =>
+        expect(mocks.syncDefaultProfileThreadTranscriptMock).toHaveBeenCalledTimes(1),
+      );
+    });
+
   it("syncs, opens, and continues an external Codex chat through the default profile", async () => {
       const externalChat = {
         ...workspaceChatFixture({

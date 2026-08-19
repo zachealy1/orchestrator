@@ -82,10 +82,23 @@ export type ActiveRunControl = {
   kanbanStopRequest: PendingKanbanStopRequest | null;
 };
 
-export function isActiveRunControl(control: ActiveRunControl) {
+export function isActiveRunControl(
+  control: Pick<ActiveRunControl, "stopped" | "runView">,
+) {
   return (
     !control.stopped &&
     (control.runView.status === "connecting" || control.runView.status === "running")
+  );
+}
+
+export function isNavigableRunControl(
+  control: Pick<ActiveRunControl, "stopped" | "runView">,
+) {
+  return (
+    !control.stopped &&
+    (isActiveRunControl(control) ||
+      control.runView.serverRequests.length > 0 ||
+      control.runView.approvalRequests.length > 0)
   );
 }
 
