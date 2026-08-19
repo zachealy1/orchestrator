@@ -584,6 +584,14 @@ button.pending-interaction-nav:disabled {
   grid-column: 1 / -1;
 }
 
+.computer-use-target-selector {
+  grid-template-columns: repeat(2, minmax(150px, 1fr));
+}
+
+.default-browser-status-row {
+  border-top: 1px solid var(--color-divider);
+}
+
 .appearance-setting {
   min-height: 72px;
 }

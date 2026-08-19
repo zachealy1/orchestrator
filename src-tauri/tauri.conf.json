@@ -35,7 +35,8 @@
     "targets": "all",
     "resources": [
       "resources/playwright/**/*",
-      "resources/github-cli/**/*"
+      "resources/github-cli/**/*",
+      "resources/browser-extension/**/*"
     ],
     "icon": [
       "icons/32x32.png",

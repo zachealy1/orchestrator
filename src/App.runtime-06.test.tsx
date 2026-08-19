@@ -157,7 +157,7 @@ describe("Application runtime scenarios 6", () => {
       );
       expect(firstSettings).toEqual(
         expect.objectContaining({
-          version: 2,
+          version: 3,
           accountId: 7,
           profileKey: "account:7",
           selectedRepositoryPath: workspace.path,
@@ -166,6 +166,7 @@ describe("Application runtime scenarios 6", () => {
           intent: "normal",
           accessMode: "ask-for-approval",
           computerUseEnabled: true,
+          browserExecutionTarget: "default-browser",
           model: "gpt-original",
           reasoningEffort: "low",
           useOss: false,
@@ -479,8 +480,9 @@ describe("Application runtime scenarios 6", () => {
         JSON.parse(mocks.createRunMock.mock.calls[0]?.[0].executionSettingsJson),
       ).toEqual({
         ...persistedSettings,
-        version: 2,
+        version: 3,
         selectedRepositoryPath: workspace.path,
+        browserExecutionTarget: "isolated",
       });
       expect(mocks.prepareBrowserSessionMock).not.toHaveBeenCalled();
       expect(mocks.readCodexFileMock).toHaveBeenCalledWith(

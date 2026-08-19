@@ -10,6 +10,10 @@ function actions(): SettingsViewActions {
   return {
     setThemePreference: vi.fn(),
     setComputerUseEnabled: vi.fn(),
+    setBrowserExecutionTarget: vi.fn(),
+    installDefaultBrowserExtension: vi.fn(),
+    refreshBrowserRuntimeStatus: vi.fn(),
+    openDefaultBrowserAccessibilitySettings: vi.fn(),
     connectGithub: vi.fn(),
     showGithubLogin: vi.fn(),
     disconnectGithub: vi.fn(),
@@ -33,7 +37,8 @@ function model(overrides: Partial<SettingsViewModel> = {}): SettingsViewModel {
   return {
     themePreference: "system",
     computerUseEnabled: true,
-    browserRuntimeStatus: { available: true, message: null },
+    browserExecutionTarget: "default-browser",
+    browserRuntimeStatus: { available: true, message: null, defaultBrowser: null },
     githubConnection: null,
     githubConnectionPending: false,
     notificationPreferences: {

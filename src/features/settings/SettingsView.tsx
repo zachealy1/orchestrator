@@ -3,11 +3,14 @@ import {
   Bell,
   BellOff,
   GitPullRequest,
+  Accessibility,
+  ExternalLink,
   LogIn,
   LogOut,
   Monitor,
   Moon,
   Plug,
+  RefreshCw,
   Settings,
   Sun,
   Trash2,
@@ -20,7 +23,10 @@ import type {
   AgentNotificationPermissionStatus,
   AgentNotificationPreferences,
 } from "../../lib/agentNotifications";
-import type { BrowserRuntimeStatus } from "../browser/types";
+import type {
+  BrowserExecutionTarget,
+  BrowserRuntimeStatus,
+} from "../browser/types";
 import type { CodexLoginState, OssProvider } from "../codex/types";
 import type { CodexAccountProfile } from "../accounts/types";
 import type { ThemePreference } from "../../shared/types";
@@ -40,6 +46,7 @@ export type SettingsViewModel = {
   dragRegion?: string;
   themePreference: ThemePreference;
   computerUseEnabled: boolean;
+  browserExecutionTarget: BrowserExecutionTarget;
   browserRuntimeStatus: BrowserRuntimeStatus | null;
   githubConnection: GithubConnectionStatus | null;
   githubConnectionPending: boolean;
@@ -62,6 +69,10 @@ export type SettingsViewModel = {
 export type SettingsViewActions = {
   setThemePreference: (preference: ThemePreference) => void;
   setComputerUseEnabled: (enabled: boolean) => void;
+  setBrowserExecutionTarget: (target: BrowserExecutionTarget) => void;
+  installDefaultBrowserExtension: () => void;
+  refreshBrowserRuntimeStatus: () => void;
+  openDefaultBrowserAccessibilitySettings: () => void;
   connectGithub: () => void;
   showGithubLogin: () => void;
   disconnectGithub: () => void;
@@ -166,8 +177,8 @@ export const SettingsView = memo(function SettingsView({
             <div>
               <strong>Enable browser computer use</strong>
               <span>
-                Give future agent turns an isolated browser that opens only when
-                Codex uses it.
+                Give future agent turns a browser that opens only when Codex
+                uses it.
               </span>
             </div>
             <input
@@ -178,6 +189,97 @@ export const SettingsView = memo(function SettingsView({
               }
             />
           </label>
+          <div className="setting-row computer-use-target-setting">
+            <div>
+              <strong>Browser</strong>
+              <span>Changing this applies to future turns only.</span>
+            </div>
+            <div
+              className="theme-selector computer-use-target-selector"
+              role="radiogroup"
+              aria-label="Computer use browser"
+            >
+              <button
+                type="button"
+                role="radio"
+                aria-checked={model.browserExecutionTarget === "default-browser"}
+                className={
+                  model.browserExecutionTarget === "default-browser"
+                    ? "active"
+                    : ""
+                }
+                onClick={() =>
+                  actions.setBrowserExecutionTarget("default-browser")
+                }
+              >
+                <ExternalLink size={16} aria-hidden="true" />
+                Default browser
+              </button>
+              <button
+                type="button"
+                role="radio"
+                aria-checked={model.browserExecutionTarget === "isolated"}
+                className={
+                  model.browserExecutionTarget === "isolated" ? "active" : ""
+                }
+                onClick={() => actions.setBrowserExecutionTarget("isolated")}
+              >
+                <Monitor size={16} aria-hidden="true" />
+                Isolated Chromium
+              </button>
+            </div>
+          </div>
+          {model.browserExecutionTarget === "default-browser" ? (
+            <div className="setting-row default-browser-status-row">
+              <div>
+                <strong>
+                  {model.browserRuntimeStatus?.defaultBrowser?.browser?.name ??
+                    "Default browser"}
+                </strong>
+                <span>
+                  {model.browserRuntimeStatus?.defaultBrowser
+                    ?.extensionConnected
+                    ? "Browser Bridge connected"
+                    : model.browserRuntimeStatus?.defaultBrowser?.message ??
+                      "Checking the Browser Bridge extension"}
+                </span>
+              </div>
+              <div className="button-row compact">
+                {!model.browserRuntimeStatus?.defaultBrowser
+                  ?.extensionConnected ? (
+                  <button
+                    className="secondary"
+                    type="button"
+                    onClick={actions.installDefaultBrowserExtension}
+                  >
+                    <ExternalLink size={16} aria-hidden="true" />
+                    Install extension
+                  </button>
+                ) : null}
+                <button
+                  className="native-plan-icon-action"
+                  type="button"
+                  aria-label="Check browser connection again"
+                  data-tooltip="Check again"
+                  onClick={actions.refreshBrowserRuntimeStatus}
+                >
+                  <RefreshCw size={16} aria-hidden="true" />
+                </button>
+                {!model.browserRuntimeStatus?.defaultBrowser
+                  ?.accessibilityTrusted ? (
+                  <button
+                    className="native-plan-icon-action"
+                    type="button"
+                    aria-label="Open Accessibility settings"
+                    data-tooltip="Accessibility settings"
+                    onClick={actions.openDefaultBrowserAccessibilitySettings}
+                  >
+                    <Accessibility size={16} aria-hidden="true" />
+                  </button>
+                ) : null}
+              </div>
+            </div>
+          ) : null}
         </div>
         {model.browserRuntimeStatus?.available === false ? (
           <p className="computer-use-runtime-error" role="alert">

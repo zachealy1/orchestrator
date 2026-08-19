@@ -90,7 +90,7 @@ export type RunListItem = RunRecord & {
 };
 
 export type RunExecutionSettings = {
-  version: 2;
+  version: 3;
   accountId: number;
   profileKey: CodexProfileKey;
   selectedRepositoryPath: string | null;
@@ -99,6 +99,7 @@ export type RunExecutionSettings = {
   intent: "normal" | "plan" | "plan-revision" | "plan-implementation";
   accessMode: CodexAccessMode;
   computerUseEnabled: boolean;
+  browserExecutionTarget: import("../browser/types").BrowserExecutionTarget;
   model: string | null;
   reasoningEffort: string | null;
   useOss: boolean;

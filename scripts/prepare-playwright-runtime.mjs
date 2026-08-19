@@ -33,6 +33,7 @@ const sourceFingerprint = fingerprint([
   fileURLToPath(import.meta.url),
   path.join(runtimeSource, "package-lock.json"),
   path.join(runtimeSource, "orchestrator-playwright-mcp.mjs"),
+  path.join(runtimeSource, "orchestrator-default-browser-mcp.mjs"),
 ]);
 
 if (process.platform !== "darwin") {
@@ -63,6 +64,10 @@ fs.mkdirSync(mcpDestination, { recursive: true });
 fs.copyFileSync(
   path.join(runtimeSource, "orchestrator-playwright-mcp.mjs"),
   path.join(mcpDestination, "orchestrator-playwright-mcp.mjs"),
+);
+fs.copyFileSync(
+  path.join(runtimeSource, "orchestrator-default-browser-mcp.mjs"),
+  path.join(mcpDestination, "orchestrator-default-browser-mcp.mjs"),
 );
 fs.cpSync(path.join(runtimeSource, "node_modules"), path.join(mcpDestination, "node_modules"), {
   recursive: true,
@@ -112,6 +117,7 @@ fs.writeFileSync(
       sourceFingerprint,
       nodeExecutable: relative(destination, nodeBinary),
       wrapperScript: "mcp/orchestrator-playwright-mcp.mjs",
+      defaultBrowserWrapperScript: "mcp/orchestrator-default-browser-mcp.mjs",
       chromiumExecutable: relative(destination, chromiumExecutable),
     },
     null,
@@ -146,6 +152,9 @@ function runtimeIsCurrent(file, expectedFingerprint) {
       manifest.sourceFingerprint === expectedFingerprint &&
       fs.existsSync(path.join(path.dirname(file), manifest.nodeExecutable)) &&
       fs.existsSync(path.join(path.dirname(file), manifest.wrapperScript)) &&
+      fs.existsSync(
+        path.join(path.dirname(file), manifest.defaultBrowserWrapperScript),
+      ) &&
       fs.existsSync(path.join(path.dirname(file), manifest.chromiumExecutable))
     );
   } catch {

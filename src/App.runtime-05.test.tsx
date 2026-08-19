@@ -888,8 +888,8 @@ describe("Application runtime scenarios 5", () => {
       await user.click(computerUse);
       expect(computerUse).not.toBeChecked();
       expect(
-        JSON.parse(localStorage.getItem("orchestrator.computer-use.v1")!),
-      ).toEqual({ enabled: false });
+        JSON.parse(localStorage.getItem("orchestrator.computer-use.v2")!),
+      ).toEqual({ enabled: false, executionTarget: "default-browser" });
     });
 
   it("omits the scoped Playwright server when computer use is disabled", async () => {

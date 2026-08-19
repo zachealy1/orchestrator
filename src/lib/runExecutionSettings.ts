@@ -2,13 +2,14 @@ import type { CodexAccessMode, CodexProfileKey, OssProvider } from "../features/
 import type { ComposerContextFile, SelectedComposerSkill } from "../features/composer/types";
 import type { ResolvedRunExecutionSettings, RunExecutionSettings } from "../features/runs/types";
 
-export const RUN_EXECUTION_SETTINGS_VERSION = 2;
+export const RUN_EXECUTION_SETTINGS_VERSION = 3;
 
 type RunExecutionSettingsInput = Omit<
   RunExecutionSettings,
-  "version" | "selectedRepositoryPath"
+  "version" | "selectedRepositoryPath" | "browserExecutionTarget"
 > & {
   selectedRepositoryPath?: string | null;
+  browserExecutionTarget?: RunExecutionSettings["browserExecutionTarget"];
 };
 
 type LegacyRunSettingsRecord = {
@@ -34,6 +35,7 @@ export function createRunExecutionSettings(
     intent: input.intent,
     accessMode: input.accessMode,
     computerUseEnabled: input.computerUseEnabled,
+    browserExecutionTarget: input.browserExecutionTarget ?? "isolated",
     model: input.model,
     reasoningEffort: input.reasoningEffort,
     useOss: input.useOss,
@@ -118,18 +120,24 @@ export function resolveStoredRunExecutionSettings(
 }
 
 function readRunExecutionSettings(value: unknown): RunExecutionSettings | null {
-  if (!isRecord(value) || (value.version !== 1 && value.version !== 2)) {
+  if (
+    !isRecord(value) ||
+    (value.version !== 1 && value.version !== 2 && value.version !== 3)
+  ) {
     return null;
   }
   if (
     !isSafeAccountId(value.accountId) ||
     !isProfileKeyForAccount(value.profileKey, value.accountId) ||
-    (value.version === 2 && !isOptionalString(value.selectedRepositoryPath)) ||
+    (value.version >= 2 && !isOptionalString(value.selectedRepositoryPath)) ||
     !isOptionalString(value.selectedBranch) ||
     !isRunMode(value.mode) ||
     !isRunIntent(value.intent) ||
     !isAccessMode(value.accessMode) ||
     typeof value.computerUseEnabled !== "boolean" ||
+    (value.version === 3 &&
+      value.browserExecutionTarget !== "default-browser" &&
+      value.browserExecutionTarget !== "isolated") ||
     !isOptionalString(value.model) ||
     !isOptionalString(value.reasoningEffort) ||
     typeof value.useOss !== "boolean" ||
@@ -158,7 +166,7 @@ function readRunExecutionSettings(value: unknown): RunExecutionSettings | null {
     accountId: value.accountId,
     profileKey: value.profileKey,
     selectedRepositoryPath:
-      value.version === 2
+      value.version >= 2
         ? normalizeOptionalString(value.selectedRepositoryPath)
         : null,
     selectedBranch: normalizeOptionalString(value.selectedBranch),
@@ -166,6 +174,10 @@ function readRunExecutionSettings(value: unknown): RunExecutionSettings | null {
     intent: value.intent,
     accessMode: value.accessMode,
     computerUseEnabled: value.computerUseEnabled,
+    browserExecutionTarget:
+      value.version === 3
+        ? (value.browserExecutionTarget as RunExecutionSettings["browserExecutionTarget"])
+        : "isolated",
     model: normalizeOptionalString(value.model),
     reasoningEffort: normalizeOptionalString(value.reasoningEffort),
     useOss: value.useOss,

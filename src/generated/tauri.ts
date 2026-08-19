@@ -148,6 +148,11 @@ export const commands = {
 	browserSessionFocus: (token: string) => __TAURI_INVOKE<BrowserSessionStatus>("browser_session_focus", { token }),
 	browserSessionUpdateTarget: (token: string, target: BrowserSessionTarget) => __TAURI_INVOKE<BrowserSessionStatus>("browser_session_update_target", { token, target }),
 	browserSessionStop: (token: string) => __TAURI_INVOKE<BrowserSessionStatus>("browser_session_stop", { token }),
+	browserSessionListTabs: (token: string) => __TAURI_INVOKE<DefaultBrowserTab[]>("browser_session_list_tabs", { token }),
+	browserSessionAttachTab: (token: string, tabId: number) => __TAURI_INVOKE<BrowserSessionStatus>("browser_session_attach_tab", { token, tabId }),
+	defaultBrowserCapabilityStatus: () => __TAURI_INVOKE<DefaultBrowserCapabilityStatus>("default_browser_capability_status"),
+	defaultBrowserInstallExtension: () => __TAURI_INVOKE<null>("default_browser_install_extension"),
+	defaultBrowserOpenAccessibilitySettings: () => __TAURI_INVOKE<null>("default_browser_open_accessibility_settings"),
 	agentNotificationPermissionStatus: () => __TAURI_INVOKE<string>("agent_notification_permission_status"),
 	agentNotificationRequestPermission: () => __TAURI_INVOKE<string>("agent_notification_request_permission"),
 	agentNotificationSend: (request: AgentNotificationRequest) => __TAURI_INVOKE<AgentNotificationSendResult>("agent_notification_send", { request }),
@@ -238,6 +243,7 @@ export type ArchiveKanbanCardRequest = {
 export type BrowserRuntimeStatus = {
 	available: boolean,
 	message: string | null,
+	defaultBrowser: DefaultBrowserCapabilityStatus | null,
 };
 
 export type BrowserSessionStatus = {
@@ -246,6 +252,12 @@ export type BrowserSessionStatus = {
 	target: BrowserSessionTarget,
 	browserPid: number | null,
 	error: string | null,
+	backend: string,
+	browser: DefaultBrowserInfo | null,
+	extensionConnected: boolean,
+	chatGroupKey: string | null,
+	controlledTabId: number | null,
+	fallbackReason: string | null,
 };
 
 export type BrowserSessionTarget = {
@@ -257,6 +269,8 @@ export type BrowserSessionTarget = {
 	threadId: string | null,
 	turnId: string | null,
 	accessMode: string,
+	executionTarget: string,
+	chatTitle: string,
 };
 
 export type ChatTitleGenerationResult = {
@@ -322,6 +336,31 @@ export type CreateKanbanCardRequest = {
 	repositoryScope: string,
 	repositories?: KanbanRepositorySelectionInput[],
 	operationId: string,
+};
+
+export type DefaultBrowserCapabilityStatus = {
+	browser: DefaultBrowserInfo | null,
+	extensionId: string,
+	extensionConnected: boolean,
+	nativeHostInstalled: boolean,
+	accessibilityTrusted: boolean,
+	extensionPath: string,
+	message: string | null,
+};
+
+export type DefaultBrowserInfo = {
+	bundleId: string,
+	name: string,
+	path: string,
+	supported: boolean,
+};
+
+export type DefaultBrowserTab = {
+	id: number,
+	title: string,
+	origin: string,
+	active: boolean,
+	inCurrentGroup: boolean,
 };
 
 export type DeleteKanbanCardRequest = {

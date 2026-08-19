@@ -12,6 +12,10 @@ use std::{
 use tauri::{AppHandle, Emitter, Manager, State};
 use uuid::Uuid;
 
+use crate::default_browser::{
+    self, DefaultBrowserBridgeState, DefaultBrowserCapabilityStatus, DefaultBrowserTab,
+};
+
 const PLAYWRIGHT_SERVER_NAME: &str = "playwright";
 const BROWSER_SESSION_EVENT: &str = "orchestrator:browser-session";
 const CONTROL_TIMEOUT: Duration = Duration::from_secs(3);
@@ -20,6 +24,7 @@ const CONTROL_TIMEOUT: Duration = Duration::from_secs(3);
 pub(crate) struct PlaywrightRuntime {
     pub node_executable: PathBuf,
     pub wrapper_script: PathBuf,
+    pub default_browser_wrapper_script: PathBuf,
     pub chromium_executable: PathBuf,
 }
 
@@ -48,6 +53,12 @@ struct BrowserSessionRecord {
     session_root: PathBuf,
     state_file: PathBuf,
     control_socket: PathBuf,
+    backend: String,
+    fallback_reason: Option<String>,
+    group_key: Option<String>,
+    group_title: Option<String>,
+    status: String,
+    controlled_tab_id: Option<i64>,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, specta::Type)]
@@ -61,6 +72,8 @@ pub(crate) struct BrowserSessionTarget {
     pub thread_id: Option<String>,
     pub turn_id: Option<String>,
     pub access_mode: String,
+    pub execution_target: String,
+    pub chat_title: String,
 }
 
 #[derive(Clone, Debug, Serialize, specta::Type)]
@@ -71,6 +84,12 @@ pub(crate) struct BrowserSessionStatus {
     pub target: BrowserSessionTarget,
     pub browser_pid: Option<u32>,
     pub error: Option<String>,
+    pub backend: String,
+    pub browser: Option<default_browser::DefaultBrowserInfo>,
+    pub extension_connected: bool,
+    pub chat_group_key: Option<String>,
+    pub controlled_tab_id: Option<i64>,
+    pub fallback_reason: Option<String>,
 }
 
 #[derive(Clone, Debug, Serialize, specta::Type)]
@@ -78,6 +97,7 @@ pub(crate) struct BrowserSessionStatus {
 pub(crate) struct BrowserRuntimeStatus {
     pub available: bool,
     pub message: Option<String>,
+    pub default_browser: Option<DefaultBrowserCapabilityStatus>,
 }
 
 #[derive(Serialize, specta::Type)]
@@ -98,6 +118,7 @@ struct RuntimeManifest {
     playwright_version: String,
     node_executable: String,
     wrapper_script: String,
+    default_browser_wrapper_script: Option<String>,
     chromium_executable: String,
 }
 
@@ -112,14 +133,16 @@ struct WrapperState {
 }
 
 pub(crate) fn resolve_playwright_runtime(app: &AppHandle) -> Result<PlaywrightRuntime, String> {
-    if let (Some(node), Some(wrapper), Some(chromium)) = (
+    if let (Some(node), Some(wrapper), Some(default_wrapper), Some(chromium)) = (
         env::var_os("ORCHESTRATOR_PLAYWRIGHT_NODE"),
         env::var_os("ORCHESTRATOR_PLAYWRIGHT_WRAPPER"),
+        env::var_os("ORCHESTRATOR_DEFAULT_BROWSER_WRAPPER"),
         env::var_os("ORCHESTRATOR_PLAYWRIGHT_CHROMIUM"),
     ) {
         return validate_runtime_paths(
             PathBuf::from(node),
             PathBuf::from(wrapper),
+            PathBuf::from(default_wrapper),
             PathBuf::from(chromium),
             "environment override".to_string(),
         );
@@ -199,14 +222,20 @@ pub(crate) fn append_playwright_app_server_args(
 #[tauri::command]
 #[specta::specta]
 pub(crate) async fn browser_runtime_status(app: AppHandle) -> BrowserRuntimeStatus {
+    let default_browser = Some(default_browser::default_browser_capability_status(
+        app.clone(),
+        app.state::<DefaultBrowserBridgeState>(),
+    ));
     match resolve_playwright_runtime(&app) {
         Ok(_) => BrowserRuntimeStatus {
             available: true,
             message: None,
+            default_browser,
         },
         Err(error) => BrowserRuntimeStatus {
             available: false,
             message: Some(error),
+            default_browser,
         },
     }
 }
@@ -217,6 +246,7 @@ pub(crate) async fn browser_session_prepare(
     target: BrowserSessionTarget,
     app: AppHandle,
     state: State<'_, BrowserSessionRegistry>,
+    default_browser_state: State<'_, DefaultBrowserBridgeState>,
 ) -> Result<PreparedBrowserSession, String> {
     validate_target(&target)?;
     let runtime = resolve_playwright_runtime(&app)?;
@@ -237,36 +267,104 @@ pub(crate) async fn browser_session_prepare(
         .and_then(|_| fs::create_dir_all(&temp_dir))
         .map_err(|error| format!("Could not prepare the browser session: {error}"))?;
     secure_directory(&session_root)?;
-    let config = json!({
-        "mcp_servers": {
-            PLAYWRIGHT_SERVER_NAME: {
-                "command": runtime.node_executable,
-                "args": [
-                    runtime.wrapper_script,
-                    "--session-token", token,
-                    "--entry-id", target.entry_id,
-                    "--state-file", state_file,
-                    "--browser-executable", runtime.chromium_executable,
-                    "--output-dir", output_dir,
-                    "--control-socket", control_socket,
-                    "--access-mode", target.access_mode,
-                ],
-                "env": {
-                    "TMPDIR": temp_dir,
-                },
-                "enabled": true,
-                "required": true,
-                "startup_timeout_sec": 30,
-                "tool_timeout_sec": 120,
+    let group_key = target
+        .chat_id
+        .map(|chat_id| format!("workspace-{}-chat-{chat_id}", target.workspace_id));
+    let group_title = format!(
+        "Orchestrator · {}",
+        target
+            .chat_title
+            .trim()
+            .chars()
+            .take(60)
+            .collect::<String>()
+    );
+    let default_status = default_browser::default_browser_capability_status(
+        app.clone(),
+        app.state::<DefaultBrowserBridgeState>(),
+    );
+    let use_default_browser = target.execution_target == "default-browser"
+        && target.chat_id.is_some()
+        && default_status
+            .browser
+            .as_ref()
+            .is_some_and(|browser| browser.supported)
+        && default_status.extension_connected;
+    let fallback_reason = if target.execution_target == "default-browser" && !use_default_browser {
+        Some(default_status.message.clone().unwrap_or_else(|| {
+            "The default-browser bridge is unavailable. Isolated Chromium will be used.".to_string()
+        }))
+    } else {
+        None
+    };
+    let (config, backend) = if use_default_browser {
+        let (bridge_socket, bridge_secret) =
+            default_browser::bridge_connection_details(default_browser_state.inner())?;
+        (
+            json!({
+                "mcp_servers": {
+                    PLAYWRIGHT_SERVER_NAME: {
+                        "command": runtime.node_executable,
+                        "args": [
+                            runtime.default_browser_wrapper_script,
+                            "--session-token", token,
+                            "--entry-id", target.entry_id,
+                            "--bridge-socket", bridge_socket,
+                            "--bridge-secret", bridge_secret,
+                            "--group-key", group_key,
+                            "--group-title", group_title,
+                            "--access-mode", target.access_mode,
+                        ],
+                        "enabled": true,
+                        "required": true,
+                        "startup_timeout_sec": 30,
+                        "tool_timeout_sec": 120,
+                    }
+                }
+            }),
+            "default-browser".to_string(),
+        )
+    } else {
+        (
+            json!({
+            "mcp_servers": {
+                PLAYWRIGHT_SERVER_NAME: {
+                    "command": runtime.node_executable,
+                    "args": [
+                        runtime.wrapper_script,
+                        "--session-token", token,
+                        "--entry-id", target.entry_id,
+                        "--state-file", state_file,
+                        "--browser-executable", runtime.chromium_executable,
+                        "--output-dir", output_dir,
+                        "--control-socket", control_socket,
+                        "--access-mode", target.access_mode,
+                    ],
+                    "env": {
+                        "TMPDIR": temp_dir,
+                    },
+                    "enabled": true,
+                    "required": true,
+                    "startup_timeout_sec": 30,
+                    "tool_timeout_sec": 120,
+                }
             }
-        }
-    });
+            }),
+            "isolated".to_string(),
+        )
+    };
     let record = BrowserSessionRecord {
         token: token.clone(),
         target: target.clone(),
         session_root,
         state_file,
         control_socket,
+        backend,
+        fallback_reason,
+        group_key,
+        group_title: Some(group_title),
+        status: "prepared".to_string(),
+        controlled_tab_id: None,
     };
     let status = status_for_record(&record);
     state
@@ -304,10 +402,27 @@ pub(crate) async fn browser_session_focus(
     token: String,
     app: AppHandle,
     state: State<'_, BrowserSessionRegistry>,
+    default_browser_state: State<'_, DefaultBrowserBridgeState>,
 ) -> Result<BrowserSessionStatus, String> {
     validate_token(&token)?;
-    let record = session_record(&state, &token)?;
-    send_control_command(&record, "focus")?;
+    let mut record = session_record(&state, &token)?;
+    if record.backend == "default-browser" {
+        default_browser::focus_group(
+            default_browser_state.inner(),
+            record
+                .group_key
+                .as_deref()
+                .ok_or("Browser group is unavailable.")?,
+        )?;
+        record.status = "running".to_string();
+        if let Ok(mut sessions) = state.sessions.lock() {
+            if let Some(stored) = sessions.get_mut(&token) {
+                stored.status = record.status.clone();
+            }
+        }
+    } else {
+        send_control_command(&record, "focus")?;
+    }
     let status = status_for_record(&record);
     emit_browser_session_state(&app, &status);
     Ok(status)
@@ -320,6 +435,7 @@ pub(crate) async fn browser_session_update_target(
     target: BrowserSessionTarget,
     app: AppHandle,
     state: State<'_, BrowserSessionRegistry>,
+    default_browser_state: State<'_, DefaultBrowserBridgeState>,
 ) -> Result<BrowserSessionStatus, String> {
     validate_token(&token)?;
     validate_target(&target)?;
@@ -331,9 +447,24 @@ pub(crate) async fn browser_session_update_target(
         let record = sessions
             .get_mut(&token)
             .ok_or_else(|| "The browser session is no longer available.".to_string())?;
+        let previous_title = record.target.chat_title.clone();
         record.target = target;
+        if record.backend == "default-browser" && previous_title != record.target.chat_title {
+            record.group_title = Some(format!("Orchestrator · {}", record.target.chat_title));
+        }
         record.clone()
     };
+    if record.backend == "default-browser" {
+        if let (Some(group_key), Some(group_title)) =
+            (record.group_key.as_deref(), record.group_title.as_deref())
+        {
+            let _ = default_browser::rename_group(
+                default_browser_state.inner(),
+                group_key,
+                group_title,
+            );
+        }
+    }
     let status = status_for_record(&record);
     emit_browser_session_state(&app, &status);
     Ok(status)
@@ -345,6 +476,7 @@ pub(crate) async fn browser_session_stop(
     token: String,
     app: AppHandle,
     state: State<'_, BrowserSessionRegistry>,
+    default_browser_state: State<'_, DefaultBrowserBridgeState>,
 ) -> Result<BrowserSessionStatus, String> {
     validate_token(&token)?;
     let record = {
@@ -356,9 +488,13 @@ pub(crate) async fn browser_session_stop(
             .remove(&token)
             .ok_or_else(|| "The browser session is no longer available.".to_string())?
     };
-    let _ = send_control_command(&record, "stop");
-    if !wait_for_session_stop(&record).await {
-        terminate_session_processes(&record);
+    if record.backend == "default-browser" {
+        let _ = default_browser::detach_session(default_browser_state.inner(), &record.token);
+    } else {
+        let _ = send_control_command(&record, "stop");
+        if !wait_for_session_stop(&record).await {
+            terminate_session_processes(&record);
+        }
     }
     let stopped = BrowserSessionStatus {
         token: record.token.clone(),
@@ -366,11 +502,78 @@ pub(crate) async fn browser_session_stop(
         target: record.target.clone(),
         browser_pid: None,
         error: None,
+        backend: record.backend.clone(),
+        browser: None,
+        extension_connected: false,
+        chat_group_key: record.group_key.clone(),
+        controlled_tab_id: None,
+        fallback_reason: record.fallback_reason.clone(),
     };
     let _ = fs::remove_dir_all(&record.session_root);
     let _ = fs::remove_file(&record.control_socket);
     emit_browser_session_state(&app, &stopped);
     Ok(stopped)
+}
+
+#[tauri::command]
+#[specta::specta]
+pub(crate) async fn browser_session_list_tabs(
+    token: String,
+    state: State<'_, BrowserSessionRegistry>,
+    default_browser_state: State<'_, DefaultBrowserBridgeState>,
+) -> Result<Vec<DefaultBrowserTab>, String> {
+    validate_token(&token)?;
+    let record = session_record(&state, &token)?;
+    if record.backend != "default-browser" {
+        return Err("Tabs can be attached only when using the default browser.".to_string());
+    }
+    default_browser::list_tabs(
+        default_browser_state.inner(),
+        record
+            .group_key
+            .as_deref()
+            .ok_or("Browser group is unavailable.")?,
+    )
+}
+
+#[tauri::command]
+#[specta::specta]
+pub(crate) async fn browser_session_attach_tab(
+    token: String,
+    tab_id: i64,
+    app: AppHandle,
+    state: State<'_, BrowserSessionRegistry>,
+    default_browser_state: State<'_, DefaultBrowserBridgeState>,
+) -> Result<BrowserSessionStatus, String> {
+    validate_token(&token)?;
+    if tab_id <= 0 {
+        return Err("Select a valid browser tab.".to_string());
+    }
+    let mut record = session_record(&state, &token)?;
+    if record.backend != "default-browser" {
+        return Err("Tabs can be attached only when using the default browser.".to_string());
+    }
+    default_browser::attach_tab(
+        default_browser_state.inner(),
+        record
+            .group_key
+            .as_deref()
+            .ok_or("Browser group is unavailable.")?,
+        record.group_title.as_deref().unwrap_or("Orchestrator"),
+        &record.token,
+        tab_id,
+    )?;
+    record.status = "running".to_string();
+    record.controlled_tab_id = Some(tab_id);
+    if let Ok(mut sessions) = state.sessions.lock() {
+        if let Some(stored) = sessions.get_mut(&token) {
+            stored.status = record.status.clone();
+            stored.controlled_tab_id = record.controlled_tab_id;
+        }
+    }
+    let status = status_for_record(&record);
+    emit_browser_session_state(&app, &status);
+    Ok(status)
 }
 
 fn emit_browser_session_state(app: &AppHandle, status: &BrowserSessionStatus) {
@@ -398,6 +601,21 @@ fn session_record_direct(
 }
 
 fn status_for_record(record: &BrowserSessionRecord) -> BrowserSessionStatus {
+    if record.backend == "default-browser" {
+        return BrowserSessionStatus {
+            token: record.token.clone(),
+            status: record.status.clone(),
+            target: record.target.clone(),
+            browser_pid: None,
+            error: None,
+            backend: record.backend.clone(),
+            browser: None,
+            extension_connected: true,
+            chat_group_key: record.group_key.clone(),
+            controlled_tab_id: record.controlled_tab_id,
+            fallback_reason: record.fallback_reason.clone(),
+        };
+    }
     let wrapper_state = fs::read_to_string(&record.state_file)
         .ok()
         .and_then(|raw| serde_json::from_str::<WrapperState>(&raw).ok())
@@ -411,6 +629,12 @@ fn status_for_record(record: &BrowserSessionRecord) -> BrowserSessionStatus {
         target: record.target.clone(),
         browser_pid: wrapper_state.as_ref().and_then(|state| state.browser_pid),
         error: wrapper_state.and_then(|state| state.error),
+        backend: record.backend.clone(),
+        browser: None,
+        extension_connected: false,
+        chat_group_key: record.group_key.clone(),
+        controlled_tab_id: None,
+        fallback_reason: record.fallback_reason.clone(),
     }
 }
 
@@ -510,6 +734,12 @@ fn validate_target(target: &BrowserSessionTarget) -> Result<(), String> {
     ) {
         return Err("Invalid browser access mode.".to_string());
     }
+    if !matches!(
+        target.execution_target.as_str(),
+        "default-browser" | "isolated"
+    ) {
+        return Err("Invalid browser execution target.".to_string());
+    }
     Ok(())
 }
 
@@ -533,10 +763,18 @@ fn read_packaged_runtime(root: &Path, architecture: &str) -> Result<PlaywrightRu
     }
     let node = confined_runtime_path(root, &manifest.node_executable)?;
     let wrapper = confined_runtime_path(root, &manifest.wrapper_script)?;
+    let default_wrapper = confined_runtime_path(
+        root,
+        manifest
+            .default_browser_wrapper_script
+            .as_deref()
+            .ok_or("The default-browser MCP wrapper is missing from the runtime manifest.")?,
+    )?;
     let chromium = confined_runtime_path(root, &manifest.chromium_executable)?;
     validate_runtime_paths(
         node,
         wrapper,
+        default_wrapper,
         chromium,
         format!(
             "@playwright/mcp {} / Playwright {}",
@@ -553,6 +791,10 @@ fn resolve_development_runtime() -> Result<PlaywrightRuntime, String> {
         .join("scripts")
         .join("playwright-runtime")
         .join("orchestrator-playwright-mcp.mjs");
+    let default_wrapper = repository
+        .join("scripts")
+        .join("playwright-runtime")
+        .join("orchestrator-default-browser-mcp.mjs");
     let node = resolve_path_executable("node")
         .ok_or_else(|| "Node.js is required for the development browser runtime.".to_string())?;
     let chromium = env::var_os("ORCHESTRATOR_PLAYWRIGHT_CHROMIUM")
@@ -562,7 +804,13 @@ fn resolve_development_runtime() -> Result<PlaywrightRuntime, String> {
             "The pinned Chromium build is unavailable. Run `npm run prepare:playwright-runtime` before starting Orchestrator."
                 .to_string()
         })?;
-    validate_runtime_paths(node, wrapper, chromium, "development runtime".to_string())
+    validate_runtime_paths(
+        node,
+        wrapper,
+        default_wrapper,
+        chromium,
+        "development runtime".to_string(),
+    )
 }
 
 fn probe_development_chromium(repository: &Path, node: &Path) -> Option<PathBuf> {
@@ -585,6 +833,7 @@ fn probe_development_chromium(repository: &Path, node: &Path) -> Option<PathBuf>
 fn validate_runtime_paths(
     node: PathBuf,
     wrapper: PathBuf,
+    default_wrapper: PathBuf,
     chromium: PathBuf,
     _version: String,
 ) -> Result<PlaywrightRuntime, String> {
@@ -606,9 +855,16 @@ fn validate_runtime_paths(
             chromium.display()
         ));
     }
+    if !default_wrapper.is_file() {
+        return Err(format!(
+            "The default-browser MCP wrapper was not found at {}.",
+            default_wrapper.display()
+        ));
+    }
     Ok(PlaywrightRuntime {
         node_executable: node,
         wrapper_script: wrapper,
+        default_browser_wrapper_script: default_wrapper,
         chromium_executable: chromium,
     })
 }
@@ -668,6 +924,8 @@ mod tests {
             thread_id: None,
             turn_id: None,
             access_mode: "ask-for-approval".to_string(),
+            execution_target: "isolated".to_string(),
+            chat_title: "Test chat".to_string(),
         };
         assert!(validate_target(&target).is_err());
 
@@ -684,6 +942,7 @@ mod tests {
         let runtime = PlaywrightRuntime {
             node_executable: PathBuf::from("/bundle/bin/node"),
             wrapper_script: PathBuf::from("/bundle/mcp/wrapper.mjs"),
+            default_browser_wrapper_script: PathBuf::from("/bundle/mcp/default.mjs"),
             chromium_executable: PathBuf::from("/bundle/chromium"),
         };
         let mut args = Vec::new();
@@ -708,12 +967,15 @@ mod tests {
         fs::create_dir_all(&root).expect("creates validation fixture");
         let node = root.join("node");
         let wrapper = root.join("wrapper.mjs");
+        let default_wrapper = root.join("default-wrapper.mjs");
         fs::write(&node, b"node").expect("writes node fixture");
         fs::write(&wrapper, b"wrapper").expect("writes wrapper fixture");
+        fs::write(&default_wrapper, b"wrapper").expect("writes default wrapper fixture");
 
         let result = validate_runtime_paths(
             node,
             wrapper,
+            default_wrapper,
             root.join("missing-chromium"),
             "test".to_string(),
         );

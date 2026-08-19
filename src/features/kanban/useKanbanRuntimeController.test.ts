@@ -185,6 +185,7 @@ function harness() {
       accounts: [account],
       selectedAccountId: account.id,
       computerUseEnabled: true,
+      browserExecutionTarget: "default-browser" as const,
       ossProvider: "ollama" as const,
     })),
     listModels: vi.fn(async () => [model]),

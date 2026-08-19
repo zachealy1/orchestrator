@@ -7,6 +7,7 @@ import {
   GitBranchPlus,
   GitCommitHorizontal,
   Loader2,
+  Link2,
   MessageSquare,
   Monitor,
   PanelRight,
@@ -63,6 +64,7 @@ export function WorkspaceContextBanner({
   onToggleHistory,
   browserSession,
   onFocusBrowser,
+  onAttachBrowserTab,
   onStopBrowser,
   windowDragRegionsEnabled,
 }: {
@@ -93,6 +95,7 @@ export function WorkspaceContextBanner({
   onToggleHistory: () => void;
   browserSession: BrowserSessionState | null;
   onFocusBrowser: () => void;
+  onAttachBrowserTab: () => void;
   onStopBrowser: () => void;
   windowDragRegionsEnabled: boolean;
 }) {
@@ -106,9 +109,11 @@ export function WorkspaceContextBanner({
   );
   const browserVisible =
     browserSession !== null &&
-    ["starting", "running", "awaiting-approval", "error"].includes(
+    (["starting", "running", "awaiting-approval", "error"].includes(
       browserSession.status,
-    );
+    ) ||
+      (browserSession.backend === "default-browser" &&
+        ["prepared", "ready"].includes(browserSession.status)));
 
   useEffect(() => {
     if (!browserMenuOpen) return;
@@ -416,6 +421,20 @@ export function WorkspaceContextBanner({
                     role="group"
                     aria-label="Browser session controls"
                   >
+                    {browserSession.backend === "default-browser" ? (
+                      <button
+                        className="native-plan-icon-action"
+                        type="button"
+                        aria-label="Attach an existing browser tab"
+                        data-tooltip="Attach tab"
+                        onClick={() => {
+                          onAttachBrowserTab();
+                          setBrowserMenuOpen(false);
+                        }}
+                      >
+                        <Link2 size={15} aria-hidden="true" />
+                      </button>
+                    ) : null}
                     <button
                       className="native-plan-icon-action"
                       type="button"

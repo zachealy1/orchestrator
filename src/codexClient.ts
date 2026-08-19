@@ -11,7 +11,7 @@ import type {
 } from "./lib/agentNotifications";
 import type { WorkspaceCommitIntentContext } from "./lib/commitMessage";
 import type { ActiveCodexLogin, CodexAccountResponse, CodexConnectResult, CodexLoginResponse, CodexModel, ModelListResponse, OssProvider } from "./features/codex/types";
-import type { BrowserRuntimeStatus, BrowserSessionState, BrowserSessionTarget, PreparedBrowserSession } from "./features/browser/types";
+import type { BrowserRuntimeStatus, BrowserSessionState, BrowserSessionTarget, DefaultBrowserCapabilityStatus, DefaultBrowserTab, PreparedBrowserSession } from "./features/browser/types";
 import type { CodexSkillSummary, ComposerContextFile, DroppedContextPathInspection, ImageAttachmentPreview } from "./features/composer/types";
 import type { ExternalTranscriptSnapshot, ExternalThreadHistoryIndex } from "./features/conversations/types";
 import type { GitBranchList, Workspace, WorkspaceFilePreview, WorkspaceGitActionResult, WorkspaceGitDiff, WorkspaceGitOverview, WorkspaceGitRepository, WorkspaceTreeEntry } from "./features/workspaces/types";
@@ -52,6 +52,30 @@ export function updateBrowserSessionTarget(
 
 export function stopBrowserSession(token: string) {
   return commandResult<BrowserSessionState>(commands.browserSessionStop(token));
+}
+
+export function readDefaultBrowserCapabilityStatus() {
+  return commandResult<DefaultBrowserCapabilityStatus>(
+    commands.defaultBrowserCapabilityStatus(),
+  );
+}
+
+export function installDefaultBrowserExtension() {
+  return commandResult<void>(commands.defaultBrowserInstallExtension());
+}
+
+export function openDefaultBrowserAccessibilitySettings() {
+  return commandResult<void>(commands.defaultBrowserOpenAccessibilitySettings());
+}
+
+export function listDefaultBrowserTabs(token: string) {
+  return commandResult<DefaultBrowserTab[]>(commands.browserSessionListTabs(token));
+}
+
+export function attachDefaultBrowserTab(token: string, tabId: number) {
+  return commandResult<BrowserSessionState>(
+    commands.browserSessionAttachTab(token, tabId),
+  );
 }
 
 export function probeLocalWebPreview(url: string) {

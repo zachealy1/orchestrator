@@ -59,10 +59,13 @@ import {
   deleteCodexProfile,
   generateWorkspaceCommitMessage,
   generateChatTitle,
+  attachDefaultBrowserTab,
   focusBrowserSession,
+  installDefaultBrowserExtension,
   inspectPromptQueueContext,
   inspectDroppedContextPaths,
   listGitBranches,
+  listDefaultBrowserTabs,
   listDefaultCodexSkills,
   listCodexModels,
   listCodexSkills,
@@ -95,6 +98,7 @@ import {
   updateBrowserSessionTarget,
   undoWorkspaceGitDiff,
   openAgentNotificationSettings,
+  openDefaultBrowserAccessibilitySettings,
 } from "../codexClient";
 import {
   fallbackChatTitle,
@@ -348,8 +352,12 @@ import {
   pendingApprovalMatchesEntry,
 } from "../features/notifications/approvalRouting";
 import { SettingsView } from "../features/settings/SettingsView";
-import type { BrowserSessionState } from "../features/browser/types";
+import type {
+  BrowserSessionState,
+  DefaultBrowserTab,
+} from "../features/browser/types";
 import { useComputerUseController } from "../features/browser/useComputerUseController";
+import { DefaultBrowserTabDialog } from "../features/browser/DefaultBrowserTabDialog";
 import { cleanupAbandonedCodexProfiles } from "../features/accounts/abandonedProfiles";
 import type {
   CodexAccountProfile,
@@ -943,8 +951,14 @@ function App() {
   } = useNotificationController(readAgentNotificationPreferences());
   const { themePreference, setThemePreference, resolvedTheme } =
     useAppearanceController();
-  const { computerUseEnabled, setComputerUseEnabled, browserRuntimeStatus } =
-    useComputerUseController();
+  const {
+    computerUseEnabled,
+    setComputerUseEnabled,
+    browserExecutionTarget,
+    setBrowserExecutionTarget,
+    browserRuntimeStatus,
+    refreshBrowserRuntimeStatus,
+  } = useComputerUseController();
   const macOsWindowDragRegionsEnabled = useMacOsWindowDragRegionsEnabled();
   const selfWindowDragRegion = windowDragRegionValue(
     macOsWindowDragRegionsEnabled,
@@ -971,6 +985,13 @@ function App() {
   const [githubLoginOpening, setGithubLoginOpening] = useState(false);
   const [githubLoginCopied, setGithubLoginCopied] = useState(false);
   const [githubLoginError, setGithubLoginError] = useState<string | null>(null);
+  const [defaultBrowserTabDialog, setDefaultBrowserTabDialog] = useState<{
+    token: string;
+    tabs: DefaultBrowserTab[];
+    loading: boolean;
+    attachingTabId: number | null;
+    error: string | null;
+  } | null>(null);
   const githubConnectRequestRef = useRef(false);
   const githubConnectionPending =
     githubLoginStarting || githubConnection?.status === "connecting";
@@ -3534,6 +3555,21 @@ function App() {
     });
   }
 
+  async function syncActiveBrowserChatTitle(chatId: number, title: string) {
+    const chat = await getChatRecord(chatId);
+    if (!chat) return;
+    const control = findRunControlByChat(chat.workspace_id, chatId);
+    const browserSession = control?.browserSession;
+    if (!control || !browserSession) return;
+    updateRunControlBrowserState(
+      control,
+      await updateBrowserSessionTarget(browserSession.token, {
+        ...browserSession.state.target,
+        chatTitle: title,
+      }),
+    );
+  }
+
   function startChatTitleGeneration(request: ChatTitleGenerationRequest) {
     if (chatTitleGenerationsInFlightRef.current.has(request.chatId)) return;
     chatTitleGenerationsInFlightRef.current.add(request.chatId);
@@ -3553,6 +3589,7 @@ function App() {
         }
         if (await completeChatTitleGeneration(request.chatId, title)) {
           updateHistoryChatTitle(request.chatId, title, "complete");
+          void syncActiveBrowserChatTitle(request.chatId, title).catch(() => undefined);
           await syncSharedChatTitle(request.chatId, title).catch((error) => {
             console.warn("Could not synchronize the generated Codex title", error);
           });
@@ -3571,6 +3608,10 @@ function App() {
           setStatusMessage(
             "AI title generation failed; using the prompt-based title.",
           );
+          void syncActiveBrowserChatTitle(
+            request.chatId,
+            request.fallbackTitle,
+          ).catch(() => undefined);
         }
       } finally {
         chatTitleGenerationsInFlightRef.current.delete(request.chatId);
@@ -4780,6 +4821,9 @@ function App() {
   async function refreshRunControlBrowserState(control: ActiveRunControl) {
     const token = control.browserSession?.token;
     if (!token) return;
+    if (control.browserSession?.state.backend === "default-browser") {
+      return;
+    }
     try {
       updateRunControlBrowserState(
         control,
@@ -6385,6 +6429,76 @@ function App() {
     }
   }
 
+  async function loadDefaultBrowserTabsForSession(token: string) {
+    setDefaultBrowserTabDialog((current) =>
+      current?.token === token
+        ? { ...current, loading: true, error: null }
+        : {
+            token,
+            tabs: [],
+            loading: true,
+            attachingTabId: null,
+            error: null,
+          },
+    );
+    try {
+      const tabs = await listDefaultBrowserTabs(token);
+      setDefaultBrowserTabDialog((current) =>
+        current?.token === token
+          ? { ...current, tabs, loading: false, error: null }
+          : current,
+      );
+    } catch (error) {
+      setDefaultBrowserTabDialog((current) =>
+        current?.token === token
+          ? {
+              ...current,
+              loading: false,
+              error: errorMessage(error),
+            }
+          : current,
+      );
+    }
+  }
+
+  function openSelectedBrowserTabDialog() {
+    const session = selectedActiveRunControl?.browserSession;
+    if (!session || session.state.backend !== "default-browser") return;
+    void loadDefaultBrowserTabsForSession(session.token);
+  }
+
+  async function attachTabToSelectedBrowserSession(token: string, tabId: number) {
+    const control = selectedActiveRunControl;
+    if (!control?.browserSession || control.browserSession.token !== token) {
+      setDefaultBrowserTabDialog(null);
+      setStatusMessage("The browser session changed before the tab was attached.");
+      return;
+    }
+    setDefaultBrowserTabDialog((current) =>
+      current?.token === token
+        ? { ...current, attachingTabId: tabId, error: null }
+        : current,
+    );
+    try {
+      updateRunControlBrowserState(
+        control,
+        await attachDefaultBrowserTab(token, tabId),
+      );
+      setDefaultBrowserTabDialog(null);
+      setStatusMessage("Browser tab attached to this chat.");
+    } catch (error) {
+      setDefaultBrowserTabDialog((current) =>
+        current?.token === token
+          ? {
+              ...current,
+              attachingTabId: null,
+              error: errorMessage(error),
+            }
+          : current,
+      );
+    }
+  }
+
   function openWorkspaceContextMenu(
     workspace: Workspace,
     event:
@@ -6513,6 +6627,7 @@ function App() {
       }));
       setChatRenameDialog(null);
       setStatusMessage("Chat renamed.");
+      void syncActiveBrowserChatTitle(dialog.chat.id, title).catch(() => undefined);
       if (dialog.chat.profile_key === DEFAULT_CODEX_PROFILE_KEY) {
         void syncSharedChatTitle(
           dialog.chat.id,
@@ -10699,11 +10814,17 @@ function App() {
           threadId: initialThreadId,
           turnId: null,
           accessMode: snapshot.access.accessMode,
+          executionTarget: snapshot.executionSettings.browserExecutionTarget,
+          chatTitle:
+            (await getChatRecord(chatId))?.title ?? snapshot.promptFallback,
         })
       : null;
     runControl.browserSession = browserSession;
     if (browserSession) {
       activeRunRegistry.touch();
+      if (browserSession.state.fallbackReason) {
+        setStatusMessage(browserSession.state.fallbackReason);
+      }
     }
     const threadConfig = {
       ...(snapshot.useOss
@@ -11804,6 +11925,7 @@ function App() {
       accounts: codexAccountsRef.current,
       selectedAccountId: selectedAccountIdRef.current,
       computerUseEnabled,
+      browserExecutionTarget,
       ossProvider,
     }),
     listModels: listCodexModelsForProfile,
@@ -11850,6 +11972,7 @@ function App() {
       queued.reasoningEffort === active.reasoningEffort &&
       queued.accessMode === active.accessMode &&
       queued.computerUseEnabled === active.computerUseEnabled &&
+      queued.browserExecutionTarget === active.browserExecutionTarget &&
       queued.useOss === active.useOss &&
       queued.ossProvider === active.ossProvider &&
       selectedSession?.threadId === control.threadId &&
@@ -12015,6 +12138,7 @@ function App() {
       intent,
       accessMode,
       computerUseEnabled,
+      browserExecutionTarget,
       model:
         useOss || modelLoadErrorRef.current
           ? null
@@ -12313,6 +12437,7 @@ function App() {
       intent: planMode ? "plan" : "normal",
       accessMode,
       computerUseEnabled,
+      browserExecutionTarget,
       model:
         useOss || modelLoadErrorRef.current
           ? null
@@ -15840,6 +15965,7 @@ function App() {
       intent,
       accessMode,
       computerUseEnabled,
+      browserExecutionTarget,
       model,
       reasoningEffort: model ? reasoningEffort : null,
       useOss: followUpUseOss,
@@ -17514,6 +17640,27 @@ function App() {
         />
       ) : null}
 
+      {defaultBrowserTabDialog &&
+      selectedActiveRunControl?.browserSession?.token ===
+        defaultBrowserTabDialog.token ? (
+        <DefaultBrowserTabDialog
+          tabs={defaultBrowserTabDialog.tabs}
+          loading={defaultBrowserTabDialog.loading}
+          attachingTabId={defaultBrowserTabDialog.attachingTabId}
+          error={defaultBrowserTabDialog.error}
+          onRefresh={() =>
+            void loadDefaultBrowserTabsForSession(defaultBrowserTabDialog.token)
+          }
+          onAttach={(tabId) =>
+            void attachTabToSelectedBrowserSession(
+              defaultBrowserTabDialog.token,
+              tabId,
+            )
+          }
+          onClose={() => setDefaultBrowserTabDialog(null)}
+        />
+      ) : null}
+
       {accountHandoffCandidate ? (
         <AccountHandoffDialog
           candidate={accountHandoffCandidate}
@@ -17761,6 +17908,7 @@ function App() {
                 selectedActiveRunControl?.browserSession?.state ?? null
               }
               onFocusBrowser={() => void focusSelectedBrowserSession()}
+              onAttachBrowserTab={openSelectedBrowserTabDialog}
               onStopBrowser={() => void stopSelectedBrowserSession()}
               windowDragRegionsEnabled={macOsWindowDragRegionsEnabled}
             />
@@ -18246,6 +18394,7 @@ function App() {
                 dragRegion: selfWindowDragRegion,
                 themePreference,
                 computerUseEnabled,
+                browserExecutionTarget,
                 browserRuntimeStatus,
                 githubConnection,
                 githubConnectionPending,
@@ -18267,6 +18416,19 @@ function App() {
               actions={{
                 setThemePreference,
                 setComputerUseEnabled,
+                setBrowserExecutionTarget,
+                installDefaultBrowserExtension: () => {
+                  void installDefaultBrowserExtension().catch((error) =>
+                    setStatusMessage(errorMessage(error)),
+                  );
+                },
+                refreshBrowserRuntimeStatus: () =>
+                  void refreshBrowserRuntimeStatus(),
+                openDefaultBrowserAccessibilitySettings: () => {
+                  void openDefaultBrowserAccessibilitySettings().catch(
+                    (error) => setStatusMessage(errorMessage(error)),
+                  );
+                },
                 connectGithub: () => void handleConnectGithub(),
                 showGithubLogin: () => setGithubLoginDialogOpen(true),
                 disconnectGithub: () => void handleDisconnectGithub(),
@@ -18324,6 +18486,10 @@ function interactionModeForSnapshot(snapshot: RunSetupSnapshot): RunInteractionM
   if (snapshot.goalMode && snapshot.mode === "plan") return "goal-plan";
   if (snapshot.goalMode) return "goal";
   return snapshot.mode === "plan" ? "plan" : "chat";
+}
+
+function errorMessage(error: unknown) {
+  return error instanceof Error ? error.message : String(error);
 }
 
 function assertRuntimeAccessMatches(

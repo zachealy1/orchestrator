@@ -27,6 +27,7 @@ mod agent_notifications;
 mod browser_sessions;
 mod codex;
 mod database;
+mod default_browser;
 mod git;
 mod github;
 mod github_cli;
@@ -44,6 +45,7 @@ use agent_notifications::AgentNotificationState;
 use browser_sessions::{BrowserSessionRegistry, PlaywrightRuntime};
 pub(crate) use codex::*;
 pub(crate) use database::*;
+use default_browser::DefaultBrowserBridgeState;
 pub(crate) use git::*;
 use migrations::migrations;
 pub(crate) use models::*;
@@ -155,6 +157,11 @@ fn command_builder() -> tauri_specta::Builder<tauri::Wry> {
             browser_sessions::browser_session_focus,
             browser_sessions::browser_session_update_target,
             browser_sessions::browser_session_stop,
+            browser_sessions::browser_session_list_tabs,
+            browser_sessions::browser_session_attach_tab,
+            default_browser::default_browser_capability_status,
+            default_browser::default_browser_install_extension,
+            default_browser::default_browser_open_accessibility_settings,
             agent_notifications::agent_notification_permission_status,
             agent_notifications::agent_notification_request_permission,
             agent_notifications::agent_notification_send,
@@ -180,6 +187,7 @@ pub fn run() {
         .manage(CodexState::default())
         .manage(AgentNotificationState::default())
         .manage(BrowserSessionRegistry::default())
+        .manage(DefaultBrowserBridgeState::default())
         .manage(github_cli::GithubState::default())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_clipboard_manager::init())
@@ -190,6 +198,12 @@ pub fn run() {
                 .build(),
         )
         .setup(|app| {
+            let browser_bridge = app.state::<DefaultBrowserBridgeState>();
+            default_browser::initialize_default_browser_bridge(
+                app.handle(),
+                browser_bridge.inner(),
+            )
+            .map_err(std::io::Error::other)?;
             let database = tauri::async_runtime::block_on(DatabaseState::connect(app.handle()))
                 .map_err(std::io::Error::other)?;
             app.manage(database);
@@ -204,6 +218,10 @@ pub fn run() {
             present_main_window(app_handle);
         }
     });
+}
+
+pub fn run_browser_native_host(config_path: &Path) -> Result<(), String> {
+    default_browser::run_native_messaging_host(config_path)
 }
 
 fn present_main_window(app: &AppHandle) {
