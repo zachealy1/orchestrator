@@ -95,8 +95,29 @@ describe("Kanban local review styles", () => {
     const errorRule = rule(".kanban-transition-dialog .kanban-form-error");
 
     expect(errorRule).toContain("display: grid");
+    expect(errorRule).toContain("width: 100%");
+    expect(errorRule).toContain("box-sizing: border-box");
     expect(errorRule).toContain("grid-template-columns: auto minmax(0, 1fr)");
     expect(errorRule).toContain("align-items: start");
+  });
+
+  it("limits transition descriptions without shortening error rows", () => {
+    expect(
+      rule(
+        ".kanban-transition-dialog.is-stop-and-move > #kanban-transition-description",
+      ),
+    ).toContain("max-width: 620px");
+    expect(
+      rule(
+        ".kanban-transition-dialog.is-no-changes > #kanban-transition-description",
+      ),
+    ).toContain("max-width: 620px");
+    expect(css).not.toContain(
+      ".kanban-transition-dialog.is-stop-and-move > p {",
+    );
+    expect(css).not.toContain(
+      ".kanban-transition-dialog.is-no-changes > p {",
+    );
   });
 
   it("uses a flat archive summary and borderless icon-only actions", () => {

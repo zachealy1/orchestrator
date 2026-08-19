@@ -1028,7 +1028,7 @@ button.kanban-card-content {
   font-size: 1.34rem;
 }
 
-.kanban-transition-dialog.is-no-changes > p {
+.kanban-transition-dialog.is-no-changes > #kanban-transition-description {
   max-width: 620px;
   font-size: 0.9rem;
 }
@@ -1562,6 +1562,8 @@ button.kanban-card-content {
 
 .kanban-transition-dialog .kanban-form-error {
   display: grid;
+  width: 100%;
+  box-sizing: border-box;
   grid-template-columns: auto minmax(0, 1fr);
   align-items: start;
   gap: 7px;
@@ -1604,7 +1606,7 @@ button.kanban-card-content {
   line-height: 1.5;
 }
 
-.kanban-transition-dialog.is-stop-and-move > p {
+.kanban-transition-dialog.is-stop-and-move > #kanban-transition-description {
   max-width: 620px;
   font-size: 0.9rem;
 }
