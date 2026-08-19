@@ -422,8 +422,9 @@ button.kanban-card-content {
   font-size: 0.76rem;
   line-height: 1.35;
   overflow-wrap: anywhere;
+  line-clamp: 3;
   -webkit-box-orient: vertical;
-  -webkit-line-clamp: 2;
+  -webkit-line-clamp: 3;
 }
 
 .kanban-card-metadata {

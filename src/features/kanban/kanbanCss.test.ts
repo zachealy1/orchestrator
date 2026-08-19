@@ -189,7 +189,11 @@ describe("Kanban local review styles", () => {
     expect(badges).toContain("row-gap: var(--kanban-card-vertical-gap)");
     expect(content).toContain("row-gap: var(--kanban-card-vertical-gap)");
     expect(title).toContain("line-height: 1.3");
+    expect(description).toContain("display: -webkit-box");
+    expect(description).toContain("overflow: hidden");
     expect(description).toContain("line-height: 1.35");
+    expect(description).toContain("line-clamp: 3");
+    expect(description).toContain("-webkit-line-clamp: 3");
     expect(metadata).toContain("row-gap: var(--kanban-card-vertical-gap)");
     expect(metadataItem).toContain("padding: 1px 6px");
     expect(footer).toContain("padding-top: 0");
