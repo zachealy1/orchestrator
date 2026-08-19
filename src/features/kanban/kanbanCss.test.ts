@@ -168,7 +168,7 @@ describe("Kanban local review styles", () => {
     const branchText = rule(".kanban-branch-text");
     const changedFiles = rule(".kanban-changed-file-count");
 
-    expect(topline).toContain("align-items: center");
+    expect(topline).toContain("align-items: flex-end");
     expect(badges).toContain("flex: 1 1 auto");
     expect(badges).toContain("min-width: 0");
     expect(badges).toContain("flex-wrap: wrap");
