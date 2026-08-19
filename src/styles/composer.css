@@ -957,7 +957,7 @@ button.composer-status-action:focus-visible {
   padding: 14px 20px 8px;
   font-family: inherit;
   font-size: 1rem;
-  line-height: 1.5;
+  line-height: 1.25;
   white-space: pre-wrap;
   overflow-wrap: break-word;
   word-break: break-word;
@@ -1013,7 +1013,7 @@ button.composer-status-action:focus-visible {
   overflow: hidden;
   color: var(--text);
   font-size: 1rem;
-  line-height: 1.5;
+  line-height: 1.25;
   padding: 14px 20px 8px;
   pointer-events: none;
   white-space: pre-wrap;
