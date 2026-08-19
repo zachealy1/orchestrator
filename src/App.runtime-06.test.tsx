@@ -1667,11 +1667,13 @@ describe("Application runtime scenarios 6", () => {
           workspace.path,
         ),
       );
+      const diffDrawer = screen.getByRole("complementary", {
+        name: "File preview",
+      });
       expect(
-        within(screen.getByRole("complementary", { name: "File preview" })).getByText(
-          "Git diff",
-        ),
+        within(diffDrawer).getByRole("heading", { name: "README.md" }),
       ).toBeInTheDocument();
+      expect(within(diffDrawer).queryByText("Git diff")).not.toBeInTheDocument();
       await user.click(screen.getByRole("button", { name: "Close file preview" }));
 
       await waitFor(() =>

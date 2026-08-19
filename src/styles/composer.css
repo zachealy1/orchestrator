@@ -29,6 +29,10 @@
   line-height: 1.2;
 }
 
+.surface-header h2:first-child {
+  margin-top: 0;
+}
+
 .field {
   display: grid;
   gap: 8px;

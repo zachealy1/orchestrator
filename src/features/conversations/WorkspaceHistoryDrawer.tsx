@@ -80,10 +80,7 @@ export const WorkspaceHistoryDrawer = memo(function WorkspaceHistoryDrawer({
       onTransitionEnd={onTransitionEnd}
     >
       <header>
-        <div>
-          <p className="eyebrow">History</p>
-          <h2>{workspace?.label ?? "Workspace chats"}</h2>
-        </div>
+        <h2>{workspace?.label ?? "Workspace chats"}</h2>
       </header>
 
       {historyState.status === "loading" ? (

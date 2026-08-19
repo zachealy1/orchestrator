@@ -1522,7 +1522,6 @@ function App() {
     [],
   );
   const selectedWorkspaceName = selectedWorkspace?.label ?? "Choose a repository";
-  const selectedWorkspacePath = selectedWorkspace?.path ?? "No workspace selected";
   const selectedAccount =
     codexAccounts.find((account) => account.id === selectedAccountId) ?? null;
   const selectedModel =
@@ -17410,7 +17409,6 @@ function App() {
               data-tauri-drag-region={deepWindowDragRegion}
             >
               <div data-tauri-drag-region="false">
-                <p className="eyebrow">{selectedWorkspacePath}</p>
                 <h2>{selectedWorkspaceName}</h2>
               </div>
               <div className="topbar-actions" data-tauri-drag-region="false">
@@ -17941,7 +17939,6 @@ function App() {
             <section className="surface analytics-detail" aria-label="Analytics detail">
               <div className="surface-header">
                 <div>
-                  <p className="eyebrow">Local metrics</p>
                   <h2>Workspace usage</h2>
                 </div>
               </div>

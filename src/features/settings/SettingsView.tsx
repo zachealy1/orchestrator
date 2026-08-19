@@ -98,7 +98,6 @@ export const SettingsView = memo(function SettingsView({
       >
         <div className="surface-header">
           <div>
-            <p className="eyebrow">Appearance</p>
             <h2>Theme</h2>
           </div>
         </div>
@@ -139,7 +138,6 @@ export const SettingsView = memo(function SettingsView({
       >
         <div className="surface-header">
           <div>
-            <p className="eyebrow">Agent capabilities</p>
             <h2>Computer use</h2>
           </div>
           <span
@@ -194,7 +192,6 @@ export const SettingsView = memo(function SettingsView({
       <section className="surface settings-panel github-settings-panel" aria-label="GitHub settings">
         <div className="surface-header">
           <div>
-            <p className="eyebrow">Source control</p>
             <h2>GitHub</h2>
           </div>
           <span
@@ -273,7 +270,6 @@ export const SettingsView = memo(function SettingsView({
       <section className="surface settings-panel" aria-label="Codex settings">
         <div className="surface-header">
           <div>
-            <p className="eyebrow">Settings</p>
             <h2>Codex connection</h2>
           </div>
           <span
@@ -485,7 +481,6 @@ function NotificationSettings({
     >
       <div className="surface-header">
         <div>
-          <p className="eyebrow">Notifications</p>
           <h2>Agent alerts</h2>
         </div>
         <span

@@ -738,16 +738,9 @@ button.account-switcher-item:hover:not(:disabled) {
 
 .topbar h2 {
   overflow: hidden;
-  margin-top: 4px;
   color: var(--text);
   font-size: 1.52rem;
   line-height: 1.15;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.topbar .eyebrow {
-  overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }

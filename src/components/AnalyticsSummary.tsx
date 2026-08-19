@@ -16,7 +16,6 @@ export function AnalyticsSummary({ summary }: Props) {
     <section className="surface analytics" aria-label="Analytics">
       <div className="surface-header">
         <div>
-          <p className="eyebrow">Analytics</p>
           <h2>Token and run health</h2>
         </div>
       </div>

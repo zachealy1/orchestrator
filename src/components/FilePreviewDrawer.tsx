@@ -70,9 +70,6 @@ export const FilePreviewDrawer = memo(function FilePreviewDrawer({
       />
       <header>
         <div className="file-preview-title">
-          <p className="eyebrow">
-            {previewState.mode === "diff" ? "Git diff" : "Preview"}
-          </p>
           <h2>{file.name}</h2>
           <span>{file.relativePath}</span>
         </div>
