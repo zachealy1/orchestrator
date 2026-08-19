@@ -201,6 +201,48 @@ describe("Kanban controls", () => {
     expect(onConfirm).toHaveBeenCalledOnce();
   });
 
+  it("uses a review-style layout and borderless icon actions for no-change completion", async () => {
+    const user = userEvent.setup();
+    const onCancel = vi.fn();
+    const onConfirm = vi.fn();
+
+    render(
+      <KanbanTransitionDialog
+        open
+        kind="complete-without-pr"
+        card={card}
+        onCancel={onCancel}
+        onConfirm={onConfirm}
+      />,
+    );
+
+    const dialog = screen.getByRole("alertdialog", {
+      name: "Complete without a pull request?",
+    });
+    expect(dialog).toHaveClass("is-no-changes");
+    expect(dialog.querySelector(".eyebrow")).not.toBeInTheDocument();
+    expect(
+      dialog.querySelector(".kanban-no-changes-transition-heading-icon"),
+    ).toBeInTheDocument();
+    expect(dialog.querySelector(".kanban-summary-transition-card")).toHaveTextContent(
+      "Archived workflow",
+    );
+
+    const cancelButton = screen.getByRole("button", { name: "Cancel" });
+    const confirmButton = screen.getByRole("button", { name: "Mark Done" });
+    expect(cancelButton).toHaveClass("native-plan-icon-action", "cancel");
+    expect(cancelButton).toHaveAttribute("data-tooltip", "Cancel");
+    expect(confirmButton).toHaveClass("native-plan-icon-action", "implement");
+    expect(confirmButton).toHaveAttribute("data-tooltip", "Mark Done");
+    expect(confirmButton).toHaveTextContent("");
+    await waitFor(() => expect(confirmButton).toHaveFocus());
+
+    await user.click(cancelButton);
+    await user.click(confirmButton);
+    expect(onCancel).toHaveBeenCalledOnce();
+    expect(onConfirm).toHaveBeenCalledOnce();
+  });
+
   it("groups archived cards into swim lanes and exposes restore/delete actions", async () => {
     const user = userEvent.setup();
     const onRestoreCard = vi.fn();

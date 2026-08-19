@@ -219,12 +219,17 @@ export const SubagentInspector = memo(function SubagentInspector({
         : null,
     [parentRunView, record],
   );
+  const hasInteractions = Boolean(
+    interactionRunView &&
+      (interactionRunView.approvalRequests.length > 0 ||
+        interactionRunView.serverRequests.length > 0),
+  );
   const interactionEntry = useMemo(
     () =>
-      parentEntry && interactionRunView
+      parentEntry && interactionRunView && hasInteractions
         ? { ...parentEntry, runView: interactionRunView }
         : null,
-    [interactionRunView, parentEntry],
+    [hasInteractions, interactionRunView, parentEntry],
   );
   const transcriptTurns = useMemo(
     () =>
@@ -296,7 +301,9 @@ export const SubagentInspector = memo(function SubagentInspector({
 
   return (
     <aside
-      className="subagent-inspector"
+      className={`subagent-inspector${
+        hasInteractions ? " has-interactions" : ""
+      }`}
       aria-label={`Subagent inspector: ${record.task}`}
     >
       <header className="subagent-inspector-header">
@@ -363,20 +370,16 @@ export const SubagentInspector = memo(function SubagentInspector({
         </div>
       </header>
 
-      <div
-        className={`subagent-inspector-interactions${
-          interactionEntry && interactionRunView ? "" : " is-empty"
-        }`}
-      >
-        {interactionEntry && interactionRunView ? (
+      {interactionEntry && interactionRunView ? (
+        <div className="subagent-inspector-interactions">
           <RunApprovalRequests
             entry={interactionEntry}
             runView={interactionRunView}
             onResolveRequest={onResolveRequest}
             onAnswerUserInput={onAnswerUserInput}
           />
-        ) : null}
-      </div>
+        </div>
+      ) : null}
 
       <div className="subagent-inspector-transcript">
         {transcriptState.status === "loading" &&

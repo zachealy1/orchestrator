@@ -232,4 +232,44 @@ describe("subagent protocol", () => {
       store.getConversation("chat:2").map((record) => record.id),
     ).toEqual(["newer", "older"]);
   });
+
+  it("never stores or counts a run root thread as a subagent", () => {
+    const invalidRoot: SubagentRecord = {
+      id: "root",
+      ownerClientId: "owner",
+      workspaceId: 1,
+      chatId: 2,
+      runId: 3,
+      parentTurnId: "turn-parent",
+      profileKey: "account:1",
+      accountId: 1,
+      rootThreadId: "root-thread",
+      parentThreadId: "child-thread",
+      childThreadId: "root-thread",
+      childTurnId: null,
+      spawnItemId: null,
+      task: "Subagent /root",
+      depth: 1,
+      status: "running",
+      statusBeforeAttention: null,
+      agentStatus: "running",
+      needsAttention: false,
+      error: null,
+      finalResult: null,
+      startedAt: "2026-08-19T16:00:00.000Z",
+      updatedAt: "2026-08-19T16:00:00.000Z",
+      completedAt: null,
+    };
+
+    store.replaceConversation("chat:2", [invalidRoot]);
+    expect(store.getConversation("chat:2")).toHaveLength(0);
+
+    store.upsert(invalidRoot);
+    expect(store.findByThread("account:1", "root-thread")).toBeNull();
+    expect(deriveSubagentComposerModel([invalidRoot])).toMatchObject({
+      activeCount: 0,
+      completedCount: 0,
+      records: [],
+    });
+  });
 });

@@ -352,6 +352,28 @@ describe("Application runtime scenarios 7", () => {
         },
       });
 
+      await emitCodexNotification({
+        method: "item/completed",
+        params: {
+          threadId: "child-thread-1",
+          turnId: "child-turn-1",
+          item: {
+            type: "collabAgentToolCall",
+            id: "child-reports-to-parent",
+            tool: "sendInput",
+            status: "completed",
+            senderThreadId: "child-thread-1",
+            receiverThreadIds: ["thread-1"],
+            agentsStates: {
+              "thread-1": {
+                status: "running",
+                message: null,
+              },
+            },
+          },
+        },
+      });
+
       await waitFor(() =>
         expect(
           screen.getByRole("button", { name: /Subagents/i }),
@@ -365,6 +387,11 @@ describe("Application runtime scenarios 7", () => {
           runId: 202,
           childThreadId: "child-thread-1",
           status: "completed",
+        }),
+      );
+      expect(mocks.upsertRunSubagentMock).not.toHaveBeenCalledWith(
+        expect.objectContaining({
+          childThreadId: "thread-1",
         }),
       );
     });

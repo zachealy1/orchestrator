@@ -986,8 +986,27 @@ button.kanban-card-content {
   width: min(520px, 100%);
 }
 
-.kanban-transition-dialog.is-archive {
+.kanban-transition-dialog.is-archive,
+.kanban-transition-dialog.is-no-changes {
   width: min(720px, 100%);
+}
+
+.kanban-transition-dialog.is-no-changes {
+  gap: 22px;
+  padding: 28px;
+}
+
+.kanban-transition-dialog.is-no-changes > header {
+  align-items: center;
+}
+
+.kanban-transition-dialog.is-no-changes h2 {
+  font-size: 1.34rem;
+}
+
+.kanban-transition-dialog.is-no-changes > p {
+  max-width: 620px;
+  font-size: 0.9rem;
 }
 
 .kanban-transition-dialog:has(.kanban-delete-header) {
@@ -1022,14 +1041,22 @@ button.kanban-card-content {
   gap: 12px;
 }
 
-.kanban-archive-transition-heading {
+.kanban-summary-transition-heading {
   display: flex;
   min-width: 0;
   align-items: center;
   gap: 12px;
 }
 
-.kanban-archive-transition-heading h2 {
+.kanban-transition-dialog.is-no-changes .kanban-summary-transition-heading {
+  gap: 16px;
+}
+
+.kanban-no-changes-transition-heading-icon {
+  flex: 0 0 auto;
+}
+
+.kanban-summary-transition-heading h2 {
   min-width: 0;
   margin: 0;
   overflow-wrap: anywhere;
@@ -1559,7 +1586,7 @@ button.kanban-card-content {
   color: var(--color-primary);
 }
 
-.kanban-archive-transition-card {
+.kanban-summary-transition-card {
   grid-template-columns: auto minmax(0, 1fr);
   align-items: center;
   gap: 12px;
@@ -1569,21 +1596,45 @@ button.kanban-card-content {
   background: transparent;
 }
 
-.kanban-archive-transition-card > svg {
+.kanban-archive-transition-card {
+  border-width: 1px 0;
+  border-radius: 0;
+  background: transparent;
+}
+
+.kanban-transition-dialog.is-no-changes .kanban-summary-transition-card {
+  gap: 16px;
+  padding: 20px 4px;
+}
+
+.kanban-summary-transition-card > svg,
+.kanban-summary-transition-heading > svg {
   color: var(--color-text-secondary);
 }
 
-.kanban-archive-transition-card > div {
+.kanban-summary-transition-card > div {
   display: grid;
   min-width: 0;
   gap: 4px;
 }
 
-.kanban-archive-transition-card strong,
-.kanban-archive-transition-card span,
-.kanban-archive-transition-card small {
+.kanban-summary-transition-card strong,
+.kanban-summary-transition-card span,
+.kanban-summary-transition-card small {
   overflow: hidden;
   text-overflow: ellipsis;
+}
+
+.kanban-transition-dialog.is-no-changes .kanban-summary-transition-card strong {
+  font-size: 0.98rem;
+}
+
+.kanban-transition-dialog.is-no-changes .kanban-summary-transition-card span {
+  font-size: 0.82rem;
+}
+
+.kanban-transition-dialog.is-no-changes > footer {
+  gap: 12px;
 }
 
 .kanban-cleanup-options {

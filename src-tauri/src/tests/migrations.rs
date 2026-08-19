@@ -28,7 +28,7 @@ fn resolved_plugin_migrator(
 }
 
 #[test]
-fn existing_versions_one_through_twenty_five_upgrade_through_thirty_seven() {
+fn existing_versions_one_through_twenty_five_upgrade_through_thirty_eight() {
     tauri::async_runtime::block_on(async {
         let mut connection = SqliteConnection::connect("sqlite::memory:")
             .await
@@ -58,7 +58,7 @@ fn existing_versions_one_through_twenty_five_upgrade_through_thirty_seven() {
         .fetch_one(&mut connection)
         .await
         .expect("count upgraded migrations");
-        assert_eq!(applied_count, 37);
+        assert_eq!(applied_count, 38);
 
         resolved_plugin_migrator(MIGRATION_DEFINITIONS)
             .run_direct(&mut connection)
@@ -640,6 +640,69 @@ fn subagent_metadata_uses_a_new_immutable_migration_slot() {
             .count(),
         1
     );
+}
+
+#[test]
+fn invalid_root_subagents_are_removed_in_a_new_migration_slot() {
+    tauri::async_runtime::block_on(async {
+        let mut connection = SqliteConnection::connect("sqlite::memory:")
+            .await
+            .expect("open subagent cleanup migration database");
+        resolved_plugin_migrator(&MIGRATION_DEFINITIONS[..37])
+            .run_direct(&mut connection)
+            .await
+            .expect("apply migrations through 37");
+
+        sqlx::query("INSERT INTO workspaces (path, label) VALUES ('/workspace', 'Workspace')")
+            .execute(&mut connection)
+            .await
+            .expect("insert workspace");
+        sqlx::query(
+            "INSERT INTO tasks (
+                workspace_id, original_prompt, improved_prompt,
+                route_recommendation, budget_tokens, status
+             ) VALUES (1, 'Run', 'Run', 'direct', 1000, 'running')",
+        )
+        .execute(&mut connection)
+        .await
+        .expect("insert task");
+        sqlx::query(
+            "INSERT INTO runs (
+                task_id, workspace_id, client_user_message_id,
+                codex_thread_id, started_at, status
+             ) VALUES (1, 1, 'client-1', 'root-thread', CURRENT_TIMESTAMP, 'running')",
+        )
+        .execute(&mut connection)
+        .await
+        .expect("insert run");
+        sqlx::query(
+            "INSERT INTO run_subagents (
+                id, run_id, profile_key, account_id, root_thread_id,
+                parent_thread_id, child_thread_id, task_prompt,
+                hierarchy_depth, status, started_at, updated_at
+             ) VALUES
+                ('invalid', 1, 'account:1', 1, 'root-thread', 'child-thread',
+                 'root-thread', 'Subagent /root', 1, 'running',
+                 CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
+                ('valid', 1, 'account:1', 1, 'root-thread', 'root-thread',
+                 'child-thread', 'Inspect', 1, 'completed',
+                 CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)",
+        )
+        .execute(&mut connection)
+        .await
+        .expect("insert valid and invalid subagents");
+
+        resolved_plugin_migrator(MIGRATION_DEFINITIONS)
+            .run_direct(&mut connection)
+            .await
+            .expect("apply invalid root subagent cleanup");
+
+        let ids: Vec<String> = sqlx::query_scalar("SELECT id FROM run_subagents ORDER BY id")
+            .fetch_all(&mut connection)
+            .await
+            .expect("read cleaned subagents");
+        assert_eq!(ids, vec!["valid"]);
+    });
 }
 
 #[test]

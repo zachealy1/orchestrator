@@ -4,6 +4,7 @@ import {
   Check,
   CircleStop,
   FileText,
+  GitPullRequest,
   Loader2,
   RefreshCw,
   Trash2,
@@ -76,7 +77,7 @@ const COPY: Record<
     eyebrow: "No repository changes",
     title: "Complete without a pull request?",
     description:
-      "Git found no changes or commits to publish. This marks the card Done without creating a pull request.",
+      "No repository changes or commits were found. Completing this card moves it to Done without opening a pull request.",
     confirm: "Mark Done",
     danger: false,
   },
@@ -155,7 +156,9 @@ export function KanbanTransitionDialog({
   const copy = COPY[kind];
   const isDelete = kind === "delete";
   const isArchive = kind === "archive";
-  const iconOnlyActions = isDelete || isArchive;
+  const isCompleteWithoutPullRequest = kind === "complete-without-pr";
+  const usesSummaryLayout = isArchive || isCompleteWithoutPullRequest;
+  const iconOnlyActions = isDelete || usesSummaryLayout;
   const title = isDelete ? `Delete ${card.title}?` : copy.title;
   const description = isDelete
     ? "The card will be removed. Worktrees and branches stay on disk."
@@ -207,7 +210,7 @@ export function KanbanTransitionDialog({
         ref={dialogRef}
         className={`confirmation-dialog kanban-transition-dialog${
           isArchive ? " is-archive" : ""
-        }`}
+        }${isCompleteWithoutPullRequest ? " is-no-changes" : ""}`}
         role="alertdialog"
         aria-modal="true"
         aria-busy={busy}
@@ -221,8 +224,8 @@ export function KanbanTransitionDialog({
             className={
               isDelete
                 ? "kanban-delete-heading"
-                : isArchive
-                  ? "kanban-archive-transition-heading"
+                : usesSummaryLayout
+                  ? "kanban-summary-transition-heading"
                   : undefined
             }
           >
@@ -232,6 +235,12 @@ export function KanbanTransitionDialog({
               <Archive
                 className="kanban-archive-transition-heading-icon"
                 size={22}
+                aria-hidden="true"
+              />
+            ) : isCompleteWithoutPullRequest ? (
+              <GitPullRequest
+                className="kanban-no-changes-transition-heading-icon"
+                size={28}
                 aria-hidden="true"
               />
             ) : (
@@ -250,9 +259,13 @@ export function KanbanTransitionDialog({
           </button>
         </header>
         <p id="kanban-transition-description">{description}</p>
-        {isArchive ? (
-          <div className="kanban-transition-card kanban-archive-transition-card">
-            <FileText size={20} aria-hidden="true" />
+        {usesSummaryLayout ? (
+          <div
+            className={`kanban-transition-card kanban-summary-transition-card${
+              isArchive ? " kanban-archive-transition-card" : ""
+            }`}
+          >
+            <FileText size={isCompleteWithoutPullRequest ? 24 : 20} aria-hidden="true" />
             <div>
               <strong>{card.title}</strong>
               <span>{card.description}</span>
@@ -322,7 +335,7 @@ export function KanbanTransitionDialog({
             ref={cancelRef}
             type="button"
             className={
-              isArchive
+              usesSummaryLayout
                 ? "native-plan-icon-action cancel"
                 : isDelete
                   ? "kanban-transition-icon-action"
@@ -330,7 +343,7 @@ export function KanbanTransitionDialog({
             }
             aria-label={iconOnlyActions ? "Cancel" : undefined}
             title={iconOnlyActions ? "Cancel" : undefined}
-            data-tooltip={isArchive ? "Cancel" : undefined}
+            data-tooltip={usesSummaryLayout ? "Cancel" : undefined}
             disabled={busy}
             onClick={onCancel}
           >
@@ -340,7 +353,7 @@ export function KanbanTransitionDialog({
             ref={confirmRef}
             type="button"
             className={
-              isArchive
+              usesSummaryLayout
                 ? "native-plan-icon-action implement"
                 : `${copy.danger ? "danger" : ""}${
                     isDelete ? " kanban-transition-icon-action" : ""
@@ -348,7 +361,7 @@ export function KanbanTransitionDialog({
             }
             aria-label={iconOnlyActions ? copy.confirm : undefined}
             title={iconOnlyActions ? copy.confirm : undefined}
-            data-tooltip={isArchive ? copy.confirm : undefined}
+            data-tooltip={usesSummaryLayout ? copy.confirm : undefined}
             disabled={busy || confirmDisabled}
             onClick={() => void onConfirm()}
           >

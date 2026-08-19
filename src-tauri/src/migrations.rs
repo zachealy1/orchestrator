@@ -231,6 +231,12 @@ pub(crate) const MIGRATION_DEFINITIONS: &[MigrationDefinition] = &[
         sql: include_str!("../migrations/037_add_kanban_plan_results.sql"),
         checksum: 0xd46677b692f1ed31,
     },
+    MigrationDefinition {
+        version: 38,
+        description: "remove_invalid_root_subagents",
+        sql: include_str!("../migrations/038_remove_invalid_root_subagents.sql"),
+        checksum: 0x8464d1c957030e0f,
+    },
 ];
 
 pub(crate) fn migration_sql(definition: &MigrationDefinition) -> &'static str {

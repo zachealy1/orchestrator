@@ -137,6 +137,10 @@ function recordConversationKey(record: SubagentRecord) {
   return subagentConversationKey(record) ?? `run:${record.runId ?? record.id}`;
 }
 
+function isTrackableSubagent(record: SubagentRecord) {
+  return record.childThreadId !== record.rootThreadId;
+}
+
 export class SubagentStore {
   readonly #conversationSnapshots = new Map<
     string,
@@ -154,7 +158,7 @@ export class SubagentStore {
         this.#childThreadIndex.delete(key);
       }
     });
-    const next = [...records].sort(compareSubagents);
+    const next = records.filter(isTrackableSubagent).sort(compareSubagents);
     this.#conversationSnapshots.set(conversationKey, next);
     next.forEach((record) => {
       this.#childThreadIndex.set(
@@ -169,6 +173,20 @@ export class SubagentStore {
     const conversationKey = recordConversationKey(record);
     const current =
       this.#conversationSnapshots.get(conversationKey) ?? EMPTY_SUBAGENTS;
+    if (!isTrackableSubagent(record)) {
+      const next = current.filter(
+        (candidate) =>
+          candidate.id !== record.id &&
+          !(
+            candidate.profileKey === record.profileKey &&
+            candidate.childThreadId === record.childThreadId
+          ),
+      );
+      if (next.length !== current.length) {
+        this.replaceConversation(conversationKey, next);
+      }
+      return;
+    }
     const existingIndex = current.findIndex(
       (candidate) => candidate.id === record.id,
     );
@@ -303,10 +321,11 @@ export function useConversationSubagents(
 export function deriveSubagentComposerModel(
   records: readonly SubagentRecord[],
 ): SubagentComposerModel {
+  const trackableRecords = records.filter(isTrackableSubagent);
   let activeCount = 0;
   let completedCount = 0;
   let attentionCount = 0;
-  records.forEach((record) => {
+  trackableRecords.forEach((record) => {
     if (isActiveSubagentStatus(record.status)) activeCount += 1;
     else completedCount += 1;
     if (record.needsAttention || record.status === "needs-attention") {
@@ -314,7 +333,7 @@ export function deriveSubagentComposerModel(
     }
   });
   return {
-    records: [...records],
+    records: trackableRecords,
     activeCount,
     completedCount,
     attentionCount,

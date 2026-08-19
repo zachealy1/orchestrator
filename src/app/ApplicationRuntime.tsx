@@ -5341,76 +5341,81 @@ function App() {
   ) {
     const identity = readCodexMessageRunIdentity(message);
     const now = new Date().toISOString();
-    const records = parseCollabToolCalls(message).map((call) => {
-      const existing = subagentStore.findByThread(
-        control.profileKey,
-        call.childThreadId,
-      );
-      const hierarchyParent =
-        call.senderThreadId === control.threadId
-          ? null
-          : subagentStore.findByThread(control.profileKey, call.senderThreadId);
-      const status = lifecycleFromCollabToolCall(
-        call,
-        message.method,
-        existing?.status ?? null,
-      );
-      const terminal = !isActiveSubagentStatus(status);
-      const record: SubagentRecord = {
-        id:
-          existing?.id ??
-          `${control.profileKey}:${control.runId ?? control.clientId}:${call.childThreadId}`,
-        ownerClientId: control.clientId,
-        workspaceId: control.workspaceId,
-        chatId: control.chatId,
-        runId: control.runId,
-        parentTurnId:
-          existing?.parentTurnId ??
-          identity.turnId ??
-          hierarchyParent?.childTurnId ??
-          control.turnId,
-        profileKey: control.profileKey,
-        accountId: control.accountId,
-        rootThreadId:
-          existing?.rootThreadId ??
-          control.threadId ??
-          call.senderThreadId,
-        parentThreadId: call.senderThreadId,
-        childThreadId: call.childThreadId,
-        childTurnId: existing?.childTurnId ?? null,
-        spawnItemId:
-          call.tool === "spawn_agent"
-            ? call.itemId
-            : existing?.spawnItemId ?? null,
-        task: call.prompt ?? existing?.task ?? "Subagent task",
-        depth:
-          existing?.depth ??
-          (hierarchyParent ? hierarchyParent.depth + 1 : 1),
-        status,
-        statusBeforeAttention:
-          status === "needs-attention"
-            ? existing?.statusBeforeAttention ??
-              existing?.status ??
-              "running"
-            : null,
-        agentStatus: call.agentStatus ?? existing?.agentStatus ?? null,
-        needsAttention: status === "needs-attention",
-        error:
-          status === "failed"
-            ? existing?.error ?? "The subagent operation failed."
-            : null,
-        finalResult: existing?.finalResult ?? null,
-        startedAt: existing?.startedAt ?? now,
-        updatedAt: now,
-        completedAt: terminal ? existing?.completedAt ?? now : null,
-      };
-      saveSubagentRecord(record);
-      return record;
-    });
+    const records = parseCollabToolCalls(message)
+      .filter((call) => call.childThreadId !== control.threadId)
+      .map((call) => {
+        const existing = subagentStore.findByThread(
+          control.profileKey,
+          call.childThreadId,
+        );
+        const hierarchyParent =
+          call.senderThreadId === control.threadId
+            ? null
+            : subagentStore.findByThread(
+                control.profileKey,
+                call.senderThreadId,
+              );
+        const status = lifecycleFromCollabToolCall(
+          call,
+          message.method,
+          existing?.status ?? null,
+        );
+        const terminal = !isActiveSubagentStatus(status);
+        const record: SubagentRecord = {
+          id:
+            existing?.id ??
+            `${control.profileKey}:${control.runId ?? control.clientId}:${call.childThreadId}`,
+          ownerClientId: control.clientId,
+          workspaceId: control.workspaceId,
+          chatId: control.chatId,
+          runId: control.runId,
+          parentTurnId:
+            existing?.parentTurnId ??
+            identity.turnId ??
+            hierarchyParent?.childTurnId ??
+            control.turnId,
+          profileKey: control.profileKey,
+          accountId: control.accountId,
+          rootThreadId:
+            existing?.rootThreadId ??
+            control.threadId ??
+            call.senderThreadId,
+          parentThreadId: call.senderThreadId,
+          childThreadId: call.childThreadId,
+          childTurnId: existing?.childTurnId ?? null,
+          spawnItemId:
+            call.tool === "spawn_agent"
+              ? call.itemId
+              : existing?.spawnItemId ?? null,
+          task: call.prompt ?? existing?.task ?? "Subagent task",
+          depth:
+            existing?.depth ??
+            (hierarchyParent ? hierarchyParent.depth + 1 : 1),
+          status,
+          statusBeforeAttention:
+            status === "needs-attention"
+              ? existing?.statusBeforeAttention ??
+                existing?.status ??
+                "running"
+              : null,
+          agentStatus: call.agentStatus ?? existing?.agentStatus ?? null,
+          needsAttention: status === "needs-attention",
+          error:
+            status === "failed"
+              ? existing?.error ?? "The subagent operation failed."
+              : null,
+          finalResult: existing?.finalResult ?? null,
+          startedAt: existing?.startedAt ?? now,
+          updatedAt: now,
+          completedAt: terminal ? existing?.completedAt ?? now : null,
+        };
+        saveSubagentRecord(record);
+        return record;
+      });
     if (records.length > 0) return records;
 
     const legacy = parseLegacySubagentActivity(message);
-    if (!legacy) return [];
+    if (!legacy || legacy.childThreadId === control.threadId) return [];
     const existing = subagentStore.findByThread(
       control.profileKey,
       legacy.childThreadId,

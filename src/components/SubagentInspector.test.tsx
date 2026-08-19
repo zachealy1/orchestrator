@@ -156,6 +156,12 @@ describe("SubagentInspector", () => {
     expect(
       screen.getByText("Inspection complete").closest(".run-summary"),
     ).toHaveClass("markdown-summary");
+    expect(
+      document.querySelector(".subagent-inspector-interactions"),
+    ).toBeNull();
+    expect(
+      screen.getByLabelText("Subagent inspector: Inspect the API"),
+    ).not.toHaveClass("has-interactions");
 
     const input = screen.getByRole("textbox", {
       name: "Send instruction to subagent",

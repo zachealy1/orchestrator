@@ -358,7 +358,12 @@ export function createTranscriptRepository(database: FrontendDatabase) {
   }
 
   async function upsertRunSubagent(record: SubagentRecord) {
-    if (record.runId === null) return record;
+    if (
+      record.runId === null ||
+      record.childThreadId === record.rootThreadId
+    ) {
+      return record;
+    }
     const db = await getDatabase();
     await db.execute(
       `INSERT INTO run_subagents (
@@ -434,6 +439,7 @@ export function createTranscriptRepository(database: FrontendDatabase) {
        JOIN runs ON runs.id = subagents.run_id
        WHERE runs.chat_id = $1
          AND runs.deleted_at IS NULL
+         AND subagents.child_thread_id <> subagents.root_thread_id
        ORDER BY subagents.updated_at DESC, subagents.id`,
       [chatId],
     );
