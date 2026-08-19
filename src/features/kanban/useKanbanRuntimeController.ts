@@ -70,7 +70,11 @@ export type KanbanRuntimeControllerDependencies<
     },
   ) => Promise<unknown>;
   getNextTurnIndex: (chatId: number) => Promise<number>;
-  findRunControl: (workspaceId: number, chatId: number) => RunControl | null;
+  findRunControl: (
+    workspaceId: number,
+    chatId: number,
+    cardId: string,
+  ) => RunControl | null;
   beginRun: (snapshot: RunSetupSnapshot) => RunControl;
   scheduleRun: (control: RunControl, snapshot: RunSetupSnapshot) => void;
   stopRun: (control: RunControl) => Promise<StopActiveRunResult>;
@@ -229,7 +233,7 @@ export function createKanbanRuntimeController<
     const reservationKey = `${card.workspaceId}:${card.chatId}`;
     if (
       launchReservations.has(reservationKey) ||
-      dependencies.findRunControl(card.workspaceId, card.chatId)
+      dependencies.findRunControl(card.workspaceId, card.chatId, card.id)
     ) {
       throw new Error(
         "This card conversation already has an active or starting run.",
@@ -390,7 +394,11 @@ export function createKanbanRuntimeController<
 
   async function pauseCard(card: KanbanCardRecord) {
     const dependencies = getDependencies();
-    const control = dependencies.findRunControl(card.workspaceId, card.chatId);
+    const control = dependencies.findRunControl(
+      card.workspaceId,
+      card.chatId,
+      card.id,
+    );
     if (!control || control.kanbanAttempt?.cardId !== card.id) {
       throw new Error("This card no longer has a live turn to pause.");
     }
@@ -403,7 +411,11 @@ export function createKanbanRuntimeController<
 
   async function stopCard(card: KanbanCardRecord) {
     const dependencies = getDependencies();
-    const control = dependencies.findRunControl(card.workspaceId, card.chatId);
+    const control = dependencies.findRunControl(
+      card.workspaceId,
+      card.chatId,
+      card.id,
+    );
     if (!control || control.kanbanAttempt?.cardId !== card.id) {
       await native.stopInactiveCard(card);
       dependencies.refreshBoards();
