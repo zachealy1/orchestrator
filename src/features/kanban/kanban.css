@@ -250,7 +250,7 @@
 }
 
 .kanban-card-topline {
-  align-items: flex-end;
+  align-items: center;
 }
 
 .kanban-card-badges {
