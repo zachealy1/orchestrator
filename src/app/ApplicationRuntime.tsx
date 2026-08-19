@@ -121,7 +121,6 @@ import { SubagentInspector } from "../components/SubagentInspector";
 import { KanbanWorkspace } from "../features/kanban/KanbanWorkspace";
 import { KanbanComposerOverlay } from "../features/kanban/components/KanbanComposerOverlay";
 import {
-  acceptKanbanPlan,
   commitKanbanGit,
   cleanupKanbanGit,
   createKanbanCard,
@@ -15559,7 +15558,10 @@ function App() {
     }
   }
 
-  async function openPlanImplementationDialog(entry: TaskChatEntry) {
+  async function openPlanImplementationDialog(
+    entry: TaskChatEntry,
+    kanbanCard: KanbanCardRecord | null = null,
+  ) {
     const workspace = selectedWorkspaceRef.current;
     const session = workspace
       ? workspaceChatSessionsRef.current[workspace.id] ?? null
@@ -15580,9 +15582,10 @@ function App() {
     }
 
     const preferredSettings =
-      entry.executionSettings?.source === "captured"
+      parseRunExecutionSettings(kanbanCard?.executionSettingsJson) ??
+      (entry.executionSettings?.source === "captured"
         ? entry.executionSettings.settings
-        : null;
+        : null);
     const preferredProfileKey = preferredSettings?.profileKey ?? null;
     const profileKey: CodexProfileKey =
       preferredProfileKey === DEFAULT_CODEX_PROFILE_KEY &&
@@ -15609,6 +15612,7 @@ function App() {
       requestId,
       workspaceId: workspace.id,
       chatId: session.chatId,
+      kanbanCardId: kanbanCard?.id ?? null,
       entry,
       allowDefaultProfile:
         session.profileKey === DEFAULT_CODEX_PROFILE_KEY,
@@ -15762,7 +15766,7 @@ function App() {
     });
   }
 
-  function confirmPlanImplementation() {
+  async function confirmPlanImplementation() {
     const dialog = planImplementationDialog;
     const workspace = selectedWorkspaceRef.current;
     const session = workspace
@@ -15804,7 +15808,17 @@ function App() {
       return;
     }
 
-    if (dialog.profileKey !== session.profileKey) {
+    if (
+      dialog.kanbanCardId !== null &&
+      planActionLocksRef.current.has(dialog.entry.clientId)
+    ) {
+      return;
+    }
+
+    if (
+      dialog.kanbanCardId === null &&
+      dialog.profileKey !== session.profileKey
+    ) {
       setPendingAccountHandoff({
         workspaceId: workspace.id,
         chatId: session.chatId,
@@ -15813,11 +15827,88 @@ function App() {
         targetAccountId: dialog.accountId,
         targetProfileKey: dialog.profileKey,
       });
-    } else {
+    } else if (dialog.kanbanCardId === null) {
       clearPendingAccountHandoff(session.chatId);
     }
 
     setPlanImplementationDialog({ ...dialog, status: "starting", error: null });
+    if (dialog.kanbanCardId !== null) {
+      planActionLocksRef.current.add(dialog.entry.clientId);
+      updateTaskChatEntryRunView(dialog.entry.clientId, (current) =>
+        updateNativePlanReview(current, "submitting", "transitioning"),
+      );
+      try {
+        const card = await getKanbanCardForChat(dialog.chatId);
+        if (!card || card.id !== dialog.kanbanCardId) {
+          throw new Error("The Plan card is no longer available.");
+        }
+        if (!boardPlanIsAwaitingReview(card)) {
+          throw new Error("That Plan card is no longer awaiting review.");
+        }
+        const capturedSettings = parseRunExecutionSettings(
+          card.executionSettingsJson,
+        );
+        if (!capturedSettings || capturedSettings.mode !== "plan") {
+          throw new Error("The Plan card execution settings are unavailable.");
+        }
+        const implementationSettings = createRunExecutionSettings({
+          ...capturedSettings,
+          accountId: dialog.accountId,
+          profileKey: dialog.profileKey,
+          mode: "run",
+          intent: "plan-implementation",
+          model: model.model,
+          reasoningEffort: dialog.reasoningEffort,
+          goalMode: false,
+        });
+        await kanbanRuntime.launchCard(
+          card,
+          "implement_plan",
+          "Implement the approved plan.",
+          { executionSettings: implementationSettings },
+        );
+        updateTaskChatEntryRunView(dialog.entry.clientId, (current) =>
+          updateNativePlanReview(current, "approved", "transitioning"),
+        );
+        if (dialog.entry.runId !== null) {
+          await updateRun(dialog.entry.runId, {
+            planReviewState: "approved",
+          }).catch(() => undefined);
+        }
+        void removeAgentNotification(
+          planNotificationEventKey(
+            profileKeyForPlanEntry(dialog.entry),
+            dialog.entry,
+          ),
+        ).catch(() => undefined);
+        setPlanMode(false);
+        setGoalMode(false);
+        refreshKanbanBoards();
+        setStatusMessage(
+          "Plan accepted. Implementation started on this card.",
+        );
+        closePlanImplementationDialog();
+      } catch (error) {
+        updateTaskChatEntryRunView(dialog.entry.clientId, (current) =>
+          updateNativePlanReview(current, "available", "awaiting-approval"),
+        );
+        setPlanImplementationDialog((current) =>
+          current?.requestId === dialog.requestId
+            ? {
+                ...current,
+                status: "idle",
+                error:
+                  error instanceof Error
+                    ? error.message
+                    : "The implementation could not be started.",
+              }
+            : current,
+        );
+      } finally {
+        planActionLocksRef.current.delete(dialog.entry.clientId);
+      }
+      return;
+    }
     const started = launchPlanFollowUp(
       dialog.entry,
       "Implement the plan.",
@@ -16127,43 +16218,7 @@ function App() {
       setStatusMessage("That Plan card is no longer awaiting review.");
       return;
     }
-    if (planActionLocksRef.current.has(entry.clientId)) return;
-    planActionLocksRef.current.add(entry.clientId);
-    updateTaskChatEntryRunView(entry.clientId, (current) =>
-      updateNativePlanReview(current, "submitting", "transitioning"),
-    );
-    try {
-      const result = await acceptKanbanPlan(card);
-      updateTaskChatEntryRunView(entry.clientId, (current) =>
-        updateNativePlanReview(current, "approved", "completed"),
-      );
-      if (entry.runId !== null) {
-        await updateRun(entry.runId, { planReviewState: "approved" }).catch(
-          () => undefined,
-        );
-      }
-      void removeAgentNotification(
-        planNotificationEventKey(profileKeyForPlanEntry(entry), entry),
-      ).catch(() => undefined);
-      const resetWarning = await resetPlanThreadAfterBoardDecision(entry);
-      setPlanMode(false);
-      refreshKanbanBoards();
-      const successMessage = `Plan accepted. “${result.generatedCard.title}” was added to To do.`;
-      setStatusMessage(
-        resetWarning ? `${successMessage} ${resetWarning}` : successMessage,
-      );
-    } catch (error) {
-      updateTaskChatEntryRunView(entry.clientId, (current) =>
-        updateNativePlanReview(current, "available", "awaiting-approval"),
-      );
-      setStatusMessage(
-        `Could not accept the Plan card: ${
-          error instanceof Error ? error.message : String(error)
-        }`,
-      );
-    } finally {
-      planActionLocksRef.current.delete(entry.clientId);
-    }
+    await openPlanImplementationDialog(entry, card);
   }
 
   async function handleRevisePlan(entry: TaskChatEntry, revision: string) {
@@ -16263,8 +16318,7 @@ function App() {
         const resetWarning = await resetPlanThreadAfterBoardDecision(entry);
         setPlanMode(false);
         refreshKanbanBoards();
-        const successMessage =
-          "Plan rejected. No implementation ticket was created.";
+        const successMessage = "Plan rejected. The card moved to Done.";
         setStatusMessage(
           resetWarning ? `${successMessage} ${resetWarning}` : successMessage,
         );

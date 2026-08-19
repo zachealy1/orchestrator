@@ -8,6 +8,7 @@ export type PlanImplementationDialogState = {
   requestId: number;
   workspaceId: number;
   chatId: number;
+  kanbanCardId: string | null;
   entry: TaskChatEntry;
   allowDefaultProfile: boolean;
   accountId: number;

@@ -100,7 +100,7 @@ export type KanbanAttemptRecord = {
   id: string;
   cardId: string;
   generation: number;
-  kind: "start" | "retry" | "resume" | "request_changes";
+  kind: "start" | "retry" | "resume" | "request_changes" | "implement_plan";
   status: string;
   prompt: string;
   runId: number | null;
@@ -122,11 +122,6 @@ export type KanbanAttemptResult = {
 export type CompletedKanbanPlan = {
   itemId: string;
   text: string;
-};
-
-export type AcceptKanbanPlanResult = {
-  sourceCard: KanbanCardRecord;
-  generatedCard: KanbanCardRecord;
 };
 
 export type KanbanCardDraft = {
@@ -325,6 +320,7 @@ export function claimKanbanAttempt(input: {
   kind: KanbanAttemptRecord["kind"];
   prompt: string;
   configSnapshot: unknown;
+  executionSettingsJson?: string | null;
   attemptId?: string;
   operationId?: string;
 }) {
@@ -336,6 +332,7 @@ export function claimKanbanAttempt(input: {
     kind: input.kind,
     prompt: input.prompt,
     configSnapshotJson: JSON.stringify(input.configSnapshot),
+    executionSettingsJson: input.executionSettingsJson ?? null,
     operationId: input.operationId ?? createKanbanId("op"),
   }) as Promise<KanbanAttemptResult>;
 }
@@ -366,22 +363,6 @@ export function updateKanbanAttempt(input: {
     completedPlan: input.completedPlan ?? null,
     operationId: input.operationId ?? createKanbanId("op"),
   }) as Promise<KanbanAttemptResult>;
-}
-
-export function acceptKanbanPlan(
-  card: Pick<KanbanCardRecord, "id" | "stateVersion" | "currentAttemptId">,
-  ids: { generatedCardId?: string; operationId?: string } = {},
-) {
-  if (!card.currentAttemptId) {
-    return Promise.reject(new Error("This Plan card has no completed attempt."));
-  }
-  return commands.kanbanAcceptPlan({
-    cardId: card.id,
-    attemptId: card.currentAttemptId,
-    expectedVersion: card.stateVersion,
-    generatedCardId: ids.generatedCardId ?? createKanbanId("card"),
-    operationId: ids.operationId ?? createKanbanId("op"),
-  }) as Promise<AcceptKanbanPlanResult>;
 }
 
 export function rejectKanbanPlan(

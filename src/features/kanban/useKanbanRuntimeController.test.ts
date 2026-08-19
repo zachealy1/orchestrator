@@ -248,6 +248,7 @@ describe("Kanban runtime controller", () => {
         reasoningLevel: model.defaultReasoningEffort,
         repositories: target.repositories,
       },
+      executionSettingsJson: null,
     });
     expect(dependencies.updateChat).toHaveBeenCalledWith(target.chatId, {
       accountId: account.id,
@@ -389,6 +390,82 @@ describe("Kanban runtime controller", () => {
       expect.anything(),
       snapshot,
     );
+  });
+
+  it("implements an approved Plan on the existing card with authoritative settings and prompt", async () => {
+    const { controller, dependencies, native, claimed } = harness();
+    const implementationSettings = createRunExecutionSettings({
+      accountId: account.id,
+      profileKey: "account:3",
+      selectedRepositoryPath: "/workspace/repo",
+      selectedBranch: "main",
+      mode: "run",
+      intent: "plan-implementation",
+      accessMode: "full-access",
+      computerUseEnabled: false,
+      model: model.model,
+      reasoningEffort: "high",
+      useOss: false,
+      ossProvider: "ollama",
+      contextFiles: [],
+      selectedSkills: [],
+      goalMode: false,
+    });
+    const approvedPrompt = "Implement this approved plan:\n\n1. Add the feature";
+    vi.mocked(native.claimAttempt).mockResolvedValue({
+      ...claimed,
+      attempt: {
+        ...claimed.attempt,
+        kind: "implement_plan",
+        prompt: approvedPrompt,
+      },
+    });
+    dependencies.loadChat.mockResolvedValue(
+      chatRecord({
+        account_id: account.id,
+        profile_key: "account:3",
+        codex_thread_id: "thread-card",
+      }),
+    );
+    const target = card({
+      stage: "in_review",
+      executionState: "completed",
+      reviewState: "awaiting_review",
+      currentAttemptId: "attempt-plan",
+      hasStartedTurn: true,
+    });
+
+    await controller.launchCard(
+      target,
+      "implement_plan",
+      "Implement the approved plan.",
+      { executionSettings: implementationSettings },
+    );
+
+    expect(native.claimAttempt).toHaveBeenCalledWith(
+      expect.objectContaining({
+        card: target,
+        kind: "implement_plan",
+        executionSettingsJson:
+          serializeRunExecutionSettings(implementationSettings),
+      }),
+    );
+    const [snapshot] = dependencies.beginRun.mock.calls[0]!;
+    expect(snapshot).toMatchObject({
+      promptText: approvedPrompt,
+      promptFallback: approvedPrompt,
+      chatId: target.chatId,
+      threadId: "thread-card",
+      threadStrategy: { kind: "resume" },
+      mode: "run",
+      intent: "plan-implementation",
+      model: model.model,
+      effort: "high",
+      selectedRepositoryPath: "/cards/card-1/root/repo",
+      selectedBranch: "codex/card-1",
+      fromQueue: false,
+      kanbanAttempt: { cardId: target.id },
+    });
   });
 
   it("keeps queued continuations inside the card attempt and worktree", async () => {

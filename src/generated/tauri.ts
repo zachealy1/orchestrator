@@ -106,7 +106,6 @@ export const commands = {
 	kanbanMoveCard: (request: MoveKanbanCardRequest) => __TAURI_INVOKE<KanbanCardDto>("kanban_move_card", { request }),
 	kanbanClaimAttempt: (request: ClaimKanbanAttemptRequest) => __TAURI_INVOKE<ClaimKanbanAttemptResult>("kanban_claim_attempt", { request }),
 	kanbanUpdateAttempt: (request: UpdateKanbanAttemptRequest) => __TAURI_INVOKE<ClaimKanbanAttemptResult>("kanban_update_attempt", { request }),
-	kanbanAcceptPlan: (request: AcceptKanbanPlanRequest) => __TAURI_INVOKE<AcceptKanbanPlanResult>("kanban_accept_plan", { request }),
 	kanbanRejectPlan: (request: RejectKanbanPlanRequest) => __TAURI_INVOKE<KanbanCardDto>("kanban_reject_plan", { request }),
 	kanbanApproveCard: (request: VersionedKanbanCardRequest) => __TAURI_INVOKE<KanbanCardDto>("kanban_approve_card", { request }),
 	kanbanReopenCard: (request: VersionedKanbanCardRequest) => __TAURI_INVOKE<KanbanCardDto>("kanban_reopen_card", { request }),
@@ -176,19 +175,6 @@ export const commands = {
 };
 
 /* Types */
-export type AcceptKanbanPlanRequest = {
-	cardId: string,
-	attemptId: string,
-	expectedVersion: number,
-	generatedCardId: string,
-	operationId: string,
-};
-
-export type AcceptKanbanPlanResult = {
-	sourceCard: KanbanCardDto,
-	generatedCard: KanbanCardDto,
-};
-
 export type ActiveCodexLogin = {
 	accountId: number,
 	loginId: string | null,
@@ -284,6 +270,7 @@ export type ClaimKanbanAttemptRequest = {
 	kind: string,
 	prompt: string,
 	configSnapshotJson: string,
+	executionSettingsJson?: string | null,
 	operationId: string,
 };
 

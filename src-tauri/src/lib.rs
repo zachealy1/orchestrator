@@ -115,7 +115,6 @@ fn command_builder() -> tauri_specta::Builder<tauri::Wry> {
             kanban_store::kanban_move_card,
             kanban_store::kanban_claim_attempt,
             kanban_store::kanban_update_attempt,
-            kanban_store::kanban_accept_plan,
             kanban_store::kanban_reject_plan,
             kanban_store::kanban_approve_card,
             kanban_store::kanban_reopen_card,

@@ -197,6 +197,8 @@ pub struct ClaimKanbanAttemptRequest {
     pub kind: String,
     pub prompt: String,
     pub config_snapshot_json: String,
+    #[serde(default)]
+    pub execution_settings_json: Option<String>,
     pub operation_id: String,
 }
 
@@ -255,28 +257,11 @@ pub struct UpdateKanbanAttemptRequest {
 
 #[derive(Debug, Deserialize, Serialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
-pub struct AcceptKanbanPlanRequest {
-    pub card_id: String,
-    pub attempt_id: String,
-    pub expected_version: i64,
-    pub generated_card_id: String,
-    pub operation_id: String,
-}
-
-#[derive(Debug, Deserialize, Serialize, specta::Type)]
-#[serde(rename_all = "camelCase")]
 pub struct RejectKanbanPlanRequest {
     pub card_id: String,
     pub attempt_id: String,
     pub expected_version: i64,
     pub operation_id: String,
-}
-
-#[derive(Debug, Clone, Serialize, specta::Type)]
-#[serde(rename_all = "camelCase")]
-pub struct AcceptKanbanPlanResult {
-    pub source_card: KanbanCardDto,
-    pub generated_card: KanbanCardDto,
 }
 
 #[derive(Debug, Deserialize, Serialize, specta::Type)]
@@ -417,30 +402,88 @@ fn execution_settings_are_plan_mode(value: Option<&str>) -> bool {
         .is_some_and(|mode| mode == "plan")
 }
 
-fn implementation_execution_settings(value: Option<&str>) -> Result<String, String> {
-    let mut settings = value
-        .ok_or_else(|| "The planning card has no captured execution settings.".to_string())
+fn execution_settings_are_plan_implementation(value: Option<&str>) -> bool {
+    value
+        .and_then(|settings| serde_json::from_str::<serde_json::Value>(settings).ok())
         .and_then(|settings| {
-            serde_json::from_str::<serde_json::Value>(settings)
-                .map_err(|_| "The planning card execution settings are invalid.".to_string())
-        })?;
+            settings
+                .get("intent")
+                .and_then(serde_json::Value::as_str)
+                .map(str::to_owned)
+        })
+        .is_some_and(|intent| intent == "plan-implementation")
+}
+
+struct ImplementationExecutionSettings {
+    encoded: String,
+    account_id: Option<i64>,
+    access_mode: String,
+    model: Option<String>,
+    reasoning_level: Option<String>,
+}
+
+fn implementation_execution_settings(
+    value: Option<&str>,
+) -> Result<ImplementationExecutionSettings, String> {
+    let encoded = value
+        .ok_or_else(|| "Choose implementation settings before accepting this plan.".to_string())?;
+    let settings = serde_json::from_str::<serde_json::Value>(encoded)
+        .map_err(|_| "The implementation settings are invalid.".to_string())?;
     let object = settings
-        .as_object_mut()
-        .ok_or_else(|| "The planning card execution settings are invalid.".to_string())?;
-    if object.get("mode").and_then(serde_json::Value::as_str) != Some("plan") {
-        return Err("Only a Plan-mode card can create an implementation ticket.".to_string());
+        .as_object()
+        .ok_or_else(|| "The implementation settings are invalid.".to_string())?;
+    if object.get("mode").and_then(serde_json::Value::as_str) != Some("run")
+        || object.get("intent").and_then(serde_json::Value::as_str) != Some("plan-implementation")
+        || object.get("goalMode").and_then(serde_json::Value::as_bool) != Some(false)
+    {
+        return Err("The accepted plan requires implementation-mode settings.".to_string());
     }
-    object.insert(
-        "mode".to_string(),
-        serde_json::Value::String("run".to_string()),
-    );
-    object.insert(
-        "intent".to_string(),
-        serde_json::Value::String("normal".to_string()),
-    );
-    object.insert("goalMode".to_string(), serde_json::Value::Bool(false));
-    serde_json::to_string(&settings)
-        .map_err(|_| "The implementation ticket settings could not be encoded.".to_string())
+    let access_mode = object
+        .get("accessMode")
+        .and_then(serde_json::Value::as_str)
+        .ok_or_else(|| "The implementation access mode is missing.".to_string())?
+        .to_string();
+    validate_access(&access_mode)?;
+    let profile_key = object
+        .get("profileKey")
+        .and_then(serde_json::Value::as_str)
+        .ok_or_else(|| "The implementation account profile is missing.".to_string())?;
+    let captured_account_id = object
+        .get("accountId")
+        .and_then(serde_json::Value::as_i64)
+        .ok_or_else(|| "The implementation account is invalid.".to_string())?;
+    let account_id = if profile_key == "default" {
+        if captured_account_id != 0 {
+            return Err("The shared Codex profile has invalid account settings.".to_string());
+        }
+        None
+    } else {
+        let expected = profile_key
+            .strip_prefix("account:")
+            .and_then(|value| value.parse::<i64>().ok())
+            .filter(|value| *value > 0)
+            .ok_or_else(|| "The implementation account profile is invalid.".to_string())?;
+        if captured_account_id != expected {
+            return Err("The implementation account does not match its profile.".to_string());
+        }
+        Some(expected)
+    };
+    let optional_string = |key: &str| -> Result<Option<String>, String> {
+        match object.get(key) {
+            None | Some(serde_json::Value::Null) => Ok(None),
+            Some(serde_json::Value::String(value)) if !value.trim().is_empty() => {
+                Ok(Some(value.clone()))
+            }
+            _ => Err(format!("The implementation {key} value is invalid.")),
+        }
+    };
+    Ok(ImplementationExecutionSettings {
+        encoded: encoded.to_string(),
+        account_id,
+        access_mode,
+        model: optional_string("model")?,
+        reasoning_level: optional_string("reasoningEffort")?,
+    })
 }
 
 fn validate_completed_plan(plan: &CompletedKanbanPlanInput) -> Result<(), String> {
@@ -491,7 +534,7 @@ fn claim_transition_allowed(
         "start" => stage == "todo" && execution_state == "idle",
         "retry" => matches!(execution_state, "failed" | "stopped"),
         "resume" => matches!(execution_state, "paused" | "blocked" | "interrupted"),
-        "request_changes" => {
+        "request_changes" | "implement_plan" => {
             stage == "in_review"
                 && execution_state == "completed"
                 && review_state == "awaiting_review"
@@ -1492,7 +1535,7 @@ pub async fn kanban_claim_attempt(
     validate_identifier(&request.operation_id, "operation")?;
     if !matches!(
         request.kind.as_str(),
-        "start" | "retry" | "resume" | "request_changes"
+        "start" | "retry" | "resume" | "request_changes" | "implement_plan"
     ) {
         return Err("The card attempt kind is invalid.".to_string());
     }
@@ -1501,6 +1544,18 @@ pub async fn kanban_claim_attempt(
     }
     serde_json::from_str::<serde_json::Value>(&request.config_snapshot_json)
         .map_err(|_| "The card execution settings are invalid.".to_string())?;
+    let implementation_settings = if request.kind == "implement_plan" {
+        Some(implementation_execution_settings(
+            request.execution_settings_json.as_deref(),
+        )?)
+    } else {
+        if request.execution_settings_json.is_some() {
+            return Err(
+                "Only an accepted Plan can replace the card execution settings.".to_string(),
+            );
+        }
+        None
+    };
     let request_fingerprint = operation_fingerprint(&request)?;
     let mut connection = open_database(&app).await?;
     let workspace_id = card_workspace_id(&mut connection, &request.card_id).await?;
@@ -1525,7 +1580,9 @@ pub async fn kanban_claim_attempt(
         });
     }
     let lifecycle = sqlx::query(
-        "SELECT stage, execution_state, review_state, current_attempt_id FROM kanban_cards
+        "SELECT stage, execution_state, review_state, current_attempt_id,
+                execution_settings_json
+         FROM kanban_cards
          WHERE id = ?1 AND state_version = ?2
            AND archived_at IS NULL AND deleted_at IS NULL",
     )
@@ -1547,6 +1604,64 @@ pub async fn kanban_claim_attempt(
         );
     }
     let reviewed_attempt_id = lifecycle.get::<Option<String>, _>("current_attempt_id");
+    let implementation_plan = if request.kind == "implement_plan" {
+        let reviewed_attempt_id = reviewed_attempt_id
+            .as_deref()
+            .ok_or_else(|| "This Plan card has no completed attempt to accept.".to_string())?;
+        let plan = sqlx::query(
+            "SELECT result.plan_text, result.run_id, card.execution_settings_json
+             FROM kanban_plan_results AS result
+             JOIN kanban_cards AS card ON card.id = result.card_id
+             WHERE result.card_id = ?1 AND result.attempt_id = ?2
+               AND result.decision = 'awaiting_review'",
+        )
+        .bind(&request.card_id)
+        .bind(reviewed_attempt_id)
+        .fetch_optional(&mut *transaction)
+        .await
+        .map_err(|error| format!("The approved plan could not be loaded: {error}"))?
+        .ok_or_else(|| {
+            "Only the latest Plan result awaiting review can be accepted.".to_string()
+        })?;
+        let source_settings = plan.get::<Option<String>, _>("execution_settings_json");
+        if !execution_settings_are_plan_mode(source_settings.as_deref()) {
+            transaction.rollback().await.ok();
+            return Err("Only a Plan-mode card can start plan implementation.".to_string());
+        }
+        Some((
+            plan.get::<String, _>("plan_text"),
+            plan.get::<i64, _>("run_id"),
+        ))
+    } else {
+        None
+    };
+    let retry_prompt = if matches!(request.kind.as_str(), "retry" | "resume")
+        && execution_settings_are_plan_implementation(
+            lifecycle
+                .get::<Option<String>, _>("execution_settings_json")
+                .as_deref(),
+        ) {
+        match reviewed_attempt_id.as_deref() {
+            Some(attempt_id) => sqlx::query_scalar::<_, String>(
+                "SELECT prompt FROM kanban_attempts WHERE id = ?1 AND card_id = ?2",
+            )
+            .bind(attempt_id)
+            .bind(&request.card_id)
+            .fetch_optional(&mut *transaction)
+            .await
+            .map_err(|error| {
+                format!("The implementation retry prompt could not be loaded: {error}")
+            })?,
+            None => None,
+        }
+    } else {
+        None
+    };
+    let attempt_prompt = implementation_plan
+        .as_ref()
+        .map(|(plan_text, _)| format!("Implement this approved plan:\n\n{}", plan_text.trim()))
+        .or(retry_prompt)
+        .unwrap_or_else(|| request.prompt.trim().to_string());
     let generation: i64 = sqlx::query_scalar(
         "SELECT COALESCE(MAX(generation), 0) + 1 FROM kanban_attempts WHERE card_id = ?1",
     )
@@ -1564,7 +1679,7 @@ pub async fn kanban_claim_attempt(
     .bind(&request.card_id)
     .bind(generation)
     .bind(&request.kind)
-    .bind(request.prompt.trim())
+    .bind(&attempt_prompt)
     .bind(&request.config_snapshot_json)
     .execute(&mut *transaction)
     .await
@@ -1575,27 +1690,53 @@ pub async fn kanban_claim_attempt(
             format!("The card attempt could not be created: {error}")
         }
     })?;
-    let result = sqlx::query(
-        "UPDATE kanban_cards
-         SET stage = 'in_progress', execution_state = 'starting', review_state =
-               CASE WHEN ?1 = 'request_changes' THEN 'changes_requested' ELSE review_state END,
-             current_attempt_id = ?2, last_error = NULL,
-             state_version = state_version + 1, updated_at = CURRENT_TIMESTAMP
-         WHERE id = ?3 AND state_version = ?4 AND archived_at IS NULL AND deleted_at IS NULL
-           AND (
-             (?1 = 'start' AND stage = 'todo' AND execution_state = 'idle')
-             OR (?1 = 'retry' AND execution_state IN ('failed','stopped'))
-             OR (?1 = 'resume' AND execution_state IN ('paused','blocked','interrupted'))
-             OR (?1 = 'request_changes' AND stage = 'in_review'
-                 AND execution_state = 'completed' AND review_state = 'awaiting_review')
-           )",
-    )
-    .bind(&request.kind)
-    .bind(&request.attempt_id)
-    .bind(&request.card_id)
-    .bind(request.expected_version)
-    .execute(&mut *transaction)
-    .await
+    let result = if let Some(settings) = implementation_settings.as_ref() {
+        sqlx::query(
+            "UPDATE kanban_cards
+             SET stage = 'in_progress', execution_state = 'starting', review_state = 'none',
+                 review_channel = NULL, current_attempt_id = ?1, last_error = NULL,
+                 approved_at = NULL, account_id = ?2, access_mode = ?3, model = ?4,
+                 reasoning_level = ?5, execution_settings_json = ?6,
+                 state_version = state_version + 1, updated_at = CURRENT_TIMESTAMP
+             WHERE id = ?7 AND state_version = ?8 AND current_attempt_id = ?9
+               AND stage = 'in_review' AND execution_state = 'completed'
+               AND review_state = 'awaiting_review'
+               AND archived_at IS NULL AND deleted_at IS NULL",
+        )
+        .bind(&request.attempt_id)
+        .bind(settings.account_id)
+        .bind(&settings.access_mode)
+        .bind(settings.model.as_deref())
+        .bind(settings.reasoning_level.as_deref())
+        .bind(&settings.encoded)
+        .bind(&request.card_id)
+        .bind(request.expected_version)
+        .bind(reviewed_attempt_id.as_deref())
+        .execute(&mut *transaction)
+        .await
+    } else {
+        sqlx::query(
+            "UPDATE kanban_cards
+             SET stage = 'in_progress', execution_state = 'starting', review_state =
+                   CASE WHEN ?1 = 'request_changes' THEN 'changes_requested' ELSE review_state END,
+                 current_attempt_id = ?2, last_error = NULL,
+                 state_version = state_version + 1, updated_at = CURRENT_TIMESTAMP
+             WHERE id = ?3 AND state_version = ?4 AND archived_at IS NULL AND deleted_at IS NULL
+               AND (
+                 (?1 = 'start' AND stage = 'todo' AND execution_state = 'idle')
+                 OR (?1 = 'retry' AND execution_state IN ('failed','stopped'))
+                 OR (?1 = 'resume' AND execution_state IN ('paused','blocked','interrupted'))
+                 OR (?1 = 'request_changes' AND stage = 'in_review'
+                     AND execution_state = 'completed' AND review_state = 'awaiting_review')
+               )",
+        )
+        .bind(&request.kind)
+        .bind(&request.attempt_id)
+        .bind(&request.card_id)
+        .bind(request.expected_version)
+        .execute(&mut *transaction)
+        .await
+    }
     .map_err(|error| format!("The card could not be claimed: {error}"))?;
     if result.rows_affected() != 1 {
         transaction.rollback().await.ok();
@@ -1634,6 +1775,39 @@ pub async fn kanban_claim_attempt(
         .execute(&mut *transaction)
         .await
         .map_err(|error| format!("The review decision could not be saved: {error}"))?;
+    } else if let Some((_, run_id)) = implementation_plan {
+        let reviewed_attempt_id = reviewed_attempt_id
+            .as_deref()
+            .ok_or_else(|| "The approved Plan attempt is no longer available.".to_string())?;
+        let plan_update = sqlx::query(
+            "UPDATE kanban_plan_results
+             SET decision = 'accepted', decided_at = CURRENT_TIMESTAMP,
+                 updated_at = CURRENT_TIMESTAMP
+             WHERE card_id = ?1 AND attempt_id = ?2 AND decision = 'awaiting_review'",
+        )
+        .bind(&request.card_id)
+        .bind(reviewed_attempt_id)
+        .execute(&mut *transaction)
+        .await
+        .map_err(|error| format!("The accepted plan result could not be saved: {error}"))?;
+        if plan_update.rows_affected() != 1 {
+            transaction.rollback().await.ok();
+            return Err("The Plan result changed while it was being accepted.".to_string());
+        }
+        sqlx::query("UPDATE runs SET plan_review_state = 'approved' WHERE id = ?1")
+            .bind(run_id)
+            .execute(&mut *transaction)
+            .await
+            .map_err(|error| format!("The accepted plan run could not be saved: {error}"))?;
+        sqlx::query(
+            "INSERT INTO kanban_review_decisions (card_id, attempt_id, decision)
+             VALUES (?1, ?2, 'approved')",
+        )
+        .bind(&request.card_id)
+        .bind(reviewed_attempt_id)
+        .execute(&mut *transaction)
+        .await
+        .map_err(|error| format!("The plan review decision could not be saved: {error}"))?;
     }
     sqlx::query("UPDATE kanban_boards SET revision = revision + 1, updated_at = CURRENT_TIMESTAMP WHERE workspace_id = ?1")
         .bind(workspace_id)
@@ -1920,249 +2094,6 @@ pub async fn kanban_update_attempt(
         card: load_card(&mut connection, &request.card_id).await?,
         attempt: load_attempt(&mut connection, &request.attempt_id).await?,
     })
-}
-
-async fn load_accepted_plan_result(
-    connection: &mut SqliteConnection,
-    card_id: &str,
-    attempt_id: &str,
-) -> Result<Option<AcceptKanbanPlanResult>, String> {
-    let generated_card_id = sqlx::query_scalar::<_, String>(
-        "SELECT generated_card_id FROM kanban_plan_results
-         WHERE card_id = ?1 AND attempt_id = ?2 AND decision = 'accepted'
-           AND generated_card_id IS NOT NULL",
-    )
-    .bind(card_id)
-    .bind(attempt_id)
-    .fetch_optional(&mut *connection)
-    .await
-    .map_err(|error| format!("The accepted plan result could not be loaded: {error}"))?;
-    let Some(generated_card_id) = generated_card_id else {
-        return Ok(None);
-    };
-    Ok(Some(AcceptKanbanPlanResult {
-        source_card: load_card(connection, card_id).await?,
-        generated_card: load_card(connection, &generated_card_id).await?,
-    }))
-}
-
-#[tauri::command]
-#[specta::specta]
-pub async fn kanban_accept_plan(
-    app: AppHandle,
-    request: AcceptKanbanPlanRequest,
-) -> Result<AcceptKanbanPlanResult, String> {
-    validate_identifier(&request.card_id, "card")?;
-    validate_identifier(&request.attempt_id, "attempt")?;
-    validate_identifier(&request.generated_card_id, "generated card")?;
-    validate_identifier(&request.operation_id, "operation")?;
-    let request_fingerprint = operation_fingerprint(&request)?;
-    let mut connection = open_database(&app).await?;
-    if let Some(result) =
-        load_accepted_plan_result(&mut connection, &request.card_id, &request.attempt_id).await?
-    {
-        return Ok(result);
-    }
-    let workspace_id = card_workspace_id(&mut connection, &request.card_id).await?;
-    let mut transaction = connection
-        .begin()
-        .await
-        .map_err(|error| format!("The plan acceptance could not start: {error}"))?;
-    if !insert_operation(
-        &mut transaction,
-        &request.operation_id,
-        Some(&request.card_id),
-        workspace_id,
-        "accept_plan",
-        &request_fingerprint,
-    )
-    .await?
-    {
-        transaction.rollback().await.ok();
-        return load_accepted_plan_result(&mut connection, &request.card_id, &request.attempt_id)
-            .await?
-            .ok_or_else(|| {
-                "The accepted implementation ticket could not be restored.".to_string()
-            });
-    }
-    let source = sqlx::query(
-        "SELECT card.title, card.account_id, card.access_mode, card.model,
-                card.reasoning_level, card.execution_settings_json,
-                card.repository_scope, plan.plan_text, plan.run_id
-         FROM kanban_cards AS card
-         JOIN kanban_plan_results AS plan
-           ON plan.card_id = card.id AND plan.attempt_id = ?2
-         WHERE card.id = ?1 AND card.state_version = ?3
-           AND card.current_attempt_id = ?2 AND card.stage = 'in_review'
-           AND card.execution_state = 'completed'
-           AND card.review_state = 'awaiting_review'
-           AND card.archived_at IS NULL AND card.deleted_at IS NULL
-           AND plan.decision = 'awaiting_review'",
-    )
-    .bind(&request.card_id)
-    .bind(&request.attempt_id)
-    .bind(request.expected_version)
-    .fetch_optional(&mut *transaction)
-    .await
-    .map_err(|error| format!("The plan acceptance could not be checked: {error}"))?;
-    let Some(source) = source else {
-        transaction.rollback().await.ok();
-        if let Some(result) =
-            load_accepted_plan_result(&mut connection, &request.card_id, &request.attempt_id)
-                .await?
-        {
-            return Ok(result);
-        }
-        return Err(
-            "Only the latest Plan card result awaiting review can be accepted.".to_string(),
-        );
-    };
-    let title = source.get::<String, _>("title");
-    let plan_text = source.get::<String, _>("plan_text");
-    validate_card_content(&title, &plan_text)?;
-    let source_settings = source.get::<Option<String>, _>("execution_settings_json");
-    let generated_settings = implementation_execution_settings(source_settings.as_deref())?;
-    let account_id = source.get::<Option<i64>, _>("account_id");
-    let profile_key = account_id.map(|value| format!("account:{value}"));
-    let chat = sqlx::query(
-        "INSERT INTO chats (
-            workspace_id, account_id, title, status, origin, profile_key, surface,
-            title_generation_state
-         ) VALUES (?1, ?2, ?3, 'draft', 'orchestrator', ?4, 'kanban', 'complete')",
-    )
-    .bind(workspace_id)
-    .bind(account_id)
-    .bind(&title)
-    .bind(profile_key)
-    .execute(&mut *transaction)
-    .await
-    .map_err(|error| {
-        format!("The implementation ticket conversation could not be created: {error}")
-    })?;
-    let chat_id = chat.last_insert_rowid();
-    let next_position: i64 = sqlx::query_scalar(
-        "SELECT COALESCE(MAX(sort_position), 0) + ?2
-         FROM kanban_cards
-         WHERE workspace_id = ?1 AND stage = 'todo' AND deleted_at IS NULL",
-    )
-    .bind(workspace_id)
-    .bind(POSITION_STEP)
-    .fetch_one(&mut *transaction)
-    .await
-    .map_err(|error| {
-        format!("The implementation ticket position could not be allocated: {error}")
-    })?;
-    sqlx::query(
-        "INSERT INTO kanban_cards (
-            id, workspace_id, chat_id, title, description, account_id,
-            access_mode, model, reasoning_level, execution_settings_json,
-            repository_scope, stage, sort_position, execution_state, review_state
-         ) VALUES (
-            ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11,
-            'todo', ?12, 'idle', 'none'
-         )",
-    )
-    .bind(&request.generated_card_id)
-    .bind(workspace_id)
-    .bind(chat_id)
-    .bind(&title)
-    .bind(&plan_text)
-    .bind(account_id)
-    .bind(source.get::<String, _>("access_mode"))
-    .bind(source.get::<Option<String>, _>("model"))
-    .bind(source.get::<Option<String>, _>("reasoning_level"))
-    .bind(generated_settings)
-    .bind(source.get::<String, _>("repository_scope"))
-    .bind(next_position)
-    .execute(&mut *transaction)
-    .await
-    .map_err(|error| format!("The implementation ticket could not be created: {error}"))?;
-    sqlx::query(
-        "INSERT INTO kanban_card_repository_selections (
-            card_id, repository_path, relative_path, label, include_dirty
-         )
-         SELECT ?1, repository_path, relative_path, label, include_dirty
-         FROM kanban_card_repository_selections WHERE card_id = ?2",
-    )
-    .bind(&request.generated_card_id)
-    .bind(&request.card_id)
-    .execute(&mut *transaction)
-    .await
-    .map_err(|error| {
-        format!("The implementation ticket repositories could not be copied: {error}")
-    })?;
-    let source_update = sqlx::query(
-        "UPDATE kanban_cards
-         SET stage = 'done', review_state = 'approved', review_channel = NULL,
-             approved_at = CURRENT_TIMESTAMP, state_version = state_version + 1,
-             updated_at = CURRENT_TIMESTAMP
-         WHERE id = ?1 AND state_version = ?2 AND current_attempt_id = ?3
-           AND stage = 'in_review' AND execution_state = 'completed'
-           AND review_state = 'awaiting_review'",
-    )
-    .bind(&request.card_id)
-    .bind(request.expected_version)
-    .bind(&request.attempt_id)
-    .execute(&mut *transaction)
-    .await
-    .map_err(|error| format!("The planning card could not be completed: {error}"))?;
-    if source_update.rows_affected() != 1 {
-        transaction.rollback().await.ok();
-        if let Some(result) =
-            load_accepted_plan_result(&mut connection, &request.card_id, &request.attempt_id)
-                .await?
-        {
-            return Ok(result);
-        }
-        return Err("The planning card changed before its plan was accepted.".to_string());
-    }
-    let run_id = source.get::<i64, _>("run_id");
-    let plan_update = sqlx::query(
-        "UPDATE kanban_plan_results
-         SET decision = 'accepted', generated_card_id = ?1,
-             decided_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP
-         WHERE card_id = ?2 AND attempt_id = ?3 AND decision = 'awaiting_review'",
-    )
-    .bind(&request.generated_card_id)
-    .bind(&request.card_id)
-    .bind(&request.attempt_id)
-    .execute(&mut *transaction)
-    .await
-    .map_err(|error| format!("The accepted plan result could not be saved: {error}"))?;
-    if plan_update.rows_affected() != 1 {
-        transaction.rollback().await.ok();
-        return Err("The accepted plan result changed during review.".to_string());
-    }
-    sqlx::query("UPDATE runs SET plan_review_state = 'approved' WHERE id = ?1")
-        .bind(run_id)
-        .execute(&mut *transaction)
-        .await
-        .map_err(|error| format!("The accepted plan run could not be saved: {error}"))?;
-    sqlx::query(
-        "INSERT INTO kanban_review_decisions (card_id, attempt_id, decision)
-         VALUES (?1, ?2, 'approved')",
-    )
-    .bind(&request.card_id)
-    .bind(&request.attempt_id)
-    .execute(&mut *transaction)
-    .await
-    .map_err(|error| format!("The plan review decision could not be saved: {error}"))?;
-    sqlx::query(
-        "UPDATE kanban_boards SET revision = revision + 1,
-             updated_at = CURRENT_TIMESTAMP WHERE workspace_id = ?1",
-    )
-    .bind(workspace_id)
-    .execute(&mut *transaction)
-    .await
-    .map_err(|error| format!("The Kanban board could not be updated: {error}"))?;
-    complete_operation(&mut transaction, &request.operation_id).await?;
-    transaction
-        .commit()
-        .await
-        .map_err(|error| format!("The plan acceptance could not be saved: {error}"))?;
-    load_accepted_plan_result(&mut connection, &request.card_id, &request.attempt_id)
-        .await?
-        .ok_or_else(|| "The accepted implementation ticket could not be loaded.".to_string())
 }
 
 #[tauri::command]
@@ -3696,29 +3627,28 @@ mod tests {
     use super::*;
 
     #[test]
-    fn plan_execution_settings_become_normal_idle_ticket_settings() {
-        let source = r#"{
-            "mode":"plan",
-            "intent":"review",
-            "goalMode":true,
+    fn accepted_plan_requires_valid_implementation_settings() {
+        let settings = r#"{
+            "accountId":7,
+            "profileKey":"account:7",
+            "mode":"run",
+            "intent":"plan-implementation",
+            "goalMode":false,
+            "accessMode":"full-access",
             "model":"gpt-5.6",
-            "reasoning":"high",
-            "access":"workspace-write",
-            "contextFiles":["spec.md"],
-            "skills":["frontend"]
+            "reasoningEffort":"high"
         }"#;
-        assert!(execution_settings_are_plan_mode(Some(source)));
-
-        let generated: serde_json::Value = serde_json::from_str(
-            &implementation_execution_settings(Some(source)).expect("convert plan settings"),
-        )
-        .expect("decode generated settings");
-        assert_eq!(generated["mode"], "run");
-        assert_eq!(generated["intent"], "normal");
-        assert_eq!(generated["goalMode"], false);
-        assert_eq!(generated["model"], "gpt-5.6");
-        assert_eq!(generated["contextFiles"][0], "spec.md");
-        assert_eq!(generated["skills"][0], "frontend");
+        let parsed = implementation_execution_settings(Some(settings))
+            .expect("validate implementation settings");
+        assert_eq!(parsed.account_id, Some(7));
+        assert_eq!(parsed.access_mode, "full-access");
+        assert_eq!(parsed.model.as_deref(), Some("gpt-5.6"));
+        assert_eq!(parsed.reasoning_level.as_deref(), Some("high"));
+        assert!(implementation_execution_settings(Some(
+            r#"{"accountId":7,"profileKey":"account:7","mode":"plan","intent":"plan","goalMode":false,"accessMode":"full-access"}"#,
+        ))
+        .is_err());
+        assert!(execution_settings_are_plan_implementation(Some(settings)));
     }
 
     #[test]
@@ -3763,6 +3693,12 @@ mod tests {
         ));
         assert!(claim_transition_allowed(
             "request_changes",
+            "in_review",
+            "completed",
+            "awaiting_review"
+        ));
+        assert!(claim_transition_allowed(
+            "implement_plan",
             "in_review",
             "completed",
             "awaiting_review"

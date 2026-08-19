@@ -17,6 +17,7 @@ import { accessSettings } from "../../lib/codexAccess";
 import {
   createRunExecutionSettings,
   parseRunExecutionSettings,
+  serializeRunExecutionSettings,
 } from "../../lib/runExecutionSettings";
 import { improvePrompt } from "../../lib/taskAnalysis";
 import {
@@ -97,16 +98,16 @@ export type KanbanRuntimeController = {
     card: KanbanCardRecord,
     kind: KanbanLaunchKind,
     promptText: string,
-    options?: KanbanContinuationOptions,
+    options?: KanbanLaunchOptions,
   ) => Promise<void>;
   pauseCard: (card: KanbanCardRecord) => Promise<void>;
   stopCard: (card: KanbanCardRecord) => Promise<void>;
 };
 
-export type KanbanContinuationOptions = {
-  executionSettings: RunExecutionSettings;
-  queueItemId: string;
-  clientUserMessageId: string;
+export type KanbanLaunchOptions = {
+  executionSettings?: RunExecutionSettings;
+  queueItemId?: string;
+  clientUserMessageId?: string;
 };
 
 function errorMessage(error: unknown) {
@@ -143,7 +144,7 @@ export function createKanbanRuntimeController<
     card: KanbanCardRecord,
     kind: KanbanLaunchKind,
     promptText: string,
-    options?: KanbanContinuationOptions,
+    options?: KanbanLaunchOptions,
   ) {
     const dependencies = getDependencies();
     const state = dependencies.getState();
@@ -251,11 +252,16 @@ export function createKanbanRuntimeController<
           reasoningLevel: executionSettings.reasoningEffort,
           repositories: card.repositories,
         },
+        executionSettingsJson:
+          kind === "implement_plan"
+            ? serializeRunExecutionSettings(executionSettings)
+            : null,
       });
       dependencies.refreshBoards();
 
       let executionRoot: string | null = null;
       try {
+        const effectivePrompt = claimed.attempt.prompt;
         const repositoryExecution = await native.prepareRepositoryExecution({
           card,
           claimedCard: claimed.card,
@@ -296,8 +302,8 @@ export function createKanbanRuntimeController<
           ? null
           : await native.loadInheritedContext(card.id);
         const snapshot: RunSetupSnapshot = {
-          promptText,
-          promptFallback: promptText,
+          promptText: effectivePrompt,
+          promptFallback: effectivePrompt,
           workspace: { ...workspace, path: executionRoot },
           accountId,
           account,
@@ -315,7 +321,7 @@ export function createKanbanRuntimeController<
           effort: runExecutionSettings.reasoningEffort,
           useOss: runExecutionSettings.useOss,
           ossProvider: runExecutionSettings.ossProvider,
-          improvedPrompt: improvePrompt(promptText),
+          improvedPrompt: improvePrompt(effectivePrompt),
           contextFiles: runExecutionSettings.contextFiles,
           selectedSkills: runExecutionSettings.selectedSkills,
           goalMode: runExecutionSettings.goalMode,
@@ -343,7 +349,7 @@ export function createKanbanRuntimeController<
           executionSettings: runExecutionSettings,
           restorePromptOnSetupFailure: false,
           queueItemId: options?.queueItemId ?? null,
-          fromQueue: Boolean(options),
+          fromQueue: Boolean(options?.queueItemId),
           clientUserMessageId: options?.clientUserMessageId,
           kanbanAttempt: {
             cardId: card.id,
