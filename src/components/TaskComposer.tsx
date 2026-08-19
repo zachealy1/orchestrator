@@ -427,10 +427,19 @@ export const TaskComposer = memo(function TaskComposer({ model, actions }: Props
 
   function handlePlanModeClick() {
     if (queueEditSaving) return;
+    const textarea = promptTextareaRef.current;
+    const selectionStart = textarea?.selectionStart ?? null;
+    const selectionEnd = textarea?.selectionEnd ?? null;
     const nextPlanMode = !planMode;
     onPlanModeChange(nextPlanMode);
     if (nextPlanMode && goalMode) {
       onGoalModeChange(false);
+    }
+    if (textarea) {
+      textarea.focus({ preventScroll: true });
+      if (selectionStart !== null && selectionEnd !== null) {
+        textarea.setSelectionRange(selectionStart, selectionEnd);
+      }
     }
   }
 

@@ -1078,6 +1078,26 @@ describe("TaskComposer", () => {
     expect(promptInput).toHaveValue("Fix the failing test");
   });
 
+  it("submits the loaded prompt with Enter after enabling Plan Mode", async () => {
+    const onRun = vi.fn();
+    const onPlanModeChange = vi.fn();
+    const { user } = renderControlledComposer({
+      prompt: "Plan the implementation",
+      onPlanModeChange,
+      onRun,
+    });
+    const promptInput = screen.getByLabelText("Prompt");
+
+    await user.click(screen.getByRole("button", { name: "Plan mode" }));
+    expect(onPlanModeChange).toHaveBeenCalledWith(true);
+    expect(promptInput).toHaveFocus();
+
+    await user.keyboard("{Enter}");
+
+    expect(onRun).toHaveBeenCalledOnce();
+    expect(onRun).toHaveBeenCalledWith("Plan the implementation");
+  });
+
   it("submits a new prompt with one Enter when the queue already has an item", async () => {
     const onRun = vi.fn();
     const { user } = renderControlledComposer({
