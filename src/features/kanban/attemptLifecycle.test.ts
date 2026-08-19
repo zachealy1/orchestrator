@@ -54,9 +54,39 @@ describe("Kanban attempt state controller", () => {
       turnId: "turn-1",
       executionRoot: "/cards/card-1/root",
       error: null,
+      completedPlan: null,
       operationId: "operation-1",
     });
     expect(onBoardChanged).toHaveBeenCalledOnce();
+  });
+
+  it("retries a completed plan as one immutable terminal request", async () => {
+    const updateAttempt = vi
+      .fn()
+      .mockRejectedValueOnce(new Error("database busy"))
+      .mockResolvedValueOnce({});
+    const controller = new KanbanAttemptStateController({
+      updateAttempt,
+      createOperationId: () => "operation-plan",
+      onBoardChanged: vi.fn(),
+      onPersistenceError: vi.fn(),
+    });
+    const completedPlan = {
+      itemId: "plan-item-1",
+      text: "# Implementation plan\n\nShip it.",
+    };
+
+    await expect(
+      controller.persist(control(), "completed", null, {
+        retryCount: 1,
+        completedPlan,
+      }),
+    ).resolves.toEqual({ persisted: true, error: null });
+    expect(updateAttempt).toHaveBeenCalledTimes(2);
+    expect(updateAttempt.mock.calls[0][0]).toEqual(updateAttempt.mock.calls[1][0]);
+    expect(updateAttempt.mock.calls[0][0]).toEqual(
+      expect.objectContaining({ completedPlan, operationId: "operation-plan" }),
+    );
   });
 
   it("retries the same idempotent request and reports terminal failure", async () => {

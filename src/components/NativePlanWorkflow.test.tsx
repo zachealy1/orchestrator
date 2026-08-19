@@ -109,20 +109,20 @@ describe("native Plan transcript workflow", () => {
       screen.queryByRole("button", { name: "Show full plan" }),
     ).not.toBeInTheDocument();
     const implementButton = screen.getByRole("button", {
-      name: "Implement plan",
+      name: "Accept plan",
     });
-    const reviseButton = screen.getByRole("button", { name: "Revise plan" });
-    const cancelButton = screen.getByRole("button", { name: "Cancel plan" });
+    const reviseButton = screen.getByRole("button", { name: "Update plan" });
+    const cancelButton = screen.getByRole("button", { name: "Reject plan" });
     expect(implementButton).toHaveClass(
       "native-plan-icon-action",
       "implement",
     );
     expect(reviseButton).toHaveClass("native-plan-icon-action", "revise");
     expect(cancelButton).toHaveClass("native-plan-icon-action", "cancel");
-    expect(implementButton).toHaveAttribute("title", "Implement plan");
-    expect(reviseButton).toHaveAttribute("title", "Revise plan");
-    expect(cancelButton).toHaveAttribute("title", "Cancel plan");
-    expect(implementButton).not.toHaveTextContent("Implement plan");
+    expect(implementButton).toHaveAttribute("title", "Accept plan");
+    expect(reviseButton).toHaveAttribute("title", "Update plan");
+    expect(cancelButton).toHaveAttribute("title", "Reject plan");
+    expect(implementButton).not.toHaveTextContent("Accept plan");
     expect(reviseButton).not.toHaveTextContent("Revise");
     expect(cancelButton).not.toHaveTextContent("Cancel");
     expect(
@@ -149,7 +149,7 @@ describe("native Plan transcript workflow", () => {
     await user.click(sendRevision);
     expect(onRevisePlan).toHaveBeenCalledWith(entry, "Add rollback steps");
     await user.click(cancelRevision);
-    await user.click(screen.getByRole("button", { name: "Cancel plan" }));
+    await user.click(screen.getByRole("button", { name: "Reject plan" }));
     expect(onCancelPlan).toHaveBeenCalledWith(entry);
   });
 
@@ -159,7 +159,7 @@ describe("native Plan transcript workflow", () => {
     const onRevisePlan = vi.fn(() => true);
     renderTurn(entry, { onRevisePlan });
 
-    await user.click(screen.getByRole("button", { name: "Revise plan" }));
+    await user.click(screen.getByRole("button", { name: "Update plan" }));
     const input = screen.getByLabelText("What should change?");
     await user.type(input, "Tighten the validation scope");
 
@@ -181,7 +181,7 @@ describe("native Plan transcript workflow", () => {
     const onRevisePlan = vi.fn(() => false);
     renderTurn(entry, { onRevisePlan });
 
-    await user.click(screen.getByRole("button", { name: "Revise plan" }));
+    await user.click(screen.getByRole("button", { name: "Update plan" }));
     const input = screen.getByLabelText("What should change?");
     await user.type(input, "Keep the API stable");
     await user.keyboard("{Shift>}{Enter}{/Shift}Add rollback coverage");
@@ -202,7 +202,7 @@ describe("native Plan transcript workflow", () => {
     const onRevisePlan = vi.fn();
     renderTurn(entry, { onRevisePlan });
 
-    await user.click(screen.getByRole("button", { name: "Revise plan" }));
+    await user.click(screen.getByRole("button", { name: "Update plan" }));
     const input = screen.getByLabelText("What should change?");
     await user.type(input, "   ");
     fireEvent.keyDown(input, { key: "Enter" });

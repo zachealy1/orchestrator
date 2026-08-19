@@ -106,6 +106,8 @@ export const commands = {
 	kanbanMoveCard: (request: MoveKanbanCardRequest) => __TAURI_INVOKE<KanbanCardDto>("kanban_move_card", { request }),
 	kanbanClaimAttempt: (request: ClaimKanbanAttemptRequest) => __TAURI_INVOKE<ClaimKanbanAttemptResult>("kanban_claim_attempt", { request }),
 	kanbanUpdateAttempt: (request: UpdateKanbanAttemptRequest) => __TAURI_INVOKE<ClaimKanbanAttemptResult>("kanban_update_attempt", { request }),
+	kanbanAcceptPlan: (request: AcceptKanbanPlanRequest) => __TAURI_INVOKE<AcceptKanbanPlanResult>("kanban_accept_plan", { request }),
+	kanbanRejectPlan: (request: RejectKanbanPlanRequest) => __TAURI_INVOKE<KanbanCardDto>("kanban_reject_plan", { request }),
 	kanbanApproveCard: (request: VersionedKanbanCardRequest) => __TAURI_INVOKE<KanbanCardDto>("kanban_approve_card", { request }),
 	kanbanReopenCard: (request: VersionedKanbanCardRequest) => __TAURI_INVOKE<KanbanCardDto>("kanban_reopen_card", { request }),
 	kanbanStopInactiveCard: (request: VersionedKanbanCardRequest) => __TAURI_INVOKE<KanbanCardDto>("kanban_stop_inactive_card", { request }),
@@ -169,6 +171,19 @@ export const commands = {
 };
 
 /* Types */
+export type AcceptKanbanPlanRequest = {
+	cardId: string,
+	attemptId: string,
+	expectedVersion: number,
+	generatedCardId: string,
+	operationId: string,
+};
+
+export type AcceptKanbanPlanResult = {
+	sourceCard: KanbanCardDto,
+	generatedCard: KanbanCardDto,
+};
+
 export type ActiveCodexLogin = {
 	accountId: number,
 	loginId: string | null,
@@ -267,6 +282,11 @@ export type CodexConnectResult = {
 	pid: number | null,
 	alreadyConnected: boolean,
 	initialize: unknown,
+};
+
+export type CompletedKanbanPlanInput = {
+	itemId: string,
+	text: string,
 };
 
 export type CreateChatWithQueuedPromptRequest = {
@@ -801,6 +821,13 @@ export type RecoveredRunCounts = {
 	chats: number,
 };
 
+export type RejectKanbanPlanRequest = {
+	cardId: string,
+	attemptId: string,
+	expectedVersion: number,
+	operationId: string,
+};
+
 export type RejectedDroppedContextPath = {
 	path: string,
 	reason: string,
@@ -841,6 +868,7 @@ export type UpdateKanbanAttemptRequest = {
 	turnId: string | null,
 	executionRoot: string | null,
 	error: string | null,
+	completedPlan?: CompletedKanbanPlanInput | null,
 	operationId: string,
 };
 

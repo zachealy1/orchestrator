@@ -3,6 +3,7 @@ import { isNativeUserInputRequest } from "../../lib/nativePlanMode";
 import {
   createKanbanId,
   updateKanbanAttempt,
+  type CompletedKanbanPlan,
   type KanbanAttemptResult,
 } from "./api";
 
@@ -52,6 +53,7 @@ export type KanbanAttemptStateControllerDependencies = {
     turnId?: string | null;
     executionRoot?: string | null;
     error?: string | null;
+    completedPlan?: CompletedKanbanPlan | null;
     operationId?: string;
   }) => Promise<KanbanAttemptResult>;
   createOperationId: () => string;
@@ -82,7 +84,10 @@ export class KanbanAttemptStateController {
     control: KanbanAttemptControl | null,
     status: string,
     error: string | null = null,
-    options: { retryCount?: number } = {},
+    options: {
+      retryCount?: number;
+      completedPlan?: CompletedKanbanPlan | null;
+    } = {},
   ): Promise<KanbanAttemptPersistenceResult> {
     const binding = control?.kanbanAttempt;
     if (!control || !binding) return { persisted: true, error: null };
@@ -100,6 +105,7 @@ export class KanbanAttemptStateController {
       turnId: control.turnId,
       executionRoot: binding.executionRoot,
       error,
+      completedPlan: options.completedPlan ?? null,
       operationId: this.dependencies.createOperationId(),
     };
     let lastError = "The Kanban attempt state could not be saved.";

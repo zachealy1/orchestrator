@@ -28,7 +28,7 @@ fn resolved_plugin_migrator(
 }
 
 #[test]
-fn existing_versions_one_through_twenty_five_upgrade_through_thirty_six() {
+fn existing_versions_one_through_twenty_five_upgrade_through_thirty_seven() {
     tauri::async_runtime::block_on(async {
         let mut connection = SqliteConnection::connect("sqlite::memory:")
             .await
@@ -58,7 +58,7 @@ fn existing_versions_one_through_twenty_five_upgrade_through_thirty_six() {
         .fetch_one(&mut connection)
         .await
         .expect("count upgraded migrations");
-        assert_eq!(applied_count, 36);
+        assert_eq!(applied_count, 37);
 
         resolved_plugin_migrator(MIGRATION_DEFINITIONS)
             .run_direct(&mut connection)
@@ -268,6 +268,15 @@ fn kanban_schema_migrations_apply_from_a_clean_database() {
         .await
         .expect("read local review table");
         assert_eq!(local_review_tables, 1);
+
+        let plan_result_tables: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM sqlite_master
+             WHERE type = 'table' AND name = 'kanban_plan_results'",
+        )
+        .fetch_one(&mut connection)
+        .await
+        .expect("read Kanban plan result table");
+        assert_eq!(plan_result_tables, 1);
 
         let local_review_columns: Vec<String> = sqlx::query_scalar(
             "SELECT name FROM pragma_table_info('kanban_local_reviews') ORDER BY cid",

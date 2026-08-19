@@ -135,7 +135,10 @@ export type TranscriptTurnActions = {
     response: UserInputResponse,
   ) => void;
   onImplementPlan?: (entry: TaskChatEntry) => void;
-  onRevisePlan?: (entry: TaskChatEntry, revision: string) => boolean | void;
+  onRevisePlan?: (
+    entry: TaskChatEntry,
+    revision: string,
+  ) => boolean | void | Promise<boolean | void>;
   onCancelPlan?: (entry: TaskChatEntry) => void;
   onOpenWebPreview?: (
     entry: TaskChatEntry,
@@ -1646,20 +1649,33 @@ const NativePlanCard = memo(function NativePlanCard({
       return;
     }
     setRevisionSubmitting(true);
+    if (accepted instanceof Promise) {
+      void accepted
+        .then((started) => {
+          if (started === false) {
+            revisionSubmissionLockRef.current = false;
+            setRevisionSubmitting(false);
+          }
+        })
+        .catch(() => {
+          revisionSubmissionLockRef.current = false;
+          setRevisionSubmitting(false);
+        });
+    }
   };
   const heading = canReview
     ? "Plan ready"
     : plan.reviewState === "approved"
-      ? "Plan approved"
+      ? "Plan accepted"
       : plan.reviewState === "superseded"
         ? "Plan superseded"
         : plan.reviewState === "cancelled"
-          ? "Plan cancelled"
+          ? "Plan rejected"
           : "Plan";
   const detail = canReview
     ? "Review before implementation"
     : plan.reviewState === "approved"
-      ? "Implementation started"
+      ? "Decision accepted"
       : plan.reviewState === "superseded"
         ? "A revised plan follows"
         : plan.reviewState === "cancelled"
@@ -1728,8 +1744,8 @@ const NativePlanCard = memo(function NativePlanCard({
           <button
             type="button"
             className="native-plan-icon-action implement"
-            aria-label="Implement plan"
-            title="Implement plan"
+            aria-label="Accept plan"
+            title="Accept plan"
             disabled={busy || !onImplementPlan}
             onClick={() => onImplementPlan?.(entry)}
           >
@@ -1738,8 +1754,8 @@ const NativePlanCard = memo(function NativePlanCard({
           <button
             type="button"
             className="native-plan-icon-action revise"
-            aria-label="Revise plan"
-            title="Revise plan"
+            aria-label="Update plan"
+            title="Update plan"
             disabled={busy || !onRevisePlan}
             onClick={() => setRevising(true)}
           >
@@ -1748,8 +1764,8 @@ const NativePlanCard = memo(function NativePlanCard({
           <button
             type="button"
             className="native-plan-icon-action cancel"
-            aria-label="Cancel plan"
-            title="Cancel plan"
+            aria-label="Reject plan"
+            title="Reject plan"
             disabled={busy || !onCancelPlan}
             onClick={() => onCancelPlan?.(entry)}
           >

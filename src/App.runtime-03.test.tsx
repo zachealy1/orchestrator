@@ -546,7 +546,7 @@ describe("Application runtime scenarios 3", () => {
       ).toBeInTheDocument();
       expect(within(plan).getByText("Completed plan")).toBeInTheDocument();
       expect(
-        within(plan).queryByRole("button", { name: "Implement plan" }),
+        within(plan).queryByRole("button", { name: "Accept plan" }),
       ).not.toBeInTheDocument();
       expect(screen.queryByText(/<proposed_plan>/)).not.toBeInTheDocument();
     });
@@ -1713,7 +1713,7 @@ describe("Application runtime scenarios 3", () => {
         },
       });
       expect(
-        screen.queryByRole("button", { name: "Implement plan" }),
+        screen.queryByRole("button", { name: "Accept plan" }),
       ).not.toBeInTheDocument();
 
       await emitCodexNotification({
@@ -1726,7 +1726,7 @@ describe("Application runtime scenarios 3", () => {
       });
 
       const implement = await screen.findByRole("button", {
-        name: "Implement plan",
+        name: "Accept plan",
       });
       expect(screen.getByRole("combobox", { name: "Run account" })).toBeEnabled();
       expect(screen.getByRole("combobox", { name: "Agent" })).toBeDisabled();

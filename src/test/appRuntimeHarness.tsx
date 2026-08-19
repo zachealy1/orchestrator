@@ -86,6 +86,8 @@ const mocks = vi.hoisted(() => ({
   recoverInterruptedChatTitleGenerationsMock: vi.fn(),
   recoverInterruptedKanbanAttemptsMock: vi.fn(),
   getKanbanCardForChatMock: vi.fn(),
+  acceptKanbanPlanMock: vi.fn(),
+  rejectKanbanPlanMock: vi.fn(),
   claimKanbanAttemptMock: vi.fn(),
   cleanupKanbanGitMock: vi.fn(),
   loadKanbanBoardMock: vi.fn(),
@@ -411,6 +413,7 @@ vi.mock("../features/kanban/api", async () => {
   );
   return {
     ...actual,
+    acceptKanbanPlan: mocks.acceptKanbanPlanMock,
     claimKanbanAttempt: mocks.claimKanbanAttemptMock,
     cleanupKanbanGit: mocks.cleanupKanbanGitMock,
     loadKanbanBoard: mocks.loadKanbanBoardMock,
@@ -424,6 +427,7 @@ vi.mock("../features/kanban/api", async () => {
     reconcileKanbanGit: mocks.reconcileKanbanGitMock,
     recoverInterruptedKanbanAttempts:
       mocks.recoverInterruptedKanbanAttemptsMock,
+    rejectKanbanPlan: mocks.rejectKanbanPlanMock,
     getKanbanCardForChat: mocks.getKanbanCardForChatMock,
     saveKanbanGitBindings: mocks.saveKanbanGitBindingsMock,
     updateKanbanAttempt: mocks.updateKanbanAttemptMock,
@@ -814,6 +818,8 @@ export function prepareDefaults() {
     mocks.readBrowserSessionStatusMock,
     mocks.recoverInterruptedKanbanAttemptsMock,
     mocks.getKanbanCardForChatMock,
+    mocks.acceptKanbanPlanMock,
+    mocks.rejectKanbanPlanMock,
     mocks.claimKanbanAttemptMock,
     mocks.cleanupKanbanGitMock,
     mocks.loadKanbanBoardMock,
@@ -840,6 +846,8 @@ export function prepareDefaults() {
   mocks.chatHasPendingPlanReviewMock.mockResolvedValue(false);
   mocks.recoverInterruptedKanbanAttemptsMock.mockResolvedValue(0);
   mocks.getKanbanCardForChatMock.mockResolvedValue(null);
+  mocks.acceptKanbanPlanMock.mockResolvedValue(null);
+  mocks.rejectKanbanPlanMock.mockResolvedValue(null);
   mocks.cleanupKanbanGitMock.mockImplementation(async ({ binding }) => ({
     binding: { ...binding, status: "cleaned" },
     status: "cleaned",
