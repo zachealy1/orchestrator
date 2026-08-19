@@ -601,8 +601,29 @@ describe("Kanban runtime controller", () => {
 
     await controller.pauseCard(card());
 
+    expect(dependencies.findRunControl).toHaveBeenCalledWith(
+      workspace.id,
+      11,
+      "card-1",
+    );
     expect(control.kanbanStopStatus).toBe("paused");
     expect(dependencies.stopRun).toHaveBeenCalledWith(control);
+  });
+
+  it("stops a waiting live card through the shared stop bridge", async () => {
+    const { controller, control, dependencies, native } = harness();
+    dependencies.findRunControl.mockReturnValue(control);
+
+    await controller.stopCard(card({ executionState: "waiting_user" }));
+
+    expect(dependencies.findRunControl).toHaveBeenCalledWith(
+      workspace.id,
+      11,
+      "card-1",
+    );
+    expect(control.kanbanStopStatus).toBe("stopped");
+    expect(dependencies.stopRun).toHaveBeenCalledWith(control);
+    expect(native.stopInactiveCard).not.toHaveBeenCalled();
   });
 
   it("stops an inactive card natively and refreshes the board", async () => {
@@ -611,6 +632,11 @@ describe("Kanban runtime controller", () => {
 
     await controller.stopCard(target);
 
+    expect(dependencies.findRunControl).toHaveBeenCalledWith(
+      workspace.id,
+      target.chatId,
+      target.id,
+    );
     expect(native.stopInactiveCard).toHaveBeenCalledWith(target);
     expect(dependencies.stopRun).not.toHaveBeenCalled();
     expect(dependencies.refreshBoards).toHaveBeenCalledOnce();

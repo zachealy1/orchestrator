@@ -13,7 +13,7 @@ use sha2::{Digest, Sha256};
 use sqlx::{
     pool::PoolConnection,
     sqlite::{SqliteConnection, SqliteRow},
-    Connection, Row, Sqlite,
+    Connection, Row, Sqlite, Transaction,
 };
 use std::collections::HashMap;
 use tauri::{AppHandle, Manager};
@@ -2539,6 +2539,64 @@ pub async fn kanban_reopen_card(
     load_card(&mut connection, &request.card_id).await
 }
 
+async fn stop_inactive_card_state(
+    transaction: &mut Transaction<'_, Sqlite>,
+    card_id: &str,
+    expected_version: i64,
+) -> Result<bool, String> {
+    let result = sqlx::query(
+        "UPDATE kanban_cards
+         SET execution_state = 'stopped', state_version = state_version + 1,
+             updated_at = CURRENT_TIMESTAMP
+         WHERE id = ?1 AND state_version = ?2
+           AND (
+             execution_state IN ('paused','blocked','interrupted')
+             OR (
+               execution_state IN ('waiting_user','waiting_approval')
+               AND NOT EXISTS (
+                 SELECT 1
+                 FROM kanban_attempts attempt
+                 JOIN runs run ON run.id = attempt.run_id
+                 WHERE attempt.id = kanban_cards.current_attempt_id
+                   AND run.status IN ('starting','connecting','running')
+               )
+             )
+           )
+           AND archived_at IS NULL AND deleted_at IS NULL",
+    )
+    .bind(card_id)
+    .bind(expected_version)
+    .execute(&mut **transaction)
+    .await
+    .map_err(|error| format!("The card could not be stopped: {error}"))?;
+    if result.rows_affected() != 1 {
+        return Ok(false);
+    }
+    sqlx::query(
+        "UPDATE kanban_attempts SET status = 'stopped', recoverable = 0,
+            completed_at = COALESCE(completed_at, CURRENT_TIMESTAMP),
+            updated_at = CURRENT_TIMESTAMP
+         WHERE id = (SELECT current_attempt_id FROM kanban_cards WHERE id = ?1)
+           AND status IN ('paused','blocked','interrupted','waiting_user','waiting_approval')",
+    )
+    .bind(card_id)
+    .execute(&mut **transaction)
+    .await
+    .map_err(|error| format!("The card attempt could not be stopped: {error}"))?;
+    sqlx::query(
+        "UPDATE kanban_pending_requests SET status = 'expired',
+            resolved_at = CURRENT_TIMESTAMP
+         WHERE attempt_id = (
+           SELECT current_attempt_id FROM kanban_cards WHERE id = ?1
+         ) AND status IN ('pending','submitting')",
+    )
+    .bind(card_id)
+    .execute(&mut **transaction)
+    .await
+    .map_err(|error| format!("The card requests could not be cleared: {error}"))?;
+    Ok(true)
+}
+
 #[tauri::command]
 #[specta::specta]
 pub async fn kanban_stop_inactive_card(
@@ -2565,34 +2623,15 @@ pub async fn kanban_stop_inactive_card(
         transaction.rollback().await.ok();
         return load_card(&mut connection, &request.card_id).await;
     }
-    let result = sqlx::query(
-        "UPDATE kanban_cards
-         SET execution_state = 'stopped', state_version = state_version + 1,
-             updated_at = CURRENT_TIMESTAMP
-         WHERE id = ?1 AND state_version = ?2
-           AND execution_state IN ('paused','blocked','interrupted')
-           AND archived_at IS NULL AND deleted_at IS NULL",
-    )
-    .bind(&request.card_id)
-    .bind(request.expected_version)
-    .execute(&mut *transaction)
-    .await
-    .map_err(|error| format!("The card could not be stopped: {error}"))?;
-    if result.rows_affected() != 1 {
+    if !stop_inactive_card_state(&mut transaction, &request.card_id, request.expected_version)
+        .await?
+    {
         transaction.rollback().await.ok();
-        return Err("This card no longer has an inactive attempt to stop.".to_string());
+        return Err(
+            "The card still has an active turn or changed before it could be stopped. Refresh the board and try again."
+                .to_string(),
+        );
     }
-    sqlx::query(
-        "UPDATE kanban_attempts SET status = 'stopped', recoverable = 0,
-            completed_at = COALESCE(completed_at, CURRENT_TIMESTAMP),
-            updated_at = CURRENT_TIMESTAMP
-         WHERE id = (SELECT current_attempt_id FROM kanban_cards WHERE id = ?1)
-           AND status IN ('paused','blocked','interrupted')",
-    )
-    .bind(&request.card_id)
-    .execute(&mut *transaction)
-    .await
-    .map_err(|error| format!("The card attempt could not be stopped: {error}"))?;
     sqlx::query(
         "UPDATE kanban_boards SET revision = revision + 1,
             updated_at = CURRENT_TIMESTAMP WHERE workspace_id = ?1",
@@ -3947,6 +3986,101 @@ mod tests {
         assert!(!attempt_status_transition_allowed("blocked", "running"));
         assert!(attempt_status_transition_allowed("blocked", "interrupted"));
         assert!(!attempt_status_transition_allowed("completed", "running"));
+    }
+
+    #[test]
+    fn inactive_stop_recovers_stale_waiting_attempts_without_stopping_live_runs() {
+        tauri::async_runtime::block_on(async {
+            let mut connection = SqliteConnection::connect("sqlite::memory:")
+                .await
+                .expect("open stop recovery database");
+            sqlx::query(
+                "CREATE TABLE runs (id INTEGER PRIMARY KEY, status TEXT NOT NULL);
+                 CREATE TABLE kanban_attempts (
+                   id TEXT PRIMARY KEY,
+                   status TEXT NOT NULL,
+                   run_id INTEGER,
+                   recoverable INTEGER NOT NULL DEFAULT 0,
+                   completed_at TEXT,
+                   updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+                 );
+                 CREATE TABLE kanban_cards (
+                   id TEXT PRIMARY KEY,
+                   execution_state TEXT NOT NULL,
+                   current_attempt_id TEXT,
+                   state_version INTEGER NOT NULL,
+                   archived_at TEXT,
+                   deleted_at TEXT,
+                   updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+                 );
+                 CREATE TABLE kanban_pending_requests (
+                   id TEXT PRIMARY KEY,
+                   attempt_id TEXT NOT NULL,
+                   status TEXT NOT NULL,
+                   resolved_at TEXT
+                 );",
+            )
+            .execute(&mut connection)
+            .await
+            .expect("create stop recovery tables");
+            sqlx::query(
+                "INSERT INTO runs (id, status) VALUES (1, 'interrupted'), (2, 'running');
+                 INSERT INTO kanban_attempts (id, status, run_id) VALUES
+                   ('stale-attempt', 'waiting_user', 1),
+                   ('live-attempt', 'waiting_approval', 2);
+                 INSERT INTO kanban_cards (
+                   id, execution_state, current_attempt_id, state_version
+                 ) VALUES
+                   ('stale-card', 'waiting_user', 'stale-attempt', 4),
+                   ('live-card', 'waiting_approval', 'live-attempt', 7);
+                 INSERT INTO kanban_pending_requests (id, attempt_id, status) VALUES
+                   ('stale-request', 'stale-attempt', 'pending'),
+                   ('live-request', 'live-attempt', 'pending');",
+            )
+            .execute(&mut connection)
+            .await
+            .expect("seed stop recovery rows");
+
+            let mut stale = connection.begin().await.expect("begin stale stop");
+            assert!(stop_inactive_card_state(&mut stale, "stale-card", 4)
+                .await
+                .expect("stop stale card"));
+            stale.commit().await.expect("commit stale stop");
+
+            let stale_card: String = sqlx::query_scalar(
+                "SELECT execution_state FROM kanban_cards WHERE id = 'stale-card'",
+            )
+            .fetch_one(&mut connection)
+            .await
+            .expect("read stale card");
+            let stale_attempt: String =
+                sqlx::query_scalar("SELECT status FROM kanban_attempts WHERE id = 'stale-attempt'")
+                    .fetch_one(&mut connection)
+                    .await
+                    .expect("read stale attempt");
+            let stale_request: String = sqlx::query_scalar(
+                "SELECT status FROM kanban_pending_requests WHERE id = 'stale-request'",
+            )
+            .fetch_one(&mut connection)
+            .await
+            .expect("read stale request");
+            assert_eq!(stale_card, "stopped");
+            assert_eq!(stale_attempt, "stopped");
+            assert_eq!(stale_request, "expired");
+
+            let mut live = connection.begin().await.expect("begin live stop");
+            assert!(!stop_inactive_card_state(&mut live, "live-card", 7)
+                .await
+                .expect("reject live card stop"));
+            live.rollback().await.expect("finish live stop");
+            let live_card: String = sqlx::query_scalar(
+                "SELECT execution_state FROM kanban_cards WHERE id = 'live-card'",
+            )
+            .fetch_one(&mut connection)
+            .await
+            .expect("read live card");
+            assert_eq!(live_card, "waiting_approval");
+        });
     }
 
     #[test]

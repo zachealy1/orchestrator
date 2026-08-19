@@ -537,7 +537,7 @@ import {
   type KanbanChatGitRepositoryState,
 } from "../features/workspaces/chatGitTarget";
 import {
-  collectStartupWarnings,
+  collectStartupWarningStages,
   withStartupFallback,
 } from "./bootstrapRecovery";
 
@@ -3243,11 +3243,13 @@ function App() {
   ]);
 
   async function bootstrap() {
-    const startupWarnings = await collectStartupWarnings([
-      recoverAbandonedRuns(),
-      recoverInterruptedChatTitleGenerations(),
-      recoverInterruptedPromptQueueItems(),
-      recoverInterruptedKanbanAttempts(),
+    const startupWarnings = await collectStartupWarningStages([
+      () => [
+        recoverAbandonedRuns(),
+        recoverInterruptedChatTitleGenerations(),
+        recoverInterruptedPromptQueueItems(),
+      ],
+      () => [recoverInterruptedKanbanAttempts()],
     ]);
     const restoredQueueItems = await withStartupFallback(
       holdRestoredPromptQueueItems(),
@@ -12112,7 +12114,10 @@ function App() {
     loadChat: getChatRecord,
     updateChat,
     getNextTurnIndex: getNextChatTurnIndex,
-    findRunControl: findRunControlByChat,
+    findRunControl: (workspaceId, chatId, cardId) =>
+      findNavigableRunControlByChat(workspaceId, chatId, {
+        kanbanCardId: cardId,
+      }),
     beginRun: beginOptimisticRun,
     scheduleRun: scheduleRunSetup,
     stopRun: stopActiveRun,
