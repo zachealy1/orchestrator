@@ -433,7 +433,7 @@ function PullRequestChooser({
             type="button"
             className="native-plan-icon-action"
             aria-label="Close pull request chooser"
-            title="Close"
+            data-tooltip="Close"
             onClick={onClose}
           >
             <X size={16} aria-hidden="true" />

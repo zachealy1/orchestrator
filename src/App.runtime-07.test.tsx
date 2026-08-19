@@ -1630,15 +1630,23 @@ describe("Application runtime scenarios 7", () => {
       });
       expect(prompt).toHaveValue("Keep this draft");
       expect(screen.getByLabelText("Goal progress")).toBeInTheDocument();
+      const keepGoal = within(dialog).getByRole("button", {
+        name: "Keep current goal",
+      });
+      const stopAndEdit = within(dialog).getByRole("button", {
+        name: "Stop and edit goal",
+      });
+      expect(keepGoal).toHaveAttribute("data-tooltip", "Keep current goal");
+      expect(stopAndEdit).toHaveAttribute("data-tooltip", "Stop and edit goal");
+      expect(keepGoal).not.toHaveAttribute("title");
+      expect(stopAndEdit).not.toHaveAttribute("title");
       expect(mocks.codexRpcMock).not.toHaveBeenCalledWith(
         7,
         "thread/goal/clear",
         expect.anything(),
       );
 
-      await user.click(
-        within(dialog).getByRole("button", { name: "Keep current goal" }),
-      );
+      await user.click(keepGoal);
       expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
       expect(prompt).toHaveValue("Keep this draft");
       expect(screen.getByLabelText("Goal progress")).toBeInTheDocument();

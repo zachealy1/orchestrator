@@ -338,12 +338,11 @@ export function KanbanTransitionDialog({
               usesSummaryLayout
                 ? "native-plan-icon-action cancel"
                 : isDelete
-                  ? "kanban-transition-icon-action"
+                  ? "native-plan-icon-action kanban-transition-icon-action"
                   : "secondary"
             }
             aria-label={iconOnlyActions ? "Cancel" : undefined}
-            title={iconOnlyActions ? "Cancel" : undefined}
-            data-tooltip={usesSummaryLayout ? "Cancel" : undefined}
+            data-tooltip={iconOnlyActions ? "Cancel" : undefined}
             disabled={busy}
             onClick={onCancel}
           >
@@ -356,12 +355,13 @@ export function KanbanTransitionDialog({
               usesSummaryLayout
                 ? "native-plan-icon-action implement"
                 : `${copy.danger ? "danger" : ""}${
-                    isDelete ? " kanban-transition-icon-action" : ""
+                    isDelete
+                      ? " native-plan-icon-action kanban-transition-icon-action"
+                      : ""
                   }`.trim() || undefined
             }
             aria-label={iconOnlyActions ? copy.confirm : undefined}
-            title={iconOnlyActions ? copy.confirm : undefined}
-            data-tooltip={usesSummaryLayout ? copy.confirm : undefined}
+            data-tooltip={iconOnlyActions ? copy.confirm : undefined}
             disabled={busy || confirmDisabled}
             onClick={() => void onConfirm()}
           >

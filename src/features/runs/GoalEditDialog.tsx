@@ -65,7 +65,6 @@ export function GoalEditDialog({
             className="native-plan-icon-action"
             type="button"
             aria-label="Keep current goal"
-            title="Keep current goal"
             data-tooltip="Keep current goal"
             disabled={!isIdle}
             onClick={onCancel}
@@ -76,7 +75,6 @@ export function GoalEditDialog({
             className="native-plan-icon-action"
             type="button"
             aria-label="Stop and edit goal"
-            title="Stop and edit goal"
             data-tooltip="Stop and edit goal"
             disabled={!isIdle}
             onClick={onConfirm}

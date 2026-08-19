@@ -1745,7 +1745,7 @@ const NativePlanCard = memo(function NativePlanCard({
             type="button"
             className="native-plan-icon-action implement"
             aria-label="Accept plan"
-            title="Accept plan"
+            data-tooltip="Accept plan"
             disabled={busy || !onImplementPlan}
             onClick={() => onImplementPlan?.(entry)}
           >
@@ -1755,7 +1755,7 @@ const NativePlanCard = memo(function NativePlanCard({
             type="button"
             className="native-plan-icon-action revise"
             aria-label="Update plan"
-            title="Update plan"
+            data-tooltip="Update plan"
             disabled={busy || !onRevisePlan}
             onClick={() => setRevising(true)}
           >
@@ -1765,7 +1765,7 @@ const NativePlanCard = memo(function NativePlanCard({
             type="button"
             className="native-plan-icon-action cancel"
             aria-label="Reject plan"
-            title="Reject plan"
+            data-tooltip="Reject plan"
             disabled={busy || !onCancelPlan}
             onClick={() => onCancelPlan?.(entry)}
           >

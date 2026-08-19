@@ -589,7 +589,6 @@ export function KanbanCardDialog({
               type="button"
               className="native-plan-icon-action cancel"
               aria-label="Cancel"
-              title="Cancel"
               data-tooltip="Cancel"
               disabled={saving}
               onClick={onCancel}
@@ -600,7 +599,6 @@ export function KanbanCardDialog({
               type="submit"
               className="native-plan-icon-action implement"
               aria-label={saving ? "Saving card" : submitLabel}
-              title={saving ? "Saving card" : submitLabel}
               data-tooltip={saving ? "Saving card" : submitLabel}
               disabled={saving}
             >

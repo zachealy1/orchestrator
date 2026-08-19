@@ -57,9 +57,7 @@ export const PlanProgressIndicator = memo(function PlanProgressIndicator({
       icon={<ProgressIcon state={progress.state} />}
       title={`Step ${progress.currentStep} / ${progress.totalSteps}`}
       description={progress.stepLabel || null}
-      descriptionTitle={progress.stepLabel || undefined}
       status={stateLabel}
-      statusTitle={stateLabel}
       trailing={
         <span className="plan-progress-track" aria-hidden="true">
           <span

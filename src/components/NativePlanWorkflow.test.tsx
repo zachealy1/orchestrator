@@ -119,9 +119,12 @@ describe("native Plan transcript workflow", () => {
     );
     expect(reviseButton).toHaveClass("native-plan-icon-action", "revise");
     expect(cancelButton).toHaveClass("native-plan-icon-action", "cancel");
-    expect(implementButton).toHaveAttribute("title", "Accept plan");
-    expect(reviseButton).toHaveAttribute("title", "Update plan");
-    expect(cancelButton).toHaveAttribute("title", "Reject plan");
+    expect(implementButton).toHaveAttribute("data-tooltip", "Accept plan");
+    expect(reviseButton).toHaveAttribute("data-tooltip", "Update plan");
+    expect(cancelButton).toHaveAttribute("data-tooltip", "Reject plan");
+    expect(implementButton).not.toHaveAttribute("title");
+    expect(reviseButton).not.toHaveAttribute("title");
+    expect(cancelButton).not.toHaveAttribute("title");
     expect(implementButton).not.toHaveTextContent("Accept plan");
     expect(reviseButton).not.toHaveTextContent("Revise");
     expect(cancelButton).not.toHaveTextContent("Cancel");

@@ -98,7 +98,6 @@ export const GoalProgressIndicator = memo(function GoalProgressIndicator({
               onClick={canPause ? onPause : onResume}
               disabled={pending}
               aria-label={actionLabel}
-              title={actionLabel}
               data-tooltip={actionLabel}
             >
               {canPause ? (
@@ -114,7 +113,6 @@ export const GoalProgressIndicator = memo(function GoalProgressIndicator({
             onClick={onEdit}
             disabled={pending}
             aria-label="Edit goal"
-            title="Edit goal"
             data-tooltip="Edit goal"
           >
             <Pencil size={15} aria-hidden="true" />
@@ -125,7 +123,6 @@ export const GoalProgressIndicator = memo(function GoalProgressIndicator({
             onClick={onStop}
             disabled={pending}
             aria-label="Stop goal"
-            title="Stop goal"
             data-tooltip="Stop goal"
           >
             <X size={15} aria-hidden="true" />
