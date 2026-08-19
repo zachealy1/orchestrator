@@ -85,4 +85,69 @@ describe("KanbanComposerOverlay", () => {
       "",
     );
   });
+
+  it("forwards unused composer wheel gestures to the board scroll region", () => {
+    render(
+      <div data-testid="mount">
+        <div className="kanban-board-groups" data-testid="board" />
+        <KanbanComposerOverlay>
+          <div className="composer-panel" data-testid="composer">
+            Composer
+          </div>
+        </KanbanComposerOverlay>
+      </div>,
+    );
+    const board = screen.getByTestId("board");
+    Object.defineProperties(board, {
+      clientHeight: { configurable: true, value: 400 },
+      scrollHeight: { configurable: true, value: 1_200 },
+    });
+
+    const wheel = new WheelEvent("wheel", {
+      bubbles: true,
+      cancelable: true,
+      deltaY: 160,
+    });
+    screen.getByTestId("composer").dispatchEvent(wheel);
+
+    expect(board.scrollTop).toBe(160);
+    expect(wheel.defaultPrevented).toBe(true);
+  });
+
+  it("does not hijack wheel gestures from scrollable composer content", () => {
+    render(
+      <div>
+        <div className="kanban-board-groups" data-testid="board" />
+        <KanbanComposerOverlay>
+          <div
+            className="composer-panel"
+            data-testid="composer-scroll-region"
+            style={{ overflowY: "auto" }}
+          >
+            Composer
+          </div>
+        </KanbanComposerOverlay>
+      </div>,
+    );
+    const board = screen.getByTestId("board");
+    const composer = screen.getByTestId("composer-scroll-region");
+    Object.defineProperties(board, {
+      clientHeight: { configurable: true, value: 400 },
+      scrollHeight: { configurable: true, value: 1_200 },
+    });
+    Object.defineProperties(composer, {
+      clientHeight: { configurable: true, value: 120 },
+      scrollHeight: { configurable: true, value: 360 },
+    });
+
+    composer.dispatchEvent(
+      new WheelEvent("wheel", {
+        bubbles: true,
+        cancelable: true,
+        deltaY: 100,
+      }),
+    );
+
+    expect(board.scrollTop).toBe(0);
+  });
 });

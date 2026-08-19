@@ -223,8 +223,11 @@ describe("Kanban local review styles", () => {
     const mount = sourceRule(shellCss, ".kanban-workspace-mount");
     const composer = sourceRule(shellCss, ".kanban-composer-shell");
 
+    expect(groups).toContain("height: 0");
+    expect(groups).toContain("flex: 1 1 0");
     expect(groups).toContain("overflow-x: hidden");
     expect(groups).toContain("overflow-y: auto");
+    expect(groups).toContain("overscroll-behavior-y: contain");
     expect(groups).toContain(
       "padding-bottom: calc(var(--kanban-composer-clearance, 220px) + 16px)",
     );

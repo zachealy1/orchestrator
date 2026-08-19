@@ -2601,12 +2601,14 @@ button.kanban-card-content {
 
 .kanban-board-groups {
   display: flex;
+  height: 0;
   min-height: 0;
-  flex: 1;
+  flex: 1 1 0;
   flex-direction: column;
   gap: 16px;
   overflow-x: hidden;
   overflow-y: auto;
+  overscroll-behavior-y: contain;
   padding-bottom: calc(var(--kanban-composer-clearance, 220px) + 16px);
   scroll-padding-bottom: calc(var(--kanban-composer-clearance, 220px) + 16px);
   scrollbar-gutter: stable;
