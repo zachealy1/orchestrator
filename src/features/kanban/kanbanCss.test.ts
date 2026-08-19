@@ -147,6 +147,28 @@ describe("Kanban local review styles", () => {
     expect(css).not.toContain(".kanban-card-footer > :last-child");
   });
 
+  it("keeps ticket content vertically compact", () => {
+    const card = rule(".kanban-card-tile");
+    const content = rule(".kanban-card-content");
+    const title = rule(".kanban-card-content strong");
+    const description = rule(".kanban-card-description");
+    const metadata = rule(".kanban-card-metadata");
+    const metadataItem = rule(".kanban-card-metadata > span");
+    const footer = rule(".kanban-card-footer");
+    const pullRequests = rule(".kanban-pr-status-list");
+
+    expect(card).toContain("gap: 5px");
+    expect(card).toContain("padding: 8px 10px");
+    expect(content).toContain("gap: 3px");
+    expect(title).toContain("line-height: 1.3");
+    expect(description).toContain("line-height: 1.35");
+    expect(metadata).toContain("gap: 3px 4px");
+    expect(metadataItem).toContain("padding: 1px 6px");
+    expect(footer).toContain("padding-top: 0");
+    expect(pullRequests).toContain("gap: 2px");
+    expect(pullRequests).toContain("padding-top: 0");
+  });
+
   it("keeps grouped cards in one scroll viewport above the composer", () => {
     const groups = rule(".kanban-board-groups");
     const nestedBoard = rule(".kanban-board-group .kanban-board");
