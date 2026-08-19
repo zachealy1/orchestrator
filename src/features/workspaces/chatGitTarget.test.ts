@@ -5,8 +5,10 @@ import type {
   KanbanGitStatusResult,
 } from "../kanban/api";
 import {
+  createKanbanChatFilePreviewTarget,
   kanbanRepositoriesToWorkspaceOverview,
   kanbanStatusToWorkspaceRepository,
+  resolveKanbanChatFileTarget,
 } from "./chatGitTarget";
 
 const binding: KanbanGitBinding = {
@@ -62,6 +64,96 @@ const diff: KanbanGitDiffResult = {
 };
 
 describe("chat Git target mapping", () => {
+  it("resolves workspace-prefixed transcript paths into the card worktree", () => {
+    const nestedBinding = {
+      ...binding,
+      sourceRepositoryPath: "/repo/space-invaders-test",
+      relativePath: "01-space-invaders-test",
+      worktreePath: "/cards/card-1/01-space-invaders-test",
+    };
+
+    expect(
+      resolveKanbanChatFileTarget(
+        [nestedBinding],
+        "01-space-invaders-test/src/game.ts:42",
+      ),
+    ).toEqual({
+      binding: nestedBinding,
+      repositoryRelativePath: "src/game.ts",
+    });
+    expect(
+      resolveKanbanChatFileTarget(
+        [nestedBinding],
+        "file:///cards/card-1/01-space-invaders-test/src/game.ts#L42",
+      ),
+    ).toEqual({
+      binding: nestedBinding,
+      repositoryRelativePath: "src/game.ts",
+    });
+  });
+
+  it("does not guess a bare path when a card spans multiple repositories", () => {
+    expect(
+      resolveKanbanChatFileTarget(
+        [
+          { ...binding, relativePath: "app" },
+          {
+            ...binding,
+            sourceRepositoryPath: "/repo/api",
+            relativePath: "api",
+            worktreePath: "/cards/card-1/api",
+          },
+        ],
+        "src/index.ts",
+      ),
+    ).toBeNull();
+  });
+
+  it("prefers the most specific repository for nested absolute paths", () => {
+    const nestedBinding = {
+      ...binding,
+      sourceRepositoryPath: "/repo/app/packages/game",
+      relativePath: "packages/game",
+      worktreePath: "/cards/card-1/game",
+    };
+    expect(
+      resolveKanbanChatFileTarget(
+        [binding, nestedBinding],
+        "/repo/app/packages/game/src/main.ts",
+      ),
+    ).toEqual({
+      binding: nestedBinding,
+      repositoryRelativePath: "src/main.ts",
+    });
+  });
+
+  it.each([
+    ["added", "A", false],
+    ["modified", "M", false],
+    ["renamed", "R", false],
+    ["deleted", "D", true],
+  ] as const)(
+    "projects %s transcript edits into the isolated file preview",
+    (status, badge, gitGhost) => {
+      const target = createKanbanChatFilePreviewTarget(
+        [binding],
+        "src/game.ts",
+        { name: "game.ts", status },
+      );
+
+      expect(target).toMatchObject({
+        repositoryRelativePath: "src/game.ts",
+        file: {
+          path: "/cards/card-1/app/src/game.ts",
+          relativePath: "src/game.ts",
+          gitGhost,
+        },
+        gitStatus: { statusKind: status, badge },
+      });
+      expect(target?.diffCacheKey).toContain(binding.baseCommit);
+    },
+  );
+
   it("projects an isolated Kanban worktree into the shared Git UI model", () => {
     const repository = kanbanStatusToWorkspaceRepository(
       "/repo",

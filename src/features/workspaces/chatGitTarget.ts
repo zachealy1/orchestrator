@@ -8,6 +8,7 @@ import type {
   WorkspaceGitOverview,
   WorkspaceGitRepositoryStatus,
   WorkspaceGitStatusKind,
+  WorkspaceTreeEntry,
 } from "./types";
 
 export type KanbanChatGitRepositoryState =
@@ -29,6 +30,176 @@ export type KanbanChatGitRepositoryState =
       repository: null;
       error: string;
     };
+
+export type KanbanChatFileTarget = {
+  binding: KanbanGitBinding;
+  repositoryRelativePath: string;
+};
+
+type KanbanChatEditedFile = {
+  name: string;
+  status: "added" | "modified" | "deleted" | "renamed" | "copied" | "unknown";
+};
+
+export type KanbanChatFilePreviewTarget = KanbanChatFileTarget & {
+  file: WorkspaceTreeEntry;
+  gitStatus: WorkspaceGitFileStatus | null;
+  diffCacheKey: string;
+};
+
+function normalizeFileTargetPath(path: string) {
+  let value = path.trim();
+  if (!value) return null;
+
+  if (/^[a-z][a-z\d+.-]*:/i.test(value)) {
+    try {
+      const url = new URL(value);
+      if (url.protocol !== "file:") return null;
+      value = decodeURIComponent(url.pathname);
+    } catch {
+      return null;
+    }
+  } else {
+    try {
+      value = decodeURIComponent(value.split("#", 1)[0].split("?", 1)[0]);
+    } catch {
+      value = value.split("#", 1)[0].split("?", 1)[0];
+    }
+  }
+
+  value = value.replace(/\\/g, "/").replace(/:\d+(?::\d+)?$/, "");
+  return value.replace(/^\.\//, "").replace(/\/+$/, "") || null;
+}
+
+function relativeChildPath(path: string, root: string) {
+  const normalizedRoot = root.replace(/\\/g, "/").replace(/\/+$/, "");
+  if (path === normalizedRoot) return "";
+  return path.startsWith(`${normalizedRoot}/`)
+    ? path.slice(normalizedRoot.length + 1)
+    : null;
+}
+
+function validRepositoryRelativePath(path: string) {
+  const normalized = path.replace(/^\/+/, "").replace(/^\.\//, "");
+  if (
+    !normalized ||
+    normalized === "." ||
+    normalized.split("/").some((segment) => segment === "..")
+  ) {
+    return null;
+  }
+  return normalized;
+}
+
+/** Resolves transcript paths without guessing between repositories in multi-repo cards. */
+export function resolveKanbanChatFileTarget(
+  bindings: KanbanGitBinding[],
+  path: string,
+): KanbanChatFileTarget | null {
+  const normalizedPath = normalizeFileTargetPath(path);
+  if (!normalizedPath || bindings.length === 0) return null;
+
+  const absoluteCandidates = bindings
+    .flatMap((binding) =>
+      [binding.worktreePath, binding.sourceRepositoryPath].map((root) => ({
+        binding,
+        root: root.replace(/\\/g, "/").replace(/\/+$/, ""),
+      })),
+    )
+    .sort((left, right) => right.root.length - left.root.length);
+  for (const { binding, root } of absoluteCandidates) {
+    const direct = relativeChildPath(normalizedPath, root);
+    const repositoryRelativePath =
+      direct === null ? null : validRepositoryRelativePath(direct);
+    if (repositoryRelativePath) return { binding, repositoryRelativePath };
+  }
+
+  const relativePath = normalizedPath.replace(/^\/+/, "");
+  const prefixedCandidates = bindings
+    .filter((binding) => binding.relativePath !== ".")
+    .map((binding) => ({
+      binding,
+      repositoryPrefix: binding.relativePath
+        .replace(/\\/g, "/")
+        .replace(/^\/+|\/+$/g, ""),
+    }))
+    .sort(
+      (left, right) =>
+        right.repositoryPrefix.length - left.repositoryPrefix.length,
+    );
+  for (const { binding, repositoryPrefix } of prefixedCandidates) {
+    if (!repositoryPrefix || !relativePath.startsWith(`${repositoryPrefix}/`)) {
+      continue;
+    }
+    const repositoryRelativePath = validRepositoryRelativePath(
+      relativePath.slice(repositoryPrefix.length + 1),
+    );
+    if (repositoryRelativePath) return { binding, repositoryRelativePath };
+  }
+
+  if (bindings.length !== 1) return null;
+  const repositoryRelativePath = validRepositoryRelativePath(relativePath);
+  return repositoryRelativePath
+    ? { binding: bindings[0], repositoryRelativePath }
+    : null;
+}
+
+function editedFileStatusKind(
+  editedFile: KanbanChatEditedFile | undefined,
+): WorkspaceGitStatusKind | null {
+  if (!editedFile) return null;
+  return editedFile.status === "unknown" ? "modified" : editedFile.status;
+}
+
+export function createKanbanChatFilePreviewTarget(
+  bindings: KanbanGitBinding[],
+  path: string,
+  editedFile?: KanbanChatEditedFile,
+): KanbanChatFilePreviewTarget | null {
+  const target = resolveKanbanChatFileTarget(bindings, path);
+  if (!target) return null;
+
+  const { binding, repositoryRelativePath } = target;
+  const worktreeRoot = binding.worktreePath.replace(/\/+$/, "");
+  const filePath = `${worktreeRoot}/${repositoryRelativePath}`;
+  const statusKind = editedFileStatusKind(editedFile);
+  const pathParts = repositoryRelativePath.split("/").filter(Boolean);
+  const gitStatus = statusKind
+    ? {
+        path: filePath,
+        relativePath: repositoryRelativePath,
+        repositoryPath: binding.sourceRepositoryPath,
+        repositoryRelativePath,
+        oldRelativePath: null,
+        indexStatus: " ",
+        worktreeStatus: " ",
+        statusKind,
+        badge: statusBadge(statusKind),
+      }
+    : null;
+
+  return {
+    binding,
+    repositoryRelativePath,
+    file: {
+      name:
+        editedFile?.name ??
+        pathParts[pathParts.length - 1] ??
+        repositoryRelativePath,
+      path: filePath,
+      relativePath: repositoryRelativePath,
+      kind: "file",
+      gitGhost: statusKind === "deleted",
+    },
+    gitStatus,
+    diffCacheKey: [
+      "kanban-card",
+      binding.worktreePath,
+      binding.baseCommit,
+      repositoryRelativePath,
+    ].join("\u0000"),
+  };
+}
 
 function pathLabel(binding: KanbanGitBinding) {
   const sourceParts = binding.sourceRepositoryPath.split(/[\\/]/).filter(Boolean);

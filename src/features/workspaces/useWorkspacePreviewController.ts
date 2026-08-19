@@ -54,6 +54,22 @@ type InvalidateWorkspacePreviewOptions = {
   reloadOpenPreview?: boolean;
 };
 
+type ActivePreviewContext = {
+  workspace: Workspace;
+  gitStatus?: WorkspaceGitFileStatus | null;
+  diffRequest?: OpenWorkspaceFilePreviewOptions["diffRequest"];
+};
+
+function previewDiffCacheKey(
+  workspace: Workspace,
+  file: WorkspaceTreeEntry,
+  context: ActivePreviewContext | null,
+) {
+  return context?.workspace.path === workspace.path && context.diffRequest
+    ? context.diffRequest.cacheKey
+    : workspaceCacheKey(workspace.path, file.path);
+}
+
 const emptyPreviewState = (): WorkspacePreviewState => ({
   status: "idle",
   mode: "preview",
@@ -83,6 +99,7 @@ export function useWorkspacePreviewController({
   const previewResizingRef = useRef(previewResizing);
   const previewRequestId = useRef(0);
   const activePreviewCacheKeyRef = useRef<string | null>(null);
+  const activePreviewContextRef = useRef<ActivePreviewContext | null>(null);
   const fileDiffCache = useRef(new Map<string, WorkspaceGitDiff>());
   const fileDiffRequestCache = useRef(
     new Map<string, Promise<WorkspaceGitDiff>>(),
@@ -124,6 +141,11 @@ export function useWorkspacePreviewController({
   const previewGitStatus = useMemo(() => {
     if (!previewState.file) {
       return null;
+    }
+
+    const activeContext = activePreviewContextRef.current;
+    if (activeContext?.gitStatus !== undefined) {
+      return activeContext.gitStatus;
     }
 
     const workspace =
@@ -255,7 +277,12 @@ export function useWorkspacePreviewController({
       file: WorkspaceTreeEntry,
       requestId = previewRequestId.current,
     ) => {
-      const cacheKey = workspaceCacheKey(workspace.path, file.path);
+      const activeContext = activePreviewContextRef.current;
+      const diffRequest =
+        activeContext?.workspace.path === workspace.path
+          ? activeContext.diffRequest
+          : undefined;
+      const cacheKey = previewDiffCacheKey(workspace, file, activeContext);
       const cachedDiff = fileDiffCache.current.get(cacheKey);
       if (cachedDiff) {
         setPreviewState((current) => ({
@@ -287,13 +314,16 @@ export function useWorkspacePreviewController({
           null;
         const request =
           existingRequest ??
-          readWorkspaceGitDiff(
-            workspace.path,
-            file.path,
-            repositoryPath,
+          (diffRequest
+            ? diffRequest.load()
+            : readWorkspaceGitDiff(
+                workspace.path,
+                file.path,
+                repositoryPath,
+              )
           ).finally(() => {
-            fileDiffRequestCache.current.delete(cacheKey);
-          });
+              fileDiffRequestCache.current.delete(cacheKey);
+            });
         if (!existingRequest) {
           fileDiffRequestCache.current.set(cacheKey, request);
         }
@@ -354,7 +384,9 @@ export function useWorkspacePreviewController({
       const requestId = previewRequestId.current + 1;
       previewRequestId.current = requestId;
       if (openPreview.mode === "diff") {
-        void loadWorkspaceFileDiff(workspace, openFile, requestId);
+        const activeWorkspace =
+          activePreviewContextRef.current?.workspace ?? workspace;
+        void loadWorkspaceFileDiff(activeWorkspace, openFile, requestId);
         return;
       }
 
@@ -370,7 +402,10 @@ export function useWorkspacePreviewController({
     ) => {
       const requestId = previewRequestId.current + 1;
       previewRequestId.current = requestId;
-      const gitStatus = gitStatusByRelativePath.get(file.relativePath) ?? null;
+      const gitStatus =
+        options.gitStatus !== undefined
+          ? options.gitStatus
+          : gitStatusByRelativePath.get(file.relativePath) ?? null;
       const mode =
         options.mode ??
         (gitStatus?.statusKind === "deleted" || file.gitGhost
@@ -378,8 +413,17 @@ export function useWorkspacePreviewController({
           : "preview");
       const cacheKey = workspacePreviewCacheKey(workspace.path, file.path);
       activePreviewCacheKeyRef.current = cacheKey;
+      activePreviewContextRef.current = {
+        workspace,
+        gitStatus,
+        diffRequest: options.diffRequest,
+      };
       if (options.forceRefresh) {
         invalidateWorkspacePreviewCaches(workspace, file.path);
+        if (options.diffRequest) {
+          fileDiffCache.current.delete(options.diffRequest.cacheKey);
+          fileDiffRequestCache.current.delete(options.diffRequest.cacheKey);
+        }
       }
       const cachedPreview = options.forceRefresh
         ? null
@@ -392,7 +436,12 @@ export function useWorkspacePreviewController({
       }
       const visiblePreview =
         cachedPreview ?? filePreviews.getPartial(workspace.path, file.path);
-      const cachedDiff = fileDiffCache.current.get(cacheKey) ?? null;
+      const diffCacheKey = previewDiffCacheKey(
+        workspace,
+        file,
+        activePreviewContextRef.current,
+      );
+      const cachedDiff = fileDiffCache.current.get(diffCacheKey) ?? null;
       setPreviewState({
         status:
           mode === "preview"
@@ -451,13 +500,18 @@ export function useWorkspacePreviewController({
   const setWorkspacePreviewMode = useStableEvent(
     (mode: "preview" | "diff") => {
       const file = previewState.file;
-      const workspace = selectedWorkspace;
+      const workspace =
+        activePreviewContextRef.current?.workspace ?? selectedWorkspace;
       if (!file || !workspace || previewState.mode === mode) {
         return;
       }
 
       setPreviewState((current) => ({ ...current, mode }));
-      const cacheKey = workspaceCacheKey(workspace.path, file.path);
+      const cacheKey = previewDiffCacheKey(
+        workspace,
+        file,
+        activePreviewContextRef.current,
+      );
       const cachedPreview = filePreviews.getCached(workspace.path, file.path);
       const cachedDiff = fileDiffCache.current.get(cacheKey);
       if (mode === "preview" && cachedPreview) {
@@ -497,6 +551,7 @@ export function useWorkspacePreviewController({
   const closeWorkspaceFilePreview = useStableEvent(() => {
     previewRequestId.current += 1;
     activePreviewCacheKeyRef.current = null;
+    activePreviewContextRef.current = null;
     setPreviewState(emptyPreviewState());
   });
 
@@ -506,6 +561,7 @@ export function useWorkspacePreviewController({
       pathBelongsToWorkspace(previewStateRef.current.file.path, workspace.path)
     ) {
       activePreviewCacheKeyRef.current = null;
+      activePreviewContextRef.current = null;
       setPreviewState(emptyPreviewState());
     }
     filePreviews.invalidate(workspace.path);

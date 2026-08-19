@@ -1,5 +1,8 @@
 import type { WorkspaceCommitIntentContext } from "../../lib/commitMessage";
-import type { WorkspaceGitFileStatus } from "./types";
+import type {
+  WorkspaceGitDiff,
+  WorkspaceGitFileStatus,
+} from "./types";
 
 export type CommitMessageGenerationSnapshot = {
   workspacePath: string;
@@ -21,4 +24,9 @@ export type RefreshWorkspaceGitStatusOptions = {
 export type OpenWorkspaceFilePreviewOptions = {
   forceRefresh?: boolean;
   mode?: "preview" | "diff";
+  gitStatus?: WorkspaceGitFileStatus | null;
+  diffRequest?: {
+    cacheKey: string;
+    load: () => Promise<WorkspaceGitDiff>;
+  };
 };

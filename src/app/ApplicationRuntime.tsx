@@ -129,6 +129,7 @@ import {
   provisionKanbanGit,
   pushKanbanGit,
   readKanbanGitDiff,
+  readKanbanGitFileDiff,
   readKanbanGitStatus,
   recoverInterruptedKanbanAttempts,
   rejectKanbanPlan,
@@ -532,6 +533,7 @@ import type {
   RefreshWorkspaceGitStatusOptions,
 } from "../features/workspaces/runtimeState";
 import {
+  createKanbanChatFilePreviewTarget,
   kanbanRepositoriesToWorkspaceOverview,
   kanbanStatusToWorkspaceRepository,
   type KanbanChatGitRepositoryState,
@@ -2047,31 +2049,52 @@ function App() {
     closeWorkspaceFilePreview,
     removeWorkspacePreview,
   } = workspacePreview;
-  const openTranscriptFileLink = useStableEvent((href: string) => {
-    const cardGitContext = kanbanChatGitContext;
-    if (
-      selectedWorkspace &&
-      cardGitContext &&
-      cardGitContext.chatId === selectedWorkspaceChatSession?.chatId &&
-      cardGitContext.kind === "kanban"
-    ) {
-      for (const repository of cardGitContext.repositories) {
-        const binding = repository.binding;
-        const worktreeWorkspace = {
-          ...selectedWorkspace,
-          path: binding.worktreePath,
-        };
-        const file = workspaceFileEntryFromResponseLink(
-          href,
-          worktreeWorkspace,
-        );
-        if (!file) continue;
-        void openWorkspaceFilePreview(worktreeWorkspace, file, {
-          forceRefresh: true,
-        });
-        return true;
+  const openKanbanChatFilePreview = useStableEvent(
+    (
+      path: string,
+      options: {
+        mode?: "preview" | "diff";
+        editedFile?: RunEditedFile;
+      } = {},
+    ) => {
+      const workspace = selectedWorkspaceRef.current;
+      const context = kanbanChatGitContext;
+      if (
+        !workspace ||
+        !context ||
+        context.kind !== "kanban" ||
+        context.chatId !== selectedWorkspaceChatSession?.chatId
+      ) {
+        return false;
       }
-    }
+
+      const target = createKanbanChatFilePreviewTarget(
+        context.repositories.map((repository) => repository.binding),
+        path,
+        options.editedFile,
+      );
+      if (!target) return false;
+
+      const { binding, repositoryRelativePath } = target;
+      const worktreeWorkspace: Workspace = {
+        ...workspace,
+        path: binding.worktreePath,
+        selected_git_repository_path: binding.worktreePath,
+      };
+      void openWorkspaceFilePreview(worktreeWorkspace, target.file, {
+        forceRefresh: true,
+        mode: options.mode,
+        gitStatus: target.gitStatus,
+        diffRequest: {
+          cacheKey: target.diffCacheKey,
+          load: () => readKanbanGitFileDiff(binding, repositoryRelativePath),
+        },
+      });
+      return true;
+    },
+  );
+  const openTranscriptFileLink = useStableEvent((href: string) => {
+    if (openKanbanChatFilePreview(href)) return true;
     return openTaskResponseFileLink(href);
   });
   useEffect(() => {
@@ -16862,6 +16885,17 @@ function App() {
     const workspace = selectedWorkspaceRef.current;
     if (!workspace || workspace.id !== entry.workspaceId) {
       throw new Error("Open the workspace for this edit before reviewing it");
+    }
+
+    if (
+      entry.chatId !== null &&
+      entry.chatId === kanbanChatGitContext?.chatId &&
+      openKanbanChatFilePreview(editedFile.path, {
+        mode: "diff",
+        editedFile,
+      })
+    ) {
+      return;
     }
 
     const file = workspaceFileEntryFromResponseLink(editedFile.path, workspace);

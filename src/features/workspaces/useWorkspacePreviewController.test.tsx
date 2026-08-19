@@ -239,4 +239,59 @@ describe("useWorkspacePreviewController", () => {
       PREVIEW_DRAWER_MIN_WIDTH,
     );
   });
+
+  it("retains a card-specific diff request across preview mode changes", async () => {
+    const worktreeWorkspace = {
+      ...workspace,
+      path: "/cards/card-1/repo",
+      selected_git_repository_path: "/cards/card-1/repo",
+    };
+    const file = {
+      ...entry("game.ts"),
+      path: "/cards/card-1/repo/game.ts",
+    };
+    const service = new WorkspaceFilePreviewService({
+      readInitial: vi.fn().mockResolvedValue(preview(file, "updated", { complete: true })),
+      readChunk: vi.fn(),
+      readVersion: vi.fn(),
+    });
+    const loadCardDiff = vi.fn().mockResolvedValue({
+      path: file.path,
+      relativePath: file.relativePath,
+      sections: [
+        {
+          kind: "unstaged",
+          title: "Card changes",
+          baseLabel: "main:game.ts",
+          headLabel: "codex/card:game.ts",
+          baseContent: "before\n",
+          headContent: "updated\n",
+          baseTruncated: false,
+          headTruncated: false,
+          content: "@@ -1 +1 @@\n-before\n+updated\n",
+          isBinary: false,
+        },
+      ],
+    });
+    const { result } = renderPreviewController(service);
+
+    await act(() =>
+      result.current.openWorkspaceFilePreview(worktreeWorkspace, file, {
+        diffRequest: {
+          cacheKey: "card-1\u0000game.ts",
+          load: loadCardDiff,
+        },
+      }),
+    );
+    act(() => result.current.drawerProps.onModeChange("diff"));
+
+    await waitFor(() =>
+      expect(result.current.previewState.diff?.sections[0]).toMatchObject({
+        title: "Card changes",
+        headContent: "updated\n",
+      }),
+    );
+    expect(loadCardDiff).toHaveBeenCalledTimes(1);
+    expect(mocks.readWorkspaceGitDiff).not.toHaveBeenCalled();
+  });
 });

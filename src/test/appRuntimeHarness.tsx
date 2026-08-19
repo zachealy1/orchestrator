@@ -93,6 +93,7 @@ const mocks = vi.hoisted(() => ({
   loadKanbanGitBindingsMock: vi.fn(),
   readKanbanGitStatusMock: vi.fn(),
   readKanbanGitDiffMock: vi.fn(),
+  readKanbanGitFileDiffMock: vi.fn(),
   commitKanbanGitMock: vi.fn(),
   pushKanbanGitMock: vi.fn(),
   loadKanbanInheritedContextMock: vi.fn(),
@@ -422,6 +423,7 @@ vi.mock("../features/kanban/api", async () => {
     loadKanbanGitBindings: mocks.loadKanbanGitBindingsMock,
     readKanbanGitStatus: mocks.readKanbanGitStatusMock,
     readKanbanGitDiff: mocks.readKanbanGitDiffMock,
+    readKanbanGitFileDiff: mocks.readKanbanGitFileDiffMock,
     commitKanbanGit: mocks.commitKanbanGitMock,
     pushKanbanGit: mocks.pushKanbanGitMock,
     loadKanbanInheritedContext: mocks.loadKanbanInheritedContextMock,
@@ -946,6 +948,11 @@ export function prepareDefaults() {
     content: "",
     untrackedPaths: [],
     isEmpty: true,
+  }));
+  mocks.readKanbanGitFileDiffMock.mockImplementation(async (binding, filePath) => ({
+    path: `${binding.worktreePath}/${filePath}`,
+    relativePath: filePath,
+    sections: [],
   }));
   mocks.commitKanbanGitMock.mockImplementation(
     async ({ binding, message }) => ({
