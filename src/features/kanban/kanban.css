@@ -199,9 +199,9 @@
 .kanban-card-tile {
   position: relative;
   display: grid;
-  gap: 8px;
+  gap: 5px;
   min-width: 0;
-  padding: 10px;
+  padding: 8px 10px;
   border: 1px solid var(--color-divider);
   border-radius: var(--radius);
   background: var(--color-component-background);
@@ -352,7 +352,7 @@
   display: grid;
   width: 100%;
   min-height: 0;
-  gap: 5px;
+  gap: 3px;
   margin: 0;
   padding: 0;
   border: 0;
@@ -401,7 +401,7 @@ button.kanban-card-content {
   overflow: hidden;
   font-size: 0.86rem;
   font-weight: 720;
-  line-height: 1.35;
+  line-height: 1.3;
   overflow-wrap: anywhere;
   -webkit-box-orient: vertical;
   -webkit-line-clamp: 2;
@@ -412,7 +412,7 @@ button.kanban-card-content {
   overflow: hidden;
   color: var(--color-text-secondary);
   font-size: 0.76rem;
-  line-height: 1.42;
+  line-height: 1.35;
   overflow-wrap: anywhere;
   -webkit-box-orient: vertical;
   -webkit-line-clamp: 2;
@@ -422,7 +422,7 @@ button.kanban-card-content {
   display: flex;
   min-width: 0;
   flex-wrap: wrap;
-  gap: 4px;
+  gap: 3px 4px;
 }
 
 .kanban-card-metadata > span {
@@ -431,7 +431,7 @@ button.kanban-card-content {
   overflow: hidden;
   align-items: center;
   justify-content: center;
-  padding: 2px 6px;
+  padding: 1px 6px;
   border: 1px solid var(--color-divider);
   border-radius: 999px;
   color: var(--color-text-secondary);
@@ -443,7 +443,7 @@ button.kanban-card-content {
 
 .kanban-card-footer {
   flex-wrap: wrap;
-  padding-top: 1px;
+  padding-top: 0;
   color: var(--color-text-secondary);
   font-size: 0.72rem;
 }
@@ -459,8 +459,8 @@ button.kanban-card-content {
 
 .kanban-pr-status-list {
   display: grid;
-  gap: 3px;
-  padding-top: 2px;
+  gap: 2px;
+  padding-top: 0;
   color: var(--color-text-secondary);
   font-size: 0.72rem;
   line-height: 1.35;
