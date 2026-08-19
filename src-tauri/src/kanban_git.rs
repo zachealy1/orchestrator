@@ -1217,7 +1217,7 @@ fn base_branch_head(source: &Path, binding: &KanbanGitRepositoryBinding) -> Opti
     rev_parse(source, &reference).ok()
 }
 
-fn is_empty_root_commit(repo: &Path, commit: &str) -> Result<bool, String> {
+pub(crate) fn is_empty_root_commit(repo: &Path, commit: &str) -> Result<bool, String> {
     let revision = git_checked(
         repo,
         &["rev-list", "--parents", "-n", "1", commit],

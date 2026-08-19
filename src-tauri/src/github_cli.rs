@@ -727,42 +727,127 @@ pub(crate) async fn push_branch(
     repository: &str,
     branch: &str,
 ) -> Result<(), String> {
+    push_ref(
+        app,
+        worktree,
+        remote,
+        owner,
+        repository,
+        branch,
+        branch,
+        "GitHub rejected the branch push",
+    )
+    .await
+}
+
+pub(crate) async fn ensure_base_branch(
+    app: &AppHandle,
+    worktree: &Path,
+    remote: &str,
+    owner: &str,
+    repository: &str,
+    base_commit: &str,
+    base_branch: &str,
+) -> Result<(), String> {
     let app = app.clone();
     let worktree = worktree.to_path_buf();
     let remote = remote.to_string();
     let owner = owner.to_string();
     let repository = repository.to_string();
-    let branch = branch.to_string();
+    let base_commit = base_commit.to_string();
+    let base_branch = base_branch.to_string();
     tauri::async_runtime::spawn_blocking(move || {
         let runtime = resolve_github_cli_runtime(&app)?;
         ensure_authenticated(&runtime)?;
-        let refspec = format!("{branch}:refs/heads/{branch}");
-        let mut command = Command::new("git");
-        command.arg("-C").arg(&worktree);
-        let helper = if is_ssh_remote(&remote) {
-            None
-        } else {
-            let helper = credential_helper(&runtime)?;
-            command
-                .args(["-c", "credential.helper="])
-                .arg("-c")
-                .arg(format!("credential.helper={}", helper.to_string_lossy()));
-            Some(helper)
-        };
-        let destination = if is_ssh_remote(&remote) {
-            remote.clone()
-        } else {
-            format!("https://github.com/{owner}/{repository}.git")
-        };
-        let output = command
+        let (destination, helper) = git_remote_destination(&runtime, &remote, &owner, &repository)?;
+        let result = ensure_base_branch_at_destination(
+            &runtime,
+            &worktree,
+            &destination,
+            helper.as_deref(),
+            &base_commit,
+            &base_branch,
+        );
+        if let Some(helper) = helper {
+            let _ = fs::remove_file(helper);
+        }
+        result
+    })
+    .await
+    .map_err(|error| format!("GitHub base branch preparation stopped unexpectedly: {error}"))?
+}
+
+fn ensure_base_branch_at_destination(
+    runtime: &GithubCliRuntime,
+    worktree: &Path,
+    destination: &str,
+    helper: Option<&Path>,
+    base_commit: &str,
+    base_branch: &str,
+) -> Result<(), String> {
+    let remote_ref = format!("refs/heads/{base_branch}");
+    let probe = git_remote_command(runtime, worktree, helper)
+        .args(["ls-remote", "--exit-code", "--heads"])
+        .arg(destination)
+        .arg(&remote_ref)
+        .output()
+        .map_err(|error| format!("GitHub base branch check could not be started: {error}"))?;
+    if probe.status.success() {
+        return Ok(());
+    }
+    if probe.status.code() != Some(2) {
+        let stderr = String::from_utf8_lossy(&probe.stderr).trim().to_string();
+        return Err(map_error_text(
+            "GitHub could not check the pull request base branch",
+            &stderr,
+        ));
+    }
+
+    let refspec = format!("{base_commit}:{remote_ref}");
+    let output = git_remote_command(runtime, worktree, helper)
+        .args(["push", "--porcelain"])
+        .arg(destination)
+        .arg(refspec)
+        .output()
+        .map_err(|error| format!("GitHub base branch push could not be started: {error}"))?;
+    if output.status.success() {
+        Ok(())
+    } else {
+        let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+        Err(map_error_text(
+            "GitHub could not create the pull request base branch",
+            &stderr,
+        ))
+    }
+}
+
+async fn push_ref(
+    app: &AppHandle,
+    worktree: &Path,
+    remote: &str,
+    owner: &str,
+    repository: &str,
+    source: &str,
+    destination_branch: &str,
+    failure_label: &str,
+) -> Result<(), String> {
+    let app = app.clone();
+    let worktree = worktree.to_path_buf();
+    let remote = remote.to_string();
+    let owner = owner.to_string();
+    let repository = repository.to_string();
+    let source = source.to_string();
+    let destination_branch = destination_branch.to_string();
+    let failure_label = failure_label.to_string();
+    tauri::async_runtime::spawn_blocking(move || {
+        let runtime = resolve_github_cli_runtime(&app)?;
+        ensure_authenticated(&runtime)?;
+        let refspec = format!("{source}:refs/heads/{destination_branch}");
+        let (destination, helper) = git_remote_destination(&runtime, &remote, &owner, &repository)?;
+        let output = git_remote_command(&runtime, &worktree, helper.as_deref())
             .args(["push", "--porcelain"])
-            .arg(destination)
+            .arg(&destination)
             .arg(refspec)
-            .env("GH_CONFIG_DIR", &runtime.config_dir)
-            .env("GIT_TERMINAL_PROMPT", "0")
-            .env_remove("GH_TOKEN")
-            .env_remove("GITHUB_TOKEN")
-            .stdin(Stdio::null())
             .output()
             .map_err(|error| format!("Git push could not be started: {error}"));
         if let Some(helper) = helper {
@@ -773,11 +858,49 @@ pub(crate) async fn push_branch(
             Ok(())
         } else {
             let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
-            Err(map_error_text("GitHub rejected the branch push", &stderr))
+            Err(map_error_text(&failure_label, &stderr))
         }
     })
     .await
     .map_err(|error| format!("Git push stopped unexpectedly: {error}"))?
+}
+
+fn git_remote_destination(
+    runtime: &GithubCliRuntime,
+    remote: &str,
+    owner: &str,
+    repository: &str,
+) -> Result<(String, Option<PathBuf>), String> {
+    if is_ssh_remote(remote) {
+        Ok((remote.to_string(), None))
+    } else {
+        Ok((
+            format!("https://github.com/{owner}/{repository}.git"),
+            Some(credential_helper(runtime)?),
+        ))
+    }
+}
+
+fn git_remote_command(
+    runtime: &GithubCliRuntime,
+    worktree: &Path,
+    helper: Option<&Path>,
+) -> Command {
+    let mut command = Command::new("git");
+    command.arg("-C").arg(worktree);
+    if let Some(helper) = helper {
+        command
+            .args(["-c", "credential.helper="])
+            .arg("-c")
+            .arg(format!("credential.helper={}", helper.to_string_lossy()));
+    }
+    command
+        .env("GH_CONFIG_DIR", &runtime.config_dir)
+        .env("GIT_TERMINAL_PROMPT", "0")
+        .env_remove("GH_TOKEN")
+        .env_remove("GITHUB_TOKEN")
+        .stdin(Stdio::null());
+    command
 }
 
 fn run_login(app: &AppHandle, state: &GithubState) -> Result<(), String> {
@@ -1410,12 +1533,48 @@ impl From<GhPullRequest> for GithubPullRequest {
 #[cfg(test)]
 mod tests {
     use super::{
-        github_login_command, has_active_authentication, is_device_login_line, is_ssh_remote,
-        map_error_text, parse_device_code_line, read_login_stderr, sanitize_login_error,
-        shell_quote, GithubCliRuntime, GITHUB_DEVICE_LOGIN_URL,
+        ensure_base_branch_at_destination, github_login_command, has_active_authentication,
+        is_device_login_line, is_ssh_remote, map_error_text, parse_device_code_line,
+        read_login_stderr, sanitize_login_error, shell_quote, GithubCliRuntime,
+        GITHUB_DEVICE_LOGIN_URL,
     };
     use serde_json::json;
-    use std::{ffi::OsStr, io::Cursor, path::Path};
+    use std::{
+        ffi::OsStr,
+        fs,
+        io::Cursor,
+        path::{Path, PathBuf},
+        process::Command,
+        time::{SystemTime, UNIX_EPOCH},
+    };
+
+    fn git(repo: &Path, args: &[&str]) -> String {
+        let output = Command::new("git")
+            .arg("-C")
+            .arg(repo)
+            .args(args)
+            .output()
+            .expect("run Git command");
+        assert!(
+            output.status.success(),
+            "Git command failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        String::from_utf8_lossy(&output.stdout).trim().to_string()
+    }
+
+    fn temporary_directory(label: &str) -> PathBuf {
+        let nonce = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("clock")
+            .as_nanos();
+        let path = std::env::temp_dir().join(format!(
+            "orchestrator-github-cli-{label}-{}-{nonce}",
+            std::process::id()
+        ));
+        fs::create_dir_all(&path).expect("create temporary directory");
+        path
+    }
 
     #[test]
     fn configures_browser_login_for_macos() {
@@ -1446,6 +1605,59 @@ mod tests {
                 Some(OsStr::new("/usr/bin/true")),
             );
         }
+    }
+
+    #[test]
+    fn creates_a_missing_pull_request_base_without_overwriting_it() {
+        let root = temporary_directory("base-branch");
+        let repository = root.join("repository");
+        let remote = root.join("remote.git");
+        fs::create_dir_all(&repository).expect("create repository");
+        fs::create_dir_all(&remote).expect("create remote");
+        git(&repository, &["init", "-b", "card"]);
+        git(&repository, &["config", "user.name", "Orchestrator Test"]);
+        git(
+            &repository,
+            &["config", "user.email", "orchestrator@example.test"],
+        );
+        fs::write(repository.join("README.md"), "base\n").expect("write base file");
+        git(&repository, &["add", "README.md"]);
+        git(&repository, &["commit", "-m", "Base"]);
+        let base_commit = git(&repository, &["rev-parse", "HEAD"]);
+        git(&remote, &["init", "--bare"]);
+        let runtime = GithubCliRuntime {
+            executable: "/tmp/unused-gh".into(),
+            config_dir: root.join("gh-config"),
+            version: "test".to_string(),
+        };
+        let destination = remote.to_string_lossy().to_string();
+
+        ensure_base_branch_at_destination(
+            &runtime,
+            &repository,
+            &destination,
+            None,
+            &base_commit,
+            "main",
+        )
+        .expect("create base branch");
+        assert_eq!(git(&remote, &["rev-parse", "refs/heads/main"]), base_commit);
+
+        fs::write(repository.join("README.md"), "changed\n").expect("change file");
+        git(&repository, &["commit", "-am", "Change"]);
+        let newer_commit = git(&repository, &["rev-parse", "HEAD"]);
+        ensure_base_branch_at_destination(
+            &runtime,
+            &repository,
+            &destination,
+            None,
+            &newer_commit,
+            "main",
+        )
+        .expect("keep existing base branch");
+        assert_eq!(git(&remote, &["rev-parse", "refs/heads/main"]), base_commit);
+
+        let _ = fs::remove_dir_all(root);
     }
 
     #[test]

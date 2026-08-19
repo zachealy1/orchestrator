@@ -2,8 +2,8 @@ use crate::{
     git::generate_workspace_repository_commit_message_blocking,
     github_cli,
     kanban_git::{
-        kanban_git_commit, kanban_git_status, KanbanGitBindingRequest, KanbanGitCommitRequest,
-        KanbanGitRepositoryBinding,
+        is_empty_root_commit, kanban_git_commit, kanban_git_status, KanbanGitBindingRequest,
+        KanbanGitCommitRequest, KanbanGitRepositoryBinding,
     },
     models::WorkspaceCommitIntentContext,
     DatabaseState,
@@ -377,6 +377,21 @@ async fn publish_record(
         drop(connection);
         touch_card_board(&app, &card_id).await?;
         return Ok(());
+    }
+    if is_empty_root_commit(
+        Path::new(&next_binding.worktree_path),
+        &next_binding.base_commit,
+    )? {
+        github_cli::ensure_base_branch(
+            &app,
+            Path::new(&next_binding.worktree_path),
+            &remote,
+            &owner,
+            &repository,
+            &next_binding.base_commit,
+            &next_binding.base_branch,
+        )
+        .await?;
     }
     let head_commit =
         push_with_github_cli(&app, &next_binding, &remote, &owner, &repository).await?;
