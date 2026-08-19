@@ -985,6 +985,14 @@ button.edited-files-disclosure:focus-visible:not(:disabled) {
   white-space: pre-wrap;
 }
 
+.stream-message > :first-child {
+  margin-block-start: 0;
+}
+
+.stream-message > :last-child {
+  margin-block-end: 0;
+}
+
 .stream-event,
 .stream-placeholder {
   display: inline-flex;

@@ -26,4 +26,14 @@ describe("high-speed transcript scrolling CSS", () => {
     expect(transcript).toContain("-webkit-overflow-scrolling: touch");
     expect(realRow).toContain("background: var(--color-background)");
   });
+
+  it("uses the timeline gap as the only outer spacing around streamed messages", () => {
+    const timeline = rule(".stream-event-list");
+    const firstMessageChild = rule(".stream-message > :first-child");
+    const lastMessageChild = rule(".stream-message > :last-child");
+
+    expect(timeline).toContain("gap: 18px");
+    expect(firstMessageChild).toContain("margin-block-start: 0");
+    expect(lastMessageChild).toContain("margin-block-end: 0");
+  });
 });
