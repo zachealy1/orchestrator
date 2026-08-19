@@ -102,6 +102,26 @@ describe("FloatingHeaderStatusBubble", () => {
     expect(screen.getByText("Approval needed")).toBeInTheDocument();
   });
 
+  it("dismisses one notice immediately without affecting the remaining stack", () => {
+    const onDismiss = vi.fn();
+    render(
+      <FloatingHeaderStatusBubble
+        notices={[persistentApproval, transientWarning]}
+        anchorElement={anchorElement}
+        active
+        onDismiss={onDismiss}
+      />,
+    );
+
+    fireEvent.click(
+      screen.getByRole("button", { name: "Dismiss Goal update failed" }),
+    );
+
+    expect(screen.queryByText("Goal update failed")).not.toBeInTheDocument();
+    expect(screen.getByText("Approval needed")).toBeInTheDocument();
+    expect(onDismiss).toHaveBeenCalledWith("warning");
+  });
+
   it("pauses transient notice time while hovered or keyboard-focused", () => {
     vi.useFakeTimers();
     const actionableWarning = {

@@ -45,9 +45,11 @@ describe("Kanban local review styles", () => {
     expect(anchor).toContain("height: 0");
     expect(anchor).toContain("flex: 0 0 0");
     expect(anchor).toContain("pointer-events: none");
-    expect(bubble).toContain("right: 16px");
-    expect(bubble).toContain("left: 16px");
-    expect(bubble).toContain("max-width: none");
+    expect(bubble).toContain("top: 24px");
+    expect(bubble).toContain("left: 50%");
+    expect(bubble).toContain("width: min(760px, calc(100% - 64px))");
+    expect(bubble).toContain("max-width: calc(100% - 32px)");
+    expect(bubble).toContain("transform: translateX(-50%)");
     expect(bubble).toContain("pointer-events: auto");
   });
 

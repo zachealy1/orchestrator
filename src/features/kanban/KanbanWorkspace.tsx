@@ -796,6 +796,19 @@ export function KanbanWorkspace({
     return notices;
   }, [bindingErrorStatus, errorStatus, successStatus, workspace.id]);
 
+  const dismissFloatingStatusNotice = useCallback(
+    (noticeId: string) => {
+      if (noticeId === `kanban-action-error-${workspace.id}`) {
+        setErrorStatus(null);
+      } else if (noticeId === `kanban-binding-error-${workspace.id}`) {
+        setBindingErrorStatus(null);
+      } else if (noticeId === `kanban-action-success-${workspace.id}`) {
+        setSuccessStatus(null);
+      }
+    },
+    [workspace.id],
+  );
+
   const performBoardLoad = useCallback(async (includeArchived: boolean) => {
     const request = ++requestSequence.current;
     if (!snapshotRef.current) setLoading(true);
@@ -2094,6 +2107,7 @@ export function KanbanWorkspace({
         notices={floatingStatusNotices}
         anchorElement={statusAnchorElement}
         active={active}
+        onDismiss={dismissFloatingStatusNotice}
       />
       {active
         ? toolbarHost === undefined

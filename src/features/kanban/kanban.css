@@ -2590,13 +2590,15 @@ button.kanban-card-content {
 }
 
 .kanban-floating-status-anchor .floating-header-status-bubble {
-  top: 12px;
-  right: 16px;
-  left: 16px;
-  width: auto;
-  max-width: none;
+  top: 24px;
+  right: auto;
+  left: 50%;
+  width: min(760px, calc(100% - 64px));
+  max-width: calc(100% - 32px);
   margin-inline: 0;
+  box-shadow: 0 10px 28px rgb(var(--shadow-rgb) / 0.14);
   pointer-events: auto;
+  transform: translateX(-50%);
 }
 
 .kanban-board-groups {

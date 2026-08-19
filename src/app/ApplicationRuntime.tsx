@@ -16086,7 +16086,9 @@ function App() {
                 error:
                   error instanceof Error
                     ? error.message
-                    : "The implementation could not be started.",
+                    : typeof error === "string" && error.trim()
+                      ? error
+                      : "The implementation could not be started.",
               }
             : current,
         );

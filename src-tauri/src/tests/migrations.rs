@@ -28,7 +28,7 @@ fn resolved_plugin_migrator(
 }
 
 #[test]
-fn existing_versions_one_through_twenty_five_upgrade_through_thirty_eight() {
+fn existing_versions_one_through_twenty_five_upgrade_through_thirty_nine() {
     tauri::async_runtime::block_on(async {
         let mut connection = SqliteConnection::connect("sqlite::memory:")
             .await
@@ -58,7 +58,7 @@ fn existing_versions_one_through_twenty_five_upgrade_through_thirty_eight() {
         .fetch_one(&mut connection)
         .await
         .expect("count upgraded migrations");
-        assert_eq!(applied_count, 38);
+        assert_eq!(applied_count, 39);
 
         resolved_plugin_migrator(MIGRATION_DEFINITIONS)
             .run_direct(&mut connection)
@@ -702,6 +702,171 @@ fn invalid_root_subagents_are_removed_in_a_new_migration_slot() {
             .await
             .expect("read cleaned subagents");
         assert_eq!(ids, vec!["valid"]);
+    });
+}
+
+#[test]
+fn plan_implementation_attempts_upgrade_without_losing_related_state() {
+    tauri::async_runtime::block_on(async {
+        let mut connection = SqliteConnection::connect("sqlite::memory:")
+            .await
+            .expect("open Plan implementation migration database");
+        resolved_plugin_migrator(&MIGRATION_DEFINITIONS[..38])
+            .run_direct(&mut connection)
+            .await
+            .expect("apply migrations through 38");
+
+        sqlx::query(
+            "INSERT INTO workspaces (id, path, label) VALUES (1, '/workspace', 'Workspace')",
+        )
+        .execute(&mut connection)
+        .await
+        .expect("insert workspace");
+        sqlx::query(
+            "INSERT INTO chats (id, workspace_id, title, status, surface)
+             VALUES (1, 1, 'Plan card', 'completed', 'kanban')",
+        )
+        .execute(&mut connection)
+        .await
+        .expect("insert chat");
+        sqlx::query(
+            "INSERT INTO tasks (
+                id, workspace_id, original_prompt, improved_prompt,
+                route_recommendation, budget_tokens, status
+             ) VALUES (1, 1, 'Plan it', 'Plan it', 'direct', 1000, 'completed')",
+        )
+        .execute(&mut connection)
+        .await
+        .expect("insert task");
+        sqlx::query(
+            "INSERT INTO runs (
+                id, task_id, workspace_id, chat_id, status, collaboration_mode,
+                run_intent, plan_review_state, completed_plan_item_id,
+                completed_plan_text
+             ) VALUES (
+                1, 1, 1, 1, 'completed', 'plan', 'plan', 'available',
+                'plan-item', 'Approved implementation plan'
+             )",
+        )
+        .execute(&mut connection)
+        .await
+        .expect("insert Plan run");
+        sqlx::query(
+            "INSERT INTO kanban_cards (
+                id, workspace_id, chat_id, title, description, access_mode,
+                repository_scope, stage, sort_position, execution_state,
+                review_state, current_attempt_id, execution_settings_json
+             ) VALUES (
+                'card-plan', 1, 1, 'Plan card', 'Plan it', 'ask-for-approval',
+                'all', 'in_review', 1024, 'completed', 'awaiting_review',
+                'attempt-plan', '{\"version\":3,\"mode\":\"plan\",\"intent\":\"plan\"}'
+             )",
+        )
+        .execute(&mut connection)
+        .await
+        .expect("insert Plan card");
+        sqlx::query(
+            "INSERT INTO kanban_attempts (
+                id, card_id, generation, attempt_kind, status, prompt,
+                config_snapshot_json, run_id, task_id, thread_id, turn_id,
+                last_event_sequence
+             ) VALUES (
+                'attempt-plan', 'card-plan', 1, 'start', 'completed', 'Plan it',
+                '{}', 1, 1, 'thread-plan', 'turn-plan', 3
+             )",
+        )
+        .execute(&mut connection)
+        .await
+        .expect("insert completed Plan attempt");
+        sqlx::query(
+            "INSERT INTO kanban_pending_requests (
+                id, card_id, attempt_id, request_kind, request_key,
+                payload_json, status
+             ) VALUES (
+                'request-plan', 'card-plan', 'attempt-plan', 'user_input',
+                'question-plan', '{}', 'resolved'
+             )",
+        )
+        .execute(&mut connection)
+        .await
+        .expect("insert related request");
+        sqlx::query(
+            "INSERT INTO kanban_review_decisions (
+                card_id, attempt_id, decision, message
+             ) VALUES ('card-plan', 'attempt-plan', 'changes_requested', 'Revise it')",
+        )
+        .execute(&mut connection)
+        .await
+        .expect("insert related review decision");
+        sqlx::query(
+            "INSERT INTO kanban_runtime_events (
+                card_id, attempt_id, generation, sequence, event_key,
+                event_type, payload_json
+             ) VALUES (
+                'card-plan', 'attempt-plan', 1, 3, 'event-plan', 'completed', '{}'
+             )",
+        )
+        .execute(&mut connection)
+        .await
+        .expect("insert related runtime event");
+        sqlx::query(
+            "INSERT INTO kanban_plan_results (
+                attempt_id, card_id, run_id, plan_item_id, plan_text
+             ) VALUES (
+                'attempt-plan', 'card-plan', 1, 'plan-item',
+                'Approved implementation plan'
+             )",
+        )
+        .execute(&mut connection)
+        .await
+        .expect("insert awaiting Plan result");
+
+        resolved_plugin_migrator(MIGRATION_DEFINITIONS)
+            .run_direct(&mut connection)
+            .await
+            .expect("apply Plan implementation attempt migration");
+
+        for table in [
+            "kanban_pending_requests",
+            "kanban_review_decisions",
+            "kanban_runtime_events",
+            "kanban_plan_results",
+        ] {
+            let count: i64 = sqlx::query_scalar(&format!("SELECT COUNT(*) FROM {table}"))
+                .fetch_one(&mut connection)
+                .await
+                .unwrap_or_else(|error| panic!("count preserved {table} rows: {error}"));
+            assert_eq!(count, 1, "{table} rows must survive the table rebuild");
+        }
+
+        sqlx::query(
+            "INSERT INTO kanban_attempts (
+                id, card_id, generation, attempt_kind, status, prompt,
+                config_snapshot_json
+             ) VALUES (
+                'attempt-implementation', 'card-plan', 2, 'implement_plan',
+                'provisioning', 'Implement this approved plan', '{}'
+             )",
+        )
+        .execute(&mut connection)
+        .await
+        .expect("insert Plan implementation attempt");
+
+        let attempt_kind: String = sqlx::query_scalar(
+            "SELECT attempt_kind FROM kanban_attempts
+             WHERE id = 'attempt-implementation'",
+        )
+        .fetch_one(&mut connection)
+        .await
+        .expect("read Plan implementation attempt");
+        assert_eq!(attempt_kind, "implement_plan");
+
+        let foreign_key_failures: Vec<String> =
+            sqlx::query_scalar("SELECT \"table\" FROM pragma_foreign_key_check")
+                .fetch_all(&mut connection)
+                .await
+                .expect("check migrated foreign keys");
+        assert!(foreign_key_failures.is_empty());
     });
 }
 

@@ -3,6 +3,7 @@ import {
   ChevronRight,
   CircleAlert,
   ShieldCheck,
+  X,
 } from "lucide-react";
 import {
   memo,
@@ -31,6 +32,7 @@ type Props = {
   anchorElement: HTMLElement | null;
   active: boolean;
   onActivate?: (noticeId: string) => void;
+  onDismiss?: (noticeId: string) => void;
 };
 
 type NoticeTimer = {
@@ -55,9 +57,11 @@ export const FloatingHeaderStatusBubble = memo(
     anchorElement,
     active,
     onActivate,
+    onDismiss,
   }: Props) {
     const timersRef = useRef(new Map<string, NoticeTimer>());
     const interactionsRef = useRef(new Map<string, NoticeInteraction>());
+    const manuallyDismissedRevisionsRef = useRef(new Map<string, string>());
     const lastVisibleNoticesRef = useRef<FloatingStatusNotice[]>([]);
     const [timerRevision, setTimerRevision] = useState(0);
     const [interactionRevision, setInteractionRevision] = useState(0);
@@ -76,10 +80,21 @@ export const FloatingHeaderStatusBubble = memo(
         if (timer.timeoutId !== null) window.clearTimeout(timer.timeoutId);
         timersRef.current.delete(noticeId);
         interactionsRef.current.delete(noticeId);
+        manuallyDismissedRevisionsRef.current.delete(noticeId);
         changed = true;
       }
 
       for (const notice of notices) {
+        const dismissedRevision = manuallyDismissedRevisionsRef.current.get(
+          notice.id,
+        );
+        if (
+          dismissedRevision !== undefined &&
+          dismissedRevision !== notice.revisionKey
+        ) {
+          manuallyDismissedRevisionsRef.current.delete(notice.id);
+          changed = true;
+        }
         if (notice.timeoutMs === null) {
           const existing = timersRef.current.get(notice.id);
           if (existing?.timeoutId !== null && existing?.timeoutId !== undefined) {
@@ -203,7 +218,37 @@ export const FloatingHeaderStatusBubble = memo(
       [],
     );
 
+    const dismissNotice = useCallback(
+      (notice: FloatingStatusNotice) => {
+        manuallyDismissedRevisionsRef.current.set(
+          notice.id,
+          notice.revisionKey,
+        );
+        lastVisibleNoticesRef.current = lastVisibleNoticesRef.current.filter(
+          (candidate) => candidate.id !== notice.id,
+        );
+        const timer = timersRef.current.get(notice.id);
+        if (timer?.timeoutId !== null && timer?.timeoutId !== undefined) {
+          window.clearTimeout(timer.timeoutId);
+        }
+        if (timer) {
+          timer.timeoutId = null;
+          timer.startedAtMs = null;
+          timer.dismissed = true;
+        }
+        setTimerRevision((current) => current + 1);
+        onDismiss?.(notice.id);
+      },
+      [onDismiss],
+    );
+
     const visibleNotices = notices.filter((notice) => {
+      if (
+        manuallyDismissedRevisionsRef.current.get(notice.id) ===
+        notice.revisionKey
+      ) {
+        return false;
+      }
       const timer = timersRef.current.get(notice.id);
       return notice.timeoutMs === null || !timer?.dismissed;
     });
@@ -250,6 +295,7 @@ export const FloatingHeaderStatusBubble = memo(
             key={`${notice.id}:${notice.revisionKey}`}
             notice={notice}
             onActivate={onActivate}
+            onDismiss={onDismiss ? () => dismissNotice(notice) : undefined}
             onHoverChange={(hovered) =>
               setInteraction(notice.id, "hovered", hovered)
             }
@@ -267,11 +313,13 @@ export const FloatingHeaderStatusBubble = memo(
 function FloatingStatusRow({
   notice,
   onActivate,
+  onDismiss,
   onHoverChange,
   onFocusChange,
 }: {
   notice: FloatingStatusNotice;
   onActivate?: (noticeId: string) => void;
+  onDismiss?: () => void;
   onHoverChange: (hovered: boolean) => void;
   onFocusChange: (focused: boolean) => void;
 }) {
@@ -326,6 +374,17 @@ function FloatingStatusRow({
       ) : (
         <div className="composer-status-content">{content}</div>
       )}
+      {onDismiss ? (
+        <button
+          className="composer-status-dismiss"
+          type="button"
+          aria-label={`Dismiss ${notice.title}`}
+          title={`Dismiss ${notice.title}`}
+          onClick={onDismiss}
+        >
+          <X size={14} aria-hidden="true" />
+        </button>
+      ) : null}
     </div>
   );
 }

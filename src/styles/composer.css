@@ -192,8 +192,10 @@ select:disabled {
 }
 
 .composer-status-notice {
+  display: flex;
   min-width: 0;
   min-height: 32px;
+  align-items: center;
   overflow: hidden;
   border: 0;
   border-bottom: 1px solid var(--color-divider);
@@ -691,6 +693,7 @@ button.prompt-queue-icon-action {
   display: flex;
   width: 100%;
   min-width: 0;
+  flex: 1 1 auto;
   min-height: 32px;
   align-items: center;
   gap: 8px;
@@ -719,6 +722,41 @@ button.composer-status-action:active {
 button.composer-status-action:focus-visible {
   outline: 2px solid var(--color-primary);
   outline-offset: -2px;
+}
+
+.composer-status-dismiss {
+  display: inline-grid;
+  width: 26px;
+  min-width: 26px;
+  height: 26px;
+  min-height: 26px;
+  flex: 0 0 26px;
+  place-items: center;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  box-shadow: none;
+  color: var(--color-icon-muted);
+  margin: 3px 4px 3px 0;
+  padding: 0;
+  transform: none;
+}
+
+.composer-status-dismiss:hover,
+.composer-status-dismiss:active {
+  background: var(--color-button-active);
+  color: var(--color-icon-muted);
+  box-shadow: none;
+  transform: none;
+}
+
+.composer-status-dismiss:focus-visible {
+  outline: 2px solid var(--color-primary);
+  outline-offset: -2px;
+}
+
+.composer-status-notice .composer-status-dismiss > svg {
+  color: var(--color-icon-muted);
 }
 
 .composer-status-action > svg,

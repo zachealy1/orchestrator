@@ -499,6 +499,14 @@ describe("KanbanWorkspace controller", () => {
       name: "Workspace status",
     });
     expect(within(bubble).getByText("Agent turn started.")).toBeInTheDocument();
+    await user.click(
+      within(bubble).getByRole("button", {
+        name: "Dismiss Agent turn started.",
+      }),
+    );
+    expect(
+      within(bubble).queryByText("Agent turn started."),
+    ).not.toBeInTheDocument();
     expect(
       document.querySelector(".kanban-workspace-view > .kanban-workspace-alert"),
     ).toBeNull();
