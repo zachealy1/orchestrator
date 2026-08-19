@@ -227,6 +227,13 @@ pub struct ClaimKanbanAttemptResult {
     pub attempt: KanbanAttemptDto,
 }
 
+#[derive(Debug, Clone, Deserialize, Serialize, specta::Type)]
+#[serde(rename_all = "camelCase")]
+pub struct CompletedKanbanPlanInput {
+    pub item_id: String,
+    pub text: String,
+}
+
 #[derive(Debug, Deserialize, Serialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct UpdateKanbanAttemptRequest {
@@ -241,7 +248,35 @@ pub struct UpdateKanbanAttemptRequest {
     pub turn_id: Option<String>,
     pub execution_root: Option<String>,
     pub error: Option<String>,
+    #[serde(default)]
+    pub completed_plan: Option<CompletedKanbanPlanInput>,
     pub operation_id: String,
+}
+
+#[derive(Debug, Deserialize, Serialize, specta::Type)]
+#[serde(rename_all = "camelCase")]
+pub struct AcceptKanbanPlanRequest {
+    pub card_id: String,
+    pub attempt_id: String,
+    pub expected_version: i64,
+    pub generated_card_id: String,
+    pub operation_id: String,
+}
+
+#[derive(Debug, Deserialize, Serialize, specta::Type)]
+#[serde(rename_all = "camelCase")]
+pub struct RejectKanbanPlanRequest {
+    pub card_id: String,
+    pub attempt_id: String,
+    pub expected_version: i64,
+    pub operation_id: String,
+}
+
+#[derive(Debug, Clone, Serialize, specta::Type)]
+#[serde(rename_all = "camelCase")]
+pub struct AcceptKanbanPlanResult {
+    pub source_card: KanbanCardDto,
+    pub generated_card: KanbanCardDto,
 }
 
 #[derive(Debug, Deserialize, Serialize, specta::Type)]
@@ -365,6 +400,54 @@ fn validate_card_content(title: &str, description: &str) -> Result<(), String> {
     if description.trim().is_empty() || description.chars().count() > MAX_DESCRIPTION_CHARS {
         return Err(format!(
             "Card descriptions must be between 1 and {MAX_DESCRIPTION_CHARS} characters."
+        ));
+    }
+    Ok(())
+}
+
+fn execution_settings_are_plan_mode(value: Option<&str>) -> bool {
+    value
+        .and_then(|settings| serde_json::from_str::<serde_json::Value>(settings).ok())
+        .and_then(|settings| {
+            settings
+                .get("mode")
+                .and_then(serde_json::Value::as_str)
+                .map(str::to_owned)
+        })
+        .is_some_and(|mode| mode == "plan")
+}
+
+fn implementation_execution_settings(value: Option<&str>) -> Result<String, String> {
+    let mut settings = value
+        .ok_or_else(|| "The planning card has no captured execution settings.".to_string())
+        .and_then(|settings| {
+            serde_json::from_str::<serde_json::Value>(settings)
+                .map_err(|_| "The planning card execution settings are invalid.".to_string())
+        })?;
+    let object = settings
+        .as_object_mut()
+        .ok_or_else(|| "The planning card execution settings are invalid.".to_string())?;
+    if object.get("mode").and_then(serde_json::Value::as_str) != Some("plan") {
+        return Err("Only a Plan-mode card can create an implementation ticket.".to_string());
+    }
+    object.insert(
+        "mode".to_string(),
+        serde_json::Value::String("run".to_string()),
+    );
+    object.insert(
+        "intent".to_string(),
+        serde_json::Value::String("normal".to_string()),
+    );
+    object.insert("goalMode".to_string(), serde_json::Value::Bool(false));
+    serde_json::to_string(&settings)
+        .map_err(|_| "The implementation ticket settings could not be encoded.".to_string())
+}
+
+fn validate_completed_plan(plan: &CompletedKanbanPlanInput) -> Result<(), String> {
+    validate_identifier(&plan.item_id, "plan item")?;
+    if plan.text.trim().is_empty() || plan.text.chars().count() > MAX_DESCRIPTION_CHARS {
+        return Err(format!(
+            "Completed plans must be between 1 and {MAX_DESCRIPTION_CHARS} characters."
         ));
     }
     Ok(())
@@ -1518,6 +1601,28 @@ pub async fn kanban_claim_attempt(
     }
     if request.kind == "request_changes" {
         sqlx::query(
+            "UPDATE runs SET plan_review_state = 'superseded'
+             WHERE id = (
+                 SELECT run_id FROM kanban_plan_results
+                 WHERE attempt_id = ?1 AND card_id = ?2 AND decision = 'awaiting_review'
+             )",
+        )
+        .bind(reviewed_attempt_id.as_deref())
+        .bind(&request.card_id)
+        .execute(&mut *transaction)
+        .await
+        .map_err(|error| format!("The prior plan run could not be superseded: {error}"))?;
+        sqlx::query(
+            "UPDATE kanban_plan_results
+             SET decision = 'superseded', updated_at = CURRENT_TIMESTAMP
+             WHERE attempt_id = ?1 AND card_id = ?2 AND decision = 'awaiting_review'",
+        )
+        .bind(reviewed_attempt_id.as_deref())
+        .bind(&request.card_id)
+        .execute(&mut *transaction)
+        .await
+        .map_err(|error| format!("The prior plan could not be superseded: {error}"))?;
+        sqlx::query(
             "INSERT INTO kanban_review_decisions (card_id, attempt_id, decision, message)
              VALUES (?1, ?2, 'changes_requested', ?3)",
         )
@@ -1578,22 +1683,50 @@ async fn card_has_pending_follow_up(
 #[specta::specta]
 pub async fn kanban_update_attempt(
     app: AppHandle,
-    request: UpdateKanbanAttemptRequest,
+    mut request: UpdateKanbanAttemptRequest,
 ) -> Result<ClaimKanbanAttemptResult, String> {
+    if request.sequence <= 0 {
+        return Err("The card attempt event sequence is invalid.".to_string());
+    }
+    let mut connection = open_database(&app).await?;
+    let workspace_id = card_workspace_id(&mut connection, &request.card_id).await?;
+    let execution_settings_json: Option<String> =
+        sqlx::query_scalar("SELECT execution_settings_json FROM kanban_cards WHERE id = ?1")
+            .bind(&request.card_id)
+            .fetch_one(&mut *connection)
+            .await
+            .map_err(|error| format!("The card execution settings could not be loaded: {error}"))?;
+    let requested_plan_completion = request.status == "completed"
+        && execution_settings_are_plan_mode(execution_settings_json.as_deref());
+    if requested_plan_completion {
+        let invalid_plan = request
+            .completed_plan
+            .as_ref()
+            .map(validate_completed_plan)
+            .unwrap_or_else(|| {
+                Err("The Plan-mode attempt completed without a reviewable plan.".to_string())
+            })
+            .err();
+        if let Some(error) = invalid_plan {
+            request.status = "failed".to_string();
+            request.error = Some(error);
+            request.completed_plan = None;
+        }
+    }
+    if request.completed_plan.is_some() && !requested_plan_completion {
+        return Err("Only a completed Plan-mode card can save a plan result.".to_string());
+    }
+    let plan_completion = requested_plan_completion && request.status == "completed";
     let execution_state = execution_state_for_attempt_status(&request.status)
         .ok_or_else(|| "The card execution state is invalid.".to_string())?;
     let terminal = matches!(
         request.status.as_str(),
         "completed" | "failed" | "stopped" | "interrupted"
     );
-    if request.sequence <= 0 {
-        return Err("The card attempt event sequence is invalid.".to_string());
-    }
-    let github_review_available =
-        request.status == "completed" && crate::github::github_review_available(&app).await;
     let request_fingerprint = operation_fingerprint(&request)?;
-    let mut connection = open_database(&app).await?;
-    let workspace_id = card_workspace_id(&mut connection, &request.card_id).await?;
+    let github_review_available = request.status == "completed"
+        && !plan_completion
+        && crate::github::github_review_available(&app).await;
     let mut transaction = connection
         .begin()
         .await
@@ -1664,7 +1797,7 @@ pub async fn kanban_update_attempt(
         transaction.rollback().await.ok();
         return Err("A stale card attempt tried to update this card.".to_string());
     }
-    let review_channel = if request.status == "completed" {
+    let review_channel = if request.status == "completed" && !plan_completion {
         Some(if github_review_available {
             "github"
         } else {
@@ -1696,6 +1829,44 @@ pub async fn kanban_update_attempt(
         transaction.rollback().await.ok();
         return Err("A stale card attempt was ignored.".to_string());
     }
+    if let Some(plan) = request.completed_plan.as_ref() {
+        let run_id = request
+            .run_id
+            .ok_or_else(|| "The completed plan has no persisted run.".to_string())?;
+        sqlx::query(
+            "INSERT INTO kanban_plan_results (
+                attempt_id, card_id, run_id, plan_item_id, plan_text, decision
+             ) VALUES (?1, ?2, ?3, ?4, ?5, 'awaiting_review')",
+        )
+        .bind(&request.attempt_id)
+        .bind(&request.card_id)
+        .bind(run_id)
+        .bind(plan.item_id.trim())
+        .bind(&plan.text)
+        .execute(&mut *transaction)
+        .await
+        .map_err(|error| format!("The completed plan could not be saved: {error}"))?;
+        let run_update = sqlx::query(
+            "UPDATE runs
+             SET collaboration_mode = 'plan', run_intent = 'plan',
+                 completed_plan_item_id = ?1, completed_plan_text = ?2,
+                 plan_review_state = 'available'
+             WHERE id = ?3 AND chat_id = (
+                 SELECT chat_id FROM kanban_cards WHERE id = ?4
+             )",
+        )
+        .bind(plan.item_id.trim())
+        .bind(&plan.text)
+        .bind(run_id)
+        .bind(&request.card_id)
+        .execute(&mut *transaction)
+        .await
+        .map_err(|error| format!("The completed plan run could not be saved: {error}"))?;
+        if run_update.rows_affected() != 1 {
+            transaction.rollback().await.ok();
+            return Err("The completed plan does not belong to this card's run.".to_string());
+        }
+    }
     let event_payload = serde_json::to_string(&request)
         .map_err(|_| "The card attempt event could not be encoded.".to_string())?;
     sqlx::query(
@@ -1714,6 +1885,7 @@ pub async fn kanban_update_attempt(
     .await
     .map_err(|error| format!("The card attempt event could not be saved: {error}"))?;
     let publication_deferred = request.status == "completed"
+        && !plan_completion
         && card_has_pending_follow_up(
             &mut transaction,
             &request.card_id,
@@ -1731,7 +1903,11 @@ pub async fn kanban_update_attempt(
         .commit()
         .await
         .map_err(|error| format!("The card attempt could not be saved: {error}"))?;
-    if request.status == "completed" && review_channel == Some("github") && !publication_deferred {
+    if request.status == "completed"
+        && !plan_completion
+        && review_channel == Some("github")
+        && !publication_deferred
+    {
         let app_for_publication = app.clone();
         let card_id = request.card_id.clone();
         tauri::async_runtime::spawn(async move {
@@ -1742,6 +1918,372 @@ pub async fn kanban_update_attempt(
         card: load_card(&mut connection, &request.card_id).await?,
         attempt: load_attempt(&mut connection, &request.attempt_id).await?,
     })
+}
+
+async fn load_accepted_plan_result(
+    connection: &mut SqliteConnection,
+    card_id: &str,
+    attempt_id: &str,
+) -> Result<Option<AcceptKanbanPlanResult>, String> {
+    let generated_card_id = sqlx::query_scalar::<_, String>(
+        "SELECT generated_card_id FROM kanban_plan_results
+         WHERE card_id = ?1 AND attempt_id = ?2 AND decision = 'accepted'
+           AND generated_card_id IS NOT NULL",
+    )
+    .bind(card_id)
+    .bind(attempt_id)
+    .fetch_optional(&mut *connection)
+    .await
+    .map_err(|error| format!("The accepted plan result could not be loaded: {error}"))?;
+    let Some(generated_card_id) = generated_card_id else {
+        return Ok(None);
+    };
+    Ok(Some(AcceptKanbanPlanResult {
+        source_card: load_card(connection, card_id).await?,
+        generated_card: load_card(connection, &generated_card_id).await?,
+    }))
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn kanban_accept_plan(
+    app: AppHandle,
+    request: AcceptKanbanPlanRequest,
+) -> Result<AcceptKanbanPlanResult, String> {
+    validate_identifier(&request.card_id, "card")?;
+    validate_identifier(&request.attempt_id, "attempt")?;
+    validate_identifier(&request.generated_card_id, "generated card")?;
+    validate_identifier(&request.operation_id, "operation")?;
+    let request_fingerprint = operation_fingerprint(&request)?;
+    let mut connection = open_database(&app).await?;
+    if let Some(result) =
+        load_accepted_plan_result(&mut connection, &request.card_id, &request.attempt_id).await?
+    {
+        return Ok(result);
+    }
+    let workspace_id = card_workspace_id(&mut connection, &request.card_id).await?;
+    let mut transaction = connection
+        .begin()
+        .await
+        .map_err(|error| format!("The plan acceptance could not start: {error}"))?;
+    if !insert_operation(
+        &mut transaction,
+        &request.operation_id,
+        Some(&request.card_id),
+        workspace_id,
+        "accept_plan",
+        &request_fingerprint,
+    )
+    .await?
+    {
+        transaction.rollback().await.ok();
+        return load_accepted_plan_result(&mut connection, &request.card_id, &request.attempt_id)
+            .await?
+            .ok_or_else(|| {
+                "The accepted implementation ticket could not be restored.".to_string()
+            });
+    }
+    let source = sqlx::query(
+        "SELECT card.title, card.account_id, card.access_mode, card.model,
+                card.reasoning_level, card.execution_settings_json,
+                card.repository_scope, plan.plan_text, plan.run_id
+         FROM kanban_cards AS card
+         JOIN kanban_plan_results AS plan
+           ON plan.card_id = card.id AND plan.attempt_id = ?2
+         WHERE card.id = ?1 AND card.state_version = ?3
+           AND card.current_attempt_id = ?2 AND card.stage = 'in_review'
+           AND card.execution_state = 'completed'
+           AND card.review_state = 'awaiting_review'
+           AND card.archived_at IS NULL AND card.deleted_at IS NULL
+           AND plan.decision = 'awaiting_review'",
+    )
+    .bind(&request.card_id)
+    .bind(&request.attempt_id)
+    .bind(request.expected_version)
+    .fetch_optional(&mut *transaction)
+    .await
+    .map_err(|error| format!("The plan acceptance could not be checked: {error}"))?;
+    let Some(source) = source else {
+        transaction.rollback().await.ok();
+        if let Some(result) =
+            load_accepted_plan_result(&mut connection, &request.card_id, &request.attempt_id)
+                .await?
+        {
+            return Ok(result);
+        }
+        return Err(
+            "Only the latest Plan card result awaiting review can be accepted.".to_string(),
+        );
+    };
+    let title = source.get::<String, _>("title");
+    let plan_text = source.get::<String, _>("plan_text");
+    validate_card_content(&title, &plan_text)?;
+    let source_settings = source.get::<Option<String>, _>("execution_settings_json");
+    let generated_settings = implementation_execution_settings(source_settings.as_deref())?;
+    let account_id = source.get::<Option<i64>, _>("account_id");
+    let profile_key = account_id.map(|value| format!("account:{value}"));
+    let chat = sqlx::query(
+        "INSERT INTO chats (
+            workspace_id, account_id, title, status, origin, profile_key, surface,
+            title_generation_state
+         ) VALUES (?1, ?2, ?3, 'draft', 'orchestrator', ?4, 'kanban', 'complete')",
+    )
+    .bind(workspace_id)
+    .bind(account_id)
+    .bind(&title)
+    .bind(profile_key)
+    .execute(&mut *transaction)
+    .await
+    .map_err(|error| {
+        format!("The implementation ticket conversation could not be created: {error}")
+    })?;
+    let chat_id = chat.last_insert_rowid();
+    let next_position: i64 = sqlx::query_scalar(
+        "SELECT COALESCE(MAX(sort_position), 0) + ?2
+         FROM kanban_cards
+         WHERE workspace_id = ?1 AND stage = 'todo' AND deleted_at IS NULL",
+    )
+    .bind(workspace_id)
+    .bind(POSITION_STEP)
+    .fetch_one(&mut *transaction)
+    .await
+    .map_err(|error| {
+        format!("The implementation ticket position could not be allocated: {error}")
+    })?;
+    sqlx::query(
+        "INSERT INTO kanban_cards (
+            id, workspace_id, chat_id, title, description, account_id,
+            access_mode, model, reasoning_level, execution_settings_json,
+            repository_scope, stage, sort_position, execution_state, review_state
+         ) VALUES (
+            ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11,
+            'todo', ?12, 'idle', 'none'
+         )",
+    )
+    .bind(&request.generated_card_id)
+    .bind(workspace_id)
+    .bind(chat_id)
+    .bind(&title)
+    .bind(&plan_text)
+    .bind(account_id)
+    .bind(source.get::<String, _>("access_mode"))
+    .bind(source.get::<Option<String>, _>("model"))
+    .bind(source.get::<Option<String>, _>("reasoning_level"))
+    .bind(generated_settings)
+    .bind(source.get::<String, _>("repository_scope"))
+    .bind(next_position)
+    .execute(&mut *transaction)
+    .await
+    .map_err(|error| format!("The implementation ticket could not be created: {error}"))?;
+    sqlx::query(
+        "INSERT INTO kanban_card_repository_selections (
+            card_id, repository_path, relative_path, label, include_dirty
+         )
+         SELECT ?1, repository_path, relative_path, label, include_dirty
+         FROM kanban_card_repository_selections WHERE card_id = ?2",
+    )
+    .bind(&request.generated_card_id)
+    .bind(&request.card_id)
+    .execute(&mut *transaction)
+    .await
+    .map_err(|error| {
+        format!("The implementation ticket repositories could not be copied: {error}")
+    })?;
+    let source_update = sqlx::query(
+        "UPDATE kanban_cards
+         SET stage = 'done', review_state = 'approved', review_channel = NULL,
+             approved_at = CURRENT_TIMESTAMP, state_version = state_version + 1,
+             updated_at = CURRENT_TIMESTAMP
+         WHERE id = ?1 AND state_version = ?2 AND current_attempt_id = ?3
+           AND stage = 'in_review' AND execution_state = 'completed'
+           AND review_state = 'awaiting_review'",
+    )
+    .bind(&request.card_id)
+    .bind(request.expected_version)
+    .bind(&request.attempt_id)
+    .execute(&mut *transaction)
+    .await
+    .map_err(|error| format!("The planning card could not be completed: {error}"))?;
+    if source_update.rows_affected() != 1 {
+        transaction.rollback().await.ok();
+        if let Some(result) =
+            load_accepted_plan_result(&mut connection, &request.card_id, &request.attempt_id)
+                .await?
+        {
+            return Ok(result);
+        }
+        return Err("The planning card changed before its plan was accepted.".to_string());
+    }
+    let run_id = source.get::<i64, _>("run_id");
+    let plan_update = sqlx::query(
+        "UPDATE kanban_plan_results
+         SET decision = 'accepted', generated_card_id = ?1,
+             decided_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP
+         WHERE card_id = ?2 AND attempt_id = ?3 AND decision = 'awaiting_review'",
+    )
+    .bind(&request.generated_card_id)
+    .bind(&request.card_id)
+    .bind(&request.attempt_id)
+    .execute(&mut *transaction)
+    .await
+    .map_err(|error| format!("The accepted plan result could not be saved: {error}"))?;
+    if plan_update.rows_affected() != 1 {
+        transaction.rollback().await.ok();
+        return Err("The accepted plan result changed during review.".to_string());
+    }
+    sqlx::query("UPDATE runs SET plan_review_state = 'approved' WHERE id = ?1")
+        .bind(run_id)
+        .execute(&mut *transaction)
+        .await
+        .map_err(|error| format!("The accepted plan run could not be saved: {error}"))?;
+    sqlx::query(
+        "INSERT INTO kanban_review_decisions (card_id, attempt_id, decision)
+         VALUES (?1, ?2, 'approved')",
+    )
+    .bind(&request.card_id)
+    .bind(&request.attempt_id)
+    .execute(&mut *transaction)
+    .await
+    .map_err(|error| format!("The plan review decision could not be saved: {error}"))?;
+    sqlx::query(
+        "UPDATE kanban_boards SET revision = revision + 1,
+             updated_at = CURRENT_TIMESTAMP WHERE workspace_id = ?1",
+    )
+    .bind(workspace_id)
+    .execute(&mut *transaction)
+    .await
+    .map_err(|error| format!("The Kanban board could not be updated: {error}"))?;
+    complete_operation(&mut transaction, &request.operation_id).await?;
+    transaction
+        .commit()
+        .await
+        .map_err(|error| format!("The plan acceptance could not be saved: {error}"))?;
+    load_accepted_plan_result(&mut connection, &request.card_id, &request.attempt_id)
+        .await?
+        .ok_or_else(|| "The accepted implementation ticket could not be loaded.".to_string())
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn kanban_reject_plan(
+    app: AppHandle,
+    request: RejectKanbanPlanRequest,
+) -> Result<KanbanCardDto, String> {
+    validate_identifier(&request.card_id, "card")?;
+    validate_identifier(&request.attempt_id, "attempt")?;
+    validate_identifier(&request.operation_id, "operation")?;
+    let request_fingerprint = operation_fingerprint(&request)?;
+    let mut connection = open_database(&app).await?;
+    let existing_decision = sqlx::query_scalar::<_, String>(
+        "SELECT decision FROM kanban_plan_results
+         WHERE card_id = ?1 AND attempt_id = ?2",
+    )
+    .bind(&request.card_id)
+    .bind(&request.attempt_id)
+    .fetch_optional(&mut *connection)
+    .await
+    .map_err(|error| format!("The plan decision could not be loaded: {error}"))?;
+    if existing_decision.as_deref() == Some("rejected") {
+        return load_card(&mut connection, &request.card_id).await;
+    }
+    if existing_decision.as_deref() == Some("accepted") {
+        return Err("An accepted plan cannot be rejected.".to_string());
+    }
+    let workspace_id = card_workspace_id(&mut connection, &request.card_id).await?;
+    let mut transaction = connection
+        .begin()
+        .await
+        .map_err(|error| format!("The plan rejection could not start: {error}"))?;
+    if !insert_operation(
+        &mut transaction,
+        &request.operation_id,
+        Some(&request.card_id),
+        workspace_id,
+        "reject_plan",
+        &request_fingerprint,
+    )
+    .await?
+    {
+        transaction.rollback().await.ok();
+        return load_card(&mut connection, &request.card_id).await;
+    }
+    let result = sqlx::query(
+        "UPDATE kanban_cards
+         SET stage = 'done', review_state = 'none', review_channel = NULL,
+             approved_at = NULL, state_version = state_version + 1,
+             updated_at = CURRENT_TIMESTAMP
+         WHERE id = ?1 AND state_version = ?2 AND current_attempt_id = ?3
+           AND stage = 'in_review' AND execution_state = 'completed'
+           AND review_state = 'awaiting_review'
+           AND EXISTS (
+               SELECT 1 FROM kanban_plan_results
+               WHERE card_id = ?1 AND attempt_id = ?3 AND decision = 'awaiting_review'
+           )",
+    )
+    .bind(&request.card_id)
+    .bind(request.expected_version)
+    .bind(&request.attempt_id)
+    .execute(&mut *transaction)
+    .await
+    .map_err(|error| format!("The planning card could not be rejected: {error}"))?;
+    if result.rows_affected() != 1 {
+        transaction.rollback().await.ok();
+        let decision = sqlx::query_scalar::<_, String>(
+            "SELECT decision FROM kanban_plan_results
+             WHERE card_id = ?1 AND attempt_id = ?2",
+        )
+        .bind(&request.card_id)
+        .bind(&request.attempt_id)
+        .fetch_optional(&mut *connection)
+        .await
+        .map_err(|error| format!("The plan decision could not be restored: {error}"))?;
+        if decision.as_deref() == Some("rejected") {
+            return load_card(&mut connection, &request.card_id).await;
+        }
+        if decision.as_deref() == Some("accepted") {
+            return Err("An accepted plan cannot be rejected.".to_string());
+        }
+        return Err(
+            "Only the latest Plan card result awaiting review can be rejected.".to_string(),
+        );
+    }
+    sqlx::query(
+        "UPDATE runs SET plan_review_state = 'cancelled'
+         WHERE id = (
+             SELECT run_id FROM kanban_plan_results
+             WHERE card_id = ?1 AND attempt_id = ?2
+         )",
+    )
+    .bind(&request.card_id)
+    .bind(&request.attempt_id)
+    .execute(&mut *transaction)
+    .await
+    .map_err(|error| format!("The rejected plan run could not be saved: {error}"))?;
+    sqlx::query(
+        "UPDATE kanban_plan_results
+         SET decision = 'rejected', decided_at = CURRENT_TIMESTAMP,
+             updated_at = CURRENT_TIMESTAMP
+         WHERE card_id = ?1 AND attempt_id = ?2 AND decision = 'awaiting_review'",
+    )
+    .bind(&request.card_id)
+    .bind(&request.attempt_id)
+    .execute(&mut *transaction)
+    .await
+    .map_err(|error| format!("The rejected plan result could not be saved: {error}"))?;
+    sqlx::query(
+        "UPDATE kanban_boards SET revision = revision + 1,
+             updated_at = CURRENT_TIMESTAMP WHERE workspace_id = ?1",
+    )
+    .bind(workspace_id)
+    .execute(&mut *transaction)
+    .await
+    .map_err(|error| format!("The Kanban board could not be updated: {error}"))?;
+    complete_operation(&mut transaction, &request.operation_id).await?;
+    transaction
+        .commit()
+        .await
+        .map_err(|error| format!("The plan rejection could not be saved: {error}"))?;
+    load_card(&mut connection, &request.card_id).await
 }
 
 #[tauri::command]
@@ -3109,6 +3651,51 @@ pub async fn kanban_recover_interrupted(app: AppHandle) -> Result<u64, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn plan_execution_settings_become_normal_idle_ticket_settings() {
+        let source = r#"{
+            "mode":"plan",
+            "intent":"review",
+            "goalMode":true,
+            "model":"gpt-5.6",
+            "reasoning":"high",
+            "access":"workspace-write",
+            "contextFiles":["spec.md"],
+            "skills":["frontend"]
+        }"#;
+        assert!(execution_settings_are_plan_mode(Some(source)));
+
+        let generated: serde_json::Value = serde_json::from_str(
+            &implementation_execution_settings(Some(source)).expect("convert plan settings"),
+        )
+        .expect("decode generated settings");
+        assert_eq!(generated["mode"], "run");
+        assert_eq!(generated["intent"], "normal");
+        assert_eq!(generated["goalMode"], false);
+        assert_eq!(generated["model"], "gpt-5.6");
+        assert_eq!(generated["contextFiles"][0], "spec.md");
+        assert_eq!(generated["skills"][0], "frontend");
+    }
+
+    #[test]
+    fn completed_plan_validation_rejects_empty_and_oversized_descriptions() {
+        assert!(validate_completed_plan(&CompletedKanbanPlanInput {
+            item_id: "plan-item-1".to_string(),
+            text: "# Plan\n\nShip it.".to_string(),
+        })
+        .is_ok());
+        assert!(validate_completed_plan(&CompletedKanbanPlanInput {
+            item_id: "plan-item-1".to_string(),
+            text: "   ".to_string(),
+        })
+        .is_err());
+        assert!(validate_completed_plan(&CompletedKanbanPlanInput {
+            item_id: "plan-item-1".to_string(),
+            text: "x".repeat(MAX_DESCRIPTION_CHARS + 1),
+        })
+        .is_err());
+    }
 
     #[test]
     fn local_review_diff_totals_ignore_file_headers() {

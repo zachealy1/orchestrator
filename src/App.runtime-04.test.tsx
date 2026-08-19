@@ -28,6 +28,124 @@ import {
 
 const mocks = getMocks();
 
+function preparePersistedBoardPlanReview() {
+  prepareSignedInRun();
+  const defaultMode = {
+    mode: "default",
+    settings: {
+      model: "gpt-5.5",
+      reasoning_effort: "high",
+      developer_instructions: null,
+    },
+  };
+  const chat = {
+    ...workspaceChatFixture({ title: "Board planning ticket" }),
+    collaboration_mode: "plan",
+    saved_default_collaboration_mode_json: JSON.stringify(defaultMode),
+  };
+  const markdown = "# Board plan\n\n1. Implement the accepted work";
+  const run = {
+    ...workspaceRunFixture({
+      chat_id: chat.id,
+      original_prompt: "Plan the board work",
+      final_message: null,
+    }),
+    collaboration_mode: "plan",
+    run_intent: "plan",
+    client_user_message_id: "client-message-board-plan",
+    completed_plan_item_id: "plan-item-board",
+    completed_plan_text: markdown,
+    plan_review_state: "available",
+  } satisfies WorkspaceRunFixture;
+  const card = {
+    id: "card-board-plan",
+    workspaceId: workspace.id,
+    chatId: chat.id,
+    title: "Board planning ticket",
+    description: "Plan the board work",
+    accountId: 7,
+    accessMode: "ask-for-approval" as const,
+    model: "gpt-5.5",
+    reasoningLevel: "high",
+    executionSettingsJson: JSON.stringify({
+      version: 2,
+      accountId: 7,
+      mode: "plan",
+      intent: "plan",
+      profileKey: "account:7",
+      selectedRepositoryPath: null,
+      selectedBranch: null,
+      accessMode: "ask-for-approval",
+      computerUseEnabled: false,
+      model: "gpt-5.5",
+      reasoningEffort: "high",
+      useOss: false,
+      ossProvider: "ollama",
+      contextFiles: [],
+      selectedSkills: [],
+      goalMode: false,
+    }),
+    repositoryScope: "all" as const,
+    stage: "in_review" as const,
+    sortPosition: 1_000,
+    executionState: "completed" as const,
+    reviewState: "awaiting_review" as const,
+    reviewChannel: null,
+    currentAttemptId: "attempt-board-plan",
+    stateVersion: 4,
+    archivedAt: null,
+    deletedAt: null,
+    approvedAt: null,
+    lastError: null,
+    hasInheritedContext: false,
+    hasStartedTurn: true,
+    createdAt: "2026-06-30T09:00:00Z",
+    updatedAt: "2026-06-30T09:01:00Z",
+    repositories: [],
+    pullRequests: [],
+  };
+  mocks.listWorkspaceChatsMock.mockResolvedValue([chat]);
+  mocks.getChatWithRunsMock.mockResolvedValue(
+    workspaceChatWithRunsFixture(chat, [run]),
+  );
+  mocks.listLocalChatTranscriptMock.mockResolvedValue([run]);
+  mocks.getKanbanCardForChatMock.mockResolvedValue(card);
+  mocks.codexRpcMock.mockImplementation(
+    async (_accountId: number, method: string) => {
+      if (method === "collaborationMode/list") {
+        return {
+          data: [
+            { name: "Plan", mode: "plan", reasoning_effort: "medium" },
+            { name: "Default", mode: "default" },
+          ],
+        };
+      }
+      if (method === "thread/read") {
+        return {
+          thread: {
+            id: "thread-1",
+            turns: [
+              {
+                id: "turn-1",
+                status: "completed",
+                items: [
+                  {
+                    type: "plan",
+                    id: "plan-item-board",
+                    text: markdown,
+                  },
+                ],
+              },
+            ],
+          },
+        };
+      }
+      return {};
+    },
+  );
+  return { card, chat };
+}
+
 describe("Application runtime scenarios 4", () => {
   beforeEach(() => {
       mocks.listeners.clear();
@@ -187,7 +305,7 @@ describe("Application runtime scenarios 4", () => {
       );
 
       await user.click(
-        await screen.findByRole("button", { name: "Implement plan" }),
+        await screen.findByRole("button", { name: "Accept plan" }),
       );
       const dialog = await screen.findByRole("dialog", {
         name: "Confirm implementation settings",
@@ -336,7 +454,7 @@ describe("Application runtime scenarios 4", () => {
       );
 
       const implement = await screen.findByRole("button", {
-        name: "Implement plan",
+        name: "Accept plan",
       });
       await user.click(implement);
       const dialog = await screen.findByRole("dialog", {
@@ -418,7 +536,7 @@ describe("Application runtime scenarios 4", () => {
       ).toBeInTheDocument();
       expect(within(plan).getByText("Hello hello hello")).toBeInTheDocument();
       expect(
-        within(plan).getByRole("button", { name: "Implement plan" }),
+        within(plan).getByRole("button", { name: "Accept plan" }),
       ).toBeInTheDocument();
       expect(screen.queryByText(/<proposed_plan>/)).not.toBeInTheDocument();
       expect(screen.queryByLabelText("Run summary")).not.toBeInTheDocument();
@@ -566,7 +684,7 @@ describe("Application runtime scenarios 4", () => {
       );
 
       expect(
-        await screen.findByRole("button", { name: "Implement plan" }),
+        await screen.findByRole("button", { name: "Accept plan" }),
       ).toBeInTheDocument();
       await waitFor(() =>
         expect(mocks.codexRpcMock).toHaveBeenCalledWith(
@@ -589,7 +707,89 @@ describe("Application runtime scenarios 4", () => {
 
       expect(screen.queryByLabelText("Task chat transcript")).not.toBeInTheDocument();
       expect(
-        screen.queryByRole("button", { name: "Implement plan" }),
+        screen.queryByRole("button", { name: "Accept plan" }),
+      ).not.toBeInTheDocument();
+    });
+
+  it("accepts a Kanban Plan into a new ticket without opening inline implementation", async () => {
+      const { card } = preparePersistedBoardPlanReview();
+      mocks.acceptKanbanPlanMock.mockResolvedValue({
+        sourceCard: { ...card, stage: "done", reviewState: "approved" },
+        generatedCard: {
+          ...card,
+          id: "card-implementation",
+          chatId: 902,
+          stage: "todo",
+          executionState: "idle",
+          reviewState: "none",
+          currentAttemptId: null,
+        },
+      });
+
+      const { user } = await renderApp();
+      const banner = screen.getByRole("region", { name: "Selected folder" });
+      await user.click(
+        within(banner).getByRole("button", { name: /open chat history/i }),
+      );
+      const drawer = await screen.findByRole("complementary", {
+        name: "Workspace chat history",
+      });
+      await user.click(
+        within(drawer).getByRole("button", { name: /board planning ticket/i }),
+      );
+      await user.click(
+        await screen.findByRole("button", { name: "Accept plan" }),
+      );
+
+      await waitFor(() =>
+        expect(mocks.acceptKanbanPlanMock).toHaveBeenCalledWith(card),
+      );
+      expect(
+        screen.queryByRole("dialog", { name: "Confirm implementation settings" }),
+      ).not.toBeInTheDocument();
+      await waitFor(() =>
+        expect(mocks.updateChatMock).toHaveBeenCalledWith(
+          card.chatId,
+          expect.objectContaining({ collaborationMode: "default" }),
+        ),
+      );
+      expect(mocks.removeAgentNotificationMock).toHaveBeenCalled();
+      expect(
+        mocks.codexRpcMock.mock.calls.some((call) => call[1] === "turn/start"),
+      ).toBe(false);
+      expect(await screen.findByText("Plan accepted")).toBeInTheDocument();
+    });
+
+  it("rejects a Kanban Plan without creating an implementation ticket", async () => {
+      const { card } = preparePersistedBoardPlanReview();
+      mocks.rejectKanbanPlanMock.mockResolvedValue({
+        ...card,
+        stage: "done",
+        reviewState: "none",
+      });
+
+      const { user } = await renderApp();
+      const banner = screen.getByRole("region", { name: "Selected folder" });
+      await user.click(
+        within(banner).getByRole("button", { name: /open chat history/i }),
+      );
+      const drawer = await screen.findByRole("complementary", {
+        name: "Workspace chat history",
+      });
+      await user.click(
+        within(drawer).getByRole("button", { name: /board planning ticket/i }),
+      );
+      await user.click(
+        await screen.findByRole("button", { name: "Reject plan" }),
+      );
+
+      await waitFor(() =>
+        expect(mocks.rejectKanbanPlanMock).toHaveBeenCalledWith(card),
+      );
+      expect(mocks.acceptKanbanPlanMock).not.toHaveBeenCalled();
+      expect(await screen.findByText("Plan rejected")).toBeInTheDocument();
+      expect(
+        screen.queryByRole("button", { name: "Accept plan" }),
       ).not.toBeInTheDocument();
     });
 
@@ -650,7 +850,7 @@ describe("Application runtime scenarios 4", () => {
       ).toBeInTheDocument();
       expect(within(plan).getByText("Summary")).toBeInTheDocument();
       expect(
-        within(plan).getByRole("button", { name: "Implement plan" }),
+        within(plan).getByRole("button", { name: "Accept plan" }),
       ).toBeInTheDocument();
       expect(screen.queryByText(/<proposed_plan>/)).not.toBeInTheDocument();
       expect(screen.queryByLabelText("Run summary")).not.toBeInTheDocument();

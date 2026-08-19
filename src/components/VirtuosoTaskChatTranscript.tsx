@@ -159,7 +159,7 @@ export type TranscriptActions = {
   onRevisePlan?: (
     entry: TaskChatEntry,
     revision: string,
-  ) => boolean | void;
+  ) => boolean | void | Promise<boolean | void>;
   onCancelPlan?: (entry: TaskChatEntry) => void;
   onOpenFileLink?: (href: string) => boolean;
   onOpenWebPreview?: (

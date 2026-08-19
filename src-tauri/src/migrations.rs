@@ -219,6 +219,12 @@ pub(crate) const MIGRATION_DEFINITIONS: &[MigrationDefinition] = &[
         sql: include_str!("../migrations/035_add_chat_continuations.sql"),
         checksum: 0x3260bd2173e147fe,
     },
+    MigrationDefinition {
+        version: 36,
+        description: "add_kanban_plan_results",
+        sql: include_str!("../migrations/036_add_kanban_plan_results.sql"),
+        checksum: 0xd46677b692f1ed31,
+    },
 ];
 
 pub(crate) fn migration_sql(definition: &MigrationDefinition) -> &'static str {

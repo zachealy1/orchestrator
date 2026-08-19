@@ -119,6 +119,16 @@ export type KanbanAttemptResult = {
   attempt: KanbanAttemptRecord;
 };
 
+export type CompletedKanbanPlan = {
+  itemId: string;
+  text: string;
+};
+
+export type AcceptKanbanPlanResult = {
+  sourceCard: KanbanCardRecord;
+  generatedCard: KanbanCardRecord;
+};
+
 export type KanbanCardDraft = {
   title: string;
   description: string;
@@ -342,6 +352,7 @@ export function updateKanbanAttempt(input: {
   turnId?: string | null;
   executionRoot?: string | null;
   error?: string | null;
+  completedPlan?: CompletedKanbanPlan | null;
   operationId?: string;
 }) {
   return commands.kanbanUpdateAttempt({
@@ -352,8 +363,40 @@ export function updateKanbanAttempt(input: {
     turnId: input.turnId ?? null,
     executionRoot: input.executionRoot ?? null,
     error: input.error ?? null,
+    completedPlan: input.completedPlan ?? null,
     operationId: input.operationId ?? createKanbanId("op"),
   }) as Promise<KanbanAttemptResult>;
+}
+
+export function acceptKanbanPlan(
+  card: Pick<KanbanCardRecord, "id" | "stateVersion" | "currentAttemptId">,
+  ids: { generatedCardId?: string; operationId?: string } = {},
+) {
+  if (!card.currentAttemptId) {
+    return Promise.reject(new Error("This Plan card has no completed attempt."));
+  }
+  return commands.kanbanAcceptPlan({
+    cardId: card.id,
+    attemptId: card.currentAttemptId,
+    expectedVersion: card.stateVersion,
+    generatedCardId: ids.generatedCardId ?? createKanbanId("card"),
+    operationId: ids.operationId ?? createKanbanId("op"),
+  }) as Promise<AcceptKanbanPlanResult>;
+}
+
+export function rejectKanbanPlan(
+  card: Pick<KanbanCardRecord, "id" | "stateVersion" | "currentAttemptId">,
+  operationId = createKanbanId("op"),
+) {
+  if (!card.currentAttemptId) {
+    return Promise.reject(new Error("This Plan card has no completed attempt."));
+  }
+  return commands.kanbanRejectPlan({
+    cardId: card.id,
+    attemptId: card.currentAttemptId,
+    expectedVersion: card.stateVersion,
+    operationId,
+  }) as Promise<KanbanCardRecord>;
 }
 
 export function approveKanbanCard(

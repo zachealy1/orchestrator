@@ -115,6 +115,7 @@ import { SubagentInspector } from "../components/SubagentInspector";
 import { KanbanWorkspace } from "../features/kanban/KanbanWorkspace";
 import { KanbanComposerOverlay } from "../features/kanban/components/KanbanComposerOverlay";
 import {
+  acceptKanbanPlan,
   commitKanbanGit,
   cleanupKanbanGit,
   createKanbanCard,
@@ -125,6 +126,7 @@ import {
   readKanbanGitDiff,
   readKanbanGitStatus,
   recoverInterruptedKanbanAttempts,
+  rejectKanbanPlan,
   reopenKanbanCard,
   type KanbanCardRecord,
   type KanbanGitBinding,
@@ -13881,12 +13883,28 @@ function App() {
         readString(params.threadId) ?? undefined,
       );
     });
+    const kanbanPlanAttempt = Boolean(
+      control.kanbanAttempt &&
+        nextRunView.nativePlan.mode === "plan" &&
+        (control.intent === "plan" || control.intent === "plan-revision"),
+    );
+    const missingCompletedKanbanPlan = Boolean(
+      terminalStatus === "completed" &&
+        kanbanPlanAttempt &&
+        (!nextRunView.nativePlan.completedText.trim() ||
+          !nextRunView.nativePlan.planItemId),
+    );
+    const persistedTerminalStatus = missingCompletedKanbanPlan
+      ? "failed"
+      : terminalStatus;
     const terminalError =
-      terminalStatus === "failed"
+      missingCompletedKanbanPlan
+        ? "Codex completed the Plan-mode card without a reviewable plan."
+        : persistedTerminalStatus === "failed"
         ? readSubagentError(message) ??
           nextRunView.error ??
           "Codex could not complete this card."
-        : terminalStatus === "interrupted"
+        : persistedTerminalStatus === "interrupted"
           ? nextRunView.error ?? "The Codex turn ended unexpectedly."
           : null;
     if (method === "serverRequest/resolved" && control.kanbanAttempt) {
@@ -13938,12 +13956,22 @@ function App() {
     }
     await persistRunEvent(control, "notification", method, message);
 
-    if (terminalStatus) {
+    if (persistedTerminalStatus) {
+      const completedPlan =
+        persistedTerminalStatus === "completed" &&
+        kanbanPlanAttempt &&
+        nextRunView.nativePlan.planItemId &&
+        nextRunView.nativePlan.completedText.trim()
+          ? {
+              itemId: nextRunView.nativePlan.planItemId,
+              text: nextRunView.nativePlan.completedText,
+            }
+          : null;
       const persistence = await kanbanAttempts.persist(
         control,
-        terminalStatus,
+        persistedTerminalStatus,
         terminalError,
-        { retryCount: 1 },
+        { retryCount: 1, completedPlan },
       );
       if (persistence.persisted) {
         removeRunControl(control);
@@ -13992,9 +14020,9 @@ function App() {
       }
     }
 
-    if (terminalStatus) {
+    if (persistedTerminalStatus) {
       const turn = terminalTurn;
-      const status = terminalStatus;
+      const status = persistedTerminalStatus;
       const completedControl = control;
       const completedEntry =
         taskChatEntriesRef.current.find(
@@ -15358,17 +15386,261 @@ function App() {
     return true;
   }
 
-  function handleImplementPlan(entry: TaskChatEntry) {
-    void openPlanImplementationDialog(entry);
+  async function boardPlanCardForEntry(entry: TaskChatEntry) {
+    if (entry.chatId === null) return null;
+    const card = await getKanbanCardForChat(entry.chatId);
+    const settings = parseRunExecutionSettings(card?.executionSettingsJson);
+    return card && settings?.mode === "plan" ? card : null;
   }
 
-  function handleRevisePlan(entry: TaskChatEntry, revision: string) {
-    return launchPlanFollowUp(entry, revision, "plan-revision");
+  function boardPlanIsAwaitingReview(card: KanbanCardRecord) {
+    return Boolean(
+      card.currentAttemptId &&
+        card.stage === "in_review" &&
+        card.executionState === "completed" &&
+        card.reviewState === "awaiting_review",
+    );
+  }
+
+  function profileKeyForPlanEntry(entry: TaskChatEntry): CodexProfileKey {
+    const workspace = selectedWorkspaceRef.current;
+    return (
+      entry.executionSettings?.settings.profileKey ??
+      (workspace
+        ? workspaceChatSessionsRef.current[workspace.id]?.profileKey
+        : null) ??
+      DEFAULT_CODEX_PROFILE_KEY
+    );
+  }
+
+  async function resetPlanThreadAfterBoardDecision(entry: TaskChatEntry) {
+    const workspace = selectedWorkspaceRef.current;
+    const session = workspace
+      ? workspaceChatSessionsRef.current[workspace.id] ?? null
+      : null;
+    if (
+      !session?.threadId ||
+      entry.chatId === null ||
+      session.chatId !== entry.chatId
+    ) {
+      return "The plan decision was saved, but its chat must be reopened to reset Plan mode.";
+    }
+    const profileKey = session.profileKey ?? DEFAULT_CODEX_PROFILE_KEY;
+    const usesDefaultProfile = profileKey === DEFAULT_CODEX_PROFILE_KEY;
+    const sessionAccountId = accountIdFromProfileKey(profileKey);
+    const accountId = usesDefaultProfile
+      ? 0
+      : Number.isFinite(sessionAccountId)
+        ? sessionAccountId
+        : selectedAccountIdRef.current;
+    if (!usesDefaultProfile && !accountId) {
+      return "The plan decision was saved, but its Codex account is unavailable for resetting Plan mode.";
+    }
+    try {
+      await ensureCodexProfileConnected(profileKey, accountId ?? 0);
+      const modes = await collaborationModesForRun(
+        profileKey,
+        accountId ?? 0,
+        selectedModel?.model ?? null,
+        selectedReasoningEffort,
+        false,
+      );
+      await codexRpcForProfile(
+        profileKey,
+        accountId ?? 0,
+        "thread/settings/update",
+        {
+          threadId: session.threadId,
+          collaborationMode:
+            session.savedDefaultCollaborationMode ?? modes.default,
+        },
+      );
+      await updateChat(entry.chatId, {
+        status: "completed",
+        collaborationMode: "default",
+        savedDefaultCollaborationModeJson: null,
+      });
+      return null;
+    } catch (error) {
+      return `The plan decision was saved, but Plan mode could not be reset: ${
+        error instanceof Error ? error.message : String(error)
+      }`;
+    }
+  }
+
+  async function handleImplementPlan(entry: TaskChatEntry) {
+    let card: KanbanCardRecord | null = null;
+    try {
+      card = await boardPlanCardForEntry(entry);
+    } catch (error) {
+      setStatusMessage(
+        `Could not check the Plan card: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+      );
+      return;
+    }
+    if (!card) {
+      await openPlanImplementationDialog(entry);
+      return;
+    }
+    if (!boardPlanIsAwaitingReview(card)) {
+      setStatusMessage("That Plan card is no longer awaiting review.");
+      return;
+    }
+    if (planActionLocksRef.current.has(entry.clientId)) return;
+    planActionLocksRef.current.add(entry.clientId);
+    updateTaskChatEntryRunView(entry.clientId, (current) =>
+      updateNativePlanReview(current, "submitting", "transitioning"),
+    );
+    try {
+      const result = await acceptKanbanPlan(card);
+      updateTaskChatEntryRunView(entry.clientId, (current) =>
+        updateNativePlanReview(current, "approved", "completed"),
+      );
+      if (entry.runId !== null) {
+        await updateRun(entry.runId, { planReviewState: "approved" }).catch(
+          () => undefined,
+        );
+      }
+      void removeAgentNotification(
+        planNotificationEventKey(profileKeyForPlanEntry(entry), entry),
+      ).catch(() => undefined);
+      const resetWarning = await resetPlanThreadAfterBoardDecision(entry);
+      setPlanMode(false);
+      refreshKanbanBoards();
+      const successMessage = `Plan accepted. “${result.generatedCard.title}” was added to To do.`;
+      setStatusMessage(
+        resetWarning ? `${successMessage} ${resetWarning}` : successMessage,
+      );
+    } catch (error) {
+      updateTaskChatEntryRunView(entry.clientId, (current) =>
+        updateNativePlanReview(current, "available", "awaiting-approval"),
+      );
+      setStatusMessage(
+        `Could not accept the Plan card: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+      );
+    } finally {
+      planActionLocksRef.current.delete(entry.clientId);
+    }
+  }
+
+  async function handleRevisePlan(entry: TaskChatEntry, revision: string) {
+    let card: KanbanCardRecord | null = null;
+    try {
+      card = await boardPlanCardForEntry(entry);
+    } catch (error) {
+      setStatusMessage(
+        `Could not check the Plan card: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+      );
+      return false;
+    }
+    if (!card) {
+      return launchPlanFollowUp(entry, revision, "plan-revision");
+    }
+    if (!boardPlanIsAwaitingReview(card)) {
+      setStatusMessage("That Plan card is no longer awaiting review.");
+      return false;
+    }
+    if (planActionLocksRef.current.has(entry.clientId)) return false;
+    planActionLocksRef.current.add(entry.clientId);
+    updateTaskChatEntryRunView(entry.clientId, (current) =>
+      updateNativePlanReview(current, "submitting", "transitioning"),
+    );
+    try {
+      await kanbanRuntime.launchCard(card, "request_changes", revision);
+      updateTaskChatEntryRunView(entry.clientId, (current) =>
+        updateNativePlanReview(current, "superseded", "transitioning"),
+      );
+      if (entry.runId !== null) {
+        await updateRun(entry.runId, {
+          planReviewState: "superseded",
+        }).catch(() => undefined);
+      }
+      void removeAgentNotification(
+        planNotificationEventKey(profileKeyForPlanEntry(entry), entry),
+      ).catch(() => undefined);
+      refreshKanbanBoards();
+      setStatusMessage("Plan update started. The card moved to In progress.");
+      return true;
+    } catch (error) {
+      updateTaskChatEntryRunView(entry.clientId, (current) =>
+        updateNativePlanReview(current, "available", "awaiting-approval"),
+      );
+      setStatusMessage(
+        `Could not update the Plan card: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+      );
+      return false;
+    } finally {
+      planActionLocksRef.current.delete(entry.clientId);
+    }
   }
 
   async function handleCancelPlan(entry: TaskChatEntry) {
     if (entry.runView.nativePlan.reviewState !== "available") {
       setStatusMessage("That plan is no longer awaiting review.");
+      return;
+    }
+    let boardCard: KanbanCardRecord | null = null;
+    try {
+      boardCard = await boardPlanCardForEntry(entry);
+    } catch (error) {
+      setStatusMessage(
+        `Could not check the Plan card: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+      );
+      return;
+    }
+    if (boardCard) {
+      if (!boardPlanIsAwaitingReview(boardCard)) {
+        setStatusMessage("That Plan card is no longer awaiting review.");
+        return;
+      }
+      if (planActionLocksRef.current.has(entry.clientId)) return;
+      planActionLocksRef.current.add(entry.clientId);
+      updateTaskChatEntryRunView(entry.clientId, (current) =>
+        updateNativePlanReview(current, "submitting", "cancelling"),
+      );
+      try {
+        await rejectKanbanPlan(boardCard);
+        updateTaskChatEntryRunView(entry.clientId, (current) =>
+          updateNativePlanReview(current, "cancelled", "cancelled"),
+        );
+        if (entry.runId !== null) {
+          await updateRun(entry.runId, { planReviewState: "cancelled" }).catch(
+            () => undefined,
+          );
+        }
+        void removeAgentNotification(
+          planNotificationEventKey(profileKeyForPlanEntry(entry), entry),
+        ).catch(() => undefined);
+        const resetWarning = await resetPlanThreadAfterBoardDecision(entry);
+        setPlanMode(false);
+        refreshKanbanBoards();
+        const successMessage =
+          "Plan rejected. No implementation ticket was created.";
+        setStatusMessage(
+          resetWarning ? `${successMessage} ${resetWarning}` : successMessage,
+        );
+      } catch (error) {
+        updateTaskChatEntryRunView(entry.clientId, (current) =>
+          updateNativePlanReview(current, "available", "awaiting-approval"),
+        );
+        setStatusMessage(
+          `Could not reject the Plan card: ${
+            error instanceof Error ? error.message : String(error)
+          }`,
+        );
+      } finally {
+        planActionLocksRef.current.delete(entry.clientId);
+      }
       return;
     }
     const workspace = selectedWorkspaceRef.current;

@@ -1,10 +1,12 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const commandMocks = vi.hoisted(() => ({
+  kanbanAcceptPlan: vi.fn(),
   kanbanClaimAttempt: vi.fn(),
   kanbanGitCleanup: vi.fn(),
   kanbanGitCommit: vi.fn(),
   kanbanGitProvision: vi.fn(),
+  kanbanRejectPlan: vi.fn(),
   kanbanSaveGitBindings: vi.fn(),
   kanbanUpdateAttempt: vi.fn(),
 }));
@@ -14,10 +16,12 @@ vi.mock("../../generated/tauri", () => ({
 }));
 
 import {
+  acceptKanbanPlan,
   claimKanbanAttempt,
   cleanupKanbanGit,
   commitKanbanGit,
   provisionKanbanGit,
+  rejectKanbanPlan,
   saveKanbanGitBindings,
   updateKanbanAttempt,
   type KanbanGitBinding,
@@ -138,7 +142,61 @@ describe("Kanban native API", () => {
       turnId: null,
       executionRoot: null,
       error: null,
+      completedPlan: null,
       operationId: "operation-2",
+    });
+  });
+
+  it("persists the completed plan with the terminal attempt event", async () => {
+    await updateKanbanAttempt({
+      cardId: "card-1",
+      attemptId: "attempt-1",
+      generation: 2,
+      sequence: 8,
+      status: "completed",
+      completedPlan: {
+        itemId: "plan-item-1",
+        text: "# Implementation plan\n\nShip it.",
+      },
+      operationId: "operation-plan",
+    });
+
+    expect(commandMocks.kanbanUpdateAttempt).toHaveBeenCalledWith(
+      expect.objectContaining({
+        completedPlan: {
+          itemId: "plan-item-1",
+          text: "# Implementation plan\n\nShip it.",
+        },
+        operationId: "operation-plan",
+      }),
+    );
+  });
+
+  it("sends guarded, idempotent plan decisions", async () => {
+    const card = {
+      id: "card-1",
+      stateVersion: 5,
+      currentAttemptId: "attempt-1",
+    };
+
+    await acceptKanbanPlan(card, {
+      generatedCardId: "card-generated",
+      operationId: "operation-accept",
+    });
+    await rejectKanbanPlan(card, "operation-reject");
+
+    expect(commandMocks.kanbanAcceptPlan).toHaveBeenCalledWith({
+      cardId: "card-1",
+      attemptId: "attempt-1",
+      expectedVersion: 5,
+      generatedCardId: "card-generated",
+      operationId: "operation-accept",
+    });
+    expect(commandMocks.kanbanRejectPlan).toHaveBeenCalledWith({
+      cardId: "card-1",
+      attemptId: "attempt-1",
+      expectedVersion: 5,
+      operationId: "operation-reject",
     });
   });
 
