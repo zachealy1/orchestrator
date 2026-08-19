@@ -63,7 +63,7 @@ export type KanbanRuntimeControllerDependencies<
   updateChat: (
     chatId: number,
     fields: {
-      accountId: number;
+      accountId: number | null;
       profileKey: CodexProfileKey;
       status: string;
     },
@@ -283,7 +283,7 @@ export function createKanbanRuntimeController<
           throw new Error("The card conversation is no longer available.");
         }
         await dependencies.updateChat(chat.id, {
-          accountId,
+          accountId: profileKey === "default" ? null : accountId,
           profileKey,
           status: "starting",
         });

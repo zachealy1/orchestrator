@@ -1355,15 +1355,13 @@ export function KanbanWorkspace({
     );
     const previous = targetCards[request.toIndex - 1] ?? null;
     const next = targetCards[request.toIndex] ?? null;
-    await runAction(
-      () =>
-        moveKanbanCard({
-          card: persisted,
-          targetStage: target,
-          beforeCardId: next?.id ?? null,
-          afterCardId: previous?.id ?? null,
-        }),
-      "Card moved.",
+    await runAction(() =>
+      moveKanbanCard({
+        card: persisted,
+        targetStage: target,
+        beforeCardId: next?.id ?? null,
+        afterCardId: previous?.id ?? null,
+      }),
     );
   }
 

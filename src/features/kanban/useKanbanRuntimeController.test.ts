@@ -345,6 +345,52 @@ describe("Kanban runtime controller", () => {
     );
   });
 
+  it("starts a shared-profile Plan card without persisting the synthetic account id", async () => {
+    const { controller, dependencies } = harness();
+    const executionSettings = createRunExecutionSettings({
+      accountId: 0,
+      profileKey: "default",
+      selectedRepositoryPath: "/workspace/repo",
+      selectedBranch: "main",
+      mode: "plan",
+      intent: "plan",
+      accessMode: "full-access",
+      computerUseEnabled: true,
+      model: model.model,
+      reasoningEffort: "high",
+      useOss: false,
+      ossProvider: "ollama",
+      contextFiles: [],
+      selectedSkills: [],
+      goalMode: false,
+    });
+    const target = card({
+      executionSettingsJson: serializeRunExecutionSettings(executionSettings),
+    });
+    dependencies.loadChat.mockResolvedValue(
+      chatRecord({ profile_key: "default" }),
+    );
+
+    await controller.launchCard(target, "start", target.description);
+
+    expect(dependencies.updateChat).toHaveBeenCalledWith(target.chatId, {
+      accountId: null,
+      profileKey: "default",
+      status: "starting",
+    });
+    const [snapshot] = dependencies.beginRun.mock.calls[0]!;
+    expect(snapshot).toMatchObject({
+      accountId: 0,
+      profileKey: "default",
+      mode: "plan",
+      intent: "plan",
+    });
+    expect(dependencies.scheduleRun).toHaveBeenCalledWith(
+      expect.anything(),
+      snapshot,
+    );
+  });
+
   it("keeps queued continuations inside the card attempt and worktree", async () => {
     const { controller, dependencies, native } = harness();
     const executionSettings = createRunExecutionSettings({
