@@ -197,9 +197,11 @@
 }
 
 .kanban-card-tile {
+  --kanban-card-vertical-gap: 3px;
+
   position: relative;
   display: grid;
-  gap: 5px;
+  row-gap: var(--kanban-card-vertical-gap);
   min-width: 0;
   padding: 8px 10px;
   border: 1px solid var(--color-divider);
@@ -243,7 +245,12 @@
   min-width: 0;
   align-items: flex-start;
   justify-content: space-between;
-  gap: 7px;
+  column-gap: 7px;
+  row-gap: var(--kanban-card-vertical-gap);
+}
+
+.kanban-card-topline {
+  align-items: center;
 }
 
 .kanban-card-badges {
@@ -252,7 +259,8 @@
   min-width: 0;
   flex-wrap: wrap;
   align-items: center;
-  gap: 5px;
+  column-gap: 5px;
+  row-gap: var(--kanban-card-vertical-gap);
 }
 
 .kanban-card-top-actions {
@@ -352,7 +360,7 @@
   display: grid;
   width: 100%;
   min-height: 0;
-  gap: 3px;
+  row-gap: var(--kanban-card-vertical-gap);
   margin: 0;
   padding: 0;
   border: 0;
@@ -422,7 +430,8 @@ button.kanban-card-content {
   display: flex;
   min-width: 0;
   flex-wrap: wrap;
-  gap: 3px 4px;
+  column-gap: 4px;
+  row-gap: var(--kanban-card-vertical-gap);
 }
 
 .kanban-card-metadata > span {
@@ -459,7 +468,7 @@ button.kanban-card-content {
 
 .kanban-pr-status-list {
   display: grid;
-  gap: 2px;
+  row-gap: var(--kanban-card-vertical-gap);
   padding-top: 0;
   color: var(--color-text-secondary);
   font-size: 0.72rem;
