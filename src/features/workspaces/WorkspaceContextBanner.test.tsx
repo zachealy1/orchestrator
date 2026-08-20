@@ -17,11 +17,12 @@ const workspace: Workspace = {
 function renderBanner(
   surfaceMode: "chat" | "kanban",
   kanbanToolbarHostRef?: (element: HTMLDivElement | null) => void,
+  selectedWorkspace: Workspace | null = workspace,
 ) {
   const onSurfaceModeChange = vi.fn();
   render(
     <WorkspaceContextBanner
-      workspace={workspace}
+      workspace={selectedWorkspace}
       surfaceMode={surfaceMode}
       onSurfaceModeChange={onSurfaceModeChange}
       kanbanToolbarHostRef={kanbanToolbarHostRef}
@@ -85,6 +86,27 @@ describe("WorkspaceContextBanner surface switch", () => {
     expect(
       document.querySelector(".workspace-header-control-rail"),
     ).not.toContainElement(switcher);
+  });
+
+  it("places the Orchestrator beta lockup at the end of the header controls", () => {
+    renderBanner("chat");
+
+    const controlRail = document.querySelector(".workspace-header-control-rail");
+    const betaBrand = screen.getByLabelText("Orchestrator beta");
+
+    expect(controlRail).toContainElement(betaBrand);
+    expect(controlRail?.lastElementChild).toBe(betaBrand);
+    expect(betaBrand).toHaveTextContent("OrchestratorBETA");
+  });
+
+  it("keeps the beta lockup visible before a workspace is selected", () => {
+    renderBanner("chat", undefined, null);
+
+    const controlRail = document.querySelector(".workspace-header-control-rail");
+    const betaBrand = screen.getByLabelText("Orchestrator beta");
+
+    expect(controlRail?.lastElementChild).toBe(betaBrand);
+    expect(betaBrand).toHaveTextContent("OrchestratorBETA");
   });
 
   it("provides a toolbar host only while the Kanban surface is visible", () => {

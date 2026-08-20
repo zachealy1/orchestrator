@@ -108,6 +108,7 @@ import {
 import { AnalyticsSummary } from "../components/AnalyticsSummary";
 import type { ComposerSelectOption } from "../components/ComposerSelect";
 import { FilePreviewDrawer } from "../components/FilePreviewDrawer";
+import { OrchestratorBetaBrand } from "../components/OrchestratorBetaBrand";
 import type { TaskChatEntry } from "../components/TaskChatTurn";
 import {
   VirtuosoTaskChatTranscript,
@@ -18125,6 +18126,7 @@ function App() {
                 <button className="icon-button" type="button" onClick={() => setActiveView("settings")} title="Settings">
                   <Settings size={17} />
                 </button>
+                <OrchestratorBetaBrand />
               </div>
             </header>
 

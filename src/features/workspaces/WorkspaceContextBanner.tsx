@@ -21,6 +21,7 @@ import type {
   RefCallback,
 } from "react";
 import { ComposerSelect } from "../../components/ComposerSelect";
+import { OrchestratorBetaBrand } from "../../components/OrchestratorBetaBrand";
 import { getContextUsageDisplay } from "../../lib/contextUsage";
 import type { RunViewState } from "../../lib/codexEventReducer";
 import { windowDragRegionValue } from "../../lib/windowDragging";
@@ -159,29 +160,32 @@ export function WorkspaceContextBanner({
           </div>
           <WorkspaceContextMeter tokenUsage={null} contextWindow={contextWindow} />
         </div>
-        <div className="workspace-context-actions" data-tauri-drag-region="false">
-          <button className="workspace-header-button" type="button" disabled>
-            <GitCommitHorizontal size={15} />
-            Git
-          </button>
-          <button
-            className="workspace-header-button icon-only"
-            type="button"
-            disabled
-            aria-label="New chat"
-            title="Start a new chat"
-          >
-            <SquarePen size={15} />
-          </button>
-          <button
-            className="workspace-header-button icon-only history-panel-button"
-            type="button"
-            disabled
-            aria-label="Open chat history"
-            title="History"
-          >
-            <PanelRight size={15} />
-          </button>
+        <div className="workspace-header-control-rail">
+          <div className="workspace-context-actions" data-tauri-drag-region="false">
+            <button className="workspace-header-button" type="button" disabled>
+              <GitCommitHorizontal size={15} />
+              Git
+            </button>
+            <button
+              className="workspace-header-button icon-only"
+              type="button"
+              disabled
+              aria-label="New chat"
+              title="Start a new chat"
+            >
+              <SquarePen size={15} />
+            </button>
+            <button
+              className="workspace-header-button icon-only history-panel-button"
+              type="button"
+              disabled
+              aria-label="Open chat history"
+              title="History"
+            >
+              <PanelRight size={15} />
+            </button>
+          </div>
+          <OrchestratorBetaBrand />
         </div>
       </section>
     );
@@ -526,6 +530,7 @@ export function WorkspaceContextBanner({
         ) : null}
         </div>
         </div>
+        <OrchestratorBetaBrand />
       </div>
     </section>
   );
