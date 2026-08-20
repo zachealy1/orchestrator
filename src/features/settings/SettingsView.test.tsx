@@ -38,7 +38,11 @@ function model(overrides: Partial<SettingsViewModel> = {}): SettingsViewModel {
     themePreference: "system",
     computerUseEnabled: true,
     browserExecutionTarget: "default-browser",
-    browserRuntimeStatus: { available: true, message: null, defaultBrowser: null },
+    browserRuntimeStatus: {
+      available: true,
+      message: null,
+      defaultBrowser: null,
+    },
     githubConnection: null,
     githubConnectionPending: false,
     notificationPreferences: {
@@ -92,6 +96,47 @@ describe("SettingsView", () => {
     );
   });
 
+  it("routes the agent alerts shortcut through every notification preference", () => {
+    const handlers = actions();
+    render(<SettingsView model={model()} actions={handlers} />);
+
+    fireEvent.click(screen.getByRole("checkbox", { name: "Agent alerts" }));
+
+    expect(handlers.setNotificationPreference).toHaveBeenCalledTimes(5);
+    expect(handlers.setNotificationPreference).toHaveBeenCalledWith(
+      "responseCompleted",
+      false,
+    );
+    expect(handlers.setNotificationPreference).toHaveBeenCalledWith(
+      "externalAction",
+      false,
+    );
+  });
+
+  it("filters overview and detail sections from settings search", () => {
+    render(<SettingsView model={model()} actions={actions()} />);
+
+    fireEvent.change(
+      screen.getByRole("searchbox", { name: "Search settings" }),
+      {
+        target: { value: "github" },
+      },
+    );
+
+    expect(
+      screen.getByRole("region", { name: "Connections overview" }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("region", { name: "GitHub settings" }),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByRole("region", { name: "Quick preferences" }),
+    ).toBeNull();
+    expect(
+      screen.queryByRole("region", { name: "Computer use settings" }),
+    ).toBeNull();
+  });
+
   it("shows bundled CLI availability without requesting app credentials", () => {
     const handlers = actions();
     render(
@@ -116,10 +161,16 @@ describe("SettingsView", () => {
       />,
     );
 
-    const githubSettings = screen.getByRole("region", { name: "GitHub settings" });
-    const connect = within(githubSettings).getByRole("button", { name: "Connect" });
+    const githubSettings = screen.getByRole("region", {
+      name: "GitHub settings",
+    });
+    const connect = within(githubSettings).getByRole("button", {
+      name: "Connect",
+    });
     expect(connect).toBeDisabled();
-    expect(screen.queryByRole("textbox", { name: /github app client id/i })).toBeNull();
+    expect(
+      screen.queryByRole("textbox", { name: /github app client id/i }),
+    ).toBeNull();
   });
 
   it("returns an in-progress CLI login to the shared modal", () => {
