@@ -14,6 +14,7 @@ import {
   renderApp,
   holdNextAnimationFrames,
   prepareSignedInRun,
+  prepareKanbanRun,
   startMockRun,
   emitCodexNotification,
   setWindowWidth,
@@ -280,6 +281,108 @@ describe("Application runtime scenarios 6", () => {
         "false",
       );
       expect(confirm).toHaveBeenCalledTimes(1);
+    });
+
+  it("reruns an Orchestrator-owned shared Kanban prompt in its worktree", async () => {
+      prepareKanbanRun();
+      const executionRoot = "/repo/.codex-kanban/card-shared-edit";
+      const worktreePath = `${executionRoot}/orchestrator`;
+      const cardBranch = "codex/shared-edit";
+      const sharedChat = {
+        ...workspaceChatFixture({
+          id: 409,
+          title: "Shared Kanban edit",
+          codex_thread_id: "thread-shared-edit",
+          profile_key: "default",
+        }),
+        account_id: null,
+        account_label: null,
+        account_email: null,
+        surface: "kanban" as const,
+        native_workspace_binding_status: "ready" as const,
+        native_workspace_binding_json: JSON.stringify({
+          version: 2,
+          kind: "kanban",
+          sourceWorkspacePath: workspace.path,
+          executionDirectory: executionRoot,
+          runtimeWorkspaceRoots: [executionRoot, worktreePath],
+          projectId: "project-workspace-1",
+          pendingContinuationContext: null,
+        }),
+      };
+      const sharedRun = workspaceRunFixture({
+        id: 309,
+        chat_id: sharedChat.id,
+        account_id: null,
+        account_label: "Codex default profile",
+        account_email: null,
+        codex_thread_id: "thread-shared-edit",
+        original_prompt: "Original shared prompt",
+        final_message: "The original run was blocked.",
+        execution_settings_json: JSON.stringify({
+          version: 3,
+          accountId: 0,
+          profileKey: "default",
+          selectedRepositoryPath: worktreePath,
+          selectedBranch: cardBranch,
+          mode: "run",
+          intent: "normal",
+          accessMode: "ask-for-approval",
+          computerUseEnabled: false,
+          browserExecutionTarget: "isolated",
+          model: defaultCodexModel.model,
+          reasoningEffort: "medium",
+          useOss: false,
+          ossProvider: "ollama",
+          contextFiles: [],
+          selectedSkills: [],
+          goalMode: false,
+        }),
+      });
+      mocks.listWorkspaceChatsMock.mockResolvedValue([sharedChat]);
+      mocks.getChatWithRunsMock.mockResolvedValue({
+        chat: sharedChat,
+        runs: [sharedRun],
+      });
+      mocks.listLocalChatTranscriptMock.mockResolvedValue([sharedRun]);
+      mocks.getChatRecordMock.mockResolvedValue(sharedChat);
+      mocks.listGitBranchesMock.mockResolvedValue({
+        branches: [cardBranch],
+        currentBranch: cardBranch,
+      });
+
+      const { user } = await renderApp();
+      const banner = screen.getByRole("region", { name: "Selected folder" });
+      await user.click(
+        within(banner).getByRole("button", { name: /open chat history/i }),
+      );
+      const drawer = await screen.findByRole("complementary", {
+        name: "Workspace chat history",
+      });
+      await user.click(
+        within(drawer).getByRole("button", { name: /shared kanban edit/i }),
+      );
+      await user.click(await screen.findByRole("button", { name: "Edit prompt" }));
+      await user.clear(screen.getByLabelText("Edit submitted prompt"));
+      await user.type(
+        screen.getByLabelText("Edit submitted prompt"),
+        "Edited shared prompt",
+      );
+      await user.click(screen.getByRole("button", { name: "Run edited prompt" }));
+
+      await waitFor(() =>
+        expect(mocks.codexDefaultProfileRpcMock).toHaveBeenCalledWith(
+          "turn/start",
+          expect.objectContaining({
+            cwd: executionRoot,
+            runtimeWorkspaceRoots: [executionRoot, worktreePath],
+          }),
+        ),
+      );
+      expect(screen.queryByText(/default external Codex profile/i)).not.toBeInTheDocument();
+      expect(mocks.createRunMock).toHaveBeenCalledWith(
+        expect.objectContaining({ accountId: null, chatId: sharedChat.id }),
+      );
     });
 
   it("requires Full access confirmation again before replacing an edited turn", async () => {

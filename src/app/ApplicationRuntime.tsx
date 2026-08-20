@@ -4008,7 +4008,6 @@ function App() {
             threadSource: "orchestrator",
             ephemeral: false,
             historyMode: "paginated",
-            environments: [],
             runtimeWorkspaceRoots: sharedBinding.runtimeWorkspaceRoots,
           });
           const threadId = started.thread.id;
@@ -7467,7 +7466,6 @@ function App() {
         threadSource: "orchestrator",
         ephemeral: false,
         historyMode: "paginated",
-        environments: [],
         runtimeWorkspaceRoots: binding.runtimeWorkspaceRoots,
       });
       const threadId = started.thread.id;
@@ -13964,23 +13962,21 @@ function App() {
       showRerunIssue("Wait for the active run to finish before editing a prompt.");
       return;
     }
-    if (originalSettings.profileKey === DEFAULT_CODEX_PROFILE_KEY) {
-      showRerunIssue(
-        "Edited prompts are unavailable for runs from the default external Codex profile.",
-      );
-      return;
-    }
 
-    const account = codexAccountsRef.current.find(
-      (candidate) => candidate.id === originalSettings.accountId,
-    );
-    if (!account) {
+    const usesDefaultProfile =
+      originalSettings.profileKey === DEFAULT_CODEX_PROFILE_KEY;
+    const account = usesDefaultProfile
+      ? null
+      : codexAccountsRef.current.find(
+          (candidate) => candidate.id === originalSettings.accountId,
+        ) ?? null;
+    if (!usesDefaultProfile && !account) {
       showRerunIssue(
         "The Codex account used by the original prompt is no longer available.",
       );
       return;
     }
-    if (account.status === "signed_out") {
+    if (account?.status === "signed_out") {
       showRerunIssue(
         "Sign in to the Codex account used by the original prompt before rerunning it.",
       );
@@ -13993,12 +13989,33 @@ function App() {
       return;
     }
 
+    const chatId = entry.chatId ?? selectedWorkspaceChatSession?.chatId ?? null;
     let originalRepositoryPath = originalSettings.selectedRepositoryPath;
+    let executionWorkspace = workspace;
+    let nativeTaskWorkspaceBinding: NativeTaskWorkspaceBinding | null = null;
     try {
+      if (usesDefaultProfile && chatId) {
+        const chat = await getChatRecord(chatId);
+        if (chat?.surface === "kanban") {
+          nativeTaskWorkspaceBinding = parseNativeTaskWorkspaceBinding(
+            chat.native_workspace_binding_json,
+          );
+          if (!nativeTaskWorkspaceBinding) {
+            showRerunIssue(
+              "The card worktree is unavailable, so this prompt cannot be rerun safely.",
+            );
+            return;
+          }
+          executionWorkspace = {
+            ...workspace,
+            path: nativeTaskWorkspaceBinding.executionDirectory,
+          };
+        }
+      }
       if (!originalRepositoryPath) {
         const overview = normalizeWorkspaceGitOverview(
-          workspace.path,
-          await listWorkspaceGitStatus(workspace.path, true),
+          executionWorkspace.path,
+          await listWorkspaceGitStatus(executionWorkspace.path, true),
         );
         if (overview.repositories.length !== 1) {
           showRerunIssue(
@@ -14009,7 +14026,7 @@ function App() {
         originalRepositoryPath = overview.repositories[0].repository.rootPath;
       }
       const branchList = await listGitBranches(
-        workspace.path,
+        executionWorkspace.path,
         originalRepositoryPath,
       );
       if (
@@ -14027,7 +14044,10 @@ function App() {
           originalSettings.profileKey,
           originalSettings.accountId,
         );
-        const availableModels = await listCodexModels(originalSettings.accountId);
+        const availableModels = await listCodexModelsForProfile(
+          originalSettings.profileKey,
+          originalSettings.accountId,
+        );
         const originalModel = availableModels.find(
           (candidate) =>
             candidate.model === originalSettings.model ||
@@ -14063,8 +14083,6 @@ function App() {
       return;
     }
 
-    const chatId = entry.chatId ?? selectedWorkspaceChatSession?.chatId ?? null;
-
     const editedTurnIndex =
       entry.turnIndex ??
       Math.max(
@@ -14083,11 +14101,12 @@ function App() {
     const snapshot: RunSetupSnapshot = {
       promptText,
       promptFallback: nextPrompt,
-      workspace: { ...workspace },
+      workspace: { ...executionWorkspace },
       sourceWorkspacePath: workspace.path,
       accountId: originalSettings.accountId,
-      account: { ...account },
+      account: account ? { ...account } : null,
       profileKey: originalSettings.profileKey,
+      nativeTaskWorkspaceBinding,
       chatOrigin: "orchestrator",
       externalThreadId: null,
       selectedRepositoryPath: originalRepositoryPath,
