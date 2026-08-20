@@ -301,7 +301,6 @@ export function KanbanCardDialog({
           <div className="kanban-card-dialog-scroll">
             <div className="kanban-card-editor-layout">
               <div className="kanban-card-editor-task">
-                <h3>Task</h3>
                 <label className="kanban-field">
                   <span>Title</span>
                   <input
