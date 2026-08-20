@@ -378,6 +378,37 @@ fn undo_workspace_git_diff_reverses_the_exact_unstaged_patch() {
 }
 
 #[test]
+fn undo_workspace_git_diff_strips_a_card_repository_prefix() {
+    let workspace = git_test_directory("git-undo-card-prefix");
+    let file = workspace.join("src/app.ts");
+    fs::create_dir_all(file.parent().unwrap()).unwrap();
+    fs::write(&file, "export const value = 1;\n").unwrap();
+    git(&workspace, &["add", "src/app.ts"]);
+    git(&workspace, &["commit", "-m", "initial"]);
+    fs::write(&file, "export const value = 2;\n").unwrap();
+    let diff = git_stdout(&workspace, &["diff", "--", "src/app.ts"])
+        .replace("a/src/app.ts", "a/01-space-invaders-test/src/app.ts")
+        .replace("b/src/app.ts", "b/01-space-invaders-test/src/app.ts");
+
+    let result = undo_workspace_git_diff_with_path_strip_blocking(
+        workspace.to_string_lossy().to_string(),
+        diff,
+        Some(2),
+    )
+    .unwrap();
+
+    assert_eq!(
+        fs::read_to_string(&file).unwrap(),
+        "export const value = 1;\n"
+    );
+    assert!(git_stdout(&workspace, &["status", "--porcelain"])
+        .trim()
+        .is_empty());
+    assert_eq!(result.message, "Undid changes to 1 file");
+    remove_test_directory(workspace);
+}
+
+#[test]
 fn undo_workspace_git_diff_removes_an_exact_untracked_file() {
     let workspace = git_test_directory("git-undo-untracked-file");
     let file = workspace.join("new.ts");

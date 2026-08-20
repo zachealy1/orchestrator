@@ -397,9 +397,13 @@ export function readWorkspaceGitDiff(
   );
 }
 
-export function undoWorkspaceGitDiff(workspacePath: string, diff: string) {
+export function undoWorkspaceGitDiff(
+  workspacePath: string,
+  diff: string,
+  pathStrip?: number | null,
+) {
   return commandResult<WorkspaceGitActionResult>(
-    commands.undoWorkspaceGitDiff(workspacePath, diff),
+    commands.undoWorkspaceGitDiff(workspacePath, diff, pathStrip ?? null),
   );
 }
 

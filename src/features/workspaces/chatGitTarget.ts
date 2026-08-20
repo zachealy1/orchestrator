@@ -36,6 +36,11 @@ export type KanbanChatFileTarget = {
   repositoryRelativePath: string;
 };
 
+export type KanbanChatUndoTarget = {
+  binding: KanbanGitBinding;
+  pathStrip: number;
+};
+
 type KanbanChatEditedFile = {
   name: string;
   status: "added" | "modified" | "deleted" | "renamed" | "copied" | "unknown";
@@ -142,6 +147,43 @@ export function resolveKanbanChatFileTarget(
   return repositoryRelativePath
     ? { binding: bindings[0], repositoryRelativePath }
     : null;
+}
+
+/** Resolves a saved turn diff to one isolated card repository. */
+export function resolveKanbanChatUndoTarget(
+  bindings: KanbanGitBinding[],
+  editedFiles: Array<{ path: string }>,
+): KanbanChatUndoTarget | null {
+  if (editedFiles.length === 0) return null;
+
+  const targets = editedFiles.map((file) =>
+    resolveKanbanChatFileTarget(bindings, file.path),
+  );
+  const first = targets[0];
+  if (
+    !first ||
+    targets.some(
+      (target) =>
+        !target || target.binding.worktreePath !== first.binding.worktreePath,
+    )
+  ) {
+    return null;
+  }
+
+  const executionRelativePath = relativeChildPath(
+    first.binding.worktreePath.replace(/\\/g, "/").replace(/\/+$/, ""),
+    first.binding.executionRoot.replace(/\\/g, "/").replace(/\/+$/, ""),
+  );
+  if (executionRelativePath === null) return null;
+  const prefixDepth = executionRelativePath
+    .split("/")
+    .filter((segment) => segment && segment !== ".").length;
+
+  return {
+    binding: first.binding,
+    // Git's normal `a/` or `b/` prefix is the first stripped component.
+    pathStrip: prefixDepth + 1,
+  };
 }
 
 function editedFileStatusKind(

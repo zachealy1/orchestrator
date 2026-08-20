@@ -550,6 +550,7 @@ import {
   createKanbanChatFilePreviewTarget,
   kanbanRepositoriesToWorkspaceOverview,
   kanbanStatusToWorkspaceRepository,
+  resolveKanbanChatUndoTarget,
   type KanbanChatGitRepositoryState,
 } from "../features/workspaces/chatGitTarget";
 import {
@@ -17754,24 +17755,104 @@ function App() {
       throw new Error("Stop the active agent in this workspace before undoing changes");
     }
 
-    const result = await undoWorkspaceGitDiff(
-      workspace.path,
-      entry.runView.latestDiff,
-    );
+    const matchingChatGitContext =
+      entry.chatId !== null &&
+      entry.chatId === kanbanChatGitContext?.chatId
+        ? kanbanChatGitContext
+        : null;
+    if (matchingChatGitContext?.kind === "loading") {
+      throw new Error("The card worktree is still loading; try the undo again shortly");
+    }
+    if (matchingChatGitContext?.kind === "error") {
+      throw new Error(
+        matchingChatGitContext.error ?? "The card worktree is unavailable",
+      );
+    }
+    const cardContext =
+      matchingChatGitContext?.kind === "kanban"
+        ? matchingChatGitContext
+        : null;
+    const cardUndoTarget = cardContext
+      ? resolveKanbanChatUndoTarget(
+          cardContext.repositories.map((repository) => repository.binding),
+          entry.runView.editedFiles,
+        )
+      : null;
+    if (cardContext && !cardUndoTarget) {
+      throw new Error(
+        "This edit summary spans more than one card repository and cannot be undone as one patch",
+      );
+    }
+
+    const result = cardUndoTarget
+      ? await undoWorkspaceGitDiff(
+          cardUndoTarget.binding.worktreePath,
+          entry.runView.latestDiff,
+          cardUndoTarget.pathStrip,
+        )
+      : await undoWorkspaceGitDiff(workspace.path, entry.runView.latestDiff);
     updateTaskChatEntryRunView(entry.clientId, (current) => ({
       ...current,
       fileChangesReverted: true,
     }));
-    invalidateWorkspacePreviewCaches(workspace, undefined, {
-      reloadOpenPreview: true,
-    });
-    await Promise.all([
-      refreshWorkspaceGitStatus(workspace, {
-        showLoading: false,
-        force: true,
-      }),
-      refreshWorkspaceDirectoriesAfterRun(workspace),
-    ]);
+    if (cardContext && cardUndoTarget) {
+      const worktreeWorkspace: Workspace = {
+        ...workspace,
+        path: cardUndoTarget.binding.worktreePath,
+        selected_git_repository_path: cardUndoTarget.binding.worktreePath,
+      };
+      invalidateWorkspacePreviewCaches(worktreeWorkspace, undefined, {
+        reloadOpenPreview: true,
+      });
+      try {
+        const [status, diff] = await Promise.all([
+          readKanbanGitStatus(cardUndoTarget.binding),
+          readKanbanGitDiff(cardUndoTarget.binding),
+        ]);
+        const repository = kanbanStatusToWorkspaceRepository(
+          workspace.path,
+          status,
+          diff,
+        );
+        setKanbanChatGitContext((current) => {
+          if (
+            current?.kind !== "kanban" ||
+            current.chatId !== cardContext.chatId ||
+            current.cardId !== cardContext.cardId
+          ) {
+            return current;
+          }
+          return {
+            ...current,
+            repositories: current.repositories.map((candidate) =>
+              candidate.binding.worktreePath ===
+              cardUndoTarget.binding.worktreePath
+                ? {
+                    status: "loaded" as const,
+                    binding: status.binding,
+                    repository,
+                    error: null,
+                  }
+                : candidate,
+            ),
+          };
+        });
+      } catch {
+        // The exact undo already succeeded; the periodic card refresh can retry
+        // if its Git status could not be reloaded immediately.
+      }
+    } else {
+      invalidateWorkspacePreviewCaches(workspace, undefined, {
+        reloadOpenPreview: true,
+      });
+      await Promise.all([
+        refreshWorkspaceGitStatus(workspace, {
+          showLoading: false,
+          force: true,
+        }),
+        refreshWorkspaceDirectoriesAfterRun(workspace),
+      ]);
+    }
     setStatusMessage(result.message);
   }
 
@@ -19152,7 +19233,9 @@ function App() {
                           null,
                         liveFollow: runIsActive,
                         fileUndoDisabled:
-                          selectedWorkspaceRunningChatActivity.size > 0,
+                          selectedWorkspaceRunningChatActivity.size > 0 ||
+                          selectedChatGitResolutionPending ||
+                          Boolean(selectedChatGitResolutionError),
                         editablePromptEntryId,
                         notificationFocusRequest:
                           transcriptNotificationFocusRequest,

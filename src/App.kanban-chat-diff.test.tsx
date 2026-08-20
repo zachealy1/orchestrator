@@ -118,4 +118,81 @@ describe("Kanban chat diff preview", () => {
       "No diff available for this file.",
     );
   });
+
+  it("undoes a card chat patch in its isolated nested repository", async () => {
+    const chat = workspaceChatFixture({ id: 403, title: "Animate controls" });
+    const latestDiff = [
+      "diff --git a/01-space-invaders-test/src/game.ts b/01-space-invaders-test/src/game.ts",
+      "--- a/01-space-invaders-test/src/game.ts",
+      "+++ b/01-space-invaders-test/src/game.ts",
+      "@@ -1 +1 @@",
+      "-before",
+      "+updated",
+      "",
+    ].join("\n");
+    const run = workspaceRunFixture({
+      id: 303,
+      chat_id: chat.id,
+      original_prompt: "Animate controls",
+      final_message: "Animated the controls.",
+      latest_diff: latestDiff,
+    });
+    const binding = {
+      sourceRepositoryPath: "/repo/orchestrator/01-space-invaders-test",
+      relativePath: "01-space-invaders-test",
+      executionRoot: "/cards/card-game",
+      sourceBranch: "main",
+      baseBranch: "main",
+      baseCommit: "0123456789abcdef",
+      cardBranch: "codex/animate-controls",
+      worktreePath: "/cards/card-game/01-space-invaders-test",
+      status: "ready",
+      error: null,
+    };
+    mocks.listWorkspaceChatsMock.mockResolvedValue([chat]);
+    mocks.getChatWithRunsMock.mockResolvedValue(
+      workspaceChatWithRunsFixture(chat, [run]),
+    );
+    mocks.getKanbanCardForChatMock.mockResolvedValue({
+      id: "card-game",
+      hasStartedTurn: true,
+    });
+    mocks.loadKanbanGitBindingsMock.mockResolvedValue([binding]);
+
+    const { user } = await renderApp();
+    const header = screen.getByRole("region", { name: "Selected folder" });
+    await user.click(
+      within(header).getByRole("button", { name: /open chat history/i }),
+    );
+    const drawer = await screen.findByRole("complementary", {
+      name: "Workspace chat history",
+    });
+    await user.click(
+      within(drawer).getByRole("button", { name: /animate controls/i }),
+    );
+
+    const summary = await screen.findByLabelText("Edited 1 file");
+    const undoButton = within(summary).getByRole("button", {
+      name: "Undo file changes",
+    });
+    await waitFor(() => expect(undoButton).toBeEnabled());
+    await user.click(undoButton);
+    await user.click(
+      within(screen.getByRole("dialog", { name: "Undo changes?" })).getByRole(
+        "button",
+        { name: "Undo changes" },
+      ),
+    );
+
+    await waitFor(() =>
+      expect(mocks.undoWorkspaceGitDiffMock).toHaveBeenCalledWith(
+        binding.worktreePath,
+        latestDiff,
+        2,
+      ),
+    );
+    expect(
+      within(summary).getByRole("button", { name: "File changes undone" }),
+    ).toBeDisabled();
+  });
 });

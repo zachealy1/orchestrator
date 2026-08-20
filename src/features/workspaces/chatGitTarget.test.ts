@@ -9,6 +9,7 @@ import {
   kanbanRepositoriesToWorkspaceOverview,
   kanbanStatusToWorkspaceRepository,
   resolveKanbanChatFileTarget,
+  resolveKanbanChatUndoTarget,
 } from "./chatGitTarget";
 
 const binding: KanbanGitBinding = {
@@ -153,6 +154,31 @@ describe("chat Git target mapping", () => {
       expect(target?.diffCacheKey).toContain(binding.baseCommit);
     },
   );
+
+  it("routes a card turn undo to its nested Git worktree", () => {
+    const target = resolveKanbanChatUndoTarget([binding], [
+      { path: "/cards/card-1/app/src/game.ts" },
+      { path: "app/src/input.ts" },
+    ]);
+
+    expect(target).toEqual({ binding, pathStrip: 2 });
+  });
+
+  it("does not combine an undo across separate card repositories", () => {
+    const otherBinding: KanbanGitBinding = {
+      ...binding,
+      sourceRepositoryPath: "/repo/other",
+      relativePath: "other",
+      worktreePath: "/cards/card-1/other",
+    };
+
+    expect(
+      resolveKanbanChatUndoTarget([binding, otherBinding], [
+        { path: "/cards/card-1/app/src/game.ts" },
+        { path: "/cards/card-1/other/src/api.ts" },
+      ]),
+    ).toBeNull();
+  });
 
   it("projects an isolated Kanban worktree into the shared Git UI model", () => {
     const repository = kanbanStatusToWorkspaceRepository(

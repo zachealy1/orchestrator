@@ -1816,6 +1816,14 @@ pub(crate) fn undo_workspace_git_diff_blocking(
     workspace_path: String,
     diff: String,
 ) -> Result<WorkspaceGitActionResult, String> {
+    undo_workspace_git_diff_with_path_strip_blocking(workspace_path, diff, None)
+}
+
+pub(crate) fn undo_workspace_git_diff_with_path_strip_blocking(
+    workspace_path: String,
+    diff: String,
+    path_strip: Option<usize>,
+) -> Result<WorkspaceGitActionResult, String> {
     let workspace = canonical_workspace(&workspace_path)?;
     let git_root = resolve_git_root(&workspace)?;
     if diff.trim().is_empty() {
@@ -1830,20 +1838,17 @@ pub(crate) fn undo_workspace_git_diff_blocking(
     {
         return Err("Binary file changes cannot be undone from this summary".to_string());
     }
+    if matches!(path_strip, Some(0 | 65..)) {
+        return Err("The saved edit diff has an invalid path prefix depth".to_string());
+    }
 
     let root_arg = git_root.to_string_lossy().to_string();
-    let numstat = run_command_with_stdin(
-        "git",
-        &[
-            "-C".to_string(),
-            root_arg.clone(),
-            "apply".to_string(),
-            "--numstat".to_string(),
-            "-z".to_string(),
-            "-".to_string(),
-        ],
-        &diff,
-    )?;
+    let mut numstat_args = vec!["-C".to_string(), root_arg.clone(), "apply".to_string()];
+    if let Some(path_strip) = path_strip {
+        numstat_args.push(format!("-p{path_strip}"));
+    }
+    numstat_args.extend(["--numstat".to_string(), "-z".to_string(), "-".to_string()]);
+    let numstat = run_command_with_stdin("git", &numstat_args, &diff)?;
     if !numstat.ok {
         return Err(output_detail(&numstat)
             .unwrap_or_else(|| "The saved edit diff could not be inspected".to_string()));
@@ -1857,16 +1862,17 @@ pub(crate) fn undo_workspace_git_diff_blocking(
         return Err("Unstage the affected files before undoing this edit summary".to_string());
     }
 
-    let reverse_args = [
-        "-C".to_string(),
-        root_arg,
-        "apply".to_string(),
+    let mut reverse_args = vec!["-C".to_string(), root_arg, "apply".to_string()];
+    if let Some(path_strip) = path_strip {
+        reverse_args.push(format!("-p{path_strip}"));
+    }
+    reverse_args.extend([
         "--reverse".to_string(),
         "--whitespace=nowarn".to_string(),
         "-".to_string(),
-    ];
+    ]);
     let mut check_args = reverse_args.to_vec();
-    check_args.insert(4, "--check".to_string());
+    check_args.insert(check_args.len() - 1, "--check".to_string());
     let check = run_command_with_stdin("git", &check_args, &diff)?;
     if !check.ok {
         return Err(output_detail(&check).unwrap_or_else(|| {
@@ -1895,9 +1901,13 @@ pub(crate) fn undo_workspace_git_diff_blocking(
 pub(crate) async fn undo_workspace_git_diff(
     workspace_path: String,
     diff: String,
+    path_strip: Option<usize>,
 ) -> Result<WorkspaceGitActionResult, String> {
-    run_blocking_command("undo workspace file changes", move || {
-        undo_workspace_git_diff_blocking(workspace_path, diff)
+    run_blocking_command("undo workspace file changes", move || match path_strip {
+        Some(path_strip) => {
+            undo_workspace_git_diff_with_path_strip_blocking(workspace_path, diff, Some(path_strip))
+        }
+        None => undo_workspace_git_diff_blocking(workspace_path, diff),
     })
     .await
 }
