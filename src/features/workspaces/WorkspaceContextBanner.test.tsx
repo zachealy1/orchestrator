@@ -88,25 +88,16 @@ describe("WorkspaceContextBanner surface switch", () => {
     ).not.toContainElement(switcher);
   });
 
-  it("places the Orchestrator beta lockup at the end of the header controls", () => {
+  it("does not place global product branding in the workspace header", () => {
     renderBanner("chat");
 
-    const controlRail = document.querySelector(".workspace-header-control-rail");
-    const betaBrand = screen.getByLabelText("Orchestrator beta");
-
-    expect(controlRail).toContainElement(betaBrand);
-    expect(controlRail?.lastElementChild).toBe(betaBrand);
-    expect(betaBrand).toHaveTextContent("OrchestratorBETA");
+    expect(screen.queryByLabelText("Orchestrator beta")).not.toBeInTheDocument();
   });
 
-  it("keeps the beta lockup visible before a workspace is selected", () => {
+  it("keeps the empty workspace header free of global product branding", () => {
     renderBanner("chat", undefined, null);
 
-    const controlRail = document.querySelector(".workspace-header-control-rail");
-    const betaBrand = screen.getByLabelText("Orchestrator beta");
-
-    expect(controlRail?.lastElementChild).toBe(betaBrand);
-    expect(betaBrand).toHaveTextContent("OrchestratorBETA");
+    expect(screen.queryByLabelText("Orchestrator beta")).not.toBeInTheDocument();
   });
 
   it("provides a toolbar host only while the Kanban surface is visible", () => {

@@ -59,6 +59,15 @@ type PreparedSemanticRow = {
   section: PreparedDiffSection;
   row: DiffRow;
 };
+type PreparedSideBySideRow = {
+  id: string;
+  kind: DiffRow["kind"];
+  oldLineNumber: number | null;
+  oldTokens: PreparedPreviewToken[];
+  newLineNumber: number | null;
+  newTokens: PreparedPreviewToken[];
+  overviewRow: DiffRow;
+};
 type PreparedInlineRow = {
   id: string;
   kind: DiffRow["kind"];
@@ -75,6 +84,13 @@ const INITIAL_SCROLL_METRICS: ScrollMetrics = {
   clientHeight: 0,
 };
 const DIFF_ROW_HEIGHT_PX = 24;
+const DIFF_OVERVIEW_WIDTH_PX = 24;
+const DIFF_SIDE_GUTTER_WIDTH_PX = 48;
+const DIFF_INLINE_GUTTER_WIDTH_PX = 52;
+const DIFF_SOURCE_PADDING_PX = 20;
+const DIFF_CHARACTER_WIDTH_PX = 7.6;
+const MINIMUM_DIFF_WRAP_COLUMNS = 8;
+const DEFAULT_DIFF_VIEWPORT_WIDTH_PX = 900;
 
 export const DiffPreview = memo(function DiffPreview({
   path,
@@ -83,6 +99,7 @@ export const DiffPreview = memo(function DiffPreview({
   layout,
 }: Props) {
   const { codePreviewHighlighting } = useAppServices();
+  const previewRef = useRef<HTMLDivElement | null>(null);
   const scrollRef = useRef<HTMLDivElement | null>(null);
   const scrollMetricsFrameRef = useRef<number | null>(null);
   const preparationInput = useMemo<PrepareDiffDocumentInput>(
@@ -106,6 +123,28 @@ export const DiffPreview = memo(function DiffPreview({
   const [prepared, setPrepared] = useState<PreparedDiffDocument | null>(null);
   const [preparationError, setPreparationError] = useState<string | null>(null);
   const [scrollMetrics, setScrollMetrics] = useState(INITIAL_SCROLL_METRICS);
+  const [viewportWidth, setViewportWidth] = useState(
+    DEFAULT_DIFF_VIEWPORT_WIDTH_PX,
+  );
+
+  useLayoutEffect(() => {
+    const previewElement = previewRef.current;
+    if (!previewElement) return;
+    const updateWidth = () => {
+      const width = Math.floor(
+        previewElement.getBoundingClientRect().width ||
+          previewElement.clientWidth,
+      );
+      if (width > 0) {
+        setViewportWidth((current) => (current === width ? current : width));
+      }
+    };
+    updateWidth();
+    if (typeof ResizeObserver === "undefined") return;
+    const observer = new ResizeObserver(updateWidth);
+    observer.observe(previewElement);
+    return () => observer.disconnect();
+  }, []);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -154,7 +193,20 @@ export const DiffPreview = memo(function DiffPreview({
     () => semanticRows.flatMap(flattenInlineRow),
     [semanticRows],
   );
-  const displayRows = layout === "side-by-side" ? semanticRows : inlineRows;
+  const wrapColumns = useMemo(
+    () => calculateDiffWrapColumns(viewportWidth, layout),
+    [layout, viewportWidth],
+  );
+  const sideBySideRows = useMemo(
+    () => semanticRows.flatMap((row) => wrapSideBySideRow(row, wrapColumns)),
+    [semanticRows, wrapColumns],
+  );
+  const wrappedInlineRows = useMemo(
+    () => inlineRows.flatMap((row) => wrapInlineRow(row, wrapColumns)),
+    [inlineRows, wrapColumns],
+  );
+  const displayRows =
+    layout === "side-by-side" ? sideBySideRows : wrappedInlineRows;
   const overscan = usePreviewOverscan(
     scrollRef,
     DIFF_ROW_HEIGHT_PX,
@@ -182,9 +234,9 @@ export const DiffPreview = memo(function DiffPreview({
   const overviewRows = useMemo(
     () =>
       layout === "side-by-side"
-        ? semanticRows.map(({ row }) => row)
-        : inlineRows.map(({ overviewRow }) => overviewRow),
-    [inlineRows, layout, semanticRows],
+        ? sideBySideRows.map(({ overviewRow }) => overviewRow)
+        : wrappedInlineRows.map(({ overviewRow }) => overviewRow),
+    [layout, sideBySideRows, wrappedInlineRows],
   );
   const overviewMarkers = useMemo(
     () => buildDiffOverviewMarkers(overviewRows),
@@ -342,10 +394,12 @@ export const DiffPreview = memo(function DiffPreview({
 
   return (
     <div
+      ref={previewRef}
       className={`diff-preview ${layout}${overviewViewport.scrollable ? " overview-visible" : ""}`}
       aria-label="Full file diff preview"
       data-render-mode={document?.highlightingMode ?? "preparing"}
       data-row-height={DIFF_ROW_HEIGHT_PX}
+      data-wrap-columns={wrapColumns}
     >
       {layout === "side-by-side" ? <DiffPinnedColumnHeader /> : null}
       {document?.truncated || preparationError ? (
@@ -363,14 +417,14 @@ export const DiffPreview = memo(function DiffPreview({
           <div className="diff-preview-scroll" ref={scrollRef}>
             {layout === "side-by-side" ? (
               <SideBySideRows
-                rows={semanticRows}
+                rows={sideBySideRows}
                 virtualRows={renderedRows}
                 totalSize={totalSize}
                 resolvedTheme={resolvedTheme}
               />
             ) : (
               <InlineRows
-                rows={inlineRows}
+                rows={wrappedInlineRows}
                 virtualRows={renderedRows}
                 totalSize={totalSize}
                 resolvedTheme={resolvedTheme}
@@ -519,7 +573,7 @@ const SideBySideRows = memo(function SideBySideRows({
   totalSize,
   resolvedTheme,
 }: {
-  rows: PreparedSemanticRow[];
+  rows: PreparedSideBySideRow[];
   virtualRows: RenderedVirtualRow[];
   totalSize: number;
   resolvedTheme: ResolvedTheme;
@@ -536,7 +590,7 @@ const SideBySideRows = memo(function SideBySideRows({
         if (!item) return null;
         return (
           <div
-            className={`diff-preview-row ${item.row.kind}`}
+            className={`diff-preview-row ${item.kind}`}
             role="row"
             key={virtualRow.key}
             data-index={virtualRow.index}
@@ -547,22 +601,14 @@ const SideBySideRows = memo(function SideBySideRows({
           >
             <DiffCell
               side="old"
-              lineNumber={item.row.baseLineNumber}
-              tokens={tokensForLine(
-                item.section.baseLines,
-                item.row.baseLineNumber,
-                item.row.baseText,
-              )}
+              lineNumber={item.oldLineNumber}
+              tokens={item.oldTokens}
               resolvedTheme={resolvedTheme}
             />
             <DiffCell
               side="new"
-              lineNumber={item.row.headLineNumber}
-              tokens={tokensForLine(
-                item.section.headLines,
-                item.row.headLineNumber,
-                item.row.headText,
-              )}
+              lineNumber={item.newLineNumber}
+              tokens={item.newTokens}
               resolvedTheme={resolvedTheme}
             />
           </div>
@@ -695,6 +741,116 @@ function flattenInlineRow(item: PreparedSemanticRow): PreparedInlineRow[] {
     });
   }
   return result;
+}
+
+function calculateDiffWrapColumns(
+  viewportWidth: number,
+  layout: DiffLayout,
+) {
+  const sourceWidth =
+    layout === "side-by-side"
+      ? viewportWidth / 2 -
+        DIFF_SIDE_GUTTER_WIDTH_PX -
+        DIFF_SOURCE_PADDING_PX -
+        DIFF_OVERVIEW_WIDTH_PX
+      : viewportWidth -
+        DIFF_INLINE_GUTTER_WIDTH_PX -
+        DIFF_SOURCE_PADDING_PX -
+        DIFF_OVERVIEW_WIDTH_PX;
+  return Math.max(
+    MINIMUM_DIFF_WRAP_COLUMNS,
+    Math.floor(sourceWidth / DIFF_CHARACTER_WIDTH_PX),
+  );
+}
+
+function wrapSideBySideRow(
+  item: PreparedSemanticRow,
+  maxColumns: number,
+): PreparedSideBySideRow[] {
+  const oldSegments = wrapPreparedTokens(
+    tokensForLine(
+      item.section.baseLines,
+      item.row.baseLineNumber,
+      item.row.baseText,
+    ),
+    maxColumns,
+  );
+  const newSegments = wrapPreparedTokens(
+    tokensForLine(
+      item.section.headLines,
+      item.row.headLineNumber,
+      item.row.headText,
+    ),
+    maxColumns,
+  );
+  const segmentCount = Math.max(oldSegments.length, newSegments.length);
+  return Array.from({ length: segmentCount }, (_, index) => ({
+    id: `${item.id}-visual-${index}`,
+    kind: item.row.kind,
+    oldLineNumber: index === 0 ? item.row.baseLineNumber : null,
+    oldTokens: oldSegments[index] ?? [],
+    newLineNumber: index === 0 ? item.row.headLineNumber : null,
+    newTokens: newSegments[index] ?? [],
+    overviewRow: item.row,
+  }));
+}
+
+function wrapInlineRow(
+  item: PreparedInlineRow,
+  maxColumns: number,
+): PreparedInlineRow[] {
+  return wrapPreparedTokens(item.tokens, maxColumns).map((tokens, index) => ({
+    ...item,
+    id: `${item.id}-visual-${index}`,
+    lineNumber: index === 0 ? item.lineNumber : null,
+    tokens,
+  }));
+}
+
+function wrapPreparedTokens(
+  tokens: PreparedPreviewToken[],
+  maxColumns: number,
+): PreparedPreviewToken[][] {
+  const segments: PreparedPreviewToken[][] = [[]];
+  let column = 0;
+
+  for (const token of tokens) {
+    for (const character of token.content) {
+      let characterWidth =
+        character === "\t" ? Math.max(1, 4 - (column % 4)) : 1;
+      if (column > 0 && column + characterWidth > maxColumns) {
+        segments.push([]);
+        column = 0;
+        characterWidth = character === "\t" ? 4 : 1;
+      }
+      appendPreparedTokenCharacter(
+        segments[segments.length - 1],
+        token,
+        character,
+      );
+      column += characterWidth;
+    }
+  }
+
+  return segments;
+}
+
+function appendPreparedTokenCharacter(
+  segment: PreparedPreviewToken[],
+  token: PreparedPreviewToken,
+  character: string,
+) {
+  const previous = segment[segment.length - 1];
+  if (
+    previous &&
+    previous.lightColor === token.lightColor &&
+    previous.darkColor === token.darkColor &&
+    previous.semantic === token.semantic
+  ) {
+    previous.content += character;
+    return;
+  }
+  segment.push({ ...token, content: character });
 }
 
 function tokensForLine(

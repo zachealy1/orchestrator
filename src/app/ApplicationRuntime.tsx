@@ -17819,6 +17819,12 @@ function App() {
           data-tauri-drag-region={selfWindowDragRegion}
           aria-hidden="true"
         />
+        <div
+          className="app-rail-brand"
+          data-tauri-drag-region={selfWindowDragRegion}
+        >
+          <OrchestratorBetaBrand />
+        </div>
         <nav
           className="primary-nav"
           aria-label="Primary"
@@ -18127,7 +18133,6 @@ function App() {
                 <button className="icon-button" type="button" onClick={() => setActiveView("settings")} title="Settings">
                   <Settings size={17} />
                 </button>
-                <OrchestratorBetaBrand />
               </div>
             </header>
 

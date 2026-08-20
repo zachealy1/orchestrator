@@ -75,4 +75,10 @@ describe("code preview gutter CSS", () => {
     expect(gutter).not.toContain("overflow: hidden");
     expect(gutter).not.toContain("text-overflow:");
   });
+
+  it("uses white text for the selected file preview mode", () => {
+    const selectedMode = rule(".file-preview-mode-toggle button.active,");
+
+    expect(selectedMode).toContain("color: var(--color-button-primary-text)");
+  });
 });

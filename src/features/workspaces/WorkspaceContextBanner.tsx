@@ -21,7 +21,6 @@ import type {
   RefCallback,
 } from "react";
 import { ComposerSelect } from "../../components/ComposerSelect";
-import { OrchestratorBetaBrand } from "../../components/OrchestratorBetaBrand";
 import { getContextUsageDisplay } from "../../lib/contextUsage";
 import type { RunViewState } from "../../lib/codexEventReducer";
 import { windowDragRegionValue } from "../../lib/windowDragging";
@@ -185,7 +184,6 @@ export function WorkspaceContextBanner({
               <PanelRight size={15} />
             </button>
           </div>
-          <OrchestratorBetaBrand />
         </div>
       </section>
     );
@@ -530,7 +528,6 @@ export function WorkspaceContextBanner({
         ) : null}
         </div>
         </div>
-        <OrchestratorBetaBrand />
       </div>
     </section>
   );

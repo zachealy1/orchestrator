@@ -28,6 +28,15 @@
   height: 30px;
 }
 
+.app-rail-brand {
+  display: flex;
+  min-height: 48px;
+  flex: 0 0 auto;
+  align-items: center;
+  border-bottom: 1px solid var(--color-divider);
+  padding: 7px 10px;
+}
+
 .run-row span,
 .muted {
   color: var(--muted);
@@ -1023,12 +1032,6 @@ button.account-switcher-item:hover:not(:disabled) {
   padding: 0 6px;
 }
 
-.workspace-header-control-rail > .orchestrator-beta-brand,
-.topbar-actions > .orchestrator-beta-brand {
-  border-left: 1px solid var(--color-divider);
-  padding-left: 12px;
-}
-
 .workspace-mode-controls {
   display: flex;
   min-width: 0;
@@ -1186,30 +1189,6 @@ button.account-switcher-item:hover:not(:disabled) {
 
   .workspace-kanban-header-controls .composer-select.kanban-group-select {
     width: 120px;
-  }
-}
-
-@container (max-width: 760px) {
-  .workspace-header-control-rail {
-    gap: 8px;
-  }
-
-  .workspace-header-control-rail > .orchestrator-beta-brand {
-    gap: 5px;
-    padding-left: 8px;
-  }
-
-  .workspace-header-control-rail .orchestrator-beta-brand-mark {
-    width: 22px;
-    height: 22px;
-  }
-
-  .workspace-header-control-rail .orchestrator-beta-brand-name {
-    font-size: 0.78rem;
-  }
-
-  .workspace-header-control-rail .orchestrator-beta-tag {
-    padding-inline: 5px;
   }
 }
 

@@ -520,6 +520,12 @@ button.history-run-item.disabled {
   color: var(--muted);
 }
 
+.file-preview-mode-toggle button.active,
+.file-preview-mode-toggle button.active:hover:not(:disabled),
+.file-preview-mode-toggle button.active:focus-visible:not(:disabled) {
+  color: var(--color-button-primary-text);
+}
+
 .file-preview-mode-toggle button:focus-visible {
   box-shadow: inset 0 0 0 2px var(--dropdown-focus-ring);
 }

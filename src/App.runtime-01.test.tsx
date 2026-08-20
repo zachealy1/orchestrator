@@ -59,6 +59,10 @@ describe("Application runtime scenarios 1", () => {
       const primaryNav = screen.getByRole("navigation", {
         name: "Primary",
       });
+      const appRailBrand = document.querySelector(".app-rail-brand");
+      const betaBrand = screen.getByLabelText("Orchestrator beta");
+      expect(appRailBrand).toContainElement(betaBrand);
+      expect(appRailBrand?.nextElementSibling).toBe(primaryNav);
       expect(
         within(primaryNav).queryByRole("button", { name: "Task" }),
       ).not.toBeInTheDocument();

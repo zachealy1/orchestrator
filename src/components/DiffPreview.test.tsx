@@ -143,6 +143,56 @@ describe("DiffPreview", () => {
     expect(inline).toHaveTextContent("Z");
   });
 
+  it.each(["side-by-side", "inline"] as const)(
+    "wraps long %s diff lines into fixed-height visual rows without losing text",
+    async (layout) => {
+      const longLine =
+        "it('freezes gameplay while paused and resumes without dropping the next animation frame', () => expect(game.state).toBe('running'));";
+      const { container } = render(
+        <DiffPreview
+          path="game.test.ts"
+          sections={[
+            {
+              ...section,
+              baseContent: "",
+              headContent: longLine,
+            },
+          ]}
+          resolvedTheme="dark"
+          layout={layout}
+        />,
+      );
+
+      const table = await screen.findByRole("table", {
+        name: layout === "side-by-side" ? "Side-by-side diff" : "Inline diff",
+      });
+      await waitFor(() =>
+        expect(
+          table.querySelectorAll(
+            layout === "side-by-side"
+              ? ".diff-preview-row"
+              : ".diff-preview-inline-row",
+          ).length,
+        ).toBeGreaterThan(1),
+      );
+
+      const sourceCells = Array.from(
+        table.querySelectorAll<HTMLElement>(
+          layout === "side-by-side"
+            ? ".diff-preview-cell.new .diff-preview-source"
+            : ".diff-preview-source",
+        ),
+      );
+      expect(sourceCells.map((cell) => cell.textContent).join("")).toBe(longLine);
+      expect(
+        table.querySelectorAll(".diff-preview-gutter:not(:empty)"),
+      ).toHaveLength(1);
+      expect(container.querySelector(".diff-preview")).toHaveAttribute(
+        "data-wrap-columns",
+      );
+    },
+  );
+
   it("only renders a bounded initial row slice for large diffs", async () => {
     const { container } = render(
       <DiffPreview
