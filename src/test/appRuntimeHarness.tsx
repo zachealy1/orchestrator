@@ -204,10 +204,6 @@ vi.mock("../lib/nativeContextFileDrop", () => ({
   registerNativeContextFileDrop: mocks.registerNativeContextFileDropMock,
 }));
 
-vi.mock("../assets/brand/orchestrator-mark.png", () => ({
-  default: "orchestrator-mark.png",
-}));
-
 vi.mock("../assets/brand/orchestrator-wordmark.png", () => ({
   default: "orchestrator-wordmark.png",
 }));

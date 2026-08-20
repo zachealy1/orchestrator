@@ -1,15 +1,10 @@
 import { memo } from "react";
-import orchestratorMark from "../assets/brand/orchestrator-mark.png";
+import { OrchestratorMark } from "./OrchestratorMark";
 
 export const OrchestratorBetaBrand = memo(function OrchestratorBetaBrand() {
   return (
     <div className="orchestrator-beta-brand" aria-label="Orchestrator beta">
-      <img
-        className="orchestrator-beta-brand-mark"
-        src={orchestratorMark}
-        alt=""
-        aria-hidden="true"
-      />
+      <OrchestratorMark className="orchestrator-beta-brand-mark" />
       <span className="orchestrator-beta-brand-name">Orchestrator</span>
       <span className="orchestrator-beta-tag">BETA</span>
     </div>

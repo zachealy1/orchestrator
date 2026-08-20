@@ -747,11 +747,10 @@ button.pending-interaction-nav:disabled {
   align-items: center;
 }
 
-.brand-lockup img {
+.brand-lockup-mark {
   width: 52px;
   height: 52px;
   flex: 0 0 auto;
-  object-fit: contain;
 }
 
 .brand-lockup > div {

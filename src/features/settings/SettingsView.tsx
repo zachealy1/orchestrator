@@ -17,8 +17,8 @@ import {
   UserPlus,
 } from "lucide-react";
 import { memo } from "react";
-import orchestratorMark from "../../assets/brand/orchestrator-mark.png";
 import { ComposerSelect } from "../../components/ComposerSelect";
+import { OrchestratorMark } from "../../components/OrchestratorMark";
 import type {
   AgentNotificationPermissionStatus,
   AgentNotificationPreferences,
@@ -554,7 +554,7 @@ export const SettingsView = memo(function SettingsView({
 
       <section className="surface brand-panel" aria-label="About Orchestrator">
         <div className="brand-lockup">
-          <img src={orchestratorMark} alt="" />
+          <OrchestratorMark className="brand-lockup-mark" />
           <div>
             <h2>Orchestrator</h2>
             <span>Token-aware Codex workspace</span>

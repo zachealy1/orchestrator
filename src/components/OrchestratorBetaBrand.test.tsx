@@ -8,9 +8,7 @@ describe("OrchestratorBetaBrand", () => {
 
     const brand = screen.getByLabelText("Orchestrator beta");
     expect(brand).toHaveTextContent("OrchestratorBETA");
-    expect(brand.querySelector("img")).toHaveAttribute(
-      "src",
-      expect.stringContaining("orchestrator-mark"),
-    );
+    expect(brand.querySelector("svg.orchestrator-mark")).not.toBeNull();
+    expect(brand.querySelectorAll(".orchestrator-mark-node")).toHaveLength(4);
   });
 });
