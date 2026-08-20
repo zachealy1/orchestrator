@@ -451,6 +451,10 @@ describe("KanbanWorkspace controller", () => {
     await waitFor(() =>
       expect(githubMocks.syncKanbanPullRequests).toHaveBeenCalledTimes(1),
     );
+    expect(githubMocks.syncKanbanPullRequests).toHaveBeenLastCalledWith(
+      1,
+      expect.any(Number),
+    );
     const intervalCall = setInterval.mock.calls.find(
       ([, delay]) => delay === 10_000,
     );

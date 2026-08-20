@@ -926,7 +926,10 @@ export function KanbanWorkspace({
 
     setPullRequestSyncing(true);
     const operation = (async () => {
-      const updated = await syncKanbanPullRequests(workspace.id);
+      const updated = await syncKanbanPullRequests(
+        workspace.id,
+        snapshotRef.current?.revision ?? null,
+      );
       if (updated > 0 && workspaceIdRef.current === workspace.id) {
         await loadBoard();
       }

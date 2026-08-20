@@ -67,8 +67,14 @@ export function publishKanbanCard(cardId: string) {
   return commands.githubPublishKanbanCard(cardId);
 }
 
-export function syncKanbanPullRequests(workspaceId?: number | null) {
-  return commands.githubSyncKanbanPullRequests(workspaceId ?? null);
+export function syncKanbanPullRequests(
+  workspaceId?: number | null,
+  knownBoardRevision?: number | null,
+) {
+  return commands.githubSyncKanbanPullRequests(
+    workspaceId ?? null,
+    knownBoardRevision ?? null,
+  );
 }
 
 export function completeKanbanWithoutPullRequest(cardId: string) {

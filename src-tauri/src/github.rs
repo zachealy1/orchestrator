@@ -61,6 +61,21 @@ struct PullRequestSyncTarget {
 
 const PULL_REQUEST_SYNC_CONCURRENCY: usize = 4;
 
+fn synchronized_change_count(
+    synchronized: u64,
+    known_board_revision: Option<i64>,
+    persisted_board_revision: Option<i64>,
+) -> u64 {
+    if matches!(
+        (known_board_revision, persisted_board_revision),
+        (Some(known), Some(persisted)) if known != persisted
+    ) {
+        synchronized.max(1)
+    } else {
+        synchronized
+    }
+}
+
 async fn open_database(app: &AppHandle) -> Result<PoolConnection<Sqlite>, String> {
     app.state::<DatabaseState>().acquire().await
 }
@@ -730,6 +745,7 @@ async fn complete_merged_cards(app: &AppHandle) -> Result<u64, String> {
 pub(crate) async fn github_sync_kanban_pull_requests(
     app: AppHandle,
     workspace_id: Option<i64>,
+    known_board_revision: Option<i64>,
 ) -> Result<u64, String> {
     if !github_cli::github_review_available(&app).await {
         return Err("Connect GitHub in Settings to refresh pull requests.".to_string());
@@ -822,7 +838,21 @@ pub(crate) async fn github_sync_kanban_pull_requests(
         }
     }
     synced += complete_merged_cards(&app).await?;
-    Ok(synced)
+    let persisted_board_revision = if let Some(workspace_id) = workspace_id {
+        let mut connection = open_database(&app).await?;
+        sqlx::query_scalar::<_, i64>("SELECT revision FROM kanban_boards WHERE workspace_id = ?1")
+            .bind(workspace_id)
+            .fetch_optional(&mut *connection)
+            .await
+            .map_err(|error| format!("The Kanban board revision could not be checked: {error}"))?
+    } else {
+        None
+    };
+    Ok(synchronized_change_count(
+        synced,
+        known_board_revision,
+        persisted_board_revision,
+    ))
 }
 
 #[tauri::command]
@@ -864,7 +894,7 @@ pub(crate) async fn github_complete_kanban_without_pull_request(
 mod tests {
     use super::{
         parse_github_remote, pull_request_sync_changed, safe_pull_request_text,
-        PullRequestSyncTarget,
+        synchronized_change_count, PullRequestSyncTarget,
     };
     use crate::github_cli::GithubPullRequest;
 
@@ -923,5 +953,13 @@ mod tests {
             ..unchanged
         };
         assert!(pull_request_sync_changed(&target, &merged));
+    }
+
+    #[test]
+    fn missed_background_publication_requests_a_board_reload() {
+        assert_eq!(synchronized_change_count(0, Some(12), Some(13)), 1);
+        assert_eq!(synchronized_change_count(0, Some(13), Some(13)), 0);
+        assert_eq!(synchronized_change_count(2, Some(12), Some(13)), 2);
+        assert_eq!(synchronized_change_count(0, None, Some(13)), 0);
     }
 }
