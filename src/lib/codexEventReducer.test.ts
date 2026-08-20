@@ -568,6 +568,113 @@ describe("codexEventReducer", () => {
     expect(state.console).toHaveLength(0);
   });
 
+  it("updates one descriptive row for an MCP tool lifecycle", () => {
+    const item = {
+      type: "mcpToolCall",
+      id: "tool-1",
+      server: "node_repl",
+      tool: "js",
+      arguments: { title: "Check available browser connections" },
+    };
+    let state = applyCodexMessage(emptyRunView, {
+      method: "item/started",
+      params: { item },
+    });
+
+    expect(state.streamEvents).toHaveLength(1);
+    expect(state.streamEvents[0]).toMatchObject({
+      kind: "activity",
+      text: "Checking available browser connections",
+      activityIds: ["tool-1"],
+    });
+    expect(state.toolActivitiesById["tool-1"]).toMatchObject({
+      label: "Checking available browser connections",
+      status: "running",
+    });
+
+    state = applyCodexMessage(state, {
+      method: "item/completed",
+      params: {
+        item: {
+          type: "mcpToolCall",
+          id: "tool-1",
+          status: "completed",
+          durationMs: 1250,
+        },
+      },
+    });
+    state = applyCodexMessage(state, {
+      method: "item/completed",
+      params: {
+        item: {
+          type: "mcpToolCall",
+          id: "tool-1",
+          status: "failed",
+          durationMs: 2000,
+        },
+      },
+    });
+
+    expect(state.streamEvents).toHaveLength(1);
+    expect(state.toolActivitiesById["tool-1"]).toMatchObject({
+      label: "Checked available browser connections",
+      status: "completed",
+      durationMs: 1250,
+    });
+    expect(JSON.stringify(state)).not.toMatch(/mcpToolCall|Started|Completed/u);
+  });
+
+  it("handles completed and out-of-order tool events idempotently", () => {
+    let state = applyCodexMessage(emptyRunView, {
+      method: "item/completed",
+      params: {
+        item: {
+          type: "mcpToolCall",
+          id: "tool-2",
+          server: "codex_apps",
+          tool: "github.get_pr_info",
+          status: "completed",
+        },
+      },
+    });
+    state = applyCodexMessage(state, {
+      method: "item/started",
+      params: {
+        item: {
+          type: "mcpToolCall",
+          id: "tool-2",
+          server: "codex_apps",
+          tool: "github.get_pr_info",
+        },
+      },
+    });
+
+    expect(state.toolActivityOrder).toEqual(["tool-2"]);
+    expect(state.toolActivitiesById["tool-2"]?.status).toBe("completed");
+    expect(state.streamEvents).toHaveLength(1);
+  });
+
+  it("removes generic thinking when descriptive activity arrives", () => {
+    let state = applyCodexMessage(emptyRunView, {
+      method: "item/started",
+      params: { item: { type: "reasoning" } },
+    });
+    state = applyCodexMessage(state, {
+      method: "item/started",
+      params: {
+        item: {
+          type: "mcpToolCall",
+          id: "tool-3",
+          server: "playwright",
+          tool: "browser_snapshot",
+        },
+      },
+    });
+
+    expect(state.streamEvents).toHaveLength(1);
+    expect(state.streamEvents[0]?.text).toBe("Inspecting the current browser page");
+  });
+
   it("groups edited files from unified diff notifications", () => {
     let state = applyCodexMessage(emptyRunView, {
       method: "turn/diff/updated",

@@ -134,10 +134,15 @@ export type TaskChatEntry = {
   status: RunViewState["status"];
   runView: RunViewState;
   preparedSummary?: PreparedHistoricalSummary;
-  historicalActivity?: {
+  historicalActivity?: ({
+    source: "default-profile";
     profileKey: "default";
     threadId: string;
     turnId: string;
+  } | {
+    source: "persisted-run";
+    runId: number;
+  }) & {
     status: "available" | "loading" | "loaded" | "error";
     nextCursor: string | null;
     error: string | null;

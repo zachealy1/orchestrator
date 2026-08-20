@@ -305,6 +305,7 @@ export function createTaskChatEntriesFromExternalTranscriptSnapshot(
       },
       historicalActivity: turn.turnId
         ? {
+            source: "default-profile" as const,
             profileKey: "default" as const,
             threadId: snapshot.threadId,
             turnId: turn.turnId,
@@ -448,6 +449,13 @@ export function createTaskChatEntryFromHistoryRun(
               contextTokens: run.latest_context_tokens,
               modelContextWindow: run.latest_model_context_window,
             },
+    },
+    historicalActivity: {
+      source: "persisted-run",
+      runId: run.id,
+      status: "available",
+      nextCursor: null,
+      error: null,
     },
   };
 }

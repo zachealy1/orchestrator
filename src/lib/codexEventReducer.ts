@@ -18,6 +18,13 @@ import {
   type TokenUsage,
 } from "./contextUsage";
 import type { RunWebPreview } from "./webPreview";
+import {
+  describeToolActivity,
+  normalizeToolActivityStatus,
+  type ToolActivityCategory,
+  type ToolActivitySafeDetail,
+  type ToolActivityStatus,
+} from "./toolActivity";
 
 export type { TokenUsage } from "./contextUsage";
 
@@ -57,6 +64,19 @@ export type RunCommandActivity = {
   output: string;
 };
 
+export type RunToolActivity = {
+  id: string;
+  category: ToolActivityCategory;
+  server: string;
+  tool: string;
+  label: string;
+  status: ToolActivityStatus;
+  startedAt: string | null;
+  completedAt: string | null;
+  durationMs: number | null;
+  safeDetails: ToolActivitySafeDetail[];
+};
+
 type AgentMessagePhase = "commentary" | "final_answer" | null;
 
 type AgentMessageState = {
@@ -81,6 +101,8 @@ export type RunViewState = {
   editedFiles: RunEditedFile[];
   fileChangesReverted: boolean;
   commands: RunCommandActivity[];
+  toolActivitiesById: Record<string, RunToolActivity>;
+  toolActivityOrder: string[];
   webPreview: RunWebPreview | null;
   agentMessagesById: Record<string, AgentMessageState>;
   finalMessageItemId: string | null;
@@ -111,6 +133,8 @@ export const emptyRunView: RunViewState = {
   editedFiles: [],
   fileChangesReverted: false,
   commands: [],
+  toolActivitiesById: {},
+  toolActivityOrder: [],
   webPreview: null,
   agentMessagesById: {},
   finalMessageItemId: null,
@@ -254,7 +278,7 @@ export function applyCodexMessage(
       const editedFiles = extractEditedFiles(params, diff);
       return {
         ...appendStreamEvent(
-          mergeEditedFiles(state, editedFiles),
+          mergeEditedFiles(removeTrailingThinkingEvent(state), editedFiles),
           "file",
           editedFiles.length > 0
             ? `Edited ${editedFiles.length} ${editedFiles.length === 1 ? "file" : "files"}`
@@ -270,7 +294,7 @@ export function applyCodexMessage(
       const itemId = extractAgentMessageId(params, readObject(params.item), state);
       return appendAgentMessageDelta(
         appendStreamEvent(
-          appendLine(state, "assistant", delta),
+          appendLine(removeTrailingThinkingEvent(state), "assistant", delta),
           "message",
           delta,
           true,
@@ -322,16 +346,11 @@ export function applyCodexMessage(
       if (item.type === "agentMessage") {
         return startAgentMessage(state, params, item);
       }
-      if (item.type === "subAgentActivity") {
-        const text = `Subagent activity: ${readString(item.kind) ?? "started"}`;
-        return appendStreamEvent(
-          appendLine(state, "subagent", text),
-          "activity",
-          text,
-        );
-      }
       if (item.type === "commandExecution" || item.type === "command") {
         return upsertCommandActivity(state, params, "pending", true);
+      }
+      if (isToolActivityItemType(readString(item.type))) {
+        return upsertToolActivity(state, params, "running");
       }
       if (item.type === "fileChange") {
         const itemId = readString(item.id);
@@ -351,8 +370,7 @@ export function applyCodexMessage(
       if (isHiddenLifecycleItemType(readString(item.type))) {
         return appendThinkingEvent(state);
       }
-      const text = `Started ${readString(item.type) ?? "item"}`;
-      return appendStreamEvent(appendLine(state, "system", text), "activity", text);
+      return appendThinkingEvent(state);
     }
     case "item/completed": {
       const item = readObject(params.item);
@@ -384,14 +402,6 @@ export function applyCodexMessage(
       if (item.type === "agentMessage") {
         return completeAgentMessage(state, params, item);
       }
-      if (item.type === "subAgentActivity") {
-        const text = `Subagent activity completed: ${readString(item.kind) ?? "done"}`;
-        return appendStreamEvent(
-          appendLine(state, "subagent", text),
-          "activity",
-          text,
-        );
-      }
       if (item.type === "commandExecution" || item.type === "command") {
         return upsertCommandActivity(
           state,
@@ -400,24 +410,32 @@ export function applyCodexMessage(
           true,
         );
       }
+      if (isToolActivityItemType(readString(item.type))) {
+        return upsertToolActivity(
+          state,
+          params,
+          normalizeToolActivityStatus(item.status, "completed"),
+        );
+      }
       if (isHiddenLifecycleItemType(readString(item.type))) {
         return appendThinkingEvent(state);
       }
-      return appendStreamEvent(
-        state,
-        "activity",
-        `Completed ${readString(item.type) ?? "item"}`,
-      );
+      return appendThinkingEvent(state);
     }
     case "turn/completed": {
       const turn = readObject(params.turn);
       const status = readString(turn.status);
       const failed = status === "failed";
+      const interrupted =
+        status === "interrupted" || status === "cancelled" || status === "canceled";
       const completedAt = new Date().toISOString();
       const durationMs = readNullableNumber(turn.durationMs);
       return {
-        ...state,
-        status: failed ? "failed" : "completed",
+        ...finalizeToolActivities(
+          state,
+          failed ? "failed" : interrupted ? "interrupted" : "completed",
+        ),
+        status: failed ? "failed" : interrupted ? "interrupted" : "completed",
         completedAt,
         elapsedMs:
           durationMs ??
@@ -454,7 +472,11 @@ export function applyCodexMessage(
       const completedAt = new Date().toISOString();
       return {
         ...appendStreamEvent(
-          appendLine(state, "system", JSON.stringify(params.error ?? message)),
+          appendLine(
+            finalizeToolActivities(state, "failed"),
+            "system",
+            JSON.stringify(params.error ?? message),
+          ),
           "system",
           JSON.stringify(params.error ?? message),
         ),
@@ -473,6 +495,142 @@ export function applyCodexMessage(
     default:
       return state;
   }
+}
+
+function upsertToolActivity(
+  state: RunViewState,
+  params: Record<string, unknown>,
+  requestedStatus: ToolActivityStatus,
+): RunViewState {
+  const item = readObject(params.item);
+  const id =
+    readString(item.id) ??
+    readString(params.itemId) ??
+    readString(params.id) ??
+    null;
+  if (!id) {
+    return appendThinkingEvent(state);
+  }
+
+  const existing = state.toolActivitiesById[id];
+  if (existing && isTerminalToolStatus(existing.status)) {
+    return state;
+  }
+
+  const status = normalizeToolActivityStatus(
+    item.status ?? params.status,
+    requestedStatus,
+  );
+  const argumentsObject = readObject(item.arguments);
+  const presentation = describeToolActivity(
+    existing && Object.keys(argumentsObject).length === 0
+      ? {
+          ...item,
+          server: readString(item.server) ?? existing.server,
+          tool: readString(item.tool) ?? existing.tool,
+          arguments: { title: existing.label },
+        }
+      : item,
+    status,
+  );
+  const now = new Date().toISOString();
+  const startedAt =
+    existing?.startedAt ??
+    readString(item.startedAt) ??
+    readString(params.startedAt) ??
+    (status === "running" || status === "pending" ? now : null);
+  const completedAt = isTerminalToolStatus(status)
+    ? readString(item.completedAt) ?? readString(params.completedAt) ?? now
+    : null;
+  const durationMs =
+    extractDurationMs(params) ??
+    (startedAt && completedAt
+      ? calculateElapsedMs(startedAt, completedAt, existing?.durationMs ?? 0)
+      : existing?.durationMs ?? null);
+  const activity: RunToolActivity = {
+    id,
+    ...presentation,
+    safeDetails:
+      presentation.safeDetails.length > 0
+        ? presentation.safeDetails
+        : existing?.safeDetails ?? [],
+    status,
+    startedAt,
+    completedAt,
+    durationMs,
+  };
+  const isNew = !existing;
+  const withoutThinking = removeTrailingThinkingEvent(state);
+  const nextState: RunViewState = {
+    ...withoutThinking,
+    toolActivitiesById: {
+      ...withoutThinking.toolActivitiesById,
+      [id]: activity,
+    },
+    toolActivityOrder: isNew
+      ? [...withoutThinking.toolActivityOrder, id]
+      : withoutThinking.toolActivityOrder,
+  };
+  if (!isNew) {
+    return nextState;
+  }
+  return appendStreamEvent(nextState, "activity", activity.label, false, [id]);
+}
+
+function finalizeToolActivities(
+  state: RunViewState,
+  status: Extract<ToolActivityStatus, "completed" | "failed" | "interrupted">,
+) {
+  const now = new Date().toISOString();
+  let changed = false;
+  const toolActivitiesById = { ...state.toolActivitiesById };
+  for (const id of state.toolActivityOrder) {
+    const activity = toolActivitiesById[id];
+    if (!activity || isTerminalToolStatus(activity.status)) continue;
+    changed = true;
+    toolActivitiesById[id] = {
+      ...activity,
+      status,
+      label:
+        status === "failed"
+          ? `Failed: ${lowercaseFirst(activity.label)}`
+          : status === "interrupted"
+            ? `Stopped: ${lowercaseFirst(activity.label)}`
+            : completedActivityLabel(activity.label),
+      completedAt: now,
+      durationMs: activity.startedAt
+        ? calculateElapsedMs(activity.startedAt, now, activity.durationMs ?? 0)
+        : activity.durationMs,
+    };
+  }
+  return changed ? { ...state, toolActivitiesById } : state;
+}
+
+function isTerminalToolStatus(status: ToolActivityStatus) {
+  return (
+    status === "completed" ||
+    status === "failed" ||
+    status === "declined" ||
+    status === "interrupted"
+  );
+}
+
+function completedActivityLabel(label: string) {
+  const replacements: Array<[RegExp, string]> = [
+    [/^Checking\b/u, "Checked"],
+    [/^Opening\b/u, "Opened"],
+    [/^Reading\b/u, "Read"],
+    [/^Inspecting\b/u, "Inspected"],
+    [/^Capturing\b/u, "Captured"],
+    [/^Searching\b/u, "Searched"],
+    [/^Running\b/u, "Ran"],
+    [/^Using\b/u, "Used"],
+    [/^Waiting\b/u, "Waited"],
+  ];
+  for (const [pattern, replacement] of replacements) {
+    if (pattern.test(label)) return label.replace(pattern, replacement);
+  }
+  return label;
 }
 
 export function addApprovalRequest(
@@ -965,6 +1123,21 @@ function appendThinkingEvent(state: RunViewState) {
   return appendStreamEvent(state, "activity", "Thinking");
 }
 
+function removeTrailingThinkingEvent(state: RunViewState) {
+  const last = state.streamEvents[state.streamEvents.length - 1];
+  if (last?.kind !== "activity" || last.text !== "Thinking") {
+    return state;
+  }
+  return {
+    ...state,
+    streamEvents: state.streamEvents.slice(0, -1),
+  };
+}
+
+function lowercaseFirst(value: string) {
+  return value ? `${value[0]!.toLowerCase()}${value.slice(1)}` : value;
+}
+
 function mergeEditedFiles(
   state: RunViewState,
   editedFiles: RunEditedFile[],
@@ -1123,9 +1296,10 @@ function upsertCommandActivity(
     durationMs,
     output: "",
   };
+  const baseState = appendTimelineEvent ? removeTrailingThinkingEvent(state) : state;
   const nextState = {
-    ...state,
-    commands: upsertCommand(state.commands, nextCommand),
+    ...baseState,
+    commands: upsertCommand(baseState.commands, nextCommand),
   };
 
   return appendTimelineEvent
@@ -1325,7 +1499,25 @@ function normalizeFileStatus(status: string | null): RunEditedFile["status"] {
 }
 
 function isHiddenLifecycleItemType(type: string | null) {
-  return type === "userMessage" || type === "reasoning" || type === "fileChange";
+  return (
+    type === "userMessage" ||
+    type === "reasoning" ||
+    type === "fileChange" ||
+    type === "plan" ||
+    type === "contextCompaction" ||
+    type === "imageView"
+  );
+}
+
+function isToolActivityItemType(type: string | null) {
+  return (
+    type === "mcpToolCall" ||
+    type === "dynamicToolCall" ||
+    type === "collabToolCall" ||
+    type === "collabAgentToolCall" ||
+    type === "subAgentActivity" ||
+    type === "webSearch"
+  );
 }
 
 function basename(path: string) {

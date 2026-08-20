@@ -421,8 +421,9 @@ pub(crate) async fn send_request(
 }
 
 pub(crate) fn project_historical_turn_activity(response: &Value) -> HistoricalTurnActivityResponse {
-    let mut commands = Vec::new();
+    let mut commands: Vec<HistoricalCommandActivity> = Vec::new();
     let mut edited_files: Vec<HistoricalEditedFile> = Vec::new();
+    let mut tool_activities: Vec<HistoricalToolActivity> = Vec::new();
     let items = response
         .get("data")
         .and_then(Value::as_array)
@@ -449,12 +450,24 @@ pub(crate) fn project_historical_turn_activity(response: &Value) -> HistoricalTu
                     _ => "completed",
                 }
                 .to_string();
-                commands.push(HistoricalCommandActivity {
+                let projected = HistoricalCommandActivity {
                     id,
                     command,
                     status,
                     duration_ms: item.get("durationMs").and_then(Value::as_i64),
-                });
+                };
+                if let Some(existing) = commands
+                    .iter_mut()
+                    .find(|command| command.id == projected.id)
+                {
+                    if !is_terminal_historical_status(&existing.status)
+                        || is_terminal_historical_status(&projected.status)
+                    {
+                        *existing = projected;
+                    }
+                } else {
+                    commands.push(projected);
+                }
             }
             Some("fileChange") => {
                 let changes = item
@@ -505,6 +518,33 @@ pub(crate) fn project_historical_turn_activity(response: &Value) -> HistoricalTu
                     }
                 }
             }
+            Some(
+                item_type @ ("mcpToolCall"
+                | "dynamicToolCall"
+                | "collabToolCall"
+                | "collabAgentToolCall"
+                | "subAgentActivity"
+                | "webSearch"),
+            ) => {
+                let id = item
+                    .get("id")
+                    .and_then(Value::as_str)
+                    .unwrap_or("historical-tool")
+                    .to_string();
+                let projected = project_historical_tool_activity(item_type, &id, &item);
+                if let Some(existing) = tool_activities
+                    .iter_mut()
+                    .find(|activity| activity.id == id)
+                {
+                    if !is_terminal_historical_status(&existing.status)
+                        || is_terminal_historical_status(&projected.status)
+                    {
+                        *existing = projected;
+                    }
+                } else {
+                    tool_activities.push(projected);
+                }
+            }
             _ => {}
         }
     }
@@ -512,11 +552,215 @@ pub(crate) fn project_historical_turn_activity(response: &Value) -> HistoricalTu
     HistoricalTurnActivityResponse {
         commands,
         edited_files,
+        tool_activities,
         next_cursor: response
             .get("nextCursor")
             .and_then(Value::as_str)
             .map(str::to_string),
     }
+}
+
+fn project_historical_tool_activity(
+    item_type: &str,
+    id: &str,
+    item: &Value,
+) -> HistoricalToolActivity {
+    let arguments = item.get("arguments").and_then(Value::as_object);
+    let server = safe_protocol_identifier(item.get("server").and_then(Value::as_str))
+        .unwrap_or_else(|| "integration".to_string());
+    let tool = safe_protocol_identifier(item.get("tool").and_then(Value::as_str))
+        .unwrap_or_else(|| "tool".to_string());
+    let title = arguments
+        .and_then(|arguments| arguments.get("title"))
+        .and_then(Value::as_str)
+        .and_then(sanitize_tool_activity_title);
+    let mut safe_details = Vec::new();
+
+    if let Some(repository) = arguments
+        .and_then(|arguments| {
+            first_argument_string(arguments, &["repo_full_name", "repository", "repo"])
+        })
+        .filter(|value| is_safe_repository_name(value))
+    {
+        safe_details.push(HistoricalToolActivityDetail {
+            label: "Repository".to_string(),
+            value: repository.to_string(),
+        });
+    }
+
+    if let Some(path) = arguments
+        .and_then(|arguments| first_argument_string(arguments, &["file_path", "path", "filename"]))
+    {
+        let filename = Path::new(path)
+            .file_name()
+            .and_then(OsStr::to_str)
+            .unwrap_or("");
+        if !filename.is_empty()
+            && filename.chars().count() <= 160
+            && !contains_sensitive_activity_text(filename)
+        {
+            safe_details.push(HistoricalToolActivityDetail {
+                label: "File".to_string(),
+                value: filename.to_string(),
+            });
+        }
+    }
+
+    if let Some(origin) = arguments
+        .and_then(|arguments| first_argument_string(arguments, &["url", "uri"]))
+        .and_then(safe_http_origin)
+    {
+        safe_details.push(HistoricalToolActivityDetail {
+            label: "Origin".to_string(),
+            value: origin,
+        });
+    }
+
+    if let Some(action) = arguments
+        .and_then(|arguments| first_argument_string(arguments, &["action", "operation"]))
+        .filter(|value| is_safe_activity_action(value))
+    {
+        safe_details.push(HistoricalToolActivityDetail {
+            label: "Action".to_string(),
+            value: action.to_string(),
+        });
+    }
+
+    HistoricalToolActivity {
+        id: id.to_string(),
+        item_type: item_type.to_string(),
+        server,
+        tool,
+        title,
+        status: normalize_historical_tool_status(item.get("status").and_then(Value::as_str)),
+        duration_ms: item
+            .get("durationMs")
+            .and_then(Value::as_i64)
+            .or_else(|| item.get("elapsedMs").and_then(Value::as_i64)),
+        safe_details,
+    }
+}
+
+fn safe_protocol_identifier(value: Option<&str>) -> Option<String> {
+    let value = value?.trim();
+    if value.is_empty()
+        || value.len() > 160
+        || !value
+            .chars()
+            .all(|character| character.is_ascii_alphanumeric() || "_.:/-".contains(character))
+    {
+        return None;
+    }
+    Some(value.to_string())
+}
+
+fn sanitize_tool_activity_title(value: &str) -> Option<String> {
+    let normalized = value
+        .chars()
+        .map(|character| {
+            if character.is_control() {
+                ' '
+            } else {
+                character
+            }
+        })
+        .collect::<String>()
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ");
+    if normalized.is_empty()
+        || normalized.chars().count() > 180
+        || normalized.contains("http://")
+        || normalized.contains("https://")
+        || contains_sensitive_activity_text(&normalized)
+    {
+        return None;
+    }
+    Some(normalized)
+}
+
+fn contains_sensitive_activity_text(value: &str) -> bool {
+    let normalized = value.to_ascii_lowercase().replace([' ', '-', '_'], "");
+    [
+        "authorization",
+        "bearer",
+        "cookie",
+        "credential",
+        "devicecode",
+        "onetime",
+        "otp",
+        "password",
+        "passcode",
+        "secret",
+        "token",
+        "apikey",
+        "cardnumber",
+        "cvv",
+    ]
+    .iter()
+    .any(|needle| normalized.contains(needle))
+}
+
+fn first_argument_string<'a>(
+    arguments: &'a serde_json::Map<String, Value>,
+    keys: &[&str],
+) -> Option<&'a str> {
+    keys.iter()
+        .find_map(|key| arguments.get(*key).and_then(Value::as_str))
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+}
+
+fn is_safe_repository_name(value: &str) -> bool {
+    let mut segments = value.split('/');
+    let Some(owner) = segments.next() else {
+        return false;
+    };
+    let Some(repository) = segments.next() else {
+        return false;
+    };
+    segments.next().is_none()
+        && !owner.is_empty()
+        && !repository.is_empty()
+        && value
+            .chars()
+            .all(|character| character.is_ascii_alphanumeric() || "_.-/".contains(character))
+}
+
+fn safe_http_origin(value: &str) -> Option<String> {
+    let parsed = url::Url::parse(value).ok()?;
+    if !matches!(parsed.scheme(), "http" | "https")
+        || !parsed.username().is_empty()
+        || parsed.password().is_some()
+    {
+        return None;
+    }
+    Some(parsed.origin().ascii_serialization())
+}
+
+fn is_safe_activity_action(value: &str) -> bool {
+    !value.is_empty()
+        && value.chars().count() <= 80
+        && !contains_sensitive_activity_text(value)
+        && value
+            .chars()
+            .all(|character| character.is_ascii_alphanumeric() || " ._-".contains(character))
+}
+
+fn normalize_historical_tool_status(value: Option<&str>) -> String {
+    match value {
+        Some("pending") => "pending",
+        Some("inProgress" | "running" | "started") => "running",
+        Some("failed" | "error") => "failed",
+        Some("declined" | "denied") => "declined",
+        Some("cancelled" | "canceled" | "interrupted") => "interrupted",
+        _ => "completed",
+    }
+    .to_string()
+}
+
+fn is_terminal_historical_status(status: &str) -> bool {
+    matches!(status, "completed" | "failed" | "declined" | "interrupted")
 }
 
 pub(crate) fn project_subagent_thread(

@@ -68,6 +68,7 @@ fn command_builder() -> tauri_specta::Builder<tauri::Wry> {
             codex_default_profile_rpc,
             codex_projected_subagent_thread_read,
             codex_default_profile_turn_activity,
+            codex_persisted_run_activity,
             codex_default_profile_thread_index,
             codex_default_profile_thread_index_cancel,
             codex_default_profile_thread_transcript_sync,

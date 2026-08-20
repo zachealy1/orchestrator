@@ -2,7 +2,12 @@ import { commands } from "./generated/tauri";
 import type {
   RunCommandActivity,
   RunEditedFile,
+  RunToolActivity,
 } from "./lib/codexEventReducer";
+import {
+  describeToolActivity,
+  normalizeToolActivityStatus,
+} from "./lib/toolActivity";
 import type {
   AgentNotificationPermissionStatus,
   AgentNotificationRequest,
@@ -191,23 +196,80 @@ export function readProjectedSubagentThread(input: {
 export type HistoricalTurnActivityResponse = {
   commands: Array<Omit<RunCommandActivity, "output">>;
   editedFiles: RunEditedFile[];
+  toolActivities: RunToolActivity[];
   nextCursor: string | null;
 };
 
-export function loadDefaultProfileTurnActivity(input: {
+export async function loadDefaultProfileTurnActivity(input: {
   threadId: string;
   turnId: string;
   cursor?: string | null;
   limit?: number;
 }) {
-  return commandResult<HistoricalTurnActivityResponse>(
-    commands.codexDefaultProfileTurnActivity(
-      input.threadId,
-      input.turnId,
-      input.cursor ?? null,
-      input.limit ?? 50,
-    ),
+  const response = await commands.codexDefaultProfileTurnActivity(
+    input.threadId,
+    input.turnId,
+    input.cursor ?? null,
+    input.limit ?? 50,
   );
+  return projectHistoricalTurnActivityResponse(response);
+}
+
+export async function loadPersistedRunActivity(input: {
+  runId: number;
+  cursor?: string | null;
+  limit?: number;
+}) {
+  const response = await commands.codexPersistedRunActivity(
+    input.runId,
+    input.cursor ?? null,
+    input.limit ?? 100,
+  );
+  return projectHistoricalTurnActivityResponse(response);
+}
+
+function projectHistoricalTurnActivityResponse(
+  response: Awaited<ReturnType<typeof commands.codexDefaultProfileTurnActivity>>,
+) {
+  return {
+    commands: response.commands.map((command) => ({
+      ...command,
+      status: normalizeHistoricalCommandStatus(command.status),
+    })),
+    editedFiles: response.editedFiles as RunEditedFile[],
+    toolActivities: (response.toolActivities ?? []).map((activity) => {
+      const status = normalizeToolActivityStatus(activity.status, "completed");
+      const presentation = describeToolActivity(
+        {
+          type: activity.itemType,
+          server: activity.server,
+          tool: activity.tool,
+          arguments: activity.title ? { title: activity.title } : {},
+        },
+        status,
+      );
+      return {
+        id: activity.id,
+        ...presentation,
+        safeDetails: activity.safeDetails,
+        status,
+        startedAt: null,
+        completedAt: null,
+        durationMs: activity.durationMs,
+      } satisfies RunToolActivity;
+    }),
+    nextCursor: response.nextCursor,
+  } satisfies HistoricalTurnActivityResponse;
+}
+
+function normalizeHistoricalCommandStatus(
+  status: string,
+): Omit<RunCommandActivity, "output">["status"] {
+  if (status === "pending" || status === "running" || status === "failed" || status === "declined") {
+    return status;
+  }
+  if (status === "awaiting-approval") return "awaiting-approval";
+  return "completed";
 }
 
 export function indexDefaultProfileThread(input: {

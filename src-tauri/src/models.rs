@@ -165,11 +165,32 @@ pub(crate) struct HistoricalEditedFile {
     pub(crate) status: String,
 }
 
+#[derive(Clone, Serialize, specta::Type)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct HistoricalToolActivityDetail {
+    pub(crate) label: String,
+    pub(crate) value: String,
+}
+
+#[derive(Clone, Serialize, specta::Type)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct HistoricalToolActivity {
+    pub(crate) id: String,
+    pub(crate) item_type: String,
+    pub(crate) server: String,
+    pub(crate) tool: String,
+    pub(crate) title: Option<String>,
+    pub(crate) status: String,
+    pub(crate) duration_ms: Option<i64>,
+    pub(crate) safe_details: Vec<HistoricalToolActivityDetail>,
+}
+
 #[derive(Serialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct HistoricalTurnActivityResponse {
     pub(crate) commands: Vec<HistoricalCommandActivity>,
     pub(crate) edited_files: Vec<HistoricalEditedFile>,
+    pub(crate) tool_activities: Vec<HistoricalToolActivity>,
     pub(crate) next_cursor: Option<String>,
 }
 

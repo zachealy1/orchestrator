@@ -1,5 +1,5 @@
 use super::*;
-use sqlx::{pool::PoolConnection, sqlite::SqlitePoolOptions, Sqlite, SqlitePool};
+use sqlx::{pool::PoolConnection, sqlite::SqlitePoolOptions, Row, Sqlite, SqlitePool};
 
 #[derive(Clone)]
 pub(crate) struct DatabaseState {
@@ -390,6 +390,95 @@ pub(crate) async fn append_run_events_transaction(
         .await
         .map_err(|_| "The application database is unavailable.".to_string())?;
     append_run_events_in_transaction(&mut connection, &events).await
+}
+
+#[tauri::command]
+#[specta::specta]
+pub(crate) async fn codex_persisted_run_activity(
+    run_id: i64,
+    cursor: Option<String>,
+    limit: Option<u32>,
+    database: State<'_, DatabaseState>,
+) -> Result<HistoricalTurnActivityResponse, String> {
+    if run_id <= 0 {
+        return Err("Run id is required.".to_string());
+    }
+    let before_sequence = cursor
+        .as_deref()
+        .map(str::parse::<i64>)
+        .transpose()
+        .map_err(|_| "The activity cursor is invalid.".to_string())?
+        .unwrap_or(i64::MAX);
+    let limit = i64::from(limit.unwrap_or(100).clamp(1, 100));
+    let rows = sqlx::query(
+        "SELECT sequence, method, payload_json
+         FROM run_events
+         WHERE run_id = ?1
+           AND sequence < ?2
+           AND method IN ('item/started', 'item/completed')
+         ORDER BY sequence DESC
+         LIMIT ?3",
+    )
+    .bind(run_id)
+    .bind(before_sequence)
+    .bind(limit)
+    .fetch_all(&database.pool)
+    .await
+    .map_err(|_| "Historical run activity could not be loaded.".to_string())?;
+
+    let mut items = Vec::new();
+    let mut oldest_sequence = None;
+    for row in &rows {
+        let sequence = row
+            .try_get::<i64, _>("sequence")
+            .map_err(|_| "Historical run activity is invalid.".to_string())?;
+        oldest_sequence = Some(sequence);
+        let method = row
+            .try_get::<String, _>("method")
+            .map_err(|_| "Historical run activity is invalid.".to_string())?;
+        let payload_json = row
+            .try_get::<String, _>("payload_json")
+            .map_err(|_| "Historical run activity is invalid.".to_string())?;
+        let payload: Value = serde_json::from_str(&payload_json)
+            .map_err(|_| "Historical run activity is invalid.".to_string())?;
+        let Some(mut item) = payload
+            .get("params")
+            .and_then(|params| params.get("item"))
+            .cloned()
+        else {
+            continue;
+        };
+        let Some(item_object) = item.as_object_mut() else {
+            continue;
+        };
+        if item_object.get("status").is_none() {
+            item_object.insert(
+                "status".to_string(),
+                Value::String(if method == "item/started" {
+                    "inProgress".to_string()
+                } else {
+                    "completed".to_string()
+                }),
+            );
+        }
+        if item_object.get("durationMs").is_none() {
+            if let Some(duration) = payload
+                .get("params")
+                .and_then(|params| params.get("durationMs"))
+                .cloned()
+            {
+                item_object.insert("durationMs".to_string(), duration);
+            }
+        }
+        items.push(item);
+    }
+
+    let has_more = rows.len() == limit as usize;
+    let response = json!({
+        "data": items,
+        "nextCursor": has_more.then(|| oldest_sequence.map(|sequence| sequence.to_string())).flatten()
+    });
+    Ok(project_historical_turn_activity(&response))
 }
 
 fn require_one_row(rows_affected: u64, message: &str) -> Result<(), String> {

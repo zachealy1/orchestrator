@@ -71,6 +71,7 @@ import {
   listWorkspaceGitStatus,
   listWorkspaceDirectory,
   loadDefaultProfileTurnActivity,
+  loadPersistedRunActivity,
   logoutCodexAccount,
   pushWorkspaceBranch,
   readActiveCodexLogin,
@@ -346,6 +347,7 @@ import {
   createTaskChatClientId,
   mergeCommandActivities,
   mergeEditedFileActivities,
+  mergeToolActivities,
   replaceChatEntries,
 } from "../features/conversations/runtimeHelpers";
 import type {
@@ -8590,12 +8592,22 @@ function App() {
         : current.historicalActivity,
     }));
 
-    const cacheKey = `${activity.threadId}:${activity.turnId}:${cursor ?? "latest"}`;
+    const cacheKey =
+      activity.source === "default-profile"
+        ? `default:${activity.threadId}:${activity.turnId}:${cursor ?? "latest"}`
+        : `run:${activity.runId}:${cursor ?? "latest"}`;
     try {
       const response = await appServices.historicalActivities.getOrLoad(
         cacheKey,
-        () =>
-          ensureCodexProfileConnected(DEFAULT_CODEX_PROFILE_KEY, 0).then(
+        () => {
+          if (activity.source === "persisted-run") {
+            return loadPersistedRunActivity({
+              runId: activity.runId,
+              cursor,
+              limit: HISTORY_ACTIVITY_PAGE_SIZE,
+            });
+          }
+          return ensureCodexProfileConnected(DEFAULT_CODEX_PROFILE_KEY, 0).then(
             () =>
               loadDefaultProfileTurnActivity({
                 threadId: activity.threadId,
@@ -8603,34 +8615,44 @@ function App() {
                 cursor,
                 limit: HISTORY_ACTIVITY_PAGE_SIZE,
               }),
-          ),
+          );
+        },
       );
 
       if (!taskChatEntriesRef.current.some((item) => item.clientId === entry.clientId)) {
         return;
       }
-      updateHistoricalActivityEntry(entry.clientId, (current) => ({
-        ...current,
-        runView: {
-          ...current.runView,
-          commands: mergeCommandActivities(
-            current.runView.commands,
-            response.commands.map((command) => ({ ...command, output: "" })),
-          ),
-          editedFiles: mergeEditedFileActivities(
-            current.runView.editedFiles,
-            response.editedFiles,
-          ),
-        },
-        historicalActivity: current.historicalActivity
-          ? {
-              ...current.historicalActivity,
-              status: "loaded",
-              nextCursor: response.nextCursor,
-              error: null,
-            }
-          : current.historicalActivity,
-      }));
+      updateHistoricalActivityEntry(entry.clientId, (current) => {
+        const tools = mergeToolActivities(
+          current.runView.toolActivitiesById,
+          current.runView.toolActivityOrder,
+          response.toolActivities ?? [],
+        );
+        return {
+          ...current,
+          runView: {
+            ...current.runView,
+            commands: mergeCommandActivities(
+              current.runView.commands,
+              response.commands.map((command) => ({ ...command, output: "" })),
+            ),
+            editedFiles: mergeEditedFileActivities(
+              current.runView.editedFiles,
+              response.editedFiles,
+            ),
+            toolActivitiesById: tools.byId,
+            toolActivityOrder: tools.order,
+          },
+          historicalActivity: current.historicalActivity
+            ? {
+                ...current.historicalActivity,
+                status: "loaded",
+                nextCursor: response.nextCursor,
+                error: null,
+              }
+            : current.historicalActivity,
+        };
+      });
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       updateHistoricalActivityEntry(entry.clientId, (current) => ({

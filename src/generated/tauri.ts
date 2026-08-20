@@ -19,6 +19,7 @@ export const commands = {
 	codexDefaultProfileRpc: (method: string, params: unknown) => __TAURI_INVOKE<unknown>("codex_default_profile_rpc", { method, params }),
 	codexProjectedSubagentThreadRead: (accountId: number | null, profileKey: string, threadId: string) => __TAURI_INVOKE<ProjectedSubagentThread>("codex_projected_subagent_thread_read", { accountId, profileKey, threadId }),
 	codexDefaultProfileTurnActivity: (threadId: string, turnId: string, cursor: string | null, limit: number | null) => __TAURI_INVOKE<HistoricalTurnActivityResponse>("codex_default_profile_turn_activity", { threadId, turnId, cursor, limit }),
+	codexPersistedRunActivity: (runId: number, cursor: string | null, limit: number | null) => __TAURI_INVOKE<HistoricalTurnActivityResponse>("codex_persisted_run_activity", { runId, cursor, limit }),
 	codexDefaultProfileThreadIndex: (threadId: string, sourceVersion: string, pageSize: number | null, requestId: string) => __TAURI_INVOKE<ExternalThreadHistoryIndex>("codex_default_profile_thread_index", { threadId, sourceVersion, pageSize, requestId }),
 	codexDefaultProfileThreadIndexCancel: (requestId: string) => __TAURI_INVOKE<null>("codex_default_profile_thread_index_cancel", { requestId }),
 	codexDefaultProfileThreadTranscriptSync: (threadId: string, sourceVersion: string, pageSize: number | null, requestId: string) => __TAURI_INVOKE<ExternalTranscriptSnapshot>("codex_default_profile_thread_transcript_sync", { threadId, sourceVersion, pageSize, requestId }),
@@ -457,9 +458,26 @@ export type HistoricalEditedFile = {
 	status: string,
 };
 
+export type HistoricalToolActivity = {
+	id: string,
+	itemType: string,
+	server: string,
+	tool: string,
+	title: string | null,
+	status: string,
+	durationMs: number | null,
+	safeDetails: HistoricalToolActivityDetail[],
+};
+
+export type HistoricalToolActivityDetail = {
+	label: string,
+	value: string,
+};
+
 export type HistoricalTurnActivityResponse = {
 	commands: HistoricalCommandActivity[],
 	editedFiles: HistoricalEditedFile[],
+	toolActivities: HistoricalToolActivity[],
 	nextCursor: string | null,
 };
 

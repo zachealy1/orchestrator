@@ -1198,7 +1198,119 @@ it("keeps the edited-files summary hidden while command activity is running", ()
         Node.DOCUMENT_POSITION_FOLLOWING,
     ).toBeTruthy();
     expect(screen.queryByText("npm test output")).not.toBeInTheDocument();
-    expect(container.querySelector("details.edited-files")).toBeNull();
+  expect(container.querySelector("details.edited-files")).toBeNull();
+  });
+
+  it("shows active and failed tools while collapsing completed tool activity", () => {
+    const activities = {
+      "tool-running": {
+        id: "tool-running",
+        category: "browser" as const,
+        server: "playwright",
+        tool: "browser_snapshot",
+        label: "Inspecting the current browser page",
+        status: "running" as const,
+        startedAt: "2026-06-30T17:30:01Z",
+        completedAt: null,
+        durationMs: null,
+        safeDetails: [{ label: "Origin", value: "http://localhost:3000" }],
+      },
+      "tool-completed": {
+        id: "tool-completed",
+        category: "github" as const,
+        server: "codex_apps",
+        tool: "github.get_pr_info",
+        label: "Read pull request details",
+        status: "completed" as const,
+        startedAt: null,
+        completedAt: null,
+        durationMs: 900,
+        safeDetails: [{ label: "Repository", value: "openai/orchestrator" }],
+      },
+      "tool-completed-2": {
+        id: "tool-completed-2",
+        category: "github" as const,
+        server: "codex_apps",
+        tool: "github.list_prs",
+        label: "Listed pull requests",
+        status: "completed" as const,
+        startedAt: null,
+        completedAt: null,
+        durationMs: 400,
+        safeDetails: [],
+      },
+      "tool-failed": {
+        id: "tool-failed",
+        category: "browser" as const,
+        server: "playwright",
+        tool: "browser_take_screenshot",
+        label: "Could not capture a page screenshot",
+        status: "failed" as const,
+        startedAt: null,
+        completedAt: null,
+        durationMs: 200,
+        safeDetails: [],
+      },
+    };
+    render(
+      <TaskChatTranscript
+        entries={[
+          {
+            ...historyEntry(1),
+            status: "running",
+            runView: {
+              ...emptyRunView,
+              status: "running",
+              toolActivitiesById: activities,
+              toolActivityOrder: [
+                "tool-running",
+                "tool-completed",
+                "tool-completed-2",
+                "tool-failed",
+              ],
+              streamEvents: [
+                {
+                  id: "tool-running-event",
+                  kind: "activity",
+                  text: "Using tools",
+                  timestamp: "2026-06-30T17:30:01Z",
+                  activityIds: ["tool-running"],
+                },
+                {
+                  id: "tool-completed-event",
+                  kind: "activity",
+                  text: "Completed mcpToolCall",
+                  timestamp: "2026-06-30T17:30:02Z",
+                  activityIds: ["tool-completed"],
+                },
+                {
+                  id: "tool-completed-2-event",
+                  kind: "activity",
+                  text: "Completed mcpToolCall",
+                  timestamp: "2026-06-30T17:30:03Z",
+                  activityIds: ["tool-completed-2"],
+                },
+                {
+                  id: "tool-failed-event",
+                  kind: "activity",
+                  text: "Completed mcpToolCall",
+                  timestamp: "2026-06-30T17:30:04Z",
+                  activityIds: ["tool-failed"],
+                },
+              ],
+            },
+          },
+        ]}
+        onResolveRequest={vi.fn()}
+      />,
+    );
+
+    expect(screen.getByText("Inspecting the current browser page")).toBeVisible();
+    expect(screen.getByText("Could not capture a page screenshot")).toBeVisible();
+    expect(screen.getByText("Used 2 github tools")).toBeVisible();
+    expect(screen.getByText("Read pull request details")).toBeInTheDocument();
+    expect(screen.getByText("openai/orchestrator")).toBeInTheDocument();
+    expect(screen.queryByText(/mcpToolCall|Started|Completed/u)).not.toBeInTheDocument();
   });
 
 it("reviews files, expands long lists, and confirms an exact edit undo", async () => {

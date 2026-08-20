@@ -8,6 +8,7 @@ vi.mock("@tauri-apps/api/core", () => ({
 
 import {
   listDefaultCodexSkills,
+  loadPersistedRunActivity,
   readActiveCodexLogin,
   startCodexLogin,
 } from "./codexClient";
@@ -56,6 +57,45 @@ describe("Codex account login client", () => {
     expect(invokeMock).toHaveBeenCalledWith("codex_default_profile_rpc", {
       method: "skill/list",
       params: { includeHidden: false },
+    });
+  });
+
+  it("projects persisted run tools without exposing raw payloads", async () => {
+    invokeMock.mockResolvedValue({
+      commands: [],
+      editedFiles: [],
+      toolActivities: [
+        {
+          id: "tool-1",
+          itemType: "mcpToolCall",
+          server: "codex_apps",
+          tool: "github.get_pr_info",
+          title: "Read pull request details",
+          status: "completed",
+          durationMs: 750,
+          safeDetails: [
+            { label: "Repository", value: "openai/orchestrator" },
+          ],
+        },
+      ],
+      nextCursor: null,
+    });
+
+    const result = await loadPersistedRunActivity({ runId: 19 });
+
+    expect(invokeMock).toHaveBeenCalledWith("codex_persisted_run_activity", {
+      runId: 19,
+      cursor: null,
+      limit: 100,
+    });
+    expect(result.toolActivities[0]).toMatchObject({
+      id: "tool-1",
+      category: "github",
+      label: "Read pull request details",
+      status: "completed",
+      safeDetails: [
+        { label: "Repository", value: "openai/orchestrator" },
+      ],
     });
   });
 });

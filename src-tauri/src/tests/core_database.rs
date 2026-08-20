@@ -592,6 +592,21 @@ fn historical_activity_projection_omits_bulk_item_content() {
                 "content": "private reasoning body"
             },
             {
+                "type": "mcpToolCall",
+                "id": "tool-1",
+                "server": "codex_apps",
+                "tool": "github.get_pr_info",
+                "status": "completed",
+                "durationMs": 800,
+                "arguments": {
+                    "title": "Read pull request details",
+                    "repo_full_name": "openai/orchestrator",
+                    "url": "https://github.com/openai/orchestrator/pull/1?token=private",
+                    "typed_text": "private input"
+                },
+                "result": { "content": "very large private result" }
+            },
+            {
                 "type": "fileChange",
                 "changes": [
                     {
@@ -614,9 +629,25 @@ fn historical_activity_projection_omits_bulk_item_content() {
     assert_eq!(value["editedFiles"][0]["path"], "src/App.tsx");
     assert_eq!(value["editedFiles"][0]["additions"], 2);
     assert_eq!(value["editedFiles"][0]["deletions"], 1);
+    assert_eq!(value["toolActivities"][0]["id"], "tool-1");
+    assert_eq!(
+        value["toolActivities"][0]["title"],
+        "Read pull request details"
+    );
+    assert_eq!(
+        value["toolActivities"][0]["safeDetails"][0]["value"],
+        "openai/orchestrator"
+    );
+    assert_eq!(
+        value["toolActivities"][0]["safeDetails"][1]["value"],
+        "https://github.com"
+    );
     assert_eq!(value["nextCursor"], "older-items");
     assert!(!serialized.contains("very large command output"));
     assert!(!serialized.contains("private reasoning body"));
+    assert!(!serialized.contains("private input"));
+    assert!(!serialized.contains("very large private result"));
+    assert!(!serialized.contains("token=private"));
     assert!(!serialized.contains("--- a/src/App.tsx"));
 }
 

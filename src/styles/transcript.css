@@ -706,6 +706,71 @@ summary.run-live-metrics::-webkit-details-marker {
   line-height: 1.45;
 }
 
+.tool-activity-groups {
+  display: grid;
+  min-width: 0;
+  gap: 10px;
+}
+
+.tool-activity-row {
+  display: grid;
+  grid-template-columns: 18px minmax(0, max-content) auto;
+  width: fit-content;
+  max-width: min(980px, 100%);
+  align-items: center;
+  gap: 8px;
+}
+
+.tool-activity-row.is-failed,
+.tool-activity-row.is-declined,
+.tool-activity-row.is-interrupted {
+  color: var(--color-error);
+}
+
+.tool-activity-icon {
+  display: inline-flex;
+  width: 18px;
+  height: 18px;
+  align-items: center;
+  justify-content: center;
+  color: currentColor;
+}
+
+.tool-activity-label {
+  min-width: 0;
+  overflow: hidden;
+  color: inherit;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.tool-activity-duration {
+  color: var(--color-text-muted);
+  white-space: nowrap;
+}
+
+.tool-activity-details {
+  display: flex;
+  grid-column: 2 / -1;
+  min-width: 0;
+  flex-wrap: wrap;
+  gap: 4px 10px;
+  color: var(--color-text-muted);
+  font-size: 0.9em;
+}
+
+.tool-activity-details > span {
+  max-width: 100%;
+  overflow-wrap: anywhere;
+}
+
+@media (max-width: 700px) {
+  .tool-activity-row {
+    grid-template-columns: 18px minmax(0, 1fr) auto;
+    width: 100%;
+  }
+}
+
 .activity-file-name {
   max-width: min(520px, 100%);
   overflow: hidden;

@@ -11,15 +11,19 @@ import {
   ExternalLink,
   FileDiff,
   FileText,
+  GitPullRequest,
   Globe2,
   Image as ImageIcon,
   Loader2,
   MessageSquare,
   Pencil,
   RotateCcw,
+  Search,
   ShieldAlert,
   ShieldCheck,
   Terminal,
+  Users,
+  Wrench,
   X,
 } from "lucide-react";
 import {
@@ -44,6 +48,7 @@ import remarkGfm from "remark-gfm";
 import type {
   RunCommandActivity,
   RunEditedFile,
+  RunToolActivity,
   RunViewState,
   StreamEvent,
 } from "../lib/codexEventReducer";
@@ -1445,6 +1450,14 @@ const RunTimeline = memo(function RunTimeline({
           );
         }
 
+        if (item.kind === "tools") {
+          return (
+            <RunActivityGroups key={item.id}>
+              <ToolActivitiesGroup activities={item.activities} />
+            </RunActivityGroups>
+          );
+        }
+
         return (
           <StreamEventRow
             event={item.event}
@@ -1467,11 +1480,13 @@ function RunActivityGroups({ children }: { children: ReactNode }) {
 
 type TimelineItem =
   | { kind: "event"; event: StreamEvent }
-  | { kind: "commands"; id: string; commands: RunCommandActivity[] };
+  | { kind: "commands"; id: string; commands: RunCommandActivity[] }
+  | { kind: "tools"; id: string; activities: RunToolActivity[] };
 
 function buildTimelineItems(runView: RunViewState): TimelineItem[] {
   const items: TimelineItem[] = [];
   const renderedCommandIds = new Set<string>();
+  const renderedToolIds = new Set<string>();
 
   for (const event of runView.streamEvents) {
     if (shouldHideCompletedFinalMessageEvent(runView, event)) {
@@ -1501,6 +1516,23 @@ function buildTimelineItems(runView: RunViewState): TimelineItem[] {
       continue;
     }
 
+    if (event.kind === "activity") {
+      const referencesKnownTool = event.activityIds?.some(
+        (id) => runView.toolActivitiesById[id] !== undefined,
+      );
+      const activities = selectToolActivitiesForEvent(
+        runView,
+        event.activityIds,
+        renderedToolIds,
+      );
+      if (activities.length > 0) {
+        items.push({ kind: "tools", id: `tools-${event.id}`, activities });
+        activities.forEach((activity) => renderedToolIds.add(activity.id));
+        continue;
+      }
+      if (referencesKnownTool) continue;
+    }
+
     items.push({ kind: "event", event });
   }
 
@@ -1514,8 +1546,36 @@ function buildTimelineItems(runView: RunViewState): TimelineItem[] {
       commands: remainingCommands,
     });
   }
+  const remainingTools = runView.toolActivityOrder
+    .map((id) => runView.toolActivitiesById[id])
+    .filter(
+      (activity): activity is RunToolActivity =>
+        Boolean(activity) && !renderedToolIds.has(activity.id),
+    );
+  if (remainingTools.length > 0) {
+    items.push({ kind: "tools", id: "tools-remaining", activities: remainingTools });
+  }
 
   return items;
+}
+
+function selectToolActivitiesForEvent(
+  runView: RunViewState,
+  activityIds: string[] | undefined,
+  renderedToolIds: Set<string>,
+) {
+  if (
+    !activityIds?.some((id) => runView.toolActivitiesById[id] !== undefined) ||
+    renderedToolIds.size > 0
+  ) {
+    return [];
+  }
+  return runView.toolActivityOrder
+    .map((id) => runView.toolActivitiesById[id])
+    .filter(
+      (activity): activity is RunToolActivity =>
+        Boolean(activity) && !renderedToolIds.has(activity.id),
+    );
 }
 
 function shouldHideCompletedFinalMessageEvent(
@@ -1598,6 +1658,141 @@ const CommandsGroup = memo(function CommandsGroup({
     </details>
   );
 });
+
+const ToolActivitiesGroup = memo(function ToolActivitiesGroup({
+  activities,
+}: {
+  activities: RunToolActivity[];
+}) {
+  const active = activities.filter(
+    (activity) => activity.status === "pending" || activity.status === "running",
+  );
+  const failed = activities.filter(
+    (activity) =>
+      activity.status === "failed" ||
+      activity.status === "declined" ||
+      activity.status === "interrupted",
+  );
+  const completed = activities.filter((activity) => activity.status === "completed");
+
+  return (
+    <div className="tool-activity-groups" aria-live="polite">
+      {active.map((activity) => (
+        <ToolActivityRow activity={activity} key={activity.id} />
+      ))}
+      {failed.map((activity) => (
+        <ToolActivityRow activity={activity} key={activity.id} />
+      ))}
+      {completed.length > 0 ? (
+        <details className="run-activity-group tool-runs">
+          <summary>
+            <span className="run-activity-title">
+              {toolCategoryIcon(summaryToolCategory(completed), 15)}
+              {completedToolSummary(completed)}
+            </span>
+            <ChevronDown size={15} aria-hidden="true" />
+          </summary>
+          <div className="run-activity-items">
+            {completed.map((activity) => (
+              <ToolActivityRow activity={activity} key={activity.id} />
+            ))}
+          </div>
+        </details>
+      ) : null}
+    </div>
+  );
+});
+
+const ToolActivityRow = memo(function ToolActivityRow({
+  activity,
+}: {
+  activity: RunToolActivity;
+}) {
+  return (
+    <div
+      className={`run-activity-item tool-activity-row is-${activity.status}`}
+      aria-label={`${activity.label}, ${toolActivityStatusLabel(activity.status)}`}
+    >
+      <span className="tool-activity-icon" aria-hidden="true">
+        {activity.status === "running" || activity.status === "pending" ? (
+          <Loader2 className="spin" size={15} />
+        ) : (
+          toolCategoryIcon(activity.category, 15)
+        )}
+      </span>
+      <span className="tool-activity-label" title={activity.label}>
+        {activity.label}
+      </span>
+      {activity.durationMs !== null ? (
+        <span className="tool-activity-duration">
+          {formatDuration(activity.durationMs)}
+        </span>
+      ) : null}
+      {activity.safeDetails.length > 0 ? (
+        <span className="tool-activity-details">
+          {activity.safeDetails.map((detail) => (
+            <span key={`${detail.label}:${detail.value}`}>
+              <span className="sr-only">{detail.label}: </span>
+              {detail.value}
+            </span>
+          ))}
+        </span>
+      ) : null}
+    </div>
+  );
+});
+
+function toolCategoryIcon(category: RunToolActivity["category"], size: number) {
+  switch (category) {
+    case "browser":
+      return <Globe2 size={size} aria-hidden="true" />;
+    case "github":
+      return <GitPullRequest size={size} aria-hidden="true" />;
+    case "search":
+      return <Search size={size} aria-hidden="true" />;
+    case "collaboration":
+      return <Users size={size} aria-hidden="true" />;
+    default:
+      return <Wrench size={size} aria-hidden="true" />;
+  }
+}
+
+function summaryToolCategory(activities: RunToolActivity[]) {
+  const category = activities[0]?.category ?? "integration";
+  return activities.every((activity) => activity.category === category)
+    ? category
+    : "integration";
+}
+
+function completedToolSummary(activities: RunToolActivity[]) {
+  const category = summaryToolCategory(activities);
+  const categoryLabel =
+    category === "integration"
+      ? ""
+      : category === "collaboration"
+        ? " collaboration"
+        : ` ${category}`;
+  return `Used ${activities.length}${categoryLabel} ${
+    activities.length === 1 ? "tool" : "tools"
+  }`;
+}
+
+function toolActivityStatusLabel(status: RunToolActivity["status"]) {
+  switch (status) {
+    case "pending":
+      return "Pending";
+    case "running":
+      return "Running";
+    case "completed":
+      return "Completed";
+    case "declined":
+      return "Declined";
+    case "interrupted":
+      return "Interrupted";
+    default:
+      return "Failed";
+  }
+}
 
 const StreamEventRow = memo(function StreamEventRow({
   event,
