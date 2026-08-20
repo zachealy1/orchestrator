@@ -265,7 +265,7 @@
   display: flex;
   width: 100%;
   min-width: 0;
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
   align-items: center;
   column-gap: 5px;
   row-gap: var(--kanban-card-vertical-gap);
@@ -278,6 +278,7 @@
 
 .kanban-mode-badge {
   display: inline-flex;
+  flex: 0 0 auto;
   max-width: 100%;
   min-width: 0;
   align-items: center;
@@ -290,6 +291,7 @@
 
 .kanban-state-badge {
   display: inline-flex;
+  flex: 0 1 auto;
   max-width: 100%;
   min-width: 0;
   align-items: center;
@@ -503,9 +505,8 @@ button.kanban-card-content {
 
 @container kanban-card (max-width: 280px) {
   .kanban-card-badges {
-    display: grid;
-    grid-template-columns: minmax(0, 1fr);
-    justify-items: start;
+    display: flex;
+    flex-wrap: nowrap;
   }
 
   .kanban-state-badge,

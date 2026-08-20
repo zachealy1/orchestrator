@@ -160,11 +160,14 @@ describe("Kanban local review styles", () => {
     expect(emptyState).toContain("justify-content: center");
   });
 
-  it("wraps and truncates narrow card status content without overlap", () => {
+  it("keeps card status and mode inline while truncating narrow content", () => {
     const board = rule(".kanban-board");
     const card = rule(".kanban-card-tile");
     const topline = rule(".kanban-card-topline");
     const badges = rule(".kanban-card-badges");
+    const narrowBadges = sourceRule(css, "  .kanban-card-badges");
+    const stateBadge = rule(".kanban-state-badge");
+    const modeBadge = rule(".kanban-mode-badge");
     const actions = rule(".kanban-card-top-actions");
     const content = rule(".kanban-card-content");
     const stateLabel = rule(".kanban-state-label,");
@@ -186,7 +189,12 @@ describe("Kanban local review styles", () => {
     expect(topline).toContain("align-items: start");
     expect(badges).toContain("width: 100%");
     expect(badges).toContain("min-width: 0");
-    expect(badges).toContain("flex-wrap: wrap");
+    expect(badges).toContain("flex-wrap: nowrap");
+    expect(narrowBadges).toContain("display: flex");
+    expect(narrowBadges).toContain("flex-wrap: nowrap");
+    expect(narrowBadges).not.toContain("grid-template-columns");
+    expect(stateBadge).toContain("flex: 0 1 auto");
+    expect(modeBadge).toContain("flex: 0 0 auto");
     expect(actions).toContain("align-self: start");
     expect(content).toContain("min-width: 0");
     expect(content).toContain("overflow: hidden");
