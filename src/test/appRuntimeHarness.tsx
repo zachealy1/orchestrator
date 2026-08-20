@@ -1842,6 +1842,8 @@ export function prepareSignedInRun() {
 export function prepareKanbanRun() {
   prepareSignedInRun();
   mocks.listCodexModelsMock.mockResolvedValue([defaultCodexModel]);
+  let threadCwd = workspace.path;
+  let threadProjectId: string | null = "project-workspace-1";
   mocks.codexDefaultProfileRpcMock.mockImplementation(
     async (method: string, params?: Record<string, any>) => {
       if (method === "account/read") {
@@ -1857,11 +1859,47 @@ export function prepareKanbanRun() {
       if (method === "model/list") {
         return { data: [defaultCodexModel], nextCursor: null };
       }
+      if (method === "project/list") {
+        return {
+          data: [
+            {
+              id: "project-workspace-1",
+              name: workspace.label,
+              roots: [{ path: workspace.path }],
+              metadata: {},
+            },
+          ],
+          nextCursor: null,
+        };
+      }
+      if (method === "thread/start") {
+        threadCwd = params?.cwd ?? workspace.path;
+        threadProjectId = params?.projectId ?? null;
+        const result = await mocks.codexRpcMock(0, method, params);
+        return result && typeof result === "object" && "thread" in result
+          ? result
+          : { thread: { id: "thread-1" } };
+      }
+      if (method === "thread/resume") {
+        threadCwd = params?.cwd ?? threadCwd;
+        return {};
+      }
+      if (method === "thread/metadata/update") {
+        threadProjectId = params?.projectId ?? threadProjectId;
+        return {
+          thread: {
+            id: params?.threadId ?? "thread-1",
+            cwd: threadCwd,
+            projectId: threadProjectId,
+          },
+        };
+      }
       if (method === "thread/read") {
         return {
           thread: {
             id: params?.threadId ?? "thread-1",
-            cwd: workspace.path,
+            cwd: threadCwd,
+            projectId: threadProjectId,
           },
         };
       }

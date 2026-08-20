@@ -207,6 +207,7 @@ export type StartedRunThread = {
 export type RunThreadStageResult = StartedRunThread & {
   browserSession: PreparedBrowserSession | null;
   startFreshThread: () => Promise<StartedRunThread>;
+  nativeTaskWorkspaceBinding: NativeTaskWorkspaceBinding | null;
 };
 export type GoalTerminationState = {
   workspaceId: number;

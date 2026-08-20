@@ -1,6 +1,6 @@
 import type { KanbanGitBinding } from "../features/kanban/api";
 
-export const NATIVE_TASK_WORKSPACE_BINDING_VERSION = 1;
+export const NATIVE_TASK_WORKSPACE_BINDING_VERSION = 2;
 
 export type NativeTaskWorkspaceBinding = {
   version: typeof NATIVE_TASK_WORKSPACE_BINDING_VERSION;
@@ -8,7 +8,7 @@ export type NativeTaskWorkspaceBinding = {
   sourceWorkspacePath: string;
   executionDirectory: string;
   runtimeWorkspaceRoots: string[];
-  environmentId: string;
+  projectId: string | null;
   pendingContinuationContext: string | null;
 };
 
@@ -21,6 +21,7 @@ export function createKanbanNativeTaskWorkspaceBinding(input: {
   sourceWorkspacePath: string;
   executionDirectory: string;
   bindings: KanbanGitBinding[];
+  projectId?: string | null;
   pendingContinuationContext?: string | null;
 }): NativeTaskWorkspaceBinding {
   return {
@@ -32,7 +33,7 @@ export function createKanbanNativeTaskWorkspaceBinding(input: {
       input.executionDirectory,
       ...input.bindings.map((binding) => binding.worktreePath),
     ]),
-    environmentId: `orchestrator:kanban:${input.cardId}`,
+    projectId: input.projectId ?? null,
     pendingContinuationContext: input.pendingContinuationContext ?? null,
   };
 }
@@ -42,6 +43,7 @@ export function createContinuationNativeTaskWorkspaceBinding(input: {
   sourceWorkspacePath: string;
   executionDirectory?: string | null;
   runtimeWorkspaceRoots?: string[];
+  projectId?: string | null;
   pendingContinuationContext?: string | null;
 }): NativeTaskWorkspaceBinding {
   const executionDirectory = input.executionDirectory ?? input.sourceWorkspacePath;
@@ -54,7 +56,7 @@ export function createContinuationNativeTaskWorkspaceBinding(input: {
       executionDirectory,
       ...(input.runtimeWorkspaceRoots ?? []),
     ]),
-    environmentId: `orchestrator:continuation:${input.chatId}`,
+    projectId: input.projectId ?? null,
     pendingContinuationContext: input.pendingContinuationContext ?? null,
   };
 }
@@ -64,16 +66,21 @@ export function parseNativeTaskWorkspaceBinding(
 ): NativeTaskWorkspaceBinding | null {
   if (!value) return null;
   try {
-    const parsed = JSON.parse(value) as Partial<NativeTaskWorkspaceBinding>;
+    const parsed = JSON.parse(value) as Omit<
+      Partial<NativeTaskWorkspaceBinding>,
+      "version"
+    > & {
+      version?: number;
+      environmentId?: unknown;
+    };
     if (
-      parsed.version !== NATIVE_TASK_WORKSPACE_BINDING_VERSION ||
+      (parsed.version !== 1 &&
+        parsed.version !== NATIVE_TASK_WORKSPACE_BINDING_VERSION) ||
       (parsed.kind !== "kanban" && parsed.kind !== "continuation") ||
       typeof parsed.sourceWorkspacePath !== "string" ||
       !parsed.sourceWorkspacePath ||
       typeof parsed.executionDirectory !== "string" ||
       !parsed.executionDirectory ||
-      typeof parsed.environmentId !== "string" ||
-      !parsed.environmentId ||
       !Array.isArray(parsed.runtimeWorkspaceRoots) ||
       !parsed.runtimeWorkspaceRoots.every(
         (path) => typeof path === "string" && Boolean(path),
@@ -82,6 +89,11 @@ export function parseNativeTaskWorkspaceBinding(
         parsed.pendingContinuationContext === null ||
         typeof parsed.pendingContinuationContext === "string" ||
         parsed.pendingContinuationContext === undefined
+      ) ||
+      !(
+        parsed.projectId === null ||
+        typeof parsed.projectId === "string" ||
+        parsed.projectId === undefined
       )
     ) {
       return null;
@@ -92,7 +104,10 @@ export function parseNativeTaskWorkspaceBinding(
       sourceWorkspacePath: parsed.sourceWorkspacePath,
       executionDirectory: parsed.executionDirectory,
       runtimeWorkspaceRoots: uniquePaths(parsed.runtimeWorkspaceRoots),
-      environmentId: parsed.environmentId,
+      projectId:
+        typeof parsed.projectId === "string" && parsed.projectId.trim()
+          ? parsed.projectId
+          : null,
       pendingContinuationContext: parsed.pendingContinuationContext ?? null,
     };
   } catch {
@@ -100,14 +115,23 @@ export function parseNativeTaskWorkspaceBinding(
   }
 }
 
-export function nativeTaskTurnEnvironment(
+export function nativeTaskExecutionOverrides(
   binding: NativeTaskWorkspaceBinding,
 ) {
   return {
-    environmentId: binding.environmentId,
+    environments: [],
     cwd: binding.executionDirectory,
     runtimeWorkspaceRoots: binding.runtimeWorkspaceRoots,
   };
+}
+
+export function assignNativeTaskProject(
+  binding: NativeTaskWorkspaceBinding,
+  projectId: string,
+): NativeTaskWorkspaceBinding {
+  return binding.projectId === projectId
+    ? binding
+    : { ...binding, projectId };
 }
 
 export function clearNativeTaskPendingContext(

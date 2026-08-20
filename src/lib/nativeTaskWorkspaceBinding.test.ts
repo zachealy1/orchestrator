@@ -1,10 +1,11 @@
 import { describe, expect, it } from "vitest";
 import type { KanbanGitBinding } from "../features/kanban/api";
 import {
+  assignNativeTaskProject,
   clearNativeTaskPendingContext,
   createContinuationNativeTaskWorkspaceBinding,
   createKanbanNativeTaskWorkspaceBinding,
-  nativeTaskTurnEnvironment,
+  nativeTaskExecutionOverrides,
   parseNativeTaskWorkspaceBinding,
 } from "./nativeTaskWorkspaceBinding";
 
@@ -31,7 +32,7 @@ describe("native task workspace bindings", () => {
     });
 
     expect(result).toEqual({
-      version: 1,
+      version: 2,
       kind: "kanban",
       sourceWorkspacePath: "/workspace",
       executionDirectory: "/app/cards/card-1",
@@ -39,11 +40,11 @@ describe("native task workspace bindings", () => {
         "/app/cards/card-1",
         "/app/cards/card-1/repo",
       ],
-      environmentId: "orchestrator:kanban:card-1",
+      projectId: null,
       pendingContinuationContext: null,
     });
-    expect(nativeTaskTurnEnvironment(result)).toEqual({
-      environmentId: "orchestrator:kanban:card-1",
+    expect(nativeTaskExecutionOverrides(result)).toEqual({
+      environments: [],
       cwd: "/app/cards/card-1",
       runtimeWorkspaceRoots: [
         "/app/cards/card-1",
@@ -69,7 +70,11 @@ describe("native task workspace bindings", () => {
       "/app/continuations/42",
       "/app/continuations/42/repo",
     ]);
-    expect(result.environmentId).toBe("orchestrator:continuation:42");
+    expect(result.projectId).toBeNull();
+    expect(assignNativeTaskProject(result, "project-42")).toEqual({
+      ...result,
+      projectId: "project-42",
+    });
     expect(clearNativeTaskPendingContext(result)).toEqual({
       ...result,
       pendingContinuationContext: null,
@@ -88,7 +93,7 @@ describe("native task workspace bindings", () => {
     expect(parseNativeTaskWorkspaceBinding("not-json")).toBeNull();
     expect(
       parseNativeTaskWorkspaceBinding(
-        JSON.stringify({ ...valid, version: 2 }),
+        JSON.stringify({ ...valid, version: 3 }),
       ),
     ).toBeNull();
     expect(
@@ -96,5 +101,29 @@ describe("native task workspace bindings", () => {
         JSON.stringify({ ...valid, runtimeWorkspaceRoots: [null] }),
       ),
     ).toBeNull();
+  });
+
+  it("upgrades version-one synthetic environment bindings", () => {
+    const parsed = parseNativeTaskWorkspaceBinding(
+      JSON.stringify({
+        version: 1,
+        kind: "kanban",
+        sourceWorkspacePath: "/workspace",
+        executionDirectory: "/app/cards/card-1",
+        runtimeWorkspaceRoots: ["/app/cards/card-1"],
+        environmentId: "orchestrator:kanban:card-1",
+        pendingContinuationContext: null,
+      }),
+    );
+
+    expect(parsed).toEqual({
+      version: 2,
+      kind: "kanban",
+      sourceWorkspacePath: "/workspace",
+      executionDirectory: "/app/cards/card-1",
+      runtimeWorkspaceRoots: ["/app/cards/card-1"],
+      projectId: null,
+      pendingContinuationContext: null,
+    });
   });
 });

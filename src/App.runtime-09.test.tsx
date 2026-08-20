@@ -75,6 +75,42 @@ describe("Application runtime scenarios 9", () => {
         }),
       ),
     );
+    expect(mocks.codexDefaultProfileRpcMock).toHaveBeenCalledWith(
+      "thread/start",
+      expect.objectContaining({
+        cwd: "/repo/.codex-kanban/card-run-control-test",
+        projectId: "project-workspace-1",
+        environments: [],
+        runtimeWorkspaceRoots: [
+          "/repo/.codex-kanban/card-run-control-test",
+          "/repo/.codex-kanban/card-run-control-test/orchestrator",
+        ],
+      }),
+    );
+    expect(mocks.codexDefaultProfileRpcMock).toHaveBeenCalledWith(
+      "turn/start",
+      expect.objectContaining({
+        cwd: "/repo/.codex-kanban/card-run-control-test",
+        environments: [],
+        runtimeWorkspaceRoots: [
+          "/repo/.codex-kanban/card-run-control-test",
+          "/repo/.codex-kanban/card-run-control-test/orchestrator",
+        ],
+      }),
+    );
+    const turnStartIndex = mocks.codexDefaultProfileRpcMock.mock.calls.findIndex(
+      ([method, params]) =>
+        method === "turn/start" &&
+        params?.threadId === "thread-kanban-question",
+    );
+    const projectUpdateIndex =
+      mocks.codexDefaultProfileRpcMock.mock.calls.findIndex(
+        ([method, params]) =>
+          method === "thread/metadata/update" &&
+          params?.threadId === "thread-kanban-question",
+      );
+    expect(turnStartIndex).toBeGreaterThanOrEqual(0);
+    expect(projectUpdateIndex).toBeGreaterThan(turnStartIndex);
 
     await emitCodexServerRequest({
       id: "kanban-input-1",

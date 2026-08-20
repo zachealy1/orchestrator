@@ -794,11 +794,28 @@ describe("Application runtime scenarios 3", () => {
     mocks.listWorkspaceChatsMock.mockResolvedValue([sharedChat]);
     mocks.codexDefaultProfileRpcMock.mockImplementation(
       async (method: string, params?: Record<string, unknown>) => {
+        if (method === "project/list") {
+          return {
+            data: [],
+            nextCursor: null,
+          };
+        }
+        if (method === "project/create") {
+          return {
+            project: {
+              id: "project-workspace-1",
+              name: workspace.label,
+              roots: [{ path: workspace.path }],
+              metadata: {},
+            },
+          };
+        }
         if (method === "thread/read") {
           return {
             thread: {
               id: params?.threadId,
               cwd: workspace.path,
+              projectId: "project-workspace-1",
             },
           };
         }
@@ -833,6 +850,20 @@ describe("Application runtime scenarios 3", () => {
           runtimeWorkspaceRoots: [workspace.path],
         }),
       ),
+    );
+    expect(mocks.codexDefaultProfileRpcMock).toHaveBeenCalledWith(
+      "project/create",
+      expect.objectContaining({
+        name: workspace.label,
+        roots: [{ path: workspace.path }],
+      }),
+    );
+    expect(mocks.codexDefaultProfileRpcMock).toHaveBeenCalledWith(
+      "thread/metadata/update",
+      {
+        threadId: sharedChat.codex_thread_id,
+        projectId: "project-workspace-1",
+      },
     );
     expect(mocks.saveNativeWorkspaceBindingMock).toHaveBeenLastCalledWith(
       expect.objectContaining({
