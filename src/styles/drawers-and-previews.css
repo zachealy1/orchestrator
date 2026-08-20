@@ -501,7 +501,13 @@ button.history-run-item.disabled {
 }
 
 .file-preview-mode-toggle {
+  border: 0;
+  background: rgb(var(--text-secondary-rgb) / 0.1);
   color: var(--text);
+}
+
+.file-preview-mode-toggle::before {
+  background: var(--panel-strong);
 }
 
 .file-preview-mode-toggle.mode-diff::before {
@@ -511,6 +517,11 @@ button.history-run-item.disabled {
 .file-preview-mode-toggle button {
   width: 58px;
   padding: 0 9px;
+  color: var(--muted);
+}
+
+.file-preview-mode-toggle button:focus-visible {
+  box-shadow: inset 0 0 0 2px var(--dropdown-focus-ring);
 }
 
 .file-preview-close {
