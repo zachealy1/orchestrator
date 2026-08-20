@@ -627,6 +627,9 @@ function App() {
   const nativeProjectResolutionInFlightRef = useRef(
     new Map<number, Promise<string>>(),
   );
+  const defaultProfileAuthRefreshInFlightRef = useRef<Promise<boolean> | null>(
+    null,
+  );
   const nativeTaskStartupReconciliationKeyRef = useRef<string | null>(null);
   const {
     completeDuplicateProfileCleanup,
@@ -2977,8 +2980,18 @@ function App() {
     if (!selectedWorkspace) return;
     const synchronizeVisibleWorkspace = () => {
       if (document.visibilityState !== "visible") return;
-      void reconcileKanbanNativeTasks(selectedWorkspace)
-        .catch(() => undefined)
+      void refreshDefaultProfileAuthentication({ refreshToken: false })
+        .catch((error) => {
+          console.warn("Could not refresh the shared Codex account", error);
+          return defaultProfileAuthenticated;
+        })
+        .then((authenticated) =>
+          authenticated
+            ? reconcileKanbanNativeTasks(selectedWorkspace).catch(
+                () => undefined,
+              )
+            : undefined,
+        )
         .then(() =>
           loadWorkspaceRunHistory(selectedWorkspace, {
             syncExternal: true,
@@ -9486,6 +9499,44 @@ function App() {
     await probeCollaborationModes(profileKey, accountId);
   }
 
+  async function refreshDefaultProfileAuthentication(options: {
+    refreshToken?: boolean;
+  } = {}) {
+    const existing = defaultProfileAuthRefreshInFlightRef.current;
+    if (existing) return existing;
+
+    const refresh = (async () => {
+      if (!connectedAccountIdsRef.current.has(0)) {
+        await connectDefaultCodexProfile();
+        setConnectedAccountIds((current) => {
+          const next = new Set(current).add(0);
+          connectedAccountIdsRef.current = next;
+          return next;
+        });
+      }
+
+      const auth = await codexDefaultProfileRpc<CodexAccountResponse>(
+        "account/read",
+        { refreshToken: options.refreshToken ?? false },
+      );
+      const authenticated = Boolean(auth.account && !auth.requiresOpenaiAuth);
+      setDefaultProfileAuthenticated(authenticated);
+      if (selectedAccountIdRef.current === 0) {
+        setCodexAccount(auth.account);
+        setRequiresOpenaiAuth(auth.requiresOpenaiAuth);
+        if (authenticated && modelsRef.current.length === 0) {
+          await refreshCodexModels(0);
+        }
+      }
+      return authenticated;
+    })().finally(() => {
+      defaultProfileAuthRefreshInFlightRef.current = null;
+    });
+
+    defaultProfileAuthRefreshInFlightRef.current = refresh;
+    return refresh;
+  }
+
   function probeCollaborationModes(
     profileKey: CodexProfileKey,
     accountId: number,
@@ -13330,12 +13381,6 @@ function App() {
 
     const profileKey: CodexProfileKey = DEFAULT_CODEX_PROFILE_KEY;
     const accountId = 0;
-    if (!defaultProfileAuthenticated) {
-      setStatusMessage(
-        "Sign in to the Codex app account before creating a Kanban card.",
-      );
-      return;
-    }
 
     const selectedCardModel =
       modelsRef.current.find((model) => model.id === selectedModelId) ??
@@ -15078,23 +15123,10 @@ function App() {
 
     if (profileKey === DEFAULT_CODEX_PROFILE_KEY && method === "account/updated") {
       try {
-        const auth = await codexDefaultProfileRpc<CodexAccountResponse>(
-          "account/read",
-          { refreshToken: false },
-        );
-        const authenticated = Boolean(
-          auth.account && !auth.requiresOpenaiAuth,
-        );
-        setDefaultProfileAuthenticated(authenticated);
-        if (selectedAccountIdRef.current === 0) {
-          setCodexAccount(auth.account);
-          setRequiresOpenaiAuth(auth.requiresOpenaiAuth);
-          if (authenticated && modelsRef.current.length === 0) {
-            await refreshCodexModels(0);
-          }
-        }
-      } catch {
-        setDefaultProfileAuthenticated(false);
+        await refreshDefaultProfileAuthentication({ refreshToken: false });
+      } catch (error) {
+        // A transport failure is not evidence that the user signed out.
+        console.warn("Could not refresh the shared Codex account", error);
       }
     }
 
@@ -18920,14 +18952,13 @@ function App() {
                   <KanbanComposerOverlay>
                     <TaskComposer
                       model={{
-                        disabled:
-                          !defaultProfileAuthenticated || kanbanCardCreatePending,
+                        disabled: kanbanCardCreatePending,
                         runActive: false,
                         prompt,
                         promptRevision,
                         submitLabel: "Create Kanban card",
                         accounts: [],
-                        sharedCodexProfileAvailable: defaultProfileAuthenticated,
+                        sharedCodexProfileAvailable: true,
                         selectedAccountId: 0,
                         accountPlaceholder: "Codex app account (shared)",
                         accountSelectionDisabled: true,

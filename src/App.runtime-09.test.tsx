@@ -48,6 +48,40 @@ describe("Application runtime scenarios 9", () => {
     ).toBe(mountedBoard);
   });
 
+  it("persists a Kanban card while the shared Codex profile is unavailable", async () => {
+    const { user } = await renderApp();
+    await user.click(await screen.findByRole("radio", { name: "Kanban" }));
+
+    await user.type(
+      screen.getByLabelText("Prompt"),
+      "Add responsive arcade controls",
+    );
+    const createButton = screen.getByRole("button", {
+      name: "Create Kanban card",
+    });
+    expect(createButton).toBeEnabled();
+
+    await user.click(createButton);
+
+    await waitFor(() =>
+      expect(mocks.createKanbanCardMock).toHaveBeenCalledWith(
+        1,
+        expect.objectContaining({
+          description: "Add responsive arcade controls",
+          accountId: null,
+          executionSettingsJson: expect.stringContaining(
+            '"profileKey":"default"',
+          ),
+        }),
+      ),
+    );
+    expect(
+      mocks.codexDefaultProfileRpcMock.mock.calls.some(
+        ([method]) => method === "turn/start",
+      ),
+    ).toBe(false);
+  });
+
   it("opens a Kanban conversation while its turn awaits user input", async () => {
     prepareKanbanRun();
     mocks.codexRpcMock.mockImplementation(
