@@ -9,44 +9,16 @@ vi.mock("@tauri-apps/api/app", () => ({
 }));
 
 import {
-  SYSTEM_DARK_QUERY,
   THEME_STORAGE_KEY,
   applyDocumentTheme,
   applyResolvedTheme,
   applyThemePreference,
+  initializeTheme,
   isThemePreference,
   persistThemePreference,
   readThemePreference,
   resolveTheme,
-  watchSystemTheme,
 } from "./theme";
-
-function createMediaQuery(matches: boolean) {
-  let listener: ((event: MediaQueryListEvent) => void) | null = null;
-  const mediaQuery = {
-    matches,
-    media: SYSTEM_DARK_QUERY,
-    onchange: null,
-    addEventListener: vi.fn(
-      (_type: string, nextListener: (event: MediaQueryListEvent) => void) => {
-        listener = nextListener;
-      },
-    ),
-    removeEventListener: vi.fn(() => {
-      listener = null;
-    }),
-    addListener: vi.fn(),
-    removeListener: vi.fn(),
-    dispatchEvent: vi.fn(),
-  } as unknown as MediaQueryList;
-
-  return {
-    mediaQuery,
-    emit(nextMatches: boolean) {
-      listener?.({ matches: nextMatches } as MediaQueryListEvent);
-    },
-  };
-}
 
 describe("theme", () => {
   beforeEach(() => {
@@ -57,76 +29,40 @@ describe("theme", () => {
     mocks.setNativeTheme.mockResolvedValue(undefined);
   });
 
-  it("validates and persists supported preferences", () => {
-    expect(isThemePreference("light")).toBe(true);
+  it("supports dark as the only interface preference", () => {
     expect(isThemePreference("dark")).toBe(true);
-    expect(isThemePreference("system")).toBe(true);
-    expect(isThemePreference("sepia")).toBe(false);
+    expect(isThemePreference("light")).toBe(false);
+    expect(isThemePreference("system")).toBe(false);
+    expect(resolveTheme("dark")).toBe("dark");
+  });
+
+  it("ignores legacy preferences and persists dark", () => {
+    localStorage.setItem(THEME_STORAGE_KEY, "light");
+    expect(readThemePreference()).toBe("dark");
 
     persistThemePreference("dark");
     expect(localStorage.getItem(THEME_STORAGE_KEY)).toBe("dark");
-    expect(readThemePreference()).toBe("dark");
   });
 
-  it("falls back to system for missing or invalid stored values", () => {
-    expect(readThemePreference()).toBe("system");
-
-    localStorage.setItem(THEME_STORAGE_KEY, "sepia");
-    expect(readThemePreference()).toBe("system");
-
-    expect(
-      readThemePreference({
-        getItem() {
-          throw new Error("storage unavailable");
-        },
-      }),
-    ).toBe("system");
-  });
-
-  it("resolves system mode from the operating system preference", () => {
-    const darkMedia = createMediaQuery(true);
-    const lightMedia = createMediaQuery(false);
-
-    expect(resolveTheme("system", () => darkMedia.mediaQuery)).toBe("dark");
-    expect(resolveTheme("system", () => lightMedia.mediaQuery)).toBe("light");
-    expect(resolveTheme("light", () => darkMedia.mediaQuery)).toBe("light");
-  });
-
-  it("applies document and native themes", () => {
-    applyDocumentTheme("dark");
+  it("keeps document and native chrome dark", () => {
+    applyDocumentTheme("light");
     expect(document.documentElement).toHaveAttribute("data-theme", "dark");
     expect(document.documentElement.style.colorScheme).toBe("dark");
 
-    applyThemePreference("light");
-    expect(document.documentElement).toHaveAttribute("data-theme", "light");
-    expect(mocks.setNativeTheme).toHaveBeenCalledWith("light");
-
-    applyThemePreference("system");
-    expect(mocks.setNativeTheme).toHaveBeenCalledWith("light");
-  });
-
-  it("keeps the document and native chrome on the same resolved theme", () => {
-    applyResolvedTheme("dark");
-
-    expect(document.documentElement).toHaveAttribute("data-theme", "dark");
-    expect(document.documentElement.style.colorScheme).toBe("dark");
+    applyResolvedTheme("light");
     expect(mocks.setNativeTheme).toHaveBeenCalledWith("dark");
+
+    applyThemePreference("dark");
+    expect(document.documentElement).toHaveAttribute("data-theme", "dark");
+    expect(mocks.setNativeTheme).toHaveBeenLastCalledWith("dark");
   });
 
-  it("watches and cleans up system theme changes", () => {
-    const media = createMediaQuery(false);
-    const onChange = vi.fn();
-    const cleanup = watchSystemTheme(onChange, () => media.mediaQuery);
+  it("initializes dark and replaces any stale saved preference", () => {
+    localStorage.setItem(THEME_STORAGE_KEY, "system");
 
-    media.emit(true);
-    expect(onChange).toHaveBeenCalledWith("dark");
-
-    cleanup();
-    media.emit(false);
-    expect(onChange).toHaveBeenCalledTimes(1);
-    expect(media.mediaQuery.removeEventListener).toHaveBeenCalledWith(
-      "change",
-      expect.any(Function),
-    );
+    expect(initializeTheme()).toBe("dark");
+    expect(localStorage.getItem(THEME_STORAGE_KEY)).toBe("dark");
+    expect(document.documentElement).toHaveAttribute("data-theme", "dark");
+    expect(mocks.setNativeTheme).toHaveBeenCalledWith("dark");
   });
 });

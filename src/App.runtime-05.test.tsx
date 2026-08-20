@@ -187,27 +187,21 @@ describe("Application runtime scenarios 5", () => {
       expect(providerSelect).toHaveTextContent("LM Studio");
     });
 
-  it("changes and persists the interface theme from settings", async () => {
+  it("enforces dark mode and exposes no appearance controls", async () => {
+      localStorage.setItem("orchestrator.theme", "light");
       const { user } = await renderApp();
+
+      await waitFor(() =>
+        expect(document.documentElement).toHaveAttribute("data-theme", "dark"),
+      );
+      expect(document.documentElement.style.colorScheme).toBe("dark");
+      expect(localStorage.getItem("orchestrator.theme")).toBe("dark");
 
       await user.click(screen.getByRole("button", { name: "Settings" }));
 
-      const systemTheme = screen.getByRole("radio", { name: "System" });
-      const darkTheme = screen.getByRole("radio", { name: "Dark" });
-      const lightTheme = screen.getByRole("radio", { name: "Light" });
-
-      expect(systemTheme).toHaveAttribute("aria-checked", "true");
-
-      darkTheme.focus();
-      await user.keyboard(" ");
-      expect(darkTheme).toHaveAttribute("aria-checked", "true");
-      expect(document.documentElement).toHaveAttribute("data-theme", "dark");
-      expect(localStorage.getItem("orchestrator.theme")).toBe("dark");
-
-      await user.click(lightTheme);
-      expect(lightTheme).toHaveAttribute("aria-checked", "true");
-      expect(document.documentElement).toHaveAttribute("data-theme", "light");
-      expect(localStorage.getItem("orchestrator.theme")).toBe("light");
+      expect(screen.queryByRole("radio", { name: "System" })).toBeNull();
+      expect(screen.queryByRole("radio", { name: "Dark" })).toBeNull();
+      expect(screen.queryByRole("radio", { name: "Light" })).toBeNull();
     });
 
   it("requests notification permission only from Settings and persists each category", async () => {

@@ -953,8 +953,7 @@ function App() {
     userInputAutoResolutionTimersRef,
     requestActionLocksRef,
   } = useNotificationController(readAgentNotificationPreferences());
-  const { themePreference, setThemePreference, resolvedTheme } =
-    useAppearanceController();
+  const { resolvedTheme } = useAppearanceController();
   const {
     computerUseEnabled,
     setComputerUseEnabled,
@@ -18692,7 +18691,6 @@ function App() {
             <SettingsView
               model={{
                 dragRegion: selfWindowDragRegion,
-                themePreference,
                 computerUseEnabled,
                 browserExecutionTarget,
                 browserRuntimeStatus,
@@ -18714,7 +18712,6 @@ function App() {
                 ossProvider,
               }}
               actions={{
-                setThemePreference,
                 setComputerUseEnabled,
                 setBrowserExecutionTarget,
                 installDefaultBrowserExtension: () => {

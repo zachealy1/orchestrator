@@ -2,7 +2,6 @@ import {
   AlertCircle,
   Bell,
   BellOff,
-  Box,
   ChevronRight,
   GitPullRequest,
   Accessibility,
@@ -10,18 +9,15 @@ import {
   LogIn,
   LogOut,
   Monitor,
-  Moon,
   Plug,
   RefreshCw,
   Search,
   Settings,
-  SlidersHorizontal,
-  Sun,
   Trash2,
   UserRound,
   UserPlus,
 } from "lucide-react";
-import { memo, useState } from "react";
+import { memo, useState, type ReactNode } from "react";
 import { ComposerSelect } from "../../components/ComposerSelect";
 import { OrchestratorMark } from "../../components/OrchestratorMark";
 import type {
@@ -34,18 +30,7 @@ import type {
 } from "../browser/types";
 import type { CodexLoginState, OssProvider } from "../codex/types";
 import type { CodexAccountProfile } from "../accounts/types";
-import type { ThemePreference } from "../../shared/types";
 import type { GithubConnectionStatus } from "../github/api";
-
-const THEME_OPTIONS: Array<{
-  value: ThemePreference;
-  label: string;
-  icon: typeof Sun;
-}> = [
-  { value: "light", label: "Light", icon: Sun },
-  { value: "dark", label: "Dark", icon: Moon },
-  { value: "system", label: "System", icon: Monitor },
-];
 
 const NOTIFICATION_PREFERENCE_KEYS: Array<keyof AgentNotificationPreferences> =
   [
@@ -58,7 +43,6 @@ const NOTIFICATION_PREFERENCE_KEYS: Array<keyof AgentNotificationPreferences> =
 
 export type SettingsViewModel = {
   dragRegion?: string;
-  themePreference: ThemePreference;
   computerUseEnabled: boolean;
   browserExecutionTarget: BrowserExecutionTarget;
   browserRuntimeStatus: BrowserRuntimeStatus | null;
@@ -81,7 +65,6 @@ export type SettingsViewModel = {
 };
 
 export type SettingsViewActions = {
-  setThemePreference: (preference: ThemePreference) => void;
   setComputerUseEnabled: (enabled: boolean) => void;
   setBrowserExecutionTarget: (target: BrowserExecutionTarget) => void;
   installDefaultBrowserExtension: () => void;
@@ -142,31 +125,33 @@ export const SettingsView = memo(function SettingsView({
           aria-label="Computer use settings"
           id="settings-computer-use"
         >
-          <div className="surface-header">
-            <div>
-              <h2>Computer use</h2>
-            </div>
-            <span
-              className={`notification-permission-status ${
-                model.browserRuntimeStatus === null
-                  ? ""
+          <SettingsDetailHeader
+            icon={Monitor}
+            title="Computer use"
+            description="Control which browser Orchestrator can use for future turns."
+            status={
+              <span
+                className={`notification-permission-status ${
+                  model.browserRuntimeStatus === null
+                    ? ""
+                    : model.browserRuntimeStatus.available
+                      ? "permission-allowed"
+                      : "permission-denied"
+                }`}
+              >
+                {model.browserRuntimeStatus?.available === false ? (
+                  <AlertCircle size={14} aria-hidden="true" />
+                ) : (
+                  <Monitor size={14} aria-hidden="true" />
+                )}
+                {model.browserRuntimeStatus === null
+                  ? "Checking"
                   : model.browserRuntimeStatus.available
-                    ? "permission-allowed"
-                    : "permission-denied"
-              }`}
-            >
-              {model.browserRuntimeStatus?.available === false ? (
-                <AlertCircle size={14} aria-hidden="true" />
-              ) : (
-                <Monitor size={14} aria-hidden="true" />
-              )}
-              {model.browserRuntimeStatus === null
-                ? "Checking"
-                : model.browserRuntimeStatus.available
-                  ? "Available"
-                  : "Unavailable"}
-            </span>
-          </div>
+                    ? "Available"
+                    : "Unavailable"}
+              </span>
+            }
+          />
           <div className="setting-list">
             <label className="setting-row checkbox-setting">
               <div>
@@ -303,28 +288,30 @@ export const SettingsView = memo(function SettingsView({
           aria-label="GitHub settings"
           id="settings-github"
         >
-          <div className="surface-header">
-            <div>
-              <h2>GitHub</h2>
-            </div>
-            <span
-              className={`run-status ${
-                model.githubConnectionPending
-                  ? "running"
+          <SettingsDetailHeader
+            icon={GitPullRequest}
+            title="GitHub"
+            description="Connect the bundled GitHub CLI for repository actions."
+            status={
+              <span
+                className={`run-status ${
+                  model.githubConnectionPending
+                    ? "running"
+                    : model.githubConnection?.connected
+                      ? "completed"
+                      : "interrupted"
+                }`}
+              >
+                {model.githubConnectionPending
+                  ? "connecting"
                   : model.githubConnection?.connected
-                    ? "completed"
-                    : "interrupted"
-              }`}
-            >
-              {model.githubConnectionPending
-                ? "connecting"
-                : model.githubConnection?.connected
-                  ? "connected"
-                  : model.githubConnection?.available === false
-                    ? "unavailable"
-                    : "disconnected"}
-            </span>
-          </div>
+                    ? "connected"
+                    : model.githubConnection?.available === false
+                      ? "unavailable"
+                      : "disconnected"}
+              </span>
+            }
+          />
           <div className="setting-list">
             <div className="setting-row">
               <div>
@@ -396,16 +383,18 @@ export const SettingsView = memo(function SettingsView({
           aria-label="Codex settings"
           id="settings-accounts"
         >
-          <div className="surface-header">
-            <div>
-              <h2>Codex connection</h2>
-            </div>
-            <span
-              className={`run-status ${model.codexConnected ? "completed" : "interrupted"}`}
-            >
-              {model.codexConnected ? "connected" : "disconnected"}
-            </span>
-          </div>
+          <SettingsDetailHeader
+            icon={UserRound}
+            title="Codex connection"
+            description="Manage Codex accounts and optional OSS providers used for runs."
+            status={
+              <span
+                className={`run-status ${model.codexConnected ? "completed" : "interrupted"}`}
+              >
+                {model.codexConnected ? "connected" : "disconnected"}
+              </span>
+            }
+          />
           <div className="setting-list">
             <div className="account-management">
               {model.accounts.length === 0 ? (
@@ -585,25 +574,6 @@ export const SettingsView = memo(function SettingsView({
         </section>
       ) : null}
 
-      {matchesSettings("about", "orchestrator", "advanced") ? (
-        <section
-          className="surface brand-panel"
-          aria-label="About Orchestrator"
-          id="settings-about"
-        >
-          <div className="brand-lockup">
-            <OrchestratorMark className="brand-lockup-mark" />
-            <div>
-              <h2>Orchestrator</h2>
-              <span>Token-aware Codex workspace</span>
-            </div>
-          </div>
-          <p>
-            A token-aware desktop workspace for Codex runs, advisory preflight,
-            context budgeting, and local analytics.
-          </p>
-        </section>
-      ) : null}
     </>
   );
 });
@@ -631,8 +601,6 @@ function SettingsOverview({
   const browserReady = model.browserRuntimeStatus?.available === true;
   const showQuickPreferences = queryMatches(
     "quick preferences",
-    "theme",
-    "appearance",
     "computer use",
     "browser",
     "notifications",
@@ -643,7 +611,6 @@ function SettingsOverview({
     "codex",
     "accounts",
     "github",
-    "local models",
     "oss provider",
     "ollama",
     "lm studio",
@@ -655,10 +622,7 @@ function SettingsOverview({
         className="settings-page-header"
         data-tauri-drag-region={model.dragRegion}
       >
-        <div data-tauri-drag-region="false">
-          <h1>Settings</h1>
-          <p>Manage how Orchestrator works for you.</p>
-        </div>
+        <h1 data-tauri-drag-region="false">Settings</h1>
         <label className="settings-search" data-tauri-drag-region="false">
           <Search size={17} aria-hidden="true" />
           <span className="sr-only">Search settings</span>
@@ -746,40 +710,6 @@ function SettingsOverview({
                 </div>
               </div>
               <div className="settings-overview-rows">
-                <div className="settings-overview-row">
-                  <span className="settings-row-icon" aria-hidden="true">
-                    <Sun size={18} />
-                  </span>
-                  <div>
-                    <strong>Theme</strong>
-                    <span>Choose how Orchestrator looks.</span>
-                  </div>
-                  <div
-                    className="theme-selector settings-theme-selector"
-                    role="radiogroup"
-                    aria-label="Interface theme"
-                  >
-                    {THEME_OPTIONS.map((option) => {
-                      const ThemeIcon = option.icon;
-                      const selected = model.themePreference === option.value;
-                      return (
-                        <button
-                          className={selected ? "active" : ""}
-                          type="button"
-                          role="radio"
-                          aria-checked={selected}
-                          key={option.value}
-                          onClick={() =>
-                            actions.setThemePreference(option.value)
-                          }
-                        >
-                          <ThemeIcon size={15} aria-hidden="true" />
-                          {option.label}
-                        </button>
-                      );
-                    })}
-                  </div>
-                </div>
                 <label className="settings-overview-row">
                   <span className="settings-row-icon" aria-hidden="true">
                     <Monitor size={18} />
@@ -879,29 +809,6 @@ function SettingsOverview({
                     Manage
                   </button>
                 </div>
-                <div className="settings-overview-row settings-connection-row">
-                  <span className="settings-row-icon" aria-hidden="true">
-                    <Box size={18} />
-                  </span>
-                  <div>
-                    <strong>Local models</strong>
-                    <span>Ollama or LM Studio.</span>
-                  </div>
-                  <span className="settings-connection-value">
-                    {model.useOss
-                      ? model.ossProvider === "ollama"
-                        ? "Ollama"
-                        : "LM Studio"
-                      : "Off"}
-                  </span>
-                  <button
-                    className="settings-manage-button"
-                    type="button"
-                    onClick={() => scrollToSettingsSection("settings-accounts")}
-                  >
-                    Manage
-                  </button>
-                </div>
               </div>
             </section>
           ) : null}
@@ -928,14 +835,8 @@ function SettingsOverview({
           <SettingsSectionLink
             icon={UserRound}
             title="Accounts"
-            description="Manage Codex accounts and local models."
+            description="Manage Codex accounts and run providers."
             targetId="settings-accounts"
-          />
-          <SettingsSectionLink
-            icon={SlidersHorizontal}
-            title="Advanced"
-            description="Connection status and application information."
-            targetId="settings-about"
           />
         </nav>
       ) : null}
@@ -950,7 +851,7 @@ function SettingsStatusCard({
   healthy,
   targetId,
 }: {
-  icon: typeof Sun | "codex";
+  icon: typeof Monitor | "codex";
   label: string;
   value: string;
   healthy: boolean;
@@ -988,7 +889,7 @@ function SettingsSectionLink({
   description,
   targetId,
 }: {
-  icon: typeof Sun;
+  icon: typeof Monitor;
   title: string;
   description: string;
   targetId: string;
@@ -1039,6 +940,33 @@ function scrollToSettingsSection(id: string) {
   });
 }
 
+function SettingsDetailHeader({
+  icon: Icon,
+  title,
+  description,
+  status,
+}: {
+  icon: typeof Monitor;
+  title: string;
+  description: string;
+  status: ReactNode;
+}) {
+  return (
+    <div className="surface-header settings-detail-header">
+      <div className="settings-detail-heading">
+        <span className="settings-detail-header-icon" aria-hidden="true">
+          <Icon size={20} />
+        </span>
+        <div className="settings-detail-header-copy">
+          <h2>{title}</h2>
+          <p>{description}</p>
+        </div>
+      </div>
+      {status}
+    </div>
+  );
+}
+
 function NotificationSettings({
   model,
   actions,
@@ -1052,21 +980,23 @@ function NotificationSettings({
       aria-label="Notification settings"
       id="settings-notifications"
     >
-      <div className="surface-header">
-        <div>
-          <h2>Agent alerts</h2>
-        </div>
-        <span
-          className={`notification-permission-status permission-${model.notificationPermission}`}
-        >
-          {model.notificationPermission === "allowed" ? (
-            <Bell size={14} aria-hidden="true" />
-          ) : (
-            <BellOff size={14} aria-hidden="true" />
-          )}
-          {permissionLabel(model.notificationPermission)}
-        </span>
-      </div>
+      <SettingsDetailHeader
+        icon={Bell}
+        title="Agent alerts"
+        description="Choose which moments deserve your attention."
+        status={
+          <span
+            className={`notification-permission-status permission-${model.notificationPermission}`}
+          >
+            {model.notificationPermission === "allowed" ? (
+              <Bell size={14} aria-hidden="true" />
+            ) : (
+              <BellOff size={14} aria-hidden="true" />
+            )}
+            {permissionLabel(model.notificationPermission)}
+          </span>
+        }
+      />
       <div className="setting-list">
         <NotificationToggle
           label="Completed responses"
@@ -1109,28 +1039,30 @@ function NotificationSettings({
           }
         />
       </div>
-      <div className="notification-settings-actions">
-        {model.notificationPermission === "denied" ? (
-          <button
-            className="secondary"
-            type="button"
-            onClick={actions.openNotificationSettings}
-          >
-            <Settings size={16} aria-hidden="true" />
-            Open macOS settings
-          </button>
-        ) : model.notificationPermission !== "allowed" ? (
-          <button
-            className="secondary"
-            type="button"
-            onClick={actions.enableNotifications}
-            disabled={model.notificationPermission === "unavailable"}
-          >
-            <Bell size={16} aria-hidden="true" />
-            Enable notifications
-          </button>
-        ) : null}
-      </div>
+      {model.notificationPermission !== "allowed" ? (
+        <div className="notification-settings-actions">
+          {model.notificationPermission === "denied" ? (
+            <button
+              className="secondary"
+              type="button"
+              onClick={actions.openNotificationSettings}
+            >
+              <Settings size={16} aria-hidden="true" />
+              Open macOS settings
+            </button>
+          ) : (
+            <button
+              className="secondary"
+              type="button"
+              onClick={actions.enableNotifications}
+              disabled={model.notificationPermission === "unavailable"}
+            >
+              <Bell size={16} aria-hidden="true" />
+              Enable notifications
+            </button>
+          )}
+        </div>
+      ) : null}
     </section>
   );
 }
