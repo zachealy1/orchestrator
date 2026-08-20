@@ -1905,6 +1905,20 @@ export function prepareKanbanRun() {
           nextCursor: null,
         };
       }
+      if (method === "fs/getMetadata") {
+        return {
+          isDirectory: true,
+          isFile: false,
+          isSymlink: false,
+        };
+      }
+      if (method === "command/exec") {
+        return {
+          exitCode: 0,
+          stdout: `${params?.cwd ?? workspace.path}\n`,
+          stderr: "",
+        };
+      }
       if (method === "thread/start") {
         threadCwd = params?.cwd ?? workspace.path;
         threadProjectId = params?.projectId ?? null;

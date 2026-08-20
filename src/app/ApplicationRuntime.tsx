@@ -141,6 +141,7 @@ import {
 import {
   KanbanAttemptStateController,
   acknowledgeKanbanStopWithTurn,
+  blockedNoToolImplementationError,
   createPendingKanbanStopRequest,
   kanbanStatusAfterFailedStop,
 } from "../features/kanban/attemptLifecycle";
@@ -449,6 +450,7 @@ import {
   type WebPreviewProbeAttempt,
 } from "../features/runs/runtimeTypes";
 import { useRunController } from "../features/runs/useRunController";
+import { validateNativeTaskExecutionEnvironment } from "../features/runs/nativeTaskEnvironment";
 import {
   BUILTIN_SLASH_COMMANDS,
   addPlanImplementationProgressInstructions,
@@ -11757,7 +11759,6 @@ function App() {
         ephemeral: false,
         historyMode: "paginated",
         config: threadConfig,
-        ...(nativeTaskBinding ? { environments: [] } : {}),
         ...(nativeTaskBinding?.projectId
           ? { projectId: nativeTaskBinding.projectId }
           : {}),
@@ -12016,6 +12017,21 @@ function App() {
       const startThread = startedThread.startFreshThread;
       const nativeTaskWorkspaceBinding =
         startedThread.nativeTaskWorkspaceBinding;
+
+      if (nativeTaskWorkspaceBinding) {
+        await validateNativeTaskExecutionEnvironment({
+          binding: nativeTaskWorkspaceBinding,
+          permissionProfile: snapshot.access.permissionProfile,
+          rpc: (method, params) =>
+            codexRpcForProfile(
+              snapshot.profileKey,
+              snapshot.accountId,
+              method,
+              params,
+            ),
+          ensureActive: () => ensureRunControlActive(runControl),
+        });
+      }
 
       await establishRunGoalStage(
         runControl,
@@ -15431,7 +15447,7 @@ function App() {
 
     flushFrameBatchedCodexNotifications();
 
-    const nextRunView = updateRunControlView(control, (current) => {
+    let nextRunView = updateRunControlView(control, (current) => {
       let next = applyCodexMessage(current, message);
       if (intermediateGoalTurnCompleted) {
         next = {
@@ -15463,19 +15479,45 @@ function App() {
         (!nextRunView.nativePlan.completedText.trim() ||
           !nextRunView.nativePlan.planItemId),
     );
-    const persistedTerminalStatus = missingCompletedKanbanPlan
+    const blockedNoToolError =
+      terminalStatus === "completed" &&
+      control.kanbanAttempt &&
+      !kanbanPlanAttempt
+        ? blockedNoToolImplementationError({
+            finalMessage: nextRunView.finalMessage,
+            commandCount: nextRunView.commands.length,
+            editedFileCount: nextRunView.editedFiles.length,
+            hasDiff: Boolean(nextRunView.latestDiff.trim()),
+          })
+        : null;
+    const persistedKanbanStatus = blockedNoToolError
+      ? "blocked"
+      : missingCompletedKanbanPlan
+        ? "failed"
+        : terminalStatus;
+    const persistedRunStatus = blockedNoToolError
       ? "failed"
-      : terminalStatus;
+      : missingCompletedKanbanPlan
+        ? "failed"
+        : terminalStatus;
+    if (blockedNoToolError) {
+      nextRunView = updateRunControlView(control, (current) => ({
+        ...current,
+        status: "failed",
+        error: blockedNoToolError,
+      }));
+    }
     const terminalError =
-      missingCompletedKanbanPlan
+      blockedNoToolError ??
+      (missingCompletedKanbanPlan
         ? "Codex completed the Plan-mode card without a reviewable plan."
-        : persistedTerminalStatus === "failed"
-        ? readSubagentError(message) ??
-          nextRunView.error ??
-          "Codex could not complete this card."
-        : persistedTerminalStatus === "interrupted"
-          ? nextRunView.error ?? "The Codex turn ended unexpectedly."
-          : null;
+        : persistedRunStatus === "failed"
+          ? readSubagentError(message) ??
+            nextRunView.error ??
+            "Codex could not complete this card."
+          : persistedRunStatus === "interrupted"
+            ? nextRunView.error ?? "The Codex turn ended unexpectedly."
+            : null);
     if (method === "serverRequest/resolved" && control.kanbanAttempt) {
       const hasPendingUserInput = nextRunView.serverRequests
         .filter(isNativeUserInputRequest)
@@ -15525,9 +15567,9 @@ function App() {
     }
     await persistRunEvent(control, "notification", method, message);
 
-    if (persistedTerminalStatus) {
+    if (persistedKanbanStatus) {
       const completedPlan =
-        persistedTerminalStatus === "completed" &&
+        persistedKanbanStatus === "completed" &&
         kanbanPlanAttempt &&
         nextRunView.nativePlan.planItemId &&
         nextRunView.nativePlan.completedText.trim()
@@ -15538,7 +15580,7 @@ function App() {
           : null;
       const persistence = await kanbanAttempts.persist(
         control,
-        persistedTerminalStatus,
+        persistedKanbanStatus,
         terminalError,
         { retryCount: 1, completedPlan },
       );
@@ -15613,9 +15655,9 @@ function App() {
       }
     }
 
-    if (persistedTerminalStatus) {
+    if (persistedRunStatus) {
       const turn = terminalTurn;
-      const status = persistedTerminalStatus;
+      const status = persistedRunStatus;
       const completedControl = control;
       const completedEntry =
         taskChatEntriesRef.current.find(

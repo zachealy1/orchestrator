@@ -114,7 +114,6 @@ describe("Application runtime scenarios 9", () => {
       expect.objectContaining({
         cwd: "/repo/.codex-kanban/card-run-control-test",
         projectId: "project-workspace-1",
-        environments: [],
         runtimeWorkspaceRoots: [
           "/repo/.codex-kanban/card-run-control-test",
           "/repo/.codex-kanban/card-run-control-test/orchestrator",
@@ -125,18 +124,33 @@ describe("Application runtime scenarios 9", () => {
       "turn/start",
       expect.objectContaining({
         cwd: "/repo/.codex-kanban/card-run-control-test",
-        environments: [],
         runtimeWorkspaceRoots: [
           "/repo/.codex-kanban/card-run-control-test",
           "/repo/.codex-kanban/card-run-control-test/orchestrator",
         ],
       }),
     );
+    expect(
+      mocks.codexDefaultProfileRpcMock.mock.calls.find(
+        ([method]) => method === "thread/start",
+      )?.[1],
+    ).not.toHaveProperty("environments");
+    expect(
+      mocks.codexDefaultProfileRpcMock.mock.calls.find(
+        ([method]) => method === "turn/start",
+      )?.[1],
+    ).not.toHaveProperty("environments");
+    const environmentProbeIndex =
+      mocks.codexDefaultProfileRpcMock.mock.calls.findIndex(
+        ([method]) => method === "command/exec",
+      );
     const turnStartIndex = mocks.codexDefaultProfileRpcMock.mock.calls.findIndex(
       ([method, params]) =>
         method === "turn/start" &&
         params?.threadId === "thread-kanban-question",
     );
+    expect(environmentProbeIndex).toBeGreaterThanOrEqual(0);
+    expect(environmentProbeIndex).toBeLessThan(turnStartIndex);
     const projectUpdateIndex =
       mocks.codexDefaultProfileRpcMock.mock.calls.findIndex(
         ([method, params]) =>
@@ -186,6 +200,40 @@ describe("Application runtime scenarios 9", () => {
           .closest('[data-agent-notification-target="user-input"]'),
       ).toHaveFocus(),
     );
+  });
+
+  it("fails Kanban setup before turn/start when the worktree is unavailable", async () => {
+    prepareKanbanRun();
+    const defaultRpc =
+      mocks.codexDefaultProfileRpcMock.getMockImplementation();
+    mocks.codexDefaultProfileRpcMock.mockImplementation(
+      async (method: string, params?: Record<string, any>) => {
+        if (method === "fs/getMetadata") {
+          return { isDirectory: false, isFile: false, isSymlink: false };
+        }
+        return defaultRpc?.(method, params);
+      },
+    );
+
+    const { user } = await renderApp();
+    await user.click(await screen.findByRole("radio", { name: "Kanban" }));
+    await user.click(
+      screen.getByRole("button", { name: "Start test Kanban agent" }),
+    );
+
+    await waitFor(() =>
+      expect(mocks.updateKanbanAttemptMock).toHaveBeenCalledWith(
+        expect.objectContaining({
+          status: "failed",
+          error: expect.stringContaining("isolated worktree is unavailable"),
+        }),
+      ),
+    );
+    expect(
+      mocks.codexDefaultProfileRpcMock.mock.calls.some(
+        ([method]) => method === "turn/start",
+      ),
+    ).toBe(false);
   });
 
   it("keeps a Kanban run active when its pause interrupt is rejected", async () => {
@@ -357,6 +405,72 @@ describe("Application runtime scenarios 9", () => {
       expect.objectContaining({ status: "interrupted" }),
     );
     expect(mocks.updateTaskStatusMock).toHaveBeenCalledWith(101, "interrupted");
+  });
+
+  it("keeps a no-tool Kanban result blocked instead of sending it to review", async () => {
+    prepareKanbanRun();
+
+    const { user } = await renderApp();
+    await user.click(await screen.findByRole("radio", { name: "Kanban" }));
+    await user.click(
+      screen.getByRole("button", { name: "Start test Kanban agent" }),
+    );
+    await waitFor(() =>
+      expect(mocks.updateKanbanAttemptMock).toHaveBeenCalledWith(
+        expect.objectContaining({ status: "running", sequence: 1 }),
+      ),
+    );
+
+    await emitCodexNotification({
+      method: "thread/goal/updated",
+      params: {
+        threadId: "thread-1",
+        goal: {
+          threadId: "thread-1",
+          objective: "Exercise Kanban pause semantics",
+          status: "complete",
+          timeUsedSeconds: 1,
+        },
+      },
+    }, { accountId: 0, profileKey: "default" });
+    await emitCodexNotification({
+      method: "item/completed",
+      params: {
+        item: {
+          type: "agentMessage",
+          id: "blocked-final",
+          phase: "final_answer",
+          text: "I'm blocked because this session has no filesystem or terminal access to the selected repository.",
+        },
+      },
+    }, { accountId: 0, profileKey: "default" });
+    await emitCodexNotification({
+      method: "turn/completed",
+      params: {
+        threadId: "thread-1",
+        turn: { id: "turn-1", status: "completed", durationMs: 250 },
+      },
+    }, { accountId: 0, profileKey: "default" });
+
+    await waitFor(() =>
+      expect(mocks.updateKanbanAttemptMock).toHaveBeenCalledWith(
+        expect.objectContaining({
+          status: "blocked",
+          sequence: 2,
+          error: expect.stringContaining("no implementation was performed"),
+        }),
+      ),
+    );
+    expect(mocks.updateKanbanAttemptMock).not.toHaveBeenCalledWith(
+      expect.objectContaining({ status: "completed" }),
+    );
+    expect(mocks.updateRunMock).toHaveBeenCalledWith(
+      202,
+      expect.objectContaining({
+        status: "failed",
+        error: expect.stringContaining("no implementation was performed"),
+      }),
+    );
   });
 
   it("retries terminal Kanban persistence before completing the run record", async () => {

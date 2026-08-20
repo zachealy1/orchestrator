@@ -118,8 +118,8 @@ export function parseNativeTaskWorkspaceBinding(
 export function nativeTaskExecutionOverrides(
   binding: NativeTaskWorkspaceBinding,
 ) {
+  // Omitting `environments` selects Codex's local environment; an empty array disables it.
   return {
-    environments: [],
     cwd: binding.executionDirectory,
     runtimeWorkspaceRoots: binding.runtimeWorkspaceRoots,
   };

@@ -159,6 +159,31 @@ export function kanbanStatusAfterFailedStop(runView: {
   return "running";
 }
 
+const NO_TOOL_BLOCKED_RESULT_PATTERNS = [
+  /(?:no|without) (?:(?:filesystem|file system|terminal|shell)(?:\s+or\s+)?)+\s+access/i,
+  /(?:cannot|can't|could not|couldn't) access (?:the )?(?:filesystem|file system|terminal|shell|repository|workspace)/i,
+  /(?:filesystem|file system|terminal|shell|repository|workspace).{0,48}(?:is not|isn't|was not|wasn't|not) (?:available|accessible|attached)/i,
+];
+
+export function blockedNoToolImplementationError(input: {
+  finalMessage: string;
+  commandCount: number;
+  editedFileCount: number;
+  hasDiff: boolean;
+}) {
+  if (
+    input.commandCount > 0 ||
+    input.editedFileCount > 0 ||
+    input.hasDiff ||
+    !NO_TOOL_BLOCKED_RESULT_PATTERNS.some((pattern) =>
+      pattern.test(input.finalMessage),
+    )
+  ) {
+    return null;
+  }
+  return "Codex could not access the card worktree or terminal, so no implementation was performed. Resume the card after restoring its execution environment.";
+}
+
 export async function acknowledgeKanbanStopWithTurn(
   control: Pick<
     KanbanAttemptControl,

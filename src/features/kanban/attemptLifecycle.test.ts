@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import {
   KanbanAttemptStateController,
   acknowledgeKanbanStopWithTurn,
+  blockedNoToolImplementationError,
   createPendingKanbanStopRequest,
   kanbanStatusAfterFailedStop,
   type KanbanAttemptControl,
@@ -200,5 +201,31 @@ describe("Kanban pending stop primitives", () => {
     expect(
       kanbanStatusAfterFailedStop({ serverRequests: [], approvalRequests: [] }),
     ).toBe("running");
+  });
+});
+
+describe("Kanban implementation completion", () => {
+  it("classifies an explicit no-tool response as blocked", () => {
+    expect(
+      blockedNoToolImplementationError({
+        finalMessage:
+          "I'm blocked because this session has no filesystem or terminal access to the selected repository.",
+        commandCount: 0,
+        editedFileCount: 0,
+        hasDiff: false,
+      }),
+    ).toContain("no implementation was performed");
+  });
+
+  it("does not override completion after repository activity", () => {
+    expect(
+      blockedNoToolImplementationError({
+        finalMessage:
+          "The browser check was blocked because no terminal was attached.",
+        commandCount: 2,
+        editedFileCount: 1,
+        hasDiff: true,
+      }),
+    ).toBeNull();
   });
 });

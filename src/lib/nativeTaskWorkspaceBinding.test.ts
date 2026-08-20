@@ -44,7 +44,6 @@ describe("native task workspace bindings", () => {
       pendingContinuationContext: null,
     });
     expect(nativeTaskExecutionOverrides(result)).toEqual({
-      environments: [],
       cwd: "/app/cards/card-1",
       runtimeWorkspaceRoots: [
         "/app/cards/card-1",
