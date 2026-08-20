@@ -553,6 +553,20 @@ button.submitted-prompt-edit-button:focus-visible {
   text-decoration: none;
 }
 
+.submitted-web-link {
+  color: var(--color-primary);
+  cursor: pointer;
+  text-decoration-line: underline;
+  text-decoration-thickness: 1px;
+  text-underline-offset: 3px;
+}
+
+.submitted-web-link:hover,
+.submitted-web-link:focus-visible {
+  color: var(--color-primary);
+  text-decoration-thickness: 2px;
+}
+
 .submitted-inline-file:hover .submitted-inline-file-name,
 .submitted-inline-file:focus-visible .submitted-inline-file-name {
   color: var(--color-secondary);

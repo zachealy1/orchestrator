@@ -210,6 +210,7 @@ import {
   parseNativeTaskWorkspaceBinding,
   type NativeTaskWorkspaceBinding,
 } from "../lib/nativeTaskWorkspaceBinding";
+import { normalizeExternalTranscriptUrl } from "../lib/transcriptLinks";
 import {
   comparePromptQueueDisplayOrder,
   comparePromptQueueDispatchOrder,
@@ -1132,6 +1133,11 @@ function App() {
     getDrawerPhase,
   } = conversationLayout;
   const [, setStatusMessage] = useState("Choose a workspace to begin.");
+  const [transcriptLinkError, setTranscriptLinkError] = useState<{
+    message: string;
+    revision: number;
+  } | null>(null);
+  const transcriptLinkErrorRevisionRef = useRef(0);
   const activeViewRef = useRef<AppView>("task");
   const chatTitleGenerationsInFlightRef = useRef(new Set<number>());
   const workspaceTaskMemories = appServices.workspaceTaskMemories;
@@ -2162,9 +2168,21 @@ function App() {
       return true;
     },
   );
-  const openTranscriptFileLink = useStableEvent((href: string) => {
+  const openTranscriptLink = useStableEvent((href: string) => {
     if (openKanbanChatFilePreview(href)) return true;
-    return openTaskResponseFileLink(href);
+    if (openTaskResponseFileLink(href)) return true;
+
+    const url = normalizeExternalTranscriptUrl(href);
+    if (!url) return true;
+    void Promise.resolve()
+      .then(() => openUrl(url))
+      .catch((error) => {
+        setTranscriptLinkError({
+          message: error instanceof Error ? error.message : String(error),
+          revision: ++transcriptLinkErrorRevisionRef.current,
+        });
+      });
+    return true;
   });
   useEffect(() => {
     persistWorkspaceSurfaceMode(workspaceSurfaceMode);
@@ -2586,6 +2604,16 @@ function App() {
         timeoutMs: FLOATING_STATUS_NOTICE_TIMEOUT_MS,
       });
     }
+    if (transcriptLinkError) {
+      notices.push({
+        id: "transcript-link-error",
+        revisionKey: String(transcriptLinkError.revision),
+        tone: "warning",
+        title: "Could not open link",
+        detail: transcriptLinkError.message,
+        timeoutMs: FLOATING_STATUS_NOTICE_TIMEOUT_MS,
+      });
+    }
     if (
       selectedGitOperation &&
       (selectedGitOperation.status === "succeeded" ||
@@ -2612,6 +2640,7 @@ function App() {
     crossConversationApprovals.length,
     selectedActiveRunControl?.goalActionError,
     selectedGitOperation,
+    transcriptLinkError,
   ]);
   const activateFloatingStatusNotice = useStableEvent((noticeId: string) => {
     if (noticeId === "cross-conversation-approvals") {
@@ -19046,7 +19075,7 @@ function App() {
                         onImplementPlan: implementTranscriptPlan,
                         onRevisePlan: reviseTranscriptPlan,
                         onCancelPlan: cancelTranscriptPlan,
-                        onOpenFileLink: openTranscriptFileLink,
+                        onOpenTranscriptLink: openTranscriptLink,
                         onOpenWebPreview: openTranscriptWebPreview,
                         onReviewEditedFile: reviewTranscriptEditedFile,
                         onUndoEditedFiles: undoTranscriptEditedFiles,

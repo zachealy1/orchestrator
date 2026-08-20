@@ -55,4 +55,15 @@ describe("renderHistoricalMarkdown", () => {
     expect(html).toContain('class="markdown-preview-link"');
     expect(html).not.toContain("[batman.txt](");
   });
+
+  it("linkifies bare web URLs without weakening sanitization", async () => {
+    const html = await renderHistoricalMarkdown(
+      "Review https://example.com/docs?mode=full#setup, then continue.",
+    );
+
+    expect(html).toContain(
+      '<a href="https://example.com/docs?mode=full#setup">https://example.com/docs?mode=full#setup</a>',
+    );
+    expect(html).not.toContain("href=\"javascript:");
+  });
 });

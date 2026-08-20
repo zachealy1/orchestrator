@@ -61,7 +61,7 @@ describe("Application runtime scenarios 3", () => {
         chat_id: historicalChat.id,
         turn_index: 2,
         original_prompt: "Add the history button",
-        final_message: "History button added.",
+        final_message: "History button added. https://example.com/history",
       });
       mocks.listWorkspaceChatsMock.mockResolvedValue([historicalChat]);
       mocks.getChatWithRunsMock.mockResolvedValue(
@@ -80,13 +80,26 @@ describe("Application runtime scenarios 3", () => {
       expect(within(drawer).getByText(/2 turns/)).toBeInTheDocument();
       await user.click(within(drawer).getByRole("button", { name: /fix the app header/i }));
 
-      await screen.findByText("History button added.");
+      const historyLink = await screen.findByRole("link", {
+        name: "https://example.com/history",
+      });
       const transcript = screen.getByLabelText("Task chat transcript");
       expect(within(transcript).getAllByLabelText("Submitted prompt")).toHaveLength(2);
       expect(transcript).toHaveTextContent("Fix the app header");
       expect(transcript).toHaveTextContent("Header fixed.");
       expect(transcript).toHaveTextContent("Add the history button");
       expect(transcript).toHaveTextContent("History button added.");
+      await user.click(historyLink);
+      expect(mocks.openUrlMock).toHaveBeenCalledOnce();
+      expect(mocks.openUrlMock).toHaveBeenCalledWith(
+        "https://example.com/history",
+      );
+
+      mocks.openUrlMock.mockRejectedValueOnce(new Error("browser unavailable"));
+      await user.click(historyLink);
+      await screen.findByText("Could not open link");
+      await screen.findByText("browser unavailable");
+      expect(mocks.openUrlMock).toHaveBeenCalledTimes(2);
     });
 
   it("opens persisted shared-chat turns without waiting for native synchronization", async () => {

@@ -75,6 +75,10 @@ import {
   isPreviewableSummaryLink,
   normalizePreviewableMarkdownLinks,
 } from "../lib/summaryLinks";
+import {
+  findSubmittedPromptWebLinks,
+  normalizeExternalTranscriptUrl,
+} from "../lib/transcriptLinks";
 import { ORCHESTRATOR_PROMPT_CONTEXT_MIME } from "../features/composer/types";
 import type { ComposerContextFile } from "../features/composer/types";
 import type { CodexMessage } from "../features/codex/types";
@@ -149,7 +153,7 @@ export type TranscriptTurnActions = {
     file: RunEditedFile,
   ) => Promise<void> | void;
   onUndoEditedFiles?: (entry: TaskChatEntry) => Promise<void> | void;
-  onOpenFileLink?: (href: string) => boolean;
+  onOpenTranscriptLink?: (href: string) => boolean;
   onLoadHistoricalActivity?: (entry: TaskChatEntry) => void;
   onPlanDisclosureChange?: NativePlanDisclosureChangeHandler;
   onPendingInteractionPageChange?: PendingInteractionPageChangeHandler;
@@ -181,7 +185,7 @@ export const TaskChatTurn = memo(function TaskChatTurn({
   onImplementPlan,
   onRevisePlan,
   onCancelPlan,
-  onOpenFileLink,
+  onOpenTranscriptLink,
   onOpenWebPreview,
   onReviewEditedFile,
   onUndoEditedFiles,
@@ -251,7 +255,7 @@ export const TaskChatTurn = memo(function TaskChatTurn({
               <SubmittedPrompt
                 prompt={entry.prompt}
                 contextFiles={entry.contextFiles ?? EMPTY_CONTEXT_FILES}
-                onOpenFileLink={onOpenFileLink}
+                onOpenTranscriptLink={onOpenTranscriptLink}
               />
             </article>
             {entry.steeredPrompts?.map((steeredPrompt) => (
@@ -263,7 +267,7 @@ export const TaskChatTurn = memo(function TaskChatTurn({
                 <SubmittedPrompt
                   prompt={steeredPrompt.prompt}
                   contextFiles={EMPTY_CONTEXT_FILES}
-                  onOpenFileLink={onOpenFileLink}
+                  onOpenTranscriptLink={onOpenTranscriptLink}
                 />
               </article>
             ))}
@@ -294,7 +298,7 @@ export const TaskChatTurn = memo(function TaskChatTurn({
           onImplementPlan={onImplementPlan}
           onRevisePlan={onRevisePlan}
           onCancelPlan={onCancelPlan}
-          onOpenFileLink={onOpenFileLink}
+          onOpenTranscriptLink={onOpenTranscriptLink}
           onOpenWebPreview={onOpenWebPreview}
           onReviewEditedFile={onReviewEditedFile}
           onUndoEditedFiles={onUndoEditedFiles}
@@ -417,16 +421,22 @@ const SubmittedImageAttachment = memo(function SubmittedImageAttachment({
 const SubmittedPrompt = memo(function SubmittedPrompt({
   prompt,
   contextFiles,
-  onOpenFileLink,
+  onOpenTranscriptLink,
 }: {
   prompt: string;
   contextFiles: ComposerContextFile[];
-  onOpenFileLink?: (href: string) => boolean;
+  onOpenTranscriptLink?: (href: string) => boolean;
 }) {
-  const inlineFiles = contextFiles.filter((file) => file.source === "search");
-  const segments = buildSubmittedPromptSegments(prompt, inlineFiles);
+  const segments = useMemo(
+    () =>
+      buildSubmittedPromptSegments(
+        prompt,
+        contextFiles.filter((file) => file.source === "search"),
+      ),
+    [contextFiles, prompt],
+  );
 
-  if (!segments.some((segment) => segment.kind === "file")) {
+  if (!segments.some((segment) => segment.kind !== "text")) {
     return <>{prompt}</>;
   }
 
@@ -437,6 +447,24 @@ const SubmittedPrompt = memo(function SubmittedPrompt({
           return <span key={`text-${index}`}>{segment.text}</span>;
         }
 
+        if (segment.kind === "web") {
+          return (
+            <a
+              className="submitted-web-link"
+              href={segment.href}
+              key={`${segment.href}-${index}`}
+              onClick={(event: ReactMouseEvent<HTMLAnchorElement>) => {
+                if (onOpenTranscriptLink?.(segment.href)) {
+                  event.preventDefault();
+                  event.stopPropagation();
+                }
+              }}
+            >
+              {segment.text}
+            </a>
+          );
+        }
+
         return (
           <a
             className="submitted-inline-file"
@@ -444,7 +472,7 @@ const SubmittedPrompt = memo(function SubmittedPrompt({
             key={`${segment.href}-${index}`}
             title={`Preview ${segment.href}`}
             onClick={(event: ReactMouseEvent<HTMLAnchorElement>) => {
-              if (onOpenFileLink?.(segment.href)) {
+              if (onOpenTranscriptLink?.(segment.href)) {
                 event.preventDefault();
                 event.stopPropagation();
               }
@@ -469,7 +497,7 @@ const AssistantRunOutput = memo(function AssistantRunOutput({
   onImplementPlan,
   onRevisePlan,
   onCancelPlan,
-  onOpenFileLink,
+  onOpenTranscriptLink,
   onOpenWebPreview,
   onReviewEditedFile,
   onUndoEditedFiles,
@@ -487,7 +515,7 @@ const AssistantRunOutput = memo(function AssistantRunOutput({
   onImplementPlan?: TranscriptTurnActions["onImplementPlan"];
   onRevisePlan?: TranscriptTurnActions["onRevisePlan"];
   onCancelPlan?: TranscriptTurnActions["onCancelPlan"];
-  onOpenFileLink?: (href: string) => boolean;
+  onOpenTranscriptLink?: (href: string) => boolean;
   onOpenWebPreview?: TranscriptTurnActions["onOpenWebPreview"];
   onReviewEditedFile?: TranscriptTurnActions["onReviewEditedFile"];
   onUndoEditedFiles?: TranscriptTurnActions["onUndoEditedFiles"];
@@ -515,7 +543,7 @@ const AssistantRunOutput = memo(function AssistantRunOutput({
             entry={entry}
             runView={runView}
             onLoadHistoricalActivity={onLoadHistoricalActivity}
-            onOpenFileLink={onOpenFileLink}
+            onOpenTranscriptLink={onOpenTranscriptLink}
           />
         ) : (
           <RunMetrics runView={runView} />
@@ -525,6 +553,7 @@ const AssistantRunOutput = memo(function AssistantRunOutput({
           onImplementPlan={onImplementPlan}
           onRevisePlan={onRevisePlan}
           onCancelPlan={onCancelPlan}
+          onOpenTranscriptLink={onOpenTranscriptLink}
           expanded={planExpanded}
           onDisclosureChange={onPlanDisclosureChange}
         />
@@ -535,7 +564,7 @@ const AssistantRunOutput = memo(function AssistantRunOutput({
           <RunSummary
             runView={runView}
             preparedSummary={entry.preparedSummary}
-            onOpenFileLink={onOpenFileLink}
+            onOpenTranscriptLink={onOpenTranscriptLink}
           />
         ) : null}
         <WebPreviewCard
@@ -574,7 +603,7 @@ const AssistantRunOutput = memo(function AssistantRunOutput({
     <div className="run-output-surface running" aria-label="Live run output">
       <RunMetrics runView={runView} />
       {hasTimeline ? (
-        <RunTimeline runView={runView} onOpenFileLink={onOpenFileLink} />
+        <RunTimeline runView={runView} onOpenTranscriptLink={onOpenTranscriptLink} />
       ) : hasPlanPreview ? null : runView.status === "connecting" ? (
         <PreparingRunStatus />
       ) : (
@@ -588,6 +617,7 @@ const AssistantRunOutput = memo(function AssistantRunOutput({
         onImplementPlan={onImplementPlan}
         onRevisePlan={onRevisePlan}
         onCancelPlan={onCancelPlan}
+        onOpenTranscriptLink={onOpenTranscriptLink}
         expanded={planExpanded}
         onDisclosureChange={onPlanDisclosureChange}
       />
@@ -1000,12 +1030,12 @@ const RunTraceDropdown = memo(function RunTraceDropdown({
   entry,
   runView,
   onLoadHistoricalActivity,
-  onOpenFileLink,
+  onOpenTranscriptLink,
 }: {
   entry: TaskChatEntry;
   runView: RunViewState;
   onLoadHistoricalActivity?: (entry: TaskChatEntry) => void;
-  onOpenFileLink?: (href: string) => boolean;
+  onOpenTranscriptLink?: (href: string) => boolean;
 }) {
   const [open, setOpen] = useState(false);
 
@@ -1049,7 +1079,7 @@ const RunTraceDropdown = memo(function RunTraceDropdown({
               </button>
             </div>
           ) : null}
-          <RunTimeline runView={runView} onOpenFileLink={onOpenFileLink} />
+          <RunTimeline runView={runView} onOpenTranscriptLink={onOpenTranscriptLink} />
           {entry.historicalActivity?.status === "loaded" &&
           entry.historicalActivity.nextCursor ? (
             <button
@@ -1083,17 +1113,21 @@ const RunMetrics = memo(function RunMetrics({
 });
 
 function usePreviewableMarkdownComponents(
-  onOpenFileLink?: (href: string) => boolean,
+  onOpenTranscriptLink?: (href: string) => boolean,
 ) {
   return useMemo<Components>(
     () => ({
       a: ({ href, children, node: _node, ...props }) => {
         const previewable = Boolean(
-          href && onOpenFileLink && isPreviewableSummaryLink(href),
+          href && onOpenTranscriptLink && isPreviewableSummaryLink(href),
+        );
+        const external = Boolean(
+          href && normalizeExternalTranscriptUrl(href),
         );
         const className = [
           props.className,
           previewable ? "markdown-preview-link" : null,
+          external ? "markdown-external-link" : null,
         ]
           .filter(Boolean)
           .join(" ");
@@ -1105,7 +1139,7 @@ function usePreviewableMarkdownComponents(
             href={href}
             title={previewable ? "Click to preview file" : props.title}
             onClick={(event: ReactMouseEvent<HTMLAnchorElement>) => {
-              if (href && onOpenFileLink?.(href)) {
+              if (href && onOpenTranscriptLink?.(href)) {
                 event.preventDefault();
                 event.stopPropagation();
               }
@@ -1116,20 +1150,20 @@ function usePreviewableMarkdownComponents(
         );
       },
     }),
-    [onOpenFileLink],
+    [onOpenTranscriptLink],
   );
 }
 
 const RunSummary = memo(function RunSummary({
   runView,
   preparedSummary,
-  onOpenFileLink,
+  onOpenTranscriptLink,
 }: {
   runView: RunViewState;
   preparedSummary?: PreparedHistoricalSummary;
-  onOpenFileLink?: (href: string) => boolean;
+  onOpenTranscriptLink?: (href: string) => boolean;
 }) {
-  const markdownComponents = usePreviewableMarkdownComponents(onOpenFileLink);
+  const markdownComponents = usePreviewableMarkdownComponents(onOpenTranscriptLink);
 
   if (runView.status === "failed" && runView.error) {
     return (
@@ -1177,7 +1211,7 @@ const RunSummary = memo(function RunSummary({
           const anchor =
             target instanceof Element ? target.closest("a[href]") : null;
           const href = anchor?.getAttribute("href");
-          if (href && onOpenFileLink?.(href)) {
+          if (href && onOpenTranscriptLink?.(href)) {
             event.preventDefault();
             event.stopPropagation();
           }
@@ -1188,7 +1222,10 @@ const RunSummary = memo(function RunSummary({
 
   return (
     <div className="run-summary markdown-summary" aria-label="Run summary">
-      <ReactMarkdown components={markdownComponents}>
+      <ReactMarkdown
+        components={markdownComponents}
+        remarkPlugins={PLAN_MARKDOWN_PLUGINS}
+      >
         {normalizePreviewableMarkdownLinks(runView.finalMessage)}
       </ReactMarkdown>
     </div>
@@ -1203,6 +1240,7 @@ function buildSubmittedPromptSegments(
   const segments: Array<
     | { kind: "text"; text: string }
     | { kind: "file"; file: ComposerContextFile; href: string }
+    | { kind: "web"; text: string; href: string }
   > = [];
   let cursor = 0;
 
@@ -1214,7 +1252,9 @@ function buildSubmittedPromptSegments(
     if (!match) {
       const nextMatchIndex = findNextInlineFileIndex(prompt, cursor + 1, candidates);
       const end = nextMatchIndex === -1 ? prompt.length : nextMatchIndex;
-      segments.push({ kind: "text", text: prompt.slice(cursor, end) });
+      segments.push(
+        ...buildSubmittedPromptTextSegments(prompt.slice(cursor, end)),
+      );
       cursor = end;
       continue;
     }
@@ -1223,6 +1263,29 @@ function buildSubmittedPromptSegments(
     cursor += match.token.length;
   }
 
+  return segments;
+}
+
+function buildSubmittedPromptTextSegments(text: string) {
+  const links = findSubmittedPromptWebLinks(text);
+  const segments: Array<
+    | { kind: "text"; text: string }
+    | { kind: "web"; text: string; href: string }
+  > = [];
+  let cursor = 0;
+
+  for (const link of links) {
+    if (link.start < cursor) continue;
+    if (link.start > cursor) {
+      segments.push({ kind: "text", text: text.slice(cursor, link.start) });
+    }
+    segments.push({ kind: "web", text: link.label, href: link.href });
+    cursor = link.end;
+  }
+
+  if (cursor < text.length) {
+    segments.push({ kind: "text", text: text.slice(cursor) });
+  }
   return segments;
 }
 
@@ -1357,10 +1420,10 @@ function isFileNameBoundaryCharacter(value: string) {
 
 const RunTimeline = memo(function RunTimeline({
   runView,
-  onOpenFileLink,
+  onOpenTranscriptLink,
 }: {
   runView: RunViewState;
-  onOpenFileLink?: (href: string) => boolean;
+  onOpenTranscriptLink?: (href: string) => boolean;
 }) {
   const items = buildTimelineItems(runView);
 
@@ -1383,7 +1446,7 @@ const RunTimeline = memo(function RunTimeline({
           <StreamEventRow
             event={item.event}
             key={item.event.id}
-            onOpenFileLink={onOpenFileLink}
+            onOpenTranscriptLink={onOpenTranscriptLink}
           />
         );
       })}
@@ -1535,16 +1598,19 @@ const CommandsGroup = memo(function CommandsGroup({
 
 const StreamEventRow = memo(function StreamEventRow({
   event,
-  onOpenFileLink,
+  onOpenTranscriptLink,
 }: {
   event: StreamEvent;
-  onOpenFileLink?: (href: string) => boolean;
+  onOpenTranscriptLink?: (href: string) => boolean;
 }) {
-  const markdownComponents = usePreviewableMarkdownComponents(onOpenFileLink);
+  const markdownComponents = usePreviewableMarkdownComponents(onOpenTranscriptLink);
   if (event.kind === "message") {
     return (
       <div className="stream-message" key={event.id}>
-        <ReactMarkdown components={markdownComponents}>
+        <ReactMarkdown
+          components={markdownComponents}
+          remarkPlugins={PLAN_MARKDOWN_PLUGINS}
+        >
           {normalizePreviewableMarkdownLinks(event.text)}
         </ReactMarkdown>
       </div>
@@ -1576,11 +1642,19 @@ function streamEventIcon(kind: StreamEvent["kind"]) {
 
 const NativePlanMarkdown = memo(function NativePlanMarkdown({
   text,
+  onOpenTranscriptLink,
 }: {
   text: string;
+  onOpenTranscriptLink?: (href: string) => boolean;
 }) {
+  const markdownComponents = usePreviewableMarkdownComponents(
+    onOpenTranscriptLink,
+  );
   return (
-    <ReactMarkdown remarkPlugins={PLAN_MARKDOWN_PLUGINS}>
+    <ReactMarkdown
+      components={markdownComponents}
+      remarkPlugins={PLAN_MARKDOWN_PLUGINS}
+    >
       {text}
     </ReactMarkdown>
   );
@@ -1591,6 +1665,7 @@ const NativePlanCard = memo(function NativePlanCard({
   onImplementPlan,
   onRevisePlan,
   onCancelPlan,
+  onOpenTranscriptLink,
   expanded,
   onDisclosureChange,
 }: {
@@ -1598,6 +1673,7 @@ const NativePlanCard = memo(function NativePlanCard({
   onImplementPlan?: TranscriptTurnActions["onImplementPlan"];
   onRevisePlan?: TranscriptTurnActions["onRevisePlan"];
   onCancelPlan?: TranscriptTurnActions["onCancelPlan"];
+  onOpenTranscriptLink?: TranscriptTurnActions["onOpenTranscriptLink"];
   expanded?: boolean;
   onDisclosureChange?: NativePlanDisclosureChangeHandler;
 }) {
@@ -1704,7 +1780,10 @@ const NativePlanCard = memo(function NativePlanCard({
         }`}
         id={contentId}
       >
-        <NativePlanMarkdown text={renderedText} />
+        <NativePlanMarkdown
+          text={renderedText}
+          onOpenTranscriptLink={onOpenTranscriptLink}
+        />
       </div>
       {preview.isLong ? (
         <button

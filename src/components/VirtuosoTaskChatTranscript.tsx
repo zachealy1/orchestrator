@@ -162,7 +162,7 @@ export type TranscriptActions = {
     revision: string,
   ) => boolean | void | Promise<boolean | void>;
   onCancelPlan?: (entry: TaskChatEntry) => void;
-  onOpenFileLink?: (href: string) => boolean;
+  onOpenTranscriptLink?: (href: string) => boolean;
   onOpenWebPreview?: (
     entry: TaskChatEntry,
     preview: RunWebPreview,
@@ -223,7 +223,7 @@ const VirtualTranscriptRow = memo(function VirtualTranscriptRow({
   onImplementPlan,
   onRevisePlan,
   onCancelPlan,
-  onOpenFileLink,
+  onOpenTranscriptLink,
   onOpenWebPreview,
   onReviewEditedFile,
   onUndoEditedFiles,
@@ -247,7 +247,7 @@ const VirtualTranscriptRow = memo(function VirtualTranscriptRow({
   onImplementPlan?: TranscriptActions["onImplementPlan"];
   onRevisePlan?: TranscriptActions["onRevisePlan"];
   onCancelPlan?: TranscriptActions["onCancelPlan"];
-  onOpenFileLink?: (href: string) => boolean;
+  onOpenTranscriptLink?: (href: string) => boolean;
   onOpenWebPreview?: TranscriptActions["onOpenWebPreview"];
   onReviewEditedFile?: TranscriptActions["onReviewEditedFile"];
   onUndoEditedFiles?: TranscriptActions["onUndoEditedFiles"];
@@ -277,7 +277,7 @@ const VirtualTranscriptRow = memo(function VirtualTranscriptRow({
         actions={{
           onCancelEdit,
           onEditingPromptChange,
-          onOpenFileLink,
+          onOpenTranscriptLink,
           onOpenWebPreview,
           onResolveRequest,
           onAnswerUserInput,
@@ -318,7 +318,7 @@ const VirtuosoTaskChatTranscriptImpl = forwardRef<
     onImplementPlan,
     onRevisePlan,
     onCancelPlan,
-    onOpenFileLink,
+    onOpenTranscriptLink,
     onOpenWebPreview,
     onReviewEditedFile,
     onUndoEditedFiles,
@@ -1679,7 +1679,7 @@ const VirtuosoTaskChatTranscriptImpl = forwardRef<
             entry={entry}
             onCancelEdit={handleCancelEdit}
             onEditingPromptChange={setEditingPrompt}
-            onOpenFileLink={onOpenFileLink}
+            onOpenTranscriptLink={onOpenTranscriptLink}
             onOpenWebPreview={onOpenWebPreview}
             onResolveRequest={onResolveRequest}
             onAnswerUserInput={onAnswerUserInput}
@@ -1720,7 +1720,7 @@ const VirtuosoTaskChatTranscriptImpl = forwardRef<
         onEditPrompt,
         onImplementPlan,
         onLoadHistoricalActivity,
-        onOpenFileLink,
+        onOpenTranscriptLink,
         onOpenWebPreview,
         onResolveRequest,
         onRevisePlan,

@@ -48,7 +48,7 @@ type TestTranscriptProps = {
   onResolveRequest: TranscriptTurnActions["onResolveRequest"];
   editablePromptEntryId?: string | null;
   onEditPrompt?: (entry: TaskChatEntry, prompt: string) => void;
-  onOpenFileLink?: (href: string) => boolean;
+  onOpenTranscriptLink?: (href: string) => boolean;
 };
 
 function TaskChatTranscript({
@@ -56,7 +56,7 @@ function TaskChatTranscript({
   onResolveRequest,
   editablePromptEntryId = null,
   onEditPrompt,
-  onOpenFileLink,
+  onOpenTranscriptLink,
 }: TestTranscriptProps) {
   const [editingEntryId, setEditingEntryId] = useState<string | null>(null);
   const [editingPrompt, setEditingPrompt] = useState("");
@@ -84,7 +84,7 @@ function TaskChatTranscript({
             setEditingPrompt(selectedEntry.prompt);
           }}
           onResolveRequest={onResolveRequest}
-          onOpenFileLink={onOpenFileLink}
+          onOpenTranscriptLink={onOpenTranscriptLink}
         />
       ))}
     </div>
@@ -111,6 +111,86 @@ function historyEntry(turnIndex: number): TaskChatEntry {
 }
 
 describe("TaskChatTurn", () => {
+it("renders submitted, steered, and assistant web URLs as clickable links", () => {
+    const onOpenTranscriptLink = vi.fn(() => true);
+    const entry: TaskChatEntry = {
+      ...historyEntry(1),
+      prompt: "Open https://example.com/input.",
+      steeredPrompts: [
+        {
+          id: "steer-1",
+          prompt: "Then visit https://example.com/follow-up.",
+          submittedAt: "2026-06-30T17:31:00Z",
+        },
+      ],
+      runView: {
+        ...historyEntry(1).runView,
+        finalMessage: "Results are at https://example.com/result.",
+      },
+    };
+
+    render(
+      <TaskChatTranscript
+        entries={[entry]}
+        onResolveRequest={vi.fn()}
+        onOpenTranscriptLink={onOpenTranscriptLink}
+      />,
+    );
+
+    const inputLink = screen.getByRole("link", {
+      name: "https://example.com/input",
+    });
+    const steeredLink = screen.getByRole("link", {
+      name: "https://example.com/follow-up",
+    });
+    const resultLink = screen.getByRole("link", {
+      name: "https://example.com/result",
+    });
+    expect(inputLink).toHaveClass("submitted-web-link");
+    expect(steeredLink).toHaveClass("submitted-web-link");
+    expect(resultLink).toHaveClass("markdown-external-link");
+
+    fireEvent.click(inputLink);
+    fireEvent.click(steeredLink);
+    fireEvent.click(resultLink);
+
+    expect(onOpenTranscriptLink).toHaveBeenNthCalledWith(
+      1,
+      "https://example.com/input",
+    );
+    expect(onOpenTranscriptLink).toHaveBeenNthCalledWith(
+      2,
+      "https://example.com/follow-up",
+    );
+    expect(onOpenTranscriptLink).toHaveBeenNthCalledWith(
+      3,
+      "https://example.com/result",
+    );
+  });
+
+it("keeps URLs inside submitted code spans as plain text", () => {
+    render(
+      <TaskChatTranscript
+        entries={[
+          {
+            ...historyEntry(1),
+            prompt: "Keep `https://example.com/not-a-link` as code.",
+          },
+        ]}
+        onResolveRequest={vi.fn()}
+      />,
+    );
+
+    expect(
+      screen.queryByRole("link", {
+        name: "https://example.com/not-a-link",
+      }),
+    ).not.toBeInTheDocument();
+    expect(screen.getByLabelText("Submitted prompt")).toHaveTextContent(
+      "https://example.com/not-a-link",
+    );
+  });
+
 it("renders prepared historical HTML instead of parsing the raw summary on mount", () => {
     const entry = {
       ...historyEntry(1),
@@ -145,7 +225,7 @@ it("renders prepared historical HTML instead of parsing the raw summary on mount
   });
 
 it("delegates prepared historical file links to the preview handler", () => {
-    const onOpenFileLink = vi.fn(() => true);
+    const onOpenTranscriptLink = vi.fn(() => true);
     const entry = {
       ...historyEntry(1),
       preparedSummary: {
@@ -166,16 +246,16 @@ it("delegates prepared historical file links to the preview handler", () => {
         onCancelEdit={vi.fn()}
         onStartEdit={vi.fn()}
         onResolveRequest={vi.fn()}
-        onOpenFileLink={onOpenFileLink}
+        onOpenTranscriptLink={onOpenTranscriptLink}
       />,
     );
 
     fireEvent.click(screen.getByRole("link", { name: "App.tsx" }));
-    expect(onOpenFileLink).toHaveBeenCalledWith("/repo/App.tsx");
+    expect(onOpenTranscriptLink).toHaveBeenCalledWith("/repo/App.tsx");
   });
 
 it("renders live app-server file links as Markdown", () => {
-    const onOpenFileLink = vi.fn(() => true);
+    const onOpenTranscriptLink = vi.fn(() => true);
     const entry: TaskChatEntry = {
       ...historyEntry(1),
       status: "running",
@@ -205,7 +285,7 @@ it("renders live app-server file links as Markdown", () => {
         onCancelEdit={vi.fn()}
         onStartEdit={vi.fn()}
         onResolveRequest={vi.fn()}
-        onOpenFileLink={onOpenFileLink}
+        onOpenTranscriptLink={onOpenTranscriptLink}
       />,
     );
 
@@ -213,7 +293,7 @@ it("renders live app-server file links as Markdown", () => {
     expect(link).toHaveClass("markdown-preview-link");
     expect(screen.queryByText(/\[batman\.txt\]/)).toBeNull();
     fireEvent.click(link);
-    expect(onOpenFileLink).toHaveBeenCalledWith(
+    expect(onOpenTranscriptLink).toHaveBeenCalledWith(
       "/Users/test/Library/Application%20Support/com.example/card/batman.txt",
     );
   });
@@ -559,7 +639,7 @@ it("cancels prompt editing without changing the submitted prompt", () => {
   });
 
 it("renders submitted inline file references as previewable links", () => {
-    const onOpenFileLink = vi.fn(() => true);
+    const onOpenTranscriptLink = vi.fn(() => true);
     render(
       <TaskChatTranscript
         entries={[
@@ -589,7 +669,7 @@ it("renders submitted inline file references as previewable links", () => {
           },
         ]}
         onResolveRequest={vi.fn()}
-        onOpenFileLink={onOpenFileLink}
+        onOpenTranscriptLink={onOpenTranscriptLink}
       />,
     );
 
@@ -603,7 +683,7 @@ it("renders submitted inline file references as previewable links", () => {
 
     fireEvent.click(fileLink);
 
-    expect(onOpenFileLink).toHaveBeenCalledWith("/repo/hello-world.txt:1");
+    expect(onOpenTranscriptLink).toHaveBeenCalledWith("/repo/hello-world.txt:1");
   });
 
 it("restores the inline file appearance from persisted Markdown alone", () => {
@@ -842,7 +922,7 @@ it("does not label cumulative thread usage as a completed turn total", () => {
   });
 
 it("routes markdown file links through the app file preview handler", () => {
-    const onOpenFileLink = vi.fn(() => true);
+    const onOpenTranscriptLink = vi.fn(() => true);
     render(
       <TaskChatTranscript
         entries={[
@@ -864,7 +944,7 @@ it("routes markdown file links through the app file preview handler", () => {
           },
         ]}
         onResolveRequest={vi.fn()}
-        onOpenFileLink={onOpenFileLink}
+        onOpenTranscriptLink={onOpenTranscriptLink}
       />,
     );
 
@@ -874,7 +954,7 @@ it("routes markdown file links through the app file preview handler", () => {
 
     fireEvent.click(previewLink);
 
-    expect(onOpenFileLink).toHaveBeenCalledWith("/repo/hello-world.txt");
+    expect(onOpenTranscriptLink).toHaveBeenCalledWith("/repo/hello-world.txt");
   });
 
 it("does not render an empty trace dropdown when only final-answer text was streamed", () => {
