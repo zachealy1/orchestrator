@@ -18105,7 +18105,7 @@ function App() {
           active={activeView === "task"}
           onActivate={activateFloatingStatusNotice}
         />
-        {activeView !== "task" ? (
+        {activeView === "analytics" ? (
           <>
             <header
               className="topbar"
