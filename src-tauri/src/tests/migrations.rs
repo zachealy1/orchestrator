@@ -28,7 +28,7 @@ fn resolved_plugin_migrator(
 }
 
 #[test]
-fn existing_versions_one_through_twenty_five_upgrade_through_thirty_nine() {
+fn existing_versions_one_through_twenty_five_upgrade_through_forty() {
     tauri::async_runtime::block_on(async {
         let mut connection = SqliteConnection::connect("sqlite::memory:")
             .await
@@ -58,13 +58,34 @@ fn existing_versions_one_through_twenty_five_upgrade_through_thirty_nine() {
         .fetch_one(&mut connection)
         .await
         .expect("count upgraded migrations");
-        assert_eq!(applied_count, 39);
+        assert_eq!(applied_count, 40);
 
         resolved_plugin_migrator(MIGRATION_DEFINITIONS)
             .run_direct(&mut connection)
             .await
             .expect("all extracted migrations must resolve against the upgraded database");
     });
+}
+
+#[test]
+fn native_task_workspace_bindings_use_migration_slot_forty() {
+    let migration = migrations()
+        .into_iter()
+        .find(|migration| migration.version == 40)
+        .expect("migration 40");
+
+    assert_eq!(
+        migration.description,
+        "bind_kanban_chats_to_native_projects"
+    );
+    for column in [
+        "native_workspace_binding_json",
+        "native_workspace_binding_status",
+        "native_workspace_binding_error",
+        "native_workspace_binding_updated_at",
+    ] {
+        assert!(migration.sql.contains(column), "missing {column}");
+    }
 }
 
 #[test]

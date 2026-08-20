@@ -22,6 +22,7 @@ import type {
   KanbanRunAttemptBinding,
   PendingKanbanStopRequest,
 } from "../kanban/attemptLifecycle";
+import type { NativeTaskWorkspaceBinding } from "../../lib/nativeTaskWorkspaceBinding";
 
 export type {
   KanbanAttemptPersistenceResult,
@@ -80,6 +81,7 @@ export type ActiveRunControl = {
   kanbanAttempt: KanbanRunAttemptBinding | null;
   kanbanStopStatus: "paused" | "stopped" | null;
   kanbanStopRequest: PendingKanbanStopRequest | null;
+  nativeTaskWorkspaceBinding: NativeTaskWorkspaceBinding | null;
 };
 
 export function isActiveRunControl(
@@ -123,6 +125,7 @@ export type RunSetupSnapshot = {
   workspace: Workspace;
   /** Source workspace for shared-profile thread ownership when execution is isolated. */
   sourceWorkspacePath?: string | null;
+  nativeTaskWorkspaceBinding?: NativeTaskWorkspaceBinding | null;
   accountId: number;
   account: CodexAccountProfile | null;
   profileKey: CodexProfileKey;

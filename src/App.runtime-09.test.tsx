@@ -99,7 +99,7 @@ describe("Application runtime scenarios 9", () => {
           },
         ],
       },
-    });
+    }, { accountId: 0, profileKey: "default" });
 
     await user.click(
       screen.getByRole("button", { name: "Open test Kanban conversation" }),
@@ -169,7 +169,7 @@ describe("Application runtime scenarios 9", () => {
         "The card turn could not be paused.",
       ),
     );
-    expect(mocks.codexRpcMock).toHaveBeenCalledWith(7, "turn/interrupt", {
+    expect(mocks.codexRpcMock).toHaveBeenCalledWith(0, "turn/interrupt", {
       threadId: "thread-kanban",
       turnId: "turn-kanban",
     });
@@ -264,7 +264,7 @@ describe("Application runtime scenarios 9", () => {
     });
 
     await waitFor(() =>
-      expect(mocks.codexRpcMock).toHaveBeenCalledWith(7, "turn/interrupt", {
+      expect(mocks.codexRpcMock).toHaveBeenCalledWith(0, "turn/interrupt", {
         threadId: "thread-kanban-race",
         turnId: "turn-kanban-race",
       }),
@@ -321,7 +321,7 @@ describe("Application runtime scenarios 9", () => {
           timeUsedSeconds: 1,
         },
       },
-    });
+    }, { accountId: 0, profileKey: "default" });
     await emitCodexNotification({
       method: "turn/completed",
       params: {
@@ -332,7 +332,7 @@ describe("Application runtime scenarios 9", () => {
           durationMs: 250,
         },
       },
-    });
+    }, { accountId: 0, profileKey: "default" });
 
     await waitFor(() => {
       const terminalCalls = mocks.updateKanbanAttemptMock.mock.calls.filter(
@@ -391,7 +391,7 @@ describe("Application runtime scenarios 9", () => {
         turnId: "turn-1",
         error: { message: "Root protocol stream failed" },
       },
-    });
+    }, { accountId: 0, profileKey: "default" });
 
     await waitFor(() =>
       expect(mocks.updateKanbanAttemptMock).toHaveBeenCalledWith(
@@ -426,14 +426,14 @@ describe("Application runtime scenarios 9", () => {
     await emitCodexNotification({
       method: "thread/goal/cleared",
       params: { threadId: "thread-1" },
-    });
+    }, { accountId: 0, profileKey: "default" });
     await emitCodexNotification({
       method: "turn/interrupted",
       params: {
         threadId: "thread-1",
         turn: { id: "turn-1" },
       },
-    });
+    }, { accountId: 0, profileKey: "default" });
 
     await waitFor(() =>
       expect(mocks.updateKanbanAttemptMock).toHaveBeenCalledWith(
@@ -476,8 +476,8 @@ describe("Application runtime scenarios 9", () => {
     await act(async () => {
       mocks.listeners.get("codex:process")?.({
         payload: {
-          accountId: 7,
-          profileKey: "account:7",
+          accountId: 0,
+          profileKey: "default",
           status: "exited",
           message: "Codex app-server stdout closed",
         },
@@ -547,7 +547,7 @@ describe("Application runtime scenarios 9", () => {
     );
     await waitFor(() =>
       expect(mocks.codexRpcMock).toHaveBeenCalledWith(
-        7,
+        0,
         "turn/interrupt",
         expect.any(Object),
       ),
@@ -555,8 +555,8 @@ describe("Application runtime scenarios 9", () => {
     await act(async () => {
       mocks.listeners.get("codex:process")?.({
         payload: {
-          accountId: 7,
-          profileKey: "account:7",
+          accountId: 0,
+          profileKey: "default",
           status: "exited",
           message: "Codex app-server exited during pause",
         },
@@ -612,6 +612,15 @@ describe("Application runtime scenarios 9", () => {
       .mockRejectedValueOnce(new Error("The card version changed"))
       .mockResolvedValueOnce([binding]);
     mocks.loadKanbanBoardMock.mockImplementation(async () => {
+      if (mocks.claimKanbanAttemptMock.mock.results.length === 0) {
+        return {
+          workspaceId: 1,
+          revision: 0,
+          preferencesJson: "{}",
+          columns: [],
+          cards: [],
+        };
+      }
       const claimed = await mocks.claimKanbanAttemptMock.mock.results[0].value;
       return {
         workspaceId: 1,
@@ -707,6 +716,15 @@ describe("Application runtime scenarios 9", () => {
       new Error("Kanban binding storage unavailable"),
     );
     mocks.loadKanbanBoardMock.mockImplementation(async () => {
+      if (mocks.claimKanbanAttemptMock.mock.results.length === 0) {
+        return {
+          workspaceId: 1,
+          revision: 0,
+          preferencesJson: "{}",
+          columns: [],
+          cards: [],
+        };
+      }
       const claimed = await mocks.claimKanbanAttemptMock.mock.results[0].value;
       return {
         workspaceId: 1,

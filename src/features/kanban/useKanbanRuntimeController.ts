@@ -21,9 +21,9 @@ import {
 } from "../../lib/runExecutionSettings";
 import { improvePrompt } from "../../lib/taskAnalysis";
 import {
-  accountIdFromProfileKey,
-  profileKeyForAccountId,
-} from "../codex/runtimeHelpers";
+  createKanbanNativeTaskWorkspaceBinding,
+  parseNativeTaskWorkspaceBinding,
+} from "../../lib/nativeTaskWorkspaceBinding";
 import {
   claimKanbanAttempt,
   loadKanbanInheritedContext,
@@ -156,30 +156,9 @@ export function createKanbanRuntimeController<
     const capturedSettings =
       options?.executionSettings ??
       parseRunExecutionSettings(card.executionSettingsJson);
-    const profileKey = (
-      capturedSettings?.profileKey ??
-      workspace.default_profile_key ??
-      profileKeyForAccountId(
-        card.accountId ?? workspace.default_account_id ?? state.selectedAccountId,
-      )
-    ) as CodexProfileKey;
-    const accountId = profileKey === "default"
-      ? 0
-      : capturedSettings?.accountId ??
-        card.accountId ??
-        accountIdFromProfileKey(profileKey) ??
-        workspace.default_account_id ??
-        state.selectedAccountId;
-    if (accountId === null || accountId === undefined) {
-      throw new Error(
-        "Choose a signed-in Codex account before starting this card.",
-      );
-    }
-    const account =
-      state.accounts.find((candidate) => candidate.id === accountId) ?? null;
-    if (profileKey !== "default" && (!account || account.status !== "signed_in")) {
-      throw new Error("The card's Codex account is unavailable or signed out.");
-    }
+    const profileKey: CodexProfileKey = "default";
+    const accountId = 0;
+    const account = null;
     const availableModels = await dependencies.listModels(profileKey, accountId);
     const requestedModel = capturedSettings?.model ?? card.model;
     const selectedModel = requestedModel
@@ -209,8 +188,14 @@ export function createKanbanRuntimeController<
       );
     }
 
-    const executionSettings = capturedSettings ??
-      createRunExecutionSettings({
+    const executionSettings = createRunExecutionSettings(
+      capturedSettings
+        ? {
+            ...capturedSettings,
+            accountId,
+            profileKey,
+          }
+        : {
         accountId,
         profileKey,
         selectedRepositoryPath: null,
@@ -228,7 +213,8 @@ export function createKanbanRuntimeController<
         contextFiles: [],
         selectedSkills: [],
         goalMode: true,
-      });
+      },
+    );
     const access = accessSettings({ accessMode: executionSettings.accessMode });
     const reservationKey = `${card.workspaceId}:${card.chatId}`;
     if (
@@ -287,11 +273,22 @@ export function createKanbanRuntimeController<
               selectedBranch: selectedBinding.cardBranch,
             })
           : executionSettings;
-
         const chat = await dependencies.loadChat(card.chatId);
         if (!chat) {
           throw new Error("The card conversation is no longer available.");
         }
+        const storedNativeBinding = parseNativeTaskWorkspaceBinding(
+          chat.native_workspace_binding_json,
+        );
+        const nativeTaskWorkspaceBinding =
+          createKanbanNativeTaskWorkspaceBinding({
+            cardId: card.id,
+            sourceWorkspacePath: workspace.path,
+            executionDirectory: executionRoot,
+            bindings: repositoryExecution.bindings,
+            pendingContinuationContext:
+              storedNativeBinding?.pendingContinuationContext ?? null,
+          });
         await dependencies.updateChat(chat.id, {
           accountId: profileKey === "default" ? null : accountId,
           profileKey,
@@ -310,6 +307,7 @@ export function createKanbanRuntimeController<
           promptFallback: effectivePrompt,
           workspace: { ...workspace, path: executionRoot },
           sourceWorkspacePath: workspace.path,
+          nativeTaskWorkspaceBinding,
           accountId,
           account,
           profileKey,
@@ -350,7 +348,9 @@ export function createKanbanRuntimeController<
             : currentThreadId
               ? { kind: "resume" }
               : { kind: "fresh" },
-          previousChatContext: inheritedContext,
+          previousChatContext:
+            nativeTaskWorkspaceBinding.pendingContinuationContext ??
+            inheritedContext,
           executionSettings: runExecutionSettings,
           restorePromptOnSetupFailure: false,
           queueItemId: options?.queueItemId ?? null,

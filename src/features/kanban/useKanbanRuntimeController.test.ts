@@ -160,8 +160,8 @@ type TestRunControl = KanbanRuntimeRunControl & { clientId: string };
 function runControl(): TestRunControl {
   return {
     clientId: "run-control-1",
-    accountId: account.id,
-    profileKey: "account:3",
+    accountId: 0,
+    profileKey: "default",
     runId: null,
     taskId: null,
     threadId: null,
@@ -242,7 +242,7 @@ describe("Kanban runtime controller", () => {
         version: 1,
         cardId: target.id,
         title: target.title,
-        accountId: account.id,
+        accountId: 0,
         accessMode: target.accessMode,
         model: model.model,
         reasoningLevel: model.defaultReasoningEffort,
@@ -251,8 +251,8 @@ describe("Kanban runtime controller", () => {
       executionSettingsJson: null,
     });
     expect(dependencies.updateChat).toHaveBeenCalledWith(target.chatId, {
-      accountId: account.id,
-      profileKey: "account:3",
+      accountId: null,
+      profileKey: "default",
       status: "starting",
     });
     expect(native.loadInheritedContext).toHaveBeenCalledWith(target.id);
@@ -261,8 +261,8 @@ describe("Kanban runtime controller", () => {
       promptText: target.description,
       workspace: { id: workspace.id, path: "/cards/card-1/root" },
       sourceWorkspacePath: workspace.path,
-      accountId: account.id,
-      profileKey: "account:3",
+      accountId: 0,
+      profileKey: "default",
       computerUseEnabled: true,
       model: model.model,
       effort: model.defaultReasoningEffort,
@@ -271,6 +271,15 @@ describe("Kanban runtime controller", () => {
       turnIndex: 2,
       threadStrategy: { kind: "fresh" },
       previousChatContext: "Inherited card context",
+      nativeTaskWorkspaceBinding: expect.objectContaining({
+        kind: "kanban",
+        sourceWorkspacePath: workspace.path,
+        executionDirectory: "/cards/card-1/root",
+        runtimeWorkspaceRoots: [
+          "/cards/card-1/root",
+          "/cards/card-1/root/repo",
+        ],
+      }),
       kanbanAttempt: {
         cardId: target.id,
         attemptId: "attempt-1",
@@ -341,6 +350,8 @@ describe("Kanban runtime controller", () => {
     expect(snapshot.executionSettings).toEqual(
       expect.objectContaining({
         ...executionSettings,
+        accountId: 0,
+        profileKey: "default",
         selectedRepositoryPath: "/cards/card-1/root/repo",
         selectedBranch: "codex/card-1",
       }),
@@ -491,7 +502,11 @@ describe("Kanban runtime controller", () => {
         card: target,
         kind: "implement_plan",
         executionSettingsJson:
-          serializeRunExecutionSettings(implementationSettings),
+          serializeRunExecutionSettings({
+            ...implementationSettings,
+            accountId: 0,
+            profileKey: "default",
+          }),
       }),
     );
     const [snapshot] = dependencies.beginRun.mock.calls[0]!;
@@ -499,8 +514,14 @@ describe("Kanban runtime controller", () => {
       promptText: approvedPrompt,
       promptFallback: approvedPrompt,
       chatId: target.chatId,
-      threadId: "thread-card",
-      threadStrategy: { kind: "resume" },
+      threadId: null,
+      threadStrategy: {
+        kind: "handoff",
+        handoff: expect.objectContaining({
+          fromThreadId: "thread-card",
+          targetProfileKey: "default",
+        }),
+      },
       mode: "run",
       intent: "plan-implementation",
       model: model.model,
@@ -616,8 +637,8 @@ describe("Kanban runtime controller", () => {
     ).rejects.toThrow("Repository setup failed");
     expect(dependencies.attempts.persist).toHaveBeenCalledWith(
       expect.objectContaining({
-        accountId: account.id,
-        profileKey: "account:3",
+        accountId: 0,
+        profileKey: "default",
         kanbanAttempt: expect.objectContaining({
           cardId: "card-1",
           executionRoot: "/cards/card-1/partial",

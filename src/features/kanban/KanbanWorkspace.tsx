@@ -130,6 +130,7 @@ type Props = {
   workspace: Workspace;
   repositories: WorkspaceGitRepositoryStatus[];
   accounts: CodexAccountProfile[];
+  sharedProfileAvailable?: boolean;
   models: CodexModel[];
   refreshToken: number;
   listChatTranscript: (chatId: number) => Promise<HistoryRunSummary[]>;
@@ -658,6 +659,7 @@ export function KanbanWorkspace({
   workspace,
   repositories,
   accounts,
+  sharedProfileAvailable = true,
   models,
   refreshToken,
   listChatTranscript,
@@ -1466,15 +1468,8 @@ export function KanbanWorkspace({
     const existingSettings = parseRunExecutionSettings(
       sourceCard?.executionSettingsJson,
     );
-    const accountId = draft.accountId
-      ? Number(draft.accountId)
-      : existingSettings?.accountId ?? workspace.default_account_id ?? 0;
-    const profileKey: CodexProfileKey =
-      existingSettings?.accountId === accountId
-        ? existingSettings.profileKey
-        : accountId === 0
-          ? ("default" as CodexProfileKey)
-          : (`account:${accountId}` as CodexProfileKey);
+    const accountId = 0;
+    const profileKey: CodexProfileKey = "default";
     const selectedRepository =
       selectedRepositories.find(
         (repository) =>
@@ -1506,7 +1501,7 @@ export function KanbanWorkspace({
     return {
       title: draft.title,
       description: draft.description,
-      accountId: draft.accountId ? Number(draft.accountId) : null,
+      accountId: null,
       accessMode: draft.accessMode,
       model: draft.model || null,
       reasoningLevel: draft.reasoningLevel || null,
@@ -2204,7 +2199,14 @@ export function KanbanWorkspace({
           label: repository.repository.label,
           path: repository.repository.rootPath,
         }))}
-        accountOptions={accounts.map((account) => ({ value: String(account.id), label: account.label, disabled: account.status !== "signed_in" }))}
+        accountOptions={[
+          {
+            value: "shared",
+            label: "Codex app account (shared)",
+            disabled: !sharedProfileAvailable,
+          },
+        ]}
+        sharedAccountOnly
         modelOptions={models.filter((model) => !model.hidden).map((model) => ({ value: model.model, label: model.displayName }))}
         modelReasoningOptions={Object.fromEntries(
           models

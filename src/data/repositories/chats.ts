@@ -4,6 +4,7 @@ import type {
   ChatRecord,
 } from "../../features/conversations/types";
 import type { KanbanGitBinding } from "../../features/kanban/api";
+import type { NativeTaskWorkspaceBinding } from "../../lib/nativeTaskWorkspaceBinding";
 import { FrontendDatabase } from "../database";
 
 export function createChatRepository(database: FrontendDatabase) {
@@ -75,6 +76,8 @@ export function createChatRepository(database: FrontendDatabase) {
         origin, profile_key, external_thread_id, source_kind, sync_status,
         external_cwd, external_created_at, external_updated_at, last_synced_at,
         native_thread_updated_at, native_last_synced_at, native_sync_status,
+        native_workspace_binding_json, native_workspace_binding_status,
+        native_workspace_binding_error, native_workspace_binding_updated_at,
         title_generation_state, title_fallback, title_manually_edited,
         title_generation_started_at, conversation_revision,
         continued_from_chat_id, continuation_kind, continuation_snapshot_json,
@@ -97,6 +100,8 @@ export function createChatRepository(database: FrontendDatabase) {
         origin, profile_key, external_thread_id, source_kind, sync_status,
         external_cwd, external_created_at, external_updated_at, last_synced_at,
         native_thread_updated_at, native_last_synced_at, native_sync_status,
+        native_workspace_binding_json, native_workspace_binding_status,
+        native_workspace_binding_error, native_workspace_binding_updated_at,
         collaboration_mode, saved_default_collaboration_mode_json,
         title_generation_state, title_fallback, title_manually_edited,
         title_generation_started_at, conversation_revision,
@@ -115,6 +120,8 @@ export function createChatRepository(database: FrontendDatabase) {
         origin, profile_key, external_thread_id, source_kind, sync_status,
         external_cwd, external_created_at, external_updated_at, last_synced_at,
         native_thread_updated_at, native_last_synced_at, native_sync_status,
+        native_workspace_binding_json, native_workspace_binding_status,
+        native_workspace_binding_error, native_workspace_binding_updated_at,
         collaboration_mode, saved_default_collaboration_mode_json,
         title_generation_state, title_fallback, title_manually_edited,
         title_generation_started_at, conversation_revision,
@@ -377,6 +384,69 @@ export function createChatRepository(database: FrontendDatabase) {
     );
   }
 
+  async function saveNativeWorkspaceBinding(input: {
+    chatId: number;
+    binding: NativeTaskWorkspaceBinding;
+    status: "pending" | "reconciling" | "ready" | "deferred" | "error";
+    error?: string | null;
+  }) {
+    const db = await getDatabase();
+    const result = await db.execute(
+      `UPDATE chats
+       SET native_workspace_binding_json = $1,
+           native_workspace_binding_status = $2,
+           native_workspace_binding_error = $3,
+           native_workspace_binding_updated_at = CURRENT_TIMESTAMP,
+           updated_at = CURRENT_TIMESTAMP
+       WHERE id = $4 AND deleted_at IS NULL`,
+      [
+        JSON.stringify(input.binding),
+        input.status,
+        input.error ?? null,
+        input.chatId,
+      ],
+    );
+    return result.rowsAffected === 1;
+  }
+
+  async function activateSharedNativeWorkspaceBinding(input: {
+    chatId: number;
+    expectedProfileKey: string | null;
+    expectedThreadId: string | null;
+    codexThreadId: string;
+    binding: NativeTaskWorkspaceBinding;
+    status: string;
+  }) {
+    const db = await getDatabase();
+    const result = await db.execute(
+      `UPDATE chats
+       SET account_id = NULL,
+           profile_key = 'default',
+           codex_thread_id = $1,
+           status = $2,
+           native_sync_status = 'synced',
+           native_last_synced_at = CURRENT_TIMESTAMP,
+           native_workspace_binding_json = $3,
+           native_workspace_binding_status = 'ready',
+           native_workspace_binding_error = NULL,
+           native_workspace_binding_updated_at = CURRENT_TIMESTAMP,
+           updated_at = CURRENT_TIMESTAMP
+       WHERE id = $4
+         AND profile_key IS $5
+         AND codex_thread_id IS $6
+         AND deleted_at IS NULL`,
+      [
+        input.codexThreadId,
+        input.status,
+        JSON.stringify(input.binding),
+        input.chatId,
+        input.expectedProfileKey,
+        input.expectedThreadId,
+      ],
+    );
+    return result.rowsAffected === 1;
+  }
+
   type ExternalCodexChatInput = {
     workspaceId: number;
     profileKey: "default";
@@ -494,6 +564,8 @@ export function createChatRepository(database: FrontendDatabase) {
     renameChat,
     reconcileSharedNativeThreads,
     markSharedNativeThreadUnavailable,
+    saveNativeWorkspaceBinding,
+    activateSharedNativeWorkspaceBinding,
     saveChatWorktreeBindings,
     listChatWorktreeBindings,
     upsertExternalCodexChats,

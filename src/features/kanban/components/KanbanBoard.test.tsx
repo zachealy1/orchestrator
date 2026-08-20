@@ -74,6 +74,19 @@ describe("KanbanBoard", () => {
     ).toEqual(["First card", "Second card"]);
 
     const firstCard = within(todo).getByRole("article", { name: /First card/ });
+    expect(within(firstCard).getByText("orchestrator")).toHaveClass(
+      "kanban-card-metadata-repository",
+    );
+    expect(within(firstCard).getByText("Default account")).toHaveClass(
+      "kanban-card-metadata-account",
+    );
+    expect(within(firstCard).getByText("GPT-5")).toHaveClass(
+      "kanban-card-metadata-model",
+    );
+    expect(within(firstCard).getByText("high")).toHaveClass(
+      "kanban-card-metadata-reasoning",
+    );
+    expect(within(firstCard).getByLabelText("Plan mode")).toBeInTheDocument();
     expect(
       within(firstCard).queryByRole("button", {
         name: "View details for First card",

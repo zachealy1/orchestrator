@@ -120,6 +120,32 @@ function preparePersistedBoardPlanReview() {
   mocks.getChatRecordMock.mockResolvedValue(chat);
   mocks.getNextChatTurnIndexMock.mockResolvedValue(2);
   mocks.getKanbanCardForChatMock.mockResolvedValue(card);
+  mocks.codexDefaultProfileRpcMock.mockImplementation(
+    async (method: string, params?: Record<string, unknown>) => {
+      if (method === "account/read") {
+        return {
+          account: {
+            type: "chatgpt",
+            email: "shared@example.com",
+            planType: "pro",
+          },
+          requiresOpenaiAuth: false,
+        };
+      }
+      if (method === "model/list") {
+        return { data: [defaultCodexModel], nextCursor: null };
+      }
+      if (method === "thread/read") {
+        return {
+          thread: {
+            id: params?.threadId,
+            cwd: workspace.path,
+          },
+        };
+      }
+      return {};
+    },
+  );
   mocks.codexRpcMock.mockImplementation(
     async (_accountId: number, method: string) => {
       if (method === "collaborationMode/list") {

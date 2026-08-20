@@ -792,6 +792,19 @@ describe("Application runtime scenarios 3", () => {
       profile_key: "default",
     });
     mocks.listWorkspaceChatsMock.mockResolvedValue([sharedChat]);
+    mocks.codexDefaultProfileRpcMock.mockImplementation(
+      async (method: string, params?: Record<string, unknown>) => {
+        if (method === "thread/read") {
+          return {
+            thread: {
+              id: params?.threadId,
+              cwd: workspace.path,
+            },
+          };
+        }
+        return {};
+      },
+    );
 
     const { user } = await renderApp();
     const banner = screen.getByRole("region", { name: "Selected folder" });
@@ -812,17 +825,25 @@ describe("Application runtime scenarios 3", () => {
     );
 
     await waitFor(() =>
-      expect(mocks.continueTaskInCodexDesktopMock).toHaveBeenCalledWith(
-        workspace.path,
-        expect.stringContaining(
-          'Continue the Orchestrator task "Shared desktop task" in Codex Desktop.',
-        ),
+      expect(mocks.codexDefaultProfileRpcMock).toHaveBeenCalledWith(
+        "thread/resume",
+        expect.objectContaining({
+          threadId: sharedChat.codex_thread_id,
+          cwd: workspace.path,
+          runtimeWorkspaceRoots: [workspace.path],
+        }),
       ),
     );
-    expect(mocks.continueTaskInCodexDesktopMock).toHaveBeenCalledWith(
-      workspace.path,
-      expect.stringContaining("Original objective:"),
+    expect(mocks.saveNativeWorkspaceBindingMock).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        chatId: sharedChat.id,
+        status: "ready",
+        binding: expect.objectContaining({
+          sourceWorkspacePath: workspace.path,
+        }),
+      }),
     );
+    expect(mocks.continueTaskInCodexDesktopMock).not.toHaveBeenCalled();
   });
 
   it("renames the chat targeted by the history context menu", async () => {

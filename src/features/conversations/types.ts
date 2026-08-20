@@ -206,6 +206,16 @@ export type ChatRecord = {
   native_thread_updated_at?: string | null;
   native_last_synced_at?: string | null;
   native_sync_status?: "synced" | "unavailable" | "error" | null;
+  native_workspace_binding_json?: string | null;
+  native_workspace_binding_status?:
+    | "pending"
+    | "reconciling"
+    | "ready"
+    | "deferred"
+    | "error"
+    | null;
+  native_workspace_binding_error?: string | null;
+  native_workspace_binding_updated_at?: string | null;
   collaboration_mode?: "plan" | "default" | null;
   saved_default_collaboration_mode_json?: string | null;
   title_generation_state?: "pending" | "generating" | "complete" | "failed";

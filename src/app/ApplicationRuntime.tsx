@@ -97,7 +97,6 @@ import {
   updateBrowserSessionTarget,
   undoWorkspaceGitDiff,
   openAgentNotificationSettings,
-  continueTaskInCodexDesktop,
   openDefaultBrowserAccessibilitySettings,
 } from "../codexClient";
 import {
@@ -126,6 +125,7 @@ import {
   cleanupKanbanGit,
   createKanbanCard,
   getKanbanCardForChat,
+  loadKanbanBoard,
   loadKanbanGitBindings,
   provisionKanbanGit,
   pushKanbanGit,
@@ -201,6 +201,14 @@ import {
   resolveStoredRunExecutionSettings,
   serializeRunExecutionSettings,
 } from "../lib/runExecutionSettings";
+import {
+  clearNativeTaskPendingContext,
+  createContinuationNativeTaskWorkspaceBinding,
+  createKanbanNativeTaskWorkspaceBinding,
+  nativeTaskTurnEnvironment,
+  parseNativeTaskWorkspaceBinding,
+  type NativeTaskWorkspaceBinding,
+} from "../lib/nativeTaskWorkspaceBinding";
 import {
   comparePromptQueueDisplayOrder,
   comparePromptQueueDispatchOrder,
@@ -582,6 +590,25 @@ type ChatGitTarget =
       binding: KanbanGitBinding;
     };
 
+async function forEachWithConcurrency<T>(
+  items: T[],
+  concurrency: number,
+  action: (item: T) => Promise<void>,
+) {
+  let index = 0;
+  const workers = Array.from(
+    { length: Math.min(Math.max(1, concurrency), items.length) },
+    async () => {
+      while (index < items.length) {
+        const item = items[index];
+        index += 1;
+        await action(item);
+      }
+    },
+  );
+  await Promise.all(workers);
+}
+
 function App() {
   const appServices = useAppServices();
   const {
@@ -591,6 +618,10 @@ function App() {
     activeRuns: activeRunRegistry,
     workspaceFilePreviews,
   } = appServices;
+  const nativeTaskReconciliationInFlightRef = useRef(
+    new Map<number, Promise<void>>(),
+  );
+  const nativeTaskStartupReconciliationKeyRef = useRef<string | null>(null);
   const {
     completeDuplicateProfileCleanup,
     createCodexAccount,
@@ -604,6 +635,7 @@ function App() {
   const { getAnalyticsActivity, getAnalyticsSummary } = repositories.analytics;
   const {
     activateChatAccountHandoff,
+    activateSharedNativeWorkspaceBinding,
     chatHasPendingPlanReview,
     claimChatTitleGeneration,
     completeChatTitleGeneration,
@@ -619,6 +651,7 @@ function App() {
     recoverInterruptedChatTitleGenerations,
     renameChat,
     saveChatWorktreeBindings,
+    saveNativeWorkspaceBinding,
     updateChat,
     upsertExternalCodexChats,
   } = repositories.chats;
@@ -2831,6 +2864,30 @@ function App() {
   ]);
 
   useEffect(() => {
+    if (!defaultProfileAuthenticated) {
+      nativeTaskStartupReconciliationKeyRef.current = null;
+      return;
+    }
+    if (workspaces.length === 0) return;
+    const reconciliationKey = `${workspaceLocationsKey}:authenticated`;
+    if (
+      nativeTaskStartupReconciliationKeyRef.current === reconciliationKey
+    ) {
+      return;
+    }
+    nativeTaskStartupReconciliationKeyRef.current = reconciliationKey;
+
+    void forEachWithConcurrency(workspaces, 2, async (workspace) => {
+      await reconcileKanbanNativeTasks(workspace).catch((error) => {
+        console.warn(
+          `Could not associate Kanban tasks in ${workspace.label} with Codex`,
+          error,
+        );
+      });
+    });
+  }, [defaultProfileAuthenticated, workspaceLocationsKey, workspaces]);
+
+  useEffect(() => {
     if (!selectedWorkspace) {
       return;
     }
@@ -2839,7 +2896,26 @@ function App() {
       void refreshWorkspaceData(selectedWorkspace.id);
     }
     void refreshWorkspaceGitStatus(selectedWorkspace);
-  }, [activeView, selectedWorkspace?.id, selectedWorkspace?.path]);
+    if (defaultProfileAuthenticated) {
+      void reconcileKanbanNativeTasks(selectedWorkspace).then(() => {
+        if (selectedWorkspaceRef.current?.id === selectedWorkspace.id) {
+          void loadWorkspaceRunHistory(selectedWorkspace, {
+            syncExternal: true,
+            showLoading: false,
+          });
+        }
+      }).catch((error) => {
+        setStatusMessage(
+          `Could not associate Kanban tasks with Codex: ${errorMessage(error)}`,
+        );
+      });
+    }
+  }, [
+    activeView,
+    defaultProfileAuthenticated,
+    selectedWorkspace?.id,
+    selectedWorkspace?.path,
+  ]);
 
   useEffect(() => {
     if (!historyDrawerOpen || !selectedWorkspace) {
@@ -2867,10 +2943,14 @@ function App() {
     if (!selectedWorkspace) return;
     const synchronizeVisibleWorkspace = () => {
       if (document.visibilityState !== "visible") return;
-      void loadWorkspaceRunHistory(selectedWorkspace, {
-        syncExternal: true,
-        showLoading: false,
-      });
+      void reconcileKanbanNativeTasks(selectedWorkspace)
+        .catch(() => undefined)
+        .then(() =>
+          loadWorkspaceRunHistory(selectedWorkspace, {
+            syncExternal: true,
+            showLoading: false,
+          }),
+        );
     };
     window.addEventListener("focus", synchronizeVisibleWorkspace);
     document.addEventListener("visibilitychange", synchronizeVisibleWorkspace);
@@ -2881,7 +2961,11 @@ function App() {
         synchronizeVisibleWorkspace,
       );
     };
-  }, [selectedWorkspace?.id, selectedWorkspace?.path]);
+  }, [
+    defaultProfileAuthenticated,
+    selectedWorkspace?.id,
+    selectedWorkspace?.path,
+  ]);
 
   useEffect(() => {
     workspaces.forEach((workspace) => {
@@ -3474,6 +3558,13 @@ function App() {
       setCodexAccount(defaultProfileAuth.account);
       setRequiresOpenaiAuth(defaultProfileAuth.requiresOpenaiAuth);
     }
+    if (defaultProfileAuthenticated) {
+      void forEachWithConcurrency(workspaceRows, 2, async (candidate) => {
+        await reconcileKanbanNativeTasks(candidate);
+      }).catch((error) => {
+        console.warn("Could not reconcile Kanban tasks during startup", error);
+      });
+    }
 
     let activeLoginRecoveryFailedAccountId: number | null = null;
     if (nativeActiveLogin) {
@@ -3682,6 +3773,192 @@ function App() {
         chatTitle: title,
       }),
     );
+  }
+
+  async function reconcileKanbanNativeTasks(workspace: Workspace) {
+    const existing = nativeTaskReconciliationInFlightRef.current.get(
+      workspace.id,
+    );
+    if (existing) return existing;
+
+    const reconciliation = (async () => {
+      await ensureCodexProfileConnected(DEFAULT_CODEX_PROFILE_KEY, 0);
+      const auth = await codexDefaultProfileRpc<CodexAccountResponse>(
+        "account/read",
+        { refreshToken: false },
+      );
+      if (!auth.account || auth.requiresOpenaiAuth) {
+        throw new Error(
+          "Sign in to the Codex app account to associate Kanban tasks with this project.",
+        );
+      }
+
+      const [board, chats] = await Promise.all([
+        loadKanbanBoard(workspace.id, { includeArchived: true }),
+        listWorkspaceChats(workspace.id),
+      ]);
+      const chatsById = new Map(chats.map((chat) => [chat.id, chat]));
+      const startedCards = board.cards.filter(
+        (card) => card.hasStartedTurn && !card.deletedAt,
+      );
+
+      await forEachWithConcurrency(startedCards, 3, async (card) => {
+        const chat = chatsById.get(card.chatId) ??
+          (await getChatRecord(card.chatId));
+        if (!chat) return;
+
+        const liveControl = findRunControlByChat(workspace.id, chat.id);
+        const bindings = await loadKanbanGitBindings(card.id);
+        if (bindings.length === 0) {
+          const fallback = createContinuationNativeTaskWorkspaceBinding({
+            chatId: chat.id,
+            sourceWorkspacePath: workspace.path,
+          });
+          await saveNativeWorkspaceBinding({
+            chatId: chat.id,
+            binding: fallback,
+            status: "error",
+            error: "The card worktree is unavailable.",
+          });
+          return;
+        }
+        const existingBinding = parseNativeTaskWorkspaceBinding(
+          chat.native_workspace_binding_json,
+        );
+        const executionDirectory =
+          bindings[0]?.executionRoot ?? bindings[0]?.worktreePath;
+        const binding = createKanbanNativeTaskWorkspaceBinding({
+          cardId: card.id,
+          sourceWorkspacePath: workspace.path,
+          executionDirectory,
+          bindings,
+          pendingContinuationContext:
+            existingBinding?.pendingContinuationContext ?? null,
+        });
+
+        if (liveControl) {
+          await saveNativeWorkspaceBinding({
+            chatId: chat.id,
+            binding,
+            status: "deferred",
+          });
+          return;
+        }
+
+        await saveNativeWorkspaceBinding({
+          chatId: chat.id,
+          binding,
+          status: "reconciling",
+        });
+
+        try {
+          if (
+            chat.profile_key === DEFAULT_CODEX_PROFILE_KEY &&
+            chat.codex_thread_id
+          ) {
+            await reconcileNativeTaskThreadBinding(
+              {
+                chatId: chat.id,
+                profileKey: DEFAULT_CODEX_PROFILE_KEY,
+                accountId: 0,
+                threadId: chat.codex_thread_id,
+                accessMode: card.accessMode,
+              },
+              binding,
+            );
+            await syncSharedChatTitle(
+              chat.id,
+              chat.title,
+              chat.codex_thread_id,
+            ).catch(() => undefined);
+            return;
+          }
+
+          const historyChat = chatsById.get(chat.id);
+          if (!historyChat) {
+            throw new Error(
+              "The completed card history is unavailable for a shared continuation.",
+            );
+          }
+          const prepared = await prepareChatContinuation(historyChat, {
+            includeRepositories: false,
+          });
+          const sharedBinding: NativeTaskWorkspaceBinding = {
+            ...binding,
+            pendingContinuationContext: prepared.snapshot.context,
+          };
+          const started = await codexDefaultProfileRpc<{
+            thread: { id: string };
+          }>("thread/start", {
+            cwd: workspace.path,
+            serviceName: "orchestrator",
+            threadSource: "orchestrator",
+            ephemeral: false,
+            historyMode: "paginated",
+            environments: [nativeTaskTurnEnvironment(sharedBinding)],
+            runtimeWorkspaceRoots: sharedBinding.runtimeWorkspaceRoots,
+          });
+          const threadId = started.thread.id;
+          try {
+            await codexDefaultProfileRpc("thread/name/set", {
+              threadId,
+              name: chat.title,
+            });
+            await reconcileNativeTaskThreadBinding(
+              {
+                chatId: chat.id,
+                profileKey: DEFAULT_CODEX_PROFILE_KEY,
+                accountId: 0,
+                threadId,
+                accessMode: card.accessMode,
+              },
+              sharedBinding,
+            );
+            const activated = await activateSharedNativeWorkspaceBinding({
+              chatId: chat.id,
+              expectedProfileKey: chat.profile_key,
+              expectedThreadId: chat.codex_thread_id,
+              codexThreadId: threadId,
+              binding: sharedBinding,
+              status: chat.status,
+            });
+            if (!activated) {
+              throw new Error(
+                "The card conversation changed during native task registration.",
+              );
+            }
+            const session = workspaceChatSessionsRef.current[workspace.id];
+            if (session?.chatId === chat.id) {
+              updateRememberedWorkspaceChatSession(workspace.id, chat.id, {
+                ...session,
+                profileKey: DEFAULT_CODEX_PROFILE_KEY,
+                threadId,
+              });
+            }
+          } catch (error) {
+            await codexDefaultProfileRpc("thread/archive", { threadId }).catch(
+              () => undefined,
+            );
+            throw error;
+          }
+        } catch (error) {
+          await saveNativeWorkspaceBinding({
+            chatId: chat.id,
+            binding,
+            status: "error",
+            error: error instanceof Error ? error.message : String(error),
+          }).catch(() => undefined);
+        }
+      });
+    })().finally(() => {
+      nativeTaskReconciliationInFlightRef.current.delete(workspace.id);
+    });
+
+    nativeTaskReconciliationInFlightRef.current.set(
+      workspace.id,
+      reconciliation,
+    );
+    return reconciliation;
   }
 
   function startChatTitleGeneration(request: ChatTitleGenerationRequest) {
@@ -7015,18 +7292,92 @@ function App() {
       const prepared = await prepareChatContinuation(chat, {
         includeRepositories: false,
       });
-      const context = prepared.snapshot.context.trim();
-      const prompt = [
-        `Continue the Orchestrator task "${chat.title}" in Codex Desktop.`,
-        "The following is sanitized background context from completed turns. Review it, then continue the task without repeating completed work.",
-        context.length > 56_000
-          ? `${context.slice(0, 56_000).trimEnd()}\n[Continuation context truncated]`
-          : context,
-      ].join("\n\n");
-      await continueTaskInCodexDesktop(prepared.workspace.path, prompt);
-      setStatusMessage(
-        "The continuation is ready in Codex. Submit the prefilled prompt there to create the task.",
-      );
+      const card = await getKanbanCardForChat(chat.id);
+      if (card?.hasStartedTurn) {
+        await reconcileKanbanNativeTasks(prepared.workspace);
+        const reconciled = await getChatRecord(chat.id);
+        if (
+          reconciled?.profile_key !== DEFAULT_CODEX_PROFILE_KEY ||
+          !reconciled.codex_thread_id ||
+          reconciled.native_workspace_binding_status !== "ready"
+        ) {
+          throw new Error(
+            reconciled?.native_workspace_binding_error ??
+              "The Kanban task could not be registered with Codex.",
+          );
+        }
+        setStatusMessage("This Kanban task is now available in Codex.");
+        return;
+      }
+
+      const worktreeBindings = await listChatWorktreeBindings(chat.id);
+      const binding = createContinuationNativeTaskWorkspaceBinding({
+        chatId: chat.id,
+        sourceWorkspacePath: prepared.workspace.path,
+        executionDirectory:
+          worktreeBindings[0]?.executionRoot ?? prepared.workspace.path,
+        runtimeWorkspaceRoots: worktreeBindings.flatMap((item) => [
+          item.executionRoot,
+          item.worktreePath,
+        ]),
+        pendingContinuationContext: prepared.snapshot.context,
+      });
+      if (
+        chat.profile_key === DEFAULT_CODEX_PROFILE_KEY &&
+        chat.codex_thread_id
+      ) {
+        await reconcileNativeTaskThreadBinding(
+          {
+            chatId: chat.id,
+            profileKey: DEFAULT_CODEX_PROFILE_KEY,
+            accountId: 0,
+            threadId: chat.codex_thread_id,
+            accessMode: "ask-for-approval",
+          },
+          binding,
+        );
+        setStatusMessage("This task is now associated with its Codex project.");
+        return;
+      }
+
+      await ensureCodexProfileConnected(DEFAULT_CODEX_PROFILE_KEY, 0);
+      const started = await codexDefaultProfileRpc<{
+        thread: { id: string };
+      }>("thread/start", {
+        cwd: prepared.workspace.path,
+        serviceName: "orchestrator",
+        threadSource: "orchestrator",
+        ephemeral: false,
+        historyMode: "paginated",
+        environments: [nativeTaskTurnEnvironment(binding)],
+        runtimeWorkspaceRoots: binding.runtimeWorkspaceRoots,
+      });
+      const threadId = started.thread.id;
+      try {
+        await codexDefaultProfileRpc("thread/name/set", {
+          threadId,
+          name: chat.title,
+        });
+        const activated = await activateSharedNativeWorkspaceBinding({
+          chatId: chat.id,
+          expectedProfileKey: chat.profile_key,
+          expectedThreadId: chat.codex_thread_id,
+          codexThreadId: threadId,
+          binding,
+          status: chat.status,
+        });
+        if (!activated) {
+          throw new Error(
+            "The conversation changed while it was being registered with Codex.",
+          );
+        }
+      } catch (error) {
+        await codexDefaultProfileRpc("thread/archive", { threadId }).catch(
+          () => undefined,
+        );
+        throw error;
+      }
+      setStatusMessage("The shared continuation is now available in Codex.");
     } catch (error) {
       setStatusMessage(
         `Could not continue the task in Codex: ${
@@ -10547,6 +10898,8 @@ function App() {
       kanbanAttempt: snapshot.kanbanAttempt ?? null,
       kanbanStopStatus: null,
       kanbanStopRequest: null,
+      nativeTaskWorkspaceBinding:
+        snapshot.nativeTaskWorkspaceBinding ?? null,
     };
     const nextEntry: TaskChatEntry = {
       clientId,
@@ -11092,6 +11445,54 @@ function App() {
     return { text, additionalContext };
   }
 
+  async function reconcileNativeTaskThreadBinding(
+    input: {
+      chatId: number;
+      profileKey: CodexProfileKey;
+      accountId: number;
+      threadId: string;
+      accessMode: CodexAccessMode;
+    },
+    binding: NativeTaskWorkspaceBinding,
+  ) {
+    if (input.profileKey !== DEFAULT_CODEX_PROFILE_KEY) return false;
+    const access = accessSettings({ accessMode: input.accessMode });
+    await codexRpcForProfile(
+      input.profileKey,
+      input.accountId,
+      "thread/resume",
+      {
+        threadId: input.threadId,
+        cwd: binding.sourceWorkspacePath,
+        approvalPolicy: access.approvalPolicy,
+        approvalsReviewer: "user",
+        permissions: access.permissionProfile,
+        runtimeWorkspaceRoots: binding.runtimeWorkspaceRoots,
+      },
+    );
+    const response = await codexRpcForProfile<{ thread?: unknown }>(
+      input.profileKey,
+      input.accountId,
+      "thread/read",
+      { threadId: input.threadId, includeTurns: false },
+    );
+    const actualCwd = normalizeWorkspacePath(
+      readString(readObject(response.thread).cwd) ?? "",
+    );
+    const expectedCwd = normalizeWorkspacePath(binding.sourceWorkspacePath);
+    if (actualCwd !== expectedCwd) {
+      throw new Error(
+        "Codex did not retain the source workspace for this task.",
+      );
+    }
+    await saveNativeWorkspaceBinding({
+      chatId: input.chatId,
+      binding,
+      status: "ready",
+    });
+    return true;
+  }
+
   async function startRunThreadStage(
     runControl: ActiveRunControl,
     snapshot: RunSetupSnapshot,
@@ -11134,6 +11535,19 @@ function App() {
         : {}),
       ...(browserSession?.config ?? {}),
     };
+    const nativeTaskBinding = snapshot.nativeTaskWorkspaceBinding ?? null;
+    const nativeEnvironments = nativeTaskBinding
+      ? [nativeTaskTurnEnvironment(nativeTaskBinding)]
+      : undefined;
+    const nativeRuntimeWorkspaceRoots =
+      nativeTaskBinding?.runtimeWorkspaceRoots;
+    if (nativeTaskBinding) {
+      await saveNativeWorkspaceBinding({
+        chatId,
+        binding: nativeTaskBinding,
+        status: "pending",
+      });
+    }
 
     appServices.runCoordinator.transition(runControl.clientId, "starting-thread");
     let threadId = initialThreadId;
@@ -11165,6 +11579,10 @@ function App() {
         ephemeral: false,
         historyMode: "paginated",
         config: threadConfig,
+        ...(nativeEnvironments ? { environments: nativeEnvironments } : {}),
+        ...(nativeRuntimeWorkspaceRoots
+          ? { runtimeWorkspaceRoots: nativeRuntimeWorkspaceRoots }
+          : {}),
       });
       ensureRunControlActive(runControl);
       assertRuntimeAccessMatches(thread, snapshot.access);
@@ -11248,6 +11666,9 @@ function App() {
           approvalsReviewer: "user",
           permissions: snapshot.access.permissionProfile,
           config: threadConfig,
+          ...(nativeRuntimeWorkspaceRoots
+            ? { runtimeWorkspaceRoots: nativeRuntimeWorkspaceRoots }
+            : {}),
         });
         resumedThread = true;
         assertRuntimeAccessMatches(resumed, snapshot.access);
@@ -11340,6 +11761,49 @@ function App() {
           turnId: null,
         }),
       );
+    }
+    if (nativeTaskBinding) {
+      const readThreadCwd = async () => {
+        const response = await codexRpcForProfile<{ thread?: unknown }>(
+          snapshot.profileKey,
+          snapshot.accountId,
+          "thread/read",
+          { threadId, includeTurns: false },
+        );
+        return readString(readObject(response.thread).cwd);
+      };
+      const expectedCwd = normalizeWorkspacePath(
+        nativeTaskBinding.sourceWorkspacePath,
+      );
+      let persistedCwd = normalizeWorkspacePath((await readThreadCwd()) ?? "");
+      if (persistedCwd !== expectedCwd) {
+        await codexRpcForProfile(
+          snapshot.profileKey,
+          snapshot.accountId,
+          "thread/resume",
+          {
+            threadId,
+            cwd: nativeTaskBinding.sourceWorkspacePath,
+            approvalPolicy: snapshot.access.approvalPolicy,
+            approvalsReviewer: "user",
+            permissions: snapshot.access.permissionProfile,
+            config: threadConfig,
+            runtimeWorkspaceRoots: nativeRuntimeWorkspaceRoots,
+          },
+        );
+        persistedCwd = normalizeWorkspacePath((await readThreadCwd()) ?? "");
+      }
+      if (persistedCwd !== expectedCwd) {
+        await saveNativeWorkspaceBinding({
+          chatId,
+          binding: nativeTaskBinding,
+          status: "error",
+          error: "Codex did not retain the source workspace for this task.",
+        });
+        throw new Error(
+          "Codex could not associate this Kanban task with its source project.",
+        );
+      }
     }
     await updateRun(runId, {
       codexThreadId: threadId,
@@ -11439,7 +11903,17 @@ function App() {
             threadId: nextThreadId,
             input: buildCodexTurnInput(text, snapshot.contextFiles),
             additionalContext,
-            cwd: snapshot.workspace.path,
+            ...(snapshot.nativeTaskWorkspaceBinding
+              ? {
+                  environments: [
+                    nativeTaskTurnEnvironment(
+                      snapshot.nativeTaskWorkspaceBinding,
+                    ),
+                  ],
+                  runtimeWorkspaceRoots:
+                    snapshot.nativeTaskWorkspaceBinding.runtimeWorkspaceRoots,
+                }
+              : { cwd: snapshot.workspace.path }),
             approvalPolicy: snapshot.access.approvalPolicy,
             approvalsReviewer: "user",
             permissions: snapshot.access.permissionProfile,
@@ -11496,6 +11970,17 @@ function App() {
       runControl.threadId = threadId;
       runControl.turnId = turn.turn.id;
       runControl.turnStartPending = false;
+      if (snapshot.nativeTaskWorkspaceBinding) {
+        const acceptedBinding = clearNativeTaskPendingContext(
+          snapshot.nativeTaskWorkspaceBinding,
+        );
+        runControl.nativeTaskWorkspaceBinding = acceptedBinding;
+        await saveNativeWorkspaceBinding({
+          chatId,
+          binding: acceptedBinding,
+          status: "ready",
+        });
+      }
       const pendingKanbanStop = runControl.kanbanStopRequest;
       if (pendingKanbanStop) {
         const acknowledgement = await acknowledgeKanbanStopWithTurn(
@@ -12719,28 +13204,12 @@ function App() {
       return;
     }
 
-    const session = workspaceChatSessionsRef.current[workspace.id] ?? null;
-    const pendingHandoff = session
-      ? pendingAccountHandoffsRef.current[session.chatId] ?? null
-      : null;
-    const profileKey: CodexProfileKey =
-      pendingHandoff?.targetProfileKey ??
-      session?.profileKey ??
-      profileKeyForAccountId(selectedAccountIdRef.current);
-    const accountId =
-      profileKey === DEFAULT_CODEX_PROFILE_KEY
-        ? 0
-        : accountIdFromProfileKey(profileKey);
-    const account =
-      accountId && accountId !== 0
-        ? codexAccountsRef.current.find((candidate) => candidate.id === accountId) ??
-          null
-        : null;
-    if (
-      profileKey !== DEFAULT_CODEX_PROFILE_KEY &&
-      (!accountId || !account || account.status !== "signed_in")
-    ) {
-      setStatusMessage("Sign in to a Codex account before creating a card.");
+    const profileKey: CodexProfileKey = DEFAULT_CODEX_PROFILE_KEY;
+    const accountId = 0;
+    if (!defaultProfileAuthenticated) {
+      setStatusMessage(
+        "Sign in to the Codex app account before creating a Kanban card.",
+      );
       return;
     }
 
@@ -12750,7 +13219,7 @@ function App() {
       null;
     const mode = planMode ? "plan" : "run";
     const executionSettings = createRunExecutionSettings({
-      accountId: accountId ?? 0,
+      accountId,
       profileKey,
       selectedRepositoryPath: repository.repository.rootPath,
       selectedBranch,
@@ -12785,8 +13254,7 @@ function App() {
       const card = await createKanbanCard(workspace.id, {
         title: GENERATING_CHAT_TITLE,
         description: promptText,
-        accountId:
-          profileKey === DEFAULT_CODEX_PROFILE_KEY ? null : accountId ?? null,
+        accountId: null,
         accessMode,
         model: executionSettings.model,
         reasoningLevel: executionSettings.reasoningEffort,
@@ -12821,7 +13289,7 @@ function App() {
       startChatTitleGeneration({
         chatId: card.chatId,
         workspacePath: workspace.path,
-        accountId: accountId ?? 0,
+        accountId,
         model: executionSettings.model,
         initialPrompt,
         fallbackTitle,
@@ -14918,6 +15386,30 @@ function App() {
         terminalError,
         { retryCount: 1, completedPlan },
       );
+      if (
+        persistence.persisted &&
+        control.chatId !== null &&
+        control.threadId &&
+        control.nativeTaskWorkspaceBinding
+      ) {
+        await reconcileNativeTaskThreadBinding(
+          {
+            chatId: control.chatId,
+            profileKey: control.profileKey,
+            accountId: control.accountId,
+            threadId: control.threadId,
+            accessMode: control.executionSettings.accessMode,
+          },
+          control.nativeTaskWorkspaceBinding,
+        ).catch(async (error) => {
+          await saveNativeWorkspaceBinding({
+            chatId: control.chatId!,
+            binding: control.nativeTaskWorkspaceBinding!,
+            status: "error",
+            error: error instanceof Error ? error.message : String(error),
+          }).catch(() => undefined);
+        });
+      }
       if (persistence.persisted) {
         removeRunControl(control);
       } else if (
@@ -18285,6 +18777,7 @@ function App() {
                   workspace={selectedWorkspace}
                   repositories={selectedGitOverview?.repositories ?? []}
                   accounts={signedInAccounts}
+                  sharedProfileAvailable={defaultProfileAuthenticated}
                   models={models}
                   refreshToken={kanbanRefreshToken}
                   listChatTranscript={listLocalChatTranscript}
@@ -18303,16 +18796,17 @@ function App() {
                   <KanbanComposerOverlay>
                     <TaskComposer
                       model={{
-                        disabled: !canRun || kanbanCardCreatePending,
+                        disabled:
+                          !defaultProfileAuthenticated || kanbanCardCreatePending,
                         runActive: false,
                         prompt,
                         promptRevision,
                         submitLabel: "Create Kanban card",
-                        accounts: signedInAccounts,
+                        accounts: [],
                         sharedCodexProfileAvailable: defaultProfileAuthenticated,
-                        selectedAccountId: selectedComposerAccountId,
-                        accountPlaceholder: selectedComposerAccountPlaceholder,
-                        accountSelectionDisabled: kanbanCardCreatePending,
+                        selectedAccountId: 0,
+                        accountPlaceholder: "Codex app account (shared)",
+                        accountSelectionDisabled: true,
                         modelSelectionDisabled: kanbanCardCreatePending,
                         models,
                         modelLoadError,

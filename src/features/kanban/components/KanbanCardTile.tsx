@@ -304,7 +304,10 @@ export function KanbanCardTile({
               {STATE_LABELS[card.executionState]}
             </span>
           </span>
-          <span className="kanban-mode-badge">
+          <span
+            className="kanban-mode-badge"
+            aria-label={`${SUBMISSION_MODE_LABELS[submissionMode]} mode`}
+          >
             <SubmissionModeIcon mode={submissionMode} />
             <span className="kanban-mode-label">
               {SUBMISSION_MODE_LABELS[submissionMode]}
@@ -427,12 +430,19 @@ function KanbanCardContent({
           <span className="kanban-card-description">{card.description}</span>
         ) : null}
         <span className="kanban-card-metadata">
-          <span title={card.repositories.map((repository) => repository.path).join("\n")}>
+          <span
+            className="kanban-card-metadata-repository"
+            title={card.repositories
+              .map((repository) => repository.path)
+              .join("\n")}
+          >
             {repositoryLabel(card)}
           </span>
-          <span>{card.accountLabel}</span>
-          <span>{card.modelLabel}</span>
-          <span>
+          <span className="kanban-card-metadata-account">
+            {card.accountLabel}
+          </span>
+          <span className="kanban-card-metadata-model">{card.modelLabel}</span>
+          <span className="kanban-card-metadata-reasoning">
             {card.reasoningLevelLabel ??
               (card.reasoningLevel || "Model default")}
           </span>

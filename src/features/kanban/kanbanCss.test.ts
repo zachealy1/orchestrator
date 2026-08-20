@@ -161,20 +161,36 @@ describe("Kanban local review styles", () => {
   });
 
   it("wraps and truncates narrow card status content without overlap", () => {
+    const board = rule(".kanban-board");
+    const card = rule(".kanban-card-tile");
     const topline = rule(".kanban-card-topline");
     const badges = rule(".kanban-card-badges");
     const actions = rule(".kanban-card-top-actions");
+    const content = rule(".kanban-card-content");
     const stateLabel = rule(".kanban-state-label,");
     const footer = rule(".kanban-card-footer");
     const branch = rule(".kanban-branch-label");
     const branchText = rule(".kanban-branch-text");
     const changedFiles = rule(".kanban-changed-file-count");
 
-    expect(topline).toContain("align-items: center");
-    expect(badges).toContain("flex: 1 1 auto");
+    expect(board).toContain("container-name: kanban-board");
+    expect(board).toContain("container-type: inline-size");
+    expect(card).toContain("container-name: kanban-card");
+    expect(card).toContain("container-type: inline-size");
+    expect(card).toContain("overflow: hidden");
+    expect(card).toContain("align-content: start");
+    expect(topline).toContain("display: grid");
+    expect(topline).toContain(
+      "grid-template-columns: minmax(0, 1fr) auto",
+    );
+    expect(topline).toContain("align-items: start");
+    expect(badges).toContain("width: 100%");
     expect(badges).toContain("min-width: 0");
     expect(badges).toContain("flex-wrap: wrap");
-    expect(actions).toContain("flex: 0 0 auto");
+    expect(actions).toContain("align-self: start");
+    expect(content).toContain("min-width: 0");
+    expect(content).toContain("overflow: hidden");
+    expect(content).toContain("align-content: start");
     expect(stateLabel).toContain("overflow: hidden");
     expect(stateLabel).toContain("text-overflow: ellipsis");
     expect(footer).toContain("flex-wrap: wrap");
@@ -185,6 +201,16 @@ describe("Kanban local review styles", () => {
     expect(changedFiles).toContain("flex: 0 0 auto");
     expect(changedFiles).toContain("max-width: 100%");
     expect(changedFiles).toContain("text-overflow: ellipsis");
+    expect(css).toContain("@container kanban-board (max-width: 920px)");
+    expect(css).toContain("@container kanban-board (max-width: 620px)");
+    expect(css).toContain("@container kanban-card (max-width: 280px)");
+    expect(css).toContain("@container kanban-card (max-width: 220px)");
+    expect(css).toContain(
+      ".kanban-card-metadata > .kanban-card-metadata-account {",
+    );
+    expect(css).toContain(
+      ".kanban-card-metadata > .kanban-card-metadata-reasoning {",
+    );
     expect(css).not.toContain(".kanban-card-footer > :last-child");
   });
 

@@ -103,6 +103,8 @@ const mocks = vi.hoisted(() => ({
   saveKanbanGitBindingsMock: vi.fn(),
   updateKanbanAttemptMock: vi.fn(),
   updateChatMock: vi.fn(),
+  saveNativeWorkspaceBindingMock: vi.fn(),
+  activateSharedNativeWorkspaceBindingMock: vi.fn(),
   chatHasPendingPlanReviewMock: vi.fn(),
   getChatRecordMock: vi.fn(),
   getNextChatTurnIndexMock: vi.fn(),
@@ -469,6 +471,9 @@ vi.mock("../data/repositories", () => ({
         mocks.recoverInterruptedChatTitleGenerationsMock,
       renameChat: mocks.renameChatMock,
       reconcileSharedNativeThreads: mocks.reconcileSharedNativeThreadsMock,
+      saveNativeWorkspaceBinding: mocks.saveNativeWorkspaceBindingMock,
+      activateSharedNativeWorkspaceBinding:
+        mocks.activateSharedNativeWorkspaceBindingMock,
       saveChatWorktreeBindings: mocks.saveChatWorktreeBindingsMock,
       updateChat: mocks.updateChatMock,
       upsertExternalCodexChats: mocks.upsertExternalCodexChatsMock,
@@ -835,6 +840,8 @@ export function prepareDefaults() {
     mocks.reconcileKanbanGitMock,
     mocks.saveKanbanGitBindingsMock,
     mocks.updateKanbanAttemptMock,
+    mocks.saveNativeWorkspaceBindingMock,
+    mocks.activateSharedNativeWorkspaceBindingMock,
     mocks.resolveCodexServerRequestMock,
     mocks.runPreflightMock,
     mocks.sendAgentNotificationMock,
@@ -847,7 +854,16 @@ export function prepareDefaults() {
   mocks.promptQueueState.revision = 0;
   mocks.chatHasPendingPlanReviewMock.mockResolvedValue(false);
   mocks.continueTaskInCodexDesktopMock.mockResolvedValue(undefined);
+  mocks.saveNativeWorkspaceBindingMock.mockResolvedValue(undefined);
+  mocks.activateSharedNativeWorkspaceBindingMock.mockResolvedValue(true);
   mocks.recoverInterruptedKanbanAttemptsMock.mockResolvedValue(0);
+  mocks.loadKanbanBoardMock.mockResolvedValue({
+    workspaceId: workspace.id,
+    revision: 0,
+    preferencesJson: "{}",
+    columns: [],
+    cards: [],
+  });
   mocks.getKanbanCardForChatMock.mockResolvedValue(null);
   mocks.rejectKanbanPlanMock.mockResolvedValue(null);
   mocks.cleanupKanbanGitMock.mockImplementation(async ({ binding }) => ({
@@ -1826,6 +1842,32 @@ export function prepareSignedInRun() {
 export function prepareKanbanRun() {
   prepareSignedInRun();
   mocks.listCodexModelsMock.mockResolvedValue([defaultCodexModel]);
+  mocks.codexDefaultProfileRpcMock.mockImplementation(
+    async (method: string, params?: Record<string, any>) => {
+      if (method === "account/read") {
+        return {
+          account: {
+            type: "chatgpt",
+            email: "shared@example.com",
+            planType: "pro",
+          },
+          requiresOpenaiAuth: false,
+        };
+      }
+      if (method === "model/list") {
+        return { data: [defaultCodexModel], nextCursor: null };
+      }
+      if (method === "thread/read") {
+        return {
+          thread: {
+            id: params?.threadId ?? "thread-1",
+            cwd: workspace.path,
+          },
+        };
+      }
+      return mocks.codexRpcMock(0, method, params);
+    },
+  );
   mocks.getChatRecordMock.mockResolvedValue({
     ...workspaceChatFixture({ id: 777, status: "draft", turn_count: 0 }),
     codex_thread_id: null,
@@ -1845,10 +1887,20 @@ export async function startMockRun(user: ReturnType<typeof userEvent.setup>, pro
   );
 }
 
-export async function emitCodexNotification(message: unknown) {
+export async function emitCodexNotification(
+  message: unknown,
+  options: {
+    accountId?: number;
+    profileKey?: `account:${number}` | "default";
+  } = {},
+) {
   await act(async () => {
     mocks.listeners.get("codex:notification")?.({
-      payload: { accountId: 7, message },
+      payload: {
+        accountId: options.accountId ?? 7,
+        profileKey: options.profileKey ?? "account:7",
+        message,
+      },
     });
     await Promise.resolve();
   });
