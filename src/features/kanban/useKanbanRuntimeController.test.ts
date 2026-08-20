@@ -260,6 +260,7 @@ describe("Kanban runtime controller", () => {
     expect(snapshot).toMatchObject({
       promptText: target.description,
       workspace: { id: workspace.id, path: "/cards/card-1/root" },
+      sourceWorkspacePath: workspace.path,
       accountId: account.id,
       profileKey: "account:3",
       computerUseEnabled: true,
@@ -383,6 +384,8 @@ describe("Kanban runtime controller", () => {
     expect(snapshot).toMatchObject({
       accountId: 0,
       profileKey: "default",
+      workspace: { path: "/cards/card-1/root" },
+      sourceWorkspacePath: workspace.path,
       mode: "plan",
       intent: "plan",
     });
@@ -390,6 +393,47 @@ describe("Kanban runtime controller", () => {
       expect.anything(),
       snapshot,
     );
+  });
+
+  it("hands an isolated Kanban chat to the selected shared profile", async () => {
+    const { controller, dependencies } = harness();
+    const executionSettings = createRunExecutionSettings({
+      accountId: 0,
+      profileKey: "default",
+      selectedRepositoryPath: "/workspace/repo",
+      selectedBranch: "main",
+      mode: "run",
+      intent: "normal",
+      accessMode: "full-access",
+      computerUseEnabled: true,
+      model: model.model,
+      reasoningEffort: "high",
+      useOss: false,
+      ossProvider: "ollama",
+      contextFiles: [],
+      selectedSkills: [],
+      goalMode: false,
+    });
+    dependencies.loadChat.mockResolvedValue(
+      chatRecord({
+        account_id: account.id,
+        profile_key: "account:3",
+        codex_thread_id: "isolated-thread",
+      }),
+    );
+
+    await controller.launchCard(card(), "start", "Continue this card", {
+      executionSettings,
+    });
+
+    const [snapshot] = dependencies.beginRun.mock.calls[0]!;
+    expect(snapshot.threadStrategy).toEqual({
+      kind: "handoff",
+      handoff: expect.objectContaining({
+        fromThreadId: "isolated-thread",
+        targetProfileKey: "default",
+      }),
+    });
   });
 
   it("implements an approved Plan on the existing card with authoritative settings and prompt", async () => {

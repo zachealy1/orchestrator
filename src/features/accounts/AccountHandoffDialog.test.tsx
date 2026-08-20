@@ -3,7 +3,7 @@ import { describe, expect, it, vi } from "vitest";
 import { AccountHandoffDialog } from "./AccountHandoffDialog";
 
 describe("AccountHandoffDialog", () => {
-  it("uses a single title when continuing in the shared Codex account", () => {
+  it("treats selecting the shared profile as an account handoff", () => {
     render(
       <AccountHandoffDialog
         candidate={{
@@ -23,11 +23,11 @@ describe("AccountHandoffDialog", () => {
       />,
     );
 
-    expect(
-      screen.getByRole("dialog", { name: "Continue this chat in codex?" }),
-    ).toBeInTheDocument();
-    expect(screen.queryByText("Codex continuation")).not.toBeInTheDocument();
-    expect(document.querySelector(".confirmation-dialog .eyebrow")).toBeNull();
+    const dialog = screen.getByRole("dialog", {
+      name: "Switch account for this chat?",
+    });
+    expect(dialog).toHaveTextContent("Continue from Personal with Codex");
+    expect(dialog.querySelector(".eyebrow")).toBeNull();
   });
 
   it("uses a single title when switching to another account", () => {

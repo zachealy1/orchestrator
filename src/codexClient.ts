@@ -102,6 +102,15 @@ export function stopDefaultCodexProfile() {
   return commandResult<void>(commands.codexDefaultProfileStop());
 }
 
+export function continueTaskInCodexDesktop(
+  workspacePath: string,
+  prompt: string,
+) {
+  return commandResult<void>(
+    commands.codexDesktopContinueTask(workspacePath, prompt),
+  );
+}
+
 export function readAgentNotificationPermissionStatus() {
   return commandResult<AgentNotificationPermissionStatus>(
     commands.agentNotificationPermissionStatus(),

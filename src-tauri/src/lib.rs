@@ -26,6 +26,7 @@ use tokio::{sync::oneshot, time::timeout};
 mod agent_notifications;
 mod browser_sessions;
 mod codex;
+mod codex_desktop;
 mod database;
 mod default_browser;
 mod git;
@@ -76,6 +77,7 @@ fn command_builder() -> tauri_specta::Builder<tauri::Wry> {
             codex_stop,
             codex_default_profile_stop,
             codex_delete_profile,
+            codex_desktop::codex_desktop_continue_task,
             list_git_branches,
             checkout_git_branch,
             checkout_git_branch_in_workspace,

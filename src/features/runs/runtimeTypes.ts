@@ -121,6 +121,8 @@ export type RunSetupSnapshot = {
   promptText: string;
   promptFallback: string;
   workspace: Workspace;
+  /** Source workspace for shared-profile thread ownership when execution is isolated. */
+  sourceWorkspacePath?: string | null;
   accountId: number;
   account: CodexAccountProfile | null;
   profileKey: CodexProfileKey;

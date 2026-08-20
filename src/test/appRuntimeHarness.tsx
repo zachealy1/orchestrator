@@ -14,6 +14,7 @@ const mocks = vi.hoisted(() => ({
   openUrlMock: vi.fn(),
   connectCodexMock: vi.fn(),
   connectDefaultCodexProfileMock: vi.fn(),
+  continueTaskInCodexDesktopMock: vi.fn(),
   commitWorkspaceChangesMock: vi.fn(),
   generateChatTitleMock: vi.fn(),
   generateWorkspaceCommitMessageMock: vi.fn(),
@@ -350,6 +351,7 @@ vi.mock("../codexClient", () => ({
   codexRpc: mocks.codexRpcMock,
   commitWorkspaceChanges: mocks.commitWorkspaceChangesMock,
   connectDefaultCodexProfile: mocks.connectDefaultCodexProfileMock,
+  continueTaskInCodexDesktop: mocks.continueTaskInCodexDesktopMock,
   connectCodex: mocks.connectCodexMock,
   checkoutGitBranch: mocks.checkoutGitBranchMock,
   createGitBranch: mocks.createGitBranchMock,
@@ -807,6 +809,7 @@ export function prepareDefaults() {
     mocks.createChatMock,
     mocks.createTaskMock,
     mocks.createRunMock,
+    mocks.continueTaskInCodexDesktopMock,
     mocks.chatHasPendingPlanReviewMock,
     mocks.generateChatTitleMock,
     mocks.inspectDroppedContextPathsMock,
@@ -843,6 +846,7 @@ export function prepareDefaults() {
   mocks.promptQueueState.priority = 0;
   mocks.promptQueueState.revision = 0;
   mocks.chatHasPendingPlanReviewMock.mockResolvedValue(false);
+  mocks.continueTaskInCodexDesktopMock.mockResolvedValue(undefined);
   mocks.recoverInterruptedKanbanAttemptsMock.mockResolvedValue(0);
   mocks.getKanbanCardForChatMock.mockResolvedValue(null);
   mocks.rejectKanbanPlanMock.mockResolvedValue(null);
@@ -1790,6 +1794,13 @@ export function holdNextAnimationFrames() {
 }
 
 export function prepareSignedInRun() {
+  mocks.listWorkspacesMock.mockResolvedValue([
+    {
+      ...workspace,
+      default_account_id: signedInAccount.id,
+      default_profile_key: `account:${signedInAccount.id}`,
+    },
+  ]);
   mocks.listCodexAccountsMock.mockResolvedValue([signedInAccount]);
   mocks.readCodexAccountMock.mockResolvedValue({
     account: {

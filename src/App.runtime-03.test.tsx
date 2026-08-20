@@ -784,6 +784,47 @@ describe("Application runtime scenarios 3", () => {
       );
     });
 
+  it("continues a shared task through a workspace-scoped Codex Desktop handoff", async () => {
+    const sharedChat = workspaceChatFixture({
+      id: 402,
+      title: "Shared desktop task",
+      codex_thread_id: "01a01afb-ee70-7372-8e68-b7128ad9c194",
+      profile_key: "default",
+    });
+    mocks.listWorkspaceChatsMock.mockResolvedValue([sharedChat]);
+
+    const { user } = await renderApp();
+    const banner = screen.getByRole("region", { name: "Selected folder" });
+    await user.click(
+      within(banner).getByRole("button", { name: /open chat history/i }),
+    );
+    const drawer = await screen.findByRole("complementary", {
+      name: "Workspace chat history",
+    });
+    const row = within(drawer)
+      .getByText("Shared desktop task")
+      .closest(".history-run-item");
+    expect(row).toBeInstanceOf(HTMLElement);
+
+    fireEvent.contextMenu(row as HTMLElement, { clientX: 120, clientY: 140 });
+    await user.click(
+      screen.getByRole("menuitem", { name: "Continue in Codex" }),
+    );
+
+    await waitFor(() =>
+      expect(mocks.continueTaskInCodexDesktopMock).toHaveBeenCalledWith(
+        workspace.path,
+        expect.stringContaining(
+          'Continue the Orchestrator task "Shared desktop task" in Codex Desktop.',
+        ),
+      ),
+    );
+    expect(mocks.continueTaskInCodexDesktopMock).toHaveBeenCalledWith(
+      workspace.path,
+      expect.stringContaining("Original objective:"),
+    );
+  });
+
   it("renames the chat targeted by the history context menu", async () => {
       const chat = workspaceChatFixture({
         id: 405,

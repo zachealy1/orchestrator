@@ -29,8 +29,14 @@ export function createWorkspaceRepository(database: FrontendDatabase) {
     const label = workspaceLabel(path);
 
     await db.execute(
-      `INSERT INTO workspaces (path, label, last_opened_at)
-       VALUES ($1, $2, CURRENT_TIMESTAMP)
+      `INSERT INTO workspaces (
+         path,
+         label,
+         default_account_id,
+         default_profile_key,
+         last_opened_at
+       )
+       VALUES ($1, $2, NULL, 'default', CURRENT_TIMESTAMP)
        ON CONFLICT(path) DO UPDATE SET
          label = excluded.label,
          last_opened_at = CURRENT_TIMESTAMP,
@@ -70,7 +76,6 @@ export function createWorkspaceRepository(database: FrontendDatabase) {
   async function softDeleteWorkspace(workspaceId: number) {
     await commands.softDeleteWorkspaceTransaction(workspaceId);
   }
-
 
   return {
     listWorkspaces,

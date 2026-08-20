@@ -97,6 +97,7 @@ import {
   updateBrowserSessionTarget,
   undoWorkspaceGitDiff,
   openAgentNotificationSettings,
+  continueTaskInCodexDesktop,
   openDefaultBrowserAccessibilitySettings,
 } from "../codexClient";
 import {
@@ -5038,10 +5039,6 @@ function App() {
     options: { unsubscribe?: boolean } = {},
   ) {
     const session = control.browserSession;
-    if (!session) return;
-    control.browserSession = null;
-    activeRunRegistry.touch();
-
     if (options.unsubscribe !== false && control.threadId) {
       await codexRpcForProfile(
         control.profileKey,
@@ -5050,6 +5047,9 @@ function App() {
         { threadId: control.threadId },
       ).catch(() => undefined);
     }
+    if (!session) return;
+    control.browserSession = null;
+    activeRunRegistry.touch();
     await stopBrowserSession(session.token).catch(() => undefined);
   }
 
@@ -5315,8 +5315,15 @@ function App() {
     }
     control.activePlaywrightToolCalls.clear();
     cancelWebPreviewDetection(control);
-    if (options.cleanupBrowser !== false && control.browserSession) {
+    if (options.cleanupBrowser !== false) {
       void cleanupRunBrowserSession(control);
+    } else if (control.threadId) {
+      void codexRpcForProfile(
+        control.profileKey,
+        control.accountId,
+        "thread/unsubscribe",
+        { threadId: control.threadId },
+      ).catch(() => undefined);
     }
     control.runView.serverRequests
       .filter(isNativeUserInputRequest)
@@ -6541,7 +6548,7 @@ function App() {
         );
       }
     }
-    void cleanupRunBrowserSession(control);
+    void cleanupRunBrowserSession(control, { unsubscribe: false });
     return {
       stopped: true,
       goalCleared: goalClearError === null,
@@ -6801,7 +6808,10 @@ function App() {
     }
   }
 
-  async function prepareChatContinuation(chat: ChatListItem) {
+  async function prepareChatContinuation(
+    chat: ChatListItem,
+    options: { includeRepositories?: boolean } = {},
+  ) {
     const workspace = workspacesRef.current.find(
       (candidate) => candidate.id === chat.workspace_id,
     );
@@ -6895,6 +6905,10 @@ function App() {
     const settingsJson =
       latestRun?.execution_settings_json ?? chat.continuation_settings_json ?? null;
 
+    if (options.includeRepositories === false) {
+      return { workspace, snapshot, settingsJson, repositories: [] };
+    }
+
     let bindings = await listChatWorktreeBindings(chat.id);
     if (bindings.length === 0) {
       const card = await getKanbanCardForChat(chat.id);
@@ -6946,7 +6960,9 @@ function App() {
   async function continueChatInNewChat(chat: ChatListItem) {
     setChatHistoryContextMenu(null);
     try {
-      const prepared = await prepareChatContinuation(chat);
+      const prepared = await prepareChatContinuation(chat, {
+        includeRepositories: false,
+      });
       const created = await createChat({
         workspaceId: chat.workspace_id,
         accountId: chat.account_id,
@@ -6991,17 +7007,33 @@ function App() {
 
   async function continueChatInCodex(chat: ChatListItem) {
     setChatHistoryContextMenu(null);
-    if (chat.profile_key === DEFAULT_CODEX_PROFILE_KEY) {
-      setStatusMessage("This chat is already shared with Codex.");
-      return;
-    }
     if (findRunControlByChat(chat.workspace_id, chat.id)) {
       setStatusMessage("Wait for the active turn to finish before continuing in Codex.");
       return;
     }
-    const opened = await selectHistoryChat(chat, { positionIntent: "latest" });
-    if (!opened) return;
-    requestCodexAccountSelection(0);
+    try {
+      const prepared = await prepareChatContinuation(chat, {
+        includeRepositories: false,
+      });
+      const context = prepared.snapshot.context.trim();
+      const prompt = [
+        `Continue the Orchestrator task "${chat.title}" in Codex Desktop.`,
+        "The following is sanitized background context from completed turns. Review it, then continue the task without repeating completed work.",
+        context.length > 56_000
+          ? `${context.slice(0, 56_000).trimEnd()}\n[Continuation context truncated]`
+          : context,
+      ].join("\n\n");
+      await continueTaskInCodexDesktop(prepared.workspace.path, prompt);
+      setStatusMessage(
+        "The continuation is ready in Codex. Submit the prefilled prompt there to create the task.",
+      );
+    } catch (error) {
+      setStatusMessage(
+        `Could not continue the task in Codex: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+      );
+    }
   }
 
   async function confirmChatWorktreeContinuation() {
@@ -11111,6 +11143,10 @@ function App() {
       : null;
     let resumedThread = false;
     const startFreshThread = async (): Promise<StartedRunThread> => {
+      const threadCwd =
+        snapshot.profileKey === DEFAULT_CODEX_PROFILE_KEY
+          ? (snapshot.sourceWorkspacePath ?? snapshot.workspace.path)
+          : snapshot.workspace.path;
       const thread = await codexRpcForProfile<{
         thread: { id: string };
         model?: string;
@@ -11119,7 +11155,7 @@ function App() {
         approvalPolicy?: string;
         activePermissionProfile?: { id?: string | null } | null;
       }>(snapshot.profileKey, snapshot.accountId, "thread/start", {
-        cwd: snapshot.workspace.path,
+        cwd: threadCwd,
         model: snapshot.model,
         approvalPolicy: snapshot.access.approvalPolicy,
         approvalsReviewer: "user",
@@ -11204,7 +11240,10 @@ function App() {
           activePermissionProfile?: { id?: string | null } | null;
         }>(snapshot.profileKey, snapshot.accountId, "thread/resume", {
           threadId,
-          cwd: snapshot.workspace.path,
+          cwd:
+            snapshot.profileKey === DEFAULT_CODEX_PROFILE_KEY
+              ? (snapshot.sourceWorkspacePath ?? snapshot.workspace.path)
+              : snapshot.workspace.path,
           approvalPolicy: snapshot.access.approvalPolicy,
           approvalsReviewer: "user",
           permissions: snapshot.access.permissionProfile,
@@ -12098,19 +12137,27 @@ function App() {
     const currentThreadId =
       chat.codex_thread_id ??
       (chat.origin === "codex_external" ? chat.external_thread_id : null);
+    const pendingHandoff = pendingAccountHandoffsRef.current[chat.id] ?? null;
     const accountHandoff: AccountHandoffRunStrategy | null =
       currentProfileKey !== profileKey
-        ? {
-            workspaceId: workspace.id,
-            chatId: chat.id,
-            fromProfileKey: currentProfileKey,
-            fromThreadId: currentThreadId,
-            targetAccountId: accountId,
-            targetProfileKey: profileKey,
-            adoptingExternalChat:
-              chat.origin === "codex_external" &&
-              currentProfileKey === DEFAULT_CODEX_PROFILE_KEY,
-          }
+        ? pendingHandoff?.targetProfileKey === profileKey
+          ? {
+              ...pendingHandoff,
+              adoptingExternalChat:
+                chat.origin === "codex_external" &&
+                currentProfileKey === DEFAULT_CODEX_PROFILE_KEY,
+            }
+          : {
+              workspaceId: workspace.id,
+              chatId: chat.id,
+              fromProfileKey: currentProfileKey,
+              fromThreadId: currentThreadId,
+              targetAccountId: accountId,
+              targetProfileKey: profileKey,
+              adoptingExternalChat:
+                chat.origin === "codex_external" &&
+                currentProfileKey === DEFAULT_CODEX_PROFILE_KEY,
+            }
         : null;
     const continuationBindings = await listChatWorktreeBindings(chat.id);
     const executionWorkspace =
@@ -12139,6 +12186,7 @@ function App() {
       promptText: item.prompt,
       promptFallback: item.prompt,
       workspace: { ...executionWorkspace },
+      sourceWorkspacePath: workspace.path,
       accountId,
       account: account ? { ...account } : null,
       profileKey,
@@ -13383,6 +13431,7 @@ function App() {
       promptText,
       promptFallback: nextPrompt,
       workspace: { ...workspace },
+      sourceWorkspacePath: workspace.path,
       accountId: originalSettings.accountId,
       account: { ...account },
       profileKey: originalSettings.profileKey,
@@ -16345,6 +16394,7 @@ function App() {
       promptText,
       promptFallback: promptText,
       workspace: { ...workspace },
+      sourceWorkspacePath: workspace.path,
       accountId: accountId ?? 0,
       account: account ? { ...account } : null,
       profileKey,
@@ -18619,26 +18669,23 @@ function App() {
                         <GitBranchPlus size={15} aria-hidden="true" />
                         <span>Continue in new worktree</span>
                       </button>
-                      {chatHistoryContextMenu.chat.profile_key !==
-                      DEFAULT_CODEX_PROFILE_KEY ? (
-                        <button
-                          className="workspace-context-menu-item"
-                          type="button"
-                          role="menuitem"
-                          onClick={() =>
-                            void continueChatInCodex(chatHistoryContextMenu.chat)
-                          }
-                          disabled={
-                            findRunControlByChat(
-                              chatHistoryContextMenu.chat.workspace_id,
-                              chatHistoryContextMenu.chat.id,
-                            ) !== null
-                          }
-                        >
-                          <Share2 size={15} aria-hidden="true" />
-                          <span>Continue in Codex</span>
-                        </button>
-                      ) : null}
+                      <button
+                        className="workspace-context-menu-item"
+                        type="button"
+                        role="menuitem"
+                        onClick={() =>
+                          void continueChatInCodex(chatHistoryContextMenu.chat)
+                        }
+                        disabled={
+                          findRunControlByChat(
+                            chatHistoryContextMenu.chat.workspace_id,
+                            chatHistoryContextMenu.chat.id,
+                          ) !== null
+                        }
+                      >
+                        <Share2 size={15} aria-hidden="true" />
+                        <span>Continue in Codex</span>
+                      </button>
                       <div
                         className="workspace-context-menu-separator"
                         role="separator"

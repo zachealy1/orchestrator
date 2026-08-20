@@ -28,6 +28,7 @@ export const commands = {
 	codexStop: (accountId: number) => __TAURI_INVOKE<null>("codex_stop", { accountId }),
 	codexDefaultProfileStop: () => __TAURI_INVOKE<null>("codex_default_profile_stop"),
 	codexDeleteProfile: (accountId: number) => __TAURI_INVOKE<null>("codex_delete_profile", { accountId }),
+	codexDesktopContinueTask: (workspacePath: string, prompt: string) => __TAURI_INVOKE<null>("codex_desktop_continue_task", { workspacePath, prompt }),
 	listGitBranches: (path: string, repositoryPath: string | null) => __TAURI_INVOKE<GitBranchList>("list_git_branches", { path, repositoryPath }),
 	checkoutGitBranch: (path: string, branch: string) => __TAURI_INVOKE<GitCheckoutResult>("checkout_git_branch", { path, branch }),
 	checkoutGitBranchInWorkspace: (workspacePath: string, repositoryPath: string | null, branch: string) => __TAURI_INVOKE<GitCheckoutResult>("checkout_git_branch_in_workspace", { workspacePath, repositoryPath, branch }),

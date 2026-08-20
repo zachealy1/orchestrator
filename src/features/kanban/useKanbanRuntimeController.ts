@@ -309,6 +309,7 @@ export function createKanbanRuntimeController<
           promptText: effectivePrompt,
           promptFallback: effectivePrompt,
           workspace: { ...workspace, path: executionRoot },
+          sourceWorkspacePath: workspace.path,
           accountId,
           account,
           profileKey,
