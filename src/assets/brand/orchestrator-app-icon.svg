@@ -1,28 +1,40 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
-  <path
-    fill="#55acee"
-    d="M21 13h22a8 8 0 0 1 8 8v22a8 8 0 0 1-8 8H21a8 8 0 0 1-8-8V21a8 8 0 0 1 8-8Zm0 6a2 2 0 0 0-2 2v22a2 2 0 0 0 2 2h22a2 2 0 0 0 2-2V21a2 2 0 0 0-2-2H21Z"
-  />
-  <rect x="4" y="4" width="24" height="24" rx="7" fill="#1da1f2" />
   <rect
-    x="36"
-    y="4"
-    width="24"
-    height="24"
-    rx="7"
-    fill="#22303c"
+    x="6"
+    y="6"
+    width="52"
+    height="52"
+    rx="12"
+    fill="#15202b"
     stroke="#445c6d"
-    stroke-width="1.5"
+    stroke-width="1.25"
   />
-  <rect x="4" y="36" width="24" height="24" rx="7" fill="#3fb950" />
-  <rect
-    x="36"
-    y="36"
-    width="24"
-    height="24"
-    rx="7"
-    fill="#22303c"
-    stroke="#445c6d"
-    stroke-width="1.5"
-  />
+  <g transform="translate(12 12) scale(.625)">
+    <path
+      fill="#55acee"
+      d="M21 13h22a8 8 0 0 1 8 8v22a8 8 0 0 1-8 8H21a8 8 0 0 1-8-8V21a8 8 0 0 1 8-8Zm0 6a2 2 0 0 0-2 2v22a2 2 0 0 0 2 2h22a2 2 0 0 0 2-2V21a2 2 0 0 0-2-2H21Z"
+    />
+    <rect x="4" y="4" width="24" height="24" rx="7" fill="#1da1f2" />
+    <rect
+      x="36"
+      y="4"
+      width="24"
+      height="24"
+      rx="7"
+      fill="#334e5b"
+      stroke="#445c6d"
+      stroke-width="1.5"
+    />
+    <rect x="4" y="36" width="24" height="24" rx="7" fill="#3fb950" />
+    <rect
+      x="36"
+      y="36"
+      width="24"
+      height="24"
+      rx="7"
+      fill="#334e5b"
+      stroke="#445c6d"
+      stroke-width="1.5"
+    />
+  </g>
 </svg>
