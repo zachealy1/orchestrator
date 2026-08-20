@@ -290,7 +290,7 @@ describe("Application runtime scenarios 6", () => {
       const cardBranch = "codex/shared-edit";
       const sharedChat = {
         ...workspaceChatFixture({
-          id: 409,
+          id: 777,
           title: "Shared Kanban edit",
           codex_thread_id: "thread-shared-edit",
           profile_key: "default",
@@ -382,6 +382,55 @@ describe("Application runtime scenarios 6", () => {
       expect(screen.queryByText(/default external Codex profile/i)).not.toBeInTheDocument();
       expect(mocks.createRunMock).toHaveBeenCalledWith(
         expect.objectContaining({ accountId: null, chatId: sharedChat.id }),
+      );
+
+      await user.click(await screen.findByRole("radio", { name: "Kanban" }));
+      await user.click(
+        screen.getByRole("button", { name: "Open test Kanban conversation" }),
+      );
+      await waitFor(() =>
+        expect(
+          screen
+            .getAllByLabelText("Submitted prompt")
+            .some((prompt) => prompt.textContent?.includes("Edited shared prompt")),
+        ).toBe(true),
+      );
+
+      await emitCodexNotification(
+        {
+          method: "item/agentMessage/delta",
+          params: {
+            threadId: "thread-1",
+            turnId: "turn-1",
+            itemId: "shared-edit-message",
+            delta: "Implemented the edited shared prompt.",
+          },
+        },
+        { accountId: 0, profileKey: "default" },
+      );
+      expect(
+        await screen.findByText("Implemented the edited shared prompt."),
+      ).toBeInTheDocument();
+
+      await emitCodexNotification(
+        {
+          method: "turn/completed",
+          params: {
+            threadId: "thread-1",
+            turn: {
+              id: "turn-1",
+              status: "completed",
+              durationMs: 1000,
+            },
+          },
+        },
+        { accountId: 0, profileKey: "default" },
+      );
+      await waitFor(() =>
+        expect(mocks.updateRunMock).toHaveBeenCalledWith(
+          expect.any(Number),
+          expect.objectContaining({ status: "completed" }),
+        ),
       );
     });
 

@@ -5777,7 +5777,8 @@ function App() {
       }
       if (
         options.kanbanCardId &&
-        control.kanbanAttempt?.cardId !== options.kanbanCardId
+        control.kanbanAttempt &&
+        control.kanbanAttempt.cardId !== options.kanbanCardId
       ) {
         return false;
       }
