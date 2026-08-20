@@ -1,5 +1,9 @@
-import { useCallback, useState } from "react";
-import type { AnalyticsSummary } from "./types";
+import { useCallback, useRef, useState } from "react";
+import type {
+  AnalyticsActivityPoint,
+  AnalyticsScope,
+  AnalyticsSummary,
+} from "./types";
 
 const DEFAULT_ANALYTICS: AnalyticsSummary = {
   run_count: 0,
@@ -11,21 +15,46 @@ const DEFAULT_ANALYTICS: AnalyticsSummary = {
 };
 
 export type AnalyticsControllerOptions = {
-  loadSummary: (workspaceId: number) => Promise<AnalyticsSummary>;
+  loadSummary: (
+    scope: number | AnalyticsScope,
+  ) => Promise<AnalyticsSummary>;
+  loadActivity?: (
+    scope: AnalyticsScope,
+  ) => Promise<AnalyticsActivityPoint[]>;
 };
 
 export function useAnalyticsController({
   loadSummary,
+  loadActivity,
 }: AnalyticsControllerOptions) {
   const [analytics, setAnalytics] = useState(DEFAULT_ANALYTICS);
+  const [activity, setActivity] = useState<AnalyticsActivityPoint[]>([]);
+  const [loading, setLoading] = useState(false);
+  const requestIdRef = useRef(0);
   const refreshAnalytics = useCallback(
-    async (workspaceId: number) => {
-      const summary = await loadSummary(workspaceId);
-      setAnalytics(summary);
-      return summary;
+    async (scope: number | AnalyticsScope) => {
+      const requestId = ++requestIdRef.current;
+      setLoading(true);
+      try {
+        const [summary, nextActivity] = await Promise.all([
+          loadSummary(scope),
+          typeof scope === "number" || !loadActivity
+            ? Promise.resolve([])
+            : loadActivity(scope),
+        ]);
+        if (requestId === requestIdRef.current) {
+          setAnalytics(summary);
+          setActivity(nextActivity);
+        }
+        return summary;
+      } finally {
+        if (requestId === requestIdRef.current) {
+          setLoading(false);
+        }
+      }
     },
-    [loadSummary],
+    [loadActivity, loadSummary],
   );
 
-  return { analytics, refreshAnalytics };
+  return { activity, analytics, loading, refreshAnalytics };
 }

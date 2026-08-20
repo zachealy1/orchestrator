@@ -8,7 +8,6 @@ import {
   GitBranchPlus,
   MessageSquarePlus,
   Pencil,
-  RefreshCw,
   Share2,
   Settings,
   Trash2,
@@ -321,6 +320,7 @@ import {
 } from "../lib/agentNotifications";
 import type { ActiveCodexLogin, AccountLoginCompletedNotification, AccountUpdatedNotification, CodexAccessMode, CodexAccountResponse, CodexMessage, CodexLoginState, CodexModel, CodexProcessEvent, CodexProfileKey, RunInteractionMode } from "../features/codex/types";
 import type { AdditionalContextEntry, PreflightReport, RunExecutionSettings } from "../features/runs/types";
+import type { AnalyticsDateRange } from "../features/analytics/types";
 import { useAnalyticsController } from "../features/analytics/useAnalyticsController";
 import type { ChatContinuationSnapshot, ChatContinuationTurn, ChatListItem, ChatRecord, HistoricalChatOpenRequest, HistoricalTranscriptState, WorkspaceChatSession } from "../features/conversations/types";
 import { useConversationController } from "../features/conversations/useConversationController";
@@ -600,7 +600,7 @@ function App() {
     softDeleteCodexAccount,
     updateCodexAccount,
   } = repositories.accounts;
-  const { getAnalyticsSummary } = repositories.analytics;
+  const { getAnalyticsActivity, getAnalyticsSummary } = repositories.analytics;
   const {
     activateChatAccountHandoff,
     chatHasPendingPlanReview,
@@ -971,9 +971,20 @@ function App() {
     macOsWindowDragRegionsEnabled,
     "deep",
   );
-  const { analytics, refreshAnalytics: refreshWorkspaceData } =
-    useAnalyticsController({ loadSummary: getAnalyticsSummary });
+  const {
+    activity: analyticsActivity,
+    analytics,
+    loading: analyticsLoading,
+    refreshAnalytics: refreshWorkspaceData,
+  } = useAnalyticsController({
+    loadActivity: getAnalyticsActivity,
+    loadSummary: getAnalyticsSummary,
+  });
   const [activeView, setActiveView] = useState<AppView>("task");
+  const [analyticsWorkspaceFilter, setAnalyticsWorkspaceFilter] =
+    useState<number[] | null>(null);
+  const [analyticsDateRange, setAnalyticsDateRange] =
+    useState<AnalyticsDateRange>("30d");
   const [defaultProfileAuthenticated, setDefaultProfileAuthenticated] =
     useState(false);
   const [workspaceSurfaceMode, setWorkspaceSurfaceMode] =
@@ -1081,7 +1092,7 @@ function App() {
     isTranscriptViewportStable,
     getDrawerPhase,
   } = conversationLayout;
-  const [statusMessage, setStatusMessage] = useState("Choose a workspace to begin.");
+  const [, setStatusMessage] = useState("Choose a workspace to begin.");
   const activeViewRef = useRef<AppView>("task");
   const chatTitleGenerationsInFlightRef = useRef(new Set<number>());
   const workspaceTaskMemories = appServices.workspaceTaskMemories;
@@ -1102,6 +1113,25 @@ function App() {
     [],
   );
   activeViewRef.current = activeView;
+  const refreshAnalyticsForCurrentView = useStableEvent(
+    (fallbackWorkspaceId: number) => {
+      if (activeViewRef.current !== "analytics") {
+        return refreshWorkspaceData(fallbackWorkspaceId);
+      }
+      const currentWorkspaces = workspacesRef.current;
+      const workspaceIds = analyticsWorkspaceFilter
+        ? currentWorkspaces
+            .filter((workspace) =>
+              analyticsWorkspaceFilter.includes(workspace.id),
+            )
+            .map((workspace) => workspace.id)
+        : currentWorkspaces.map((workspace) => workspace.id);
+      return refreshWorkspaceData({
+        workspaceIds,
+        range: analyticsDateRange,
+      });
+    },
+  );
   const pendingRunBindingNotificationsRef = useRef<
     PendingRunBindingNotification[]
   >([]);
@@ -1552,7 +1582,6 @@ function App() {
     () => TASK_QUOTES[Math.floor(Math.random() * TASK_QUOTES.length)],
     [],
   );
-  const selectedWorkspaceName = selectedWorkspace?.label ?? "Choose a repository";
   const selectedAccount =
     codexAccounts.find((account) => account.id === selectedAccountId) ?? null;
   const selectedModel =
@@ -2767,14 +2796,49 @@ function App() {
     };
   }, [dispatchAgentNotificationActivation]);
 
+  const analyticsWorkspaceIds = useMemo(
+    () =>
+      analyticsWorkspaceFilter
+        ? workspaces
+            .filter((workspace) => analyticsWorkspaceFilter.includes(workspace.id))
+            .map((workspace) => workspace.id)
+        : workspaces.map((workspace) => workspace.id),
+    [analyticsWorkspaceFilter, workspaces],
+  );
+
+  useEffect(() => {
+    if (
+      analyticsWorkspaceFilter !== null &&
+      analyticsWorkspaceIds.length === 0 &&
+      workspaces.length > 0
+    ) {
+      setAnalyticsWorkspaceFilter(null);
+    }
+  }, [analyticsWorkspaceFilter, analyticsWorkspaceIds.length, workspaces.length]);
+
+  useEffect(() => {
+    if (activeView !== "analytics") return;
+    void refreshWorkspaceData({
+      workspaceIds: analyticsWorkspaceIds,
+      range: analyticsDateRange,
+    });
+  }, [
+    activeView,
+    analyticsDateRange,
+    analyticsWorkspaceIds,
+    refreshWorkspaceData,
+  ]);
+
   useEffect(() => {
     if (!selectedWorkspace) {
       return;
     }
 
-    void refreshWorkspaceData(selectedWorkspace.id);
+    if (activeView !== "analytics") {
+      void refreshWorkspaceData(selectedWorkspace.id);
+    }
     void refreshWorkspaceGitStatus(selectedWorkspace);
-  }, [selectedWorkspace?.id, selectedWorkspace?.path]);
+  }, [activeView, selectedWorkspace?.id, selectedWorkspace?.path]);
 
   useEffect(() => {
     if (!historyDrawerOpen || !selectedWorkspace) {
@@ -8209,7 +8273,7 @@ function App() {
     setChatHistoryDeleteCandidate(null);
     setStatusMessage("Removed chat from history.");
     await refreshSelectedWorkspaceHistory();
-    await refreshWorkspaceData(chat.workspace_id);
+    await refreshAnalyticsForCurrentView(chat.workspace_id);
   }
 
   async function confirmWorkspaceDelete() {
@@ -11556,7 +11620,7 @@ function App() {
         pendingChatTitleGeneration = null;
         startChatTitleGeneration(titleRequest);
       }
-      await refreshWorkspaceData(snapshot.workspace.id);
+      await refreshAnalyticsForCurrentView(snapshot.workspace.id);
       ensureRunControlActive(runControl);
       if (selectedWorkspaceRef.current?.id === snapshot.workspace.id) {
         void refreshSelectedWorkspaceHistory();
@@ -15007,7 +15071,7 @@ function App() {
           }),
           refreshWorkspaceDirectoriesAfterRun(completedWorkspace),
           selectedWorkspaceRef.current?.id === completedWorkspace.id
-            ? refreshWorkspaceData(completedWorkspace.id)
+            ? refreshAnalyticsForCurrentView(completedWorkspace.id)
             : Promise.resolve(),
         ]);
       }
@@ -18104,47 +18168,6 @@ function App() {
           active={activeView === "task"}
           onActivate={activateFloatingStatusNotice}
         />
-        {activeView === "analytics" ? (
-          <>
-            <header
-              className="topbar"
-              data-tauri-drag-region={deepWindowDragRegion}
-            >
-              <div data-tauri-drag-region="false">
-                <h2>{selectedWorkspaceName}</h2>
-              </div>
-              <div className="topbar-actions" data-tauri-drag-region="false">
-                <span>{authMessage}</span>
-                <button
-                  className="icon-button"
-                  type="button"
-                  onClick={() => {
-                    if (selectedWorkspace) {
-                      void refreshWorkspaceData(selectedWorkspace.id);
-                      void refreshWorkspaceGitStatus(selectedWorkspace);
-                      void refreshBranches(selectedWorkspace);
-                    }
-                  }}
-                  title="Refresh"
-                >
-                  <RefreshCw size={17} />
-                </button>
-                <button className="icon-button" type="button" onClick={() => setActiveView("settings")} title="Settings">
-                  <Settings size={17} />
-                </button>
-              </div>
-            </header>
-
-            <div
-              className="status-strip"
-              data-tauri-drag-region={selfWindowDragRegion}
-            >
-              <span>Status</span>
-              <p>{statusMessage}</p>
-            </div>
-          </>
-        ) : null}
-
         {activeView === "task" ? (
           <div className="codex-workspace">
             <WorkspaceContextBanner
@@ -18651,35 +18674,19 @@ function App() {
 
         {activeView === "analytics" ? (
           <div
-            className="view-stack"
+            className="view-stack analytics-view-stack"
             data-tauri-drag-region={selfWindowDragRegion}
           >
-            <AnalyticsSummary summary={analytics} />
-            <section className="surface analytics-detail" aria-label="Analytics detail">
-              <div className="surface-header">
-                <div>
-                  <h2>Workspace usage</h2>
-                </div>
-              </div>
-              <div className="analytics-breakdown">
-                <div>
-                  <span>Completed runs</span>
-                  <strong>{analytics.completed_count.toLocaleString()}</strong>
-                </div>
-                <div>
-                  <span>Cached tokens</span>
-                  <strong>{analytics.cached_tokens.toLocaleString()}</strong>
-                </div>
-                <div>
-                  <span>Failure rate</span>
-                  <strong>
-                    {analytics.run_count
-                      ? `${Math.round((analytics.failed_count / analytics.run_count) * 100)}%`
-                      : "0%"}
-                  </strong>
-                </div>
-              </div>
-            </section>
+            <AnalyticsSummary
+              summary={analytics}
+              activity={analyticsActivity}
+              workspaces={workspaces}
+              workspaceFilter={analyticsWorkspaceFilter}
+              range={analyticsDateRange}
+              loading={analyticsLoading}
+              onWorkspaceFilterChange={setAnalyticsWorkspaceFilter}
+              onRangeChange={setAnalyticsDateRange}
+            />
           </div>
         ) : null}
 
