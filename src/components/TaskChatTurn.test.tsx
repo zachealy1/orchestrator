@@ -417,6 +417,90 @@ it("keeps an unavailable web preview retryable without changing its geometry", a
     expect(button).toBeEnabled();
   });
 
+it.each(["plan", "plan-revision"] as const)(
+  "does not render a web preview for %s turns",
+  (intent) => {
+    const entry: TaskChatEntry = {
+      ...historyEntry(1),
+      runView: {
+        ...historyEntry(1).runView,
+        nativePlan: {
+          ...historyEntry(1).runView.nativePlan,
+          intent,
+        },
+        webPreview: {
+          version: 1,
+          url: "http://localhost:5173/",
+          origin: "http://localhost:5173",
+          detectedAt: "2026-08-20T12:00:00.000Z",
+          sourceCommandId: "command-plan-preview",
+          availability: "unavailable",
+        },
+      },
+    };
+
+    render(
+      <TestTaskChatTurn
+        entry={entry}
+        editable={false}
+        editing={false}
+        editingPrompt=""
+        onEditingPromptChange={vi.fn()}
+        onSubmitEdit={vi.fn()}
+        onCancelEdit={vi.fn()}
+        onStartEdit={vi.fn()}
+        onResolveRequest={vi.fn()}
+        onOpenWebPreview={vi.fn()}
+      />,
+    );
+
+    expect(screen.queryByText("Web preview")).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "Open web preview in browser" }),
+    ).not.toBeInTheDocument();
+  },
+);
+
+it("retains web previews for plan implementation turns", () => {
+    const entry: TaskChatEntry = {
+      ...historyEntry(1),
+      runView: {
+        ...historyEntry(1).runView,
+        nativePlan: {
+          ...historyEntry(1).runView.nativePlan,
+          intent: "plan-implementation",
+        },
+        webPreview: {
+          version: 1,
+          url: "http://localhost:5173/",
+          origin: "http://localhost:5173",
+          detectedAt: "2026-08-20T12:00:00.000Z",
+          sourceCommandId: "command-implementation-preview",
+          availability: "available",
+        },
+      },
+    };
+
+    render(
+      <TestTaskChatTurn
+        entry={entry}
+        editable={false}
+        editing={false}
+        editingPrompt=""
+        onEditingPromptChange={vi.fn()}
+        onSubmitEdit={vi.fn()}
+        onCancelEdit={vi.fn()}
+        onStartEdit={vi.fn()}
+        onResolveRequest={vi.fn()}
+        onOpenWebPreview={vi.fn()}
+      />,
+    );
+
+    expect(
+      screen.getByRole("button", { name: "Open web preview in browser" }),
+    ).toBeInTheDocument();
+  });
+
 it("renders submitted prompts and live output with real-time metrics", () => {
     render(
       <TaskChatTranscript

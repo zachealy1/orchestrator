@@ -567,11 +567,14 @@ const AssistantRunOutput = memo(function AssistantRunOutput({
             onOpenTranscriptLink={onOpenTranscriptLink}
           />
         ) : null}
-        <WebPreviewCard
-          entry={entry}
-          preview={runView.webPreview}
-          onOpen={onOpenWebPreview}
-        />
+        {runView.nativePlan.intent !== "plan" &&
+        runView.nativePlan.intent !== "plan-revision" ? (
+          <WebPreviewCard
+            entry={entry}
+            preview={runView.webPreview}
+            onOpen={onOpenWebPreview}
+          />
+        ) : null}
         <EditedFilesSummary
           entry={entry}
           expanded={editedFilesExpanded}
