@@ -2598,6 +2598,7 @@ pub(crate) fn git_diff_section(
     };
 
     let is_binary = git_diff_is_binary(&diff) || base.is_binary || head.is_binary;
+    let (diff, diff_truncated) = bounded_unified_diff(diff);
 
     Ok(WorkspaceGitDiffSection {
         kind: kind.to_string(),
@@ -2606,8 +2607,8 @@ pub(crate) fn git_diff_section(
         head_label,
         base_content: base.content,
         head_content: head.content,
-        base_truncated: base.truncated,
-        head_truncated: head.truncated,
+        base_truncated: base.truncated || diff_truncated,
+        head_truncated: head.truncated || diff_truncated,
         content: diff,
         is_binary,
     })

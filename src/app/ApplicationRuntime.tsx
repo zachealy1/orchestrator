@@ -2036,6 +2036,7 @@ function App() {
   }, [gitStatusByWorkspaceId, selectedWorkspace]);
   const workspacePreview = useWorkspacePreviewController({
     filePreviews: workspaceFilePreviews,
+    previewHighlighting: appServices.codePreviewHighlighting,
     workspaces,
     selectedWorkspace,
     gitStatusStates,

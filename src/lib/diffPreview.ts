@@ -1,4 +1,4 @@
-import { diffLines } from "diff";
+import { diffLines, parsePatch } from "diff";
 import type { ResolvedTheme } from "../shared/types";
 import {
   detectPreviewLanguage,
@@ -137,6 +137,73 @@ export function buildDiffRows(baseContent: string, headContent: string) {
           headText: "",
         },
       ];
+}
+
+export function buildDiffRowsFromUnifiedDiff(content: string) {
+  const rows: DiffRow[] = [];
+  for (const patch of parsePatch(content)) {
+    for (const hunk of patch.hunks) {
+      let baseLineNumber = hunk.oldStart;
+      let headLineNumber = hunk.newStart;
+      for (let index = 0; index < hunk.lines.length;) {
+        const line = hunk.lines[index];
+        if (line.startsWith(" ")) {
+          rows.push({
+            id: `h-u-${baseLineNumber}-${headLineNumber}-${rows.length}`,
+            kind: "unchanged",
+            baseLineNumber,
+            headLineNumber,
+            baseText: line.slice(1),
+            headText: line.slice(1),
+          });
+          baseLineNumber += 1;
+          headLineNumber += 1;
+          index += 1;
+          continue;
+        }
+        if (line.startsWith("-")) {
+          const removed: string[] = [];
+          while (hunk.lines[index]?.startsWith("-")) {
+            removed.push(hunk.lines[index].slice(1));
+            index += 1;
+          }
+          const added: string[] = [];
+          while (hunk.lines[index]?.startsWith("+")) {
+            added.push(hunk.lines[index].slice(1));
+            index += 1;
+          }
+          for (const pair of pairChangedLineBlocks(removed, added)) {
+            const hasBase = pair.baseText !== null;
+            const hasHead = pair.headText !== null;
+            rows.push({
+              id: `h-c-${baseLineNumber}-${headLineNumber}-${rows.length}`,
+              kind: hasBase && hasHead ? "changed" : hasBase ? "removed" : "added",
+              baseLineNumber: hasBase ? baseLineNumber : null,
+              headLineNumber: hasHead ? headLineNumber : null,
+              baseText: pair.baseText ?? "",
+              headText: pair.headText ?? "",
+            });
+            if (hasBase) baseLineNumber += 1;
+            if (hasHead) headLineNumber += 1;
+          }
+          continue;
+        }
+        if (line.startsWith("+")) {
+          rows.push({
+            id: `h-a-${headLineNumber}-${rows.length}`,
+            kind: "added",
+            baseLineNumber: null,
+            headLineNumber,
+            baseText: "",
+            headText: line.slice(1),
+          });
+          headLineNumber += 1;
+        }
+        index += 1;
+      }
+    }
+  }
+  return rows;
 }
 
 export function buildDiffOverviewMarkers(rows: DiffRow[]): DiffOverviewMarker[] {

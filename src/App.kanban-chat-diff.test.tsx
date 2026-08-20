@@ -112,7 +112,7 @@ describe("Kanban chat diff preview", () => {
     const previewDrawer = screen.getByRole("complementary", {
       name: "File preview",
     });
-    expect(previewDrawer).toHaveTextContent("before");
+    await waitFor(() => expect(previewDrawer).toHaveTextContent("before"));
     expect(previewDrawer).toHaveTextContent("updated");
     expect(previewDrawer).not.toHaveTextContent(
       "No diff available for this file.",

@@ -29,6 +29,7 @@ import {
   type WorkspaceFilePreviewService,
 } from "./WorkspaceFilePreviewService";
 import type { OpenWorkspaceFilePreviewOptions } from "./runtimeState";
+import type { CodePreviewHighlightingService } from "../../lib/codePreviewHighlighting";
 
 export const PREVIEW_DRAWER_DEFAULT_WIDTH = 520;
 export const PREVIEW_DRAWER_MIN_WIDTH = 360;
@@ -40,6 +41,7 @@ export const DIFF_SIDE_BY_SIDE_MIN_WIDTH = 760;
 
 type WorkspacePreviewControllerOptions = {
   filePreviews: WorkspaceFilePreviewService;
+  previewHighlighting?: Pick<CodePreviewHighlightingService, "warm">;
   workspaces: Workspace[];
   selectedWorkspace: Workspace | null;
   gitStatusStates: Record<number, WorkspaceGitStatusState>;
@@ -83,6 +85,7 @@ const emptyPreviewState = (): WorkspacePreviewState => ({
 
 export function useWorkspacePreviewController({
   filePreviews,
+  previewHighlighting,
   workspaces,
   selectedWorkspace,
   gitStatusStates,
@@ -222,21 +225,6 @@ export function useWorkspacePreviewController({
 
       try {
         const preview = await filePreviews.load(workspace.path, file.path, {
-          onInitialPreview: (initialPreview) => {
-            if (
-              previewRequestId.current !== requestId ||
-              activePreviewCacheKeyRef.current !== cacheKey
-            ) {
-              return;
-            }
-            setPreviewState((current) => ({
-              ...current,
-              status: "loaded",
-              file,
-              preview: initialPreview,
-              error: null,
-            }));
-          },
           shouldContinue: () =>
             activePreviewCacheKeyRef.current === cacheKey,
         });
@@ -400,6 +388,7 @@ export function useWorkspacePreviewController({
       file: WorkspaceTreeEntry,
       options: OpenWorkspaceFilePreviewOptions = {},
     ) => {
+      void previewHighlighting?.warm(file.path).catch(() => undefined);
       const requestId = previewRequestId.current + 1;
       previewRequestId.current = requestId;
       const gitStatus =
@@ -434,8 +423,10 @@ export function useWorkspacePreviewController({
       ) {
         return;
       }
-      const visiblePreview =
-        cachedPreview ?? filePreviews.getPartial(workspace.path, file.path);
+      // In-flight native chunks are transport state, not renderable documents.
+      // Keep the preview in its loading state until the stable version has been
+      // fully assembled and prepared.
+      const visiblePreview = cachedPreview;
       const diffCacheKey = previewDiffCacheKey(
         workspace,
         file,

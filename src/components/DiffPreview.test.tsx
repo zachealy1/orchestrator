@@ -106,6 +106,8 @@ describe("DiffPreview", () => {
     expect(screen.getAllByText("Z")).toHaveLength(2);
 
     const grid = screen.getByRole("table", { name: "Side-by-side diff" });
+    expect(grid).toHaveStyle({ width: "100%" });
+    expect(grid.getAttribute("style")).not.toMatch(/width:\s*\d+px/);
     expect(within(grid).getAllByText("2")).toHaveLength(2);
     expect(
       container.querySelector(".diff-preview-scroll")?.textContent,
@@ -169,6 +171,7 @@ describe("DiffPreview", () => {
       />,
     );
 
+    await screen.findByRole("table", { name: "Side-by-side diff" });
     const scrollElement = mockScrollableDiff(container, {
       scrollHeight: 1000,
       clientHeight: 100,
@@ -197,6 +200,7 @@ describe("DiffPreview", () => {
       />,
     );
 
+    await screen.findByRole("table", { name: "Side-by-side diff" });
     const scrollElement = mockScrollableDiff(container, {
       scrollHeight: 1000,
       clientHeight: 100,
@@ -231,6 +235,7 @@ describe("DiffPreview", () => {
       />,
     );
 
+    await screen.findByRole("table", { name: "Side-by-side diff" });
     const scrollElement = mockScrollableDiff(container, {
       scrollHeight: 50000,
       clientHeight: 100,
@@ -282,6 +287,7 @@ describe("DiffPreview", () => {
       />,
     );
 
+    await screen.findByRole("table", { name: "Side-by-side diff" });
     mockScrollableDiff(container);
 
     await waitFor(() =>
@@ -322,6 +328,7 @@ describe("DiffPreview", () => {
       />,
     );
 
+    await screen.findByRole("table", { name: "Side-by-side diff" });
     const scrollElement = mockScrollableDiff(container);
     await screen.findByRole("scrollbar", { name: "Diff overview scroller" });
     const maxScrollTop = virtualMaxScrollTop(container);
@@ -344,6 +351,7 @@ describe("DiffPreview", () => {
       />,
     );
 
+    await screen.findByRole("table", { name: "Side-by-side diff" });
     const scrollElement = mockScrollableDiff(container);
     const ruler = await screen.findByRole("scrollbar", {
       name: "Diff overview scroller",

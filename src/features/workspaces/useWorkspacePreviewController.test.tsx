@@ -95,7 +95,7 @@ describe("useWorkspacePreviewController", () => {
     vi.clearAllMocks();
   });
 
-  it("publishes an initial chunk before replacing it with the completed preview", async () => {
+  it("keeps native chunks hidden until the completed preview is assembled", async () => {
     const file = entry("large.txt");
     const finalChunk = deferred<WorkspaceFilePreview>();
     const reader: WorkspaceFilePreviewReader = {
@@ -117,9 +117,11 @@ describe("useWorkspacePreviewController", () => {
     act(() => {
       loading = result.current.openWorkspaceFilePreview(workspace, file);
     });
-    await waitFor(() =>
-      expect(result.current.previewState.preview?.content).toBe("partial"),
-    );
+    await waitFor(() => expect(reader.readChunk).toHaveBeenCalledOnce());
+    expect(result.current.previewState).toMatchObject({
+      status: "loading",
+      preview: null,
+    });
 
     finalChunk.resolve(
       preview(file, "tail", {
@@ -164,9 +166,11 @@ describe("useWorkspacePreviewController", () => {
     act(() => {
       firstLoad = result.current.openWorkspaceFilePreview(workspace, first);
     });
-    await waitFor(() =>
-      expect(result.current.previewState.preview?.content).toBe("first partial"),
-    );
+    await waitFor(() => expect(reader.readChunk).toHaveBeenCalledOnce());
+    expect(result.current.previewState).toMatchObject({
+      status: "loading",
+      preview: null,
+    });
     await act(() =>
       result.current.openWorkspaceFilePreview(workspace, second),
     );

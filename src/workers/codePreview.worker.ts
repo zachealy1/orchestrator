@@ -4,6 +4,10 @@ import {
   CodePreviewCache,
   highlightPreviewContent,
 } from "../lib/codePreview";
+import {
+  prepareDiffDocument,
+  prepareSourceDocument,
+} from "../lib/previewDocuments";
 import type {
   CodePreviewHighlightWorkerRequest,
   CodePreviewHighlightWorkerResponse,
@@ -16,17 +20,30 @@ workerScope.addEventListener(
   "message",
   async (event: MessageEvent<CodePreviewHighlightWorkerRequest>) => {
     const request = event.data;
-    if (request.type !== "highlight") {
-      return;
-    }
-
     try {
-      const lines = await highlightPreviewContent(request.input, cache);
-      const response: CodePreviewHighlightWorkerResponse = {
-        type: "highlighted",
-        generationId: request.generationId,
-        lines,
-      };
+      let response: CodePreviewHighlightWorkerResponse;
+      if (request.type === "highlight") {
+        const lines = await highlightPreviewContent(request.input, cache);
+        response = {
+          type: "highlighted",
+          generationId: request.generationId,
+          lines,
+        };
+      } else if (request.type === "prepare-source") {
+        const document = await prepareSourceDocument(request.input, cache);
+        response = {
+          type: "source-prepared",
+          generationId: request.generationId,
+          document,
+        };
+      } else {
+        const document = await prepareDiffDocument(request.input, cache);
+        response = {
+          type: "diff-prepared",
+          generationId: request.generationId,
+          document,
+        };
+      }
       workerScope.postMessage(response);
     } catch (error) {
       const response: CodePreviewHighlightWorkerResponse = {

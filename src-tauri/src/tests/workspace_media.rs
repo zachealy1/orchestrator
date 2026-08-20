@@ -281,6 +281,92 @@ fn workspace_file_preview_completes_empty_and_small_files_immediately() {
 }
 
 #[test]
+fn workspace_file_preview_chunks_stop_at_the_native_limit() {
+    let workspace = test_directory("workspace-preview-native-limit");
+    let file = workspace.join("oversized.txt");
+    let expected_preview = "x".repeat(WORKSPACE_PREVIEW_MAX_BYTES);
+    fs::write(&file, format!("{expected_preview}tail")).unwrap();
+
+    let mut preview = read_workspace_file_preview_blocking(
+        workspace.to_string_lossy().to_string(),
+        file.to_string_lossy().to_string(),
+    )
+    .unwrap();
+    let version = preview.version.clone();
+    let mut assembled = String::new();
+    loop {
+        assert!(preview.truncated);
+        assembled.push_str(&preview.content);
+        if preview.complete {
+            break;
+        }
+        preview = read_workspace_file_preview_chunk_blocking(
+            workspace.to_string_lossy().to_string(),
+            file.to_string_lossy().to_string(),
+            preview.next_offset,
+            Some(version.clone()),
+        )
+        .unwrap();
+    }
+
+    assert_eq!(preview.next_offset, WORKSPACE_PREVIEW_MAX_BYTES as u64);
+    assert_eq!(assembled, expected_preview);
+    let past_limit = read_workspace_file_preview_chunk_blocking(
+        workspace.to_string_lossy().to_string(),
+        file.to_string_lossy().to_string(),
+        WORKSPACE_PREVIEW_MAX_BYTES as u64 + 1,
+        Some(version),
+    );
+    assert!(past_limit.unwrap_err().contains("exceeds preview limit"));
+    remove_test_directory(workspace);
+}
+
+#[test]
+fn workspace_file_preview_bounds_text_at_a_complete_line() {
+    let mut bytes = b"first\n".to_vec();
+    bytes.extend(std::iter::repeat(b'x').take(WORKSPACE_PREVIEW_MAX_BYTES - bytes.len() - 1));
+    bytes.push(b'\n');
+    bytes.extend_from_slice("unfinished é".as_bytes());
+
+    let preview = preview_text_from_bytes(&bytes);
+
+    assert!(preview.truncated);
+    assert!(!preview.is_binary);
+    assert_eq!(preview.content.len(), WORKSPACE_PREVIEW_MAX_BYTES);
+    assert!(preview.content.ends_with('\n'));
+    assert!(!preview.content.contains("unfinished"));
+}
+
+#[test]
+fn oversized_diff_projection_keeps_only_complete_hunks() {
+    let first_hunk = "@@ -1 +1 @@\n-old\n+new\n";
+    let second_hunk = format!(
+        "@@ -2 +2 @@\n{}",
+        "+oversized\n".repeat(WORKSPACE_PREVIEW_MAX_BYTES / 10 + 1)
+    );
+    let diff =
+        format!("diff --git a/file b/file\n--- a/file\n+++ b/file\n{first_hunk}{second_hunk}");
+
+    let (bounded, truncated) = bounded_unified_diff(diff);
+
+    assert!(truncated);
+    assert!(bounded.contains(first_hunk));
+    assert!(!bounded.contains("@@ -2 +2 @@"));
+    assert!(bounded.len() <= WORKSPACE_PREVIEW_MAX_BYTES);
+}
+
+#[test]
+fn oversized_diff_prefix_is_truncated_on_a_utf8_boundary() {
+    let diff = "é".repeat(WORKSPACE_PREVIEW_MAX_BYTES / 2 + 1);
+
+    let (bounded, truncated) = bounded_unified_diff(diff);
+
+    assert!(truncated);
+    assert!(bounded.is_char_boundary(bounded.len()));
+    assert!(bounded.len() <= WORKSPACE_PREVIEW_MAX_BYTES);
+}
+
+#[test]
 fn image_attachment_preparation_validates_content_and_bounds_thumbnail() {
     let directory = test_directory("image-attachment-preview");
     let file = directory.join("reference.data");

@@ -1,5 +1,6 @@
 import type { HighlighterCore, ThemedToken } from "shiki/types";
 import type { ResolvedTheme } from "../shared/types";
+import { recordPreviewDiagnostic } from "./previewDiagnostics";
 
 export const CODE_PREVIEW_THEMES = {
   light: "github-light",
@@ -153,6 +154,7 @@ export class BoundedPreviewHighlightCache<T> {
 
 export class CodePreviewCache {
   #highlighterPromise: Promise<CodePreviewHighlighter> | null = null;
+  readonly #languagePromises = new Map<string, Promise<void>>();
   readonly #highlights: BoundedPreviewHighlightCache<
     Promise<PreviewSemanticToken[][]>
   >;
@@ -167,9 +169,41 @@ export class CodePreviewCache {
     );
   }
 
-  loadHighlighter() {
+  loadHighlighter(language?: string) {
     this.#highlighterPromise ??= createCodeHighlighter();
-    return this.#highlighterPromise;
+    if (!language || language === "plaintext") {
+      return this.#highlighterPromise;
+    }
+
+    let languagePromise = this.#languagePromises.get(language);
+    if (!languagePromise) {
+      const diagnosticIdentity = `grammar:${language}`;
+      recordPreviewDiagnostic({
+        identity: diagnosticIdentity,
+        stage: "grammar-loading",
+      });
+      languagePromise = this.#highlighterPromise
+        .then(async (highlighter) => {
+          const languageDefinition = await loadPreviewLanguage(language);
+          if (!languageDefinition) {
+            throw new Error(`Unsupported preview language: ${language}`);
+          }
+          await highlighter.loadLanguage(languageDefinition as never);
+          recordPreviewDiagnostic({
+            identity: diagnosticIdentity,
+            stage: "grammar-ready",
+          });
+        })
+        .catch((error) => {
+          this.#languagePromises.delete(language);
+          throw error;
+        });
+      this.#languagePromises.set(language, languagePromise);
+    }
+
+    return languagePromise.then(
+      () => this.#highlighterPromise as Promise<CodePreviewHighlighter>,
+    );
   }
 
   get(key: string) {
@@ -190,6 +224,7 @@ export class CodePreviewCache {
 
   clear() {
     this.#highlights.clear();
+    this.#languagePromises.clear();
     this.#highlighterPromise = null;
   }
 
@@ -217,8 +252,8 @@ export function codePreviewTheme(theme: ResolvedTheme) {
   return CODE_PREVIEW_THEMES[theme];
 }
 
-export function loadCodeHighlighter(cache: CodePreviewCache) {
-  return cache.loadHighlighter();
+export function loadCodeHighlighter(cache: CodePreviewCache, language?: string) {
+  return cache.loadHighlighter(language);
 }
 
 export function previewHighlightCacheKey(input: {
@@ -262,7 +297,7 @@ export async function highlightPreviewContent(
     return cached;
   }
 
-  const highlighted = loadCodeHighlighter(cache)
+  const highlighted = loadCodeHighlighter(cache, input.language)
     .then((highlighter) =>
       highlighter.codeToTokens(input.content, {
         lang: input.language as never,
@@ -339,89 +374,46 @@ async function createCodeHighlighter(): Promise<CodePreviewHighlighter> {
     { createJavaScriptRegexEngine },
     githubLight,
     githubDark,
-    bash,
-    c,
-    csharp,
-    css,
-    diff,
-    dockerfile,
-    go,
-    html,
-    java,
-    javascript,
-    json,
-    jsx,
-    kotlin,
-    makefile,
-    markdown,
-    python,
-    rust,
-    sql,
-    swift,
-    toml,
-    tsx,
-    typescript,
-    xml,
-    yaml,
   ] = await Promise.all([
     import("shiki/core"),
     import("shiki/engine/javascript"),
     import("shiki/themes/github-light.mjs"),
     import("shiki/themes/github-dark.mjs"),
-    import("shiki/langs/bash.mjs"),
-    import("shiki/langs/c.mjs"),
-    import("shiki/langs/csharp.mjs"),
-    import("shiki/langs/css.mjs"),
-    import("shiki/langs/diff.mjs"),
-    import("shiki/langs/dockerfile.mjs"),
-    import("shiki/langs/go.mjs"),
-    import("shiki/langs/html.mjs"),
-    import("shiki/langs/java.mjs"),
-    import("shiki/langs/javascript.mjs"),
-    import("shiki/langs/json.mjs"),
-    import("shiki/langs/jsx.mjs"),
-    import("shiki/langs/kotlin.mjs"),
-    import("shiki/langs/makefile.mjs"),
-    import("shiki/langs/markdown.mjs"),
-    import("shiki/langs/python.mjs"),
-    import("shiki/langs/rust.mjs"),
-    import("shiki/langs/sql.mjs"),
-    import("shiki/langs/swift.mjs"),
-    import("shiki/langs/toml.mjs"),
-    import("shiki/langs/tsx.mjs"),
-    import("shiki/langs/typescript.mjs"),
-    import("shiki/langs/xml.mjs"),
-    import("shiki/langs/yaml.mjs"),
   ]);
 
   return createHighlighterCore({
     themes: [githubLight.default, githubDark.default],
-    langs: [
-      bash.default,
-      c.default,
-      csharp.default,
-      css.default,
-      diff.default,
-      dockerfile.default,
-      go.default,
-      html.default,
-      java.default,
-      javascript.default,
-      json.default,
-      jsx.default,
-      kotlin.default,
-      makefile.default,
-      markdown.default,
-      python.default,
-      rust.default,
-      sql.default,
-      swift.default,
-      toml.default,
-      tsx.default,
-      typescript.default,
-      xml.default,
-      yaml.default,
-    ],
+    langs: [],
     engine: createJavaScriptRegexEngine(),
   });
+}
+
+async function loadPreviewLanguage(language: string) {
+  switch (language) {
+    case "bash": return (await import("shiki/langs/bash.mjs")).default;
+    case "c": return (await import("shiki/langs/c.mjs")).default;
+    case "csharp": return (await import("shiki/langs/csharp.mjs")).default;
+    case "css": return (await import("shiki/langs/css.mjs")).default;
+    case "diff": return (await import("shiki/langs/diff.mjs")).default;
+    case "dockerfile": return (await import("shiki/langs/dockerfile.mjs")).default;
+    case "go": return (await import("shiki/langs/go.mjs")).default;
+    case "html": return (await import("shiki/langs/html.mjs")).default;
+    case "java": return (await import("shiki/langs/java.mjs")).default;
+    case "javascript": return (await import("shiki/langs/javascript.mjs")).default;
+    case "json": return (await import("shiki/langs/json.mjs")).default;
+    case "jsx": return (await import("shiki/langs/jsx.mjs")).default;
+    case "kotlin": return (await import("shiki/langs/kotlin.mjs")).default;
+    case "makefile": return (await import("shiki/langs/makefile.mjs")).default;
+    case "markdown": return (await import("shiki/langs/markdown.mjs")).default;
+    case "python": return (await import("shiki/langs/python.mjs")).default;
+    case "rust": return (await import("shiki/langs/rust.mjs")).default;
+    case "sql": return (await import("shiki/langs/sql.mjs")).default;
+    case "swift": return (await import("shiki/langs/swift.mjs")).default;
+    case "toml": return (await import("shiki/langs/toml.mjs")).default;
+    case "tsx": return (await import("shiki/langs/tsx.mjs")).default;
+    case "typescript": return (await import("shiki/langs/typescript.mjs")).default;
+    case "xml": return (await import("shiki/langs/xml.mjs")).default;
+    case "yaml": return (await import("shiki/langs/yaml.mjs")).default;
+    default: return null;
+  }
 }

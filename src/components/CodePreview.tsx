@@ -1,7 +1,6 @@
 import { useVirtualizer } from "@tanstack/react-virtual";
 import {
   memo,
-  startTransition,
   useEffect,
   useLayoutEffect,
   useMemo,
@@ -9,27 +8,24 @@ import {
   useState,
   type CSSProperties,
 } from "react";
-import type { ResolvedTheme } from "../shared/types";
 import {
   codePreviewTheme,
   detectPreviewLanguage,
-  type PreviewSemanticToken,
 } from "../lib/codePreview";
+import { usePreviewOverscan } from "../lib/fixedRowVirtualization";
+import {
+  PREVIEW_HIGHLIGHT_MAX_CHARACTERS,
+  preparePlaintextSourceDocument,
+  sourceDocumentIdentity,
+  type PreparedPreviewToken,
+  type PreparedSourceDocument,
+} from "../lib/previewDocuments";
+import {
+  recordPreviewDiagnostic,
+  recordPreviewGeometry,
+} from "../lib/previewDiagnostics";
 import { useAppServices } from "../runtime/AppServices";
-
-type Token = {
-  content: string;
-  color?: string;
-  semantic?: PreviewSemanticToken["semantic"];
-};
-
-type HighlightedPreview = {
-  path: string;
-  content: string;
-  language: string;
-  resolvedTheme: ResolvedTheme;
-  lines: Token[][];
-};
+import type { ResolvedTheme } from "../shared/types";
 
 type Props = {
   path: string;
@@ -42,15 +38,14 @@ type Props = {
   languageOverride?: string;
 };
 
-const VIRTUAL_OVERSCAN = 30;
-const CODE_ROW_ESTIMATE_PX = 20;
+const CODE_ROW_HEIGHT_PX = 20;
 const CODE_VERTICAL_PADDING_PX = 12;
 const CODE_GUTTER_HORIZONTAL_PADDING_PX = 24;
 const CODE_GUTTER_BORDER_PX = 1;
-const MAX_HIGHLIGHT_SOURCE_CHARACTERS = 2_000_000;
 
 type CodePreviewStyle = CSSProperties & {
   "--code-preview-gutter-width": string;
+  "--code-preview-row-height": string;
 };
 
 type RenderedVirtualRow = {
@@ -75,118 +70,127 @@ export const CodePreview = memo(function CodePreview({
     () => languageOverride ?? detectPreviewLanguage(path),
     [languageOverride, path],
   );
-  const [highlightedPreview, setHighlightedPreview] =
-    useState<HighlightedPreview | null>(null);
-  const [highlightError, setHighlightError] = useState<string | null>(null);
-  const fallbackLines = useMemo(
-    () => lines ?? splitPreviewLines(content),
-    [content, lines],
+  const preparationInput = useMemo(
+    () => ({ path, content, language, truncated, version }),
+    [content, language, path, truncated, version],
   );
-  const theme = codePreviewTheme(resolvedTheme);
-  const lineNumberDigits = String(fallbackLines.length).length;
-  const previewStyle = useMemo<CodePreviewStyle>(
-    () => ({
-      "--code-preview-gutter-width": `calc(${lineNumberDigits}ch + ${
-        CODE_GUTTER_HORIZONTAL_PADDING_PX + CODE_GUTTER_BORDER_PX
-      }px)`,
-    }),
-    [lineNumberDigits],
+  const preparationIdentity = useMemo(
+    () => sourceDocumentIdentity(preparationInput),
+    [preparationInput],
   );
+  const immediateDocument = useMemo(() => {
+    if (!complete) {
+      return null;
+    }
+    if (
+      lines ||
+      language === "plaintext" ||
+      content.length > PREVIEW_HIGHLIGHT_MAX_CHARACTERS
+    ) {
+      return preparePlaintextSourceDocument(preparationInput, lines);
+    }
+    return null;
+  }, [complete, content.length, language, lines, preparationInput]);
+  const [prepared, setPrepared] = useState<PreparedSourceDocument | null>(
+    immediateDocument,
+  );
+  const [preparationError, setPreparationError] = useState<string | null>(null);
 
   useEffect(() => {
-    let disposed = false;
     const abortController = new AbortController();
-    setHighlightedPreview(null);
-    setHighlightError(null);
-
-    if (
-      !complete ||
-      Boolean(lines) ||
-      language === "plaintext" ||
-      content.length > MAX_HIGHLIGHT_SOURCE_CHARACTERS
-    ) {
-      return () => {
-        disposed = true;
-        abortController.abort();
-      };
+    let active = true;
+    setPreparationError(null);
+    if (!complete || immediateDocument) {
+      setPrepared(immediateDocument);
+      return () => abortController.abort();
     }
 
+    setPrepared((current) =>
+      current?.identity === preparationIdentity ? current : null,
+    );
     void codePreviewHighlighting
-      .highlight(
-        {
-          path,
-          content,
-          language,
-          resolvedTheme,
-        },
-        abortController.signal,
-      )
-      .then((lines) => {
-        if (disposed) {
-          return;
-        }
-
-        startTransition(() => {
-          setHighlightedPreview({
-            path,
-            content,
-            language,
-            resolvedTheme,
-            lines,
-          });
-        });
+      .prepareSource(preparationInput, abortController.signal)
+      .then((document) => {
+        if (active) setPrepared(document);
       })
       .catch((error) => {
-        if (disposed) {
+        if (!active) return;
+        if (error instanceof Error && error.name === "AbortError") {
           return;
         }
-
-        setHighlightError(error instanceof Error ? error.message : String(error));
+        setPreparationError(error instanceof Error ? error.message : String(error));
+        setPrepared(preparePlaintextSourceDocument(preparationInput));
       });
-
     return () => {
-      disposed = true;
+      active = false;
       abortController.abort();
     };
   }, [
     codePreviewHighlighting,
     complete,
-    content,
-    language,
-    lines,
-    path,
-    resolvedTheme,
-    theme,
+    immediateDocument,
+    preparationIdentity,
+    preparationInput,
   ]);
 
-  const tokenLines =
-    highlightedPreview?.path === path &&
-    highlightedPreview.content === content &&
-    highlightedPreview.language === language &&
-    highlightedPreview.resolvedTheme === resolvedTheme
-      ? highlightedPreview.lines
-      : null;
+  const document =
+    prepared?.identity === preparationIdentity ? prepared : immediateDocument;
+  const rowCount = document?.lines.length ?? 0;
+  const overscan = usePreviewOverscan(
+    scrollRef,
+    CODE_ROW_HEIGHT_PX,
+    document?.identity,
+  );
   const rowVirtualizer = useVirtualizer({
-    count: fallbackLines.length,
+    count: rowCount,
     getScrollElement: () => scrollRef.current,
-    estimateSize: () => CODE_ROW_ESTIMATE_PX,
-    overscan: VIRTUAL_OVERSCAN,
+    estimateSize: () => CODE_ROW_HEIGHT_PX,
+    overscan,
     paddingStart: CODE_VERTICAL_PADDING_PX,
     paddingEnd: CODE_VERTICAL_PADDING_PX,
     initialRect: { width: 800, height: 720 },
-    getItemKey: (index) => `${path}-${index}`,
+    getItemKey: (index) => `${preparationIdentity}-${index}`,
   });
-  const rowVirtualizerRef = useRef(rowVirtualizer);
-  rowVirtualizerRef.current = rowVirtualizer;
-
-  const scrollResetKey: string | readonly string[] = version ?? lines ?? content;
-  const scrollIdentityRef = useRef({ path, scrollResetKey });
-  if (
-    scrollIdentityRef.current.path !== path ||
-    scrollIdentityRef.current.scrollResetKey !== scrollResetKey
-  ) {
-    scrollIdentityRef.current = { path, scrollResetKey };
-  }
+  const virtualRows: RenderedVirtualRow[] = rowVirtualizer.getVirtualItems();
+  const renderedRows =
+    virtualRows.length > 0
+      ? virtualRows
+      : buildFallbackVirtualRows(
+          rowCount,
+          overscan,
+          CODE_ROW_HEIGHT_PX,
+          CODE_VERTICAL_PADDING_PX,
+          path,
+        );
+  const totalSize = rowVirtualizer.getTotalSize();
+  const lineNumberDigits = String(Math.max(rowCount, 1)).length;
+  const contentWidth = useMemo(
+    () =>
+      Math.max(
+        1,
+        document?.lines.reduce(
+          (maximum, line) =>
+            Math.max(
+              maximum,
+              line.reduce((length, token) => length + token.content.length, 0),
+            ),
+          0,
+        ) ?? 0,
+      ) * 8 +
+      lineNumberDigits * 8 +
+      CODE_GUTTER_HORIZONTAL_PADDING_PX +
+      40,
+    [document, lineNumberDigits],
+  );
+  const previewStyle = useMemo<CodePreviewStyle>(
+    () => ({
+      "--code-preview-gutter-width": `calc(${lineNumberDigits}ch + ${
+        CODE_GUTTER_HORIZONTAL_PADDING_PX + CODE_GUTTER_BORDER_PX
+      }px)`,
+      "--code-preview-row-height": `${CODE_ROW_HEIGHT_PX}px`,
+    }),
+    [lineNumberDigits],
+  );
 
   useLayoutEffect(() => {
     const scrollElement = scrollRef.current;
@@ -194,151 +198,75 @@ export const CodePreview = memo(function CodePreview({
       scrollElement.scrollTop = 0;
       scrollElement.scrollLeft = 0;
     }
-  }, [path, scrollResetKey]);
-
-  useLayoutEffect(() => {
-    rowVirtualizer.measure();
-  }, [content, lines, path]);
+  }, [preparationIdentity]);
 
   useEffect(() => {
-    const scrollElement = scrollRef.current;
-    if (!scrollElement || typeof ResizeObserver === "undefined") {
-      return;
-    }
-
-    let measuredWidth = scrollElement.clientWidth;
-    let anchorFrame: number | null = null;
-    let offsetFrame: number | null = null;
-    const cancelAnchorRestore = () => {
-      if (anchorFrame !== null) {
-        cancelAnimationFrame(anchorFrame);
-        anchorFrame = null;
-      }
-      if (offsetFrame !== null) {
-        cancelAnimationFrame(offsetFrame);
-        offsetFrame = null;
-      }
-    };
-    const resizeObserver = new ResizeObserver((entries) => {
-      const nextWidth = entries[0]?.contentRect.width ?? scrollElement.clientWidth;
-      if (Math.abs(nextWidth - measuredWidth) < 0.5) {
-        return;
-      }
-
-      measuredWidth = nextWidth;
-      const virtualizer = rowVirtualizerRef.current;
-      const scrollTop = scrollElement.scrollTop;
-      const anchor = virtualizer
-        .getVirtualItems()
-        .find((row) => row.start + row.size > scrollTop);
-      const offsetWithinAnchor = anchor ? scrollTop - anchor.start : 0;
-      const previewIdentity = scrollIdentityRef.current;
-      cancelAnchorRestore();
-      virtualizer.measure();
-
-      if (anchor) {
-        anchorFrame = requestAnimationFrame(() => {
-          anchorFrame = null;
-          if (scrollIdentityRef.current !== previewIdentity) {
-            return;
-          }
-          const currentVirtualizer = rowVirtualizerRef.current;
-          currentVirtualizer.scrollToIndex(anchor.index, { align: "start" });
-          offsetFrame = requestAnimationFrame(() => {
-            offsetFrame = null;
-            if (scrollIdentityRef.current !== previewIdentity) {
-              return;
-            }
-            const measuredAnchor = currentVirtualizer
-              .getVirtualItems()
-              .find((row) => row.index === anchor.index);
-            if (measuredAnchor) {
-              currentVirtualizer.scrollToOffset(
-                measuredAnchor.start + offsetWithinAnchor,
-              );
-            }
-          });
-        });
+    if (!document) return;
+    const frame = window.requestAnimationFrame(() => {
+      recordPreviewDiagnostic({
+        identity: document.identity,
+        stage: "stable-paint",
+        rowCount: document.lines.length,
+      });
+      const scrollElement = scrollRef.current;
+      if (scrollElement) {
+        recordPreviewGeometry(
+          document.identity,
+          scrollElement,
+          ".code-preview-line",
+        );
       }
     });
-    resizeObserver.observe(scrollElement);
-    return () => {
-      resizeObserver.disconnect();
-      cancelAnchorRestore();
-    };
-  }, []);
+    return () => window.cancelAnimationFrame(frame);
+  }, [document]);
 
-  const virtualRows: RenderedVirtualRow[] = rowVirtualizer.getVirtualItems();
-  const renderedRows =
-    virtualRows.length > 0
-      ? virtualRows
-      : buildFallbackVirtualRows(
-          fallbackLines.length,
-          CODE_ROW_ESTIMATE_PX,
-          CODE_VERTICAL_PADDING_PX,
-          path,
-        );
-  const totalSize = rowVirtualizer.getTotalSize();
-
-  useLayoutEffect(() => {
-    const scrollElement = scrollRef.current;
-    if (!scrollElement) {
-      return;
-    }
-
-    const maximumScrollTop = Math.max(totalSize - scrollElement.clientHeight, 0);
-    if (scrollElement.scrollTop > maximumScrollTop) {
-      scrollElement.scrollTop = maximumScrollTop;
-    }
-  }, [totalSize]);
-
-  const hasMeta = !complete || truncated || Boolean(highlightError);
+  const theme = codePreviewTheme(resolvedTheme);
+  const hasMeta = truncated || Boolean(preparationError);
 
   return (
     <div
       className="code-preview"
       data-language={language}
-      data-line-count={fallbackLines.length}
+      data-line-count={rowCount}
       data-line-number-digits={lineNumberDigits}
       data-complete={complete ? "true" : "false"}
       data-indexed-lines={lines ? "true" : "false"}
+      data-render-mode={document?.highlightingMode ?? "preparing"}
       data-shiki-theme={theme}
       style={previewStyle}
     >
       {hasMeta ? (
         <div className="code-preview-meta" aria-label="Preview metadata">
-          {!complete ? <span>Loading complete file…</span> : null}
-          {truncated ? <span>Truncated</span> : null}
-          {highlightError ? <span>Plain text fallback</span> : null}
+          {truncated ? <span>Truncated preview</span> : null}
+          {preparationError ? <span>Plain text fallback</span> : null}
         </div>
       ) : null}
-      <pre
-        className="code-preview-code"
-        aria-label="Highlighted file preview"
-        ref={scrollRef}
-      >
-        <code
-          className="code-preview-virtualizer"
-          style={{ height: `${totalSize}px` }}
+      {!complete || !document ? (
+        <div className="code-preview-preparing" role="status">
+          Preparing file preview…
+        </div>
+      ) : (
+        <pre
+          className="code-preview-code"
+          aria-label="Highlighted file preview"
+          ref={scrollRef}
         >
-          {renderedRows.map((virtualRow) => {
-            const lineIndex = virtualRow.index;
-            return (
+          <code
+            className="code-preview-virtualizer"
+            style={{ height: `${totalSize}px`, width: `${contentWidth}px` }}
+          >
+            {renderedRows.map((virtualRow) => (
               <CodePreviewLine
                 key={virtualRow.key}
-                line={
-                  tokenLines?.[lineIndex] ?? [
-                    { content: fallbackLines[lineIndex] ?? "" },
-                  ]
-                }
-                lineIndex={lineIndex}
-                measureElement={rowVirtualizer.measureElement}
-                virtualStart={virtualRow.start}
+                line={document.lines[virtualRow.index] ?? [{ content: "" }]}
+                lineIndex={virtualRow.index}
+                resolvedTheme={resolvedTheme}
+                virtualStart={Math.round(virtualRow.start)}
               />
-            );
-          })}
-        </code>
-      </pre>
+            ))}
+          </code>
+        </pre>
+      )}
     </div>
   );
 });
@@ -346,32 +274,40 @@ export const CodePreview = memo(function CodePreview({
 const CodePreviewLine = memo(function CodePreviewLine({
   line,
   lineIndex,
-  measureElement,
+  resolvedTheme,
   virtualStart,
 }: {
-  line: Token[];
+  line: PreparedPreviewToken[];
   lineIndex: number;
-  measureElement: (node: HTMLSpanElement | null) => void;
+  resolvedTheme: ResolvedTheme;
   virtualStart: number;
 }) {
   return (
     <span
       className="code-preview-line"
       data-index={lineIndex}
-      ref={measureElement}
-      style={{ transform: `translateY(${virtualStart}px)` }}
+      style={{ transform: `translate3d(0, ${virtualStart}px, 0)` }}
     >
       <span className="code-preview-gutter" aria-hidden="true">
-        {lineNumber(lineIndex)}
+        {lineIndex + 1}
       </span>
       <span className="code-preview-source">
         {line.map((token, tokenIndex) => (
           <span
-            className={token.semantic ? `code-preview-token ${token.semantic}` : undefined}
+            className={
+              token.semantic
+                ? `code-preview-token ${token.semantic}`
+                : undefined
+            }
             key={`${lineIndex}-${tokenIndex}`}
             style={
-              token.color && !token.semantic
-                ? { color: token.color }
+              !token.semantic
+                ? {
+                    color:
+                      resolvedTheme === "light"
+                        ? token.lightColor
+                        : token.darkColor,
+                  }
                 : undefined
             }
           >
@@ -383,24 +319,17 @@ const CodePreviewLine = memo(function CodePreviewLine({
   );
 });
 
-function splitPreviewLines(content: string) {
-  return content.length > 0 ? content.split(/\r\n|\r|\n/) : [""];
-}
-
 function buildFallbackVirtualRows(
   count: number,
-  rowEstimate: number,
+  overscan: number,
+  rowHeight: number,
   paddingStart: number,
   keyPrefix: string,
 ): RenderedVirtualRow[] {
-  const visibleCount = Math.min(count, VIRTUAL_OVERSCAN * 2 + 1);
+  const visibleCount = Math.min(count, overscan + 1);
   return Array.from({ length: visibleCount }, (_, index) => ({
     key: `${keyPrefix}-fallback-${index}`,
     index,
-    start: paddingStart + index * rowEstimate,
+    start: paddingStart + index * rowHeight,
   }));
-}
-
-function lineNumber(index: number) {
-  return index + 1;
 }

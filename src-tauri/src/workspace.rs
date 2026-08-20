@@ -145,6 +145,41 @@ fn validate_workspace_file_preview_offset(
     Ok(())
 }
 
+fn workspace_file_preview_limit(source: &mut fs::File, total_bytes: u64) -> Result<u64, String> {
+    let mut limit = total_bytes.min(WORKSPACE_PREVIEW_MAX_BYTES as u64);
+    if limit == total_bytes {
+        return Ok(limit);
+    }
+
+    source
+        .seek(SeekFrom::Start(limit))
+        .map_err(|error| format!("Unable to seek in preview file: {error}"))?;
+    let mut current = [0_u8; 1];
+    source
+        .read_exact(&mut current)
+        .map_err(|error| format!("Unable to inspect preview boundary: {error}"))?;
+    if current[0] & 0xc0 != 0x80 {
+        return Ok(limit);
+    }
+
+    for distance in 1..=3_u64 {
+        let candidate = limit.saturating_sub(distance);
+        source
+            .seek(SeekFrom::Start(candidate))
+            .map_err(|error| format!("Unable to seek in preview file: {error}"))?;
+        let mut byte = [0_u8; 1];
+        source
+            .read_exact(&mut byte)
+            .map_err(|error| format!("Unable to inspect preview boundary: {error}"))?;
+        if utf8_sequence_width(byte[0]).is_some_and(|width| candidate + width as u64 > limit) {
+            limit = candidate;
+            break;
+        }
+    }
+
+    Ok(limit)
+}
+
 fn decode_workspace_file_preview_chunk(
     bytes: &[u8],
     reaches_end_of_file: bool,
@@ -188,6 +223,7 @@ pub(crate) fn read_workspace_file_preview_chunk_blocking(
         .metadata()
         .map_err(|error| format!("Unable to inspect {}: {error}", file_path.display()))?;
     let total_bytes = metadata.len();
+    let preview_limit = workspace_file_preview_limit(&mut source, total_bytes)?;
     let version = workspace_file_preview_version(&metadata)?;
 
     if expected_version
@@ -196,9 +232,9 @@ pub(crate) fn read_workspace_file_preview_chunk_blocking(
     {
         return Err("File changed while loading; restart the preview".to_string());
     }
-    if offset > total_bytes {
+    if offset > preview_limit {
         return Err(format!(
-            "Preview offset {offset} exceeds file size {total_bytes}"
+            "Preview offset {offset} exceeds preview limit {preview_limit}"
         ));
     }
 
@@ -206,7 +242,7 @@ pub(crate) fn read_workspace_file_preview_chunk_blocking(
     source
         .seek(SeekFrom::Start(offset))
         .map_err(|error| format!("Unable to seek in {}: {error}", file_path.display()))?;
-    let maximum_length = (total_bytes - offset).min(WORKSPACE_FILE_PREVIEW_CHUNK_BYTES as u64);
+    let maximum_length = (preview_limit - offset).min(WORKSPACE_FILE_PREVIEW_CHUNK_BYTES as u64);
     let mut bytes = Vec::with_capacity(maximum_length as usize);
     source
         .take(maximum_length)
@@ -228,13 +264,13 @@ pub(crate) fn read_workspace_file_preview_chunk_blocking(
     } else {
         offset + consumed_bytes as u64
     };
-    let complete = is_binary || next_offset == total_bytes;
+    let complete = is_binary || next_offset == preview_limit;
 
     Ok(WorkspaceFilePreview {
         relative_path: relative_workspace_path(&workspace, &file_path)?,
         path: file_path.to_string_lossy().to_string(),
         content,
-        truncated: false,
+        truncated: !is_binary && preview_limit < total_bytes,
         is_binary,
         complete,
         next_offset,

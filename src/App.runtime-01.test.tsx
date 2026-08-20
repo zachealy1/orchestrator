@@ -327,8 +327,10 @@ describe("Application runtime scenarios 1", () => {
           readmeEntry.path,
         ),
       );
-      expect(screen.getByRole("complementary", { name: "File preview" })).toHaveTextContent(
-        "# Mobile client",
+      await waitFor(() =>
+        expect(
+          screen.getByRole("complementary", { name: "File preview" }),
+        ).toHaveTextContent("# Mobile client"),
       );
       expect(screen.queryByLabelText("Selected context files")).not.toBeInTheDocument();
     });

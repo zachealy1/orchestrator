@@ -4,10 +4,12 @@ import {
   readWorkspaceFilePreviewVersion,
 } from "../../codexClient";
 import type { WorkspaceFilePreview } from "./types";
+import { recordPreviewDiagnostic } from "../../lib/previewDiagnostics";
 
 export const FILE_PREVIEW_CACHE_MAX_ENTRIES = 8;
-export const FILE_PREVIEW_CACHE_MAX_CHARACTERS = 12_000_000;
+export const FILE_PREVIEW_CACHE_MAX_CHARACTERS = 12 * 1024 * 1024;
 export const FILE_PREVIEW_MONOLITHIC_MAX_BYTES = 2 * 1024 * 1024;
+export const FILE_PREVIEW_MAX_BYTES = 12 * 1024 * 1024;
 
 export type WorkspaceFilePreviewReader = {
   readInitial: (
@@ -150,6 +152,11 @@ export class WorkspaceFilePreviewService {
     }
 
     const generation = this.#generations.get(key) ?? 0;
+    const diagnosticIdentity = `native:${key}`;
+    recordPreviewDiagnostic({
+      identity: diagnosticIdentity,
+      stage: "native-transfer-started",
+    });
     const shouldContinue = () =>
       (this.#generations.get(key) ?? 0) === generation &&
       (options.shouldContinue?.() ?? true);
@@ -175,6 +182,11 @@ export class WorkspaceFilePreviewService {
         }
         this.#partial.delete(key);
         this.#cacheComplete(key, preview);
+        recordPreviewDiagnostic({
+          identity: diagnosticIdentity,
+          stage: "native-transfer-completed",
+          rowCount: preview.lines?.length,
+        });
         return preview;
       })
       .catch((error) => {
@@ -314,6 +326,10 @@ export class WorkspaceFilePreviewService {
         }
 
         const totalBytes = initial.totalBytes;
+        const previewBytes = Math.min(
+          totalBytes ?? Number.POSITIVE_INFINITY,
+          FILE_PREVIEW_MAX_BYTES,
+        );
         const version = initial.version;
         let nextOffset = initial.nextOffset;
         if (
@@ -336,7 +352,7 @@ export class WorkspaceFilePreviewService {
           appendPreviewLineChunk(lineIndex, initial.content);
         }
 
-        while ((nextOffset as number) < (totalBytes as number)) {
+        while ((nextOffset as number) < previewBytes) {
           if (!shouldContinue()) {
             throw filePreviewLoadCancelledError();
           }
@@ -378,19 +394,22 @@ export class WorkspaceFilePreviewService {
           nextOffset = chunkNextOffset;
         }
 
+        const wasTruncated = previewBytes < (totalBytes as number);
         const indexedLines = lineIndex
-          ? finishPreviewLineIndex(lineIndex)
+          ? finishPreviewLineIndex(lineIndex, wasTruncated)
           : undefined;
         return {
           ...initial,
           content: chunks?.join("") ?? "",
-          truncated: false,
+          truncated: wasTruncated,
           isBinary: false,
           complete: true,
-          nextOffset: totalBytes,
+          nextOffset,
           lines: indexedLines,
           sourceCharacters:
-            lineIndex?.sourceCharacters ??
+            (wasTruncated
+              ? indexedLines?.reduce((total, line) => total + line.length, 0)
+              : lineIndex?.sourceCharacters) ??
             chunks?.reduce((total, chunk) => total + chunk.length, 0),
         };
       } catch (error) {
@@ -465,9 +484,14 @@ function appendPreviewLineChunk(
   }
 }
 
-function finishPreviewLineIndex(index: IncrementalPreviewLineIndex) {
+function finishPreviewLineIndex(
+  index: IncrementalPreviewLineIndex,
+  discardIncompleteLine = false,
+) {
   appendPreviewLineChunk(index, "", true);
-  index.lines.push(index.remainderSegments.join(""));
+  if (!discardIncompleteLine || index.remainderSegments.length === 0) {
+    index.lines.push(index.remainderSegments.join(""));
+  }
   index.remainderSegments = [];
   return index.lines;
 }

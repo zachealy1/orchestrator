@@ -12,41 +12,64 @@ import type {
   CodePreviewHighlightWorkerRequest,
   CodePreviewHighlightWorkerResponse,
 } from "./codePreviewWorkerProtocol";
+import { preparePlaintextSourceDocument } from "./previewDocuments";
 
 class FakeCodePreviewHighlightWorker implements CodePreviewHighlightWorker {
   onmessage:
     | ((event: MessageEvent<CodePreviewHighlightWorkerResponse>) => void)
     | null = null;
   onerror: ((event: ErrorEvent) => void) | null = null;
-  request: CodePreviewHighlightWorkerRequest | null = null;
+  requests = new Map<string, CodePreviewHighlightWorkerRequest>();
   terminate = vi.fn();
 
   postMessage(request: CodePreviewHighlightWorkerRequest) {
-    this.request = request;
+    this.requests.set(request.generationId, request);
   }
 
-  respond(lines: PreviewSemanticToken[][] = [[{ content: "const", offset: 0 }]]) {
-    if (!this.request) {
-      throw new Error("No worker request was posted.");
-    }
-    const response: CodePreviewHighlightWorkerResponse = {
-      type: "highlighted",
-      generationId: this.request.generationId,
-      lines,
-    };
-    this.onmessage?.(new MessageEvent("message", { data: response }));
+  requestForPath(path: string) {
+    return [...this.requests.values()].find(
+      (request) => request.input.path === path,
+    );
   }
 
-  respondWithError(message: string) {
-    if (!this.request) {
-      throw new Error("No worker request was posted.");
-    }
-    const response: CodePreviewHighlightWorkerResponse = {
-      type: "error",
-      generationId: this.request.generationId,
-      message,
-    };
-    this.onmessage?.(new MessageEvent("message", { data: response }));
+  respondHighlighted(
+    request: CodePreviewHighlightWorkerRequest,
+    lines: PreviewSemanticToken[][],
+  ) {
+    this.onmessage?.(
+      new MessageEvent("message", {
+        data: {
+          type: "highlighted",
+          generationId: request.generationId,
+          lines,
+        } satisfies CodePreviewHighlightWorkerResponse,
+      }),
+    );
+  }
+
+  respondSource(request: CodePreviewHighlightWorkerRequest) {
+    if (request.type !== "prepare-source") throw new Error("Expected source request");
+    this.onmessage?.(
+      new MessageEvent("message", {
+        data: {
+          type: "source-prepared",
+          generationId: request.generationId,
+          document: preparePlaintextSourceDocument(request.input),
+        } satisfies CodePreviewHighlightWorkerResponse,
+      }),
+    );
+  }
+
+  respondWithError(request: CodePreviewHighlightWorkerRequest, message: string) {
+    this.onmessage?.(
+      new MessageEvent("message", {
+        data: {
+          type: "error",
+          generationId: request.generationId,
+          message,
+        } satisfies CodePreviewHighlightWorkerResponse,
+      }),
+    );
   }
 }
 
@@ -60,111 +83,124 @@ function input(path: string): CodePreviewHighlightInput {
 }
 
 describe("CodePreviewHighlightingService", () => {
-  it("highlights in a worker and reuses the idle worker", async () => {
-    const workers: FakeCodePreviewHighlightWorker[] = [];
-    const mainThreadHighlight = vi.fn();
+  it("reuses one persistent worker for sequential requests", async () => {
+    const worker = new FakeCodePreviewHighlightWorker();
     const service = new CodePreviewHighlightingService({
-      createWorker: () => {
-        const worker = new FakeCodePreviewHighlightWorker();
-        workers.push(worker);
-        return worker;
-      },
-      highlightOnMainThread: mainThreadHighlight,
+      createWorker: () => worker,
     });
-
     const first = service.highlight(input("/repo/first.ts"));
-    expect(workers[0].request?.input.path).toBe("/repo/first.ts");
-    workers[0].respond([[{ content: "first", offset: 0 }]]);
+    const firstRequest = worker.requestForPath("/repo/first.ts")!;
+    worker.respondHighlighted(firstRequest, [[{ content: "first", offset: 0 }]]);
     await expect(first).resolves.toEqual([[{ content: "first", offset: 0 }]]);
 
     const second = service.highlight(input("/repo/second.ts"));
-    expect(workers).toHaveLength(1);
-    expect(workers[0].request?.input.path).toBe("/repo/second.ts");
-    workers[0].respond([[{ content: "second", offset: 0 }]]);
+    const secondRequest = worker.requestForPath("/repo/second.ts")!;
+    worker.respondHighlighted(secondRequest, [[{ content: "second", offset: 0 }]]);
     await expect(second).resolves.toEqual([[{ content: "second", offset: 0 }]]);
-    expect(mainThreadHighlight).not.toHaveBeenCalled();
+    expect(worker.terminate).not.toHaveBeenCalled();
 
     service.dispose();
-    expect(workers[0].terminate).toHaveBeenCalledOnce();
+    expect(worker.terminate).toHaveBeenCalledOnce();
   });
 
-  it("terminates a stale generation before starting the next file", async () => {
-    const workers: FakeCodePreviewHighlightWorker[] = [];
+  it("allows concurrent preparations to finish independently", async () => {
+    const worker = new FakeCodePreviewHighlightWorker();
     const service = new CodePreviewHighlightingService({
-      createWorker: () => {
-        const worker = new FakeCodePreviewHighlightWorker();
-        workers.push(worker);
-        return worker;
-      },
+      createWorker: () => worker,
+    });
+    const first = service.highlight(input("/repo/first.ts"));
+    const second = service.highlight(input("/repo/second.ts"));
+    const firstRequest = worker.requestForPath("/repo/first.ts")!;
+    const secondRequest = worker.requestForPath("/repo/second.ts")!;
+
+    worker.respondHighlighted(secondRequest, [[{ content: "second", offset: 0 }]]);
+    worker.respondHighlighted(firstRequest, [[{ content: "first", offset: 0 }]]);
+    await expect(second).resolves.toEqual([[{ content: "second", offset: 0 }]]);
+    await expect(first).resolves.toEqual([[{ content: "first", offset: 0 }]]);
+    expect(worker.terminate).not.toHaveBeenCalled();
+  });
+
+  it("warms a requested grammar once without replacing the shared worker", async () => {
+    const worker = new FakeCodePreviewHighlightWorker();
+    const service = new CodePreviewHighlightingService({
+      createWorker: () => worker,
     });
 
-    const stale = service.highlight(input("/repo/stale.ts"));
-    const current = service.highlight(input("/repo/current.ts"));
+    const first = service.warm("/repo/App.tsx");
+    const request = worker.requestForPath("warm.tsx")!;
+    worker.respondSource(request);
+    await first;
+    await service.warm("/repo/Other.tsx");
 
-    await expect(stale).rejects.toMatchObject({ name: "AbortError" });
-    expect(workers[0].terminate).toHaveBeenCalledOnce();
-    expect(workers[1].request?.input.path).toBe("/repo/current.ts");
-    workers[1].respond([[{ content: "current", offset: 0 }]]);
-    await expect(current).resolves.toEqual([[{ content: "current", offset: 0 }]]);
-    service.dispose();
+    expect(worker.requests.size).toBe(1);
+    expect(worker.terminate).not.toHaveBeenCalled();
   });
 
-  it("uses the main thread only when Worker is unavailable", async () => {
+  it("cancels one consumer without terminating the shared worker", async () => {
+    const worker = new FakeCodePreviewHighlightWorker();
+    const service = new CodePreviewHighlightingService({
+      createWorker: () => worker,
+    });
+    const controller = new AbortController();
+    const cancelled = service.highlight(input("/repo/cancelled.ts"), controller.signal);
+    const retained = service.highlight(input("/repo/retained.ts"));
+    const retainedRequest = worker.requestForPath("/repo/retained.ts")!;
+    controller.abort();
+    worker.respondHighlighted(retainedRequest, [[{ content: "retained", offset: 0 }]]);
+
+    await expect(cancelled).rejects.toMatchObject({ name: "AbortError" });
+    await expect(retained).resolves.toEqual([[{ content: "retained", offset: 0 }]]);
+    expect(worker.terminate).not.toHaveBeenCalled();
+  });
+
+  it("prepares and caches immutable source documents", async () => {
+    const worker = new FakeCodePreviewHighlightWorker();
+    const service = new CodePreviewHighlightingService({
+      createWorker: () => worker,
+    });
+    const sourceInput = {
+      path: "/repo/file.ts",
+      content: "const value = 1;",
+      language: "typescript",
+      truncated: false,
+      version: "v1",
+    };
+    const first = service.prepareSource(sourceInput);
+    const request = worker.requestForPath(sourceInput.path)!;
+    worker.respondSource(request);
+    const document = await first;
+    await expect(service.prepareSource(sourceInput)).resolves.toBe(document);
+    expect(worker.requests.size).toBe(1);
+  });
+
+  it("uses the main thread only for small previews when Worker is unavailable", async () => {
     const highlighted = [[{ content: "fallback", offset: 0 }]];
     const mainThreadHighlight = vi.fn().mockResolvedValue(highlighted);
     const service = new CodePreviewHighlightingService({
       createWorker: () => null,
       highlightOnMainThread: mainThreadHighlight,
     });
-
     await expect(service.highlight(input("/repo/fallback.ts"))).resolves.toEqual(
       highlighted,
     );
     expect(mainThreadHighlight).toHaveBeenCalledOnce();
-  });
 
-  it("keeps a large preview plaintext when Worker is unavailable", async () => {
-    const mainThreadHighlight = vi.fn();
-    const service = new CodePreviewHighlightingService({
-      createWorker: () => null,
-      highlightOnMainThread: mainThreadHighlight,
-    });
     const largeInput = {
       ...input("/repo/large.ts"),
       content: "x".repeat(MAIN_THREAD_HIGHLIGHT_MAX_CHARACTERS + 1),
     };
-
     await expect(service.highlight(largeInput)).resolves.toEqual([]);
-    expect(mainThreadHighlight).not.toHaveBeenCalled();
+    expect(mainThreadHighlight).toHaveBeenCalledOnce();
   });
 
-  it("rejects worker failures without moving expensive work to the main thread", async () => {
+  it("rejects one worker request failure without destroying the worker", async () => {
     const worker = new FakeCodePreviewHighlightWorker();
-    const mainThreadHighlight = vi.fn();
     const service = new CodePreviewHighlightingService({
       createWorker: () => worker,
-      highlightOnMainThread: mainThreadHighlight,
     });
-
     const pending = service.highlight(input("/repo/broken.ts"));
-    worker.respondWithError("grammar failed");
-
+    worker.respondWithError(worker.requestForPath("/repo/broken.ts")!, "grammar failed");
     await expect(pending).rejects.toThrow("grammar failed");
-    expect(mainThreadHighlight).not.toHaveBeenCalled();
-    expect(worker.terminate).toHaveBeenCalledOnce();
-  });
-
-  it("supports AbortSignal cancellation", async () => {
-    const worker = new FakeCodePreviewHighlightWorker();
-    const service = new CodePreviewHighlightingService({
-      createWorker: () => worker,
-    });
-    const controller = new AbortController();
-    const pending = service.highlight(input("/repo/cancelled.ts"), controller.signal);
-
-    controller.abort();
-
-    await expect(pending).rejects.toMatchObject({ name: "AbortError" });
-    expect(worker.terminate).toHaveBeenCalledOnce();
+    expect(worker.terminate).not.toHaveBeenCalled();
   });
 });

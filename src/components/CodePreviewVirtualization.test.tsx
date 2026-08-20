@@ -1,13 +1,9 @@
-import { act, render, screen } from "@testing-library/react";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { render } from "@testing-library/react";
+import { describe, expect, it, vi } from "vitest";
 import { CodePreview } from "./CodePreview";
 
 const mocks = vi.hoisted(() => ({
-  measure: vi.fn(),
-  measureElement: vi.fn(),
-  scrollToIndex: vi.fn(),
-  scrollToOffset: vi.fn(),
-  totalSize: 137,
+  totalSize: 20_024,
 }));
 
 vi.mock("@tanstack/react-virtual", () => ({
@@ -16,54 +12,17 @@ vi.mock("@tanstack/react-virtual", () => ({
     getVirtualItems: () => [
       { index: 0, key: "first", start: 12, size: 20 },
     ],
-    measure: mocks.measure,
-    measureElement: mocks.measureElement,
-    scrollToIndex: mocks.scrollToIndex,
-    scrollToOffset: mocks.scrollToOffset,
   }),
-}));
-
-vi.mock("../lib/codePreview", () => ({
-  codePreviewTheme: () => "github-light",
-  detectPreviewLanguage: () => "plaintext",
 }));
 
 vi.mock("../runtime/AppServices", () => ({
   useAppServices: () => ({
-    codePreviewHighlighting: {
-      highlight: vi.fn(),
-    },
+    codePreviewHighlighting: { prepareSource: vi.fn() },
   }),
 }));
 
-describe("CodePreview virtual height", () => {
-  let resizeCallback: ResizeObserverCallback | null = null;
-
-  beforeEach(() => {
-    vi.clearAllMocks();
-    resizeCallback = null;
-    vi.stubGlobal(
-      "ResizeObserver",
-      class {
-        constructor(callback: ResizeObserverCallback) {
-          resizeCallback = callback;
-        }
-
-        observe() {}
-        disconnect() {}
-      },
-    );
-    vi.stubGlobal("requestAnimationFrame", (callback: FrameRequestCallback) => {
-      callback(0);
-      return 1;
-    });
-  });
-
-  afterEach(() => {
-    vi.unstubAllGlobals();
-  });
-
-  it("uses the virtualizer's measured total without restoring an inflated estimate", () => {
+describe("CodePreview fixed-row virtualization", () => {
+  it("uses a deterministic virtual height and integer row transform", () => {
     const content = Array.from(
       { length: 1_000 },
       (_, index) => `line ${index + 1}`,
@@ -78,78 +37,28 @@ describe("CodePreview virtual height", () => {
     );
 
     expect(container.querySelector(".code-preview-virtualizer")).toHaveStyle({
-      height: "137px",
+      height: "20024px",
     });
-    expect(mocks.measure).toHaveBeenCalled();
+    expect(container.querySelector(".code-preview-line")).toHaveStyle({
+      transform: "translate3d(0, 12px, 0)",
+    });
+    expect(container.querySelector(".code-preview-line")).not.toHaveAttribute(
+      "data-measured",
+    );
   });
 
-  it("remeasures wrapped rows on width changes and restores the visible row anchor", () => {
-    render(
+  it("keeps long lines on one editor row", () => {
+    const { container } = render(
       <CodePreview
-        path="/repo/wrapped.txt"
-        content={"a very long wrapped line\nsecond line"}
-        resolvedTheme="light"
+        path="/repo/long.txt"
+        content={"x".repeat(500)}
+        resolvedTheme="dark"
         truncated={false}
       />,
     );
-    const scrollElement = screen.getByLabelText("Highlighted file preview");
-    Object.defineProperty(scrollElement, "clientWidth", {
-      configurable: true,
-      value: 500,
-    });
-    scrollElement.scrollTop = 15;
-
-    act(() => {
-      resizeCallback?.(
-        [{ contentRect: { width: 500 } } as ResizeObserverEntry],
-        {} as ResizeObserver,
-      );
-    });
-
-    expect(mocks.measure).toHaveBeenCalledTimes(2);
-    expect(mocks.scrollToIndex).toHaveBeenCalledWith(0, { align: "start" });
-    expect(mocks.scrollToOffset).toHaveBeenCalledWith(15);
-  });
-
-  it("does not restore an old resize anchor after another file is selected", () => {
-    const frames: FrameRequestCallback[] = [];
-    vi.stubGlobal("requestAnimationFrame", (callback: FrameRequestCallback) => {
-      frames.push(callback);
-      return frames.length;
-    });
-    vi.stubGlobal("cancelAnimationFrame", vi.fn());
-    const { rerender } = render(
-      <CodePreview
-        path="/repo/old.txt"
-        content={"old wrapped line\nold second line"}
-        resolvedTheme="light"
-        truncated={false}
-      />,
-    );
-    const scrollElement = screen.getByLabelText("Highlighted file preview");
-    scrollElement.scrollTop = 15;
-
-    act(() => {
-      resizeCallback?.(
-        [{ contentRect: { width: 500 } } as ResizeObserverEntry],
-        {} as ResizeObserver,
-      );
-    });
-    expect(frames).toHaveLength(1);
-
-    rerender(
-      <CodePreview
-        path="/repo/new.txt"
-        content="new first line"
-        resolvedTheme="light"
-        truncated={false}
-      />,
-    );
-    expect(scrollElement.scrollTop).toBe(0);
-    act(() => frames.shift()?.(0));
-
-    expect(mocks.scrollToIndex).not.toHaveBeenCalled();
-    expect(mocks.scrollToOffset).not.toHaveBeenCalled();
-    expect(scrollElement.scrollTop).toBe(0);
+    const virtualizer = container.querySelector(
+      ".code-preview-virtualizer",
+    ) as HTMLElement;
+    expect(Number.parseFloat(virtualizer.style.width)).toBeGreaterThan(4_000);
   });
 });

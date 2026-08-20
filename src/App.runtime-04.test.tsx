@@ -1242,11 +1242,11 @@ describe("Application runtime scenarios 4", () => {
 
       await user.click(within(workspaceNav).getByRole("button", { name: "large.ts" }));
 
-      expect(await screen.findByText("Preview truncated to 512 KB.")).toBeInTheDocument();
-      expect(await screen.findByText("Truncated")).toBeInTheDocument();
-      expect(screen.getByLabelText("Highlighted file preview")).toHaveTextContent(
-        "const value = 1;",
-      );
+      expect(await screen.findByText("Preview limited to 12 MiB.")).toBeInTheDocument();
+      expect(await screen.findByText("Truncated preview")).toBeInTheDocument();
+      expect(
+        await screen.findByLabelText("Highlighted file preview"),
+      ).toHaveTextContent("const value = 1;");
     });
 
   it("resizes the file preview drawer horizontally", async () => {

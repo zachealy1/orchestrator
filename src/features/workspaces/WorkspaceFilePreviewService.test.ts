@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import type { WorkspaceFilePreview } from "./types";
 import {
+  FILE_PREVIEW_MAX_BYTES,
   WorkspaceFilePreviewService,
   type WorkspaceFilePreviewReader,
 } from "./WorkspaceFilePreviewService";
@@ -104,6 +105,39 @@ describe("WorkspaceFilePreviewService", () => {
     expect(loaded.content).toBe("");
     expect(loaded.lines).toEqual(["one", "two", "three"]);
     expect(loaded.sourceCharacters).toBe(14);
+  });
+
+  it("stops at the preview byte limit and discards an incomplete trailing line", async () => {
+    const native = reader({
+      readInitial: vi.fn().mockResolvedValue(
+        preview("/repo/huge.txt", "first\nunfinished", {
+          complete: false,
+          nextOffset: FILE_PREVIEW_MAX_BYTES - 4,
+          totalBytes: FILE_PREVIEW_MAX_BYTES + 100,
+          version: "huge-v1",
+        }),
+      ),
+      readChunk: vi.fn().mockResolvedValue(
+        preview("/repo/huge.txt", "-tail\ncut", {
+          complete: false,
+          nextOffset: FILE_PREVIEW_MAX_BYTES,
+          totalBytes: FILE_PREVIEW_MAX_BYTES + 100,
+          version: "huge-v1",
+        }),
+      ),
+    });
+    const service = new WorkspaceFilePreviewService(native);
+
+    const loaded = await service.load("/repo", "/repo/huge.txt");
+
+    expect(loaded).toMatchObject({
+      complete: true,
+      truncated: true,
+      nextOffset: FILE_PREVIEW_MAX_BYTES,
+      lines: ["first", "unfinished-tail"],
+      sourceCharacters: 20,
+    });
+    expect(native.readChunk).toHaveBeenCalledOnce();
   });
 
   it("retries the bounded transfer when chunks belong to a stale version", async () => {

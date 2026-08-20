@@ -1,64 +1,72 @@
-import {
-  useVirtualizer,
-  type Virtualizer,
-  type VirtualItem,
-} from "@tanstack/react-virtual";
+import { useVirtualizer, type VirtualItem } from "@tanstack/react-virtual";
 import {
   memo,
-  startTransition,
   useCallback,
   useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
   type KeyboardEvent,
   type PointerEvent,
 } from "react";
-import type { ResolvedTheme } from "../shared/types";
 import type { WorkspaceGitDiffSection } from "../features/workspaces/types";
 import {
   buildDiffOverviewMarkers,
-  buildDiffRows,
   calculateOverviewViewport,
-  highlightDiffSide,
   scrollToOverviewPosition,
-  splitDiffLines,
   type DiffOverviewMarker,
   type DiffOverviewViewport,
   type DiffRow,
-  type DiffToken,
-  type HighlightedDiffSide,
 } from "../lib/diffPreview";
+import { usePreviewOverscan } from "../lib/fixedRowVirtualization";
+import {
+  diffDocumentIdentity,
+  preparePlaintextDiffDocument,
+  type PreparedDiffDocument,
+  type PreparedDiffSection,
+  type PreparedPreviewToken,
+  type PrepareDiffDocumentInput,
+} from "../lib/previewDocuments";
+import {
+  recordPreviewDiagnostic,
+  recordPreviewGeometry,
+} from "../lib/previewDiagnostics";
 import { useAppServices } from "../runtime/AppServices";
+import type { ResolvedTheme } from "../shared/types";
 
 type DiffLayout = "side-by-side" | "inline";
-
-type SectionHighlight = {
-  base: HighlightedDiffSide;
-  head: HighlightedDiffSide;
-  fallback: boolean;
-};
-
 type ScrollMetrics = {
   scrollTop: number;
   scrollHeight: number;
   clientHeight: number;
 };
-
-type OverviewKeyboardAction = "line-up" | "line-down" | "page-up" | "page-down" | "start" | "end";
-
+type OverviewKeyboardAction =
+  | "line-up"
+  | "line-down"
+  | "page-up"
+  | "page-down"
+  | "start"
+  | "end";
 type Props = {
   path: string;
   sections: WorkspaceGitDiffSection[];
   resolvedTheme: ResolvedTheme;
   layout: DiffLayout;
 };
-
-type VirtualDiffRow = {
-  sectionId: string;
+type PreparedSemanticRow = {
+  id: string;
+  section: PreparedDiffSection;
   row: DiffRow;
 };
-
+type PreparedInlineRow = {
+  id: string;
+  kind: DiffRow["kind"];
+  side: "old" | "new" | "context";
+  lineNumber: number | null;
+  tokens: PreparedPreviewToken[];
+  overviewRow: DiffRow;
+};
 type RenderedVirtualRow = Pick<VirtualItem, "key" | "index" | "start">;
 
 const INITIAL_SCROLL_METRICS: ScrollMetrics = {
@@ -66,46 +74,7 @@ const INITIAL_SCROLL_METRICS: ScrollMetrics = {
   scrollHeight: 0,
   clientHeight: 0,
 };
-
-const VIRTUAL_OVERSCAN = 30;
-const SIDE_BY_SIDE_ROW_ESTIMATE_PX = 24;
-const INLINE_ROW_ESTIMATE_PX = 44;
-const PENDING_SECTION_HIGHLIGHT: SectionHighlight = {
-  base: { language: "plaintext", lines: [] },
-  head: { language: "plaintext", lines: [] },
-  fallback: false,
-};
-
-function observeDiffElementOffset<TItemElement extends Element>(
-  instance: Virtualizer<HTMLDivElement, TItemElement>,
-  callback: (offset: number, isScrolling: boolean) => void,
-) {
-  const element = instance.scrollElement;
-  const targetWindow = instance.targetWindow;
-  if (!element || !targetWindow) return;
-
-  let settledTimeoutId: number | null = null;
-  let latestOffset = element.scrollTop;
-  const handleScroll = () => {
-    latestOffset = element.scrollTop;
-    if (settledTimeoutId !== null) {
-      targetWindow.clearTimeout(settledTimeoutId);
-    }
-    settledTimeoutId = targetWindow.setTimeout(() => {
-      settledTimeoutId = null;
-      callback(latestOffset, false);
-    }, instance.options.isScrollingResetDelay);
-    callback(latestOffset, true);
-  };
-
-  element.addEventListener("scroll", handleScroll, { passive: true });
-  return () => {
-    element.removeEventListener("scroll", handleScroll);
-    if (settledTimeoutId !== null) {
-      targetWindow.clearTimeout(settledTimeoutId);
-    }
-  };
-}
+const DIFF_ROW_HEIGHT_PX = 24;
 
 export const DiffPreview = memo(function DiffPreview({
   path,
@@ -113,57 +82,109 @@ export const DiffPreview = memo(function DiffPreview({
   resolvedTheme,
   layout,
 }: Props) {
-  const { codePreview } = useAppServices();
+  const { codePreviewHighlighting } = useAppServices();
   const scrollRef = useRef<HTMLDivElement | null>(null);
   const scrollMetricsFrameRef = useRef<number | null>(null);
-  const renderSections = useMemo(
-    () =>
-      sections.map((section, index) => ({
+  const preparationInput = useMemo<PrepareDiffDocumentInput>(
+    () => ({
+      path,
+      sections: sections.map((section, index) => ({
         id: `${section.kind}-${index}`,
-        section,
-        rows: buildDiffRows(section.baseContent, section.headContent),
+        baseContent: section.baseContent,
+        headContent: section.headContent,
+        diffContent: section.content,
+        baseTruncated: section.baseTruncated,
+        headTruncated: section.headTruncated,
       })),
-    [sections],
+    }),
+    [path, sections],
   );
-  const flattenedRows = useMemo(
+  const preparationIdentity = useMemo(
+    () => diffDocumentIdentity(preparationInput),
+    [preparationInput],
+  );
+  const [prepared, setPrepared] = useState<PreparedDiffDocument | null>(null);
+  const [preparationError, setPreparationError] = useState<string | null>(null);
+  const [scrollMetrics, setScrollMetrics] = useState(INITIAL_SCROLL_METRICS);
+
+  useEffect(() => {
+    const controller = new AbortController();
+    let active = true;
+    setPreparationError(null);
+    setPrepared((current) =>
+      current?.identity === preparationIdentity ? current : null,
+    );
+    void codePreviewHighlighting
+      .prepareDiff(preparationInput, controller.signal)
+      .then((document) => {
+        if (active) setPrepared(document);
+      })
+      .catch((error) => {
+        if (!active) return;
+        if (error instanceof Error && error.name === "AbortError") {
+          return;
+        }
+        setPreparationError(error instanceof Error ? error.message : String(error));
+        setPrepared(preparePlaintextDiffDocument(preparationInput));
+      });
+    return () => {
+      active = false;
+      controller.abort();
+    };
+  }, [
+    codePreviewHighlighting,
+    preparationIdentity,
+    preparationInput,
+  ]);
+
+  const document =
+    prepared?.identity === preparationIdentity ? prepared : null;
+  const semanticRows = useMemo<PreparedSemanticRow[]>(
     () =>
-      renderSections.flatMap(({ id, rows }) =>
-        rows.map((row) => ({
-          sectionId: id,
+      document?.sections.flatMap((section) =>
+        section.rows.map((row) => ({
+          id: `${section.id}-${row.id}`,
+          section,
           row,
         })),
-      ),
-    [renderSections],
+      ) ?? [],
+    [document],
   );
-  const [highlights, setHighlights] = useState<Record<string, SectionHighlight>>(
-    {},
+  const inlineRows = useMemo(
+    () => semanticRows.flatMap(flattenInlineRow),
+    [semanticRows],
   );
-  const [scrollMetrics, setScrollMetrics] = useState(INITIAL_SCROLL_METRICS);
-  const rowEstimate =
-    layout === "side-by-side"
-      ? SIDE_BY_SIDE_ROW_ESTIMATE_PX
-      : INLINE_ROW_ESTIMATE_PX;
+  const displayRows = layout === "side-by-side" ? semanticRows : inlineRows;
+  const overscan = usePreviewOverscan(
+    scrollRef,
+    DIFF_ROW_HEIGHT_PX,
+    document?.identity,
+  );
   const rowVirtualizer = useVirtualizer({
-    count: flattenedRows.length,
+    count: displayRows.length,
     getScrollElement: () => scrollRef.current,
-    estimateSize: () => rowEstimate,
-    overscan: VIRTUAL_OVERSCAN,
+    estimateSize: () => DIFF_ROW_HEIGHT_PX,
+    overscan,
     initialRect: { width: 900, height: 720 },
-    observeElementOffset: observeDiffElementOffset,
-    getItemKey: (index) => {
-      const item = flattenedRows[index];
-      return item ? `${item.sectionId}-${item.row.id}` : index;
-    },
+    getItemKey: (index) => displayRows[index]?.id ?? index,
   });
   const virtualRows: RenderedVirtualRow[] = rowVirtualizer.getVirtualItems();
   const renderedRows =
     virtualRows.length > 0
       ? virtualRows
-      : buildFallbackVirtualRows(flattenedRows.length, rowEstimate, "diff");
+      : buildFallbackVirtualRows(
+          displayRows.length,
+          overscan,
+          DIFF_ROW_HEIGHT_PX,
+          "diff",
+        );
   const totalSize = rowVirtualizer.getTotalSize();
   const overviewRows = useMemo(
-    () => flattenedRows.map(({ row }) => row),
-    [flattenedRows],
+    () =>
+      layout === "side-by-side"
+        ? semanticRows.map(({ row }) => row)
+        : inlineRows.map(({ overviewRow }) => overviewRow),
+    [inlineRows, layout, semanticRows],
   );
   const overviewMarkers = useMemo(
     () => buildDiffOverviewMarkers(overviewRows),
@@ -179,14 +200,42 @@ export const DiffPreview = memo(function DiffPreview({
     [scrollMetrics],
   );
 
+  useLayoutEffect(() => {
+    const scrollElement = scrollRef.current;
+    if (scrollElement) {
+      scrollElement.scrollTop = 0;
+      scrollElement.scrollLeft = 0;
+    }
+  }, [preparationIdentity, layout]);
+
+  useEffect(() => {
+    if (!document) return;
+    const frame = window.requestAnimationFrame(() => {
+      recordPreviewDiagnostic({
+        identity: document.identity,
+        stage: "stable-paint",
+        rowCount: displayRows.length,
+      });
+      const scrollElement = scrollRef.current;
+      if (scrollElement) {
+        recordPreviewGeometry(
+          document.identity,
+          scrollElement,
+          layout === "side-by-side"
+            ? ".diff-preview-row"
+            : ".diff-preview-inline-row",
+        );
+      }
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, [displayRows.length, document]);
+
   const readScrollMetrics = useCallback(() => {
     const scrollElement = scrollRef.current;
     if (!scrollElement) {
       return;
     }
-
     const nextMetrics = readVirtualScrollMetrics(scrollElement, totalSize);
-
     setScrollMetrics((current) =>
       current.scrollTop === nextMetrics.scrollTop &&
       current.scrollHeight === nextMetrics.scrollHeight &&
@@ -200,7 +249,6 @@ export const DiffPreview = memo(function DiffPreview({
     if (scrollMetricsFrameRef.current !== null) {
       return;
     }
-
     scrollMetricsFrameRef.current = window.requestAnimationFrame(() => {
       scrollMetricsFrameRef.current = null;
       readScrollMetrics();
@@ -208,75 +256,20 @@ export const DiffPreview = memo(function DiffPreview({
   }, [readScrollMetrics]);
 
   useEffect(() => {
-    let disposed = false;
-    setHighlights({});
-
-    void Promise.all(
-      renderSections.map(async ({ id, section }) => {
-        try {
-          const [base, head] = await Promise.all([
-            highlightDiffSide(
-              section.baseContent,
-              path,
-              resolvedTheme,
-              codePreview,
-            ),
-            highlightDiffSide(
-              section.headContent,
-              path,
-              resolvedTheme,
-              codePreview,
-            ),
-          ]);
-          return { id, highlight: { base, head, fallback: false } };
-        } catch {
-          return {
-            id,
-            highlight: {
-              base: fallbackHighlight(section.baseContent),
-              head: fallbackHighlight(section.headContent),
-              fallback: true,
-            },
-          };
-        }
-      }),
-    ).then((results) => {
-      if (disposed) {
-        return;
-      }
-
-      startTransition(() => {
-        setHighlights(
-          Object.fromEntries(
-            results.map((result) => [result.id, result.highlight]),
-          ),
-        );
-      });
-    });
-
-    return () => {
-      disposed = true;
-    };
-  }, [codePreview, path, renderSections, resolvedTheme]);
-
-  useEffect(() => {
     const scrollElement = scrollRef.current;
     if (!scrollElement) {
       return;
     }
-
     readScrollMetrics();
     scrollElement.addEventListener("scroll", updateScrollMetrics, {
       passive: true,
     });
-
     const resizeObserver =
       typeof ResizeObserver === "undefined"
         ? null
         : new ResizeObserver(updateScrollMetrics);
     resizeObserver?.observe(scrollElement);
     window.addEventListener("resize", updateScrollMetrics);
-
     return () => {
       scrollElement.removeEventListener("scroll", updateScrollMetrics);
       resizeObserver?.disconnect();
@@ -286,12 +279,12 @@ export const DiffPreview = memo(function DiffPreview({
         scrollMetricsFrameRef.current = null;
       }
     };
-  }, [readScrollMetrics, updateScrollMetrics]);
+  }, [document, readScrollMetrics, updateScrollMetrics]);
 
   useEffect(() => {
     const frameId = window.requestAnimationFrame(readScrollMetrics);
     return () => window.cancelAnimationFrame(frameId);
-  }, [flattenedRows.length, highlights, layout, readScrollMetrics, totalSize]);
+  }, [displayRows.length, layout, readScrollMetrics, totalSize]);
 
   const jumpToOverviewRatio = useCallback(
     (ratio: number) => {
@@ -299,7 +292,6 @@ export const DiffPreview = memo(function DiffPreview({
       if (!scrollElement) {
         return;
       }
-
       scrollToOverviewPosition(
         scrollElement,
         ratio,
@@ -316,15 +308,15 @@ export const DiffPreview = memo(function DiffPreview({
       if (!scrollElement) {
         return;
       }
-
-      const lineStep = 42;
-      const pageStep = Math.max(scrollElement.clientHeight * 0.85, lineStep);
+      const pageStep = Math.max(
+        scrollElement.clientHeight * 0.85,
+        DIFF_ROW_HEIGHT_PX,
+      );
       const maxScrollTop = Math.max(
         getVirtualScrollHeight(totalSize, scrollElement.clientHeight) -
           scrollElement.clientHeight,
         0,
       );
-
       if (action === "start") {
         scrollElement.scrollTop = 0;
       } else if (action === "end") {
@@ -332,9 +324,9 @@ export const DiffPreview = memo(function DiffPreview({
       } else {
         const delta =
           action === "line-up"
-            ? -lineStep
+            ? -DIFF_ROW_HEIGHT_PX
             : action === "line-down"
-              ? lineStep
+              ? DIFF_ROW_HEIGHT_PX
               : action === "page-up"
                 ? -pageStep
                 : pageStep;
@@ -343,7 +335,6 @@ export const DiffPreview = memo(function DiffPreview({
           maxScrollTop,
         );
       }
-
       readScrollMetrics();
     },
     [readScrollMetrics, totalSize],
@@ -353,50 +344,59 @@ export const DiffPreview = memo(function DiffPreview({
     <div
       className={`diff-preview ${layout}${overviewViewport.scrollable ? " overview-visible" : ""}`}
       aria-label="Full file diff preview"
+      data-render-mode={document?.highlightingMode ?? "preparing"}
+      data-row-height={DIFF_ROW_HEIGHT_PX}
     >
       {layout === "side-by-side" ? <DiffPinnedColumnHeader /> : null}
-      <div className="diff-preview-body">
-        <div className="diff-preview-scroll" ref={scrollRef}>
-          {layout === "side-by-side" ? (
-            <SideBySideRows
-              rows={flattenedRows}
-              virtualRows={renderedRows}
-              totalSize={totalSize}
-              highlights={highlights}
-              measureElement={rowVirtualizer.measureElement}
-            />
-          ) : (
-            <InlineRows
-              rows={flattenedRows}
-              virtualRows={renderedRows}
-              totalSize={totalSize}
-              highlights={highlights}
-              measureElement={rowVirtualizer.measureElement}
-            />
-          )}
+      {document?.truncated || preparationError ? (
+        <div className="code-preview-meta" aria-label="Diff metadata">
+          {document?.truncated ? <span>Truncated diff preview</span> : null}
+          {preparationError ? <span>Plain text fallback</span> : null}
         </div>
-        <DiffOverviewRuler
-          markers={overviewMarkers}
-          viewport={overviewViewport}
-          scrollTop={scrollMetrics.scrollTop}
-          maxScrollTop={Math.max(
-            scrollMetrics.scrollHeight - scrollMetrics.clientHeight,
-            0,
-          )}
-          onJumpToRatio={jumpToOverviewRatio}
-          onNavigate={navigateOverview}
-        />
-      </div>
+      ) : null}
+      {!document ? (
+        <div className="code-preview-preparing" role="status">
+          Preparing diff preview…
+        </div>
+      ) : (
+        <div className="diff-preview-body">
+          <div className="diff-preview-scroll" ref={scrollRef}>
+            {layout === "side-by-side" ? (
+              <SideBySideRows
+                rows={semanticRows}
+                virtualRows={renderedRows}
+                totalSize={totalSize}
+                resolvedTheme={resolvedTheme}
+              />
+            ) : (
+              <InlineRows
+                rows={inlineRows}
+                virtualRows={renderedRows}
+                totalSize={totalSize}
+                resolvedTheme={resolvedTheme}
+              />
+            )}
+          </div>
+          <DiffOverviewRuler
+            markers={overviewMarkers}
+            viewport={overviewViewport}
+            scrollTop={scrollMetrics.scrollTop}
+            maxScrollTop={Math.max(
+              scrollMetrics.scrollHeight - scrollMetrics.clientHeight,
+              0,
+            )}
+            onJumpToRatio={jumpToOverviewRatio}
+            onNavigate={navigateOverview}
+          />
+        </div>
+      )}
     </div>
   );
 });
 
 function DiffPinnedColumnHeader() {
   return (
-    <div
-      className="diff-preview-pinned-column-header"
-      aria-label="Diff columns"
-    >
+    <div className="diff-preview-pinned-column-header" aria-label="Diff columns">
       <div className="diff-preview-pinned-column-title old">Original</div>
       <div className="diff-preview-pinned-column-title new">Modified</div>
     </div>
@@ -420,24 +420,15 @@ function DiffOverviewRuler({
 }) {
   const trackRef = useRef<HTMLDivElement | null>(null);
   const activePointerIdRef = useRef<number | null>(null);
-
   const jumpFromClientY = useCallback(
     (clientY: number) => {
       const track = trackRef.current;
-      if (!track) {
-        return;
-      }
-
+      if (!track) return;
       const rect = track.getBoundingClientRect();
-      if (rect.height <= 0) {
-        return;
-      }
-
-      onJumpToRatio((clientY - rect.top) / rect.height);
+      if (rect.height > 0) onJumpToRatio((clientY - rect.top) / rect.height);
     },
     [onJumpToRatio],
   );
-
   const handlePointerDown = useCallback(
     (event: PointerEvent<HTMLDivElement>) => {
       activePointerIdRef.current = event.pointerId;
@@ -447,28 +438,19 @@ function DiffOverviewRuler({
     },
     [jumpFromClientY],
   );
-
   const handlePointerMove = useCallback(
     (event: PointerEvent<HTMLDivElement>) => {
-      if (activePointerIdRef.current !== event.pointerId) {
-        return;
-      }
-
+      if (activePointerIdRef.current !== event.pointerId) return;
       event.preventDefault();
       jumpFromClientY(event.clientY);
     },
     [jumpFromClientY],
   );
-
   const handlePointerEnd = useCallback((event: PointerEvent<HTMLDivElement>) => {
-    if (activePointerIdRef.current !== event.pointerId) {
-      return;
-    }
-
+    if (activePointerIdRef.current !== event.pointerId) return;
     event.currentTarget.releasePointerCapture?.(event.pointerId);
     activePointerIdRef.current = null;
   }, []);
-
   const handleKeyDown = useCallback(
     (event: KeyboardEvent<HTMLDivElement>) => {
       const actionByKey: Partial<Record<string, OverviewKeyboardAction>> = {
@@ -480,20 +462,13 @@ function DiffOverviewRuler({
         End: "end",
       };
       const action = actionByKey[event.key];
-      if (!action) {
-        return;
-      }
-
+      if (!action) return;
       event.preventDefault();
       onNavigate(action);
     },
     [onNavigate],
   );
-
-  if (!viewport.scrollable) {
-    return null;
-  }
-
+  if (!viewport.scrollable) return null;
   return (
     <div
       className="diff-overview-ruler"
@@ -542,56 +517,53 @@ const SideBySideRows = memo(function SideBySideRows({
   rows,
   virtualRows,
   totalSize,
-  highlights,
-  measureElement,
+  resolvedTheme,
 }: {
-  rows: VirtualDiffRow[];
+  rows: PreparedSemanticRow[];
   virtualRows: RenderedVirtualRow[];
   totalSize: number;
-  highlights: Record<string, SectionHighlight>;
-  measureElement: (node: HTMLDivElement | null) => void;
+  resolvedTheme: ResolvedTheme;
 }) {
   return (
     <div
       className="diff-preview-grid virtualized"
       role="table"
       aria-label="Side-by-side diff"
-      style={{ height: `${totalSize}px` }}
+      style={{ height: `${totalSize}px`, width: "100%" }}
     >
       {virtualRows.map((virtualRow) => {
         const item = rows[virtualRow.index];
-        if (!item) {
-          return null;
-        }
-        const row = item.row;
-        const highlight = highlights[item.sectionId] ?? PENDING_SECTION_HIGHLIGHT;
-
+        if (!item) return null;
         return (
           <div
-            className={`diff-preview-row ${row.kind}`}
+            className={`diff-preview-row ${item.row.kind}`}
             role="row"
             key={virtualRow.key}
             data-index={virtualRow.index}
-            ref={measureElement}
-            style={{ transform: `translateY(${virtualRow.start}px)` }}
+            style={{
+              height: `${DIFF_ROW_HEIGHT_PX}px`,
+              transform: `translate3d(0, ${Math.round(virtualRow.start)}px, 0)`,
+            }}
           >
             <DiffCell
               side="old"
-              lineNumber={row.baseLineNumber}
+              lineNumber={item.row.baseLineNumber}
               tokens={tokensForLine(
-                highlight.base.lines,
-                row.baseLineNumber,
-                row.baseText,
+                item.section.baseLines,
+                item.row.baseLineNumber,
+                item.row.baseText,
               )}
+              resolvedTheme={resolvedTheme}
             />
             <DiffCell
               side="new"
-              lineNumber={row.headLineNumber}
+              lineNumber={item.row.headLineNumber}
               tokens={tokensForLine(
-                highlight.head.lines,
-                row.headLineNumber,
-                row.headText,
+                item.section.headLines,
+                item.row.headLineNumber,
+                item.row.headText,
               )}
+              resolvedTheme={resolvedTheme}
             />
           </div>
         );
@@ -604,61 +576,40 @@ const InlineRows = memo(function InlineRows({
   rows,
   virtualRows,
   totalSize,
-  highlights,
-  measureElement,
+  resolvedTheme,
 }: {
-  rows: VirtualDiffRow[];
+  rows: PreparedInlineRow[];
   virtualRows: RenderedVirtualRow[];
   totalSize: number;
-  highlights: Record<string, SectionHighlight>;
-  measureElement: (node: HTMLDivElement | null) => void;
+  resolvedTheme: ResolvedTheme;
 }) {
   return (
     <div
       className="diff-preview-inline virtualized"
       role="table"
       aria-label="Inline diff"
-      style={{ height: `${totalSize}px` }}
+      style={{ height: `${totalSize}px`, width: "100%" }}
     >
       {virtualRows.map((virtualRow) => {
         const item = rows[virtualRow.index];
-        if (!item) {
-          return null;
-        }
-        const row = item.row;
-        const highlight = highlights[item.sectionId] ?? PENDING_SECTION_HIGHLIGHT;
-
+        if (!item) return null;
         return (
           <div
-            className="diff-preview-inline-group"
-            role="rowgroup"
+            className={`diff-preview-inline-row ${item.kind}`}
+            role="row"
             key={virtualRow.key}
             data-index={virtualRow.index}
-            ref={measureElement}
-            style={{ transform: `translateY(${virtualRow.start}px)` }}
+            style={{
+              height: `${DIFF_ROW_HEIGHT_PX}px`,
+              transform: `translate3d(0, ${Math.round(virtualRow.start)}px, 0)`,
+            }}
           >
-            {row.kind !== "added" ? (
-              <DiffCell
-                side={row.kind === "unchanged" ? "context" : "old"}
-                lineNumber={row.baseLineNumber}
-                tokens={tokensForLine(
-                  highlight.base.lines,
-                  row.baseLineNumber,
-                  row.baseText,
-                )}
-              />
-            ) : null}
-            {row.kind !== "removed" && row.kind !== "unchanged" ? (
-              <DiffCell
-                side="new"
-                lineNumber={row.headLineNumber}
-                tokens={tokensForLine(
-                  highlight.head.lines,
-                  row.headLineNumber,
-                  row.headText,
-                )}
-              />
-            ) : null}
+            <DiffCell
+              side={item.side}
+              lineNumber={item.lineNumber}
+              tokens={item.tokens}
+              resolvedTheme={resolvedTheme}
+            />
           </div>
         );
       })}
@@ -670,10 +621,12 @@ const DiffCell = memo(function DiffCell({
   side,
   lineNumber,
   tokens,
+  resolvedTheme,
 }: {
   side: "old" | "new" | "context";
   lineNumber: number | null;
-  tokens: DiffToken[];
+  tokens: PreparedPreviewToken[];
+  resolvedTheme: ResolvedTheme;
 }) {
   return (
     <div className={`diff-preview-cell ${side}`}>
@@ -683,11 +636,20 @@ const DiffCell = memo(function DiffCell({
       <code className="diff-preview-source">
         {tokens.map((token, index) => (
           <span
-            className={token.semantic ? `code-preview-token ${token.semantic}` : undefined}
+            className={
+              token.semantic
+                ? `code-preview-token ${token.semantic}`
+                : undefined
+            }
             key={`${index}-${token.content}`}
             style={
-              token.color && !token.semantic
-                ? { color: token.color }
+              !token.semantic
+                ? {
+                    color:
+                      resolvedTheme === "light"
+                        ? token.lightColor
+                        : token.darkColor,
+                  }
                 : undefined
             }
           >
@@ -699,22 +661,51 @@ const DiffCell = memo(function DiffCell({
   );
 });
 
+function flattenInlineRow(item: PreparedSemanticRow): PreparedInlineRow[] {
+  const { row, section } = item;
+  if (row.kind === "unchanged") {
+    return [{
+      id: `${item.id}-context`,
+      kind: row.kind,
+      side: "context",
+      lineNumber: row.baseLineNumber,
+      tokens: tokensForLine(section.baseLines, row.baseLineNumber, row.baseText),
+      overviewRow: row,
+    }];
+  }
+  const result: PreparedInlineRow[] = [];
+  if (row.kind !== "added") {
+    result.push({
+      id: `${item.id}-old`,
+      kind: row.kind,
+      side: "old",
+      lineNumber: row.baseLineNumber,
+      tokens: tokensForLine(section.baseLines, row.baseLineNumber, row.baseText),
+      overviewRow: row,
+    });
+  }
+  if (row.kind !== "removed") {
+    result.push({
+      id: `${item.id}-new`,
+      kind: row.kind,
+      side: "new",
+      lineNumber: row.headLineNumber,
+      tokens: tokensForLine(section.headLines, row.headLineNumber, row.headText),
+      overviewRow: row,
+    });
+  }
+  return result;
+}
+
 function tokensForLine(
-  lines: DiffToken[][],
+  lines: PreparedPreviewToken[][],
   lineNumber: number | null,
   fallbackText: string,
 ) {
   if (lineNumber === null) {
-    return fallbackText ? [{ content: fallbackText }] : [{ content: "" }];
+    return [{ content: fallbackText }];
   }
   return lines[lineNumber - 1] ?? [{ content: fallbackText }];
-}
-
-function fallbackHighlight(content: string): HighlightedDiffSide {
-  return {
-    language: "plaintext",
-    lines: splitDiffLines(content).map((line) => [{ content: line }]),
-  };
 }
 
 function readVirtualScrollMetrics(
@@ -728,16 +719,10 @@ function readVirtualScrollMetrics(
     scrollHeight,
     clientHeight,
   );
-
   if (scrollElement.scrollTop !== scrollTop) {
     scrollElement.scrollTop = scrollTop;
   }
-
-  return {
-    scrollTop,
-    scrollHeight,
-    clientHeight,
-  };
+  return { scrollTop, scrollHeight, clientHeight };
 }
 
 function getVirtualScrollHeight(totalSize: number, clientHeight: number) {
@@ -749,19 +734,22 @@ function clampScrollTop(
   scrollHeight: number,
   clientHeight: number,
 ) {
-  const maxScrollTop = Math.max(scrollHeight - clientHeight, 0);
-  return Math.min(Math.max(scrollTop, 0), maxScrollTop);
+  return Math.min(
+    Math.max(scrollTop, 0),
+    Math.max(scrollHeight - clientHeight, 0),
+  );
 }
 
 function buildFallbackVirtualRows(
   count: number,
-  rowEstimate: number,
+  overscan: number,
+  rowHeight: number,
   keyPrefix: string,
 ): RenderedVirtualRow[] {
-  const visibleCount = Math.min(count, VIRTUAL_OVERSCAN * 2 + 1);
+  const visibleCount = Math.min(count, overscan + 1);
   return Array.from({ length: visibleCount }, (_, index) => ({
     key: `${keyPrefix}-fallback-${index}`,
     index,
-    start: index * rowEstimate,
+    start: index * rowHeight,
   }));
 }

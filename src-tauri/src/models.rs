@@ -12,6 +12,7 @@ impl specta::Type for IpcJsonValue {
 
 pub(crate) const DATABASE_URL: &str = "sqlite:app.db";
 pub(crate) const WORKSPACE_FILE_PREVIEW_CHUNK_BYTES: usize = 512 * 1024;
+pub(crate) const WORKSPACE_PREVIEW_MAX_BYTES: usize = 12 * 1024 * 1024;
 pub(crate) const WORKSPACE_FILE_BINARY_PROBE_BYTES: usize = 8 * 1024;
 pub(crate) const MAX_IMAGE_ATTACHMENT_BYTES: u64 = 25 * 1024 * 1024;
 pub(crate) const MAX_IMAGE_ATTACHMENT_PIXELS: u64 = 80_000_000;

@@ -175,36 +175,84 @@ pub(crate) fn read_workspace_file_preview_text(
         });
     }
 
-    match fs::read_to_string(&canonical_file) {
-        Ok(content) if content.contains('\0') => Ok(PreviewText {
-            content: String::new(),
-            truncated: false,
-            is_binary: true,
-        }),
-        Ok(content) => Ok(PreviewText {
-            content,
-            truncated: false,
-            is_binary: false,
-        }),
-        Err(error) if error.kind() == std::io::ErrorKind::InvalidData => Ok(PreviewText {
-            content: String::new(),
-            truncated: false,
-            is_binary: true,
-        }),
-        Err(error) => Err(format!(
-            "Unable to read {}: {error}",
-            canonical_file.display()
-        )),
-    }
+    source
+        .seek(std::io::SeekFrom::Start(0))
+        .map_err(|error| format!("Unable to read {}: {error}", canonical_file.display()))?;
+    let mut bytes =
+        Vec::with_capacity((metadata.len() as usize).min(WORKSPACE_PREVIEW_MAX_BYTES + 1));
+    Read::by_ref(&mut source)
+        .take((WORKSPACE_PREVIEW_MAX_BYTES + 1) as u64)
+        .read_to_end(&mut bytes)
+        .map_err(|error| format!("Unable to read {}: {error}", canonical_file.display()))?;
+    Ok(preview_text_from_bytes(&bytes))
 }
 
 pub(crate) fn preview_text_from_bytes(bytes: &[u8]) -> PreviewText {
-    let (content, is_binary) = decode_preview_text(bytes);
+    let truncated = bytes.len() > WORKSPACE_PREVIEW_MAX_BYTES;
+    let bounded = &bytes[..bytes.len().min(WORKSPACE_PREVIEW_MAX_BYTES)];
+    let (mut content, is_binary) = decode_preview_text(bounded);
+    if truncated && !is_binary {
+        content = truncate_to_complete_line(content);
+    }
     PreviewText {
         content,
-        truncated: false,
+        truncated,
         is_binary,
     }
+}
+
+pub(crate) fn bounded_unified_diff(diff: String) -> (String, bool) {
+    if diff.len() <= WORKSPACE_PREVIEW_MAX_BYTES {
+        return (diff, false);
+    }
+
+    let mut prefix = String::new();
+    let mut hunks = Vec::<String>::new();
+    let mut current_hunk: Option<String> = None;
+    for line in diff.split_inclusive('\n') {
+        if line.starts_with("@@ ") {
+            if let Some(hunk) = current_hunk.take() {
+                hunks.push(hunk);
+            }
+            current_hunk = Some(line.to_string());
+        } else if let Some(hunk) = current_hunk.as_mut() {
+            hunk.push_str(line);
+        } else {
+            prefix.push_str(line);
+        }
+    }
+    if let Some(hunk) = current_hunk {
+        hunks.push(hunk);
+    }
+
+    let mut bounded = prefix;
+    for hunk in hunks {
+        if bounded.len() + hunk.len() > WORKSPACE_PREVIEW_MAX_BYTES {
+            break;
+        }
+        bounded.push_str(&hunk);
+    }
+    if bounded.len() > WORKSPACE_PREVIEW_MAX_BYTES {
+        let mut boundary = WORKSPACE_PREVIEW_MAX_BYTES;
+        while !bounded.is_char_boundary(boundary) {
+            boundary -= 1;
+        }
+        bounded.truncate(boundary);
+        bounded = truncate_to_complete_line(bounded);
+    }
+    (bounded, true)
+}
+
+fn truncate_to_complete_line(mut content: String) -> String {
+    if content.ends_with('\n') || content.ends_with('\r') {
+        return content;
+    }
+    if let Some(index) = content.rfind(['\n', '\r']) {
+        content.truncate(index + 1);
+    } else {
+        content.clear();
+    }
+    content
 }
 
 pub(crate) fn empty_preview_text() -> PreviewText {
@@ -262,6 +310,7 @@ pub(crate) fn synthetic_untracked_diff(
         )
     };
 
+    let (diff, diff_truncated) = bounded_unified_diff(diff);
     Ok(WorkspaceGitDiffSection {
         kind: "untracked".to_string(),
         title: "Untracked file".to_string(),
@@ -269,8 +318,8 @@ pub(crate) fn synthetic_untracked_diff(
         head_label: format!("Working tree:{relative_path}"),
         base_content: String::new(),
         head_content: head.content,
-        base_truncated: false,
-        head_truncated: head.truncated,
+        base_truncated: diff_truncated,
+        head_truncated: head.truncated || diff_truncated,
         content: diff,
         is_binary: head.is_binary,
     })
