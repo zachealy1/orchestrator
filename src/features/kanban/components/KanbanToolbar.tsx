@@ -1,4 +1,4 @@
-import { Archive, Filter, Layers3, Search, X } from "lucide-react";
+import { Archive, Filter, Layers3, RefreshCw, Search, X } from "lucide-react";
 import {
   useCallback,
   useEffect,
@@ -24,10 +24,12 @@ export type KanbanToolbarProps = {
   visibleCardCount: number;
   totalCardCount: number;
   archivedOpen?: boolean;
+  refreshing?: boolean;
   disabled?: boolean;
   onSearchChange: (value: string) => void;
   onFiltersChange: (filters: KanbanFilterSelection) => void;
   onGroupByChange: (value: KanbanGroupBy) => void;
+  onRefresh?: () => void;
   onToggleArchived?: () => void;
 };
 
@@ -49,10 +51,12 @@ export function KanbanToolbar({
   visibleCardCount,
   totalCardCount,
   archivedOpen = false,
+  refreshing = false,
   disabled = false,
   onSearchChange,
   onFiltersChange,
   onGroupByChange,
+  onRefresh,
   onToggleArchived,
 }: KanbanToolbarProps) {
   const [filtersOpen, setFiltersOpen] = useState(false);
@@ -228,6 +232,22 @@ export function KanbanToolbar({
       ) : null}
 
       <div className="kanban-toolbar-spacer" />
+      {onRefresh ? (
+        <button
+          type="button"
+          className="kanban-toolbar-button kanban-refresh-button"
+          aria-label="Refresh pull request status"
+          data-tooltip="Refresh pull request status"
+          disabled={disabled || refreshing}
+          onClick={onRefresh}
+        >
+          <RefreshCw
+            className={refreshing ? "spin" : undefined}
+            size={15}
+            aria-hidden="true"
+          />
+        </button>
+      ) : null}
       {onToggleArchived ? (
         <button
           type="button"

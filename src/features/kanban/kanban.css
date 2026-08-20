@@ -785,7 +785,8 @@ button.kanban-card-content {
   white-space: nowrap;
 }
 
-.kanban-toolbar-button.kanban-archive-button {
+.kanban-toolbar-button.kanban-archive-button,
+.kanban-toolbar-button.kanban-refresh-button {
   width: 34px;
   padding: 0;
 }

@@ -188,6 +188,9 @@ type LocalReviewState = {
   error: string | null;
 };
 
+const PENDING_PUBLICATION_SYNC_INTERVAL_MS = 2_000;
+const REVIEW_PULL_REQUEST_SYNC_INTERVAL_MS = 10_000;
+
 type KanbanStatusMessage = {
   workspaceId: number;
   message: string;
@@ -770,7 +773,14 @@ export function KanbanWorkspace({
   const preferenceSavePending = useRef(false);
   const workspaceViewRef = useRef<HTMLDivElement | null>(null);
   const scrollRestorePendingRef = useRef(true);
+  const pullRequestSyncInFlightRef = useRef<{
+    workspaceId: number;
+    operation: Promise<number>;
+  } | null>(null);
+  const workspaceIdRef = useRef(workspace.id);
+  const [pullRequestSyncing, setPullRequestSyncing] = useState(false);
 
+  workspaceIdRef.current = workspace.id;
   snapshotRef.current = snapshot;
   preferencesRef.current = preferences;
   bindingsByCardRef.current = bindingsByCard;
@@ -910,6 +920,30 @@ export function KanbanWorkspace({
     [performBoardLoad],
   );
 
+  const synchronizePullRequests = useCallback(() => {
+    const inFlight = pullRequestSyncInFlightRef.current;
+    if (inFlight?.workspaceId === workspace.id) return inFlight.operation;
+
+    setPullRequestSyncing(true);
+    const operation = (async () => {
+      const updated = await syncKanbanPullRequests(workspace.id);
+      if (updated > 0 && workspaceIdRef.current === workspace.id) {
+        await loadBoard();
+      }
+      return updated;
+    })().finally(() => {
+      if (pullRequestSyncInFlightRef.current?.operation === operation) {
+        pullRequestSyncInFlightRef.current = null;
+        setPullRequestSyncing(false);
+      }
+    });
+    pullRequestSyncInFlightRef.current = {
+      workspaceId: workspace.id,
+      operation,
+    };
+    return operation;
+  }, [loadBoard, workspace.id]);
+
   const reconcileBindings = useCallback(async () => {
     const request = ++reconcileSequence.current;
     const entries = Object.entries(bindingsByCardRef.current);
@@ -970,6 +1004,8 @@ export function KanbanWorkspace({
     boardLoadInFlightRef.current = null;
     boardReloadQueuedRef.current = false;
     boardReloadNeedsArchivedRef.current = false;
+    pullRequestSyncInFlightRef.current = null;
+    setPullRequestSyncing(false);
     const cached = readKanbanWorkspaceCache(workspace.id);
     snapshotRef.current = cached?.snapshot ?? null;
     setSnapshot(cached?.snapshot ?? null);
@@ -1020,27 +1056,52 @@ export function KanbanWorkspace({
       ),
     ),
   );
+  const hasReviewPullRequests = Boolean(
+    snapshot?.cards.some(
+      (card) =>
+        card.archivedAt === null &&
+        card.deletedAt === null &&
+        card.stage === "in_review" &&
+        card.pullRequests?.some(
+          (pullRequest) =>
+            pullRequest.number !== null &&
+            (pullRequest.publicationStatus === "draft" ||
+              pullRequest.publicationStatus === "ready" ||
+              pullRequest.publicationStatus === "closed"),
+        ),
+    ),
+  );
 
   useEffect(() => {
     if (!active || !boardReady) return;
-    let cancelled = false;
-    async function sync() {
-      try {
-        const updated = await syncKanbanPullRequests(workspace.id);
-        if (!cancelled && updated > 0) await loadBoard();
-      } catch {
+    const sync = () => {
+      if (document.visibilityState !== "visible") return;
+      void synchronizePullRequests().catch(() => {
         // A disconnected GitHub account is represented by the persisted card state.
-      }
-    }
-    void sync();
-    const interval = window.setInterval(() => {
-      if (document.visibilityState === "visible") void sync();
-    }, hasPendingPublication ? 2_000 : 60_000);
-    return () => {
-      cancelled = true;
-      window.clearInterval(interval);
+      });
     };
-  }, [active, boardReady, hasPendingPublication, loadBoard, workspace.id]);
+    sync();
+    const intervalMs = hasPendingPublication
+      ? PENDING_PUBLICATION_SYNC_INTERVAL_MS
+      : hasReviewPullRequests
+        ? REVIEW_PULL_REQUEST_SYNC_INTERVAL_MS
+        : null;
+    const interval =
+      intervalMs === null ? null : window.setInterval(sync, intervalMs);
+    window.addEventListener("focus", sync);
+    document.addEventListener("visibilitychange", sync);
+    return () => {
+      if (interval !== null) window.clearInterval(interval);
+      window.removeEventListener("focus", sync);
+      document.removeEventListener("visibilitychange", sync);
+    };
+  }, [
+    active,
+    boardReady,
+    hasPendingPublication,
+    hasReviewPullRequests,
+    synchronizePullRequests,
+  ]);
 
   useEffect(() => {
     if (!active || !archivedOpen || archivedLoadedRef.current) return;
@@ -2032,6 +2093,7 @@ export function KanbanWorkspace({
         (card) => card.archivedAt === null && card.deletedAt === null,
       ).length}
       archivedOpen={archivedOpen}
+      refreshing={pullRequestSyncing}
       disabled={busy}
       onSearchChange={(search) =>
         schedulePreferenceSave({ ...preferencesRef.current, search })
@@ -2042,6 +2104,11 @@ export function KanbanWorkspace({
       onGroupByChange={(groupBy) =>
         schedulePreferenceSave({ ...preferencesRef.current, groupBy })
       }
+      onRefresh={() => {
+        void synchronizePullRequests().catch((syncError) => {
+          setError(`Pull request status could not be refreshed: ${errorMessage(syncError)}`);
+        });
+      }}
       onToggleArchived={() =>
         setArchivedOpen((current) => {
           const next = !current;

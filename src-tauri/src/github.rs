@@ -46,6 +46,21 @@ pub(crate) struct GithubPublicationResult {
     pub pull_requests: Vec<KanbanPullRequestDto>,
 }
 
+#[derive(Clone, Debug)]
+struct PullRequestSyncTarget {
+    id: i64,
+    owner: String,
+    repository: String,
+    number: i64,
+    draft: bool,
+    state: String,
+    publication_status: String,
+    url: Option<String>,
+    error: Option<String>,
+}
+
+const PULL_REQUEST_SYNC_CONCURRENCY: usize = 4;
+
 async fn open_database(app: &AppHandle) -> Result<PoolConnection<Sqlite>, String> {
     app.state::<DatabaseState>().acquire().await
 }
@@ -606,11 +621,7 @@ pub(crate) async fn github_publish_kanban_card(
     })
 }
 
-async fn sync_pull_request(app: &AppHandle, row: &sqlx::sqlite::SqliteRow) -> Result<bool, String> {
-    let owner: String = row.get("owner");
-    let repository: String = row.get("repository");
-    let number: i64 = row.get("pull_request_number");
-    let pull_request = github_cli::view_pull_request(app, &owner, &repository, number).await?;
+fn pull_request_sync_state(pull_request: &github_cli::GithubPullRequest) -> (&str, &str) {
     let state = if pull_request.merged_at.is_some() {
         "merged"
     } else {
@@ -625,23 +636,57 @@ async fn sync_pull_request(app: &AppHandle, row: &sqlx::sqlite::SqliteRow) -> Re
     } else {
         "ready"
     };
+    (state, publication)
+}
+
+fn pull_request_sync_changed(
+    target: &PullRequestSyncTarget,
+    pull_request: &github_cli::GithubPullRequest,
+) -> bool {
+    let (state, publication) = pull_request_sync_state(pull_request);
+    target.draft != pull_request.draft
+        || target.state != state
+        || target.publication_status != publication
+        || target.url.as_deref() != Some(pull_request.url.as_str())
+        || target.error.is_some()
+}
+
+async fn sync_pull_request(
+    app: &AppHandle,
+    target: &PullRequestSyncTarget,
+) -> Result<bool, String> {
+    let pull_request =
+        github_cli::view_pull_request(app, &target.owner, &target.repository, target.number)
+            .await?;
+    let (state, publication) = pull_request_sync_state(&pull_request);
+    let changed = pull_request_sync_changed(target, &pull_request);
     let mut connection = open_database(app).await?;
-    sqlx::query(
-        "UPDATE kanban_pull_requests SET draft = ?1, pull_request_state = ?2,
-                publication_status = ?3, pull_request_url = ?4, last_error = NULL,
-                etag = ?5, last_synced_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP
-         WHERE id = ?6",
-    )
-    .bind(pull_request.draft)
-    .bind(state)
-    .bind(publication)
-    .bind(pull_request.url)
-    .bind(Option::<String>::None)
-    .bind(row.get::<i64, _>("id"))
-    .execute(&mut *connection)
-    .await
-    .map_err(|error| format!("Pull request state could not be saved: {error}"))?;
-    Ok(true)
+    if changed {
+        sqlx::query(
+            "UPDATE kanban_pull_requests SET draft = ?1, pull_request_state = ?2,
+                    publication_status = ?3, pull_request_url = ?4, last_error = NULL,
+                    etag = ?5, last_synced_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP
+             WHERE id = ?6",
+        )
+        .bind(pull_request.draft)
+        .bind(state)
+        .bind(publication)
+        .bind(&pull_request.url)
+        .bind(Option::<String>::None)
+        .bind(target.id)
+        .execute(&mut *connection)
+        .await
+        .map_err(|error| format!("Pull request state could not be saved: {error}"))?;
+    } else {
+        sqlx::query(
+            "UPDATE kanban_pull_requests SET last_synced_at = CURRENT_TIMESTAMP WHERE id = ?1",
+        )
+        .bind(target.id)
+        .execute(&mut *connection)
+        .await
+        .map_err(|error| format!("Pull request sync time could not be saved: {error}"))?;
+    }
+    Ok(changed)
 }
 
 async fn complete_merged_cards(app: &AppHandle) -> Result<u64, String> {
@@ -708,16 +753,33 @@ pub(crate) async fn github_sync_kanban_pull_requests(
     .await
     .map_err(|error| format!("Pending publications could not be recovered: {error}"))?;
     let rows = sqlx::query(
-        "SELECT pr.id, pr.owner, pr.repository, pr.pull_request_number, pr.etag
+        "SELECT pr.id, pr.owner, pr.repository, pr.pull_request_number, pr.draft,
+                pr.pull_request_state, pr.publication_status, pr.pull_request_url,
+                pr.last_error
          FROM kanban_pull_requests pr JOIN kanban_cards card ON card.id = pr.card_id
          WHERE pr.pull_request_number IS NOT NULL
-           AND pr.publication_status IN ('draft','ready','closed','merged')
+           AND pr.publication_status IN ('draft','ready','closed')
+           AND card.stage = 'in_review' AND card.deleted_at IS NULL
            AND (?1 IS NULL OR card.workspace_id = ?1)",
     )
     .bind(workspace_id)
     .fetch_all(&mut *connection)
     .await
     .map_err(|error| format!("Pull requests could not be loaded: {error}"))?;
+    let targets = rows
+        .into_iter()
+        .map(|row| PullRequestSyncTarget {
+            id: row.get("id"),
+            owner: row.get("owner"),
+            repository: row.get("repository"),
+            number: row.get("pull_request_number"),
+            draft: row.get::<i64, _>("draft") != 0,
+            state: row.get("pull_request_state"),
+            publication_status: row.get("publication_status"),
+            url: row.get("pull_request_url"),
+            error: row.get("last_error"),
+        })
+        .collect::<Vec<_>>();
     drop(connection);
     let mut synced = 0_u64;
     for row in stale_publications {
@@ -744,9 +806,19 @@ pub(crate) async fn github_sync_kanban_pull_requests(
         }
         synced += 1;
     }
-    for row in &rows {
-        if matches!(sync_pull_request(&app, row).await, Ok(true)) {
-            synced += 1;
+    for batch in targets.chunks(PULL_REQUEST_SYNC_CONCURRENCY) {
+        let tasks = batch
+            .iter()
+            .cloned()
+            .map(|target| {
+                let app = app.clone();
+                tauri::async_runtime::spawn(async move { sync_pull_request(&app, &target).await })
+            })
+            .collect::<Vec<_>>();
+        for task in tasks {
+            if matches!(task.await, Ok(Ok(true))) {
+                synced += 1;
+            }
         }
     }
     synced += complete_merged_cards(&app).await?;
@@ -790,7 +862,11 @@ pub(crate) async fn github_complete_kanban_without_pull_request(
 
 #[cfg(test)]
 mod tests {
-    use super::{parse_github_remote, safe_pull_request_text};
+    use super::{
+        parse_github_remote, pull_request_sync_changed, safe_pull_request_text,
+        PullRequestSyncTarget,
+    };
+    use crate::github_cli::GithubPullRequest;
 
     #[test]
     fn parses_supported_github_remotes() {
@@ -818,5 +894,34 @@ mod tests {
         assert!(safe.contains("Tests pass."));
         assert!(!safe.contains("API_KEY"));
         assert!(!safe.contains("hidden"));
+    }
+
+    #[test]
+    fn pull_request_sync_only_reports_user_visible_state_changes() {
+        let target = PullRequestSyncTarget {
+            id: 1,
+            owner: "openai".to_string(),
+            repository: "orchestrator".to_string(),
+            number: 12,
+            draft: false,
+            state: "open".to_string(),
+            publication_status: "ready".to_string(),
+            url: Some("https://github.com/openai/orchestrator/pull/12".to_string()),
+            error: None,
+        };
+        let unchanged = GithubPullRequest {
+            number: 12,
+            url: "https://github.com/openai/orchestrator/pull/12".to_string(),
+            state: "open".to_string(),
+            draft: false,
+            merged_at: None,
+        };
+        assert!(!pull_request_sync_changed(&target, &unchanged));
+
+        let merged = GithubPullRequest {
+            merged_at: Some("2026-08-20T12:00:00Z".to_string()),
+            ..unchanged
+        };
+        assert!(pull_request_sync_changed(&target, &merged));
     }
 }

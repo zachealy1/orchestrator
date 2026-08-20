@@ -41,6 +41,7 @@ describe("Kanban controls", () => {
     const onSearchChange = vi.fn();
     const onFiltersChange = vi.fn();
     const onGroupByChange = vi.fn();
+    const onRefresh = vi.fn();
     const onToggleArchived = vi.fn();
 
     render(
@@ -63,6 +64,7 @@ describe("Kanban controls", () => {
         onSearchChange={onSearchChange}
         onFiltersChange={onFiltersChange}
         onGroupByChange={onGroupByChange}
+        onRefresh={onRefresh}
         onToggleArchived={onToggleArchived}
       />,
     );
@@ -91,6 +93,13 @@ describe("Kanban controls", () => {
     await user.click(screen.getByRole("combobox", { name: "Group cards by" }));
     await user.click(screen.getByRole("option", { name: "Repository" }));
     expect(onGroupByChange).toHaveBeenCalledWith("repository");
+
+    const refreshButton = screen.getByRole("button", {
+      name: "Refresh pull request status",
+    });
+    expect(refreshButton).not.toHaveTextContent("Refresh");
+    await user.click(refreshButton);
+    expect(onRefresh).toHaveBeenCalledOnce();
 
     const archivedButton = screen.getByRole("button", {
       name: "Archived cards",

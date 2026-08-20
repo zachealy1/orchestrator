@@ -2,7 +2,10 @@ import { act, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { Workspace } from "../workspaces/types";
-import type { GithubConnectionStatus } from "../github/api";
+import type {
+  GithubConnectionStatus,
+  KanbanPullRequestRecord,
+} from "../github/api";
 import type {
   KanbanBoardSnapshotRecord,
   KanbanCardRecord,
@@ -110,6 +113,27 @@ function binding(overrides: Partial<KanbanGitBinding> = {}): KanbanGitBinding {
     worktreePath: "/workspace/.codex/card-1/repo",
     status: "ready",
     error: null,
+    ...overrides,
+  };
+}
+
+function pullRequest(
+  overrides: Partial<KanbanPullRequestRecord> = {},
+): KanbanPullRequestRecord {
+  return {
+    sourceRepositoryPath: "/workspace/repo",
+    relativePath: "repo",
+    owner: "owner",
+    repository: "repo",
+    number: 12,
+    url: "https://github.com/owner/repo/pull/12",
+    baseBranch: "main",
+    headBranch: "codex/controller-card",
+    draft: true,
+    state: "open",
+    publicationStatus: "draft",
+    error: null,
+    updatedAt: "2026-08-09T12:00:00Z",
     ...overrides,
   };
 }
@@ -383,6 +407,95 @@ describe("KanbanWorkspace controller", () => {
     expect(githubMocks.syncKanbanPullRequests).toHaveBeenCalledTimes(1);
 
     toolbarHost.remove();
+  });
+
+  it("deduplicates focus and visibility refreshes while a sync is active", async () => {
+    let resolveSync!: (updated: number) => void;
+    githubMocks.syncKanbanPullRequests.mockReturnValueOnce(
+      new Promise<number>((resolve) => {
+        resolveSync = resolve;
+      }),
+    );
+    renderWorkspace();
+
+    await screen.findByRole("article", { name: /Controller card/ });
+    await waitFor(() =>
+      expect(githubMocks.syncKanbanPullRequests).toHaveBeenCalledTimes(1),
+    );
+
+    act(() => {
+      window.dispatchEvent(new Event("focus"));
+      document.dispatchEvent(new Event("visibilitychange"));
+    });
+    expect(githubMocks.syncKanbanPullRequests).toHaveBeenCalledTimes(1);
+
+    await act(async () => {
+      resolveSync(0);
+      await Promise.resolve();
+    });
+    githubMocks.syncKanbanPullRequests.mockResolvedValue(0);
+    act(() => window.dispatchEvent(new Event("focus")));
+    await waitFor(() =>
+      expect(githubMocks.syncKanbanPullRequests).toHaveBeenCalledTimes(2),
+    );
+  });
+
+  it("polls open review cards every ten seconds and reloads only after changes", async () => {
+    const setInterval = vi.spyOn(window, "setInterval");
+    apiMocks.loadKanbanBoard.mockResolvedValue(
+      snapshot([card({ pullRequests: [pullRequest()] })]),
+    );
+    renderWorkspace();
+
+    await screen.findByRole("article", { name: /Controller card/ });
+    await waitFor(() =>
+      expect(githubMocks.syncKanbanPullRequests).toHaveBeenCalledTimes(1),
+    );
+    const intervalCall = setInterval.mock.calls.find(
+      ([, delay]) => delay === 10_000,
+    );
+    expect(intervalCall).toBeDefined();
+    const intervalCallback = intervalCall?.[0] as TimerHandler;
+    const initialLoadCount = apiMocks.loadKanbanWorkspaceBootstrap.mock.calls.length;
+
+    act(() => {
+      if (typeof intervalCallback === "function") intervalCallback();
+    });
+    await waitFor(() =>
+      expect(githubMocks.syncKanbanPullRequests).toHaveBeenCalledTimes(2),
+    );
+    expect(apiMocks.loadKanbanWorkspaceBootstrap).toHaveBeenCalledTimes(
+      initialLoadCount,
+    );
+
+    githubMocks.syncKanbanPullRequests.mockResolvedValueOnce(1);
+    act(() => {
+      if (typeof intervalCallback === "function") intervalCallback();
+    });
+    await waitFor(() =>
+      expect(apiMocks.loadKanbanWorkspaceBootstrap).toHaveBeenCalledTimes(
+        initialLoadCount + 1,
+      ),
+    );
+    setInterval.mockRestore();
+  });
+
+  it("keeps an icon-only manual pull request refresh fallback", async () => {
+    const user = userEvent.setup();
+    renderWorkspace();
+
+    await screen.findByRole("article", { name: /Controller card/ });
+    await waitFor(() =>
+      expect(githubMocks.syncKanbanPullRequests).toHaveBeenCalledTimes(1),
+    );
+    const refresh = screen.getByRole("button", {
+      name: "Refresh pull request status",
+    });
+    expect(refresh).not.toHaveTextContent("Refresh");
+    await user.click(refresh);
+    await waitFor(() =>
+      expect(githubMocks.syncKanbanPullRequests).toHaveBeenCalledTimes(2),
+    );
   });
 
   it("loads archived cards only when the archived board is opened", async () => {
