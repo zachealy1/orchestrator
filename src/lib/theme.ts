@@ -2,81 +2,54 @@ import { setTheme as setNativeTheme } from "@tauri-apps/api/app";
 import type { ResolvedTheme, ThemePreference } from "../shared/types";
 
 export const THEME_STORAGE_KEY = "orchestrator.theme";
-export const SYSTEM_DARK_QUERY = "(prefers-color-scheme: dark)";
 
 export function isThemePreference(value: unknown): value is ThemePreference {
-  return value === "light" || value === "dark" || value === "system";
+  return value === "dark";
 }
 
 export function readThemePreference(
-  storage: Pick<Storage, "getItem"> = window.localStorage,
+  _storage: Pick<Storage, "getItem"> = window.localStorage,
 ): ThemePreference {
-  try {
-    const storedPreference = storage.getItem(THEME_STORAGE_KEY);
-    return isThemePreference(storedPreference) ? storedPreference : "system";
-  } catch {
-    return "system";
-  }
+  return "dark";
 }
 
 export function persistThemePreference(
-  preference: ThemePreference,
+  _preference: ThemePreference,
   storage: Pick<Storage, "setItem"> = window.localStorage,
 ) {
   try {
-    storage.setItem(THEME_STORAGE_KEY, preference);
+    storage.setItem(THEME_STORAGE_KEY, "dark");
   } catch {
-    // Theme selection still applies for the current session.
+    // Dark mode still applies for the current session.
   }
 }
 
-export function resolveTheme(
-  preference: ThemePreference,
-  matchMedia: (query: string) => MediaQueryList = window.matchMedia.bind(window),
-): ResolvedTheme {
-  if (preference !== "system") {
-    return preference;
-  }
-
-  return matchMedia(SYSTEM_DARK_QUERY).matches ? "dark" : "light";
+export function resolveTheme(_preference: ThemePreference): ResolvedTheme {
+  return "dark";
 }
 
 export function applyDocumentTheme(
-  theme: ResolvedTheme,
+  _theme: ResolvedTheme,
   root: HTMLElement = document.documentElement,
 ) {
-  root.dataset.theme = theme;
-  root.style.colorScheme = theme;
+  root.dataset.theme = "dark";
+  root.style.colorScheme = "dark";
 }
 
-export function applyResolvedTheme(theme: ResolvedTheme) {
-  applyDocumentTheme(theme);
-  void setNativeTheme(theme).catch(() => {
+export function applyResolvedTheme(_theme: ResolvedTheme) {
+  applyDocumentTheme("dark");
+  void setNativeTheme("dark").catch(() => {
     // Browser previews do not expose the Tauri runtime.
   });
-  return theme;
+  return "dark";
 }
 
-export function applyThemePreference(preference: ThemePreference) {
-  const resolvedTheme = resolveTheme(preference);
-  return applyResolvedTheme(resolvedTheme);
-}
-
-export function watchSystemTheme(
-  onChange: (theme: ResolvedTheme) => void,
-  matchMedia: (query: string) => MediaQueryList = window.matchMedia.bind(window),
-) {
-  const mediaQuery = matchMedia(SYSTEM_DARK_QUERY);
-  const handleChange = (event: MediaQueryListEvent) => {
-    onChange(event.matches ? "dark" : "light");
-  };
-
-  mediaQuery.addEventListener("change", handleChange);
-  return () => mediaQuery.removeEventListener("change", handleChange);
+export function applyThemePreference(_preference: ThemePreference) {
+  return applyResolvedTheme("dark");
 }
 
 export function initializeTheme() {
-  const preference = readThemePreference();
-  applyThemePreference(preference);
-  return preference;
+  persistThemePreference("dark");
+  applyThemePreference("dark");
+  return "dark";
 }

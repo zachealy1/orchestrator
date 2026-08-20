@@ -8,7 +8,6 @@ import {
 
 function actions(): SettingsViewActions {
   return {
-    setThemePreference: vi.fn(),
     setComputerUseEnabled: vi.fn(),
     setBrowserExecutionTarget: vi.fn(),
     installDefaultBrowserExtension: vi.fn(),
@@ -35,7 +34,6 @@ function actions(): SettingsViewActions {
 
 function model(overrides: Partial<SettingsViewModel> = {}): SettingsViewModel {
   return {
-    themePreference: "system",
     computerUseEnabled: true,
     browserExecutionTarget: "default-browser",
     browserRuntimeStatus: {
@@ -70,17 +68,28 @@ function model(overrides: Partial<SettingsViewModel> = {}): SettingsViewModel {
 }
 
 describe("SettingsView", () => {
-  it("routes theme and capability changes through settings actions", () => {
+  it("routes capability changes through settings actions", () => {
     const handlers = actions();
     render(<SettingsView model={model()} actions={handlers} />);
 
-    fireEvent.click(screen.getByRole("radio", { name: "Dark" }));
     fireEvent.click(
       screen.getByRole("checkbox", { name: /enable browser computer use/i }),
     );
 
-    expect(handlers.setThemePreference).toHaveBeenCalledWith("dark");
     expect(handlers.setComputerUseEnabled).toHaveBeenCalledWith(false);
+  });
+
+  it("omits removed overview, appearance, and product information", () => {
+    render(<SettingsView model={model()} actions={actions()} />);
+
+    expect(screen.queryByText("Theme")).not.toBeInTheDocument();
+    expect(screen.queryByText("Choose how Orchestrator looks.")).toBeNull();
+    expect(screen.queryByText("Local models")).toBeNull();
+    expect(screen.queryByText("Ollama or LM Studio.")).toBeNull();
+    expect(screen.queryByText("Token-aware Codex workspace")).toBeNull();
+    expect(
+      screen.queryByText("Manage how Orchestrator works for you."),
+    ).toBeNull();
   });
 
   it("updates notification preferences without owning persistence", () => {

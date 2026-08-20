@@ -54,8 +54,7 @@
 }
 
 .check p,
-.recommendation p,
-.brand-panel p {
+.recommendation p {
   margin: 3px 0 0;
   color: var(--muted);
   font-size: 0.88rem;
@@ -593,15 +592,14 @@ button.pending-interaction-nav:disabled {
 
 .settings-page-header {
   display: flex;
-  min-height: 72px;
+  min-height: 60px;
   align-items: center;
   justify-content: space-between;
   gap: 24px;
   padding: 2px 2px 4px;
 }
 
-.settings-page-header h1,
-.settings-page-header p {
+.settings-page-header h1 {
   margin: 0;
 }
 
@@ -610,12 +608,6 @@ button.pending-interaction-nav:disabled {
   font-size: clamp(1.8rem, 2.2vw, 2.35rem);
   line-height: 1.05;
   letter-spacing: -0.025em;
-}
-
-.settings-page-header p {
-  margin-top: 8px;
-  color: var(--color-text-secondary);
-  font-size: 0.94rem;
 }
 
 .settings-search {
@@ -858,11 +850,6 @@ button.settings-status-card:focus-visible:not(:disabled) {
   color: currentColor;
 }
 
-.settings-theme-selector {
-  width: 100%;
-  max-width: 300px;
-}
-
 .settings-connection-row {
   grid-template-columns: 34px minmax(0, 1fr) auto auto;
 }
@@ -962,7 +949,7 @@ button.settings-manage-button:focus-visible:not(:disabled) {
 
 .settings-section-navigation {
   display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 12px;
 }
 
@@ -1019,11 +1006,100 @@ button.settings-section-link:focus-visible:not(:disabled) {
 }
 
 .settings-panel {
+  overflow: hidden;
   scroll-margin-top: 20px;
+  padding: 0;
+  box-shadow: 0 8px 28px rgb(var(--shadow-rgb) / 0.07);
 }
 
 .settings-panel .setting-list {
-  gap: 8px;
+  gap: 0;
+  padding: 0 18px 18px;
+}
+
+.settings-detail-header {
+  min-height: 80px;
+  align-items: center;
+  margin: 0;
+  border-bottom: 1px solid var(--color-divider);
+  padding: 16px 18px;
+}
+
+.settings-detail-heading {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 12px;
+}
+
+.settings-detail-header-icon {
+  display: grid;
+  width: 40px;
+  height: 40px;
+  flex: 0 0 auto;
+  place-items: center;
+  border-radius: var(--radius);
+  background: var(--color-selected-background);
+  color: var(--color-icon);
+}
+
+.settings-detail-header-copy {
+  display: grid;
+  min-width: 0;
+  gap: 5px;
+}
+
+.settings-detail-header-copy h2,
+.settings-detail-header-copy p {
+  margin: 0;
+}
+
+.settings-detail-header-copy h2 {
+  color: var(--color-text);
+  font-size: 1rem;
+}
+
+.settings-detail-header-copy p {
+  overflow: hidden;
+  color: var(--color-text-secondary);
+  font-size: 0.79rem;
+  line-height: 1.35;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.settings-detail-header .run-status,
+.settings-detail-header .notification-permission-status {
+  min-height: 30px;
+  padding: 6px 9px;
+}
+
+.settings-panel .setting-row {
+  min-height: 68px;
+  border: 0;
+  border-bottom: 1px solid var(--color-divider);
+  border-radius: 0;
+  background: transparent;
+  padding: 14px 2px;
+}
+
+.settings-panel .setting-list > .setting-row:last-child {
+  border-bottom: 0;
+}
+
+.settings-panel .setting-row > div {
+  gap: 4px;
+}
+
+.settings-panel .setting-row > .button-row {
+  display: flex;
+  flex-wrap: nowrap;
+  align-items: center;
+  justify-content: flex-end;
+}
+
+.settings-panel .setting-row > div > span {
+  line-height: 1.4;
 }
 
 .computer-use-target-selector {
@@ -1050,7 +1126,18 @@ button.settings-section-link:focus-visible:not(:disabled) {
 
 .account-management {
   display: grid;
-  gap: 8px;
+  gap: 0;
+  border-bottom: 1px solid var(--color-divider);
+  padding: 4px 2px 14px;
+}
+
+.account-management > .muted {
+  padding: 12px 0;
+}
+
+.account-management > button.secondary {
+  justify-self: start;
+  margin-top: 12px;
 }
 
 .managed-account-row {
@@ -1059,7 +1146,11 @@ button.settings-section-link:focus-visible:not(:disabled) {
   gap: 10px;
   align-items: center;
   border-bottom: 1px solid var(--color-divider);
-  padding: 10px 0;
+  padding: 12px 0;
+}
+
+.managed-account-row:last-of-type {
+  border-bottom: 0;
 }
 
 .managed-account-row > div:nth-child(2) {
@@ -1117,56 +1208,28 @@ button.settings-section-link:focus-visible:not(:disabled) {
 .notification-settings-actions {
   display: flex;
   justify-content: flex-end;
-  margin-top: 12px;
+  margin: 0;
+  border-top: 1px solid var(--color-divider);
+  padding: 14px 18px 18px;
 }
 
 .computer-use-runtime-error {
-  margin: 10px 12px 0;
+  margin: 0 18px 18px;
+  border-radius: 6px;
+  background: rgb(var(--error-rgb) / 0.08);
   color: var(--color-error);
   font-size: 0.82rem;
   line-height: 1.45;
+  padding: 10px 12px;
 }
 
 .github-settings-panel .setting-row {
-  align-items: start;
+  align-items: center;
 }
 
 .managed-account-row:focus-visible {
   outline: 2px solid rgb(var(--primary-rgb) / 0.7);
   outline-offset: 2px;
-}
-
-.brand-panel {
-  display: grid;
-  gap: 14px;
-}
-
-.brand-lockup {
-  display: flex;
-  gap: 14px;
-  align-items: center;
-}
-
-.brand-lockup-mark {
-  width: 52px;
-  height: 52px;
-  flex: 0 0 auto;
-}
-
-.brand-lockup > div {
-  display: grid;
-  gap: 3px;
-}
-
-.brand-lockup h2 {
-  margin: 0;
-  color: var(--color-text);
-  font-size: 1.12rem;
-}
-
-.brand-lockup span {
-  color: var(--color-text-secondary);
-  font-size: 0.82rem;
 }
 
 @media (max-width: 1300px) {

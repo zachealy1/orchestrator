@@ -740,8 +740,7 @@ button.account-switcher-item:hover:not(:disabled) {
 .topbar h2,
 .topbar p,
 .surface h2,
-.surface p,
-.brand-panel p {
+.surface p {
   margin: 0;
 }
 

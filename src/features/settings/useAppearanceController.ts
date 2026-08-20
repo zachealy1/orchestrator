@@ -1,39 +1,19 @@
-import { useEffect, useState, type Dispatch, type SetStateAction } from "react";
+import { useEffect } from "react";
 import {
-  applyResolvedTheme,
   applyThemePreference,
   persistThemePreference,
-  readThemePreference,
-  resolveTheme,
-  watchSystemTheme,
 } from "../../lib/theme";
-import type { ThemePreference } from "../../shared/types";
+import type { ResolvedTheme } from "../../shared/types";
 
 export type AppearanceController = {
-  themePreference: ThemePreference;
-  setThemePreference: Dispatch<SetStateAction<ThemePreference>>;
-  resolvedTheme: ReturnType<typeof resolveTheme>;
+  resolvedTheme: ResolvedTheme;
 };
 
 export function useAppearanceController(): AppearanceController {
-  const [themePreference, setThemePreference] = useState<ThemePreference>(
-    readThemePreference,
-  );
-  const [resolvedTheme, setResolvedTheme] = useState(() =>
-    resolveTheme(readThemePreference()),
-  );
-
   useEffect(() => {
-    persistThemePreference(themePreference);
-    setResolvedTheme(applyThemePreference(themePreference));
+    persistThemePreference("dark");
+    applyThemePreference("dark");
+  }, []);
 
-    if (themePreference !== "system") return;
-
-    return watchSystemTheme((theme) => {
-      applyResolvedTheme(theme);
-      setResolvedTheme(theme);
-    });
-  }, [themePreference]);
-
-  return { themePreference, setThemePreference, resolvedTheme };
+  return { resolvedTheme: "dark" };
 }
