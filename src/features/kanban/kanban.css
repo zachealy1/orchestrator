@@ -258,7 +258,7 @@
 .kanban-card-topline {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
-  align-items: start;
+  align-items: center;
 }
 
 .kanban-card-badges {
@@ -273,7 +273,7 @@
 
 .kanban-card-top-actions {
   min-width: 0;
-  align-self: start;
+  align-self: center;
 }
 
 .kanban-mode-badge {

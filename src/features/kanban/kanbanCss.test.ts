@@ -186,7 +186,8 @@ describe("Kanban local review styles", () => {
     expect(topline).toContain(
       "grid-template-columns: minmax(0, 1fr) auto",
     );
-    expect(topline).toContain("align-items: start");
+    expect(topline).toContain("align-items: center");
+    expect(actions).toContain("align-self: center");
     expect(badges).toContain("width: 100%");
     expect(badges).toContain("min-width: 0");
     expect(badges).toContain("flex-wrap: nowrap");
@@ -195,7 +196,7 @@ describe("Kanban local review styles", () => {
     expect(narrowBadges).not.toContain("grid-template-columns");
     expect(stateBadge).toContain("flex: 0 1 auto");
     expect(modeBadge).toContain("flex: 0 0 auto");
-    expect(actions).toContain("align-self: start");
+    expect(actions).toContain("align-self: center");
     expect(content).toContain("min-width: 0");
     expect(content).toContain("overflow: hidden");
     expect(content).toContain("align-content: start");
