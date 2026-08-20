@@ -82,7 +82,6 @@ export const GithubDeviceLoginDialog = memo(function GithubDeviceLoginDialog({
         aria-describedby="github-device-login-description"
       >
         <div>
-          <p className="eyebrow">Source control</p>
           <h2 id="github-device-login-title">Connect GitHub</h2>
           <p id="github-device-login-description">
             {browserOpened

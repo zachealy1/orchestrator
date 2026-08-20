@@ -162,6 +162,62 @@ describe("Kanban controls", () => {
     expect(onConfirm).toHaveBeenCalledOnce();
   });
 
+  it("uses one visible title for standard transition confirmations", () => {
+    render(
+      <KanbanTransitionDialog
+        open
+        kind="approve-done"
+        card={card}
+        onCancel={vi.fn()}
+        onConfirm={vi.fn()}
+      />,
+    );
+
+    const dialog = screen.getByRole("alertdialog", {
+      name: "Approve this result?",
+    });
+    expect(dialog.querySelector(".eyebrow")).toBeNull();
+    expect(dialog.querySelectorAll("h2")).toHaveLength(1);
+    const cancelButton = screen.getByRole("button", { name: "Cancel" });
+    const confirmButton = screen.getByRole("button", {
+      name: "Approve and mark Done",
+    });
+    expect(cancelButton).toHaveClass("native-plan-icon-action");
+    expect(cancelButton).toHaveTextContent("");
+    expect(cancelButton).toHaveAttribute("data-tooltip", "Cancel");
+    expect(confirmButton).toHaveClass(
+      "native-plan-icon-action",
+      "implement",
+    );
+    expect(confirmButton).toHaveTextContent("");
+    expect(confirmButton).toHaveAttribute(
+      "data-tooltip",
+      "Approve and mark Done",
+    );
+  });
+
+  it("uses icon-only actions for destructive transition confirmations", () => {
+    render(
+      <KanbanTransitionDialog
+        open
+        kind="discard-uncommitted"
+        card={card}
+        onCancel={vi.fn()}
+        onConfirm={vi.fn()}
+      />,
+    );
+
+    const cancelButton = screen.getByRole("button", { name: "Cancel" });
+    const confirmButton = screen.getByRole("button", {
+      name: "Discard changes",
+    });
+    expect(cancelButton).toHaveClass("native-plan-icon-action");
+    expect(cancelButton).toHaveTextContent("");
+    expect(confirmButton).toHaveClass("native-plan-icon-action", "cancel");
+    expect(confirmButton).toHaveTextContent("");
+    expect(confirmButton).toHaveAttribute("data-tooltip", "Discard changes");
+  });
+
   it("uses the archive-specific layout and borderless icon actions", async () => {
     const user = userEvent.setup();
     const onCancel = vi.fn();

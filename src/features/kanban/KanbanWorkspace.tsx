@@ -281,6 +281,7 @@ function KanbanGitDialog({
   );
   const copy = GIT_DIALOG_COPY[dialog.action];
   const messageRequired = dialog.action !== "merge";
+  const iconOnlyActions = dialog.action === "merge";
 
   useEffect(() => {
     const frame = window.requestAnimationFrame(() => {
@@ -338,7 +339,7 @@ function KanbanGitDialog({
         }}
       >
         <div>
-          <p className="eyebrow">Git</p>
+          {!iconOnlyActions ? <p className="eyebrow">Git</p> : null}
           <h2 id="kanban-git-dialog-title">{copy.title}</h2>
           <p id="kanban-git-dialog-description">
             Each repository is handled independently. Partial results are
@@ -362,15 +363,24 @@ function KanbanGitDialog({
         <div className="confirmation-actions">
           <button
             type="button"
-            className="secondary"
+            className={iconOnlyActions ? "native-plan-icon-action" : "secondary"}
+            aria-label={iconOnlyActions ? "Cancel" : undefined}
+            data-tooltip={iconOnlyActions ? "Cancel" : undefined}
             disabled={busy}
             onClick={onCancel}
           >
-            Cancel
+            {iconOnlyActions ? <X size={15} aria-hidden="true" /> : "Cancel"}
           </button>
-          <button ref={confirmRef} type="submit" disabled={confirmDisabled}>
+          <button
+            ref={confirmRef}
+            type="submit"
+            className={iconOnlyActions ? "native-plan-icon-action implement" : undefined}
+            aria-label={iconOnlyActions ? (busy ? copy.busy : copy.confirm) : undefined}
+            data-tooltip={iconOnlyActions ? (busy ? copy.busy : copy.confirm) : undefined}
+            disabled={confirmDisabled}
+          >
             <GitDialogActionIcon action={dialog.action} busy={busy} />
-            {busy ? copy.busy : copy.confirm}
+            {iconOnlyActions ? null : busy ? copy.busy : copy.confirm}
           </button>
         </div>
       </form>

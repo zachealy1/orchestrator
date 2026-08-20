@@ -958,7 +958,6 @@ function UndoEditedFilesDialog({
         aria-busy={busy}
       >
         <div>
-          <p className="eyebrow">File changes</p>
           <h2 id={titleId}>Undo changes?</h2>
           <p id={descriptionId}>
             Undo the changes represented by this summary?

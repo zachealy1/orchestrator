@@ -37,7 +37,6 @@ export function WorkspaceDeleteDialog({
         aria-describedby="workspace-delete-description"
       >
         <div>
-          <p className="eyebrow">Workspace</p>
           <h2 id="workspace-delete-title">Remove workspace?</h2>
           <p id="workspace-delete-description">
             This removes {workspace.label} from Orchestrator. The folder on disk

@@ -41,10 +41,9 @@ export type KanbanTransitionDialogProps = {
 
 const COPY: Record<
   KanbanTransitionKind,
-  { eyebrow: string; title: string; description: string; confirm: string; danger: boolean }
+  { title: string; description: string; confirm: string; danger: boolean }
 > = {
   stop: {
-    eyebrow: "Active agent",
     title: "Stop this agent?",
     description:
       "The current turn will be interrupted. Its conversation, branch, worktree, and completed output are preserved so the card can be retried later.",
@@ -52,7 +51,6 @@ const COPY: Record<
     danger: true,
   },
   "stop-and-move": {
-    eyebrow: "Active agent",
     title: "Stop this agent and move the card?",
     description:
       "The current turn will be interrupted. The conversation, branch, worktree, and completed output will be preserved.",
@@ -60,7 +58,6 @@ const COPY: Record<
     danger: true,
   },
   "approve-done": {
-    eyebrow: "Review decision",
     title: "Approve this result?",
     description:
       "This marks the card Done. It does not commit, push, merge, remove a worktree, or delete a branch.",
@@ -68,7 +65,6 @@ const COPY: Record<
     danger: false,
   },
   "approve-local": {
-    eyebrow: "Local review",
     title: "Approve and merge locally?",
     description:
       "Orchestrator will commit outstanding card changes and merge each card branch into its captured local target. Nothing will be pushed.",
@@ -76,7 +72,6 @@ const COPY: Record<
     danger: false,
   },
   "complete-without-pr": {
-    eyebrow: "No repository changes",
     title: "Complete without a pull request?",
     description:
       "No repository changes or commits were found. Completing this card moves it to Done without opening a pull request.",
@@ -84,7 +79,6 @@ const COPY: Record<
     danger: false,
   },
   "request-changes": {
-    eyebrow: "Continue work",
     title: "Return this card to In progress?",
     description:
       "A continuation turn will start in the same card conversation and isolated worktrees. Add the requested changes in the conversation after continuing.",
@@ -92,7 +86,6 @@ const COPY: Record<
     danger: false,
   },
   archive: {
-    eyebrow: "Archive card",
     title: "Archive this card?",
     description:
       "Archived cards leave the board but retain their conversation, review state, branches, worktrees, and Git artifacts. An active agent must stop first.",
@@ -100,7 +93,6 @@ const COPY: Record<
     danger: false,
   },
   delete: {
-    eyebrow: "Destructive action",
     title: "Delete this card?",
     description:
       "Choose artifact cleanup explicitly. Uncommitted work is never discarded and branches are never deleted unless you select and confirm those actions.",
@@ -108,7 +100,6 @@ const COPY: Record<
     danger: true,
   },
   "discard-uncommitted": {
-    eyebrow: "Uncommitted work",
     title: "Discard uncommitted changes?",
     description:
       "This permanently removes uncommitted work from the card worktree. Commits and conversation history are not affected.",
@@ -161,7 +152,6 @@ export function KanbanTransitionDialog({
   const isStopAndMove = kind === "stop-and-move";
   const isCompleteWithoutPullRequest = kind === "complete-without-pr";
   const usesSummaryLayout = isArchive || isCompleteWithoutPullRequest;
-  const iconOnlyActions = isDelete || usesSummaryLayout || isStopAndMove;
   const title = isDelete ? `Delete ${card.title}?` : copy.title;
   const description = isDelete
     ? "The card will be removed. Worktrees and branches stay on disk."
@@ -256,9 +246,7 @@ export function KanbanTransitionDialog({
                 size={28}
                 aria-hidden="true"
               />
-            ) : (
-              <span className="eyebrow">{copy.eyebrow}</span>
-            )}
+            ) : null}
             <h2 id="kanban-transition-title">{title}</h2>
           </div>
           {!isStopAndMove ? (
@@ -377,14 +365,14 @@ export function KanbanTransitionDialog({
                 ? "native-plan-icon-action cancel"
                 : isDelete
                   ? "native-plan-icon-action kanban-transition-icon-action"
-                  : "secondary"
+                  : "native-plan-icon-action"
             }
-            aria-label={iconOnlyActions ? "Cancel" : undefined}
-            data-tooltip={iconOnlyActions ? "Cancel" : undefined}
+            aria-label="Cancel"
+            data-tooltip="Cancel"
             disabled={busy}
             onClick={onCancel}
           >
-            {iconOnlyActions ? <X size={17} aria-hidden="true" /> : "Cancel"}
+            <X size={17} aria-hidden="true" />
           </button>
           <button
             ref={confirmRef}
@@ -394,14 +382,14 @@ export function KanbanTransitionDialog({
                 ? "native-plan-icon-action kanban-stop-move-confirm"
                 : usesSummaryLayout
                 ? "native-plan-icon-action implement"
-                : `${copy.danger ? "danger" : ""}${
-                    isDelete
-                      ? " native-plan-icon-action kanban-transition-icon-action"
-                      : ""
-                  }`.trim() || undefined
+                : isDelete
+                  ? "danger native-plan-icon-action kanban-transition-icon-action"
+                  : `native-plan-icon-action ${
+                      copy.danger ? "cancel" : "implement"
+                    }`
             }
-            aria-label={iconOnlyActions ? copy.confirm : undefined}
-            data-tooltip={iconOnlyActions ? copy.confirm : undefined}
+            aria-label={busy ? "Working…" : copy.confirm}
+            data-tooltip={busy ? "Working…" : copy.confirm}
             disabled={busy || confirmDisabled}
             onClick={() => void onConfirm()}
           >
@@ -410,7 +398,6 @@ export function KanbanTransitionDialog({
             ) : (
               <ConfirmIcon kind={kind} />
             )}
-            {iconOnlyActions ? null : busy ? "Working…" : copy.confirm}
           </button>
         </footer>
       </section>

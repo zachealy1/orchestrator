@@ -25,6 +25,8 @@ describe("DefaultBrowserTabDialog", () => {
       />,
     );
 
+    const dialog = screen.getByRole("dialog", { name: "Attach a browser tab" });
+    expect(dialog.querySelector(".eyebrow")).toBeNull();
     expect(screen.getByText("Signed-in dashboard")).toBeInTheDocument();
     expect(screen.getByText("https://example.com")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Attach Signed-in dashboard" }));

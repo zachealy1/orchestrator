@@ -37,7 +37,6 @@ export function ChatDeleteDialog({
         aria-describedby="chat-delete-description"
       >
         <div>
-          <p className="eyebrow">Chat</p>
           <h2 id="chat-delete-title">Remove chat?</h2>
           <p id="chat-delete-description">
             {chat.continuation_kind === "worktree"

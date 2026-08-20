@@ -55,7 +55,6 @@ export function ChatRenameDialog({
         }}
       >
         <div>
-          <p className="eyebrow">Chat</p>
           <h2 id="chat-rename-title">Rename chat</h2>
         </div>
         <label className="branch-creation-field">

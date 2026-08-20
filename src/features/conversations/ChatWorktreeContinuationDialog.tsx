@@ -53,7 +53,6 @@ export function ChatWorktreeContinuationDialog({
         aria-labelledby="chat-worktree-title"
       >
         <div>
-          <p className="eyebrow">Chat continuation</p>
           <h2 id="chat-worktree-title">Continue in new worktree</h2>
           <p>
             Create an isolated continuation of <strong>{title}</strong> across

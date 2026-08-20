@@ -42,12 +42,9 @@ export function AccountHandoffDialog({
         aria-describedby="account-handoff-description"
       >
         <div>
-          <p className="eyebrow">
-            {continuesInCodex ? "Codex continuation" : "Codex account"}
-          </p>
           <h2 id="account-handoff-title">
             {continuesInCodex
-              ? "Continue this chat in Codex?"
+              ? "Continue this chat in codex?"
               : "Switch account for this chat?"}
           </h2>
           <p id="account-handoff-description">

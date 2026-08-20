@@ -55,7 +55,6 @@ export const DefaultBrowserTabDialog = memo(function DefaultBrowserTabDialog({
         aria-describedby="default-browser-tab-description"
       >
         <div>
-          <p className="eyebrow">Computer use</p>
           <h2 id="default-browser-tab-title">Attach a browser tab</h2>
           <p id="default-browser-tab-description">
             Choose a tab to move into this chat's Orchestrator group. Its title

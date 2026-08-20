@@ -227,9 +227,9 @@ button.danger:hover:not(:disabled) {
 }
 
 .confirmation-dialog h2 {
-  margin-top: 4px;
   color: var(--text);
   font-size: 1.18rem;
+  line-height: 1.25;
 }
 
 .confirmation-dialog p:not(.eyebrow) {

@@ -66,7 +66,6 @@ export function BranchCreationDialog({
         }}
       >
         <div>
-          <p className="eyebrow">Git</p>
           <h2 id="branch-creation-title">Create branch</h2>
           <p id="branch-creation-description">
             Create and switch to a new local branch

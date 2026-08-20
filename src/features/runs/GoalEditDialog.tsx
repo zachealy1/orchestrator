@@ -47,7 +47,6 @@ export function GoalEditDialog({
         aria-describedby="goal-edit-description"
       >
         <div>
-          <p className="eyebrow">Goal</p>
           <h2 id="goal-edit-title">Replace draft and edit goal?</h2>
           <p id="goal-edit-description">
             This stops the current goal and replaces your unsent prompt with
