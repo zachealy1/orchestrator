@@ -113,21 +113,12 @@ describe("Application runtime scenarios 9", () => {
       "thread/start",
       expect.objectContaining({
         cwd: "/repo/orchestrator",
-        projectId: "project-workspace-1",
-        runtimeWorkspaceRoots: [
-          "/repo/.codex-kanban/card-run-control-test",
-          "/repo/.codex-kanban/card-run-control-test/orchestrator",
-        ],
       }),
     );
     expect(mocks.codexDefaultProfileRpcMock).toHaveBeenCalledWith(
       "turn/start",
       expect.objectContaining({
         cwd: "/repo/.codex-kanban/card-run-control-test",
-        runtimeWorkspaceRoots: [
-          "/repo/.codex-kanban/card-run-control-test",
-          "/repo/.codex-kanban/card-run-control-test/orchestrator",
-        ],
       }),
     );
     expect(
@@ -151,15 +142,16 @@ describe("Application runtime scenarios 9", () => {
     );
     expect(environmentProbeIndex).toBeGreaterThanOrEqual(0);
     expect(environmentProbeIndex).toBeLessThan(turnStartIndex);
-    const projectUpdateIndex =
+    const sourceRootVerificationIndex =
       mocks.codexDefaultProfileRpcMock.mock.calls.findIndex(
         ([method, params]) =>
-          method === "thread/metadata/update" &&
+          method === "thread/read" &&
+          params?.includeTurns === false &&
           params?.threadId === "thread-kanban-question",
       );
     expect(turnStartIndex).toBeGreaterThanOrEqual(0);
-    expect(projectUpdateIndex).toBeGreaterThanOrEqual(0);
-    expect(projectUpdateIndex).toBeLessThan(turnStartIndex);
+    expect(sourceRootVerificationIndex).toBeGreaterThanOrEqual(0);
+    expect(sourceRootVerificationIndex).toBeLessThan(turnStartIndex);
 
     await emitCodexServerRequest({
       id: "kanban-input-1",

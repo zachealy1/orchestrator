@@ -1341,9 +1341,9 @@ describe("Application runtime scenarios 5", () => {
         expect.objectContaining({
           approvalPolicy: "untrusted",
           approvalsReviewer: "user",
-          permissions: ASK_FOR_APPROVAL_PERMISSION_PROFILE,
         }),
       );
+      expect(threadStart?.[2]).not.toHaveProperty("permissions");
       expect(turnStart?.[2]).toEqual(
         expect.objectContaining({
           approvalPolicy: "untrusted",
@@ -1379,9 +1379,9 @@ describe("Application runtime scenarios 5", () => {
         expect.objectContaining({
           approvalPolicy: "never",
           approvalsReviewer: "user",
-          permissions: ":danger-full-access",
         }),
       );
+      expect(threadStart?.[2]).not.toHaveProperty("permissions");
       expect(firstTurnStart?.[2]).toEqual(
         expect.objectContaining({
           approvalPolicy: "never",

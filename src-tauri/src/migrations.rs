@@ -255,6 +255,12 @@ pub(crate) const MIGRATION_DEFINITIONS: &[MigrationDefinition] = &[
         sql: include_str!("../migrations/041_default_kanban_workspaces_to_shared_profile.sql"),
         checksum: 0xbeeda1977f6613f7,
     },
+    MigrationDefinition {
+        version: 42,
+        description: "reconcile_native_task_source_roots",
+        sql: include_str!("../migrations/042_reconcile_native_task_source_roots.sql"),
+        checksum: 0x996443c3b068ca75,
+    },
 ];
 
 pub(crate) fn migration_sql(definition: &MigrationDefinition) -> &'static str {

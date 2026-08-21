@@ -28,7 +28,7 @@ fn resolved_plugin_migrator(
 }
 
 #[test]
-fn existing_versions_one_through_twenty_five_upgrade_through_forty_one() {
+fn existing_versions_one_through_twenty_five_upgrade_through_forty_two() {
     tauri::async_runtime::block_on(async {
         let mut connection = SqliteConnection::connect("sqlite::memory:")
             .await
@@ -58,12 +58,78 @@ fn existing_versions_one_through_twenty_five_upgrade_through_forty_one() {
         .fetch_one(&mut connection)
         .await
         .expect("count upgraded migrations");
-        assert_eq!(applied_count, 41);
+        assert_eq!(applied_count, 42);
 
         resolved_plugin_migrator(MIGRATION_DEFINITIONS)
             .run_direct(&mut connection)
             .await
             .expect("all extracted migrations must resolve against the upgraded database");
+    });
+}
+
+#[test]
+fn shared_and_kanban_chats_are_queued_for_source_root_reconciliation() {
+    tauri::async_runtime::block_on(async {
+        let mut connection = SqliteConnection::connect("sqlite::memory:")
+            .await
+            .expect("open source-root reconciliation database");
+        resolved_plugin_migrator(&MIGRATION_DEFINITIONS[..41])
+            .run_direct(&mut connection)
+            .await
+            .expect("apply migrations through shared Kanban defaults");
+
+        sqlx::query("INSERT INTO workspaces (path, label) VALUES ('/workspace', 'Workspace')")
+            .execute(&mut connection)
+            .await
+            .expect("insert workspace");
+        sqlx::query(
+            "INSERT INTO chats (
+                workspace_id, title, status, surface, origin, profile_key,
+                codex_thread_id, native_workspace_binding_status,
+                native_workspace_binding_error
+             ) VALUES
+                (1, 'Shared', 'completed', 'chat', 'orchestrator', 'default',
+                 'thread-shared', 'ready', 'old error'),
+                (1, 'Kanban isolated', 'completed', 'kanban', 'orchestrator', 'account:7',
+                 'thread-isolated', 'ready', 'old error'),
+                (1, 'Private', 'completed', 'chat', 'orchestrator', 'account:7',
+                 'thread-private', 'ready', 'keep'),
+                (1, 'Imported', 'completed', 'chat', 'codex_external', 'default',
+                 'thread-imported', 'ready', 'keep')",
+        )
+        .execute(&mut connection)
+        .await
+        .expect("insert chats");
+
+        resolved_plugin_migrator(MIGRATION_DEFINITIONS)
+            .run_direct(&mut connection)
+            .await
+            .expect("apply source-root reconciliation migration");
+
+        let rows = sqlx::query_as::<_, (String, Option<String>, Option<String>)>(
+            "SELECT title, native_workspace_binding_status, native_workspace_binding_error
+             FROM chats ORDER BY id",
+        )
+        .fetch_all(&mut connection)
+        .await
+        .expect("read reconciliation state");
+        assert_eq!(
+            rows,
+            vec![
+                ("Shared".to_owned(), Some("pending".to_owned()), None),
+                ("Kanban isolated".to_owned(), Some("pending".to_owned()), None),
+                (
+                    "Private".to_owned(),
+                    Some("ready".to_owned()),
+                    Some("keep".to_owned()),
+                ),
+                (
+                    "Imported".to_owned(),
+                    Some("ready".to_owned()),
+                    Some("keep".to_owned()),
+                ),
+            ],
+        );
     });
 }
 

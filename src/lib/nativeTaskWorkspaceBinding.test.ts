@@ -1,11 +1,10 @@
 import { describe, expect, it } from "vitest";
 import type { KanbanGitBinding } from "../features/kanban/api";
 import {
-  assignNativeTaskProject,
   clearNativeTaskPendingContext,
   createContinuationNativeTaskWorkspaceBinding,
   createKanbanNativeTaskWorkspaceBinding,
-  markNativeTaskCatalogRegistered,
+  markNativeTaskSourceRootAssociated,
   nativeTaskExecutionOverrides,
   parseNativeTaskWorkspaceBinding,
 } from "./nativeTaskWorkspaceBinding";
@@ -33,7 +32,7 @@ describe("native task workspace bindings", () => {
     });
 
     expect(result).toEqual({
-      version: 3,
+      version: 4,
       kind: "kanban",
       sourceWorkspacePath: "/workspace",
       executionDirectory: "/app/cards/card-1",
@@ -41,16 +40,11 @@ describe("native task workspace bindings", () => {
         "/app/cards/card-1",
         "/app/cards/card-1/repo",
       ],
-      projectId: null,
       pendingContinuationContext: null,
-      catalogRegistration: "pending",
+      sourceRootAssociation: "pending",
     });
     expect(nativeTaskExecutionOverrides(result)).toEqual({
       cwd: "/app/cards/card-1",
-      runtimeWorkspaceRoots: [
-        "/app/cards/card-1",
-        "/app/cards/card-1/repo",
-      ],
     });
   });
 
@@ -71,18 +65,13 @@ describe("native task workspace bindings", () => {
       "/app/continuations/42",
       "/app/continuations/42/repo",
     ]);
-    expect(result.projectId).toBeNull();
-    expect(assignNativeTaskProject(result, "project-42")).toEqual({
-      ...result,
-      projectId: "project-42",
-    });
     expect(clearNativeTaskPendingContext(result)).toEqual({
       ...result,
       pendingContinuationContext: null,
     });
-    expect(markNativeTaskCatalogRegistered(result)).toEqual({
+    expect(markNativeTaskSourceRootAssociated(result)).toEqual({
       ...result,
-      catalogRegistration: "source-workspace",
+      sourceRootAssociation: "source-root",
     });
   });
 
@@ -98,7 +87,7 @@ describe("native task workspace bindings", () => {
     expect(parseNativeTaskWorkspaceBinding("not-json")).toBeNull();
     expect(
       parseNativeTaskWorkspaceBinding(
-        JSON.stringify({ ...valid, version: 4 }),
+        JSON.stringify({ ...valid, version: 5 }),
       ),
     ).toBeNull();
     expect(
@@ -122,14 +111,13 @@ describe("native task workspace bindings", () => {
     );
 
     expect(parsed).toEqual({
-      version: 3,
+      version: 4,
       kind: "kanban",
       sourceWorkspacePath: "/workspace",
       executionDirectory: "/app/cards/card-1",
       runtimeWorkspaceRoots: ["/app/cards/card-1"],
-      projectId: null,
       pendingContinuationContext: null,
-      catalogRegistration: "pending",
+      sourceRootAssociation: "pending",
     });
   });
 
@@ -146,6 +134,23 @@ describe("native task workspace bindings", () => {
       }),
     );
 
-    expect(parsed?.catalogRegistration).toBe("pending");
+    expect(parsed?.sourceRootAssociation).toBe("pending");
+  });
+
+  it("forces version-three project bindings through source-root association", () => {
+    const parsed = parseNativeTaskWorkspaceBinding(
+      JSON.stringify({
+        version: 3,
+        kind: "continuation",
+        sourceWorkspacePath: "/workspace",
+        executionDirectory: "/workspace",
+        runtimeWorkspaceRoots: ["/workspace"],
+        projectId: "project-1",
+        pendingContinuationContext: null,
+        catalogRegistration: "source-workspace",
+      }),
+    );
+
+    expect(parsed?.sourceRootAssociation).toBe("pending");
   });
 });

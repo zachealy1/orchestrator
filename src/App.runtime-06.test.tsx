@@ -301,13 +301,13 @@ describe("Application runtime scenarios 6", () => {
         surface: "kanban" as const,
         native_workspace_binding_status: "ready" as const,
         native_workspace_binding_json: JSON.stringify({
-          version: 2,
+          version: 4,
           kind: "kanban",
           sourceWorkspacePath: workspace.path,
           executionDirectory: executionRoot,
           runtimeWorkspaceRoots: [executionRoot, worktreePath],
-          projectId: "project-workspace-1",
           pendingContinuationContext: null,
+          sourceRootAssociation: "source-root",
         }),
       };
       const sharedRun = workspaceRunFixture({
@@ -375,14 +375,22 @@ describe("Application runtime scenarios 6", () => {
           "turn/start",
           expect.objectContaining({
             cwd: executionRoot,
-            runtimeWorkspaceRoots: [executionRoot, worktreePath],
           }),
         ),
       );
+      expect(
+        mocks.codexDefaultProfileRpcMock.mock.calls.find(
+          ([method]) => method === "turn/start",
+        )?.[1],
+      ).not.toHaveProperty("runtimeWorkspaceRoots");
       expect(screen.queryByText(/default external Codex profile/i)).not.toBeInTheDocument();
       expect(mocks.createRunMock).toHaveBeenCalledWith(
         expect.objectContaining({ accountId: null, chatId: sharedChat.id }),
       );
+      mocks.getChatRecordMock.mockResolvedValue({
+        ...sharedChat,
+        codex_thread_id: "thread-1",
+      });
 
       await user.click(await screen.findByRole("radio", { name: "Kanban" }));
       await user.click(
@@ -430,6 +438,26 @@ describe("Application runtime scenarios 6", () => {
         expect(mocks.updateRunMock).toHaveBeenCalledWith(
           expect.any(Number),
           expect.objectContaining({ status: "completed" }),
+        ),
+      );
+      await waitFor(() =>
+        expect(mocks.codexDefaultProfileRpcMock).toHaveBeenCalledWith(
+          "thread/resume",
+          expect.objectContaining({
+            threadId: "thread-1",
+            cwd: workspace.path,
+          }),
+        ),
+      );
+      await waitFor(() =>
+        expect(mocks.saveNativeWorkspaceBindingMock).toHaveBeenCalledWith(
+          expect.objectContaining({
+            chatId: sharedChat.id,
+            status: "ready",
+            binding: expect.objectContaining({
+              sourceRootAssociation: "source-root",
+            }),
+          }),
         ),
       );
     });

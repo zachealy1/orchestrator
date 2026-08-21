@@ -322,7 +322,6 @@ describe("Application runtime scenarios 3", () => {
           cwd: workspace.path,
           approvalPolicy: "untrusted",
           approvalsReviewer: "user",
-          permissions: ASK_FOR_APPROVAL_PERMISSION_PROFILE,
           config: expect.objectContaining({
             mcp_servers: {
               playwright: {
@@ -370,7 +369,6 @@ describe("Application runtime scenarios 3", () => {
         codex_thread_id: null,
       });
       let sharedThreadCwd = sharedWorkspace.path;
-      let sharedProjectId: string | null = null;
       mocks.codexDefaultProfileRpcMock.mockImplementation(
         async (method: string, params?: Record<string, unknown>) => {
           if (method === "account/read") {
@@ -389,39 +387,15 @@ describe("Application runtime scenarios 3", () => {
           if (method === "thread/list") {
             return { threads: [] };
           }
-          if (method === "project/list") {
-            return {
-              data: [
-                {
-                  id: "project-workspace-1",
-                  name: sharedWorkspace.label,
-                  roots: [{ path: sharedWorkspace.path }],
-                },
-              ],
-              nextCursor: null,
-            };
-          }
           if (method === "thread/start") {
             sharedThreadCwd = String(params?.cwd ?? sharedWorkspace.path);
-            sharedProjectId = String(params?.projectId ?? "") || null;
             return { thread: { id: "shared-thread-1" } };
-          }
-          if (method === "thread/metadata/update") {
-            sharedProjectId = String(params?.projectId ?? "") || null;
-            return {
-              thread: {
-                id: params?.threadId,
-                cwd: sharedThreadCwd,
-                projectId: sharedProjectId,
-              },
-            };
           }
           if (method === "thread/read") {
             return {
               thread: {
                 id: params?.threadId,
                 cwd: sharedThreadCwd,
-                projectId: sharedProjectId,
               },
             };
           }
@@ -452,21 +426,13 @@ describe("Application runtime scenarios 3", () => {
           expect.objectContaining({
             cwd: sharedWorkspace.path,
             ephemeral: false,
-            historyMode: "paginated",
-            projectId: "project-workspace-1",
             threadSource: "orchestrator",
           }),
         ),
       );
-      expect(mocks.codexDefaultProfileRpcMock).toHaveBeenCalledWith(
-        "thread/metadata/update",
-        {
-          threadId: "shared-thread-1",
-          projectId: "project-workspace-1",
-        },
-      );
-      const metadataIndex = mocks.codexDefaultProfileRpcMock.mock.calls.findIndex(
-        ([method]) => method === "thread/metadata/update",
+      const verificationIndex = mocks.codexDefaultProfileRpcMock.mock.calls.findIndex(
+        ([method, params]) =>
+          method === "thread/read" && params?.threadId === "shared-thread-1",
       );
       const titleIndex = mocks.codexDefaultProfileRpcMock.mock.calls.findIndex(
         ([method]) => method === "thread/name/set",
@@ -474,9 +440,16 @@ describe("Application runtime scenarios 3", () => {
       const turnIndex = mocks.codexDefaultProfileRpcMock.mock.calls.findIndex(
         ([method]) => method === "turn/start",
       );
-      expect(metadataIndex).toBeGreaterThanOrEqual(0);
-      expect(titleIndex).toBeGreaterThan(metadataIndex);
+      expect(verificationIndex).toBeGreaterThanOrEqual(0);
+      expect(titleIndex).toBeGreaterThan(verificationIndex);
       expect(turnIndex).toBeGreaterThan(titleIndex);
+      expect(
+        mocks.codexDefaultProfileRpcMock.mock.calls.some(([method]) =>
+          ["project/list", "project/create", "thread/metadata/update"].includes(
+            method,
+          ),
+        ),
+      ).toBe(false);
       expect(mocks.codexDefaultProfileRpcMock).toHaveBeenCalledWith(
         "turn/start",
         expect.objectContaining({ threadId: "shared-thread-1" }),
@@ -873,36 +846,14 @@ describe("Application runtime scenarios 3", () => {
     mocks.getChatRecordMock.mockResolvedValue(sharedChat);
     mocks.codexDefaultProfileRpcMock.mockImplementation(
       async (method: string, params?: Record<string, unknown>) => {
-        if (method === "project/list") {
-          return {
-            data: [],
-            nextCursor: null,
-          };
-        }
-        if (method === "project/create") {
-          return {
-            project: {
-              id: "project-workspace-1",
-              name: workspace.label,
-              roots: [{ path: workspace.path }],
-              metadata: {},
-            },
-          };
-        }
-        if (method === "thread/fork") {
-          return {
-            thread: {
-              id: "workspace-scoped-thread-1",
-              cwd: workspace.path,
-            },
-          };
+        if (method === "thread/resume") {
+          return { thread: { id: params?.threadId, cwd: params?.cwd } };
         }
         if (method === "thread/read") {
           return {
             thread: {
               id: params?.threadId,
               cwd: workspace.path,
-              projectId: "project-workspace-1",
             },
           };
         }
@@ -930,39 +881,31 @@ describe("Application runtime scenarios 3", () => {
 
     await waitFor(() =>
       expect(mocks.codexDefaultProfileRpcMock).toHaveBeenCalledWith(
-        "thread/fork",
+        "thread/resume",
         expect.objectContaining({
           threadId: sharedChat.codex_thread_id,
           cwd: workspace.path,
-          runtimeWorkspaceRoots: [workspace.path],
         }),
       ),
     );
-    expect(mocks.codexDefaultProfileRpcMock).toHaveBeenCalledWith(
-      "project/create",
-      expect.objectContaining({
-        name: workspace.label,
-        roots: [{ path: workspace.path }],
-      }),
-    );
-    expect(mocks.codexDefaultProfileRpcMock).toHaveBeenCalledWith(
-      "thread/metadata/update",
-      {
-        threadId: "workspace-scoped-thread-1",
-        projectId: "project-workspace-1",
-      },
-    );
-    expect(mocks.activateSharedNativeWorkspaceBindingMock).toHaveBeenCalledWith(
+    expect(mocks.saveNativeWorkspaceBindingMock).toHaveBeenCalledWith(
       expect.objectContaining({
         chatId: sharedChat.id,
-        expectedThreadId: sharedChat.codex_thread_id,
-        codexThreadId: "workspace-scoped-thread-1",
+        status: "ready",
         binding: expect.objectContaining({
           sourceWorkspacePath: workspace.path,
-          catalogRegistration: "source-workspace",
+          sourceRootAssociation: "source-root",
         }),
       }),
     );
+    expect(mocks.activateSharedNativeWorkspaceBindingMock).not.toHaveBeenCalled();
+    expect(
+      mocks.codexDefaultProfileRpcMock.mock.calls.some(([method]) =>
+        ["project/list", "project/create", "thread/fork", "thread/metadata/update"].includes(
+          method,
+        ),
+      ),
+    ).toBe(false);
     expect(mocks.continueTaskInCodexDesktopMock).not.toHaveBeenCalled();
   });
 
