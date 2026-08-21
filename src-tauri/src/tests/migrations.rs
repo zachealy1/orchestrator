@@ -28,7 +28,7 @@ fn resolved_plugin_migrator(
 }
 
 #[test]
-fn existing_versions_one_through_twenty_five_upgrade_through_forty_two() {
+fn existing_versions_one_through_twenty_five_upgrade_through_forty_three() {
     tauri::async_runtime::block_on(async {
         let mut connection = SqliteConnection::connect("sqlite::memory:")
             .await
@@ -58,12 +58,117 @@ fn existing_versions_one_through_twenty_five_upgrade_through_forty_two() {
         .fetch_one(&mut connection)
         .await
         .expect("count upgraded migrations");
-        assert_eq!(applied_count, 42);
+        assert_eq!(applied_count, 43);
 
         resolved_plugin_migrator(MIGRATION_DEFINITIONS)
             .run_direct(&mut connection)
             .await
             .expect("all extracted migrations must resolve against the upgraded database");
+    });
+}
+
+#[test]
+fn completed_follow_up_plans_are_repaired_into_review() {
+    tauri::async_runtime::block_on(async {
+        let mut connection = SqliteConnection::connect("sqlite::memory:")
+            .await
+            .expect("open follow-up Plan repair database");
+        resolved_plugin_migrator(&MIGRATION_DEFINITIONS[..42])
+            .run_direct(&mut connection)
+            .await
+            .expect("apply migrations through source-root reconciliation");
+
+        sqlx::query(
+            "INSERT INTO workspaces (id, path, label)
+             VALUES (1, '/workspace', 'Workspace');
+             INSERT INTO chats (id, workspace_id, title, status, surface)
+             VALUES (1, 1, 'Follow-up Plan', 'completed', 'kanban');
+             INSERT INTO tasks (
+                 id, workspace_id, chat_id, original_prompt, improved_prompt,
+                 route_recommendation, budget_tokens, status
+             ) VALUES (
+                 1, 1, 1, 'Plan it again', 'Plan it again',
+                 'direct', 1000, 'completed'
+             );
+             INSERT INTO runs (
+                 id, task_id, workspace_id, chat_id, status,
+                 collaboration_mode, run_intent, plan_review_state,
+                 completed_plan_item_id, completed_plan_text,
+                 execution_settings_json, completed_at
+             ) VALUES (
+                 1, 1, 1, 1, 'completed', 'plan', 'plan', 'available',
+                 'plan-item-2', 'The second plan',
+                 '{\"mode\":\"plan\",\"intent\":\"plan\",\"selectedRepositoryPath\":\"/worktree/repo\",\"selectedBranch\":\"codex/card\"}',
+                 '2026-08-21T18:22:56Z'
+             );
+             INSERT INTO kanban_boards (workspace_id) VALUES (1);
+             INSERT INTO kanban_cards (
+                 id, workspace_id, chat_id, title, description, access_mode,
+                 repository_scope, stage, sort_position, execution_state,
+                 review_state, current_attempt_id, execution_settings_json
+             ) VALUES (
+                 'card-plan', 1, 1, 'Follow-up Plan', 'Plan it again',
+                 'ask-for-approval', 'all', 'in_progress', 1024, 'running',
+                 'changes_requested', 'attempt-plan-2',
+                 '{\"mode\":\"run\",\"intent\":\"plan-implementation\",\"selectedRepositoryPath\":\"/source/repo\",\"selectedBranch\":\"main\"}'
+             );
+             INSERT INTO kanban_attempts (
+                 id, card_id, generation, attempt_kind, status, prompt,
+                 config_snapshot_json, run_id, task_id, thread_id, turn_id,
+                 last_event_sequence
+             ) VALUES (
+                 'attempt-plan-2', 'card-plan', 2, 'request_changes',
+                 'running', 'Plan it again', '{}', 1, 1,
+                 'thread-plan', 'turn-plan-2', 1
+             );",
+        )
+        .execute(&mut connection)
+        .await
+        .expect("seed stuck follow-up Plan");
+
+        resolved_plugin_migrator(MIGRATION_DEFINITIONS)
+            .run_direct(&mut connection)
+            .await
+            .expect("repair stuck follow-up Plan");
+
+        let card = sqlx::query_as::<_, (String, String, String, String)>(
+            "SELECT stage, execution_state, review_state, execution_settings_json
+             FROM kanban_cards WHERE id = 'card-plan'",
+        )
+        .fetch_one(&mut connection)
+        .await
+        .expect("read repaired card");
+        assert_eq!(card.0, "in_review");
+        assert_eq!(card.1, "completed");
+        assert_eq!(card.2, "awaiting_review");
+        assert!(card.3.contains("\"mode\":\"plan\""));
+        assert!(card
+            .3
+            .contains("\"selectedRepositoryPath\":\"/source/repo\""));
+        assert!(card.3.contains("\"selectedBranch\":\"main\""));
+
+        let attempt: (String, Option<String>, i64) = sqlx::query_as(
+            "SELECT status, completed_at, last_event_sequence
+             FROM kanban_attempts WHERE id = 'attempt-plan-2'",
+        )
+        .fetch_one(&mut connection)
+        .await
+        .expect("read repaired attempt");
+        assert_eq!(attempt.0, "completed");
+        assert_eq!(attempt.1.as_deref(), Some("2026-08-21T18:22:56Z"));
+        assert_eq!(attempt.2, 2);
+
+        let plan: (String, String) = sqlx::query_as(
+            "SELECT plan_item_id, plan_text FROM kanban_plan_results
+             WHERE attempt_id = 'attempt-plan-2'",
+        )
+        .fetch_one(&mut connection)
+        .await
+        .expect("read repaired Plan result");
+        assert_eq!(
+            plan,
+            ("plan-item-2".to_owned(), "The second plan".to_owned())
+        );
     });
 }
 

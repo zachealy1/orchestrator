@@ -435,6 +435,63 @@ fn execution_settings_are_plan_implementation(value: Option<&str>) -> bool {
         .is_some_and(|intent| intent == "plan-implementation")
 }
 
+struct AttemptExecutionSettings {
+    effective: Option<String>,
+    persisted: Option<String>,
+}
+
+fn preserve_card_repository_target(attempt: &str, card: &str) -> String {
+    let Ok(mut attempt_settings) = serde_json::from_str::<serde_json::Value>(attempt) else {
+        return attempt.to_string();
+    };
+    let Ok(card_settings) = serde_json::from_str::<serde_json::Value>(card) else {
+        return attempt.to_string();
+    };
+    let (Some(attempt_object), Some(card_object)) =
+        (attempt_settings.as_object_mut(), card_settings.as_object())
+    else {
+        return attempt.to_string();
+    };
+    for key in ["selectedRepositoryPath", "selectedBranch"] {
+        if let Some(value) = card_object.get(key) {
+            attempt_object.insert(key.to_string(), value.clone());
+        }
+    }
+    serde_json::to_string(&attempt_settings).unwrap_or_else(|_| attempt.to_string())
+}
+
+async fn attempt_execution_settings(
+    connection: &mut SqliteConnection,
+    card_id: &str,
+    run_id: Option<i64>,
+) -> Result<AttemptExecutionSettings, String> {
+    let row = sqlx::query(
+        "SELECT run.execution_settings_json AS run_settings,
+                card.execution_settings_json AS card_settings
+         FROM kanban_cards AS card
+         LEFT JOIN runs AS run
+           ON run.id = ?2 AND run.chat_id = card.chat_id
+         WHERE card.id = ?1",
+    )
+    .bind(card_id)
+    .bind(run_id)
+    .fetch_one(&mut *connection)
+    .await
+    .map_err(|error| format!("The card attempt execution settings could not be loaded: {error}"))?;
+    let run_settings = row.get::<Option<String>, _>("run_settings");
+    let card_settings = row.get::<Option<String>, _>("card_settings");
+    let persisted = match (&run_settings, &card_settings) {
+        (Some(attempt), Some(card)) => Some(preserve_card_repository_target(attempt, card)),
+        (Some(attempt), None) => Some(attempt.clone()),
+        (None, Some(card)) => Some(card.clone()),
+        (None, None) => None,
+    };
+    Ok(AttemptExecutionSettings {
+        effective: run_settings.or_else(|| card_settings.clone()),
+        persisted,
+    })
+}
+
 struct ImplementationExecutionSettings {
     encoded: String,
     account_id: Option<i64>,
@@ -2057,14 +2114,15 @@ pub async fn kanban_update_attempt(
     }
     let mut connection = open_database(&app).await?;
     let workspace_id = card_workspace_id(&mut connection, &request.card_id).await?;
-    let execution_settings_json: Option<String> =
-        sqlx::query_scalar("SELECT execution_settings_json FROM kanban_cards WHERE id = ?1")
-            .bind(&request.card_id)
-            .fetch_one(&mut *connection)
-            .await
-            .map_err(|error| format!("The card execution settings could not be loaded: {error}"))?;
+    // A follow-up can deliberately switch an existing card into Plan mode. The
+    // run captures that choice, while the card still contains the preceding
+    // attempt's settings until this completion is accepted. Use the matching
+    // persisted run as the authority for this attempt, with the card as a
+    // fallback for setup failures and older records.
+    let attempt_settings =
+        attempt_execution_settings(&mut connection, &request.card_id, request.run_id).await?;
     let requested_plan_completion = request.status == "completed"
-        && execution_settings_are_plan_mode(execution_settings_json.as_deref());
+        && execution_settings_are_plan_mode(attempt_settings.effective.as_deref());
     if requested_plan_completion {
         let invalid_plan = request
             .completed_plan
@@ -2179,13 +2237,19 @@ pub async fn kanban_update_attempt(
              stage = CASE WHEN ?2 = 'completed' THEN 'in_review' ELSE stage END,
              review_state = CASE WHEN ?2 = 'completed' THEN 'awaiting_review' ELSE review_state END,
              review_channel = CASE WHEN ?2 = 'completed' THEN ?3 ELSE review_channel END,
-             last_error = ?4, state_version = state_version + 1,
+             execution_settings_json = CASE
+                 WHEN ?2 = 'completed' AND ?4 = 1 THEN ?5
+                 ELSE execution_settings_json
+             END,
+             last_error = ?6, state_version = state_version + 1,
              updated_at = CURRENT_TIMESTAMP
-         WHERE id = ?5 AND current_attempt_id = ?6 AND deleted_at IS NULL",
+         WHERE id = ?7 AND current_attempt_id = ?8 AND deleted_at IS NULL",
     )
     .bind(execution_state)
     .bind(&request.status)
     .bind(review_channel)
+    .bind(plan_completion)
+    .bind(attempt_settings.persisted.as_deref())
     .bind(request.error.as_deref())
     .bind(&request.card_id)
     .bind(&request.attempt_id)
@@ -3891,6 +3955,61 @@ mod tests {
         ))
         .is_err());
         assert!(execution_settings_are_plan_implementation(Some(settings)));
+    }
+
+    #[test]
+    fn follow_up_attempt_uses_its_matching_run_settings() {
+        tauri::async_runtime::block_on(async {
+            let mut connection = SqliteConnection::connect("sqlite::memory:")
+                .await
+                .expect("open attempt settings database");
+            sqlx::query(
+                "CREATE TABLE kanban_cards (
+                    id TEXT PRIMARY KEY,
+                    chat_id INTEGER NOT NULL,
+                    execution_settings_json TEXT
+                 );
+                 CREATE TABLE runs (
+                    id INTEGER PRIMARY KEY,
+                    chat_id INTEGER,
+                    execution_settings_json TEXT
+                 );
+                 INSERT INTO kanban_cards (id, chat_id, execution_settings_json)
+                 VALUES (
+                    'card-1', 11,
+                    '{\"mode\":\"run\",\"selectedRepositoryPath\":\"/source/repo\",\"selectedBranch\":\"main\"}'
+                 );
+                 INSERT INTO runs (id, chat_id, execution_settings_json) VALUES
+                    (
+                        7, 11,
+                        '{\"mode\":\"plan\",\"selectedRepositoryPath\":\"/worktree/repo\",\"selectedBranch\":\"codex/card\"}'
+                    ),
+                    (8, 12, '{\"mode\":\"plan\"}');",
+            )
+            .execute(&mut connection)
+            .await
+            .expect("seed attempt settings");
+
+            let matching = attempt_execution_settings(&mut connection, "card-1", Some(7))
+                .await
+                .expect("load matching run settings");
+            let unrelated = attempt_execution_settings(&mut connection, "card-1", Some(8))
+                .await
+                .expect("ignore unrelated run settings");
+
+            assert!(execution_settings_are_plan_mode(
+                matching.effective.as_deref()
+            ));
+            assert!(execution_settings_are_plan_mode(
+                matching.persisted.as_deref()
+            ));
+            let persisted = matching.persisted.expect("persist attempt settings");
+            assert!(persisted.contains("\"selectedRepositoryPath\":\"/source/repo\""));
+            assert!(persisted.contains("\"selectedBranch\":\"main\""));
+            assert!(!execution_settings_are_plan_mode(
+                unrelated.effective.as_deref()
+            ));
+        });
     }
 
     #[test]

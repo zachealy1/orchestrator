@@ -261,6 +261,12 @@ pub(crate) const MIGRATION_DEFINITIONS: &[MigrationDefinition] = &[
         sql: include_str!("../migrations/042_reconcile_native_task_source_roots.sql"),
         checksum: 0x996443c3b068ca75,
     },
+    MigrationDefinition {
+        version: 43,
+        description: "repair_stuck_kanban_follow_up_plans",
+        sql: include_str!("../migrations/043_repair_stuck_kanban_follow_up_plans.sql"),
+        checksum: 0xd8e9ef08130503be,
+    },
 ];
 
 pub(crate) fn migration_sql(definition: &MigrationDefinition) -> &'static str {
