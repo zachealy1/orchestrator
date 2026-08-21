@@ -271,9 +271,75 @@ describe("Application runtime scenarios 9", () => {
         }),
       ),
     );
+    const goalExecutionResumeIndex =
+      mocks.codexDefaultProfileRpcMock.mock.calls.findIndex(
+        ([method, params]) =>
+          method === "thread/resume" &&
+          params?.cwd === "/repo/.codex-kanban/card-run-control-test",
+      );
+    const goalSetIndex = mocks.codexDefaultProfileRpcMock.mock.calls.findIndex(
+      ([method]) => method === "thread/goal/set",
+    );
+    expect(goalExecutionResumeIndex).toBeGreaterThanOrEqual(0);
+    expect(goalSetIndex).toBeGreaterThan(goalExecutionResumeIndex);
+    expect(
+      mocks.codexDefaultProfileRpcMock.mock.calls[goalExecutionResumeIndex]?.[1],
+    ).toEqual(
+      expect.objectContaining({
+        runtimeWorkspaceRoots: [
+          "/repo/.codex-kanban/card-run-control-test",
+          "/repo/.codex-kanban/card-run-control-test/orchestrator",
+        ],
+        permissions: ASK_FOR_APPROVAL_PERMISSION_PROFILE,
+      }),
+    );
     expect(screen.getByLabelText("Kanban test result")).toHaveTextContent(
       "started",
     );
+  });
+
+  it("fails Goal setup before activation when Codex ignores the worktree cwd", async () => {
+    prepareKanbanRun();
+    const defaultRpc =
+      mocks.codexDefaultProfileRpcMock.getMockImplementation();
+    mocks.codexDefaultProfileRpcMock.mockImplementation(
+      async (method: string, params?: Record<string, any>) => {
+        if (
+          method === "thread/resume" &&
+          params?.cwd === "/repo/.codex-kanban/card-run-control-test"
+        ) {
+          return {};
+        }
+        return defaultRpc?.(method, params);
+      },
+    );
+
+    const { user } = await renderApp();
+    await user.click(await screen.findByRole("radio", { name: "Kanban" }));
+    await user.click(
+      screen.getByRole("button", { name: "Start test Kanban agent" }),
+    );
+
+    await waitFor(() =>
+      expect(mocks.updateKanbanAttemptMock).toHaveBeenCalledWith(
+        expect.objectContaining({
+          status: "failed",
+          error: expect.stringContaining(
+            "did not retain the isolated card worktree",
+          ),
+        }),
+      ),
+    );
+    expect(
+      mocks.codexDefaultProfileRpcMock.mock.calls.some(
+        ([method]) => method === "thread/goal/set",
+      ),
+    ).toBe(false);
+    expect(
+      mocks.codexDefaultProfileRpcMock.mock.calls.some(
+        ([method]) => method === "turn/start",
+      ),
+    ).toBe(false);
   });
 
   it("fails Kanban setup before turn/start when the worktree is unavailable", async () => {

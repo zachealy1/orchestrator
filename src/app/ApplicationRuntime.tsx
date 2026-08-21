@@ -11642,6 +11642,48 @@ function App() {
     }
   }
 
+  async function bindThreadGoalToNativeTaskExecutionRoot(input: {
+    profileKey: CodexProfileKey;
+    accountId: number;
+    threadId: string;
+    binding: NativeTaskWorkspaceBinding;
+    access: CodexAccessSettings;
+    ensureActive: () => void;
+  }) {
+    await codexRpcForProfile(
+      input.profileKey,
+      input.accountId,
+      "thread/resume",
+      {
+        threadId: input.threadId,
+        cwd: input.binding.executionDirectory,
+        runtimeWorkspaceRoots: input.binding.runtimeWorkspaceRoots,
+        approvalPolicy: input.access.approvalPolicy,
+        approvalsReviewer: "user",
+        permissions: input.access.permissionProfile,
+      },
+    );
+    input.ensureActive();
+    const response = await codexRpcForProfile<{ thread?: unknown }>(
+      input.profileKey,
+      input.accountId,
+      "thread/read",
+      { threadId: input.threadId, includeTurns: false },
+    );
+    input.ensureActive();
+    const actualCwd = normalizeWorkspacePath(
+      readString(readObject(response.thread).cwd) ?? "",
+    );
+    const expectedCwd = normalizeWorkspacePath(
+      input.binding.executionDirectory,
+    );
+    if (actualCwd !== expectedCwd) {
+      throw new Error(
+        "Codex did not retain the isolated card worktree before Goal Mode was activated.",
+      );
+    }
+  }
+
   async function prepareRunTurnPayloadStage(
     runControl: ActiveRunControl,
     snapshot: RunSetupSnapshot,
@@ -12357,6 +12399,17 @@ function App() {
               method,
               params,
             ),
+          ensureActive: () => ensureRunControlActive(runControl),
+        });
+      }
+
+      if (snapshot.goalMode && nativeTaskWorkspaceBinding) {
+        await bindThreadGoalToNativeTaskExecutionRoot({
+          profileKey: snapshot.profileKey,
+          accountId: snapshot.accountId,
+          threadId,
+          binding: nativeTaskWorkspaceBinding,
+          access: snapshot.access,
           ensureActive: () => ensureRunControlActive(runControl),
         });
       }
@@ -18464,6 +18517,18 @@ function App() {
     activeRunRegistry.touch();
 
     try {
+      if (status === "active" && control.nativeTaskWorkspaceBinding) {
+        await bindThreadGoalToNativeTaskExecutionRoot({
+          profileKey: control.profileKey,
+          accountId: control.accountId,
+          threadId: control.threadId,
+          binding: control.nativeTaskWorkspaceBinding,
+          access: accessSettings({
+            accessMode: control.executionSettings.accessMode,
+          }),
+          ensureActive: () => ensureRunControlActive(control),
+        });
+      }
       const response = await updateThreadGoalStatusForProfile(
         control.profileKey,
         control.accountId,
