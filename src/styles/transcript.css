@@ -1061,7 +1061,6 @@ button.edited-files-disclosure:focus-visible:not(:disabled) {
   color: var(--color-text);
   font-size: 1rem;
   line-height: 1.65;
-  white-space: pre-wrap;
 }
 
 .stream-message > :first-child {
@@ -1129,10 +1128,12 @@ button.edited-files-disclosure:focus-visible:not(:disabled) {
 
 .run-summary.error {
   color: var(--color-error);
+  white-space: pre-wrap;
 }
 
 .run-summary.muted {
   color: var(--color-text-secondary);
+  white-space: pre-wrap;
 }
 
 .markdown-summary {

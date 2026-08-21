@@ -36,4 +36,17 @@ describe("high-speed transcript scrolling CSS", () => {
     expect(firstMessageChild).toContain("margin-block-start: 0");
     expect(lastMessageChild).toContain("margin-block-end: 0");
   });
+
+  it("uses normalized Markdown whitespace for live and completed responses", () => {
+    const markdown = rule(".markdown-summary");
+    const historicalPlain = rule(".historical-summary-plain");
+    const error = rule(".run-summary.error");
+    const muted = rule(".run-summary.muted");
+
+    expect(markdown).toContain("white-space: normal");
+    expect(markdown).toContain("gap: 18px");
+    expect(historicalPlain).toContain("white-space: pre-wrap");
+    expect(error).toContain("white-space: pre-wrap");
+    expect(muted).toContain("white-space: pre-wrap");
+  });
 });

@@ -84,6 +84,7 @@ import {
   findSubmittedPromptWebLinks,
   normalizeExternalTranscriptUrl,
 } from "../lib/transcriptLinks";
+import { prepareStreamingMarkdown } from "../lib/streamingMarkdown";
 import { ORCHESTRATOR_PROMPT_CONTEXT_MIME } from "../features/composer/types";
 import type { ComposerContextFile } from "../features/composer/types";
 import type { CodexMessage } from "../features/codex/types";
@@ -535,15 +536,29 @@ const AssistantRunOutput = memo(function AssistantRunOutput({
     runView.status === "completed" ||
     runView.status === "failed" ||
     runView.status === "interrupted";
+  const timelineItems = buildTimelineItems(runView);
+  const hasTimeline = timelineItems.length > 0;
+  const finalAnswer = selectAssistantFinalAnswer(runView, completed);
+  const hasTrace = hasTimeline || entry.historicalActivity !== undefined;
+  const hasPlanPreview = Boolean(
+    runView.nativePlan.completedText || runView.nativePlan.previewText,
+  );
+  const showSummary = completed
+    ? Boolean(
+        finalAnswer.trim() ||
+          runView.status === "failed" ||
+          runView.status === "interrupted" ||
+          !runView.nativePlan.completedText,
+      )
+    : Boolean(finalAnswer.trim());
 
-  if (completed) {
-    const hasTrace =
-      buildTimelineItems(runView).length > 0 ||
-      entry.historicalActivity !== undefined;
-
-    return (
-      <div className="run-output-surface completed">
-        {hasTrace ? (
+  return (
+    <div
+      className={`run-output-surface ${completed ? "completed" : "running"}`}
+      aria-label={completed ? undefined : "Live run output"}
+    >
+      {completed ? (
+        hasTrace ? (
           <RunTraceDropdown
             entry={entry}
             runView={runView}
@@ -552,73 +567,25 @@ const AssistantRunOutput = memo(function AssistantRunOutput({
           />
         ) : (
           <RunMetrics runView={runView} />
-        )}
-        <NativePlanCard
-          entry={entry}
-          onImplementPlan={onImplementPlan}
-          onRevisePlan={onRevisePlan}
-          onCancelPlan={onCancelPlan}
-          onOpenTranscriptLink={onOpenTranscriptLink}
-          expanded={planExpanded}
-          onDisclosureChange={onPlanDisclosureChange}
-        />
-        {runView.finalMessage.trim() ||
-        runView.status === "failed" ||
-        runView.status === "interrupted" ||
-        !runView.nativePlan.completedText ? (
-          <RunSummary
-            runView={runView}
-            preparedSummary={entry.preparedSummary}
-            onOpenTranscriptLink={onOpenTranscriptLink}
-          />
-        ) : null}
-        {runView.nativePlan.intent !== "plan" &&
-        runView.nativePlan.intent !== "plan-revision" ? (
-          <WebPreviewCard
-            entry={entry}
-            preview={runView.webPreview}
-            onOpen={onOpenWebPreview}
-          />
-        ) : null}
-        <EditedFilesSummary
-          entry={entry}
-          expanded={editedFilesExpanded}
-          undoDisabled={fileUndoDisabled}
-          onDisclosureChange={onPlanDisclosureChange}
-          onReviewFile={onReviewEditedFile}
-          onUndo={onUndoEditedFiles}
-        />
-        <RunApprovalRequests
-          entry={entry}
-          runView={runView}
-          onResolveRequest={onResolveRequest}
-          onAnswerUserInput={onAnswerUserInput}
-          onPendingInteractionPageChange={onPendingInteractionPageChange}
-        />
-      </div>
-    );
-  }
-
-  const hasTimeline =
-    runView.streamEvents.length > 0 ||
-    runView.editedFiles.length > 0 ||
-    runView.commands.length > 0;
-  const hasPlanPreview = Boolean(
-    runView.nativePlan.completedText || runView.nativePlan.previewText,
-  );
-
-  return (
-    <div className="run-output-surface running" aria-label="Live run output">
-      <RunMetrics runView={runView} />
-      {hasTimeline ? (
-        <RunTimeline runView={runView} onOpenTranscriptLink={onOpenTranscriptLink} />
-      ) : hasPlanPreview ? null : runView.status === "connecting" ? (
-        <PreparingRunStatus />
+        )
       ) : (
-        <p className="stream-placeholder">
-          <Clock size={15} aria-hidden="true" />
-          Waiting for app-server output...
-        </p>
+        <>
+          <RunMetrics runView={runView} />
+          {hasTimeline ? (
+            <RunTimeline
+              items={timelineItems}
+              onOpenTranscriptLink={onOpenTranscriptLink}
+            />
+          ) : hasPlanPreview || finalAnswer.trim() ? null : runView.status ===
+            "connecting" ? (
+            <PreparingRunStatus />
+          ) : (
+            <p className="stream-placeholder">
+              <Clock size={15} aria-hidden="true" />
+              Waiting for app-server output...
+            </p>
+          )}
+        </>
       )}
       <NativePlanCard
         entry={entry}
@@ -629,6 +596,35 @@ const AssistantRunOutput = memo(function AssistantRunOutput({
         expanded={planExpanded}
         onDisclosureChange={onPlanDisclosureChange}
       />
+      {showSummary ? (
+        <RunSummary
+          key="assistant-final-response"
+          runView={runView}
+          text={finalAnswer}
+          streaming={!completed}
+          preparedSummary={completed ? entry.preparedSummary : undefined}
+          onOpenTranscriptLink={onOpenTranscriptLink}
+        />
+      ) : null}
+      {completed &&
+      runView.nativePlan.intent !== "plan" &&
+      runView.nativePlan.intent !== "plan-revision" ? (
+        <WebPreviewCard
+          entry={entry}
+          preview={runView.webPreview}
+          onOpen={onOpenWebPreview}
+        />
+      ) : null}
+      {completed ? (
+        <EditedFilesSummary
+          entry={entry}
+          expanded={editedFilesExpanded}
+          undoDisabled={fileUndoDisabled}
+          onDisclosureChange={onPlanDisclosureChange}
+          onReviewFile={onReviewEditedFile}
+          onUndo={onUndoEditedFiles}
+        />
+      ) : null}
       <RunApprovalRequests
         entry={entry}
         runView={runView}
@@ -1087,7 +1083,10 @@ const RunTraceDropdown = memo(function RunTraceDropdown({
               </button>
             </div>
           ) : null}
-          <RunTimeline runView={runView} onOpenTranscriptLink={onOpenTranscriptLink} />
+          <RunTimeline
+            items={buildTimelineItems(runView)}
+            onOpenTranscriptLink={onOpenTranscriptLink}
+          />
           {entry.historicalActivity?.status === "loaded" &&
           entry.historicalActivity.nextCursor ? (
             <button
@@ -1164,15 +1163,17 @@ function usePreviewableMarkdownComponents(
 
 const RunSummary = memo(function RunSummary({
   runView,
+  text,
+  streaming,
   preparedSummary,
   onOpenTranscriptLink,
 }: {
   runView: RunViewState;
+  text: string;
+  streaming: boolean;
   preparedSummary?: PreparedHistoricalSummary;
   onOpenTranscriptLink?: (href: string) => boolean;
 }) {
-  const markdownComponents = usePreviewableMarkdownComponents(onOpenTranscriptLink);
-
   if (runView.status === "failed" && runView.error) {
     return (
       <div className="run-summary error" aria-label="Run error">
@@ -1189,7 +1190,8 @@ const RunSummary = memo(function RunSummary({
     );
   }
 
-  if (!runView.finalMessage.trim()) {
+  if (!text.trim()) {
+    if (streaming) return null;
     return (
       <div className="run-summary muted" aria-label="Run summary">
         Completed without a final message.
@@ -1229,16 +1231,58 @@ const RunSummary = memo(function RunSummary({
   }
 
   return (
-    <div className="run-summary markdown-summary" aria-label="Run summary">
+    <AssistantMarkdownMessage
+      text={text}
+      streaming={streaming}
+      onOpenTranscriptLink={onOpenTranscriptLink}
+    />
+  );
+});
+
+const AssistantMarkdownMessage = memo(function AssistantMarkdownMessage({
+  text,
+  streaming,
+  onOpenTranscriptLink,
+}: {
+  text: string;
+  streaming: boolean;
+  onOpenTranscriptLink?: (href: string) => boolean;
+}) {
+  const markdownComponents = usePreviewableMarkdownComponents(onOpenTranscriptLink);
+  const markdown = useMemo(
+    () =>
+      normalizePreviewableMarkdownLinks(
+        streaming ? prepareStreamingMarkdown(text) : text,
+      ),
+    [streaming, text],
+  );
+
+  return (
+    <div
+      className="run-summary markdown-summary assistant-markdown-message"
+      aria-label="Run summary"
+      aria-live={streaming ? "polite" : undefined}
+    >
       <ReactMarkdown
         components={markdownComponents}
         remarkPlugins={PLAN_MARKDOWN_PLUGINS}
       >
-        {normalizePreviewableMarkdownLinks(runView.finalMessage)}
+        {markdown}
       </ReactMarkdown>
     </div>
   );
 });
+
+function selectAssistantFinalAnswer(runView: RunViewState, completed: boolean) {
+  if (completed) return runView.finalMessage;
+
+  const streamingMessages = Object.values(runView.agentMessagesById)
+    .filter((message) => message.phase === "final_answer" && message.text.trim())
+    .map((message) => message.text);
+  return streamingMessages.length > 0
+    ? streamingMessages.join("\n\n")
+    : runView.finalMessage;
+}
 
 function buildSubmittedPromptSegments(
   prompt: string,
@@ -1427,14 +1471,12 @@ function isFileNameBoundaryCharacter(value: string) {
 }
 
 const RunTimeline = memo(function RunTimeline({
-  runView,
+  items,
   onOpenTranscriptLink,
 }: {
-  runView: RunViewState;
+  items: TimelineItem[];
   onOpenTranscriptLink?: (href: string) => boolean;
 }) {
-  const items = buildTimelineItems(runView);
-
   if (items.length === 0) {
     return null;
   }
@@ -1489,7 +1531,7 @@ function buildTimelineItems(runView: RunViewState): TimelineItem[] {
   const renderedToolIds = new Set<string>();
 
   for (const event of runView.streamEvents) {
-    if (shouldHideCompletedFinalMessageEvent(runView, event)) {
+    if (shouldHideFinalMessageEvent(runView, event)) {
       continue;
     }
 
@@ -1578,20 +1620,11 @@ function selectToolActivitiesForEvent(
     );
 }
 
-function shouldHideCompletedFinalMessageEvent(
+function shouldHideFinalMessageEvent(
   runView: RunViewState,
   event: StreamEvent,
 ) {
-  if (
-    event.kind !== "message" ||
-    !(
-      runView.status === "completed" ||
-      runView.status === "failed" ||
-      runView.status === "interrupted"
-    )
-  ) {
-    return false;
-  }
+  if (event.kind !== "message") return false;
 
   const activityIds = event.activityIds ?? [];
   if (
@@ -1603,7 +1636,12 @@ function shouldHideCompletedFinalMessageEvent(
     return true;
   }
 
+  const completed =
+    runView.status === "completed" ||
+    runView.status === "failed" ||
+    runView.status === "interrupted";
   return (
+    completed &&
     activityIds.length === 0 &&
     runView.finalMessage.trim().length > 0 &&
     event.text.trim() === runView.finalMessage.trim()

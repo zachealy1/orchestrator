@@ -298,6 +298,150 @@ it("renders live app-server file links as Markdown", () => {
     );
   });
 
+it("uses one stable Markdown response while the final answer completes", () => {
+  const incomplete = [
+    "First paragraph.",
+    "",
+    "Second paragraph.",
+    "",
+    "- One",
+    "- Updated [favicon.svg](/repo/public/favicon.svg",
+  ].join("\n");
+  const complete = `${incomplete})`;
+  const runningEntry: TaskChatEntry = {
+    ...historyEntry(1),
+    status: "running",
+    runView: {
+      ...emptyRunView,
+      status: "running",
+      agentMessagesById: {
+        "final-1": { text: incomplete, phase: "final_answer" },
+      },
+      streamEvents: [
+        {
+          id: "message-1",
+          kind: "message",
+          text: incomplete,
+          timestamp: "2026-08-21T12:00:00.000Z",
+          activityIds: ["final-1"],
+        },
+      ],
+    },
+  };
+  const actions: TranscriptTurnActions = {
+    onEditingPromptChange: vi.fn(),
+    onSubmitEdit: vi.fn(),
+    onCancelEdit: vi.fn(),
+    onStartEdit: vi.fn(),
+    onResolveRequest: vi.fn(),
+  };
+  const result = render(
+    <TestTaskChatTurn
+      entry={runningEntry}
+      editable={false}
+      editing={false}
+      editingPrompt=""
+      {...actions}
+    />,
+  );
+
+  const liveResponse = screen.getByLabelText("Run summary");
+  expect(liveResponse).toHaveClass(
+    "run-summary",
+    "markdown-summary",
+    "assistant-markdown-message",
+  );
+  expect(liveResponse).toHaveTextContent("Updated favicon.svg");
+  expect(liveResponse).not.toHaveTextContent("/repo/public/favicon.svg");
+  expect(screen.queryByLabelText("App-server stream")).toBeNull();
+  expect(within(liveResponse).queryByRole("link", { name: "favicon.svg" })).toBeNull();
+
+  result.rerender(
+    <TestTaskChatTurn
+      entry={{
+        ...runningEntry,
+        status: "completed",
+        runView: {
+          ...runningEntry.runView,
+          status: "completed",
+          finalMessage: complete,
+          finalMessageItemId: "final-1",
+          agentMessagesById: {
+            "final-1": { text: complete, phase: "final_answer" },
+          },
+          streamEvents: [
+            {
+              ...runningEntry.runView.streamEvents[0]!,
+              text: complete,
+            },
+          ],
+        },
+      }}
+      editable={false}
+      editing={false}
+      editingPrompt=""
+      {...actions}
+    />,
+  );
+
+  const completedResponse = screen.getByLabelText("Run summary");
+  expect(completedResponse).toBe(liveResponse);
+  expect(
+    within(completedResponse).getByRole("link", { name: "favicon.svg" }),
+  ).toHaveAttribute("href", "/repo/public/favicon.svg");
+  expect(screen.getAllByText("First paragraph.")).toHaveLength(1);
+});
+
+it("uses completed-summary whitespace rules while the final answer streams", () => {
+  const text = [
+    "First paragraph.",
+    "",
+    "Second paragraph.",
+    "",
+    "- First item",
+    "- Second item",
+  ].join("\n");
+  const entry: TaskChatEntry = {
+    ...historyEntry(1),
+    status: "running",
+    runView: {
+      ...emptyRunView,
+      status: "running",
+      agentMessagesById: {
+        "final-1": { text, phase: "final_answer" },
+      },
+      streamEvents: [
+        {
+          id: "message-1",
+          kind: "message",
+          text,
+          timestamp: "2026-08-21T12:00:00.000Z",
+          activityIds: ["final-1"],
+        },
+      ],
+    },
+  };
+
+  render(
+    <TestTaskChatTurn
+      entry={entry}
+      editable={false}
+      editing={false}
+      editingPrompt=""
+      onEditingPromptChange={vi.fn()}
+      onSubmitEdit={vi.fn()}
+      onCancelEdit={vi.fn()}
+      onStartEdit={vi.fn()}
+      onResolveRequest={vi.fn()}
+    />,
+  );
+
+  const response = screen.getByLabelText("Run summary");
+  expect(response.querySelectorAll(":scope > p")).toHaveLength(2);
+  expect(response.querySelectorAll(":scope > ul")).toHaveLength(1);
+  expect(response).toHaveClass("markdown-summary");
+});
+
 it("renders a completed web preview between the summary and edited files", async () => {
     const onOpenWebPreview = vi.fn().mockResolvedValue(undefined);
     const entry: TaskChatEntry = {
