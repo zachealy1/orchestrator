@@ -597,6 +597,20 @@ type ChatGitTarget =
       binding: KanbanGitBinding;
     };
 
+type TurnAccessValidationResult =
+  | { ok: true }
+  | { ok: false; error: Error };
+
+type PendingTurnAccessValidation = {
+  threadId: string;
+  expected: CodexAccessSettings;
+  startedAtMs: number;
+  timerId: number;
+  resolve: (result: TurnAccessValidationResult) => void;
+};
+
+const TURN_ACCESS_VALIDATION_TIMEOUT_MS = 5_000;
+
 async function forEachWithConcurrency<T>(
   items: T[],
   concurrency: number,
@@ -1184,6 +1198,9 @@ function App() {
   const pendingRunBindingNotificationsRef = useRef<
     PendingRunBindingNotification[]
   >([]);
+  const pendingTurnAccessValidationsRef = useRef(
+    new Map<string, PendingTurnAccessValidation>(),
+  );
   const mentionSearchRequestId = useRef(0);
   const slashCommandSearchRequestId = useRef(0);
   const codexSkillCache = useRef(new Map<CodexProfileKey, CodexSkillSummary[]>());
@@ -5734,6 +5751,7 @@ function App() {
       control.threadId,
       control.turnId,
     );
+    clearPendingTurnAccessValidation(control);
     activeRunRegistry.delete(control.clientId);
     pendingRunBindingNotificationsRef.current =
       pendingRunBindingNotificationsRef.current.filter((pending) => {
@@ -5818,6 +5836,82 @@ function App() {
       pendingRunBindingNotificationsRef.current.filter(
         (pending) => now - pending.receivedAt <= RUN_NOTIFICATION_BINDING_TTL_MS,
       );
+  }
+
+  function clearPendingTurnAccessValidation(control: ActiveRunControl) {
+    const pending = pendingTurnAccessValidationsRef.current.get(
+      control.clientId,
+    );
+    if (!pending) return;
+    window.clearTimeout(pending.timerId);
+    pendingTurnAccessValidationsRef.current.delete(control.clientId);
+    pending.resolve({ ok: false, error: new RunStoppedError() });
+  }
+
+  function beginTurnAccessValidation(
+    control: ActiveRunControl,
+    threadId: string,
+    expected: CodexAccessSettings,
+  ) {
+    clearPendingTurnAccessValidation(control);
+    let resolveValidation!: (result: TurnAccessValidationResult) => void;
+    const promise = new Promise<TurnAccessValidationResult>((resolve) => {
+      resolveValidation = resolve;
+    });
+    const startedAtMs = Date.now();
+    const timerId = window.setTimeout(() => {
+      const pending = pendingTurnAccessValidationsRef.current.get(
+        control.clientId,
+      );
+      if (!pending || pending.startedAtMs !== startedAtMs) return;
+      pendingTurnAccessValidationsRef.current.delete(control.clientId);
+      resolveValidation({
+        ok: false,
+        error: new Error(
+          "Codex did not confirm the requested permission profile before the turn started. The run was stopped to avoid an unverified sandbox configuration.",
+        ),
+      });
+    }, TURN_ACCESS_VALIDATION_TIMEOUT_MS);
+    pendingTurnAccessValidationsRef.current.set(control.clientId, {
+      threadId,
+      expected,
+      startedAtMs,
+      timerId,
+      resolve: resolveValidation,
+    });
+    return promise;
+  }
+
+  function resolvePendingTurnAccessValidation(
+    control: ActiveRunControl,
+    runtime: {
+      approvalPolicy?: string;
+      activePermissionProfile?: { id?: string | null } | null;
+    },
+    emittedAtMs: number | null = null,
+  ) {
+    const pending = pendingTurnAccessValidationsRef.current.get(
+      control.clientId,
+    );
+    if (
+      !pending ||
+      pending.threadId !== control.threadId ||
+      (emittedAtMs !== null && emittedAtMs < pending.startedAtMs) ||
+      !runtime.activePermissionProfile?.id
+    ) {
+      return;
+    }
+    window.clearTimeout(pending.timerId);
+    pendingTurnAccessValidationsRef.current.delete(control.clientId);
+    try {
+      assertRuntimeAccessMatches(runtime, pending.expected);
+      pending.resolve({ ok: true });
+    } catch (error) {
+      pending.resolve({
+        ok: false,
+        error: error instanceof Error ? error : new Error(String(error)),
+      });
+    }
   }
 
   function bufferPendingRunBindingNotification(
@@ -11890,6 +11984,7 @@ function App() {
     let threadModelProvider: string | null | undefined = snapshot.useOss
       ? "oss"
       : null;
+    let threadActivePermissionProfile: string | null = null;
     let resumedThread = false;
     const startFreshThread = async (): Promise<StartedRunThread> => {
       const threadCwd =
@@ -11912,7 +12007,7 @@ function App() {
         config: threadConfig,
       });
       ensureRunControlActive(runControl);
-      assertRuntimeAccessMatches(thread, snapshot.access);
+      assertRuntimeApprovalPolicyMatches(thread, snapshot.access);
       const nextThreadId = thread.thread.id;
       runControl.threadId = nextThreadId;
       if (
@@ -11960,6 +12055,8 @@ function App() {
         threadId: nextThreadId,
         model: nextThreadModel,
         modelProvider: nextThreadModelProvider,
+        activePermissionProfile:
+          thread.activePermissionProfile?.id ?? null,
       };
     };
 
@@ -12013,6 +12110,7 @@ function App() {
       threadId = thread.threadId;
       threadModel = thread.model;
       threadModelProvider = thread.modelProvider;
+      threadActivePermissionProfile = thread.activePermissionProfile;
     } else {
       if (
         nativeTaskBinding &&
@@ -12074,9 +12172,11 @@ function App() {
           config: threadConfig,
         });
         resumedThread = true;
-        assertRuntimeAccessMatches(resumed, snapshot.access);
+        assertRuntimeApprovalPolicyMatches(resumed, snapshot.access);
         threadModel = resumed.model ?? threadModel;
         threadModelProvider = resumed.modelProvider ?? threadModelProvider;
+        threadActivePermissionProfile =
+          resumed.activePermissionProfile?.id ?? null;
       } catch (error) {
         if (isCodexThreadNotFoundError(error)) {
           await prepareMissingSharedThreadContinuation();
@@ -12084,6 +12184,7 @@ function App() {
           threadId = thread.threadId;
           threadModel = thread.model;
           threadModelProvider = thread.modelProvider;
+          threadActivePermissionProfile = thread.activePermissionProfile;
           updateRunControlView(runControl, (current) => ({
             ...current,
             tokenUsageStartTotal: 0,
@@ -12177,6 +12278,7 @@ function App() {
       threadId,
       model: threadModel,
       modelProvider: threadModelProvider,
+      activePermissionProfile: threadActivePermissionProfile,
       browserSession,
       startFreshThread,
       nativeTaskWorkspaceBinding: nativeTaskBinding,
@@ -12234,6 +12336,8 @@ function App() {
       threadId = startedThread.threadId;
       let threadModel = startedThread.model;
       let threadModelProvider = startedThread.modelProvider;
+      let threadActivePermissionProfile =
+        startedThread.activePermissionProfile;
       const browserSession = startedThread.browserSession;
       const startThread = startedThread.startFreshThread;
       const nativeTaskWorkspaceBinding =
@@ -12271,7 +12375,11 @@ function App() {
 
       appServices.runCoordinator.transition(runControl.clientId, "starting-turn");
       const startTurn = (nextThreadId: string) =>
-        codexRpcForProfile<{ turn: { id: string } }>(
+        codexRpcForProfile<{
+          turn: { id: string };
+          approvalPolicy?: string;
+          activePermissionProfile?: { id?: string | null } | null;
+        }>(
           snapshot.profileKey,
           snapshot.accountId,
           "turn/start",
@@ -12296,10 +12404,47 @@ function App() {
           },
         );
 
+      const startValidatedTurn = async (nextThreadId: string) => {
+        const requiresTurnValidation = permissionProfileNeedsTurnValidation(
+          threadActivePermissionProfile,
+          snapshot.access,
+        );
+        const turnRequest = startTurn(nextThreadId);
+        const validation = requiresTurnValidation
+          ? beginTurnAccessValidation(
+              runControl,
+              nextThreadId,
+              snapshot.access,
+            )
+          : null;
+        let acceptedTurnId: string | null = null;
+        try {
+          const started = await turnRequest;
+          acceptedTurnId = started.turn.id;
+          runControl.turnId = acceptedTurnId;
+          if (validation) {
+            resolvePendingTurnAccessValidation(runControl, started);
+            const result = await validation;
+            if (!result.ok) {
+              await codexRpcForProfile(
+                snapshot.profileKey,
+                snapshot.accountId,
+                "turn/interrupt",
+                { threadId: nextThreadId, turnId: acceptedTurnId },
+              ).catch(() => undefined);
+              throw result.error;
+            }
+          }
+          return started;
+        } finally {
+          clearPendingTurnAccessValidation(runControl);
+        }
+      };
+
       let turn: { turn: { id: string } };
       try {
         runControl.turnStartPending = true;
-        turn = await startTurn(threadId);
+        turn = await startValidatedTurn(threadId);
       } catch (error) {
         runControl.turnStartPending = false;
         ensureRunControlActive(runControl);
@@ -12316,6 +12461,7 @@ function App() {
         threadId = thread.threadId;
         threadModel = thread.model;
         threadModelProvider = thread.modelProvider;
+        threadActivePermissionProfile = thread.activePermissionProfile;
         updateRunControlView(runControl, (current) => ({
           ...current,
           tokenUsageStartTotal: 0,
@@ -12337,7 +12483,7 @@ function App() {
           warnings,
           true,
         );
-        turn = await startTurn(threadId);
+        turn = await startValidatedTurn(threadId);
       }
       runControl.threadId = threadId;
       runControl.turnId = turn.turn.id;
@@ -15517,6 +15663,22 @@ function App() {
       return;
     }
     const identity = readCodexMessageRunIdentity(message);
+    if (method === "thread/settings/updated") {
+      const settings = readObject(params.threadSettings);
+      const activePermissionProfile = readObject(
+        settings.activePermissionProfile,
+      );
+      resolvePendingTurnAccessValidation(
+        control,
+        {
+          approvalPolicy: readString(settings.approvalPolicy) ?? undefined,
+          activePermissionProfile: {
+            id: readString(activePermissionProfile.id),
+          },
+        },
+        readNumber(readObject(message).emittedAtMs),
+      );
+    }
     const trackedSubagents = trackSubagentCollaboration(control, message);
     if (
       trackedSubagents.length > 0 &&
@@ -19834,14 +19996,7 @@ function assertRuntimeAccessMatches(
   },
   expected: CodexAccessSettings,
 ) {
-  if (
-    runtime.approvalPolicy &&
-    runtime.approvalPolicy !== expected.approvalPolicy
-  ) {
-    throw new Error(
-      `Codex activated approval policy ${runtime.approvalPolicy}, but the application requested ${expected.approvalPolicy}. The run was stopped to avoid a permission mismatch.`,
-    );
-  }
+  assertRuntimeApprovalPolicyMatches(runtime, expected);
   const activeProfile = runtime.activePermissionProfile?.id;
   if (activeProfile && activeProfile !== expected.permissionProfile) {
     const compatibilityHint =
@@ -19852,6 +20007,30 @@ function assertRuntimeAccessMatches(
       `Codex activated permission profile ${activeProfile}, but the application requested ${expected.permissionProfile}. The run was stopped to avoid a sandbox mismatch.${compatibilityHint}`,
     );
   }
+}
+
+function assertRuntimeApprovalPolicyMatches(
+  runtime: { approvalPolicy?: string },
+  expected: CodexAccessSettings,
+) {
+  if (
+    runtime.approvalPolicy &&
+    runtime.approvalPolicy !== expected.approvalPolicy
+  ) {
+    throw new Error(
+      `Codex activated approval policy ${runtime.approvalPolicy}, but the application requested ${expected.approvalPolicy}. The run was stopped to avoid a permission mismatch.`,
+    );
+  }
+}
+
+function permissionProfileNeedsTurnValidation(
+  activePermissionProfile: string | null,
+  expected: CodexAccessSettings,
+) {
+  return (
+    activePermissionProfile !== null &&
+    activePermissionProfile !== expected.permissionProfile
+  );
 }
 
 function contextMenuPosition(

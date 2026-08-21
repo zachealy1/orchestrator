@@ -9,6 +9,7 @@ import {
   renderApp,
   setWindowWidth,
 } from "./test/appRuntimeHarness";
+import { ASK_FOR_APPROVAL_PERMISSION_PROFILE } from "./lib/codexAccess";
 
 const mocks = getMocks();
 
@@ -192,6 +193,77 @@ describe("Application runtime scenarios 9", () => {
           .getByText("Which deployment scope should be used?")
           .closest('[data-agent-notification-target="user-input"]'),
       ).toHaveFocus(),
+    );
+  });
+
+  it("starts a shared Goal card after the turn replaces the thread bootstrap profile", async () => {
+    prepareKanbanRun();
+    mocks.codexRpcMock.mockImplementation(
+      async (_accountId: number, method: string, params: any) => {
+        if (method === "thread/start") {
+          return {
+            thread: { id: "thread-kanban-goal-access" },
+            approvalPolicy: "untrusted",
+            activePermissionProfile: { id: ":danger-full-access" },
+          };
+        }
+        if (method === "thread/goal/set") {
+          return {
+            goal: {
+              threadId: params.threadId,
+              objective: params.objective,
+              status: "active",
+              timeUsedSeconds: 0,
+            },
+          };
+        }
+        if (method === "turn/start") {
+          return { turn: { id: "turn-kanban-goal-access" } };
+        }
+        return {};
+      },
+    );
+
+    const { user } = await renderApp();
+    await user.click(await screen.findByRole("radio", { name: "Kanban" }));
+    await user.click(
+      screen.getByRole("button", { name: "Start test Kanban agent" }),
+    );
+
+    await waitFor(() =>
+      expect(mocks.codexDefaultProfileRpcMock).toHaveBeenCalledWith(
+        "turn/start",
+        expect.objectContaining({
+          permissions: ASK_FOR_APPROVAL_PERMISSION_PROFILE,
+        }),
+      ),
+    );
+    await emitCodexNotification(
+      {
+        method: "thread/settings/updated",
+        params: {
+          threadId: "thread-kanban-goal-access",
+          threadSettings: {
+            approvalPolicy: "untrusted",
+            activePermissionProfile: {
+              id: ASK_FOR_APPROVAL_PERMISSION_PROFILE,
+            },
+          },
+        },
+      },
+      { accountId: 0, profileKey: "default" },
+    );
+
+    await waitFor(() =>
+      expect(mocks.updateKanbanAttemptMock).toHaveBeenCalledWith(
+        expect.objectContaining({
+          status: "running",
+          turnId: "turn-kanban-goal-access",
+        }),
+      ),
+    );
+    expect(screen.getByLabelText("Kanban test result")).toHaveTextContent(
+      "started",
     );
   });
 

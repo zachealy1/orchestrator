@@ -203,6 +203,7 @@ export type StartedRunThread = {
   threadId: string;
   model: string | null | undefined;
   modelProvider: string | null | undefined;
+  activePermissionProfile: string | null;
 };
 export type RunThreadStageResult = StartedRunThread & {
   browserSession: PreparedBrowserSession | null;
