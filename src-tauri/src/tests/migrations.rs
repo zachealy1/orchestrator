@@ -117,7 +117,11 @@ fn shared_and_kanban_chats_are_queued_for_source_root_reconciliation() {
             rows,
             vec![
                 ("Shared".to_owned(), Some("pending".to_owned()), None),
-                ("Kanban isolated".to_owned(), Some("pending".to_owned()), None),
+                (
+                    "Kanban isolated".to_owned(),
+                    Some("pending".to_owned()),
+                    None
+                ),
                 (
                     "Private".to_owned(),
                     Some("ready".to_owned()),

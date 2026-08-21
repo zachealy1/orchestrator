@@ -453,6 +453,7 @@ import {
 } from "../features/runs/runtimeTypes";
 import { useRunController } from "../features/runs/useRunController";
 import { validateNativeTaskExecutionEnvironment } from "../features/runs/nativeTaskEnvironment";
+import { verifyNativeTaskCommandEvent } from "../features/runs/nativeTaskExecutionBoundary";
 import {
   BUILTIN_SLASH_COMMANDS,
   addPlanImplementationProgressInstructions,
@@ -11139,6 +11140,8 @@ function App() {
       kanbanStopRequest: null,
       nativeTaskWorkspaceBinding:
         snapshot.nativeTaskWorkspaceBinding ?? null,
+      nativeTaskCommandExecutionObserved: false,
+      nativeTaskExecutionViolation: null,
     };
     const nextEntry: TaskChatEntry = {
       clientId,
@@ -15471,6 +15474,32 @@ function App() {
     );
   }
 
+  async function verifyKanbanExecutionBoundary(control: ActiveRunControl) {
+    if (control.nativeTaskExecutionViolation) {
+      return control.nativeTaskExecutionViolation;
+    }
+    const cardId = control.kanbanAttempt?.cardId;
+    if (!cardId || !control.nativeTaskWorkspaceBinding) return null;
+    try {
+      const bindings = await loadKanbanGitBindings(cardId);
+      if (bindings.length === 0) {
+        return "The card worktree bindings are unavailable, so completion cannot be verified.";
+      }
+      const statuses = await Promise.all(
+        bindings.map((binding) => readKanbanGitStatus(binding)),
+      );
+      const changedSource = statuses.find((status) => status.sourceStatusChanged);
+      if (changedSource) {
+        return `Changes were detected outside the isolated card worktree in ${changedSource.binding.sourceRepositoryPath}. The card was blocked to prevent publishing the wrong files.`;
+      }
+      return null;
+    } catch (error) {
+      return `The isolated card worktree could not be verified before completion: ${
+        error instanceof Error ? error.message : String(error)
+      }`;
+    }
+  }
+
   async function handleCodexNotification(
     accountId: number,
     profileKey: CodexProfileKey,
@@ -15663,6 +15692,32 @@ function App() {
       return;
     }
     const identity = readCodexMessageRunIdentity(message);
+    if (control.nativeTaskWorkspaceBinding) {
+      const verification = verifyNativeTaskCommandEvent(
+        control.nativeTaskWorkspaceBinding,
+        message,
+      );
+      if (verification.commandObserved) {
+        control.nativeTaskCommandExecutionObserved = true;
+      }
+      if (verification.error && !control.nativeTaskExecutionViolation) {
+        control.nativeTaskExecutionViolation = verification.error;
+        updateRunControlView(control, (current) => ({
+          ...current,
+          error: verification.error,
+        }));
+        const violationThreadId = identity.threadId ?? control.threadId;
+        const violationTurnId = identity.turnId ?? control.turnId;
+        if (violationThreadId && violationTurnId) {
+          void interruptTurnForProfile(
+            control.profileKey,
+            control.accountId,
+            violationThreadId,
+            violationTurnId,
+          ).catch(() => undefined);
+        }
+      }
+    }
     if (method === "thread/settings/updated") {
       const settings = readObject(params.threadSettings);
       const activePermissionProfile = readObject(
@@ -15827,6 +15882,11 @@ function App() {
             ? "failed"
             : "completed"
         : null;
+    const executionBoundaryError =
+      control.nativeTaskExecutionViolation ??
+      (terminalStatus === "completed"
+        ? await verifyKanbanExecutionBoundary(control)
+        : null);
     inspectCodexMessageForWebPreview(control, message);
     applyBrowserLifecycleNotification(control, method, params);
 
@@ -15881,24 +15941,29 @@ function App() {
             hasDiff: Boolean(nextRunView.latestDiff.trim()),
           })
         : null;
-    const persistedKanbanStatus = blockedNoToolError
+    const persistedKanbanStatus = executionBoundaryError
+      ? "blocked"
+      : blockedNoToolError
       ? "blocked"
       : missingCompletedKanbanPlan
         ? "failed"
         : terminalStatus;
-    const persistedRunStatus = blockedNoToolError
+    const persistedRunStatus = executionBoundaryError
+      ? "failed"
+      : blockedNoToolError
       ? "failed"
       : missingCompletedKanbanPlan
         ? "failed"
         : terminalStatus;
-    if (blockedNoToolError) {
+    if (executionBoundaryError || blockedNoToolError) {
       nextRunView = updateRunControlView(control, (current) => ({
         ...current,
         status: "failed",
-        error: blockedNoToolError,
+        error: executionBoundaryError ?? blockedNoToolError,
       }));
     }
     const terminalError =
+      executionBoundaryError ??
       blockedNoToolError ??
       (missingCompletedKanbanPlan
         ? "Codex completed the Plan-mode card without a reviewable plan."

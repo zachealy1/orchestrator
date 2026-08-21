@@ -11,7 +11,9 @@ use tauri::{AppHandle, Manager};
 use uuid::Uuid;
 
 use crate::{
-    git::{git_diff_is_binary, read_git_object_preview, stage_case_only_renames},
+    git::{
+        case_only_renames, git_diff_is_binary, read_git_object_preview, stage_case_only_renames,
+    },
     models::{WorkspaceGitDiff, WorkspaceGitDiffSection},
     paths::{empty_preview_text, read_workspace_file_preview_text},
 };
@@ -48,6 +50,8 @@ pub(crate) struct KanbanGitRepositoryBinding {
     pub base_commit: String,
     pub card_branch: String,
     pub worktree_path: String,
+    #[serde(default)]
+    pub source_status_fingerprint: Option<String>,
     pub status: String,
     pub error: Option<KanbanGitOperationError>,
 }
@@ -91,6 +95,7 @@ pub(crate) struct KanbanGitReconcileResult {
     pub target_moved: bool,
     pub has_changes: bool,
     pub has_conflicts: bool,
+    pub source_status_changed: bool,
 }
 
 #[derive(Clone, Debug, Serialize, specta::Type)]
@@ -115,6 +120,7 @@ pub(crate) struct KanbanGitStatusResult {
     pub behind_target: Option<u64>,
     pub has_changes: bool,
     pub has_conflicts: bool,
+    pub source_status_changed: bool,
     pub staged_count: usize,
     pub unstaged_count: usize,
     pub untracked_count: usize,
@@ -557,6 +563,69 @@ fn repository_is_dirty(repo: &Path) -> Result<bool, String> {
     .is_empty())
 }
 
+fn extend_fingerprint(hash: &mut u64, bytes: &[u8]) {
+    for byte in bytes {
+        *hash ^= u64::from(*byte);
+        *hash = hash.wrapping_mul(0x100000001b3);
+    }
+}
+
+fn repository_status_fingerprint(repo: &Path) -> Result<String, String> {
+    let status = git_checked_bytes(
+        repo,
+        &["status", "--porcelain=v1", "-z", "--untracked-files=all"],
+        "Unable to fingerprint Git status",
+    )?;
+    let head = optional_head_commit(repo)?.unwrap_or_else(|| "unborn".to_string());
+    let case_renames = case_only_renames(repo, None)?;
+    let mut hash = 0xcbf29ce484222325_u64;
+    extend_fingerprint(&mut hash, b"head\0");
+    extend_fingerprint(&mut hash, head.as_bytes());
+    extend_fingerprint(&mut hash, b"\0status\0");
+    extend_fingerprint(&mut hash, &status);
+    for (tracked, actual) in case_renames {
+        extend_fingerprint(&mut hash, b"\0case-rename\0");
+        extend_fingerprint(&mut hash, tracked.as_bytes());
+        extend_fingerprint(&mut hash, b"\0");
+        extend_fingerprint(&mut hash, actual.as_bytes());
+    }
+    Ok(format!("{hash:016x}"))
+}
+
+fn source_status_changed(
+    source: &Path,
+    binding: &KanbanGitRepositoryBinding,
+) -> Result<bool, String> {
+    if let Some(expected) = binding.source_status_fingerprint.as_deref() {
+        return Ok(repository_status_fingerprint(source)? != expected);
+    }
+    Ok(repository_is_dirty(source)?
+        || !case_only_renames(source, None)?.is_empty()
+        || optional_head_commit(source)?.as_deref() != Some(binding.base_commit.as_str()))
+}
+
+fn append_case_only_renames(
+    repo: &Path,
+    files: &mut Vec<KanbanGitFileStatus>,
+) -> Result<(), String> {
+    for (tracked_path, actual_path) in case_only_renames(repo, None)? {
+        if files.iter().any(|file| {
+            file.path == actual_path || file.original_path.as_deref() == Some(tracked_path.as_str())
+        }) {
+            continue;
+        }
+        files.push(KanbanGitFileStatus {
+            path: actual_path,
+            original_path: Some(tracked_path),
+            index_status: " ".to_string(),
+            worktree_status: "R".to_string(),
+            kind: "renamed".to_string(),
+        });
+    }
+    files.sort_by(|left, right| left.path.cmp(&right.path));
+    Ok(())
+}
+
 fn untracked_paths(repo: &Path) -> Result<Vec<String>, String> {
     let bytes = git_checked_bytes(
         repo,
@@ -822,6 +891,7 @@ fn create_worktree(
         base_commit: repository.base_commit.clone(),
         card_branch,
         worktree_path: worktree.to_string_lossy().to_string(),
+        source_status_fingerprint: Some(repository_status_fingerprint(&repository.source_root)?),
         status: if repository.dirty && !repository.include_dirty_changes {
             "readySourceChangesExcluded".to_string()
         } else if repository.dirty {
@@ -1244,6 +1314,7 @@ fn reconcile_blocking(binding: KanbanGitRepositoryBinding) -> KanbanGitReconcile
         target_moved: false,
         has_changes: false,
         has_conflicts: false,
+        source_status_changed: false,
     };
     let source = match resolve_repository(Path::new(&binding.source_repository_path)) {
         Ok(source) => {
@@ -1361,7 +1432,7 @@ fn reconcile_blocking(binding: KanbanGitRepositoryBinding) -> KanbanGitReconcile
             return result;
         }
     };
-    let files = match parse_status(&bytes) {
+    let mut files = match parse_status(&bytes) {
         Ok(files) => files,
         Err(message) => {
             result_binding.status = "error".to_string();
@@ -1375,6 +1446,18 @@ fn reconcile_blocking(binding: KanbanGitRepositoryBinding) -> KanbanGitReconcile
             return result;
         }
     };
+    if let Err(message) = append_case_only_renames(worktree, &mut files) {
+        result_binding.status = "error".to_string();
+        result_binding.error = Some(operation_error(
+            Some(binding.source_repository_path.clone()),
+            "case_status_failed",
+            message,
+            false,
+        ));
+        result.binding = result_binding;
+        return result;
+    }
+    result.source_status_changed = source_status_changed(&source, &binding).unwrap_or(true);
     result.has_changes = !files.is_empty()
         || result
             .head_commit
@@ -1403,7 +1486,8 @@ fn status_blocking(binding: KanbanGitRepositoryBinding) -> Result<KanbanGitStatu
         &["status", "--porcelain=v1", "-z", "--untracked-files=all"],
         "Unable to read Git status",
     )?;
-    let files = parse_status(&bytes)?;
+    let mut files = parse_status(&bytes)?;
+    append_case_only_renames(&worktree, &mut files)?;
     let head_commit = rev_parse(&worktree, "HEAD^{commit}")?;
     let (ahead_of_base, behind_base) = ahead_behind(&worktree, &binding.base_commit, "HEAD")?;
     let target_head = base_branch_head(&source, &binding);
@@ -1411,6 +1495,7 @@ fn status_blocking(binding: KanbanGitRepositoryBinding) -> Result<KanbanGitStatu
         .as_deref()
         .map(|target| ahead_behind(&worktree, target, "HEAD"))
         .transpose()?;
+    let source_status_changed = source_status_changed(&source, &binding)?;
     Ok(KanbanGitStatusResult {
         binding,
         head_commit,
@@ -1421,6 +1506,7 @@ fn status_blocking(binding: KanbanGitRepositoryBinding) -> Result<KanbanGitStatu
         behind_target: target_counts.map(|counts| counts.1),
         has_changes: !files.is_empty() || ahead_of_base > 0 || behind_base > 0,
         has_conflicts: files.iter().any(|file| file.kind == "conflicted"),
+        source_status_changed,
         staged_count: files
             .iter()
             .filter(|file| file.index_status != " " && file.index_status != "?")
@@ -2328,6 +2414,11 @@ mod tests {
             excluded.repositories[0].status,
             "readySourceChangesExcluded"
         );
+        assert!(
+            !status_blocking(excluded.repositories[0].clone())
+                .expect("read excluded status")
+                .source_status_changed
+        );
 
         let included_cards = temp_directory("dirty-included-cards");
         let included = provision(&included_cards, &repo, "dirty-included", true);
@@ -2460,6 +2551,31 @@ mod tests {
     }
 
     #[test]
+    fn status_detects_changes_made_in_the_source_repository() {
+        let repo = init_repository("source-boundary-source");
+        let cards = temp_directory("source-boundary-cards");
+        let result = provision(&cards, &repo, "source-boundary-card", false);
+        let binding = result.repositories[0].clone();
+
+        let initial = status_blocking(binding.clone()).expect("read initial status");
+        assert!(!initial.source_status_changed);
+        fs::write(repo.join("outside.txt"), "outside worktree\n")
+            .expect("write source-only change");
+        let changed = status_blocking(binding.clone()).expect("read changed status");
+        assert!(changed.source_status_changed);
+        assert!(!changed.has_changes);
+
+        cleanup_blocking(KanbanGitCleanupRequest {
+            binding,
+            delete_branch: true,
+            force: true,
+        })
+        .expect("cleanup");
+        remove_test_directory(&repo);
+        remove_test_directory(&cards);
+    }
+
+    #[test]
     fn commit_handles_case_only_renames_in_card_worktrees() {
         let repo = init_repository("case-only-rename-source");
         let cards = temp_directory("case-only-rename-cards");
@@ -2468,6 +2584,15 @@ mod tests {
         let worktree = Path::new(&binding.worktree_path);
         fs::rename(worktree.join("README.md"), worktree.join("readme.md"))
             .expect("rename tracked file casing");
+
+        let status = status_blocking(binding.clone()).expect("read case-only status");
+        assert!(status.has_changes);
+        assert_eq!(status.unstaged_count, 1);
+        assert!(status.files.iter().any(|file| {
+            file.kind == "renamed"
+                && file.path == "readme.md"
+                && file.original_path.as_deref() == Some("README.md")
+        }));
 
         commit_blocking(KanbanGitCommitRequest {
             binding: binding.clone(),

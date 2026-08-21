@@ -82,6 +82,8 @@ export type ActiveRunControl = {
   kanbanStopStatus: "paused" | "stopped" | null;
   kanbanStopRequest: PendingKanbanStopRequest | null;
   nativeTaskWorkspaceBinding: NativeTaskWorkspaceBinding | null;
+  nativeTaskCommandExecutionObserved: boolean;
+  nativeTaskExecutionViolation: string | null;
 };
 
 export function isActiveRunControl(

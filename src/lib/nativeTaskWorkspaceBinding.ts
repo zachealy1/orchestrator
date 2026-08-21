@@ -1,6 +1,7 @@
 import type { KanbanGitBinding } from "../features/kanban/api";
 
 export const NATIVE_TASK_WORKSPACE_BINDING_VERSION = 4;
+export const NATIVE_TASK_LOCAL_ENVIRONMENT_ID = "local";
 
 export type NativeTaskSourceRootAssociation = "pending" | "source-root";
 
@@ -133,6 +134,14 @@ export function nativeTaskExecutionOverrides(
 ) {
   return {
     cwd: binding.executionDirectory,
+    runtimeWorkspaceRoots: binding.runtimeWorkspaceRoots,
+    environments: [
+      {
+        environmentId: NATIVE_TASK_LOCAL_ENVIRONMENT_ID,
+        cwd: binding.executionDirectory,
+        runtimeWorkspaceRoots: binding.runtimeWorkspaceRoots,
+      },
+    ],
   };
 }
 

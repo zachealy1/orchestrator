@@ -382,7 +382,18 @@ describe("Application runtime scenarios 6", () => {
         mocks.codexDefaultProfileRpcMock.mock.calls.find(
           ([method]) => method === "turn/start",
         )?.[1],
-      ).not.toHaveProperty("runtimeWorkspaceRoots");
+      ).toEqual(
+        expect.objectContaining({
+          runtimeWorkspaceRoots: [executionRoot, worktreePath],
+          environments: [
+            expect.objectContaining({
+              environmentId: "local",
+              cwd: executionRoot,
+              runtimeWorkspaceRoots: [executionRoot, worktreePath],
+            }),
+          ],
+        }),
+      );
       expect(screen.queryByText(/default external Codex profile/i)).not.toBeInTheDocument();
       expect(mocks.createRunMock).toHaveBeenCalledWith(
         expect.objectContaining({ accountId: null, chatId: sharedChat.id }),

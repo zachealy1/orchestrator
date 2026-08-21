@@ -45,6 +45,20 @@ describe("native task workspace bindings", () => {
     });
     expect(nativeTaskExecutionOverrides(result)).toEqual({
       cwd: "/app/cards/card-1",
+      runtimeWorkspaceRoots: [
+        "/app/cards/card-1",
+        "/app/cards/card-1/repo",
+      ],
+      environments: [
+        {
+          environmentId: "local",
+          cwd: "/app/cards/card-1",
+          runtimeWorkspaceRoots: [
+            "/app/cards/card-1",
+            "/app/cards/card-1/repo",
+          ],
+        },
+      ],
     });
   });
 

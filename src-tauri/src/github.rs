@@ -344,6 +344,12 @@ async fn publish_record(
         },
     )
     .await?;
+    if status.source_status_changed {
+        return Err(format!(
+            "Changes were detected outside the isolated card worktree in {}. Publication was blocked to prevent publishing the wrong files.",
+            status.binding.source_repository_path
+        ));
+    }
     let mut next_binding = binding;
     if status.has_changes {
         let context = WorkspaceCommitIntentContext {
@@ -875,6 +881,34 @@ pub(crate) async fn github_complete_kanban_without_pull_request(
     if total == 0 || invalid > 0 {
         return Err("This card still has work to publish or an existing pull request.".to_string());
     }
+    let binding_rows: Vec<String> = sqlx::query_scalar(
+        "SELECT binding_json FROM kanban_repository_bindings
+         WHERE card_id = ?1 AND state != 'removed' ORDER BY repository_path",
+    )
+    .bind(&card_id)
+    .fetch_all(&mut *connection)
+    .await
+    .map_err(|error| format!("Card worktrees could not be checked: {error}"))?;
+    drop(connection);
+    for value in binding_rows {
+        let binding: crate::kanban_git::KanbanGitRepositoryBinding =
+            serde_json::from_str(&value)
+                .map_err(|_| "A saved card worktree is invalid.".to_string())?;
+        let status = kanban_git_status(app.clone(), KanbanGitBindingRequest { binding }).await?;
+        if status.source_status_changed {
+            return Err(format!(
+                "Changes were detected outside the isolated card worktree in {}. Review the misplaced changes before completing this card.",
+                status.binding.source_repository_path
+            ));
+        }
+        if status.has_changes || status.ahead_of_base > 0 {
+            return Err(
+                "This card now has work to publish. Retry publication instead of completing it without a pull request."
+                    .to_string(),
+            );
+        }
+    }
+    let mut connection = open_database(&app).await?;
     sqlx::query(
         "UPDATE kanban_cards SET stage = 'done', review_state = 'approved',
                 approved_at = CURRENT_TIMESTAMP, state_version = state_version + 1,

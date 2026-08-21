@@ -806,11 +806,11 @@ fn actual_case_relative_path(
     )
 }
 
-/// Stages path-casing corrections before `git add` encounters an index alias on macOS.
-pub(crate) fn stage_case_only_renames(
+/// Finds tracked paths whose on-disk casing differs on case-insensitive filesystems.
+pub(crate) fn case_only_renames(
     git_root: &Path,
     pathspecs: Option<&[String]>,
-) -> Result<(), String> {
+) -> Result<Vec<(String, String)>, String> {
     let root_arg = git_root.to_string_lossy();
     let mut list_args = vec!["-C", root_arg.as_ref(), "ls-files", "-z"];
     if let Some(pathspecs) = pathspecs {
@@ -823,6 +823,7 @@ pub(crate) fn stage_case_only_renames(
             .unwrap_or_else(|| "Unable to inspect tracked Git paths".to_string()));
     }
 
+    let mut renames = Vec::new();
     for tracked_path in tracked_probe
         .stdout
         .split('\0')
@@ -831,6 +832,18 @@ pub(crate) fn stage_case_only_renames(
         let Some(actual_path) = actual_case_relative_path(git_root, tracked_path)? else {
             continue;
         };
+        renames.push((tracked_path.to_string(), actual_path));
+    }
+    Ok(renames)
+}
+
+/// Stages path-casing corrections before `git add` encounters an index alias on macOS.
+pub(crate) fn stage_case_only_renames(
+    git_root: &Path,
+    pathspecs: Option<&[String]>,
+) -> Result<(), String> {
+    let root_arg = git_root.to_string_lossy();
+    for (tracked_path, actual_path) in case_only_renames(git_root, pathspecs)? {
         let remove_probe = run_command(
             "git",
             &[
@@ -839,7 +852,7 @@ pub(crate) fn stage_case_only_renames(
                 "update-index",
                 "--force-remove",
                 "--",
-                tracked_path,
+                tracked_path.as_str(),
             ],
         );
         if !remove_probe.ok {

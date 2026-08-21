@@ -131,7 +131,16 @@ describe("Application runtime scenarios 9", () => {
       mocks.codexDefaultProfileRpcMock.mock.calls.find(
         ([method]) => method === "turn/start",
       )?.[1],
-    ).not.toHaveProperty("environments");
+    ).toEqual(
+      expect.objectContaining({
+        environments: [
+          expect.objectContaining({
+            environmentId: "local",
+            cwd: "/repo/.codex-kanban/card-run-control-test",
+          }),
+        ],
+      }),
+    );
     const environmentProbeIndex =
       mocks.codexDefaultProfileRpcMock.mock.calls.findIndex(
         ([method]) => method === "command/exec",

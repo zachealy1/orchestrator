@@ -329,6 +329,8 @@ pub struct PersistedKanbanGitBinding {
     pub base_commit: String,
     pub card_branch: String,
     pub worktree_path: String,
+    #[serde(default)]
+    pub source_status_fingerprint: Option<String>,
     pub status: String,
     #[specta(type = Option<specta_typescript::Unknown>)]
     pub error: Option<serde_json::Value>,
@@ -2974,8 +2976,8 @@ pub async fn kanban_save_git_bindings(
             "INSERT INTO kanban_repository_bindings (
                 id, card_id, repository_path, relative_path, base_branch,
                 base_commit, card_branch, worktree_path, state, last_error,
-                binding_json
-             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
+                status_fingerprint, binding_json
+             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
         )
         .bind(Uuid::new_v4().to_string())
         .bind(&request.card_id)
@@ -2987,6 +2989,7 @@ pub async fn kanban_save_git_bindings(
         .bind(&binding.worktree_path)
         .bind(persisted_binding_state(&binding.status))
         .bind(error_message)
+        .bind(&binding.source_status_fingerprint)
         .bind(binding_json)
         .execute(&mut *transaction)
         .await
@@ -3082,13 +3085,15 @@ async fn upsert_local_review_state(
     sqlx::query(
         "UPDATE kanban_repository_bindings
          SET base_commit = ?1, state = ?2, last_error = ?3,
-             binding_json = ?4, updated_at = CURRENT_TIMESTAMP
-         WHERE card_id = ?5 AND repository_path = ?6",
+             binding_json = ?4, status_fingerprint = ?5,
+             updated_at = CURRENT_TIMESTAMP
+         WHERE card_id = ?6 AND repository_path = ?7",
     )
     .bind(&binding.base_commit)
     .bind(persisted_binding_state(&binding.status))
     .bind(binding_error)
     .bind(binding_json)
+    .bind(&binding.source_status_fingerprint)
     .bind(card_id)
     .bind(&binding.source_repository_path)
     .execute(&mut *transaction)
@@ -3490,6 +3495,15 @@ pub async fn kanban_approve_local_review(
                 continue;
             }
         };
+        if status.source_status_changed {
+            let error = format!(
+                "Changes were detected outside the isolated card worktree in {}. Local approval was blocked.",
+                status.binding.source_repository_path
+            );
+            mark_local_review_failure(&app, &request.card_id, &status.binding, &error).await;
+            failures.push(format!("{}: {error}", status.binding.relative_path));
+            continue;
+        }
         if status.has_changes {
             let context = WorkspaceCommitIntentContext {
                 objective: Some(objective.clone()),

@@ -170,6 +170,7 @@ export type KanbanGitBinding = {
   baseCommit: string;
   cardBranch: string;
   worktreePath: string;
+  sourceStatusFingerprint?: string | null;
   status: string;
   error: KanbanGitOperationError | null;
 };
@@ -194,6 +195,7 @@ export type KanbanGitReconcileResult = {
   targetMoved: boolean;
   hasChanges: boolean;
   hasConflicts: boolean;
+  sourceStatusChanged?: boolean;
 };
 
 export type KanbanGitFileStatus = {
@@ -214,6 +216,7 @@ export type KanbanGitStatusResult = {
   behindTarget: number | null;
   hasChanges: boolean;
   hasConflicts: boolean;
+  sourceStatusChanged?: boolean;
   stagedCount: number;
   unstagedCount: number;
   untrackedCount: number;
