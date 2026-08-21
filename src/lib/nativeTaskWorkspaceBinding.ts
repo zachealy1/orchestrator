@@ -1,6 +1,10 @@
 import type { KanbanGitBinding } from "../features/kanban/api";
 
-export const NATIVE_TASK_WORKSPACE_BINDING_VERSION = 2;
+export const NATIVE_TASK_WORKSPACE_BINDING_VERSION = 3;
+
+export type NativeTaskCatalogRegistration =
+  | "pending"
+  | "source-workspace";
 
 export type NativeTaskWorkspaceBinding = {
   version: typeof NATIVE_TASK_WORKSPACE_BINDING_VERSION;
@@ -10,6 +14,7 @@ export type NativeTaskWorkspaceBinding = {
   runtimeWorkspaceRoots: string[];
   projectId: string | null;
   pendingContinuationContext: string | null;
+  catalogRegistration: NativeTaskCatalogRegistration;
 };
 
 function uniquePaths(paths: Array<string | null | undefined>) {
@@ -23,6 +28,7 @@ export function createKanbanNativeTaskWorkspaceBinding(input: {
   bindings: KanbanGitBinding[];
   projectId?: string | null;
   pendingContinuationContext?: string | null;
+  catalogRegistration?: NativeTaskCatalogRegistration;
 }): NativeTaskWorkspaceBinding {
   return {
     version: NATIVE_TASK_WORKSPACE_BINDING_VERSION,
@@ -35,6 +41,7 @@ export function createKanbanNativeTaskWorkspaceBinding(input: {
     ]),
     projectId: input.projectId ?? null,
     pendingContinuationContext: input.pendingContinuationContext ?? null,
+    catalogRegistration: input.catalogRegistration ?? "pending",
   };
 }
 
@@ -45,6 +52,7 @@ export function createContinuationNativeTaskWorkspaceBinding(input: {
   runtimeWorkspaceRoots?: string[];
   projectId?: string | null;
   pendingContinuationContext?: string | null;
+  catalogRegistration?: NativeTaskCatalogRegistration;
 }): NativeTaskWorkspaceBinding {
   const executionDirectory = input.executionDirectory ?? input.sourceWorkspacePath;
   return {
@@ -58,6 +66,7 @@ export function createContinuationNativeTaskWorkspaceBinding(input: {
     ]),
     projectId: input.projectId ?? null,
     pendingContinuationContext: input.pendingContinuationContext ?? null,
+    catalogRegistration: input.catalogRegistration ?? "pending",
   };
 }
 
@@ -72,9 +81,11 @@ export function parseNativeTaskWorkspaceBinding(
     > & {
       version?: number;
       environmentId?: unknown;
+      catalogRegistration?: unknown;
     };
     if (
       (parsed.version !== 1 &&
+        parsed.version !== 2 &&
         parsed.version !== NATIVE_TASK_WORKSPACE_BINDING_VERSION) ||
       (parsed.kind !== "kanban" && parsed.kind !== "continuation") ||
       typeof parsed.sourceWorkspacePath !== "string" ||
@@ -94,6 +105,11 @@ export function parseNativeTaskWorkspaceBinding(
         parsed.projectId === null ||
         typeof parsed.projectId === "string" ||
         parsed.projectId === undefined
+      ) ||
+      !(
+        parsed.catalogRegistration === undefined ||
+        parsed.catalogRegistration === "pending" ||
+        parsed.catalogRegistration === "source-workspace"
       )
     ) {
       return null;
@@ -109,6 +125,11 @@ export function parseNativeTaskWorkspaceBinding(
           ? parsed.projectId
           : null,
       pendingContinuationContext: parsed.pendingContinuationContext ?? null,
+      catalogRegistration:
+        parsed.version === NATIVE_TASK_WORKSPACE_BINDING_VERSION &&
+        parsed.catalogRegistration === "source-workspace"
+          ? "source-workspace"
+          : "pending",
     };
   } catch {
     return null;
@@ -140,4 +161,12 @@ export function clearNativeTaskPendingContext(
   return binding.pendingContinuationContext
     ? { ...binding, pendingContinuationContext: null }
     : binding;
+}
+
+export function markNativeTaskCatalogRegistered(
+  binding: NativeTaskWorkspaceBinding,
+): NativeTaskWorkspaceBinding {
+  return binding.catalogRegistration === "source-workspace"
+    ? binding
+    : { ...binding, catalogRegistration: "source-workspace" };
 }

@@ -5,6 +5,7 @@ import {
   clearNativeTaskPendingContext,
   createContinuationNativeTaskWorkspaceBinding,
   createKanbanNativeTaskWorkspaceBinding,
+  markNativeTaskCatalogRegistered,
   nativeTaskExecutionOverrides,
   parseNativeTaskWorkspaceBinding,
 } from "./nativeTaskWorkspaceBinding";
@@ -32,7 +33,7 @@ describe("native task workspace bindings", () => {
     });
 
     expect(result).toEqual({
-      version: 2,
+      version: 3,
       kind: "kanban",
       sourceWorkspacePath: "/workspace",
       executionDirectory: "/app/cards/card-1",
@@ -42,6 +43,7 @@ describe("native task workspace bindings", () => {
       ],
       projectId: null,
       pendingContinuationContext: null,
+      catalogRegistration: "pending",
     });
     expect(nativeTaskExecutionOverrides(result)).toEqual({
       cwd: "/app/cards/card-1",
@@ -78,6 +80,10 @@ describe("native task workspace bindings", () => {
       ...result,
       pendingContinuationContext: null,
     });
+    expect(markNativeTaskCatalogRegistered(result)).toEqual({
+      ...result,
+      catalogRegistration: "source-workspace",
+    });
   });
 
   it("validates persisted bindings without accepting malformed metadata", () => {
@@ -92,7 +98,7 @@ describe("native task workspace bindings", () => {
     expect(parseNativeTaskWorkspaceBinding("not-json")).toBeNull();
     expect(
       parseNativeTaskWorkspaceBinding(
-        JSON.stringify({ ...valid, version: 3 }),
+        JSON.stringify({ ...valid, version: 4 }),
       ),
     ).toBeNull();
     expect(
@@ -116,13 +122,30 @@ describe("native task workspace bindings", () => {
     );
 
     expect(parsed).toEqual({
-      version: 2,
+      version: 3,
       kind: "kanban",
       sourceWorkspacePath: "/workspace",
       executionDirectory: "/app/cards/card-1",
       runtimeWorkspaceRoots: ["/app/cards/card-1"],
       projectId: null,
       pendingContinuationContext: null,
+      catalogRegistration: "pending",
     });
+  });
+
+  it("forces legacy bindings through source-workspace registration", () => {
+    const parsed = parseNativeTaskWorkspaceBinding(
+      JSON.stringify({
+        version: 2,
+        kind: "continuation",
+        sourceWorkspacePath: "/workspace",
+        executionDirectory: "/workspace",
+        runtimeWorkspaceRoots: ["/workspace"],
+        projectId: "project-1",
+        pendingContinuationContext: null,
+      }),
+    );
+
+    expect(parsed?.catalogRegistration).toBe("pending");
   });
 });

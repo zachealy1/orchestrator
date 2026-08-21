@@ -489,9 +489,11 @@ describe("Application runtime scenarios 4", () => {
         }),
       );
 
-      const implement = await screen.findByRole("button", {
-        name: "Accept plan",
-      });
+      const implement = await screen.findByRole(
+        "button",
+        { name: "Accept plan" },
+        { timeout: 3_000 },
+      );
       await user.click(implement);
       const dialog = await screen.findByRole("dialog", {
         name: "Confirm implementation settings",

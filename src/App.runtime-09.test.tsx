@@ -112,7 +112,7 @@ describe("Application runtime scenarios 9", () => {
     expect(mocks.codexDefaultProfileRpcMock).toHaveBeenCalledWith(
       "thread/start",
       expect.objectContaining({
-        cwd: "/repo/.codex-kanban/card-run-control-test",
+        cwd: "/repo/orchestrator",
         projectId: "project-workspace-1",
         runtimeWorkspaceRoots: [
           "/repo/.codex-kanban/card-run-control-test",
@@ -158,7 +158,8 @@ describe("Application runtime scenarios 9", () => {
           params?.threadId === "thread-kanban-question",
       );
     expect(turnStartIndex).toBeGreaterThanOrEqual(0);
-    expect(projectUpdateIndex).toBeGreaterThan(turnStartIndex);
+    expect(projectUpdateIndex).toBeGreaterThanOrEqual(0);
+    expect(projectUpdateIndex).toBeLessThan(turnStartIndex);
 
     await emitCodexServerRequest({
       id: "kanban-input-1",

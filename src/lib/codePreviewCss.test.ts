@@ -77,7 +77,7 @@ describe("code preview gutter CSS", () => {
   });
 
   it("uses white text for the selected file preview mode", () => {
-    const selectedMode = rule(".file-preview-mode-toggle button.active,");
+    const selectedMode = rule(".file-preview-mode-toggle button.active {");
 
     expect(selectedMode).toContain("color: var(--color-button-primary-text)");
   });

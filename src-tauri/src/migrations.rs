@@ -249,6 +249,12 @@ pub(crate) const MIGRATION_DEFINITIONS: &[MigrationDefinition] = &[
         sql: include_str!("../migrations/040_bind_kanban_chats_to_native_projects.sql"),
         checksum: 0xaab7a4d278bca67c,
     },
+    MigrationDefinition {
+        version: 41,
+        description: "default_kanban_workspaces_to_shared_profile",
+        sql: include_str!("../migrations/041_default_kanban_workspaces_to_shared_profile.sql"),
+        checksum: 0xbeeda1977f6613f7,
+    },
 ];
 
 pub(crate) fn migration_sql(definition: &MigrationDefinition) -> &'static str {

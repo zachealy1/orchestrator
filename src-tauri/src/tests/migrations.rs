@@ -28,7 +28,7 @@ fn resolved_plugin_migrator(
 }
 
 #[test]
-fn existing_versions_one_through_twenty_five_upgrade_through_forty() {
+fn existing_versions_one_through_twenty_five_upgrade_through_forty_one() {
     tauri::async_runtime::block_on(async {
         let mut connection = SqliteConnection::connect("sqlite::memory:")
             .await
@@ -58,7 +58,7 @@ fn existing_versions_one_through_twenty_five_upgrade_through_forty() {
         .fetch_one(&mut connection)
         .await
         .expect("count upgraded migrations");
-        assert_eq!(applied_count, 40);
+        assert_eq!(applied_count, 41);
 
         resolved_plugin_migrator(MIGRATION_DEFINITIONS)
             .run_direct(&mut connection)
@@ -86,6 +86,65 @@ fn native_task_workspace_bindings_use_migration_slot_forty() {
     ] {
         assert!(migration.sql.contains(column), "missing {column}");
     }
+}
+
+#[test]
+fn kanban_workspaces_default_to_the_shared_profile_in_migration_forty_one() {
+    tauri::async_runtime::block_on(async {
+        let mut connection = SqliteConnection::connect("sqlite::memory:")
+            .await
+            .expect("open workspace default migration database");
+        resolved_plugin_migrator(&MIGRATION_DEFINITIONS[..40])
+            .run_direct(&mut connection)
+            .await
+            .expect("apply migrations through native task bindings");
+
+        sqlx::query(
+            "INSERT INTO codex_accounts (id, label, status) VALUES
+                (7, 'Kanban account', 'connected'),
+                (8, 'Chat account', 'connected')",
+        )
+        .execute(&mut connection)
+        .await
+        .expect("insert account defaults");
+        sqlx::query(
+            "INSERT INTO workspaces (
+                path, label, default_account_id, default_profile_key
+             ) VALUES
+                ('/kanban', 'Kanban', 7, 'account:7'),
+                ('/chat', 'Chat', 8, 'account:8')",
+        )
+        .execute(&mut connection)
+        .await
+        .expect("insert workspace defaults");
+        sqlx::query("INSERT INTO kanban_boards (workspace_id) VALUES (1)")
+            .execute(&mut connection)
+            .await
+            .expect("insert Kanban board");
+
+        resolved_plugin_migrator(MIGRATION_DEFINITIONS)
+            .run_direct(&mut connection)
+            .await
+            .expect("apply shared Kanban profile migration");
+
+        let kanban_default: (String, Option<i64>) = sqlx::query_as(
+            "SELECT default_profile_key, default_account_id
+             FROM workspaces WHERE id = 1",
+        )
+        .fetch_one(&mut connection)
+        .await
+        .expect("read Kanban workspace default");
+        assert_eq!(kanban_default, ("default".to_owned(), None));
+
+        let chat_default: (String, Option<i64>) = sqlx::query_as(
+            "SELECT default_profile_key, default_account_id
+             FROM workspaces WHERE id = 2",
+        )
+        .fetch_one(&mut connection)
+        .await
+        .expect("read chat workspace default");
+        assert_eq!(chat_default, ("account:8".to_owned(), Some(8)));
+    });
 }
 
 #[test]

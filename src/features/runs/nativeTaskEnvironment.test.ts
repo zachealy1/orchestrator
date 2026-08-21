@@ -2,13 +2,14 @@ import { describe, expect, it, vi } from "vitest";
 import { validateNativeTaskExecutionEnvironment } from "./nativeTaskEnvironment";
 
 const binding = {
-  version: 2 as const,
+  version: 3 as const,
   kind: "kanban" as const,
   sourceWorkspacePath: "/workspace",
   executionDirectory: "/cards/card-1",
   runtimeWorkspaceRoots: ["/cards/card-1", "/cards/card-1/repo"],
   projectId: "project-1",
   pendingContinuationContext: null,
+  catalogRegistration: "source-workspace" as const,
 };
 
 describe("native task execution environment", () => {
