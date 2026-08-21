@@ -5361,16 +5361,13 @@ function App() {
   async function refreshRunControlBrowserState(control: ActiveRunControl) {
     const token = control.browserSession?.token;
     if (!token) return;
-    if (control.browserSession?.state.backend === "default-browser") {
-      return;
-    }
     try {
       updateRunControlBrowserState(
         control,
         await readBrowserSessionStatus(token),
       );
     } catch {
-      // MCP startup events remain the primary source; status refresh is supplementary.
+      // Native backend events remain authoritative; this refresh is supplementary.
     }
   }
 
@@ -5391,71 +5388,19 @@ function App() {
   function applyBrowserLifecycleNotification(
     control: ActiveRunControl,
     method: string | null,
-    params: Record<string, unknown>,
+    _params: Record<string, unknown>,
   ) {
+    if (!control.browserSession) return;
+    if (method === "turn/started") {
+      setRunControlBrowserLifecycle(control, "running");
+      void refreshRunControlBrowserState(control);
+      return;
+    }
     if (
       method === "turn/completed" ||
       method === "turn/interrupted" ||
       method === "error"
     ) {
-      control.activePlaywrightToolCalls.clear();
-    }
-    if (!control.browserSession) return;
-    if (
-      method === "mcpServer/startupStatus/updated" &&
-      readString(params.name) === "playwright"
-    ) {
-      const status = readString(params.status);
-      if (status === "starting" || status === "ready") {
-        setRunControlBrowserLifecycle(control, status);
-      } else if (status === "failed") {
-        setRunControlBrowserLifecycle(
-          control,
-          "error",
-          readString(params.error) ?? "The browser service could not start.",
-        );
-      } else if (status === "cancelled") {
-        setRunControlBrowserLifecycle(control, "stopped");
-      }
-      void refreshRunControlBrowserState(control);
-      return;
-    }
-
-    if (method === "item/started" || method === "item/completed") {
-      const item = readObject(params.item);
-      if (
-        readString(item.type) !== "mcpToolCall" ||
-        readString(item.server) !== "playwright"
-      ) {
-        return;
-      }
-      const itemId = readString(item.id);
-      if (itemId) {
-        if (method === "item/started") {
-          const threadId = readString(params.threadId) ?? control.threadId;
-          const turnId = readString(params.turnId) ?? control.turnId;
-          const tool = readString(item.tool);
-          if (threadId && turnId && tool) {
-            control.activePlaywrightToolCalls.set(itemId, {
-              itemId,
-              threadId,
-              turnId,
-              tool,
-              arguments: item.arguments ?? {},
-            });
-          }
-        } else {
-          control.activePlaywrightToolCalls.delete(itemId);
-        }
-      }
-      setRunControlBrowserLifecycle(
-        control,
-        method === "item/started" &&
-          control.browserSession.state.browserPid === null
-          ? "starting"
-          : "running",
-        readString(readObject(item.error).message),
-      );
       void refreshRunControlBrowserState(control);
     }
   }
@@ -5739,7 +5684,6 @@ function App() {
     } else if (control.stopped) {
       appServices.runCoordinator.tryTransition(control.clientId, "cancelling");
     }
-    control.activePlaywrightToolCalls.clear();
     cancelWebPreviewDetection(control);
     if (options.cleanupBrowser !== false) {
       void cleanupRunBrowserSession(control);
@@ -9464,6 +9408,32 @@ function App() {
     return request;
   }
 
+  async function requireBundledBrowserSkill(
+    profileKey: CodexProfileKey,
+    accountId: number,
+  ) {
+    const skills = await getCodexSkills(profileKey, accountId).catch((error) => {
+      throw new Error(
+        `Could not verify Codex's bundled Browser skill for this account: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+      );
+    });
+    const browserSkill = skills.find((skill) => {
+      const identity = `${skill.id} ${skill.name}`.toLowerCase();
+      return (
+        identity.includes("browser:control-in-app-browser") ||
+        identity.includes("control-in-app-browser")
+      );
+    });
+    if (!browserSkill) {
+      throw new Error(
+        "Codex's bundled Browser skill is unavailable for this account. Update Codex or choose a supported account before starting Computer Use.",
+      );
+    }
+    return browserSkill;
+  }
+
   async function searchSlashCommands(query: string) {
     const requestId = slashCommandSearchRequestId.current + 1;
     slashCommandSearchRequestId.current = requestId;
@@ -11232,7 +11202,6 @@ function App() {
       queueItemId: snapshot.queueItemId ?? null,
       queueAdvanceBlocked: false,
       browserSession: null,
-      activePlaywrightToolCalls: new Map(),
       webPreviewDetection: {
         commands: new Map(),
         probes: new Map(),
@@ -11774,9 +11743,22 @@ function App() {
       runControl.intent === "plan-implementation"
         ? addPlanImplementationProgressInstructions(baseTurnText)
         : baseTurnText;
+    const selectedSkills = runControl.browserSession
+      ? [
+          ...snapshot.selectedSkills.filter(
+            (skill) => skill.name !== "browser:control-in-app-browser",
+          ),
+          {
+            id: "browser:control-in-app-browser",
+            name: "browser:control-in-app-browser",
+            description:
+              "Control the run's selected Orchestrator browser session for local web testing.",
+          },
+        ]
+      : snapshot.selectedSkills;
     const text = applySelectedSkillsToPrompt(
       progressAwareTurnText,
-      snapshot.selectedSkills,
+      selectedSkills,
     );
     let { additionalContext, skippedFiles } = await buildAdditionalContext(
       snapshot.profileKey,
@@ -12075,6 +12057,12 @@ function App() {
       runControl.clientId,
       "preparing-browser",
     );
+    if (snapshot.computerUseEnabled) {
+      await requireBundledBrowserSkill(
+        snapshot.profileKey,
+        snapshot.accountId,
+      );
+    }
     const browserSession = snapshot.computerUseEnabled
       ? await prepareBrowserSession({
           profileKey: snapshot.profileKey,
@@ -16617,41 +16605,8 @@ function App() {
       profileKey,
       requestToken,
       interactionMode: control?.interactionMode ?? "chat",
-      activePlaywrightToolCalls:
-        control?.browserSession?.state.target.accessMode ===
-        "ask-for-approval"
-          ? [...control.activePlaywrightToolCalls.values()]
-          : [],
     });
     if (parsed && !isNativeUserInputRequest(request)) {
-      if (
-        parsed.kind === "browser" &&
-        (!control?.browserSession ||
-          control.browserSession.token !==
-            parsed.browserRequest?.sessionToken)
-      ) {
-        parsed.kind = "unsupported";
-        parsed.browserRequest = null;
-        parsed.choices = [];
-        parsed.error =
-          "This browser approval did not match the active isolated browser session.";
-      }
-      if (
-        parsed.kind === "browser-tool" &&
-        (!control?.browserSession ||
-          control.browserSession.state.target.accessMode !==
-            "ask-for-approval" ||
-          !parsed.browserToolRequest ||
-          !control.activePlaywrightToolCalls.has(
-            parsed.browserToolRequest.itemId,
-          ))
-      ) {
-        parsed.kind = "unsupported";
-        parsed.browserToolRequest = null;
-        parsed.choices = [];
-        parsed.error =
-          "This browser tool approval did not match the active isolated browser session.";
-      }
       const belongsToActiveRun = control !== null;
       const shouldNotify = [
         "command",
@@ -16659,8 +16614,6 @@ function App() {
         "permissions",
         "legacy-command",
         "legacy-file-change",
-        "browser",
-        "browser-tool",
       ].includes(parsed.kind);
       let historyChat: ChatListItem | ChatRecord | null = !belongsToActiveRun
         ? historyStateRef.current.chats.find(
@@ -16765,9 +16718,6 @@ function App() {
       updateRunControlView(control, (current) => addApprovalRequest(current, parsed));
       if (requestBelongsToSubagent) {
         setSubagentAttention(control, requestSubagent.childThreadId, true);
-      }
-      if (parsed.kind === "browser" || parsed.kind === "browser-tool") {
-        setRunControlBrowserLifecycle(control, "awaiting-approval");
       }
       notifyApproval();
       await persistRunEvent(
@@ -17071,13 +17021,6 @@ function App() {
       updateRunControlView(control, (current) =>
         markApprovalAwaitingResolution(current, currentRequest.key),
       );
-      if (
-        currentRequest.kind === "browser" ||
-        currentRequest.kind === "browser-tool"
-      ) {
-        setRunControlBrowserLifecycle(control, "running");
-        void refreshRunControlBrowserState(control);
-      }
     } catch (error) {
       updateRunControlView(control, (current) =>
         markApprovalError(

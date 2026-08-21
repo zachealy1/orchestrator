@@ -33,6 +33,20 @@ assert.match(serviceWorker, /chrome\.runtime\.onStartup\.addListener\(connectNat
 assert.match(serviceWorker, /url: "about:blank"/u);
 assert.doesNotMatch(serviceWorker, /chrome\.tabs\.query\(\{\s*active:\s*true/u);
 assert.doesNotMatch(serviceWorker, /Runtime\.evaluate/u);
+for (const action of [
+  "browser-backend-tabs",
+  "browser-backend-user-tabs",
+  "browser-backend-create-tab",
+  "browser-backend-claim-tab",
+  "browser-backend-attach",
+  "browser-backend-detach",
+  "browser-backend-cdp",
+  "browser-backend-events",
+]) {
+  assert.match(serviceWorker, new RegExp(`case "${action}"`, "u"));
+}
+assert.match(serviceWorker, /tab\.groupId !== groupId/u);
+assert.match(serviceWorker, /outside this Orchestrator chat group/u);
 assert.match(serviceWorker, /case "inspect-action"/u);
 assert.match(serviceWorker, /Browser\.setDownloadBehavior/u);
 assert.match(serviceWorker, /password\|passcode\|credential/u);

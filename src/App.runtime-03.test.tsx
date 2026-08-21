@@ -323,11 +323,12 @@ describe("Application runtime scenarios 3", () => {
           approvalPolicy: "untrusted",
           approvalsReviewer: "user",
           config: expect.objectContaining({
-            mcp_servers: {
-              playwright: {
-                enabled: true,
-              },
-            },
+            shell_environment_policy: expect.objectContaining({
+              set: expect.objectContaining({
+                BROWSER_USE_AVAILABLE_BACKENDS: "cdp",
+                BROWSER_AUTH_EVAL_EXACT_CDP_BACKEND_SOCKET: "true",
+              }),
+            }),
           }),
         }),
       );

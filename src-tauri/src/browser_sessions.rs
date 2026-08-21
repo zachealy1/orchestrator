@@ -16,16 +16,25 @@ use crate::default_browser::{
     self, DefaultBrowserBridgeState, DefaultBrowserCapabilityStatus, DefaultBrowserTab,
 };
 
-const PLAYWRIGHT_SERVER_NAME: &str = "playwright";
 const BROWSER_SESSION_EVENT: &str = "orchestrator:browser-session";
 const CONTROL_TIMEOUT: Duration = Duration::from_secs(3);
+const BACKEND_START_TIMEOUT: Duration = Duration::from_secs(15);
+const BROWSER_PLUGIN_NAME: &str = "browser";
+const SUPPORTED_BROWSER_PLUGIN_MAJOR: u64 = 26;
 
 #[derive(Clone)]
-pub(crate) struct PlaywrightRuntime {
+pub(crate) struct BrowserHostRuntime {
     pub node_executable: PathBuf,
-    pub wrapper_script: PathBuf,
-    pub default_browser_wrapper_script: PathBuf,
+    pub backend_script: PathBuf,
     pub chromium_executable: PathBuf,
+}
+
+#[derive(Clone)]
+struct BrowserSkillRuntime {
+    version: String,
+    _client_script: PathBuf,
+    _service_script: PathBuf,
+    _skill_file: PathBuf,
 }
 
 #[derive(Default)]
@@ -41,6 +50,7 @@ impl Drop for BrowserSessionRegistry {
                 terminate_session_processes(session);
                 let _ = fs::remove_dir_all(&session.session_root);
                 let _ = fs::remove_file(&session.control_socket);
+                let _ = fs::remove_file(&session.backend_pipe);
             }
         }
     }
@@ -52,13 +62,17 @@ struct BrowserSessionRecord {
     target: BrowserSessionTarget,
     session_root: PathBuf,
     state_file: PathBuf,
+    backend_pipe: PathBuf,
     control_socket: PathBuf,
     backend: String,
     fallback_reason: Option<String>,
     group_key: Option<String>,
     group_title: Option<String>,
     status: String,
+    runtime_error: Option<String>,
     controlled_tab_id: Option<i64>,
+    skill_version: String,
+    service_compatible: bool,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, specta::Type)]
@@ -90,6 +104,9 @@ pub(crate) struct BrowserSessionStatus {
     pub chat_group_key: Option<String>,
     pub controlled_tab_id: Option<i64>,
     pub fallback_reason: Option<String>,
+    pub browser_skill_version: String,
+    pub browser_service_compatible: bool,
+    pub backend_healthy: bool,
 }
 
 #[derive(Clone, Debug, Serialize, specta::Type)]
@@ -98,6 +115,8 @@ pub(crate) struct BrowserRuntimeStatus {
     pub available: bool,
     pub message: Option<String>,
     pub default_browser: Option<DefaultBrowserCapabilityStatus>,
+    pub browser_skill_version: Option<String>,
+    pub browser_service_compatible: bool,
 }
 
 #[derive(Serialize, specta::Type)]
@@ -114,11 +133,9 @@ pub(crate) struct PreparedBrowserSession {
 struct RuntimeManifest {
     version: u32,
     architecture: String,
-    playwright_mcp_version: String,
     playwright_version: String,
     node_executable: String,
-    wrapper_script: String,
-    default_browser_wrapper_script: Option<String>,
+    browser_backend_script: String,
     chromium_executable: String,
 }
 
@@ -130,19 +147,18 @@ struct WrapperState {
     wrapper_pid: Option<u32>,
     browser_pid: Option<u32>,
     error: Option<String>,
+    backend_pipe: Option<String>,
 }
 
-pub(crate) fn resolve_playwright_runtime(app: &AppHandle) -> Result<PlaywrightRuntime, String> {
-    if let (Some(node), Some(wrapper), Some(default_wrapper), Some(chromium)) = (
+pub(crate) fn resolve_browser_host_runtime(app: &AppHandle) -> Result<BrowserHostRuntime, String> {
+    if let (Some(node), Some(backend), Some(chromium)) = (
         env::var_os("ORCHESTRATOR_PLAYWRIGHT_NODE"),
-        env::var_os("ORCHESTRATOR_PLAYWRIGHT_WRAPPER"),
-        env::var_os("ORCHESTRATOR_DEFAULT_BROWSER_WRAPPER"),
+        env::var_os("ORCHESTRATOR_BROWSER_BACKEND"),
         env::var_os("ORCHESTRATOR_PLAYWRIGHT_CHROMIUM"),
     ) {
         return validate_runtime_paths(
             PathBuf::from(node),
-            PathBuf::from(wrapper),
-            PathBuf::from(default_wrapper),
+            PathBuf::from(backend),
             PathBuf::from(chromium),
             "environment override".to_string(),
         );
@@ -188,35 +204,9 @@ pub(crate) fn resolve_playwright_runtime(app: &AppHandle) -> Result<PlaywrightRu
     }
 
     Err(
-        "The bundled Playwright runtime is unavailable. Rebuild Orchestrator with `npm run build:tauri`."
+        "The bundled Browser host runtime is unavailable. Rebuild Orchestrator with `npm run build:tauri`."
             .to_string(),
     )
-}
-
-pub(crate) fn append_playwright_app_server_args(
-    args: &mut Vec<String>,
-    runtime: &PlaywrightRuntime,
-) {
-    args.extend([
-        "-c".to_string(),
-        format!(
-            "mcp_servers.{PLAYWRIGHT_SERVER_NAME}.command={}",
-            toml_string(&runtime.node_executable)
-        ),
-        "-c".to_string(),
-        format!(
-            "mcp_servers.{PLAYWRIGHT_SERVER_NAME}.args=[{},\"--unscoped\"]",
-            toml_string(&runtime.wrapper_script)
-        ),
-        "-c".to_string(),
-        format!("mcp_servers.{PLAYWRIGHT_SERVER_NAME}.enabled=false"),
-        "-c".to_string(),
-        format!("mcp_servers.{PLAYWRIGHT_SERVER_NAME}.required=false"),
-        "-c".to_string(),
-        format!("mcp_servers.{PLAYWRIGHT_SERVER_NAME}.startup_timeout_sec=30"),
-        "-c".to_string(),
-        format!("mcp_servers.{PLAYWRIGHT_SERVER_NAME}.tool_timeout_sec=120"),
-    ]);
 }
 
 #[tauri::command]
@@ -226,16 +216,25 @@ pub(crate) async fn browser_runtime_status(app: AppHandle) -> BrowserRuntimeStat
         app.clone(),
         app.state::<DefaultBrowserBridgeState>(),
     ));
-    match resolve_playwright_runtime(&app) {
-        Ok(_) => BrowserRuntimeStatus {
+    let skill = resolve_browser_skill_runtime();
+    match (resolve_browser_host_runtime(&app), skill) {
+        (Ok(_), Ok(skill)) => BrowserRuntimeStatus {
             available: true,
             message: None,
             default_browser,
+            browser_skill_version: Some(skill.version),
+            browser_service_compatible: true,
         },
-        Err(error) => BrowserRuntimeStatus {
+        (host, skill) => BrowserRuntimeStatus {
             available: false,
-            message: Some(error),
+            message: Some(
+                host.err()
+                    .or_else(|| skill.err())
+                    .unwrap_or_else(|| "The bundled Browser runtime is unavailable.".to_string()),
+            ),
             default_browser,
+            browser_skill_version: None,
+            browser_service_compatible: false,
         },
     }
 }
@@ -249,7 +248,8 @@ pub(crate) async fn browser_session_prepare(
     default_browser_state: State<'_, DefaultBrowserBridgeState>,
 ) -> Result<PreparedBrowserSession, String> {
     validate_target(&target)?;
-    let runtime = resolve_playwright_runtime(&app)?;
+    let runtime = resolve_browser_host_runtime(&app)?;
+    let skill = resolve_browser_skill_runtime()?;
 
     let token = Uuid::new_v4().simple().to_string();
     let app_data = app
@@ -260,6 +260,8 @@ pub(crate) async fn browser_session_prepare(
     let output_dir = session_root.join("output");
     let temp_dir = session_root.join("tmp");
     let state_file = session_root.join("state.json");
+    let backend_pipe =
+        env::temp_dir().join(format!("orchestrator-codex-browser-{}.sock", &token[..16]));
     let control_socket =
         env::temp_dir().join(format!("orchestrator-browser-{}.sock", &token[..16]));
 
@@ -297,74 +299,94 @@ pub(crate) async fn browser_session_prepare(
     } else {
         None
     };
-    let (config, backend) = if use_default_browser {
+    let backend = if use_default_browser {
+        "default-browser".to_string()
+    } else {
+        "isolated".to_string()
+    };
+    let mut command = Command::new(&runtime.node_executable);
+    command
+        .arg(&runtime.backend_script)
+        .args(["--backend", &backend])
+        .args(["--session-token", &token])
+        .args(["--entry-id", &target.entry_id])
+        .args(["--profile-key", &target.profile_key])
+        .args(["--workspace-id", &target.workspace_id.to_string()])
+        .arg("--state-file")
+        .arg(&state_file)
+        .arg("--backend-pipe")
+        .arg(&backend_pipe)
+        .arg("--control-socket")
+        .arg(&control_socket)
+        .env("TMPDIR", &temp_dir)
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null());
+    if let Some(run_id) = target.run_id {
+        command.args(["--run-id", &run_id.to_string()]);
+    }
+    if let Some(thread_id) = target.thread_id.as_deref() {
+        command.args(["--thread-id", thread_id]);
+    }
+    if let Some(turn_id) = target.turn_id.as_deref() {
+        command.args(["--turn-id", turn_id]);
+    }
+    if use_default_browser {
         let (bridge_socket, bridge_secret) =
             default_browser::bridge_connection_details(default_browser_state.inner())?;
-        (
-            json!({
-                "mcp_servers": {
-                    PLAYWRIGHT_SERVER_NAME: {
-                        "command": runtime.node_executable,
-                        "args": [
-                            runtime.default_browser_wrapper_script,
-                            "--session-token", token,
-                            "--entry-id", target.entry_id,
-                            "--bridge-socket", bridge_socket,
-                            "--bridge-secret", bridge_secret,
-                            "--group-key", group_key,
-                            "--group-title", group_title,
-                            "--access-mode", target.access_mode,
-                        ],
-                        "enabled": true,
-                        "required": true,
-                        "startup_timeout_sec": 30,
-                        "tool_timeout_sec": 120,
-                    }
-                }
-            }),
-            "default-browser".to_string(),
-        )
+        command
+            .arg("--bridge-socket")
+            .arg(bridge_socket)
+            .arg("--bridge-secret")
+            .arg(bridge_secret)
+            .arg("--group-key")
+            .arg(
+                group_key
+                    .as_deref()
+                    .ok_or("Browser group is unavailable.")?,
+            )
+            .arg("--group-title")
+            .arg(&group_title);
     } else {
-        (
-            json!({
-            "mcp_servers": {
-                PLAYWRIGHT_SERVER_NAME: {
-                    "command": runtime.node_executable,
-                    "args": [
-                        runtime.wrapper_script,
-                        "--session-token", token,
-                        "--entry-id", target.entry_id,
-                        "--state-file", state_file,
-                        "--browser-executable", runtime.chromium_executable,
-                        "--output-dir", output_dir,
-                        "--control-socket", control_socket,
-                        "--access-mode", target.access_mode,
-                    ],
-                    "env": {
-                        "TMPDIR": temp_dir,
-                    },
-                    "enabled": true,
-                    "required": true,
-                    "startup_timeout_sec": 30,
-                    "tool_timeout_sec": 120,
-                }
-            }
-            }),
-            "isolated".to_string(),
-        )
-    };
+        command
+            .arg("--browser-executable")
+            .arg(&runtime.chromium_executable)
+            .arg("--profile-dir")
+            .arg(session_root.join("profile"));
+    }
+    let mut backend_process = command
+        .spawn()
+        .map_err(|error| format!("Could not start the bundled Browser backend: {error}"))?;
+    if let Err(error) = wait_for_backend_ready(&state_file, &backend_pipe, &token).await {
+        let _ = backend_process.kill();
+        terminate_processes_from_state(&state_file, &token);
+        if use_default_browser {
+            let _ = default_browser::detach_session(default_browser_state.inner(), &token);
+        }
+        let _ = fs::remove_dir_all(&session_root);
+        let _ = fs::remove_file(&backend_pipe);
+        let _ = fs::remove_file(&control_socket);
+        return Err(error);
+    }
+    drop(backend_process);
+
+    let config = browser_service_config(&backend_pipe, &skill.version);
     let record = BrowserSessionRecord {
         token: token.clone(),
         target: target.clone(),
         session_root,
         state_file,
+        backend_pipe,
         control_socket,
         backend,
         fallback_reason,
         group_key,
         group_title: Some(group_title),
-        status: "prepared".to_string(),
+        status: "ready".to_string(),
+        runtime_error: None,
         controlled_tab_id: None,
+        skill_version: skill.version,
+        service_compatible: true,
     };
     let status = status_for_record(&record);
     state
@@ -372,12 +394,13 @@ pub(crate) async fn browser_session_prepare(
         .lock()
         .map_err(|_| "Browser session lock was poisoned".to_string())?
         .insert(token.clone(), record);
+    monitor_browser_backend(app.clone(), token.clone());
 
     let prepared = PreparedBrowserSession {
         token,
         config,
         state: BrowserSessionStatus {
-            status: "prepared".to_string(),
+            status: "ready".to_string(),
             ..status
         },
     };
@@ -465,6 +488,10 @@ pub(crate) async fn browser_session_update_target(
             );
         }
     }
+    send_control_payload(
+        &record,
+        json!({ "action": "update-target", "target": record.target }),
+    )?;
     let status = status_for_record(&record);
     emit_browser_session_state(&app, &status);
     Ok(status)
@@ -488,13 +515,12 @@ pub(crate) async fn browser_session_stop(
             .remove(&token)
             .ok_or_else(|| "The browser session is no longer available.".to_string())?
     };
+    let _ = send_control_command(&record, "stop");
+    if !wait_for_session_stop(&record).await {
+        terminate_session_processes(&record);
+    }
     if record.backend == "default-browser" {
         let _ = default_browser::detach_session(default_browser_state.inner(), &record.token);
-    } else {
-        let _ = send_control_command(&record, "stop");
-        if !wait_for_session_stop(&record).await {
-            terminate_session_processes(&record);
-        }
     }
     let stopped = BrowserSessionStatus {
         token: record.token.clone(),
@@ -508,9 +534,13 @@ pub(crate) async fn browser_session_stop(
         chat_group_key: record.group_key.clone(),
         controlled_tab_id: None,
         fallback_reason: record.fallback_reason.clone(),
+        browser_skill_version: record.skill_version.clone(),
+        browser_service_compatible: record.service_compatible,
+        backend_healthy: false,
     };
     let _ = fs::remove_dir_all(&record.session_root);
     let _ = fs::remove_file(&record.control_socket);
+    let _ = fs::remove_file(&record.backend_pipe);
     emit_browser_session_state(&app, &stopped);
     Ok(stopped)
 }
@@ -601,47 +631,98 @@ fn session_record_direct(
 }
 
 fn status_for_record(record: &BrowserSessionRecord) -> BrowserSessionStatus {
-    if record.backend == "default-browser" {
-        return BrowserSessionStatus {
-            token: record.token.clone(),
-            status: record.status.clone(),
-            target: record.target.clone(),
-            browser_pid: None,
-            error: None,
-            backend: record.backend.clone(),
-            browser: None,
-            extension_connected: true,
-            chat_group_key: record.group_key.clone(),
-            controlled_tab_id: record.controlled_tab_id,
-            fallback_reason: record.fallback_reason.clone(),
-        };
-    }
     let wrapper_state = fs::read_to_string(&record.state_file)
         .ok()
         .and_then(|raw| serde_json::from_str::<WrapperState>(&raw).ok())
         .filter(|state| state.session_token == record.token);
     BrowserSessionStatus {
         token: record.token.clone(),
-        status: wrapper_state
-            .as_ref()
-            .map(|state| state.status.clone())
-            .unwrap_or_else(|| "prepared".to_string()),
+        status: if record.runtime_error.is_some() {
+            "error".to_string()
+        } else {
+            wrapper_state
+                .as_ref()
+                .map(|state| state.status.clone())
+                .unwrap_or_else(|| record.status.clone())
+        },
         target: record.target.clone(),
         browser_pid: wrapper_state.as_ref().and_then(|state| state.browser_pid),
-        error: wrapper_state.and_then(|state| state.error),
+        error: record
+            .runtime_error
+            .clone()
+            .or_else(|| wrapper_state.as_ref().and_then(|state| state.error.clone())),
         backend: record.backend.clone(),
         browser: None,
-        extension_connected: false,
+        extension_connected: record.backend == "default-browser",
         chat_group_key: record.group_key.clone(),
-        controlled_tab_id: None,
+        controlled_tab_id: record.controlled_tab_id,
         fallback_reason: record.fallback_reason.clone(),
+        browser_skill_version: record.skill_version.clone(),
+        browser_service_compatible: record.service_compatible,
+        backend_healthy: record.runtime_error.is_none()
+            && wrapper_state.as_ref().is_some_and(|state| {
+                state.status == "ready"
+                    && state.backend_pipe.as_deref()
+                        == Some(record.backend_pipe.to_string_lossy().as_ref())
+                    && record.backend_pipe.exists()
+            }),
     }
 }
 
+fn monitor_browser_backend(app: AppHandle, token: String) {
+    tauri::async_runtime::spawn(async move {
+        loop {
+            tokio::time::sleep(Duration::from_millis(500)).await;
+            let registry = app.state::<BrowserSessionRegistry>();
+            let Ok(record) = session_record_direct(registry.inner(), &token) else {
+                return;
+            };
+            let status = status_for_record(&record);
+            if status.backend_healthy {
+                continue;
+            }
+            if matches!(status.status.as_str(), "stopping" | "stopped") {
+                return;
+            }
+            let error = status.error.unwrap_or_else(|| {
+                "The bundled Browser backend disconnected from this run.".to_string()
+            });
+            let updated = {
+                let Ok(mut sessions) = registry.sessions.lock() else {
+                    return;
+                };
+                let Some(stored) = sessions.get_mut(&token) else {
+                    return;
+                };
+                if stored.runtime_error.is_some() {
+                    return;
+                }
+                stored.status = "error".to_string();
+                stored.runtime_error = Some(error);
+                status_for_record(stored)
+            };
+            emit_browser_session_state(&app, &updated);
+            return;
+        }
+    });
+}
+
 fn send_control_command(record: &BrowserSessionRecord, action: &str) -> Result<(), String> {
+    send_control_payload(record, json!({ "action": action }))
+}
+
+fn send_control_payload(record: &BrowserSessionRecord, mut payload: Value) -> Result<(), String> {
     #[cfg(unix)]
     {
         use std::os::unix::net::UnixStream;
+
+        payload
+            .as_object_mut()
+            .ok_or("Browser control payload is invalid.")?
+            .insert(
+                "sessionToken".to_string(),
+                Value::String(record.token.clone()),
+            );
 
         let mut stream = UnixStream::connect(&record.control_socket)
             .map_err(|error| format!("Could not contact the browser session: {error}"))?;
@@ -651,12 +732,8 @@ fn send_control_command(record: &BrowserSessionRecord, action: &str) -> Result<(
         stream
             .set_write_timeout(Some(CONTROL_TIMEOUT))
             .map_err(|error| format!("Could not configure browser control timeout: {error}"))?;
-        writeln!(
-            stream,
-            "{}",
-            json!({ "sessionToken": record.token, "action": action })
-        )
-        .map_err(|error| format!("Could not send the browser control command: {error}"))?;
+        writeln!(stream, "{}", payload)
+            .map_err(|error| format!("Could not send the browser control command: {error}"))?;
         stream
             .flush()
             .map_err(|error| format!("Could not flush the browser control command: {error}"))?;
@@ -678,7 +755,7 @@ fn send_control_command(record: &BrowserSessionRecord, action: &str) -> Result<(
 
     #[cfg(not(unix))]
     {
-        let _ = (record, action);
+        let _ = (record, payload);
         Err("Browser controls are available only in the macOS desktop app.".to_string())
     }
 }
@@ -706,6 +783,22 @@ fn terminate_session_processes(record: &BrowserSessionRecord) {
         .and_then(|raw| serde_json::from_str::<WrapperState>(&raw).ok())
         .filter(|state| state.session_token == record.token);
     for pid in wrapper_state
+        .iter()
+        .flat_map(|state| [state.browser_pid, state.wrapper_pid])
+        .flatten()
+    {
+        let _ = Command::new("/bin/kill")
+            .args(["-TERM", &pid.to_string()])
+            .status();
+    }
+}
+
+fn terminate_processes_from_state(state_file: &Path, token: &str) {
+    let state = fs::read_to_string(state_file)
+        .ok()
+        .and_then(|raw| serde_json::from_str::<WrapperState>(&raw).ok())
+        .filter(|state| state.session_token == token);
+    for pid in state
         .iter()
         .flat_map(|state| [state.browser_pid, state.wrapper_pid])
         .flatten()
@@ -751,50 +844,159 @@ fn validate_token(token: &str) -> Result<(), String> {
     }
 }
 
-fn read_packaged_runtime(root: &Path, architecture: &str) -> Result<PlaywrightRuntime, String> {
+fn browser_service_config(backend_pipe: &Path, skill_version: &str) -> Value {
+    json!({
+        "shell_environment_policy": {
+            "inherit": "all",
+            "set": {
+                "BROWSER_USE_AVAILABLE_BACKENDS": "cdp",
+                "CDP_BROWSER_BACKEND_PIPE_PATH": backend_pipe,
+                "BROWSER_AUTH_EVAL_EXACT_CDP_BACKEND_SOCKET": "true",
+                "BROWSER_USE_BROWSER_CLIENT_BUILD": skill_version,
+                "BROWSER_USE_DISABLE_API_MEMBERS": "Browser.download,Tab.upload,Tab.clipboard",
+                "BROWSER_USE_DISABLE_BROWSER_CAPABILITIES": "download,upload,clipboard",
+                "BROWSER_USE_DISABLE_TAB_CAPABILITIES": "download,upload,clipboard",
+                "BROWSER_USE_SECURITY_MODE": ""
+            }
+        }
+    })
+}
+
+async fn wait_for_backend_ready(
+    state_file: &Path,
+    backend_pipe: &Path,
+    token: &str,
+) -> Result<(), String> {
+    let started = std::time::Instant::now();
+    while started.elapsed() < BACKEND_START_TIMEOUT {
+        if let Ok(raw) = fs::read_to_string(state_file) {
+            if let Ok(state) = serde_json::from_str::<WrapperState>(&raw) {
+                if state.session_token != token {
+                    return Err(
+                        "The Browser backend returned a mismatched session token.".to_string()
+                    );
+                }
+                if state.status == "error" {
+                    return Err(state.error.unwrap_or_else(|| {
+                        "The bundled Browser backend could not be started.".to_string()
+                    }));
+                }
+                if state.status == "ready"
+                    && state.backend_pipe.as_deref()
+                        == Some(backend_pipe.to_string_lossy().as_ref())
+                    && backend_pipe.exists()
+                {
+                    return Ok(());
+                }
+            }
+        }
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+    Err("The bundled Browser backend did not become ready in time.".to_string())
+}
+
+fn resolve_browser_skill_runtime() -> Result<BrowserSkillRuntime, String> {
+    let plugin_root = if let Some(value) = env::var_os("ORCHESTRATOR_BROWSER_PLUGIN_ROOT") {
+        PathBuf::from(value)
+    } else {
+        let home = env::var_os("HOME")
+            .map(PathBuf::from)
+            .ok_or_else(|| "Could not resolve the Codex Browser plugin directory.".to_string())?;
+        let cache = home
+            .join(".codex")
+            .join("plugins")
+            .join("cache")
+            .join("openai-bundled")
+            .join(BROWSER_PLUGIN_NAME);
+        let mut versions = fs::read_dir(&cache)
+            .map_err(|_| {
+                "Codex's bundled Browser skill is not installed. Update Codex and try again."
+                    .to_string()
+            })?
+            .filter_map(Result::ok)
+            .filter(|entry| entry.path().is_dir())
+            .collect::<Vec<_>>();
+        versions.sort_by_key(|entry| entry.file_name());
+        versions
+            .pop()
+            .map(|entry| entry.path())
+            .ok_or_else(|| "Codex's bundled Browser skill is unavailable.".to_string())?
+    };
+    let canonical = plugin_root
+        .canonicalize()
+        .map_err(|error| format!("Could not resolve the bundled Browser plugin: {error}"))?;
+    let manifest_path = canonical.join(".codex-plugin").join("plugin.json");
+    let manifest: Value = serde_json::from_slice(
+        &fs::read(&manifest_path)
+            .map_err(|error| format!("Could not read the bundled Browser manifest: {error}"))?,
+    )
+    .map_err(|error| format!("The bundled Browser manifest is invalid: {error}"))?;
+    if manifest.get("name").and_then(Value::as_str) != Some(BROWSER_PLUGIN_NAME) {
+        return Err("The resolved Codex plugin is not the trusted Browser plugin.".to_string());
+    }
+    let version = manifest
+        .get("version")
+        .and_then(Value::as_str)
+        .filter(|value| !value.trim().is_empty())
+        .ok_or("The bundled Browser plugin has no version.")?
+        .to_string();
+    let major = version
+        .split('.')
+        .next()
+        .and_then(|value| value.parse::<u64>().ok())
+        .ok_or_else(|| "The bundled Browser plugin version is invalid.".to_string())?;
+    if major != SUPPORTED_BROWSER_PLUGIN_MAJOR {
+        return Err(format!(
+            "Codex Browser plugin {version} is not compatible with this Orchestrator build."
+        ));
+    }
+    let client_script = canonical.join("scripts").join("browser-client.mjs");
+    let service_script = canonical.join("scripts").join("browser-service.mjs");
+    let skill_file = canonical
+        .join("skills")
+        .join("control-in-app-browser")
+        .join("SKILL.md");
+    for (label, path) in [
+        ("client", &client_script),
+        ("service", &service_script),
+        ("skill", &skill_file),
+    ] {
+        if !path.is_file() {
+            return Err(format!("The bundled Browser {label} is missing."));
+        }
+    }
+    Ok(BrowserSkillRuntime {
+        version,
+        _client_script: client_script,
+        _service_script: service_script,
+        _skill_file: skill_file,
+    })
+}
+
+fn read_packaged_runtime(root: &Path, architecture: &str) -> Result<BrowserHostRuntime, String> {
     let manifest_path = root.join("runtime.json");
     let manifest: RuntimeManifest = serde_json::from_slice(
         &fs::read(&manifest_path)
-            .map_err(|error| format!("Could not read the Playwright runtime manifest: {error}"))?,
+            .map_err(|error| format!("Could not read the Browser host manifest: {error}"))?,
     )
-    .map_err(|error| format!("The Playwright runtime manifest is invalid: {error}"))?;
-    if manifest.version != 1 || manifest.architecture != architecture {
-        return Err("The bundled Playwright runtime does not match this Mac.".to_string());
+    .map_err(|error| format!("The Browser host manifest is invalid: {error}"))?;
+    if manifest.version != 2 || manifest.architecture != architecture {
+        return Err("The bundled Browser host does not match this Mac.".to_string());
     }
     let node = confined_runtime_path(root, &manifest.node_executable)?;
-    let wrapper = confined_runtime_path(root, &manifest.wrapper_script)?;
-    let default_wrapper = confined_runtime_path(
-        root,
-        manifest
-            .default_browser_wrapper_script
-            .as_deref()
-            .ok_or("The default-browser MCP wrapper is missing from the runtime manifest.")?,
-    )?;
+    let backend = confined_runtime_path(root, &manifest.browser_backend_script)?;
     let chromium = confined_runtime_path(root, &manifest.chromium_executable)?;
-    validate_runtime_paths(
-        node,
-        wrapper,
-        default_wrapper,
-        chromium,
-        format!(
-            "@playwright/mcp {} / Playwright {}",
-            manifest.playwright_mcp_version, manifest.playwright_version
-        ),
-    )
+    validate_runtime_paths(node, backend, chromium, manifest.playwright_version)
 }
 
-fn resolve_development_runtime() -> Result<PlaywrightRuntime, String> {
+fn resolve_development_runtime() -> Result<BrowserHostRuntime, String> {
     let repository = Path::new(env!("CARGO_MANIFEST_DIR"))
         .parent()
         .ok_or_else(|| "Could not resolve the Orchestrator repository.".to_string())?;
-    let wrapper = repository
+    let backend = repository
         .join("scripts")
         .join("playwright-runtime")
-        .join("orchestrator-playwright-mcp.mjs");
-    let default_wrapper = repository
-        .join("scripts")
-        .join("playwright-runtime")
-        .join("orchestrator-default-browser-mcp.mjs");
+        .join("orchestrator-browser-backend.mjs");
     let node = resolve_path_executable("node")
         .ok_or_else(|| "Node.js is required for the development browser runtime.".to_string())?;
     let chromium = env::var_os("ORCHESTRATOR_PLAYWRIGHT_CHROMIUM")
@@ -804,13 +1006,7 @@ fn resolve_development_runtime() -> Result<PlaywrightRuntime, String> {
             "The pinned Chromium build is unavailable. Run `npm run prepare:playwright-runtime` before starting Orchestrator."
                 .to_string()
         })?;
-    validate_runtime_paths(
-        node,
-        wrapper,
-        default_wrapper,
-        chromium,
-        "development runtime".to_string(),
-    )
+    validate_runtime_paths(node, backend, chromium, "development runtime".to_string())
 }
 
 fn probe_development_chromium(repository: &Path, node: &Path) -> Option<PathBuf> {
@@ -832,21 +1028,20 @@ fn probe_development_chromium(repository: &Path, node: &Path) -> Option<PathBuf>
 
 fn validate_runtime_paths(
     node: PathBuf,
-    wrapper: PathBuf,
-    default_wrapper: PathBuf,
+    backend: PathBuf,
     chromium: PathBuf,
     _version: String,
-) -> Result<PlaywrightRuntime, String> {
+) -> Result<BrowserHostRuntime, String> {
     if !node.is_file() {
         return Err(format!(
-            "The Playwright Node runtime was not found at {}.",
+            "The Browser host Node runtime was not found at {}.",
             node.display()
         ));
     }
-    if !wrapper.is_file() {
+    if !backend.is_file() {
         return Err(format!(
-            "The Playwright MCP wrapper was not found at {}.",
-            wrapper.display()
+            "The Browser backend host was not found at {}.",
+            backend.display()
         ));
     }
     if !chromium.is_file() {
@@ -855,16 +1050,9 @@ fn validate_runtime_paths(
             chromium.display()
         ));
     }
-    if !default_wrapper.is_file() {
-        return Err(format!(
-            "The default-browser MCP wrapper was not found at {}.",
-            default_wrapper.display()
-        ));
-    }
-    Ok(PlaywrightRuntime {
+    Ok(BrowserHostRuntime {
         node_executable: node,
-        wrapper_script: wrapper,
-        default_browser_wrapper_script: default_wrapper,
+        backend_script: backend,
         chromium_executable: chromium,
     })
 }
@@ -893,10 +1081,6 @@ fn resolve_path_executable(name: &str) -> Option<PathBuf> {
             .map(|directory| directory.join(name))
             .find(|candidate| candidate.is_file())
     })
-}
-
-fn toml_string(path: &Path) -> String {
-    serde_json::to_string(&path.to_string_lossy()).expect("paths serialize as JSON strings")
 }
 
 fn secure_directory(path: &Path) -> Result<(), String> {
@@ -938,24 +1122,14 @@ mod tests {
     }
 
     #[test]
-    fn app_server_registration_is_pinned_and_disabled_by_default() {
-        let runtime = PlaywrightRuntime {
-            node_executable: PathBuf::from("/bundle/bin/node"),
-            wrapper_script: PathBuf::from("/bundle/mcp/wrapper.mjs"),
-            default_browser_wrapper_script: PathBuf::from("/bundle/mcp/default.mjs"),
-            chromium_executable: PathBuf::from("/bundle/chromium"),
-        };
-        let mut args = Vec::new();
-        append_playwright_app_server_args(&mut args, &runtime);
-        assert!(args
-            .iter()
-            .any(|arg| arg == "mcp_servers.playwright.enabled=false"));
-        assert!(args
-            .iter()
-            .any(|arg| arg.contains("/bundle/mcp/wrapper.mjs")));
-        assert!(!args
-            .iter()
-            .any(|arg| arg.contains("npx") || arg.contains("@latest")));
+    fn browser_service_config_exposes_one_exact_backend_without_mcp() {
+        let config = browser_service_config(Path::new("/tmp/browser.sock"), "26.818.31338");
+        let serialized = serde_json::to_string(&config).expect("serializes Browser config");
+        assert!(serialized.contains("CDP_BROWSER_BACKEND_PIPE_PATH"));
+        assert!(serialized.contains("BROWSER_AUTH_EVAL_EXACT_CDP_BACKEND_SOCKET"));
+        assert!(serialized.contains("26.818.31338"));
+        assert!(!serialized.contains("mcp_servers"));
+        assert!(!serialized.contains("playwright"));
     }
 
     #[test]
@@ -966,16 +1140,13 @@ mod tests {
         ));
         fs::create_dir_all(&root).expect("creates validation fixture");
         let node = root.join("node");
-        let wrapper = root.join("wrapper.mjs");
-        let default_wrapper = root.join("default-wrapper.mjs");
+        let backend = root.join("backend.mjs");
         fs::write(&node, b"node").expect("writes node fixture");
-        fs::write(&wrapper, b"wrapper").expect("writes wrapper fixture");
-        fs::write(&default_wrapper, b"wrapper").expect("writes default wrapper fixture");
+        fs::write(&backend, b"backend").expect("writes backend fixture");
 
         let result = validate_runtime_paths(
             node,
-            wrapper,
-            default_wrapper,
+            backend,
             root.join("missing-chromium"),
             "test".to_string(),
         );

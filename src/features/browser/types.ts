@@ -42,6 +42,8 @@ export type BrowserRuntimeStatus = {
   available: boolean;
   message: string | null;
   defaultBrowser: DefaultBrowserCapabilityStatus | null;
+  browserSkillVersion: string | null;
+  browserServiceCompatible: boolean;
 };
 
 export type BrowserSessionTarget = {
@@ -69,6 +71,9 @@ export type BrowserSessionState = {
   chatGroupKey: string | null;
   controlledTabId: number | null;
   fallbackReason: string | null;
+  browserSkillVersion: string;
+  browserServiceCompatible: boolean;
+  backendHealthy: boolean;
 };
 
 export type PreparedBrowserSession = {

@@ -2,7 +2,6 @@ import { describe, expect, it } from "vitest";
 import {
   findSafeApprovalDenialChoice,
   parseApprovalRequest,
-  type ActivePlaywrightToolCall,
 } from "./codexApprovals";
 
 const base = {
@@ -14,12 +13,10 @@ const base = {
 function parse(
   method: string,
   params: Record<string, unknown>,
-  activePlaywrightToolCalls: ActivePlaywrightToolCall[] = [],
 ) {
   return parseApprovalRequest({
     ...base,
     message: { id: 9, method, params },
-    activePlaywrightToolCalls,
   })!;
 }
 
@@ -284,293 +281,15 @@ describe("native Codex approval protocol", () => {
     expect(request.error).toMatch(/not supported/i);
   });
 
-  it("accepts signed Orchestrator Playwright policy elicitations", () => {
+  it("fails closed for obsolete Playwright MCP elicitations", () => {
     const request = parse("mcpServer/elicitation/request", {
       serverName: "playwright",
       mode: "form",
-      _meta: {
-        "orchestrator/browser-approval": {
-          version: 1,
-          nonce: "nonce",
-          sessionToken: "0123456789abcdef0123456789abcdef",
-          kind: "origin",
-          origin: "https://example.com",
-          action: "navigate",
-        },
-      },
+      _meta: { codex_approval_kind: "mcp_tool_call" },
     });
-
-    expect(request.kind).toBe("browser");
-    expect(request.browserRequest).toEqual({
-      sessionToken: "0123456789abcdef0123456789abcdef",
-      kind: "origin",
-      origin: "https://example.com",
-      action: "navigate",
-    });
-    expect(request.choices.map((choice) => choice.response)).toEqual([
-      {
-        action: "accept",
-        content: { decision: "allow" },
-        _meta: null,
-      },
-      {
-        action: "decline",
-        content: null,
-        _meta: null,
-      },
-    ]);
-  });
-
-  it("accepts external WebSocket origins from the Playwright policy wrapper", () => {
-    const request = parse("mcpServer/elicitation/request", {
-      serverName: "playwright",
-      mode: "form",
-      _meta: {
-        "orchestrator/browser-approval": {
-          version: 1,
-          nonce: "nonce",
-          sessionToken: "0123456789abcdef0123456789abcdef",
-          kind: "origin",
-          origin: "wss://example.com",
-          action: "open a WebSocket to this origin",
-        },
-      },
-    });
-
-    expect(request.kind).toBe("browser");
-    expect(request.browserRequest?.origin).toBe("wss://example.com");
-  });
-
-  it("accepts a native Playwright tool approval only for its active correlated call", () => {
-    const toolCall = {
-      itemId: "browser-call-1",
-      threadId: "thread-1",
-      turnId: "turn-1",
-      tool: "browser_tabs",
-      arguments: {
-        url: "http://127.0.0.1:3001/",
-        action: "new",
-      },
-    };
-    const request = parse(
-      "mcpServer/elicitation/request",
-      {
-        threadId: "thread-1",
-        turnId: "turn-1",
-        serverName: "playwright",
-        mode: "form",
-        requestedSchema: { type: "object", properties: {} },
-        _meta: {
-          codex_approval_kind: "mcp_tool_call",
-          persist: ["session", "always"],
-          tool_description: "List, create, close, or select a browser tab.",
-          tool_params: {
-            action: "new",
-            url: "http://127.0.0.1:3001/",
-          },
-          tool_params_display: [
-            { display_name: "Action", name: "action", value: "new" },
-            {
-              display_name: "URL",
-              name: "url",
-              value: "http://127.0.0.1:3001/",
-            },
-          ],
-        },
-      },
-      [toolCall],
-    );
-
-    expect(request.kind).toBe("browser-tool");
-    expect(request.itemId).toBe("browser-call-1");
-    expect(request.browserToolRequest).toEqual({
-      itemId: "browser-call-1",
-      tool: "browser_tabs",
-      displayName: "Browser Tabs",
-      description: "List, create, close, or select a browser tab.",
-      parameters: [
-        { name: "action", label: "Action", value: "new" },
-        {
-          name: "url",
-          label: "URL",
-          value: "http://127.0.0.1:3001/",
-        },
-      ],
-    });
-    expect(request.choices.map((choice) => choice.response)).toEqual([
-      { action: "accept", content: {}, _meta: null },
-      { action: "decline", content: null, _meta: null },
-    ]);
-  });
-
-  it("redacts sensitive native Playwright tool parameters", () => {
-    const toolCall = {
-      itemId: "browser-call-2",
-      threadId: "thread-1",
-      turnId: "turn-1",
-      tool: "browser_type",
-      arguments: {
-        action: "type",
-        text: "top secret",
-        password: "hunter2",
-        url: "https://user:password@example.com/login?token=secret#form",
-      },
-    };
-    const request = parse(
-      "mcpServer/elicitation/request",
-      {
-        threadId: "thread-1",
-        turnId: "turn-1",
-        serverName: "playwright",
-        mode: "form",
-        requestedSchema: { type: "object", properties: {} },
-        _meta: {
-          codex_approval_kind: "mcp_tool_call",
-          tool_description: "Type text into an editable element.",
-          tool_params: toolCall.arguments,
-          tool_params_display: [
-            { display_name: "Action", name: "action", value: "type" },
-            { display_name: "Text", name: "text", value: "top secret" },
-            {
-              display_name: "Password",
-              name: "password",
-              value: "hunter2",
-            },
-            {
-              display_name: "URL",
-              name: "url",
-              value:
-                "https://user:password@example.com/login?token=secret#form",
-            },
-          ],
-        },
-      },
-      [toolCall],
-    );
-
-    expect(request.kind).toBe("browser-tool");
-    expect(request.browserToolRequest?.parameters).toEqual([
-      { name: "action", label: "Action", value: "type" },
-      { name: "url", label: "URL", value: "https://example.com/login" },
-    ]);
-    expect(JSON.stringify(request.browserToolRequest)).not.toContain(
-      "top secret",
-    );
-    expect(JSON.stringify(request.browserToolRequest)).not.toContain("hunter2");
-    expect(JSON.stringify(request.browserToolRequest)).not.toContain(
-      "token=secret",
-    );
-  });
-
-  it.each([
-    {
-      label: "no active Playwright call",
-      calls: [],
-      toolParams: { action: "new", url: "http://127.0.0.1:3001/" },
-    },
-    {
-      label: "mismatched tool arguments",
-      calls: [
-        {
-          itemId: "browser-call-1",
-          threadId: "thread-1",
-          turnId: "turn-1",
-          tool: "browser_tabs",
-          arguments: { action: "select", index: 1 },
-        },
-      ],
-      toolParams: { action: "new", url: "http://127.0.0.1:3001/" },
-    },
-    {
-      label: "ambiguous active calls",
-      calls: [
-        {
-          itemId: "browser-call-1",
-          threadId: "thread-1",
-          turnId: "turn-1",
-          tool: "browser_tabs",
-          arguments: { action: "new" },
-        },
-        {
-          itemId: "browser-call-2",
-          threadId: "thread-1",
-          turnId: "turn-1",
-          tool: "browser_tabs",
-          arguments: { action: "new" },
-        },
-      ],
-      toolParams: { action: "new" },
-    },
-  ])("rejects a native Playwright request with $label", ({ calls, toolParams }) => {
-    const request = parse(
-      "mcpServer/elicitation/request",
-      {
-        threadId: "thread-1",
-        turnId: "turn-1",
-        serverName: "playwright",
-        mode: "form",
-        requestedSchema: { type: "object", properties: {} },
-        _meta: {
-          codex_approval_kind: "mcp_tool_call",
-          tool_description: "Manage browser tabs.",
-          tool_params: toolParams,
-          tool_params_display: [],
-        },
-      },
-      calls,
-    );
-
     expect(request.kind).toBe("unsupported");
     expect(request.choices).toEqual([]);
-    expect(request.error).toMatch(/validated active Playwright/i);
-  });
-
-  it.each([
-    {
-      label: "another MCP server",
-      params: {
-        serverName: "other",
-        mode: "form",
-        _meta: {},
-      },
-    },
-    {
-      label: "credentials in an origin",
-      params: {
-        serverName: "playwright",
-        mode: "form",
-        _meta: {
-          "orchestrator/browser-approval": {
-            version: 1,
-            sessionToken: "0123456789abcdef0123456789abcdef",
-            kind: "origin",
-            origin: "https://user:secret@example.com",
-            action: "navigate",
-          },
-        },
-      },
-    },
-    {
-      label: "a malformed session token",
-      params: {
-        serverName: "playwright",
-        mode: "form",
-        _meta: {
-          "orchestrator/browser-approval": {
-            version: 1,
-            sessionToken: "not-a-session",
-            kind: "sensitive-action",
-            origin: "https://example.com",
-            action: "type into the requested field",
-          },
-        },
-      },
-    },
-  ])("rejects $label", ({ params }) => {
-    const request = parse("mcpServer/elicitation/request", params);
-    expect(request.kind).toBe("unsupported");
-    expect(request.choices).toEqual([]);
-    expect(request.error).toMatch(/validated active Playwright approval/i);
+    expect(request.error).toMatch(/not supported|native Codex/i);
   });
 
   it("uses the installed legacy response vocabulary without converting denial", () => {

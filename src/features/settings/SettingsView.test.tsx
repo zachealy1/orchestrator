@@ -40,6 +40,8 @@ function model(overrides: Partial<SettingsViewModel> = {}): SettingsViewModel {
       available: true,
       message: null,
       defaultBrowser: null,
+      browserSkillVersion: "26.818.31338",
+      browserServiceCompatible: true,
     },
     githubConnection: null,
     githubConnectionPending: false,

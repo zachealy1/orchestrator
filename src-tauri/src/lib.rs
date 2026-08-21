@@ -43,7 +43,7 @@ mod web_preview;
 mod workspace;
 
 use agent_notifications::AgentNotificationState;
-use browser_sessions::{BrowserSessionRegistry, PlaywrightRuntime};
+use browser_sessions::BrowserSessionRegistry;
 pub(crate) use codex::*;
 pub(crate) use database::*;
 use default_browser::DefaultBrowserBridgeState;

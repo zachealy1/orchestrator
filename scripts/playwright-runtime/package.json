@@ -4,8 +4,6 @@
   "version": "1.0.0",
   "type": "module",
   "dependencies": {
-    "@modelcontextprotocol/sdk": "1.29.0",
-    "@playwright/mcp": "0.0.78",
     "playwright": "1.62.0-alpha-1783623505000"
   }
 }

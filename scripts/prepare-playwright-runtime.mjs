@@ -32,8 +32,7 @@ const runtimePackage = JSON.parse(
 const sourceFingerprint = fingerprint([
   fileURLToPath(import.meta.url),
   path.join(runtimeSource, "package-lock.json"),
-  path.join(runtimeSource, "orchestrator-playwright-mcp.mjs"),
-  path.join(runtimeSource, "orchestrator-default-browser-mcp.mjs"),
+  path.join(runtimeSource, "orchestrator-browser-backend.mjs"),
 ]);
 
 if (process.platform !== "darwin") {
@@ -59,17 +58,13 @@ fs.mkdirSync(destination, { recursive: true, mode: 0o755 });
 
 run("npm", ["ci", "--omit=dev", "--ignore-scripts"], runtimeSource);
 
-const mcpDestination = path.join(destination, "mcp");
-fs.mkdirSync(mcpDestination, { recursive: true });
+const hostDestination = path.join(destination, "host");
+fs.mkdirSync(hostDestination, { recursive: true });
 fs.copyFileSync(
-  path.join(runtimeSource, "orchestrator-playwright-mcp.mjs"),
-  path.join(mcpDestination, "orchestrator-playwright-mcp.mjs"),
+  path.join(runtimeSource, "orchestrator-browser-backend.mjs"),
+  path.join(hostDestination, "orchestrator-browser-backend.mjs"),
 );
-fs.copyFileSync(
-  path.join(runtimeSource, "orchestrator-default-browser-mcp.mjs"),
-  path.join(mcpDestination, "orchestrator-default-browser-mcp.mjs"),
-);
-fs.cpSync(path.join(runtimeSource, "node_modules"), path.join(mcpDestination, "node_modules"), {
+fs.cpSync(path.join(runtimeSource, "node_modules"), path.join(hostDestination, "node_modules"), {
   recursive: true,
 });
 
@@ -81,12 +76,12 @@ if (preservedBrowsers) {
 } else {
   fs.mkdirSync(browsersPath, { recursive: true });
 }
-let chromiumExecutable = probeChromium(nodeBinary, mcpDestination, browsersPath);
+let chromiumExecutable = probeChromium(nodeBinary, hostDestination, browsersPath);
 if (!chromiumExecutable || !fs.existsSync(chromiumExecutable)) {
   run(
     nodeBinary,
     [
-      path.join(mcpDestination, "node_modules", "playwright", "cli.js"),
+      path.join(hostDestination, "node_modules", "playwright", "cli.js"),
       "install",
       "chromium",
       "--no-shell",
@@ -96,7 +91,7 @@ if (!chromiumExecutable || !fs.existsSync(chromiumExecutable)) {
   );
   chromiumExecutable = probeChromium(
     nodeBinary,
-    mcpDestination,
+    hostDestination,
     browsersPath,
   );
 }
@@ -108,16 +103,14 @@ fs.writeFileSync(
   manifestPath,
   JSON.stringify(
     {
-      version: 1,
+      version: 2,
       platform: process.platform,
       architecture,
       nodeVersion: NODE_VERSION,
-      playwrightMcpVersion: runtimePackage.dependencies["@playwright/mcp"],
       playwrightVersion: runtimePackage.dependencies.playwright,
       sourceFingerprint,
       nodeExecutable: relative(destination, nodeBinary),
-      wrapperScript: "mcp/orchestrator-playwright-mcp.mjs",
-      defaultBrowserWrapperScript: "mcp/orchestrator-default-browser-mcp.mjs",
+      browserBackendScript: "host/orchestrator-browser-backend.mjs",
       chromiumExecutable: relative(destination, chromiumExecutable),
     },
     null,
@@ -151,10 +144,8 @@ function runtimeIsCurrent(file, expectedFingerprint) {
     return (
       manifest.sourceFingerprint === expectedFingerprint &&
       fs.existsSync(path.join(path.dirname(file), manifest.nodeExecutable)) &&
-      fs.existsSync(path.join(path.dirname(file), manifest.wrapperScript)) &&
-      fs.existsSync(
-        path.join(path.dirname(file), manifest.defaultBrowserWrapperScript),
-      ) &&
+      manifest.version === 2 &&
+      fs.existsSync(path.join(path.dirname(file), manifest.browserBackendScript)) &&
       fs.existsSync(path.join(path.dirname(file), manifest.chromiumExecutable))
     );
   } catch {

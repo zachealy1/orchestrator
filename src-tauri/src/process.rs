@@ -85,10 +85,7 @@ pub(crate) fn ensure_default_codex_home() -> Result<PathBuf, String> {
     Ok(codex_home)
 }
 
-pub(crate) fn codex_app_server_args(
-    isolated_file_store: bool,
-    playwright_runtime: Option<&PlaywrightRuntime>,
-) -> Vec<String> {
+pub(crate) fn codex_app_server_args(isolated_file_store: bool) -> Vec<String> {
     let profile_key = format!("permissions.{ASK_FOR_APPROVAL_PERMISSION_PROFILE}");
     let mut args = vec![
         "app-server".to_string(),
@@ -114,9 +111,6 @@ pub(crate) fn codex_app_server_args(
             "-c".to_string(),
             "cli_auth_credentials_store=\"file\"".to_string(),
         ]);
-    }
-    if let Some(runtime) = playwright_runtime {
-        browser_sessions::append_playwright_app_server_args(&mut args, runtime);
     }
     args
 }

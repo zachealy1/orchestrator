@@ -667,6 +667,11 @@ describe("Application runtime scenarios 8", () => {
       });
       mocks.listCodexSkillsMock.mockResolvedValue([
         {
+          id: "browser:control-in-app-browser",
+          name: "browser:control-in-app-browser",
+          description: "Control the in-app browser",
+        },
+        {
           id: "docs",
           name: "Docs",
           description: "Use repository documentation",

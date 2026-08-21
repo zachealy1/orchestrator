@@ -40,6 +40,8 @@ export function useComputerUseController(): ComputerUseController {
       setBrowserRuntimeStatus({
         available: false,
         defaultBrowser: null,
+        browserSkillVersion: null,
+        browserServiceCompatible: false,
         message:
           error instanceof Error
             ? error.message
@@ -59,6 +61,8 @@ export function useComputerUseController(): ComputerUseController {
         setBrowserRuntimeStatus({
           available: false,
           defaultBrowser: null,
+          browserSkillVersion: null,
+          browserServiceCompatible: false,
           message:
             error instanceof Error
               ? error.message

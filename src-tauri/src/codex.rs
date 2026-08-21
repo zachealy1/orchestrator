@@ -1532,7 +1532,6 @@ pub(crate) async fn connect_codex_profile(
     codex_home: PathBuf,
     isolated_file_store: bool,
 ) -> Result<CodexConnectResult, String> {
-    let playwright_runtime = browser_sessions::resolve_playwright_runtime(app).ok();
     let connection_generation = state
         .next_connection_generation
         .fetch_add(1, Ordering::SeqCst)
@@ -1561,10 +1560,7 @@ pub(crate) async fn connect_codex_profile(
 
         let codex_binary = resolve_codex_binary()?;
         let mut command = Command::new(&codex_binary);
-        command.args(codex_app_server_args(
-            isolated_file_store,
-            playwright_runtime.as_ref(),
-        ));
+        command.args(codex_app_server_args(isolated_file_store));
         let mut child = command
             .env("CODEX_HOME", &codex_home)
             .stdin(Stdio::piped())

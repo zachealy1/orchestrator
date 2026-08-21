@@ -9,6 +9,9 @@ const attachedTabs = new Set();
 const consoleMessages = new Map();
 const networkRequests = new Map();
 const approvedOriginsByTab = new Map();
+const browserBackendEvents = new Map();
+const browserBackendTabs = new Map();
+const browserBackendTargetSessions = new Map();
 
 function connectNative() {
   if (nativePort) return;
@@ -91,6 +94,26 @@ async function dispatch(request) {
       return inspectAction(request);
     case "tool":
       return runTool(request);
+    case "browser-backend-tabs":
+      return listBackendTabs(request);
+    case "browser-backend-user-tabs":
+      return listBackendUserTabs(request);
+    case "browser-backend-create-tab":
+      return createBackendTab(request);
+    case "browser-backend-claim-tab":
+      return claimBackendTab(request, request.tabId);
+    case "browser-backend-attach":
+      return attachBackendTab(request, request.tabId);
+    case "browser-backend-detach":
+      return detachBackendTab(request, request.tabId);
+    case "browser-backend-attach-target":
+      return attachBackendTarget(request, request.tabId, request.targetId);
+    case "browser-backend-detach-target":
+      return detachBackendTarget(request, request.tabId, request.targetId);
+    case "browser-backend-cdp":
+      return executeBackendCdp(request);
+    case "browser-backend-events":
+      return takeBackendEvents(request.sessionToken);
     default:
       throw new Error("Unsupported browser bridge action.");
   }
@@ -237,13 +260,20 @@ async function renameGroup(groupKey, title) {
 }
 
 async function detachSession(sessionToken) {
+  const tabIds = browserBackendTabs.get(sessionToken) ?? new Set();
   const tabId = controlledTabs.get(sessionToken);
   controlledTabs.delete(sessionToken);
-  if (Number.isInteger(tabId) && attachedTabs.has(tabId)) {
-    await chrome.debugger.detach({ tabId }).catch(() => undefined);
-    attachedTabs.delete(tabId);
-  }
-  if (Number.isInteger(tabId)) approvedOriginsByTab.delete(tabId);
+  if (Number.isInteger(tabId)) tabIds.add(tabId);
+  await Promise.all([...tabIds].map(async (candidate) => {
+    if (attachedTabs.has(candidate)) {
+      await chrome.debugger.detach({ tabId: candidate }).catch(() => undefined);
+      attachedTabs.delete(candidate);
+    }
+    approvedOriginsByTab.delete(candidate);
+  }));
+  browserBackendTabs.delete(sessionToken);
+  browserBackendEvents.delete(sessionToken);
+  browserBackendTargetSessions.delete(sessionToken);
   return { detached: true };
 }
 
@@ -269,7 +299,7 @@ async function ensureControlledTab(request) {
   return tabId;
 }
 
-async function ensureDebugger(tabId) {
+async function ensureDebugger(tabId, legacySecurity = true) {
   if (attachedTabs.has(tabId)) return;
   await chrome.debugger.attach({ tabId }, "1.3");
   attachedTabs.add(tabId);
@@ -278,9 +308,11 @@ async function ensureDebugger(tabId) {
   await sendCdp(tabId, "Runtime.enable");
   await sendCdp(tabId, "Network.enable");
   await sendCdp(tabId, "Page.enable");
-  await sendCdp(tabId, "Fetch.enable", {
-    patterns: [{ urlPattern: "http://*/*" }, { urlPattern: "https://*/*" }],
-  });
+  if (legacySecurity) {
+    await sendCdp(tabId, "Fetch.enable", {
+      patterns: [{ urlPattern: "http://*/*" }, { urlPattern: "https://*/*" }],
+    });
+  }
   await sendCdp(tabId, "Browser.setDownloadBehavior", {
     behavior: "deny",
     browserContextId: undefined,
@@ -366,6 +398,22 @@ chrome.debugger.onEvent.addListener((source, method, params) => {
   if (method === "Fetch.requestPaused") {
     void authorizePausedRequest(tabId, params);
   }
+  for (const [sessionToken, tabIds] of browserBackendTabs) {
+    if (!tabIds.has(tabId)) continue;
+    const events = browserBackendEvents.get(sessionToken) ?? [];
+    events.push({
+      source: {
+        tabId,
+        ...(typeof source.sessionId === "string" ? { sessionId: source.sessionId } : {}),
+      },
+      method,
+      params: params ?? {},
+    });
+    if (events.length > MAX_ACTIVITY_ITEMS * 5) {
+      events.splice(0, events.length - MAX_ACTIVITY_ITEMS * 5);
+    }
+    browserBackendEvents.set(sessionToken, events);
+  }
 });
 
 async function authorizePausedRequest(tabId, params) {
@@ -423,6 +471,151 @@ function summarizeNetwork(method, params) {
 
 function sendCdp(tabId, method, commandParams = {}) {
   return chrome.debugger.sendCommand({ tabId }, method, commandParams);
+}
+
+function backendTab(tab) {
+  return {
+    id: tab.id,
+    title: String(tab.title ?? "Untitled tab").slice(0, 160),
+    url: tab.url ?? tab.pendingUrl ?? "about:blank",
+    active: Boolean(tab.active),
+    windowId: tab.windowId,
+  };
+}
+
+async function controlledGroupTabs(request) {
+  const group = await groupForKey(request.groupKey);
+  return chrome.tabs.query({ groupId: group.id });
+}
+
+async function listBackendTabs(request) {
+  const tabs = await controlledGroupTabs(request);
+  return tabs.filter((tab) => Number.isInteger(tab.id)).map(backendTab);
+}
+
+async function listBackendUserTabs(request) {
+  const groups = await storedGroups();
+  const groupId = groups[request.groupKey]?.groupId ?? -1;
+  const tabs = await chrome.tabs.query({ windowType: "normal" });
+  return tabs
+    .filter((tab) => Number.isInteger(tab.id) && !tab.incognito && tab.groupId !== groupId)
+    .map(backendTab);
+}
+
+async function createBackendTab(request) {
+  const group = await groupForKey(request.groupKey);
+  const tab = await chrome.tabs.create({
+    windowId: Number.isInteger(request.preferredWindowId)
+      ? request.preferredWindowId
+      : group.windowId,
+    active: true,
+    url: "about:blank",
+  });
+  await chrome.tabs.group({ groupId: group.id, tabIds: [tab.id] });
+  await setControlledTab(request.sessionToken, tab.id);
+  await attachBackendTab(request, tab.id);
+  return backendTab(tab);
+}
+
+async function claimBackendTab(request, tabId) {
+  await attachTab(
+    request.groupKey,
+    request.groupTitle,
+    request.sessionToken,
+    Number(tabId),
+  );
+  await attachBackendTab(request, Number(tabId));
+  return backendTab(await chrome.tabs.get(Number(tabId)));
+}
+
+async function attachBackendTab(request, tabId) {
+  const numericTabId = Number(tabId);
+  const tabs = await controlledGroupTabs(request);
+  if (!tabs.some((tab) => tab.id === numericTabId)) {
+    throw new Error("The requested tab is outside this Orchestrator chat group.");
+  }
+  await ensureDebugger(numericTabId, false);
+  const controlled = browserBackendTabs.get(request.sessionToken) ?? new Set();
+  controlled.add(numericTabId);
+  browserBackendTabs.set(request.sessionToken, controlled);
+  await setControlledTab(request.sessionToken, numericTabId);
+  return null;
+}
+
+async function detachBackendTab(request, tabId) {
+  const numericTabId = Number(tabId);
+  const targetSessions = browserBackendTargetSessions.get(request.sessionToken);
+  if (targetSessions) {
+    for (const [key, sessionId] of targetSessions) {
+      if (!key.startsWith(`${numericTabId}:`)) continue;
+      await sendBackendCdp(numericTabId, "Target.detachFromTarget", { sessionId })
+        .catch(() => undefined);
+      targetSessions.delete(key);
+    }
+  }
+  browserBackendTabs.get(request.sessionToken)?.delete(numericTabId);
+  if (attachedTabs.has(numericTabId)) {
+    await chrome.debugger.detach({ tabId: numericTabId }).catch(() => undefined);
+    attachedTabs.delete(numericTabId);
+  }
+  return null;
+}
+
+async function attachBackendTarget(request, tabId, targetId) {
+  await attachBackendTab(request, tabId);
+  const numericTabId = Number(tabId);
+  const attached = await sendBackendCdp(numericTabId, "Target.attachToTarget", {
+    targetId: String(targetId),
+    flatten: true,
+  });
+  if (typeof attached?.sessionId === "string") {
+    const targetSessions =
+      browserBackendTargetSessions.get(request.sessionToken) ?? new Map();
+    targetSessions.set(`${numericTabId}:${String(targetId)}`, attached.sessionId);
+    browserBackendTargetSessions.set(request.sessionToken, targetSessions);
+  }
+  return null;
+}
+
+async function detachBackendTarget(request, tabId, targetId) {
+  await attachBackendTab(request, tabId);
+  if (typeof targetId !== "string" || !targetId) return null;
+  const numericTabId = Number(tabId);
+  const targetSessions = browserBackendTargetSessions.get(request.sessionToken);
+  const key = `${numericTabId}:${targetId}`;
+  const sessionId = targetSessions?.get(key);
+  if (!sessionId) return null;
+  await sendBackendCdp(numericTabId, "Target.detachFromTarget", { sessionId })
+    .catch(() => undefined);
+  targetSessions?.delete(key);
+  return null;
+}
+
+async function executeBackendCdp(request) {
+  const tabId = Number(request.target?.tabId ?? request.tabId);
+  await attachBackendTab(request, tabId);
+  return sendBackendCdp(
+    tabId,
+    requiredString(request.method, "CDP method"),
+    request.commandParams && typeof request.commandParams === "object"
+      ? request.commandParams
+      : {},
+    request.target?.sessionId,
+  );
+}
+
+function sendBackendCdp(tabId, method, commandParams = {}, sessionId = undefined) {
+  return chrome.debugger.sendCommand(
+    { tabId, ...(typeof sessionId === "string" && sessionId ? { sessionId } : {}) },
+    method,
+    commandParams,
+  );
+}
+
+function takeBackendEvents(sessionToken) {
+  const events = browserBackendEvents.get(sessionToken) ?? [];
+  browserBackendEvents.set(sessionToken, []);
+  return events;
 }
 
 async function runTool(request) {

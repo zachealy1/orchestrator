@@ -351,8 +351,8 @@ fn default_profile_uses_local_codex_home() {
 
 #[test]
 fn app_server_profiles_enable_network_without_full_access() {
-    let shared_args = codex_app_server_args(false, None);
-    let isolated_args = codex_app_server_args(true, None);
+    let shared_args = codex_app_server_args(false);
+    let isolated_args = codex_app_server_args(true);
     let profile_key = format!("permissions.{ASK_FOR_APPROVAL_PERMISSION_PROFILE}");
 
     assert_eq!(
@@ -377,6 +377,9 @@ fn app_server_profiles_enable_network_without_full_access() {
     assert!(!shared_args
         .iter()
         .any(|arg| arg.contains("cli_auth_credentials_store")));
+    assert!(!shared_args.iter().any(|arg| {
+        arg.contains("mcp_servers") || arg.to_ascii_lowercase().contains("playwright")
+    }));
     assert!(isolated_args
         .iter()
         .any(|arg| arg == "cli_auth_credentials_store=\"file\""));

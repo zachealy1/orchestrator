@@ -367,6 +367,7 @@ vi.mock("../codexClient", () => ({
   undoWorkspaceGitDiff: mocks.undoWorkspaceGitDiffMock,
   listCodexModels: mocks.listCodexModelsMock,
   listCodexSkills: mocks.listCodexSkillsMock,
+  listDefaultCodexSkills: mocks.listCodexSkillsMock,
   listWorkspaceDirectory: mocks.listWorkspaceDirectoryMock,
   loadDefaultProfileTurnActivity: mocks.loadDefaultProfileTurnActivityMock,
   readProjectedSubagentThread: mocks.readProjectedSubagentThreadMock,
@@ -1070,13 +1071,20 @@ export function prepareDefaults() {
   mocks.readBrowserRuntimeStatusMock.mockResolvedValue({
     available: true,
     message: null,
+    defaultBrowser: null,
+    browserSkillVersion: "26.818.31338",
+    browserServiceCompatible: true,
   });
   mocks.prepareBrowserSessionMock.mockImplementation(async (target) => ({
     token: "0123456789abcdef0123456789abcdef",
     config: {
-      mcp_servers: {
-        playwright: {
-          enabled: true,
+      shell_environment_policy: {
+        inherit: "all",
+        set: {
+          BROWSER_USE_AVAILABLE_BACKENDS: "cdp",
+          CDP_BROWSER_BACKEND_PIPE_PATH: "/tmp/orchestrator-browser.sock",
+          BROWSER_AUTH_EVAL_EXACT_CDP_BACKEND_SOCKET: "true",
+          BROWSER_USE_BROWSER_CLIENT_BUILD: "26.818.31338",
         },
       },
     },
@@ -1086,6 +1094,15 @@ export function prepareDefaults() {
       target,
       browserPid: null,
       error: null,
+      backend: "isolated",
+      browser: null,
+      extensionConnected: false,
+      chatGroupKey: null,
+      controlledTabId: null,
+      fallbackReason: null,
+      browserSkillVersion: "26.818.31338",
+      browserServiceCompatible: true,
+      backendHealthy: true,
     },
   }));
   mocks.readBrowserSessionStatusMock.mockImplementation(async (token) => ({
@@ -1103,6 +1120,15 @@ export function prepareDefaults() {
     },
     browserPid: null,
     error: null,
+    backend: "isolated",
+    browser: null,
+    extensionConnected: false,
+    chatGroupKey: null,
+    controlledTabId: null,
+    fallbackReason: null,
+    browserSkillVersion: "26.818.31338",
+    browserServiceCompatible: true,
+    backendHealthy: true,
   }));
   mocks.focusBrowserSessionMock.mockImplementation(
     async (token) => ({
@@ -1144,7 +1170,13 @@ export function prepareDefaults() {
     turns: [],
   });
   mocks.upsertRunSubagentMock.mockResolvedValue(undefined);
-  mocks.listCodexSkillsMock.mockResolvedValue([]);
+  mocks.listCodexSkillsMock.mockResolvedValue([
+    {
+      id: "browser:control-in-app-browser",
+      name: "browser:control-in-app-browser",
+      description: "Control the selected browser for local web testing.",
+    },
+  ]);
   mocks.listGitBranchesMock.mockResolvedValue({
     branches: ["main"],
     currentBranch: "main",

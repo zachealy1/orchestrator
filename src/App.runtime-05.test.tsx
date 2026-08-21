@@ -15,7 +15,6 @@ import {
   prepareSignedInRun,
   startMockRun,
   emitCodexNotification,
-  emitCodexServerRequest,
   setWindowWidth,
 } from "./test/appRuntimeHarness";
 import { ASK_FOR_APPROVAL_PERMISSION_PROFILE } from "./lib/codexAccess";
@@ -886,7 +885,7 @@ describe("Application runtime scenarios 5", () => {
       ).toEqual({ enabled: false, executionTarget: "default-browser" });
     });
 
-  it("omits the scoped Playwright server when computer use is disabled", async () => {
+  it("omits Browser backend configuration when computer use is disabled", async () => {
       localStorage.setItem(
         "orchestrator.computer-use.v1",
         JSON.stringify({ enabled: false }),
@@ -928,7 +927,7 @@ describe("Application runtime scenarios 5", () => {
       );
     });
 
-  it("scopes the Playwright MCP browser to one turn and cleans it up", async () => {
+  it("scopes the bundled Browser skill backend to one turn and cleans it up", async () => {
       prepareSignedInRun();
       mocks.readBrowserSessionStatusMock.mockImplementationOnce(
         async (token) => ({
@@ -965,27 +964,27 @@ describe("Application runtime scenarios 5", () => {
       expect(threadStart?.[2]).toEqual(
         expect.objectContaining({
           config: expect.objectContaining({
-            mcp_servers: {
-              playwright: {
-                enabled: true,
-              },
-            },
+            shell_environment_policy: expect.objectContaining({
+              set: expect.objectContaining({
+                BROWSER_USE_AVAILABLE_BACKENDS: "cdp",
+                BROWSER_AUTH_EVAL_EXACT_CDP_BACKEND_SOCKET: "true",
+              }),
+            }),
           }),
         }),
       );
-
+      expect(JSON.stringify(threadStart?.[2])).not.toContain("mcp_servers");
+      const turnStart = mocks.codexRpcMock.mock.calls.find(
+        ([, method]) => method === "turn/start",
+      );
+      expect(JSON.stringify(turnStart?.[2])).toContain(
+        "browser:control-in-app-browser",
+      );
       await emitCodexNotification({
-        method: "item/started",
+        method: "turn/started",
         params: {
           threadId: "thread-1",
-          turnId: "turn-1",
-          item: {
-            type: "mcpToolCall",
-            id: "browser-call-1",
-            server: "playwright",
-            tool: "browser_navigate",
-            status: "inProgress",
-          },
+          turn: { id: "turn-1", status: "inProgress" },
         },
       });
       const browserButton = await screen.findByRole("button", {
@@ -994,45 +993,6 @@ describe("Application runtime scenarios 5", () => {
       await user.click(browserButton);
       expect(mocks.focusBrowserSessionMock).toHaveBeenCalledWith(
         "0123456789abcdef0123456789abcdef",
-      );
-
-      await emitCodexServerRequest({
-        id: 77,
-        method: "mcpServer/elicitation/request",
-        params: {
-          threadId: "thread-1",
-          turnId: "turn-1",
-          serverName: "playwright",
-          mode: "form",
-          _meta: {
-            "orchestrator/browser-approval": {
-              version: 1,
-              nonce: "approval-1",
-              sessionToken: "0123456789abcdef0123456789abcdef",
-              kind: "origin",
-              origin: "https://example.com",
-              action: "navigate",
-            },
-          },
-        },
-      });
-      expect(
-        await screen.findByText(
-          "Codex needs approval to open an external website",
-        ),
-      ).toBeInTheDocument();
-      await user.click(
-        screen.getByRole("button", { name: "Allow for this turn" }),
-      );
-      expect(mocks.resolveCodexServerRequestMock).toHaveBeenCalledWith(
-        7,
-        77,
-        expect.any(String),
-        {
-          action: "accept",
-          content: { decision: "allow" },
-          _meta: null,
-        },
       );
 
       await emitCodexNotification({
@@ -1053,146 +1013,6 @@ describe("Application runtime scenarios 5", () => {
         "thread/unsubscribe",
         { threadId: "thread-1" },
       );
-    });
-
-  it("resolves a correlated native Playwright tool approval without exposing sensitive parameters", async () => {
-      prepareSignedInRun();
-
-      const { user } = await renderApp();
-      await startMockRun(user, "Open the local app in a browser");
-
-      await emitCodexNotification({
-        method: "item/started",
-        params: {
-          threadId: "thread-1",
-          turnId: "turn-1",
-          item: {
-            type: "mcpToolCall",
-            id: "browser-call-1",
-            server: "playwright",
-            tool: "browser_tabs",
-            status: "inProgress",
-            arguments: {
-              action: "new",
-              url: "http://127.0.0.1:3001/?token=secret",
-              text: "private input",
-            },
-          },
-        },
-      });
-      await emitCodexServerRequest({
-        id: 78,
-        method: "mcpServer/elicitation/request",
-        params: {
-          threadId: "thread-1",
-          turnId: "turn-1",
-          serverName: "playwright",
-          mode: "form",
-          message: 'Allow the playwright MCP server to run tool "browser_tabs"?',
-          requestedSchema: { type: "object", properties: {} },
-          _meta: {
-            codex_approval_kind: "mcp_tool_call",
-            persist: ["session", "always"],
-            tool_description: "List, create, close, or select a browser tab.",
-            tool_params: {
-              text: "private input",
-              url: "http://127.0.0.1:3001/?token=secret",
-              action: "new",
-            },
-            tool_params_display: [
-              { display_name: "Action", name: "action", value: "new" },
-              {
-                display_name: "URL",
-                name: "url",
-                value: "http://127.0.0.1:3001/?token=secret",
-              },
-              {
-                display_name: "Text",
-                name: "text",
-                value: "private input",
-              },
-            ],
-          },
-        },
-      });
-
-      expect(
-        await screen.findByText("Codex needs approval to use the browser"),
-      ).toBeInTheDocument();
-      expect(screen.getByText("Browser Tabs")).toBeInTheDocument();
-      expect(
-        screen.getByText("List, create, close, or select a browser tab."),
-      ).toBeInTheDocument();
-      expect(screen.getByText("http://127.0.0.1:3001/")).toBeInTheDocument();
-      expect(screen.queryByText("private input")).not.toBeInTheDocument();
-      expect(screen.queryByText(/token=secret/u)).not.toBeInTheDocument();
-      expect(
-        screen.queryByText("Unsupported native Codex request"),
-      ).not.toBeInTheDocument();
-
-      await user.click(screen.getByRole("button", { name: "Allow once" }));
-      expect(mocks.resolveCodexServerRequestMock).toHaveBeenCalledWith(
-        7,
-        78,
-        expect.any(String),
-        {
-          action: "accept",
-          content: {},
-          _meta: null,
-        },
-      );
-
-      await emitCodexNotification({
-        method: "serverRequest/resolved",
-        params: {
-          threadId: "thread-1",
-          turnId: "turn-1",
-          requestId: 78,
-        },
-      });
-      await emitCodexNotification({
-        method: "item/completed",
-        params: {
-          threadId: "thread-1",
-          turnId: "turn-1",
-          item: {
-            type: "mcpToolCall",
-            id: "browser-call-1",
-            server: "playwright",
-            tool: "browser_tabs",
-            status: "completed",
-            arguments: {
-              action: "new",
-              url: "http://127.0.0.1:3001/?token=secret",
-              text: "private input",
-            },
-          },
-        },
-      });
-      await emitCodexServerRequest({
-        id: 79,
-        method: "mcpServer/elicitation/request",
-        params: {
-          threadId: "thread-1",
-          turnId: "turn-1",
-          serverName: "playwright",
-          mode: "form",
-          requestedSchema: { type: "object", properties: {} },
-          _meta: {
-            codex_approval_kind: "mcp_tool_call",
-            tool_description: "List, create, close, or select a browser tab.",
-            tool_params: {
-              action: "new",
-              url: "http://127.0.0.1:3001/?token=secret",
-              text: "private input",
-            },
-            tool_params_display: [],
-          },
-        },
-      });
-      expect(
-        await screen.findByText("Unsupported native Codex request"),
-      ).toBeInTheDocument();
     });
 
   it("generates a concise chat title without delaying the initial turn", async () => {

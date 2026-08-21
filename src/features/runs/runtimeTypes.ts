@@ -1,4 +1,3 @@
-import type { ActivePlaywrightToolCall } from "../../lib/codexApprovals";
 import type { CodexAccessSettings } from "../../lib/codexAccess";
 import type { RunViewState } from "../../lib/codexEventReducer";
 import type { CollaborationMode, RunIntent } from "../../lib/nativePlanMode";
@@ -76,7 +75,6 @@ export type ActiveRunControl = {
   queueItemId: string | null;
   queueAdvanceBlocked: boolean;
   browserSession: PreparedBrowserSession | null;
-  activePlaywrightToolCalls: Map<string, ActivePlaywrightToolCall>;
   webPreviewDetection: WebPreviewDetectionState;
   kanbanAttempt: KanbanRunAttemptBinding | null;
   kanbanStopStatus: "paused" | "stopped" | null;
