@@ -1,6 +1,6 @@
 import type { KanbanGitBinding } from "../features/kanban/api";
 
-export const NATIVE_TASK_WORKSPACE_BINDING_VERSION = 5;
+export const NATIVE_TASK_WORKSPACE_BINDING_VERSION = 6;
 export const NATIVE_TASK_LOCAL_ENVIRONMENT_ID = "local";
 
 export type NativeTaskSourceRootAssociation = "pending" | "source-root";
@@ -90,6 +90,7 @@ export function parseNativeTaskWorkspaceBinding(
         parsed.version !== 2 &&
         parsed.version !== 3 &&
         parsed.version !== 4 &&
+        parsed.version !== 5 &&
         parsed.version !== NATIVE_TASK_WORKSPACE_BINDING_VERSION) ||
       (parsed.kind !== "kanban" && parsed.kind !== "continuation") ||
       typeof parsed.sourceWorkspacePath !== "string" ||
@@ -131,7 +132,8 @@ export function parseNativeTaskWorkspaceBinding(
       runtimeWorkspaceRoots: uniquePaths(parsed.runtimeWorkspaceRoots),
       pendingContinuationContext: parsed.pendingContinuationContext ?? null,
       sourceRootAssociation:
-        parsed.version === NATIVE_TASK_WORKSPACE_BINDING_VERSION &&
+        (parsed.version === 5 ||
+          parsed.version === NATIVE_TASK_WORKSPACE_BINDING_VERSION) &&
         parsed.sourceRootAssociation === "source-root"
           ? "source-root"
           : "pending",

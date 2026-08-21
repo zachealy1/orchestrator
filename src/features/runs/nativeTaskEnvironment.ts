@@ -31,16 +31,13 @@ export function verifyNativeTaskThreadEnvironment(input: {
   const expectedSource = normalizeWorkspacePath(
     input.binding.sourceWorkspacePath,
   );
-  const expectedExecution = normalizeWorkspacePath(
-    input.binding.executionDirectory,
-  );
   const actualThreadId =
     typeof response.thread?.id === "string" ? response.thread.id : null;
-  const actualSource =
+  const actualThreadSource =
     typeof response.thread?.cwd === "string"
       ? normalizeWorkspacePath(response.thread.cwd)
       : "";
-  const actualExecution =
+  const actualResponseSource =
     typeof response.cwd === "string" ? normalizeWorkspacePath(response.cwd) : "";
   const expectedRoots = normalizedPaths(input.binding.runtimeWorkspaceRoots);
   const actualRoots = normalizedPaths(response.runtimeWorkspaceRoots);
@@ -48,14 +45,12 @@ export function verifyNativeTaskThreadEnvironment(input: {
   if (actualThreadId !== input.threadId) {
     throw new Error("Codex returned a different thread for the card environment.");
   }
-  if (actualSource !== expectedSource) {
+  if (
+    actualThreadSource !== expectedSource ||
+    actualResponseSource !== expectedSource
+  ) {
     throw new Error(
       "Codex did not retain the source workspace for this Kanban task.",
-    );
-  }
-  if (actualExecution !== expectedExecution) {
-    throw new Error(
-      "Codex did not select the isolated card worktree as the thread environment.",
     );
   }
   if (

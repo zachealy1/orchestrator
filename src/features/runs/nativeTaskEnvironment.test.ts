@@ -5,7 +5,7 @@ import {
 } from "./nativeTaskEnvironment";
 
 const binding = {
-  version: 5 as const,
+  version: 6 as const,
   kind: "kanban" as const,
   sourceWorkspacePath: "/workspace",
   executionDirectory: "/cards/card-1",
@@ -54,21 +54,35 @@ describe("native task execution environment", () => {
     expect(rpc).not.toHaveBeenCalledWith("command/exec", expect.anything());
   });
 
-  it("verifies source identity and the sticky worktree environment together", () => {
+  it("verifies source identity and accepted sticky-environment roots together", () => {
     expect(
       verifyNativeTaskThreadEnvironment({
         binding,
         threadId: "thread-1",
         response: {
           thread: { id: "thread-1", cwd: "/workspace" },
-          cwd: "/cards/card-1",
+          cwd: "/workspace",
           runtimeWorkspaceRoots: ["/cards/card-1/repo", "/cards/card-1"],
         },
       }),
     ).toEqual({ ...binding, verifiedEnvironmentThreadId: "thread-1" });
   });
 
-  it("rejects a thread that executes outside the card worktree", () => {
+  it("rejects a thread whose response loses the source workspace", () => {
+    expect(() =>
+      verifyNativeTaskThreadEnvironment({
+        binding,
+        threadId: "thread-1",
+        response: {
+          thread: { id: "thread-1", cwd: "/workspace" },
+          cwd: "/another-workspace",
+          runtimeWorkspaceRoots: binding.runtimeWorkspaceRoots,
+        },
+      }),
+    ).toThrow("did not retain the source workspace");
+  });
+
+  it("rejects sticky-environment roots that differ from the card worktrees", () => {
     expect(() =>
       verifyNativeTaskThreadEnvironment({
         binding,
@@ -76,9 +90,9 @@ describe("native task execution environment", () => {
         response: {
           thread: { id: "thread-1", cwd: "/workspace" },
           cwd: "/workspace",
-          runtimeWorkspaceRoots: binding.runtimeWorkspaceRoots,
+          runtimeWorkspaceRoots: ["/workspace"],
         },
       }),
-    ).toThrow("did not select the isolated card worktree");
+    ).toThrow("runtime workspace roots");
   });
 });

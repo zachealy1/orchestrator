@@ -1921,7 +1921,6 @@ export function prepareKanbanRun(
           result && typeof result === "object"
             ? (result as Record<string, any>)
             : {};
-        const effectiveEnvironment = params?.environments?.[0];
         return {
           ...resultRecord,
           thread: {
@@ -1929,10 +1928,9 @@ export function prepareKanbanRun(
             id: resultRecord.thread?.id ?? "thread-1",
             cwd: resultRecord.thread?.cwd ?? threadCwd,
           },
-          cwd: resultRecord.cwd ?? effectiveEnvironment?.cwd ?? threadCwd,
+          cwd: resultRecord.cwd ?? threadCwd,
           runtimeWorkspaceRoots:
             resultRecord.runtimeWorkspaceRoots ??
-            effectiveEnvironment?.runtimeWorkspaceRoots ??
             params?.runtimeWorkspaceRoots ??
             [],
           approvalPolicy:

@@ -35,7 +35,7 @@ describe("native task workspace bindings", () => {
     });
 
     expect(result).toEqual({
-      version: 5,
+      version: 6,
       kind: "kanban",
       sourceWorkspacePath: "/workspace",
       executionDirectory: "/app/cards/card-1",
@@ -125,7 +125,7 @@ describe("native task workspace bindings", () => {
     expect(parseNativeTaskWorkspaceBinding("not-json")).toBeNull();
     expect(
       parseNativeTaskWorkspaceBinding(
-        JSON.stringify({ ...valid, version: 6 }),
+        JSON.stringify({ ...valid, version: 7 }),
       ),
     ).toBeNull();
     expect(
@@ -149,7 +149,7 @@ describe("native task workspace bindings", () => {
     );
 
     expect(parsed).toEqual({
-      version: 5,
+      version: 6,
       kind: "kanban",
       sourceWorkspacePath: "/workspace",
       executionDirectory: "/app/cards/card-1",
@@ -191,5 +191,37 @@ describe("native task workspace bindings", () => {
     );
 
     expect(parsed?.sourceRootAssociation).toBe("pending");
+  });
+
+  it("preserves version-five source association but invalidates its environment proof", () => {
+    const parsed = parseNativeTaskWorkspaceBinding(
+      JSON.stringify({
+        version: 5,
+        kind: "kanban",
+        sourceWorkspacePath: "/workspace",
+        executionDirectory: "/app/cards/card-1",
+        runtimeWorkspaceRoots: [
+          "/app/cards/card-1",
+          "/app/cards/card-1/repo",
+        ],
+        pendingContinuationContext: null,
+        sourceRootAssociation: "source-root",
+        verifiedEnvironmentThreadId: "thread-legacy-proof",
+      }),
+    );
+
+    expect(parsed).toEqual({
+      version: 6,
+      kind: "kanban",
+      sourceWorkspacePath: "/workspace",
+      executionDirectory: "/app/cards/card-1",
+      runtimeWorkspaceRoots: [
+        "/app/cards/card-1",
+        "/app/cards/card-1/repo",
+      ],
+      pendingContinuationContext: null,
+      sourceRootAssociation: "source-root",
+      verifiedEnvironmentThreadId: null,
+    });
   });
 });

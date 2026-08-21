@@ -294,7 +294,7 @@ describe("Application runtime scenarios 6", () => {
         surface: "kanban" as const,
         native_workspace_binding_status: "ready" as const,
         native_workspace_binding_json: JSON.stringify({
-          version: 5,
+          version: 6,
           kind: "kanban",
           sourceWorkspacePath: workspace.path,
           executionDirectory: executionRoot,

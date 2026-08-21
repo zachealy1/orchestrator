@@ -316,13 +316,14 @@ describe("Application runtime scenarios 9", () => {
       }),
       native_workspace_binding_status: "ready" as const,
       native_workspace_binding_json: JSON.stringify({
-        version: 4,
+        version: 5,
         kind: "kanban",
         sourceWorkspacePath: workspace.path,
         executionDirectory: executionRoot,
         runtimeWorkspaceRoots: [executionRoot, worktreePath],
         pendingContinuationContext: null,
         sourceRootAssociation: "source-root",
+        verifiedEnvironmentThreadId: oldThreadId,
       }),
     };
     mocks.getChatRecordMock.mockResolvedValue(chat);
@@ -342,7 +343,7 @@ describe("Application runtime scenarios 9", () => {
           codexThreadId: "thread-1",
           status: "running",
           binding: expect.objectContaining({
-            version: 5,
+            version: 6,
             verifiedEnvironmentThreadId: "thread-1",
           }),
         }),
@@ -361,7 +362,7 @@ describe("Application runtime scenarios 9", () => {
     );
   });
 
-  it("fails Goal setup before activation when Codex ignores the worktree cwd", async () => {
+  it("fails Goal setup before activation when Codex changes the source cwd", async () => {
     prepareKanbanRun();
     mocks.codexRpcMock.mockImplementation(
       async (_accountId: number, method: string, params?: Record<string, any>) =>
@@ -369,9 +370,9 @@ describe("Application runtime scenarios 9", () => {
           ? {
               thread: {
                 id: "thread-bad-environment",
-                cwd: params?.cwd,
+                cwd: "/repo/another-workspace",
               },
-              cwd: params?.cwd,
+              cwd: "/repo/another-workspace",
               runtimeWorkspaceRoots: params?.runtimeWorkspaceRoots ?? [],
               approvalPolicy: params?.approvalPolicy,
               activePermissionProfile: { id: params?.permissions },
@@ -390,7 +391,63 @@ describe("Application runtime scenarios 9", () => {
         expect.objectContaining({
           status: "failed",
           error: expect.stringContaining(
-            "did not select the isolated card worktree",
+            "did not retain the source workspace",
+          ),
+        }),
+      ),
+    );
+    expect(
+      mocks.codexDefaultProfileRpcMock.mock.calls.some(
+        ([method]) => method === "thread/goal/set",
+      ),
+    ).toBe(false);
+    expect(
+      mocks.codexDefaultProfileRpcMock.mock.calls.some(
+        ([method]) => method === "turn/start",
+      ),
+    ).toBe(false);
+    await waitFor(() =>
+      expect(mocks.codexDefaultProfileRpcMock).toHaveBeenCalledWith(
+        "thread/archive",
+        { threadId: "thread-bad-environment" },
+      ),
+    );
+    expect(mocks.saveNativeWorkspaceBindingMock).not.toHaveBeenCalledWith(
+      expect.objectContaining({
+        error: expect.stringContaining(
+          "task changed before its Codex workspace association completed",
+        ),
+      }),
+    );
+  });
+
+  it("surfaces sticky-environment protocol rejection without activating Goal Mode", async () => {
+    prepareKanbanRun();
+    const defaultRpc =
+      mocks.codexDefaultProfileRpcMock.getMockImplementation();
+    mocks.codexDefaultProfileRpcMock.mockImplementation(
+      async (method: string, params?: Record<string, any>) => {
+        if (method === "thread/start") {
+          throw new Error(
+            "Codex rejected the sticky environments configuration.",
+          );
+        }
+        return defaultRpc?.(method, params);
+      },
+    );
+
+    const { user } = await renderApp();
+    await user.click(await screen.findByRole("radio", { name: "Kanban" }));
+    await user.click(
+      screen.getByRole("button", { name: "Start test Kanban agent" }),
+    );
+
+    await waitFor(() =>
+      expect(mocks.updateKanbanAttemptMock).toHaveBeenCalledWith(
+        expect.objectContaining({
+          status: "failed",
+          error: expect.stringContaining(
+            "rejected the sticky environments configuration",
           ),
         }),
       ),

@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { verifyNativeTaskCommandEvent } from "./nativeTaskExecutionBoundary";
 
 const binding = {
-  version: 5 as const,
+  version: 6 as const,
   kind: "kanban" as const,
   sourceWorkspacePath: "/workspace",
   executionDirectory: "/cards/card-1",

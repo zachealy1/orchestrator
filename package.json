@@ -21,6 +21,7 @@
     "test:playwright-runtime": "npm run prepare:playwright-runtime && node scripts/test-playwright-runtime.mjs",
     "test:browser-extension": "npm run prepare:browser-extension && node --check browser-extension/service-worker.js && node --check browser-extension/status.js && node scripts/test-browser-extension.mjs",
     "test:github-cli-runtime": "npm run prepare:github-cli-runtime && node scripts/test-github-cli-runtime.mjs",
+    "test:live-goal-environment": "RUN_CODEX_LIVE_GOAL_ENVIRONMENT_TEST=1 node scripts/live-native-goal-environment.mjs",
     "test:live-plan": "RUN_CODEX_LIVE_PLAN_TEST=1 node scripts/live-native-plan-mode.mjs",
     "test:watch": "vitest",
     "preview": "vite preview",

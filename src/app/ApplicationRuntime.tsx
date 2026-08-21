@@ -11582,7 +11582,7 @@ function App() {
           new Date().toISOString(),
           runControl.runView,
         );
-        await restoreRunNativeTaskSourceRoot(runControl);
+        await cleanUpFailedRunNativeTaskThread(runControl);
         removeRunControl(runControl);
         appServices.runCoordinator.tryTransition(
           runControl.clientId,
@@ -11610,7 +11610,7 @@ function App() {
         if (failedQueueItem) upsertPromptQueueItemInMemory(failedQueueItem);
         if (chatId !== null) setPromptQueuePaused(chatId, true, "failure");
       }
-      await restoreRunNativeTaskSourceRoot(runControl);
+      await cleanUpFailedRunNativeTaskThread(runControl);
       removeRunControl(runControl);
       appServices.runCoordinator.tryTransition(runControl.clientId, "cancelled");
       return;
@@ -11702,7 +11702,7 @@ function App() {
       if (failedQueueItem) upsertPromptQueueItemInMemory(failedQueueItem);
       if (chatId !== null) setPromptQueuePaused(chatId, true, "failure");
     }
-    await restoreRunNativeTaskSourceRoot(runControl);
+    await cleanUpFailedRunNativeTaskThread(runControl);
     removeRunControl(runControl);
     appServices.runCoordinator.tryTransition(runControl.clientId, "failed", message);
     setStatusMessage(`Run setup failed: ${message}`);
@@ -11993,6 +11993,14 @@ function App() {
       return false;
     }
     try {
+      const chat = await getChatRecord(chatId);
+      if (
+        !chat ||
+        chat.profile_key !== control.profileKey ||
+        chat.codex_thread_id !== threadId
+      ) {
+        return false;
+      }
       return await reconcileNativeTaskThreadBinding(
         {
           chatId,
@@ -12013,6 +12021,44 @@ function App() {
       }).catch(() => undefined);
       return false;
     }
+  }
+
+  async function archiveUnactivatedRunThread(control: ActiveRunControl) {
+    const chatId = control.chatId;
+    const threadId = control.threadId;
+    if (
+      chatId === null ||
+      !threadId ||
+      control.turnId !== null ||
+      control.profileKey !== DEFAULT_CODEX_PROFILE_KEY
+    ) {
+      return false;
+    }
+    try {
+      const chat = await getChatRecord(chatId);
+      if (
+        chat?.profile_key === control.profileKey &&
+        chat.codex_thread_id === threadId
+      ) {
+        return false;
+      }
+      const response = await codexDefaultProfileRpc<{ thread?: unknown }>(
+        "thread/read",
+        { threadId, includeTurns: true },
+      );
+      if (readActiveCodexTurnId(response.thread)) return false;
+      await codexDefaultProfileRpc("thread/archive", { threadId });
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  async function cleanUpFailedRunNativeTaskThread(
+    control: ActiveRunControl,
+  ) {
+    await restoreRunNativeTaskSourceRoot(control);
+    await archiveUnactivatedRunThread(control);
   }
 
   async function startRunThreadStage(
