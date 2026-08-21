@@ -208,7 +208,9 @@ import {
   createContinuationNativeTaskWorkspaceBinding,
   createKanbanNativeTaskWorkspaceBinding,
   markNativeTaskSourceRootAssociated,
+  nativeTaskEnvironmentIsVerified,
   nativeTaskExecutionOverrides,
+  nativeTaskThreadStartOverrides,
   parseNativeTaskWorkspaceBinding,
   type NativeTaskWorkspaceBinding,
 } from "../lib/nativeTaskWorkspaceBinding";
@@ -452,7 +454,10 @@ import {
   type WebPreviewProbeAttempt,
 } from "../features/runs/runtimeTypes";
 import { useRunController } from "../features/runs/useRunController";
-import { validateNativeTaskExecutionEnvironment } from "../features/runs/nativeTaskEnvironment";
+import {
+  validateNativeTaskExecutionEnvironment,
+  verifyNativeTaskThreadEnvironment,
+} from "../features/runs/nativeTaskEnvironment";
 import { verifyNativeTaskCommandEvent } from "../features/runs/nativeTaskExecutionBoundary";
 import {
   BUILTIN_SLASH_COMMANDS,
@@ -611,6 +616,13 @@ type PendingTurnAccessValidation = {
 };
 
 const TURN_ACCESS_VALIDATION_TIMEOUT_MS = 5_000;
+const GOAL_TURN_START_TIMEOUT_MS = 5_000;
+
+type PendingGoalTurnStart = {
+  threadId: string;
+  generation: number;
+  resolve: (turnId: string) => void;
+};
 
 async function forEachWithConcurrency<T>(
   items: T[],
@@ -1202,6 +1214,10 @@ function App() {
   const pendingTurnAccessValidationsRef = useRef(
     new Map<string, PendingTurnAccessValidation>(),
   );
+  const pendingGoalTurnStartsRef = useRef(
+    new Map<string, PendingGoalTurnStart>(),
+  );
+  const goalTurnStartGenerationRef = useRef(0);
   const mentionSearchRequestId = useRef(0);
   const slashCommandSearchRequestId = useRef(0);
   const codexSkillCache = useRef(new Map<CodexProfileKey, CodexSkillSummary[]>());
@@ -5753,6 +5769,7 @@ function App() {
       control.turnId,
     );
     clearPendingTurnAccessValidation(control);
+    pendingGoalTurnStartsRef.current.delete(control.clientId);
     activeRunRegistry.delete(control.clientId);
     pendingRunBindingNotificationsRef.current =
       pendingRunBindingNotificationsRef.current.filter((pending) => {
@@ -5881,6 +5898,94 @@ function App() {
       resolve: resolveValidation,
     });
     return promise;
+  }
+
+  function beginGoalTurnStart(
+    control: ActiveRunControl,
+    threadId: string,
+  ) {
+    const generation = goalTurnStartGenerationRef.current + 1;
+    goalTurnStartGenerationRef.current = generation;
+    let resolveTurn!: (turnId: string) => void;
+    const promise = new Promise<string>((resolve) => {
+      resolveTurn = resolve;
+    });
+    pendingGoalTurnStartsRef.current.set(control.clientId, {
+      threadId,
+      generation,
+      resolve: resolveTurn,
+    });
+    return { generation, promise };
+  }
+
+  function resolvePendingGoalTurnStart(
+    control: ActiveRunControl,
+    threadId: string | null,
+    turnId: string | null,
+  ) {
+    if (!threadId || !turnId) return;
+    const pending = pendingGoalTurnStartsRef.current.get(control.clientId);
+    if (!pending || pending.threadId !== threadId) return;
+    pendingGoalTurnStartsRef.current.delete(control.clientId);
+    pending.resolve(turnId);
+  }
+
+  function resolvePendingGoalTurnStartForMessage(
+    profileKey: CodexProfileKey,
+    message: CodexMessage,
+  ) {
+    if (message.method !== "turn/started") return null;
+    const identity = readCodexMessageRunIdentity(message);
+    if (!identity.threadId || !identity.turnId) return null;
+    const control = [...activeRunRegistry.values()].find((candidate) => {
+      if (candidate.profileKey !== profileKey || candidate.stopped) return false;
+      const pending = pendingGoalTurnStartsRef.current.get(candidate.clientId);
+      return pending?.threadId === identity.threadId;
+    });
+    if (!control) return null;
+    resolvePendingGoalTurnStart(control, identity.threadId, identity.turnId);
+    return control;
+  }
+
+  async function waitForGoalTurnStart(
+    control: ActiveRunControl,
+    threadId: string,
+    pending: { generation: number; promise: Promise<string> },
+  ) {
+    let timerId: number | null = null;
+    const timeout = new Promise<null>((resolve) => {
+      timerId = window.setTimeout(
+        () => resolve(null),
+        GOAL_TURN_START_TIMEOUT_MS,
+      );
+    });
+    const notifiedTurnId = await Promise.race([
+      pending.promise.then((turnId) => turnId as string | null),
+      timeout,
+    ]);
+    if (timerId !== null) window.clearTimeout(timerId);
+    if (notifiedTurnId) return notifiedTurnId;
+
+    const current = pendingGoalTurnStartsRef.current.get(control.clientId);
+    if (!current || current.generation !== pending.generation) {
+      if (control.turnId) return control.turnId;
+      throw new RunStoppedError();
+    }
+    const response = await codexRpcForProfile<{ thread?: unknown }>(
+      control.profileKey,
+      control.accountId,
+      "thread/read",
+      { threadId, includeTurns: true },
+    );
+    ensureRunControlActive(control);
+    const recoveredTurnId = readActiveCodexTurnId(response.thread);
+    pendingGoalTurnStartsRef.current.delete(control.clientId);
+    if (!recoveredTurnId) {
+      throw new Error(
+        "Codex activated the Goal but did not report its initial turn.",
+      );
+    }
+    return recoveredTurnId;
   }
 
   function resolvePendingTurnAccessValidation(
@@ -11607,10 +11712,10 @@ function App() {
     runControl: ActiveRunControl,
     snapshot: RunSetupSnapshot,
     threadId: string,
-    warnings: string[],
-    freshThread: boolean,
   ) {
-    if (!snapshot.goalMode) return;
+    if (!snapshot.goalMode) return null;
+    runControl.acceptsThreadContinuation = true;
+    const pendingTurn = beginGoalTurnStart(runControl, threadId);
     try {
       const response = await setThreadGoalForProfile(
         snapshot.profileKey,
@@ -11622,64 +11727,29 @@ function App() {
         fallbackThreadId: threadId,
       });
       if (!goal) throw new Error("Codex returned invalid goal state.");
-      runControl.acceptsThreadContinuation = true;
       runControl.goal = goal;
       runControl.goalActionPending = null;
       runControl.goalActionError = null;
       activeRunRegistry.touch();
       ensureRunControlActive(runControl);
+      const turnId = await waitForGoalTurnStart(
+        runControl,
+        threadId,
+        pendingTurn,
+      );
+      runControl.turnId = turnId;
+      return turnId;
     } catch (error) {
+      pendingGoalTurnStartsRef.current.delete(runControl.clientId);
       if (error instanceof RunStoppedError) throw error;
       runControl.acceptsThreadContinuation = false;
       runControl.goal = null;
       runControl.goalActionPending = null;
       runControl.goalActionError = null;
-      warnings.push(
-        `Goal mode could not set a thread goal${
-          freshThread ? " on the fresh thread" : ""
-        }: ${error instanceof Error ? error.message : String(error)}`,
-      );
-    }
-  }
-
-  async function bindThreadGoalToNativeTaskExecutionRoot(input: {
-    profileKey: CodexProfileKey;
-    accountId: number;
-    threadId: string;
-    binding: NativeTaskWorkspaceBinding;
-    access: CodexAccessSettings;
-    ensureActive: () => void;
-  }) {
-    await codexRpcForProfile(
-      input.profileKey,
-      input.accountId,
-      "thread/resume",
-      {
-        threadId: input.threadId,
-        cwd: input.binding.executionDirectory,
-        runtimeWorkspaceRoots: input.binding.runtimeWorkspaceRoots,
-        approvalPolicy: input.access.approvalPolicy,
-        approvalsReviewer: "user",
-        permissions: input.access.permissionProfile,
-      },
-    );
-    input.ensureActive();
-    const response = await codexRpcForProfile<{ thread?: unknown }>(
-      input.profileKey,
-      input.accountId,
-      "thread/read",
-      { threadId: input.threadId, includeTurns: false },
-    );
-    input.ensureActive();
-    const actualCwd = normalizeWorkspacePath(
-      readString(readObject(response.thread).cwd) ?? "",
-    );
-    const expectedCwd = normalizeWorkspacePath(
-      input.binding.executionDirectory,
-    );
-    if (actualCwd !== expectedCwd) {
       throw new Error(
-        "Codex did not retain the isolated card worktree before Goal Mode was activated.",
+        `Goal mode could not start its initial turn: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
       );
     }
   }
@@ -11857,7 +11927,6 @@ function App() {
     binding: NativeTaskWorkspaceBinding,
   ) {
     if (input.profileKey !== DEFAULT_CODEX_PROFILE_KEY) return false;
-    const access = accessSettings({ accessMode: input.accessMode });
     const chat = await getChatRecord(input.chatId);
     if (
       !chat ||
@@ -11892,17 +11961,6 @@ function App() {
       return false;
     }
 
-    await codexRpcForProfile(
-      input.profileKey,
-      input.accountId,
-      "thread/resume",
-      {
-        threadId: input.threadId,
-        cwd: binding.sourceWorkspacePath,
-        approvalPolicy: access.approvalPolicy,
-        approvalsReviewer: "user",
-      },
-    );
     const registeredBinding = await registerNativeTaskSourceRoot(
       {
         profileKey: input.profileKey,
@@ -11998,6 +12056,9 @@ function App() {
         ? { model_provider: "oss", oss_provider: snapshot.ossProvider }
         : {}),
       ...(browserSession?.config ?? {}),
+      ...(snapshot.effort
+        ? { model_reasoning_effort: snapshot.effort }
+        : {}),
     };
     let nativeTaskBinding = snapshot.nativeTaskWorkspaceBinding ?? null;
     if (snapshot.chatOrigin === "codex_external") {
@@ -12031,20 +12092,26 @@ function App() {
       : null;
     let threadActivePermissionProfile: string | null = null;
     let resumedThread = false;
+    let supersededThreadId: string | null = null;
     const startFreshThread = async (): Promise<StartedRunThread> => {
       const threadCwd =
         nativeTaskBinding?.sourceWorkspacePath ?? snapshot.workspace.path;
       const thread = await codexRpcForProfile<{
-        thread: { id: string };
+        thread: { id: string; cwd?: string };
+        cwd?: string;
+        runtimeWorkspaceRoots?: string[];
         model?: string;
         modelProvider?: string;
         serviceTier?: string | null;
         approvalPolicy?: string;
         activePermissionProfile?: { id?: string | null } | null;
       }>(snapshot.profileKey, snapshot.accountId, "thread/start", {
-        cwd: threadCwd,
+        ...(nativeTaskBinding
+          ? nativeTaskThreadStartOverrides(nativeTaskBinding)
+          : { cwd: threadCwd }),
         model: snapshot.model,
         approvalPolicy: snapshot.access.approvalPolicy,
+        permissions: snapshot.access.permissionProfile,
         approvalsReviewer: "user",
         serviceName: "orchestrator",
         threadSource: "orchestrator",
@@ -12052,9 +12119,16 @@ function App() {
         config: threadConfig,
       });
       ensureRunControlActive(runControl);
-      assertRuntimeApprovalPolicyMatches(thread, snapshot.access);
+      assertRuntimeAccessMatches(thread, snapshot.access);
       const nextThreadId = thread.thread.id;
       runControl.threadId = nextThreadId;
+      if (nativeTaskBinding) {
+        nativeTaskBinding = verifyNativeTaskThreadEnvironment({
+          binding: nativeTaskBinding,
+          threadId: nextThreadId,
+          response: thread,
+        });
+      }
       if (
         nativeTaskBinding &&
         snapshot.profileKey === DEFAULT_CODEX_PROFILE_KEY
@@ -12070,11 +12144,13 @@ function App() {
           nativeTaskBinding,
         );
         runControl.nativeTaskWorkspaceBinding = nativeTaskBinding;
-        await saveNativeWorkspaceBinding({
-          chatId,
-          binding: nativeTaskBinding,
-          status: "pending",
-        });
+        if (!supersededThreadId) {
+          await saveNativeWorkspaceBinding({
+            chatId,
+            binding: nativeTaskBinding,
+            status: "pending",
+          });
+        }
       }
       void flushPendingRunBindingNotifications(runControl).catch((error) => {
         console.error("Could not replay buffered Codex notifications", error);
@@ -12082,7 +12158,7 @@ function App() {
       const nextThreadModel = thread.model ?? snapshot.model;
       const nextThreadModelProvider =
         thread.modelProvider ?? (snapshot.useOss ? "oss" : null);
-      if (!accountHandoff) {
+      if (!accountHandoff && !supersededThreadId) {
         await updateChat(chatId, {
           codexThreadId: nextThreadId,
           status: "running",
@@ -12102,6 +12178,8 @@ function App() {
         modelProvider: nextThreadModelProvider,
         activePermissionProfile:
           thread.activePermissionProfile?.id ?? null,
+        nativeTaskWorkspaceBinding: nativeTaskBinding,
+        supersededThreadId,
       };
     };
 
@@ -12118,13 +12196,25 @@ function App() {
           "The shared conversation is unavailable for native task recovery.",
         );
       }
-      const prepared = await prepareChatContinuation(chat, {
-        includeRepositories: false,
-      });
+      let continuationContext: string | null = null;
+      try {
+        const prepared = await prepareChatContinuation(chat, {
+          includeRepositories: false,
+        });
+        continuationContext = prepared.snapshot.context;
+      } catch (error) {
+        if (
+          !(error instanceof Error) ||
+          error.message !==
+            "This chat does not have a completed turn to continue yet."
+        ) {
+          throw error;
+        }
+      }
       nativeTaskBinding = {
         ...nativeTaskBinding,
         sourceRootAssociation: "pending",
-        pendingContinuationContext: prepared.snapshot.context,
+        pendingContinuationContext: continuationContext,
       };
       await saveNativeWorkspaceBinding({
         chatId,
@@ -12132,6 +12222,17 @@ function App() {
         status: "pending",
       });
     };
+
+    if (
+      snapshot.goalMode &&
+      threadId &&
+      nativeTaskBinding &&
+      !nativeTaskEnvironmentIsVerified(nativeTaskBinding, threadId)
+    ) {
+      supersededThreadId = threadId;
+      await prepareMissingSharedThreadContinuation();
+      threadId = null;
+    }
 
     if (
       threadId &&
@@ -12210,8 +12311,7 @@ function App() {
           activePermissionProfile?: { id?: string | null } | null;
         }>(snapshot.profileKey, snapshot.accountId, "thread/resume", {
           threadId,
-          cwd:
-            nativeTaskBinding?.sourceWorkspacePath ?? snapshot.workspace.path,
+          ...(!nativeTaskBinding ? { cwd: snapshot.workspace.path } : {}),
           approvalPolicy: snapshot.access.approvalPolicy,
           approvalsReviewer: "user",
           config: threadConfig,
@@ -12327,6 +12427,7 @@ function App() {
       browserSession,
       startFreshThread,
       nativeTaskWorkspaceBinding: nativeTaskBinding,
+      supersededThreadId,
     };
   }
 
@@ -12387,6 +12488,7 @@ function App() {
       const startThread = startedThread.startFreshThread;
       const nativeTaskWorkspaceBinding =
         startedThread.nativeTaskWorkspaceBinding;
+      const supersededThreadId = startedThread.supersededThreadId ?? null;
 
       if (nativeTaskWorkspaceBinding) {
         await validateNativeTaskExecutionEnvironment({
@@ -12403,24 +12505,18 @@ function App() {
         });
       }
 
-      if (snapshot.goalMode && nativeTaskWorkspaceBinding) {
-        await bindThreadGoalToNativeTaskExecutionRoot({
-          profileKey: snapshot.profileKey,
-          accountId: snapshot.accountId,
+      if (
+        snapshot.goalMode &&
+        nativeTaskWorkspaceBinding &&
+        !nativeTaskEnvironmentIsVerified(
+          nativeTaskWorkspaceBinding,
           threadId,
-          binding: nativeTaskWorkspaceBinding,
-          access: snapshot.access,
-          ensureActive: () => ensureRunControlActive(runControl),
-        });
+        )
+      ) {
+        throw new Error(
+          "The card worktree environment was not verified before Goal Mode activation.",
+        );
       }
-
-      await establishRunGoalStage(
-        runControl,
-        snapshot,
-        threadId,
-        warnings,
-        false,
-      );
 
       const { text, additionalContext } = await prepareRunTurnPayloadStage(
         runControl,
@@ -12498,48 +12594,55 @@ function App() {
       };
 
       let turn: { turn: { id: string } };
-      try {
+      if (snapshot.goalMode) {
         runControl.turnStartPending = true;
-        turn = await startValidatedTurn(threadId);
-      } catch (error) {
-        runControl.turnStartPending = false;
-        ensureRunControlActive(runControl);
-        if (
-          !isCodexThreadNotFoundError(error) ||
-          snapshot.profileKey === DEFAULT_CODEX_PROFILE_KEY
-        ) {
-          throw error;
-        }
-        warnings.push(
-          "Previous Codex thread was no longer available, so Orchestrator started a fresh thread for this chat.",
-        );
-        const thread = await startThread();
-        threadId = thread.threadId;
-        threadModel = thread.model;
-        threadModelProvider = thread.modelProvider;
-        threadActivePermissionProfile = thread.activePermissionProfile;
-        updateRunControlView(runControl, (current) => ({
-          ...current,
-          tokenUsageStartTotal: 0,
-          tokenUsageStartCachedInput: 0,
-        }));
-        await updateRun(runId, {
-          codexThreadId: threadId,
-          model: threadModel ?? snapshot.model,
-          modelProvider: threadModelProvider ?? (snapshot.useOss ? "oss" : null),
-          status: "running",
-          collaborationMode: collaborationMode.mode,
-          runIntent: runControl.intent,
-        });
-        ensureRunControlActive(runControl);
-        await establishRunGoalStage(
+        const goalTurnId = await establishRunGoalStage(
           runControl,
           snapshot,
           threadId,
-          warnings,
-          true,
         );
-        turn = await startValidatedTurn(threadId);
+        if (!goalTurnId) {
+          throw new Error("Codex did not create the initial Goal turn.");
+        }
+        turn = { turn: { id: goalTurnId } };
+      } else {
+        try {
+          runControl.turnStartPending = true;
+          turn = await startValidatedTurn(threadId);
+        } catch (error) {
+          runControl.turnStartPending = false;
+          ensureRunControlActive(runControl);
+          if (
+            !isCodexThreadNotFoundError(error) ||
+            snapshot.profileKey === DEFAULT_CODEX_PROFILE_KEY
+          ) {
+            throw error;
+          }
+          warnings.push(
+            "Previous Codex thread was no longer available, so Orchestrator started a fresh thread for this chat.",
+          );
+          const thread = await startThread();
+          threadId = thread.threadId;
+          threadModel = thread.model;
+          threadModelProvider = thread.modelProvider;
+          threadActivePermissionProfile = thread.activePermissionProfile;
+          updateRunControlView(runControl, (current) => ({
+            ...current,
+            tokenUsageStartTotal: 0,
+            tokenUsageStartCachedInput: 0,
+          }));
+          await updateRun(runId, {
+            codexThreadId: threadId,
+            model: threadModel ?? snapshot.model,
+            modelProvider:
+              threadModelProvider ?? (snapshot.useOss ? "oss" : null),
+            status: "running",
+            collaborationMode: collaborationMode.mode,
+            runIntent: runControl.intent,
+          });
+          ensureRunControlActive(runControl);
+          turn = await startValidatedTurn(threadId);
+        }
       }
       runControl.threadId = threadId;
       runControl.turnId = turn.turn.id;
@@ -12549,14 +12652,54 @@ function App() {
           nativeTaskWorkspaceBinding,
         );
         runControl.nativeTaskWorkspaceBinding = acceptedBinding;
-        await saveNativeWorkspaceBinding({
-          chatId,
-          binding: acceptedBinding,
-          status:
-            snapshot.profileKey === DEFAULT_CODEX_PROFILE_KEY
-              ? "deferred"
-              : "ready",
-        });
+        if (
+          supersededThreadId &&
+          snapshot.profileKey === DEFAULT_CODEX_PROFILE_KEY &&
+          !accountHandoff
+        ) {
+          const activated = await activateSharedNativeWorkspaceBinding({
+            chatId,
+            expectedProfileKey: snapshot.profileKey,
+            expectedThreadId: supersededThreadId,
+            codexThreadId: threadId,
+            binding: acceptedBinding,
+            status: "running",
+          });
+          if (!activated) {
+            await interruptTurnForProfile(
+              snapshot.profileKey,
+              snapshot.accountId,
+              threadId,
+              turn.turn.id,
+            ).catch(() => undefined);
+            throw new Error(
+              "The conversation changed before the replacement Goal thread could be activated.",
+            );
+          }
+          updateRememberedWorkspaceChatSession(
+            snapshot.workspace.id,
+            chatId,
+            {
+              chatId,
+              threadId,
+              origin: snapshot.chatOrigin,
+              profileKey: snapshot.profileKey,
+              externalThreadId: snapshot.externalThreadId,
+              nextTurnIndex: snapshot.turnIndex + 1,
+              savedDefaultCollaborationMode:
+                snapshot.mode === "plan"
+                  ? snapshot.defaultCollaborationMode ??
+                    collaborationModes.default
+                  : null,
+            },
+          );
+        } else {
+          await saveNativeWorkspaceBinding({
+            chatId,
+            binding: acceptedBinding,
+            status: "ready",
+          });
+        }
       }
       const pendingKanbanStop = runControl.kanbanStopRequest;
       if (pendingKanbanStop) {
@@ -12713,6 +12856,23 @@ function App() {
       ensureRunControlActive(runControl);
       await kanbanAttempts.persist(runControl, "running");
       ensureRunControlActive(runControl);
+      if (
+        supersededThreadId &&
+        supersededThreadId !== threadId &&
+        snapshot.profileKey === DEFAULT_CODEX_PROFILE_KEY
+      ) {
+        void codexDefaultProfileRpc<{ thread?: unknown }>("thread/read", {
+          threadId: supersededThreadId,
+          includeTurns: true,
+        })
+          .then((response) => {
+            if (readActiveCodexTurnId(response.thread)) return;
+            return codexDefaultProfileRpc("thread/archive", {
+              threadId: supersededThreadId,
+            });
+          })
+          .catch(() => undefined);
+      }
       void flushPendingRunBindingNotifications(runControl).catch((error) => {
         console.error("Could not replay buffered Codex notifications", error);
       });
@@ -15561,6 +15721,12 @@ function App() {
     const method = message.method ?? null;
 
     const params = readObject(message.params);
+    // Goal activation can emit turn/started before the new thread is attached to
+    // the generic run router. Resolve that generation-scoped latch first.
+    const earlyGoalTurnControl = resolvePendingGoalTurnStartForMessage(
+      profileKey,
+      message,
+    );
 
     if (profileKey !== DEFAULT_CODEX_PROFILE_KEY && method === "account/login/completed") {
       await handleAccountLoginCompleted(accountId, readAccountLoginCompleted(params));
@@ -15745,6 +15911,23 @@ function App() {
       return;
     }
     const identity = readCodexMessageRunIdentity(message);
+    const pendingGoalTurnStart = pendingGoalTurnStartsRef.current.get(
+      control.clientId,
+    );
+    const goalTurnWasPending = Boolean(
+      method === "turn/started" &&
+        (earlyGoalTurnControl === control ||
+          (pendingGoalTurnStart &&
+            pendingGoalTurnStart.threadId ===
+              (identity.threadId ?? control.threadId))),
+    );
+    if (method === "turn/started") {
+      resolvePendingGoalTurnStart(
+        control,
+        identity.threadId ?? control.threadId,
+        identity.turnId,
+      );
+    }
     if (control.nativeTaskWorkspaceBinding) {
       const verification = verifyNativeTaskCommandEvent(
         control.nativeTaskWorkspaceBinding,
@@ -15860,7 +16043,7 @@ function App() {
       }
       control.turnId = identity.turnId;
       control.goalTurnCompleted = false;
-      if (control.runId !== null) {
+      if (control.runId !== null && !goalTurnWasPending) {
         void updateRun(control.runId, {
           codexTurnId: identity.turnId,
           status: "running",
@@ -18518,14 +18701,28 @@ function App() {
 
     try {
       if (status === "active" && control.nativeTaskWorkspaceBinding) {
-        await bindThreadGoalToNativeTaskExecutionRoot({
-          profileKey: control.profileKey,
-          accountId: control.accountId,
-          threadId: control.threadId,
+        if (
+          !nativeTaskEnvironmentIsVerified(
+            control.nativeTaskWorkspaceBinding,
+            control.threadId,
+          )
+        ) {
+          throw new Error(
+            "This Goal cannot resume because its isolated worktree environment was not verified. Retry the card to create a correctly configured Goal thread.",
+          );
+        }
+        await validateNativeTaskExecutionEnvironment({
           binding: control.nativeTaskWorkspaceBinding,
-          access: accessSettings({
+          permissionProfile: accessSettings({
             accessMode: control.executionSettings.accessMode,
-          }),
+          }).permissionProfile,
+          rpc: (method, params) =>
+            codexRpcForProfile(
+              control.profileKey,
+              control.accountId,
+              method,
+              params,
+            ),
           ensureActive: () => ensureRunControlActive(control),
         });
       }

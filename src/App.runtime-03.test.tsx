@@ -389,7 +389,23 @@ describe("Application runtime scenarios 3", () => {
           }
           if (method === "thread/start") {
             sharedThreadCwd = String(params?.cwd ?? sharedWorkspace.path);
-            return { thread: { id: "shared-thread-1" } };
+            const environment = Array.isArray(params?.environments)
+              ? (params.environments[0] as
+                  | {
+                      cwd?: string;
+                      runtimeWorkspaceRoots?: string[];
+                    }
+                  | undefined)
+              : undefined;
+            return {
+              thread: { id: "shared-thread-1", cwd: sharedThreadCwd },
+              cwd: environment?.cwd ?? sharedThreadCwd,
+              runtimeWorkspaceRoots:
+                environment?.runtimeWorkspaceRoots ??
+                (Array.isArray(params?.runtimeWorkspaceRoots)
+                  ? params.runtimeWorkspaceRoots
+                  : []),
+            };
           }
           if (method === "thread/read") {
             return {
@@ -881,13 +897,25 @@ describe("Application runtime scenarios 3", () => {
 
     await waitFor(() =>
       expect(mocks.codexDefaultProfileRpcMock).toHaveBeenCalledWith(
-        "thread/resume",
-        expect.objectContaining({
+        "thread/read",
+        {
           threadId: sharedChat.codex_thread_id,
-          cwd: workspace.path,
-        }),
+          includeTurns: false,
+        },
       ),
     );
+    expect(mocks.codexDefaultProfileRpcMock).toHaveBeenCalledWith(
+      "thread/name/set",
+      {
+        threadId: sharedChat.codex_thread_id,
+        name: sharedChat.title,
+      },
+    );
+    expect(
+      mocks.codexDefaultProfileRpcMock.mock.calls.some(
+        ([method, params]) => method === "thread/resume" && "cwd" in (params ?? {}),
+      ),
+    ).toBe(false);
     expect(mocks.saveNativeWorkspaceBindingMock).toHaveBeenCalledWith(
       expect.objectContaining({
         chatId: sharedChat.id,

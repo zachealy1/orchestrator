@@ -20,8 +20,6 @@ import {
   setWindowWidth,
   PromptQueueItem,
 } from "./test/appRuntimeHarness";
-import { ASK_FOR_APPROVAL_PERMISSION_PROFILE } from "./lib/codexAccess";
-
 const mocks = getMocks();
 
 describe("Application runtime scenarios 6", () => {
@@ -151,6 +149,14 @@ describe("Application runtime scenarios 6", () => {
       await user.type(promptInput, "Fix docs /docs");
       await user.click(await screen.findByRole("option", { name: /docs/i }));
       await user.click(screen.getByRole("button", { name: /run codex/i }));
+      await waitFor(() => expect(mocks.setThreadGoalMock).toHaveBeenCalledTimes(1));
+      await emitCodexNotification({
+        method: "turn/started",
+        params: {
+          threadId: "thread-1",
+          turn: { id: "turn-1", status: "inProgress" },
+        },
+      });
 
       await waitFor(() => expect(mocks.createRunMock).toHaveBeenCalledTimes(1));
       const firstSettings = JSON.parse(
@@ -221,6 +227,14 @@ describe("Application runtime scenarios 6", () => {
         "Fix docs more carefully",
       );
       await user.click(screen.getByRole("button", { name: "Run edited prompt" }));
+      await waitFor(() => expect(mocks.setThreadGoalMock).toHaveBeenCalledTimes(2));
+      await emitCodexNotification({
+        method: "turn/started",
+        params: {
+          threadId: "thread-1",
+          turn: { id: "turn-2", status: "inProgress" },
+        },
+      });
 
       await waitFor(() => expect(mocks.createRunMock).toHaveBeenCalledTimes(2));
       const secondSettings = JSON.parse(
@@ -239,34 +253,13 @@ describe("Application runtime scenarios 6", () => {
         7,
         `${workspace.path}/README.md`,
       );
-      const turnStarts = mocks.codexRpcMock.mock.calls.filter(
-        ([, method]) => method === "turn/start",
-      );
-      expect(turnStarts[1]?.[2]).toEqual(
-        expect.objectContaining({
-          model: "gpt-original",
-          effort: "low",
-          approvalPolicy: "untrusted",
-          permissions: ASK_FOR_APPROVAL_PERMISSION_PROFILE,
-          additionalContext: {
-            [`file:${workspace.path}/README.md`]: {
-              kind: "untrusted",
-              value: expect.stringContaining("updated file contents"),
-            },
-          },
-          input: [
-            expect.objectContaining({
-              text: expect.stringContaining(
-                "Docs: Use repository documentation",
-              ),
-            }),
-            {
-              type: "localImage",
-              path: imagePath,
-              detail: "auto",
-            },
-          ],
-        }),
+      expect(
+        mocks.codexRpcMock.mock.calls.filter(([, method]) => method === "turn/start"),
+      ).toHaveLength(0);
+      expect(mocks.setThreadGoalMock).toHaveBeenLastCalledWith(
+        7,
+        "thread-1",
+        "Fix docs more carefully",
       );
       expect(mocks.readCodexFileMock).not.toHaveBeenCalledWith(7, imagePath);
       expect(mocks.prepareBrowserSessionMock).toHaveBeenCalledTimes(2);
@@ -301,13 +294,14 @@ describe("Application runtime scenarios 6", () => {
         surface: "kanban" as const,
         native_workspace_binding_status: "ready" as const,
         native_workspace_binding_json: JSON.stringify({
-          version: 4,
+          version: 5,
           kind: "kanban",
           sourceWorkspacePath: workspace.path,
           executionDirectory: executionRoot,
           runtimeWorkspaceRoots: [executionRoot, worktreePath],
           pendingContinuationContext: null,
           sourceRootAssociation: "source-root",
+          verifiedEnvironmentThreadId: "thread-shared-edit",
         }),
       };
       const sharedRun = workspaceRunFixture({
@@ -398,11 +392,15 @@ describe("Application runtime scenarios 6", () => {
       expect(mocks.createRunMock).toHaveBeenCalledWith(
         expect.objectContaining({ accountId: null, chatId: sharedChat.id }),
       );
-      mocks.getChatRecordMock.mockResolvedValue({
-        ...sharedChat,
-        codex_thread_id: "thread-1",
-      });
-
+      await waitFor(() =>
+        expect(mocks.updateRunMock).toHaveBeenCalledWith(
+          expect.any(Number),
+          expect.objectContaining({
+            codexTurnId: "turn-1",
+            status: "running",
+          }),
+        ),
+      );
       await user.click(await screen.findByRole("radio", { name: "Kanban" }));
       await user.click(
         screen.getByRole("button", { name: "Open test Kanban conversation" }),
@@ -453,10 +451,9 @@ describe("Application runtime scenarios 6", () => {
       );
       await waitFor(() =>
         expect(mocks.codexDefaultProfileRpcMock).toHaveBeenCalledWith(
-          "thread/resume",
+          "thread/read",
           expect.objectContaining({
             threadId: "thread-1",
-            cwd: workspace.path,
           }),
         ),
       );

@@ -1341,9 +1341,9 @@ describe("Application runtime scenarios 5", () => {
         expect.objectContaining({
           approvalPolicy: "untrusted",
           approvalsReviewer: "user",
+          permissions: ASK_FOR_APPROVAL_PERMISSION_PROFILE,
         }),
       );
-      expect(threadStart?.[2]).not.toHaveProperty("permissions");
       expect(turnStart?.[2]).toEqual(
         expect.objectContaining({
           approvalPolicy: "untrusted",
@@ -1379,9 +1379,9 @@ describe("Application runtime scenarios 5", () => {
         expect.objectContaining({
           approvalPolicy: "never",
           approvalsReviewer: "user",
+          permissions: ":danger-full-access",
         }),
       );
-      expect(threadStart?.[2]).not.toHaveProperty("permissions");
       expect(firstTurnStart?.[2]).toEqual(
         expect.objectContaining({
           approvalPolicy: "never",
@@ -1423,32 +1423,19 @@ describe("Application runtime scenarios 5", () => {
       );
     });
 
-  it("starts a Full-access Goal after Codex activates the turn permission profile", async () => {
+  it("starts a Full-access Goal after Codex verifies the thread permission profile", async () => {
       prepareSignedInRun();
       vi.spyOn(window, "confirm").mockReturnValue(true);
       mocks.codexRpcMock.mockImplementation(
-        async (_accountId: number, method: string, params: any) => {
+        async (_accountId: number, method: string) => {
           if (method === "thread/start") {
             return {
               thread: { id: "thread-1" },
               approvalPolicy: "never",
               activePermissionProfile: {
-                id: ASK_FOR_APPROVAL_PERMISSION_PROFILE,
+                id: ":danger-full-access",
               },
             };
-          }
-          if (method === "thread/goal/set") {
-            return {
-              goal: {
-                threadId: params.threadId,
-                objective: "Complete the Goal safely",
-                status: "active",
-                timeUsedSeconds: 0,
-              },
-            };
-          }
-          if (method === "turn/start") {
-            return { turn: { id: "turn-goal-access" } };
           }
           return {};
         },
@@ -1458,36 +1445,30 @@ describe("Application runtime scenarios 5", () => {
       await user.click(screen.getByRole("combobox", { name: "Access" }));
       await user.click(screen.getByRole("option", { name: "Full access" }));
       await user.click(screen.getByRole("button", { name: "Goal mode" }));
-      await user.type(screen.getByLabelText("Prompt"), "Complete the Goal safely");
-      await user.click(screen.getByRole("button", { name: /run codex/i }));
-
-      await waitFor(() =>
-        expect(mocks.codexRpcMock).toHaveBeenCalledWith(
-          7,
-          "turn/start",
-          expect.objectContaining({ permissions: ":danger-full-access" }),
-        ),
-      );
-      await emitCodexNotification({
-        method: "thread/settings/updated",
-        params: {
-          threadId: "thread-1",
-          threadSettings: {
-            approvalPolicy: "never",
-            activePermissionProfile: { id: ":danger-full-access" },
-          },
-        },
-      });
+      await startMockRun(user, "Complete the Goal safely");
 
       await waitFor(() =>
         expect(mocks.updateRunMock).toHaveBeenCalledWith(
           202,
           expect.objectContaining({
-            codexTurnId: "turn-goal-access",
+            codexTurnId: "turn-1",
             status: "running",
           }),
         ),
       );
+      expect(mocks.codexRpcMock).toHaveBeenCalledWith(
+        7,
+        "thread/start",
+        expect.objectContaining({ permissions: ":danger-full-access" }),
+      );
+      expect(mocks.setThreadGoalMock).toHaveBeenCalledWith(
+        7,
+        "thread-1",
+        "Complete the Goal safely",
+      );
+      expect(
+        mocks.codexRpcMock.mock.calls.filter((call) => call[1] === "turn/start"),
+      ).toHaveLength(0);
       expect(mocks.codexRpcMock).not.toHaveBeenCalledWith(
         7,
         "turn/interrupt",
@@ -1496,7 +1477,7 @@ describe("Application runtime scenarios 5", () => {
       expect(screen.queryByText(/sandbox mismatch/i)).not.toBeInTheDocument();
     });
 
-  it("fails closed when the turn reports a different active permission profile", async () => {
+  it("fails closed before a turn when the thread reports a different permission profile", async () => {
       prepareSignedInRun();
       mocks.codexRpcMock.mockImplementation(
         async (_accountId: number, method: string) => {
@@ -1518,31 +1499,18 @@ describe("Application runtime scenarios 5", () => {
       await user.type(screen.getByLabelText("Prompt"), "Do not weaken access");
       await user.click(screen.getByRole("button", { name: /run codex/i }));
 
-      await waitFor(() =>
-        expect(
-          mocks.codexRpcMock.mock.calls.some((call) => call[1] === "turn/start"),
-        ).toBe(true),
-      );
-      await emitCodexNotification({
-        method: "thread/settings/updated",
-        params: {
-          threadId: "thread-1",
-          threadSettings: {
-            approvalPolicy: "untrusted",
-            activePermissionProfile: { id: ":danger-full-access" },
-          },
-        },
-      });
-
       expect(
         await screen.findByText(/stopped to avoid a sandbox mismatch/i),
       ).toBeInTheDocument();
       expect(screen.getByText(/update codex and retry/i)).toBeInTheDocument();
-      expect(mocks.codexRpcMock).toHaveBeenCalledWith(
-        7,
-        "turn/interrupt",
-        { threadId: "thread-1", turnId: "turn-1" },
-      );
+      expect(
+        mocks.codexRpcMock.mock.calls.some((call) => call[1] === "turn/start"),
+      ).toBe(false);
+      expect(
+        mocks.codexRpcMock.mock.calls.some(
+          (call) => call[1] === "turn/interrupt",
+        ),
+      ).toBe(false);
     });
 
   it("requires confirmation before enabling Full access", async () => {

@@ -2,13 +2,14 @@ import { describe, expect, it } from "vitest";
 import { verifyNativeTaskCommandEvent } from "./nativeTaskExecutionBoundary";
 
 const binding = {
-  version: 4 as const,
+  version: 5 as const,
   kind: "kanban" as const,
   sourceWorkspacePath: "/workspace",
   executionDirectory: "/cards/card-1",
   runtimeWorkspaceRoots: ["/cards/card-1", "/cards/card-1/repo"],
   pendingContinuationContext: null,
   sourceRootAssociation: "source-root" as const,
+  verifiedEnvironmentThreadId: "thread-1",
 };
 
 function command(cwd?: string) {

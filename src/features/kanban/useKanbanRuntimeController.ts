@@ -118,6 +118,15 @@ function errorMessage(error: unknown) {
   return error instanceof Error ? error.message : String(error);
 }
 
+function samePathSet(left: string[], right: string[]) {
+  const sortedLeft = [...new Set(left)].sort();
+  const sortedRight = [...new Set(right)].sort();
+  return (
+    sortedLeft.length === sortedRight.length &&
+    sortedLeft.every((path, index) => path === sortedRight[index])
+  );
+}
+
 function workspaceForCard(state: KanbanRuntimeState, card: KanbanCardRecord) {
   const workspace = state.workspaces.find(
     (candidate) => candidate.id === card.workspaceId,
@@ -280,6 +289,14 @@ export function createKanbanRuntimeController<
         const storedNativeBinding = parseNativeTaskWorkspaceBinding(
           chat.native_workspace_binding_json,
         );
+        const runtimeWorkspaceRoots = [
+          ...new Set([
+            executionRoot,
+            ...repositoryExecution.bindings.map(
+              (binding) => binding.worktreePath,
+            ),
+          ]),
+        ];
         const nativeTaskWorkspaceBinding =
           createKanbanNativeTaskWorkspaceBinding({
             cardId: card.id,
@@ -288,6 +305,18 @@ export function createKanbanRuntimeController<
             bindings: repositoryExecution.bindings,
             pendingContinuationContext:
               storedNativeBinding?.pendingContinuationContext ?? null,
+            sourceRootAssociation:
+              storedNativeBinding?.sourceWorkspacePath === workspace.path
+                ? storedNativeBinding.sourceRootAssociation
+                : "pending",
+            verifiedEnvironmentThreadId:
+              storedNativeBinding?.executionDirectory === executionRoot &&
+              samePathSet(
+                storedNativeBinding.runtimeWorkspaceRoots,
+                runtimeWorkspaceRoots,
+              )
+                ? storedNativeBinding.verifiedEnvironmentThreadId
+                : null,
           });
         await dependencies.updateChat(chat.id, {
           accountId: profileKey === "default" ? null : accountId,

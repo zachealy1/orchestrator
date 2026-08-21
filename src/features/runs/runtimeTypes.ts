@@ -206,6 +206,8 @@ export type StartedRunThread = {
   model: string | null | undefined;
   modelProvider: string | null | undefined;
   activePermissionProfile: string | null;
+  nativeTaskWorkspaceBinding?: NativeTaskWorkspaceBinding | null;
+  supersededThreadId?: string | null;
 };
 export type RunThreadStageResult = StartedRunThread & {
   browserSession: PreparedBrowserSession | null;

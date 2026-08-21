@@ -8,6 +8,8 @@ import {
   prepareKanbanRun,
   renderApp,
   setWindowWidth,
+  workspace,
+  workspaceChatFixture,
 } from "./test/appRuntimeHarness";
 import { ASK_FOR_APPROVAL_PERMISSION_PROFILE } from "./lib/codexAccess";
 
@@ -114,22 +116,17 @@ describe("Application runtime scenarios 9", () => {
       "thread/start",
       expect.objectContaining({
         cwd: "/repo/orchestrator",
-      }),
-    );
-    expect(mocks.codexDefaultProfileRpcMock).toHaveBeenCalledWith(
-      "turn/start",
-      expect.objectContaining({
-        cwd: "/repo/.codex-kanban/card-run-control-test",
+        environments: [
+          expect.objectContaining({
+            environmentId: "local",
+            cwd: "/repo/.codex-kanban/card-run-control-test",
+          }),
+        ],
       }),
     );
     expect(
       mocks.codexDefaultProfileRpcMock.mock.calls.find(
         ([method]) => method === "thread/start",
-      )?.[1],
-    ).not.toHaveProperty("environments");
-    expect(
-      mocks.codexDefaultProfileRpcMock.mock.calls.find(
-        ([method]) => method === "turn/start",
       )?.[1],
     ).toEqual(
       expect.objectContaining({
@@ -141,17 +138,22 @@ describe("Application runtime scenarios 9", () => {
         ],
       }),
     );
+    expect(
+      mocks.codexDefaultProfileRpcMock.mock.calls.some(
+        ([method]) => method === "turn/start",
+      ),
+    ).toBe(false);
     const environmentProbeIndex =
       mocks.codexDefaultProfileRpcMock.mock.calls.findIndex(
         ([method]) => method === "command/exec",
       );
-    const turnStartIndex = mocks.codexDefaultProfileRpcMock.mock.calls.findIndex(
+    const goalSetIndex = mocks.codexDefaultProfileRpcMock.mock.calls.findIndex(
       ([method, params]) =>
-        method === "turn/start" &&
+        method === "thread/goal/set" &&
         params?.threadId === "thread-kanban-question",
     );
     expect(environmentProbeIndex).toBeGreaterThanOrEqual(0);
-    expect(environmentProbeIndex).toBeLessThan(turnStartIndex);
+    expect(environmentProbeIndex).toBeLessThan(goalSetIndex);
     const sourceRootVerificationIndex =
       mocks.codexDefaultProfileRpcMock.mock.calls.findIndex(
         ([method, params]) =>
@@ -159,9 +161,9 @@ describe("Application runtime scenarios 9", () => {
           params?.includeTurns === false &&
           params?.threadId === "thread-kanban-question",
       );
-    expect(turnStartIndex).toBeGreaterThanOrEqual(0);
+    expect(goalSetIndex).toBeGreaterThanOrEqual(0);
     expect(sourceRootVerificationIndex).toBeGreaterThanOrEqual(0);
-    expect(sourceRootVerificationIndex).toBeLessThan(turnStartIndex);
+    expect(sourceRootVerificationIndex).toBeLessThan(goalSetIndex);
 
     await emitCodexServerRequest({
       id: "kanban-input-1",
@@ -205,15 +207,13 @@ describe("Application runtime scenarios 9", () => {
     );
   });
 
-  it("starts a shared Goal card after the turn replaces the thread bootstrap profile", async () => {
+  it("starts a shared Goal card from the native goal-created turn", async () => {
     prepareKanbanRun();
     mocks.codexRpcMock.mockImplementation(
       async (_accountId: number, method: string, params: any) => {
         if (method === "thread/start") {
           return {
             thread: { id: "thread-kanban-goal-access" },
-            approvalPolicy: "untrusted",
-            activePermissionProfile: { id: ":danger-full-access" },
           };
         }
         if (method === "thread/goal/set") {
@@ -225,9 +225,6 @@ describe("Application runtime scenarios 9", () => {
               timeUsedSeconds: 0,
             },
           };
-        }
-        if (method === "turn/start") {
-          return { turn: { id: "turn-kanban-goal-access" } };
         }
         return {};
       },
@@ -241,23 +238,16 @@ describe("Application runtime scenarios 9", () => {
 
     await waitFor(() =>
       expect(mocks.codexDefaultProfileRpcMock).toHaveBeenCalledWith(
-        "turn/start",
-        expect.objectContaining({
-          permissions: ASK_FOR_APPROVAL_PERMISSION_PROFILE,
-        }),
+        "thread/goal/set",
+        expect.objectContaining({ status: "active" }),
       ),
     );
     await emitCodexNotification(
       {
-        method: "thread/settings/updated",
+        method: "turn/started",
         params: {
           threadId: "thread-kanban-goal-access",
-          threadSettings: {
-            approvalPolicy: "untrusted",
-            activePermissionProfile: {
-              id: ASK_FOR_APPROVAL_PERMISSION_PROFILE,
-            },
-          },
+          turn: { id: "turn-kanban-goal-access", status: "inProgress" },
         },
       },
       { accountId: 0, profileKey: "default" },
@@ -271,47 +261,122 @@ describe("Application runtime scenarios 9", () => {
         }),
       ),
     );
-    const goalExecutionResumeIndex =
+    const threadStartIndex =
       mocks.codexDefaultProfileRpcMock.mock.calls.findIndex(
-        ([method, params]) =>
-          method === "thread/resume" &&
-          params?.cwd === "/repo/.codex-kanban/card-run-control-test",
+        ([method]) => method === "thread/start",
       );
     const goalSetIndex = mocks.codexDefaultProfileRpcMock.mock.calls.findIndex(
       ([method]) => method === "thread/goal/set",
     );
-    expect(goalExecutionResumeIndex).toBeGreaterThanOrEqual(0);
-    expect(goalSetIndex).toBeGreaterThan(goalExecutionResumeIndex);
+    expect(threadStartIndex).toBeGreaterThanOrEqual(0);
+    expect(goalSetIndex).toBeGreaterThan(threadStartIndex);
     expect(
-      mocks.codexDefaultProfileRpcMock.mock.calls[goalExecutionResumeIndex]?.[1],
+      mocks.codexDefaultProfileRpcMock.mock.calls[threadStartIndex]?.[1],
     ).toEqual(
       expect.objectContaining({
+        cwd: "/repo/orchestrator",
         runtimeWorkspaceRoots: [
           "/repo/.codex-kanban/card-run-control-test",
           "/repo/.codex-kanban/card-run-control-test/orchestrator",
         ],
         permissions: ASK_FOR_APPROVAL_PERMISSION_PROFILE,
+        environments: [
+          {
+            environmentId: "local",
+            cwd: "/repo/.codex-kanban/card-run-control-test",
+            runtimeWorkspaceRoots: [
+              "/repo/.codex-kanban/card-run-control-test",
+              "/repo/.codex-kanban/card-run-control-test/orchestrator",
+            ],
+          },
+        ],
       }),
     );
+    expect(
+      mocks.codexDefaultProfileRpcMock.mock.calls.some(
+        ([method]) => method === "turn/start",
+      ),
+    ).toBe(false);
     expect(screen.getByLabelText("Kanban test result")).toHaveTextContent(
       "started",
     );
   });
 
+  it("replaces an unverified Goal thread only after its native retry turn starts", async () => {
+    prepareKanbanRun();
+    const executionRoot = "/repo/.codex-kanban/card-run-control-test";
+    const worktreePath = `${executionRoot}/orchestrator`;
+    const oldThreadId = "thread-unverified-goal";
+    const chat = {
+      ...workspaceChatFixture({
+        id: 777,
+        codex_thread_id: oldThreadId,
+        profile_key: "default",
+        status: "failed",
+      }),
+      native_workspace_binding_status: "ready" as const,
+      native_workspace_binding_json: JSON.stringify({
+        version: 4,
+        kind: "kanban",
+        sourceWorkspacePath: workspace.path,
+        executionDirectory: executionRoot,
+        runtimeWorkspaceRoots: [executionRoot, worktreePath],
+        pendingContinuationContext: null,
+        sourceRootAssociation: "source-root",
+      }),
+    };
+    mocks.getChatRecordMock.mockResolvedValue(chat);
+
+    const { user } = await renderApp();
+    await user.click(await screen.findByRole("radio", { name: "Kanban" }));
+    await user.click(
+      screen.getByRole("button", { name: "Start test Kanban agent" }),
+    );
+
+    await waitFor(() =>
+      expect(mocks.activateSharedNativeWorkspaceBindingMock).toHaveBeenCalledWith(
+        expect.objectContaining({
+          chatId: chat.id,
+          expectedProfileKey: "default",
+          expectedThreadId: oldThreadId,
+          codexThreadId: "thread-1",
+          status: "running",
+          binding: expect.objectContaining({
+            version: 5,
+            verifiedEnvironmentThreadId: "thread-1",
+          }),
+        }),
+      ),
+    );
+    expect(
+      mocks.codexDefaultProfileRpcMock.mock.calls.some(
+        ([method]) => method === "turn/start",
+      ),
+    ).toBe(false);
+    await waitFor(() =>
+      expect(mocks.codexDefaultProfileRpcMock).toHaveBeenCalledWith(
+        "thread/archive",
+        { threadId: oldThreadId },
+      ),
+    );
+  });
+
   it("fails Goal setup before activation when Codex ignores the worktree cwd", async () => {
     prepareKanbanRun();
-    const defaultRpc =
-      mocks.codexDefaultProfileRpcMock.getMockImplementation();
-    mocks.codexDefaultProfileRpcMock.mockImplementation(
-      async (method: string, params?: Record<string, any>) => {
-        if (
-          method === "thread/resume" &&
-          params?.cwd === "/repo/.codex-kanban/card-run-control-test"
-        ) {
-          return {};
-        }
-        return defaultRpc?.(method, params);
-      },
+    mocks.codexRpcMock.mockImplementation(
+      async (_accountId: number, method: string, params?: Record<string, any>) =>
+        method === "thread/start"
+          ? {
+              thread: {
+                id: "thread-bad-environment",
+                cwd: params?.cwd,
+              },
+              cwd: params?.cwd,
+              runtimeWorkspaceRoots: params?.runtimeWorkspaceRoots ?? [],
+              approvalPolicy: params?.approvalPolicy,
+              activePermissionProfile: { id: params?.permissions },
+            }
+          : {},
     );
 
     const { user } = await renderApp();
@@ -325,7 +390,7 @@ describe("Application runtime scenarios 9", () => {
         expect.objectContaining({
           status: "failed",
           error: expect.stringContaining(
-            "did not retain the isolated card worktree",
+            "did not select the isolated card worktree",
           ),
         }),
       ),
@@ -408,7 +473,7 @@ describe("Application runtime scenarios 9", () => {
     await user.click(
       screen.getByRole("button", { name: "Start test Kanban agent" }),
     );
-
+    await new Promise((resolve) => window.setTimeout(resolve, 250));
     await waitFor(() =>
       expect(mocks.updateKanbanAttemptMock).toHaveBeenCalledWith(
         expect.objectContaining({
@@ -460,8 +525,7 @@ describe("Application runtime scenarios 9", () => {
   });
 
   it("interrupts a Kanban turn that starts after pause won the setup race", async () => {
-    prepareKanbanRun();
-    let resolveTurnStart!: (value: { turn: { id: string } }) => void;
+    prepareKanbanRun({ autoStartGoalTurn: false });
     mocks.codexRpcMock.mockImplementation(
       async (_accountId: number, method: string, params: any) => {
         if (method === "thread/start") {
@@ -477,11 +541,6 @@ describe("Application runtime scenarios 9", () => {
             },
           };
         }
-        if (method === "turn/start") {
-          return new Promise<{ turn: { id: string } }>((resolve) => {
-            resolveTurnStart = resolve;
-          });
-        }
         return {};
       },
     );
@@ -494,7 +553,7 @@ describe("Application runtime scenarios 9", () => {
     await waitFor(() =>
       expect(
         mocks.codexRpcMock.mock.calls.some(
-          ([, method]) => method === "turn/start",
+          ([, method]) => method === "thread/goal/set",
         ),
       ).toBe(true),
     );
@@ -516,10 +575,16 @@ describe("Application runtime scenarios 9", () => {
       ),
     ).toBe(false);
 
-    await act(async () => {
-      resolveTurnStart({ turn: { id: "turn-kanban-race" } });
-      await Promise.resolve();
-    });
+    await emitCodexNotification(
+      {
+        method: "turn/started",
+        params: {
+          threadId: "thread-kanban-race",
+          turn: { id: "turn-kanban-race", status: "inProgress" },
+        },
+      },
+      { accountId: 0, profileKey: "default" },
+    );
 
     await waitFor(() =>
       expect(mocks.codexRpcMock).toHaveBeenCalledWith(0, "turn/interrupt", {

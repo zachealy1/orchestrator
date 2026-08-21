@@ -1,6 +1,6 @@
 import type { KanbanGitBinding } from "../features/kanban/api";
 
-export const NATIVE_TASK_WORKSPACE_BINDING_VERSION = 4;
+export const NATIVE_TASK_WORKSPACE_BINDING_VERSION = 5;
 export const NATIVE_TASK_LOCAL_ENVIRONMENT_ID = "local";
 
 export type NativeTaskSourceRootAssociation = "pending" | "source-root";
@@ -13,6 +13,7 @@ export type NativeTaskWorkspaceBinding = {
   runtimeWorkspaceRoots: string[];
   pendingContinuationContext: string | null;
   sourceRootAssociation: NativeTaskSourceRootAssociation;
+  verifiedEnvironmentThreadId: string | null;
 };
 
 function uniquePaths(paths: Array<string | null | undefined>) {
@@ -26,6 +27,7 @@ export function createKanbanNativeTaskWorkspaceBinding(input: {
   bindings: KanbanGitBinding[];
   pendingContinuationContext?: string | null;
   sourceRootAssociation?: NativeTaskSourceRootAssociation;
+  verifiedEnvironmentThreadId?: string | null;
 }): NativeTaskWorkspaceBinding {
   return {
     version: NATIVE_TASK_WORKSPACE_BINDING_VERSION,
@@ -38,6 +40,7 @@ export function createKanbanNativeTaskWorkspaceBinding(input: {
     ]),
     pendingContinuationContext: input.pendingContinuationContext ?? null,
     sourceRootAssociation: input.sourceRootAssociation ?? "pending",
+    verifiedEnvironmentThreadId: input.verifiedEnvironmentThreadId ?? null,
   };
 }
 
@@ -48,6 +51,7 @@ export function createContinuationNativeTaskWorkspaceBinding(input: {
   runtimeWorkspaceRoots?: string[];
   pendingContinuationContext?: string | null;
   sourceRootAssociation?: NativeTaskSourceRootAssociation;
+  verifiedEnvironmentThreadId?: string | null;
 }): NativeTaskWorkspaceBinding {
   const executionDirectory = input.executionDirectory ?? input.sourceWorkspacePath;
   return {
@@ -61,6 +65,7 @@ export function createContinuationNativeTaskWorkspaceBinding(input: {
     ]),
     pendingContinuationContext: input.pendingContinuationContext ?? null,
     sourceRootAssociation: input.sourceRootAssociation ?? "pending",
+    verifiedEnvironmentThreadId: input.verifiedEnvironmentThreadId ?? null,
   };
 }
 
@@ -78,11 +83,13 @@ export function parseNativeTaskWorkspaceBinding(
       catalogRegistration?: unknown;
       projectId?: unknown;
       sourceRootAssociation?: unknown;
+      verifiedEnvironmentThreadId?: unknown;
     };
     if (
       (parsed.version !== 1 &&
         parsed.version !== 2 &&
         parsed.version !== 3 &&
+        parsed.version !== 4 &&
         parsed.version !== NATIVE_TASK_WORKSPACE_BINDING_VERSION) ||
       (parsed.kind !== "kanban" && parsed.kind !== "continuation") ||
       typeof parsed.sourceWorkspacePath !== "string" ||
@@ -107,6 +114,11 @@ export function parseNativeTaskWorkspaceBinding(
         parsed.sourceRootAssociation === undefined ||
         parsed.sourceRootAssociation === "pending" ||
         parsed.sourceRootAssociation === "source-root"
+      ) ||
+      !(
+        parsed.verifiedEnvironmentThreadId === undefined ||
+        parsed.verifiedEnvironmentThreadId === null ||
+        typeof parsed.verifiedEnvironmentThreadId === "string"
       )
     ) {
       return null;
@@ -123,6 +135,12 @@ export function parseNativeTaskWorkspaceBinding(
         parsed.sourceRootAssociation === "source-root"
           ? "source-root"
           : "pending",
+      verifiedEnvironmentThreadId:
+        parsed.version === NATIVE_TASK_WORKSPACE_BINDING_VERSION &&
+        typeof parsed.verifiedEnvironmentThreadId === "string" &&
+        parsed.verifiedEnvironmentThreadId
+          ? parsed.verifiedEnvironmentThreadId
+          : null,
     };
   } catch {
     return null;
@@ -134,6 +152,22 @@ export function nativeTaskExecutionOverrides(
 ) {
   return {
     cwd: binding.executionDirectory,
+    runtimeWorkspaceRoots: binding.runtimeWorkspaceRoots,
+    environments: [
+      {
+        environmentId: NATIVE_TASK_LOCAL_ENVIRONMENT_ID,
+        cwd: binding.executionDirectory,
+        runtimeWorkspaceRoots: binding.runtimeWorkspaceRoots,
+      },
+    ],
+  };
+}
+
+export function nativeTaskThreadStartOverrides(
+  binding: NativeTaskWorkspaceBinding,
+) {
+  return {
+    cwd: binding.sourceWorkspacePath,
     runtimeWorkspaceRoots: binding.runtimeWorkspaceRoots,
     environments: [
       {
@@ -159,4 +193,23 @@ export function markNativeTaskSourceRootAssociated(
   return binding.sourceRootAssociation === "source-root"
     ? binding
     : { ...binding, sourceRootAssociation: "source-root" };
+}
+
+export function markNativeTaskEnvironmentVerified(
+  binding: NativeTaskWorkspaceBinding,
+  threadId: string,
+): NativeTaskWorkspaceBinding {
+  return {
+    ...binding,
+    verifiedEnvironmentThreadId: threadId,
+  };
+}
+
+export function nativeTaskEnvironmentIsVerified(
+  binding: NativeTaskWorkspaceBinding,
+  threadId: string | null | undefined,
+) {
+  return Boolean(
+    threadId && binding.verifiedEnvironmentThreadId === threadId,
+  );
 }

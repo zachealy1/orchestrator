@@ -1872,7 +1872,9 @@ export function prepareSignedInRun() {
   );
 }
 
-export function prepareKanbanRun() {
+export function prepareKanbanRun(
+  options: { autoStartGoalTurn?: boolean } = {},
+) {
   prepareSignedInRun();
   mocks.listCodexModelsMock.mockResolvedValue([defaultCodexModel]);
   let threadCwd = workspace.path;
@@ -1915,13 +1917,37 @@ export function prepareKanbanRun() {
       if (method === "thread/start") {
         threadCwd = params?.cwd ?? workspace.path;
         const result = await mocks.codexRpcMock(0, method, params);
-        return result && typeof result === "object" && "thread" in result
-          ? result
-          : { thread: { id: "thread-1" } };
+        const resultRecord =
+          result && typeof result === "object"
+            ? (result as Record<string, any>)
+            : {};
+        const effectiveEnvironment = params?.environments?.[0];
+        return {
+          ...resultRecord,
+          thread: {
+            ...(resultRecord.thread ?? {}),
+            id: resultRecord.thread?.id ?? "thread-1",
+            cwd: resultRecord.thread?.cwd ?? threadCwd,
+          },
+          cwd: resultRecord.cwd ?? effectiveEnvironment?.cwd ?? threadCwd,
+          runtimeWorkspaceRoots:
+            resultRecord.runtimeWorkspaceRoots ??
+            effectiveEnvironment?.runtimeWorkspaceRoots ??
+            params?.runtimeWorkspaceRoots ??
+            [],
+          approvalPolicy:
+            resultRecord.approvalPolicy ?? params?.approvalPolicy,
+          activePermissionProfile:
+            resultRecord.activePermissionProfile ?? {
+              id: params?.permissions ?? null,
+            },
+        };
       }
       if (method === "thread/resume") {
-        threadCwd = params?.cwd ?? threadCwd;
-        return {};
+        return {
+          approvalPolicy: params?.approvalPolicy,
+          activePermissionProfile: { id: params?.permissions ?? null },
+        };
       }
       if (method === "thread/read") {
         return {
@@ -1930,6 +1956,40 @@ export function prepareKanbanRun() {
             cwd: threadCwd,
           },
         };
+      }
+      if (method === "thread/goal/set") {
+        const result = await mocks.codexRpcMock(0, method, params);
+        const turnId = String(params?.threadId ?? "thread-1").replace(
+          /^thread/,
+          "turn",
+        );
+        if (options.autoStartGoalTurn !== false) {
+          window.setTimeout(() => {
+            mocks.listeners.get("codex:notification")?.({
+              payload: {
+                accountId: 0,
+                profileKey: "default",
+                message: {
+                  method: "turn/started",
+                  params: {
+                    threadId: params?.threadId ?? "thread-1",
+                    turn: { id: turnId, status: "inProgress" },
+                  },
+                },
+              },
+            });
+          }, 0);
+        }
+        return result && typeof result === "object" && "goal" in result
+          ? result
+          : {
+              goal: {
+                threadId: params?.threadId ?? "thread-1",
+                objective: params?.objective ?? "Test goal",
+                status: params?.status ?? "active",
+                timeUsedSeconds: 0,
+              },
+            };
       }
       return mocks.codexRpcMock(0, method, params);
     },
@@ -1942,8 +2002,38 @@ export function prepareKanbanRun() {
 }
 
 export async function startMockRun(user: ReturnType<typeof userEvent.setup>, prompt: string) {
+  const goalModeEnabled =
+    screen
+      .getByRole("button", { name: /goal mode/i })
+      .getAttribute("aria-pressed") === "true";
   await user.type(screen.getByLabelText("Prompt"), prompt);
   await user.click(screen.getByRole("button", { name: /run codex/i }));
+  if (goalModeEnabled) {
+    await waitFor(() => {
+      const managedGoalCalls = mocks.setThreadGoalMock.mock.calls;
+      const managedGoalCall = managedGoalCalls[managedGoalCalls.length - 1];
+      const defaultGoalCall = mocks.codexDefaultProfileRpcMock.mock.calls.find(
+        ([method]) => method === "thread/goal/set",
+      );
+      expect(managedGoalCall ?? defaultGoalCall).toBeDefined();
+    });
+    const managedGoalCalls = mocks.setThreadGoalMock.mock.calls;
+    const managedGoalCall = managedGoalCalls[managedGoalCalls.length - 1];
+    if (managedGoalCall) {
+      const threadId = managedGoalCall[1] as string;
+      await emitCodexNotification({
+        method: "turn/started",
+        params: {
+          threadId,
+          turn: { id: "turn-1", status: "inProgress" },
+        },
+      });
+    }
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: /stop codex/i })).toBeInTheDocument(),
+    );
+    return;
+  }
   await waitFor(() =>
     expect(mocks.codexRpcMock).toHaveBeenCalledWith(
       7,

@@ -1,14 +1,18 @@
 import { describe, expect, it, vi } from "vitest";
-import { validateNativeTaskExecutionEnvironment } from "./nativeTaskEnvironment";
+import {
+  validateNativeTaskExecutionEnvironment,
+  verifyNativeTaskThreadEnvironment,
+} from "./nativeTaskEnvironment";
 
 const binding = {
-  version: 4 as const,
+  version: 5 as const,
   kind: "kanban" as const,
   sourceWorkspacePath: "/workspace",
   executionDirectory: "/cards/card-1",
   runtimeWorkspaceRoots: ["/cards/card-1", "/cards/card-1/repo"],
   pendingContinuationContext: null,
   sourceRootAssociation: "source-root" as const,
+  verifiedEnvironmentThreadId: null,
 };
 
 describe("native task execution environment", () => {
@@ -48,5 +52,33 @@ describe("native task execution environment", () => {
       }),
     ).rejects.toThrow("The isolated worktree is unavailable");
     expect(rpc).not.toHaveBeenCalledWith("command/exec", expect.anything());
+  });
+
+  it("verifies source identity and the sticky worktree environment together", () => {
+    expect(
+      verifyNativeTaskThreadEnvironment({
+        binding,
+        threadId: "thread-1",
+        response: {
+          thread: { id: "thread-1", cwd: "/workspace" },
+          cwd: "/cards/card-1",
+          runtimeWorkspaceRoots: ["/cards/card-1/repo", "/cards/card-1"],
+        },
+      }),
+    ).toEqual({ ...binding, verifiedEnvironmentThreadId: "thread-1" });
+  });
+
+  it("rejects a thread that executes outside the card worktree", () => {
+    expect(() =>
+      verifyNativeTaskThreadEnvironment({
+        binding,
+        threadId: "thread-1",
+        response: {
+          thread: { id: "thread-1", cwd: "/workspace" },
+          cwd: "/workspace",
+          runtimeWorkspaceRoots: binding.runtimeWorkspaceRoots,
+        },
+      }),
+    ).toThrow("did not select the isolated card worktree");
   });
 });

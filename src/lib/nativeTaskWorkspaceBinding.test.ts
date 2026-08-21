@@ -5,7 +5,10 @@ import {
   createContinuationNativeTaskWorkspaceBinding,
   createKanbanNativeTaskWorkspaceBinding,
   markNativeTaskSourceRootAssociated,
+  markNativeTaskEnvironmentVerified,
+  nativeTaskEnvironmentIsVerified,
   nativeTaskExecutionOverrides,
+  nativeTaskThreadStartOverrides,
   parseNativeTaskWorkspaceBinding,
 } from "./nativeTaskWorkspaceBinding";
 
@@ -32,7 +35,7 @@ describe("native task workspace bindings", () => {
     });
 
     expect(result).toEqual({
-      version: 4,
+      version: 5,
       kind: "kanban",
       sourceWorkspacePath: "/workspace",
       executionDirectory: "/app/cards/card-1",
@@ -42,6 +45,7 @@ describe("native task workspace bindings", () => {
       ],
       pendingContinuationContext: null,
       sourceRootAssociation: "pending",
+      verifiedEnvironmentThreadId: null,
     });
     expect(nativeTaskExecutionOverrides(result)).toEqual({
       cwd: "/app/cards/card-1",
@@ -60,6 +64,26 @@ describe("native task workspace bindings", () => {
         },
       ],
     });
+    expect(nativeTaskThreadStartOverrides(result)).toEqual({
+      cwd: "/workspace",
+      runtimeWorkspaceRoots: [
+        "/app/cards/card-1",
+        "/app/cards/card-1/repo",
+      ],
+      environments: [
+        {
+          environmentId: "local",
+          cwd: "/app/cards/card-1",
+          runtimeWorkspaceRoots: [
+            "/app/cards/card-1",
+            "/app/cards/card-1/repo",
+          ],
+        },
+      ],
+    });
+    const verified = markNativeTaskEnvironmentVerified(result, "thread-1");
+    expect(nativeTaskEnvironmentIsVerified(verified, "thread-1")).toBe(true);
+    expect(nativeTaskEnvironmentIsVerified(verified, "thread-2")).toBe(false);
   });
 
   it("deduplicates continuation roots and retains pending sanitized context", () => {
@@ -101,7 +125,7 @@ describe("native task workspace bindings", () => {
     expect(parseNativeTaskWorkspaceBinding("not-json")).toBeNull();
     expect(
       parseNativeTaskWorkspaceBinding(
-        JSON.stringify({ ...valid, version: 5 }),
+        JSON.stringify({ ...valid, version: 6 }),
       ),
     ).toBeNull();
     expect(
@@ -125,13 +149,14 @@ describe("native task workspace bindings", () => {
     );
 
     expect(parsed).toEqual({
-      version: 4,
+      version: 5,
       kind: "kanban",
       sourceWorkspacePath: "/workspace",
       executionDirectory: "/app/cards/card-1",
       runtimeWorkspaceRoots: ["/app/cards/card-1"],
       pendingContinuationContext: null,
       sourceRootAssociation: "pending",
+      verifiedEnvironmentThreadId: null,
     });
   });
 
