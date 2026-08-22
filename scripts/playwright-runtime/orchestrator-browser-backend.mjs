@@ -50,15 +50,14 @@ const entryId = args.get("entry-id");
 const stateFile = args.get("state-file");
 const backendPipe = args.get("backend-pipe");
 const controlSocket = args.get("control-socket");
-const browserExecutable = args.get("browser-executable");
-const profileDirectory = args.get("profile-dir");
+const safariDriver = args.get("safari-driver");
 const bridgeSocket = args.get("bridge-socket");
 const bridgeSecret = args.get("bridge-secret");
 const groupKey = args.get("group-key");
 const groupTitle = args.get("group-title") ?? "Orchestrator";
 
 if (
-  !["isolated", "default-browser"].includes(backend) ||
+  !["browser-bridge", "safari-mcp"].includes(backend) ||
   !sessionToken ||
   !entryId ||
   !stateFile ||
@@ -68,11 +67,11 @@ if (
   process.stderr.write("Orchestrator Browser backend configuration is incomplete.\n");
   process.exit(2);
 }
-if (backend === "isolated" && (!browserExecutable || !profileDirectory)) {
-  process.stderr.write("The isolated Browser backend is missing Chromium configuration.\n");
+if (backend === "safari-mcp" && !safariDriver) {
+  process.stderr.write("The Safari Browser backend is missing safaridriver configuration.\n");
   process.exit(2);
 }
-if (backend === "default-browser" && (!bridgeSocket || !bridgeSecret || !groupKey)) {
+if (backend === "browser-bridge" && (!bridgeSocket || !bridgeSecret || !groupKey)) {
   process.stderr.write("The default Browser backend is missing extension configuration.\n");
   process.exit(2);
 }
@@ -171,8 +170,8 @@ async function handleRequest(message) {
       return {
         id: `orchestrator-${entryId}`,
         type: "cdp",
-        family: "chrome",
-        name: backend === "isolated" ? "Orchestrator Isolated Chromium" : "Orchestrator Default Browser",
+        family: backend === "safari-mcp" ? "safari" : "chrome",
+        name: backend === "safari-mcp" ? "Orchestrator Safari" : "Orchestrator Default Browser",
         metadata: {
           orchestratorSessionToken: sessionToken,
           orchestratorBackend: backend,
@@ -182,7 +181,7 @@ async function handleRequest(message) {
     case "getTabs":
       return adapter.getTabs();
     case "getUserTabs":
-      return backend === "default-browser" ? adapter.getUserTabs() : [];
+      return adapter.getUserTabs();
     case "getUserHistory":
       return [];
     case "createTab":
@@ -213,7 +212,7 @@ async function handleRequest(message) {
       await adapter.turnEnded(params);
       return null;
     case "executeUnhandledCommand":
-      throw new Error("This Browser command is not supported by the selected backend.");
+      return adapter.executeUnhandledCommand(params);
     default:
       throw new Error(`No handler registered for method: ${method}`);
   }
@@ -392,191 +391,192 @@ class DefaultBrowserAdapter {
   moveMouse(params) { return this.executeCdp({ target: { tabId: params.tabId }, method: "Input.dispatchMouseEvent", commandParams: { type: "mouseMoved", x: params.x, y: params.y } }); }
   focus() { return bridgeRequest("focus-group"); }
   turnEnded() { return null; }
+  executeUnhandledCommand() { throw new Error("This Browser command is not supported by the Browser Bridge backend."); }
   async close() {
     if (this.polling) clearInterval(this.polling);
     await bridgeRequest("detach-session").catch(() => undefined);
   }
 }
 
-class CdpConnection {
-  constructor(url) { this.url = url; }
-  socket = null;
+class SafariMcpAdapter {
+  child = null;
   nextId = 1;
   pending = new Map();
-  eventHandler = null;
-  closeHandler = null;
-
-  async connect() {
-    this.socket = new WebSocket(this.url);
-    this.socket.addEventListener("message", (event) => {
-      const message = JSON.parse(String(event.data));
-      if (message.id !== undefined) {
-        const pending = this.pending.get(message.id);
-        if (!pending) return;
-        this.pending.delete(message.id);
-        if (message.error) pending.reject(new Error(message.error.message ?? "CDP command failed."));
-        else pending.resolve(message.result ?? {});
-      } else if (message.method) {
-        this.eventHandler?.(message);
-      }
-    });
-    this.socket.addEventListener("close", () => this.closeHandler?.());
-    await new Promise((resolve, reject) => {
-      this.socket.addEventListener("open", resolve, { once: true });
-      this.socket.addEventListener("error", () => reject(new Error("Could not connect to Chromium DevTools.")), { once: true });
-    });
-  }
-
-  send(method, params = {}, sessionId = undefined) {
-    if (!this.socket || this.socket.readyState !== WebSocket.OPEN) throw new Error("Chromium DevTools is unavailable.");
-    const id = this.nextId++;
-    return new Promise((resolve, reject) => {
-      this.pending.set(id, { resolve, reject });
-      this.socket.send(JSON.stringify({ id, method, params, ...(sessionId ? { sessionId } : {}) }));
-    });
-  }
-
-  close() { this.socket?.close(); }
-}
-
-class IsolatedBrowserAdapter {
-  child = null;
-  cdp = null;
-  tabIds = new Map();
-  targets = new Map();
-  sessions = new Map();
-  childSessions = new Map();
-  cachedExpressions = new Map();
+  input = "";
+  handles = new Map();
+  reverseHandles = new Map();
   nextTabId = 1;
   activeTabId = null;
+  cachedExpressions = new Map();
 
   async start() {
-    fs.mkdirSync(profileDirectory, { recursive: true, mode: 0o700 });
-    this.child = spawn(browserExecutable, [
-      `--user-data-dir=${profileDirectory}`,
-      "--remote-debugging-port=0",
-      "--remote-allow-origins=*",
-      "--no-first-run",
-      "--no-default-browser-check",
-      "--disable-background-networking",
-      "--disable-component-update",
-      "--disable-sync",
-      "--disable-features=Translate,MediaRouter",
-      "about:blank",
-    ], { stdio: "ignore" });
+    this.child = spawn(safariDriver, ["--mcp"], { stdio: ["pipe", "pipe", "pipe"] });
     browserPid = this.child.pid ?? null;
+    this.child.stdout.setEncoding("utf8");
+    this.child.stdout.on("data", (chunk) => this.onData(chunk));
     this.child.once("exit", () => {
-      if (!closing) failBackend("Isolated Chromium exited during browser control.");
+      for (const pending of this.pending.values()) pending.reject(new Error("Safari MCP disconnected."));
+      this.pending.clear();
+      if (!closing) failBackend("Safari MCP disconnected from this run.");
     });
-    const portFile = path.join(profileDirectory, "DevToolsActivePort");
-    const [port, browserPath] = await waitForDevTools(portFile, this.child);
-    this.cdp = new CdpConnection(`ws://127.0.0.1:${port}${browserPath}`);
-    this.cdp.eventHandler = (event) => this.handleEvent(event);
-    this.cdp.closeHandler = () => {
-      if (!closing) failBackend("The isolated Chromium DevTools connection was lost.");
-    };
-    await this.cdp.connect();
-    await this.cdp.send("Target.setDiscoverTargets", { discover: true });
+    await this.request("initialize", {
+      protocolVersion: "2025-06-18",
+      capabilities: {},
+      clientInfo: { name: "Orchestrator", version: "1" },
+    });
+    this.notify("notifications/initialized", {});
+    await this.callTool("create_tab", { url: "about:blank" });
+    await this.getTabs();
   }
 
-  tabId(targetId) {
-    let id = this.targets.get(targetId);
-    if (!id) {
-      id = this.nextTabId++;
-      this.targets.set(targetId, id);
-      this.tabIds.set(id, targetId);
+  onData(chunk) {
+    this.input += chunk;
+    for (;;) {
+      const newline = this.input.indexOf("\n");
+      if (newline < 0) return;
+      const raw = this.input.slice(0, newline).trim();
+      this.input = this.input.slice(newline + 1);
+      if (!raw) continue;
+      let message;
+      try { message = JSON.parse(raw); } catch { continue; }
+      const pending = this.pending.get(message.id);
+      if (!pending) continue;
+      this.pending.delete(message.id);
+      if (message.error) pending.reject(new Error(message.error.message ?? "Safari MCP request failed."));
+      else pending.resolve(message.result ?? {});
     }
-    return id;
   }
 
-  async targetInfos() {
-    const result = await this.cdp.send("Target.getTargets");
-    return (result.targetInfos ?? []).filter((target) => target.type === "page");
+  request(method, params = {}) {
+    if (!this.child?.stdin.writable) throw new Error("Safari MCP is unavailable.");
+    const id = this.nextId++;
+    return new Promise((resolve, reject) => {
+      const timer = setTimeout(() => {
+        this.pending.delete(id);
+        reject(new Error(`Safari MCP timed out handling ${method}.`));
+      }, 15_000);
+      this.pending.set(id, {
+        resolve: (value) => { clearTimeout(timer); resolve(value); },
+        reject: (error) => { clearTimeout(timer); reject(error); },
+      });
+      this.child.stdin.write(`${JSON.stringify({ jsonrpc: "2.0", id, method, params })}\n`);
+    });
+  }
+
+  notify(method, params = {}) {
+    this.child?.stdin.write(`${JSON.stringify({ jsonrpc: "2.0", method, params })}\n`);
+  }
+
+  async callTool(name, args = {}) {
+    const result = await this.request("tools/call", { name, arguments: args });
+    if (result.isError) throw new Error(this.toolText(result) || `Safari tool ${name} failed.`);
+    const text = this.toolText(result);
+    if (!text) {
+      const image = (result.content ?? []).find((item) => item.type === "image");
+      if (image?.data) return { data: image.data, mimeType: image.mimeType ?? "image/png" };
+      return result.structuredContent ?? {};
+    }
+    try { return JSON.parse(text); } catch { return text; }
+  }
+
+  toolText(result) {
+    return (result.content ?? []).filter((item) => item.type === "text").map((item) => item.text).join("\n");
+  }
+
+  tabId(handle) {
+    const key = String(handle);
+    if (!this.reverseHandles.has(key)) {
+      const id = this.nextTabId++;
+      this.reverseHandles.set(key, id);
+      this.handles.set(id, key);
+    }
+    return this.reverseHandles.get(key);
   }
 
   async getTabs() {
-    const infos = await this.targetInfos();
-    return infos.map((target, index) => {
-      const id = this.tabId(target.targetId);
-      if (this.activeTabId === null && index === 0) this.activeTabId = id;
-      return { id, title: target.title ?? "Untitled tab", url: target.url ?? "about:blank", active: id === this.activeTabId };
+    const value = await this.callTool("list_tabs");
+    const tabs = Array.isArray(value) ? value : value.tabs ?? [];
+    return tabs.map((tab, index) => {
+      const handle = tab.handle ?? tab.id ?? tab.tabHandle;
+      const id = this.tabId(handle);
+      if (this.activeTabId === null || tab.active) this.activeTabId = id;
+      return { id, title: tab.title ?? "Safari tab", url: tab.url ?? "about:blank", active: id === this.activeTabId || (!this.activeTabId && index === 0) };
     });
   }
 
   getUserTabs() { return []; }
   async createTab() {
-    const created = await this.cdp.send("Target.createTarget", { url: "about:blank" });
-    const id = this.tabId(created.targetId);
+    const value = await this.callTool("create_tab", { url: "about:blank" });
+    const handle = value.handle ?? value.id ?? value.tabHandle;
+    const id = this.tabId(handle);
     this.activeTabId = id;
     return { id, title: "New tab", url: "about:blank", active: true };
   }
-  claimUserTab(tabId) { return this.attach(tabId).then(() => this.getTab(tabId)); }
-  async getTab(tabId) { return (await this.getTabs()).find((tab) => tab.id === Number(tabId)) ?? null; }
-
+  claimUserTab() { throw new Error("Safari exposes only Orchestrator-owned tabs."); }
   async attach(tabId) {
-    const numeric = Number(tabId);
-    const targetId = this.tabIds.get(numeric);
-    if (!targetId) throw new Error("The browser tab is unavailable.");
-    if (!this.sessions.has(numeric)) {
-      const result = await this.cdp.send("Target.attachToTarget", { targetId, flatten: true });
-      this.sessions.set(numeric, result.sessionId);
-      for (const method of ["Page.enable", "Runtime.enable", "DOM.enable", "Accessibility.enable"]) {
-        await this.cdp.send(method, {}, result.sessionId).catch(() => undefined);
-      }
-    }
-    this.activeTabId = numeric;
+    const handle = this.handles.get(Number(tabId));
+    if (!handle) throw new Error("The Safari tab is unavailable.");
+    await this.callTool("switch_tab", { handle });
+    this.activeTabId = Number(tabId);
     return null;
   }
-
-  async detach(tabId) {
-    const numeric = Number(tabId);
-    for (const [key, childSessionId] of this.childSessions) {
-      if (!key.startsWith(`${numeric}:`)) continue;
-      await this.cdp
-        .send("Target.detachFromTarget", { sessionId: childSessionId })
-        .catch(() => undefined);
-      this.childSessions.delete(key);
-    }
-    const sessionId = this.sessions.get(numeric);
-    if (sessionId) {
-      await this.cdp.send("Target.detachFromTarget", { sessionId }).catch(() => undefined);
-      this.sessions.delete(numeric);
-    }
-    return null;
-  }
-
-  async attachTarget(tabId, targetId) {
-    await this.attach(tabId);
-    const numeric = Number(tabId);
-    const sessionId = this.sessions.get(numeric);
-    const attached = await this.cdp.send(
-      "Target.attachToTarget",
-      { targetId, flatten: true },
-      sessionId,
-    );
-    if (typeof attached?.sessionId === "string") {
-      this.childSessions.set(`${numeric}:${targetId}`, attached.sessionId);
-    }
-    return null;
-  }
-  async detachTarget(tabId, targetId) {
-    const numeric = Number(tabId);
-    const parentSessionId = this.sessions.get(numeric);
-    const childSessionId = this.childSessions.get(`${numeric}:${targetId}`);
-    if (parentSessionId && childSessionId) {
-      await this.cdp
-        .send("Target.detachFromTarget", { sessionId: childSessionId }, parentSessionId)
-        .catch(() => undefined);
-      this.childSessions.delete(`${numeric}:${targetId}`);
-    }
-    return null;
+  detach() { return null; }
+  attachTarget() { return null; }
+  detachTarget() { return null; }
+  nameSession() { return null; }
+  focus() { return this.activeTabId ? this.attach(this.activeTabId) : null; }
+  turnEnded() { return null; }
+  moveMouse() { return null; }
+  executeUnhandledCommand(params) {
+    const name = params.name ?? params.command ?? params.method;
+    const supported = new Set([
+      "browser_console_messages", "browser_dialogs", "get_network_request",
+      "list_network_requests", "get_page_content", "page_info", "page_interactions",
+      "screenshot", "wait_for_navigation",
+    ]);
+    if (!supported.has(name)) throw new Error(`Safari MCP command ${name ?? "unknown"} is unavailable.`);
+    return this.callTool(name, params.arguments ?? params.params ?? {});
   }
 
   async executeCdp(params) {
     const tabId = Number(params.target?.tabId);
-    await this.attach(tabId);
-    const sessionId = this.sessions.get(tabId);
-    return this.cdp.send(params.method, params.commandParams ?? {}, sessionId);
+    if (tabId) await this.attach(tabId);
+    const values = params.commandParams ?? {};
+    switch (params.method) {
+      case "Runtime.evaluate": {
+        const value = await this.callTool("evaluate_javascript", { expression: values.expression });
+        return { result: { type: value === null ? "object" : typeof value, value } };
+      }
+      case "Page.navigate":
+        await this.callTool("navigate_to_url", { url: values.url });
+        return { frameId: "safari-main" };
+      case "Page.captureScreenshot": {
+        const value = await this.callTool("screenshot", {});
+        return { data: value.data ?? value.base64 ?? value.image ?? value };
+      }
+      case "Page.getLayoutMetrics": {
+        const value = await this.callTool("evaluate_javascript", { expression: "({width:innerWidth,height:innerHeight,scrollWidth:document.documentElement.scrollWidth,scrollHeight:document.documentElement.scrollHeight})" });
+        return { cssLayoutViewport: { clientWidth: value.width, clientHeight: value.height }, cssContentSize: { width: value.scrollWidth, height: value.scrollHeight, x: 0, y: 0 } };
+      }
+      case "Page.handleJavaScriptDialog":
+        await this.callTool("browser_dialogs", { action: values.accept ? "accept" : "dismiss", text: values.promptText });
+        return {};
+      case "Network.getResponseBody": {
+        const value = await this.callTool("get_network_request", { requestId: values.requestId });
+        return { body: value.body ?? "", base64Encoded: Boolean(value.base64Encoded) };
+      }
+      case "Browser.getVersion":
+        return { product: "Safari/27", userAgent: "Safari", protocolVersion: "Safari-MCP" };
+      case "Page.getFrameTree":
+        return { frameTree: { frame: { id: "safari-main", url: "about:blank", securityOrigin: "" } } };
+      case "Runtime.enable": case "Page.enable": case "DOM.enable": case "Accessibility.enable":
+      case "Network.enable": case "Log.enable": case "Console.enable":
+      case "Runtime.disable": case "Page.disable": case "DOM.disable": case "Accessibility.disable":
+      case "Network.disable": case "Log.disable": case "Console.disable":
+        return {};
+      default:
+        throw new Error(`Safari MCP does not support Browser command ${params.method}.`);
+    }
   }
 
   async executeCdpWithCachedExpression(params) {
@@ -587,47 +587,14 @@ class IsolatedBrowserAdapter {
     return { kind: "executed", result: await this.executeCdp({ ...params, commandParams }) };
   }
 
-  nameSession() { return null; }
-  moveMouse(params) { return this.executeCdp({ target: { tabId: params.tabId }, method: "Input.dispatchMouseEvent", commandParams: { type: "mouseMoved", x: params.x, y: params.y } }); }
-  async focus() {
-    const targetId = this.tabIds.get(this.activeTabId);
-    if (targetId) await this.cdp.send("Target.activateTarget", { targetId });
-  }
-  turnEnded() { return null; }
-
-  handleEvent(event) {
-    if (event.method === "Target.detachedFromTarget") {
-      for (const [tabId, sessionId] of this.sessions) if (sessionId === event.params?.sessionId) this.sessions.delete(tabId);
-      for (const [key, sessionId] of this.childSessions) {
-        if (sessionId === event.params?.sessionId) this.childSessions.delete(key);
-      }
-    }
-    const tabId = [...this.sessions].find(([, sessionId]) => sessionId === event.sessionId)?.[0];
-    if (!tabId || !EVENT_METHODS.includes(event.method)) return;
-    emitPageEvent({ source: { tabId, ...(event.sessionId ? { sessionId: event.sessionId } : {}) }, method: event.method, params: event.params ?? {} });
-  }
-
   async close() {
-    this.cdp?.close();
-    if (this.child?.pid) {
-      this.child.kill("SIGTERM");
-      await new Promise((resolve) => setTimeout(resolve, 200));
-      if (this.child.exitCode === null) this.child.kill("SIGKILL");
-    }
+    if (!this.child) return;
+    this.child.kill("SIGTERM");
+    await new Promise((resolve) => setTimeout(resolve, 250));
+    if (this.child.exitCode === null) this.child.kill("SIGKILL");
   }
 }
 
-async function waitForDevTools(portFile, child) {
-  for (let attempt = 0; attempt < 200; attempt += 1) {
-    if (child.exitCode !== null) throw new Error("Chromium exited before its Browser backend was ready.");
-    try {
-      const [port, browserPath] = fs.readFileSync(portFile, "utf8").trim().split(/\r?\n/u);
-      if (/^\d+$/u.test(port) && browserPath?.startsWith("/")) return [Number(port), browserPath];
-    } catch {}
-    await new Promise((resolve) => setTimeout(resolve, 50));
-  }
-  throw new Error("Timed out waiting for Chromium DevTools.");
-}
 
 async function closeSession(exitCode) {
   if (closing) return;
@@ -661,7 +628,7 @@ process.on("unhandledRejection", (error) => {
 
 try {
   writeState("starting");
-  adapter = backend === "isolated" ? new IsolatedBrowserAdapter() : new DefaultBrowserAdapter();
+  adapter = backend === "safari-mcp" ? new SafariMcpAdapter() : new DefaultBrowserAdapter();
   await adapter.start();
   startBackendServer();
   startControlServer();

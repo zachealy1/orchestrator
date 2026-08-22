@@ -26,12 +26,8 @@ const destination = path.join(
   `darwin-${architecture}`,
 );
 const manifestPath = path.join(destination, "runtime.json");
-const runtimePackage = JSON.parse(
-  fs.readFileSync(path.join(runtimeSource, "package.json"), "utf8"),
-);
 const sourceFingerprint = fingerprint([
   fileURLToPath(import.meta.url),
-  path.join(runtimeSource, "package-lock.json"),
   path.join(runtimeSource, "orchestrator-browser-backend.mjs"),
 ]);
 
@@ -48,15 +44,8 @@ if (runtimeIsCurrent(manifestPath, sourceFingerprint)) {
   process.exit(0);
 }
 
-const preservedBrowsers = preserveMatchingBrowsers(
-  destination,
-  architecture,
-  runtimePackage.dependencies.playwright,
-);
 fs.rmSync(destination, { recursive: true, force: true });
 fs.mkdirSync(destination, { recursive: true, mode: 0o755 });
-
-run("npm", ["ci", "--omit=dev", "--ignore-scripts"], runtimeSource);
 
 const hostDestination = path.join(destination, "host");
 fs.mkdirSync(hostDestination, { recursive: true });
@@ -64,54 +53,19 @@ fs.copyFileSync(
   path.join(runtimeSource, "orchestrator-browser-backend.mjs"),
   path.join(hostDestination, "orchestrator-browser-backend.mjs"),
 );
-fs.cpSync(path.join(runtimeSource, "node_modules"), path.join(hostDestination, "node_modules"), {
-  recursive: true,
-});
-
 const nodeBinary = installPinnedNode(destination, architecture);
-const browsersPath = path.join(destination, "browsers");
-if (preservedBrowsers) {
-  fs.renameSync(preservedBrowsers, browsersPath);
-  fs.rmSync(path.dirname(preservedBrowsers), { recursive: true, force: true });
-} else {
-  fs.mkdirSync(browsersPath, { recursive: true });
-}
-let chromiumExecutable = probeChromium(nodeBinary, hostDestination, browsersPath);
-if (!chromiumExecutable || !fs.existsSync(chromiumExecutable)) {
-  run(
-    nodeBinary,
-    [
-      path.join(hostDestination, "node_modules", "playwright", "cli.js"),
-      "install",
-      "chromium",
-      "--no-shell",
-    ],
-    destination,
-    { PLAYWRIGHT_BROWSERS_PATH: browsersPath },
-  );
-  chromiumExecutable = probeChromium(
-    nodeBinary,
-    hostDestination,
-    browsersPath,
-  );
-}
-if (!fs.existsSync(chromiumExecutable)) {
-  throw new Error(`Bundled Chromium executable was not found: ${chromiumExecutable}`);
-}
 
 fs.writeFileSync(
   manifestPath,
   JSON.stringify(
     {
-      version: 2,
+      version: 3,
       platform: process.platform,
       architecture,
       nodeVersion: NODE_VERSION,
-      playwrightVersion: runtimePackage.dependencies.playwright,
       sourceFingerprint,
       nodeExecutable: relative(destination, nodeBinary),
       browserBackendScript: "host/orchestrator-browser-backend.mjs",
-      chromiumExecutable: relative(destination, chromiumExecutable),
     },
     null,
     2,
@@ -144,55 +98,12 @@ function runtimeIsCurrent(file, expectedFingerprint) {
     return (
       manifest.sourceFingerprint === expectedFingerprint &&
       fs.existsSync(path.join(path.dirname(file), manifest.nodeExecutable)) &&
-      manifest.version === 2 &&
-      fs.existsSync(path.join(path.dirname(file), manifest.browserBackendScript)) &&
-      fs.existsSync(path.join(path.dirname(file), manifest.chromiumExecutable))
+      manifest.version === 3 &&
+      fs.existsSync(path.join(path.dirname(file), manifest.browserBackendScript))
     );
   } catch {
     return false;
   }
-}
-
-function preserveMatchingBrowsers(root, arch, playwrightVersion) {
-  try {
-    const manifest = JSON.parse(
-      fs.readFileSync(path.join(root, "runtime.json"), "utf8"),
-    );
-    const source = path.join(root, "browsers");
-    if (
-      manifest.architecture !== arch ||
-      manifest.playwrightVersion !== playwrightVersion ||
-      !fs.existsSync(source) ||
-      !fs.existsSync(path.join(root, manifest.chromiumExecutable))
-    ) {
-      return null;
-    }
-    const temporaryRoot = fs.mkdtempSync(
-      path.join(os.tmpdir(), "orchestrator-playwright-browsers-"),
-    );
-    const preserved = path.join(temporaryRoot, "browsers");
-    fs.renameSync(source, preserved);
-    return preserved;
-  } catch {
-    return null;
-  }
-}
-
-function probeChromium(nodeBinary, mcpRoot, browsersPath) {
-  const executableProbe = spawnSync(
-    nodeBinary,
-    [
-      "--input-type=module",
-      "--eval",
-      "import { chromium } from 'playwright'; process.stdout.write(chromium.executablePath());",
-    ],
-    {
-      cwd: mcpRoot,
-      encoding: "utf8",
-      env: { ...process.env, PLAYWRIGHT_BROWSERS_PATH: browsersPath },
-    },
-  );
-  return executableProbe.status === 0 ? executableProbe.stdout.trim() : null;
 }
 
 function installPinnedNode(root, arch) {

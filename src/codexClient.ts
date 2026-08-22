@@ -16,7 +16,7 @@ import type {
 } from "./lib/agentNotifications";
 import type { WorkspaceCommitIntentContext } from "./lib/commitMessage";
 import type { ActiveCodexLogin, CodexAccountResponse, CodexConnectResult, CodexLoginResponse, CodexModel, ModelListResponse, OssProvider } from "./features/codex/types";
-import type { BrowserRuntimeStatus, BrowserSessionState, BrowserSessionTarget, DefaultBrowserCapabilityStatus, DefaultBrowserTab, PreparedBrowserSession } from "./features/browser/types";
+import type { BrowserRuntimeStatus, BrowserSessionPreparation, BrowserSessionState, BrowserSessionTarget, DefaultBrowserCapabilityStatus, DefaultBrowserTab } from "./features/browser/types";
 import type { CodexSkillSummary, ComposerContextFile, DroppedContextPathInspection, ImageAttachmentPreview } from "./features/composer/types";
 import type { ExternalTranscriptSnapshot, ExternalThreadHistoryIndex } from "./features/conversations/types";
 import type { GitBranchList, Workspace, WorkspaceFilePreview, WorkspaceGitActionResult, WorkspaceGitDiff, WorkspaceGitOverview, WorkspaceGitRepository, WorkspaceTreeEntry } from "./features/workspaces/types";
@@ -35,7 +35,7 @@ export function readBrowserRuntimeStatus() {
 }
 
 export function prepareBrowserSession(target: BrowserSessionTarget) {
-  return commandResult<PreparedBrowserSession>(commands.browserSessionPrepare(target));
+  return commandResult<BrowserSessionPreparation>(commands.browserSessionPrepare(target));
 }
 
 export function readBrowserSessionStatus(token: string) {
@@ -71,6 +71,10 @@ export function installDefaultBrowserExtension() {
 
 export function openDefaultBrowserAccessibilitySettings() {
   return commandResult<void>(commands.defaultBrowserOpenAccessibilitySettings());
+}
+
+export function enableSafariAutomation() {
+  return commandResult<void>(commands.defaultBrowserEnableSafariAutomation());
 }
 
 export function listDefaultBrowserTabs(token: string) {

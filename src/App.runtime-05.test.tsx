@@ -881,8 +881,8 @@ describe("Application runtime scenarios 5", () => {
       await user.click(computerUse);
       expect(computerUse).not.toBeChecked();
       expect(
-        JSON.parse(localStorage.getItem("orchestrator.computer-use.v2")!),
-      ).toEqual({ enabled: false, executionTarget: "default-browser" });
+        JSON.parse(localStorage.getItem("orchestrator.computer-use.v3")!),
+      ).toEqual({ enabled: false });
     });
 
   it("omits Browser backend configuration when computer use is disabled", async () => {
@@ -909,10 +909,36 @@ describe("Application runtime scenarios 5", () => {
       expect(mocks.updateBrowserSessionTargetMock).not.toHaveBeenCalled();
     });
 
+  it("continues without Browser configuration when the default browser is unavailable", async () => {
+      prepareSignedInRun();
+      mocks.prepareBrowserSessionMock.mockResolvedValueOnce({
+        session: null,
+        browserFamily: null,
+        unavailableReason: "The Browser Bridge extension is not connected.",
+      });
+
+      const { user } = await renderApp();
+      await startMockRun(user, "Continue even when browser control is unavailable");
+
+      expect(
+        await screen.findByText(
+          /Computer Use unavailable; the agent continued without browser access\./,
+        ),
+      ).toBeInTheDocument();
+      const threadStart = mocks.codexRpcMock.mock.calls.find(
+        ([, method]) => method === "thread/start",
+      );
+      expect(threadStart?.[2]?.config).not.toEqual(
+        expect.objectContaining({
+          shell_environment_policy: expect.anything(),
+        }),
+      );
+    });
+
   it("reports an unavailable bundled browser without preventing Settings", async () => {
       mocks.readBrowserRuntimeStatusMock.mockResolvedValueOnce({
         available: false,
-        message: "The pinned Chromium executable is unavailable.",
+        message: "The default browser integration is unavailable.",
       });
 
       const { user } = await renderApp();
@@ -923,7 +949,7 @@ describe("Application runtime scenarios 5", () => {
       });
       expect(await within(settings).findByText("Unavailable")).toBeInTheDocument();
       expect(within(settings).getByRole("alert")).toHaveTextContent(
-        "The pinned Chromium executable is unavailable.",
+        "The default browser integration is unavailable.",
       );
     });
 

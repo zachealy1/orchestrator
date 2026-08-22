@@ -1,9 +1,0 @@
-{
-  "name": "orchestrator-playwright-runtime",
-  "private": true,
-  "version": "1.0.0",
-  "type": "module",
-  "dependencies": {
-    "playwright": "1.62.0-alpha-1783623505000"
-  }
-}

@@ -26,7 +26,6 @@ const SUPPORTED_BROWSER_PLUGIN_MAJOR: u64 = 26;
 pub(crate) struct BrowserHostRuntime {
     pub node_executable: PathBuf,
     pub backend_script: PathBuf,
-    pub chromium_executable: PathBuf,
 }
 
 #[derive(Clone)]
@@ -40,6 +39,7 @@ struct BrowserSkillRuntime {
 #[derive(Default)]
 pub(crate) struct BrowserSessionRegistry {
     sessions: Mutex<HashMap<String, BrowserSessionRecord>>,
+    safari_lease: Mutex<Option<String>>,
 }
 
 impl Drop for BrowserSessionRegistry {
@@ -65,7 +65,7 @@ struct BrowserSessionRecord {
     backend_pipe: PathBuf,
     control_socket: PathBuf,
     backend: String,
-    fallback_reason: Option<String>,
+    browser: default_browser::DefaultBrowserInfo,
     group_key: Option<String>,
     group_title: Option<String>,
     status: String,
@@ -86,7 +86,6 @@ pub(crate) struct BrowserSessionTarget {
     pub thread_id: Option<String>,
     pub turn_id: Option<String>,
     pub access_mode: String,
-    pub execution_target: String,
     pub chat_title: String,
 }
 
@@ -103,7 +102,7 @@ pub(crate) struct BrowserSessionStatus {
     pub extension_connected: bool,
     pub chat_group_key: Option<String>,
     pub controlled_tab_id: Option<i64>,
-    pub fallback_reason: Option<String>,
+    pub unavailable_reason: Option<String>,
     pub browser_skill_version: String,
     pub browser_service_compatible: bool,
     pub backend_healthy: bool,
@@ -128,15 +127,21 @@ pub(crate) struct PreparedBrowserSession {
     pub state: BrowserSessionStatus,
 }
 
+#[derive(Serialize, specta::Type)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct BrowserSessionPreparation {
+    pub session: Option<PreparedBrowserSession>,
+    pub unavailable_reason: Option<String>,
+    pub browser_family: Option<String>,
+}
+
 #[derive(Deserialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
 struct RuntimeManifest {
     version: u32,
     architecture: String,
-    playwright_version: String,
     node_executable: String,
     browser_backend_script: String,
-    chromium_executable: String,
 }
 
 #[derive(Deserialize, specta::Type)]
@@ -151,17 +156,11 @@ struct WrapperState {
 }
 
 pub(crate) fn resolve_browser_host_runtime(app: &AppHandle) -> Result<BrowserHostRuntime, String> {
-    if let (Some(node), Some(backend), Some(chromium)) = (
+    if let (Some(node), Some(backend)) = (
         env::var_os("ORCHESTRATOR_PLAYWRIGHT_NODE"),
         env::var_os("ORCHESTRATOR_BROWSER_BACKEND"),
-        env::var_os("ORCHESTRATOR_PLAYWRIGHT_CHROMIUM"),
     ) {
-        return validate_runtime_paths(
-            PathBuf::from(node),
-            PathBuf::from(backend),
-            PathBuf::from(chromium),
-            "environment override".to_string(),
-        );
+        return validate_runtime_paths(PathBuf::from(node), PathBuf::from(backend));
     }
 
     let architecture = if cfg!(target_arch = "aarch64") {
@@ -216,11 +215,23 @@ pub(crate) async fn browser_runtime_status(app: AppHandle) -> BrowserRuntimeStat
         app.clone(),
         app.state::<DefaultBrowserBridgeState>(),
     ));
+    let integration_ready = default_browser.as_ref().is_some_and(|status| {
+        status.browser.as_ref().is_some_and(|browser| {
+            browser.supported
+                && if browser.family.as_deref() == Some("safari") {
+                    default_browser::safari_driver_path(browser).is_some()
+                } else {
+                    status.extension_connected
+                }
+        })
+    });
     let skill = resolve_browser_skill_runtime();
     match (resolve_browser_host_runtime(&app), skill) {
-        (Ok(_), Ok(skill)) => BrowserRuntimeStatus {
+        (Ok(_), Ok(skill)) if integration_ready => BrowserRuntimeStatus {
             available: true,
-            message: None,
+            message: default_browser
+                .as_ref()
+                .and_then(|status| status.message.clone()),
             default_browser,
             browser_skill_version: Some(skill.version),
             browser_service_compatible: true,
@@ -230,6 +241,11 @@ pub(crate) async fn browser_runtime_status(app: AppHandle) -> BrowserRuntimeStat
             message: Some(
                 host.err()
                     .or_else(|| skill.err())
+                    .or_else(|| {
+                        default_browser
+                            .as_ref()
+                            .and_then(|status| status.message.clone())
+                    })
                     .unwrap_or_else(|| "The bundled Browser runtime is unavailable.".to_string()),
             ),
             default_browser,
@@ -246,10 +262,32 @@ pub(crate) async fn browser_session_prepare(
     app: AppHandle,
     state: State<'_, BrowserSessionRegistry>,
     default_browser_state: State<'_, DefaultBrowserBridgeState>,
-) -> Result<PreparedBrowserSession, String> {
+) -> Result<BrowserSessionPreparation, String> {
     validate_target(&target)?;
-    let runtime = resolve_browser_host_runtime(&app)?;
-    let skill = resolve_browser_skill_runtime()?;
+    let browser = match default_browser::detect_default_browser() {
+        Some(browser) if browser.supported => browser,
+        Some(browser) => {
+            return Ok(unavailable_preparation(
+                browser.family.clone(),
+                format!("{} is not supported for Computer Use.", browser.name),
+            ))
+        }
+        None => {
+            return Ok(unavailable_preparation(
+                None,
+                "The macOS default browser could not be detected.",
+            ))
+        }
+    };
+    let family = browser.family.clone();
+    let runtime = match resolve_browser_host_runtime(&app) {
+        Ok(runtime) => runtime,
+        Err(error) => return Ok(unavailable_preparation(family, error)),
+    };
+    let skill = match resolve_browser_skill_runtime() {
+        Ok(skill) => skill,
+        Err(error) => return Ok(unavailable_preparation(browser.family.clone(), error)),
+    };
 
     let token = Uuid::new_v4().simple().to_string();
     let app_data = app
@@ -281,29 +319,38 @@ pub(crate) async fn browser_session_prepare(
             .take(60)
             .collect::<String>()
     );
+    let is_safari = browser.family.as_deref() == Some("safari");
+    if is_safari {
+        let mut lease = state
+            .safari_lease
+            .lock()
+            .map_err(|_| "Safari control lease lock was poisoned".to_string())?;
+        if lease.is_some() {
+            return Ok(unavailable_preparation(
+                browser.family.clone(),
+                "Safari is already controlled by another active turn.",
+            ));
+        }
+        *lease = Some(token.clone());
+    }
     let default_status = default_browser::default_browser_capability_status(
         app.clone(),
         app.state::<DefaultBrowserBridgeState>(),
     );
-    let use_default_browser = target.execution_target == "default-browser"
-        && target.chat_id.is_some()
-        && default_status
-            .browser
-            .as_ref()
-            .is_some_and(|browser| browser.supported)
-        && default_status.extension_connected;
-    let fallback_reason = if target.execution_target == "default-browser" && !use_default_browser {
-        Some(default_status.message.clone().unwrap_or_else(|| {
-            "The default-browser bridge is unavailable. Isolated Chromium will be used.".to_string()
-        }))
+    if !is_safari && (target.chat_id.is_none() || !default_status.extension_connected) {
+        return Ok(unavailable_preparation(
+            browser.family.clone(),
+            default_status
+                .message
+                .unwrap_or_else(|| "The Browser Bridge extension is not connected.".to_string()),
+        ));
+    }
+    let backend = if is_safari {
+        "safari-mcp"
     } else {
-        None
-    };
-    let backend = if use_default_browser {
-        "default-browser".to_string()
-    } else {
-        "isolated".to_string()
-    };
+        "browser-bridge"
+    }
+    .to_string();
     let mut command = Command::new(&runtime.node_executable);
     command
         .arg(&runtime.backend_script)
@@ -331,7 +378,7 @@ pub(crate) async fn browser_session_prepare(
     if let Some(turn_id) = target.turn_id.as_deref() {
         command.args(["--turn-id", turn_id]);
     }
-    if use_default_browser {
+    if !is_safari {
         let (bridge_socket, bridge_secret) =
             default_browser::bridge_connection_details(default_browser_state.inner())?;
         command
@@ -348,25 +395,39 @@ pub(crate) async fn browser_session_prepare(
             .arg("--group-title")
             .arg(&group_title);
     } else {
-        command
-            .arg("--browser-executable")
-            .arg(&runtime.chromium_executable)
-            .arg("--profile-dir")
-            .arg(session_root.join("profile"));
+        let safari_driver = match default_browser::safari_driver_path(&browser) {
+            Some(path) => path,
+            None => {
+                release_safari_lease(state.inner(), &token);
+                return Ok(unavailable_preparation(
+                    browser.family.clone(),
+                    "Safari's safaridriver executable is unavailable.",
+                ));
+            }
+        };
+        command.arg("--safari-driver").arg(safari_driver);
     }
-    let mut backend_process = command
-        .spawn()
-        .map_err(|error| format!("Could not start the bundled Browser backend: {error}"))?;
+    let mut backend_process = match command.spawn() {
+        Ok(process) => process,
+        Err(error) => {
+            release_safari_lease(state.inner(), &token);
+            return Ok(unavailable_preparation(
+                browser.family.clone(),
+                format!("Could not start the Browser backend: {error}"),
+            ));
+        }
+    };
     if let Err(error) = wait_for_backend_ready(&state_file, &backend_pipe, &token).await {
         let _ = backend_process.kill();
         terminate_processes_from_state(&state_file, &token);
-        if use_default_browser {
+        if !is_safari {
             let _ = default_browser::detach_session(default_browser_state.inner(), &token);
         }
         let _ = fs::remove_dir_all(&session_root);
         let _ = fs::remove_file(&backend_pipe);
         let _ = fs::remove_file(&control_socket);
-        return Err(error);
+        release_safari_lease(state.inner(), &token);
+        return Ok(unavailable_preparation(browser.family.clone(), error));
     }
     drop(backend_process);
 
@@ -379,7 +440,7 @@ pub(crate) async fn browser_session_prepare(
         backend_pipe,
         control_socket,
         backend,
-        fallback_reason,
+        browser: browser.clone(),
         group_key,
         group_title: Some(group_title),
         status: "ready".to_string(),
@@ -405,7 +466,30 @@ pub(crate) async fn browser_session_prepare(
         },
     };
     emit_browser_session_state(&app, &prepared.state);
-    Ok(prepared)
+    Ok(BrowserSessionPreparation {
+        session: Some(prepared),
+        unavailable_reason: None,
+        browser_family: browser.family,
+    })
+}
+
+fn unavailable_preparation(
+    family: Option<String>,
+    reason: impl Into<String>,
+) -> BrowserSessionPreparation {
+    BrowserSessionPreparation {
+        session: None,
+        unavailable_reason: Some(reason.into()),
+        browser_family: family,
+    }
+}
+
+fn release_safari_lease(state: &BrowserSessionRegistry, token: &str) {
+    if let Ok(mut lease) = state.safari_lease.lock() {
+        if lease.as_deref() == Some(token) {
+            *lease = None;
+        }
+    }
 }
 
 #[tauri::command]
@@ -429,7 +513,7 @@ pub(crate) async fn browser_session_focus(
 ) -> Result<BrowserSessionStatus, String> {
     validate_token(&token)?;
     let mut record = session_record(&state, &token)?;
-    if record.backend == "default-browser" {
+    if record.backend == "browser-bridge" {
         default_browser::focus_group(
             default_browser_state.inner(),
             record
@@ -472,12 +556,12 @@ pub(crate) async fn browser_session_update_target(
             .ok_or_else(|| "The browser session is no longer available.".to_string())?;
         let previous_title = record.target.chat_title.clone();
         record.target = target;
-        if record.backend == "default-browser" && previous_title != record.target.chat_title {
+        if record.backend == "browser-bridge" && previous_title != record.target.chat_title {
             record.group_title = Some(format!("Orchestrator · {}", record.target.chat_title));
         }
         record.clone()
     };
-    if record.backend == "default-browser" {
+    if record.backend == "browser-bridge" {
         if let (Some(group_key), Some(group_title)) =
             (record.group_key.as_deref(), record.group_title.as_deref())
         {
@@ -515,11 +599,12 @@ pub(crate) async fn browser_session_stop(
             .remove(&token)
             .ok_or_else(|| "The browser session is no longer available.".to_string())?
     };
+    release_safari_lease(state.inner(), &record.token);
     let _ = send_control_command(&record, "stop");
     if !wait_for_session_stop(&record).await {
         terminate_session_processes(&record);
     }
-    if record.backend == "default-browser" {
+    if record.backend == "browser-bridge" {
         let _ = default_browser::detach_session(default_browser_state.inner(), &record.token);
     }
     let stopped = BrowserSessionStatus {
@@ -533,7 +618,7 @@ pub(crate) async fn browser_session_stop(
         extension_connected: false,
         chat_group_key: record.group_key.clone(),
         controlled_tab_id: None,
-        fallback_reason: record.fallback_reason.clone(),
+        unavailable_reason: None,
         browser_skill_version: record.skill_version.clone(),
         browser_service_compatible: record.service_compatible,
         backend_healthy: false,
@@ -554,7 +639,7 @@ pub(crate) async fn browser_session_list_tabs(
 ) -> Result<Vec<DefaultBrowserTab>, String> {
     validate_token(&token)?;
     let record = session_record(&state, &token)?;
-    if record.backend != "default-browser" {
+    if record.backend != "browser-bridge" {
         return Err("Tabs can be attached only when using the default browser.".to_string());
     }
     default_browser::list_tabs(
@@ -580,7 +665,7 @@ pub(crate) async fn browser_session_attach_tab(
         return Err("Select a valid browser tab.".to_string());
     }
     let mut record = session_record(&state, &token)?;
-    if record.backend != "default-browser" {
+    if record.backend != "browser-bridge" {
         return Err("Tabs can be attached only when using the default browser.".to_string());
     }
     default_browser::attach_tab(
@@ -652,11 +737,11 @@ fn status_for_record(record: &BrowserSessionRecord) -> BrowserSessionStatus {
             .clone()
             .or_else(|| wrapper_state.as_ref().and_then(|state| state.error.clone())),
         backend: record.backend.clone(),
-        browser: None,
-        extension_connected: record.backend == "default-browser",
+        browser: Some(record.browser.clone()),
+        extension_connected: record.backend == "browser-bridge",
         chat_group_key: record.group_key.clone(),
         controlled_tab_id: record.controlled_tab_id,
-        fallback_reason: record.fallback_reason.clone(),
+        unavailable_reason: None,
         browser_skill_version: record.skill_version.clone(),
         browser_service_compatible: record.service_compatible,
         backend_healthy: record.runtime_error.is_none()
@@ -827,12 +912,6 @@ fn validate_target(target: &BrowserSessionTarget) -> Result<(), String> {
     ) {
         return Err("Invalid browser access mode.".to_string());
     }
-    if !matches!(
-        target.execution_target.as_str(),
-        "default-browser" | "isolated"
-    ) {
-        return Err("Invalid browser execution target.".to_string());
-    }
     Ok(())
 }
 
@@ -980,13 +1059,12 @@ fn read_packaged_runtime(root: &Path, architecture: &str) -> Result<BrowserHostR
             .map_err(|error| format!("Could not read the Browser host manifest: {error}"))?,
     )
     .map_err(|error| format!("The Browser host manifest is invalid: {error}"))?;
-    if manifest.version != 2 || manifest.architecture != architecture {
+    if manifest.version != 3 || manifest.architecture != architecture {
         return Err("The bundled Browser host does not match this Mac.".to_string());
     }
     let node = confined_runtime_path(root, &manifest.node_executable)?;
     let backend = confined_runtime_path(root, &manifest.browser_backend_script)?;
-    let chromium = confined_runtime_path(root, &manifest.chromium_executable)?;
-    validate_runtime_paths(node, backend, chromium, manifest.playwright_version)
+    validate_runtime_paths(node, backend)
 }
 
 fn resolve_development_runtime() -> Result<BrowserHostRuntime, String> {
@@ -999,39 +1077,10 @@ fn resolve_development_runtime() -> Result<BrowserHostRuntime, String> {
         .join("orchestrator-browser-backend.mjs");
     let node = resolve_path_executable("node")
         .ok_or_else(|| "Node.js is required for the development browser runtime.".to_string())?;
-    let chromium = env::var_os("ORCHESTRATOR_PLAYWRIGHT_CHROMIUM")
-        .map(PathBuf::from)
-        .or_else(|| probe_development_chromium(repository, &node))
-        .ok_or_else(|| {
-            "The pinned Chromium build is unavailable. Run `npm run prepare:playwright-runtime` before starting Orchestrator."
-                .to_string()
-        })?;
-    validate_runtime_paths(node, backend, chromium, "development runtime".to_string())
+    validate_runtime_paths(node, backend)
 }
 
-fn probe_development_chromium(repository: &Path, node: &Path) -> Option<PathBuf> {
-    let output = Command::new(node)
-        .current_dir(repository)
-        .args([
-            "--input-type=module",
-            "--eval",
-            "import { chromium } from 'playwright'; process.stdout.write(chromium.executablePath());",
-        ])
-        .output()
-        .ok()?;
-    if !output.status.success() {
-        return None;
-    }
-    let path = PathBuf::from(String::from_utf8(output.stdout).ok()?.trim());
-    path.is_file().then_some(path)
-}
-
-fn validate_runtime_paths(
-    node: PathBuf,
-    backend: PathBuf,
-    chromium: PathBuf,
-    _version: String,
-) -> Result<BrowserHostRuntime, String> {
+fn validate_runtime_paths(node: PathBuf, backend: PathBuf) -> Result<BrowserHostRuntime, String> {
     if !node.is_file() {
         return Err(format!(
             "The Browser host Node runtime was not found at {}.",
@@ -1044,16 +1093,9 @@ fn validate_runtime_paths(
             backend.display()
         ));
     }
-    if !chromium.is_file() {
-        return Err(format!(
-            "The pinned Chromium executable was not found at {}.",
-            chromium.display()
-        ));
-    }
     Ok(BrowserHostRuntime {
         node_executable: node,
         backend_script: backend,
-        chromium_executable: chromium,
     })
 }
 
@@ -1108,7 +1150,6 @@ mod tests {
             thread_id: None,
             turn_id: None,
             access_mode: "ask-for-approval".to_string(),
-            execution_target: "isolated".to_string(),
             chat_title: "Test chat".to_string(),
         };
         assert!(validate_target(&target).is_err());
@@ -1133,7 +1174,7 @@ mod tests {
     }
 
     #[test]
-    fn runtime_validation_requires_the_pinned_browser_executable() {
+    fn runtime_validation_requires_only_node_and_backend() {
         let root = env::temp_dir().join(format!(
             "orchestrator-playwright-validation-{}",
             Uuid::new_v4()
@@ -1144,17 +1185,8 @@ mod tests {
         fs::write(&node, b"node").expect("writes node fixture");
         fs::write(&backend, b"backend").expect("writes backend fixture");
 
-        let result = validate_runtime_paths(
-            node,
-            backend,
-            root.join("missing-chromium"),
-            "test".to_string(),
-        );
-
-        assert!(result
-            .err()
-            .expect("missing Chromium must fail")
-            .contains("Chromium executable"));
+        let result = validate_runtime_paths(node, backend);
+        assert!(result.is_ok());
         fs::remove_dir_all(root).expect("removes validation fixture");
     }
 }

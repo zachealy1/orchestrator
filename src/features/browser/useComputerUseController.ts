@@ -5,13 +5,10 @@ import {
   readComputerUsePreference,
 } from "../../lib/computerUse";
 import type { BrowserRuntimeStatus } from "./types";
-import type { BrowserExecutionTarget } from "./types";
 
 export type ComputerUseController = {
   computerUseEnabled: boolean;
   setComputerUseEnabled: Dispatch<SetStateAction<boolean>>;
-  browserExecutionTarget: BrowserExecutionTarget;
-  setBrowserExecutionTarget: Dispatch<SetStateAction<BrowserExecutionTarget>>;
   browserRuntimeStatus: BrowserRuntimeStatus | null;
   refreshBrowserRuntimeStatus: () => Promise<void>;
 };
@@ -20,18 +17,14 @@ export function useComputerUseController(): ComputerUseController {
   const [computerUseEnabled, setComputerUseEnabled] = useState(
     () => readComputerUsePreference().enabled,
   );
-  const [browserExecutionTarget, setBrowserExecutionTarget] = useState(
-    () => readComputerUsePreference().executionTarget,
-  );
   const [browserRuntimeStatus, setBrowserRuntimeStatus] =
     useState<BrowserRuntimeStatus | null>(null);
 
   useEffect(() => {
     persistComputerUsePreference({
       enabled: computerUseEnabled,
-      executionTarget: browserExecutionTarget,
     });
-  }, [browserExecutionTarget, computerUseEnabled]);
+  }, [computerUseEnabled]);
 
   async function refreshBrowserRuntimeStatus() {
     try {
@@ -92,8 +85,6 @@ export function useComputerUseController(): ComputerUseController {
   return {
     computerUseEnabled,
     setComputerUseEnabled,
-    browserExecutionTarget,
-    setBrowserExecutionTarget,
     browserRuntimeStatus,
     refreshBrowserRuntimeStatus,
   };

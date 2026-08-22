@@ -1076,6 +1076,9 @@ export function prepareDefaults() {
     browserServiceCompatible: true,
   });
   mocks.prepareBrowserSessionMock.mockImplementation(async (target) => ({
+    unavailableReason: null,
+    browserFamily: "chrome",
+    session: {
     token: "0123456789abcdef0123456789abcdef",
     config: {
       shell_environment_policy: {
@@ -1094,16 +1097,16 @@ export function prepareDefaults() {
       target,
       browserPid: null,
       error: null,
-      backend: "isolated",
-      browser: null,
-      extensionConnected: false,
+      backend: "browser-bridge",
+      browser: { bundleId: "com.google.Chrome", name: "Chrome", path: "/Applications/Google Chrome.app", supported: true, family: "chrome" },
+      extensionConnected: true,
       chatGroupKey: null,
       controlledTabId: null,
-      fallbackReason: null,
+      unavailableReason: null,
       browserSkillVersion: "26.818.31338",
       browserServiceCompatible: true,
       backendHealthy: true,
-    },
+    }},
   }));
   mocks.readBrowserSessionStatusMock.mockImplementation(async (token) => ({
     token,
@@ -1120,12 +1123,12 @@ export function prepareDefaults() {
     },
     browserPid: null,
     error: null,
-    backend: "isolated",
+    backend: "browser-bridge",
     browser: null,
     extensionConnected: false,
     chatGroupKey: null,
     controlledTabId: null,
-    fallbackReason: null,
+    unavailableReason: null,
     browserSkillVersion: "26.818.31338",
     browserServiceCompatible: true,
     backendHealthy: true,

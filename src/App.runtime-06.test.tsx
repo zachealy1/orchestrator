@@ -169,7 +169,7 @@ describe("Application runtime scenarios 6", () => {
       );
       expect(firstSettings).toEqual(
         expect.objectContaining({
-          version: 3,
+          version: 4,
           accountId: 7,
           profileKey: "account:7",
           selectedRepositoryPath: workspace.path,
@@ -178,7 +178,6 @@ describe("Application runtime scenarios 6", () => {
           intent: "normal",
           accessMode: "ask-for-approval",
           computerUseEnabled: true,
-          browserExecutionTarget: "default-browser",
           model: "gpt-original",
           reasoningEffort: "low",
           useOss: false,
@@ -771,14 +770,16 @@ describe("Application runtime scenarios 6", () => {
       await user.click(screen.getByRole("button", { name: "Run edited prompt" }));
 
       await waitFor(() => expect(mocks.createRunMock).toHaveBeenCalledTimes(1));
-      expect(
-        JSON.parse(mocks.createRunMock.mock.calls[0]?.[0].executionSettingsJson),
-      ).toEqual({
-        ...persistedSettings,
-        version: 3,
+      const rerunSettings = JSON.parse(
+        mocks.createRunMock.mock.calls[0]?.[0].executionSettingsJson,
+      );
+      expect(rerunSettings).toEqual(expect.objectContaining({
+        version: 4,
         selectedRepositoryPath: workspace.path,
-        browserExecutionTarget: "isolated",
-      });
+        computerUseEnabled: persistedSettings.computerUseEnabled,
+        model: persistedSettings.model,
+      }));
+      expect(rerunSettings).not.toHaveProperty("browserExecutionTarget");
       expect(mocks.prepareBrowserSessionMock).not.toHaveBeenCalled();
       expect(mocks.readCodexFileMock).toHaveBeenCalledWith(
         7,

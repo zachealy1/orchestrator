@@ -9,10 +9,10 @@ import {
 function actions(): SettingsViewActions {
   return {
     setComputerUseEnabled: vi.fn(),
-    setBrowserExecutionTarget: vi.fn(),
     installDefaultBrowserExtension: vi.fn(),
     refreshBrowserRuntimeStatus: vi.fn(),
     openDefaultBrowserAccessibilitySettings: vi.fn(),
+    enableSafariAutomation: vi.fn(),
     connectGithub: vi.fn(),
     showGithubLogin: vi.fn(),
     disconnectGithub: vi.fn(),
@@ -35,7 +35,6 @@ function actions(): SettingsViewActions {
 function model(overrides: Partial<SettingsViewModel> = {}): SettingsViewModel {
   return {
     computerUseEnabled: true,
-    browserExecutionTarget: "default-browser",
     browserRuntimeStatus: {
       available: true,
       message: null,
