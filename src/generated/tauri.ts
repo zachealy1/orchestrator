@@ -145,7 +145,7 @@ export const commands = {
 	runPreflight: (path: string, prompt: string, useOss: boolean, ossProvider: string | null) => __TAURI_INVOKE<PreflightReport>("run_preflight", { path, prompt, useOss, ossProvider }),
 	probeLocalWebPreview: (url: string) => __TAURI_INVOKE<LocalWebPreviewProbeResult>("probe_local_web_preview", { url }),
 	browserRuntimeStatus: () => __TAURI_INVOKE<BrowserRuntimeStatus>("browser_runtime_status"),
-	browserSessionPrepare: (target: BrowserSessionTarget) => __TAURI_INVOKE<PreparedBrowserSession>("browser_session_prepare", { target }),
+	browserSessionPrepare: (target: BrowserSessionTarget) => __TAURI_INVOKE<BrowserSessionPreparation>("browser_session_prepare", { target }),
 	browserSessionStatus: (token: string) => __TAURI_INVOKE<BrowserSessionStatus>("browser_session_status", { token }),
 	browserSessionFocus: (token: string) => __TAURI_INVOKE<BrowserSessionStatus>("browser_session_focus", { token }),
 	browserSessionUpdateTarget: (token: string, target: BrowserSessionTarget) => __TAURI_INVOKE<BrowserSessionStatus>("browser_session_update_target", { token, target }),
@@ -155,6 +155,7 @@ export const commands = {
 	defaultBrowserCapabilityStatus: () => __TAURI_INVOKE<DefaultBrowserCapabilityStatus>("default_browser_capability_status"),
 	defaultBrowserInstallExtension: () => __TAURI_INVOKE<null>("default_browser_install_extension"),
 	defaultBrowserOpenAccessibilitySettings: () => __TAURI_INVOKE<null>("default_browser_open_accessibility_settings"),
+	defaultBrowserEnableSafariAutomation: () => __TAURI_INVOKE<null>("default_browser_enable_safari_automation"),
 	agentNotificationPermissionStatus: () => __TAURI_INVOKE<string>("agent_notification_permission_status"),
 	agentNotificationRequestPermission: () => __TAURI_INVOKE<string>("agent_notification_request_permission"),
 	agentNotificationSend: (request: AgentNotificationRequest) => __TAURI_INVOKE<AgentNotificationSendResult>("agent_notification_send", { request }),
@@ -237,6 +238,12 @@ export type BrowserRuntimeStatus = {
 	browserServiceCompatible: boolean,
 };
 
+export type BrowserSessionPreparation = {
+	session: PreparedBrowserSession | null,
+	unavailableReason: string | null,
+	browserFamily: string | null,
+};
+
 export type BrowserSessionStatus = {
 	token: string,
 	status: string,
@@ -248,7 +255,7 @@ export type BrowserSessionStatus = {
 	extensionConnected: boolean,
 	chatGroupKey: string | null,
 	controlledTabId: number | null,
-	fallbackReason: string | null,
+	unavailableReason: string | null,
 	browserSkillVersion: string,
 	browserServiceCompatible: boolean,
 	backendHealthy: boolean,
@@ -263,7 +270,6 @@ export type BrowserSessionTarget = {
 	threadId: string | null,
 	turnId: string | null,
 	accessMode: string,
-	executionTarget: string,
 	chatTitle: string,
 };
 
@@ -348,6 +354,7 @@ export type DefaultBrowserInfo = {
 	name: string,
 	path: string,
 	supported: boolean,
+	family: string | null,
 };
 
 export type DefaultBrowserTab = {

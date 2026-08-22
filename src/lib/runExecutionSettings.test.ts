@@ -17,7 +17,6 @@ describe("run execution settings", () => {
       intent: "plan",
       accessMode: "full-access",
       computerUseEnabled: true,
-      browserExecutionTarget: "default-browser",
       model: "gpt-5.5",
       reasoningEffort: "high",
       useOss: false,
@@ -72,10 +71,9 @@ describe("run execution settings", () => {
 
     expect(parseRunExecutionSettings(legacySettings)).toEqual(
       expect.objectContaining({
-        version: 3,
+        version: 4,
         selectedRepositoryPath: null,
         selectedBranch: "feature/original",
-        browserExecutionTarget: "isolated",
       }),
     );
   });
@@ -117,7 +115,7 @@ describe("run execution settings", () => {
     expect(resolved).toEqual({
       source: "legacy",
       settings: expect.objectContaining({
-        version: 3,
+        version: 4,
         selectedRepositoryPath: null,
         accountId: 7,
         profileKey: "account:7",
@@ -126,7 +124,6 @@ describe("run execution settings", () => {
         intent: "plan",
         accessMode: "ask-for-approval",
         computerUseEnabled: false,
-        browserExecutionTarget: "isolated",
         model: "gpt-5.5",
         reasoningEffort: null,
         contextFiles: [],

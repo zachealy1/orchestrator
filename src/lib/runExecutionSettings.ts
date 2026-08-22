@@ -2,14 +2,13 @@ import type { CodexAccessMode, CodexProfileKey, OssProvider } from "../features/
 import type { ComposerContextFile, SelectedComposerSkill } from "../features/composer/types";
 import type { ResolvedRunExecutionSettings, RunExecutionSettings } from "../features/runs/types";
 
-export const RUN_EXECUTION_SETTINGS_VERSION = 3;
+export const RUN_EXECUTION_SETTINGS_VERSION = 4;
 
 type RunExecutionSettingsInput = Omit<
   RunExecutionSettings,
-  "version" | "selectedRepositoryPath" | "browserExecutionTarget"
+  "version" | "selectedRepositoryPath"
 > & {
   selectedRepositoryPath?: string | null;
-  browserExecutionTarget?: RunExecutionSettings["browserExecutionTarget"];
 };
 
 type LegacyRunSettingsRecord = {
@@ -35,7 +34,6 @@ export function createRunExecutionSettings(
     intent: input.intent,
     accessMode: input.accessMode,
     computerUseEnabled: input.computerUseEnabled,
-    browserExecutionTarget: input.browserExecutionTarget ?? "isolated",
     model: input.model,
     reasoningEffort: input.reasoningEffort,
     useOss: input.useOss,
@@ -122,7 +120,7 @@ export function resolveStoredRunExecutionSettings(
 function readRunExecutionSettings(value: unknown): RunExecutionSettings | null {
   if (
     !isRecord(value) ||
-    (value.version !== 1 && value.version !== 2 && value.version !== 3)
+    (value.version !== 1 && value.version !== 2 && value.version !== 3 && value.version !== 4)
   ) {
     return null;
   }
@@ -174,10 +172,6 @@ function readRunExecutionSettings(value: unknown): RunExecutionSettings | null {
     intent: value.intent,
     accessMode: value.accessMode,
     computerUseEnabled: value.computerUseEnabled,
-    browserExecutionTarget:
-      value.version === 3
-        ? (value.browserExecutionTarget as RunExecutionSettings["browserExecutionTarget"])
-        : "isolated",
     model: normalizeOptionalString(value.model),
     reasoningEffort: normalizeOptionalString(value.reasoningEffort),
     useOss: value.useOss,

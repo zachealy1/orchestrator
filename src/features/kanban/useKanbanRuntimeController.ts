@@ -11,7 +11,6 @@ import type {
   StopActiveRunResult,
 } from "../runs/runtimeTypes";
 import type { RunExecutionSettings } from "../runs/types";
-import type { BrowserExecutionTarget } from "../browser/types";
 import type { Workspace } from "../workspaces/types";
 import { accessSettings } from "../../lib/codexAccess";
 import {
@@ -48,7 +47,6 @@ export type KanbanRuntimeState = {
   accounts: CodexAccountProfile[];
   selectedAccountId: number | null;
   computerUseEnabled: boolean;
-  browserExecutionTarget: BrowserExecutionTarget;
   ossProvider: OssProvider;
 };
 
@@ -220,7 +218,6 @@ export function createKanbanRuntimeController<
         intent: "normal",
         accessMode: card.accessMode,
         computerUseEnabled: state.computerUseEnabled,
-        browserExecutionTarget: state.browserExecutionTarget,
         model: selectedModel?.model ?? card.model,
         reasoningEffort:
           card.reasoningLevel ?? selectedModel?.defaultReasoningEffort ?? null,

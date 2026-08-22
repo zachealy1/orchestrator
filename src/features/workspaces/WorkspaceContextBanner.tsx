@@ -112,7 +112,7 @@ export function WorkspaceContextBanner({
     (["starting", "running", "awaiting-approval", "error"].includes(
       browserSession.status,
     ) ||
-      (browserSession.backend === "default-browser" &&
+      (browserSession.backend === "browser-bridge" &&
         ["prepared", "ready"].includes(browserSession.status)));
 
   useEffect(() => {
@@ -423,7 +423,7 @@ export function WorkspaceContextBanner({
                     role="group"
                     aria-label="Browser session controls"
                   >
-                    {browserSession.backend === "default-browser" ? (
+                    {browserSession.backend === "browser-bridge" ? (
                       <button
                         className="native-plan-icon-action"
                         type="button"

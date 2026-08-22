@@ -45,6 +45,7 @@ pub(crate) struct DefaultBrowserInfo {
     pub name: String,
     pub path: String,
     pub supported: bool,
+    pub family: Option<String>,
 }
 
 #[derive(Clone, Debug, Serialize, specta::Type)]
@@ -182,11 +183,15 @@ pub(crate) fn default_browser_capability_status(
         })
         .unwrap_or_default();
     let message = match browser.as_ref() {
-        None => Some("The macOS default browser could not be detected. Isolated Chromium will be used.".to_string()),
+        None => Some("The macOS default browser could not be detected.".to_string()),
         Some(browser) if !browser.supported => Some(format!(
-            "{} does not support Orchestrator tab groups. Isolated Chromium will be used.",
+            "{} cannot be controlled by Orchestrator. Choose Chrome, Edge, Brave, or Safari 27+ as the macOS default browser.",
             browser.name
         )),
+        Some(browser) if browser.family.as_deref() == Some("safari") => Some(
+            "Safari 27+ detected. Enable “Allow remote automation and external agents” in Safari Developer settings."
+                .to_string(),
+        ),
         Some(_) if !extension_connected => Some(
             "Install or enable the Orchestrator Browser Bridge extension to use your default browser."
                 .to_string(),
@@ -221,7 +226,7 @@ pub(crate) async fn default_browser_install_extension(app: AppHandle) -> Result<
         return Err("Could not reveal the bundled browser extension.".to_string());
     }
     let browser = detect_default_browser()
-        .filter(|browser| browser.supported)
+        .filter(|browser| browser.supported && browser.family.as_deref() != Some("safari"))
         .ok_or_else(|| {
             "Select Chrome, Edge, or Brave as the default browser before installing the extension."
                 .to_string()
@@ -245,6 +250,24 @@ pub(crate) async fn default_browser_open_accessibility_settings() -> Result<(), 
         .map_err(|error| format!("Could not open Accessibility settings: {error}"))?;
     if !status.success() {
         return Err("Could not open Accessibility settings.".to_string());
+    }
+    Ok(())
+}
+
+#[tauri::command]
+#[specta::specta]
+pub(crate) async fn default_browser_enable_safari_automation() -> Result<(), String> {
+    let browser = detect_default_browser()
+        .filter(|browser| browser.family.as_deref() == Some("safari") && browser.supported)
+        .ok_or_else(|| "Safari 27+ is not the current macOS default browser.".to_string())?;
+    let driver = safari_driver_path(&browser)
+        .ok_or_else(|| "Safari's safaridriver executable is unavailable.".to_string())?;
+    let status = Command::new(driver)
+        .arg("--enable")
+        .status()
+        .map_err(|error| format!("Could not enable Safari automation: {error}"))?;
+    if !status.success() {
+        return Err("Safari automation was not enabled. In Safari, enable Allow remote automation and external agents under Developer settings.".to_string());
     }
     Ok(())
 }
@@ -543,7 +566,7 @@ fn resolve_extension_path(app: &AppHandle) -> Result<PathBuf, String> {
     Err("The bundled browser extension is unavailable.".to_string())
 }
 
-fn detect_default_browser() -> Option<DefaultBrowserInfo> {
+pub(crate) fn detect_default_browser() -> Option<DefaultBrowserInfo> {
     #[cfg(not(target_os = "macos"))]
     return None;
     #[cfg(target_os = "macos")]
@@ -558,20 +581,55 @@ fn detect_default_browser() -> Option<DefaultBrowserInfo> {
         }
         let value: Value = serde_json::from_slice(&output.stdout).ok()?;
         let bundle_id = value.get("bundleId")?.as_str()?.to_string();
+        let family = browser_family(&bundle_id);
+        let application_path = value.get("path")?.as_str()?.to_string();
+        let supported = family.as_deref().is_some_and(|family| {
+            family != "safari" || safari_major_version(&application_path) >= Some(27)
+        });
         Some(DefaultBrowserInfo {
-            supported: is_supported_browser_bundle(&bundle_id),
+            supported,
+            family,
             name: value.get("name")?.as_str()?.to_string(),
-            path: value.get("path")?.as_str()?.to_string(),
+            path: application_path,
             bundle_id,
         })
     }
 }
 
-fn is_supported_browser_bundle(bundle_id: &str) -> bool {
-    matches!(
-        bundle_id,
-        "com.google.Chrome" | "com.microsoft.edgemac" | "com.brave.Browser"
-    )
+fn browser_family(bundle_id: &str) -> Option<String> {
+    match bundle_id {
+        "com.google.Chrome" => Some("chrome".to_string()),
+        "com.microsoft.edgemac" => Some("edge".to_string()),
+        "com.brave.Browser" => Some("brave".to_string()),
+        "com.apple.Safari" | "com.apple.SafariTechnologyPreview" => Some("safari".to_string()),
+        _ => None,
+    }
+}
+
+fn safari_major_version(application_path: &str) -> Option<u64> {
+    let output = Command::new("/usr/libexec/PlistBuddy")
+        .args(["-c", "Print :CFBundleShortVersionString"])
+        .arg(Path::new(application_path).join("Contents/Info.plist"))
+        .output()
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    String::from_utf8_lossy(&output.stdout)
+        .trim()
+        .split('.')
+        .next()?
+        .parse()
+        .ok()
+}
+
+pub(crate) fn safari_driver_path(browser: &DefaultBrowserInfo) -> Option<PathBuf> {
+    if browser.bundle_id == "com.apple.Safari" {
+        let system = PathBuf::from("/usr/bin/safaridriver");
+        return system.is_file().then_some(system);
+    }
+    let bundled = Path::new(&browser.path).join("Contents/MacOS/safaridriver");
+    bundled.is_file().then_some(bundled)
 }
 
 #[cfg(target_os = "macos")]
@@ -682,16 +740,16 @@ mod tests {
     use std::sync::atomic::AtomicBool;
 
     #[test]
-    fn supported_browser_detection_is_limited_to_chromium_family() {
-        for id in [
-            "com.google.Chrome",
-            "com.microsoft.edgemac",
-            "com.brave.Browser",
-        ] {
-            assert!(is_supported_browser_bundle(id));
-        }
-        assert!(!is_supported_browser_bundle("com.apple.Safari"));
-        assert!(!is_supported_browser_bundle("org.mozilla.firefox"));
+    fn browser_family_detection_covers_supported_browsers() {
+        assert_eq!(
+            browser_family("com.google.Chrome").as_deref(),
+            Some("chrome")
+        );
+        assert_eq!(
+            browser_family("com.apple.Safari").as_deref(),
+            Some("safari")
+        );
+        assert_eq!(browser_family("org.mozilla.firefox"), None);
     }
 
     #[test]

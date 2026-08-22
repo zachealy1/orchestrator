@@ -61,6 +61,7 @@ import {
   attachDefaultBrowserTab,
   focusBrowserSession,
   installDefaultBrowserExtension,
+  enableSafariAutomation,
   inspectPromptQueueContext,
   inspectDroppedContextPaths,
   listGitBranches,
@@ -1028,8 +1029,6 @@ function App() {
   const {
     computerUseEnabled,
     setComputerUseEnabled,
-    browserExecutionTarget,
-    setBrowserExecutionTarget,
     browserRuntimeStatus,
     refreshBrowserRuntimeStatus,
   } = useComputerUseController();
@@ -7161,7 +7160,7 @@ function App() {
 
   function openSelectedBrowserTabDialog() {
     const session = selectedActiveRunControl?.browserSession;
-    if (!session || session.state.backend !== "default-browser") return;
+    if (!session || session.state.backend !== "browser-bridge") return;
     void loadDefaultBrowserTabsForSession(session.token);
   }
 
@@ -12074,13 +12073,7 @@ function App() {
       runControl.clientId,
       "preparing-browser",
     );
-    if (snapshot.computerUseEnabled) {
-      await requireBundledBrowserSkill(
-        snapshot.profileKey,
-        snapshot.accountId,
-      );
-    }
-    const browserSession = snapshot.computerUseEnabled
+    const browserPreparation = snapshot.computerUseEnabled
       ? await prepareBrowserSession({
           profileKey: snapshot.profileKey,
           workspaceId: snapshot.workspace.id,
@@ -12090,17 +12083,52 @@ function App() {
           threadId: initialThreadId,
           turnId: null,
           accessMode: snapshot.access.accessMode,
-          executionTarget: snapshot.executionSettings.browserExecutionTarget,
           chatTitle:
             (await getChatRecord(chatId))?.title ?? snapshot.promptFallback,
-        })
+        }).catch(() => ({
+          session: null,
+          browserFamily: null,
+          unavailableReason:
+            "Computer Use unavailable; the agent continued without browser access.",
+        }))
       : null;
+    const browserSession = browserPreparation?.session ?? null;
+    if (browserPreparation) {
+      const browserEvent = createRunEventInput(
+        runControl,
+        "browser-availability",
+        browserPreparation.browserFamily,
+        browserSession
+          ? { available: true, family: browserPreparation.browserFamily }
+          : {
+              available: false,
+              family: browserPreparation.browserFamily,
+              reason: browserPreparation.unavailableReason,
+            },
+      );
+      if (browserEvent) await appendRunEvent(browserEvent);
+    }
+    if (browserSession) {
+      await requireBundledBrowserSkill(snapshot.profileKey, snapshot.accountId);
+    } else if (browserPreparation) {
+      const warning =
+        "Computer Use unavailable; the agent continued without browser access.";
+      updateTaskChatEntryRunView(runControl.clientId, (current) => ({
+        ...current,
+        streamEvents: [
+          ...current.streamEvents,
+          {
+            id: `browser-unavailable-${runId}`,
+            kind: "system",
+            text: warning,
+            timestamp: new Date().toISOString(),
+          },
+        ],
+      }));
+    }
     runControl.browserSession = browserSession;
     if (browserSession) {
       activeRunRegistry.touch();
-      if (browserSession.state.fallbackReason) {
-        setStatusMessage(browserSession.state.fallbackReason);
-      }
     }
     const threadConfig = {
       ...(snapshot.useOss
@@ -12536,6 +12564,11 @@ function App() {
       let threadActivePermissionProfile =
         startedThread.activePermissionProfile;
       const browserSession = startedThread.browserSession;
+      if (snapshot.computerUseEnabled && !browserSession) {
+        warnings.push(
+          "Computer Use unavailable; the agent continued without browser access.",
+        );
+      }
       const startThread = startedThread.startFreshThread;
       const nativeTaskWorkspaceBinding =
         startedThread.nativeTaskWorkspaceBinding;
@@ -13516,7 +13549,6 @@ function App() {
       accounts: codexAccountsRef.current,
       selectedAccountId: selectedAccountIdRef.current,
       computerUseEnabled,
-      browserExecutionTarget,
       ossProvider,
     }),
     listModels: listCodexModelsForProfile,
@@ -13566,7 +13598,6 @@ function App() {
       queued.reasoningEffort === active.reasoningEffort &&
       queued.accessMode === active.accessMode &&
       queued.computerUseEnabled === active.computerUseEnabled &&
-      queued.browserExecutionTarget === active.browserExecutionTarget &&
       queued.useOss === active.useOss &&
       queued.ossProvider === active.ossProvider &&
       selectedSession?.threadId === control.threadId &&
@@ -13732,7 +13763,6 @@ function App() {
       intent,
       accessMode,
       computerUseEnabled,
-      browserExecutionTarget,
       model:
         useOss || modelLoadErrorRef.current
           ? null
@@ -14009,7 +14039,6 @@ function App() {
       intent: planMode ? "plan" : "normal",
       accessMode,
       computerUseEnabled,
-      browserExecutionTarget,
       model:
         useOss || modelLoadErrorRef.current
           ? null
@@ -17800,7 +17829,6 @@ function App() {
       intent,
       accessMode,
       computerUseEnabled,
-      browserExecutionTarget,
       model,
       reasoningEffort: model ? reasoningEffort : null,
       useOss: followUpUseOss,
@@ -20274,7 +20302,6 @@ function App() {
               model={{
                 dragRegion: selfWindowDragRegion,
                 computerUseEnabled,
-                browserExecutionTarget,
                 browserRuntimeStatus,
                 githubConnection,
                 githubConnectionPending,
@@ -20295,7 +20322,6 @@ function App() {
               }}
               actions={{
                 setComputerUseEnabled,
-                setBrowserExecutionTarget,
                 installDefaultBrowserExtension: () => {
                   void installDefaultBrowserExtension().catch((error) =>
                     setStatusMessage(errorMessage(error)),
@@ -20307,6 +20333,11 @@ function App() {
                   void openDefaultBrowserAccessibilitySettings().catch(
                     (error) => setStatusMessage(errorMessage(error)),
                   );
+                },
+                enableSafariAutomation: () => {
+                  void enableSafariAutomation()
+                    .then(() => refreshBrowserRuntimeStatus())
+                    .catch((error) => setStatusMessage(errorMessage(error)));
                 },
                 connectGithub: () => void handleConnectGithub(),
                 showGithubLogin: () => setGithubLoginDialogOpen(true),

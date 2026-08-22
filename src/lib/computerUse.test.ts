@@ -10,24 +10,21 @@ describe("computer-use preferences", () => {
   it("defaults missing and malformed preferences to enabled", () => {
     expect(validateComputerUsePreference(null)).toEqual({
       enabled: true,
-      executionTarget: "default-browser",
     });
     expect(validateComputerUsePreference({ enabled: "yes" })).toEqual({
       enabled: true,
-      executionTarget: "default-browser",
     });
     expect(
       readComputerUsePreference({
         getItem: () => "{not-json",
         setItem: () => undefined,
       }),
-    ).toEqual({ enabled: true, executionTarget: "default-browser" });
+    ).toEqual({ enabled: true });
   });
 
   it("preserves an explicit disabled preference", () => {
     expect(validateComputerUsePreference({ enabled: false })).toEqual({
       enabled: false,
-      executionTarget: "default-browser",
     });
     expect(
       readComputerUsePreference({
@@ -37,13 +34,13 @@ describe("computer-use preferences", () => {
             : null,
         setItem: () => undefined,
       }),
-    ).toEqual({ enabled: false, executionTarget: "default-browser" });
+    ).toEqual({ enabled: false });
   });
 
   it("persists only the validated preference", () => {
     const values = new Map<string, string>();
     persistComputerUsePreference(
-      { enabled: false, executionTarget: "isolated" },
+      { enabled: false },
       {
         getItem: (key) => values.get(key) ?? null,
         setItem: (key, value) => values.set(key, value),
@@ -52,7 +49,6 @@ describe("computer-use preferences", () => {
 
     expect(JSON.parse(values.get(COMPUTER_USE_STORAGE_KEY)!)).toEqual({
       enabled: false,
-      executionTarget: "isolated",
     });
   });
 });

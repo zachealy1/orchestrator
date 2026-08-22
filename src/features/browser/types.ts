@@ -1,13 +1,14 @@
 import type { CodexAccessMode, CodexProfileKey } from "../codex/types";
 
-export type BrowserExecutionTarget = "default-browser" | "isolated";
-export type BrowserSessionBackend = "default-browser" | "isolated";
+export type BrowserFamily = "chrome" | "edge" | "brave" | "safari";
+export type BrowserSessionBackend = "browser-bridge" | "safari-mcp";
 
 export type DefaultBrowserInfo = {
   bundleId: string | null;
   name: string | null;
   path: string | null;
   supported: boolean;
+  family: BrowserFamily | null;
 };
 
 export type DefaultBrowserCapabilityStatus = {
@@ -55,7 +56,6 @@ export type BrowserSessionTarget = {
   threadId: string | null;
   turnId: string | null;
   accessMode: CodexAccessMode;
-  executionTarget: BrowserExecutionTarget;
   chatTitle: string;
 };
 
@@ -70,7 +70,7 @@ export type BrowserSessionState = {
   extensionConnected: boolean;
   chatGroupKey: string | null;
   controlledTabId: number | null;
-  fallbackReason: string | null;
+  unavailableReason: string | null;
   browserSkillVersion: string;
   browserServiceCompatible: boolean;
   backendHealthy: boolean;
@@ -80,4 +80,10 @@ export type PreparedBrowserSession = {
   token: string;
   config: Record<string, unknown>;
   state: BrowserSessionState;
+};
+
+export type BrowserSessionPreparation = {
+  session: PreparedBrowserSession | null;
+  unavailableReason: string | null;
+  browserFamily: BrowserFamily | null;
 };

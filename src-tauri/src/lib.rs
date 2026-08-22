@@ -165,6 +165,7 @@ fn command_builder() -> tauri_specta::Builder<tauri::Wry> {
             default_browser::default_browser_capability_status,
             default_browser::default_browser_install_extension,
             default_browser::default_browser_open_accessibility_settings,
+            default_browser::default_browser_enable_safari_automation,
             agent_notifications::agent_notification_permission_status,
             agent_notifications::agent_notification_request_permission,
             agent_notifications::agent_notification_send,
