@@ -2,7 +2,15 @@ import { commands, type RunEventWrite } from "../../generated/tauri";
 import type { PreflightReport, RunListItem, RunRecord, TaskRecord } from "../../features/runs/types";
 import { FrontendDatabase } from "../database";
 
-export type RunEventInput = RunEventWrite;
+export type RunEventType =
+  | "notification"
+  | "server-request"
+  | "process"
+  | "client-action";
+
+export type RunEventInput = Omit<RunEventWrite, "eventType"> & {
+  eventType: RunEventType;
+};
 
 export function createRunRepository(database: FrontendDatabase) {
   const getDatabase = () => database.get();

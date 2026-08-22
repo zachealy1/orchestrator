@@ -12124,8 +12124,8 @@ function App() {
     if (browserPreparation) {
       const browserEvent = createRunEventInput(
         runControl,
-        "browser-availability",
-        browserPreparation.browserFamily,
+        "process",
+        "browser/availability",
         browserSession
           ? { available: true, family: browserPreparation.browserFamily }
           : {

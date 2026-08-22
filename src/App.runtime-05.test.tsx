@@ -911,6 +911,17 @@ describe("Application runtime scenarios 5", () => {
 
   it("continues without Browser configuration when the default browser is unavailable", async () => {
       prepareSignedInRun();
+      const validEventTypes = new Set([
+        "notification",
+        "server-request",
+        "process",
+        "client-action",
+      ]);
+      mocks.appendRunEventMock.mockImplementation(async (event) => {
+        if (!validEventTypes.has(event.eventType)) {
+          throw new Error("The run event is invalid.");
+        }
+      });
       mocks.prepareBrowserSessionMock.mockResolvedValueOnce({
         session: null,
         browserFamily: null,
@@ -925,6 +936,17 @@ describe("Application runtime scenarios 5", () => {
           /Computer Use unavailable; the agent continued without browser access\./,
         ),
       ).toBeInTheDocument();
+      expect(mocks.appendRunEventMock).toHaveBeenCalledWith(
+        expect.objectContaining({
+          eventType: "process",
+          method: "browser/availability",
+          payload: {
+            available: false,
+            family: null,
+            reason: "The Browser Bridge extension is not connected.",
+          },
+        }),
+      );
       const threadStart = mocks.codexRpcMock.mock.calls.find(
         ([, method]) => method === "thread/start",
       );
