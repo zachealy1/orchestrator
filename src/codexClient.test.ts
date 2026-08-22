@@ -48,13 +48,47 @@ describe("Codex account login client", () => {
 
   it("loads skills through the shared default profile", async () => {
     invokeMock.mockResolvedValue({
-      data: [{ id: "review", name: "Code review" }],
+      data: [
+        {
+          cwd: "/tmp/project",
+          errors: [],
+          skills: [
+            {
+              name: "browser:control-in-app-browser",
+              description: "Control the in-app Browser",
+              enabled: true,
+              path: "/tmp/browser/SKILL.md",
+              scope: "system",
+            },
+          ],
+        },
+      ],
+    });
+
+    await expect(listDefaultCodexSkills()).resolves.toEqual([
+      expect.objectContaining({
+        id: "browser:control-in-app-browser",
+        name: "browser:control-in-app-browser",
+      }),
+    ]);
+    expect(invokeMock).toHaveBeenCalledWith("codex_default_profile_rpc", {
+      method: "skills/list",
+      params: { cwds: [], forceReload: false },
+    });
+  });
+
+  it("falls back to the legacy skill endpoint", async () => {
+    invokeMock.mockImplementation(async (_command, input) => {
+      if (input.method === "skills/list") {
+        throw new Error("Method not found");
+      }
+      return { data: [{ id: "review", name: "Code review" }] };
     });
 
     await expect(listDefaultCodexSkills()).resolves.toEqual([
       expect.objectContaining({ id: "review", name: "Code review" }),
     ]);
-    expect(invokeMock).toHaveBeenCalledWith("codex_default_profile_rpc", {
+    expect(invokeMock).toHaveBeenNthCalledWith(2, "codex_default_profile_rpc", {
       method: "skill/list",
       params: { includeHidden: false },
     });

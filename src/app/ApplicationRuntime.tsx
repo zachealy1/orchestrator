@@ -9380,21 +9380,26 @@ function App() {
   async function getCodexSkills(
     profileKey: CodexProfileKey,
     accountId: number,
+    forceReload = false,
   ) {
-    const cached = codexSkillCache.current.get(profileKey);
+    const cached = forceReload
+      ? undefined
+      : codexSkillCache.current.get(profileKey);
     if (cached) {
       return cached;
     }
 
-    const existingRequest = codexSkillRequestCache.current.get(profileKey);
+    const existingRequest = forceReload
+      ? undefined
+      : codexSkillRequestCache.current.get(profileKey);
     if (existingRequest) {
       return existingRequest;
     }
 
     const request = (
       profileKey === DEFAULT_CODEX_PROFILE_KEY
-        ? listDefaultCodexSkills()
-        : listCodexSkills(accountId)
+        ? listDefaultCodexSkills({ forceReload })
+        : listCodexSkills(accountId, { forceReload })
     )
       .then((skills) => {
         codexSkillCache.current.set(profileKey, skills);
@@ -9419,13 +9424,24 @@ function App() {
         }`,
       );
     });
-    const browserSkill = skills.find((skill) => {
+    let browserSkill = skills.find((skill) => {
       const identity = `${skill.id} ${skill.name}`.toLowerCase();
       return (
         identity.includes("browser:control-in-app-browser") ||
         identity.includes("control-in-app-browser")
       );
     });
+    if (!browserSkill) {
+      const refreshedSkills = await getCodexSkills(
+        profileKey,
+        accountId,
+        true,
+      );
+      browserSkill = refreshedSkills.find((skill) => {
+        const identity = `${skill.id} ${skill.name}`.toLowerCase();
+        return identity.includes("control-in-app-browser");
+      });
+    }
     if (!browserSkill) {
       throw new Error(
         "Codex's bundled Browser skill is unavailable for this account. Update Codex or choose a supported account before starting Computer Use.",
@@ -11746,7 +11762,8 @@ function App() {
     const selectedSkills = runControl.browserSession
       ? [
           ...snapshot.selectedSkills.filter(
-            (skill) => skill.name !== "browser:control-in-app-browser",
+            (skill) =>
+              !skill.name.toLowerCase().includes("control-in-app-browser"),
           ),
           {
             id: "browser:control-in-app-browser",

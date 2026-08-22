@@ -1013,6 +1013,45 @@ describe("Application runtime scenarios 5", () => {
         "thread/unsubscribe",
         { threadId: "thread-1" },
       );
+  });
+
+  it("rescans a stale skill catalog before starting Computer Use", async () => {
+      prepareSignedInRun();
+      mocks.listCodexSkillsMock
+        .mockResolvedValueOnce([])
+        .mockResolvedValueOnce([
+          {
+            id: "browser:control-in-app-browser",
+            name: "browser:control-in-app-browser",
+            description: "Control the selected browser for local web testing.",
+          },
+        ]);
+
+      const { user } = await renderApp();
+      await startMockRun(user, "Verify the local app in a browser");
+
+      await waitFor(() =>
+        expect(mocks.listCodexSkillsMock).toHaveBeenCalledTimes(2),
+      );
+      expect(mocks.listCodexSkillsMock).toHaveBeenNthCalledWith(
+        1,
+        7,
+        { forceReload: false },
+      );
+      expect(mocks.listCodexSkillsMock).toHaveBeenNthCalledWith(
+        2,
+        7,
+        { forceReload: true },
+      );
+      expect(mocks.prepareBrowserSessionMock).toHaveBeenCalledTimes(1);
+      expect(
+        mocks.codexRpcMock.mock.calls.some(
+          ([, method]) => method === "turn/start",
+        ),
+      ).toBe(true);
+      expect(
+        screen.queryByText(/bundled Browser skill is unavailable/i),
+      ).not.toBeInTheDocument();
     });
 
   it("generates a concise chat title without delaying the initial turn", async () => {

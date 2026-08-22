@@ -592,15 +592,19 @@ export async function listCodexModels(accountId: number) {
   return models;
 }
 
-export async function listCodexSkills(accountId: number) {
-  const methods = ["skill/list", "skills/list"];
+export async function listCodexSkills(
+  accountId: number,
+  input: { forceReload?: boolean } = {},
+) {
+  const methods: Array<[string, Record<string, unknown>]> = [
+    ["skills/list", { cwds: [], forceReload: input.forceReload ?? false }],
+    ["skill/list", { includeHidden: false }],
+  ];
   let lastError: unknown = null;
 
-  for (const method of methods) {
+  for (const [method, params] of methods) {
     try {
-      const response = await codexRpc<unknown>(accountId, method, {
-        includeHidden: false,
-      });
+      const response = await codexRpc<unknown>(accountId, method, params);
       return extractCodexSkills(response);
     } catch (error) {
       lastError = error;
@@ -612,15 +616,18 @@ export async function listCodexSkills(accountId: number) {
     : new Error("Unable to load Codex skills.");
 }
 
-export async function listDefaultCodexSkills() {
-  const methods = ["skill/list", "skills/list"];
+export async function listDefaultCodexSkills(
+  input: { forceReload?: boolean } = {},
+) {
+  const methods: Array<[string, Record<string, unknown>]> = [
+    ["skills/list", { cwds: [], forceReload: input.forceReload ?? false }],
+    ["skill/list", { includeHidden: false }],
+  ];
   let lastError: unknown = null;
 
-  for (const method of methods) {
+  for (const [method, params] of methods) {
     try {
-      const response = await codexDefaultProfileRpc<unknown>(method, {
-        includeHidden: false,
-      });
+      const response = await codexDefaultProfileRpc<unknown>(method, params);
       return extractCodexSkills(response);
     } catch (error) {
       lastError = error;
@@ -683,7 +690,7 @@ export async function searchCodexFiles(
 
 function extractCodexSkills(payload: unknown): CodexSkillSummary[] {
   const root = readObject(payload);
-  const source =
+  const topLevelSource =
     readArray(payload).length > 0
       ? readArray(payload)
       : readArray(root.skills).length > 0
@@ -691,12 +698,16 @@ function extractCodexSkills(payload: unknown): CodexSkillSummary[] {
         : readArray(root.data).length > 0
           ? readArray(root.data)
           : readArray(root.items);
+  const groupedSkills = topLevelSource.flatMap((item) =>
+    readArray(readObject(item).skills),
+  );
+  const source = groupedSkills.length > 0 ? groupedSkills : topLevelSource;
 
   const seen = new Set<string>();
   return source
     .map((item) => readObject(item))
     .map((item): CodexSkillSummary | null => {
-      if (item.hidden === true) {
+      if (item.hidden === true || item.enabled === false) {
         return null;
       }
 
@@ -721,6 +732,8 @@ function extractCodexSkills(payload: unknown): CodexSkillSummary[] {
         name,
         description:
           readString(item.description) ??
+          readString(item.shortDescription) ??
+          readString(readObject(item.interface).shortDescription) ??
           readString(item.summary) ??
           readString(item.subtitle),
       };
