@@ -559,6 +559,7 @@ import {
   createKanbanChatFilePreviewTarget,
   kanbanRepositoriesToWorkspaceOverview,
   kanbanStatusToWorkspaceRepository,
+  refreshKanbanChatRepositories,
   resolveKanbanChatUndoTarget,
   type KanbanChatGitRepositoryState,
 } from "../features/workspaces/chatGitTarget";
@@ -897,6 +898,8 @@ function App() {
   } = useWorkspaceController();
   const [kanbanChatGitContext, setKanbanChatGitContext] =
     useState<KanbanChatGitContext | null>(null);
+  const kanbanChatGitContextRef = useRef<KanbanChatGitContext | null>(null);
+  kanbanChatGitContextRef.current = kanbanChatGitContext;
   const gitDialogScopeRef = useRef<{
     workspaceId: number;
     chatId: number | null;
@@ -10636,6 +10639,31 @@ function App() {
     });
   }
 
+  async function refreshKanbanChatGitRepositories(
+    chatId: number,
+    workspacePath: string,
+  ) {
+    const context = kanbanChatGitContextRef.current;
+    if (context?.kind !== "kanban" || context.chatId !== chatId) return;
+
+    const cardId = context.cardId;
+    const repositories = await refreshKanbanChatRepositories(
+      workspacePath,
+      context.repositories,
+    );
+
+    setKanbanChatGitContext((current) => {
+      if (
+        current?.kind !== "kanban" ||
+        current.chatId !== chatId ||
+        current.cardId !== cardId
+      ) {
+        return current;
+      }
+      return { ...current, repositories };
+    });
+  }
+
   async function resolveKanbanGitOperationBinding(
     request: WorkspaceGitOperationRequest,
   ) {
@@ -16611,6 +16639,12 @@ function App() {
             showLoading: false,
             force: true,
           }),
+          activeChatId !== null
+            ? refreshKanbanChatGitRepositories(
+                activeChatId,
+                completedWorkspace.path,
+              )
+            : Promise.resolve(),
           refreshWorkspaceDirectoriesAfterRun(completedWorkspace),
           selectedWorkspaceRef.current?.id === completedWorkspace.id
             ? refreshAnalyticsForCurrentView(completedWorkspace.id)

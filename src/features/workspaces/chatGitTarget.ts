@@ -1,7 +1,9 @@
-import type {
-  KanbanGitBinding,
-  KanbanGitDiffResult,
-  KanbanGitStatusResult,
+import {
+  readKanbanGitDiff,
+  readKanbanGitStatus,
+  type KanbanGitBinding,
+  type KanbanGitDiffResult,
+  type KanbanGitStatusResult,
 } from "../kanban/api";
 import type {
   WorkspaceGitFileStatus,
@@ -312,6 +314,48 @@ export function kanbanStatusToWorkspaceRepository(
       label: pathLabel(binding),
     },
   };
+}
+
+export async function refreshKanbanChatRepositories(
+  workspacePath: string,
+  repositories: KanbanChatGitRepositoryState[],
+  readers: {
+    readStatus: (binding: KanbanGitBinding) => Promise<KanbanGitStatusResult>;
+    readDiff: (binding: KanbanGitBinding) => Promise<KanbanGitDiffResult>;
+  } = {
+    readStatus: readKanbanGitStatus,
+    readDiff: readKanbanGitDiff,
+  },
+) {
+  return Promise.all(
+    repositories.map(
+      async (candidate): Promise<KanbanChatGitRepositoryState> => {
+        try {
+          const [status, diff] = await Promise.all([
+            readers.readStatus(candidate.binding),
+            readers.readDiff(candidate.binding),
+          ]);
+          return {
+            status: "loaded",
+            binding: status.binding,
+            repository: kanbanStatusToWorkspaceRepository(
+              workspacePath,
+              status,
+              diff,
+            ),
+            error: null,
+          };
+        } catch (error) {
+          return {
+            status: "error",
+            binding: candidate.binding,
+            repository: null,
+            error: error instanceof Error ? error.message : String(error),
+          };
+        }
+      },
+    ),
+  );
 }
 
 export function kanbanRepositoriesToWorkspaceOverview(

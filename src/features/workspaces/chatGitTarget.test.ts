@@ -8,6 +8,7 @@ import {
   createKanbanChatFilePreviewTarget,
   kanbanRepositoriesToWorkspaceOverview,
   kanbanStatusToWorkspaceRepository,
+  refreshKanbanChatRepositories,
   resolveKanbanChatFileTarget,
   resolveKanbanChatUndoTarget,
 } from "./chatGitTarget";
@@ -219,5 +220,26 @@ describe("chat Git target mapping", () => {
     expect(overview?.repositories).toHaveLength(1);
     expect(overview?.changedRepositoryCount).toBe(1);
     expect(overview?.additions).toBe(1);
+  });
+
+  it("reloads an isolated card repository after its turn changes files", async () => {
+    const repositories = await refreshKanbanChatRepositories(
+      "/repo",
+      [{ status: "loading", binding, repository: null, error: null }],
+      {
+        readStatus: async () => status,
+        readDiff: async () => diff,
+      },
+    );
+
+    expect(repositories[0]).toMatchObject({
+      status: "loaded",
+      repository: {
+        currentBranch: "codex/add-batman-file",
+        aheadCount: 1,
+        additions: 1,
+        files: [{ repositoryRelativePath: "batman.txt" }],
+      },
+    });
   });
 });
