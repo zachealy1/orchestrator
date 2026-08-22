@@ -345,6 +345,83 @@ describe("Application runtime scenarios 6", () => {
       });
       mocks.listLocalChatTranscriptMock.mockResolvedValue([sharedRun]);
       mocks.getChatRecordMock.mockResolvedValue(sharedChat);
+      const sharedCard = {
+        id: "card-shared-edit",
+        workspaceId: workspace.id,
+        chatId: sharedChat.id,
+        title: sharedChat.title,
+        description: "Original shared prompt",
+        accountId: null,
+        accessMode: "ask-for-approval" as const,
+        model: defaultCodexModel.model,
+        reasoningLevel: "medium",
+        executionSettingsJson: sharedRun.execution_settings_json,
+        repositoryScope: "selected" as const,
+        stage: "in_progress" as const,
+        sortPosition: 1_000,
+        executionState: "failed" as const,
+        reviewState: "none" as const,
+        reviewChannel: null,
+        currentAttemptId: "attempt-failed-edit",
+        stateVersion: 5,
+        archivedAt: null,
+        deletedAt: null,
+        approvedAt: null,
+        lastError: "Previous setup failed",
+        hasInheritedContext: false,
+        hasStartedTurn: true,
+        createdAt: "2026-06-30T09:00:00Z",
+        updatedAt: "2026-06-30T09:01:00Z",
+        repositories: [
+          {
+            repositoryPath: workspace.path,
+            relativePath: ".",
+            label: workspace.label,
+            includeDirtyChanges: false,
+          },
+        ],
+        pullRequests: [],
+      };
+      mocks.getKanbanCardForChatMock.mockResolvedValue(sharedCard);
+      mocks.claimKanbanAttemptMock.mockResolvedValue({
+        card: {
+          ...sharedCard,
+          executionState: "starting",
+          currentAttemptId: "attempt-shared-edit-retry",
+          stateVersion: 6,
+        },
+        attempt: {
+          id: "attempt-shared-edit-retry",
+          cardId: sharedCard.id,
+          generation: 6,
+          kind: "retry",
+          status: "starting",
+          prompt: "Edited shared prompt",
+          runId: null,
+          taskId: null,
+          threadId: null,
+          turnId: null,
+          executionRoot: null,
+          lastEventSequence: 0,
+          error: null,
+          startedAt: "2026-06-30T09:02:00Z",
+          completedAt: null,
+        },
+      });
+      mocks.loadKanbanGitBindingsMock.mockResolvedValue([
+        {
+          sourceRepositoryPath: workspace.path,
+          relativePath: ".",
+          executionRoot,
+          sourceBranch: "main",
+          baseBranch: "main",
+          baseCommit: "0123456789abcdef",
+          cardBranch,
+          worktreePath,
+          status: "ready",
+          error: null,
+        },
+      ]);
       mocks.listGitBranchesMock.mockResolvedValue({
         branches: [cardBranch],
         currentBranch: cardBranch,
@@ -368,6 +445,16 @@ describe("Application runtime scenarios 6", () => {
         "Edited shared prompt",
       );
       await user.click(screen.getByRole("button", { name: "Run edited prompt" }));
+
+      await waitFor(() =>
+        expect(mocks.claimKanbanAttemptMock).toHaveBeenCalledWith(
+          expect.objectContaining({
+            card: sharedCard,
+            kind: "retry",
+            prompt: "Edited shared prompt",
+          }),
+        ),
+      );
 
       await waitFor(() =>
         expect(mocks.codexDefaultProfileRpcMock).toHaveBeenCalledWith(
@@ -406,16 +493,21 @@ describe("Application runtime scenarios 6", () => {
           }),
         ),
       );
-      await user.click(await screen.findByRole("radio", { name: "Kanban" }));
-      await user.click(
-        screen.getByRole("button", { name: "Open test Kanban conversation" }),
-      );
       await waitFor(() =>
         expect(
           screen
             .getAllByLabelText("Submitted prompt")
             .some((prompt) => prompt.textContent?.includes("Edited shared prompt")),
         ).toBe(true),
+      );
+      expect(mocks.updateKanbanAttemptMock).toHaveBeenCalledWith(
+        expect.objectContaining({
+          cardId: sharedCard.id,
+          attemptId: "attempt-shared-edit-retry",
+          generation: 6,
+          status: "running",
+          turnId: "turn-1",
+        }),
       );
 
       await emitCodexNotification(
@@ -452,6 +544,16 @@ describe("Application runtime scenarios 6", () => {
         expect(mocks.updateRunMock).toHaveBeenCalledWith(
           expect.any(Number),
           expect.objectContaining({ status: "completed" }),
+        ),
+      );
+      await waitFor(() =>
+        expect(mocks.updateKanbanAttemptMock).toHaveBeenCalledWith(
+          expect.objectContaining({
+            cardId: sharedCard.id,
+            attemptId: "attempt-shared-edit-retry",
+            generation: 6,
+            status: "completed",
+          }),
         ),
       );
       await waitFor(() =>

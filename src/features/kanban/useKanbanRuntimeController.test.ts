@@ -297,6 +297,56 @@ describe("Kanban runtime controller", () => {
     expect(dependencies.refreshBoards).toHaveBeenCalledOnce();
   });
 
+  it("preserves edited-prompt replacement state on a claimed Kanban retry", async () => {
+    const { controller, dependencies, native, claimed } = harness();
+    const target = card({
+      executionState: "failed",
+      hasStartedTurn: true,
+      currentAttemptId: "attempt-failed",
+    });
+    const restoreEntry = { clientId: "submitted-1" } as never;
+    vi.mocked(native.claimAttempt).mockImplementation(async (input) => ({
+      ...claimed,
+      attempt: {
+        ...claimed.attempt,
+        kind: input.kind,
+        prompt: input.prompt,
+      },
+    }));
+
+    await controller.launchCard(target, "retry", "Edited card prompt", {
+      turnIndex: 4,
+      threadStrategy: { kind: "fresh" },
+      previousChatContext: "Earlier completed conversation",
+      supersededRunIds: [19],
+      replacementClientId: "submitted-1",
+      restoreEntryOnSetupFailure: restoreEntry,
+      promptFallback: "Edited card prompt fallback",
+    });
+
+    expect(native.claimAttempt).toHaveBeenCalledWith(
+      expect.objectContaining({
+        card: target,
+        kind: "retry",
+        prompt: "Edited card prompt",
+      }),
+    );
+    expect(dependencies.getNextTurnIndex).not.toHaveBeenCalled();
+    const [snapshot] = dependencies.beginRun.mock.calls[0]!;
+    expect(snapshot).toMatchObject({
+      promptText: "Edited card prompt",
+      promptFallback: "Edited card prompt fallback",
+      turnIndex: 4,
+      threadId: null,
+      threadStrategy: { kind: "fresh" },
+      previousChatContext: "Earlier completed conversation",
+      supersededRunIds: [19],
+      replacementClientId: "submitted-1",
+      restoreEntryOnSetupFailure: restoreEntry,
+      kanbanAttempt: expect.objectContaining({ attemptId: "attempt-1" }),
+    });
+  });
+
   it("replays captured composer settings for newly created cards", async () => {
     const { controller, dependencies } = harness();
     const executionSettings = createRunExecutionSettings({

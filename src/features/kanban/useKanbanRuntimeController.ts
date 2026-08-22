@@ -112,6 +112,13 @@ export type KanbanLaunchOptions = {
   executionSettings?: RunExecutionSettings;
   queueItemId?: string;
   clientUserMessageId?: string;
+  turnIndex?: number;
+  threadStrategy?: RunSetupSnapshot["threadStrategy"];
+  previousChatContext?: string | null;
+  supersededRunIds?: number[];
+  replacementClientId?: string | null;
+  restoreEntryOnSetupFailure?: RunSetupSnapshot["restoreEntryOnSetupFailure"];
+  promptFallback?: string;
 };
 
 function errorMessage(error: unknown) {
@@ -323,7 +330,8 @@ export function createKanbanRuntimeController<
           profileKey,
           status: "starting",
         });
-        const turnIndex = await dependencies.getNextTurnIndex(chat.id);
+        const turnIndex =
+          options?.turnIndex ?? (await dependencies.getNextTurnIndex(chat.id));
         const currentThreadId = chat.codex_thread_id;
         const profileChanged = Boolean(
           chat.profile_key && chat.profile_key !== profileKey,
@@ -331,9 +339,30 @@ export function createKanbanRuntimeController<
         const inheritedContext = currentThreadId && !profileChanged
           ? null
           : await native.loadInheritedContext(card.id);
+        const defaultThreadStrategy: RunSetupSnapshot["threadStrategy"] =
+          profileChanged
+            ? {
+                kind: "handoff",
+                handoff: {
+                  workspaceId: workspace.id,
+                  chatId: chat.id,
+                  fromProfileKey: chat.profile_key as CodexProfileKey,
+                  fromThreadId: currentThreadId,
+                  targetAccountId: accountId,
+                  targetProfileKey: profileKey,
+                  adoptingExternalChat: false,
+                },
+              }
+            : currentThreadId
+              ? { kind: "resume" }
+              : { kind: "fresh" };
+        const threadStrategy = options?.threadStrategy ?? defaultThreadStrategy;
+        const hasExplicitPreviousContext =
+          options !== undefined &&
+          Object.prototype.hasOwnProperty.call(options, "previousChatContext");
         const snapshot: RunSetupSnapshot = {
           promptText: effectivePrompt,
-          promptFallback: effectivePrompt,
+          promptFallback: options?.promptFallback ?? effectivePrompt,
           workspace: { ...workspace, path: executionRoot },
           sourceWorkspacePath: workspace.path,
           nativeTaskWorkspaceBinding,
@@ -359,27 +388,19 @@ export function createKanbanRuntimeController<
           goalMode: runExecutionSettings.goalMode,
           loginState: "idle",
           chatId: chat.id,
-          threadId: profileChanged ? null : currentThreadId,
+          threadId:
+            threadStrategy.kind === "fresh" || profileChanged
+              ? null
+              : currentThreadId,
           turnIndex,
-          threadStrategy: profileChanged
-            ? {
-                kind: "handoff",
-                handoff: {
-                  workspaceId: workspace.id,
-                  chatId: chat.id,
-                  fromProfileKey: chat.profile_key as CodexProfileKey,
-                  fromThreadId: currentThreadId,
-                  targetAccountId: accountId,
-                  targetProfileKey: profileKey,
-                  adoptingExternalChat: false,
-                },
-              }
-            : currentThreadId
-              ? { kind: "resume" }
-              : { kind: "fresh" },
-          previousChatContext:
-            nativeTaskWorkspaceBinding.pendingContinuationContext ??
-            inheritedContext,
+          threadStrategy,
+          previousChatContext: hasExplicitPreviousContext
+            ? options?.previousChatContext ?? null
+            : nativeTaskWorkspaceBinding.pendingContinuationContext ??
+              inheritedContext,
+          supersededRunIds: options?.supersededRunIds,
+          replacementClientId: options?.replacementClientId,
+          restoreEntryOnSetupFailure: options?.restoreEntryOnSetupFailure,
           executionSettings: runExecutionSettings,
           restorePromptOnSetupFailure: false,
           queueItemId: options?.queueItemId ?? null,

@@ -14592,10 +14592,18 @@ function App() {
     let originalRepositoryPath = originalSettings.selectedRepositoryPath;
     let executionWorkspace = workspace;
     let nativeTaskWorkspaceBinding: NativeTaskWorkspaceBinding | null = null;
+    let kanbanCard: KanbanCardRecord | null = null;
     try {
       if (usesDefaultProfile && chatId) {
         const chat = await getChatRecord(chatId);
         if (chat?.surface === "kanban") {
+          kanbanCard = await getKanbanCardForChat(chatId);
+          if (!kanbanCard) {
+            showRerunIssue(
+              "The Kanban card for this conversation is no longer available.",
+            );
+            return;
+          }
           nativeTaskWorkspaceBinding = parseNativeTaskWorkspaceBinding(
             chat.native_workspace_binding_json,
           );
@@ -14697,6 +14705,51 @@ function App() {
       const currentTurnIndex = chatEntry.turnIndex ?? 0;
       return currentTurnIndex > 0 && currentTurnIndex < editedTurnIndex;
     });
+    const rerunExecutionSettings = createRunExecutionSettings({
+      ...originalSettings,
+      selectedRepositoryPath: originalRepositoryPath,
+      contextFiles: originalContextFiles,
+    });
+    const previousChatContext = buildPreviousChatContext(previousEntries);
+    if (kanbanCard?.hasStartedTurn) {
+      try {
+        if (
+          ["starting", "running", "waiting_user", "waiting_approval"].includes(
+            kanbanCard.executionState,
+          )
+        ) {
+          throw new Error("The card still has an active workflow.");
+        }
+        if (kanbanCard.stage === "done") {
+          kanbanCard = await reopenKanbanCard(kanbanCard);
+          refreshKanbanBoards();
+        }
+        const continuationKind = ["paused", "blocked", "interrupted"].includes(
+          kanbanCard.executionState,
+        )
+          ? "resume"
+          : ["failed", "stopped"].includes(kanbanCard.executionState)
+            ? "retry"
+            : "request_changes";
+        await kanbanRuntime.launchCard(kanbanCard, continuationKind, promptText, {
+          executionSettings: rerunExecutionSettings,
+          turnIndex: editedTurnIndex,
+          threadStrategy: { kind: "fresh" },
+          previousChatContext,
+          supersededRunIds: entry.runId !== null ? [entry.runId] : [],
+          replacementClientId: entry.clientId,
+          restoreEntryOnSetupFailure: entry,
+          promptFallback: nextPrompt,
+        });
+      } catch (error) {
+        showRerunIssue(
+          `Could not rerun the Kanban prompt: ${
+            error instanceof Error ? error.message : String(error)
+          }`,
+        );
+      }
+      return;
+    }
     const snapshot: RunSetupSnapshot = {
       promptText,
       promptFallback: nextPrompt,
@@ -14730,16 +14783,12 @@ function App() {
       threadId: null,
       turnIndex: editedTurnIndex,
       threadStrategy: { kind: "fresh" },
-      previousChatContext: buildPreviousChatContext(previousEntries),
+      previousChatContext,
       supersededRunIds: entry.runId !== null ? [entry.runId] : [],
       replacementClientId: entry.clientId,
       restoreEntryOnSetupFailure: entry,
       restorePromptOnSetupFailure: false,
-      executionSettings: createRunExecutionSettings({
-        ...originalSettings,
-        selectedRepositoryPath: originalRepositoryPath,
-        contextFiles: originalContextFiles,
-      }),
+      executionSettings: rerunExecutionSettings,
     };
 
     const runControl = beginOptimisticRun(snapshot);
