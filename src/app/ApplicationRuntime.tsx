@@ -3584,9 +3584,11 @@ function App() {
     let defaultProfileAuth: CodexAccountResponse | null = null;
     try {
       await connectDefaultCodexProfile();
-      defaultProfileAuth = await codexDefaultProfileRpc<CodexAccountResponse>(
-        "account/read",
-        { refreshToken: true },
+      defaultProfileAuth = normalizeCodexAccountResponse(
+        await codexDefaultProfileRpc<unknown>(
+          "account/read",
+          { refreshToken: true },
+        ),
       );
       setConnectedAccountIds((current) => {
         const next = new Set(current).add(0);
@@ -4598,7 +4600,9 @@ function App() {
 
   async function refreshAccountState(accountId: number, refreshToken = true) {
     try {
-      const response = await readCodexAccount(accountId, { refreshToken });
+      const response = normalizeCodexAccountResponse(
+        await readCodexAccount(accountId, { refreshToken }),
+      );
       const chatgptAccount =
         response.account?.type === "chatgpt" ? response.account : null;
       const existing = codexAccountsRef.current.find(
