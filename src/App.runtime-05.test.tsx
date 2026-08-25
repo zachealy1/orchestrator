@@ -309,6 +309,38 @@ describe("Application runtime scenarios 5", () => {
       expect(screen.queryByLabelText("Log out of Codex")).not.toBeInTheDocument();
     });
 
+  it("handles malformed shared-profile account/read responses on visibility refresh", async () => {
+      const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+      try {
+        mocks.codexDefaultProfileRpcMock.mockImplementation(async (method: string) => {
+          if (method === "account/read") {
+            return undefined;
+          }
+          return {};
+        });
+
+        await renderApp();
+        window.dispatchEvent(new Event("focus"));
+
+        await waitFor(() =>
+          expect(mocks.codexDefaultProfileRpcMock).toHaveBeenCalledWith(
+            "account/read",
+            { refreshToken: false },
+          ),
+        );
+
+        const sharedRefreshWarnings = warnSpy.mock.calls.filter(
+          ([message]) =>
+            typeof message === "string" &&
+            message.includes("Could not refresh the shared Codex account"),
+        );
+        expect(sharedRefreshWarnings).toHaveLength(0);
+        expect(screen.getByRole("button", { name: "Settings" })).toBeInTheDocument();
+      } finally {
+        warnSpy.mockRestore();
+      }
+    });
+
   it("starts browser login and shows waiting status", async () => {
       mocks.readAgentNotificationPermissionStatusMock.mockResolvedValue("allowed");
       const { user } = await renderApp();

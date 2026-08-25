@@ -196,6 +196,16 @@ describe("Application runtime scenarios 3", () => {
         ],
       });
       mocks.codexDefaultProfileRpcMock.mockImplementation(async (method: string) => {
+        if (method === "account/read") {
+          return {
+            account: {
+              type: "chatgpt",
+              email: "shared@example.com",
+              planType: "pro",
+            },
+            requiresOpenaiAuth: false,
+          };
+        }
         if (method === "thread/list") {
           return {
             threads: [
@@ -484,8 +494,127 @@ describe("Application runtime scenarios 3", () => {
       );
     });
 
+  it("fails shared-profile run setup cleanly when account/read returns malformed auth", async () => {
+      const sharedWorkspace = {
+        ...workspace,
+        default_account_id: null,
+        default_profile_key: "default",
+      };
+      mocks.listWorkspacesMock.mockResolvedValue([sharedWorkspace]);
+      mocks.codexDefaultProfileRpcMock.mockImplementation(
+        async (method: string, params?: Record<string, unknown>) => {
+          if (method === "account/read") {
+            if (params?.refreshToken === false) {
+              return {
+                account: {
+                  type: "chatgpt",
+                  email: "shared@example.com",
+                  planType: "pro",
+                },
+                requiresOpenaiAuth: false,
+              };
+            }
+            return undefined;
+          }
+          if (method === "model/list") {
+            return { data: [defaultCodexModel], nextCursor: null };
+          }
+          if (method === "thread/list") {
+            return { threads: [] };
+          }
+          if (method === "thread/start") {
+            return { thread: { id: "shared-thread-1" } };
+          }
+          if (method === "thread/name/set") {
+            return {};
+          }
+          if (method === "thread/read") {
+            return {
+              thread: {
+                id: params?.threadId,
+                cwd: sharedWorkspace.path,
+              },
+            };
+          }
+          if (method === "command/exec") {
+            return {
+              exitCode: 0,
+              stdout: `${String(params?.cwd ?? sharedWorkspace.path)}\n`,
+              stderr: "",
+            };
+          }
+          if (method === "turn/start") {
+            return { turn: { id: "shared-turn-1" } };
+          }
+          return {};
+        },
+      );
+
+      const { user } = await renderApp();
+      await user.type(screen.getByLabelText("Prompt"), "Share this task with Codex");
+      await user.click(screen.getByRole("button", { name: /run codex/i }));
+
+      expect(screen.getByLabelText("Preparing run")).toHaveTextContent(
+        "Preparing run...",
+      );
+      expect(
+        await screen.findByLabelText("Run error"),
+      ).toHaveTextContent(
+        "Sign in to the Codex app account before starting this shared chat.",
+      );
+      expect(
+        mocks.codexDefaultProfileRpcMock.mock.calls.some(
+          ([method]) => method === "account/read",
+        ),
+      ).toBe(true);
+      expect(
+        mocks.codexDefaultProfileRpcMock.mock.calls.some(
+          ([method]) => method === "thread/start" || method === "turn/start",
+        ),
+      ).toBe(false);
+      expect(mocks.createRunMock).not.toHaveBeenCalled();
+    });
+
   it("adopts an external chat into a managed account without losing imported turns", async () => {
       prepareSignedInRun();
+      mocks.codexDefaultProfileRpcMock.mockImplementation(
+        async (method: string, params?: Record<string, unknown>) => {
+          if (method === "account/read") {
+            return {
+              account: {
+                type: "chatgpt",
+                email: signedInAccount.email,
+                planType: signedInAccount.plan_type,
+              },
+              requiresOpenaiAuth: false,
+            };
+          }
+          if (method === "model/list") {
+            return { data: [defaultCodexModel], nextCursor: null };
+          }
+          if (method === "thread/list") {
+            return { threads: [] };
+          }
+          if (method === "thread/start") {
+            return { thread: { id: "thread-1" } };
+          }
+          if (method === "thread/name/set") {
+            return {};
+          }
+          if (method === "thread/read") {
+            return {
+              thread: {
+                id: params?.threadId,
+                cwd: workspace.path,
+              },
+            };
+          }
+          if (method === "turn/start") {
+            return { turn: { id: "turn-1" } };
+          }
+          return {};
+        },
+      );
       mocks.listCodexAccountsMock.mockResolvedValue([
         signedInAccount,
         signedInAccount2,
