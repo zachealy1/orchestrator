@@ -3905,7 +3905,8 @@ function App() {
         "account/read",
         { refreshToken: false },
       );
-      if (!auth.account || auth.requiresOpenaiAuth) {
+      const normalizedAuth = normalizeCodexAccountResponse(auth);
+      if (!normalizedAuth.account || normalizedAuth.requiresOpenaiAuth) {
         throw new Error(
           "Sign in to the Codex app account to associate Kanban tasks with this project.",
         );
@@ -9678,6 +9679,27 @@ function App() {
     await probeCollaborationModes(profileKey, accountId);
   }
 
+  function normalizeCodexAccountResponse(
+    response: unknown,
+  ): CodexAccountResponse {
+    const candidate = (response && typeof response === "object"
+      ? response
+      : null) as Partial<CodexAccountResponse> | null;
+    const accountCandidate = candidate?.account;
+    const account =
+      accountCandidate &&
+      typeof accountCandidate === "object" &&
+      "type" in accountCandidate
+        ? (accountCandidate as NonNullable<CodexAccountResponse["account"]>)
+        : null;
+    const requiresOpenaiAuth = candidate?.requiresOpenaiAuth;
+    return {
+      account,
+      requiresOpenaiAuth:
+        typeof requiresOpenaiAuth === "boolean" ? requiresOpenaiAuth : true,
+    };
+  }
+
   async function refreshDefaultProfileAuthentication(options: {
     refreshToken?: boolean;
   } = {}) {
@@ -9698,8 +9720,9 @@ function App() {
         "account/read",
         { refreshToken: options.refreshToken ?? false },
       );
-      const account = auth?.account ?? null;
-      const requiresOpenaiAuth = Boolean(auth?.requiresOpenaiAuth);
+      const normalizedAuth = normalizeCodexAccountResponse(auth);
+      const account = normalizedAuth.account;
+      const requiresOpenaiAuth = normalizedAuth.requiresOpenaiAuth;
       const authenticated = Boolean(account && !requiresOpenaiAuth);
       setDefaultProfileAuthenticated(authenticated);
       if (selectedAccountIdRef.current === 0) {
@@ -9888,12 +9911,20 @@ function App() {
           "account/read",
           { refreshToken: true },
         );
-        setCodexAccount(auth.account);
-        setRequiresOpenaiAuth(auth.requiresOpenaiAuth);
+        const normalizedAuth = normalizeCodexAccountResponse(auth);
+        setCodexAccount(normalizedAuth.account);
+        setRequiresOpenaiAuth(normalizedAuth.requiresOpenaiAuth);
         setDefaultProfileAuthenticated(
-          Boolean(auth.account && !auth.requiresOpenaiAuth),
+          Boolean(
+            normalizedAuth.account && !normalizedAuth.requiresOpenaiAuth,
+          ),
         );
-        if (shouldBlockRunForAuth(auth.requiresOpenaiAuth, auth.account)) {
+        if (
+          shouldBlockRunForAuth(
+            normalizedAuth.requiresOpenaiAuth,
+            normalizedAuth.account,
+          )
+        ) {
           setModels([]);
           setSelectedModelId(null);
           setStatusMessage("Sign in to the Codex app account before using shared chats.");
@@ -10083,7 +10114,16 @@ function App() {
             refreshToken: true,
           })
         : await refreshAccountState(candidate.targetAccountId, true);
-      if (shouldBlockRunForAuth(authState.requiresOpenaiAuth, authState.account)) {
+      const normalizedAuthState = candidate.targetProfileKey ===
+        DEFAULT_CODEX_PROFILE_KEY
+        ? normalizeCodexAccountResponse(authState)
+        : authState;
+      if (
+        shouldBlockRunForAuth(
+          normalizedAuthState.requiresOpenaiAuth,
+          normalizedAuthState.account,
+        )
+      ) {
         throw new Error("Sign in to the selected Codex account first.");
       }
 
@@ -11402,8 +11442,14 @@ function App() {
         "account/read",
         { refreshToken: true },
       );
+      const normalizedAuthState = normalizeCodexAccountResponse(authState);
       ensureRunControlActive(runControl);
-      if (shouldBlockRunForAuth(authState.requiresOpenaiAuth, authState.account)) {
+      if (
+        shouldBlockRunForAuth(
+          normalizedAuthState.requiresOpenaiAuth,
+          normalizedAuthState.account,
+        )
+      ) {
         throw new Error(
           "Sign in to the Codex app account before starting this shared chat.",
         );
