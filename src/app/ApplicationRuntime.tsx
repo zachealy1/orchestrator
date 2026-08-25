@@ -9698,11 +9698,13 @@ function App() {
         "account/read",
         { refreshToken: options.refreshToken ?? false },
       );
-      const authenticated = Boolean(auth.account && !auth.requiresOpenaiAuth);
+      const account = auth?.account ?? null;
+      const requiresOpenaiAuth = Boolean(auth?.requiresOpenaiAuth);
+      const authenticated = Boolean(account && !requiresOpenaiAuth);
       setDefaultProfileAuthenticated(authenticated);
       if (selectedAccountIdRef.current === 0) {
-        setCodexAccount(auth.account);
-        setRequiresOpenaiAuth(auth.requiresOpenaiAuth);
+        setCodexAccount(account);
+        setRequiresOpenaiAuth(requiresOpenaiAuth);
         if (authenticated && modelsRef.current.length === 0) {
           await refreshCodexModels(0);
         }
