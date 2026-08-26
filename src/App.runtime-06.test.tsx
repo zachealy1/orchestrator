@@ -974,6 +974,28 @@ describe("Application runtime scenarios 6", () => {
       );
     });
 
+  it("blocks managed-account run setup when account/read returns malformed auth", async () => {
+      prepareSignedInRun();
+      mocks.readCodexAccountMock.mockImplementation(async () => ({}));
+
+      const { user } = await renderApp();
+      await user.type(screen.getByLabelText("Prompt"), "Run with bad account data");
+      await user.click(screen.getByRole("button", { name: /run codex/i }));
+
+      expect(mocks.createChatMock).not.toHaveBeenCalled();
+      expect(mocks.createRunMock).not.toHaveBeenCalled();
+      expect(
+        mocks.codexRpcMock.mock.calls.some(
+          ([, method]) =>
+            method === "thread/start" || method === "turn/start",
+        ),
+      ).toBe(false);
+      expect(screen.getByLabelText("Prompt")).toHaveValue(
+        "Run with bad account data",
+      );
+      expect(screen.queryByLabelText("Preparing run")).not.toBeInTheDocument();
+  });
+
   it("starts a fresh Codex thread after New chat is clicked", async () => {
       prepareSignedInRun();
       mocks.createChatMock
