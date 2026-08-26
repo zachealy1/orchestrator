@@ -712,6 +712,23 @@ async fn insert_operation(
     Ok(false)
 }
 
+async fn insert_local_review_operation(
+    transaction: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
+    request: &ApproveKanbanLocalReviewRequest,
+    workspace_id: i64,
+) -> Result<bool, String> {
+    let request_fingerprint = operation_fingerprint(request)?;
+    insert_operation(
+        transaction,
+        &request.operation_id,
+        Some(&request.card_id),
+        workspace_id,
+        "approve_local_review",
+        &request_fingerprint,
+    )
+    .await
+}
+
 async fn complete_operation(
     transaction: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
     operation_id: &str,
@@ -3470,19 +3487,6 @@ pub async fn kanban_approve_local_review(
     {
         return Err("Only a completed card in local review can be approved.".to_string());
     }
-    let existing: Option<String> =
-        sqlx::query_scalar("SELECT status FROM kanban_operations WHERE operation_id = ?1")
-            .bind(&request.operation_id)
-            .fetch_optional(&mut *connection)
-            .await
-            .map_err(|error| format!("Local review state could not be checked: {error}"))?;
-    if existing.as_deref() == Some("completed") {
-        drop(connection);
-        return local_review_projection(&app, &request.card_id).await;
-    }
-    if existing.is_some() {
-        return Err("This local review operation is already running.".to_string());
-    }
     let workspace_id: i64 = card.get("workspace_id");
     let objective: String = card.get("description");
     let account_id: Option<i64> = card.get("account_id");
@@ -3496,17 +3500,19 @@ pub async fn kanban_approve_local_review(
     .fetch_optional(&mut *connection)
     .await
     .unwrap_or(None);
-    sqlx::query(
-        "INSERT INTO kanban_operations (
-             operation_id, card_id, workspace_id, action, request_hash, status
-         ) VALUES (?1, ?2, ?3, 'approve_local_review', ?1, 'pending')",
-    )
-    .bind(&request.operation_id)
-    .bind(&request.card_id)
-    .bind(workspace_id)
-    .execute(&mut *connection)
-    .await
-    .map_err(|error| format!("Local review state could not be saved: {error}"))?;
+    let mut operation_transaction = connection
+        .begin()
+        .await
+        .map_err(|error| format!("Local review state could not be saved: {error}"))?;
+    if !insert_local_review_operation(&mut operation_transaction, &request, workspace_id).await? {
+        operation_transaction.rollback().await.ok();
+        drop(connection);
+        return local_review_projection(&app, &request.card_id).await;
+    }
+    operation_transaction
+        .commit()
+        .await
+        .map_err(|error| format!("Local review state could not be saved: {error}"))?;
     let binding_rows: Vec<String> = sqlx::query_scalar(
         "SELECT binding_json FROM kanban_repository_bindings
          WHERE card_id = ?1 AND state != 'removed' ORDER BY relative_path, repository_path",
@@ -4035,6 +4041,64 @@ mod tests {
     fn local_review_diff_totals_ignore_file_headers() {
         let diff = "diff --git a/file.txt b/file.txt\n--- a/file.txt\n+++ b/file.txt\n@@ -1 +1,2 @@\n-old\n+new\n+extra\n";
         assert_eq!(diff_totals(diff), (2, 1));
+    }
+
+    #[test]
+    fn local_review_operation_uses_the_shared_operation_schema() {
+        tauri::async_runtime::block_on(async {
+            let mut connection = SqliteConnection::connect("sqlite::memory:")
+                .await
+                .expect("open operation database");
+            sqlx::query(
+                "CREATE TABLE kanban_operations (
+                    operation_id TEXT PRIMARY KEY,
+                    workspace_id INTEGER NOT NULL,
+                    card_id TEXT,
+                    operation_kind TEXT NOT NULL,
+                    status TEXT NOT NULL
+                        CHECK (status IN ('applying', 'completed', 'failed')),
+                    result_json TEXT,
+                    error_code TEXT,
+                    error TEXT,
+                    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    completed_at TEXT,
+                    request_fingerprint TEXT NOT NULL DEFAULT ''
+                 )",
+            )
+            .execute(&mut connection)
+            .await
+            .expect("create operation table");
+            let request = ApproveKanbanLocalReviewRequest {
+                card_id: "card-1".to_string(),
+                operation_id: "operation-1".to_string(),
+            };
+
+            let mut transaction = connection.begin().await.expect("begin operation");
+            assert!(insert_local_review_operation(&mut transaction, &request, 7)
+                .await
+                .expect("insert local review operation"));
+            transaction.commit().await.expect("commit operation");
+
+            let operation = sqlx::query(
+                "SELECT workspace_id, card_id, operation_kind, status, request_fingerprint
+                 FROM kanban_operations WHERE operation_id = ?1",
+            )
+            .bind(&request.operation_id)
+            .fetch_one(&mut connection)
+            .await
+            .expect("load local review operation");
+            assert_eq!(operation.get::<i64, _>("workspace_id"), 7);
+            assert_eq!(operation.get::<String, _>("card_id"), request.card_id);
+            assert_eq!(
+                operation.get::<String, _>("operation_kind"),
+                "approve_local_review"
+            );
+            assert_eq!(operation.get::<String, _>("status"), "applying");
+            assert_eq!(
+                operation.get::<String, _>("request_fingerprint"),
+                operation_fingerprint(&request).expect("fingerprint request")
+            );
+        });
     }
 
     #[test]
