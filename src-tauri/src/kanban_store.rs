@@ -3574,7 +3574,7 @@ pub async fn kanban_approve_local_review(
             failures.push(format!("{}: {error}", status.binding.relative_path));
             continue;
         }
-        if status.has_changes {
+        if status.has_uncommitted_changes() {
             let context = WorkspaceCommitIntentContext {
                 objective: Some(objective.clone()),
                 approved_plan: None,

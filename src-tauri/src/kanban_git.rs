@@ -127,6 +127,12 @@ pub(crate) struct KanbanGitStatusResult {
     pub files: Vec<KanbanGitFileStatus>,
 }
 
+impl KanbanGitStatusResult {
+    pub(crate) fn has_uncommitted_changes(&self) -> bool {
+        !self.files.is_empty()
+    }
+}
+
 #[derive(Clone, Debug, Deserialize, specta::Type)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub(crate) struct KanbanGitDiffRequest {
@@ -2489,6 +2495,7 @@ mod tests {
 
         let status = status_blocking(binding.clone()).expect("read status");
         assert!(status.has_changes);
+        assert!(status.has_uncommitted_changes());
         assert_eq!(status.untracked_count, 1);
         assert!(status.files.iter().any(|file| file.path == "README.md"));
         assert!(status.files.iter().any(|file| file.path == "new.txt"));
@@ -2529,6 +2536,7 @@ mod tests {
         let committed_status = status_blocking(binding.clone()).expect("read committed status");
         assert_eq!(committed_status.ahead_of_base, 1);
         assert!(committed_status.has_changes);
+        assert!(!committed_status.has_uncommitted_changes());
         assert!(committed_status.files.is_empty());
         let committed_file_diff = file_diff_blocking(KanbanGitFileDiffRequest {
             binding: binding.clone(),
@@ -2668,6 +2676,10 @@ mod tests {
         fs::write(card_worktree.join("feature.txt"), "feature\n").expect("write feature");
         run(card_worktree, &["add", "feature.txt"]);
         run(card_worktree, &["commit", "-m", "Add feature"]);
+        let status = status_blocking(binding.clone()).expect("read committed card status");
+        assert!(status.has_changes);
+        assert_eq!(status.ahead_of_base, 1);
+        assert!(!status.has_uncommitted_changes());
         let merged = merge_blocking(KanbanGitMergeRequest {
             binding: binding.clone(),
             message: None,
