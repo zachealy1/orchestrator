@@ -622,15 +622,6 @@ button.pending-interaction-nav:disabled {
   background: var(--color-component-background);
   color: var(--color-icon-muted);
   padding: 0 12px;
-  transition:
-    border-color 140ms ease,
-    box-shadow 140ms ease,
-    background 140ms ease;
-}
-
-.settings-search:focus-within {
-  border-color: var(--color-text-secondary);
-  box-shadow: 0 0 0 3px rgb(var(--text-secondary-rgb) / 0.16);
 }
 
 .settings-search input {
@@ -639,6 +630,7 @@ button.pending-interaction-nav:disabled {
   border: 0;
   background: transparent;
   color: var(--color-text);
+  box-shadow: none;
   outline: none;
 }
 
@@ -854,7 +846,7 @@ button.settings-connection-row {
   width: 100%;
   grid-template-columns: 34px minmax(0, 1fr) auto;
   justify-content: stretch;
-  border-radius: 6px;
+  border-radius: 0;
   background: transparent;
   color: var(--color-text);
   font-weight: inherit;

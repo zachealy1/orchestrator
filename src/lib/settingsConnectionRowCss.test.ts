@@ -28,7 +28,7 @@ describe("settings connection row styles", () => {
     expect(resting).toContain(
       "grid-template-columns: 34px minmax(0, 1fr) auto",
     );
-    expect(resting).toContain("border-radius: 6px");
+    expect(resting).toContain("border-radius: 0");
     expect(interactive).toContain("background: var(--color-button-active)");
     expect(interactive).toContain("box-shadow: none");
     expect(interactive).toContain("transform: none");

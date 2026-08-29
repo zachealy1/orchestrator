@@ -14,14 +14,12 @@ function rule(selector: string) {
 }
 
 describe("settings search styles", () => {
-  it("uses a neutral focus treatment instead of the primary blue highlight", () => {
-    const focus = rule(".settings-search:focus-within");
+  it("does not apply a focus highlight to the wrapper or input", () => {
+    const input = rule(".settings-search input");
 
-    expect(focus).toContain("border-color: var(--color-text-secondary)");
-    expect(focus).toContain(
-      "box-shadow: 0 0 0 3px rgb(var(--text-secondary-rgb) / 0.16)",
-    );
-    expect(focus).not.toContain("var(--color-primary)");
-    expect(focus).not.toContain("var(--dropdown-focus-ring)");
+    expect(css).not.toMatch(/\.settings-search:focus-within\s*\{/);
+    expect(input).toContain("border: 0");
+    expect(input).toContain("box-shadow: none");
+    expect(input).toContain("outline: none");
   });
 });
