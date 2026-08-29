@@ -989,10 +989,43 @@ button.settings-manage-button:focus-visible:not(:disabled) {
   font-size: 1rem;
 }
 
-.settings-detail-header .run-status,
-.settings-detail-header .notification-permission-status {
+.settings-status-badge {
+  display: inline-flex;
+  flex: 0 0 auto;
   min-height: 30px;
+  align-items: center;
+  gap: 7px;
+  border-radius: 6px;
+  background: var(--color-surface-soft);
+  color: var(--color-text-secondary);
+  font-size: 0.8rem;
+  font-weight: 700;
   padding: 6px 9px;
+  white-space: nowrap;
+}
+
+.settings-status-badge-dot {
+  width: 8px;
+  height: 8px;
+  flex: 0 0 auto;
+  border-radius: 50%;
+  background: var(--color-text-secondary);
+}
+
+.settings-status-badge.positive .settings-status-badge-dot {
+  background: var(--color-diff-addition);
+}
+
+.settings-status-badge.negative .settings-status-badge-dot {
+  background: var(--color-error);
+}
+
+.settings-status-badge.neutral .settings-status-badge-dot {
+  background: var(--color-text-secondary);
+}
+
+.settings-status-badge.pending .settings-status-badge-dot {
+  background: var(--color-primary);
 }
 
 .settings-panel .setting-row {
@@ -1102,28 +1135,6 @@ button.settings-manage-button:focus-visible:not(:disabled) {
   font-size: 0.8rem;
   text-overflow: ellipsis;
   white-space: nowrap;
-}
-
-.notification-permission-status {
-  display: inline-flex;
-  flex: 0 0 auto;
-  gap: 7px;
-  align-items: center;
-  border-radius: 6px;
-  background: var(--color-surface-soft);
-  color: var(--color-text-secondary);
-  font-size: 0.8rem;
-  font-weight: 700;
-  padding: 7px 10px;
-  white-space: nowrap;
-}
-
-.notification-permission-status.permission-allowed {
-  color: var(--color-primary);
-}
-
-.notification-permission-status.permission-denied {
-  color: var(--color-error);
 }
 
 .notification-settings-actions {

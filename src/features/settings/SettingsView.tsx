@@ -1,7 +1,5 @@
 import {
-  AlertCircle,
   Bell,
-  BellOff,
   ChevronRight,
   GitPullRequest,
   Accessibility,
@@ -17,7 +15,7 @@ import {
   UserRound,
   UserPlus,
 } from "lucide-react";
-import { memo, useState, type ReactNode } from "react";
+import { memo, useState } from "react";
 import { ComposerSelect } from "../../components/ComposerSelect";
 import { OrchestratorMark } from "../../components/OrchestratorMark";
 import type {
@@ -37,6 +35,13 @@ const NOTIFICATION_PREFERENCE_KEYS: Array<keyof AgentNotificationPreferences> =
     "planReady",
     "externalAction",
   ];
+
+type SettingsStatusTone = "positive" | "negative" | "neutral" | "pending";
+
+type SettingsDetailStatus = {
+  label: string;
+  tone: SettingsStatusTone;
+};
 
 export type SettingsViewModel = {
   dragRegion?: string;
@@ -125,26 +130,11 @@ export const SettingsView = memo(function SettingsView({
             icon={Monitor}
             title="Computer use"
             status={
-              <span
-                className={`notification-permission-status ${
-                  model.browserRuntimeStatus === null
-                    ? ""
-                    : model.browserRuntimeStatus.available
-                      ? "permission-allowed"
-                      : "permission-denied"
-                }`}
-              >
-                {model.browserRuntimeStatus?.available === false ? (
-                  <AlertCircle size={14} aria-hidden="true" />
-                ) : (
-                  <Monitor size={14} aria-hidden="true" />
-                )}
-                {model.browserRuntimeStatus === null
-                  ? "Checking"
-                  : model.browserRuntimeStatus.available
-                    ? "Available"
-                    : "Unavailable"}
-              </span>
+              model.browserRuntimeStatus === null
+                ? { label: "Checking", tone: "pending" }
+                : model.browserRuntimeStatus.available
+                  ? { label: "Available", tone: "positive" }
+                  : { label: "Unavailable", tone: "negative" }
             }
           />
           <div className="setting-list">
@@ -250,23 +240,13 @@ export const SettingsView = memo(function SettingsView({
             icon={GitPullRequest}
             title="GitHub"
             status={
-              <span
-                className={`run-status ${
-                  model.githubConnectionPending
-                    ? "running"
-                    : model.githubConnection?.connected
-                      ? "completed"
-                      : "interrupted"
-                }`}
-              >
-                {model.githubConnectionPending
-                  ? "connecting"
-                  : model.githubConnection?.connected
-                    ? "connected"
-                    : model.githubConnection?.available === false
-                      ? "unavailable"
-                      : "disconnected"}
-              </span>
+              model.githubConnectionPending
+                ? { label: "Connecting", tone: "pending" }
+                : model.githubConnection?.connected
+                  ? { label: "Connected", tone: "positive" }
+                  : model.githubConnection?.available === false
+                    ? { label: "Unavailable", tone: "negative" }
+                    : { label: "Disconnected", tone: "neutral" }
             }
           />
           <div className="setting-list">
@@ -344,11 +324,9 @@ export const SettingsView = memo(function SettingsView({
             icon={UserRound}
             title="Codex connection"
             status={
-              <span
-                className={`run-status ${model.codexConnected ? "completed" : "interrupted"}`}
-              >
-                {model.codexConnected ? "connected" : "disconnected"}
-              </span>
+              model.codexConnected
+                ? { label: "Connected", tone: "positive" }
+                : { label: "Disconnected", tone: "neutral" }
             }
           />
           <div className="setting-list">
@@ -850,7 +828,7 @@ function SettingsDetailHeader({
 }: {
   icon: typeof Monitor;
   title: string;
-  status: ReactNode;
+  status: SettingsDetailStatus;
 }) {
   return (
     <div className="surface-header settings-detail-header">
@@ -862,8 +840,21 @@ function SettingsDetailHeader({
           <h2>{title}</h2>
         </div>
       </div>
-      {status}
+      <SettingsStatusBadge {...status} />
     </div>
+  );
+}
+
+function SettingsStatusBadge({ label, tone }: SettingsDetailStatus) {
+  return (
+    <span
+      className={`settings-status-badge ${tone}`}
+      role="status"
+      aria-label={label}
+    >
+      <span className="settings-status-badge-dot" aria-hidden="true" />
+      {label}
+    </span>
   );
 }
 
@@ -883,18 +874,7 @@ function NotificationSettings({
       <SettingsDetailHeader
         icon={Bell}
         title="Agent alerts"
-        status={
-          <span
-            className={`notification-permission-status permission-${model.notificationPermission}`}
-          >
-            {model.notificationPermission === "allowed" ? (
-              <Bell size={14} aria-hidden="true" />
-            ) : (
-              <BellOff size={14} aria-hidden="true" />
-            )}
-            {permissionLabel(model.notificationPermission)}
-          </span>
-        }
+        status={notificationSettingsStatus(model.notificationPermission)}
       />
       <div className="setting-list">
         <NotificationToggle
@@ -1003,15 +983,17 @@ function notificationOverviewLabel(
   }
 }
 
-function permissionLabel(permission: AgentNotificationPermissionStatus) {
+function notificationSettingsStatus(
+  permission: AgentNotificationPermissionStatus,
+): SettingsDetailStatus {
   switch (permission) {
     case "allowed":
-      return "Allowed";
+      return { label: "Allowed", tone: "positive" };
     case "not-enabled":
-      return "Not enabled";
+      return { label: "Not enabled", tone: "neutral" };
     case "denied":
-      return "Denied";
+      return { label: "Denied", tone: "negative" };
     case "unavailable":
-      return "Unavailable";
+      return { label: "Unavailable", tone: "negative" };
   }
 }

@@ -68,6 +68,26 @@ function model(overrides: Partial<SettingsViewModel> = {}): SettingsViewModel {
   };
 }
 
+function githubConnection(
+  overrides: Partial<NonNullable<SettingsViewModel["githubConnection"]>> = {},
+): NonNullable<SettingsViewModel["githubConnection"]> {
+  return {
+    available: true,
+    connected: false,
+    login: null,
+    displayName: null,
+    avatarUrl: null,
+    status: "disconnected",
+    message: null,
+    cliVersion: "2.96.0",
+    deviceCode: null,
+    verificationUri: null,
+    loginGeneration: null,
+    browserOpened: false,
+    ...overrides,
+  };
+}
+
 describe("SettingsView", () => {
   it("routes capability changes through settings actions", () => {
     const handlers = actions();
@@ -119,6 +139,103 @@ describe("SettingsView", () => {
     expect(
       screen.getByRole("button", { name: /computer use\s*not available/i }),
     ).toBeInTheDocument();
+  });
+
+  it("uses one shared status badge across every settings detail header", () => {
+    const { rerender } = render(
+      <SettingsView
+        model={model({
+          githubConnection: githubConnection({
+            connected: true,
+            login: "dev",
+            status: "connected",
+          }),
+        })}
+        actions={actions()}
+      />,
+    );
+
+    [
+      "Computer use settings",
+      "Notification settings",
+      "GitHub settings",
+      "Codex settings",
+    ].forEach((regionName) => {
+      const statuses = within(
+        screen.getByRole("region", { name: regionName }),
+      ).getAllByRole("status");
+      expect(statuses).toHaveLength(1);
+      expect(statuses[0]).toHaveClass("settings-status-badge");
+    });
+    expect(screen.getAllByRole("status")).toHaveLength(4);
+    expect(screen.getByRole("status", { name: "Available" })).toHaveClass(
+      "positive",
+    );
+    expect(screen.getByRole("status", { name: "Allowed" })).toHaveClass(
+      "positive",
+    );
+    screen.getAllByRole("status", { name: "Connected" }).forEach((status) => {
+      expect(status).toHaveClass("positive");
+    });
+    expect(
+      document.querySelector(
+        ".settings-detail-header .run-status, .settings-detail-header .notification-permission-status",
+      ),
+    ).toBeNull();
+
+    rerender(
+      <SettingsView
+        model={model({
+          browserRuntimeStatus: null,
+          githubConnectionPending: true,
+          notificationPermission: "not-enabled",
+          codexConnected: false,
+        })}
+        actions={actions()}
+      />,
+    );
+
+    expect(screen.getByRole("status", { name: "Checking" })).toHaveClass(
+      "pending",
+    );
+    expect(screen.getByRole("status", { name: "Connecting" })).toHaveClass(
+      "pending",
+    );
+    expect(screen.getByRole("status", { name: "Not enabled" })).toHaveClass(
+      "neutral",
+    );
+    expect(screen.getByRole("status", { name: "Disconnected" })).toHaveClass(
+      "neutral",
+    );
+
+    rerender(
+      <SettingsView
+        model={model({
+          browserRuntimeStatus: {
+            available: false,
+            message: "The browser runtime is unavailable.",
+            defaultBrowser: null,
+            browserSkillVersion: "26.818.31338",
+            browserServiceCompatible: true,
+          },
+          githubConnection: githubConnection({
+            available: false,
+            status: "unavailable",
+          }),
+          notificationPermission: "unavailable",
+          codexConnected: false,
+        })}
+        actions={actions()}
+      />,
+    );
+
+    const unavailableStatuses = screen.getAllByRole("status", {
+      name: "Unavailable",
+    });
+    expect(unavailableStatuses).toHaveLength(3);
+    unavailableStatuses.forEach((status) => {
+      expect(status).toHaveClass("negative");
+    });
   });
 
   it("renders every settings section title without a subtitle", () => {
