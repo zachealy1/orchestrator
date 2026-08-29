@@ -206,8 +206,8 @@ export type DesktopRuntimeStatus = {
   message: string | null;
   version: string | null;
   serviceCompatible: boolean;
-  accessibilityTrusted: boolean;
-  screenRecordingTrusted: boolean;
+  accessibilityTrusted: boolean | null;
+  screenRecordingTrusted: boolean | null;
 };
 
 export type ComputerUsePermissions = {

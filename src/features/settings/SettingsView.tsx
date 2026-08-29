@@ -337,7 +337,9 @@ export const SettingsView = memo(function SettingsView({
             <div className="settings-subsection-heading">
               <div>
                 <strong>macOS permissions</strong>
-                <span>Both permissions are required to see and operate desktop apps.</span>
+                <span>
+                  The signed Computer Use helper requests and verifies both permissions.
+                </span>
               </div>
               <SettingsIconAction
                 icon={RefreshCw}
@@ -349,13 +351,13 @@ export const SettingsView = memo(function SettingsView({
             <PermissionRow
               label="Screen Recording"
               description="Allows Computer Use to see approved applications."
-              granted={model.desktopRuntimeStatus?.screenRecordingTrusted === true}
+              granted={model.desktopRuntimeStatus?.screenRecordingTrusted ?? null}
               onOpen={actions.openScreenRecordingSettings}
             />
             <PermissionRow
               label="Accessibility"
               description="Allows Computer Use to click, type, and navigate."
-              granted={model.desktopRuntimeStatus?.accessibilityTrusted === true}
+              granted={model.desktopRuntimeStatus?.accessibilityTrusted ?? null}
               onOpen={actions.openAccessibilitySettings}
             />
             <div className="settings-subsection-heading">
@@ -917,9 +919,21 @@ function PermissionRow({
 }: {
   label: string;
   description: string;
-  granted: boolean;
+  granted: boolean | null;
   onOpen: () => void;
 }) {
+  if (granted === null) {
+    return (
+      <div className="setting-row computer-use-permission-row">
+        <div>
+          <strong>{label}</strong>
+          <span>{description} Managed by the official Computer Use helper.</span>
+        </div>
+        <SettingsStatusBadge label="Managed" tone="neutral" />
+      </div>
+    );
+  }
+
   if (!granted) {
     return (
       <SettingsNavigationRow
@@ -1090,8 +1104,8 @@ function ComputerUseStatusPopover({
   const titleId = useId();
   const panelId = useId();
   const missingScreenRecording =
-    runtimeStatus?.screenRecordingTrusted !== true;
-  const missingAccessibility = runtimeStatus?.accessibilityTrusted !== true;
+    runtimeStatus?.screenRecordingTrusted === false;
+  const missingAccessibility = runtimeStatus?.accessibilityTrusted === false;
   const hasMissingPermissions =
     pluginReady && (missingScreenRecording || missingAccessibility);
   const description = !pluginReady

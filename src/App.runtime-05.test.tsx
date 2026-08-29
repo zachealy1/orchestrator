@@ -882,8 +882,8 @@ describe("Application runtime scenarios 5", () => {
         message: null,
         version: "1.0.1000816",
         serviceCompatible: true,
-        accessibilityTrusted: true,
-        screenRecordingTrusted: true,
+        accessibilityTrusted: null,
+        screenRecordingTrusted: null,
       });
       mocks.codexDefaultProfileRpcMock.mockImplementation(async (method) =>
         method === "plugin/list"

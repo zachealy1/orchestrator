@@ -304,6 +304,45 @@ describe("SettingsView", () => {
     expect(trigger).toHaveFocus();
   });
 
+  it("keeps Computer Use available when permissions are owned by its signed helper", () => {
+    render(
+      <SettingsView
+        model={model({
+          desktopRuntimeStatus: {
+            available: true,
+            message: null,
+            version: "1.0.1000816",
+            serviceCompatible: true,
+            accessibilityTrusted: null,
+            screenRecordingTrusted: null,
+          },
+        })}
+        actions={actions()}
+      />,
+    );
+
+    const computerUse = screen.getByRole("region", {
+      name: "Computer use settings",
+    });
+    expect(
+      within(computerUse).getByRole("status", { name: "Available" }),
+    ).toHaveClass("positive");
+    expect(
+      within(computerUse).queryByRole("button", {
+        name: "Computer Use unavailable. Show details",
+      }),
+    ).toBeNull();
+    expect(
+      within(computerUse).getByRole("checkbox", {
+        name: /any approved app/i,
+      }),
+    ).toBeEnabled();
+    expect(within(computerUse).getAllByText("Managed")).toHaveLength(2);
+    expect(
+      screen.getByRole("button", { name: /computer use\s*ready/i }),
+    ).toBeInTheDocument();
+  });
+
   it("routes a missing Computer Use plugin from the status popover to Plugins", () => {
     const handlers = actions();
     const baseModel = model();

@@ -15,8 +15,8 @@ pub(crate) struct DesktopRuntimeStatus {
     pub message: Option<String>,
     pub version: Option<String>,
     pub service_compatible: bool,
-    pub accessibility_trusted: bool,
-    pub screen_recording_trusted: bool,
+    pub accessibility_trusted: Option<bool>,
+    pub screen_recording_trusted: Option<bool>,
 }
 
 #[derive(Clone, Debug)]
@@ -29,47 +29,40 @@ struct DesktopRuntime {
 #[tauri::command]
 #[specta::specta]
 pub(crate) async fn desktop_runtime_status() -> DesktopRuntimeStatus {
-    let accessibility_trusted = accessibility_is_trusted();
-    let screen_recording_trusted = screen_recording_is_trusted();
     #[cfg(not(target_os = "macos"))]
     return DesktopRuntimeStatus {
         available: false,
         message: Some("Desktop Computer Use is currently supported only on macOS.".to_string()),
         version: None,
         service_compatible: false,
-        accessibility_trusted,
-        screen_recording_trusted,
+        accessibility_trusted: None,
+        screen_recording_trusted: None,
     };
 
     #[cfg(target_os = "macos")]
-    match resolve_desktop_runtime() {
+    return desktop_runtime_status_from(resolve_desktop_runtime());
+}
+
+fn desktop_runtime_status_from(runtime: Result<DesktopRuntime, String>) -> DesktopRuntimeStatus {
+    match runtime {
         Ok(runtime) => DesktopRuntimeStatus {
-            available: accessibility_trusted && screen_recording_trusted,
-            message: match (screen_recording_trusted, accessibility_trusted) {
-                (false, false) => Some(
-                    "Allow Screen Recording and Accessibility for Computer Use in macOS settings."
-                        .to_string(),
-                ),
-                (false, true) => Some(
-                    "Allow Screen Recording for Computer Use in macOS settings.".to_string(),
-                ),
-                (true, false) => Some(
-                    "Allow Accessibility for Computer Use in macOS settings.".to_string(),
-                ),
-                (true, true) => None,
-            },
+            available: true,
+            message: None,
             version: Some(runtime.version),
             service_compatible: true,
-            accessibility_trusted,
-            screen_recording_trusted,
+            // The signed OpenAI Computer Use helper owns these TCC grants. Checking
+            // the Orchestrator process reports the wrong application and produces a
+            // false negative even after the user grants both permissions.
+            accessibility_trusted: None,
+            screen_recording_trusted: None,
         },
         Err(error) => DesktopRuntimeStatus {
             available: false,
             message: Some(error),
             version: None,
             service_compatible: false,
-            accessibility_trusted,
-            screen_recording_trusted,
+            accessibility_trusted: None,
+            screen_recording_trusted: None,
         },
     }
 }
@@ -178,34 +171,6 @@ fn open_privacy_settings(pane: &str) -> Result<(), String> {
     Err("Computer Use privacy settings are available only on macOS.".to_string())
 }
 
-#[cfg(target_os = "macos")]
-pub(crate) fn accessibility_is_trusted() -> bool {
-    #[link(name = "ApplicationServices", kind = "framework")]
-    unsafe extern "C" {
-        fn AXIsProcessTrusted() -> bool;
-    }
-    unsafe { AXIsProcessTrusted() }
-}
-
-#[cfg(not(target_os = "macos"))]
-pub(crate) fn accessibility_is_trusted() -> bool {
-    false
-}
-
-#[cfg(target_os = "macos")]
-fn screen_recording_is_trusted() -> bool {
-    #[link(name = "CoreGraphics", kind = "framework")]
-    unsafe extern "C" {
-        fn CGPreflightScreenCaptureAccess() -> bool;
-    }
-    unsafe { CGPreflightScreenCaptureAccess() }
-}
-
-#[cfg(not(target_os = "macos"))]
-fn screen_recording_is_trusted() -> bool {
-    false
-}
-
 fn select_highest_compatible_plugin(root: &Path, supported_major: u64) -> Result<PathBuf, String> {
     let mut candidates = fs::read_dir(root)
         .map_err(|_| {
@@ -275,4 +240,35 @@ mod tests {
         assert_eq!(parse_version("latest"), None);
     }
 
+    #[test]
+    fn compatible_provider_is_available_without_probing_orchestrator_permissions() {
+        let status = desktop_runtime_status_from(Ok(DesktopRuntime {
+            version: "1.0.1000816".to_string(),
+            _launcher: PathBuf::from("computer-use-client-launcher"),
+            _skill: PathBuf::from("SKILL.md"),
+        }));
+
+        assert!(status.available);
+        assert!(status.service_compatible);
+        assert_eq!(status.accessibility_trusted, None);
+        assert_eq!(status.screen_recording_trusted, None);
+        assert_eq!(status.message, None);
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn installed_official_provider_reports_available_when_present() {
+        let Some(home) = env::var_os("HOME").map(PathBuf::from) else {
+            return;
+        };
+        let provider_root = home.join(".codex/plugins/cache/openai-bundled/computer-use");
+        if !provider_root.is_dir() {
+            return;
+        }
+
+        let status = desktop_runtime_status_from(resolve_desktop_runtime());
+        assert!(status.available, "{:?}", status.message);
+        assert!(status.service_compatible);
+        assert!(status.version.is_some());
+    }
 }

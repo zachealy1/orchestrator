@@ -60,8 +60,8 @@ export function useComputerUseController(input: {
         available: false,
         version: null,
         serviceCompatible: false,
-        accessibilityTrusted: false,
-        screenRecordingTrusted: false,
+        accessibilityTrusted: null,
+        screenRecordingTrusted: null,
         message:
           error instanceof Error
             ? error.message
