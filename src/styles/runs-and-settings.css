@@ -764,12 +764,6 @@ button.settings-status-card:focus-visible:not(:disabled) {
   margin-bottom: 4px;
 }
 
-.settings-overview-panel-header p {
-  margin-top: 5px;
-  color: var(--color-text-secondary);
-  font-size: 0.8rem;
-}
-
 .settings-overview-rows {
   display: grid;
 }
@@ -986,28 +980,13 @@ button.settings-manage-button:focus-visible:not(:disabled) {
 }
 
 .settings-detail-header-copy {
-  display: grid;
   min-width: 0;
-  gap: 5px;
-}
-
-.settings-detail-header-copy h2,
-.settings-detail-header-copy p {
-  margin: 0;
 }
 
 .settings-detail-header-copy h2 {
+  margin: 0;
   color: var(--color-text);
   font-size: 1rem;
-}
-
-.settings-detail-header-copy p {
-  overflow: hidden;
-  color: var(--color-text-secondary);
-  font-size: 0.79rem;
-  line-height: 1.35;
-  text-overflow: ellipsis;
-  white-space: nowrap;
 }
 
 .settings-detail-header .run-status,

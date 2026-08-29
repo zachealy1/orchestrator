@@ -121,6 +121,26 @@ describe("SettingsView", () => {
     ).toBeInTheDocument();
   });
 
+  it("renders every settings section title without a subtitle", () => {
+    render(<SettingsView model={model()} actions={actions()} />);
+
+    const removedSubtitles = [
+      "Common controls, available without leaving this page.",
+      "Accounts and services available to agent runs.",
+      "Control which browser Orchestrator can use for future turns.",
+      "Choose which moments deserve your attention.",
+      "Connect the bundled GitHub CLI for repository actions.",
+      "Manage Codex accounts and optional OSS providers used for runs.",
+    ];
+
+    removedSubtitles.forEach((subtitle) => {
+      expect(screen.queryByText(subtitle)).not.toBeInTheDocument();
+    });
+    screen.getAllByRole("heading", { level: 2 }).forEach((title) => {
+      expect(title.nextElementSibling?.tagName).not.toBe("P");
+    });
+  });
+
   it("omits removed overview, appearance, and product information", () => {
     render(<SettingsView model={model()} actions={actions()} />);
 

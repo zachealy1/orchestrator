@@ -124,7 +124,6 @@ export const SettingsView = memo(function SettingsView({
           <SettingsDetailHeader
             icon={Monitor}
             title="Computer use"
-            description="Control which browser Orchestrator can use for future turns."
             status={
               <span
                 className={`notification-permission-status ${
@@ -250,7 +249,6 @@ export const SettingsView = memo(function SettingsView({
           <SettingsDetailHeader
             icon={GitPullRequest}
             title="GitHub"
-            description="Connect the bundled GitHub CLI for repository actions."
             status={
               <span
                 className={`run-status ${
@@ -345,7 +343,6 @@ export const SettingsView = memo(function SettingsView({
           <SettingsDetailHeader
             icon={UserRound}
             title="Codex connection"
-            description="Manage Codex accounts and optional OSS providers used for runs."
             status={
               <span
                 className={`run-status ${model.codexConnected ? "completed" : "interrupted"}`}
@@ -665,7 +662,6 @@ function SettingsOverview({
               <div className="surface-header settings-overview-panel-header">
                 <div>
                   <h2>Quick preferences</h2>
-                  <p>Common controls, available without leaving this page.</p>
                 </div>
               </div>
               <div className="settings-overview-rows">
@@ -715,7 +711,6 @@ function SettingsOverview({
               <div className="surface-header settings-overview-panel-header">
                 <div>
                   <h2>Connections</h2>
-                  <p>Accounts and services available to agent runs.</p>
                 </div>
               </div>
               <div className="settings-overview-rows">
@@ -851,12 +846,10 @@ function scrollToSettingsSection(id: string) {
 function SettingsDetailHeader({
   icon: Icon,
   title,
-  description,
   status,
 }: {
   icon: typeof Monitor;
   title: string;
-  description: string;
   status: ReactNode;
 }) {
   return (
@@ -867,7 +860,6 @@ function SettingsDetailHeader({
         </span>
         <div className="settings-detail-header-copy">
           <h2>{title}</h2>
-          <p>{description}</p>
         </div>
       </div>
       {status}
@@ -891,7 +883,6 @@ function NotificationSettings({
       <SettingsDetailHeader
         icon={Bell}
         title="Agent alerts"
-        description="Choose which moments deserve your attention."
         status={
           <span
             className={`notification-permission-status permission-${model.notificationPermission}`}
