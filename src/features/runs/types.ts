@@ -2,7 +2,6 @@ import type { ComposerContextFile, SelectedComposerSkill } from "../composer/typ
 import type {
   CodexAccessMode,
   CodexProfileKey,
-  OssProvider,
 } from "../codex/types";
 import type { CheckStatus } from "../../shared/types";
 
@@ -90,7 +89,7 @@ export type RunListItem = RunRecord & {
 };
 
 export type RunExecutionSettings = {
-  version: 5;
+  version: 6;
   accountId: number;
   profileKey: CodexProfileKey;
   selectedRepositoryPath: string | null;
@@ -101,8 +100,6 @@ export type RunExecutionSettings = {
   computerUseEnabled: boolean;
   model: string | null;
   reasoningEffort: string | null;
-  useOss: boolean;
-  ossProvider: OssProvider;
   contextFiles: ComposerContextFile[];
   selectedSkills: SelectedComposerSkill[];
   goalMode: boolean;

@@ -1,8 +1,8 @@
-import type { CodexAccessMode, CodexProfileKey, OssProvider } from "../features/codex/types";
+import type { CodexAccessMode, CodexProfileKey } from "../features/codex/types";
 import type { ComposerContextFile, SelectedComposerSkill } from "../features/composer/types";
 import type { ResolvedRunExecutionSettings, RunExecutionSettings } from "../features/runs/types";
 
-export const RUN_EXECUTION_SETTINGS_VERSION = 5;
+export const RUN_EXECUTION_SETTINGS_VERSION = 6;
 
 const LEGACY_BROWSER_SKILL: SelectedComposerSkill = {
   id: "browser:control-in-app-browser",
@@ -43,8 +43,6 @@ export function createRunExecutionSettings(
     computerUseEnabled: input.computerUseEnabled,
     model: input.model,
     reasoningEffort: input.reasoningEffort,
-    useOss: input.useOss,
-    ossProvider: input.ossProvider,
     contextFiles: input.contextFiles.map((file) => ({ ...file })),
     selectedSkills: input.selectedSkills.map((skill) => ({ ...skill })),
     goalMode: input.goalMode,
@@ -90,7 +88,6 @@ export function resolveStoredRunExecutionSettings(
     typeof legacy.account_id === "number" && Number.isSafeInteger(legacy.account_id)
       ? legacy.account_id
       : 0;
-  const useOss = legacy.model_provider === "oss";
   const intent = isRunIntent(legacy.run_intent) ? legacy.run_intent : "normal";
 
   return {
@@ -112,10 +109,11 @@ export function resolveStoredRunExecutionSettings(
           ? "full-access"
           : "ask-for-approval",
       computerUseEnabled: false,
-      model: useOss ? null : normalizeOptionalString(legacy.model),
+      model:
+        legacy.model_provider === "oss"
+          ? null
+          : normalizeOptionalString(legacy.model),
       reasoningEffort: null,
-      useOss,
-      ossProvider: "ollama",
       contextFiles: [],
       selectedSkills: [],
       goalMode: false,
@@ -131,7 +129,8 @@ function readRunExecutionSettings(value: unknown): RunExecutionSettings | null {
       value.version !== 2 &&
       value.version !== 3 &&
       value.version !== 4 &&
-      value.version !== 5)
+      value.version !== 5 &&
+      value.version !== 6)
   ) {
     return null;
   }
@@ -149,8 +148,6 @@ function readRunExecutionSettings(value: unknown): RunExecutionSettings | null {
       value.browserExecutionTarget !== "isolated") ||
     !isOptionalString(value.model) ||
     !isOptionalString(value.reasoningEffort) ||
-    typeof value.useOss !== "boolean" ||
-    !isOssProvider(value.ossProvider) ||
     !Array.isArray(value.contextFiles) ||
     !Array.isArray(value.selectedSkills) ||
     typeof value.goalMode !== "boolean"
@@ -194,11 +191,9 @@ function readRunExecutionSettings(value: unknown): RunExecutionSettings | null {
     intent: value.intent,
     accessMode: value.accessMode,
     computerUseEnabled:
-      value.version === 5 ? value.computerUseEnabled : false,
+      value.version >= 5 ? value.computerUseEnabled : false,
     model: normalizeOptionalString(value.model),
     reasoningEffort: normalizeOptionalString(value.reasoningEffort),
-    useOss: value.useOss,
-    ossProvider: value.ossProvider,
     contextFiles,
     selectedSkills,
     goalMode: value.goalMode,
@@ -307,10 +302,6 @@ function isRunIntent(value: unknown): value is RunExecutionSettings["intent"] {
 
 function isAccessMode(value: unknown): value is CodexAccessMode {
   return value === "ask-for-approval" || value === "full-access";
-}
-
-function isOssProvider(value: unknown): value is OssProvider {
-  return value === "ollama" || value === "lmstudio";
 }
 
 function isContextFileSource(

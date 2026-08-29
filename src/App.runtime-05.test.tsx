@@ -162,30 +162,6 @@ describe("Application runtime scenarios 5", () => {
       );
     });
 
-  it("uses the shared dropdown for OSS provider selection", async () => {
-      const { user } = await renderApp();
-
-      await user.click(screen.getByRole("button", { name: "Settings" }));
-
-      const providerSelect = screen.getByRole("combobox", {
-        name: "Settings OSS provider",
-      });
-      expect(providerSelect).toBeDisabled();
-      expect(providerSelect.closest(".composer-select")).toHaveClass(
-        "settings-provider-select",
-      );
-      expect(document.querySelector("select")).not.toBeInTheDocument();
-
-      await user.click(
-        screen.getByRole("checkbox", { name: /Use local OSS provider/ }),
-      );
-      expect(providerSelect).toBeEnabled();
-      await user.click(providerSelect);
-      await user.click(screen.getByRole("option", { name: "LM Studio" }));
-
-      expect(providerSelect).toHaveTextContent("LM Studio");
-    });
-
   it("enforces dark mode and exposes no appearance controls", async () => {
       localStorage.setItem("orchestrator.theme", "light");
       const { user } = await renderApp();
@@ -253,7 +229,9 @@ describe("Application runtime scenarios 5", () => {
       await user.click(screen.getByRole("button", { name: "Settings" }));
       expect(await screen.findByText("Denied")).toBeInTheDocument();
       await user.click(
-        screen.getByRole("button", { name: "Open macOS settings" }),
+        screen.getByRole("button", {
+          name: "Open macOS notification settings",
+        }),
       );
 
       expect(mocks.openAgentNotificationSettingsMock).toHaveBeenCalledTimes(1);
@@ -997,7 +975,11 @@ describe("Application runtime scenarios 5", () => {
       expect(within(settings).getByRole("alert")).toHaveTextContent(
         "Browser plugin is not available from configured marketplaces.",
       );
-      expect(within(settings).getByRole("button", { name: "Open Plugins" })).toBeVisible();
+      expect(
+        within(settings).getByRole("button", {
+          name: "Open Plugins for the in-app browser",
+        }),
+      ).toBeVisible();
     });
 
   it("does not force Browser into a run that did not select the plugin", async () => {

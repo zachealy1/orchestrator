@@ -34,8 +34,6 @@ function actions(): SettingsViewActions {
     addAccount: vi.fn(),
     connectAccount: vi.fn(),
     logout: vi.fn(),
-    setUseOss: vi.fn(),
-    setOssProvider: vi.fn(),
   };
 }
 
@@ -134,8 +132,6 @@ function model(overrides: Partial<SettingsViewModel> = {}): SettingsViewModel {
     runIsActive: false,
     authMessage: "No account selected",
     showLogout: false,
-    useOss: false,
-    ossProvider: "ollama",
     ...overrides,
   };
 }
@@ -198,19 +194,30 @@ describe("SettingsView", () => {
       />,
     );
 
-    fireEvent.click(screen.getByRole("button", { name: "Clear data" }));
-    fireEvent.click(screen.getByRole("button", { name: "Choose" }));
+    const clearData = screen.getByRole("button", { name: "Clear data" });
+    const screenRecordingSettings = screen.getByRole("button", {
+      name: "Open Screen Recording settings",
+    });
+    expect(clearData).toHaveClass("settings-icon-action");
+    expect(screenRecordingSettings).toHaveClass("settings-navigation-row");
+    expect(
+      screenRecordingSettings.querySelector(".lucide-external-link"),
+    ).toBeInTheDocument();
+
+    fireEvent.click(clearData);
+    fireEvent.click(
+      screen.getByRole("button", { name: "Choose download location" }),
+    );
     fireEvent.click(
       screen.getByRole("checkbox", {
         name: "Ask where to save browser downloads",
       }),
     );
-    const permissionButtons = screen.getAllByRole("button", {
-      name: "Open settings",
-    });
-    fireEvent.click(permissionButtons[0]);
-    fireEvent.click(permissionButtons[1]);
-    fireEvent.click(screen.getByRole("button", { name: "Revoke" }));
+    fireEvent.click(screenRecordingSettings);
+    fireEvent.click(
+      screen.getByRole("button", { name: "Open Accessibility settings" }),
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Revoke Editor" }));
 
     expect(handlers.clearBrowserData).toHaveBeenCalledOnce();
     expect(handlers.chooseBrowserDownloadLocation).toHaveBeenCalledOnce();
@@ -380,7 +387,6 @@ describe("SettingsView", () => {
       "Control which browser Orchestrator can use for future turns.",
       "Choose which moments deserve your attention.",
       "Connect the bundled GitHub CLI for repository actions.",
-      "Manage Codex accounts and optional OSS providers used for runs.",
     ];
 
     removedSubtitles.forEach((subtitle) => {
@@ -413,7 +419,7 @@ describe("SettingsView", () => {
     ).toBeNull();
   });
 
-  it("opens connection settings from dedicated Manage buttons", () => {
+  it("opens connection settings from selectable rows", () => {
     render(<SettingsView model={model()} actions={actions()} />);
     const connections = screen.getByRole("region", {
       name: "Connections overview",
@@ -427,21 +433,26 @@ describe("SettingsView", () => {
     codexSettings.scrollIntoView = vi.fn();
     githubSettings.scrollIntoView = vi.fn();
 
-    const manageButtons = within(connections).getAllByRole("button", {
-      name: "Manage",
+    const codexRow = within(connections).getByRole("button", {
+      name: /Codex account/i,
+    });
+    const githubRow = within(connections).getByRole("button", {
+      name: /GitHub/i,
     });
 
-    expect(manageButtons).toHaveLength(2);
-    expect(
-      within(connections).getByText("Codex account").closest("button"),
-    ).toBeNull();
-    expect(within(connections).getByText("GitHub").closest("button")).toBeNull();
-    fireEvent.click(manageButtons[0]);
+    expect(within(connections).queryByText("Manage")).toBeNull();
+    expect(within(connections).getByText("Codex account").closest("button")).toBe(
+      codexRow,
+    );
+    expect(within(connections).getByText("GitHub").closest("button")).toBe(
+      githubRow,
+    );
+    fireEvent.click(codexRow);
     expect(codexSettings.scrollIntoView).toHaveBeenCalledWith({
       behavior: "smooth",
       block: "start",
     });
-    fireEvent.click(manageButtons[1]);
+    fireEvent.click(githubRow);
     expect(githubSettings.scrollIntoView).toHaveBeenCalledWith({
       behavior: "smooth",
       block: "start",
@@ -487,8 +498,8 @@ describe("SettingsView", () => {
     expect(screen.queryByText("Notification rules")).toBeNull();
     expect(screen.queryByText("Theme")).not.toBeInTheDocument();
     expect(screen.queryByText("Choose how Orchestrator looks.")).toBeNull();
-    expect(screen.queryByText("Local models")).toBeNull();
-    expect(screen.queryByText("Ollama or LM Studio.")).toBeNull();
+    expect(screen.queryByText("Use local OSS provider")).toBeNull();
+    expect(screen.queryByText("OSS provider")).toBeNull();
     expect(screen.queryByText("Token-aware Codex workspace")).toBeNull();
     expect(
       screen.queryByText("Manage how Orchestrator works for you."),
@@ -560,7 +571,7 @@ describe("SettingsView", () => {
       name: "GitHub settings",
     });
     const connect = within(githubSettings).getByRole("button", {
-      name: "Connect",
+      name: "Connect GitHub",
     });
     expect(connect).toBeDisabled();
     expect(
@@ -593,7 +604,9 @@ describe("SettingsView", () => {
       />,
     );
 
-    fireEvent.click(screen.getByRole("button", { name: "View sign-in" }));
+    fireEvent.click(
+      screen.getByRole("button", { name: "View GitHub sign-in" }),
+    );
     expect(handlers.showGithubLogin).toHaveBeenCalledOnce();
     expect(screen.queryByText("ABCD-1234")).not.toBeInTheDocument();
   });

@@ -55,8 +55,6 @@ const executionSettings = createRunExecutionSettings({
   computerUseEnabled: true,
   model: "gpt-5.6",
   reasoningEffort: "high",
-  useOss: false,
-  ossProvider: "ollama",
   contextFiles: [
     {
       path: "/workspace/project/src/App.tsx",

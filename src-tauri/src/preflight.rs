@@ -1,11 +1,6 @@
 use super::*;
 
-pub(crate) fn run_preflight_blocking(
-    path: String,
-    prompt: String,
-    use_oss: bool,
-    oss_provider: Option<String>,
-) -> PreflightReport {
+pub(crate) fn run_preflight_blocking(path: String, prompt: String) -> PreflightReport {
     let workspace = Path::new(&path);
     let mut checks = Vec::new();
     let mut recommendations = Vec::new();
@@ -167,33 +162,6 @@ pub(crate) fn run_preflight_blocking(
         Some(format!("Default planning budget: {context_budget} tokens")),
     );
 
-    if use_oss {
-        let provider = oss_provider.unwrap_or_else(|| "ollama".to_string());
-        let provider_probe = if provider == "ollama" {
-            run_command("ollama", &["--version"])
-        } else {
-            CommandProbe {
-                ok: true,
-                stdout: "LM Studio provider selected; verify the local server is running"
-                    .to_string(),
-                stderr: String::new(),
-            }
-        };
-
-        push_check(
-            &mut checks,
-            "oss-provider",
-            "Local OSS provider",
-            if provider_probe.ok { "pass" } else { "warn" },
-            if provider_probe.ok {
-                format!("{provider} selected")
-            } else {
-                format!("{provider} was selected but could not be verified")
-            },
-            output_detail(&provider_probe),
-        );
-    }
-
     if route_recommendation == "plan-first" {
         recommendations.push(RecommendationDraft {
             kind: "route".to_string(),
@@ -229,14 +197,9 @@ pub(crate) fn run_preflight_blocking(
 
 #[tauri::command]
 #[specta::specta]
-pub(crate) async fn run_preflight(
-    path: String,
-    prompt: String,
-    use_oss: bool,
-    oss_provider: Option<String>,
-) -> Result<PreflightReport, String> {
+pub(crate) async fn run_preflight(path: String, prompt: String) -> Result<PreflightReport, String> {
     run_blocking_command("run preflight checks", move || {
-        Ok(run_preflight_blocking(path, prompt, use_oss, oss_provider))
+        Ok(run_preflight_blocking(path, prompt))
     })
     .await
 }

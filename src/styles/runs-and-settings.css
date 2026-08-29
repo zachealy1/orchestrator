@@ -839,21 +839,32 @@ button.settings-status-card:focus-visible:not(:disabled) {
 
 .settings-connection-row {
   width: 100%;
-  grid-template-columns: 34px minmax(0, 1fr) auto auto;
+  grid-template-columns: 34px minmax(0, 1fr) auto 16px;
 }
 
-.settings-manage-button {
-  min-height: 30px;
+button.settings-connection-row {
+  justify-content: initial;
+  border-radius: 0;
   background: transparent;
-  color: var(--color-primary);
-  padding: 4px 2px;
+  color: var(--color-text);
+  font-weight: inherit;
+  text-align: left;
   transform: none;
 }
 
-.settings-manage-button:hover:not(:disabled),
-.settings-manage-button:focus-visible:not(:disabled) {
-  background: transparent;
+button.settings-connection-row:hover:not(:disabled),
+button.settings-connection-row:focus-visible:not(:disabled) {
+  background: var(--color-button-active);
   transform: none;
+}
+
+button.settings-connection-row:focus-visible:not(:disabled) {
+  outline: 2px solid rgb(var(--primary-rgb) / 0.72);
+  outline-offset: -2px;
+}
+
+.settings-connection-row > svg {
+  color: var(--color-icon-muted);
 }
 
 .settings-connection-row > .account-mini-avatar {
@@ -1397,6 +1408,64 @@ button.plugin-list-row.selected {
   display: grid;
   min-width: 0;
   gap: 3px;
+}
+
+button.settings-navigation-row {
+  width: 100%;
+  justify-content: initial;
+  border-radius: 0;
+  background: transparent;
+  color: var(--color-text);
+  font-weight: inherit;
+  text-align: left;
+  transform: none;
+}
+
+button.settings-navigation-row:hover:not(:disabled),
+button.settings-navigation-row:focus-visible:not(:disabled) {
+  background: var(--color-button-active);
+  transform: none;
+}
+
+button.settings-navigation-row:focus-visible:not(:disabled) {
+  outline: 2px solid rgb(var(--primary-rgb) / 0.72);
+  outline-offset: -2px;
+}
+
+.settings-navigation-row-indicator {
+  color: var(--color-icon-muted);
+}
+
+.settings-icon-action {
+  width: 34px;
+  min-width: 34px;
+  min-height: 34px;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--color-icon-muted);
+  padding: 0;
+  transform: none;
+}
+
+.settings-icon-action:hover:not(:disabled),
+.settings-icon-action:focus-visible:not(:disabled) {
+  background: var(--color-button-active);
+  transform: none;
+}
+
+.settings-icon-action:focus-visible:not(:disabled) {
+  outline: 2px solid rgb(var(--primary-rgb) / 0.72);
+  outline-offset: 2px;
+}
+
+.settings-icon-action.danger {
+  background: transparent;
+  color: var(--color-error);
+}
+
+.settings-icon-action.danger:hover:not(:disabled),
+.settings-icon-action.danger:focus-visible:not(:disabled) {
+  background: rgb(var(--error-rgb) / 0.14);
 }
 
 .account-management {

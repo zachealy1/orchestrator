@@ -1556,8 +1556,6 @@ export function KanbanWorkspace({
       computerUseEnabled: existingSettings?.computerUseEnabled ?? false,
       model: draft.model || null,
       reasoningEffort: draft.reasoningLevel || null,
-      useOss: existingSettings?.useOss ?? false,
-      ossProvider: existingSettings?.ossProvider ?? "ollama",
       contextFiles: draft.contextFiles,
       selectedSkills: existingSettings?.selectedSkills ?? [],
       goalMode: draft.submissionMode === "goal",

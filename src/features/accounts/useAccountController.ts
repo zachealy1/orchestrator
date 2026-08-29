@@ -12,7 +12,6 @@ import type {
   CodexAccount,
   CodexLoginState,
   CodexModel,
-  OssProvider,
 } from "../codex/types";
 import type {
   AccountHandoffCandidate,
@@ -53,10 +52,6 @@ export type AccountController = {
   accountMenuOpen: boolean;
   setAccountMenuOpen: StateSetter<boolean>;
   accountMenuContainerRef: RefObject<HTMLDivElement | null>;
-  useOss: boolean;
-  setUseOss: StateSetter<boolean>;
-  ossProvider: OssProvider;
-  setOssProvider: StateSetter<OssProvider>;
   models: CodexModel[];
   setModels: StateSetter<CodexModel[]>;
   modelsRef: MutableRefObject<CodexModel[]>;
@@ -96,8 +91,6 @@ export function useAccountController(): AccountController {
   const [loginUserCode, setLoginUserCode] = useState<string | null>(null);
   const [loginError, setLoginError] = useState<string | null>(null);
   const [accountMenuOpen, setAccountMenuOpen] = useState(false);
-  const [useOss, setUseOss] = useState(false);
-  const [ossProvider, setOssProvider] = useState<OssProvider>("ollama");
   const [models, setModels] = useState<CodexModel[]>([]);
   const [modelLoadError, setModelLoadError] = useState<string | null>(null);
   const [selectedModelId, setSelectedModelId] = useState<string | null>(null);
@@ -210,10 +203,6 @@ export function useAccountController(): AccountController {
     accountMenuOpen,
     setAccountMenuOpen,
     accountMenuContainerRef,
-    useOss,
-    setUseOss,
-    ossProvider,
-    setOssProvider,
     models,
     setModels,
     modelsRef,

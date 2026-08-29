@@ -1438,11 +1438,6 @@ button.composer-select-option.action:not(:first-child)::before {
   content: "";
 }
 
-.settings-provider-select {
-  width: 150px;
-  flex: 0 0 150px;
-}
-
 .token-pill {
   margin-left: auto;
   color: var(--text-soft);

@@ -783,10 +783,6 @@ function App() {
     accountMenuOpen,
     setAccountMenuOpen,
     accountMenuContainerRef,
-    useOss,
-    setUseOss,
-    ossProvider,
-    setOssProvider,
     models,
     setModels,
     modelsRef,
@@ -10127,7 +10123,7 @@ function App() {
         throw new Error("Sign in to the selected Codex account first.");
       }
 
-      if (!useOss && !modelLoadError) {
+      if (!modelLoadError) {
         const currentModel =
           models.find((model) => model.id === selectedModelId) ??
           models[0] ??
@@ -11421,8 +11417,6 @@ function App() {
       (await runPreflight({
         workspace: snapshot.workspace,
         prompt: snapshot.promptText,
-        useOss: snapshot.useOss,
-        ossProvider: snapshot.ossProvider,
       }));
     ensureRunControlActive(runControl);
     preflightRef.current = report;
@@ -11575,7 +11569,7 @@ function App() {
       sandbox: snapshot.access.sandbox,
       approvalPolicy: snapshot.access.approvalPolicy,
       model: snapshot.model,
-      modelProvider: snapshot.useOss ? "oss" : null,
+      modelProvider: null,
       collaborationMode: collaborationMode.mode,
       runIntent: runControl.intent,
       clientUserMessageId: runControl.clientUserMessageId,
@@ -12209,9 +12203,6 @@ function App() {
       }
     }
     const threadConfig = {
-      ...(snapshot.useOss
-        ? { model_provider: "oss", oss_provider: snapshot.ossProvider }
-        : {}),
       ...(snapshot.effort
         ? { model_reasoning_effort: snapshot.effort }
         : {}),
@@ -12243,9 +12234,7 @@ function App() {
     appServices.runCoordinator.transition(runControl.clientId, "starting-thread");
     let threadId = initialThreadId;
     let threadModel: string | null | undefined = snapshot.model;
-    let threadModelProvider: string | null | undefined = snapshot.useOss
-      ? "oss"
-      : null;
+    let threadModelProvider: string | null | undefined = null;
     let threadActivePermissionProfile: string | null = null;
     let resumedThread = false;
     let supersededThreadId: string | null = null;
@@ -12312,8 +12301,7 @@ function App() {
         console.error("Could not replay buffered Codex notifications", error);
       });
       const nextThreadModel = thread.model ?? snapshot.model;
-      const nextThreadModelProvider =
-        thread.modelProvider ?? (snapshot.useOss ? "oss" : null);
+      const nextThreadModelProvider = thread.modelProvider ?? null;
       if (!accountHandoff && !supersededThreadId) {
         await updateChat(chatId, {
           codexThreadId: nextThreadId,
@@ -12556,7 +12544,7 @@ function App() {
     await updateRun(runId, {
       codexThreadId: threadId,
       model: threadModel ?? snapshot.model,
-      modelProvider: threadModelProvider ?? (snapshot.useOss ? "oss" : null),
+      modelProvider: threadModelProvider ?? null,
       status: "running",
       collaborationMode: collaborationMode.mode,
       runIntent: runControl.intent,
@@ -12776,8 +12764,7 @@ function App() {
           await updateRun(runId, {
             codexThreadId: threadId,
             model: threadModel ?? snapshot.model,
-            modelProvider:
-              threadModelProvider ?? (snapshot.useOss ? "oss" : null),
+            modelProvider: threadModelProvider ?? null,
             status: "running",
             collaborationMode: collaborationMode.mode,
             runIntent: runControl.intent,
@@ -13437,9 +13424,10 @@ function App() {
     ) {
       throw new Error("The queued prompt's Codex account is unavailable.");
     }
-    const availableModels = settings.useOss
-      ? []
-      : await listCodexModelsForProfile(profileKey, accountId);
+    const availableModels = await listCodexModelsForProfile(
+      profileKey,
+      accountId,
+    );
     const selectedQueuedModel = settings.model
       ? availableModels.find(
           (model) =>
@@ -13563,8 +13551,6 @@ function App() {
       computerUseEnabled: settings.computerUseEnabled,
       model: settings.model,
       effort: settings.reasoningEffort,
-      useOss: settings.useOss,
-      ossProvider: settings.ossProvider,
       improvedPrompt: improvePrompt(item.prompt),
       contextFiles: settings.contextFiles.map((file) => ({ ...file })),
       selectedSkills: settings.selectedSkills.map((skill) => ({ ...skill })),
@@ -13604,7 +13590,6 @@ function App() {
       accounts: codexAccountsRef.current,
       selectedAccountId: selectedAccountIdRef.current,
       computerUseEnabled,
-      ossProvider,
     }),
     listModels: listCodexModelsForProfile,
     loadChat: getChatRecord,
@@ -13653,8 +13638,6 @@ function App() {
       queued.reasoningEffort === active.reasoningEffort &&
       queued.accessMode === active.accessMode &&
       queued.computerUseEnabled === active.computerUseEnabled &&
-      queued.useOss === active.useOss &&
-      queued.ossProvider === active.ossProvider &&
       selectedSession?.threadId === control.threadId &&
       imagesOnly
     );
@@ -13818,16 +13801,12 @@ function App() {
       intent,
       accessMode,
       computerUseEnabled,
-      model:
-        useOss || modelLoadErrorRef.current
-          ? null
-          : selectedQueuedModel?.model ?? null,
-      reasoningEffort:
-        useOss || modelLoadErrorRef.current
-          ? null
-          : selectedReasoningEffort,
-      useOss,
-      ossProvider,
+      model: modelLoadErrorRef.current
+        ? null
+        : selectedQueuedModel?.model ?? null,
+      reasoningEffort: modelLoadErrorRef.current
+        ? null
+        : selectedReasoningEffort,
       contextFiles: contextFilesRef.current,
       selectedSkills: selectedSkillsRef.current,
       goalMode,
@@ -14094,16 +14073,12 @@ function App() {
       intent: planMode ? "plan" : "normal",
       accessMode,
       computerUseEnabled,
-      model:
-        useOss || modelLoadErrorRef.current
-          ? null
-          : selectedCardModel?.model ?? null,
-      reasoningEffort:
-        useOss || modelLoadErrorRef.current
-          ? null
-          : selectedReasoningEffort,
-      useOss,
-      ossProvider,
+      model: modelLoadErrorRef.current
+        ? null
+        : selectedCardModel?.model ?? null,
+      reasoningEffort: modelLoadErrorRef.current
+        ? null
+        : selectedReasoningEffort,
       contextFiles: contextFilesRef.current,
       selectedSkills: selectedSkillsRef.current,
       goalMode,
@@ -14226,7 +14201,7 @@ function App() {
             model.id === settings.model || model.model === settings.model,
         ) ?? null
       : null;
-    if (!settings.useOss && settings.model && !queuedModel) {
+    if (settings.model && !queuedModel) {
       setStatusMessage(
         `The queued prompt's model ${settings.model} is no longer available.`,
       );
@@ -14277,10 +14252,8 @@ function App() {
       contextFiles: settings.contextFiles,
       selectedSkills: settings.selectedSkills,
     });
-    if (!settings.useOss) {
-      setSelectedModelId(queuedModel?.id ?? null);
-      setSelectedReasoningEffort(settings.reasoningEffort);
-    }
+    setSelectedModelId(queuedModel?.id ?? null);
+    setSelectedReasoningEffort(settings.reasoningEffort);
     const queuedPlanMode = settings.mode === "plan";
     setGoalMode(!queuedPlanMode && settings.goalMode);
     setPlanMode(queuedPlanMode);
@@ -14363,12 +14336,9 @@ function App() {
         throw new Error("The queued prompt's chat is no longer available.");
       }
       const originalSettings = currentItem.snapshot.executionSettings;
-      const selectedEditedModel = originalSettings.useOss
-        ? null
-        : modelsRef.current.find(
-            (model) => model.id === selectedModelId,
-          ) ?? null;
-      if (!originalSettings.useOss && !selectedEditedModel) {
+      const selectedEditedModel =
+        modelsRef.current.find((model) => model.id === selectedModelId) ?? null;
+      if (!selectedEditedModel) {
         throw new Error("Select an available model for the queued prompt.");
       }
       if (
@@ -14394,14 +14364,8 @@ function App() {
         intent: editedPlanMode ? "plan" : "normal",
         accessMode: originalSettings.accessMode,
         computerUseEnabled: originalSettings.computerUseEnabled,
-        model: originalSettings.useOss
-          ? originalSettings.model
-          : selectedEditedModel?.model ?? null,
-        reasoningEffort: originalSettings.useOss
-          ? originalSettings.reasoningEffort
-          : selectedReasoningEffort,
-        useOss: originalSettings.useOss,
-        ossProvider: originalSettings.ossProvider,
+        model: selectedEditedModel.model,
+        reasoningEffort: selectedReasoningEffort,
         contextFiles: contextFilesRef.current,
         selectedSkills: selectedSkillsRef.current,
         goalMode: editedGoalMode,
@@ -14730,7 +14694,7 @@ function App() {
         return;
       }
 
-      if (!originalSettings.useOss && originalSettings.model) {
+      if (originalSettings.model) {
         await ensureCodexProfileConnected(
           originalSettings.profileKey,
           originalSettings.accountId,
@@ -14854,8 +14818,6 @@ function App() {
       computerUseEnabled: originalSettings.computerUseEnabled,
       model: originalSettings.model,
       effort: originalSettings.reasoningEffort,
-      useOss: originalSettings.useOss,
-      ossProvider: originalSettings.ossProvider,
       improvedPrompt: improvePrompt(promptText),
       contextFiles: originalContextFiles.map((file) => ({ ...file })),
       selectedSkills: originalSettings.selectedSkills.map((skill) => ({
@@ -17876,10 +17838,9 @@ function App() {
       models.find((option) => option.id === selectedModelId) ??
       models[0] ??
       null;
-    const followUpUseOss = executionSelection ? false : useOss;
     const model = executionSelection
       ? selectedModel?.model ?? null
-      : useOss || modelLoadError
+      : modelLoadError
         ? null
         : selectedModel?.model ?? null;
     const reasoningEffort = executionSelection
@@ -17918,8 +17879,6 @@ function App() {
       computerUseEnabled,
       model,
       reasoningEffort: model ? reasoningEffort : null,
-      useOss: followUpUseOss,
-      ossProvider,
       contextFiles: [],
       selectedSkills: [],
       goalMode: false,
@@ -17945,8 +17904,6 @@ function App() {
       computerUseEnabled,
       model,
       effort: model ? reasoningEffort : null,
-      useOss: followUpUseOss,
-      ossProvider,
       improvedPrompt: promptText,
       contextFiles: [],
       selectedSkills: [],
@@ -20423,8 +20380,6 @@ function App() {
                 runIsActive,
                 authMessage,
                 showLogout,
-                useOss,
-                ossProvider,
               }}
               actions={{
                 setComputerUseEnabled,
@@ -20488,8 +20443,6 @@ function App() {
                 addAccount: () => void handleAddAccount(),
                 connectAccount: (accountId) => void ensureCodexConnected(accountId),
                 logout: handleLogout,
-                setUseOss,
-                setOssProvider,
               }}
             />
 

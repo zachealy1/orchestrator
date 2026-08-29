@@ -3,6 +3,7 @@ import {
   CircleHelp,
   ChevronRight,
   Download,
+  ExternalLink,
   GitPullRequest,
   FolderOpen,
   LogIn,
@@ -11,14 +12,13 @@ import {
   Plug,
   Puzzle,
   RefreshCw,
+  RotateCcw,
   Search,
-  Settings,
   Trash2,
   UserRound,
   UserPlus,
 } from "lucide-react";
 import { memo, useState } from "react";
-import { ComposerSelect } from "../../components/ComposerSelect";
 import { OrchestratorMark } from "../../components/OrchestratorMark";
 import type {
   AgentNotificationPermissionStatus,
@@ -35,7 +35,7 @@ import {
   pluginIsReady,
   type CodexPluginCatalog,
 } from "../plugins/types";
-import type { CodexLoginState, OssProvider } from "../codex/types";
+import type { CodexLoginState } from "../codex/types";
 import type { CodexAccountProfile } from "../accounts/types";
 import type { GithubConnectionStatus } from "../github/api";
 
@@ -70,8 +70,6 @@ export type SettingsViewModel = {
   runIsActive: boolean;
   authMessage: string;
   showLogout: boolean;
-  useOss: boolean;
-  ossProvider: OssProvider;
 };
 
 export type SettingsViewActions = {
@@ -104,8 +102,6 @@ export type SettingsViewActions = {
   addAccount: () => void;
   connectAccount: (accountId: number) => void;
   logout: () => void;
-  setUseOss: (enabled: boolean) => void;
-  setOssProvider: (provider: OssProvider) => void;
 };
 
 export const SettingsView = memo(function SettingsView({
@@ -167,31 +163,36 @@ export const SettingsView = memo(function SettingsView({
             }
           />
           <div className="setting-list">
-            <div className="setting-row">
-              <div>
-                <strong>In-app browser</strong>
-                <span>
-                  Uses a persistent profile that is isolated from your regular browser.
-                </span>
-              </div>
-              {!model.browserReadiness.available ? (
-                <button className="secondary" type="button" onClick={actions.openPlugins}>
-                  <Puzzle size={16} aria-hidden="true" />
-                  Open Plugins
-                </button>
-              ) : (
+            {!model.browserReadiness.available ? (
+              <SettingsNavigationRow
+                label="In-app browser"
+                description="Uses a persistent profile that is isolated from your regular browser."
+                ariaLabel="Open Plugins for the in-app browser"
+                onActivate={actions.openPlugins}
+              />
+            ) : (
+              <div className="setting-row">
+                <div>
+                  <strong>In-app browser</strong>
+                  <span>
+                    Uses a persistent profile that is isolated from your regular browser.
+                  </span>
+                </div>
                 <SettingsStatusBadge label="Ready" tone="positive" />
-              )}
-            </div>
+              </div>
+            )}
             <div className="setting-row">
               <div>
                 <strong>Browser data</strong>
                 <span>Clear cookies, site data, cache, and task tabs from the isolated profile.</span>
               </div>
-              <button className="secondary" type="button" onClick={actions.clearBrowserData}>
-                <Trash2 size={16} aria-hidden="true" />
-                Clear data
-              </button>
+              <SettingsIconAction
+                icon={Trash2}
+                ariaLabel="Clear data"
+                tooltip="Clear browser data"
+                danger
+                onActivate={actions.clearBrowserData}
+              />
             </div>
             <div className="setting-row">
               <div>
@@ -200,14 +201,19 @@ export const SettingsView = memo(function SettingsView({
               </div>
               <div className="button-row compact">
                 {model.browserPreferences.downloadLocation ? (
-                  <button className="secondary small" type="button" onClick={actions.resetBrowserDownloadLocation}>
-                    Reset
-                  </button>
+                  <SettingsIconAction
+                    icon={RotateCcw}
+                    ariaLabel="Reset download location"
+                    tooltip="Reset download location"
+                    onActivate={actions.resetBrowserDownloadLocation}
+                  />
                 ) : null}
-                <button className="secondary" type="button" onClick={actions.chooseBrowserDownloadLocation}>
-                  <FolderOpen size={16} aria-hidden="true" />
-                  Choose
-                </button>
+                <SettingsIconAction
+                  icon={FolderOpen}
+                  ariaLabel="Choose download location"
+                  tooltip="Choose download location"
+                  onActivate={actions.chooseBrowserDownloadLocation}
+                />
               </div>
             </div>
             <label className="setting-row checkbox-setting">
@@ -230,15 +236,13 @@ export const SettingsView = memo(function SettingsView({
                     : "Profile import is not available on this device."}
                 </span>
               </div>
-              <button
-                className="secondary"
-                type="button"
+              <SettingsIconAction
+                icon={Download}
+                ariaLabel="Import browser profile"
+                tooltip="Import browser profile"
                 disabled={!model.browserReadiness.profileImportAvailable}
-                onClick={actions.importBrowserProfile}
-              >
-                <Download size={16} aria-hidden="true" />
-                Import
-              </button>
+                onActivate={actions.importBrowserProfile}
+              />
             </div>
           </div>
           {!model.browserReadiness.available ? (
@@ -295,46 +299,39 @@ export const SettingsView = memo(function SettingsView({
             </div>
             {externalBrowserPlugins.length > 0 ? (
               externalBrowserPlugins.map((plugin) => (
-                <div className="setting-row computer-use-control-row" key={plugin.id}>
-                  <div>
-                    <strong>{plugin.displayName}</strong>
-                    <span>
-                      {pluginIsReady(plugin)
-                        ? "Connected through its official browser plugin."
-                        : "This browser control is not connected."}
-                    </span>
-                  </div>
-                  <button className="secondary" type="button" onClick={actions.openPlugins}>
-                    {pluginIsReady(plugin) ? "Manage" : "Open Plugins"}
-                  </button>
-                </div>
+                <SettingsNavigationRow
+                  className="computer-use-control-row"
+                  key={plugin.id}
+                  label={plugin.displayName}
+                  description={
+                    pluginIsReady(plugin)
+                      ? "Connected through its official browser plugin."
+                      : "This browser control is not connected."
+                  }
+                  ariaLabel={`Open Plugins for ${plugin.displayName}`}
+                  onActivate={actions.openPlugins}
+                />
               ))
             ) : (
-              <div className="setting-row computer-use-empty-row">
-                <div>
-                  <strong>No connected controls</strong>
-                  <span>Install an external-browser plugin from Plugins when you need an existing browser profile.</span>
-                </div>
-                <button className="secondary" type="button" onClick={actions.openPlugins}>
-                  <Puzzle size={16} aria-hidden="true" />
-                  Open Plugins
-                </button>
-              </div>
+              <SettingsNavigationRow
+                className="computer-use-empty-row"
+                label="No connected controls"
+                description="Install an external-browser plugin from Plugins when you need an existing browser profile."
+                ariaLabel="Open Plugins for connected controls"
+                onActivate={actions.openPlugins}
+              />
             )}
             <div className="settings-subsection-heading">
               <div>
                 <strong>macOS permissions</strong>
                 <span>Both permissions are required to see and operate desktop apps.</span>
               </div>
-              <button
-                className="native-plan-icon-action"
-                type="button"
-                aria-label="Check Computer Use permissions again"
-                data-tooltip="Check again"
-                onClick={actions.refreshComputerUseStatus}
-              >
-                <RefreshCw size={16} aria-hidden="true" />
-              </button>
+              <SettingsIconAction
+                icon={RefreshCw}
+                ariaLabel="Check Computer Use permissions again"
+                tooltip="Check again"
+                onActivate={actions.refreshComputerUseStatus}
+              />
             </div>
             <PermissionRow
               label="Screen Recording"
@@ -361,13 +358,15 @@ export const SettingsView = memo(function SettingsView({
                     <strong>{application.name}</strong>
                     <span>{application.bundleId}</span>
                   </div>
-                  <button
-                    className="secondary danger"
-                    type="button"
-                    onClick={() => actions.revokeAlwaysAllowedApplication(application.id)}
-                  >
-                    Revoke
-                  </button>
+                  <SettingsIconAction
+                    icon={Trash2}
+                    ariaLabel={`Revoke ${application.name}`}
+                    tooltip={`Revoke ${application.name}`}
+                    danger
+                    onActivate={() =>
+                      actions.revokeAlwaysAllowedApplication(application.id)
+                    }
+                  />
                 </div>
               ))
             ) : (
@@ -397,9 +396,12 @@ export const SettingsView = memo(function SettingsView({
                 Orchestrator no longer uses its Browser Bridge. Remove the obsolete
                 Orchestrator browser extension from your browser when convenient.
               </p>
-              <button className="secondary small" type="button" onClick={actions.dismissLegacyBrowserMigrationNotice}>
-                Dismiss
-              </button>
+              <SettingsIconAction
+                icon={Trash2}
+                ariaLabel="Dismiss browser migration notice"
+                tooltip="Dismiss"
+                onActivate={actions.dismissLegacyBrowserMigrationNotice}
+              />
             </div>
           ) : null}
         </section>
@@ -456,36 +458,37 @@ export const SettingsView = memo(function SettingsView({
               </div>
               <div className="button-row compact">
                 {model.githubConnectionPending ? (
-                  <button
-                    className="secondary"
-                    type="button"
-                    onClick={actions.showGithubLogin}
-                  >
-                    <LogIn size={16} aria-hidden="true" />
-                    View sign-in
-                  </button>
+                  <SettingsIconAction
+                    icon={LogIn}
+                    ariaLabel="View GitHub sign-in"
+                    tooltip="View sign-in"
+                    onActivate={actions.showGithubLogin}
+                  />
                 ) : model.githubConnection?.connected ? (
-                  <button
-                    className="secondary"
-                    type="button"
-                    onClick={actions.disconnectGithub}
+                  <SettingsIconAction
+                    icon={LogOut}
+                    ariaLabel="Disconnect GitHub"
+                    tooltip="Disconnect"
+                    danger
                     disabled={model.githubConnectionPending}
-                  >
-                    <LogOut size={16} aria-hidden="true" />
-                    Disconnect
-                  </button>
+                    onActivate={actions.disconnectGithub}
+                  />
                 ) : (
-                  <button
-                    className="secondary"
-                    type="button"
-                    onClick={actions.connectGithub}
+                  <SettingsIconAction
+                    icon={GitPullRequest}
+                    ariaLabel={
+                      model.githubConnection?.status === "reconnect_required"
+                        ? "Reconnect GitHub"
+                        : "Connect GitHub"
+                    }
+                    tooltip={
+                      model.githubConnection?.status === "reconnect_required"
+                        ? "Reconnect"
+                        : "Connect"
+                    }
                     disabled={model.githubConnection?.available === false}
-                  >
-                    <GitPullRequest size={16} aria-hidden="true" />
-                    {model.githubConnection?.status === "reconnect_required"
-                      ? "Reconnect"
-                      : "Connect"}
-                  </button>
+                    onActivate={actions.connectGithub}
+                  />
                 )}
               </div>
             </div>
@@ -497,10 +500,6 @@ export const SettingsView = memo(function SettingsView({
         "accounts",
         "codex",
         "codex connection",
-        "local models",
-        "oss provider",
-        "ollama",
-        "lm studio",
       ) ? (
         <section
           className="surface settings-panel codex-settings-panel"
@@ -595,16 +594,14 @@ export const SettingsView = memo(function SettingsView({
                             {account.status === "error" ? "Retry" : "Sign in"}
                           </button>
                         ) : null}
-                        <button
-                          className="danger icon-button"
-                          type="button"
-                          onClick={() => actions.removeAccount(account.id)}
+                        <SettingsIconAction
+                          icon={Trash2}
+                          ariaLabel={`Remove ${account.label}`}
+                          tooltip={`Remove ${account.label}`}
+                          danger
+                          onActivate={() => actions.removeAccount(account.id)}
                           disabled={accountHasActiveRun || accountSigningIn}
-                          title={`Remove ${account.label}`}
-                          aria-label={`Remove ${account.label}`}
-                        >
-                          <Trash2 size={15} />
-                        </button>
+                        />
                       </div>
                     </article>
                   );
@@ -629,69 +626,32 @@ export const SettingsView = memo(function SettingsView({
                 <span>{model.authMessage}</span>
               </div>
               <div className="button-row compact">
-                <button
-                  className="secondary"
-                  type="button"
-                  onClick={() =>
+                <SettingsIconAction
+                  icon={Plug}
+                  ariaLabel="Connect selected Codex account"
+                  tooltip="Connect"
+                  onActivate={() =>
                     model.selectedAccountId !== null &&
                     actions.connectAccount(model.selectedAccountId)
                   }
                   disabled={
                     model.selectedAccountId === null || model.runIsActive
                   }
-                >
-                  <Plug size={16} />
-                  Connect
-                </button>
+                />
                 {model.showLogout ? (
-                  <button
-                    className="secondary"
-                    type="button"
-                    onClick={actions.logout}
+                  <SettingsIconAction
+                    icon={LogOut}
+                    ariaLabel="Log out of selected Codex account"
+                    tooltip="Log out"
+                    danger
+                    onActivate={actions.logout}
                     disabled={
                       model.selectedAccountId !== null &&
                       model.activeRunAccountIds.has(model.selectedAccountId)
                     }
-                  >
-                    <LogOut size={16} />
-                    Log out
-                  </button>
+                  />
                 ) : null}
               </div>
-            </div>
-            <label className="setting-row checkbox-setting">
-              <div>
-                <strong>Use local OSS provider</strong>
-                <span>
-                  Pass Codex config overrides for OSS mode when launching runs.
-                </span>
-              </div>
-              <SettingsSwitch
-                ariaLabel="Use local OSS provider"
-                checked={model.useOss}
-                onChange={actions.setUseOss}
-              />
-            </label>
-            <div className="setting-row">
-              <div>
-                <strong>OSS provider</strong>
-                <span>Used only when local OSS mode is enabled.</span>
-              </div>
-              <ComposerSelect
-                ariaLabel="Settings OSS provider"
-                value={model.ossProvider}
-                options={[
-                  { value: "ollama", label: "Ollama" },
-                  { value: "lmstudio", label: "LM Studio" },
-                ]}
-                placeholder="Select provider"
-                icon={<Plug size={16} />}
-                className="settings-provider-select"
-                disabled={!model.useOss}
-                onChange={(value) =>
-                  actions.setOssProvider(value as OssProvider)
-                }
-              />
             </div>
           </div>
         </section>
@@ -732,9 +692,6 @@ function SettingsOverview({
     "codex",
     "accounts",
     "github",
-    "oss provider",
-    "ollama",
-    "lm studio",
   );
 
   return (
@@ -829,58 +786,54 @@ function SettingsOverview({
           >
             <SettingsOverviewHeader icon={Plug} title="Connections" />
             <div className="settings-overview-rows">
-                <div className="settings-overview-row settings-connection-row">
-                  <span className="account-mini-avatar" aria-hidden="true">
-                    {(selectedAccount?.email ?? selectedAccount?.label ?? "C")
-                      .charAt(0)
-                      .toUpperCase()}
+              <button
+                className="settings-overview-row settings-connection-row"
+                type="button"
+                onClick={() => scrollToSettingsSection("settings-accounts")}
+              >
+                <span className="account-mini-avatar" aria-hidden="true">
+                  {(selectedAccount?.email ?? selectedAccount?.label ?? "C")
+                    .charAt(0)
+                    .toUpperCase()}
+                </span>
+                <div>
+                  <strong>Codex account</strong>
+                  <span>
+                    {selectedAccount?.email ??
+                      selectedAccount?.label ??
+                      "No account selected"}
                   </span>
-                  <div>
-                    <strong>Codex account</strong>
-                    <span>
-                      {selectedAccount?.email ??
-                        selectedAccount?.label ??
-                        "No account selected"}
-                    </span>
-                  </div>
-                  <span className="settings-connection-value">
-                    {selectedAccount?.plan_type
-                      ? formatCodexPlanType(selectedAccount.plan_type)
-                      : model.codexConnected
-                        ? "Connected"
-                        : "Not connected"}
-                  </span>
-                  <button
-                    className="settings-manage-button"
-                    type="button"
-                    onClick={() => scrollToSettingsSection("settings-accounts")}
-                  >
-                    Manage
-                  </button>
                 </div>
-                <div className="settings-overview-row settings-connection-row">
-                  <span className="settings-row-icon" aria-hidden="true">
-                    <GitPullRequest size={18} />
+                <span className="settings-connection-value">
+                  {selectedAccount?.plan_type
+                    ? formatCodexPlanType(selectedAccount.plan_type)
+                    : model.codexConnected
+                      ? "Connected"
+                      : "Not connected"}
+                </span>
+                <ChevronRight size={16} aria-hidden="true" />
+              </button>
+              <button
+                className="settings-overview-row settings-connection-row"
+                type="button"
+                onClick={() => scrollToSettingsSection("settings-github")}
+              >
+                <span className="settings-row-icon" aria-hidden="true">
+                  <GitPullRequest size={18} />
+                </span>
+                <div>
+                  <strong>GitHub</strong>
+                  <span>
+                    {model.githubConnection?.connected
+                      ? `@${model.githubConnection.login}`
+                      : "Not connected"}
                   </span>
-                  <div>
-                    <strong>GitHub</strong>
-                    <span>
-                      {model.githubConnection?.connected
-                        ? `@${model.githubConnection.login}`
-                        : "Not connected"}
-                    </span>
-                  </div>
-                  <span className="settings-connection-value">
-                    {model.githubConnection?.connected ? "Connected" : "Off"}
-                  </span>
-                  <button
-                    className="settings-manage-button"
-                    type="button"
-                    onClick={() => scrollToSettingsSection("settings-github")}
-                  >
-                    Manage
-                  </button>
                 </div>
+                <span className="settings-connection-value">
+                  {model.githubConnection?.connected ? "Connected" : "Off"}
+                </span>
+                <ChevronRight size={16} aria-hidden="true" />
+              </button>
             </div>
           </section>
         </div>
@@ -965,20 +918,92 @@ function PermissionRow({
   granted: boolean;
   onOpen: () => void;
 }) {
+  if (!granted) {
+    return (
+      <SettingsNavigationRow
+        className="computer-use-permission-row"
+        label={label}
+        description={description}
+        ariaLabel={`Open ${label} settings`}
+        external
+        onActivate={onOpen}
+      />
+    );
+  }
+
   return (
     <div className="setting-row computer-use-permission-row">
       <div>
         <strong>{label}</strong>
         <span>{description}</span>
       </div>
-      {granted ? (
-        <SettingsStatusBadge label="Allowed" tone="positive" />
-      ) : (
-        <button className="secondary" type="button" onClick={onOpen}>
-          Open settings
-        </button>
-      )}
+      <SettingsStatusBadge label="Allowed" tone="positive" />
     </div>
+  );
+}
+
+function SettingsNavigationRow({
+  label,
+  description,
+  ariaLabel,
+  className,
+  external = false,
+  onActivate,
+}: {
+  label: string;
+  description: string;
+  ariaLabel?: string;
+  className?: string;
+  external?: boolean;
+  onActivate: () => void;
+}) {
+  const EndIcon = external ? ExternalLink : ChevronRight;
+  return (
+    <button
+      className={`setting-row settings-navigation-row${className ? ` ${className}` : ""}`}
+      type="button"
+      aria-label={ariaLabel}
+      onClick={onActivate}
+    >
+      <div>
+        <strong>{label}</strong>
+        <span>{description}</span>
+      </div>
+      <EndIcon
+        className="settings-navigation-row-indicator"
+        size={16}
+        aria-hidden="true"
+      />
+    </button>
+  );
+}
+
+function SettingsIconAction({
+  icon: Icon,
+  ariaLabel,
+  tooltip,
+  danger = false,
+  disabled = false,
+  onActivate,
+}: {
+  icon: typeof Monitor;
+  ariaLabel: string;
+  tooltip: string;
+  danger?: boolean;
+  disabled?: boolean;
+  onActivate: () => void;
+}) {
+  return (
+    <button
+      className={`settings-icon-action${danger ? " danger" : ""}`}
+      type="button"
+      aria-label={ariaLabel}
+      data-tooltip={tooltip}
+      disabled={disabled}
+      onClick={onActivate}
+    >
+      <Icon size={16} aria-hidden="true" />
+    </button>
   );
 }
 
@@ -1110,31 +1135,32 @@ function NotificationSettings({
             actions.setNotificationPreference("externalAction", enabled)
           }
         />
-      </div>
-      {model.notificationPermission !== "allowed" ? (
-        <div className="notification-settings-actions">
-          {model.notificationPermission === "denied" ? (
-            <button
-              className="secondary"
-              type="button"
-              onClick={actions.openNotificationSettings}
-            >
-              <Settings size={16} aria-hidden="true" />
-              Open macOS settings
-            </button>
+        {model.notificationPermission !== "allowed" ? (
+          model.notificationPermission === "denied" ? (
+            <SettingsNavigationRow
+              label="macOS notification settings"
+              description="Review notification permission in System Settings."
+              ariaLabel="Open macOS notification settings"
+              external
+              onActivate={actions.openNotificationSettings}
+            />
           ) : (
-            <button
-              className="secondary"
-              type="button"
-              onClick={actions.enableNotifications}
-              disabled={model.notificationPermission === "unavailable"}
-            >
-              <Bell size={16} aria-hidden="true" />
-              Enable notifications
-            </button>
-          )}
-        </div>
-      ) : null}
+            <div className="setting-row notification-permission-row">
+              <div>
+                <strong>System notifications</strong>
+                <span>Allow Orchestrator to deliver the selected agent alerts.</span>
+              </div>
+              <SettingsIconAction
+                icon={Bell}
+                ariaLabel="Enable notifications"
+                tooltip="Enable notifications"
+                disabled={model.notificationPermission === "unavailable"}
+                onActivate={actions.enableNotifications}
+              />
+            </div>
+          )
+        ) : null}
+      </div>
     </section>
   );
 }

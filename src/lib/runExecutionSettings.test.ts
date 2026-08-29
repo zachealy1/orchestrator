@@ -19,8 +19,6 @@ describe("run execution settings", () => {
       computerUseEnabled: true,
       model: "gpt-5.5",
       reasoningEffort: "high",
-      useOss: false,
-      ossProvider: "lmstudio",
       contextFiles: [
         {
           path: "/workspace/src/App.tsx",
@@ -71,7 +69,7 @@ describe("run execution settings", () => {
 
     expect(parseRunExecutionSettings(legacySettings)).toEqual(
       expect.objectContaining({
-        version: 5,
+        version: 6,
         selectedRepositoryPath: null,
         selectedBranch: "feature/original",
         computerUseEnabled: false,
@@ -119,7 +117,7 @@ describe("run execution settings", () => {
     expect(resolved).toEqual({
       source: "legacy",
       settings: expect.objectContaining({
-        version: 5,
+        version: 6,
         selectedRepositoryPath: null,
         accountId: 7,
         profileKey: "account:7",
@@ -151,12 +149,43 @@ describe("run execution settings", () => {
     expect(resolved.source).toBe("legacy");
     expect(resolved.settings).toEqual(
       expect.objectContaining({
+        version: 6,
         accountId: 4,
         profileKey: "account:4",
         accessMode: "full-access",
-        useOss: true,
-        ossProvider: "ollama",
+        model: null,
       }),
     );
+    expect(resolved.settings).not.toHaveProperty("useOss");
+    expect(resolved.settings).not.toHaveProperty("ossProvider");
+  });
+
+  it("migrates captured OSS settings without retaining local-provider routing", () => {
+    const migrated = parseRunExecutionSettings(
+      JSON.stringify({
+        version: 5,
+        accountId: 7,
+        profileKey: "account:7",
+        selectedRepositoryPath: "/workspace/project",
+        selectedBranch: "main",
+        mode: "run",
+        intent: "normal",
+        accessMode: "ask-for-approval",
+        computerUseEnabled: false,
+        model: null,
+        reasoningEffort: null,
+        useOss: true,
+        ossProvider: "lmstudio",
+        contextFiles: [],
+        selectedSkills: [],
+        goalMode: false,
+      }),
+    );
+
+    expect(migrated).toEqual(
+      expect.objectContaining({ version: 6, model: null }),
+    );
+    expect(migrated).not.toHaveProperty("useOss");
+    expect(migrated).not.toHaveProperty("ossProvider");
   });
 });

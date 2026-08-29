@@ -9,7 +9,6 @@ import type {
   CodexLoginState,
   CodexModel,
   CodexProfileKey,
-  OssProvider,
   RunInteractionMode,
 } from "../codex/types";
 import type { ComposerContextFile, SelectedComposerSkill } from "../composer/types";
@@ -142,8 +141,6 @@ export type RunSetupSnapshot = {
   computerUseEnabled: boolean;
   model: string | null;
   effort: string | null;
-  useOss: boolean;
-  ossProvider: OssProvider;
   improvedPrompt: string;
   contextFiles: ComposerContextFile[];
   selectedSkills: SelectedComposerSkill[];

@@ -98,8 +98,6 @@ export type CodexProcessEvent = {
   message: string;
 };
 
-export type OssProvider = "ollama" | "lmstudio";
-
 export type CodexAccessMode = "ask-for-approval" | "full-access";
 
 export type RunInteractionMode = "chat" | "plan" | "goal" | "goal-plan";

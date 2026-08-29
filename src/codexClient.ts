@@ -15,7 +15,7 @@ import type {
   AgentNotificationTarget,
 } from "./lib/agentNotifications";
 import type { WorkspaceCommitIntentContext } from "./lib/commitMessage";
-import type { ActiveCodexLogin, CodexAccountResponse, CodexConnectResult, CodexLoginResponse, CodexModel, ModelListResponse, OssProvider } from "./features/codex/types";
+import type { ActiveCodexLogin, CodexAccountResponse, CodexConnectResult, CodexLoginResponse, CodexModel, ModelListResponse } from "./features/codex/types";
 import type { DesktopRuntimeStatus } from "./features/interaction/types";
 import type { CodexSkillSummary, ComposerContextFile, DroppedContextPathInspection, ImageAttachmentPreview } from "./features/composer/types";
 import type { ExternalTranscriptSnapshot, ExternalThreadHistoryIndex } from "./features/conversations/types";
@@ -527,16 +527,9 @@ export function inspectPromptQueueContext(
 export function runPreflight(input: {
   workspace: Workspace;
   prompt: string;
-  useOss: boolean;
-  ossProvider: OssProvider;
 }) {
   return commandResult<PreflightReport>(
-    commands.runPreflight(
-      input.workspace.path,
-      input.prompt,
-      input.useOss,
-      input.ossProvider,
-    ),
+    commands.runPreflight(input.workspace.path, input.prompt),
   );
 }
 

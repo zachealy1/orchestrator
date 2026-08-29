@@ -169,7 +169,7 @@ describe("Application runtime scenarios 6", () => {
       );
       expect(firstSettings).toEqual(
         expect.objectContaining({
-          version: 5,
+          version: 6,
           accountId: 7,
           profileKey: "account:7",
           selectedRepositoryPath: workspace.path,
@@ -180,8 +180,6 @@ describe("Application runtime scenarios 6", () => {
           computerUseEnabled: false,
           model: "gpt-original",
           reasoningEffort: "low",
-          useOss: false,
-          ossProvider: "ollama",
           goalMode: true,
           contextFiles: [
             expect.objectContaining({
@@ -329,8 +327,6 @@ describe("Application runtime scenarios 6", () => {
           browserExecutionTarget: "isolated",
           model: defaultCodexModel.model,
           reasoningEffort: "medium",
-          useOss: false,
-          ossProvider: "ollama",
           contextFiles: [],
           selectedSkills: [],
           goalMode: false,
@@ -699,8 +695,6 @@ describe("Application runtime scenarios 6", () => {
         computerUseEnabled: false,
         model: "gpt-original",
         reasoningEffort: "high",
-        useOss: false,
-        ossProvider: "lmstudio",
         contextFiles: [
           {
             path: `${workspace.path}/README.md`,
@@ -773,7 +767,7 @@ describe("Application runtime scenarios 6", () => {
         mocks.createRunMock.mock.calls[0]?.[0].executionSettingsJson,
       );
       expect(rerunSettings).toEqual(expect.objectContaining({
-        version: 5,
+        version: 6,
         selectedRepositoryPath: workspace.path,
         computerUseEnabled: false,
         model: persistedSettings.model,

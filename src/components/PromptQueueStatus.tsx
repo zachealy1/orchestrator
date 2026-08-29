@@ -354,7 +354,7 @@ const SortableQueueItem = memo(function SortableQueueItem({
       : "Chat";
   const settingsSummary = [
     mode,
-    settings.model ?? (settings.useOss ? settings.ossProvider : "Default model"),
+    settings.model ?? "Default model",
     settings.reasoningEffort,
     settings.contextFiles.length > 0
       ? `${settings.contextFiles.length} attachment${

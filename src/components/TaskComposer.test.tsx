@@ -183,8 +183,6 @@ function queuedPrompt(): PromptQueueItem {
     computerUseEnabled: true,
     model: "gpt-5.1-codex",
     reasoningEffort: "medium",
-    useOss: false,
-    ossProvider: "ollama",
     contextFiles: [],
     selectedSkills: [],
     goalMode: false,

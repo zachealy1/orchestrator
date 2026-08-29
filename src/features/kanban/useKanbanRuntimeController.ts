@@ -3,7 +3,6 @@ import type { CodexAccountProfile } from "../accounts/types";
 import type {
   CodexModel,
   CodexProfileKey,
-  OssProvider,
 } from "../codex/types";
 import type { ChatRecord } from "../conversations/types";
 import type {
@@ -47,7 +46,6 @@ export type KanbanRuntimeState = {
   accounts: CodexAccountProfile[];
   selectedAccountId: number | null;
   computerUseEnabled: boolean;
-  ossProvider: OssProvider;
 };
 
 export type KanbanRuntimeControllerDependencies<
@@ -221,8 +219,6 @@ export function createKanbanRuntimeController<
         model: selectedModel?.model ?? card.model,
         reasoningEffort:
           card.reasoningLevel ?? selectedModel?.defaultReasoningEffort ?? null,
-        useOss: false,
-        ossProvider: state.ossProvider,
         contextFiles: [],
         selectedSkills: [],
         goalMode: true,
@@ -377,8 +373,6 @@ export function createKanbanRuntimeController<
           computerUseEnabled: runExecutionSettings.computerUseEnabled,
           model: runExecutionSettings.model,
           effort: runExecutionSettings.reasoningEffort,
-          useOss: runExecutionSettings.useOss,
-          ossProvider: runExecutionSettings.ossProvider,
           improvedPrompt: improvePrompt(effectivePrompt),
           contextFiles: runExecutionSettings.contextFiles,
           selectedSkills: runExecutionSettings.selectedSkills,

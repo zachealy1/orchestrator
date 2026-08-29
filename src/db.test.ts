@@ -83,8 +83,6 @@ function queuedPromptSnapshot() {
     computerUseEnabled: true,
     model: "gpt-5.6",
     reasoningEffort: "medium",
-    useOss: false,
-    ossProvider: "ollama",
     contextFiles: [],
     selectedSkills: [],
     goalMode: false,
