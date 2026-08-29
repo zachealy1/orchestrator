@@ -738,13 +738,9 @@ button.settings-status-card:focus-visible:not(:disabled) {
 
 .settings-overview-grid {
   display: grid;
-  grid-template-columns: minmax(0, 1.12fr) minmax(0, 0.88fr);
+  grid-template-columns: minmax(0, 1fr);
   gap: 16px;
   align-items: stretch;
-}
-
-.settings-overview-grid.single-column {
-  grid-template-columns: minmax(0, 1fr);
 }
 
 .settings-overview-panel {
@@ -779,8 +775,7 @@ button.settings-status-card:focus-visible:not(:disabled) {
   border-top: 0;
 }
 
-.settings-overview-row > div:nth-child(2),
-.settings-overview-row-copy {
+.settings-overview-row > div:nth-child(2) {
   display: grid;
   min-width: 0;
   gap: 4px;
@@ -790,8 +785,7 @@ button.settings-status-card:focus-visible:not(:disabled) {
   font-size: 0.9rem;
 }
 
-.settings-overview-row > div:nth-child(2) > span,
-.settings-overview-row-copy > span {
+.settings-overview-row > div:nth-child(2) > span {
   overflow: hidden;
   color: var(--color-text-secondary);
   font-size: 0.78rem;

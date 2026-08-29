@@ -39,15 +39,6 @@ import type { CodexLoginState, OssProvider } from "../codex/types";
 import type { CodexAccountProfile } from "../accounts/types";
 import type { GithubConnectionStatus } from "../github/api";
 
-const NOTIFICATION_PREFERENCE_KEYS: Array<keyof AgentNotificationPreferences> =
-  [
-    "responseCompleted",
-    "approvalRequired",
-    "userInputRequired",
-    "planReady",
-    "externalAction",
-  ];
-
 type SettingsStatusTone = "positive" | "negative" | "neutral" | "pending";
 
 type SettingsDetailStatus = {
@@ -727,9 +718,6 @@ function SettingsOverview({
   const selectedAccount =
     model.accounts.find((account) => account.id === model.selectedAccountId) ??
     null;
-  const agentAlertsEnabled = NOTIFICATION_PREFERENCE_KEYS.some(
-    (key) => model.notificationPreferences[key],
-  );
   const computerUsePlugin = findPlugin(
     model.pluginCatalog,
     "computer-use@openai-bundled",
@@ -739,11 +727,6 @@ function SettingsOverview({
     pluginIsReady(computerUsePlugin) &&
     model.desktopRuntimeStatus?.available === true &&
     model.desktopRuntimeStatus?.serviceCompatible === true;
-  const showQuickPreferences = queryMatches(
-    "quick preferences",
-    "notifications",
-    "agent alerts",
-  );
   const showConnections = queryMatches(
     "connections",
     "codex",
@@ -838,53 +821,14 @@ function SettingsOverview({
         </p>
       )}
 
-      {showQuickPreferences || showConnections ? (
-        <div
-          className={`settings-overview-grid ${
-            showQuickPreferences !== showConnections ? "single-column" : ""
-          }`}
-        >
-          {showQuickPreferences ? (
-            <section
-              className="surface settings-overview-panel"
-              aria-label="Quick preferences"
-            >
-              <SettingsOverviewHeader
-                icon={Settings}
-                title="Quick preferences"
-              />
-              <div className="settings-overview-rows">
-                <label className="settings-overview-row">
-                  <span className="settings-row-icon" aria-hidden="true">
-                    <Bell size={18} />
-                  </span>
-                  <span className="settings-overview-row-copy">
-                    <strong>Agent alerts</strong>
-                    <span>
-                      Turn all configured agent notifications on or off.
-                    </span>
-                  </span>
-                  <SettingsSwitch
-                    ariaLabel="Agent alerts"
-                    checked={agentAlertsEnabled}
-                    onChange={(enabled) => {
-                      NOTIFICATION_PREFERENCE_KEYS.forEach((key) =>
-                        actions.setNotificationPreference(key, enabled),
-                      );
-                    }}
-                  />
-                </label>
-              </div>
-            </section>
-          ) : null}
-
-          {showConnections ? (
-            <section
-              className="surface settings-overview-panel"
-              aria-label="Connections overview"
-            >
-              <SettingsOverviewHeader icon={Plug} title="Connections" />
-              <div className="settings-overview-rows">
+      {showConnections ? (
+        <div className="settings-overview-grid">
+          <section
+            className="surface settings-overview-panel"
+            aria-label="Connections overview"
+          >
+            <SettingsOverviewHeader icon={Plug} title="Connections" />
+            <div className="settings-overview-rows">
                 <div className="settings-overview-row settings-connection-row">
                   <span className="account-mini-avatar" aria-hidden="true">
                     {(selectedAccount?.email ?? selectedAccount?.label ?? "C")
@@ -937,9 +881,8 @@ function SettingsOverview({
                     Manage
                   </button>
                 </div>
-              </div>
-            </section>
-          ) : null}
+            </div>
+          </section>
         </div>
       ) : null}
     </div>

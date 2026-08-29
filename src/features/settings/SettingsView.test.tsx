@@ -391,26 +391,26 @@ describe("SettingsView", () => {
     });
   });
 
-  it("renders matching icons in both settings overview headers", () => {
+  it("renders the Connections overview header without Quick preferences", () => {
     render(<SettingsView model={model()} actions={actions()} />);
 
-    [
-      { region: "Quick preferences", iconClass: "lucide-settings" },
-      { region: "Connections overview", iconClass: "lucide-plug" },
-    ].forEach(({ region, iconClass }) => {
-      const panel = screen.getByRole("region", { name: region });
-      const header = panel.querySelector(".settings-overview-panel-header");
-      const icon = panel.querySelector(
-        `.settings-detail-header-icon .${iconClass}`,
-      );
-
-      expect(header).toHaveClass("settings-detail-header");
-      expect(icon).toBeInTheDocument();
-      expect(icon?.closest(".settings-detail-header-icon")).toHaveAttribute(
-        "aria-hidden",
-        "true",
-      );
+    const panel = screen.getByRole("region", {
+      name: "Connections overview",
     });
+    const header = panel.querySelector(".settings-overview-panel-header");
+    const icon = panel.querySelector(
+      ".settings-detail-header-icon .lucide-plug",
+    );
+
+    expect(header).toHaveClass("settings-detail-header");
+    expect(icon).toBeInTheDocument();
+    expect(icon?.closest(".settings-detail-header-icon")).toHaveAttribute(
+      "aria-hidden",
+      "true",
+    );
+    expect(
+      screen.queryByRole("region", { name: "Quick preferences" }),
+    ).toBeNull();
   });
 
   it("opens connection settings from dedicated Manage buttons", () => {
@@ -504,23 +504,6 @@ describe("SettingsView", () => {
     );
     expect(handlers.setNotificationPreference).toHaveBeenCalledWith(
       "approvalRequired",
-      false,
-    );
-  });
-
-  it("routes the agent alerts shortcut through every notification preference", () => {
-    const handlers = actions();
-    render(<SettingsView model={model()} actions={handlers} />);
-
-    fireEvent.click(screen.getByRole("checkbox", { name: "Agent alerts" }));
-
-    expect(handlers.setNotificationPreference).toHaveBeenCalledTimes(5);
-    expect(handlers.setNotificationPreference).toHaveBeenCalledWith(
-      "responseCompleted",
-      false,
-    );
-    expect(handlers.setNotificationPreference).toHaveBeenCalledWith(
-      "externalAction",
       false,
     );
   });
