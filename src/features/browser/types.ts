@@ -35,6 +35,8 @@ export type BrowserSessionLifecycleStatus =
   | "starting"
   | "running"
   | "awaiting-approval"
+  | "paused"
+  | "takeover"
   | "stopping"
   | "stopped"
   | "error";
@@ -56,6 +58,7 @@ export type BrowserSessionTarget = {
   threadId: string | null;
   turnId: string | null;
   accessMode: CodexAccessMode;
+  developerModeEnabled: boolean;
   chatTitle: string;
 };
 
@@ -86,4 +89,10 @@ export type BrowserSessionPreparation = {
   session: PreparedBrowserSession | null;
   unavailableReason: string | null;
   browserFamily: BrowserFamily | null;
+};
+
+export type BrowserSessionSnapshot = {
+  dataUrl: string;
+  generation: number;
+  capturedAt: string;
 };

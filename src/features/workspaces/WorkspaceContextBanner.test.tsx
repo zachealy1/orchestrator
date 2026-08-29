@@ -67,6 +67,9 @@ function renderBanner(
       browserSession={null}
       onFocusBrowser={vi.fn()}
       onAttachBrowserTab={vi.fn()}
+      onPauseBrowser={vi.fn()}
+      onTakeOverBrowser={vi.fn()}
+      onResumeBrowser={vi.fn()}
       onStopBrowser={vi.fn()}
       windowDragRegionsEnabled={false}
     />,
@@ -149,6 +152,9 @@ describe("WorkspaceContextBanner surface switch", () => {
         browserSession={null}
         onFocusBrowser={vi.fn()}
         onAttachBrowserTab={vi.fn()}
+        onPauseBrowser={vi.fn()}
+        onTakeOverBrowser={vi.fn()}
+        onResumeBrowser={vi.fn()}
         onStopBrowser={vi.fn()}
         windowDragRegionsEnabled={false}
       />,

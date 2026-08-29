@@ -22,6 +22,7 @@ import type {
   PendingKanbanStopRequest,
 } from "../kanban/attemptLifecycle";
 import type { NativeTaskWorkspaceBinding } from "../../lib/nativeTaskWorkspaceBinding";
+import type { InteractionSession } from "../interaction/types";
 
 export type {
   KanbanAttemptPersistenceResult,
@@ -75,6 +76,10 @@ export type ActiveRunControl = {
   queueItemId: string | null;
   queueAdvanceBlocked: boolean;
   browserSession: PreparedBrowserSession | null;
+  desktopUseEnabled: boolean;
+  interactionDeveloperModeEnabled: boolean;
+  interactionDiagnosticsEnabled: boolean;
+  interactionSession: InteractionSession | null;
   webPreviewDetection: WebPreviewDetectionState;
   kanbanAttempt: KanbanRunAttemptBinding | null;
   kanbanStopStatus: "paused" | "stopped" | null;

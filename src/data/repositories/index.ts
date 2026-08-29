@@ -2,6 +2,7 @@ import { FrontendDatabase } from "../database";
 import { createAccountRepository } from "./accounts";
 import { createAnalyticsRepository } from "./analytics";
 import { createChatRepository } from "./chats";
+import { createInteractionRepository } from "./interactions";
 import { createPromptQueueRepository } from "./promptQueue";
 import { createRunRepository } from "./runs";
 import { createTranscriptRepository } from "./transcripts";
@@ -14,6 +15,7 @@ export function createAppRepositories(database: FrontendDatabase) {
     accounts: createAccountRepository(database),
     analytics: createAnalyticsRepository(database),
     chats,
+    interactions: createInteractionRepository(database),
     promptQueue: createPromptQueueRepository(database, chats),
     runs: createRunRepository(database),
     transcripts: createTranscriptRepository(database),

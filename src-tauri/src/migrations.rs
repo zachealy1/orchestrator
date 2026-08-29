@@ -267,6 +267,12 @@ pub(crate) const MIGRATION_DEFINITIONS: &[MigrationDefinition] = &[
         sql: include_str!("../migrations/043_repair_stuck_kanban_follow_up_plans.sql"),
         checksum: 0xd8e9ef08130503be,
     },
+    MigrationDefinition {
+        version: 44,
+        description: "add_interaction_audit_ledger",
+        sql: include_str!("../migrations/044_add_interaction_audit_ledger.sql"),
+        checksum: 0x534464cebbeed22b,
+    },
 ];
 
 pub(crate) fn migration_sql(definition: &MigrationDefinition) -> &'static str {

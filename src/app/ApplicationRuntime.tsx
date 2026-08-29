@@ -44,6 +44,7 @@ import {
   type WorkspaceGitOperationState,
 } from "../lib/gitOperations";
 import type { RunEventInput } from "../data/repositories";
+import { redactInteractionRunEvent } from "../features/interaction/runEventRedaction";
 import { clampFloatingMenuPosition } from "../lib/contextMenuPosition";
 import {
   cancelCodexLogin,
@@ -80,12 +81,14 @@ import {
   readCodexFile,
   readCodexAccount,
   readBrowserSessionStatus,
+  readDesktopRuntimeStatus,
   readProjectedSubagentThread,
   resolveCodexServerRequest,
   resolveDefaultCodexServerRequest,
   removeAgentNotification,
   requestAgentNotificationPermission,
   prepareBrowserSession,
+  pauseBrowserSession,
   probeLocalWebPreview,
   runPreflight,
   setThreadGoal,
@@ -93,6 +96,8 @@ import {
   stopCodex,
   stopDefaultCodexProfile,
   stopBrowserSession,
+  takeOverBrowserSession,
+  resumeBrowserSession,
   sendAgentNotification,
   syncDefaultProfileThreadTranscript,
   takePendingAgentNotificationActivation,
@@ -423,6 +428,18 @@ import { WorkspaceContextBanner } from "../features/workspaces/WorkspaceContextB
 import { useWorkspaceController } from "../features/workspaces/useWorkspaceController";
 import { useWorkspacePreviewController } from "../features/workspaces/useWorkspacePreviewController";
 import { WorkspaceSidebar } from "../features/workspaces/WorkspaceSidebar";
+import { InteractionPanel } from "../features/interaction/InteractionPanel";
+import {
+  createInteractionSession,
+  registerInteractionSurface,
+  resumeInteractionSession,
+  transitionInteractionSession,
+} from "../features/interaction/coordinator";
+import { redactInteractionSession } from "../features/interaction/telemetry";
+import type {
+  InteractionSessionState,
+  InteractionSurface,
+} from "../features/interaction/types";
 import {
   BranchCreationDialog,
 } from "../features/workspaces/BranchCreationDialog";
@@ -716,6 +733,10 @@ function App() {
     updatePromptQueueItemContextFingerprint,
     updatePromptQueueItemSnapshot,
   } = repositories.promptQueue;
+  const {
+    upsertSession: upsertInteractionSession,
+    upsertStep: upsertInteractionStep,
+  } = repositories.interactions;
   const {
     appendRunEvent,
     createRun,
@@ -1032,8 +1053,16 @@ function App() {
   const {
     computerUseEnabled,
     setComputerUseEnabled,
+    desktopUseEnabled,
+    setDesktopUseEnabled,
+    diagnosticsEnabled,
+    setDiagnosticsEnabled,
+    developerModeEnabled,
+    setDeveloperModeEnabled,
     browserRuntimeStatus,
+    desktopRuntimeStatus,
     refreshBrowserRuntimeStatus,
+    refreshDesktopRuntimeStatus,
   } = useComputerUseController();
   const macOsWindowDragRegionsEnabled = useMacOsWindowDragRegionsEnabled();
   const selfWindowDragRegion = windowDragRegionValue(
@@ -1827,6 +1856,23 @@ function App() {
     selectedWorkspace,
     selectedWorkspaceChatSession?.chatId,
   ]);
+  const selectedInteractionActivity = useMemo(() => {
+    const view = selectedActiveRunControl?.runView;
+    if (!view) return null;
+    for (const id of [...view.toolActivityOrder].reverse()) {
+      const activity = view.toolActivitiesById[id];
+      if (
+        activity &&
+        (activity.category === "browser" ||
+          /computer-use|computer_use|desktop/iu.test(
+            `${activity.server} ${activity.tool}`,
+          ))
+      ) {
+        return activity;
+      }
+    }
+    return null;
+  }, [activeRunRegistryVersion, selectedActiveRunControl]);
   const runIsActive = Boolean(
     selectedActiveRunControl && isActiveRunControl(selectedActiveRunControl),
   );
@@ -5348,6 +5394,120 @@ function App() {
     }
   }
 
+  function persistRunInteractionSession(control: ActiveRunControl) {
+    if (!control.interactionSession) return;
+    void upsertInteractionSession(
+      redactInteractionSession(control.interactionSession),
+    ).catch((error) => {
+      console.error(
+        "Could not persist the redacted interaction session",
+        error,
+      );
+    });
+  }
+
+  function persistRunInteractionActivities(control: ActiveRunControl) {
+    const session = control.interactionSession;
+    if (!session || !control.interactionDiagnosticsEnabled) return;
+    control.runView.toolActivityOrder.forEach((activityId, index) => {
+      const activity = control.runView.toolActivitiesById[activityId];
+      if (
+        !activity ||
+        (activity.category !== "browser" &&
+          !/computer-use|computer_use|desktop/iu.test(
+            `${activity.server} ${activity.tool}`,
+          ))
+      ) {
+        return;
+      }
+      const isBrowser = activity.category === "browser";
+      const resultStatus =
+        activity.status === "completed"
+          ? "provider_reported_complete"
+          : activity.status === "failed"
+            ? "failed"
+            : activity.status === "declined"
+              ? "blocked"
+              : activity.status === "interrupted"
+                ? "uncertain"
+                : null;
+      void upsertInteractionStep({
+        id: `${session.id}:${activity.id}`,
+        sessionId: session.id,
+        sequence: index + 1,
+        surfaceKind: isBrowser ? "browser" : "desktop",
+        actionKind: activity.tool,
+        groundingKind: "provider-reported",
+        consequence: "unclassified",
+        policyDecision: "provider-gate",
+        resultStatus,
+        retryCount: 0,
+        durationMs: activity.durationMs,
+        errorCode: resultStatus === "failed" ? "provider-action-failed" : null,
+        observationGeneration:
+          session.currentSurfaceId && session.surfaces[session.currentSurfaceId]
+            ? session.surfaces[session.currentSurfaceId].generation
+            : 0,
+        stateHashBefore: null,
+        stateHashAfter: null,
+        startedAt: activity.startedAt ?? session.startedAt,
+        completedAt: activity.completedAt,
+      }).catch((error) => {
+        console.error("Could not persist a redacted interaction step", error);
+      });
+    });
+  }
+
+  function setRunInteractionState(
+    control: ActiveRunControl,
+    next: InteractionSessionState,
+  ) {
+    let current = control.interactionSession;
+    if (!current || current.state === next) return;
+    try {
+      if (next === "completed") {
+        const routeToAwaitingModel: Partial<
+          Record<InteractionSessionState, InteractionSessionState[]>
+        > = {
+          provisioning: ["observing", "awaiting-model"],
+          observing: ["awaiting-model"],
+          "awaiting-confirmation": ["awaiting-model"],
+          acting: ["verifying", "awaiting-model"],
+          verifying: ["awaiting-model"],
+          recovering: ["awaiting-model"],
+          paused: ["observing", "awaiting-model"],
+          takeover: ["observing", "awaiting-model"],
+        };
+        for (const intermediate of routeToAwaitingModel[current.state] ?? []) {
+          current = transitionInteractionSession(current, intermediate);
+        }
+      } else if (next === "stopped" && current.state !== "stopping") {
+        current = transitionInteractionSession(current, "stopping");
+      }
+      control.interactionSession = transitionInteractionSession(current, next);
+      activeRunRegistry.touch();
+      persistRunInteractionSession(control);
+    } catch (error) {
+      console.error(
+        `Could not transition interaction session ${current.state} -> ${next}`,
+        error,
+      );
+    }
+  }
+
+  function registerRunInteractionSurface(
+    control: ActiveRunControl,
+    surface: InteractionSurface,
+  ) {
+    if (!control.interactionSession) return;
+    control.interactionSession = registerInteractionSurface(
+      control.interactionSession,
+      surface,
+    );
+    activeRunRegistry.touch();
+    persistRunInteractionSession(control);
+  }
+
   function updateRunControlBrowserState(
     control: ActiveRunControl,
     state: BrowserSessionState,
@@ -5390,6 +5550,13 @@ function App() {
       status,
       error,
     });
+    if (status === "paused") {
+      setRunInteractionState(control, "paused");
+    } else if (status === "takeover") {
+      setRunInteractionState(control, "takeover");
+    } else if (status === "error") {
+      setRunInteractionState(control, "failed");
+    }
   }
 
   function applyBrowserLifecycleNotification(
@@ -5397,9 +5564,21 @@ function App() {
     method: string | null,
     _params: Record<string, unknown>,
   ) {
+    if (
+      method === "serverRequest/resolved" &&
+      control.interactionSession?.state === "awaiting-confirmation"
+    ) {
+      setRunInteractionState(control, "awaiting-model");
+    }
     if (!control.browserSession) return;
     if (method === "turn/started") {
       setRunControlBrowserLifecycle(control, "running");
+      if (control.interactionSession?.state === "provisioning") {
+        setRunInteractionState(control, "observing");
+      }
+      if (control.interactionSession?.state === "observing") {
+        setRunInteractionState(control, "awaiting-model");
+      }
       void refreshRunControlBrowserState(control);
       return;
     }
@@ -5679,9 +5858,11 @@ function App() {
   ) {
     if (activeRunRegistry.get(control.clientId) !== control) return;
     if (control.runView.status === "completed") {
+      setRunInteractionState(control, "completed");
       appServices.runCoordinator.tryTransition(control.clientId, "completing");
       appServices.runCoordinator.tryTransition(control.clientId, "completed");
     } else if (control.runView.status === "failed") {
+      setRunInteractionState(control, "failed");
       appServices.runCoordinator.tryTransition(control.clientId, "rolling-back");
       appServices.runCoordinator.tryTransition(
         control.clientId,
@@ -5689,6 +5870,10 @@ function App() {
         control.runView.error,
       );
     } else if (control.stopped) {
+      if (control.interactionSession?.state !== "stopped") {
+        setRunInteractionState(control, "stopping");
+        setRunInteractionState(control, "stopped");
+      }
       appServices.runCoordinator.tryTransition(control.clientId, "cancelling");
     }
     cancelWebPreviewDetection(control);
@@ -6974,6 +7159,7 @@ function App() {
     let goalClearError: string | null = null;
 
     if (control) {
+      setRunInteractionState(control, "stopping");
       control.stopped = true;
       control.cancelScheduledSetup?.();
       control.cancelScheduledSetup = null;
@@ -7095,6 +7281,7 @@ function App() {
     }
     await restoreRunNativeTaskSourceRoot(control);
     void cleanupRunBrowserSession(control, { unsubscribe: false });
+    setRunInteractionState(control, "stopped");
     return {
       stopped: true,
       goalCleared: goalClearError === null,
@@ -7119,18 +7306,61 @@ function App() {
 
   async function stopSelectedBrowserSession() {
     const control = selectedActiveRunControl;
+    if (!control?.browserSession) return;
+    await stopActiveRun(control);
+  }
+
+  async function pauseSelectedBrowserSession() {
+    const control = selectedActiveRunControl;
+    const token = control?.browserSession?.token;
+    if (!control || !token) return;
+    try {
+      updateRunControlBrowserState(control, await pauseBrowserSession(token));
+      setRunInteractionState(control, "paused");
+      setStatusMessage("Browser control paused.");
+    } catch (error) {
+      setStatusMessage(errorMessage(error));
+    }
+  }
+
+  async function takeOverSelectedBrowserSession() {
+    const control = selectedActiveRunControl;
     const token = control?.browserSession?.token;
     if (!control || !token) return;
     try {
       updateRunControlBrowserState(
         control,
-        await stopBrowserSession(token),
+        await takeOverBrowserSession(token),
       );
-      setStatusMessage("Browser session stopped.");
-    } catch (error) {
+      setRunInteractionState(control, "takeover");
+      await focusBrowserSession(token).catch(() => undefined);
       setStatusMessage(
-        error instanceof Error ? error.message : String(error),
+        "Browser control released. Resume when you are finished.",
       );
+    } catch (error) {
+      setStatusMessage(errorMessage(error));
+    }
+  }
+
+  async function resumeSelectedBrowserSession() {
+    const control = selectedActiveRunControl;
+    const token = control?.browserSession?.token;
+    if (!control || !token) return;
+    try {
+      updateRunControlBrowserState(control, await resumeBrowserSession(token));
+      if (
+        control.interactionSession?.state === "paused" ||
+        control.interactionSession?.state === "takeover"
+      ) {
+        control.interactionSession = resumeInteractionSession(
+          control.interactionSession,
+        );
+        activeRunRegistry.touch();
+        persistRunInteractionSession(control);
+      }
+      setStatusMessage("Browser control resumed with fresh page state.");
+    } catch (error) {
+      setStatusMessage(errorMessage(error));
     }
   }
 
@@ -9457,6 +9687,38 @@ function App() {
     return browserSkill;
   }
 
+  async function requireBundledComputerUseSkill(
+    profileKey: CodexProfileKey,
+    accountId: number,
+  ) {
+    const findSkill = (skills: CodexSkillSummary[]) =>
+      skills.find((skill) => {
+        const identity = `${skill.id} ${skill.name}`.toLowerCase();
+        return (
+          identity.includes("computer-use:computer-use") ||
+          identity.includes("computer-use")
+        );
+      });
+    const skills = await getCodexSkills(profileKey, accountId).catch(
+      (error) => {
+        throw new Error(
+          `Could not verify Codex's Computer Use skill for this account: ${
+            error instanceof Error ? error.message : String(error)
+          }`,
+        );
+      },
+    );
+    const computerUseSkill =
+      findSkill(skills) ??
+      findSkill(await getCodexSkills(profileKey, accountId, true));
+    if (!computerUseSkill) {
+      throw new Error(
+        "Codex's Computer Use skill is unavailable for this account. Update ChatGPT or Codex and try again.",
+      );
+    }
+    return computerUseSkill;
+  }
+
   async function searchSlashCommands(query: string) {
     const requestId = slashCommandSearchRequestId.current + 1;
     slashCommandSearchRequestId.current = requestId;
@@ -11291,6 +11553,17 @@ function App() {
       queueItemId: snapshot.queueItemId ?? null,
       queueAdvanceBlocked: false,
       browserSession: null,
+      desktopUseEnabled,
+      interactionDeveloperModeEnabled: developerModeEnabled,
+      interactionDiagnosticsEnabled: diagnosticsEnabled,
+      interactionSession:
+        snapshot.computerUseEnabled || desktopUseEnabled
+          ? createInteractionSession({
+              id: `interaction-${clientId}`,
+              runId: null,
+              threadId: snapshot.threadId,
+            })
+          : null,
       webPreviewDetection: {
         commands: new Map(),
         probes: new Map(),
@@ -11580,6 +11853,14 @@ function App() {
       ),
     });
     runControl.runId = run.id;
+    if (runControl.interactionSession) {
+      runControl.interactionSession = {
+        ...runControl.interactionSession,
+        runId: run.id,
+        updatedAt: new Date().toISOString(),
+      };
+      persistRunInteractionSession(runControl);
+    }
     if (activeRunControlRef.current === runControl) {
       currentRunId.current = run.id;
       currentRunAccountId.current = snapshot.accountId;
@@ -11838,7 +12119,7 @@ function App() {
       runControl.intent === "plan-implementation"
         ? addPlanImplementationProgressInstructions(baseTurnText)
         : baseTurnText;
-    const selectedSkills = runControl.browserSession
+    let selectedSkills = runControl.browserSession
       ? [
           ...snapshot.selectedSkills.filter(
             (skill) =>
@@ -11852,6 +12133,35 @@ function App() {
           },
         ]
       : snapshot.selectedSkills;
+    if (runControl.desktopUseEnabled) {
+      try {
+        const status = await readDesktopRuntimeStatus();
+        if (!status.available || !status.serviceCompatible) {
+          throw new Error(
+            status.message ??
+              "The installed Computer Use provider is unavailable.",
+          );
+        }
+        const desktopSkill = await requireBundledComputerUseSkill(
+          snapshot.profileKey,
+          snapshot.accountId,
+        );
+        selectedSkills = [
+          ...selectedSkills.filter((skill) => {
+            const identity = `${skill.id} ${skill.name}`.toLowerCase();
+            return !identity.includes("computer-use");
+          }),
+          desktopSkill,
+        ];
+      } catch (error) {
+        runControl.desktopUseEnabled = false;
+        warnings.push(
+          `Desktop Computer Use unavailable: ${
+            error instanceof Error ? error.message : String(error)
+          }`,
+        );
+      }
+    }
     const text = applySelectedSkillsToPrompt(
       progressAwareTurnText,
       selectedSkills,
@@ -12163,6 +12473,7 @@ function App() {
           threadId: initialThreadId,
           turnId: null,
           accessMode: snapshot.access.accessMode,
+          developerModeEnabled: runControl.interactionDeveloperModeEnabled,
           chatTitle:
             (await getChatRecord(chatId))?.title ?? snapshot.promptFallback,
         }).catch(() => ({
@@ -12208,7 +12519,56 @@ function App() {
     }
     runControl.browserSession = browserSession;
     if (browserSession) {
+      registerRunInteractionSurface(runControl, {
+        id: `browser:${browserSession.token}`,
+        kind: "browser",
+        provider: browserSession.state.backend,
+        providerVersion: browserSession.state.browserSkillVersion,
+        title: browserSession.state.target.chatTitle,
+        origin: null,
+        bundleId: browserSession.state.browser?.bundleId ?? null,
+        generation: 1,
+        capabilities: {
+          semanticElements: true,
+          screenshots: true,
+          coordinateActions: true,
+          tabs: true,
+          windows: browserSession.state.backend === "browser-bridge",
+          dialogs: true,
+          downloads: browserSession.state.backend === "browser-bridge",
+          uploads: false,
+          clipboard: false,
+          arbitraryCode: runControl.interactionDeveloperModeEnabled,
+        },
+      });
       activeRunRegistry.touch();
+    }
+    if (runControl.desktopUseEnabled) {
+      const desktopStatus = await readDesktopRuntimeStatus().catch(() => null);
+      if (desktopStatus?.available && desktopStatus.serviceCompatible) {
+        registerRunInteractionSurface(runControl, {
+          id: "desktop:macos",
+          kind: "desktop",
+          provider: "openai-computer-use",
+          providerVersion: desktopStatus.version,
+          title: "macOS desktop",
+          origin: null,
+          bundleId: null,
+          generation: 1,
+          capabilities: {
+            semanticElements: true,
+            screenshots: true,
+            coordinateActions: true,
+            tabs: false,
+            windows: true,
+            dialogs: true,
+            downloads: false,
+            uploads: false,
+            clipboard: false,
+            arbitraryCode: false,
+          },
+        });
+      }
     }
     const threadConfig = {
       ...(snapshot.useOss
@@ -13004,6 +13364,15 @@ function App() {
         threadId,
         turnId: turn.turn.id,
       }));
+      if (runControl.interactionSession) {
+        runControl.interactionSession = {
+          ...runControl.interactionSession,
+          threadId,
+          turnId: turn.turn.id,
+          updatedAt: new Date().toISOString(),
+        };
+        persistRunInteractionSession(runControl);
+      }
       reconcileUnroutedApprovals();
       updateTaskChatEntry(runControl.clientId, (entry) => ({
         ...entry,
@@ -15172,7 +15541,20 @@ function App() {
       sequence: control.eventSequence,
       eventType,
       method,
-      payload,
+      payload: redactInteractionRunEvent(payload, {
+        browserEnabled:
+          control.browserSession !== null ||
+          Object.values(control.interactionSession?.surfaces ?? {}).some(
+            (surface) => surface.kind === "browser",
+          ),
+        desktopEnabled:
+          control.desktopUseEnabled ||
+          Object.values(control.interactionSession?.surfaces ?? {}).some(
+            (surface) => surface.kind === "desktop",
+          ),
+        eventType,
+        method,
+      }),
     } satisfies RunEventInput;
   }
 
@@ -16364,6 +16746,7 @@ function App() {
         readString(params.threadId) ?? undefined,
       );
     });
+    persistRunInteractionActivities(control);
     const kanbanPlanAttempt = Boolean(
       control.kanbanAttempt &&
         nextRunView.nativePlan.mode === "plan" &&
@@ -16539,6 +16922,13 @@ function App() {
       const turn = terminalTurn;
       const status = persistedRunStatus;
       const completedControl = control;
+      if (status === "completed") {
+        setRunInteractionState(completedControl, "completed");
+      } else if (status === "failed") {
+        setRunInteractionState(completedControl, "failed");
+      } else {
+        setRunInteractionState(completedControl, "stopped");
+      }
       const completedEntry =
         taskChatEntriesRef.current.find(
           (entry) => entry.clientId === completedControl.clientId,
@@ -16775,6 +17165,12 @@ function App() {
     const requestBelongsToSubagent =
       control !== null &&
       requestSubagent?.ownerClientId === control.clientId;
+    if (
+      control?.interactionSession?.state === "awaiting-model" &&
+      !requestBelongsToSubagent
+    ) {
+      setRunInteractionState(control, "awaiting-confirmation");
+    }
     if (control?.kanbanAttempt && !requestBelongsToSubagent) {
       void kanbanAttempts.persist(
         control,
@@ -19904,8 +20300,23 @@ function App() {
               }
               onFocusBrowser={() => void focusSelectedBrowserSession()}
               onAttachBrowserTab={openSelectedBrowserTabDialog}
+              onPauseBrowser={() => void pauseSelectedBrowserSession()}
+              onTakeOverBrowser={() => void takeOverSelectedBrowserSession()}
+              onResumeBrowser={() => void resumeSelectedBrowserSession()}
               onStopBrowser={() => void stopSelectedBrowserSession()}
               windowDragRegionsEnabled={macOsWindowDragRegionsEnabled}
+            />
+            <InteractionPanel
+              session={selectedActiveRunControl?.interactionSession ?? null}
+              browserSession={
+                selectedActiveRunControl?.browserSession?.state ?? null
+              }
+              latestActivity={selectedInteractionActivity}
+              onFocusBrowser={() => void focusSelectedBrowserSession()}
+              onPause={() => void pauseSelectedBrowserSession()}
+              onTakeOver={() => void takeOverSelectedBrowserSession()}
+              onResume={() => void resumeSelectedBrowserSession()}
+              onStop={() => void stopActiveRun(selectedActiveRunControl)}
             />
             {selectedWorkspace &&
             (workspaceSurfaceMode === "kanban" ||
@@ -20388,7 +20799,11 @@ function App() {
               model={{
                 dragRegion: selfWindowDragRegion,
                 computerUseEnabled,
+                desktopUseEnabled,
+                diagnosticsEnabled,
+                developerModeEnabled,
                 browserRuntimeStatus,
+                desktopRuntimeStatus,
                 githubConnection,
                 githubConnectionPending,
                 notificationPreferences: agentNotificationPreferences,
@@ -20408,13 +20823,19 @@ function App() {
               }}
               actions={{
                 setComputerUseEnabled,
+                setDesktopUseEnabled,
+                setDiagnosticsEnabled,
+                setDeveloperModeEnabled,
                 installDefaultBrowserExtension: () => {
                   void installDefaultBrowserExtension().catch((error) =>
                     setStatusMessage(errorMessage(error)),
                   );
                 },
                 refreshBrowserRuntimeStatus: () =>
-                  void refreshBrowserRuntimeStatus(),
+                  void Promise.all([
+                    refreshBrowserRuntimeStatus(),
+                    refreshDesktopRuntimeStatus(),
+                  ]),
                 openDefaultBrowserAccessibilitySettings: () => {
                   void openDefaultBrowserAccessibilitySettings().catch(
                     (error) => setStatusMessage(errorMessage(error)),

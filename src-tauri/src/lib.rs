@@ -32,6 +32,7 @@ mod default_browser;
 mod git;
 mod github;
 mod github_cli;
+mod interaction;
 mod kanban_git;
 mod kanban_store;
 mod migrations;
@@ -160,8 +161,13 @@ fn command_builder() -> tauri_specta::Builder<tauri::Wry> {
             browser_sessions::browser_session_focus,
             browser_sessions::browser_session_update_target,
             browser_sessions::browser_session_stop,
+            browser_sessions::browser_session_pause,
+            browser_sessions::browser_session_takeover,
+            browser_sessions::browser_session_resume,
+            browser_sessions::browser_session_snapshot,
             browser_sessions::browser_session_list_tabs,
             browser_sessions::browser_session_attach_tab,
+            interaction::desktop_runtime_status,
             default_browser::default_browser_capability_status,
             default_browser::default_browser_install_extension,
             default_browser::default_browser_open_accessibility_settings,

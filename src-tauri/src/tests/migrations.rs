@@ -28,7 +28,7 @@ fn resolved_plugin_migrator(
 }
 
 #[test]
-fn existing_versions_one_through_twenty_five_upgrade_through_forty_three() {
+fn existing_versions_one_through_twenty_five_upgrade_through_forty_four() {
     tauri::async_runtime::block_on(async {
         let mut connection = SqliteConnection::connect("sqlite::memory:")
             .await
@@ -58,13 +58,41 @@ fn existing_versions_one_through_twenty_five_upgrade_through_forty_three() {
         .fetch_one(&mut connection)
         .await
         .expect("count upgraded migrations");
-        assert_eq!(applied_count, 43);
+        assert_eq!(applied_count, 44);
 
         resolved_plugin_migrator(MIGRATION_DEFINITIONS)
             .run_direct(&mut connection)
             .await
             .expect("all extracted migrations must resolve against the upgraded database");
     });
+}
+
+#[test]
+fn interaction_audit_migration_stores_only_redacted_operational_metadata() {
+    let migration = MIGRATION_DEFINITIONS
+        .iter()
+        .find(|migration| migration.version == 44)
+        .expect("migration 44");
+    assert_eq!(migration.description, "add_interaction_audit_ledger");
+    assert!(migration
+        .sql
+        .contains("CREATE TABLE IF NOT EXISTS interaction_sessions"));
+    assert!(migration
+        .sql
+        .contains("CREATE TABLE IF NOT EXISTS interaction_steps"));
+    assert!(migration
+        .sql
+        .contains("CREATE TABLE IF NOT EXISTS interaction_permissions"));
+    for prohibited in [
+        "screenshot_blob",
+        "page_text",
+        "field_value",
+        "clipboard",
+        "password",
+        "action_arguments",
+    ] {
+        assert!(!migration.sql.contains(prohibited));
+    }
 }
 
 #[test]

@@ -150,8 +150,13 @@ export const commands = {
 	browserSessionFocus: (token: string) => __TAURI_INVOKE<BrowserSessionStatus>("browser_session_focus", { token }),
 	browserSessionUpdateTarget: (token: string, target: BrowserSessionTarget) => __TAURI_INVOKE<BrowserSessionStatus>("browser_session_update_target", { token, target }),
 	browserSessionStop: (token: string) => __TAURI_INVOKE<BrowserSessionStatus>("browser_session_stop", { token }),
+	browserSessionPause: (token: string) => __TAURI_INVOKE<BrowserSessionStatus>("browser_session_pause", { token }),
+	browserSessionTakeover: (token: string) => __TAURI_INVOKE<BrowserSessionStatus>("browser_session_takeover", { token }),
+	browserSessionResume: (token: string) => __TAURI_INVOKE<BrowserSessionStatus>("browser_session_resume", { token }),
+	browserSessionSnapshot: (token: string) => __TAURI_INVOKE<BrowserSessionSnapshot>("browser_session_snapshot", { token }),
 	browserSessionListTabs: (token: string) => __TAURI_INVOKE<DefaultBrowserTab[]>("browser_session_list_tabs", { token }),
 	browserSessionAttachTab: (token: string, tabId: number) => __TAURI_INVOKE<BrowserSessionStatus>("browser_session_attach_tab", { token, tabId }),
+	desktopRuntimeStatus: () => __TAURI_INVOKE<DesktopRuntimeStatus>("desktop_runtime_status"),
 	defaultBrowserCapabilityStatus: () => __TAURI_INVOKE<DefaultBrowserCapabilityStatus>("default_browser_capability_status"),
 	defaultBrowserInstallExtension: () => __TAURI_INVOKE<null>("default_browser_install_extension"),
 	defaultBrowserOpenAccessibilitySettings: () => __TAURI_INVOKE<null>("default_browser_open_accessibility_settings"),
@@ -244,6 +249,12 @@ export type BrowserSessionPreparation = {
 	browserFamily: string | null,
 };
 
+export type BrowserSessionSnapshot = {
+	dataUrl: string,
+	generation: number,
+	capturedAt: string,
+};
+
 export type BrowserSessionStatus = {
 	token: string,
 	status: string,
@@ -270,6 +281,7 @@ export type BrowserSessionTarget = {
 	threadId: string | null,
 	turnId: string | null,
 	accessMode: string,
+	developerModeEnabled?: boolean,
 	chatTitle: string,
 };
 
@@ -369,6 +381,14 @@ export type DeleteKanbanCardRequest = {
 	cardId: string,
 	expectedVersion: number,
 	operationId: string,
+};
+
+export type DesktopRuntimeStatus = {
+	available: boolean,
+	message: string | null,
+	version: string | null,
+	serviceCompatible: boolean,
+	accessibilityTrusted: boolean,
 };
 
 export type DroppedContextPath = {

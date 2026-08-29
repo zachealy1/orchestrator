@@ -42,13 +42,24 @@ for (const action of [
   "browser-backend-detach",
   "browser-backend-cdp",
   "browser-backend-events",
+  "browser-backend-allow-download",
+  "pause-session",
+  "mark-tab",
+  "turn-ended",
 ]) {
   assert.match(serviceWorker, new RegExp(`case "${action}"`, "u"));
 }
 assert.match(serviceWorker, /tab\.groupId !== groupId/u);
 assert.match(serviceWorker, /outside this Orchestrator chat group/u);
-assert.match(serviceWorker, /case "inspect-action"/u);
+assert.doesNotMatch(serviceWorker, /case "(?:inspect-action|tool)"/u);
 assert.match(serviceWorker, /Browser\.setDownloadBehavior/u);
+assert.match(serviceWorker, /rememberCreatedTab\(sessionToken, controlled\.id\)/u);
+assert.match(serviceWorker, /restoreClaimedTab/u);
+assert.match(serviceWorker, /forgetClosedTab/u);
+assert.match(serviceWorker, /pauseAllSessions/u);
+assert.match(serviceWorker, /marks\.has\(tabId\)/u);
+assert.match(serviceWorker, /downloadPath: request\.downloadDir/u);
+assert.match(serviceWorker, /behavior: "deny"/u);
 assert.match(serviceWorker, /password\|passcode\|credential/u);
 assert.deepEqual(
   fs.readdirSync(packagedDirectory).sort(),

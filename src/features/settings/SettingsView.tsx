@@ -23,6 +23,7 @@ import type {
   AgentNotificationPreferences,
 } from "../../lib/agentNotifications";
 import type { BrowserRuntimeStatus } from "../browser/types";
+import type { DesktopRuntimeStatus } from "../interaction/types";
 import type { CodexLoginState, OssProvider } from "../codex/types";
 import type { CodexAccountProfile } from "../accounts/types";
 import type { GithubConnectionStatus } from "../github/api";
@@ -46,7 +47,11 @@ type SettingsDetailStatus = {
 export type SettingsViewModel = {
   dragRegion?: string;
   computerUseEnabled: boolean;
+  desktopUseEnabled: boolean;
+  diagnosticsEnabled: boolean;
+  developerModeEnabled: boolean;
   browserRuntimeStatus: BrowserRuntimeStatus | null;
+  desktopRuntimeStatus: DesktopRuntimeStatus | null;
   githubConnection: GithubConnectionStatus | null;
   githubConnectionPending: boolean;
   notificationPreferences: AgentNotificationPreferences;
@@ -67,6 +72,9 @@ export type SettingsViewModel = {
 
 export type SettingsViewActions = {
   setComputerUseEnabled: (enabled: boolean) => void;
+  setDesktopUseEnabled: (enabled: boolean) => void;
+  setDiagnosticsEnabled: (enabled: boolean) => void;
+  setDeveloperModeEnabled: (enabled: boolean) => void;
   installDefaultBrowserExtension: () => void;
   refreshBrowserRuntimeStatus: () => void;
   openDefaultBrowserAccessibilitySettings: () => void;
@@ -120,6 +128,10 @@ export const SettingsView = memo(function SettingsView({
         "default browser",
         "safari automation",
         "browser bridge",
+        "desktop use",
+        "accessibility",
+        "diagnostics",
+        "developer mode",
       ) ? (
         <section
           className="surface settings-panel computer-use-settings-panel"
@@ -150,6 +162,66 @@ export const SettingsView = memo(function SettingsView({
                 ariaLabel="Enable browser computer use"
                 checked={model.computerUseEnabled}
                 onChange={actions.setComputerUseEnabled}
+              />
+            </label>
+            <label className="setting-row checkbox-setting">
+              <div>
+                <strong>Enable desktop computer use</strong>
+                <span>
+                  Allow semantic macOS accessibility actions in applications you approve.
+                </span>
+              </div>
+              <SettingsSwitch
+                ariaLabel="Enable desktop computer use"
+                checked={model.desktopUseEnabled}
+                disabled={model.desktopRuntimeStatus?.available === false}
+                onChange={actions.setDesktopUseEnabled}
+              />
+            </label>
+            <div className="setting-row default-browser-status-row">
+              <div>
+                <strong>Desktop provider</strong>
+                <span>
+                  {model.desktopRuntimeStatus === null
+                    ? "Checking installed Computer Use provider"
+                    : model.desktopRuntimeStatus.message ??
+                      `Computer Use ${model.desktopRuntimeStatus.version ?? "provider"} ready`}
+                </span>
+              </div>
+              <span
+                className={`notification-permission-status ${
+                  model.desktopRuntimeStatus?.available
+                    ? "permission-allowed"
+                    : "permission-denied"
+                }`}
+              >
+                {model.desktopRuntimeStatus?.available ? "Ready" : "Not ready"}
+              </span>
+            </div>
+            <label className="setting-row checkbox-setting">
+              <div>
+                <strong>Interaction diagnostics</strong>
+                <span>
+                  Keep redacted action outcomes and timings. Screenshots and page text remain ephemeral.
+                </span>
+              </div>
+              <SettingsSwitch
+                ariaLabel="Interaction diagnostics"
+                checked={model.diagnosticsEnabled}
+                onChange={actions.setDiagnosticsEnabled}
+              />
+            </label>
+            <label className="setting-row checkbox-setting">
+              <div>
+                <strong>Developer Mode</strong>
+                <span>
+                  Permit elevated browser debugging only after separate task and site confirmation.
+                </span>
+              </div>
+              <SettingsSwitch
+                ariaLabel="Developer Mode for browser control"
+                checked={model.developerModeEnabled}
+                onChange={actions.setDeveloperModeEnabled}
               />
             </label>
             <div className="setting-row default-browser-status-row">
@@ -647,7 +719,7 @@ function SettingsOverview({
                     <Monitor size={18} />
                   </span>
                   <span className="settings-overview-row-copy">
-                    <strong>Computer use</strong>
+                    <strong>Browser use</strong>
                     <span>Allow browser interactions for future turns.</span>
                   </span>
                   <SettingsSwitch
