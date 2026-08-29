@@ -864,7 +864,7 @@ function SettingsOverviewHeader({
   title: string;
 }) {
   return (
-    <div className="surface-header settings-overview-panel-header">
+    <div className="surface-header settings-detail-header settings-overview-panel-header">
       <div className="settings-detail-heading">
         <span className="settings-detail-header-icon" aria-hidden="true">
           <Icon size={20} />

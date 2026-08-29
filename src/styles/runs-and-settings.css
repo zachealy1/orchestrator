@@ -755,17 +755,19 @@ button.settings-status-card:focus-visible:not(:disabled) {
 }
 
 .settings-overview-panel {
+  overflow: hidden;
   min-width: 0;
+  padding: 0;
   box-shadow: 0 8px 28px rgb(var(--shadow-rgb) / 0.07);
 }
 
 .settings-overview-panel-header {
-  align-items: center;
-  margin-bottom: 4px;
+  margin: 0;
 }
 
 .settings-overview-rows {
   display: grid;
+  padding: 0 18px 18px;
 }
 
 .settings-overview-row {
@@ -778,6 +780,10 @@ button.settings-status-card:focus-visible:not(:disabled) {
   border-top: 1px solid var(--color-divider);
   color: var(--color-text);
   padding: 12px 2px;
+}
+
+.settings-overview-row:first-child {
+  border-top: 0;
 }
 
 .settings-overview-row > div:nth-child(2),

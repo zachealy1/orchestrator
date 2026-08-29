@@ -279,10 +279,12 @@ describe("SettingsView", () => {
       { region: "Connections overview", iconClass: "lucide-plug" },
     ].forEach(({ region, iconClass }) => {
       const panel = screen.getByRole("region", { name: region });
+      const header = panel.querySelector(".settings-overview-panel-header");
       const icon = panel.querySelector(
         `.settings-detail-header-icon .${iconClass}`,
       );
 
+      expect(header).toHaveClass("settings-detail-header");
       expect(icon).toBeInTheDocument();
       expect(icon?.closest(".settings-detail-header-icon")).toHaveAttribute(
         "aria-hidden",
