@@ -671,7 +671,7 @@ button.settings-status-card {
 button.settings-status-card:hover:not(:disabled),
 button.settings-status-card:focus-visible:not(:disabled) {
   border-color: var(--color-surface-muted);
-  background: var(--color-surface-soft);
+  background: var(--color-button-active);
   transform: none;
 }
 
@@ -724,7 +724,7 @@ button.settings-status-card:focus-visible:not(:disabled) {
   height: 40px;
   place-items: center;
   border-radius: var(--radius);
-  background: var(--color-selected-background);
+  background: var(--color-surface-soft);
   color: var(--color-icon);
 }
 
@@ -753,8 +753,9 @@ button.settings-status-card:focus-visible:not(:disabled) {
 .settings-overview-panel {
   overflow: hidden;
   min-width: 0;
+  contain: layout style;
   padding: 0;
-  box-shadow: 0 8px 28px rgb(var(--shadow-rgb) / 0.07);
+  box-shadow: none;
 }
 
 .settings-overview-panel-header {
@@ -857,6 +858,7 @@ button.settings-connection-row {
   color: var(--color-text);
   font-weight: inherit;
   text-align: left;
+  transition: none;
   transform: none;
 }
 
@@ -1289,8 +1291,9 @@ button.plugin-list-row.selected {
 .settings-panel {
   overflow: hidden;
   scroll-margin-top: 20px;
+  contain: layout style;
   padding: 0;
-  box-shadow: 0 8px 28px rgb(var(--shadow-rgb) / 0.07);
+  box-shadow: none;
 }
 
 .settings-panel .setting-list {
@@ -1430,6 +1433,7 @@ button.settings-navigation-row {
   color: var(--color-text);
   font-weight: inherit;
   text-align: left;
+  transition: none;
   transform: none;
 }
 

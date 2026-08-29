@@ -366,6 +366,7 @@ import {
   pendingApprovalMatchesEntry,
 } from "../features/notifications/approvalRouting";
 import { SettingsView } from "../features/settings/SettingsView";
+import { useSettingsViewBindings } from "../features/settings/useSettingsViewBindings";
 import { PluginsView } from "../features/plugins/PluginsView";
 import { usePluginsController } from "../features/plugins/usePluginsController";
 import { useComputerUseController } from "../features/browser/useComputerUseController";
@@ -19521,6 +19522,96 @@ function App() {
     });
   }
 
+  const settingsViewBindings = useSettingsViewBindings({
+    model: {
+      dragRegion: selfWindowDragRegion,
+      computerUseEnabled,
+      browserPreferences,
+      browserReadiness,
+      desktopRuntimeStatus,
+      pluginCatalog: pluginsController.catalog,
+      pluginsLoading: pluginsController.loading,
+      alwaysAllowedApplications,
+      legacyBrowserMigrationNotice,
+      githubConnection,
+      githubConnectionPending,
+      notificationPreferences: agentNotificationPreferences,
+      notificationPermission: agentNotificationPermission,
+      codexConnected,
+      accounts: codexAccounts,
+      selectedAccountId,
+      pendingLoginAccountId,
+      pendingLoginId,
+      loginState,
+      activeRunAccountIds,
+      runIsActive,
+      authMessage,
+      showLogout,
+    },
+    actions: {
+      setComputerUseEnabled,
+      setBrowserAskWhereToSave,
+      chooseBrowserDownloadLocation: () => {
+        void open({ directory: true, multiple: false }).then((path) => {
+          if (typeof path === "string") setBrowserDownloadLocation(path);
+        });
+      },
+      resetBrowserDownloadLocation: () => setBrowserDownloadLocation(null),
+      clearBrowserData: () => {
+        void clearBrowserData()
+          .then(() => setStatusMessage("In-app browser data cleared."))
+          .catch((error) => setStatusMessage(errorMessage(error)));
+      },
+      importBrowserProfile: () =>
+        setStatusMessage("Browser profile import is unavailable on this device."),
+      openPlugins: () => setActiveView("plugins"),
+      refreshComputerUseStatus: () => {
+        void Promise.all([
+          refreshDesktopRuntimeStatus(),
+          pluginsController.refresh(true),
+        ]);
+      },
+      openAccessibilitySettings: () => {
+        void openComputerUseAccessibilitySettings().catch((error) =>
+          setStatusMessage(errorMessage(error)),
+        );
+      },
+      openScreenRecordingSettings: () => {
+        void openComputerUseScreenRecordingSettings().catch((error) =>
+          setStatusMessage(errorMessage(error)),
+        );
+      },
+      revokeAlwaysAllowedApplication: (applicationId) => {
+        void revokeAlwaysAllowedApplication(applicationId).then(() =>
+          listAlwaysAllowedApplications().then(setAlwaysAllowedApplications),
+        );
+      },
+      dismissLegacyBrowserMigrationNotice: () => {
+        persistLegacyBrowserMigrationNoticeDismissal();
+        setLegacyBrowserMigrationNotice(false);
+      },
+      connectGithub: () => void handleConnectGithub(),
+      showGithubLogin: () => setGithubLoginDialogOpen(true),
+      disconnectGithub: () => void handleDisconnectGithub(),
+      setNotificationPreference: handleAgentNotificationPreferenceChange,
+      openNotificationSettings: () => void handleOpenAgentNotificationSettings(),
+      enableNotifications: () => void handleEnableAgentNotifications(),
+      renameAccount: (accountId, label) =>
+        void handleRenameAccount(accountId, label),
+      selectAccount: (accountId) => void selectCodexAccount(accountId),
+      cancelLogin: () => void handleCancelLogin(),
+      loginAccount: (account) => {
+        setSelectedAccountId(account.id);
+        selectedAccountIdRef.current = account.id;
+        void handleLoginForAccount(account);
+      },
+      removeAccount: (accountId) => void handleRemoveAccount(accountId),
+      addAccount: () => void handleAddAccount(),
+      connectAccount: (accountId) => void ensureCodexConnected(accountId),
+      logout: handleLogout,
+    },
+  });
+
   return (
     <main className="app-shell" data-tauri-drag-region={selfWindowDragRegion}>
       <aside className="app-rail" data-tauri-drag-region={deepWindowDragRegion}>
@@ -20355,96 +20446,7 @@ function App() {
             className="settings-grid"
             data-tauri-drag-region={selfWindowDragRegion}
           >
-            <SettingsView
-              model={{
-                dragRegion: selfWindowDragRegion,
-                computerUseEnabled,
-                browserPreferences,
-                browserReadiness,
-                desktopRuntimeStatus,
-                pluginCatalog: pluginsController.catalog,
-                pluginsLoading: pluginsController.loading,
-                alwaysAllowedApplications,
-                legacyBrowserMigrationNotice,
-                githubConnection,
-                githubConnectionPending,
-                notificationPreferences: agentNotificationPreferences,
-                notificationPermission: agentNotificationPermission,
-                codexConnected,
-                accounts: codexAccounts,
-                selectedAccountId,
-                pendingLoginAccountId,
-                pendingLoginId,
-                loginState,
-                activeRunAccountIds,
-                runIsActive,
-                authMessage,
-                showLogout,
-              }}
-              actions={{
-                setComputerUseEnabled,
-                setBrowserAskWhereToSave,
-                chooseBrowserDownloadLocation: () => {
-                  void open({ directory: true, multiple: false }).then((path) => {
-                    if (typeof path === "string") setBrowserDownloadLocation(path);
-                  });
-                },
-                resetBrowserDownloadLocation: () => setBrowserDownloadLocation(null),
-                clearBrowserData: () => {
-                  void clearBrowserData()
-                    .then(() => setStatusMessage("In-app browser data cleared."))
-                    .catch((error) => setStatusMessage(errorMessage(error)));
-                },
-                importBrowserProfile: () =>
-                  setStatusMessage("Browser profile import is unavailable on this device."),
-                openPlugins: () => setActiveView("plugins"),
-                refreshComputerUseStatus: () => {
-                  void Promise.all([
-                    refreshDesktopRuntimeStatus(),
-                    pluginsController.refresh(true),
-                  ]);
-                },
-                openAccessibilitySettings: () => {
-                  void openComputerUseAccessibilitySettings().catch((error) =>
-                    setStatusMessage(errorMessage(error)),
-                  );
-                },
-                openScreenRecordingSettings: () => {
-                  void openComputerUseScreenRecordingSettings().catch((error) =>
-                    setStatusMessage(errorMessage(error)),
-                  );
-                },
-                revokeAlwaysAllowedApplication: (applicationId) => {
-                  void revokeAlwaysAllowedApplication(applicationId).then(() =>
-                    listAlwaysAllowedApplications().then(setAlwaysAllowedApplications),
-                  );
-                },
-                dismissLegacyBrowserMigrationNotice: () => {
-                  persistLegacyBrowserMigrationNoticeDismissal();
-                  setLegacyBrowserMigrationNotice(false);
-                },
-                connectGithub: () => void handleConnectGithub(),
-                showGithubLogin: () => setGithubLoginDialogOpen(true),
-                disconnectGithub: () => void handleDisconnectGithub(),
-                setNotificationPreference: handleAgentNotificationPreferenceChange,
-                openNotificationSettings: () =>
-                  void handleOpenAgentNotificationSettings(),
-                enableNotifications: () => void handleEnableAgentNotifications(),
-                renameAccount: (accountId, label) =>
-                  void handleRenameAccount(accountId, label),
-                selectAccount: (accountId) => void selectCodexAccount(accountId),
-                cancelLogin: () => void handleCancelLogin(),
-                loginAccount: (account) => {
-                  setSelectedAccountId(account.id);
-                  selectedAccountIdRef.current = account.id;
-                  void handleLoginForAccount(account);
-                },
-                removeAccount: (accountId) => void handleRemoveAccount(accountId),
-                addAccount: () => void handleAddAccount(),
-                connectAccount: (accountId) => void ensureCodexConnected(accountId),
-                logout: handleLogout,
-              }}
-            />
+            <SettingsView {...settingsViewBindings} />
 
           </div>
         ) : null}

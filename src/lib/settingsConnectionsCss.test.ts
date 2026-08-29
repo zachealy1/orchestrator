@@ -5,6 +5,38 @@ import { readAppStyles } from "../test/readAppStyles";
 const css = readAppStyles();
 
 describe("settings connection styles", () => {
+  it("keeps status-card icons distinct from the shared hover highlight", () => {
+    const root = postcss.parse(css);
+    let interactionRule = "";
+    let iconRule = "";
+    let interactiveIconRule = "";
+
+    root.walkRules((candidate) => {
+      if (
+        candidate.selector.includes("button.settings-status-card:hover") &&
+        candidate.selector.includes("button.settings-status-card:focus-visible")
+      ) {
+        interactionRule = candidate.toString();
+      }
+      if (candidate.selector === ".settings-status-card-icon") {
+        iconRule = candidate.toString();
+      }
+      if (
+        candidate.selector.includes("settings-status-card") &&
+        candidate.selector.includes("settings-status-card-icon") &&
+        (candidate.selector.includes(":hover") ||
+          candidate.selector.includes(":focus-visible"))
+      ) {
+        interactiveIconRule = candidate.toString();
+      }
+    });
+
+    expect(interactionRule).toContain("background: var(--color-button-active)");
+    expect(iconRule).toContain("background: var(--color-surface-soft)");
+    expect(iconRule).toContain("color: var(--color-icon)");
+    expect(interactiveIconRule).toBe("");
+  });
+
   it("uses the shared square-edged application highlight for selectable rows", () => {
     expect(css).not.toContain(".settings-manage-button");
 
@@ -217,5 +249,34 @@ describe("settings connection styles", () => {
     expect(rules.get(".account-management > button.secondary")).toContain(
       "margin: var(--settings-option-padding-block)\n    var(--settings-option-padding-inline) 0",
     );
+  });
+
+  it("isolates settings layout and avoids scroll-time shadow and hover repaints", () => {
+    const root = postcss.parse(css);
+    const rules = new Map<string, string>();
+    const selectors = new Set([
+      ".settings-overview-panel",
+      ".settings-panel",
+      "button.settings-connection-row",
+      "button.settings-navigation-row",
+    ]);
+
+    root.walkRules((candidate) => {
+      if (selectors.has(candidate.selector)) {
+        rules.set(candidate.selector, candidate.toString());
+      }
+    });
+
+    for (const selector of [".settings-overview-panel", ".settings-panel"]) {
+      expect(rules.get(selector)).toContain("contain: layout style");
+      expect(rules.get(selector)).toContain("box-shadow: none");
+    }
+    for (const selector of [
+      "button.settings-connection-row",
+      "button.settings-navigation-row",
+    ]) {
+      expect(rules.get(selector)).toContain("transition: none");
+      expect(rules.get(selector)).toContain("transform: none");
+    }
   });
 });
