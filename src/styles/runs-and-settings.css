@@ -892,17 +892,18 @@ button.settings-connection-row:focus-visible:not(:disabled) {
 
 .settings-subsection-heading {
   display: flex;
-  min-height: 62px;
+  min-height: var(--settings-option-min-height);
   align-items: center;
   justify-content: space-between;
-  gap: 16px;
+  gap: var(--settings-option-column-gap);
   border-bottom: 1px solid var(--color-divider);
-  padding: 18px 20px 9px;
+  padding: var(--settings-option-padding-block)
+    var(--settings-option-padding-inline);
 }
 
 .settings-subsection-heading > div {
   display: grid;
-  gap: 4px;
+  gap: var(--settings-option-copy-gap);
 }
 
 .settings-subsection-heading strong {

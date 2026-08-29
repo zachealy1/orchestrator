@@ -130,7 +130,7 @@ describe("settings connection styles", () => {
       "padding: var(--settings-option-padding-block)\n    var(--settings-option-padding-inline)",
     );
     expect(rules.get(".settings-subsection-heading")).toContain(
-      "padding: 18px 20px 9px",
+      "padding: var(--settings-option-padding-block)\n    var(--settings-option-padding-inline)",
     );
     expect(rules.get(".managed-account-row")).toContain(
       "padding: var(--settings-option-padding-block)\n    var(--settings-option-padding-inline)",
@@ -147,6 +147,8 @@ describe("settings connection styles", () => {
       ".settings-panel .setting-row",
       ".settings-panel .setting-row > div",
       ".settings-panel .setting-row > .button-row",
+      ".settings-subsection-heading",
+      ".settings-subsection-heading > div",
       ".account-management",
       ".account-management > .muted",
       ".account-management > button.secondary",
@@ -172,6 +174,7 @@ describe("settings connection styles", () => {
     for (const selector of [
       ".settings-overview-row",
       ".settings-panel .setting-row",
+      ".settings-subsection-heading",
       ".managed-account-row",
     ]) {
       expect(rules.get(selector)).toContain(
@@ -188,6 +191,7 @@ describe("settings connection styles", () => {
     for (const selector of [
       ".settings-overview-row > div:nth-child(2)",
       ".settings-panel .setting-row > div",
+      ".settings-subsection-heading > div",
       ".managed-account-row > div:nth-child(2)",
     ]) {
       expect(rules.get(selector)).toContain(
