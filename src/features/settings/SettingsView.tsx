@@ -759,55 +759,49 @@ function SettingsOverview({
             >
               <SettingsOverviewHeader icon={Plug} title="Connections" />
               <div className="settings-overview-rows">
-                <div className="settings-overview-row settings-connection-row">
+                <button
+                  className="settings-overview-row settings-connection-row"
+                  type="button"
+                  onClick={() => scrollToSettingsSection("settings-accounts")}
+                >
                   <span className="account-mini-avatar" aria-hidden="true">
                     {(selectedAccount?.email ?? selectedAccount?.label ?? "C")
                       .charAt(0)
                       .toUpperCase()}
                   </span>
-                  <div>
+                  <span className="settings-overview-row-copy">
                     <strong>Codex account</strong>
                     <span>
                       {selectedAccount?.email ??
                         selectedAccount?.label ??
                         "No account selected"}
                     </span>
-                  </div>
+                  </span>
                   <span className="settings-connection-value">
                     {selectedAccount?.plan_type ??
                       (model.codexConnected ? "Connected" : "Not connected")}
                   </span>
-                  <button
-                    className="settings-manage-button"
-                    type="button"
-                    onClick={() => scrollToSettingsSection("settings-accounts")}
-                  >
-                    Manage
-                  </button>
-                </div>
-                <div className="settings-overview-row settings-connection-row">
+                </button>
+                <button
+                  className="settings-overview-row settings-connection-row"
+                  type="button"
+                  onClick={() => scrollToSettingsSection("settings-github")}
+                >
                   <span className="settings-row-icon" aria-hidden="true">
                     <GitPullRequest size={18} />
                   </span>
-                  <div>
+                  <span className="settings-overview-row-copy">
                     <strong>GitHub</strong>
                     <span>
                       {model.githubConnection?.connected
                         ? `@${model.githubConnection.login}`
                         : "Not connected"}
                     </span>
-                  </div>
+                  </span>
                   <span className="settings-connection-value">
                     {model.githubConnection?.connected ? "Connected" : "Off"}
                   </span>
-                  <button
-                    className="settings-manage-button"
-                    type="button"
-                    onClick={() => scrollToSettingsSection("settings-github")}
-                  >
-                    Manage
-                  </button>
-                </div>
+                </button>
               </div>
             </section>
           ) : null}

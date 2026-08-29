@@ -293,6 +293,40 @@ describe("SettingsView", () => {
     });
   });
 
+  it("opens connection settings from the full selectable rows", () => {
+    render(<SettingsView model={model()} actions={actions()} />);
+    const connections = screen.getByRole("region", {
+      name: "Connections overview",
+    });
+    const codexSettings = screen.getByRole("region", {
+      name: "Codex settings",
+    });
+    const githubSettings = screen.getByRole("region", {
+      name: "GitHub settings",
+    });
+    codexSettings.scrollIntoView = vi.fn();
+    githubSettings.scrollIntoView = vi.fn();
+
+    const codexRow = within(connections).getByRole("button", {
+      name: /codex account/i,
+    });
+    const githubRow = within(connections).getByRole("button", {
+      name: /github/i,
+    });
+
+    expect(within(connections).queryByText("Manage")).not.toBeInTheDocument();
+    fireEvent.click(codexRow);
+    expect(codexSettings.scrollIntoView).toHaveBeenCalledWith({
+      behavior: "smooth",
+      block: "start",
+    });
+    fireEvent.click(githubRow);
+    expect(githubSettings.scrollIntoView).toHaveBeenCalledWith({
+      behavior: "smooth",
+      block: "start",
+    });
+  });
+
   it("omits removed overview, appearance, and product information", () => {
     render(<SettingsView model={model()} actions={actions()} />);
 
