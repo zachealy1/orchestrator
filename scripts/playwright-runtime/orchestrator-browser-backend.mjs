@@ -11,6 +11,7 @@ const EVENT_METHODS = [
   "Page.frameAttached",
   "Page.frameDetached",
   "Page.frameNavigated",
+  "Page.frameResized",
   "Page.javascriptDialogClosed",
   "Page.javascriptDialogOpening",
   "Page.lifecycleEvent",
@@ -22,6 +23,7 @@ const EVENT_METHODS = [
   "Runtime.executionContextCreated",
   "Runtime.executionContextDestroyed",
   "Runtime.executionContextsCleared",
+  "DOM.documentUpdated",
   "Target.attachedToTarget",
   "Target.detachedFromTarget",
   "Target.targetInfoChanged",
@@ -50,6 +52,7 @@ const entryId = args.get("entry-id");
 const stateFile = args.get("state-file");
 const backendPipe = args.get("backend-pipe");
 const controlSocket = args.get("control-socket");
+const downloadDir = args.get("download-dir");
 const safariDriver = args.get("safari-driver");
 const bridgeSocket = args.get("bridge-socket");
 const bridgeSecret = args.get("bridge-secret");
@@ -62,7 +65,9 @@ if (
   !entryId ||
   !stateFile ||
   !backendPipe ||
-  !controlSocket
+  !controlSocket ||
+  !downloadDir ||
+  !path.isAbsolute(downloadDir)
 ) {
   process.stderr.write("Orchestrator Browser backend configuration is incomplete.\n");
   process.exit(2);
@@ -81,11 +86,22 @@ let adapter = null;
 let backendServer = null;
 let controlServer = null;
 let closing = false;
+let paused = false;
+let takeover = false;
+let generation = 1;
 let expectedSessionId = args.get("thread-id") ?? null;
 let expectedTurnId = args.get("turn-id") ?? null;
 let expectedRunId = args.get("run-id") ?? null;
 let expectedProfileKey = args.get("profile-key") ?? null;
 const clients = new Set();
+const INVALIDATING_PAGE_EVENTS = new Set([
+  "DOM.documentUpdated",
+  "Page.frameNavigated",
+  "Page.frameResized",
+  "Page.navigatedWithinDocument",
+  "Runtime.executionContextsCleared",
+  "Target.targetInfoChanged",
+]);
 
 function failBackend(message) {
   if (closing) return;
@@ -142,6 +158,10 @@ class FrameDecoder {
 }
 
 function emitPageEvent(event) {
+  if (INVALIDATING_PAGE_EVENTS.has(event?.method)) {
+    generation += 1;
+    adapter?.invalidate?.();
+  }
   const message = encodeFrame({ jsonrpc: "2.0", method: "onPageEvent", params: event });
   for (const client of clients) client.write(message);
 }
@@ -163,6 +183,13 @@ async function handleRequest(message) {
   const method = message.method;
   const params = message.params ?? {};
   if (method !== "ping") validateSession(params);
+  if (paused && !["ping", "getInfo"].includes(method)) {
+    throw new Error(
+      takeover
+        ? "Browser control is paused while the user has taken over."
+        : "Browser control is paused by the user.",
+    );
+  }
   switch (method) {
     case "ping":
       return "pong";
@@ -175,6 +202,7 @@ async function handleRequest(message) {
         metadata: {
           orchestratorSessionToken: sessionToken,
           orchestratorBackend: backend,
+          orchestratorGeneration: String(generation),
         },
         capabilities: { browser: [], tab: [] },
       };
@@ -201,9 +229,12 @@ async function handleRequest(message) {
     case "executeCdpWithCachedExpression":
       return adapter.executeCdpWithCachedExpression(params);
     case "allowDownload":
-      throw new Error("Downloads require explicit user approval and are unavailable in this session.");
+      if (backend !== "browser-bridge") {
+        throw new Error("Downloads are unavailable with this Browser provider.");
+      }
+      return adapter.allowDownload(params);
     case "markTab":
-      return null;
+      return adapter.markTab(params);
     case "nameSession":
       return adapter.nameSession(params.name);
     case "moveMouse":
@@ -277,6 +308,48 @@ function startControlServer() {
       } else if (command.action === "stop") {
         socket.end('{"ok":true}\n');
         void closeSession(0);
+      } else if (command.action === "pause" || command.action === "takeover") {
+        paused = true;
+        takeover = command.action === "takeover";
+        void adapter.pause({ takeover }).then(
+          () => {
+            generation += 1;
+            writeState(takeover ? "takeover" : "paused", { generation });
+            socket.end(`${JSON.stringify({ ok: true, generation })}\n`);
+          },
+          (error) => {
+            paused = false;
+            takeover = false;
+            socket.end(`${JSON.stringify({ ok: false, error: String(error) })}\n`);
+          },
+        );
+      } else if (command.action === "resume") {
+        void adapter.resume().then(
+          () => {
+            generation += 1;
+            paused = false;
+            takeover = false;
+            writeState("ready", { generation });
+            socket.end(`${JSON.stringify({ ok: true, generation })}\n`);
+          },
+          (error) => socket.end(`${JSON.stringify({ ok: false, error: String(error) })}\n`),
+        );
+      } else if (command.action === "snapshot") {
+        if (paused) {
+          socket.end('{"ok":false,"error":"Browser control is paused."}\n');
+          return;
+        }
+        void adapter.screenshot().then(
+          (result) => socket.end(`${JSON.stringify({
+            ok: true,
+            result: {
+              dataUrl: `data:${result.mimeType ?? "image/png"};base64,${result.data}`,
+              generation,
+              capturedAt: new Date().toISOString(),
+            },
+          })}\n`),
+          (error) => socket.end(`${JSON.stringify({ ok: false, error: String(error) })}\n`),
+        );
       } else if (command.action === "update-target") {
         const target = command.target;
         if (!target || typeof target !== "object") {
@@ -348,30 +421,84 @@ class DefaultBrowserAdapter {
   cachedExpressions = new Map();
   polling = null;
   consecutivePollingFailures = 0;
+  recovering = false;
+  recoveryAttempts = 0;
+
+  invalidate() {
+    this.cachedExpressions.clear();
+  }
 
   async start() {
     await bridgeRequest("ensure-group");
+    this.startPolling();
+  }
+
+  startPolling() {
+    if (this.polling) return;
     this.polling = setInterval(() => void this.pollEvents(), 50);
+  }
+
+  stopPolling() {
+    if (!this.polling) return;
+    clearInterval(this.polling);
+    this.polling = null;
   }
 
   async pollEvents() {
     try {
       const events = await bridgeRequest("browser-backend-events");
+      if (this.recovering) {
+        await bridgeRequest("ensure-group");
+        this.recovering = false;
+        paused = false;
+        takeover = false;
+        generation += 1;
+        this.invalidate();
+        writeState("ready", { generation, recovered: true });
+      }
       this.consecutivePollingFailures = 0;
       for (const event of Array.isArray(events) ? events : []) emitPageEvent(event);
     } catch {
       this.consecutivePollingFailures += 1;
-      if (this.consecutivePollingFailures >= 20) {
+      if (this.consecutivePollingFailures === 20) {
+        if (this.recoveryAttempts >= 1) {
+          failBackend("The default-browser extension disconnected again after recovery.");
+          return;
+        }
+        this.recoveryAttempts += 1;
+        this.recovering = true;
+        paused = true;
+        generation += 1;
+        writeState("paused", {
+          generation,
+          error: "The Browser Bridge disconnected; waiting once for it to reconnect.",
+        });
+      } else if (this.consecutivePollingFailures >= 300) {
         failBackend("The default-browser extension disconnected from this run.");
       }
     }
   }
 
   getTabs() { return bridgeRequest("browser-backend-tabs"); }
-  getUserTabs() { return bridgeRequest("browser-backend-user-tabs"); }
-  createTab(preferredWindowId) { return bridgeRequest("browser-backend-create-tab", { preferredWindowId }); }
-  claimUserTab(tabId) { return bridgeRequest("browser-backend-claim-tab", { tabId }); }
-  attach(tabId) { return bridgeRequest("browser-backend-attach", { tabId }); }
+  getUserTabs() { return []; }
+  async createTab(preferredWindowId) {
+    const result = await bridgeRequest("browser-backend-create-tab", { preferredWindowId });
+    generation += 1;
+    this.invalidate();
+    return result;
+  }
+  async claimUserTab(tabId) {
+    const result = await bridgeRequest("browser-backend-claim-tab", { tabId });
+    generation += 1;
+    this.invalidate();
+    return result;
+  }
+  async attach(tabId) {
+    const result = await bridgeRequest("browser-backend-attach", { tabId });
+    generation += 1;
+    this.invalidate();
+    return result;
+  }
   detach(tabId) { return bridgeRequest("browser-backend-detach", { tabId }); }
   attachTarget(tabId, targetId) { return bridgeRequest("browser-backend-attach-target", { tabId, targetId }); }
   detachTarget(tabId, targetId) { return bridgeRequest("browser-backend-detach-target", { tabId, targetId }); }
@@ -390,10 +517,39 @@ class DefaultBrowserAdapter {
   nameSession(name) { return bridgeRequest("rename-group", { groupTitle: String(name ?? groupTitle) }); }
   moveMouse(params) { return this.executeCdp({ target: { tabId: params.tabId }, method: "Input.dispatchMouseEvent", commandParams: { type: "mouseMoved", x: params.x, y: params.y } }); }
   focus() { return bridgeRequest("focus-group"); }
-  turnEnded() { return null; }
+  markTab(params) { return bridgeRequest("mark-tab", { tabId: params.tabId, status: params.status }); }
+  allowDownload(params) {
+    return bridgeRequest("browser-backend-allow-download", {
+      tabId: params.tabId,
+      url: params.url,
+      downloadDir,
+    });
+  }
+  turnEnded(params) { return bridgeRequest("turn-ended", { turnId: params.turn_id }); }
+  async pause({ takeover }) {
+    await bridgeRequest("pause-session", { takeover });
+    this.stopPolling();
+    this.recovering = false;
+  }
+  async resume() {
+    this.cachedExpressions.clear();
+    this.consecutivePollingFailures = 0;
+    this.startPolling();
+  }
+  async screenshot() {
+    const tabs = await this.getTabs();
+    const tab = tabs.find((candidate) => candidate.active) ?? tabs[0];
+    if (!tab) throw new Error("The browser session has no active tab.");
+    const result = await this.executeCdp({
+      target: { tabId: tab.id },
+      method: "Page.captureScreenshot",
+      commandParams: { format: "png", fromSurface: true },
+    });
+    return { data: result.data, mimeType: "image/png" };
+  }
   executeUnhandledCommand() { throw new Error("This Browser command is not supported by the Browser Bridge backend."); }
   async close() {
-    if (this.polling) clearInterval(this.polling);
+    this.stopPolling();
     await bridgeRequest("detach-session").catch(() => undefined);
   }
 }
@@ -408,6 +564,8 @@ class SafariMcpAdapter {
   nextTabId = 1;
   activeTabId = null;
   cachedExpressions = new Map();
+
+  invalidate() { this.cachedExpressions.clear(); }
 
   async start() {
     this.child = spawn(safariDriver, ["--mcp"], { stdio: ["pipe", "pipe", "pipe"] });
@@ -526,6 +684,17 @@ class SafariMcpAdapter {
   nameSession() { return null; }
   focus() { return this.activeTabId ? this.attach(this.activeTabId) : null; }
   turnEnded() { return null; }
+  markTab() { return null; }
+  pause() { return null; }
+  resume() { this.cachedExpressions.clear(); return null; }
+  async screenshot() {
+    const result = await this.executeCdp({
+      target: { tabId: this.activeTabId },
+      method: "Page.captureScreenshot",
+      commandParams: { format: "png" },
+    });
+    return { data: result.data, mimeType: "image/png" };
+  }
   moveMouse() { return null; }
   executeUnhandledCommand(params) {
     const name = params.name ?? params.command ?? params.method;

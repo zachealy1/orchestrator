@@ -1,5 +1,6 @@
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
+use sha2::{Digest, Sha256};
 use std::{
     collections::HashMap,
     env, fs,
@@ -21,6 +22,13 @@ const CONTROL_TIMEOUT: Duration = Duration::from_secs(3);
 const BACKEND_START_TIMEOUT: Duration = Duration::from_secs(15);
 const BROWSER_PLUGIN_NAME: &str = "browser";
 const SUPPORTED_BROWSER_PLUGIN_MAJOR: u64 = 26;
+const PINNED_BROWSER_PLUGIN_VERSION: &str = "26.818.41509";
+const PINNED_BROWSER_MANIFEST_SHA256: &str =
+    "cc492df96ceb02c3d4a88869bbe78bb1477c281fe9f322ce2a6be8e129e8aae8";
+const PINNED_BROWSER_CLIENT_SHA256: &str =
+    "53484b46feddd277e436a0c3f38820eca8aab4e32c01bb44e1b5766eb369b5e6";
+const PINNED_BROWSER_SERVICE_SHA256: &str =
+    "559f97ab6a2dae2a6a9da96dc19f300f4dff7bc40586b9cb1f9299ff4c86db39";
 
 #[derive(Clone)]
 pub(crate) struct BrowserHostRuntime {
@@ -86,6 +94,8 @@ pub(crate) struct BrowserSessionTarget {
     pub thread_id: Option<String>,
     pub turn_id: Option<String>,
     pub access_mode: String,
+    #[serde(default)]
+    pub developer_mode_enabled: bool,
     pub chat_title: String,
 }
 
@@ -133,6 +143,14 @@ pub(crate) struct BrowserSessionPreparation {
     pub session: Option<PreparedBrowserSession>,
     pub unavailable_reason: Option<String>,
     pub browser_family: Option<String>,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, specta::Type)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct BrowserSessionSnapshot {
+    pub data_url: String,
+    pub generation: u64,
+    pub captured_at: String,
 }
 
 #[derive(Deserialize, specta::Type)]
@@ -219,7 +237,8 @@ pub(crate) async fn browser_runtime_status(app: AppHandle) -> BrowserRuntimeStat
         status.browser.as_ref().is_some_and(|browser| {
             browser.supported
                 && if browser.family.as_deref() == Some("safari") {
-                    default_browser::safari_driver_path(browser).is_some()
+                    experimental_safari_enabled()
+                        && default_browser::safari_driver_path(browser).is_some()
                 } else {
                     status.extension_connected
                 }
@@ -280,6 +299,13 @@ pub(crate) async fn browser_session_prepare(
         }
     };
     let family = browser.family.clone();
+    if browser.family.as_deref() == Some("safari") && !experimental_safari_enabled() {
+        return Ok(unavailable_preparation(
+            family,
+            "Safari Browser Use remains experimental until it passes the production capability matrix. Use Chrome, Edge, or Brave for production tasks."
+                .to_string(),
+        ));
+    }
     let runtime = match resolve_browser_host_runtime(&app) {
         Ok(runtime) => runtime,
         Err(error) => return Ok(unavailable_preparation(family, error)),
@@ -365,6 +391,11 @@ pub(crate) async fn browser_session_prepare(
         .arg(&backend_pipe)
         .arg("--control-socket")
         .arg(&control_socket)
+        .arg("--download-dir")
+        .arg(&output_dir)
+        .env_clear()
+        .env("PATH", "/usr/bin:/bin:/usr/sbin:/sbin")
+        .env("LANG", "en_US.UTF-8")
         .env("TMPDIR", &temp_dir)
         .stdin(std::process::Stdio::null())
         .stdout(std::process::Stdio::null())
@@ -431,7 +462,8 @@ pub(crate) async fn browser_session_prepare(
     }
     drop(backend_process);
 
-    let config = browser_service_config(&backend_pipe, &skill.version);
+    let config =
+        browser_service_config(&backend_pipe, &skill.version, target.developer_mode_enabled);
     let record = BrowserSessionRecord {
         token: token.clone(),
         target: target.clone(),
@@ -632,6 +664,87 @@ pub(crate) async fn browser_session_stop(
 
 #[tauri::command]
 #[specta::specta]
+pub(crate) async fn browser_session_pause(
+    token: String,
+    app: AppHandle,
+    state: State<'_, BrowserSessionRegistry>,
+) -> Result<BrowserSessionStatus, String> {
+    control_browser_session(token, "pause", "paused", app, state).await
+}
+
+#[tauri::command]
+#[specta::specta]
+pub(crate) async fn browser_session_takeover(
+    token: String,
+    app: AppHandle,
+    state: State<'_, BrowserSessionRegistry>,
+) -> Result<BrowserSessionStatus, String> {
+    control_browser_session(token, "takeover", "takeover", app, state).await
+}
+
+#[tauri::command]
+#[specta::specta]
+pub(crate) async fn browser_session_resume(
+    token: String,
+    app: AppHandle,
+    state: State<'_, BrowserSessionRegistry>,
+) -> Result<BrowserSessionStatus, String> {
+    control_browser_session(token, "resume", "ready", app, state).await
+}
+
+#[tauri::command]
+#[specta::specta]
+pub(crate) async fn browser_session_snapshot(
+    token: String,
+    state: State<'_, BrowserSessionRegistry>,
+) -> Result<BrowserSessionSnapshot, String> {
+    validate_token(&token)?;
+    let record = session_record(&state, &token)?;
+    if matches!(
+        record.status.as_str(),
+        "paused" | "takeover" | "stopping" | "stopped" | "error"
+    ) {
+        return Err("A browser snapshot is unavailable while control is paused.".to_string());
+    }
+    let value = request_control_payload(&record, json!({ "action": "snapshot" }))?;
+    let snapshot: BrowserSessionSnapshot = serde_json::from_value(value)
+        .map_err(|_| "The browser returned an invalid snapshot.".to_string())?;
+    if !snapshot.data_url.starts_with("data:image/png;base64,") {
+        return Err("The browser returned an unsupported snapshot format.".to_string());
+    }
+    Ok(snapshot)
+}
+
+async fn control_browser_session(
+    token: String,
+    action: &str,
+    status: &str,
+    app: AppHandle,
+    state: State<'_, BrowserSessionRegistry>,
+) -> Result<BrowserSessionStatus, String> {
+    validate_token(&token)?;
+    let record = session_record(&state, &token)?;
+    if matches!(record.status.as_str(), "stopping" | "stopped" | "error") {
+        return Err("The browser session can no longer be controlled.".to_string());
+    }
+    send_control_command(&record, action)?;
+    let updated = {
+        let mut sessions = state
+            .sessions
+            .lock()
+            .map_err(|_| "Browser session lock was poisoned".to_string())?;
+        let stored = sessions
+            .get_mut(&token)
+            .ok_or_else(|| "The browser session is no longer available.".to_string())?;
+        stored.status = status.to_string();
+        status_for_record(stored)
+    };
+    emit_browser_session_state(&app, &updated);
+    Ok(updated)
+}
+
+#[tauri::command]
+#[specta::specta]
 pub(crate) async fn browser_session_list_tabs(
     token: String,
     state: State<'_, BrowserSessionRegistry>,
@@ -746,7 +859,7 @@ fn status_for_record(record: &BrowserSessionRecord) -> BrowserSessionStatus {
         browser_service_compatible: record.service_compatible,
         backend_healthy: record.runtime_error.is_none()
             && wrapper_state.as_ref().is_some_and(|state| {
-                state.status == "ready"
+                matches!(state.status.as_str(), "ready" | "paused" | "takeover")
                     && state.backend_pipe.as_deref()
                         == Some(record.backend_pipe.to_string_lossy().as_ref())
                     && record.backend_pipe.exists()
@@ -796,7 +909,14 @@ fn send_control_command(record: &BrowserSessionRecord, action: &str) -> Result<(
     send_control_payload(record, json!({ "action": action }))
 }
 
-fn send_control_payload(record: &BrowserSessionRecord, mut payload: Value) -> Result<(), String> {
+fn send_control_payload(record: &BrowserSessionRecord, payload: Value) -> Result<(), String> {
+    request_control_payload(record, payload).map(|_| ())
+}
+
+fn request_control_payload(
+    record: &BrowserSessionRecord,
+    mut payload: Value,
+) -> Result<Value, String> {
     #[cfg(unix)]
     {
         use std::os::unix::net::UnixStream;
@@ -829,7 +949,7 @@ fn send_control_payload(record: &BrowserSessionRecord, mut payload: Value) -> Re
         let response: Value = serde_json::from_str(response.trim())
             .map_err(|_| "The browser returned an invalid control response.".to_string())?;
         if response.get("ok").and_then(Value::as_bool) == Some(true) {
-            return Ok(());
+            return Ok(response.get("result").cloned().unwrap_or(Value::Null));
         }
         return Err(response
             .get("error")
@@ -915,6 +1035,10 @@ fn validate_target(target: &BrowserSessionTarget) -> Result<(), String> {
     Ok(())
 }
 
+fn experimental_safari_enabled() -> bool {
+    env::var("ORCHESTRATOR_ENABLE_EXPERIMENTAL_SAFARI").as_deref() == Ok("1")
+}
+
 fn validate_token(token: &str) -> Result<(), String> {
     if token.len() == 32 && token.bytes().all(|byte| byte.is_ascii_hexdigit()) {
         Ok(())
@@ -923,18 +1047,38 @@ fn validate_token(token: &str) -> Result<(), String> {
     }
 }
 
-fn browser_service_config(backend_pipe: &Path, skill_version: &str) -> Value {
+fn browser_service_config(
+    backend_pipe: &Path,
+    skill_version: &str,
+    developer_mode_enabled: bool,
+) -> Value {
     json!({
         "shell_environment_policy": {
-            "inherit": "all",
+            "inherit": "core",
+            "ignore_default_excludes": false,
+            "filters": {
+                "AWS_*": "exclude",
+                "AZURE_*": "exclude",
+                "GCP_*": "exclude",
+                "GOOGLE_*": "exclude",
+                "GH_*": "exclude",
+                "GITHUB_*": "exclude",
+                "OPENAI_*": "exclude",
+                "*_CREDENTIAL*": "exclude",
+                "*_KEY": "exclude",
+                "*_PASSWORD": "exclude",
+                "*_SECRET": "exclude",
+                "*_TOKEN": "exclude"
+            },
             "set": {
                 "BROWSER_USE_AVAILABLE_BACKENDS": "cdp",
                 "CDP_BROWSER_BACKEND_PIPE_PATH": backend_pipe,
                 "BROWSER_AUTH_EVAL_EXACT_CDP_BACKEND_SOCKET": "true",
                 "BROWSER_USE_BROWSER_CLIENT_BUILD": skill_version,
-                "BROWSER_USE_DISABLE_API_MEMBERS": "Browser.download,Tab.upload,Tab.clipboard",
-                "BROWSER_USE_DISABLE_BROWSER_CAPABILITIES": "download,upload,clipboard",
-                "BROWSER_USE_DISABLE_TAB_CAPABILITIES": "download,upload,clipboard",
+                "BROWSER_USE_FULL_CDP_ACCESS_ENABLED": if developer_mode_enabled { "true" } else { "false" },
+                "BROWSER_USE_DISABLE_API_MEMBERS": "Tab.upload,Tab.clipboard",
+                "BROWSER_USE_DISABLE_BROWSER_CAPABILITIES": "upload,clipboard",
+                "BROWSER_USE_DISABLE_TAB_CAPABILITIES": "upload,clipboard",
                 "BROWSER_USE_SECURITY_MODE": ""
             }
         }
@@ -993,13 +1137,18 @@ fn resolve_browser_skill_runtime() -> Result<BrowserSkillRuntime, String> {
                     .to_string()
             })?
             .filter_map(Result::ok)
-            .filter(|entry| entry.path().is_dir())
+            .filter_map(|entry| {
+                let version = entry.file_name().to_string_lossy().to_string();
+                let parsed = parse_plugin_version(&version)?;
+                (entry.path().is_dir() && parsed.0 == SUPPORTED_BROWSER_PLUGIN_MAJOR)
+                    .then_some((parsed, entry.path()))
+            })
             .collect::<Vec<_>>();
-        versions.sort_by_key(|entry| entry.file_name());
+        versions.sort_by_key(|(version, _)| *version);
         versions
             .pop()
-            .map(|entry| entry.path())
-            .ok_or_else(|| "Codex's bundled Browser skill is unavailable.".to_string())?
+            .map(|(_, path)| path)
+            .ok_or_else(|| "A compatible bundled Browser skill is unavailable.".to_string())?
     };
     let canonical = plugin_root
         .canonicalize()
@@ -1012,6 +1161,9 @@ fn resolve_browser_skill_runtime() -> Result<BrowserSkillRuntime, String> {
     .map_err(|error| format!("The bundled Browser manifest is invalid: {error}"))?;
     if manifest.get("name").and_then(Value::as_str) != Some(BROWSER_PLUGIN_NAME) {
         return Err("The resolved Codex plugin is not the trusted Browser plugin.".to_string());
+    }
+    if manifest.get("license").and_then(Value::as_str) != Some("Proprietary") {
+        return Err("The Browser provider has an unexpected distribution manifest.".to_string());
     }
     let version = manifest
         .get("version")
@@ -1044,12 +1196,55 @@ fn resolve_browser_skill_runtime() -> Result<BrowserSkillRuntime, String> {
             return Err(format!("The bundled Browser {label} is missing."));
         }
     }
+    validate_pinned_browser_runtime(&version, &manifest_path, &client_script, &service_script)?;
     Ok(BrowserSkillRuntime {
         version,
         _client_script: client_script,
         _service_script: service_script,
         _skill_file: skill_file,
     })
+}
+
+fn validate_pinned_browser_runtime(
+    version: &str,
+    manifest: &Path,
+    client: &Path,
+    service: &Path,
+) -> Result<(), String> {
+    if version != PINNED_BROWSER_PLUGIN_VERSION {
+        return Err(format!(
+            "Codex Browser plugin {version} has not been validated with this Orchestrator build."
+        ));
+    }
+    for (label, path, expected) in [
+        ("manifest", manifest, PINNED_BROWSER_MANIFEST_SHA256),
+        ("client", client, PINNED_BROWSER_CLIENT_SHA256),
+        ("service", service, PINNED_BROWSER_SERVICE_SHA256),
+    ] {
+        let actual = file_sha256(path)?;
+        if actual != expected {
+            return Err(format!(
+                "The installed Browser {label} does not match the validated {version} provider."
+            ));
+        }
+    }
+    Ok(())
+}
+
+fn file_sha256(path: &Path) -> Result<String, String> {
+    let bytes =
+        fs::read(path).map_err(|error| format!("Could not verify {}: {error}", path.display()))?;
+    Ok(format!("{:x}", Sha256::digest(bytes)))
+}
+
+fn parse_plugin_version(value: &str) -> Option<(u64, u64, u64, u64)> {
+    let mut parts = value.split('.').map(|part| part.parse::<u64>().ok());
+    Some((
+        parts.next()??,
+        parts.next().flatten().unwrap_or(0),
+        parts.next().flatten().unwrap_or(0),
+        parts.next().flatten().unwrap_or(0),
+    ))
 }
 
 fn read_packaged_runtime(root: &Path, architecture: &str) -> Result<BrowserHostRuntime, String> {
@@ -1150,6 +1345,7 @@ mod tests {
             thread_id: None,
             turn_id: None,
             access_mode: "ask-for-approval".to_string(),
+            developer_mode_enabled: false,
             chat_title: "Test chat".to_string(),
         };
         assert!(validate_target(&target).is_err());
@@ -1164,13 +1360,50 @@ mod tests {
 
     #[test]
     fn browser_service_config_exposes_one_exact_backend_without_mcp() {
-        let config = browser_service_config(Path::new("/tmp/browser.sock"), "26.818.31338");
+        let config = browser_service_config(Path::new("/tmp/browser.sock"), "26.818.31338", false);
         let serialized = serde_json::to_string(&config).expect("serializes Browser config");
         assert!(serialized.contains("CDP_BROWSER_BACKEND_PIPE_PATH"));
         assert!(serialized.contains("BROWSER_AUTH_EVAL_EXACT_CDP_BACKEND_SOCKET"));
         assert!(serialized.contains("26.818.31338"));
         assert!(!serialized.contains("mcp_servers"));
         assert!(!serialized.contains("playwright"));
+        assert!(serialized.contains("BROWSER_USE_FULL_CDP_ACCESS_ENABLED"));
+        assert_eq!(
+            config.pointer("/shell_environment_policy/inherit"),
+            Some(&Value::String("core".to_string()))
+        );
+        assert_eq!(
+            config.pointer("/shell_environment_policy/ignore_default_excludes"),
+            Some(&Value::Bool(false))
+        );
+        assert_eq!(
+            config.pointer("/shell_environment_policy/filters/*_TOKEN"),
+            Some(&Value::String("exclude".to_string()))
+        );
+    }
+
+    #[test]
+    fn plugin_versions_sort_numerically() {
+        assert!(parse_plugin_version("26.818.41509") > parse_plugin_version("26.99.99999"));
+        assert_eq!(parse_plugin_version("latest"), None);
+    }
+
+    #[test]
+    fn pinned_browser_runtime_matches_the_installed_provider_contract() {
+        let home = env::var_os("HOME").map(PathBuf::from).expect("home");
+        let root = home
+            .join(".codex/plugins/cache/openai-bundled/browser")
+            .join(PINNED_BROWSER_PLUGIN_VERSION);
+        if !root.is_dir() {
+            return;
+        }
+        validate_pinned_browser_runtime(
+            PINNED_BROWSER_PLUGIN_VERSION,
+            &root.join(".codex-plugin/plugin.json"),
+            &root.join("scripts/browser-client.mjs"),
+            &root.join("scripts/browser-service.mjs"),
+        )
+        .expect("installed pinned Browser runtime");
     }
 
     #[test]

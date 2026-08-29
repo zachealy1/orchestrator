@@ -16,7 +16,8 @@ import type {
 } from "./lib/agentNotifications";
 import type { WorkspaceCommitIntentContext } from "./lib/commitMessage";
 import type { ActiveCodexLogin, CodexAccountResponse, CodexConnectResult, CodexLoginResponse, CodexModel, ModelListResponse, OssProvider } from "./features/codex/types";
-import type { BrowserRuntimeStatus, BrowserSessionPreparation, BrowserSessionState, BrowserSessionTarget, DefaultBrowserCapabilityStatus, DefaultBrowserTab } from "./features/browser/types";
+import type { BrowserRuntimeStatus, BrowserSessionPreparation, BrowserSessionSnapshot, BrowserSessionState, BrowserSessionTarget, DefaultBrowserCapabilityStatus, DefaultBrowserTab } from "./features/browser/types";
+import type { DesktopRuntimeStatus } from "./features/interaction/types";
 import type { CodexSkillSummary, ComposerContextFile, DroppedContextPathInspection, ImageAttachmentPreview } from "./features/composer/types";
 import type { ExternalTranscriptSnapshot, ExternalThreadHistoryIndex } from "./features/conversations/types";
 import type { GitBranchList, Workspace, WorkspaceFilePreview, WorkspaceGitActionResult, WorkspaceGitDiff, WorkspaceGitOverview, WorkspaceGitRepository, WorkspaceTreeEntry } from "./features/workspaces/types";
@@ -32,6 +33,10 @@ function commandResult<T>(result: Promise<unknown>): Promise<T> {
 
 export function readBrowserRuntimeStatus() {
   return commandResult<BrowserRuntimeStatus>(commands.browserRuntimeStatus());
+}
+
+export function readDesktopRuntimeStatus() {
+  return commandResult<DesktopRuntimeStatus>(commands.desktopRuntimeStatus());
 }
 
 export function prepareBrowserSession(target: BrowserSessionTarget) {
@@ -57,6 +62,24 @@ export function updateBrowserSessionTarget(
 
 export function stopBrowserSession(token: string) {
   return commandResult<BrowserSessionState>(commands.browserSessionStop(token));
+}
+
+export function pauseBrowserSession(token: string) {
+  return commandResult<BrowserSessionState>(commands.browserSessionPause(token));
+}
+
+export function takeOverBrowserSession(token: string) {
+  return commandResult<BrowserSessionState>(commands.browserSessionTakeover(token));
+}
+
+export function resumeBrowserSession(token: string) {
+  return commandResult<BrowserSessionState>(commands.browserSessionResume(token));
+}
+
+export function readBrowserSessionSnapshot(token: string) {
+  return commandResult<BrowserSessionSnapshot>(
+    commands.browserSessionSnapshot(token),
+  );
 }
 
 export function readDefaultBrowserCapabilityStatus() {

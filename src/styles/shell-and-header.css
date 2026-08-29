@@ -1449,6 +1449,149 @@ button.account-switcher-item:hover:not(:disabled) {
   padding: 7px;
 }
 
+.interaction-panel {
+  position: sticky;
+  top: 51px;
+  z-index: 11;
+  display: grid;
+  grid-template-columns: 64px minmax(0, 1fr) max-content;
+  align-items: center;
+  gap: 10px;
+  min-height: 58px;
+  border-bottom: 1px solid var(--color-divider);
+  background: rgb(var(--component-rgb) / 0.97);
+  padding: 7px 18px;
+  backdrop-filter: blur(14px);
+}
+
+.interaction-panel-preview {
+  display: grid;
+  width: 64px;
+  height: 42px;
+  place-items: center;
+  overflow: hidden;
+  border: 1px solid var(--color-divider);
+  border-radius: 7px;
+  background: var(--color-surface-soft);
+  color: var(--color-text-secondary);
+}
+
+.interaction-panel-preview img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.interaction-panel-summary {
+  display: grid;
+  min-width: 0;
+  gap: 3px;
+}
+
+.interaction-panel-heading,
+.interaction-panel-detail,
+.interaction-panel-actions {
+  display: flex;
+  align-items: center;
+}
+
+.interaction-panel-heading {
+  min-width: 0;
+  gap: 8px;
+}
+
+.interaction-panel-heading strong {
+  overflow: hidden;
+  color: var(--color-text);
+  font-size: 0.78rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.interaction-state,
+.interaction-safe-detail,
+.interaction-risk-detail {
+  flex: 0 0 auto;
+  border-radius: 999px;
+  background: var(--color-surface-soft);
+  color: var(--color-text-secondary);
+  font-size: 0.66rem;
+  line-height: 1;
+  padding: 4px 7px;
+}
+
+.interaction-risk-detail {
+  color: var(--color-danger);
+}
+
+.interaction-state-takeover,
+.interaction-state-awaiting-confirmation,
+.interaction-state-recovering {
+  color: var(--color-primary);
+}
+
+.interaction-panel-detail {
+  min-width: 0;
+  gap: 6px;
+  overflow: hidden;
+  color: var(--color-text-secondary);
+  font-size: 0.72rem;
+  white-space: nowrap;
+}
+
+.interaction-panel-detail > span:first-of-type {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.interaction-safe-detail {
+  max-width: 190px;
+  overflow: hidden;
+  padding-block: 3px;
+  text-overflow: ellipsis;
+}
+
+.interaction-panel-actions {
+  gap: 5px;
+}
+
+.interaction-panel-actions button {
+  display: grid;
+  width: 30px;
+  height: 30px;
+  place-items: center;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--color-text-secondary);
+  cursor: pointer;
+}
+
+.interaction-panel-actions button:hover:not(:disabled),
+.interaction-panel-actions button:focus-visible:not(:disabled) {
+  background: var(--color-surface-soft);
+}
+
+.interaction-panel-actions button.danger {
+  color: var(--color-danger);
+}
+
+.interaction-panel-actions button:disabled {
+  cursor: default;
+  opacity: 0.4;
+}
+
+@media (max-width: 760px) {
+  .interaction-panel {
+    grid-template-columns: minmax(0, 1fr) max-content;
+  }
+
+  .interaction-panel-preview,
+  .interaction-safe-detail {
+    display: none;
+  }
+}
+
 .history-panel-button {
   position: relative;
   color: var(--color-button-primary-text);

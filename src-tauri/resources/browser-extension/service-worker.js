@@ -12,6 +12,9 @@ const approvedOriginsByTab = new Map();
 const browserBackendEvents = new Map();
 const browserBackendTabs = new Map();
 const browserBackendTargetSessions = new Map();
+const sessionCreatedTabs = new Map();
+const sessionClaimedTabs = new Map();
+const sessionTabMarks = new Map();
 
 function connectNative() {
   if (nativePort) return;
@@ -21,7 +24,7 @@ function connectNative() {
     port.onMessage.addListener((message) => void handleRequest(message));
     port.onDisconnect.addListener(() => {
       nativePort = null;
-      void detachAllSessions();
+      void pauseAllSessions();
       scheduleReconnect();
     });
     port.postMessage({ type: "extension-ready", version: 1 });
@@ -90,10 +93,12 @@ async function dispatch(request) {
       return attachTab(request.groupKey, request.groupTitle, request.sessionToken, request.tabId);
     case "detach-session":
       return detachSession(request.sessionToken);
-    case "inspect-action":
-      return inspectAction(request);
-    case "tool":
-      return runTool(request);
+    case "pause-session":
+      return pauseSession(request.sessionToken);
+    case "mark-tab":
+      return markSessionTab(request.sessionToken, request.tabId, request.status);
+    case "turn-ended":
+      return cleanupSessionTabs(request.sessionToken);
     case "browser-backend-tabs":
       return listBackendTabs(request);
     case "browser-backend-user-tabs":
@@ -114,6 +119,8 @@ async function dispatch(request) {
       return executeBackendCdp(request);
     case "browser-backend-events":
       return takeBackendEvents(request.sessionToken);
+    case "browser-backend-allow-download":
+      return allowBackendDownload(request, request.tabId);
     default:
       throw new Error("Unsupported browser bridge action.");
   }
@@ -122,6 +129,11 @@ async function dispatch(request) {
 async function detachAllSessions() {
   const sessions = [...controlledTabs.keys()];
   await Promise.all(sessions.map((token) => detachSession(token)));
+}
+
+async function pauseAllSessions() {
+  const sessions = [...controlledTabs.keys()];
+  await Promise.all(sessions.map((token) => pauseSession(token)));
 }
 
 async function storedGroups() {
@@ -149,10 +161,24 @@ async function ensureGroup(groupKey, title, sessionToken) {
   const groups = await storedGroups();
   let groupId = groups[groupKey]?.groupId;
   let group = await readGroup(groupId);
+  const existingControlledTabId = controlledTabs.get(sessionToken);
+  if (Number.isInteger(existingControlledTabId)) {
+    const existingTab = await chrome.tabs.get(existingControlledTabId).catch(() => null);
+    if (existingTab) {
+      return {
+        groupId: existingTab.groupId,
+        tabId: existingControlledTabId,
+        windowId: existingTab.windowId,
+      };
+    }
+    controlledTabs.delete(sessionToken);
+  }
+  let controlled = null;
   if (!group) {
     const created = await chrome.tabs.create({ url: "about:blank", active: true });
     groupId = await chrome.tabs.group({ tabIds: [created.id] });
     group = await chrome.tabGroups.get(groupId);
+    controlled = created;
   }
   await chrome.tabGroups.update(group.id, {
     title: safeGroupTitle(title),
@@ -161,8 +187,6 @@ async function ensureGroup(groupKey, title, sessionToken) {
   });
   groups[groupKey] = { groupId: group.id, title: safeGroupTitle(title) };
   await saveGroups(groups);
-  const tabs = await chrome.tabs.query({ groupId: group.id });
-  let controlled = tabs.find((tab) => tab.active) ?? tabs.at(-1);
   if (!controlled) {
     controlled = await chrome.tabs.create({
       active: true,
@@ -171,6 +195,7 @@ async function ensureGroup(groupKey, title, sessionToken) {
     });
     await chrome.tabs.group({ groupId: group.id, tabIds: [controlled.id] });
   }
+  rememberCreatedTab(sessionToken, controlled.id);
   await setControlledTab(sessionToken, controlled.id);
   return { groupId: group.id, tabId: controlled.id, windowId: group.windowId };
 }
@@ -228,6 +253,7 @@ async function attachTab(groupKey, title, sessionToken, tabId) {
   const groups = await storedGroups();
   let groupId = groups[groupKey]?.groupId;
   let group = await readGroup(groupId);
+  if (tab.groupId !== groupId) rememberClaimedTab(sessionToken, tab);
   if (!group) {
     groupId = await chrome.tabs.group({ tabIds: [tabId] });
     group = await chrome.tabGroups.get(groupId);
@@ -260,9 +286,13 @@ async function renameGroup(groupKey, title) {
 }
 
 async function detachSession(sessionToken) {
+  await cleanupSessionTabs(sessionToken);
+  return { detached: true };
+}
+
+async function pauseSession(sessionToken) {
   const tabIds = browserBackendTabs.get(sessionToken) ?? new Set();
   const tabId = controlledTabs.get(sessionToken);
-  controlledTabs.delete(sessionToken);
   if (Number.isInteger(tabId)) tabIds.add(tabId);
   await Promise.all([...tabIds].map(async (candidate) => {
     if (attachedTabs.has(candidate)) {
@@ -274,7 +304,79 @@ async function detachSession(sessionToken) {
   browserBackendTabs.delete(sessionToken);
   browserBackendEvents.delete(sessionToken);
   browserBackendTargetSessions.delete(sessionToken);
-  return { detached: true };
+  return { paused: true };
+}
+
+function rememberCreatedTab(sessionToken, tabId) {
+  if (!Number.isInteger(tabId)) return;
+  const tabs = sessionCreatedTabs.get(sessionToken) ?? new Set();
+  tabs.add(tabId);
+  sessionCreatedTabs.set(sessionToken, tabs);
+}
+
+function rememberClaimedTab(sessionToken, tab) {
+  if (!Number.isInteger(tab?.id)) return;
+  const tabs = sessionClaimedTabs.get(sessionToken) ?? new Map();
+  if (!tabs.has(tab.id)) {
+    tabs.set(tab.id, {
+      windowId: tab.windowId,
+      index: tab.index,
+      groupId: tab.groupId,
+      active: Boolean(tab.active),
+    });
+  }
+  sessionClaimedTabs.set(sessionToken, tabs);
+}
+
+function markSessionTab(sessionToken, tabId, status) {
+  const numericTabId = Number(tabId);
+  if (!Number.isInteger(numericTabId)) throw new Error("The marked browser tab is invalid.");
+  const marks = sessionTabMarks.get(sessionToken) ?? new Map();
+  if (status === "deliverable" || status === "handoff") marks.set(numericTabId, status);
+  else marks.delete(numericTabId);
+  sessionTabMarks.set(sessionToken, marks);
+  return { marked: marks.has(numericTabId) };
+}
+
+async function cleanupSessionTabs(sessionToken) {
+  await pauseSession(sessionToken);
+  const marks = sessionTabMarks.get(sessionToken) ?? new Map();
+  const created = sessionCreatedTabs.get(sessionToken) ?? new Set();
+  const claimed = sessionClaimedTabs.get(sessionToken) ?? new Map();
+  for (const tabId of created) {
+    if (marks.has(tabId)) continue;
+    await chrome.tabs.remove(tabId).catch(() => undefined);
+  }
+  for (const [tabId, original] of claimed) {
+    await restoreClaimedTab(tabId, original);
+  }
+  controlledTabs.delete(sessionToken);
+  sessionCreatedTabs.delete(sessionToken);
+  sessionClaimedTabs.delete(sessionToken);
+  sessionTabMarks.delete(sessionToken);
+  return { cleaned: true };
+}
+
+async function restoreClaimedTab(tabId, original) {
+  const tab = await chrome.tabs.get(tabId).catch(() => null);
+  if (!tab) return;
+  if (tab.groupId !== chrome.tabGroups.TAB_GROUP_ID_NONE) {
+    await chrome.tabs.ungroup(tabId).catch(() => undefined);
+  }
+  await chrome.tabs.move(tabId, {
+    windowId: original.windowId,
+    index: original.index,
+  }).catch(() => undefined);
+  if (Number.isInteger(original.groupId) && original.groupId >= 0) {
+    const originalGroup = await readGroup(original.groupId);
+    if (originalGroup) {
+      await chrome.tabs.group({ groupId: original.groupId, tabIds: [tabId] })
+        .catch(() => undefined);
+    }
+  }
+  if (original.active) {
+    await chrome.tabs.update(tabId, { active: true }).catch(() => undefined);
+  }
 }
 
 async function setControlledTab(sessionToken, tabId) {
@@ -385,7 +487,20 @@ chrome.tabs.onRemoved.addListener((tabId) => {
   for (const [sessionToken, controlledTabId] of controlledTabs) {
     if (controlledTabId === tabId) controlledTabs.delete(sessionToken);
   }
+  forgetClosedTab(tabId);
 });
+
+function forgetClosedTab(tabId) {
+  for (const tabs of sessionCreatedTabs.values()) tabs.delete(tabId);
+  for (const tabs of sessionClaimedTabs.values()) tabs.delete(tabId);
+  for (const marks of sessionTabMarks.values()) marks.delete(tabId);
+  for (const tabs of browserBackendTabs.values()) tabs.delete(tabId);
+  for (const sessions of browserBackendTargetSessions.values()) {
+    for (const key of [...sessions.keys()]) {
+      if (key.startsWith(`${tabId}:`)) sessions.delete(key);
+    }
+  }
+}
 chrome.debugger.onEvent.addListener((source, method, params) => {
   const tabId = source.tabId;
   if (!Number.isInteger(tabId)) return;
@@ -512,12 +627,15 @@ async function createBackendTab(request) {
     url: "about:blank",
   });
   await chrome.tabs.group({ groupId: group.id, tabIds: [tab.id] });
+  rememberCreatedTab(request.sessionToken, tab.id);
   await setControlledTab(request.sessionToken, tab.id);
   await attachBackendTab(request, tab.id);
   return backendTab(tab);
 }
 
 async function claimBackendTab(request, tabId) {
+  const original = await chrome.tabs.get(Number(tabId));
+  rememberClaimedTab(request.sessionToken, original);
   await attachTab(
     request.groupKey,
     request.groupTitle,
@@ -602,6 +720,31 @@ async function executeBackendCdp(request) {
       : {},
     request.target?.sessionId,
   );
+}
+
+async function allowBackendDownload(request, tabId) {
+  const numericTabId = Number(tabId);
+  await attachBackendTab(request, numericTabId);
+  if (
+    typeof request.url !== "string" ||
+    !/^https?:\/\//u.test(request.url) ||
+    typeof request.downloadDir !== "string" ||
+    !request.downloadDir.startsWith("/") ||
+    request.downloadDir.includes("\0")
+  ) {
+    throw new Error("The download request is invalid.");
+  }
+  await sendBackendCdp(numericTabId, "Browser.setDownloadBehavior", {
+    behavior: "allow",
+    downloadPath: request.downloadDir,
+    eventsEnabled: true,
+  });
+  setTimeout(() => {
+    void sendBackendCdp(numericTabId, "Browser.setDownloadBehavior", {
+      behavior: "deny",
+    }).catch(() => undefined);
+  }, 60_000);
+  return { allowed: true };
 }
 
 function sendBackendCdp(tabId, method, commandParams = {}, sessionId = undefined) {
@@ -740,6 +883,7 @@ async function browserTabsTool(request, args, currentTabId) {
     const group = await groupForKey(request.groupKey);
     const tab = await chrome.tabs.create({ windowId: group.windowId, active: true, url: "about:blank" });
     await chrome.tabs.group({ groupId: group.id, tabIds: [tab.id] });
+    rememberCreatedTab(request.sessionToken, tab.id);
     await setControlledTab(request.sessionToken, tab.id);
     return textResult(`Opened tab ${tab.id}`);
   }

@@ -633,7 +633,7 @@ pub(crate) fn safari_driver_path(browser: &DefaultBrowserInfo) -> Option<PathBuf
 }
 
 #[cfg(target_os = "macos")]
-fn accessibility_is_trusted() -> bool {
+pub(crate) fn accessibility_is_trusted() -> bool {
     #[link(name = "ApplicationServices", kind = "framework")]
     extern "C" {
         fn AXIsProcessTrusted() -> bool;
@@ -642,7 +642,7 @@ fn accessibility_is_trusted() -> bool {
 }
 
 #[cfg(not(target_os = "macos"))]
-fn accessibility_is_trusted() -> bool {
+pub(crate) fn accessibility_is_trusted() -> bool {
     false
 }
 

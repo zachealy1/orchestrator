@@ -9,6 +9,9 @@ import {
 function actions(): SettingsViewActions {
   return {
     setComputerUseEnabled: vi.fn(),
+    setDesktopUseEnabled: vi.fn(),
+    setDiagnosticsEnabled: vi.fn(),
+    setDeveloperModeEnabled: vi.fn(),
     installDefaultBrowserExtension: vi.fn(),
     refreshBrowserRuntimeStatus: vi.fn(),
     openDefaultBrowserAccessibilitySettings: vi.fn(),
@@ -35,12 +38,22 @@ function actions(): SettingsViewActions {
 function model(overrides: Partial<SettingsViewModel> = {}): SettingsViewModel {
   return {
     computerUseEnabled: true,
+    desktopUseEnabled: false,
+    diagnosticsEnabled: false,
+    developerModeEnabled: false,
     browserRuntimeStatus: {
       available: true,
       message: null,
       defaultBrowser: null,
       browserSkillVersion: "26.818.31338",
       browserServiceCompatible: true,
+    },
+    desktopRuntimeStatus: {
+      available: true,
+      message: null,
+      version: "1.0.1000816",
+      serviceCompatible: true,
+      accessibilityTrusted: true,
     },
     githubConnection: null,
     githubConnectionPending: false,
