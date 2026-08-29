@@ -5,6 +5,69 @@ import { readAppStyles } from "../test/readAppStyles";
 const css = readAppStyles();
 
 describe("settings connection styles", () => {
+  it("anchors Computer Use remediation to a labeled status popover", () => {
+    const root = postcss.parse(css);
+    let triggerRule = "";
+    let triggerInteractionRule = "";
+    let panelRule = "";
+    let actionRule = "";
+    let actionInteractionRule = "";
+
+    root.walkRules((candidate) => {
+      if (candidate.selector === "button.settings-status-popover-trigger") {
+        triggerRule = candidate.toString();
+      }
+      if (
+        candidate.selector.includes(
+          "button.settings-status-popover-trigger:hover",
+        ) &&
+        candidate.selector.includes(
+          "button.settings-status-popover-trigger[aria-expanded=\"true\"]",
+        )
+      ) {
+        triggerInteractionRule = candidate.toString();
+      }
+      if (candidate.selector === ".settings-status-popover-panel") {
+        panelRule = candidate.toString();
+      }
+      if (candidate.selector === "button.settings-status-popover-action") {
+        actionRule = candidate.toString();
+      }
+      if (
+        candidate.selector.includes(
+          "button.settings-status-popover-action:hover",
+        ) &&
+        candidate.selector.includes(
+          "button.settings-status-popover-action:focus-visible",
+        )
+      ) {
+        actionInteractionRule = candidate.toString();
+      }
+    });
+
+    expect(triggerRule).not.toContain("width: 36px");
+    expect(triggerRule).not.toContain("height: 36px");
+    expect(triggerRule).not.toContain("place-items: center");
+    expect(triggerInteractionRule).toContain(
+      "background: var(--color-button-active)",
+    );
+    expect(triggerInteractionRule).not.toContain("color:");
+
+    expect(panelRule).toContain("position: absolute");
+    expect(panelRule).toContain("right: 0");
+    expect(panelRule).toContain("border: 1px solid var(--color-divider)");
+    expect(panelRule).toContain(
+      "background: var(--color-component-background)",
+    );
+    expect(panelRule).toContain("box-shadow: none");
+
+    expect(actionRule).toContain("border-radius: 0");
+    expect(actionRule).toContain("background: transparent");
+    expect(actionInteractionRule).toContain(
+      "background: var(--color-button-active)",
+    );
+  });
+
   it("keeps status-card icons distinct from the shared hover highlight", () => {
     const root = postcss.parse(css);
     let interactionRule = "";

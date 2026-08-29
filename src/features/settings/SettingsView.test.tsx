@@ -229,6 +229,129 @@ describe("SettingsView", () => {
     );
   });
 
+  it("moves Computer Use permission failures into the header status popover", () => {
+    const handlers = actions();
+    render(
+      <SettingsView
+        model={model({
+          desktopRuntimeStatus: {
+            available: false,
+            message:
+              "Allow Screen Recording and Accessibility for Computer Use in macOS settings.",
+            version: "1.0.1000816",
+            serviceCompatible: true,
+            accessibilityTrusted: false,
+            screenRecordingTrusted: false,
+          },
+        })}
+        actions={handlers}
+      />,
+    );
+
+    const computerUse = screen.getByRole("region", {
+      name: "Computer use settings",
+    });
+    const trigger = within(computerUse).getByRole("button", {
+      name: "Computer Use unavailable. Show details",
+    });
+
+    expect(trigger).toHaveClass("settings-status-badge", "negative");
+    expect(within(trigger).getByText("Unavailable")).toBeInTheDocument();
+    expect(
+      trigger.querySelector(".settings-status-badge-dot"),
+    ).toBeInTheDocument();
+    expect(trigger.querySelector("svg")).toBeNull();
+    expect(trigger).toHaveAttribute("aria-expanded", "false");
+    expect(
+      computerUse.querySelector(".computer-use-runtime-error"),
+    ).toBeNull();
+
+    fireEvent.click(trigger);
+
+    const dialog = within(computerUse).getByRole("dialog", {
+      name: "Computer Use unavailable",
+    });
+    expect(trigger).toHaveAttribute("aria-expanded", "true");
+    expect(dialog).toHaveTextContent(
+      "Screen Recording and Accessibility are required.",
+    );
+
+    fireEvent.click(
+      within(dialog).getByRole("button", {
+        name: "Open Screen Recording settings",
+      }),
+    );
+    expect(handlers.openScreenRecordingSettings).toHaveBeenCalledOnce();
+    expect(within(computerUse).queryByRole("dialog")).toBeNull();
+
+    fireEvent.click(trigger);
+    fireEvent.click(
+      within(
+        within(computerUse).getByRole("dialog", {
+          name: "Computer Use unavailable",
+        }),
+      ).getByRole("button", { name: "Open Accessibility settings" }),
+    );
+    expect(handlers.openAccessibilitySettings).toHaveBeenCalledOnce();
+
+    fireEvent.click(trigger);
+    fireEvent.pointerDown(document.body);
+    expect(within(computerUse).queryByRole("dialog")).toBeNull();
+
+    fireEvent.click(trigger);
+    fireEvent.keyDown(document, { key: "Escape" });
+    expect(within(computerUse).queryByRole("dialog")).toBeNull();
+    expect(trigger).toHaveFocus();
+  });
+
+  it("routes a missing Computer Use plugin from the status popover to Plugins", () => {
+    const handlers = actions();
+    const baseModel = model();
+    render(
+      <SettingsView
+        model={model({
+          desktopRuntimeStatus: {
+            available: false,
+            message: "Computer Use is unavailable.",
+            version: null,
+            serviceCompatible: false,
+            accessibilityTrusted: false,
+            screenRecordingTrusted: false,
+          },
+          pluginCatalog: {
+            ...baseModel.pluginCatalog,
+            plugins: baseModel.pluginCatalog.plugins.filter(
+              (plugin) => plugin.name !== "computer-use",
+            ),
+          },
+        })}
+        actions={handlers}
+      />,
+    );
+
+    fireEvent.click(
+      screen.getByRole("button", {
+        name: "Computer Use unavailable. Show details",
+      }),
+    );
+
+    const dialog = screen.getByRole("dialog", {
+      name: "Computer Use unavailable",
+    });
+    expect(dialog).toHaveTextContent(
+      "Install the Computer Use plugin to continue.",
+    );
+    expect(
+      within(dialog).queryByRole("button", {
+        name: "Open Screen Recording settings",
+      }),
+    ).toBeNull();
+
+    fireEvent.click(within(dialog).getByRole("button", { name: "Open Plugins" }));
+    expect(handlers.openPlugins).toHaveBeenCalledOnce();
+    expect(screen.queryByRole("dialog")).toBeNull();
+  });
+
   it("renders Browser and Computer use as separate status cards", () => {
     const { rerender } = render(
       <SettingsView model={model()} actions={actions()} />,

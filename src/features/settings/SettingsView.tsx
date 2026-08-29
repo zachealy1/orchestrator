@@ -18,7 +18,7 @@ import {
   UserRound,
   UserPlus,
 } from "lucide-react";
-import { memo, useState } from "react";
+import { memo, useEffect, useId, useRef, useState, type ReactNode } from "react";
 import { OrchestratorMark } from "../../components/OrchestratorMark";
 import type {
   AgentNotificationPermissionStatus,
@@ -125,6 +125,12 @@ export const SettingsView = memo(function SettingsView({
     pluginIsReady(computerUsePlugin) &&
     model.desktopRuntimeStatus?.available === true &&
     model.desktopRuntimeStatus?.serviceCompatible === true;
+  const computerUseStatus: SettingsDetailStatus =
+    model.pluginsLoading || model.desktopRuntimeStatus === null
+      ? { label: "Checking", tone: "pending" }
+      : computerUseReady
+        ? { label: "Available", tone: "positive" }
+        : { label: "Unavailable", tone: "negative" };
   const externalBrowserPlugins = ["chrome", "edge", "brave", "opera", "vivaldi"]
     .map((name) => findPlugin(model.pluginCatalog, name))
     .filter((plugin) => plugin !== null);
@@ -270,12 +276,19 @@ export const SettingsView = memo(function SettingsView({
           <SettingsDetailHeader
             icon={Monitor}
             title="Computer use"
-            status={
-              model.pluginsLoading || model.desktopRuntimeStatus === null
-                ? { label: "Checking", tone: "pending" }
-                : computerUseReady
-                  ? { label: "Available", tone: "positive" }
-                  : { label: "Unavailable", tone: "negative" }
+            status={computerUseStatus}
+            statusContent={
+              computerUseStatus.label === "Unavailable" ? (
+                <ComputerUseStatusPopover
+                  pluginPresent={computerUsePlugin !== null}
+                  pluginReady={pluginIsReady(computerUsePlugin)}
+                  runtimeStatus={model.desktopRuntimeStatus}
+                  onOpenPlugins={actions.openPlugins}
+                  onOpenScreenRecording={actions.openScreenRecordingSettings}
+                  onOpenAccessibility={actions.openAccessibilitySettings}
+                  onRefresh={actions.refreshComputerUseStatus}
+                />
+              ) : undefined
             }
           />
           <div className="setting-list">
@@ -379,17 +392,6 @@ export const SettingsView = memo(function SettingsView({
               </div>
             )}
           </div>
-          {!computerUseReady ? (
-            <p className="computer-use-runtime-error" role="alert">
-              {computerUsePlugin
-                ? model.desktopRuntimeStatus?.message ??
-                  "Enable the Computer Use plugin and grant the required macOS permissions."
-                : "Computer Use is unavailable. Open Plugins to install the official Computer Use plugin."}
-              <button className="link-button" type="button" onClick={actions.openPlugins}>
-                Open Plugins
-              </button>
-            </p>
-          ) : null}
           {model.legacyBrowserMigrationNotice ? (
             <div className="settings-migration-notice" role="status">
               <p>
@@ -1043,10 +1045,12 @@ function SettingsDetailHeader({
   icon: Icon,
   title,
   status,
+  statusContent,
 }: {
   icon: typeof Monitor;
   title: string;
   status: SettingsDetailStatus;
+  statusContent?: ReactNode;
 }) {
   return (
     <div className="surface-header settings-detail-header">
@@ -1058,8 +1062,170 @@ function SettingsDetailHeader({
           <h2>{title}</h2>
         </div>
       </div>
-      <SettingsStatusBadge {...status} />
+      {statusContent ?? <SettingsStatusBadge {...status} />}
     </div>
+  );
+}
+
+function ComputerUseStatusPopover({
+  pluginPresent,
+  pluginReady,
+  runtimeStatus,
+  onOpenPlugins,
+  onOpenScreenRecording,
+  onOpenAccessibility,
+  onRefresh,
+}: {
+  pluginPresent: boolean;
+  pluginReady: boolean;
+  runtimeStatus: DesktopRuntimeStatus | null;
+  onOpenPlugins: () => void;
+  onOpenScreenRecording: () => void;
+  onOpenAccessibility: () => void;
+  onRefresh: () => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const rootRef = useRef<HTMLDivElement>(null);
+  const triggerRef = useRef<HTMLButtonElement>(null);
+  const titleId = useId();
+  const panelId = useId();
+  const missingScreenRecording =
+    runtimeStatus?.screenRecordingTrusted !== true;
+  const missingAccessibility = runtimeStatus?.accessibilityTrusted !== true;
+  const hasMissingPermissions =
+    pluginReady && (missingScreenRecording || missingAccessibility);
+  const description = !pluginReady
+    ? pluginPresent
+      ? "Enable the Computer Use plugin to continue."
+      : "Install the Computer Use plugin to continue."
+    : hasMissingPermissions
+      ? missingScreenRecording && missingAccessibility
+        ? "Screen Recording and Accessibility are required."
+        : missingScreenRecording
+          ? "Screen Recording is required."
+          : "Accessibility is required."
+      : runtimeStatus?.message ?? "Computer Use is not ready on this Mac.";
+
+  useEffect(() => {
+    if (!open) {
+      return;
+    }
+
+    const handlePointerDown = (event: PointerEvent) => {
+      if (!rootRef.current?.contains(event.target as Node)) {
+        setOpen(false);
+      }
+    };
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        setOpen(false);
+        triggerRef.current?.focus();
+      }
+    };
+
+    document.addEventListener("pointerdown", handlePointerDown);
+    document.addEventListener("keydown", handleKeyDown);
+    return () => {
+      document.removeEventListener("pointerdown", handlePointerDown);
+      document.removeEventListener("keydown", handleKeyDown);
+    };
+  }, [open]);
+
+  const activate = (action: () => void) => {
+    setOpen(false);
+    action();
+  };
+
+  return (
+    <div className="settings-status-popover" ref={rootRef}>
+      <span className="sr-only" role="status" aria-live="polite">
+        Unavailable
+      </span>
+      <button
+        className="settings-status-badge settings-status-popover-trigger negative"
+        type="button"
+        ref={triggerRef}
+        aria-label="Computer Use unavailable. Show details"
+        aria-expanded={open}
+        aria-controls={panelId}
+        aria-haspopup="dialog"
+        onClick={() => setOpen((current) => !current)}
+      >
+        <span className="settings-status-badge-dot" aria-hidden="true" />
+        Unavailable
+      </button>
+      {open ? (
+        <div
+          className="settings-status-popover-panel"
+          id={panelId}
+          role="dialog"
+          aria-labelledby={titleId}
+        >
+          <div className="settings-status-popover-copy">
+            <strong id={titleId}>Computer Use unavailable</strong>
+            <span>{description}</span>
+          </div>
+          <div className="settings-status-popover-actions">
+            {!pluginReady ? (
+              <StatusPopoverAction
+                label="Open Plugins"
+                icon={ChevronRight}
+                onActivate={() => activate(onOpenPlugins)}
+              />
+            ) : hasMissingPermissions ? (
+              <>
+                {missingScreenRecording ? (
+                  <StatusPopoverAction
+                    label="Screen Recording"
+                    ariaLabel="Open Screen Recording settings"
+                    icon={ExternalLink}
+                    onActivate={() => activate(onOpenScreenRecording)}
+                  />
+                ) : null}
+                {missingAccessibility ? (
+                  <StatusPopoverAction
+                    label="Accessibility"
+                    ariaLabel="Open Accessibility settings"
+                    icon={ExternalLink}
+                    onActivate={() => activate(onOpenAccessibility)}
+                  />
+                ) : null}
+              </>
+            ) : (
+              <StatusPopoverAction
+                label="Check again"
+                icon={RefreshCw}
+                onActivate={() => activate(onRefresh)}
+              />
+            )}
+          </div>
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+function StatusPopoverAction({
+  label,
+  ariaLabel,
+  icon: Icon,
+  onActivate,
+}: {
+  label: string;
+  ariaLabel?: string;
+  icon: typeof Monitor;
+  onActivate: () => void;
+}) {
+  return (
+    <button
+      className="settings-status-popover-action"
+      type="button"
+      aria-label={ariaLabel}
+      onClick={onActivate}
+    >
+      <span>{label}</span>
+      <Icon size={16} aria-hidden="true" />
+    </button>
   );
 }
 

@@ -1376,6 +1376,135 @@ button.plugin-list-row.selected {
   background: var(--color-primary);
 }
 
+.computer-use-settings-panel .settings-detail-header {
+  position: relative;
+  z-index: 2;
+}
+
+.computer-use-settings-panel .setting-list {
+  position: relative;
+  z-index: 1;
+}
+
+.settings-status-popover {
+  position: relative;
+  flex: 0 0 auto;
+}
+
+button.settings-status-popover-trigger {
+  border: 0;
+  box-shadow: none;
+  text-align: left;
+  transform: none;
+  transition: none;
+}
+
+button.settings-status-popover-trigger:hover:not(:disabled),
+button.settings-status-popover-trigger:focus-visible:not(:disabled),
+button.settings-status-popover-trigger[aria-expanded="true"] {
+  background: var(--color-button-active);
+  box-shadow: none;
+  transform: none;
+}
+
+button.settings-status-popover-trigger:focus-visible {
+  outline: 2px solid rgb(var(--primary-rgb) / 0.72);
+  outline-offset: 2px;
+}
+
+.settings-status-popover-panel {
+  position: absolute;
+  top: calc(100% + 12px);
+  right: 0;
+  z-index: 30;
+  width: min(360px, calc(100vw - 72px));
+  overflow: visible;
+  border: 1px solid var(--color-divider);
+  border-radius: 6px;
+  background: var(--color-component-background);
+  box-shadow: none;
+}
+
+.settings-status-popover-panel::before {
+  position: absolute;
+  top: -6px;
+  right: 12px;
+  width: 10px;
+  height: 10px;
+  border-top: 1px solid var(--color-divider);
+  border-left: 1px solid var(--color-divider);
+  background: var(--color-component-background);
+  content: "";
+  transform: rotate(45deg);
+}
+
+.settings-status-popover-copy {
+  display: grid;
+  gap: 5px;
+  padding: 16px;
+}
+
+.settings-status-popover-copy strong {
+  color: var(--color-text);
+  font-size: 0.9rem;
+}
+
+.settings-status-popover-copy span {
+  color: var(--color-text-secondary);
+  font-size: 0.8rem;
+  line-height: 1.4;
+}
+
+.settings-status-popover-actions {
+  display: grid;
+  border-top: 1px solid var(--color-divider);
+}
+
+button.settings-status-popover-action {
+  display: flex;
+  width: 100%;
+  min-height: 52px;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  border: 0;
+  border-bottom: 1px solid var(--color-divider);
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+  color: var(--color-text);
+  padding: 12px 16px;
+  text-align: left;
+  transform: none;
+  transition: none;
+}
+
+button.settings-status-popover-action:last-child {
+  border-bottom: 0;
+}
+
+button.settings-status-popover-action:hover:not(:disabled),
+button.settings-status-popover-action:focus-visible:not(:disabled) {
+  background: var(--color-button-active);
+  box-shadow: none;
+  transform: none;
+}
+
+button.settings-status-popover-action:focus-visible {
+  outline: 2px solid rgb(var(--primary-rgb) / 0.72);
+  outline-offset: -2px;
+}
+
+.settings-status-popover-action span {
+  font-size: 0.86rem;
+  font-weight: 650;
+}
+
+.settings-status-popover-action svg {
+  flex: 0 0 auto;
+  color: var(--color-icon-muted);
+}
+
 .settings-panel .setting-row {
   min-height: var(--settings-option-min-height);
   gap: var(--settings-option-column-gap);
