@@ -637,11 +637,10 @@ function SettingsOverview({
               className="surface settings-overview-panel"
               aria-label="Quick preferences"
             >
-              <div className="surface-header settings-overview-panel-header">
-                <div>
-                  <h2>Quick preferences</h2>
-                </div>
-              </div>
+              <SettingsOverviewHeader
+                icon={Settings}
+                title="Quick preferences"
+              />
               <div className="settings-overview-rows">
                 <label className="settings-overview-row">
                   <span className="settings-row-icon" aria-hidden="true">
@@ -686,11 +685,7 @@ function SettingsOverview({
               className="surface settings-overview-panel"
               aria-label="Connections overview"
             >
-              <div className="surface-header settings-overview-panel-header">
-                <div>
-                  <h2>Connections</h2>
-                </div>
-              </div>
+              <SettingsOverviewHeader icon={Plug} title="Connections" />
               <div className="settings-overview-rows">
                 <div className="settings-overview-row settings-connection-row">
                   <span className="account-mini-avatar" aria-hidden="true">
@@ -786,6 +781,27 @@ function SettingsStatusCard({
       </span>
       <ChevronRight size={16} aria-hidden="true" />
     </button>
+  );
+}
+
+function SettingsOverviewHeader({
+  icon: Icon,
+  title,
+}: {
+  icon: typeof Monitor;
+  title: string;
+}) {
+  return (
+    <div className="surface-header settings-overview-panel-header">
+      <div className="settings-detail-heading">
+        <span className="settings-detail-header-icon" aria-hidden="true">
+          <Icon size={20} />
+        </span>
+        <div className="settings-detail-header-copy">
+          <h2>{title}</h2>
+        </div>
+      </div>
+    </div>
   );
 }
 

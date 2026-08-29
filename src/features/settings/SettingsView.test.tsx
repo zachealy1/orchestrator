@@ -258,6 +258,26 @@ describe("SettingsView", () => {
     });
   });
 
+  it("renders matching icons in both settings overview headers", () => {
+    render(<SettingsView model={model()} actions={actions()} />);
+
+    [
+      { region: "Quick preferences", iconClass: "lucide-settings" },
+      { region: "Connections overview", iconClass: "lucide-plug" },
+    ].forEach(({ region, iconClass }) => {
+      const panel = screen.getByRole("region", { name: region });
+      const icon = panel.querySelector(
+        `.settings-detail-header-icon .${iconClass}`,
+      );
+
+      expect(icon).toBeInTheDocument();
+      expect(icon?.closest(".settings-detail-header-icon")).toHaveAttribute(
+        "aria-hidden",
+        "true",
+      );
+    });
+  });
+
   it("omits removed overview, appearance, and product information", () => {
     render(<SettingsView model={model()} actions={actions()} />);
 
