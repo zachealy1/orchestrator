@@ -1413,7 +1413,7 @@ function ComputerUseStatusPopover({
         ? "Grant both permissions to continue."
         : "Grant the required permission to continue."
       : needsPermissionReview
-        ? "Computer Use verifies access when it starts. Review the required macOS permissions if access changed."
+        ? "Computer Use verifies access when it starts. Check any permissions that are not yet verified."
         : runtimeStatus?.message ?? "Computer Use is not ready on this Mac.";
 
   useEffect(() => {
@@ -1516,6 +1516,7 @@ function ComputerUseStatusPopover({
                     label="Screen Recording"
                     ariaLabel="Open Screen Recording settings"
                     icon={ScreenShare}
+                    state={missingScreenRecording ? "required" : "unverified"}
                     onActivate={() => activate(onOpenScreenRecording)}
                   />
                 ) : null}
@@ -1524,6 +1525,7 @@ function ComputerUseStatusPopover({
                     label="Accessibility"
                     ariaLabel="Open Accessibility settings"
                     icon={Accessibility}
+                    state={missingAccessibility ? "required" : "unverified"}
                     onActivate={() => activate(onOpenAccessibility)}
                   />
                 ) : null}
@@ -1552,11 +1554,13 @@ function PermissionChecklistAction({
   label,
   ariaLabel,
   icon: Icon,
+  state,
   onActivate,
 }: {
   label: string;
   ariaLabel: string;
   icon: typeof Monitor;
+  state: "required" | "unverified";
   onActivate: () => void;
 }) {
   return (
@@ -1568,9 +1572,12 @@ function PermissionChecklistAction({
     >
       <Icon size={18} aria-hidden="true" />
       <span className="settings-status-popover-permission-label">{label}</span>
-      <span className="settings-status-popover-required">
-        <span className="settings-status-popover-required-dot" aria-hidden="true" />
-        Required
+      <span className={`settings-status-popover-permission-state ${state}`}>
+        <span
+          className="settings-status-popover-permission-state-dot"
+          aria-hidden="true"
+        />
+        {state === "required" ? "Required" : "Not verified"}
       </span>
       <ChevronRight size={16} aria-hidden="true" />
     </button>

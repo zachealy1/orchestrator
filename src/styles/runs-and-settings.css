@@ -1571,7 +1571,7 @@ button.settings-status-popover-permission:focus-visible {
   color: var(--color-icon-muted);
 }
 
-.settings-status-popover-required {
+.settings-status-popover-permission-state {
   display: inline-flex;
   align-items: center;
   gap: 7px;
@@ -1580,11 +1580,16 @@ button.settings-status-popover-permission:focus-visible {
   font-weight: 600;
 }
 
-.settings-status-popover-required-dot {
+.settings-status-popover-permission-state-dot {
   width: 7px;
   height: 7px;
   border-radius: 50%;
   background: var(--color-error);
+}
+
+.settings-status-popover-permission-state.unverified
+  .settings-status-popover-permission-state-dot {
+  background: var(--color-icon-muted);
 }
 
 .settings-status-popover-separator {

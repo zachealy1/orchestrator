@@ -12,6 +12,7 @@ describe("settings connection styles", () => {
     let panelRule = "";
     let actionRule = "";
     let permissionRule = "";
+    let unverifiedPermissionRule = "";
     let actionInteractionRule = "";
     let interactionColorRule = "";
 
@@ -37,6 +38,16 @@ describe("settings connection styles", () => {
       }
       if (candidate.selector === "button.settings-status-popover-permission") {
         permissionRule = candidate.toString();
+      }
+      if (
+        candidate.selector.includes(
+          ".settings-status-popover-permission-state.unverified",
+        ) &&
+        candidate.selector.includes(
+          ".settings-status-popover-permission-state-dot",
+        )
+      ) {
+        unverifiedPermissionRule = candidate.toString();
       }
       if (
         candidate.selector.includes(
@@ -82,6 +93,9 @@ describe("settings connection styles", () => {
     );
     expect(permissionRule).toContain("min-height: 44px");
     expect(permissionRule).toContain("border-radius: 6px");
+    expect(unverifiedPermissionRule).toContain(
+      "background: var(--color-icon-muted)",
+    );
     expect(actionInteractionRule).toContain(
       "background: var(--color-button-active)",
     );

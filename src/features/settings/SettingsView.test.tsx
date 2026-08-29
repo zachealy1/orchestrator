@@ -528,6 +528,8 @@ describe("SettingsView", () => {
       name: "Computer Use unavailable",
     });
     expect(dialog).toHaveTextContent("Grant the required permission to continue.");
+    expect(within(dialog).getByText("Required")).toBeInTheDocument();
+    expect(within(dialog).queryByText("Not verified")).toBeNull();
     expect(
       within(dialog).getByRole("button", {
         name: "Open Accessibility settings",
@@ -540,7 +542,7 @@ describe("SettingsView", () => {
     ).toBeNull();
   });
 
-  it("requires access review when helper-owned permissions are unverified", () => {
+  it("does not label helper-owned unverified permissions as required", () => {
     const handlers = actions();
     render(
       <SettingsView
@@ -595,7 +597,8 @@ describe("SettingsView", () => {
     expect(dialog).toHaveTextContent(
       "Computer Use verifies access when it starts.",
     );
-    expect(within(dialog).getAllByText("Required")).toHaveLength(2);
+    expect(within(dialog).queryByText("Required")).toBeNull();
+    expect(within(dialog).getAllByText("Not verified")).toHaveLength(2);
 
     fireEvent.click(screenRecordingRow);
     fireEvent.click(accessibilityRow);
