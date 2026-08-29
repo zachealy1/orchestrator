@@ -83,6 +83,11 @@ describe("SettingsView", () => {
   it("omits removed overview, appearance, and product information", () => {
     render(<SettingsView model={model()} actions={actions()} />);
 
+    expect(
+      screen.queryByRole("navigation", { name: "Settings sections" }),
+    ).toBeNull();
+    expect(screen.queryByText("Browser & computer use")).toBeNull();
+    expect(screen.queryByText("Notification rules")).toBeNull();
     expect(screen.queryByText("Theme")).not.toBeInTheDocument();
     expect(screen.queryByText("Choose how Orchestrator looks.")).toBeNull();
     expect(screen.queryByText("Local models")).toBeNull();

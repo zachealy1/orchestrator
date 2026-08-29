@@ -773,32 +773,6 @@ function SettingsOverview({
           ) : null}
         </div>
       ) : null}
-
-      {query.length === 0 ? (
-        <nav
-          className="settings-section-navigation"
-          aria-label="Settings sections"
-        >
-          <SettingsSectionLink
-            icon={Monitor}
-            title="Browser & computer use"
-            description="Configure browser and computer automation."
-            targetId="settings-computer-use"
-          />
-          <SettingsSectionLink
-            icon={Bell}
-            title="Notification rules"
-            description="Customize when and how you are notified."
-            targetId="settings-notifications"
-          />
-          <SettingsSectionLink
-            icon={UserRound}
-            title="Accounts"
-            description="Manage Codex accounts and run providers."
-            targetId="settings-accounts"
-          />
-        </nav>
-      ) : null}
     </div>
   );
 }
@@ -838,31 +812,6 @@ function SettingsStatusCard({
         </small>
       </span>
       <ChevronRight size={16} aria-hidden="true" />
-    </button>
-  );
-}
-
-function SettingsSectionLink({
-  icon: Icon,
-  title,
-  description,
-  targetId,
-}: {
-  icon: typeof Monitor;
-  title: string;
-  description: string;
-  targetId: string;
-}) {
-  return (
-    <button
-      className="settings-section-link"
-      type="button"
-      onClick={() => scrollToSettingsSection(targetId)}
-    >
-      <Icon size={21} aria-hidden="true" />
-      <strong>{title}</strong>
-      <span>{description}</span>
-      <ChevronRight size={17} aria-hidden="true" />
     </button>
   );
 }

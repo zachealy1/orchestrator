@@ -947,64 +947,6 @@ button.settings-manage-button:focus-visible:not(:disabled) {
   opacity: 0.45;
 }
 
-.settings-section-navigation {
-  display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 12px;
-}
-
-button.settings-section-link {
-  display: grid;
-  min-width: 0;
-  min-height: 132px;
-  grid-template-columns: minmax(0, 1fr) auto;
-  grid-template-rows: auto auto 1fr;
-  align-content: start;
-  justify-items: start;
-  gap: 8px 12px;
-  border: 1px solid var(--color-divider);
-  border-radius: var(--radius);
-  background: var(--color-component-background);
-  color: var(--color-text);
-  padding: 16px;
-  text-align: left;
-  transform: none;
-}
-
-button.settings-section-link:hover:not(:disabled),
-button.settings-section-link:focus-visible:not(:disabled) {
-  border-color: var(--color-surface-muted);
-  background: var(--color-surface-soft);
-  transform: none;
-}
-
-.settings-section-link > svg:first-child {
-  grid-column: 1 / -1;
-  color: var(--color-icon);
-}
-
-.settings-section-link strong {
-  min-width: 0;
-  overflow: hidden;
-  font-size: 0.9rem;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.settings-section-link span {
-  grid-column: 1 / -1;
-  color: var(--color-text-secondary);
-  font-size: 0.78rem;
-  font-weight: 500;
-  line-height: 1.4;
-}
-
-.settings-section-link > svg:last-child {
-  grid-column: 2;
-  grid-row: 2;
-  color: var(--color-icon-muted);
-}
-
 .settings-panel {
   overflow: hidden;
   scroll-margin-top: 20px;
@@ -1252,8 +1194,7 @@ button.settings-section-link:focus-visible:not(:disabled) {
     grid-template-columns: 1fr;
   }
 
-  .settings-status-grid,
-  .settings-section-navigation {
+  .settings-status-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
