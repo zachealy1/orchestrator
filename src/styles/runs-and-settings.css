@@ -845,21 +845,21 @@ button.settings-status-card:focus-visible:not(:disabled) {
 
 .settings-connection-row {
   width: 100%;
-  grid-template-columns: 34px minmax(0, 1fr) auto;
-  border-right: 0;
-  border-bottom: 0;
-  border-left: 0;
-  border-radius: 0;
+  grid-template-columns: 34px minmax(0, 1fr) auto auto;
+}
+
+.settings-manage-button {
+  min-height: 30px;
   background: transparent;
-  text-align: left;
+  color: var(--color-primary);
+  padding: 4px 2px;
   transform: none;
 }
 
-button.settings-connection-row:hover:not(:disabled),
-button.settings-connection-row:focus-visible:not(:disabled) {
-  border-radius: 0;
-  background: var(--color-button-active);
-  box-shadow: inset 3px 0 0 var(--color-primary);
+.settings-manage-button:hover:not(:disabled),
+.settings-manage-button:focus-visible:not(:disabled) {
+  background: transparent;
+  color: var(--color-accent);
   transform: none;
 }
 
