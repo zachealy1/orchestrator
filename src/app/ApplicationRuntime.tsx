@@ -19557,11 +19557,7 @@ function App() {
         });
       },
       resetBrowserDownloadLocation: () => setBrowserDownloadLocation(null),
-      clearBrowserData: () => {
-        void clearBrowserData()
-          .then(() => setStatusMessage("In-app browser data cleared."))
-          .catch((error) => setStatusMessage(errorMessage(error)));
-      },
+      clearBrowserData: () => clearBrowserData(),
       importBrowserProfile: () =>
         setStatusMessage("Browser profile import is unavailable on this device."),
       openPlugins: () => setActiveView("plugins"),

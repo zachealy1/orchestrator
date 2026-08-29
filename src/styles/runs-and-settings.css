@@ -1208,6 +1208,46 @@ button.plugin-list-row.selected {
   color: var(--color-error);
 }
 
+.settings-action-banner {
+  display: grid;
+  grid-template-columns: 18px minmax(0, 1fr) 34px;
+  align-items: center;
+  gap: 12px;
+  border-bottom: 1px solid var(--color-divider);
+  border-radius: 0;
+  background: var(--color-surface-soft);
+  padding: 10px var(--settings-option-padding-inline);
+}
+
+.settings-action-banner > div {
+  display: grid;
+  min-width: 0;
+  gap: 3px;
+}
+
+.settings-action-banner strong {
+  color: var(--color-text);
+  font-size: 0.82rem;
+}
+
+.settings-action-banner span {
+  color: var(--color-text-secondary);
+  font-size: 0.78rem;
+  line-height: 1.4;
+}
+
+.settings-action-banner.success > svg {
+  color: var(--color-diff-addition);
+}
+
+.settings-action-banner.error > svg {
+  color: var(--color-error);
+}
+
+.browser-data-clear-dialog {
+  width: min(460px, 100%);
+}
+
 .plugins-empty-state {
   display: flex;
   min-height: 160px;

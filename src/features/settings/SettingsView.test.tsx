@@ -1,4 +1,11 @@
-import { fireEvent, render, screen, within } from "@testing-library/react";
+import {
+  act,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+  within,
+} from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import {
   SettingsView,
@@ -6,13 +13,15 @@ import {
   type SettingsViewModel,
 } from "./SettingsView";
 
-function actions(): SettingsViewActions {
+function actions(
+  overrides: Partial<SettingsViewActions> = {},
+): SettingsViewActions {
   return {
     setComputerUseEnabled: vi.fn(),
     setBrowserAskWhereToSave: vi.fn(),
     chooseBrowserDownloadLocation: vi.fn(),
     resetBrowserDownloadLocation: vi.fn(),
-    clearBrowserData: vi.fn(),
+    clearBrowserData: vi.fn().mockResolvedValue(undefined),
     importBrowserProfile: vi.fn(),
     openPlugins: vi.fn(),
     refreshComputerUseStatus: vi.fn(),
@@ -34,6 +43,7 @@ function actions(): SettingsViewActions {
     addAccount: vi.fn(),
     connectAccount: vi.fn(),
     logout: vi.fn(),
+    ...overrides,
   };
 }
 
@@ -212,7 +222,6 @@ describe("SettingsView", () => {
       screenRecordingSettings.querySelector(".lucide-external-link"),
     ).toBeInTheDocument();
 
-    fireEvent.click(clearData);
     fireEvent.click(
       screen.getByRole("button", { name: "Choose download location" }),
     );
@@ -229,7 +238,7 @@ describe("SettingsView", () => {
     );
     fireEvent.click(screen.getByRole("button", { name: "Revoke Editor" }));
 
-    expect(handlers.clearBrowserData).toHaveBeenCalledOnce();
+    expect(handlers.clearBrowserData).not.toHaveBeenCalled();
     expect(handlers.chooseBrowserDownloadLocation).toHaveBeenCalledOnce();
     expect(handlers.setBrowserAskWhereToSave).toHaveBeenCalledWith(true);
     expect(handlers.openScreenRecordingSettings).toHaveBeenCalledOnce();
@@ -237,6 +246,159 @@ describe("SettingsView", () => {
     expect(handlers.revokeAlwaysAllowedApplication).toHaveBeenCalledWith(
       "com.example.editor",
     );
+  });
+
+  it("confirms Browser data clearing and reports success", async () => {
+    let resolveClear: (() => void) | undefined;
+    const clearBrowserData = vi.fn(
+      () =>
+        new Promise<void>((resolve) => {
+          resolveClear = resolve;
+        }),
+    );
+    render(
+      <SettingsView
+        model={model()}
+        actions={actions({ clearBrowserData })}
+      />,
+    );
+
+    const browser = screen.getByRole("region", { name: "Browser settings" });
+    const trigger = within(browser).getByRole("button", { name: "Clear data" });
+
+    fireEvent.click(trigger);
+    expect(clearBrowserData).not.toHaveBeenCalled();
+
+    let dialog = screen.getByRole("dialog", { name: "Clear browser data?" });
+    expect(dialog).toHaveClass(
+      "confirmation-dialog",
+      "browser-data-clear-dialog",
+    );
+    expect(dialog.parentElement).toHaveClass("modal-backdrop");
+    expect(dialog).toHaveTextContent("signs you out of websites");
+    expect(dialog).toHaveTextContent(
+      "Downloaded files and data in your regular browsers are not affected",
+    );
+    expect(
+      within(dialog).getByRole("button", { name: "Keep browser data" }),
+    ).toHaveFocus();
+    fireEvent.keyDown(dialog, { key: "Tab", shiftKey: true });
+    expect(
+      within(dialog).getByRole("button", { name: "Clear browser data" }),
+    ).toHaveFocus();
+    fireEvent.keyDown(dialog, { key: "Tab" });
+    expect(
+      within(dialog).getByRole("button", { name: "Keep browser data" }),
+    ).toHaveFocus();
+
+    fireEvent.click(
+      within(dialog).getByRole("button", { name: "Keep browser data" }),
+    );
+    expect(
+      screen.queryByRole("dialog", { name: "Clear browser data?" }),
+    ).not.toBeInTheDocument();
+    await waitFor(() => expect(trigger).toHaveFocus());
+    expect(clearBrowserData).not.toHaveBeenCalled();
+
+    fireEvent.click(trigger);
+    dialog = screen.getByRole("dialog", { name: "Clear browser data?" });
+    fireEvent.keyDown(window, { key: "Escape" });
+    expect(dialog).not.toBeInTheDocument();
+    await waitFor(() => expect(trigger).toHaveFocus());
+
+    fireEvent.click(trigger);
+    dialog = screen.getByRole("dialog", { name: "Clear browser data?" });
+    fireEvent.mouseDown(dialog.parentElement as HTMLElement);
+    expect(dialog).not.toBeInTheDocument();
+    await waitFor(() => expect(trigger).toHaveFocus());
+
+    fireEvent.click(trigger);
+    dialog = screen.getByRole("dialog", { name: "Clear browser data?" });
+    const confirm = within(dialog).getByRole("button", {
+      name: "Clear browser data",
+    });
+    fireEvent.click(confirm);
+
+    expect(clearBrowserData).toHaveBeenCalledOnce();
+    expect(dialog).toHaveAttribute("aria-busy", "true");
+    expect(
+      within(dialog).getByRole("button", { name: "Keep browser data" }),
+    ).toBeDisabled();
+    expect(
+      within(dialog).getByRole("button", { name: "Clearing browser data" }),
+    ).toBeDisabled();
+
+    fireEvent.keyDown(window, { key: "Escape" });
+    fireEvent.mouseDown(dialog.parentElement as HTMLElement);
+    expect(dialog).toBeInTheDocument();
+    expect(clearBrowserData).toHaveBeenCalledOnce();
+
+    await act(async () => {
+      resolveClear?.();
+      await Promise.resolve();
+    });
+
+    await waitFor(() =>
+      expect(
+        screen.queryByRole("dialog", { name: "Clear browser data?" }),
+      ).not.toBeInTheDocument(),
+    );
+    const banner = within(browser).getByRole("status", {
+      name: "Browser data cleared",
+    });
+    expect(banner).toHaveClass("settings-action-banner", "success");
+    expect(banner).toHaveTextContent(
+      "Cookies, site data, cache, sign-ins, and task tabs were removed",
+    );
+    await waitFor(() => expect(trigger).toHaveFocus());
+
+    fireEvent.click(trigger);
+    expect(
+      within(browser).queryByRole("status", { name: "Browser data cleared" }),
+    ).not.toBeInTheDocument();
+    fireEvent.click(
+      within(screen.getByRole("dialog", { name: "Clear browser data?" }))
+        .getByRole("button", { name: "Keep browser data" }),
+    );
+  });
+
+  it("reports and dismisses Browser data clearing failures", async () => {
+    const clearBrowserData = vi
+      .fn<SettingsViewActions["clearBrowserData"]>()
+      .mockRejectedValue(new Error("  The isolated profile\nis busy.  "));
+    render(
+      <SettingsView
+        model={model()}
+        actions={actions({ clearBrowserData })}
+      />,
+    );
+
+    const browser = screen.getByRole("region", { name: "Browser settings" });
+    fireEvent.click(within(browser).getByRole("button", { name: "Clear data" }));
+    fireEvent.click(
+      within(screen.getByRole("dialog", { name: "Clear browser data?" }))
+        .getByRole("button", { name: "Clear browser data" }),
+    );
+
+    const banner = await within(browser).findByRole("alert", {
+      name: "Couldn’t clear browser data",
+    });
+    expect(banner).toHaveClass("settings-action-banner", "error");
+    expect(banner).toHaveTextContent("The isolated profile is busy.");
+    expect(
+      screen.queryByRole("dialog", { name: "Clear browser data?" }),
+    ).not.toBeInTheDocument();
+
+    fireEvent.click(
+      within(banner).getByRole("button", {
+        name: "Dismiss browser data notification",
+      }),
+    );
+    expect(
+      within(browser).queryByRole("alert", {
+        name: "Couldn’t clear browser data",
+      }),
+    ).not.toBeInTheDocument();
   });
 
   it("moves Computer Use permission failures into the header status popover", () => {

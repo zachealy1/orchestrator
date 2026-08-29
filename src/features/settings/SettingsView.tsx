@@ -1,6 +1,8 @@
 import {
   Accessibility,
   Bell,
+  CheckCircle2,
+  CircleAlert,
   CircleHelp,
   ChevronRight,
   Download,
@@ -9,6 +11,7 @@ import {
   FolderOpen,
   LogIn,
   LogOut,
+  Loader2,
   Monitor,
   Plug,
   Puzzle,
@@ -19,14 +22,25 @@ import {
   Trash2,
   UserRound,
   UserPlus,
+  X,
 } from "lucide-react";
-import { memo, useEffect, useId, useRef, useState, type ReactNode } from "react";
+import {
+  memo,
+  useEffect,
+  useId,
+  useRef,
+  useState,
+  type ReactNode,
+  type Ref,
+} from "react";
+import { createPortal } from "react-dom";
 import { OrchestratorMark } from "../../components/OrchestratorMark";
 import type {
   AgentNotificationPermissionStatus,
   AgentNotificationPreferences,
 } from "../../lib/agentNotifications";
 import { formatCodexPlanType } from "../../lib/codexAuth";
+import { trapDialogFocus } from "../../shared/dialogFocus";
 import type { BrowserPreferences, BrowserReadiness } from "../browser/types";
 import type {
   AlwaysAllowedApplication,
@@ -47,6 +61,26 @@ type SettingsDetailStatus = {
   label: string;
   tone: SettingsStatusTone;
 };
+
+type BrowserDataFeedback = {
+  tone: "success" | "error";
+  title: string;
+  detail: string;
+};
+
+function settingsActionErrorMessage(error: unknown) {
+  const rawMessage =
+    error instanceof Error
+      ? error.message
+      : typeof error === "string"
+        ? error
+        : "";
+  const normalizedMessage = rawMessage.replace(/\s+/g, " ").trim();
+  if (!normalizedMessage) return "An unexpected error occurred.";
+  return normalizedMessage.length > 240
+    ? `${normalizedMessage.slice(0, 239)}…`
+    : normalizedMessage;
+}
 
 type ComputerUsePermissionState = "verified" | "denied" | "unverified";
 
@@ -130,7 +164,7 @@ export type SettingsViewActions = {
   setBrowserAskWhereToSave: (enabled: boolean) => void;
   chooseBrowserDownloadLocation: () => void;
   resetBrowserDownloadLocation: () => void;
-  clearBrowserData: () => void;
+  clearBrowserData: () => Promise<void>;
   importBrowserProfile: () => void;
   openPlugins: () => void;
   refreshComputerUseStatus: () => void;
@@ -165,6 +199,12 @@ export const SettingsView = memo(function SettingsView({
   actions: SettingsViewActions;
 }) {
   const [searchQuery, setSearchQuery] = useState("");
+  const [browserDataConfirmationOpen, setBrowserDataConfirmationOpen] =
+    useState(false);
+  const [browserDataClearPending, setBrowserDataClearPending] = useState(false);
+  const [browserDataFeedback, setBrowserDataFeedback] =
+    useState<BrowserDataFeedback | null>(null);
+  const clearBrowserDataButtonRef = useRef<HTMLButtonElement>(null);
   const matchesSettings = (...terms: string[]) => {
     const query = searchQuery.trim().toLowerCase();
     return query.length === 0 || terms.some((term) => term.includes(query));
@@ -185,6 +225,48 @@ export const SettingsView = memo(function SettingsView({
   const externalBrowserPlugins = ["chrome", "edge", "brave", "opera", "vivaldi"]
     .map((name) => findPlugin(model.pluginCatalog, name))
     .filter((plugin) => plugin !== null);
+
+  const restoreClearBrowserDataFocus = () => {
+    window.requestAnimationFrame(() => {
+      clearBrowserDataButtonRef.current?.focus({ preventScroll: true });
+    });
+  };
+
+  const requestBrowserDataClear = () => {
+    if (browserDataClearPending) return;
+    setBrowserDataFeedback(null);
+    setBrowserDataConfirmationOpen(true);
+  };
+
+  const cancelBrowserDataClear = () => {
+    if (browserDataClearPending) return;
+    setBrowserDataConfirmationOpen(false);
+    restoreClearBrowserDataFocus();
+  };
+
+  const confirmBrowserDataClear = async () => {
+    if (browserDataClearPending) return;
+    setBrowserDataClearPending(true);
+    try {
+      await actions.clearBrowserData();
+      setBrowserDataFeedback({
+        tone: "success",
+        title: "Browser data cleared",
+        detail:
+          "Cookies, site data, cache, sign-ins, and task tabs were removed from the isolated profile.",
+      });
+    } catch (error) {
+      setBrowserDataFeedback({
+        tone: "error",
+        title: "Couldn’t clear browser data",
+        detail: settingsActionErrorMessage(error),
+      });
+    } finally {
+      setBrowserDataClearPending(false);
+      setBrowserDataConfirmationOpen(false);
+      restoreClearBrowserDataFocus();
+    }
+  };
 
   return (
     <>
@@ -219,6 +301,12 @@ export const SettingsView = memo(function SettingsView({
                   : { label: "Unavailable", tone: "negative" }
             }
           />
+          {browserDataFeedback ? (
+            <BrowserDataFeedbackBanner
+              feedback={browserDataFeedback}
+              onDismiss={() => setBrowserDataFeedback(null)}
+            />
+          ) : null}
           <div className="setting-list">
             {!model.browserReadiness.available ? (
               <SettingsNavigationRow
@@ -248,7 +336,9 @@ export const SettingsView = memo(function SettingsView({
                 ariaLabel="Clear data"
                 tooltip="Clear browser data"
                 danger
-                onActivate={actions.clearBrowserData}
+                buttonRef={clearBrowserDataButtonRef}
+                disabled={browserDataClearPending}
+                onActivate={requestBrowserDataClear}
               />
             </div>
             <div className="setting-row">
@@ -711,9 +801,132 @@ export const SettingsView = memo(function SettingsView({
         </section>
       ) : null}
 
+      {browserDataConfirmationOpen ? (
+        <BrowserDataClearDialog
+          busy={browserDataClearPending}
+          onCancel={cancelBrowserDataClear}
+          onConfirm={() => void confirmBrowserDataClear()}
+        />
+      ) : null}
     </>
   );
 });
+
+function BrowserDataFeedbackBanner({
+  feedback,
+  onDismiss,
+}: {
+  feedback: BrowserDataFeedback;
+  onDismiss: () => void;
+}) {
+  const FeedbackIcon = feedback.tone === "success" ? CheckCircle2 : CircleAlert;
+  return (
+    <div
+      className={`settings-action-banner ${feedback.tone}`}
+      role={feedback.tone === "success" ? "status" : "alert"}
+      aria-label={feedback.title}
+    >
+      <FeedbackIcon size={17} aria-hidden="true" />
+      <div>
+        <strong>{feedback.title}</strong>
+        <span>{feedback.detail}</span>
+      </div>
+      <SettingsIconAction
+        icon={X}
+        ariaLabel="Dismiss browser data notification"
+        tooltip="Dismiss"
+        onActivate={onDismiss}
+      />
+    </div>
+  );
+}
+
+function BrowserDataClearDialog({
+  busy,
+  onCancel,
+  onConfirm,
+}: {
+  busy: boolean;
+  onCancel: () => void;
+  onConfirm: () => void;
+}) {
+  const titleId = useId();
+  const descriptionId = useId();
+  const cancelButtonRef = useRef<HTMLButtonElement>(null);
+
+  useEffect(() => {
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape" && !busy) {
+        event.preventDefault();
+        onCancel();
+      }
+    };
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [busy, onCancel]);
+
+  useEffect(() => {
+    cancelButtonRef.current?.focus({ preventScroll: true });
+  }, []);
+
+  return createPortal(
+    <div
+      className="modal-backdrop"
+      role="presentation"
+      onMouseDown={(event) => {
+        if (event.target === event.currentTarget && !busy) onCancel();
+      }}
+    >
+      <section
+        className="confirmation-dialog browser-data-clear-dialog"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby={titleId}
+        aria-describedby={descriptionId}
+        aria-busy={busy}
+        tabIndex={-1}
+        onKeyDown={trapDialogFocus}
+      >
+        <div>
+          <h2 id={titleId}>Clear browser data?</h2>
+          <p id={descriptionId}>
+            This signs you out of websites in the isolated in-app browser and
+            removes cookies, site data, cache, and task tabs. Downloaded files
+            and data in your regular browsers are not affected.
+          </p>
+        </div>
+        <div className="confirmation-actions">
+          <button
+            className="native-plan-icon-action"
+            ref={cancelButtonRef}
+            type="button"
+            aria-label="Keep browser data"
+            data-tooltip="Keep browser data"
+            disabled={busy}
+            onClick={onCancel}
+          >
+            <X size={15} aria-hidden="true" />
+          </button>
+          <button
+            className="native-plan-icon-action cancel"
+            type="button"
+            aria-label={busy ? "Clearing browser data" : "Clear browser data"}
+            data-tooltip={busy ? "Clearing browser data" : "Clear browser data"}
+            disabled={busy}
+            onClick={onConfirm}
+          >
+            {busy ? (
+              <Loader2 className="spin" size={15} aria-hidden="true" />
+            ) : (
+              <Trash2 size={15} aria-hidden="true" />
+            )}
+          </button>
+        </div>
+      </section>
+    </div>,
+    document.body,
+  );
+}
 
 function SettingsOverview({
   model,
@@ -1060,6 +1273,7 @@ function SettingsIconAction({
   icon: Icon,
   ariaLabel,
   tooltip,
+  buttonRef,
   danger = false,
   disabled = false,
   onActivate,
@@ -1067,12 +1281,14 @@ function SettingsIconAction({
   icon: typeof Monitor;
   ariaLabel: string;
   tooltip: string;
+  buttonRef?: Ref<HTMLButtonElement>;
   danger?: boolean;
   disabled?: boolean;
   onActivate: () => void;
 }) {
   return (
     <button
+      ref={buttonRef}
       className={`settings-icon-action${danger ? " danger" : ""}`}
       type="button"
       aria-label={ariaLabel}

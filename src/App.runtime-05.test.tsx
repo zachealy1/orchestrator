@@ -237,6 +237,34 @@ describe("Application runtime scenarios 5", () => {
       expect(mocks.openAgentNotificationSettingsMock).toHaveBeenCalledTimes(1);
     });
 
+  it("returns Browser data clearing results to visible Settings feedback", async () => {
+      const { user } = await renderApp();
+      await user.click(screen.getByRole("button", { name: "Settings" }));
+
+      const browser = screen.getByRole("region", {
+        name: "Browser settings",
+      });
+      await user.click(
+        within(browser).getByRole("button", { name: "Clear data" }),
+      );
+
+      expect(mocks.clearBrowserDataMock).not.toHaveBeenCalled();
+      await user.click(
+        within(
+          screen.getByRole("dialog", { name: "Clear browser data?" }),
+        ).getByRole("button", { name: "Clear browser data" }),
+      );
+
+      await waitFor(() =>
+        expect(mocks.clearBrowserDataMock).toHaveBeenCalledOnce(),
+      );
+      expect(
+        await within(browser).findByRole("status", {
+          name: "Browser data cleared",
+        }),
+      ).toHaveTextContent("task tabs were removed from the isolated profile");
+    });
+
   it("removes consolidated duplicate profile directories during startup", async () => {
       mocks.listDuplicateProfilesPendingCleanupMock.mockResolvedValue([11]);
 

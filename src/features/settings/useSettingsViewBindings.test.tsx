@@ -59,7 +59,7 @@ function actions(
     setBrowserAskWhereToSave: () => undefined,
     chooseBrowserDownloadLocation: () => undefined,
     resetBrowserDownloadLocation: () => undefined,
-    clearBrowserData: () => undefined,
+    clearBrowserData: async () => undefined,
     importBrowserProfile: () => undefined,
     openPlugins: () => undefined,
     refreshComputerUseStatus: () => undefined,

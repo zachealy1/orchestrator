@@ -360,4 +360,41 @@ describe("settings connection styles", () => {
       expect(rules.get(selector)).toContain("transform: none");
     }
   });
+
+  it("aligns Browser action feedback with the full-width Settings treatment", () => {
+    const root = postcss.parse(css);
+    const rules = new Map<string, string>();
+    const selectors = new Set([
+      ".settings-action-banner",
+      ".settings-action-banner.success > svg",
+      ".settings-action-banner.error > svg",
+      ".browser-data-clear-dialog",
+    ]);
+
+    root.walkRules((candidate) => {
+      if (selectors.has(candidate.selector)) {
+        rules.set(candidate.selector, candidate.toString());
+      }
+    });
+
+    const banner = rules.get(".settings-action-banner");
+    expect(banner).toContain(
+      "grid-template-columns: 18px minmax(0, 1fr) 34px",
+    );
+    expect(banner).toContain("border-bottom: 1px solid var(--color-divider)");
+    expect(banner).toContain("border-radius: 0");
+    expect(banner).toContain("background: var(--color-surface-soft)");
+    expect(banner).toContain(
+      "padding: 10px var(--settings-option-padding-inline)",
+    );
+    expect(rules.get(".settings-action-banner.success > svg")).toContain(
+      "color: var(--color-diff-addition)",
+    );
+    expect(rules.get(".settings-action-banner.error > svg")).toContain(
+      "color: var(--color-error)",
+    );
+    expect(rules.get(".browser-data-clear-dialog")).toContain(
+      "width: min(460px, 100%)",
+    );
+  });
 });
