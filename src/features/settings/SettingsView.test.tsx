@@ -293,7 +293,7 @@ describe("SettingsView", () => {
     });
   });
 
-  it("opens connection settings from the full selectable rows", () => {
+  it("opens connection settings from the restored Manage buttons", () => {
     render(<SettingsView model={model()} actions={actions()} />);
     const connections = screen.getByRole("region", {
       name: "Connections overview",
@@ -307,20 +307,21 @@ describe("SettingsView", () => {
     codexSettings.scrollIntoView = vi.fn();
     githubSettings.scrollIntoView = vi.fn();
 
-    const codexRow = within(connections).getByRole("button", {
-      name: /codex account/i,
-    });
-    const githubRow = within(connections).getByRole("button", {
-      name: /github/i,
+    const manageButtons = within(connections).getAllByRole("button", {
+      name: "Manage",
     });
 
-    expect(within(connections).queryByText("Manage")).not.toBeInTheDocument();
-    fireEvent.click(codexRow);
+    expect(manageButtons).toHaveLength(2);
+    expect(
+      within(connections).getByText("Codex account").closest("button"),
+    ).toBeNull();
+    expect(within(connections).getByText("GitHub").closest("button")).toBeNull();
+    fireEvent.click(manageButtons[0]);
     expect(codexSettings.scrollIntoView).toHaveBeenCalledWith({
       behavior: "smooth",
       block: "start",
     });
-    fireEvent.click(githubRow);
+    fireEvent.click(manageButtons[1]);
     expect(githubSettings.scrollIntoView).toHaveBeenCalledWith({
       behavior: "smooth",
       block: "start",

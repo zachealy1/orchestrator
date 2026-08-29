@@ -842,32 +842,8 @@ button.settings-status-card:focus-visible:not(:disabled) {
   color: currentColor;
 }
 
-button.settings-connection-row {
-  width: 100%;
-  grid-template-columns: 34px minmax(0, 1fr) auto;
-  justify-content: stretch;
-  border-radius: 0;
-  background: transparent;
-  color: var(--color-text);
-  font-weight: inherit;
-  text-align: left;
-  transform: none;
-}
-
-button.settings-connection-row:hover:not(:disabled),
-button.settings-connection-row:focus-visible {
-  background: var(--color-button-active);
-  box-shadow: none;
-  transform: none;
-}
-
-button.settings-connection-row:focus-visible {
-  outline: 2px solid var(--color-primary);
-  outline-offset: -2px;
-}
-
-button.settings-connection-row:active:not(:disabled) {
-  transform: none;
+.settings-connection-row {
+  grid-template-columns: 34px minmax(0, 1fr) auto auto;
 }
 
 .settings-connection-row > .account-mini-avatar {
@@ -883,6 +859,20 @@ button.settings-connection-row:active:not(:disabled) {
   font-weight: 600;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+button.settings-manage-button {
+  min-height: 32px;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--color-primary);
+  font-size: 0.8rem;
+  padding: 5px 8px;
+}
+
+button.settings-manage-button:hover:not(:disabled),
+button.settings-manage-button:focus-visible:not(:disabled) {
+  background: var(--color-button-active);
 }
 
 .settings-switch {
