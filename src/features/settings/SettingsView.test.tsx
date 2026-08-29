@@ -80,6 +80,47 @@ describe("SettingsView", () => {
     expect(handlers.setComputerUseEnabled).toHaveBeenCalledWith(false);
   });
 
+  it("labels the browser runtime status card as Computer use", () => {
+    const { rerender } = render(
+      <SettingsView model={model()} actions={actions()} />,
+    );
+    const computerUseSection = screen.getByRole("region", {
+      name: "Computer use settings",
+    });
+    computerUseSection.scrollIntoView = vi.fn();
+
+    const readyCard = screen.getByRole("button", {
+      name: /computer use\s*browser ready/i,
+    });
+    expect(within(readyCard).getByText("Computer use")).toBeInTheDocument();
+    expect(screen.queryByText("Browser")).toBeNull();
+
+    fireEvent.click(readyCard);
+    expect(computerUseSection.scrollIntoView).toHaveBeenCalledWith({
+      behavior: "smooth",
+      block: "start",
+    });
+
+    rerender(
+      <SettingsView
+        model={model({
+          browserRuntimeStatus: {
+            available: false,
+            message: "The browser runtime is unavailable.",
+            defaultBrowser: null,
+            browserSkillVersion: "26.818.31338",
+            browserServiceCompatible: true,
+          },
+        })}
+        actions={actions()}
+      />,
+    );
+
+    expect(
+      screen.getByRole("button", { name: /computer use\s*not available/i }),
+    ).toBeInTheDocument();
+  });
+
   it("omits removed overview, appearance, and product information", () => {
     render(<SettingsView model={model()} actions={actions()} />);
 

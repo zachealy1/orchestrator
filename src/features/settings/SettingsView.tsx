@@ -626,7 +626,7 @@ function SettingsOverview({
           />
           <SettingsStatusCard
             icon={Monitor}
-            label="Browser"
+            label="Computer use"
             value={
               model.browserRuntimeStatus === null
                 ? "Checking"
