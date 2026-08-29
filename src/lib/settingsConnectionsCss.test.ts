@@ -149,15 +149,13 @@ describe("settings connection styles", () => {
       }
     });
 
-    expect(rules.get(".settings-overview-rows")).toContain(
-      "padding: 0 0 18px",
-    );
+    expect(rules.get(".settings-overview-rows")).toContain("padding: 0");
+    expect(rules.get(".settings-overview-rows")).not.toContain("18px");
     expect(rules.get(".settings-overview-row")).toContain(
       "padding: var(--settings-option-padding-block)\n    var(--settings-option-padding-inline)",
     );
-    expect(rules.get(".settings-panel .setting-list")).toContain(
-      "padding: 0 0 18px",
-    );
+    expect(rules.get(".settings-panel .setting-list")).toContain("padding: 0");
+    expect(rules.get(".settings-panel .setting-list")).not.toContain("18px");
     expect(rules.get(".settings-panel .setting-row")).toContain(
       "padding: var(--settings-option-padding-block)\n    var(--settings-option-padding-inline)",
     );

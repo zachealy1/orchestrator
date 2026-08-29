@@ -764,7 +764,7 @@ button.settings-status-card:focus-visible:not(:disabled) {
 
 .settings-overview-rows {
   display: grid;
-  padding: 0 0 18px;
+  padding: 0;
 }
 
 .settings-overview-row {
@@ -948,7 +948,7 @@ button.settings-connection-row:focus-visible:not(:disabled) {
   align-items: center;
   justify-content: space-between;
   gap: 16px;
-  margin: 0 18px 18px;
+  margin: 18px;
   border: 1px solid var(--color-divider);
   background: var(--color-surface-soft);
   padding: 12px;
@@ -1298,7 +1298,7 @@ button.plugin-list-row.selected {
 
 .settings-panel .setting-list {
   gap: 0;
-  padding: 0 0 18px;
+  padding: 0;
 }
 
 .settings-detail-header {
@@ -1573,13 +1573,17 @@ button.settings-navigation-row:focus-visible:not(:disabled) {
 }
 
 .computer-use-runtime-error {
-  margin: 0 18px 18px;
+  margin: 18px;
   border-radius: 6px;
   background: rgb(var(--error-rgb) / 0.08);
   color: var(--color-error);
   font-size: 0.82rem;
   line-height: 1.45;
   padding: 10px 12px;
+}
+
+.computer-use-runtime-error + .settings-migration-notice {
+  margin-top: 0;
 }
 
 .github-settings-panel .setting-row {
