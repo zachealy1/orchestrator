@@ -48,6 +48,15 @@ type SettingsDetailStatus = {
   tone: SettingsStatusTone;
 };
 
+function computerUseRuntimeIsReady(status: DesktopRuntimeStatus | null) {
+  return (
+    status?.available === true &&
+    status.serviceCompatible === true &&
+    status.accessibilityTrusted !== false &&
+    status.screenRecordingTrusted !== false
+  );
+}
+
 export type SettingsViewModel = {
   dragRegion?: string;
   computerUseEnabled: boolean;
@@ -125,8 +134,7 @@ export const SettingsView = memo(function SettingsView({
   );
   const computerUseReady =
     pluginIsReady(computerUsePlugin) &&
-    model.desktopRuntimeStatus?.available === true &&
-    model.desktopRuntimeStatus?.serviceCompatible === true;
+    computerUseRuntimeIsReady(model.desktopRuntimeStatus);
   const computerUseStatus: SettingsDetailStatus =
     model.pluginsLoading || model.desktopRuntimeStatus === null
       ? { label: "Checking", tone: "pending" }
@@ -691,8 +699,7 @@ function SettingsOverview({
   );
   const computerUseReady =
     pluginIsReady(computerUsePlugin) &&
-    model.desktopRuntimeStatus?.available === true &&
-    model.desktopRuntimeStatus?.serviceCompatible === true;
+    computerUseRuntimeIsReady(model.desktopRuntimeStatus);
   const showConnections = queryMatches(
     "connections",
     "codex",

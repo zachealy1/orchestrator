@@ -316,6 +316,57 @@ describe("SettingsView", () => {
     expect(trigger).toHaveFocus();
   });
 
+  it("treats an explicit denied permission as unavailable even when the runtime is available", () => {
+    render(
+      <SettingsView
+        model={model({
+          desktopRuntimeStatus: {
+            available: true,
+            message: null,
+            version: "1.0.1000816",
+            serviceCompatible: true,
+            accessibilityTrusted: false,
+            screenRecordingTrusted: true,
+          },
+        })}
+        actions={actions()}
+      />,
+    );
+
+    const computerUse = screen.getByRole("region", {
+      name: "Computer use settings",
+    });
+    const trigger = within(computerUse).getByRole("button", {
+      name: "Computer Use unavailable. Show details",
+    });
+
+    expect(
+      within(computerUse).getByRole("checkbox", {
+        name: /any approved app/i,
+      }),
+    ).toBeDisabled();
+    expect(
+      screen.getByRole("button", { name: /computer use\s*not available/i }),
+    ).toBeInTheDocument();
+
+    fireEvent.click(trigger);
+
+    const dialog = within(computerUse).getByRole("dialog", {
+      name: "Computer Use unavailable",
+    });
+    expect(dialog).toHaveTextContent("Grant the required permission to continue.");
+    expect(
+      within(dialog).getByRole("button", {
+        name: "Open Accessibility settings",
+      }),
+    ).toBeInTheDocument();
+    expect(
+      within(dialog).queryByRole("button", {
+        name: "Open Screen Recording settings",
+      }),
+    ).toBeNull();
+  });
+
   it("keeps Computer Use available when permissions are owned by its signed helper", () => {
     render(
       <SettingsView
