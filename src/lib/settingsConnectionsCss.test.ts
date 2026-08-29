@@ -11,7 +11,9 @@ describe("settings connection styles", () => {
     let triggerInteractionRule = "";
     let panelRule = "";
     let actionRule = "";
+    let permissionRule = "";
     let actionInteractionRule = "";
+    let interactionColorRule = "";
 
     root.walkRules((candidate) => {
       if (candidate.selector === "button.settings-status-popover-trigger") {
@@ -33,6 +35,9 @@ describe("settings connection styles", () => {
       if (candidate.selector === "button.settings-status-popover-action") {
         actionRule = candidate.toString();
       }
+      if (candidate.selector === "button.settings-status-popover-permission") {
+        permissionRule = candidate.toString();
+      }
       if (
         candidate.selector.includes(
           "button.settings-status-popover-action:hover",
@@ -42,6 +47,16 @@ describe("settings connection styles", () => {
         )
       ) {
         actionInteractionRule = candidate.toString();
+      }
+      if (
+        candidate.selector.includes("settings-status-popover") &&
+        (candidate.selector.includes(":hover") ||
+          candidate.selector.includes(":focus-visible")) &&
+        candidate.nodes.some(
+          (node) => node.type === "decl" && node.prop === "color",
+        )
+      ) {
+        interactionColorRule = candidate.toString();
       }
     });
 
@@ -55,17 +70,22 @@ describe("settings connection styles", () => {
 
     expect(panelRule).toContain("position: absolute");
     expect(panelRule).toContain("right: 0");
-    expect(panelRule).toContain("border: 1px solid var(--color-divider)");
-    expect(panelRule).toContain(
-      "background: var(--color-component-background)",
-    );
-    expect(panelRule).toContain("box-shadow: none");
+    expect(panelRule).toContain("border: 0");
+    expect(panelRule).toContain("border-radius: 8px");
+    expect(panelRule).toContain("background: var(--color-background)");
+    expect(panelRule).toContain("box-shadow: 0 18px 48px");
 
-    expect(actionRule).toContain("border-radius: 0");
+    expect(actionRule).toContain("border-radius: 6px");
     expect(actionRule).toContain("background: transparent");
+    expect(permissionRule).toContain(
+      "grid-template-columns: 20px minmax(0, 1fr) auto 16px",
+    );
+    expect(permissionRule).toContain("min-height: 44px");
+    expect(permissionRule).toContain("border-radius: 6px");
     expect(actionInteractionRule).toContain(
       "background: var(--color-button-active)",
     );
+    expect(interactionColorRule).toBe("");
   });
 
   it("keeps status-card icons distinct from the shared hover highlight", () => {

@@ -272,9 +272,11 @@ describe("SettingsView", () => {
       name: "Computer Use unavailable",
     });
     expect(trigger).toHaveAttribute("aria-expanded", "true");
-    expect(dialog).toHaveTextContent(
-      "Screen Recording and Accessibility are required.",
-    );
+    expect(dialog).toHaveTextContent("Grant both permissions to continue.");
+    expect(within(dialog).getAllByText("Required")).toHaveLength(2);
+    expect(
+      within(dialog).getByRole("button", { name: "Check again" }),
+    ).toBeInTheDocument();
 
     fireEvent.click(
       within(dialog).getByRole("button", {
@@ -293,6 +295,16 @@ describe("SettingsView", () => {
       ).getByRole("button", { name: "Open Accessibility settings" }),
     );
     expect(handlers.openAccessibilitySettings).toHaveBeenCalledOnce();
+
+    fireEvent.click(trigger);
+    fireEvent.click(
+      within(
+        within(computerUse).getByRole("dialog", {
+          name: "Computer Use unavailable",
+        }),
+      ).getByRole("button", { name: "Check again" }),
+    );
+    expect(handlers.refreshComputerUseStatus).toHaveBeenCalledOnce();
 
     fireEvent.click(trigger);
     fireEvent.pointerDown(document.body);

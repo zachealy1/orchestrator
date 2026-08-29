@@ -1417,12 +1417,12 @@ button.settings-status-popover-trigger:focus-visible {
   top: calc(100% + 12px);
   right: 0;
   z-index: 30;
-  width: min(360px, calc(100vw - 72px));
+  width: min(380px, calc(100vw - 72px));
   overflow: visible;
-  border: 1px solid var(--color-divider);
-  border-radius: 6px;
-  background: var(--color-component-background);
-  box-shadow: none;
+  border: 0;
+  border-radius: 8px;
+  background: var(--color-background);
+  box-shadow: 0 18px 48px rgb(var(--shadow-rgb) / 0.28);
 }
 
 .settings-status-popover-panel::before {
@@ -1431,9 +1431,7 @@ button.settings-status-popover-trigger:focus-visible {
   right: 12px;
   width: 10px;
   height: 10px;
-  border-top: 1px solid var(--color-divider);
-  border-left: 1px solid var(--color-divider);
-  background: var(--color-component-background);
+  background: var(--color-background);
   content: "";
   transform: rotate(45deg);
 }
@@ -1441,7 +1439,7 @@ button.settings-status-popover-trigger:focus-visible {
 .settings-status-popover-copy {
   display: grid;
   gap: 5px;
-  padding: 16px;
+  padding: 14px 18px 13px;
 }
 
 .settings-status-popover-copy strong {
@@ -1457,52 +1455,94 @@ button.settings-status-popover-trigger:focus-visible {
 
 .settings-status-popover-actions {
   display: grid;
+  gap: 2px;
   border-top: 1px solid var(--color-divider);
+  padding: 8px 10px 10px;
 }
 
 button.settings-status-popover-action {
-  display: flex;
+  display: grid;
+  grid-template-columns: 18px minmax(0, 1fr);
   width: 100%;
-  min-height: 52px;
+  min-height: 38px;
   align-items: center;
-  justify-content: space-between;
-  gap: 12px;
+  gap: 10px;
   border: 0;
-  border-bottom: 1px solid var(--color-divider);
-  border-radius: 0;
+  border-radius: 6px;
   background: transparent;
   box-shadow: none;
   color: var(--color-text);
-  padding: 12px 16px;
+  padding: 8px 10px;
   text-align: left;
   transform: none;
   transition: none;
 }
 
-button.settings-status-popover-action:last-child {
-  border-bottom: 0;
+button.settings-status-popover-permission {
+  display: grid;
+  grid-template-columns: 20px minmax(0, 1fr) auto 16px;
+  width: 100%;
+  min-height: 44px;
+  align-items: center;
+  gap: 10px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  box-shadow: none;
+  color: var(--color-text);
+  padding: 8px 10px;
+  text-align: left;
+  transform: none;
+  transition: none;
 }
 
 button.settings-status-popover-action:hover:not(:disabled),
-button.settings-status-popover-action:focus-visible:not(:disabled) {
+button.settings-status-popover-action:focus-visible:not(:disabled),
+button.settings-status-popover-permission:hover:not(:disabled),
+button.settings-status-popover-permission:focus-visible:not(:disabled) {
   background: var(--color-button-active);
   box-shadow: none;
   transform: none;
 }
 
-button.settings-status-popover-action:focus-visible {
+button.settings-status-popover-action:focus-visible,
+button.settings-status-popover-permission:focus-visible {
   outline: 2px solid rgb(var(--primary-rgb) / 0.72);
   outline-offset: -2px;
 }
 
-.settings-status-popover-action span {
+.settings-status-popover-action span,
+.settings-status-popover-permission-label {
   font-size: 0.86rem;
   font-weight: 650;
 }
 
-.settings-status-popover-action svg {
+.settings-status-popover-action svg,
+.settings-status-popover-permission > svg {
   flex: 0 0 auto;
   color: var(--color-icon-muted);
+}
+
+.settings-status-popover-required {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  color: var(--color-text-secondary);
+  font-size: 0.78rem;
+  font-weight: 600;
+}
+
+.settings-status-popover-required-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--color-error);
+}
+
+.settings-status-popover-separator {
+  height: 1px;
+  margin: 4px 8px;
+  background: var(--color-divider);
 }
 
 .settings-panel .setting-row {

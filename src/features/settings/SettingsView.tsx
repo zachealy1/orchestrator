@@ -1,4 +1,5 @@
 import {
+  Accessibility,
   Bell,
   CircleHelp,
   ChevronRight,
@@ -13,6 +14,7 @@ import {
   Puzzle,
   RefreshCw,
   RotateCcw,
+  ScreenShare,
   Search,
   Trash2,
   UserRound,
@@ -1114,10 +1116,8 @@ function ComputerUseStatusPopover({
       : "Install the Computer Use plugin to continue."
     : hasMissingPermissions
       ? missingScreenRecording && missingAccessibility
-        ? "Screen Recording and Accessibility are required."
-        : missingScreenRecording
-          ? "Screen Recording is required."
-          : "Accessibility is required."
+        ? "Grant both permissions to continue."
+        : "Grant the required permission to continue."
       : runtimeStatus?.message ?? "Computer Use is not ready on this Mac.";
 
   useEffect(() => {
@@ -1189,21 +1189,27 @@ function ComputerUseStatusPopover({
             ) : hasMissingPermissions ? (
               <>
                 {missingScreenRecording ? (
-                  <StatusPopoverAction
+                  <PermissionChecklistAction
                     label="Screen Recording"
                     ariaLabel="Open Screen Recording settings"
-                    icon={ExternalLink}
+                    icon={ScreenShare}
                     onActivate={() => activate(onOpenScreenRecording)}
                   />
                 ) : null}
                 {missingAccessibility ? (
-                  <StatusPopoverAction
+                  <PermissionChecklistAction
                     label="Accessibility"
                     ariaLabel="Open Accessibility settings"
-                    icon={ExternalLink}
+                    icon={Accessibility}
                     onActivate={() => activate(onOpenAccessibility)}
                   />
                 ) : null}
+                <div className="settings-status-popover-separator" />
+                <StatusPopoverAction
+                  label="Check again"
+                  icon={RefreshCw}
+                  onActivate={() => activate(onRefresh)}
+                />
               </>
             ) : (
               <StatusPopoverAction
@@ -1216,6 +1222,35 @@ function ComputerUseStatusPopover({
         </div>
       ) : null}
     </div>
+  );
+}
+
+function PermissionChecklistAction({
+  label,
+  ariaLabel,
+  icon: Icon,
+  onActivate,
+}: {
+  label: string;
+  ariaLabel: string;
+  icon: typeof Monitor;
+  onActivate: () => void;
+}) {
+  return (
+    <button
+      className="settings-status-popover-permission"
+      type="button"
+      aria-label={ariaLabel}
+      onClick={onActivate}
+    >
+      <Icon size={18} aria-hidden="true" />
+      <span className="settings-status-popover-permission-label">{label}</span>
+      <span className="settings-status-popover-required">
+        <span className="settings-status-popover-required-dot" aria-hidden="true" />
+        Required
+      </span>
+      <ChevronRight size={16} aria-hidden="true" />
+    </button>
   );
 }
 
@@ -1237,8 +1272,8 @@ function StatusPopoverAction({
       aria-label={ariaLabel}
       onClick={onActivate}
     >
-      <span>{label}</span>
       <Icon size={16} aria-hidden="true" />
+      <span>{label}</span>
     </button>
   );
 }
