@@ -714,6 +714,14 @@ button.settings-status-card:focus-visible:not(:disabled) {
   background: var(--color-error);
 }
 
+.settings-status-card small.neutral > span {
+  background: var(--color-text-secondary);
+}
+
+.settings-status-card small.pending > span {
+  background: var(--color-primary);
+}
+
 .settings-status-card > svg {
   color: var(--color-icon-muted);
 }

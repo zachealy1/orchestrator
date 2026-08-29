@@ -48,13 +48,55 @@ type SettingsDetailStatus = {
   tone: SettingsStatusTone;
 };
 
-function computerUseRuntimeIsReady(status: DesktopRuntimeStatus | null) {
+type ComputerUsePermissionState = "verified" | "denied" | "unverified";
+
+function computerUseRuntimeCanRun(status: DesktopRuntimeStatus | null) {
   return (
     status?.available === true &&
     status.serviceCompatible === true &&
     status.accessibilityTrusted !== false &&
     status.screenRecordingTrusted !== false
   );
+}
+
+function computerUsePermissionState(
+  status: DesktopRuntimeStatus,
+): ComputerUsePermissionState {
+  if (
+    status.accessibilityTrusted === false ||
+    status.screenRecordingTrusted === false
+  ) {
+    return "denied";
+  }
+  if (
+    status.accessibilityTrusted === true &&
+    status.screenRecordingTrusted === true
+  ) {
+    return "verified";
+  }
+  return "unverified";
+}
+
+function computerUseDetailStatus(
+  pluginReady: boolean,
+  pluginsLoading: boolean,
+  runtimeStatus: DesktopRuntimeStatus | null,
+): SettingsDetailStatus {
+  if (pluginsLoading || runtimeStatus === null) {
+    return { label: "Checking", tone: "pending" };
+  }
+  if (
+    !pluginReady ||
+    runtimeStatus.available !== true ||
+    runtimeStatus.serviceCompatible !== true ||
+    computerUsePermissionState(runtimeStatus) === "denied"
+  ) {
+    return { label: "Unavailable", tone: "negative" };
+  }
+  if (computerUsePermissionState(runtimeStatus) === "unverified") {
+    return { label: "Review access", tone: "neutral" };
+  }
+  return { label: "Available", tone: "positive" };
 }
 
 export type SettingsViewModel = {
@@ -134,13 +176,12 @@ export const SettingsView = memo(function SettingsView({
   );
   const computerUseReady =
     pluginIsReady(computerUsePlugin) &&
-    computerUseRuntimeIsReady(model.desktopRuntimeStatus);
-  const computerUseStatus: SettingsDetailStatus =
-    model.pluginsLoading || model.desktopRuntimeStatus === null
-      ? { label: "Checking", tone: "pending" }
-      : computerUseReady
-        ? { label: "Available", tone: "positive" }
-        : { label: "Unavailable", tone: "negative" };
+    computerUseRuntimeCanRun(model.desktopRuntimeStatus);
+  const computerUseStatus = computerUseDetailStatus(
+    pluginIsReady(computerUsePlugin),
+    model.pluginsLoading,
+    model.desktopRuntimeStatus,
+  );
   const externalBrowserPlugins = ["chrome", "edge", "brave", "opera", "vivaldi"]
     .map((name) => findPlugin(model.pluginCatalog, name))
     .filter((plugin) => plugin !== null);
@@ -288,17 +329,16 @@ export const SettingsView = memo(function SettingsView({
             title="Computer use"
             status={computerUseStatus}
             statusContent={
-              computerUseStatus.label === "Unavailable" ? (
-                <ComputerUseStatusPopover
-                  pluginPresent={computerUsePlugin !== null}
-                  pluginReady={pluginIsReady(computerUsePlugin)}
-                  runtimeStatus={model.desktopRuntimeStatus}
-                  onOpenPlugins={actions.openPlugins}
-                  onOpenScreenRecording={actions.openScreenRecordingSettings}
-                  onOpenAccessibility={actions.openAccessibilitySettings}
-                  onRefresh={actions.refreshComputerUseStatus}
-                />
-              ) : undefined
+              <ComputerUseStatusPopover
+                status={computerUseStatus}
+                pluginPresent={computerUsePlugin !== null}
+                pluginReady={pluginIsReady(computerUsePlugin)}
+                runtimeStatus={model.desktopRuntimeStatus}
+                onOpenPlugins={actions.openPlugins}
+                onOpenScreenRecording={actions.openScreenRecordingSettings}
+                onOpenAccessibility={actions.openAccessibilitySettings}
+                onRefresh={actions.refreshComputerUseStatus}
+              />
             }
           />
           <div className="setting-list">
@@ -697,9 +737,11 @@ function SettingsOverview({
     "computer-use@openai-bundled",
     "computer-use",
   );
-  const computerUseReady =
-    pluginIsReady(computerUsePlugin) &&
-    computerUseRuntimeIsReady(model.desktopRuntimeStatus);
+  const computerUseStatus = computerUseDetailStatus(
+    pluginIsReady(computerUsePlugin),
+    model.pluginsLoading,
+    model.desktopRuntimeStatus,
+  );
   const showConnections = queryMatches(
     "connections",
     "codex",
@@ -766,8 +808,16 @@ function SettingsOverview({
           <SettingsStatusCard
             icon={Monitor}
             label="Computer use"
-            value={computerUseReady ? "Ready" : "Not available"}
-            healthy={computerUseReady}
+            value={
+              computerUseStatus.label === "Available"
+                ? "Ready"
+                : computerUseStatus.label === "Review access"
+                  ? "Review permissions"
+                  : computerUseStatus.label === "Checking"
+                    ? "Checking"
+                    : "Not available"
+            }
+            tone={computerUseStatus.tone}
             targetId="settings-computer-use"
           />
           <SettingsStatusCard
@@ -860,13 +910,15 @@ function SettingsStatusCard({
   label,
   value,
   healthy,
+  tone,
   targetId,
   onActivate,
 }: {
   icon: typeof Monitor | "codex";
   label: string;
   value: string;
-  healthy: boolean;
+  healthy?: boolean;
+  tone?: SettingsStatusTone;
   targetId?: string;
   onActivate?: () => void;
 }) {
@@ -889,7 +941,7 @@ function SettingsStatusCard({
       </span>
       <span>
         <strong>{label}</strong>
-        <small className={healthy ? "healthy" : "attention"}>
+        <small className={tone ?? (healthy ? "healthy" : "attention")}>
           <span aria-hidden="true" />
           {value}
         </small>
@@ -933,13 +985,14 @@ function PermissionRow({
 }) {
   if (granted === null) {
     return (
-      <div className="setting-row computer-use-permission-row">
-        <div>
-          <strong>{label}</strong>
-          <span>{description} Managed by the official Computer Use helper.</span>
-        </div>
-        <SettingsStatusBadge label="Managed" tone="neutral" />
-      </div>
+      <SettingsNavigationRow
+        className="computer-use-permission-row"
+        label={label}
+        description={`${description} Verified by the official Computer Use helper when it starts.`}
+        ariaLabel={`Open ${label} settings`}
+        external
+        onActivate={onOpen}
+      />
     );
   }
 
@@ -1091,6 +1144,7 @@ function SettingsDetailHeader({
 }
 
 function ComputerUseStatusPopover({
+  status,
   pluginPresent,
   pluginReady,
   runtimeStatus,
@@ -1099,6 +1153,7 @@ function ComputerUseStatusPopover({
   onOpenAccessibility,
   onRefresh,
 }: {
+  status: SettingsDetailStatus;
   pluginPresent: boolean;
   pluginReady: boolean;
   runtimeStatus: DesktopRuntimeStatus | null;
@@ -1110,6 +1165,7 @@ function ComputerUseStatusPopover({
   const [open, setOpen] = useState(false);
   const rootRef = useRef<HTMLDivElement>(null);
   const triggerRef = useRef<HTMLButtonElement>(null);
+  const previouslyMissingPermissionsRef = useRef(false);
   const titleId = useId();
   const panelId = useId();
   const missingScreenRecording =
@@ -1117,6 +1173,21 @@ function ComputerUseStatusPopover({
   const missingAccessibility = runtimeStatus?.accessibilityTrusted === false;
   const hasMissingPermissions =
     pluginReady && (missingScreenRecording || missingAccessibility);
+  const needsPermissionReview =
+    pluginReady &&
+    runtimeStatus?.available === true &&
+    runtimeStatus.serviceCompatible === true &&
+    !hasMissingPermissions &&
+    (runtimeStatus.screenRecordingTrusted !== true ||
+      runtimeStatus.accessibilityTrusted !== true);
+  const showScreenRecording =
+    missingScreenRecording ||
+    (needsPermissionReview && runtimeStatus?.screenRecordingTrusted !== true);
+  const showAccessibility =
+    missingAccessibility ||
+    (needsPermissionReview && runtimeStatus?.accessibilityTrusted !== true);
+  const interactive =
+    status.label === "Unavailable" || status.label === "Review access";
   const description = !pluginReady
     ? pluginPresent
       ? "Enable the Computer Use plugin to continue."
@@ -1125,7 +1196,22 @@ function ComputerUseStatusPopover({
       ? missingScreenRecording && missingAccessibility
         ? "Grant both permissions to continue."
         : "Grant the required permission to continue."
-      : runtimeStatus?.message ?? "Computer Use is not ready on this Mac.";
+      : needsPermissionReview
+        ? "Computer Use verifies access when it starts. Review the required macOS permissions if access changed."
+        : runtimeStatus?.message ?? "Computer Use is not ready on this Mac.";
+
+  useEffect(() => {
+    if (hasMissingPermissions && !previouslyMissingPermissionsRef.current) {
+      setOpen(true);
+    }
+    previouslyMissingPermissionsRef.current = hasMissingPermissions;
+  }, [hasMissingPermissions]);
+
+  useEffect(() => {
+    if (!interactive) {
+      setOpen(false);
+    }
+  }, [interactive]);
 
   useEffect(() => {
     if (!open) {
@@ -1157,23 +1243,37 @@ function ComputerUseStatusPopover({
     action();
   };
 
+  if (!interactive) {
+    return <SettingsStatusBadge {...status} />;
+  }
+
+  const unavailable = status.label === "Unavailable";
+  const title = unavailable
+    ? "Computer Use unavailable"
+    : "Computer Use access not verified";
+
   return (
     <div className="settings-status-popover" ref={rootRef}>
-      <span className="sr-only" role="status" aria-live="polite">
-        Unavailable
+      <span
+        className="sr-only"
+        role="status"
+        aria-label={status.label}
+        aria-live="polite"
+      >
+        {status.label}
       </span>
       <button
-        className="settings-status-badge settings-status-popover-trigger negative"
+        className={`settings-status-badge settings-status-popover-trigger ${status.tone}`}
         type="button"
         ref={triggerRef}
-        aria-label="Computer Use unavailable. Show details"
+        aria-label={`${title}. Show details`}
         aria-expanded={open}
         aria-controls={panelId}
         aria-haspopup="dialog"
         onClick={() => setOpen((current) => !current)}
       >
         <span className="settings-status-badge-dot" aria-hidden="true" />
-        Unavailable
+        {status.label}
       </button>
       {open ? (
         <div
@@ -1183,7 +1283,7 @@ function ComputerUseStatusPopover({
           aria-labelledby={titleId}
         >
           <div className="settings-status-popover-copy">
-            <strong id={titleId}>Computer Use unavailable</strong>
+            <strong id={titleId}>{title}</strong>
             <span>{description}</span>
           </div>
           <div className="settings-status-popover-actions">
@@ -1193,9 +1293,9 @@ function ComputerUseStatusPopover({
                 icon={ChevronRight}
                 onActivate={() => activate(onOpenPlugins)}
               />
-            ) : hasMissingPermissions ? (
+            ) : hasMissingPermissions || needsPermissionReview ? (
               <>
-                {missingScreenRecording ? (
+                {showScreenRecording ? (
                   <PermissionChecklistAction
                     label="Screen Recording"
                     ariaLabel="Open Screen Recording settings"
@@ -1203,7 +1303,7 @@ function ComputerUseStatusPopover({
                     onActivate={() => activate(onOpenScreenRecording)}
                   />
                 ) : null}
-                {missingAccessibility ? (
+                {showAccessibility ? (
                   <PermissionChecklistAction
                     label="Accessibility"
                     ariaLabel="Open Accessibility settings"

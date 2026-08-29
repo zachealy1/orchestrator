@@ -913,6 +913,17 @@ describe("Application runtime scenarios 5", () => {
       const { user } = await renderApp();
       await user.click(screen.getByRole("button", { name: "Settings" }));
 
+      expect(
+        await screen.findByRole("button", {
+          name: "Computer Use access not verified. Show details",
+        }),
+      ).toBeInTheDocument();
+      expect(
+        screen.getByRole("button", {
+          name: /computer use\s*review permissions/i,
+        }),
+      ).toBeInTheDocument();
+
       const computerUse = screen.getByRole("checkbox", {
         name: /any approved app/i,
       });

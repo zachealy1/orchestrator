@@ -195,7 +195,15 @@ describe("SettingsView", () => {
     );
 
     const clearData = screen.getByRole("button", { name: "Clear data" });
-    const screenRecordingSettings = screen.getByRole("button", {
+    const computerUse = screen.getByRole("region", {
+      name: "Computer use settings",
+    });
+    fireEvent.click(
+      within(computerUse).getByRole("button", {
+        name: "Computer Use unavailable. Show details",
+      }),
+    );
+    const screenRecordingSettings = within(computerUse).getByRole("button", {
       name: "Open Screen Recording settings",
     });
     expect(clearData).toHaveClass("settings-icon-action");
@@ -215,7 +223,9 @@ describe("SettingsView", () => {
     );
     fireEvent.click(screenRecordingSettings);
     fireEvent.click(
-      screen.getByRole("button", { name: "Open Accessibility settings" }),
+      within(computerUse).getByRole("button", {
+        name: "Open Accessibility settings",
+      }),
     );
     fireEvent.click(screen.getByRole("button", { name: "Revoke Editor" }));
 
@@ -261,12 +271,10 @@ describe("SettingsView", () => {
       trigger.querySelector(".settings-status-badge-dot"),
     ).toBeInTheDocument();
     expect(trigger.querySelector("svg")).toBeNull();
-    expect(trigger).toHaveAttribute("aria-expanded", "false");
+    expect(trigger).toHaveAttribute("aria-expanded", "true");
     expect(
       computerUse.querySelector(".computer-use-runtime-error"),
     ).toBeNull();
-
-    fireEvent.click(trigger);
 
     const dialog = within(computerUse).getByRole("dialog", {
       name: "Computer Use unavailable",
@@ -316,8 +324,12 @@ describe("SettingsView", () => {
     expect(trigger).toHaveFocus();
   });
 
-  it("treats an explicit denied permission as unavailable even when the runtime is available", () => {
-    render(
+  it("surfaces a permission denial when the runtime status changes", () => {
+    const { rerender } = render(
+      <SettingsView model={model()} actions={actions()} />,
+    );
+
+    rerender(
       <SettingsView
         model={model({
           desktopRuntimeStatus: {
@@ -339,6 +351,7 @@ describe("SettingsView", () => {
     const trigger = within(computerUse).getByRole("button", {
       name: "Computer Use unavailable. Show details",
     });
+    expect(trigger).toHaveAttribute("aria-expanded", "true");
 
     expect(
       within(computerUse).getByRole("checkbox", {
@@ -348,8 +361,6 @@ describe("SettingsView", () => {
     expect(
       screen.getByRole("button", { name: /computer use\s*not available/i }),
     ).toBeInTheDocument();
-
-    fireEvent.click(trigger);
 
     const dialog = within(computerUse).getByRole("dialog", {
       name: "Computer Use unavailable",
@@ -367,7 +378,8 @@ describe("SettingsView", () => {
     ).toBeNull();
   });
 
-  it("keeps Computer Use available when permissions are owned by its signed helper", () => {
+  it("requires access review when helper-owned permissions are unverified", () => {
+    const handlers = actions();
     render(
       <SettingsView
         model={model({
@@ -380,7 +392,7 @@ describe("SettingsView", () => {
             screenRecordingTrusted: null,
           },
         })}
-        actions={actions()}
+        actions={handlers}
       />,
     );
 
@@ -388,22 +400,45 @@ describe("SettingsView", () => {
       name: "Computer use settings",
     });
     expect(
-      within(computerUse).getByRole("status", { name: "Available" }),
-    ).toHaveClass("positive");
-    expect(
-      within(computerUse).queryByRole("button", {
-        name: "Computer Use unavailable. Show details",
-      }),
-    ).toBeNull();
+      within(computerUse).getByRole("status", { name: "Review access" }),
+    ).toHaveClass("sr-only");
+    const trigger = within(computerUse).getByRole("button", {
+      name: "Computer Use access not verified. Show details",
+    });
+    expect(trigger).toHaveClass("settings-status-badge", "neutral");
     expect(
       within(computerUse).getByRole("checkbox", {
         name: /any approved app/i,
       }),
     ).toBeEnabled();
-    expect(within(computerUse).getAllByText("Managed")).toHaveLength(2);
+    const screenRecordingRow = within(computerUse).getByRole("button", {
+      name: "Open Screen Recording settings",
+    });
+    const accessibilityRow = within(computerUse).getByRole("button", {
+      name: "Open Accessibility settings",
+    });
+    expect(screenRecordingRow).toHaveClass("settings-navigation-row");
+    expect(accessibilityRow).toHaveClass("settings-navigation-row");
+    expect(within(computerUse).queryByText("Managed")).toBeNull();
     expect(
-      screen.getByRole("button", { name: /computer use\s*ready/i }),
+      screen.getByRole("button", {
+        name: /computer use\s*review permissions/i,
+      }),
     ).toBeInTheDocument();
+
+    fireEvent.click(trigger);
+    const dialog = within(computerUse).getByRole("dialog", {
+      name: "Computer Use access not verified",
+    });
+    expect(dialog).toHaveTextContent(
+      "Computer Use verifies access when it starts.",
+    );
+    expect(within(dialog).getAllByText("Required")).toHaveLength(2);
+
+    fireEvent.click(screenRecordingRow);
+    fireEvent.click(accessibilityRow);
+    expect(handlers.openScreenRecordingSettings).toHaveBeenCalledOnce();
+    expect(handlers.openAccessibilitySettings).toHaveBeenCalledOnce();
   });
 
   it("routes a missing Computer Use plugin from the status popover to Plugins", () => {
