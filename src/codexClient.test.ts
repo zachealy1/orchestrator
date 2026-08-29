@@ -7,6 +7,8 @@ vi.mock("@tauri-apps/api/core", () => ({
 }));
 
 import {
+  codexDefaultProfileRpc,
+  connectDefaultCodexProfile,
   listDefaultCodexSkills,
   loadPersistedRunActivity,
   readActiveCodexLogin,
@@ -92,6 +94,60 @@ describe("Codex account login client", () => {
       method: "skill/list",
       params: { includeHidden: false },
     });
+  });
+
+  it("connects and retries when a shared-profile request wins the startup race", async () => {
+    let rpcAttempts = 0;
+    invokeMock.mockImplementation(async (command) => {
+      if (command === "codex_default_profile_connect") {
+        return { pid: 42, alreadyConnected: false, initialize: {} };
+      }
+      if (command === "codex_default_profile_rpc") {
+        rpcAttempts += 1;
+        if (rpcAttempts === 1) {
+          throw new Error("Codex account 0 is not connected");
+        }
+        return { marketplaces: [] };
+      }
+      throw new Error(`Unexpected command: ${command}`);
+    });
+
+    await expect(codexDefaultProfileRpc("plugin/list", { cwds: [] })).resolves.toEqual(
+      { marketplaces: [] },
+    );
+
+    expect(invokeMock).toHaveBeenNthCalledWith(1, "codex_default_profile_rpc", {
+      method: "plugin/list",
+      params: { cwds: [] },
+    });
+    expect(invokeMock).toHaveBeenNthCalledWith(
+      2,
+      "codex_default_profile_connect",
+    );
+    expect(invokeMock).toHaveBeenNthCalledWith(3, "codex_default_profile_rpc", {
+      method: "plugin/list",
+      params: { cwds: [] },
+    });
+  });
+
+  it("coalesces concurrent shared-profile connection attempts", async () => {
+    let finishConnection: (value: unknown) => void = () => {
+      throw new Error("Connection resolver was not initialized");
+    };
+    invokeMock.mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          finishConnection = resolve;
+        }),
+    );
+
+    const first = connectDefaultCodexProfile();
+    const second = connectDefaultCodexProfile();
+
+    expect(first).toBe(second);
+    expect(invokeMock).toHaveBeenCalledTimes(1);
+    finishConnection({ pid: 42, alreadyConnected: false, initialize: {} });
+    await Promise.all([first, second]);
   });
 
   it("projects persisted run tools without exposing raw payloads", async () => {

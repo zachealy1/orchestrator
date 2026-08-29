@@ -853,7 +853,6 @@ button.settings-status-card:focus-visible:not(:disabled) {
 .settings-manage-button:hover:not(:disabled),
 .settings-manage-button:focus-visible:not(:disabled) {
   background: transparent;
-  color: var(--color-accent);
   transform: none;
 }
 

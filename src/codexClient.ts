@@ -30,6 +30,8 @@ function commandResult<T>(result: Promise<unknown>): Promise<T> {
   return result as Promise<T>;
 }
 
+let defaultProfileConnectionInFlight: Promise<CodexConnectResult> | null = null;
+
 export function clearBrowserData() {
   return commandResult<void>(commands.browserDataClear());
 }
@@ -55,7 +57,20 @@ export function connectCodex(accountId: number) {
 }
 
 export function connectDefaultCodexProfile() {
-  return commandResult<CodexConnectResult>(commands.codexDefaultProfileConnect());
+  if (defaultProfileConnectionInFlight) {
+    return defaultProfileConnectionInFlight;
+  }
+
+  const connection = commandResult<CodexConnectResult>(
+    commands.codexDefaultProfileConnect(),
+  );
+  const trackedConnection = connection.finally(() => {
+    if (defaultProfileConnectionInFlight === trackedConnection) {
+      defaultProfileConnectionInFlight = null;
+    }
+  });
+  defaultProfileConnectionInFlight = trackedConnection;
+  return trackedConnection;
 }
 
 export function stopCodex(accountId: number) {
@@ -138,8 +153,24 @@ export function codexRpc<T>(accountId: number, method: string, params: unknown =
   return commandResult<T>(commands.codexRpc(accountId, method, params));
 }
 
-export function codexDefaultProfileRpc<T>(method: string, params: unknown = {}) {
-  return commandResult<T>(commands.codexDefaultProfileRpc(method, params));
+export async function codexDefaultProfileRpc<T>(
+  method: string,
+  params: unknown = {},
+) {
+  try {
+    return await commandResult<T>(
+      commands.codexDefaultProfileRpc(method, params),
+    );
+  } catch (error) {
+    if (!isDefaultProfileDisconnectedError(error)) throw error;
+    await connectDefaultCodexProfile();
+    return commandResult<T>(commands.codexDefaultProfileRpc(method, params));
+  }
+}
+
+function isDefaultProfileDisconnectedError(value: unknown) {
+  const message = value instanceof Error ? value.message : String(value);
+  return message.trim() === "Codex account 0 is not connected";
 }
 
 export function readProjectedSubagentThread(input: {
