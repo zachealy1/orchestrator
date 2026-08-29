@@ -328,6 +328,32 @@ describe("SettingsView", () => {
     });
   });
 
+  it("formats Codex plan names in account settings", () => {
+    const account: SettingsViewModel["accounts"][number] = {
+      id: 7,
+      label: "Personal",
+      email: "dev@example.com",
+      plan_type: "prolite",
+      status: "signed_in",
+      last_error: null,
+      last_used_at: null,
+      created_at: "2026-08-29T08:00:00.000Z",
+      updated_at: "2026-08-29T08:00:00.000Z",
+      deleted_at: null,
+    };
+
+    render(
+      <SettingsView
+        model={model({ accounts: [account], selectedAccountId: account.id })}
+        actions={actions()}
+      />,
+    );
+
+    expect(screen.getByText("Pro Lite")).toBeInTheDocument();
+    expect(screen.getByText("dev@example.com · Pro Lite")).toBeInTheDocument();
+    expect(screen.queryByText("prolite")).not.toBeInTheDocument();
+  });
+
   it("omits removed overview, appearance, and product information", () => {
     render(<SettingsView model={model()} actions={actions()} />);
 

@@ -22,6 +22,7 @@ import type {
   AgentNotificationPermissionStatus,
   AgentNotificationPreferences,
 } from "../../lib/agentNotifications";
+import { formatCodexPlanType } from "../../lib/codexAuth";
 import type { BrowserRuntimeStatus } from "../browser/types";
 import type { DesktopRuntimeStatus } from "../interaction/types";
 import type { CodexLoginState, OssProvider } from "../codex/types";
@@ -441,7 +442,9 @@ export const SettingsView = memo(function SettingsView({
                           {account.email ?? "Not signed in"} ·{" "}
                           {accountSigningIn
                             ? "Signing in"
-                            : (account.plan_type ?? account.status)}
+                            : account.plan_type
+                              ? formatCodexPlanType(account.plan_type)
+                              : account.status}
                         </span>
                       </div>
                       <div className="button-row compact">
@@ -774,8 +777,11 @@ function SettingsOverview({
                     </span>
                   </div>
                   <span className="settings-connection-value">
-                    {selectedAccount?.plan_type ??
-                      (model.codexConnected ? "Connected" : "Not connected")}
+                    {selectedAccount?.plan_type
+                      ? formatCodexPlanType(selectedAccount.plan_type)
+                      : model.codexConnected
+                        ? "Connected"
+                        : "Not connected"}
                   </span>
                   <button
                     className="settings-manage-button"
