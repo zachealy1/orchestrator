@@ -121,19 +121,97 @@ describe("settings connection styles", () => {
       "padding: 0 0 18px",
     );
     expect(rules.get(".settings-overview-row")).toContain(
-      "padding: 12px 20px",
+      "padding: var(--settings-option-padding-block)\n    var(--settings-option-padding-inline)",
     );
     expect(rules.get(".settings-panel .setting-list")).toContain(
       "padding: 0 0 18px",
     );
     expect(rules.get(".settings-panel .setting-row")).toContain(
-      "padding: 14px 20px",
+      "padding: var(--settings-option-padding-block)\n    var(--settings-option-padding-inline)",
     );
     expect(rules.get(".settings-subsection-heading")).toContain(
       "padding: 18px 20px 9px",
     );
     expect(rules.get(".managed-account-row")).toContain(
-      "padding: 12px 20px",
+      "padding: var(--settings-option-padding-block)\n    var(--settings-option-padding-inline)",
+    );
+  });
+
+  it("uses one spacing contract for every settings option row", () => {
+    const root = postcss.parse(css);
+    const rules = new Map<string, string>();
+    const selectors = new Set([
+      ".settings-grid",
+      ".settings-overview-row",
+      ".settings-overview-row > div:nth-child(2)",
+      ".settings-panel .setting-row",
+      ".settings-panel .setting-row > div",
+      ".settings-panel .setting-row > .button-row",
+      ".account-management",
+      ".account-management > .muted",
+      ".account-management > button.secondary",
+      ".managed-account-row",
+      ".managed-account-row > div:nth-child(2)",
+      ".managed-account-row > .button-row",
+    ]);
+
+    root.walkRules((candidate) => {
+      if (selectors.has(candidate.selector)) {
+        rules.set(candidate.selector, candidate.toString());
+      }
+    });
+
+    const contract = rules.get(".settings-grid");
+    expect(contract).toContain("--settings-option-min-height: 72px");
+    expect(contract).toContain("--settings-option-padding-block: 14px");
+    expect(contract).toContain("--settings-option-padding-inline: 20px");
+    expect(contract).toContain("--settings-option-column-gap: 12px");
+    expect(contract).toContain("--settings-option-copy-gap: 4px");
+    expect(contract).toContain("--settings-option-action-gap: 8px");
+
+    for (const selector of [
+      ".settings-overview-row",
+      ".settings-panel .setting-row",
+      ".managed-account-row",
+    ]) {
+      expect(rules.get(selector)).toContain(
+        "min-height: var(--settings-option-min-height)",
+      );
+      expect(rules.get(selector)).toContain(
+        "gap: var(--settings-option-column-gap)",
+      );
+      expect(rules.get(selector)).toContain(
+        "padding: var(--settings-option-padding-block)\n    var(--settings-option-padding-inline)",
+      );
+    }
+
+    for (const selector of [
+      ".settings-overview-row > div:nth-child(2)",
+      ".settings-panel .setting-row > div",
+      ".managed-account-row > div:nth-child(2)",
+    ]) {
+      expect(rules.get(selector)).toContain(
+        "gap: var(--settings-option-copy-gap)",
+      );
+    }
+
+    for (const selector of [
+      ".settings-panel .setting-row > .button-row",
+      ".managed-account-row > .button-row",
+    ]) {
+      expect(rules.get(selector)).toContain(
+        "gap: var(--settings-option-action-gap)",
+      );
+    }
+
+    expect(rules.get(".account-management")).toContain(
+      "padding: 0 0 var(--settings-option-padding-block)",
+    );
+    expect(rules.get(".account-management > .muted")).toContain(
+      "min-height: var(--settings-option-min-height)",
+    );
+    expect(rules.get(".account-management > button.secondary")).toContain(
+      "margin: var(--settings-option-padding-block)\n    var(--settings-option-padding-inline) 0",
     );
   });
 });

@@ -569,6 +569,13 @@ button.pending-interaction-nav:disabled {
 }
 
 .settings-grid {
+  --settings-option-min-height: 72px;
+  --settings-option-padding-block: 14px;
+  --settings-option-padding-inline: 20px;
+  --settings-option-column-gap: 12px;
+  --settings-option-copy-gap: 4px;
+  --settings-option-action-gap: 8px;
+
   display: grid;
   grid-template-columns: minmax(460px, 1fr) minmax(320px, 0.72fr);
   gap: 16px;
@@ -762,13 +769,14 @@ button.settings-status-card:focus-visible:not(:disabled) {
 .settings-overview-row {
   display: grid;
   min-width: 0;
-  min-height: 74px;
+  min-height: var(--settings-option-min-height);
   grid-template-columns: 34px minmax(0, 1fr) auto;
   align-items: center;
-  gap: 12px;
+  gap: var(--settings-option-column-gap);
   border-top: 1px solid var(--color-divider);
   color: var(--color-text);
-  padding: 12px 20px;
+  padding: var(--settings-option-padding-block)
+    var(--settings-option-padding-inline);
 }
 
 .settings-overview-row:first-child {
@@ -778,7 +786,7 @@ button.settings-status-card:focus-visible:not(:disabled) {
 .settings-overview-row > div:nth-child(2) {
   display: grid;
   min-width: 0;
-  gap: 4px;
+  gap: var(--settings-option-copy-gap);
 }
 
 .settings-overview-row strong {
@@ -1365,12 +1373,14 @@ button.plugin-list-row.selected {
 }
 
 .settings-panel .setting-row {
-  min-height: 68px;
+  min-height: var(--settings-option-min-height);
+  gap: var(--settings-option-column-gap);
   border: 0;
   border-bottom: 1px solid var(--color-divider);
   border-radius: 0;
   background: transparent;
-  padding: 14px 20px;
+  padding: var(--settings-option-padding-block)
+    var(--settings-option-padding-inline);
 }
 
 .settings-panel .setting-list > .setting-row:last-child {
@@ -1378,7 +1388,7 @@ button.plugin-list-row.selected {
 }
 
 .settings-panel .setting-row > div {
-  gap: 4px;
+  gap: var(--settings-option-copy-gap);
 }
 
 .settings-panel .setting-row > .button-row {
@@ -1386,6 +1396,7 @@ button.plugin-list-row.selected {
   flex-wrap: nowrap;
   align-items: center;
   justify-content: flex-end;
+  gap: var(--settings-option-action-gap);
 }
 
 .settings-panel .setting-row > div > span {
@@ -1481,25 +1492,33 @@ button.settings-navigation-row:focus-visible:not(:disabled) {
   display: grid;
   gap: 0;
   border-bottom: 1px solid var(--color-divider);
-  padding: 4px 0 14px;
+  padding: 0 0 var(--settings-option-padding-block);
 }
 
 .account-management > .muted {
-  padding: 12px 20px;
+  display: flex;
+  min-height: var(--settings-option-min-height);
+  align-items: center;
+  margin: 0;
+  padding: var(--settings-option-padding-block)
+    var(--settings-option-padding-inline);
 }
 
 .account-management > button.secondary {
   justify-self: start;
-  margin: 12px 20px 0;
+  margin: var(--settings-option-padding-block)
+    var(--settings-option-padding-inline) 0;
 }
 
 .managed-account-row {
   display: grid;
+  min-height: var(--settings-option-min-height);
   grid-template-columns: 32px minmax(0, 1fr) auto;
-  gap: 10px;
+  gap: var(--settings-option-column-gap);
   align-items: center;
   border-bottom: 1px solid var(--color-divider);
-  padding: 12px 20px;
+  padding: var(--settings-option-padding-block)
+    var(--settings-option-padding-inline);
 }
 
 .managed-account-row:last-of-type {
@@ -1509,7 +1528,11 @@ button.settings-navigation-row:focus-visible:not(:disabled) {
 .managed-account-row > div:nth-child(2) {
   display: grid;
   min-width: 0;
-  gap: 4px;
+  gap: var(--settings-option-copy-gap);
+}
+
+.managed-account-row > .button-row {
+  gap: var(--settings-option-action-gap);
 }
 
 .managed-account-row input {
