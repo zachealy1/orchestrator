@@ -3,7 +3,7 @@ export type RunLifecyclePhase =
   | "preparing"
   | "connecting"
   | "persisting"
-  | "preparing-browser"
+  | "preparing-interactions"
   | "starting-thread"
   | "starting-turn"
   | "active"
@@ -32,8 +32,8 @@ const ALLOWED_TRANSITIONS: Record<RunLifecyclePhase, ReadonlySet<RunLifecyclePha
   scheduled: new Set(["preparing", "cancelling", "cancelled", "failed"]),
   preparing: new Set(["connecting", "persisting", "cancelling", "rolling-back", "failed"]),
   connecting: new Set(["persisting", "cancelling", "rolling-back", "failed"]),
-  persisting: new Set(["preparing-browser", "starting-thread", "cancelling", "rolling-back", "failed"]),
-  "preparing-browser": new Set(["starting-thread", "cancelling", "rolling-back", "failed"]),
+  persisting: new Set(["preparing-interactions", "starting-thread", "cancelling", "rolling-back", "failed"]),
+  "preparing-interactions": new Set(["starting-thread", "cancelling", "rolling-back", "failed"]),
   "starting-thread": new Set(["starting-turn", "cancelling", "rolling-back", "failed"]),
   "starting-turn": new Set(["active", "cancelling", "rolling-back", "failed"]),
   active: new Set(["completing", "cancelling", "rolling-back", "failed"]),

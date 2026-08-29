@@ -1,1 +1,1 @@
-export type AppView = "task" | "analytics" | "settings";
+export type AppView = "task" | "analytics" | "plugins" | "settings";

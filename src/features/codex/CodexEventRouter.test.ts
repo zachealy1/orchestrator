@@ -35,7 +35,7 @@ describe("CodexEventRouter validation", () => {
     ).toBeNull();
   });
 
-  it("validates process and browser lifecycle payloads", () => {
+  it("validates process lifecycle payloads", () => {
     expect(
       codexEventValidation.parseProcessEvent({
         accountId: 4,
@@ -44,35 +44,5 @@ describe("CodexEventRouter validation", () => {
         message: "Connected",
       }),
     ).toMatchObject({ profileKey: "default", status: "connected" });
-    expect(
-      codexEventValidation.parseBrowserSession({
-        token: "browser-1",
-        status: "running",
-        target: {
-          profileKey: "account:4",
-          workspaceId: 1,
-          chatId: 2,
-          runId: 3,
-          entryId: "entry-1",
-          threadId: "thread-1",
-          turnId: "turn-1",
-          accessMode: "ask-for-approval",
-        },
-        browserPid: 42,
-        error: null,
-      }),
-    ).toMatchObject({ token: "browser-1", status: "running" });
-    expect(
-      codexEventValidation.parseBrowserSession({ status: "running" }),
-    ).toBeNull();
-    expect(
-      codexEventValidation.parseBrowserSession({
-        token: "browser-1",
-        status: "running",
-        target: {},
-        browserPid: null,
-        error: null,
-      }),
-    ).toBeNull();
   });
 });

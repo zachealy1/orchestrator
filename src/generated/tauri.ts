@@ -144,23 +144,10 @@ export const commands = {
 	kanbanGitCleanup: (request: KanbanGitCleanupRequest) => __TAURI_INVOKE<KanbanGitCleanupResult>("kanban_git_cleanup", { request }),
 	runPreflight: (path: string, prompt: string, useOss: boolean, ossProvider: string | null) => __TAURI_INVOKE<PreflightReport>("run_preflight", { path, prompt, useOss, ossProvider }),
 	probeLocalWebPreview: (url: string) => __TAURI_INVOKE<LocalWebPreviewProbeResult>("probe_local_web_preview", { url }),
-	browserRuntimeStatus: () => __TAURI_INVOKE<BrowserRuntimeStatus>("browser_runtime_status"),
-	browserSessionPrepare: (target: BrowserSessionTarget) => __TAURI_INVOKE<BrowserSessionPreparation>("browser_session_prepare", { target }),
-	browserSessionStatus: (token: string) => __TAURI_INVOKE<BrowserSessionStatus>("browser_session_status", { token }),
-	browserSessionFocus: (token: string) => __TAURI_INVOKE<BrowserSessionStatus>("browser_session_focus", { token }),
-	browserSessionUpdateTarget: (token: string, target: BrowserSessionTarget) => __TAURI_INVOKE<BrowserSessionStatus>("browser_session_update_target", { token, target }),
-	browserSessionStop: (token: string) => __TAURI_INVOKE<BrowserSessionStatus>("browser_session_stop", { token }),
-	browserSessionPause: (token: string) => __TAURI_INVOKE<BrowserSessionStatus>("browser_session_pause", { token }),
-	browserSessionTakeover: (token: string) => __TAURI_INVOKE<BrowserSessionStatus>("browser_session_takeover", { token }),
-	browserSessionResume: (token: string) => __TAURI_INVOKE<BrowserSessionStatus>("browser_session_resume", { token }),
-	browserSessionSnapshot: (token: string) => __TAURI_INVOKE<BrowserSessionSnapshot>("browser_session_snapshot", { token }),
-	browserSessionListTabs: (token: string) => __TAURI_INVOKE<DefaultBrowserTab[]>("browser_session_list_tabs", { token }),
-	browserSessionAttachTab: (token: string, tabId: number) => __TAURI_INVOKE<BrowserSessionStatus>("browser_session_attach_tab", { token, tabId }),
+	browserDataClear: () => __TAURI_INVOKE<null>("browser_data_clear"),
 	desktopRuntimeStatus: () => __TAURI_INVOKE<DesktopRuntimeStatus>("desktop_runtime_status"),
-	defaultBrowserCapabilityStatus: () => __TAURI_INVOKE<DefaultBrowserCapabilityStatus>("default_browser_capability_status"),
-	defaultBrowserInstallExtension: () => __TAURI_INVOKE<null>("default_browser_install_extension"),
-	defaultBrowserOpenAccessibilitySettings: () => __TAURI_INVOKE<null>("default_browser_open_accessibility_settings"),
-	defaultBrowserEnableSafariAutomation: () => __TAURI_INVOKE<null>("default_browser_enable_safari_automation"),
+	computerUseOpenAccessibilitySettings: () => __TAURI_INVOKE<null>("computer_use_open_accessibility_settings"),
+	computerUseOpenScreenRecordingSettings: () => __TAURI_INVOKE<null>("computer_use_open_screen_recording_settings"),
 	agentNotificationPermissionStatus: () => __TAURI_INVOKE<string>("agent_notification_permission_status"),
 	agentNotificationRequestPermission: () => __TAURI_INVOKE<string>("agent_notification_request_permission"),
 	agentNotificationSend: (request: AgentNotificationRequest) => __TAURI_INVOKE<AgentNotificationSendResult>("agent_notification_send", { request }),
@@ -235,56 +222,6 @@ export type ArchiveKanbanCardRequest = {
 	operationId: string,
 };
 
-export type BrowserRuntimeStatus = {
-	available: boolean,
-	message: string | null,
-	defaultBrowser: DefaultBrowserCapabilityStatus | null,
-	browserSkillVersion: string | null,
-	browserServiceCompatible: boolean,
-};
-
-export type BrowserSessionPreparation = {
-	session: PreparedBrowserSession | null,
-	unavailableReason: string | null,
-	browserFamily: string | null,
-};
-
-export type BrowserSessionSnapshot = {
-	dataUrl: string,
-	generation: number,
-	capturedAt: string,
-};
-
-export type BrowserSessionStatus = {
-	token: string,
-	status: string,
-	target: BrowserSessionTarget,
-	browserPid: number | null,
-	error: string | null,
-	backend: string,
-	browser: DefaultBrowserInfo | null,
-	extensionConnected: boolean,
-	chatGroupKey: string | null,
-	controlledTabId: number | null,
-	unavailableReason: string | null,
-	browserSkillVersion: string,
-	browserServiceCompatible: boolean,
-	backendHealthy: boolean,
-};
-
-export type BrowserSessionTarget = {
-	profileKey: string,
-	workspaceId: number,
-	chatId: number | null,
-	runId: number | null,
-	entryId: string,
-	threadId: string | null,
-	turnId: string | null,
-	accessMode: string,
-	developerModeEnabled?: boolean,
-	chatTitle: string,
-};
-
 export type ChatTitleGenerationResult = {
 	title: string,
 };
@@ -351,32 +288,6 @@ export type CreateKanbanCardRequest = {
 	operationId: string,
 };
 
-export type DefaultBrowserCapabilityStatus = {
-	browser: DefaultBrowserInfo | null,
-	extensionId: string,
-	extensionConnected: boolean,
-	nativeHostInstalled: boolean,
-	accessibilityTrusted: boolean,
-	extensionPath: string,
-	message: string | null,
-};
-
-export type DefaultBrowserInfo = {
-	bundleId: string,
-	name: string,
-	path: string,
-	supported: boolean,
-	family: string | null,
-};
-
-export type DefaultBrowserTab = {
-	id: number,
-	title: string,
-	origin: string,
-	active: boolean,
-	inCurrentGroup: boolean,
-};
-
 export type DeleteKanbanCardRequest = {
 	cardId: string,
 	expectedVersion: number,
@@ -389,6 +300,7 @@ export type DesktopRuntimeStatus = {
 	version: string | null,
 	serviceCompatible: boolean,
 	accessibilityTrusted: boolean,
+	screenRecordingTrusted: boolean,
 };
 
 export type DroppedContextPath = {
@@ -857,12 +769,6 @@ export type PreflightReport = {
 	improvedPrompt: string,
 	checks: PreflightCheck[],
 	recommendations: RecommendationDraft[],
-};
-
-export type PreparedBrowserSession = {
-	token: string,
-	config: unknown,
-	state: BrowserSessionStatus,
 };
 
 export type ProjectedSubagentThread = {

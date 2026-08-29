@@ -1424,31 +1424,6 @@ button.account-switcher-item:hover:not(:disabled) {
   box-shadow: none;
 }
 
-.workspace-browser-action {
-  position: relative;
-  display: inline-flex;
-}
-
-.workspace-header-button.browser-session-button.browser-awaiting-approval,
-.workspace-header-button.browser-session-button.browser-error {
-  background: var(--color-surface-soft);
-  color: var(--color-primary);
-}
-
-.workspace-browser-popover {
-  position: absolute;
-  z-index: 40;
-  top: calc(100% + 7px);
-  right: 0;
-  display: flex;
-  gap: 6px;
-  border: 1px solid var(--color-divider);
-  border-radius: var(--radius);
-  background: var(--panel);
-  box-shadow: 0 12px 32px rgb(var(--shadow-rgb) / 0.24);
-  padding: 7px;
-}
-
 .interaction-panel {
   position: sticky;
   top: 51px;

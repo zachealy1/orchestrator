@@ -1267,8 +1267,6 @@ describe("Application runtime scenarios 7", () => {
       const { user } = await renderApp();
       await user.click(screen.getByRole("button", { name: /goal mode/i }));
       await startMockRun(user, "Run a goal command");
-      expect(mocks.prepareBrowserSessionMock).toHaveBeenCalledTimes(1);
-
       await emitCodexNotification({
         method: "turn/completed",
         params: {

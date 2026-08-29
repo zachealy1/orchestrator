@@ -2,7 +2,14 @@ import type { CodexAccessMode, CodexProfileKey, OssProvider } from "../features/
 import type { ComposerContextFile, SelectedComposerSkill } from "../features/composer/types";
 import type { ResolvedRunExecutionSettings, RunExecutionSettings } from "../features/runs/types";
 
-export const RUN_EXECUTION_SETTINGS_VERSION = 4;
+export const RUN_EXECUTION_SETTINGS_VERSION = 5;
+
+const LEGACY_BROWSER_SKILL: SelectedComposerSkill = {
+  id: "browser:control-in-app-browser",
+  name: "browser:control-in-app-browser",
+  description:
+    "Control the isolated in-app Browser through the installed OpenAI Browser plugin.",
+};
 
 type RunExecutionSettingsInput = Omit<
   RunExecutionSettings,
@@ -120,7 +127,11 @@ export function resolveStoredRunExecutionSettings(
 function readRunExecutionSettings(value: unknown): RunExecutionSettings | null {
   if (
     !isRecord(value) ||
-    (value.version !== 1 && value.version !== 2 && value.version !== 3 && value.version !== 4)
+    (value.version !== 1 &&
+      value.version !== 2 &&
+      value.version !== 3 &&
+      value.version !== 4 &&
+      value.version !== 5)
   ) {
     return null;
   }
@@ -150,7 +161,7 @@ function readRunExecutionSettings(value: unknown): RunExecutionSettings | null {
   const contextFiles = value.contextFiles
     .map(readContextFile)
     .filter((file): file is ComposerContextFile => file !== null);
-  const selectedSkills = value.selectedSkills
+  let selectedSkills = value.selectedSkills
     .map(readSelectedSkill)
     .filter((skill): skill is SelectedComposerSkill => skill !== null);
   if (
@@ -158,6 +169,17 @@ function readRunExecutionSettings(value: unknown): RunExecutionSettings | null {
     selectedSkills.length !== value.selectedSkills.length
   ) {
     return null;
+  }
+
+  const legacyBrowserRequested =
+    value.version <= 4 && value.computerUseEnabled === true;
+  if (
+    legacyBrowserRequested &&
+    !selectedSkills.some((skill) =>
+      `${skill.id} ${skill.name}`.toLocaleLowerCase().includes("control-in-app-browser"),
+    )
+  ) {
+    selectedSkills = [...selectedSkills, LEGACY_BROWSER_SKILL];
   }
 
   return createRunExecutionSettings({
@@ -171,7 +193,8 @@ function readRunExecutionSettings(value: unknown): RunExecutionSettings | null {
     mode: value.mode,
     intent: value.intent,
     accessMode: value.accessMode,
-    computerUseEnabled: value.computerUseEnabled,
+    computerUseEnabled:
+      value.version === 5 ? value.computerUseEnabled : false,
     model: normalizeOptionalString(value.model),
     reasoningEffort: normalizeOptionalString(value.reasoningEffort),
     useOss: value.useOss,

@@ -64,13 +64,6 @@ function renderBanner(
       historyOpen={false}
       historyNotificationCount={0}
       onToggleHistory={vi.fn()}
-      browserSession={null}
-      onFocusBrowser={vi.fn()}
-      onAttachBrowserTab={vi.fn()}
-      onPauseBrowser={vi.fn()}
-      onTakeOverBrowser={vi.fn()}
-      onResumeBrowser={vi.fn()}
-      onStopBrowser={vi.fn()}
       windowDragRegionsEnabled={false}
     />,
   );
@@ -149,13 +142,6 @@ describe("WorkspaceContextBanner surface switch", () => {
         historyOpen={false}
         historyNotificationCount={0}
         onToggleHistory={vi.fn()}
-        browserSession={null}
-        onFocusBrowser={vi.fn()}
-        onAttachBrowserTab={vi.fn()}
-        onPauseBrowser={vi.fn()}
-        onTakeOverBrowser={vi.fn()}
-        onResumeBrowser={vi.fn()}
-        onStopBrowser={vi.fn()}
         windowDragRegionsEnabled={false}
       />,
     );

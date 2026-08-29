@@ -90,7 +90,7 @@ export type RunListItem = RunRecord & {
 };
 
 export type RunExecutionSettings = {
-  version: 4;
+  version: 5;
   accountId: number;
   profileKey: CodexProfileKey;
   selectedRepositoryPath: string | null;

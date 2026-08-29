@@ -6,7 +6,7 @@ import {
 } from "./preferences";
 
 describe("interaction preferences", () => {
-  it("migrates the legacy browser Computer Use preference", () => {
+  it("does not widen the legacy browser preference to desktop access", () => {
     expect(
       readInteractionPreferences({
         getItem: (key) =>
@@ -15,22 +15,26 @@ describe("interaction preferences", () => {
             : null,
         setItem: () => undefined,
       }),
-    ).toEqual({
-      browserEnabled: false,
-      desktopEnabled: false,
-      diagnosticsEnabled: false,
-      developerModeEnabled: false,
-    });
+    ).toEqual({ computerUseEnabled: false });
+  });
+
+  it("migrates the former desktop preference", () => {
+    expect(
+      readInteractionPreferences({
+        getItem: (key) =>
+          key === "orchestrator.interaction.v1"
+            ? JSON.stringify({ browserEnabled: false, desktopEnabled: true })
+            : null,
+        setItem: () => undefined,
+      }),
+    ).toEqual({ computerUseEnabled: true });
   });
 
   it("persists only validated capability flags", () => {
     const values = new Map<string, string>();
     persistInteractionPreferences(
       {
-        browserEnabled: true,
-        desktopEnabled: true,
-        diagnosticsEnabled: true,
-        developerModeEnabled: false,
+        computerUseEnabled: true,
       },
       {
         getItem: (key) => values.get(key) ?? null,
@@ -38,10 +42,7 @@ describe("interaction preferences", () => {
       },
     );
     expect(JSON.parse(values.get(INTERACTION_PREFERENCE_STORAGE_KEY)!)).toEqual({
-      browserEnabled: true,
-      desktopEnabled: true,
-      diagnosticsEnabled: true,
-      developerModeEnabled: false,
+      computerUseEnabled: true,
     });
   });
 });

@@ -8,7 +8,7 @@ describe("RunCoordinator", () => {
     coordinator.transition("entry-1", "preparing");
     coordinator.transition("entry-1", "connecting");
     coordinator.transition("entry-1", "persisting");
-    coordinator.transition("entry-1", "preparing-browser");
+    coordinator.transition("entry-1", "preparing-interactions");
     coordinator.transition("entry-1", "starting-thread");
     coordinator.transition("entry-1", "starting-turn");
     coordinator.transition("entry-1", "active");

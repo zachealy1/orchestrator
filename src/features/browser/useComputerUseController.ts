@@ -1,81 +1,56 @@
-import { useEffect, useState, type Dispatch, type SetStateAction } from "react";
-import { readBrowserRuntimeStatus, readDesktopRuntimeStatus } from "../../codexClient";
 import {
-  persistComputerUsePreference,
-  readComputerUsePreference,
-} from "../../lib/computerUse";
-import type { BrowserRuntimeStatus } from "./types";
+  useEffect,
+  useMemo,
+  useState,
+  type Dispatch,
+  type SetStateAction,
+} from "react";
+import {
+  listDefaultCodexSkills,
+  readDesktopRuntimeStatus,
+} from "../../codexClient";
+import type { CodexPluginCatalog } from "../plugins/types";
+import { findPlugin, pluginIsReady } from "../plugins/types";
 import {
   persistInteractionPreferences,
   readInteractionPreferences,
 } from "../interaction/preferences";
-import type { DesktopRuntimeStatus, InteractionPreferences } from "../interaction/types";
+import type { DesktopRuntimeStatus } from "../interaction/types";
+import {
+  persistBrowserPreferences,
+  readBrowserPreferences,
+} from "./preferences";
+import type { BrowserPreferences, BrowserReadiness } from "./types";
 
 export type ComputerUseController = {
   computerUseEnabled: boolean;
   setComputerUseEnabled: Dispatch<SetStateAction<boolean>>;
-  desktopUseEnabled: boolean;
-  setDesktopUseEnabled: Dispatch<SetStateAction<boolean>>;
-  diagnosticsEnabled: boolean;
-  setDiagnosticsEnabled: Dispatch<SetStateAction<boolean>>;
-  developerModeEnabled: boolean;
-  setDeveloperModeEnabled: Dispatch<SetStateAction<boolean>>;
-  browserRuntimeStatus: BrowserRuntimeStatus | null;
+  browserPreferences: BrowserPreferences;
+  setBrowserDownloadLocation: (path: string | null) => void;
+  setBrowserAskWhereToSave: (enabled: boolean) => void;
+  browserReadiness: BrowserReadiness;
   desktopRuntimeStatus: DesktopRuntimeStatus | null;
-  refreshBrowserRuntimeStatus: () => Promise<void>;
   refreshDesktopRuntimeStatus: () => Promise<void>;
 };
 
-export function useComputerUseController(): ComputerUseController {
-  const [preferences, setPreferences] = useState<InteractionPreferences>(() => {
-    const current = readInteractionPreferences();
-    const legacy = readComputerUsePreference();
-    return { ...current, browserEnabled: current.browserEnabled ?? legacy.enabled };
-  });
-  const computerUseEnabled = preferences.browserEnabled;
-  const desktopUseEnabled = preferences.desktopEnabled;
-  const diagnosticsEnabled = preferences.diagnosticsEnabled;
-  const developerModeEnabled = preferences.developerModeEnabled;
-  const setPreference =
-    (key: keyof InteractionPreferences): Dispatch<SetStateAction<boolean>> =>
-    (value) => {
-      setPreferences((current) => ({
-        ...current,
-        [key]: typeof value === "function" ? value(current[key]) : value,
-      }));
-    };
-  const setComputerUseEnabled = setPreference("browserEnabled");
-  const setDesktopUseEnabled = setPreference("desktopEnabled");
-  const setDiagnosticsEnabled = setPreference("diagnosticsEnabled");
-  const setDeveloperModeEnabled = setPreference("developerModeEnabled");
-  const [browserRuntimeStatus, setBrowserRuntimeStatus] =
-    useState<BrowserRuntimeStatus | null>(null);
+export function useComputerUseController(input: {
+  pluginCatalog: CodexPluginCatalog;
+}): ComputerUseController {
+  const [preferences, setPreferences] = useState(readInteractionPreferences);
+  const [browserPreferences, setBrowserPreferences] = useState(
+    readBrowserPreferences,
+  );
   const [desktopRuntimeStatus, setDesktopRuntimeStatus] =
     useState<DesktopRuntimeStatus | null>(null);
+  const [browserSkillAvailable, setBrowserSkillAvailable] = useState<
+    boolean | null
+  >(null);
 
-  useEffect(() => {
-    persistInteractionPreferences(preferences);
-    persistComputerUsePreference({
-      enabled: preferences.browserEnabled,
-    });
-  }, [preferences]);
-
-  async function refreshBrowserRuntimeStatus() {
-    try {
-      setBrowserRuntimeStatus(await readBrowserRuntimeStatus());
-    } catch (error) {
-      setBrowserRuntimeStatus({
-        available: false,
-        defaultBrowser: null,
-        browserSkillVersion: null,
-        browserServiceCompatible: false,
-        message:
-          error instanceof Error
-            ? error.message
-            : "The bundled browser runtime is unavailable.",
-      });
-    }
-  }
+  useEffect(() => persistInteractionPreferences(preferences), [preferences]);
+  useEffect(
+    () => persistBrowserPreferences(browserPreferences),
+    [browserPreferences],
+  );
 
   async function refreshDesktopRuntimeStatus() {
     try {
@@ -86,68 +61,22 @@ export function useComputerUseController(): ComputerUseController {
         version: null,
         serviceCompatible: false,
         accessibilityTrusted: false,
+        screenRecordingTrusted: false,
         message:
           error instanceof Error
             ? error.message
-            : "Desktop Computer Use is unavailable.",
+            : "Computer Use is unavailable.",
       });
     }
   }
 
   useEffect(() => {
-    let disposed = false;
-    void readBrowserRuntimeStatus().then(
-      (status) => {
-        if (!disposed) setBrowserRuntimeStatus(status);
-      },
-      (error) => {
-        if (disposed) return;
-        setBrowserRuntimeStatus({
-          available: false,
-          defaultBrowser: null,
-          browserSkillVersion: null,
-          browserServiceCompatible: false,
-          message:
-            error instanceof Error
-              ? error.message
-              : "The bundled browser runtime is unavailable.",
-        });
-      },
-    );
-    return () => {
-      disposed = true;
-    };
-  }, []);
-
-  useEffect(() => {
-    let disposed = false;
-    void readDesktopRuntimeStatus().then(
-      (status) => {
-        if (!disposed) setDesktopRuntimeStatus(status);
-      },
-      (error) => {
-        if (disposed) return;
-        setDesktopRuntimeStatus({
-          available: false,
-          version: null,
-          serviceCompatible: false,
-          accessibilityTrusted: false,
-          message:
-            error instanceof Error
-              ? error.message
-              : "Desktop Computer Use is unavailable.",
-        });
-      },
-    );
-    return () => {
-      disposed = true;
-    };
+    void refreshDesktopRuntimeStatus();
   }, []);
 
   useEffect(() => {
     const refreshWhenVisible = () => {
       if (document.visibilityState === "visible") {
-        void refreshBrowserRuntimeStatus();
         void refreshDesktopRuntimeStatus();
       }
     };
@@ -159,18 +88,88 @@ export function useComputerUseController(): ComputerUseController {
     };
   }, []);
 
-  return {
-    computerUseEnabled,
-    setComputerUseEnabled,
-    desktopUseEnabled,
-    setDesktopUseEnabled,
-    diagnosticsEnabled,
-    setDiagnosticsEnabled,
-    developerModeEnabled,
-    setDeveloperModeEnabled,
-    browserRuntimeStatus,
-    desktopRuntimeStatus,
-    refreshBrowserRuntimeStatus,
-    refreshDesktopRuntimeStatus,
+  const browserPlugin = findPlugin(
+    input.pluginCatalog,
+    "browser@openai-bundled",
+    "browser",
+  );
+  const browserPluginReady = pluginIsReady(browserPlugin);
+
+  useEffect(() => {
+    if (!browserPluginReady) {
+      setBrowserSkillAvailable(false);
+      return;
+    }
+
+    let cancelled = false;
+    setBrowserSkillAvailable(null);
+    void listDefaultCodexSkills()
+      .then((skills) => {
+        if (cancelled) return;
+        setBrowserSkillAvailable(
+          skills.some((skill) =>
+            `${skill.id} ${skill.name}`
+              .toLocaleLowerCase()
+              .includes("control-in-app-browser"),
+          ),
+        );
+      })
+      .catch(() => {
+        if (!cancelled) setBrowserSkillAvailable(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [browserPluginReady, input.pluginCatalog.refreshedAt]);
+
+  const browserReadiness: BrowserReadiness = {
+    available: browserPluginReady && browserSkillAvailable === true,
+    message: browserPlugin
+      ? browserPluginReady
+        ? browserSkillAvailable === true
+          ? "Browser plugin ready with an isolated in-app profile."
+          : browserSkillAvailable === null
+            ? "Checking whether this Codex host supports the in-app browser."
+            : "The Browser plugin is installed, but this Codex host does not report in-app browser support."
+        : browserPlugin.installed
+          ? "Enable the Browser plugin to use the in-app browser."
+          : "Install the Browser plugin to use the in-app browser."
+      : "Browser plugin is not available from configured marketplaces.",
+    pluginId: browserPlugin?.id ?? null,
+    pluginInstalled: browserPlugin?.installed ?? false,
+    pluginEnabled: browserPlugin?.enabled ?? false,
+    isolatedProfile: true,
+    profileImportAvailable: false,
   };
+
+  return useMemo(
+    () => ({
+      computerUseEnabled: preferences.computerUseEnabled,
+      setComputerUseEnabled: (value: SetStateAction<boolean>) =>
+        setPreferences((current) => ({
+          computerUseEnabled:
+            typeof value === "function"
+              ? value(current.computerUseEnabled)
+              : value,
+        })),
+      browserPreferences,
+      setBrowserDownloadLocation: (downloadLocation: string | null) =>
+        setBrowserPreferences((current) => ({ ...current, downloadLocation })),
+      setBrowserAskWhereToSave: (askWhereToSave: boolean) =>
+        setBrowserPreferences((current) => ({ ...current, askWhereToSave })),
+      browserReadiness,
+      desktopRuntimeStatus,
+      refreshDesktopRuntimeStatus,
+    }),
+    [
+      browserPreferences,
+      browserReadiness.available,
+      browserReadiness.message,
+      browserReadiness.pluginEnabled,
+      browserReadiness.pluginId,
+      browserReadiness.pluginInstalled,
+      desktopRuntimeStatus,
+      preferences.computerUseEnabled,
+    ],
+  );
 }

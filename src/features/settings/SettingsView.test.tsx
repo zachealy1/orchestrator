@@ -9,13 +9,17 @@ import {
 function actions(): SettingsViewActions {
   return {
     setComputerUseEnabled: vi.fn(),
-    setDesktopUseEnabled: vi.fn(),
-    setDiagnosticsEnabled: vi.fn(),
-    setDeveloperModeEnabled: vi.fn(),
-    installDefaultBrowserExtension: vi.fn(),
-    refreshBrowserRuntimeStatus: vi.fn(),
-    openDefaultBrowserAccessibilitySettings: vi.fn(),
-    enableSafariAutomation: vi.fn(),
+    setBrowserAskWhereToSave: vi.fn(),
+    chooseBrowserDownloadLocation: vi.fn(),
+    resetBrowserDownloadLocation: vi.fn(),
+    clearBrowserData: vi.fn(),
+    importBrowserProfile: vi.fn(),
+    openPlugins: vi.fn(),
+    refreshComputerUseStatus: vi.fn(),
+    openAccessibilitySettings: vi.fn(),
+    openScreenRecordingSettings: vi.fn(),
+    revokeAlwaysAllowedApplication: vi.fn(),
+    dismissLegacyBrowserMigrationNotice: vi.fn(),
     connectGithub: vi.fn(),
     showGithubLogin: vi.fn(),
     disconnectGithub: vi.fn(),
@@ -38,15 +42,18 @@ function actions(): SettingsViewActions {
 function model(overrides: Partial<SettingsViewModel> = {}): SettingsViewModel {
   return {
     computerUseEnabled: true,
-    desktopUseEnabled: false,
-    diagnosticsEnabled: false,
-    developerModeEnabled: false,
-    browserRuntimeStatus: {
+    browserPreferences: {
+      downloadLocation: null,
+      askWhereToSave: false,
+    },
+    browserReadiness: {
       available: true,
       message: null,
-      defaultBrowser: null,
-      browserSkillVersion: "26.818.31338",
-      browserServiceCompatible: true,
+      pluginId: "browser@openai-bundled",
+      pluginInstalled: true,
+      pluginEnabled: true,
+      isolatedProfile: true,
+      profileImportAvailable: false,
     },
     desktopRuntimeStatus: {
       available: true,
@@ -54,7 +61,59 @@ function model(overrides: Partial<SettingsViewModel> = {}): SettingsViewModel {
       version: "1.0.1000816",
       serviceCompatible: true,
       accessibilityTrusted: true,
+      screenRecordingTrusted: true,
     },
+    pluginCatalog: {
+      marketplaces: [],
+      plugins: [
+        {
+          id: "browser@openai-bundled",
+          name: "browser",
+          displayName: "Browser",
+          description: null,
+          marketplaceName: "openai-bundled",
+          marketplacePath: null,
+          version: "26.818.41509",
+          installed: true,
+          enabled: true,
+          installPolicy: "AVAILABLE",
+          authPolicy: "ON_INSTALL",
+          mustShowInstallationInterstitial: false,
+          available: true,
+          unavailableReason: null,
+          keywords: [],
+          capabilities: [],
+          logoUrl: null,
+          readiness: { skills: 1, apps: 0, mcpServers: 0, hooks: 0 },
+        },
+        {
+          id: "computer-use@openai-bundled",
+          name: "computer-use",
+          displayName: "Computer Use",
+          description: null,
+          marketplaceName: "openai-bundled",
+          marketplacePath: null,
+          version: "1.0.1000816",
+          installed: true,
+          enabled: true,
+          installPolicy: "AVAILABLE",
+          authPolicy: "ON_INSTALL",
+          mustShowInstallationInterstitial: false,
+          available: true,
+          unavailableReason: null,
+          keywords: [],
+          capabilities: [],
+          logoUrl: null,
+          readiness: { skills: 1, apps: 0, mcpServers: 1, hooks: 0 },
+        },
+      ],
+      featuredPluginIds: [],
+      errors: [],
+      refreshedAt: "2026-08-29T00:00:00.000Z",
+    },
+    pluginsLoading: false,
+    alwaysAllowedApplications: [],
+    legacyBrowserMigrationNotice: false,
     githubConnection: null,
     githubConnectionPending: false,
     notificationPreferences: {
@@ -107,13 +166,63 @@ describe("SettingsView", () => {
     render(<SettingsView model={model()} actions={handlers} />);
 
     fireEvent.click(
-      screen.getByRole("checkbox", { name: /enable browser computer use/i }),
+      screen.getByRole("checkbox", { name: /any approved app/i }),
     );
 
     expect(handlers.setComputerUseEnabled).toHaveBeenCalledWith(false);
   });
 
-  it("labels the browser runtime status card as Computer use", () => {
+  it("wires Browser preferences and Computer Use permission management", () => {
+    const handlers = actions();
+    render(
+      <SettingsView
+        model={model({
+          desktopRuntimeStatus: {
+            available: false,
+            message: "Grant the required macOS permissions.",
+            version: "1.0.1000816",
+            serviceCompatible: true,
+            accessibilityTrusted: false,
+            screenRecordingTrusted: false,
+          },
+          alwaysAllowedApplications: [
+            {
+              id: "com.example.editor",
+              name: "Editor",
+              bundleId: "com.example.editor",
+              approvedAt: "2026-08-29T08:00:00.000Z",
+            },
+          ],
+        })}
+        actions={handlers}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Clear data" }));
+    fireEvent.click(screen.getByRole("button", { name: "Choose" }));
+    fireEvent.click(
+      screen.getByRole("checkbox", {
+        name: "Ask where to save browser downloads",
+      }),
+    );
+    const permissionButtons = screen.getAllByRole("button", {
+      name: "Open settings",
+    });
+    fireEvent.click(permissionButtons[0]);
+    fireEvent.click(permissionButtons[1]);
+    fireEvent.click(screen.getByRole("button", { name: "Revoke" }));
+
+    expect(handlers.clearBrowserData).toHaveBeenCalledOnce();
+    expect(handlers.chooseBrowserDownloadLocation).toHaveBeenCalledOnce();
+    expect(handlers.setBrowserAskWhereToSave).toHaveBeenCalledWith(true);
+    expect(handlers.openScreenRecordingSettings).toHaveBeenCalledOnce();
+    expect(handlers.openAccessibilitySettings).toHaveBeenCalledOnce();
+    expect(handlers.revokeAlwaysAllowedApplication).toHaveBeenCalledWith(
+      "com.example.editor",
+    );
+  });
+
+  it("renders Browser and Computer use as separate status cards", () => {
     const { rerender } = render(
       <SettingsView model={model()} actions={actions()} />,
     );
@@ -122,13 +231,16 @@ describe("SettingsView", () => {
     });
     computerUseSection.scrollIntoView = vi.fn();
 
-    const readyCard = screen.getByRole("button", {
-      name: /computer use\s*browser ready/i,
+    const browserCard = screen.getByRole("button", {
+      name: /browser\s*ready/i,
     });
-    expect(within(readyCard).getByText("Computer use")).toBeInTheDocument();
-    expect(screen.queryByText("Browser")).toBeNull();
+    const computerUseCard = screen.getByRole("button", {
+      name: /computer use\s*ready/i,
+    });
+    expect(within(browserCard).getByText("Browser")).toBeInTheDocument();
+    expect(within(computerUseCard).getByText("Computer use")).toBeInTheDocument();
 
-    fireEvent.click(readyCard);
+    fireEvent.click(computerUseCard);
     expect(computerUseSection.scrollIntoView).toHaveBeenCalledWith({
       behavior: "smooth",
       block: "start",
@@ -137,12 +249,14 @@ describe("SettingsView", () => {
     rerender(
       <SettingsView
         model={model({
-          browserRuntimeStatus: {
+          browserReadiness: {
             available: false,
             message: "The browser runtime is unavailable.",
-            defaultBrowser: null,
-            browserSkillVersion: "26.818.31338",
-            browserServiceCompatible: true,
+            pluginId: null,
+            pluginInstalled: false,
+            pluginEnabled: false,
+            isolatedProfile: true,
+            profileImportAvailable: false,
           },
         })}
         actions={actions()}
@@ -150,7 +264,7 @@ describe("SettingsView", () => {
     );
 
     expect(
-      screen.getByRole("button", { name: /computer use\s*not available/i }),
+      screen.getByRole("button", { name: /browser\s*not available/i }),
     ).toBeInTheDocument();
   });
 
@@ -169,24 +283,28 @@ describe("SettingsView", () => {
     );
 
     [
+      "Browser settings",
       "Computer use settings",
       "Notification settings",
       "GitHub settings",
       "Codex settings",
     ].forEach((regionName) => {
-      const statuses = within(
-        screen.getByRole("region", { name: regionName }),
-      ).getAllByRole("status");
+      const region = screen.getByRole("region", { name: regionName });
+      const statuses = region.querySelectorAll(
+        ".settings-detail-header [role='status']",
+      );
       expect(statuses).toHaveLength(1);
       expect(statuses[0]).toHaveClass("settings-status-badge");
     });
-    expect(screen.getAllByRole("status")).toHaveLength(4);
-    expect(screen.getByRole("status", { name: "Available" })).toHaveClass(
-      "positive",
-    );
-    expect(screen.getByRole("status", { name: "Allowed" })).toHaveClass(
-      "positive",
-    );
+    expect(
+      document.querySelectorAll(".settings-detail-header [role='status']"),
+    ).toHaveLength(5);
+    screen.getAllByRole("status", { name: "Available" }).forEach((status) => {
+      expect(status).toHaveClass("positive");
+    });
+    screen.getAllByRole("status", { name: "Allowed" }).forEach((status) => {
+      expect(status).toHaveClass("positive");
+    });
     screen.getAllByRole("status", { name: "Connected" }).forEach((status) => {
       expect(status).toHaveClass("positive");
     });
@@ -199,7 +317,7 @@ describe("SettingsView", () => {
     rerender(
       <SettingsView
         model={model({
-          browserRuntimeStatus: null,
+          pluginsLoading: true,
           githubConnectionPending: true,
           notificationPermission: "not-enabled",
           codexConnected: false,
@@ -208,9 +326,9 @@ describe("SettingsView", () => {
       />,
     );
 
-    expect(screen.getByRole("status", { name: "Checking" })).toHaveClass(
-      "pending",
-    );
+    screen.getAllByRole("status", { name: "Checking" }).forEach((status) => {
+      expect(status).toHaveClass("pending");
+    });
     expect(screen.getByRole("status", { name: "Connecting" })).toHaveClass(
       "pending",
     );
@@ -224,12 +342,14 @@ describe("SettingsView", () => {
     rerender(
       <SettingsView
         model={model({
-          browserRuntimeStatus: {
+          browserReadiness: {
             available: false,
             message: "The browser runtime is unavailable.",
-            defaultBrowser: null,
-            browserSkillVersion: "26.818.31338",
-            browserServiceCompatible: true,
+            pluginId: null,
+            pluginInstalled: false,
+            pluginEnabled: false,
+            isolatedProfile: true,
+            profileImportAvailable: false,
           },
           githubConnection: githubConnection({
             available: false,
@@ -293,7 +413,7 @@ describe("SettingsView", () => {
     });
   });
 
-  it("opens connection settings from the restored Manage buttons", () => {
+  it("opens connection settings from native full-row buttons", () => {
     render(<SettingsView model={model()} actions={actions()} />);
     const connections = screen.getByRole("region", {
       name: "Connections overview",
@@ -307,21 +427,22 @@ describe("SettingsView", () => {
     codexSettings.scrollIntoView = vi.fn();
     githubSettings.scrollIntoView = vi.fn();
 
-    const manageButtons = within(connections).getAllByRole("button", {
-      name: "Manage",
-    });
+    const connectionRows = within(connections).getAllByRole("button");
 
-    expect(manageButtons).toHaveLength(2);
-    expect(
-      within(connections).getByText("Codex account").closest("button"),
-    ).toBeNull();
-    expect(within(connections).getByText("GitHub").closest("button")).toBeNull();
-    fireEvent.click(manageButtons[0]);
+    expect(connectionRows).toHaveLength(2);
+    expect(within(connections).queryByText("Manage")).toBeNull();
+    expect(within(connections).getByText("Codex account").closest("button")).toBe(
+      connectionRows[0],
+    );
+    expect(within(connections).getByText("GitHub").closest("button")).toBe(
+      connectionRows[1],
+    );
+    fireEvent.click(connectionRows[0]);
     expect(codexSettings.scrollIntoView).toHaveBeenCalledWith({
       behavior: "smooth",
       block: "start",
     });
-    fireEvent.click(manageButtons[1]);
+    fireEvent.click(connectionRows[1]);
     expect(githubSettings.scrollIntoView).toHaveBeenCalledWith({
       behavior: "smooth",
       block: "start",
@@ -361,6 +482,9 @@ describe("SettingsView", () => {
       screen.queryByRole("navigation", { name: "Settings sections" }),
     ).toBeNull();
     expect(screen.queryByText("Browser & computer use")).toBeNull();
+    expect(screen.queryByText(/Install extension/i)).toBeNull();
+    expect(screen.queryByText(/Safari automation/i)).toBeNull();
+    expect(screen.queryByText(/default browser/i)).toBeNull();
     expect(screen.queryByText("Notification rules")).toBeNull();
     expect(screen.queryByText("Theme")).not.toBeInTheDocument();
     expect(screen.queryByText("Choose how Orchestrator looks.")).toBeNull();

@@ -332,21 +332,7 @@ describe("Application runtime scenarios 3", () => {
           cwd: workspace.path,
           approvalPolicy: "untrusted",
           approvalsReviewer: "user",
-          config: expect.objectContaining({
-            shell_environment_policy: expect.objectContaining({
-              set: expect.objectContaining({
-                BROWSER_USE_AVAILABLE_BACKENDS: "cdp",
-                BROWSER_AUTH_EVAL_EXACT_CDP_BACKEND_SOCKET: "true",
-              }),
-            }),
-          }),
-        }),
-      );
-      expect(mocks.prepareBrowserSessionMock).toHaveBeenCalledWith(
-        expect.objectContaining({
-          profileKey: "default",
-          workspaceId: workspace.id,
-          chatId: 501,
+          config: {},
         }),
       );
       expect(
@@ -2135,6 +2121,5 @@ describe("Application runtime scenarios 3", () => {
           collaborationMode: expect.objectContaining({ mode: "default" }),
         }),
       );
-      expect(mocks.prepareBrowserSessionMock).toHaveBeenCalledTimes(2);
     });
 });

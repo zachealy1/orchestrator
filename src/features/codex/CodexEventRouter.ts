@@ -4,7 +4,6 @@ import type {
   CodexProcessEvent,
   CodexProfileKey,
 } from "./types";
-import type { BrowserSessionState } from "../browser/types";
 
 type CodexMessageRoute = {
   accountId: number;
@@ -17,7 +16,6 @@ export type CodexEventHandlers = {
   onNotification: (route: CodexMessageRoute) => void | Promise<void>;
   onServerRequest: (route: CodexMessageRoute) => void | Promise<void>;
   onProcess: (event: CodexProcessEvent) => void | Promise<void>;
-  onBrowserSession: (state: BrowserSessionState) => void | Promise<void>;
   onMalformedEvent?: (eventName: string) => void;
 };
 
@@ -65,49 +63,6 @@ function parseProcessEvent(value: unknown): CodexProcessEvent | null {
   } as CodexProcessEvent;
 }
 
-function parseBrowserSession(value: unknown): BrowserSessionState | null {
-  const validStatuses = new Set([
-    "prepared",
-    "ready",
-    "starting",
-    "running",
-    "awaiting-approval",
-    "stopping",
-    "stopped",
-    "error",
-  ]);
-  if (
-    !isRecord(value) ||
-    typeof value.token !== "string" ||
-    !validStatuses.has(String(value.status)) ||
-    !isRecord(value.target)
-  ) {
-    return null;
-  }
-  const target = value.target;
-  const profileKey = target.profileKey;
-  const accessMode = target.accessMode;
-  if (
-    (profileKey !== "default" &&
-      !(typeof profileKey === "string" && /^account:\d+$/.test(profileKey))) ||
-    typeof target.workspaceId !== "number" ||
-    !Number.isFinite(target.workspaceId) ||
-    target.workspaceId <= 0 ||
-    (target.chatId !== null && typeof target.chatId !== "number") ||
-    (target.runId !== null && typeof target.runId !== "number") ||
-    typeof target.entryId !== "string" ||
-    target.entryId.length === 0 ||
-    (target.threadId !== null && typeof target.threadId !== "string") ||
-    (target.turnId !== null && typeof target.turnId !== "string") ||
-    (accessMode !== "ask-for-approval" && accessMode !== "full-access") ||
-    (value.browserPid !== null && typeof value.browserPid !== "number") ||
-    (value.error !== null && typeof value.error !== "string")
-  ) {
-    return null;
-  }
-  return value as unknown as BrowserSessionState;
-}
-
 export class CodexEventRouter {
   private generation = 0;
   private activeUnlisteners: UnlistenFn[] = [];
@@ -145,11 +100,6 @@ export class CodexEventRouter {
         handlers.onServerRequest,
       ),
       register("codex:process", parseProcessEvent, handlers.onProcess),
-      register(
-        "orchestrator:browser-session",
-        parseBrowserSession,
-        handlers.onBrowserSession,
-      ),
     ]);
 
     return () => {
@@ -166,5 +116,4 @@ export class CodexEventRouter {
 export const codexEventValidation = {
   parseMessageRoute,
   parseProcessEvent,
-  parseBrowserSession,
 };

@@ -8,6 +8,7 @@ import {
   GitBranchPlus,
   MessageSquarePlus,
   Pencil,
+  Puzzle,
   Share2,
   Settings,
   Trash2,
@@ -48,6 +49,7 @@ import { redactInteractionRunEvent } from "../features/interaction/runEventRedac
 import { clampFloatingMenuPosition } from "../lib/contextMenuPosition";
 import {
   cancelCodexLogin,
+  clearBrowserData,
   cancelDefaultProfileThreadTranscript,
   codexDefaultProfileRpc,
   codexRpc,
@@ -59,14 +61,9 @@ import {
   deleteCodexProfile,
   generateWorkspaceCommitMessage,
   generateChatTitle,
-  attachDefaultBrowserTab,
-  focusBrowserSession,
-  installDefaultBrowserExtension,
-  enableSafariAutomation,
   inspectPromptQueueContext,
   inspectDroppedContextPaths,
   listGitBranches,
-  listDefaultBrowserTabs,
   listDefaultCodexSkills,
   listCodexModels,
   listCodexSkills,
@@ -80,31 +77,25 @@ import {
   readDefaultCodexFile,
   readCodexFile,
   readCodexAccount,
-  readBrowserSessionStatus,
   readDesktopRuntimeStatus,
   readProjectedSubagentThread,
   resolveCodexServerRequest,
   resolveDefaultCodexServerRequest,
   removeAgentNotification,
   requestAgentNotificationPermission,
-  prepareBrowserSession,
-  pauseBrowserSession,
   probeLocalWebPreview,
   runPreflight,
   setThreadGoal,
   startCodexLogin,
   stopCodex,
   stopDefaultCodexProfile,
-  stopBrowserSession,
-  takeOverBrowserSession,
-  resumeBrowserSession,
   sendAgentNotification,
   syncDefaultProfileThreadTranscript,
   takePendingAgentNotificationActivation,
-  updateBrowserSessionTarget,
   undoWorkspaceGitDiff,
   openAgentNotificationSettings,
-  openDefaultBrowserAccessibilitySettings,
+  openComputerUseAccessibilitySettings,
+  openComputerUseScreenRecordingSettings,
 } from "../codexClient";
 import {
   fallbackChatTitle,
@@ -375,12 +366,9 @@ import {
   pendingApprovalMatchesEntry,
 } from "../features/notifications/approvalRouting";
 import { SettingsView } from "../features/settings/SettingsView";
-import type {
-  BrowserSessionState,
-  DefaultBrowserTab,
-} from "../features/browser/types";
+import { PluginsView } from "../features/plugins/PluginsView";
+import { usePluginsController } from "../features/plugins/usePluginsController";
 import { useComputerUseController } from "../features/browser/useComputerUseController";
-import { DefaultBrowserTabDialog } from "../features/browser/DefaultBrowserTabDialog";
 import { cleanupAbandonedCodexProfiles } from "../features/accounts/abandonedProfiles";
 import type {
   CodexAccountProfile,
@@ -432,13 +420,13 @@ import { InteractionPanel } from "../features/interaction/InteractionPanel";
 import {
   createInteractionSession,
   registerInteractionSurface,
-  resumeInteractionSession,
   transitionInteractionSession,
 } from "../features/interaction/coordinator";
 import { redactInteractionSession } from "../features/interaction/telemetry";
 import type {
   InteractionSessionState,
   InteractionSurface,
+  AlwaysAllowedApplication,
 } from "../features/interaction/types";
 import {
   BranchCreationDialog,
@@ -734,8 +722,9 @@ function App() {
     updatePromptQueueItemSnapshot,
   } = repositories.promptQueue;
   const {
+    listAlwaysAllowedApplications,
+    revokeAlwaysAllowedApplication,
     upsertSession: upsertInteractionSession,
-    upsertStep: upsertInteractionStep,
   } = repositories.interactions;
   const {
     appendRunEvent,
@@ -1050,20 +1039,17 @@ function App() {
     requestActionLocksRef,
   } = useNotificationController(readAgentNotificationPreferences());
   const { resolvedTheme } = useAppearanceController();
+  const pluginsController = usePluginsController({ enabled: true });
   const {
     computerUseEnabled,
     setComputerUseEnabled,
-    desktopUseEnabled,
-    setDesktopUseEnabled,
-    diagnosticsEnabled,
-    setDiagnosticsEnabled,
-    developerModeEnabled,
-    setDeveloperModeEnabled,
-    browserRuntimeStatus,
+    browserPreferences,
+    setBrowserDownloadLocation,
+    setBrowserAskWhereToSave,
+    browserReadiness,
     desktopRuntimeStatus,
-    refreshBrowserRuntimeStatus,
     refreshDesktopRuntimeStatus,
-  } = useComputerUseController();
+  } = useComputerUseController({ pluginCatalog: pluginsController.catalog });
   const macOsWindowDragRegionsEnabled = useMacOsWindowDragRegionsEnabled();
   const selfWindowDragRegion = windowDragRegionValue(
     macOsWindowDragRegionsEnabled,
@@ -1103,13 +1089,20 @@ function App() {
   const [githubLoginOpening, setGithubLoginOpening] = useState(false);
   const [githubLoginCopied, setGithubLoginCopied] = useState(false);
   const [githubLoginError, setGithubLoginError] = useState<string | null>(null);
-  const [defaultBrowserTabDialog, setDefaultBrowserTabDialog] = useState<{
-    token: string;
-    tabs: DefaultBrowserTab[];
-    loading: boolean;
-    attachingTabId: number | null;
-    error: string | null;
-  } | null>(null);
+  const [alwaysAllowedApplications, setAlwaysAllowedApplications] = useState<
+    AlwaysAllowedApplication[]
+  >([]);
+  const [legacyBrowserMigrationNotice, setLegacyBrowserMigrationNotice] =
+    useState(readLegacyBrowserMigrationNotice);
+  useEffect(() => {
+    let disposed = false;
+    void listAlwaysAllowedApplications().then((applications) => {
+      if (!disposed) setAlwaysAllowedApplications(applications);
+    });
+    return () => {
+      disposed = true;
+    };
+  }, [listAlwaysAllowedApplications]);
   const githubConnectRequestRef = useRef(false);
   const githubConnectionPending =
     githubLoginStarting || githubConnection?.status === "connecting";
@@ -3359,12 +3352,6 @@ function App() {
     let unsubscribe: (() => void) | null = null;
     void appServices.codexEvents
       .subscribe({
-        onBrowserSession: (state) => {
-          const control = [...activeRunRegistry.values()].find(
-            (candidate) => candidate.browserSession?.token === state.token,
-          );
-          if (control) updateRunControlBrowserState(control, state);
-        },
         onNotification: ({ accountId, profileKey, message }) =>
           handleCodexNotification(accountId, profileKey, message),
         onServerRequest: ({
@@ -3926,21 +3913,6 @@ function App() {
     });
   }
 
-  async function syncActiveBrowserChatTitle(chatId: number, title: string) {
-    const chat = await getChatRecord(chatId);
-    if (!chat) return;
-    const control = findRunControlByChat(chat.workspace_id, chatId);
-    const browserSession = control?.browserSession;
-    if (!control || !browserSession) return;
-    updateRunControlBrowserState(
-      control,
-      await updateBrowserSessionTarget(browserSession.token, {
-        ...browserSession.state.target,
-        chatTitle: title,
-      }),
-    );
-  }
-
   async function reconcileKanbanNativeTasks(workspace: Workspace) {
     const existing = nativeTaskReconciliationInFlightRef.current.get(
       workspace.id,
@@ -4180,7 +4152,6 @@ function App() {
         }
         if (await completeChatTitleGeneration(request.chatId, title)) {
           updateHistoryChatTitle(request.chatId, title, "complete");
-          void syncActiveBrowserChatTitle(request.chatId, title).catch(() => undefined);
           await syncSharedChatTitle(request.chatId, title).catch((error) => {
             console.warn("Could not synchronize the generated Codex title", error);
           });
@@ -4199,10 +4170,6 @@ function App() {
           setStatusMessage(
             "AI title generation failed; using the prompt-based title.",
           );
-          void syncActiveBrowserChatTitle(
-            request.chatId,
-            request.fallbackTitle,
-          ).catch(() => undefined);
         }
       } finally {
         chatTitleGenerationsInFlightRef.current.delete(request.chatId);
@@ -5406,58 +5373,6 @@ function App() {
     });
   }
 
-  function persistRunInteractionActivities(control: ActiveRunControl) {
-    const session = control.interactionSession;
-    if (!session || !control.interactionDiagnosticsEnabled) return;
-    control.runView.toolActivityOrder.forEach((activityId, index) => {
-      const activity = control.runView.toolActivitiesById[activityId];
-      if (
-        !activity ||
-        (activity.category !== "browser" &&
-          !/computer-use|computer_use|desktop/iu.test(
-            `${activity.server} ${activity.tool}`,
-          ))
-      ) {
-        return;
-      }
-      const isBrowser = activity.category === "browser";
-      const resultStatus =
-        activity.status === "completed"
-          ? "provider_reported_complete"
-          : activity.status === "failed"
-            ? "failed"
-            : activity.status === "declined"
-              ? "blocked"
-              : activity.status === "interrupted"
-                ? "uncertain"
-                : null;
-      void upsertInteractionStep({
-        id: `${session.id}:${activity.id}`,
-        sessionId: session.id,
-        sequence: index + 1,
-        surfaceKind: isBrowser ? "browser" : "desktop",
-        actionKind: activity.tool,
-        groundingKind: "provider-reported",
-        consequence: "unclassified",
-        policyDecision: "provider-gate",
-        resultStatus,
-        retryCount: 0,
-        durationMs: activity.durationMs,
-        errorCode: resultStatus === "failed" ? "provider-action-failed" : null,
-        observationGeneration:
-          session.currentSurfaceId && session.surfaces[session.currentSurfaceId]
-            ? session.surfaces[session.currentSurfaceId].generation
-            : 0,
-        stateHashBefore: null,
-        stateHashAfter: null,
-        startedAt: activity.startedAt ?? session.startedAt,
-        completedAt: activity.completedAt,
-      }).catch((error) => {
-        console.error("Could not persist a redacted interaction step", error);
-      });
-    });
-  }
-
   function setRunInteractionState(
     control: ActiveRunControl,
     next: InteractionSessionState,
@@ -5508,61 +5423,10 @@ function App() {
     persistRunInteractionSession(control);
   }
 
-  function updateRunControlBrowserState(
-    control: ActiveRunControl,
-    state: BrowserSessionState,
-  ) {
-    if (
-      !control.browserSession ||
-      control.browserSession.token !== state.token
-    ) {
-      return;
-    }
-    control.browserSession = {
-      ...control.browserSession,
-      state,
-    };
-    activeRunRegistry.touch();
-  }
-
-  async function refreshRunControlBrowserState(control: ActiveRunControl) {
-    const token = control.browserSession?.token;
-    if (!token) return;
-    try {
-      updateRunControlBrowserState(
-        control,
-        await readBrowserSessionStatus(token),
-      );
-    } catch {
-      // Native backend events remain authoritative; this refresh is supplementary.
-    }
-  }
-
-  function setRunControlBrowserLifecycle(
-    control: ActiveRunControl,
-    status: BrowserSessionState["status"],
-    error: string | null = null,
-  ) {
-    const session = control.browserSession;
-    if (!session) return;
-    updateRunControlBrowserState(control, {
-      ...session.state,
-      status,
-      error,
-    });
-    if (status === "paused") {
-      setRunInteractionState(control, "paused");
-    } else if (status === "takeover") {
-      setRunInteractionState(control, "takeover");
-    } else if (status === "error") {
-      setRunInteractionState(control, "failed");
-    }
-  }
-
-  function applyBrowserLifecycleNotification(
+  function applyInteractionLifecycleNotification(
     control: ActiveRunControl,
     method: string | null,
-    _params: Record<string, unknown>,
+    params: Record<string, unknown>,
   ) {
     if (
       method === "serverRequest/resolved" &&
@@ -5570,32 +5434,90 @@ function App() {
     ) {
       setRunInteractionState(control, "awaiting-model");
     }
-    if (!control.browserSession) return;
     if (method === "turn/started") {
-      setRunControlBrowserLifecycle(control, "running");
       if (control.interactionSession?.state === "provisioning") {
         setRunInteractionState(control, "observing");
       }
       if (control.interactionSession?.state === "observing") {
         setRunInteractionState(control, "awaiting-model");
       }
-      void refreshRunControlBrowserState(control);
-      return;
     }
-    if (
-      method === "turn/completed" ||
-      method === "turn/interrupted" ||
-      method === "error"
-    ) {
-      void refreshRunControlBrowserState(control);
+    if (method === "item/started" || method === "item/completed") {
+      const item = readObject(params.item);
+      const providerIdentity = [
+        readString(item.type),
+        readString(item.server),
+        readString(item.tool),
+        readString(item.name),
+      ]
+        .filter((value): value is string => Boolean(value))
+        .join(" ");
+      const isBrowser = /browser|chrome|edge|brave|opera|vivaldi/iu.test(
+        providerIdentity,
+      );
+      const isDesktop = /computer[-_ ]?use|desktop/iu.test(providerIdentity);
+      if (
+        isBrowser &&
+        control.interactionSession &&
+        !Object.values(control.interactionSession.surfaces).some(
+          (surface) => surface.kind === "browser",
+        )
+      ) {
+        registerRunInteractionSurface(control, {
+          id: `browser:${readString(item.server) ?? "plugin"}`,
+          kind: "browser",
+          provider: readString(item.server) ?? "openai-browser",
+          providerVersion: null,
+          title: "Browser",
+          origin: null,
+          bundleId: null,
+          generation: 1,
+          capabilities: {
+            semanticElements: true,
+            screenshots: true,
+            coordinateActions: true,
+            tabs: true,
+            windows: true,
+            dialogs: true,
+            downloads: true,
+            uploads: false,
+            clipboard: false,
+            arbitraryCode: false,
+          },
+        });
+      }
+      if (
+        method === "item/started" &&
+        control.interactionSession?.state === "awaiting-model"
+      ) {
+        setRunInteractionState(control, "acting");
+      } else if (
+        method === "item/completed" &&
+        control.interactionSession?.state === "acting"
+      ) {
+        setRunInteractionState(control, "verifying");
+        setRunInteractionState(control, "observing");
+      }
+      if (
+        isDesktop &&
+        !control.desktopUseEnabled &&
+        control.threadId &&
+        control.turnId
+      ) {
+        void interruptTurnForProfile(
+          control.profileKey,
+          control.accountId,
+          control.threadId,
+          control.turnId,
+        ).catch(() => undefined);
+      }
     }
   }
 
-  async function cleanupRunBrowserSession(
+  async function cleanupRunInteractionSubscription(
     control: ActiveRunControl,
     options: { unsubscribe?: boolean } = {},
   ) {
-    const session = control.browserSession;
     if (options.unsubscribe !== false && control.threadId) {
       await codexRpcForProfile(
         control.profileKey,
@@ -5604,10 +5526,6 @@ function App() {
         { threadId: control.threadId },
       ).catch(() => undefined);
     }
-    if (!session) return;
-    control.browserSession = null;
-    activeRunRegistry.touch();
-    await stopBrowserSession(session.token).catch(() => undefined);
   }
 
   function clearUnroutedApprovalsForRun(
@@ -5854,7 +5772,7 @@ function App() {
 
   function removeRunControl(
     control: ActiveRunControl,
-    options: { cleanupBrowser?: boolean } = {},
+    options: { cleanupInteraction?: boolean } = {},
   ) {
     if (activeRunRegistry.get(control.clientId) !== control) return;
     if (control.runView.status === "completed") {
@@ -5877,8 +5795,8 @@ function App() {
       appServices.runCoordinator.tryTransition(control.clientId, "cancelling");
     }
     cancelWebPreviewDetection(control);
-    if (options.cleanupBrowser !== false) {
-      void cleanupRunBrowserSession(control);
+    if (options.cleanupInteraction !== false) {
+      void cleanupRunInteractionSubscription(control);
     } else if (control.threadId) {
       void codexRpcForProfile(
         control.profileKey,
@@ -7251,7 +7169,7 @@ function App() {
       }
     }
 
-    removeRunControl(control, { cleanupBrowser: false });
+    removeRunControl(control, { cleanupInteraction: false });
     setStatusMessage(
       goalClearError
         ? `Codex run stopped, but its Goal Mode state could not be cleared: ${goalClearError}`
@@ -7280,158 +7198,12 @@ function App() {
       }
     }
     await restoreRunNativeTaskSourceRoot(control);
-    void cleanupRunBrowserSession(control, { unsubscribe: false });
+    void cleanupRunInteractionSubscription(control, { unsubscribe: false });
     setRunInteractionState(control, "stopped");
     return {
       stopped: true,
       goalCleared: goalClearError === null,
     };
-  }
-
-  async function focusSelectedBrowserSession() {
-    const control = selectedActiveRunControl;
-    const token = control?.browserSession?.token;
-    if (!control || !token) return;
-    try {
-      updateRunControlBrowserState(
-        control,
-        await focusBrowserSession(token),
-      );
-    } catch (error) {
-      setStatusMessage(
-        error instanceof Error ? error.message : String(error),
-      );
-    }
-  }
-
-  async function stopSelectedBrowserSession() {
-    const control = selectedActiveRunControl;
-    if (!control?.browserSession) return;
-    await stopActiveRun(control);
-  }
-
-  async function pauseSelectedBrowserSession() {
-    const control = selectedActiveRunControl;
-    const token = control?.browserSession?.token;
-    if (!control || !token) return;
-    try {
-      updateRunControlBrowserState(control, await pauseBrowserSession(token));
-      setRunInteractionState(control, "paused");
-      setStatusMessage("Browser control paused.");
-    } catch (error) {
-      setStatusMessage(errorMessage(error));
-    }
-  }
-
-  async function takeOverSelectedBrowserSession() {
-    const control = selectedActiveRunControl;
-    const token = control?.browserSession?.token;
-    if (!control || !token) return;
-    try {
-      updateRunControlBrowserState(
-        control,
-        await takeOverBrowserSession(token),
-      );
-      setRunInteractionState(control, "takeover");
-      await focusBrowserSession(token).catch(() => undefined);
-      setStatusMessage(
-        "Browser control released. Resume when you are finished.",
-      );
-    } catch (error) {
-      setStatusMessage(errorMessage(error));
-    }
-  }
-
-  async function resumeSelectedBrowserSession() {
-    const control = selectedActiveRunControl;
-    const token = control?.browserSession?.token;
-    if (!control || !token) return;
-    try {
-      updateRunControlBrowserState(control, await resumeBrowserSession(token));
-      if (
-        control.interactionSession?.state === "paused" ||
-        control.interactionSession?.state === "takeover"
-      ) {
-        control.interactionSession = resumeInteractionSession(
-          control.interactionSession,
-        );
-        activeRunRegistry.touch();
-        persistRunInteractionSession(control);
-      }
-      setStatusMessage("Browser control resumed with fresh page state.");
-    } catch (error) {
-      setStatusMessage(errorMessage(error));
-    }
-  }
-
-  async function loadDefaultBrowserTabsForSession(token: string) {
-    setDefaultBrowserTabDialog((current) =>
-      current?.token === token
-        ? { ...current, loading: true, error: null }
-        : {
-            token,
-            tabs: [],
-            loading: true,
-            attachingTabId: null,
-            error: null,
-          },
-    );
-    try {
-      const tabs = await listDefaultBrowserTabs(token);
-      setDefaultBrowserTabDialog((current) =>
-        current?.token === token
-          ? { ...current, tabs, loading: false, error: null }
-          : current,
-      );
-    } catch (error) {
-      setDefaultBrowserTabDialog((current) =>
-        current?.token === token
-          ? {
-              ...current,
-              loading: false,
-              error: errorMessage(error),
-            }
-          : current,
-      );
-    }
-  }
-
-  function openSelectedBrowserTabDialog() {
-    const session = selectedActiveRunControl?.browserSession;
-    if (!session || session.state.backend !== "browser-bridge") return;
-    void loadDefaultBrowserTabsForSession(session.token);
-  }
-
-  async function attachTabToSelectedBrowserSession(token: string, tabId: number) {
-    const control = selectedActiveRunControl;
-    if (!control?.browserSession || control.browserSession.token !== token) {
-      setDefaultBrowserTabDialog(null);
-      setStatusMessage("The browser session changed before the tab was attached.");
-      return;
-    }
-    setDefaultBrowserTabDialog((current) =>
-      current?.token === token
-        ? { ...current, attachingTabId: tabId, error: null }
-        : current,
-    );
-    try {
-      updateRunControlBrowserState(
-        control,
-        await attachDefaultBrowserTab(token, tabId),
-      );
-      setDefaultBrowserTabDialog(null);
-      setStatusMessage("Browser tab attached to this chat.");
-    } catch (error) {
-      setDefaultBrowserTabDialog((current) =>
-        current?.token === token
-          ? {
-              ...current,
-              attachingTabId: null,
-              error: errorMessage(error),
-            }
-          : current,
-      );
-    }
   }
 
   function openWorkspaceContextMenu(
@@ -7562,7 +7334,6 @@ function App() {
       }));
       setChatRenameDialog(null);
       setStatusMessage("Chat renamed.");
-      void syncActiveBrowserChatTitle(dialog.chat.id, title).catch(() => undefined);
       if (dialog.chat.profile_key === DEFAULT_CODEX_PROFILE_KEY) {
         void syncSharedChatTitle(
           dialog.chat.id,
@@ -9650,43 +9421,6 @@ function App() {
     return request;
   }
 
-  async function requireBundledBrowserSkill(
-    profileKey: CodexProfileKey,
-    accountId: number,
-  ) {
-    const skills = await getCodexSkills(profileKey, accountId).catch((error) => {
-      throw new Error(
-        `Could not verify Codex's bundled Browser skill for this account: ${
-          error instanceof Error ? error.message : String(error)
-        }`,
-      );
-    });
-    let browserSkill = skills.find((skill) => {
-      const identity = `${skill.id} ${skill.name}`.toLowerCase();
-      return (
-        identity.includes("browser:control-in-app-browser") ||
-        identity.includes("control-in-app-browser")
-      );
-    });
-    if (!browserSkill) {
-      const refreshedSkills = await getCodexSkills(
-        profileKey,
-        accountId,
-        true,
-      );
-      browserSkill = refreshedSkills.find((skill) => {
-        const identity = `${skill.id} ${skill.name}`.toLowerCase();
-        return identity.includes("control-in-app-browser");
-      });
-    }
-    if (!browserSkill) {
-      throw new Error(
-        "Codex's bundled Browser skill is unavailable for this account. Update Codex or choose a supported account before starting Computer Use.",
-      );
-    }
-    return browserSkill;
-  }
-
   async function requireBundledComputerUseSkill(
     profileKey: CodexProfileKey,
     accountId: number,
@@ -11552,12 +11286,9 @@ function App() {
       eventSequence: 0,
       queueItemId: snapshot.queueItemId ?? null,
       queueAdvanceBlocked: false,
-      browserSession: null,
-      desktopUseEnabled,
-      interactionDeveloperModeEnabled: developerModeEnabled,
-      interactionDiagnosticsEnabled: diagnosticsEnabled,
+      desktopUseEnabled: computerUseEnabled,
       interactionSession:
-        snapshot.computerUseEnabled || desktopUseEnabled
+        computerUseEnabled || selectedBrowserPluginSkill(snapshot.selectedSkills)
           ? createInteractionSession({
               id: `interaction-${clientId}`,
               runId: null,
@@ -12119,20 +11850,7 @@ function App() {
       runControl.intent === "plan-implementation"
         ? addPlanImplementationProgressInstructions(baseTurnText)
         : baseTurnText;
-    let selectedSkills = runControl.browserSession
-      ? [
-          ...snapshot.selectedSkills.filter(
-            (skill) =>
-              !skill.name.toLowerCase().includes("control-in-app-browser"),
-          ),
-          {
-            id: "browser:control-in-app-browser",
-            name: "browser:control-in-app-browser",
-            description:
-              "Control the run's selected Orchestrator browser session for local web testing.",
-          },
-        ]
-      : snapshot.selectedSkills;
+    let selectedSkills = snapshot.selectedSkills;
     if (runControl.desktopUseEnabled) {
       try {
         const status = await readDesktopRuntimeStatus();
@@ -12461,88 +12179,8 @@ function App() {
   ): Promise<RunThreadStageResult> {
     appServices.runCoordinator.transition(
       runControl.clientId,
-      "preparing-browser",
+      "preparing-interactions",
     );
-    const browserPreparation = snapshot.computerUseEnabled
-      ? await prepareBrowserSession({
-          profileKey: snapshot.profileKey,
-          workspaceId: snapshot.workspace.id,
-          chatId,
-          runId,
-          entryId: runControl.clientId,
-          threadId: initialThreadId,
-          turnId: null,
-          accessMode: snapshot.access.accessMode,
-          developerModeEnabled: runControl.interactionDeveloperModeEnabled,
-          chatTitle:
-            (await getChatRecord(chatId))?.title ?? snapshot.promptFallback,
-        }).catch(() => ({
-          session: null,
-          browserFamily: null,
-          unavailableReason:
-            "Computer Use unavailable; the agent continued without browser access.",
-        }))
-      : null;
-    const browserSession = browserPreparation?.session ?? null;
-    if (browserPreparation) {
-      const browserEvent = createRunEventInput(
-        runControl,
-        "process",
-        "browser/availability",
-        browserSession
-          ? { available: true, family: browserPreparation.browserFamily }
-          : {
-              available: false,
-              family: browserPreparation.browserFamily,
-              reason: browserPreparation.unavailableReason,
-            },
-      );
-      if (browserEvent) await appendRunEvent(browserEvent);
-    }
-    if (browserSession) {
-      await requireBundledBrowserSkill(snapshot.profileKey, snapshot.accountId);
-    } else if (browserPreparation) {
-      const warning =
-        "Computer Use unavailable; the agent continued without browser access.";
-      updateTaskChatEntryRunView(runControl.clientId, (current) => ({
-        ...current,
-        streamEvents: [
-          ...current.streamEvents,
-          {
-            id: `browser-unavailable-${runId}`,
-            kind: "system",
-            text: warning,
-            timestamp: new Date().toISOString(),
-          },
-        ],
-      }));
-    }
-    runControl.browserSession = browserSession;
-    if (browserSession) {
-      registerRunInteractionSurface(runControl, {
-        id: `browser:${browserSession.token}`,
-        kind: "browser",
-        provider: browserSession.state.backend,
-        providerVersion: browserSession.state.browserSkillVersion,
-        title: browserSession.state.target.chatTitle,
-        origin: null,
-        bundleId: browserSession.state.browser?.bundleId ?? null,
-        generation: 1,
-        capabilities: {
-          semanticElements: true,
-          screenshots: true,
-          coordinateActions: true,
-          tabs: true,
-          windows: browserSession.state.backend === "browser-bridge",
-          dialogs: true,
-          downloads: browserSession.state.backend === "browser-bridge",
-          uploads: false,
-          clipboard: false,
-          arbitraryCode: runControl.interactionDeveloperModeEnabled,
-        },
-      });
-      activeRunRegistry.touch();
-    }
     if (runControl.desktopUseEnabled) {
       const desktopStatus = await readDesktopRuntimeStatus().catch(() => null);
       if (desktopStatus?.available && desktopStatus.serviceCompatible) {
@@ -12574,7 +12212,6 @@ function App() {
       ...(snapshot.useOss
         ? { model_provider: "oss", oss_provider: snapshot.ossProvider }
         : {}),
-      ...(browserSession?.config ?? {}),
       ...(snapshot.effort
         ? { model_reasoning_effort: snapshot.effort }
         : {}),
@@ -12916,18 +12553,6 @@ function App() {
       });
     }
     ensureRunControlActive(runControl);
-    if (browserSession) {
-      updateRunControlBrowserState(
-        runControl,
-        await updateBrowserSessionTarget(browserSession.token, {
-          ...browserSession.state.target,
-          chatId,
-          runId,
-          threadId,
-          turnId: null,
-        }),
-      );
-    }
     await updateRun(runId, {
       codexThreadId: threadId,
       model: threadModel ?? snapshot.model,
@@ -12943,7 +12568,6 @@ function App() {
       model: threadModel,
       modelProvider: threadModelProvider,
       activePermissionProfile: threadActivePermissionProfile,
-      browserSession,
       startFreshThread,
       nativeTaskWorkspaceBinding: nativeTaskBinding,
       supersededThreadId,
@@ -13003,12 +12627,6 @@ function App() {
       let threadModelProvider = startedThread.modelProvider;
       let threadActivePermissionProfile =
         startedThread.activePermissionProfile;
-      const browserSession = startedThread.browserSession;
-      if (snapshot.computerUseEnabled && !browserSession) {
-        warnings.push(
-          "Computer Use unavailable; the agent continued without browser access.",
-        );
-      }
       const startThread = startedThread.startFreshThread;
       const nativeTaskWorkspaceBinding =
         startedThread.nativeTaskWorkspaceBinding;
@@ -13323,18 +12941,6 @@ function App() {
           },
         );
         clearPendingAccountHandoff(chatId);
-      }
-      if (browserSession) {
-        updateRunControlBrowserState(
-          runControl,
-          await updateBrowserSessionTarget(browserSession.token, {
-            ...browserSession.state.target,
-            chatId,
-            runId,
-            threadId,
-            turnId: turn.turn.id,
-          }),
-        );
       }
       if (snapshot.queueItemId && runId !== null) {
         const acceptedQueueItem = await acceptPromptQueueItem({
@@ -15542,9 +15148,9 @@ function App() {
       eventType,
       method,
       payload: redactInteractionRunEvent(payload, {
-        browserEnabled:
-          control.browserSession !== null ||
-          Object.values(control.interactionSession?.surfaces ?? {}).some(
+        browserEnabled: Object.values(
+          control.interactionSession?.surfaces ?? {},
+        ).some(
             (surface) => surface.kind === "browser",
           ),
         desktopEnabled:
@@ -16574,7 +16180,7 @@ function App() {
       childRecord.childThreadId !== control.threadId;
     if (isChildThread && childRecord) {
       if (method === "item/started" || method === "item/completed") {
-        applyBrowserLifecycleNotification(control, method, params);
+        applyInteractionLifecycleNotification(control, method, params);
       }
       const updatedChild = updateSubagentFromNotification(
         control,
@@ -16715,7 +16321,7 @@ function App() {
         ? await verifyKanbanExecutionBoundary(control)
         : null);
     inspectCodexMessageForWebPreview(control, message);
-    applyBrowserLifecycleNotification(control, method, params);
+    applyInteractionLifecycleNotification(control, method, params);
 
     if (shouldFrameBatchCodexMessage(message)) {
       queueBufferedRunEvent(control, "notification", method, message);
@@ -16746,7 +16352,6 @@ function App() {
         readString(params.threadId) ?? undefined,
       );
     });
-    persistRunInteractionActivities(control);
     const kanbanPlanAttempt = Boolean(
       control.kanbanAttempt &&
         nextRunView.nativePlan.mode === "plan" &&
@@ -19994,6 +19599,14 @@ function App() {
             <Settings size={17} />
             <span>Settings</span>
           </button>
+          <button
+            className={activeView === "plugins" ? "active" : ""}
+            type="button"
+            onClick={() => setActiveView("plugins")}
+          >
+            <Puzzle size={17} />
+            <span>Plugins</span>
+          </button>
         </nav>
 
         <WorkspaceSidebar
@@ -20069,27 +19682,6 @@ function App() {
           onOpen={() => void handleContinueGithubConnection(false)}
           onCancel={() => void handleCancelGithubConnection()}
           onRetry={() => void handleConnectGithub()}
-        />
-      ) : null}
-
-      {defaultBrowserTabDialog &&
-      selectedActiveRunControl?.browserSession?.token ===
-        defaultBrowserTabDialog.token ? (
-        <DefaultBrowserTabDialog
-          tabs={defaultBrowserTabDialog.tabs}
-          loading={defaultBrowserTabDialog.loading}
-          attachingTabId={defaultBrowserTabDialog.attachingTabId}
-          error={defaultBrowserTabDialog.error}
-          onRefresh={() =>
-            void loadDefaultBrowserTabsForSession(defaultBrowserTabDialog.token)
-          }
-          onAttach={(tabId) =>
-            void attachTabToSelectedBrowserSession(
-              defaultBrowserTabDialog.token,
-              tabId,
-            )
-          }
-          onClose={() => setDefaultBrowserTabDialog(null)}
         />
       ) : null}
 
@@ -20295,27 +19887,11 @@ function App() {
               historyOpen={historyDrawerOpen}
               historyNotificationCount={selectedWorkspaceUnreadChatCount}
               onToggleHistory={toggleHistoryDrawer}
-              browserSession={
-                selectedActiveRunControl?.browserSession?.state ?? null
-              }
-              onFocusBrowser={() => void focusSelectedBrowserSession()}
-              onAttachBrowserTab={openSelectedBrowserTabDialog}
-              onPauseBrowser={() => void pauseSelectedBrowserSession()}
-              onTakeOverBrowser={() => void takeOverSelectedBrowserSession()}
-              onResumeBrowser={() => void resumeSelectedBrowserSession()}
-              onStopBrowser={() => void stopSelectedBrowserSession()}
               windowDragRegionsEnabled={macOsWindowDragRegionsEnabled}
             />
             <InteractionPanel
               session={selectedActiveRunControl?.interactionSession ?? null}
-              browserSession={
-                selectedActiveRunControl?.browserSession?.state ?? null
-              }
               latestActivity={selectedInteractionActivity}
-              onFocusBrowser={() => void focusSelectedBrowserSession()}
-              onPause={() => void pauseSelectedBrowserSession()}
-              onTakeOver={() => void takeOverSelectedBrowserSession()}
-              onResume={() => void resumeSelectedBrowserSession()}
               onStop={() => void stopActiveRun(selectedActiveRunControl)}
             />
             {selectedWorkspace &&
@@ -20790,6 +20366,33 @@ function App() {
           </div>
         ) : null}
 
+        {activeView === "plugins" ? (
+          <div
+            className="view-stack plugins-view-stack"
+            data-tauri-drag-region={selfWindowDragRegion}
+          >
+            <PluginsView
+              model={{
+                dragRegion: selfWindowDragRegion,
+                catalog: pluginsController.catalog,
+                loading: pluginsController.loading,
+                error: pluginsController.error,
+                notice: pluginsController.notice,
+                mutation: pluginsController.mutation,
+                detailsLoadingPluginId: pluginsController.detailsLoadingPluginId,
+              }}
+              actions={{
+                refresh: () => void pluginsController.refresh(true),
+                loadDetails: (plugin) => void pluginsController.loadDetails(plugin),
+                install: (plugin) => void pluginsController.install(plugin),
+                uninstall: (plugin) => void pluginsController.uninstall(plugin),
+                setEnabled: (plugin, enabled) =>
+                  void pluginsController.setEnabled(plugin, enabled),
+              }}
+            />
+          </div>
+        ) : null}
+
         {activeView === "settings" ? (
           <div
             className="settings-grid"
@@ -20799,11 +20402,13 @@ function App() {
               model={{
                 dragRegion: selfWindowDragRegion,
                 computerUseEnabled,
-                desktopUseEnabled,
-                diagnosticsEnabled,
-                developerModeEnabled,
-                browserRuntimeStatus,
+                browserPreferences,
+                browserReadiness,
                 desktopRuntimeStatus,
+                pluginCatalog: pluginsController.catalog,
+                pluginsLoading: pluginsController.loading,
+                alwaysAllowedApplications,
+                legacyBrowserMigrationNotice,
                 githubConnection,
                 githubConnectionPending,
                 notificationPreferences: agentNotificationPreferences,
@@ -20823,28 +20428,45 @@ function App() {
               }}
               actions={{
                 setComputerUseEnabled,
-                setDesktopUseEnabled,
-                setDiagnosticsEnabled,
-                setDeveloperModeEnabled,
-                installDefaultBrowserExtension: () => {
-                  void installDefaultBrowserExtension().catch((error) =>
+                setBrowserAskWhereToSave,
+                chooseBrowserDownloadLocation: () => {
+                  void open({ directory: true, multiple: false }).then((path) => {
+                    if (typeof path === "string") setBrowserDownloadLocation(path);
+                  });
+                },
+                resetBrowserDownloadLocation: () => setBrowserDownloadLocation(null),
+                clearBrowserData: () => {
+                  void clearBrowserData()
+                    .then(() => setStatusMessage("In-app browser data cleared."))
+                    .catch((error) => setStatusMessage(errorMessage(error)));
+                },
+                importBrowserProfile: () =>
+                  setStatusMessage("Browser profile import is unavailable on this device."),
+                openPlugins: () => setActiveView("plugins"),
+                refreshComputerUseStatus: () => {
+                  void Promise.all([
+                    refreshDesktopRuntimeStatus(),
+                    pluginsController.refresh(true),
+                  ]);
+                },
+                openAccessibilitySettings: () => {
+                  void openComputerUseAccessibilitySettings().catch((error) =>
                     setStatusMessage(errorMessage(error)),
                   );
                 },
-                refreshBrowserRuntimeStatus: () =>
-                  void Promise.all([
-                    refreshBrowserRuntimeStatus(),
-                    refreshDesktopRuntimeStatus(),
-                  ]),
-                openDefaultBrowserAccessibilitySettings: () => {
-                  void openDefaultBrowserAccessibilitySettings().catch(
-                    (error) => setStatusMessage(errorMessage(error)),
+                openScreenRecordingSettings: () => {
+                  void openComputerUseScreenRecordingSettings().catch((error) =>
+                    setStatusMessage(errorMessage(error)),
                   );
                 },
-                enableSafariAutomation: () => {
-                  void enableSafariAutomation()
-                    .then(() => refreshBrowserRuntimeStatus())
-                    .catch((error) => setStatusMessage(errorMessage(error)));
+                revokeAlwaysAllowedApplication: (applicationId) => {
+                  void revokeAlwaysAllowedApplication(applicationId).then(() =>
+                    listAlwaysAllowedApplications().then(setAlwaysAllowedApplications),
+                  );
+                },
+                dismissLegacyBrowserMigrationNotice: () => {
+                  persistLegacyBrowserMigrationNoticeDismissal();
+                  setLegacyBrowserMigrationNotice(false);
                 },
                 connectGithub: () => void handleConnectGithub(),
                 showGithubLogin: () => setGithubLoginDialogOpen(true),
@@ -20905,8 +20527,49 @@ function interactionModeForSnapshot(snapshot: RunSetupSnapshot): RunInteractionM
   return snapshot.mode === "plan" ? "plan" : "chat";
 }
 
+function selectedBrowserPluginSkill(skills: Array<{ id: string; name: string }>) {
+  return skills.some((skill) =>
+    /browser|chrome|edge|brave|opera|vivaldi/iu.test(
+      `${skill.id} ${skill.name}`,
+    ),
+  );
+}
+
 function errorMessage(error: unknown) {
   return error instanceof Error ? error.message : String(error);
+}
+
+const LEGACY_BROWSER_MIGRATION_DISMISSED_KEY =
+  "orchestrator.browser-bridge-migration-dismissed.v1";
+
+function readLegacyBrowserMigrationNotice() {
+  try {
+    if (
+      window.localStorage.getItem(LEGACY_BROWSER_MIGRATION_DISMISSED_KEY) ===
+      "true"
+    ) {
+      return false;
+    }
+    return [
+      "orchestrator.interaction.v1",
+      "orchestrator.computer-use.v3",
+      "orchestrator.computer-use.v2",
+      "orchestrator.computer-use.v1",
+    ].some((key) => window.localStorage.getItem(key) !== null);
+  } catch {
+    return false;
+  }
+}
+
+function persistLegacyBrowserMigrationNoticeDismissal() {
+  try {
+    window.localStorage.setItem(
+      LEGACY_BROWSER_MIGRATION_DISMISSED_KEY,
+      "true",
+    );
+  } catch {
+    // A missing storage backend should not prevent dismissal for this session.
+  }
 }
 
 function assertRuntimeAccessMatches(

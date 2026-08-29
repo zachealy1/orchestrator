@@ -198,10 +198,7 @@ export type InteractionPolicyDecision = {
 };
 
 export type InteractionPreferences = {
-  browserEnabled: boolean;
-  desktopEnabled: boolean;
-  diagnosticsEnabled: boolean;
-  developerModeEnabled: boolean;
+  computerUseEnabled: boolean;
 };
 
 export type DesktopRuntimeStatus = {
@@ -210,4 +207,25 @@ export type DesktopRuntimeStatus = {
   version: string | null;
   serviceCompatible: boolean;
   accessibilityTrusted: boolean;
+  screenRecordingTrusted: boolean;
+};
+
+export type ComputerUsePermissions = {
+  accessibility: "granted" | "required" | "unavailable";
+  screenRecording: "granted" | "required" | "unavailable";
+};
+
+export type ComputerUseConnectedControl = {
+  id: string;
+  name: string;
+  description: string;
+  connected: boolean;
+  pluginId: string | null;
+};
+
+export type AlwaysAllowedApplication = {
+  id: string;
+  name: string;
+  bundleId: string;
+  approvedAt: string;
 };

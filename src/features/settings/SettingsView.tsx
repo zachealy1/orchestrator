@@ -1,13 +1,15 @@
 import {
   Bell,
+  CircleHelp,
   ChevronRight,
+  Download,
   GitPullRequest,
-  Accessibility,
-  ExternalLink,
+  FolderOpen,
   LogIn,
   LogOut,
   Monitor,
   Plug,
+  Puzzle,
   RefreshCw,
   Search,
   Settings,
@@ -23,8 +25,16 @@ import type {
   AgentNotificationPreferences,
 } from "../../lib/agentNotifications";
 import { formatCodexPlanType } from "../../lib/codexAuth";
-import type { BrowserRuntimeStatus } from "../browser/types";
-import type { DesktopRuntimeStatus } from "../interaction/types";
+import type { BrowserPreferences, BrowserReadiness } from "../browser/types";
+import type {
+  AlwaysAllowedApplication,
+  DesktopRuntimeStatus,
+} from "../interaction/types";
+import {
+  findPlugin,
+  pluginIsReady,
+  type CodexPluginCatalog,
+} from "../plugins/types";
 import type { CodexLoginState, OssProvider } from "../codex/types";
 import type { CodexAccountProfile } from "../accounts/types";
 import type { GithubConnectionStatus } from "../github/api";
@@ -48,11 +58,13 @@ type SettingsDetailStatus = {
 export type SettingsViewModel = {
   dragRegion?: string;
   computerUseEnabled: boolean;
-  desktopUseEnabled: boolean;
-  diagnosticsEnabled: boolean;
-  developerModeEnabled: boolean;
-  browserRuntimeStatus: BrowserRuntimeStatus | null;
+  browserPreferences: BrowserPreferences;
+  browserReadiness: BrowserReadiness;
   desktopRuntimeStatus: DesktopRuntimeStatus | null;
+  pluginCatalog: CodexPluginCatalog;
+  pluginsLoading: boolean;
+  alwaysAllowedApplications: AlwaysAllowedApplication[];
+  legacyBrowserMigrationNotice: boolean;
   githubConnection: GithubConnectionStatus | null;
   githubConnectionPending: boolean;
   notificationPreferences: AgentNotificationPreferences;
@@ -73,13 +85,17 @@ export type SettingsViewModel = {
 
 export type SettingsViewActions = {
   setComputerUseEnabled: (enabled: boolean) => void;
-  setDesktopUseEnabled: (enabled: boolean) => void;
-  setDiagnosticsEnabled: (enabled: boolean) => void;
-  setDeveloperModeEnabled: (enabled: boolean) => void;
-  installDefaultBrowserExtension: () => void;
-  refreshBrowserRuntimeStatus: () => void;
-  openDefaultBrowserAccessibilitySettings: () => void;
-  enableSafariAutomation: () => void;
+  setBrowserAskWhereToSave: (enabled: boolean) => void;
+  chooseBrowserDownloadLocation: () => void;
+  resetBrowserDownloadLocation: () => void;
+  clearBrowserData: () => void;
+  importBrowserProfile: () => void;
+  openPlugins: () => void;
+  refreshComputerUseStatus: () => void;
+  openAccessibilitySettings: () => void;
+  openScreenRecordingSettings: () => void;
+  revokeAlwaysAllowedApplication: (applicationId: string) => void;
+  dismissLegacyBrowserMigrationNotice: () => void;
   connectGithub: () => void;
   showGithubLogin: () => void;
   disconnectGithub: () => void;
@@ -113,6 +129,18 @@ export const SettingsView = memo(function SettingsView({
     const query = searchQuery.trim().toLowerCase();
     return query.length === 0 || terms.some((term) => term.includes(query));
   };
+  const computerUsePlugin = findPlugin(
+    model.pluginCatalog,
+    "computer-use@openai-bundled",
+    "computer-use",
+  );
+  const computerUseReady =
+    pluginIsReady(computerUsePlugin) &&
+    model.desktopRuntimeStatus?.available === true &&
+    model.desktopRuntimeStatus?.serviceCompatible === true;
+  const externalBrowserPlugins = ["chrome", "edge", "brave", "opera", "vivaldi"]
+    .map((name) => findPlugin(model.pluginCatalog, name))
+    .filter((plugin) => plugin !== null);
 
   return (
     <>
@@ -124,15 +152,120 @@ export const SettingsView = memo(function SettingsView({
       />
 
       {matchesSettings(
-        "computer use",
         "browser",
-        "default browser",
-        "safari automation",
-        "browser bridge",
-        "desktop use",
+        "in-app browser",
+        "browser data",
+        "downloads",
+        "profile import",
+        "plugins",
+      ) ? (
+        <section
+          className="surface settings-panel browser-settings-panel"
+          aria-label="Browser settings"
+          id="settings-browser"
+        >
+          <SettingsDetailHeader
+            icon={Monitor}
+            title="Browser"
+            status={
+              model.pluginsLoading
+                ? { label: "Checking", tone: "pending" }
+                : model.browserReadiness.available
+                  ? { label: "Available", tone: "positive" }
+                  : { label: "Unavailable", tone: "negative" }
+            }
+          />
+          <div className="setting-list">
+            <div className="setting-row">
+              <div>
+                <strong>In-app browser</strong>
+                <span>
+                  Uses a persistent profile that is isolated from your regular browser.
+                </span>
+              </div>
+              {!model.browserReadiness.available ? (
+                <button className="secondary" type="button" onClick={actions.openPlugins}>
+                  <Puzzle size={16} aria-hidden="true" />
+                  Open Plugins
+                </button>
+              ) : (
+                <SettingsStatusBadge label="Ready" tone="positive" />
+              )}
+            </div>
+            <div className="setting-row">
+              <div>
+                <strong>Browser data</strong>
+                <span>Clear cookies, site data, cache, and task tabs from the isolated profile.</span>
+              </div>
+              <button className="secondary" type="button" onClick={actions.clearBrowserData}>
+                <Trash2 size={16} aria-hidden="true" />
+                Clear data
+              </button>
+            </div>
+            <div className="setting-row">
+              <div>
+                <strong>Download location</strong>
+                <span>{model.browserPreferences.downloadLocation ?? "System Downloads folder"}</span>
+              </div>
+              <div className="button-row compact">
+                {model.browserPreferences.downloadLocation ? (
+                  <button className="secondary small" type="button" onClick={actions.resetBrowserDownloadLocation}>
+                    Reset
+                  </button>
+                ) : null}
+                <button className="secondary" type="button" onClick={actions.chooseBrowserDownloadLocation}>
+                  <FolderOpen size={16} aria-hidden="true" />
+                  Choose
+                </button>
+              </div>
+            </div>
+            <label className="setting-row checkbox-setting">
+              <div>
+                <strong>Ask where to save downloads</strong>
+                <span>Choose a location each time the in-app browser downloads a file.</span>
+              </div>
+              <SettingsSwitch
+                ariaLabel="Ask where to save browser downloads"
+                checked={model.browserPreferences.askWhereToSave}
+                onChange={actions.setBrowserAskWhereToSave}
+              />
+            </label>
+            <div className="setting-row">
+              <div>
+                <strong>Import browser profile</strong>
+                <span>
+                  {model.browserReadiness.profileImportAvailable
+                    ? "Import supported profile data into the isolated browser."
+                    : "Profile import is not available on this device."}
+                </span>
+              </div>
+              <button
+                className="secondary"
+                type="button"
+                disabled={!model.browserReadiness.profileImportAvailable}
+                onClick={actions.importBrowserProfile}
+              >
+                <Download size={16} aria-hidden="true" />
+                Import
+              </button>
+            </div>
+          </div>
+          {!model.browserReadiness.available ? (
+            <p className="computer-use-runtime-error" role="alert">
+              {model.browserReadiness.message}
+            </p>
+          ) : null}
+        </section>
+      ) : null}
+
+      {matchesSettings(
+        "computer use",
+        "any app",
+        "desktop apps",
         "accessibility",
-        "diagnostics",
-        "developer mode",
+        "screen recording",
+        "always allowed apps",
+        "connected controls",
       ) ? (
         <section
           className="surface settings-panel computer-use-settings-panel"
@@ -143,9 +276,9 @@ export const SettingsView = memo(function SettingsView({
             icon={Monitor}
             title="Computer use"
             status={
-              model.browserRuntimeStatus === null
+              model.pluginsLoading || model.desktopRuntimeStatus === null
                 ? { label: "Checking", tone: "pending" }
-                : model.browserRuntimeStatus.available
+                : computerUseReady
                   ? { label: "Available", tone: "positive" }
                   : { label: "Unavailable", tone: "negative" }
             }
@@ -153,140 +286,130 @@ export const SettingsView = memo(function SettingsView({
           <div className="setting-list">
             <label className="setting-row checkbox-setting">
               <div>
-                <strong>Enable browser computer use</strong>
-                <span>
-                  Give future agent turns a browser that opens only when Codex
-                  uses it.
-                </span>
+                <strong>Any App</strong>
+                <span>Let Codex control applications you approve on this Mac.</span>
               </div>
               <SettingsSwitch
-                ariaLabel="Enable browser computer use"
+                ariaLabel="Allow Computer Use with any approved app"
                 checked={model.computerUseEnabled}
+                disabled={!computerUseReady}
                 onChange={actions.setComputerUseEnabled}
               />
             </label>
-            <label className="setting-row checkbox-setting">
+            <div className="settings-subsection-heading">
               <div>
-                <strong>Enable desktop computer use</strong>
-                <span>
-                  Allow semantic macOS accessibility actions in applications you approve.
-                </span>
+                <strong>Connected controls</strong>
+                <span>Additional application controls supplied by installed plugins.</span>
               </div>
-              <SettingsSwitch
-                ariaLabel="Enable desktop computer use"
-                checked={model.desktopUseEnabled}
-                disabled={model.desktopRuntimeStatus?.available === false}
-                onChange={actions.setDesktopUseEnabled}
-              />
-            </label>
-            <div className="setting-row default-browser-status-row">
+            </div>
+            {externalBrowserPlugins.length > 0 ? (
+              externalBrowserPlugins.map((plugin) => (
+                <div className="setting-row computer-use-control-row" key={plugin.id}>
+                  <div>
+                    <strong>{plugin.displayName}</strong>
+                    <span>
+                      {pluginIsReady(plugin)
+                        ? "Connected through its official browser plugin."
+                        : "This browser control is not connected."}
+                    </span>
+                  </div>
+                  <button className="secondary" type="button" onClick={actions.openPlugins}>
+                    {pluginIsReady(plugin) ? "Manage" : "Open Plugins"}
+                  </button>
+                </div>
+              ))
+            ) : (
+              <div className="setting-row computer-use-empty-row">
+                <div>
+                  <strong>No connected controls</strong>
+                  <span>Install an external-browser plugin from Plugins when you need an existing browser profile.</span>
+                </div>
+                <button className="secondary" type="button" onClick={actions.openPlugins}>
+                  <Puzzle size={16} aria-hidden="true" />
+                  Open Plugins
+                </button>
+              </div>
+            )}
+            <div className="settings-subsection-heading">
               <div>
-                <strong>Desktop provider</strong>
-                <span>
-                  {model.desktopRuntimeStatus === null
-                    ? "Checking installed Computer Use provider"
-                    : model.desktopRuntimeStatus.message ??
-                      `Computer Use ${model.desktopRuntimeStatus.version ?? "provider"} ready`}
-                </span>
+                <strong>macOS permissions</strong>
+                <span>Both permissions are required to see and operate desktop apps.</span>
               </div>
-              <span
-                className={`notification-permission-status ${
-                  model.desktopRuntimeStatus?.available
-                    ? "permission-allowed"
-                    : "permission-denied"
-                }`}
+              <button
+                className="native-plan-icon-action"
+                type="button"
+                aria-label="Check Computer Use permissions again"
+                data-tooltip="Check again"
+                onClick={actions.refreshComputerUseStatus}
               >
-                {model.desktopRuntimeStatus?.available ? "Ready" : "Not ready"}
-              </span>
+                <RefreshCw size={16} aria-hidden="true" />
+              </button>
             </div>
-            <label className="setting-row checkbox-setting">
+            <PermissionRow
+              label="Screen Recording"
+              description="Allows Computer Use to see approved applications."
+              granted={model.desktopRuntimeStatus?.screenRecordingTrusted === true}
+              onOpen={actions.openScreenRecordingSettings}
+            />
+            <PermissionRow
+              label="Accessibility"
+              description="Allows Computer Use to click, type, and navigate."
+              granted={model.desktopRuntimeStatus?.accessibilityTrusted === true}
+              onOpen={actions.openAccessibilitySettings}
+            />
+            <div className="settings-subsection-heading">
               <div>
-                <strong>Interaction diagnostics</strong>
-                <span>
-                  Keep redacted action outcomes and timings. Screenshots and page text remain ephemeral.
-                </span>
+                <strong>Always-allowed apps</strong>
+                <span>Apps Codex may use in future tasks without asking again.</span>
               </div>
-              <SettingsSwitch
-                ariaLabel="Interaction diagnostics"
-                checked={model.diagnosticsEnabled}
-                onChange={actions.setDiagnosticsEnabled}
-              />
-            </label>
-            <label className="setting-row checkbox-setting">
-              <div>
-                <strong>Developer Mode</strong>
-                <span>
-                  Permit elevated browser debugging only after separate task and site confirmation.
-                </span>
-              </div>
-              <SettingsSwitch
-                ariaLabel="Developer Mode for browser control"
-                checked={model.developerModeEnabled}
-                onChange={actions.setDeveloperModeEnabled}
-              />
-            </label>
-            <div className="setting-row default-browser-status-row">
-              <div>
-                <strong>
-                  {model.browserRuntimeStatus?.defaultBrowser?.browser?.name ??
-                    "Default browser"}
-                </strong>
-                <span>
-                  {model.browserRuntimeStatus?.defaultBrowser?.message ??
-                    (model.browserRuntimeStatus?.defaultBrowser?.extensionConnected
-                      ? "Browser Bridge connected"
-                      : "Checking browser integration")}
-                </span>
-              </div>
-              <div className="button-row compact">
-                {model.browserRuntimeStatus?.defaultBrowser?.browser?.family ===
-                "safari" ? (
-                  <button className="secondary" type="button" onClick={actions.enableSafariAutomation}>
-                    Enable Safari automation
-                  </button>
-                ) : null}
-                {model.browserRuntimeStatus?.defaultBrowser?.browser?.family !==
-                  "safari" &&
-                !model.browserRuntimeStatus?.defaultBrowser
-                  ?.extensionConnected ? (
-                    <button
-                      className="secondary"
-                      type="button"
-                      onClick={actions.installDefaultBrowserExtension}
-                    >
-                      <ExternalLink size={16} aria-hidden="true" />
-                      Install extension
-                    </button>
-                  ) : null}
+            </div>
+            {model.alwaysAllowedApplications.length > 0 ? (
+              model.alwaysAllowedApplications.map((application) => (
+                <div className="setting-row" key={application.id}>
+                  <div>
+                    <strong>{application.name}</strong>
+                    <span>{application.bundleId}</span>
+                  </div>
                   <button
-                    className="native-plan-icon-action"
+                    className="secondary danger"
                     type="button"
-                    aria-label="Check browser connection again"
-                    data-tooltip="Check again"
-                    onClick={actions.refreshBrowserRuntimeStatus}
+                    onClick={() => actions.revokeAlwaysAllowedApplication(application.id)}
                   >
-                    <RefreshCw size={16} aria-hidden="true" />
+                    Revoke
                   </button>
-                  {!model.browserRuntimeStatus?.defaultBrowser
-                    ?.accessibilityTrusted ? (
-                    <button
-                      className="native-plan-icon-action"
-                      type="button"
-                      aria-label="Open Accessibility settings"
-                      data-tooltip="Accessibility settings"
-                      onClick={actions.openDefaultBrowserAccessibilitySettings}
-                    >
-                      <Accessibility size={16} aria-hidden="true" />
-                    </button>
-                  ) : null}
+                </div>
+              ))
+            ) : (
+              <div className="settings-empty-state">
+                <CircleHelp size={20} aria-hidden="true" />
+                <div>
+                  <strong>No always-allowed apps</strong>
+                  <span>Apps appear here after you choose Always allow during a task.</span>
+                </div>
               </div>
-            </div>
+            )}
           </div>
-          {model.browserRuntimeStatus?.available === false ? (
+          {!computerUseReady ? (
             <p className="computer-use-runtime-error" role="alert">
-              {model.browserRuntimeStatus.message ??
-                "The bundled browser runtime is unavailable."}
+              {computerUsePlugin
+                ? model.desktopRuntimeStatus?.message ??
+                  "Enable the Computer Use plugin and grant the required macOS permissions."
+                : "Computer Use is unavailable. Open Plugins to install the official Computer Use plugin."}
+              <button className="link-button" type="button" onClick={actions.openPlugins}>
+                Open Plugins
+              </button>
             </p>
+          ) : null}
+          {model.legacyBrowserMigrationNotice ? (
+            <div className="settings-migration-notice" role="status">
+              <p>
+                Orchestrator no longer uses its Browser Bridge. Remove the obsolete
+                Orchestrator browser extension from your browser when convenient.
+              </p>
+              <button className="secondary small" type="button" onClick={actions.dismissLegacyBrowserMigrationNotice}>
+                Dismiss
+              </button>
+            </div>
           ) : null}
         </section>
       ) : null}
@@ -607,11 +730,17 @@ function SettingsOverview({
   const agentAlertsEnabled = NOTIFICATION_PREFERENCE_KEYS.some(
     (key) => model.notificationPreferences[key],
   );
-  const browserReady = model.browserRuntimeStatus?.available === true;
+  const computerUsePlugin = findPlugin(
+    model.pluginCatalog,
+    "computer-use@openai-bundled",
+    "computer-use",
+  );
+  const computerUseReady =
+    pluginIsReady(computerUsePlugin) &&
+    model.desktopRuntimeStatus?.available === true &&
+    model.desktopRuntimeStatus?.serviceCompatible === true;
   const showQuickPreferences = queryMatches(
     "quick preferences",
-    "computer use",
-    "browser",
     "notifications",
     "agent alerts",
   );
@@ -676,15 +805,16 @@ function SettingsOverview({
           />
           <SettingsStatusCard
             icon={Monitor}
+            label="Browser"
+            value={model.browserReadiness.available ? "Ready" : "Not available"}
+            healthy={model.browserReadiness.available}
+            targetId="settings-browser"
+          />
+          <SettingsStatusCard
+            icon={Monitor}
             label="Computer use"
-            value={
-              model.browserRuntimeStatus === null
-                ? "Checking"
-                : browserReady
-                  ? "Browser ready"
-                  : "Not available"
-            }
-            healthy={browserReady}
+            value={computerUseReady ? "Ready" : "Not available"}
+            healthy={computerUseReady}
             targetId="settings-computer-use"
           />
           <SettingsStatusCard
@@ -693,6 +823,13 @@ function SettingsOverview({
             value={notificationOverviewLabel(model.notificationPermission)}
             healthy={model.notificationPermission === "allowed"}
             targetId="settings-notifications"
+          />
+          <SettingsStatusCard
+            icon={Puzzle}
+            label="Plugins"
+            value={`${model.pluginCatalog.plugins.filter((plugin) => plugin.installed).length} installed`}
+            healthy={model.pluginCatalog.errors.length === 0}
+            onActivate={actions.openPlugins}
           />
         </section>
       ) : (
@@ -717,20 +854,6 @@ function SettingsOverview({
                 title="Quick preferences"
               />
               <div className="settings-overview-rows">
-                <label className="settings-overview-row">
-                  <span className="settings-row-icon" aria-hidden="true">
-                    <Monitor size={18} />
-                  </span>
-                  <span className="settings-overview-row-copy">
-                    <strong>Browser use</strong>
-                    <span>Allow browser interactions for future turns.</span>
-                  </span>
-                  <SettingsSwitch
-                    ariaLabel="Computer use"
-                    checked={model.computerUseEnabled}
-                    onChange={actions.setComputerUseEnabled}
-                  />
-                </label>
                 <label className="settings-overview-row">
                   <span className="settings-row-icon" aria-hidden="true">
                     <Bell size={18} />
@@ -762,7 +885,11 @@ function SettingsOverview({
             >
               <SettingsOverviewHeader icon={Plug} title="Connections" />
               <div className="settings-overview-rows">
-                <div className="settings-overview-row settings-connection-row">
+                <button
+                  className="settings-overview-row settings-connection-row"
+                  type="button"
+                  onClick={() => scrollToSettingsSection("settings-accounts")}
+                >
                   <span className="account-mini-avatar" aria-hidden="true">
                     {(selectedAccount?.email ?? selectedAccount?.label ?? "C")
                       .charAt(0)
@@ -783,15 +910,12 @@ function SettingsOverview({
                         ? "Connected"
                         : "Not connected"}
                   </span>
-                  <button
-                    className="settings-manage-button"
-                    type="button"
-                    onClick={() => scrollToSettingsSection("settings-accounts")}
-                  >
-                    Manage
-                  </button>
-                </div>
-                <div className="settings-overview-row settings-connection-row">
+                </button>
+                <button
+                  className="settings-overview-row settings-connection-row"
+                  type="button"
+                  onClick={() => scrollToSettingsSection("settings-github")}
+                >
                   <span className="settings-row-icon" aria-hidden="true">
                     <GitPullRequest size={18} />
                   </span>
@@ -806,14 +930,7 @@ function SettingsOverview({
                   <span className="settings-connection-value">
                     {model.githubConnection?.connected ? "Connected" : "Off"}
                   </span>
-                  <button
-                    className="settings-manage-button"
-                    type="button"
-                    onClick={() => scrollToSettingsSection("settings-github")}
-                  >
-                    Manage
-                  </button>
-                </div>
+                </button>
               </div>
             </section>
           ) : null}
@@ -829,19 +946,24 @@ function SettingsStatusCard({
   value,
   healthy,
   targetId,
+  onActivate,
 }: {
   icon: typeof Monitor | "codex";
   label: string;
   value: string;
   healthy: boolean;
-  targetId: string;
+  targetId?: string;
+  onActivate?: () => void;
 }) {
   const StatusIcon = icon === "codex" ? null : icon;
   return (
     <button
       className="settings-status-card"
       type="button"
-      onClick={() => scrollToSettingsSection(targetId)}
+      onClick={() => {
+        if (onActivate) onActivate();
+        else if (targetId) scrollToSettingsSection(targetId);
+      }}
     >
       <span className="settings-status-card-icon" aria-hidden="true">
         {StatusIcon ? (
@@ -879,6 +1001,34 @@ function SettingsOverviewHeader({
           <h2>{title}</h2>
         </div>
       </div>
+    </div>
+  );
+}
+
+function PermissionRow({
+  label,
+  description,
+  granted,
+  onOpen,
+}: {
+  label: string;
+  description: string;
+  granted: boolean;
+  onOpen: () => void;
+}) {
+  return (
+    <div className="setting-row computer-use-permission-row">
+      <div>
+        <strong>{label}</strong>
+        <span>{description}</span>
+      </div>
+      {granted ? (
+        <SettingsStatusBadge label="Allowed" tone="positive" />
+      ) : (
+        <button className="secondary" type="button" onClick={onOpen}>
+          Open settings
+        </button>
+      )}
     </div>
   );
 }

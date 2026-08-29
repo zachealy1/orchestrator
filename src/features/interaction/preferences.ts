@@ -1,12 +1,11 @@
 import type { InteractionPreferences } from "./types";
 
-export const INTERACTION_PREFERENCE_STORAGE_KEY = "orchestrator.interaction.v1";
+export const INTERACTION_PREFERENCE_STORAGE_KEY = "orchestrator.interaction.v2";
+export const LEGACY_INTERACTION_PREFERENCE_STORAGE_KEY =
+  "orchestrator.interaction.v1";
 
 export const DEFAULT_INTERACTION_PREFERENCES: InteractionPreferences = {
-  browserEnabled: true,
-  desktopEnabled: false,
-  diagnosticsEnabled: false,
-  developerModeEnabled: false,
+  computerUseEnabled: false,
 };
 
 type StorageLike = Pick<Storage, "getItem" | "setItem">;
@@ -25,18 +24,12 @@ export function validateInteractionPreferences(value: unknown): InteractionPrefe
   }
   const input = value as Record<string, unknown>;
   return {
-    browserEnabled:
-      typeof input.browserEnabled === "boolean" ? input.browserEnabled : true,
-    desktopEnabled:
-      typeof input.desktopEnabled === "boolean" ? input.desktopEnabled : false,
-    diagnosticsEnabled:
-      typeof input.diagnosticsEnabled === "boolean"
-        ? input.diagnosticsEnabled
-        : false,
-    developerModeEnabled:
-      typeof input.developerModeEnabled === "boolean"
-        ? input.developerModeEnabled
-        : false,
+    computerUseEnabled:
+      typeof input.computerUseEnabled === "boolean"
+        ? input.computerUseEnabled
+        : typeof input.desktopEnabled === "boolean"
+          ? input.desktopEnabled
+          : false,
   };
 }
 
@@ -47,6 +40,12 @@ export function readInteractionPreferences(
   try {
     const current = storage.getItem(INTERACTION_PREFERENCE_STORAGE_KEY);
     if (current) return validateInteractionPreferences(JSON.parse(current));
+    const legacyInteraction = storage.getItem(
+      LEGACY_INTERACTION_PREFERENCE_STORAGE_KEY,
+    );
+    if (legacyInteraction) {
+      return validateInteractionPreferences(JSON.parse(legacyInteraction));
+    }
     for (const key of [
       "orchestrator.computer-use.v3",
       "orchestrator.computer-use.v2",
@@ -54,12 +53,10 @@ export function readInteractionPreferences(
     ]) {
       const legacy = storage.getItem(key);
       if (!legacy) continue;
-      const parsed = JSON.parse(legacy) as { enabled?: unknown };
-      return {
-        ...DEFAULT_INTERACTION_PREFERENCES,
-        browserEnabled:
-          typeof parsed.enabled === "boolean" ? parsed.enabled : true,
-      };
+      JSON.parse(legacy);
+      // This retired toggle granted browser access only. Do not widen it to
+      // arbitrary desktop applications during migration.
+      return { ...DEFAULT_INTERACTION_PREFERENCES };
     }
   } catch {
     return { ...DEFAULT_INTERACTION_PREFERENCES };

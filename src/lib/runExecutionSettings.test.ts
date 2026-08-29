@@ -71,9 +71,13 @@ describe("run execution settings", () => {
 
     expect(parseRunExecutionSettings(legacySettings)).toEqual(
       expect.objectContaining({
-        version: 4,
+        version: 5,
         selectedRepositoryPath: null,
         selectedBranch: "feature/original",
+        computerUseEnabled: false,
+        selectedSkills: [
+          expect.objectContaining({ id: "browser:control-in-app-browser" }),
+        ],
       }),
     );
   });
@@ -115,7 +119,7 @@ describe("run execution settings", () => {
     expect(resolved).toEqual({
       source: "legacy",
       settings: expect.objectContaining({
-        version: 4,
+        version: 5,
         selectedRepositoryPath: null,
         accountId: 7,
         profileKey: "account:7",

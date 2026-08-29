@@ -20,7 +20,7 @@ describe("interaction telemetry redaction", () => {
     session = registerInteractionSurface(session, {
       id: "browser-1",
       kind: "browser",
-      provider: "browser-bridge",
+      provider: "browser:control-in-app-browser",
       providerVersion: "26.818.41509",
       title: "Private account statement",
       origin: "https://bank.example",

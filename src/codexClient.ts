@@ -16,7 +16,6 @@ import type {
 } from "./lib/agentNotifications";
 import type { WorkspaceCommitIntentContext } from "./lib/commitMessage";
 import type { ActiveCodexLogin, CodexAccountResponse, CodexConnectResult, CodexLoginResponse, CodexModel, ModelListResponse, OssProvider } from "./features/codex/types";
-import type { BrowserRuntimeStatus, BrowserSessionPreparation, BrowserSessionSnapshot, BrowserSessionState, BrowserSessionTarget, DefaultBrowserCapabilityStatus, DefaultBrowserTab } from "./features/browser/types";
 import type { DesktopRuntimeStatus } from "./features/interaction/types";
 import type { CodexSkillSummary, ComposerContextFile, DroppedContextPathInspection, ImageAttachmentPreview } from "./features/composer/types";
 import type { ExternalTranscriptSnapshot, ExternalThreadHistoryIndex } from "./features/conversations/types";
@@ -31,83 +30,20 @@ function commandResult<T>(result: Promise<unknown>): Promise<T> {
   return result as Promise<T>;
 }
 
-export function readBrowserRuntimeStatus() {
-  return commandResult<BrowserRuntimeStatus>(commands.browserRuntimeStatus());
+export function clearBrowserData() {
+  return commandResult<void>(commands.browserDataClear());
+}
+
+export function openComputerUseAccessibilitySettings() {
+  return commandResult<void>(commands.computerUseOpenAccessibilitySettings());
+}
+
+export function openComputerUseScreenRecordingSettings() {
+  return commandResult<void>(commands.computerUseOpenScreenRecordingSettings());
 }
 
 export function readDesktopRuntimeStatus() {
   return commandResult<DesktopRuntimeStatus>(commands.desktopRuntimeStatus());
-}
-
-export function prepareBrowserSession(target: BrowserSessionTarget) {
-  return commandResult<BrowserSessionPreparation>(commands.browserSessionPrepare(target));
-}
-
-export function readBrowserSessionStatus(token: string) {
-  return commandResult<BrowserSessionState>(commands.browserSessionStatus(token));
-}
-
-export function focusBrowserSession(token: string) {
-  return commandResult<BrowserSessionState>(commands.browserSessionFocus(token));
-}
-
-export function updateBrowserSessionTarget(
-  token: string,
-  target: BrowserSessionTarget,
-) {
-  return commandResult<BrowserSessionState>(
-    commands.browserSessionUpdateTarget(token, target),
-  );
-}
-
-export function stopBrowserSession(token: string) {
-  return commandResult<BrowserSessionState>(commands.browserSessionStop(token));
-}
-
-export function pauseBrowserSession(token: string) {
-  return commandResult<BrowserSessionState>(commands.browserSessionPause(token));
-}
-
-export function takeOverBrowserSession(token: string) {
-  return commandResult<BrowserSessionState>(commands.browserSessionTakeover(token));
-}
-
-export function resumeBrowserSession(token: string) {
-  return commandResult<BrowserSessionState>(commands.browserSessionResume(token));
-}
-
-export function readBrowserSessionSnapshot(token: string) {
-  return commandResult<BrowserSessionSnapshot>(
-    commands.browserSessionSnapshot(token),
-  );
-}
-
-export function readDefaultBrowserCapabilityStatus() {
-  return commandResult<DefaultBrowserCapabilityStatus>(
-    commands.defaultBrowserCapabilityStatus(),
-  );
-}
-
-export function installDefaultBrowserExtension() {
-  return commandResult<void>(commands.defaultBrowserInstallExtension());
-}
-
-export function openDefaultBrowserAccessibilitySettings() {
-  return commandResult<void>(commands.defaultBrowserOpenAccessibilitySettings());
-}
-
-export function enableSafariAutomation() {
-  return commandResult<void>(commands.defaultBrowserEnableSafariAutomation());
-}
-
-export function listDefaultBrowserTabs(token: string) {
-  return commandResult<DefaultBrowserTab[]>(commands.browserSessionListTabs(token));
-}
-
-export function attachDefaultBrowserTab(token: string, tabId: number) {
-  return commandResult<BrowserSessionState>(
-    commands.browserSessionAttachTab(token, tabId),
-  );
 }
 
 export function probeLocalWebPreview(url: string) {

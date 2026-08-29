@@ -1,21 +1,13 @@
 use serde::Serialize;
 use serde_json::Value;
-use sha2::{Digest, Sha256};
 use std::{
     env, fs,
     path::{Path, PathBuf},
+    process::Command,
 };
 
 const COMPUTER_USE_PLUGIN_NAME: &str = "computer-use";
 const SUPPORTED_COMPUTER_USE_PLUGIN_MAJOR: u64 = 1;
-const PINNED_COMPUTER_USE_VERSION: &str = "1.0.1000816";
-const PINNED_COMPUTER_USE_MANIFEST_SHA256: &str =
-    "41c5b8ef0c2cf4c62e2a51dec6f98d234152ec617573a1ced58831924a4b03a5";
-const PINNED_COMPUTER_USE_MCP_SHA256: &str =
-    "3516e1755f57daa9cc705c4dc048a149d5561f6d3b18059dc72fff721d7e9a73";
-const PINNED_COMPUTER_USE_LAUNCHER_SHA256: &str =
-    "096edf245e994f4a9a00177da90969acd2abe7d8acd73dad23844a40aea007f2";
-
 #[derive(Clone, Debug, Serialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct DesktopRuntimeStatus {
@@ -24,6 +16,7 @@ pub(crate) struct DesktopRuntimeStatus {
     pub version: Option<String>,
     pub service_compatible: bool,
     pub accessibility_trusted: bool,
+    pub screen_recording_trusted: bool,
 }
 
 #[derive(Clone, Debug)]
@@ -36,7 +29,8 @@ struct DesktopRuntime {
 #[tauri::command]
 #[specta::specta]
 pub(crate) async fn desktop_runtime_status() -> DesktopRuntimeStatus {
-    let accessibility_trusted = crate::default_browser::accessibility_is_trusted();
+    let accessibility_trusted = accessibility_is_trusted();
+    let screen_recording_trusted = screen_recording_is_trusted();
     #[cfg(not(target_os = "macos"))]
     return DesktopRuntimeStatus {
         available: false,
@@ -44,19 +38,30 @@ pub(crate) async fn desktop_runtime_status() -> DesktopRuntimeStatus {
         version: None,
         service_compatible: false,
         accessibility_trusted,
+        screen_recording_trusted,
     };
 
     #[cfg(target_os = "macos")]
     match resolve_desktop_runtime() {
         Ok(runtime) => DesktopRuntimeStatus {
-            available: accessibility_trusted,
-            message: (!accessibility_trusted).then(|| {
-                "Allow Orchestrator in macOS Accessibility settings before using desktop control."
-                    .to_string()
-            }),
+            available: accessibility_trusted && screen_recording_trusted,
+            message: match (screen_recording_trusted, accessibility_trusted) {
+                (false, false) => Some(
+                    "Allow Screen Recording and Accessibility for Computer Use in macOS settings."
+                        .to_string(),
+                ),
+                (false, true) => Some(
+                    "Allow Screen Recording for Computer Use in macOS settings.".to_string(),
+                ),
+                (true, false) => Some(
+                    "Allow Accessibility for Computer Use in macOS settings.".to_string(),
+                ),
+                (true, true) => None,
+            },
             version: Some(runtime.version),
             service_compatible: true,
             accessibility_trusted,
+            screen_recording_trusted,
         },
         Err(error) => DesktopRuntimeStatus {
             available: false,
@@ -64,27 +69,24 @@ pub(crate) async fn desktop_runtime_status() -> DesktopRuntimeStatus {
             version: None,
             service_compatible: false,
             accessibility_trusted,
+            screen_recording_trusted,
         },
     }
 }
 
 fn resolve_desktop_runtime() -> Result<DesktopRuntime, String> {
-    let plugin_root = if let Some(value) = env::var_os("ORCHESTRATOR_COMPUTER_USE_PLUGIN_ROOT") {
-        PathBuf::from(value)
-    } else {
-        let home = env::var_os("HOME").map(PathBuf::from).ok_or_else(|| {
-            "Could not resolve the Codex Computer Use plugin directory.".to_string()
-        })?;
-        select_highest_compatible_plugin(
-            &home
-                .join(".codex")
-                .join("plugins")
-                .join("cache")
-                .join("openai-bundled")
-                .join(COMPUTER_USE_PLUGIN_NAME),
-            SUPPORTED_COMPUTER_USE_PLUGIN_MAJOR,
-        )?
-    };
+    let home = env::var_os("HOME")
+        .map(PathBuf::from)
+        .ok_or_else(|| "Could not resolve the Codex Computer Use plugin directory.".to_string())?;
+    let plugin_root = select_highest_compatible_plugin(
+        &home
+            .join(".codex")
+            .join("plugins")
+            .join("cache")
+            .join("openai-bundled")
+            .join(COMPUTER_USE_PLUGIN_NAME),
+        SUPPORTED_COMPUTER_USE_PLUGIN_MAJOR,
+    )?;
     validate_desktop_plugin(&plugin_root)
 }
 
@@ -139,12 +141,6 @@ fn validate_desktop_plugin(plugin_root: &Path) -> Result<DesktopRuntime, String>
     if !launcher.is_file() || !skill.is_file() {
         return Err("The installed Computer Use provider is incomplete.".to_string());
     }
-    validate_pinned_desktop_runtime(
-        &version,
-        &canonical.join(".codex-plugin").join("plugin.json"),
-        &mcp_manifest_path,
-        &launcher,
-    )?;
     Ok(DesktopRuntime {
         version,
         _launcher: launcher,
@@ -152,40 +148,62 @@ fn validate_desktop_plugin(plugin_root: &Path) -> Result<DesktopRuntime, String>
     })
 }
 
-fn validate_pinned_desktop_runtime(
-    version: &str,
-    manifest: &Path,
-    mcp_manifest: &Path,
-    launcher: &Path,
-) -> Result<(), String> {
-    if version != PINNED_COMPUTER_USE_VERSION {
-        return Err(format!(
-            "Codex Computer Use plugin {version} has not been validated with this Orchestrator build."
-        ));
-    }
-    for (label, path, expected) in [
-        ("manifest", manifest, PINNED_COMPUTER_USE_MANIFEST_SHA256),
-        (
-            "provider manifest",
-            mcp_manifest,
-            PINNED_COMPUTER_USE_MCP_SHA256,
-        ),
-        ("launcher", launcher, PINNED_COMPUTER_USE_LAUNCHER_SHA256),
-    ] {
-        let actual = file_sha256(path)?;
-        if actual != expected {
-            return Err(format!(
-                "The installed Computer Use {label} does not match the validated {version} provider."
-            ));
-        }
-    }
-    Ok(())
+#[tauri::command]
+#[specta::specta]
+pub(crate) async fn computer_use_open_accessibility_settings() -> Result<(), String> {
+    open_privacy_settings("Privacy_Accessibility")
 }
 
-fn file_sha256(path: &Path) -> Result<String, String> {
-    let bytes =
-        fs::read(path).map_err(|error| format!("Could not verify {}: {error}", path.display()))?;
-    Ok(format!("{:x}", Sha256::digest(bytes)))
+#[tauri::command]
+#[specta::specta]
+pub(crate) async fn computer_use_open_screen_recording_settings() -> Result<(), String> {
+    open_privacy_settings("Privacy_ScreenCapture")
+}
+
+fn open_privacy_settings(pane: &str) -> Result<(), String> {
+    #[cfg(target_os = "macos")]
+    {
+        let status = Command::new("/usr/bin/open")
+            .arg(format!(
+                "x-apple.systempreferences:com.apple.preference.security?{pane}"
+            ))
+            .status()
+            .map_err(|error| format!("Could not open macOS privacy settings: {error}"))?;
+        return status
+            .success()
+            .then_some(())
+            .ok_or_else(|| "Could not open macOS privacy settings.".to_string());
+    }
+    #[cfg(not(target_os = "macos"))]
+    Err("Computer Use privacy settings are available only on macOS.".to_string())
+}
+
+#[cfg(target_os = "macos")]
+pub(crate) fn accessibility_is_trusted() -> bool {
+    #[link(name = "ApplicationServices", kind = "framework")]
+    unsafe extern "C" {
+        fn AXIsProcessTrusted() -> bool;
+    }
+    unsafe { AXIsProcessTrusted() }
+}
+
+#[cfg(not(target_os = "macos"))]
+pub(crate) fn accessibility_is_trusted() -> bool {
+    false
+}
+
+#[cfg(target_os = "macos")]
+fn screen_recording_is_trusted() -> bool {
+    #[link(name = "CoreGraphics", kind = "framework")]
+    unsafe extern "C" {
+        fn CGPreflightScreenCaptureAccess() -> bool;
+    }
+    unsafe { CGPreflightScreenCaptureAccess() }
+}
+
+#[cfg(not(target_os = "macos"))]
+fn screen_recording_is_trusted() -> bool {
+    false
 }
 
 fn select_highest_compatible_plugin(root: &Path, supported_major: u64) -> Result<PathBuf, String> {
@@ -257,21 +275,4 @@ mod tests {
         assert_eq!(parse_version("latest"), None);
     }
 
-    #[test]
-    fn pinned_desktop_runtime_matches_the_installed_provider_contract() {
-        let home = env::var_os("HOME").map(PathBuf::from).expect("home");
-        let root = home
-            .join(".codex/plugins/cache/openai-bundled/computer-use")
-            .join(PINNED_COMPUTER_USE_VERSION);
-        if !root.is_dir() {
-            return;
-        }
-        validate_pinned_desktop_runtime(
-            PINNED_COMPUTER_USE_VERSION,
-            &root.join(".codex-plugin/plugin.json"),
-            &root.join(".mcp.json"),
-            &root.join("bin/computer-use-client-launcher"),
-        )
-        .expect("installed pinned Computer Use runtime");
-    }
 }

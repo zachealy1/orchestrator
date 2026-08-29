@@ -25,17 +25,7 @@ const mocks = vi.hoisted(() => ({
   startCodexLoginMock: vi.fn(),
   stopCodexMock: vi.fn(),
   stopDefaultCodexProfileMock: vi.fn(),
-  readBrowserRuntimeStatusMock: vi.fn(),
   readDesktopRuntimeStatusMock: vi.fn(),
-  prepareBrowserSessionMock: vi.fn(),
-  readBrowserSessionStatusMock: vi.fn(),
-  focusBrowserSessionMock: vi.fn(),
-  updateBrowserSessionTargetMock: vi.fn(),
-  stopBrowserSessionMock: vi.fn(),
-  pauseBrowserSessionMock: vi.fn(),
-  takeOverBrowserSessionMock: vi.fn(),
-  resumeBrowserSessionMock: vi.fn(),
-  readBrowserSessionSnapshotMock: vi.fn(),
   readAgentNotificationPermissionStatusMock: vi.fn(),
   requestAgentNotificationPermissionMock: vi.fn(),
   sendAgentNotificationMock: vi.fn(),
@@ -404,17 +394,7 @@ vi.mock("../codexClient", () => ({
   startCodexLogin: mocks.startCodexLoginMock,
   stopDefaultCodexProfile: mocks.stopDefaultCodexProfileMock,
   stopCodex: mocks.stopCodexMock,
-  readBrowserRuntimeStatus: mocks.readBrowserRuntimeStatusMock,
   readDesktopRuntimeStatus: mocks.readDesktopRuntimeStatusMock,
-  prepareBrowserSession: mocks.prepareBrowserSessionMock,
-  readBrowserSessionStatus: mocks.readBrowserSessionStatusMock,
-  focusBrowserSession: mocks.focusBrowserSessionMock,
-  updateBrowserSessionTarget: mocks.updateBrowserSessionTargetMock,
-  stopBrowserSession: mocks.stopBrowserSessionMock,
-  pauseBrowserSession: mocks.pauseBrowserSessionMock,
-  takeOverBrowserSession: mocks.takeOverBrowserSessionMock,
-  resumeBrowserSession: mocks.resumeBrowserSessionMock,
-  readBrowserSessionSnapshot: mocks.readBrowserSessionSnapshotMock,
   readAgentNotificationPermissionStatus:
     mocks.readAgentNotificationPermissionStatusMock,
   requestAgentNotificationPermission: mocks.requestAgentNotificationPermissionMock,
@@ -522,8 +502,10 @@ vi.mock("../data/repositories", () => ({
     },
     interactions: {
       deleteExpiredPermissions: vi.fn(),
+      listAlwaysAllowedApplications: vi.fn().mockResolvedValue([]),
       listSteps: vi.fn().mockResolvedValue([]),
       readPermission: vi.fn().mockResolvedValue(null),
+      revokeAlwaysAllowedApplication: vi.fn(),
       setPermission: vi.fn(),
       upsertSession: mocks.upsertInteractionSessionMock,
       upsertStep: mocks.upsertInteractionStepMock,
@@ -845,8 +827,6 @@ export function prepareDefaults() {
     mocks.listChatSubagentsMock,
     mocks.loadDefaultProfileTurnActivityMock,
     mocks.readProjectedSubagentThreadMock,
-    mocks.readBrowserRuntimeStatusMock,
-    mocks.readBrowserSessionStatusMock,
     mocks.recoverInterruptedKanbanAttemptsMock,
     mocks.getKanbanCardForChatMock,
     mocks.createKanbanCardMock,
@@ -1088,113 +1068,14 @@ export function prepareDefaults() {
   });
   mocks.stopCodexMock.mockResolvedValue(undefined);
   mocks.stopDefaultCodexProfileMock.mockResolvedValue(undefined);
-  mocks.readBrowserRuntimeStatusMock.mockResolvedValue({
-    available: true,
-    message: null,
-    defaultBrowser: null,
-    browserSkillVersion: "26.818.31338",
-    browserServiceCompatible: true,
-  });
   mocks.readDesktopRuntimeStatusMock.mockResolvedValue({
     available: false,
     message: "Desktop Computer Use is unavailable in this test.",
     version: null,
     serviceCompatible: false,
     accessibilityTrusted: false,
+    screenRecordingTrusted: false,
   });
-  mocks.prepareBrowserSessionMock.mockImplementation(async (target) => ({
-    unavailableReason: null,
-    browserFamily: "chrome",
-    session: {
-    token: "0123456789abcdef0123456789abcdef",
-    config: {
-      shell_environment_policy: {
-        inherit: "core",
-        ignore_default_excludes: false,
-        set: {
-          BROWSER_USE_AVAILABLE_BACKENDS: "cdp",
-          CDP_BROWSER_BACKEND_PIPE_PATH: "/tmp/orchestrator-browser.sock",
-          BROWSER_AUTH_EVAL_EXACT_CDP_BACKEND_SOCKET: "true",
-          BROWSER_USE_BROWSER_CLIENT_BUILD: "26.818.31338",
-        },
-      },
-    },
-    state: {
-      token: "0123456789abcdef0123456789abcdef",
-      status: "prepared",
-      target,
-      browserPid: null,
-      error: null,
-      backend: "browser-bridge",
-      browser: { bundleId: "com.google.Chrome", name: "Chrome", path: "/Applications/Google Chrome.app", supported: true, family: "chrome" },
-      extensionConnected: true,
-      chatGroupKey: null,
-      controlledTabId: null,
-      unavailableReason: null,
-      browserSkillVersion: "26.818.31338",
-      browserServiceCompatible: true,
-      backendHealthy: true,
-    }},
-  }));
-  mocks.readBrowserSessionStatusMock.mockImplementation(async (token) => ({
-    token,
-    status: "ready",
-    target: {
-      profileKey: "account:1",
-      workspaceId: 1,
-      chatId: null,
-      runId: null,
-      entryId: "entry",
-      threadId: null,
-      turnId: null,
-      accessMode: "ask-for-approval",
-    },
-    browserPid: null,
-    error: null,
-    backend: "browser-bridge",
-    browser: null,
-    extensionConnected: false,
-    chatGroupKey: null,
-    controlledTabId: null,
-    unavailableReason: null,
-    browserSkillVersion: "26.818.31338",
-    browserServiceCompatible: true,
-    backendHealthy: true,
-  }));
-  mocks.focusBrowserSessionMock.mockImplementation(
-    async (token) => ({
-      ...(await mocks.readBrowserSessionStatusMock(token)),
-      status: "running",
-    }),
-  );
-  mocks.updateBrowserSessionTargetMock.mockImplementation(
-    async (token, target) => ({
-      token,
-      status: "ready",
-      target,
-      browserPid: null,
-      error: null,
-    }),
-  );
-  mocks.stopBrowserSessionMock.mockImplementation(async (token) => ({
-    ...(await mocks.readBrowserSessionStatusMock(token)),
-    status: "stopped",
-  }));
-  mocks.pauseBrowserSessionMock.mockImplementation(async (token) => ({
-    ...(await mocks.readBrowserSessionStatusMock(token)),
-    status: "paused",
-  }));
-  mocks.takeOverBrowserSessionMock.mockImplementation(async (token) => ({
-    ...(await mocks.readBrowserSessionStatusMock(token)),
-    status: "takeover",
-  }));
-  mocks.resumeBrowserSessionMock.mockImplementation(async (token) => ({
-    ...(await mocks.readBrowserSessionStatusMock(token)),
-    status: "ready",
-  }));
-  mocks.readBrowserSessionSnapshotMock.mockRejectedValue(
-    new Error("No browser snapshot in the test harness."),
-  );
   mocks.upsertInteractionSessionMock.mockResolvedValue(undefined);
   mocks.upsertInteractionStepMock.mockResolvedValue(undefined);
   mocks.readAgentNotificationPermissionStatusMock.mockResolvedValue("unavailable");

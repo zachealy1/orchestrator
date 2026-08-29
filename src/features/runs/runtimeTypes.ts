@@ -2,7 +2,6 @@ import type { CodexAccessSettings } from "../../lib/codexAccess";
 import type { RunViewState } from "../../lib/codexEventReducer";
 import type { CollaborationMode, RunIntent } from "../../lib/nativePlanMode";
 import type { GoalProgressAction, ThreadGoalState } from "../../lib/goalProgress";
-import type { PreparedBrowserSession } from "../browser/types";
 import type { TaskChatEntry } from "../conversations/types";
 import type { PendingAccountHandoff } from "../accounts/AccountHandoffDialog";
 import type { CodexAccountProfile } from "../accounts/types";
@@ -75,10 +74,7 @@ export type ActiveRunControl = {
   eventSequence: number;
   queueItemId: string | null;
   queueAdvanceBlocked: boolean;
-  browserSession: PreparedBrowserSession | null;
   desktopUseEnabled: boolean;
-  interactionDeveloperModeEnabled: boolean;
-  interactionDiagnosticsEnabled: boolean;
   interactionSession: InteractionSession | null;
   webPreviewDetection: WebPreviewDetectionState;
   kanbanAttempt: KanbanRunAttemptBinding | null;
@@ -213,7 +209,6 @@ export type StartedRunThread = {
   supersededThreadId?: string | null;
 };
 export type RunThreadStageResult = StartedRunThread & {
-  browserSession: PreparedBrowserSession | null;
   startFreshThread: () => Promise<StartedRunThread>;
   nativeTaskWorkspaceBinding: NativeTaskWorkspaceBinding | null;
 };

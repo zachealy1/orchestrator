@@ -169,7 +169,7 @@ describe("Application runtime scenarios 6", () => {
       );
       expect(firstSettings).toEqual(
         expect.objectContaining({
-          version: 4,
+          version: 5,
           accountId: 7,
           profileKey: "account:7",
           selectedRepositoryPath: workspace.path,
@@ -177,7 +177,7 @@ describe("Application runtime scenarios 6", () => {
           mode: "run",
           intent: "normal",
           accessMode: "ask-for-approval",
-          computerUseEnabled: true,
+          computerUseEnabled: false,
           model: "gpt-original",
           reasoningEffort: "low",
           useOss: false,
@@ -266,7 +266,6 @@ describe("Application runtime scenarios 6", () => {
         "Fix docs more carefully",
       );
       expect(mocks.readCodexFileMock).not.toHaveBeenCalledWith(7, imagePath);
-      expect(mocks.prepareBrowserSessionMock).toHaveBeenCalledTimes(2);
       expect(screen.getByRole("combobox", { name: "Agent" })).toHaveTextContent(
         "Current model",
       );
@@ -774,13 +773,12 @@ describe("Application runtime scenarios 6", () => {
         mocks.createRunMock.mock.calls[0]?.[0].executionSettingsJson,
       );
       expect(rerunSettings).toEqual(expect.objectContaining({
-        version: 4,
+        version: 5,
         selectedRepositoryPath: workspace.path,
-        computerUseEnabled: persistedSettings.computerUseEnabled,
+        computerUseEnabled: false,
         model: persistedSettings.model,
       }));
       expect(rerunSettings).not.toHaveProperty("browserExecutionTarget");
-      expect(mocks.prepareBrowserSessionMock).not.toHaveBeenCalled();
       expect(mocks.readCodexFileMock).toHaveBeenCalledWith(
         7,
         `${workspace.path}/README.md`,

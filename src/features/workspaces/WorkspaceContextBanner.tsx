@@ -1,23 +1,16 @@
 import {
-  AlertCircle,
   Columns3,
   Folder,
   FolderOpen,
   GitBranch,
   GitBranchPlus,
   GitCommitHorizontal,
-  Hand,
   Loader2,
-  Link2,
   MessageSquare,
-  Monitor,
-  Pause,
   PanelRight,
-  Play,
   SquarePen,
-  X,
 } from "lucide-react";
-import { useEffect, useRef, useState } from "react";
+import { useRef } from "react";
 import type {
   CSSProperties,
   KeyboardEvent as ReactKeyboardEvent,
@@ -27,7 +20,6 @@ import { ComposerSelect } from "../../components/ComposerSelect";
 import { getContextUsageDisplay } from "../../lib/contextUsage";
 import type { RunViewState } from "../../lib/codexEventReducer";
 import { windowDragRegionValue } from "../../lib/windowDragging";
-import type { BrowserSessionState } from "../browser/types";
 import {
   formatGitSummaryForStatus,
   workspaceGitRepositoryDisplayPath,
@@ -65,13 +57,6 @@ export function WorkspaceContextBanner({
   historyOpen,
   historyNotificationCount,
   onToggleHistory,
-  browserSession,
-  onFocusBrowser,
-  onAttachBrowserTab,
-  onPauseBrowser,
-  onTakeOverBrowser,
-  onResumeBrowser,
-  onStopBrowser,
   windowDragRegionsEnabled,
 }: {
   workspace: Workspace | null;
@@ -99,63 +84,14 @@ export function WorkspaceContextBanner({
   historyOpen: boolean;
   historyNotificationCount: number;
   onToggleHistory: () => void;
-  browserSession: BrowserSessionState | null;
-  onFocusBrowser: () => void;
-  onAttachBrowserTab: () => void;
-  onPauseBrowser: () => void;
-  onTakeOverBrowser: () => void;
-  onResumeBrowser: () => void;
-  onStopBrowser: () => void;
   windowDragRegionsEnabled: boolean;
 }) {
-  const [browserMenuOpen, setBrowserMenuOpen] = useState(false);
-  const browserMenuRef = useRef<HTMLDivElement>(null);
   const chatSurfaceButtonRef = useRef<HTMLButtonElement>(null);
   const kanbanSurfaceButtonRef = useRef<HTMLButtonElement>(null);
   const deepWindowDragRegion = windowDragRegionValue(
     windowDragRegionsEnabled,
     "deep",
   );
-  const browserVisible =
-    browserSession !== null &&
-    ([
-      "starting",
-      "running",
-      "awaiting-approval",
-      "paused",
-      "takeover",
-      "error",
-    ].includes(
-      browserSession.status,
-    ) ||
-      (browserSession.backend === "browser-bridge" &&
-        ["prepared", "ready"].includes(browserSession.status)));
-
-  useEffect(() => {
-    if (!browserMenuOpen) return;
-    const closeForPointer = (event: PointerEvent) => {
-      if (
-        event.target instanceof Node &&
-        !browserMenuRef.current?.contains(event.target)
-      ) {
-        setBrowserMenuOpen(false);
-      }
-    };
-    const closeForEscape = (event: KeyboardEvent) => {
-      if (event.key === "Escape") setBrowserMenuOpen(false);
-    };
-    window.addEventListener("pointerdown", closeForPointer);
-    window.addEventListener("keydown", closeForEscape);
-    return () => {
-      window.removeEventListener("pointerdown", closeForPointer);
-      window.removeEventListener("keydown", closeForEscape);
-    };
-  }, [browserMenuOpen]);
-
-  useEffect(() => {
-    if (!browserVisible) setBrowserMenuOpen(false);
-  }, [browserVisible]);
-
   if (!workspace) {
     return (
       <section
@@ -398,140 +334,6 @@ export function WorkspaceContextBanner({
                 if (actionId === "create-branch") onCreateBranch?.();
               }}
             />
-            {browserVisible ? (
-              <div className="workspace-browser-action" ref={browserMenuRef}>
-                <button
-                  className={`workspace-header-button icon-only browser-session-button browser-${browserSession.status}`}
-                  type="button"
-                  aria-label="Browser session"
-                  title={
-                    browserSession.status === "awaiting-approval"
-                      ? "Browser needs approval"
-                      : browserSession.status === "starting"
-                        ? "Browser is starting"
-                        : browserSession.status === "paused"
-                          ? "Browser automation is paused"
-                          : browserSession.status === "takeover"
-                            ? "You have browser control"
-                        : browserSession.status === "error"
-                          ? "Browser session failed"
-                          : "Focus browser"
-                  }
-                  aria-expanded={browserMenuOpen}
-                  onClick={() => {
-                    if (
-                      browserSession.status === "running" ||
-                      browserSession.status === "awaiting-approval" ||
-                      browserSession.status === "takeover"
-                    ) {
-                      onFocusBrowser();
-                    }
-                    setBrowserMenuOpen((current) => !current);
-                  }}
-                >
-                  {browserSession.status === "starting" ? (
-                    <Loader2 className="spin" size={15} aria-hidden="true" />
-                  ) : browserSession.status === "awaiting-approval" ||
-                    browserSession.status === "error" ? (
-                    <AlertCircle size={15} aria-hidden="true" />
-                  ) : (
-                    <Monitor size={15} aria-hidden="true" />
-                  )}
-                </button>
-                {browserMenuOpen ? (
-                  <div
-                    className="workspace-browser-popover"
-                    role="group"
-                    aria-label="Browser session controls"
-                  >
-                    {browserSession.backend === "browser-bridge" ? (
-                      <button
-                        className="native-plan-icon-action"
-                        type="button"
-                        aria-label="Attach an existing browser tab"
-                        data-tooltip="Attach tab"
-                        onClick={() => {
-                          onAttachBrowserTab();
-                          setBrowserMenuOpen(false);
-                        }}
-                      >
-                        <Link2 size={15} aria-hidden="true" />
-                      </button>
-                    ) : null}
-                    <button
-                      className="native-plan-icon-action"
-                      type="button"
-                      aria-label="Focus browser"
-                      data-tooltip="Focus browser"
-                      disabled={
-                        browserSession.status !== "running" &&
-                        browserSession.status !== "awaiting-approval"
-                      }
-                      onClick={() => {
-                        onFocusBrowser();
-                        setBrowserMenuOpen(false);
-                      }}
-                    >
-                      <Monitor size={15} aria-hidden="true" />
-                    </button>
-                    {browserSession.status === "paused" ||
-                    browserSession.status === "takeover" ? (
-                      <button
-                        className="native-plan-icon-action"
-                        type="button"
-                        aria-label="Resume browser automation"
-                        data-tooltip="Resume automation"
-                        onClick={() => {
-                          onResumeBrowser();
-                          setBrowserMenuOpen(false);
-                        }}
-                      >
-                        <Play size={15} aria-hidden="true" />
-                      </button>
-                    ) : (
-                      <button
-                        className="native-plan-icon-action"
-                        type="button"
-                        aria-label="Pause browser automation"
-                        data-tooltip="Pause automation"
-                        disabled={browserSession.status !== "running"}
-                        onClick={() => {
-                          onPauseBrowser();
-                          setBrowserMenuOpen(false);
-                        }}
-                      >
-                        <Pause size={15} aria-hidden="true" />
-                      </button>
-                    )}
-                    <button
-                      className="native-plan-icon-action"
-                      type="button"
-                      aria-label="Take over browser"
-                      data-tooltip="Take over"
-                      disabled={browserSession.status === "takeover"}
-                      onClick={() => {
-                        onTakeOverBrowser();
-                        setBrowserMenuOpen(false);
-                      }}
-                    >
-                      <Hand size={15} aria-hidden="true" />
-                    </button>
-                    <button
-                      className="native-plan-icon-action cancel"
-                      type="button"
-                      aria-label="Stop agent and browser"
-                      data-tooltip="Stop agent"
-                      onClick={() => {
-                        onStopBrowser();
-                        setBrowserMenuOpen(false);
-                      }}
-                    >
-                      <X size={15} aria-hidden="true" />
-                    </button>
-                  </div>
-                ) : null}
-              </div>
-            ) : null}
             <div className="workspace-git-action">
               <button
                 className="workspace-header-button icon-only primary"

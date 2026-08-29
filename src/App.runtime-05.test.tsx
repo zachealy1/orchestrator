@@ -898,87 +898,84 @@ describe("Application runtime scenarios 5", () => {
       expect(screen.queryByLabelText("Codex run console")).not.toBeInTheDocument();
     });
 
-  it("enables computer use by default and persists Settings changes", async () => {
+  it("keeps Computer Use least-privilege by default and persists Settings changes", async () => {
+      mocks.readDesktopRuntimeStatusMock.mockResolvedValueOnce({
+        available: true,
+        message: null,
+        version: "1.0.1000816",
+        serviceCompatible: true,
+        accessibilityTrusted: true,
+        screenRecordingTrusted: true,
+      });
+      mocks.codexDefaultProfileRpcMock.mockImplementation(async (method) =>
+        method === "plugin/list"
+          ? {
+              marketplaces: [{
+                name: "openai-bundled",
+                path: null,
+                plugins: [{
+                  id: "computer-use@openai-bundled",
+                  name: "computer-use",
+                  version: "1.0.1000816",
+                  localVersion: "1.0.1000816",
+                  installed: true,
+                  enabled: true,
+                  installPolicy: "INSTALLED_BY_DEFAULT",
+                  authPolicy: "ON_USE",
+                  availability: "AVAILABLE",
+                  interface: { displayName: "Computer Use" },
+                  keywords: [],
+                }],
+              }],
+              marketplaceLoadErrors: [],
+              featuredPluginIds: [],
+            }
+          : undefined,
+      );
       const { user } = await renderApp();
       await user.click(screen.getByRole("button", { name: "Settings" }));
 
       const computerUse = screen.getByRole("checkbox", {
-        name: /enable browser computer use/i,
+        name: /any approved app/i,
       });
-      expect(computerUse).toBeChecked();
-      expect(
-        screen.getByRole("region", { name: "Computer use settings" }),
-      ).toHaveTextContent("Available");
+      await waitFor(() => expect(computerUse).toBeEnabled());
+      expect(computerUse).not.toBeChecked();
 
       await user.click(computerUse);
-      expect(computerUse).not.toBeChecked();
+      expect(computerUse).toBeChecked();
       expect(
-        JSON.parse(localStorage.getItem("orchestrator.computer-use.v3")!),
-      ).toEqual({ enabled: false });
+        JSON.parse(localStorage.getItem("orchestrator.interaction.v2")!),
+      ).toEqual({ computerUseEnabled: true });
     });
 
-  it("omits Browser backend configuration when computer use is disabled", async () => {
-      localStorage.setItem(
-        "orchestrator.computer-use.v1",
-        JSON.stringify({ enabled: false }),
-      );
+  it("does not inject a custom Browser backend into ordinary runs", async () => {
       prepareSignedInRun();
 
       const { user } = await renderApp();
       await startMockRun(user, "Make this change without a browser");
 
-      expect(mocks.prepareBrowserSessionMock).not.toHaveBeenCalled();
       const threadStart = mocks.codexRpcMock.mock.calls.find(
         ([, method]) => method === "thread/start",
       );
-      expect(threadStart?.[2]).toEqual(
-        expect.objectContaining({
-          config: expect.not.objectContaining({
-            mcp_servers: expect.anything(),
-          }),
-        }),
+      expect(JSON.stringify(threadStart?.[2])).not.toContain(
+        "shell_environment_policy",
       );
-      expect(mocks.updateBrowserSessionTargetMock).not.toHaveBeenCalled();
+      expect(JSON.stringify(threadStart?.[2])).not.toContain(
+        "control-in-app-browser",
+      );
     });
 
-  it("continues without Browser configuration when the default browser is unavailable", async () => {
+  it("does not emit legacy Browser availability events", async () => {
       prepareSignedInRun();
-      const validEventTypes = new Set([
-        "notification",
-        "server-request",
-        "process",
-        "client-action",
-      ]);
-      mocks.appendRunEventMock.mockImplementation(async (event) => {
-        if (!validEventTypes.has(event.eventType)) {
-          throw new Error("The run event is invalid.");
-        }
-      });
-      mocks.prepareBrowserSessionMock.mockResolvedValueOnce({
-        session: null,
-        browserFamily: null,
-        unavailableReason: "The Browser Bridge extension is not connected.",
-      });
 
       const { user } = await renderApp();
-      await startMockRun(user, "Continue even when browser control is unavailable");
+      await startMockRun(user, "Continue without browser control");
 
       expect(
-        await screen.findByText(
-          /Computer Use unavailable; the agent continued without browser access\./,
+        mocks.appendRunEventMock.mock.calls.some(
+          ([event]) => event.method === "browser/availability",
         ),
-      ).toBeInTheDocument();
-      expect(mocks.appendRunEventMock).toHaveBeenCalledWith(
-        expect.objectContaining({
-          eventType: "process",
-          method: "browser/availability",
-          payload: {
-            available: false,
-            family: null,
-            reason: "The Browser Bridge extension is not connected.",
-          },
-        }),
-      );
+      ).toBe(false);
       const threadStart = mocks.codexRpcMock.mock.calls.find(
         ([, method]) => method === "thread/start",
       );
@@ -989,149 +986,56 @@ describe("Application runtime scenarios 5", () => {
       );
     });
 
-  it("reports an unavailable bundled browser without preventing Settings", async () => {
-      mocks.readBrowserRuntimeStatusMock.mockResolvedValueOnce({
-        available: false,
-        message: "The default browser integration is unavailable.",
-      });
-
+  it("routes an unavailable Browser plugin to Plugins", async () => {
       const { user } = await renderApp();
       await user.click(screen.getByRole("button", { name: "Settings" }));
 
       const settings = screen.getByRole("region", {
-        name: "Computer use settings",
+        name: "Browser settings",
       });
       expect(await within(settings).findByText("Unavailable")).toBeInTheDocument();
       expect(within(settings).getByRole("alert")).toHaveTextContent(
-        "The default browser integration is unavailable.",
+        "Browser plugin is not available from configured marketplaces.",
       );
+      expect(within(settings).getByRole("button", { name: "Open Plugins" })).toBeVisible();
     });
 
-  it("scopes the bundled Browser skill backend to one turn and cleans it up", async () => {
+  it("does not force Browser into a run that did not select the plugin", async () => {
       prepareSignedInRun();
-      mocks.readBrowserSessionStatusMock.mockImplementationOnce(
-        async (token) => ({
-          token,
-          status: "running",
-          target: {
-            profileKey: "account:7",
-            workspaceId: workspace.id,
-            chatId: 44,
-            runId: 60,
-            entryId: "entry",
-            threadId: "thread-1",
-            turnId: "turn-1",
-            accessMode: "ask-for-approval",
-          },
-          browserPid: 4321,
-          error: null,
-        }),
-      );
 
       const { user } = await renderApp();
-      await startMockRun(user, "Check the app in a browser");
+      await startMockRun(user, "Check the app without adding capabilities");
 
-      expect(mocks.prepareBrowserSessionMock).toHaveBeenCalledWith(
-        expect.objectContaining({
-          profileKey: "account:7",
-          workspaceId: workspace.id,
-          accessMode: "ask-for-approval",
-        }),
-      );
       const threadStart = mocks.codexRpcMock.mock.calls.find(
         ([, method]) => method === "thread/start",
       );
-      expect(threadStart?.[2]).toEqual(
-        expect.objectContaining({
-          config: expect.objectContaining({
-            shell_environment_policy: expect.objectContaining({
-              set: expect.objectContaining({
-                BROWSER_USE_AVAILABLE_BACKENDS: "cdp",
-                BROWSER_AUTH_EVAL_EXACT_CDP_BACKEND_SOCKET: "true",
-              }),
-            }),
-          }),
-        }),
-      );
-      expect(JSON.stringify(threadStart?.[2])).not.toContain("mcp_servers");
       const turnStart = mocks.codexRpcMock.mock.calls.find(
         ([, method]) => method === "turn/start",
       );
-      expect(JSON.stringify(turnStart?.[2])).toContain(
-        "browser:control-in-app-browser",
+      expect(JSON.stringify(threadStart?.[2])).not.toContain(
+        "shell_environment_policy",
       );
-      await emitCodexNotification({
-        method: "turn/started",
-        params: {
-          threadId: "thread-1",
-          turn: { id: "turn-1", status: "inProgress" },
-        },
-      });
-      const browserButton = await screen.findByRole("button", {
-        name: "Browser session",
-      });
-      await user.click(browserButton);
-      expect(mocks.focusBrowserSessionMock).toHaveBeenCalledWith(
-        "0123456789abcdef0123456789abcdef",
+      expect(JSON.stringify(turnStart?.[2])).not.toContain(
+        "control-in-app-browser",
       );
+    });
 
-      await emitCodexNotification({
-        method: "turn/completed",
-        params: {
-          threadId: "thread-1",
-          turnId: "turn-1",
-          turn: { id: "turn-1", status: "completed", durationMs: 100 },
-        },
-      });
-      await waitFor(() =>
-        expect(mocks.stopBrowserSessionMock).toHaveBeenCalledWith(
-          "0123456789abcdef0123456789abcdef",
-        ),
-      );
-      expect(mocks.codexRpcMock).toHaveBeenCalledWith(
-        7,
-        "thread/unsubscribe",
-        { threadId: "thread-1" },
-      );
-  });
-
-  it("rescans a stale skill catalog before starting Computer Use", async () => {
+  it("does not force-refresh skills when an ordinary run starts", async () => {
       prepareSignedInRun();
-      mocks.listCodexSkillsMock
-        .mockResolvedValueOnce([])
-        .mockResolvedValueOnce([
-          {
-            id: "browser:control-in-app-browser",
-            name: "browser:control-in-app-browser",
-            description: "Control the selected browser for local web testing.",
-          },
-        ]);
 
       const { user } = await renderApp();
-      await startMockRun(user, "Verify the local app in a browser");
+      await startMockRun(user, "Verify the local app");
 
-      await waitFor(() =>
-        expect(mocks.listCodexSkillsMock).toHaveBeenCalledTimes(2),
-      );
-      expect(mocks.listCodexSkillsMock).toHaveBeenNthCalledWith(
-        1,
-        7,
-        { forceReload: false },
-      );
-      expect(mocks.listCodexSkillsMock).toHaveBeenNthCalledWith(
-        2,
-        7,
-        { forceReload: true },
-      );
-      expect(mocks.prepareBrowserSessionMock).toHaveBeenCalledTimes(1);
+      expect(
+        mocks.listCodexSkillsMock.mock.calls.some(
+          ([, options]) => options?.forceReload === true,
+        ),
+      ).toBe(false);
       expect(
         mocks.codexRpcMock.mock.calls.some(
           ([, method]) => method === "turn/start",
         ),
       ).toBe(true);
-      expect(
-        screen.queryByText(/bundled Browser skill is unavailable/i),
-      ).not.toBeInTheDocument();
     });
 
   it("generates a concise chat title without delaying the initial turn", async () => {
