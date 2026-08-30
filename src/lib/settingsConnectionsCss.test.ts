@@ -276,9 +276,9 @@ describe("settings connection styles", () => {
       ".settings-panel .setting-row > .button-row",
       ".settings-subsection-heading",
       ".settings-subsection-heading > div",
+      ".codex-accounts-heading",
       ".account-management",
       ".account-management > .muted",
-      ".account-management > button.secondary",
       ".managed-account-row",
       ".managed-account-row > div:nth-child(2)",
       ".managed-account-row > .button-row",
@@ -335,14 +335,17 @@ describe("settings connection styles", () => {
       );
     }
 
+    expect(rules.get(".codex-accounts-heading")).toContain("border-bottom: 0");
     expect(rules.get(".account-management")).toContain(
-      "padding: 0 0 var(--settings-option-padding-block)",
+      "margin: 0 var(--settings-option-padding-inline)\n    var(--settings-option-padding-inline)",
     );
+    expect(rules.get(".account-management")).toContain(
+      "border: 1px solid var(--color-divider)",
+    );
+    expect(rules.get(".account-management")).toContain("border-radius: 6px");
+    expect(rules.get(".account-management")).not.toContain("padding:");
     expect(rules.get(".account-management > .muted")).toContain(
       "min-height: var(--settings-option-min-height)",
-    );
-    expect(rules.get(".account-management > button.secondary")).toContain(
-      "margin: var(--settings-option-padding-block)\n    var(--settings-option-padding-inline) 0",
     );
   });
 

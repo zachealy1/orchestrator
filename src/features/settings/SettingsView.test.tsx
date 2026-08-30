@@ -1012,6 +1012,69 @@ describe("SettingsView", () => {
     expect(screen.queryByText("prolite")).not.toBeInTheDocument();
   });
 
+  it("consolidates Codex account management into the account list", () => {
+    const handlers = actions();
+    const account: SettingsViewModel["accounts"][number] = {
+      id: 7,
+      label: "dev@example.com",
+      email: "dev@example.com",
+      plan_type: "prolite",
+      status: "signed_in",
+      last_error: null,
+      last_used_at: null,
+      created_at: "2026-08-29T08:00:00.000Z",
+      updated_at: "2026-08-29T08:00:00.000Z",
+      deleted_at: null,
+    };
+
+    render(
+      <SettingsView
+        model={model({
+          accounts: [account],
+          selectedAccountId: account.id,
+          showLogout: true,
+        })}
+        actions={handlers}
+      />,
+    );
+
+    const codexSettings = screen.getByRole("region", {
+      name: "Codex settings",
+    });
+    const addAccount = within(codexSettings).getByRole("button", {
+      name: "Add Codex account",
+    });
+
+    expect(within(codexSettings).getByText("Accounts")).toBeInTheDocument();
+    expect(
+      within(codexSettings).getByText("Choose the account used for new tasks."),
+    ).toBeInTheDocument();
+    expect(addAccount).toHaveClass("settings-icon-action");
+    expect(within(codexSettings).getByRole("status", { name: "Selected" }))
+      .toBeInTheDocument();
+    expect(within(codexSettings).queryByText("Selected account")).toBeNull();
+    expect(within(codexSettings).getByText("Pro Lite")).toBeInTheDocument();
+    expect(
+      within(codexSettings).queryByText("dev@example.com · Pro Lite"),
+    ).toBeNull();
+
+    fireEvent.click(addAccount);
+    fireEvent.click(
+      within(codexSettings).getByRole("button", {
+        name: "Connect dev@example.com",
+      }),
+    );
+    fireEvent.click(
+      within(codexSettings).getByRole("button", {
+        name: "Log out of dev@example.com",
+      }),
+    );
+
+    expect(handlers.addAccount).toHaveBeenCalledOnce();
+    expect(handlers.connectAccount).toHaveBeenCalledWith(account.id);
+    expect(handlers.logout).toHaveBeenCalledOnce();
+  });
+
   it("omits removed overview, appearance, and product information", () => {
     render(<SettingsView model={model()} actions={actions()} />);
 

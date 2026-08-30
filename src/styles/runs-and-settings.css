@@ -1658,11 +1658,18 @@ button.settings-navigation-row:focus-visible:not(:disabled) {
   background: rgb(var(--error-rgb) / 0.14);
 }
 
+.codex-accounts-heading {
+  border-bottom: 0;
+}
+
 .account-management {
   display: grid;
   gap: 0;
-  border-bottom: 1px solid var(--color-divider);
-  padding: 0 0 var(--settings-option-padding-block);
+  overflow: hidden;
+  margin: 0 var(--settings-option-padding-inline)
+    var(--settings-option-padding-inline);
+  border: 1px solid var(--color-divider);
+  border-radius: 6px;
 }
 
 .account-management > .muted {
@@ -1672,12 +1679,6 @@ button.settings-navigation-row:focus-visible:not(:disabled) {
   margin: 0;
   padding: var(--settings-option-padding-block)
     var(--settings-option-padding-inline);
-}
-
-.account-management > button.secondary {
-  justify-self: start;
-  margin: var(--settings-option-padding-block)
-    var(--settings-option-padding-inline) 0;
 }
 
 .managed-account-row {
@@ -1702,6 +1703,7 @@ button.settings-navigation-row:focus-visible:not(:disabled) {
 }
 
 .managed-account-row > .button-row {
+  align-items: center;
   gap: var(--settings-option-action-gap);
 }
 
@@ -1721,7 +1723,7 @@ button.settings-navigation-row:focus-visible:not(:disabled) {
   outline: none;
 }
 
-.managed-account-row span {
+.managed-account-row > div:nth-child(2) > span {
   overflow: hidden;
   color: var(--muted);
   font-size: 0.8rem;

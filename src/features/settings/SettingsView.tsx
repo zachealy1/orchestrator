@@ -668,6 +668,22 @@ export const SettingsView = memo(function SettingsView({
             }
           />
           <div className="setting-list">
+            <div className="settings-subsection-heading codex-accounts-heading">
+              <div>
+                <strong>Accounts</strong>
+                <span>Choose the account used for new tasks.</span>
+              </div>
+              <SettingsIconAction
+                icon={UserPlus}
+                ariaLabel="Add Codex account"
+                tooltip="Add account"
+                onActivate={actions.addAccount}
+                disabled={
+                  model.loginState === "starting" ||
+                  model.loginState === "waiting"
+                }
+              />
+            </div>
             <div className="account-management">
               {model.accounts.length === 0 ? (
                 <p className="muted">No Codex accounts added.</p>
@@ -680,6 +696,22 @@ export const SettingsView = memo(function SettingsView({
                   const accountHasActiveRun = model.activeRunAccountIds.has(
                     account.id,
                   );
+                  const accountSelected =
+                    account.id === model.selectedAccountId;
+                  const accountStateLabel = accountSigningIn
+                    ? "Signing in"
+                    : account.plan_type
+                      ? formatCodexPlanType(account.plan_type)
+                      : account.status;
+                  const accountSummary =
+                    account.email && account.email !== account.label
+                      ? `${account.email} · ${accountStateLabel}`
+                      : accountStateLabel;
+                  const accountDetail =
+                    accountSelected &&
+                    (model.loginState !== "idle" || !model.codexConnected)
+                      ? model.authMessage
+                      : accountSummary;
                   return (
                     <article
                       className="managed-account-row"
@@ -703,17 +735,15 @@ export const SettingsView = memo(function SettingsView({
                           }
                           aria-label={`Account label for ${account.label}`}
                         />
-                        <span>
-                          {account.email ?? "Not signed in"} ·{" "}
-                          {accountSigningIn
-                            ? "Signing in"
-                            : account.plan_type
-                              ? formatCodexPlanType(account.plan_type)
-                              : account.status}
-                        </span>
+                        <span>{accountDetail}</span>
                       </div>
                       <div className="button-row compact">
-                        {account.id !== model.selectedAccountId ? (
+                        {accountSelected ? (
+                          <SettingsStatusBadge
+                            label="Selected"
+                            tone="positive"
+                          />
+                        ) : (
                           <button
                             className="secondary small"
                             type="button"
@@ -722,7 +752,7 @@ export const SettingsView = memo(function SettingsView({
                           >
                             Select
                           </button>
-                        ) : null}
+                        )}
                         {accountSigningIn && model.pendingLoginId ? (
                           <button
                             className="secondary small"
@@ -746,6 +776,27 @@ export const SettingsView = memo(function SettingsView({
                             {account.status === "error" ? "Retry" : "Sign in"}
                           </button>
                         ) : null}
+                        {accountSelected ? (
+                          <SettingsIconAction
+                            icon={Plug}
+                            ariaLabel={`Connect ${account.label}`}
+                            tooltip="Connect"
+                            onActivate={() =>
+                              actions.connectAccount(account.id)
+                            }
+                            disabled={model.runIsActive}
+                          />
+                        ) : null}
+                        {accountSelected && model.showLogout ? (
+                          <SettingsIconAction
+                            icon={LogOut}
+                            ariaLabel={`Log out of ${account.label}`}
+                            tooltip="Log out"
+                            danger
+                            onActivate={actions.logout}
+                            disabled={accountHasActiveRun}
+                          />
+                        ) : null}
                         <SettingsIconAction
                           icon={Trash2}
                           ariaLabel={`Remove ${account.label}`}
@@ -759,51 +810,6 @@ export const SettingsView = memo(function SettingsView({
                   );
                 })
               )}
-              <button
-                className="secondary"
-                type="button"
-                onClick={actions.addAccount}
-                disabled={
-                  model.loginState === "starting" ||
-                  model.loginState === "waiting"
-                }
-              >
-                <UserPlus size={16} />
-                Add Codex account
-              </button>
-            </div>
-            <div className="setting-row">
-              <div>
-                <strong>Selected account</strong>
-                <span>{model.authMessage}</span>
-              </div>
-              <div className="button-row compact">
-                <SettingsIconAction
-                  icon={Plug}
-                  ariaLabel="Connect selected Codex account"
-                  tooltip="Connect"
-                  onActivate={() =>
-                    model.selectedAccountId !== null &&
-                    actions.connectAccount(model.selectedAccountId)
-                  }
-                  disabled={
-                    model.selectedAccountId === null || model.runIsActive
-                  }
-                />
-                {model.showLogout ? (
-                  <SettingsIconAction
-                    icon={LogOut}
-                    ariaLabel="Log out of selected Codex account"
-                    tooltip="Log out"
-                    danger
-                    onActivate={actions.logout}
-                    disabled={
-                      model.selectedAccountId !== null &&
-                      model.activeRunAccountIds.has(model.selectedAccountId)
-                    }
-                  />
-                ) : null}
-              </div>
             </div>
           </div>
         </section>
