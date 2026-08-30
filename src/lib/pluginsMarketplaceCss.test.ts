@@ -35,11 +35,18 @@ describe("plugin marketplace styles", () => {
   });
 
   it("keeps the compact view switcher beside the search field", () => {
+    expect(ruleFor(".plugins-browser-toolbar")).toContain(
+      "--plugins-toolbar-control-height: 44px",
+    );
+    expect(ruleFor(".plugins-search")).toContain(
+      "height: var(--plugins-toolbar-control-height)",
+    );
     expect(ruleFor(".plugins-browse-tabs")).toContain("width: max-content");
     expect(ruleFor(".plugins-browse-tabs")).toContain("align-self: center");
-    expect(ruleFor(".plugins-browse-tabs button")).toContain(
-      "min-height: 30px",
+    expect(ruleFor(".plugins-browse-tabs")).toContain(
+      "height: var(--plugins-toolbar-control-height)",
     );
+    expect(ruleFor(".plugins-browse-tabs button")).toContain("height: 100%");
     expect(ruleFor(".plugins-browse-tabs button")).toContain(
       "padding: 0 10px",
     );

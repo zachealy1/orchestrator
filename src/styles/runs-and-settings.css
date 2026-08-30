@@ -986,6 +986,8 @@ button.settings-connection-row:focus-visible:not(:disabled) {
 }
 
 .plugins-browser-toolbar {
+  --plugins-toolbar-control-height: 44px;
+
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
   align-items: center;
@@ -995,12 +997,19 @@ button.settings-connection-row:focus-visible:not(:disabled) {
 }
 
 .plugins-search {
+  height: var(--plugins-toolbar-control-height);
   min-width: 0;
   width: 100%;
 }
 
+.plugins-search input {
+  height: 100%;
+  min-height: 0;
+}
+
 .plugins-browse-tabs {
   display: inline-flex;
+  height: var(--plugins-toolbar-control-height);
   width: max-content;
   align-self: center;
   align-items: stretch;
@@ -1012,7 +1021,8 @@ button.settings-connection-row:focus-visible:not(:disabled) {
 
 .plugins-browse-tabs button {
   display: inline-flex;
-  min-height: 30px;
+  height: 100%;
+  min-height: 0;
   align-items: center;
   gap: 5px;
   border: 0;
