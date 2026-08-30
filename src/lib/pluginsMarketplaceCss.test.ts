@@ -18,6 +18,9 @@ function ruleFor(selector: string) {
 
 describe("plugin marketplace styles", () => {
   it("uses the browse-first featured and three-column catalog grids", () => {
+    expect(ruleFor(".plugins-browser-toolbar")).toContain(
+      "grid-template-columns: minmax(0, 1fr) auto",
+    );
     expect(ruleFor(".plugins-search")).toContain("width: 100%");
     expect(ruleFor(".plugins-featured-grid")).toContain(
       "grid-template-columns: repeat(2, minmax(0, 1fr))",
@@ -28,6 +31,20 @@ describe("plugin marketplace styles", () => {
           "grid-template-columns: repeat(3, minmax(0, 1fr))",
         ),
       ]),
+    );
+  });
+
+  it("keeps the compact view switcher beside the search field", () => {
+    expect(ruleFor(".plugins-browse-tabs")).toContain("width: max-content");
+    expect(ruleFor(".plugins-browse-tabs")).toContain("align-self: center");
+    expect(ruleFor(".plugins-browse-tabs button")).toContain(
+      "min-height: 30px",
+    );
+    expect(ruleFor(".plugins-browse-tabs button")).toContain(
+      "padding: 0 10px",
+    );
+    expect(ruleFor(".plugins-browse-tabs button span")).toContain(
+      "height: 16px",
     );
   });
 

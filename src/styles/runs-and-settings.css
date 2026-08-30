@@ -987,17 +987,22 @@ button.settings-connection-row:focus-visible:not(:disabled) {
 
 .plugins-browser-toolbar {
   display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
   gap: 12px;
   border-bottom: 1px solid var(--color-divider);
   padding-bottom: 16px;
 }
 
 .plugins-search {
+  min-width: 0;
   width: 100%;
 }
 
 .plugins-browse-tabs {
   display: inline-flex;
+  width: max-content;
+  align-self: center;
   align-items: stretch;
   overflow: hidden;
   border: 1px solid var(--color-divider);
@@ -1007,15 +1012,15 @@ button.settings-connection-row:focus-visible:not(:disabled) {
 
 .plugins-browse-tabs button {
   display: inline-flex;
-  min-height: 34px;
+  min-height: 30px;
   align-items: center;
-  gap: 7px;
+  gap: 5px;
   border: 0;
   border-radius: 0;
   background: transparent;
   color: var(--color-text-secondary);
-  padding: 0 14px;
-  font-size: 0.78rem;
+  padding: 0 10px;
+  font-size: 0.73rem;
   font-weight: 650;
   transform: none;
 }
@@ -1040,14 +1045,14 @@ button.settings-connection-row:focus-visible:not(:disabled) {
 
 .plugins-browse-tabs button span {
   display: inline-grid;
-  min-width: 18px;
-  height: 18px;
+  min-width: 16px;
+  height: 16px;
   place-items: center;
-  border-radius: 9px;
+  border-radius: 8px;
   background: var(--color-surface-soft);
   color: var(--color-text-secondary);
-  padding-inline: 5px;
-  font-size: 0.68rem;
+  padding-inline: 4px;
+  font-size: 0.64rem;
 }
 
 .plugins-catalog {
@@ -1448,15 +1453,6 @@ button.settings-connection-row:focus-visible:not(:disabled) {
   .plugins-featured-grid,
   .plugins-card-grid {
     grid-template-columns: 1fr;
-  }
-
-  .plugins-browse-tabs {
-    width: 100%;
-  }
-
-  .plugins-browse-tabs button {
-    flex: 1 1 0;
-    justify-content: center;
   }
 }
 
