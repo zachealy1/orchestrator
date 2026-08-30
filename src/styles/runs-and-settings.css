@@ -581,6 +581,22 @@ button.pending-interaction-nav:disabled {
   padding-bottom: 28px;
 }
 
+.application-view-slot-hidden {
+  display: none !important;
+}
+
+.settings-grid.application-view-slot-preloaded {
+  position: fixed;
+  top: 22px;
+  right: 22px;
+  left: calc(var(--app-rail-width) + 22px);
+  z-index: -1;
+  width: auto;
+  visibility: hidden;
+  pointer-events: none;
+  contain: layout style paint;
+}
+
 .settings-overview,
 .browser-settings-panel,
 .computer-use-settings-panel,

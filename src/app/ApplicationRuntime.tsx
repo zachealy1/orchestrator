@@ -382,6 +382,7 @@ import {
 } from "../features/accounts/handoff";
 import { useAccountController } from "../features/accounts/useAccountController";
 import { AccountHandoffDialog } from "../features/accounts/AccountHandoffDialog";
+import { DeferredViewSlot, PreloadedViewSlot } from "./ApplicationViewSlot";
 import {
   CodexAccountCard,
   type AuthRowState,
@@ -19882,8 +19883,10 @@ function App() {
           active={activeView === "task"}
           onActivate={activateFloatingStatusNotice}
         />
-        {activeView === "task" ? (
-          <div className="codex-workspace">
+        <DeferredViewSlot
+          active={activeView === "task"}
+          className="codex-workspace"
+        >
             <WorkspaceContextBanner
               workspace={selectedWorkspace}
               surfaceMode={workspaceSurfaceMode}
@@ -20382,8 +20385,7 @@ function App() {
               {...workspacePreview.drawerProps}
               resolvedTheme={resolvedTheme}
             />
-          </div>
-        ) : null}
+        </DeferredViewSlot>
 
         {activeView === "analytics" ? (
           <div
@@ -20430,15 +20432,13 @@ function App() {
           </div>
         ) : null}
 
-        {activeView === "settings" ? (
-          <div
-            className="settings-grid"
-            data-tauri-drag-region={selfWindowDragRegion}
-          >
-            <SettingsView {...settingsViewBindings} />
-
-          </div>
-        ) : null}
+        <PreloadedViewSlot
+          active={activeView === "settings"}
+          className="settings-grid"
+          dragRegion={selfWindowDragRegion}
+        >
+          <SettingsView {...settingsViewBindings} />
+        </PreloadedViewSlot>
       </section>
 
       {explorerDragPreview ? (
