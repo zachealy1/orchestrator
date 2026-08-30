@@ -85,8 +85,26 @@ describe("usePluginsController", () => {
 
     act(() => liveRequest.resolve(fresh));
     await waitFor(() => {
-      expect(result.current.catalog).toBe(fresh);
+      expect(result.current.catalog.plugins[0].id).toBe(
+        "fresh@openai-bundled",
+      );
       expect(result.current.loading).toBe(false);
     });
+  });
+
+  it("retains cached references when the live catalog is unchanged", async () => {
+    const cached = catalog("stable");
+    const fresh = JSON.parse(JSON.stringify(cached)) as CodexPluginCatalog;
+    fresh.refreshedAt = "fresh timestamp";
+    vi.mocked(readCachedCodexPlugins).mockReturnValue(cached);
+    vi.mocked(listCodexPlugins).mockResolvedValue(fresh);
+
+    const { result } = renderHook(() =>
+      usePluginsController({ enabled: true }),
+    );
+
+    await waitFor(() => expect(result.current.loading).toBe(false));
+    expect(result.current.catalog).toBe(cached);
+    expect(result.current.catalog.plugins[0]).toBe(cached.plugins[0]);
   });
 });

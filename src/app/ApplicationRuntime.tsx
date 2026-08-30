@@ -383,7 +383,11 @@ import {
 } from "../features/accounts/handoff";
 import { useAccountController } from "../features/accounts/useAccountController";
 import { AccountHandoffDialog } from "../features/accounts/AccountHandoffDialog";
-import { DeferredViewSlot, PreloadedViewSlot } from "./ApplicationViewSlot";
+import {
+  DeferredViewSlot,
+  PersistentPreloadedViewSlot,
+  PreloadedViewSlot,
+} from "./ApplicationViewSlot";
 import {
   CodexAccountCard,
   type AuthRowState,
@@ -20437,14 +20441,13 @@ function App() {
           </div>
         ) : null}
 
-        {activeView === "plugins" ? (
-          <div
-            className="view-stack plugins-view-stack"
-            data-tauri-drag-region={selfWindowDragRegion}
-          >
-            <PluginsView {...pluginsViewBindings} />
-          </div>
-        ) : null}
+        <PersistentPreloadedViewSlot
+          active={activeView === "plugins"}
+          className="view-stack plugins-view-stack"
+          dragRegion={selfWindowDragRegion}
+        >
+          <PluginsView {...pluginsViewBindings} />
+        </PersistentPreloadedViewSlot>
 
         <PreloadedViewSlot
           active={activeView === "settings"}

@@ -51,6 +51,9 @@ describe("plugin marketplace styles", () => {
     expect(ruleFor(".plugins-browse-tabs button span")).toContain(
       "height: 16px",
     );
+    expect(ruleFor(".plugins-catalog-panel[hidden]")).toContain(
+      "display: none",
+    );
   });
 
   it("uses application surfaces for cards and tonal hover feedback", () => {
@@ -61,14 +64,26 @@ describe("plugin marketplace styles", () => {
       "border: 1px solid var(--color-divider)",
     );
     expect(ruleFor(".plugin-card")).toContain(
-      "contain: layout style paint",
+      "contain: layout style",
     );
-    expect(ruleFor(".plugin-card:hover")).toContain(
+    expect(ruleFor(".plugin-card")).not.toContain("contain: layout style paint");
+    expect(ruleFor(".plugin-card::before")).toContain(
       "background: var(--color-button-active)",
     );
-    expect(ruleFor(".plugin-card:hover")).toContain(
-      "border-color: var(--color-divider)",
+    expect(ruleFor(".plugin-card::before")).toContain("pointer-events: none");
+    expect(ruleFor(".plugin-card:hover::before")).toContain("opacity: 1");
+    expect(ruleFor(".plugin-card:hover")).toBe("");
+    expect(ruleFor(".plugin-card-select-target")).toContain("transition: none");
+  });
+
+  it("idle-preloads the retained Plugins page without painting it", () => {
+    const rule = ruleFor(
+      ".plugins-view-stack.application-view-slot-preloaded",
     );
+    expect(rule).toContain("position: fixed");
+    expect(rule).toContain("visibility: hidden");
+    expect(rule).toContain("pointer-events: none");
+    expect(rule).toContain("contain: layout style");
   });
 
   it("uses the compact capability-led card structure", () => {

@@ -81,6 +81,19 @@ describe("Codex plugin API", () => {
         plugins: [expect.objectContaining({ id: summary.id })],
       }),
     );
+    const persisted = JSON.parse(
+      localStorage.getItem(PLUGIN_CATALOG_CACHE_KEY) ?? "{}",
+    );
+    expect(persisted.catalog).toMatchObject({
+      marketplaces: [
+        {
+          plugins: [expect.objectContaining({ displayName: "Browser" })],
+        },
+      ],
+      featuredPluginIds: [summary.id],
+    });
+    expect(persisted.catalog).not.toHaveProperty("plugins");
+    expect(JSON.stringify(persisted)).not.toContain("remotePluginId");
   });
 
   it("drops expired cached catalogs instead of delaying a live refresh", () => {
@@ -99,6 +112,27 @@ describe("Codex plugin API", () => {
 
     expect(readCachedCodexPlugins(localStorage, now)).toBeNull();
     expect(localStorage.getItem(PLUGIN_CATALOG_CACHE_KEY)).toBeNull();
+  });
+
+  it("hydrates the previous cache format during a one-time upgrade", () => {
+    localStorage.setItem(
+      "orchestrator.plugin-catalog.v1",
+      JSON.stringify({
+        cachedAt: Date.now(),
+        payload: {
+          marketplaces: [
+            { name: "openai-bundled", path: null, plugins: [summary] },
+          ],
+          marketplaceLoadErrors: [],
+          featuredPluginIds: [summary.id],
+        },
+      }),
+    );
+
+    expect(readCachedCodexPlugins()).toMatchObject({
+      plugins: [expect.objectContaining({ id: summary.id })],
+      featuredPluginIds: [summary.id],
+    });
   });
 
   it("loads component readiness from plugin details", async () => {

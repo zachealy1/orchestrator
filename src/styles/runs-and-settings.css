@@ -597,6 +597,18 @@ button.pending-interaction-nav:disabled {
   contain: layout style paint;
 }
 
+.plugins-view-stack.application-view-slot-preloaded {
+  position: fixed;
+  top: 22px;
+  right: 22px;
+  left: calc(var(--app-rail-width) + 22px);
+  z-index: -1;
+  width: auto;
+  visibility: hidden;
+  pointer-events: none;
+  contain: layout style;
+}
+
 .settings-overview,
 .browser-settings-panel,
 .computer-use-settings-panel,
@@ -1085,6 +1097,10 @@ button.settings-connection-row:focus-visible:not(:disabled) {
   padding-top: 20px;
 }
 
+.plugins-catalog-panel[hidden] {
+  display: none;
+}
+
 .plugins-featured,
 .plugins-all {
   display: grid;
@@ -1139,16 +1155,25 @@ button.settings-connection-row:focus-visible:not(:disabled) {
   border: 1px solid var(--color-divider);
   border-radius: 6px;
   background: var(--color-component-background);
-  contain: layout style paint;
+  contain: layout style;
 }
 
 .plugin-card.featured {
   min-height: 146px;
 }
 
-.plugin-card:hover {
-  border-color: var(--color-divider);
+.plugin-card::before {
+  position: absolute;
+  z-index: 0;
+  inset: 0;
   background: var(--color-button-active);
+  content: "";
+  opacity: 0;
+  pointer-events: none;
+}
+
+.plugin-card:hover::before {
+  opacity: 1;
 }
 
 .plugin-card-main {
@@ -1230,6 +1255,7 @@ button.settings-connection-row:focus-visible:not(:disabled) {
   background: transparent;
   padding: 0;
   transform: none;
+  transition: none;
 }
 
 .plugin-card-select-target:hover:not(:disabled) {
@@ -1244,6 +1270,7 @@ button.settings-connection-row:focus-visible:not(:disabled) {
 
 .plugin-card-main,
 .plugin-card-footer {
+  position: relative;
   pointer-events: none;
 }
 

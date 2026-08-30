@@ -1191,6 +1191,27 @@ describe("Application runtime scenarios 5", () => {
       expect(
         screen.getByRole("button", { name: "View Browser details" }),
       ).toBeVisible();
+
+      await user.click(screen.getByRole("tab", { name: "Explore" }));
+      const pluginSearch = screen.getByRole("textbox", {
+        name: "Search plugins",
+      });
+      await user.type(pluginSearch, "browser");
+      const main = document.querySelector<HTMLElement>(".main")!;
+      main.scrollTop = 144;
+
+      await user.click(screen.getByRole("button", { name: "Settings" }));
+      await user.click(screen.getByRole("button", { name: "Plugins" }));
+
+      expect(
+        screen.getByRole("textbox", { name: "Search plugins" }),
+      ).toBe(pluginSearch);
+      expect(pluginSearch).toHaveValue("browser");
+      expect(screen.getByRole("tab", { name: "Explore" })).toHaveAttribute(
+        "aria-selected",
+        "true",
+      );
+      expect(main.scrollTop).toBe(144);
     });
 
   it("does not force Browser into a run that did not select the plugin", async () => {

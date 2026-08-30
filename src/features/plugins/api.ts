@@ -11,8 +11,9 @@ import type {
   PluginInstallResult,
 } from "./types";
 
-export const PLUGIN_CATALOG_CACHE_KEY = "orchestrator.plugin-catalog.v1";
+export const PLUGIN_CATALOG_CACHE_KEY = "orchestrator.plugin-catalog.v2";
 export const PLUGIN_CATALOG_CACHE_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1_000;
+const LEGACY_PLUGIN_CATALOG_CACHE_KEY = "orchestrator.plugin-catalog.v1";
 
 type PluginCatalogCacheStorage = Pick<
   Storage,
@@ -25,7 +26,7 @@ export async function listCodexPlugins(input: { forceRefetch?: boolean } = {}) {
     forceRefetch: input.forceRefetch ?? false,
   });
   const catalog = normalizePluginCatalog(response);
-  scheduleCachedCodexPlugins(response);
+  scheduleCachedCodexPlugins(catalog);
   return catalog;
 }
 
@@ -34,8 +35,13 @@ export function readCachedCodexPlugins(
   now = Date.now(),
 ): CodexPluginCatalog | null {
   if (!storage) return null;
+  let cacheKey = PLUGIN_CATALOG_CACHE_KEY;
   try {
-    const serialized = storage.getItem(PLUGIN_CATALOG_CACHE_KEY);
+    let serialized = storage.getItem(cacheKey);
+    if (!serialized) {
+      cacheKey = LEGACY_PLUGIN_CATALOG_CACHE_KEY;
+      serialized = storage.getItem(cacheKey);
+    }
     if (!serialized) return null;
     const cached = readObject(JSON.parse(serialized));
     const cachedAt =
@@ -45,21 +51,38 @@ export function readCachedCodexPlugins(
       cachedAt <= 0 ||
       now - cachedAt > PLUGIN_CATALOG_CACHE_MAX_AGE_MS
     ) {
-      storage.removeItem(PLUGIN_CATALOG_CACHE_KEY);
+      storage.removeItem(cacheKey);
       return null;
     }
-    const catalog = normalizePluginCatalog(cached.payload);
-    if (catalog.marketplaces.length === 0) {
-      storage.removeItem(PLUGIN_CATALOG_CACHE_KEY);
+    if (cacheKey === LEGACY_PLUGIN_CATALOG_CACHE_KEY) {
+      const catalog = normalizePluginCatalog(cached.payload);
+      if (catalog.marketplaces.length === 0) {
+        storage.removeItem(cacheKey);
+        return null;
+      }
+      return {
+        ...catalog,
+        refreshedAt: new Date(cachedAt).toISOString(),
+      };
+    }
+    const compactCatalog = cached.catalog;
+    if (!isCompactCachedCatalog(compactCatalog)) {
+      storage.removeItem(cacheKey);
       return null;
     }
+    const plugins = compactCatalog.marketplaces.flatMap(
+      (marketplace) => marketplace.plugins,
+    );
     return {
-      ...catalog,
+      marketplaces: compactCatalog.marketplaces,
+      plugins,
+      featuredPluginIds: compactCatalog.featuredPluginIds,
+      errors: compactCatalog.errors,
       refreshedAt: new Date(cachedAt).toISOString(),
     };
   } catch {
     try {
-      storage.removeItem(PLUGIN_CATALOG_CACHE_KEY);
+      storage.removeItem(cacheKey);
     } catch {
       // Ignore cache cleanup failures; the live catalog remains authoritative.
     }
@@ -67,8 +90,8 @@ export function readCachedCodexPlugins(
   }
 }
 
-function scheduleCachedCodexPlugins(payload: unknown) {
-  const persist = () => persistCachedCodexPlugins(payload);
+function scheduleCachedCodexPlugins(catalog: CodexPluginCatalog) {
+  const persist = () => persistCachedCodexPlugins(catalog);
   if (typeof window !== "undefined" && "requestIdleCallback" in window) {
     window.requestIdleCallback(persist, { timeout: 2_000 });
     return;
@@ -77,18 +100,86 @@ function scheduleCachedCodexPlugins(payload: unknown) {
 }
 
 function persistCachedCodexPlugins(
-  payload: unknown,
+  catalog: CodexPluginCatalog,
   storage: PluginCatalogCacheStorage | null = defaultCacheStorage(),
 ) {
   if (!storage) return;
   try {
     storage.setItem(
       PLUGIN_CATALOG_CACHE_KEY,
-      JSON.stringify({ cachedAt: Date.now(), payload }),
+      JSON.stringify({
+        cachedAt: Date.now(),
+        catalog: {
+          marketplaces: catalog.marketplaces,
+          featuredPluginIds: catalog.featuredPluginIds,
+          errors: catalog.errors,
+        },
+      }),
     );
+    storage.removeItem(LEGACY_PLUGIN_CATALOG_CACHE_KEY);
   } catch {
     // Cache writes are best-effort; the live response remains authoritative.
   }
+}
+
+function isCompactCachedCatalog(value: unknown): value is Pick<
+  CodexPluginCatalog,
+  "marketplaces" | "featuredPluginIds" | "errors"
+> {
+  const source = readObject(value);
+  return (
+    Array.isArray(source.marketplaces) &&
+    source.marketplaces.length > 0 &&
+    source.marketplaces.every(isCachedMarketplace) &&
+    Array.isArray(source.featuredPluginIds) &&
+    source.featuredPluginIds.every((item) => typeof item === "string") &&
+    Array.isArray(source.errors) &&
+    source.errors.every((item) => typeof item === "string")
+  );
+}
+
+function isCachedMarketplace(value: unknown) {
+  const source = readObject(value);
+  return (
+    typeof source.name === "string" &&
+    (source.path === null || typeof source.path === "string") &&
+    Array.isArray(source.plugins) &&
+    source.plugins.every(isCachedPlugin)
+  );
+}
+
+function isCachedPlugin(value: unknown) {
+  const source = readObject(value);
+  const readiness = readObject(source.readiness);
+  return (
+    typeof source.id === "string" &&
+    typeof source.name === "string" &&
+    typeof source.displayName === "string" &&
+    (source.description === null || typeof source.description === "string") &&
+    typeof source.marketplaceName === "string" &&
+    (source.marketplacePath === null ||
+      typeof source.marketplacePath === "string") &&
+    (source.version === null || typeof source.version === "string") &&
+    typeof source.installed === "boolean" &&
+    typeof source.enabled === "boolean" &&
+    ["NOT_AVAILABLE", "AVAILABLE", "INSTALLED_BY_DEFAULT"].includes(
+      String(source.installPolicy),
+    ) &&
+    ["ON_INSTALL", "ON_USE"].includes(String(source.authPolicy)) &&
+    typeof source.mustShowInstallationInterstitial === "boolean" &&
+    typeof source.available === "boolean" &&
+    (source.unavailableReason === null ||
+      typeof source.unavailableReason === "string") &&
+    (source.logoUrl === null || typeof source.logoUrl === "string") &&
+    Array.isArray(source.keywords) &&
+    source.keywords.every((item) => typeof item === "string") &&
+    Array.isArray(source.capabilities) &&
+    source.capabilities.every((item) => typeof item === "string") &&
+    typeof readiness.skills === "number" &&
+    typeof readiness.apps === "number" &&
+    typeof readiness.mcpServers === "number" &&
+    typeof readiness.hooks === "number"
+  );
 }
 
 function defaultCacheStorage(): PluginCatalogCacheStorage | null {

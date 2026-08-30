@@ -6,7 +6,7 @@ import {
   within,
 } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { useState } from "react";
+import { Profiler, useState } from "react";
 import { describe, expect, it, vi } from "vitest";
 import {
   PluginsView,
@@ -266,6 +266,10 @@ describe("PluginsView", () => {
     expect(
       screen.queryByRole("button", { name: "View Browser details" }),
     ).not.toBeInTheDocument();
+    const preRenderedBrowserCard = screen.getByRole("button", {
+      name: "View Browser details",
+      hidden: true,
+    });
 
     fireEvent.click(screen.getByRole("tab", { name: "Explore" }));
 
@@ -277,12 +281,36 @@ describe("PluginsView", () => {
     ).toBeNull();
     expect(
       screen.getByRole("button", { name: "View Browser details" }),
-    ).toBeEmptyDOMElement();
+    ).toBe(preRenderedBrowserCard);
     expect(screen.queryByText("View details")).toBeNull();
     expect(screen.getAllByText("1 capability")).not.toHaveLength(0);
     const logo = document.querySelector(".plugin-card img");
-    expect(logo).toHaveAttribute("loading", "lazy");
+    expect(logo).not.toHaveAttribute("loading");
     expect(logo).toHaveAttribute("decoding", "async");
+  });
+
+  it("does not commit React work while scrolling or hovering cards", () => {
+    const browser = plugin({ installed: true, enabled: true });
+    let commits = 0;
+    render(
+      <div className="main" data-testid="plugin-performance-scroll">
+        <Profiler id="plugins" onRender={() => commits++}>
+          <PluginsView model={model([browser])} actions={actions()} />
+        </Profiler>
+      </div>,
+    );
+    commits = 0;
+
+    const card = screen
+      .getByRole("button", { name: "View Browser details" })
+      .closest(".plugin-card");
+    fireEvent.mouseEnter(card!);
+    fireEvent.mouseLeave(card!);
+    fireEvent.scroll(screen.getByTestId("plugin-performance-scroll"), {
+      target: { scrollTop: 120 },
+    });
+
+    expect(commits).toBe(0);
   });
 
   it("restores catalog filters, scroll, and originating-card focus", async () => {

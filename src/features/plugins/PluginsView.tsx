@@ -76,14 +76,14 @@ export const PluginsView = memo(function PluginsView({
   const installPlugin = useStableEvent(actions.install);
   const openPluginAction = useStableEvent(actions.openPlugin);
   const {
-    plugins,
     installedCount,
+    installedPlugins,
+    explorePlugins,
     featuredPlugins,
-    catalogPlugins,
+    exploreCatalogPlugins,
   } = useMemo(() => {
     const normalizedQuery = query.trim().toLocaleLowerCase();
     const filteredPlugins = model.catalog.plugins.filter((plugin) => {
-      if (browseView === "installed" && !plugin.installed) return false;
       if (!normalizedQuery) return true;
       return [
         plugin.displayName,
@@ -96,7 +96,7 @@ export const PluginsView = memo(function PluginsView({
     });
     const featuredPluginIds = new Set(model.catalog.featuredPluginIds);
     const nextFeaturedPlugins =
-      browseView === "explore" && normalizedQuery.length === 0
+      normalizedQuery.length === 0
         ? filteredPlugins
             .filter(
               (plugin) =>
@@ -109,18 +109,18 @@ export const PluginsView = memo(function PluginsView({
       nextFeaturedPlugins.map((plugin) => plugin.id),
     );
     return {
-      plugins: filteredPlugins,
       installedCount: model.catalog.plugins.reduce(
         (count, plugin) => count + (plugin.installed ? 1 : 0),
         0,
       ),
+      installedPlugins: filteredPlugins.filter((plugin) => plugin.installed),
+      explorePlugins: filteredPlugins,
       featuredPlugins: nextFeaturedPlugins,
-      catalogPlugins: filteredPlugins.filter(
+      exploreCatalogPlugins: filteredPlugins.filter(
         (plugin) => !featuredIds.has(plugin.id),
       ),
     };
   }, [
-    browseView,
     model.catalog.featuredPluginIds,
     model.catalog.plugins,
     query,
@@ -219,16 +219,20 @@ export const PluginsView = memo(function PluginsView({
               aria-label="Plugin views"
             >
               <button
+                id="plugins-installed-tab"
                 type="button"
                 role="tab"
+                aria-controls="plugins-installed-panel"
                 aria-selected={browseView === "installed"}
                 onClick={() => setBrowseView("installed")}
               >
                 Installed <span>{installedCount}</span>
               </button>
               <button
+                id="plugins-explore-tab"
                 type="button"
                 role="tab"
+                aria-controls="plugins-explore-panel"
                 aria-selected={browseView === "explore"}
                 onClick={() => setBrowseView("explore")}
               >
@@ -255,66 +259,35 @@ export const PluginsView = memo(function PluginsView({
               <Loader2 className="spin" size={20} aria-hidden="true" />
               Loading plugins
             </div>
-          ) : plugins.length === 0 ? (
-            <div className="plugins-empty-state">
-              <Puzzle size={22} aria-hidden="true" />
-              {browseView === "installed"
-                ? "No installed plugins match this search."
-                : "No plugins match this search."}
-            </div>
           ) : (
-            <div className="plugins-catalog">
-              {featuredPlugins.length > 0 ? (
-                <section
-                  className="plugins-featured"
-                  aria-labelledby="plugins-featured-title"
-                >
-                  <div className="plugins-section-heading">
-                    <h2 id="plugins-featured-title">Featured</h2>
-                    <span>Recommended capabilities</span>
-                  </div>
-                  <div className="plugins-featured-grid">
-                    {featuredPlugins.map((plugin) => (
-                      <PluginCard
-                        key={plugin.id}
-                        plugin={plugin}
-                        featured
-                        busy={model.mutation?.pluginId === plugin.id}
-                        onInstall={requestInstall}
-                        onOpenPlugin={openPlugin}
-                      />
-                    ))}
-                  </div>
-                </section>
-              ) : null}
-
-              {catalogPlugins.length > 0 ? (
-                <section
-                  className="plugins-all"
-                  aria-labelledby="plugins-all-title"
-                >
-                  <div className="plugins-section-heading">
-                    <h2 id="plugins-all-title">
-                      {browseView === "installed"
-                        ? "Installed plugins"
-                        : "All plugins"}
-                    </h2>
-                    <span>{catalogPlugins.length} shown</span>
-                  </div>
-                  <div className="plugins-card-grid">
-                    {catalogPlugins.map((plugin) => (
-                      <PluginCard
-                        key={plugin.id}
-                        plugin={plugin}
-                        busy={model.mutation?.pluginId === plugin.id}
-                        onInstall={requestInstall}
-                        onOpenPlugin={openPlugin}
-                      />
-                    ))}
-                  </div>
-                </section>
-              ) : null}
-            </div>
+            <>
+              <PluginCatalogPanel
+                id="plugins-installed-panel"
+                labelledBy="plugins-installed-tab"
+                active={browseView === "installed"}
+                emptyMessage="No installed plugins match this search."
+                sectionTitle="Installed plugins"
+                plugins={installedPlugins}
+                catalogPlugins={installedPlugins}
+                featuredPlugins={[]}
+                busyPluginId={model.mutation?.pluginId ?? null}
+                onInstall={requestInstall}
+                onOpenPlugin={openPlugin}
+              />
+              <PluginCatalogPanel
+                id="plugins-explore-panel"
+                labelledBy="plugins-explore-tab"
+                active={browseView === "explore"}
+                emptyMessage="No plugins match this search."
+                sectionTitle="All plugins"
+                plugins={explorePlugins}
+                catalogPlugins={exploreCatalogPlugins}
+                featuredPlugins={featuredPlugins}
+                busyPluginId={model.mutation?.pluginId ?? null}
+                onInstall={requestInstall}
+                onOpenPlugin={openPlugin}
+              />
+            </>
           )}
         </section>
       </div>
@@ -376,6 +349,101 @@ export const PluginsView = memo(function PluginsView({
   );
 });
 
+const PluginCatalogPanel = memo(function PluginCatalogPanel({
+  id,
+  labelledBy,
+  active,
+  emptyMessage,
+  sectionTitle,
+  plugins,
+  featuredPlugins,
+  catalogPlugins,
+  busyPluginId,
+  onInstall,
+  onOpenPlugin,
+}: {
+  id: string;
+  labelledBy: string;
+  active: boolean;
+  emptyMessage: string;
+  sectionTitle: string;
+  plugins: CodexPluginSummary[];
+  featuredPlugins: CodexPluginSummary[];
+  catalogPlugins: CodexPluginSummary[];
+  busyPluginId: string | null;
+  onInstall: (plugin: CodexPluginSummary) => void;
+  onOpenPlugin: (
+    plugin: CodexPluginSummary,
+    trigger: HTMLButtonElement,
+  ) => void;
+}) {
+  return (
+    <div
+      id={id}
+      className="plugins-catalog-panel"
+      role="tabpanel"
+      aria-labelledby={labelledBy}
+      hidden={!active}
+    >
+      {plugins.length === 0 ? (
+        <div className="plugins-empty-state">
+          <Puzzle size={22} aria-hidden="true" />
+          {emptyMessage}
+        </div>
+      ) : (
+        <div className="plugins-catalog">
+          {featuredPlugins.length > 0 ? (
+            <section
+              className="plugins-featured"
+              aria-labelledby={`${id}-featured-title`}
+            >
+              <div className="plugins-section-heading">
+                <h2 id={`${id}-featured-title`}>Featured</h2>
+                <span>Recommended capabilities</span>
+              </div>
+              <div className="plugins-featured-grid">
+                {featuredPlugins.map((plugin) => (
+                  <PluginCard
+                    key={plugin.id}
+                    plugin={plugin}
+                    featured
+                    busy={busyPluginId === plugin.id}
+                    onInstall={onInstall}
+                    onOpenPlugin={onOpenPlugin}
+                  />
+                ))}
+              </div>
+            </section>
+          ) : null}
+
+          {catalogPlugins.length > 0 ? (
+            <section
+              className="plugins-all"
+              aria-labelledby={`${id}-all-title`}
+            >
+              <div className="plugins-section-heading">
+                <h2 id={`${id}-all-title`}>{sectionTitle}</h2>
+                <span>{catalogPlugins.length} shown</span>
+              </div>
+              <div className="plugins-card-grid">
+                {catalogPlugins.map((plugin) => (
+                  <PluginCard
+                    key={plugin.id}
+                    plugin={plugin}
+                    busy={busyPluginId === plugin.id}
+                    onInstall={onInstall}
+                    onOpenPlugin={onOpenPlugin}
+                  />
+                ))}
+              </div>
+            </section>
+          ) : null}
+        </div>
+      )}
+    </div>
+  );
+});
+
 const PluginCard = memo(function PluginCard({
   plugin,
   featured = false,
@@ -411,7 +479,6 @@ const PluginCard = memo(function PluginCard({
               <img
                 src={plugin.logoUrl}
                 alt=""
-                loading="lazy"
                 decoding="async"
               />
             ) : (

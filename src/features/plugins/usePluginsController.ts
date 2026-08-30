@@ -1,4 +1,10 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import {
+  startTransition,
+  useCallback,
+  useEffect,
+  useMemo,
+  useState,
+} from "react";
 import {
   installCodexPlugin,
   listCodexPlugins,
@@ -7,6 +13,11 @@ import {
   setCodexPluginEnabled,
   uninstallCodexPlugin,
 } from "./api";
+import {
+  reconcilePluginCatalog,
+  replacePluginInCatalog,
+} from "./catalogReconciliation";
+import { preloadPluginLogos } from "./pluginLogoPreloader";
 import {
   EMPTY_PLUGIN_CATALOG,
   type CodexPluginCatalog,
@@ -30,7 +41,10 @@ export function usePluginsController(input: { enabled: boolean }) {
     setLoading(true);
     setError(null);
     try {
-      setCatalog(await listCodexPlugins({ forceRefetch }));
+      const nextCatalog = await listCodexPlugins({ forceRefetch });
+      startTransition(() => {
+        setCatalog((current) => reconcilePluginCatalog(current, nextCatalog));
+      });
     } catch (reason) {
       setError(errorMessage(reason));
     } finally {
@@ -43,18 +57,9 @@ export function usePluginsController(input: { enabled: boolean }) {
     setError(null);
     try {
       const detailed = await readCodexPlugin(plugin);
-      setCatalog((current) => ({
-        ...current,
-        plugins: current.plugins.map((entry) =>
-          entry.id === detailed.id ? detailed : entry,
-        ),
-        marketplaces: current.marketplaces.map((marketplace) => ({
-          ...marketplace,
-          plugins: marketplace.plugins.map((entry) =>
-            entry.id === detailed.id ? detailed : entry,
-          ),
-        })),
-      }));
+      startTransition(() => {
+        setCatalog((current) => replacePluginInCatalog(current, detailed));
+      });
     } catch (reason) {
       setError(errorMessage(reason));
     } finally {
@@ -65,6 +70,10 @@ export function usePluginsController(input: { enabled: boolean }) {
   useEffect(() => {
     if (input.enabled) void refresh(false);
   }, [input.enabled, refresh]);
+
+  useEffect(() => {
+    preloadPluginLogos(catalog);
+  }, [catalog]);
 
   const mutate = useCallback(
     async (
