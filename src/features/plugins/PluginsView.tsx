@@ -539,6 +539,7 @@ function PluginOverviewPage({
     <section
       className="plugin-overview-page"
       aria-labelledby="plugin-overview-title"
+      aria-busy={loading}
     >
       <button
         ref={backButtonRef}
@@ -586,12 +587,6 @@ function PluginOverviewPage({
         </span>
       </header>
 
-      {loading ? (
-        <p className="plugin-overview-feedback" role="status">
-          <Loader2 className="spin" size={16} aria-hidden="true" />
-          Loading latest plugin details
-        </p>
-      ) : null}
       {notice ? (
         <p className="plugins-notice plugin-overview-feedback" role="status">
           <Check size={15} aria-hidden="true" />

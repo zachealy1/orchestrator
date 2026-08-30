@@ -319,7 +319,7 @@ describe("PluginsView", () => {
     expect(openPlugin).toHaveBeenCalledTimes(2);
   });
 
-  it("shows detail loading and failures inline without leaving the overview", () => {
+  it("keeps detail loading unobtrusive and failures inline", () => {
     const browser = plugin({ installed: true, enabled: true });
     render(
       <PluginsView
@@ -332,7 +332,11 @@ describe("PluginsView", () => {
       />,
     );
 
-    expect(screen.getByText("Loading latest plugin details")).toBeVisible();
+    expect(screen.queryByText("Loading latest plugin details")).toBeNull();
+    expect(screen.getByRole("region", { name: "Browser" })).toHaveAttribute(
+      "aria-busy",
+      "true",
+    );
     expect(screen.getByRole("alert")).toHaveTextContent(
       "Could not read plugin details",
     );
