@@ -927,30 +927,6 @@ button.settings-connection-row:focus-visible:not(:disabled) {
   font-size: 0.76rem;
 }
 
-.settings-empty-state {
-  display: flex;
-  min-height: 88px;
-  align-items: center;
-  gap: 12px;
-  color: var(--color-icon-muted);
-  padding: 16px 20px;
-}
-
-.settings-empty-state > div {
-  display: grid;
-  gap: 4px;
-}
-
-.settings-empty-state strong {
-  color: var(--color-text);
-  font-size: 0.86rem;
-}
-
-.settings-empty-state span {
-  color: var(--color-text-secondary);
-  font-size: 0.78rem;
-}
-
 .computer-use-runtime-error .link-button {
   margin-left: 8px;
 }

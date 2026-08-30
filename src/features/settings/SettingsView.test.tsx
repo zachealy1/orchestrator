@@ -176,6 +176,19 @@ describe("SettingsView", () => {
     expect(handlers.setComputerUseEnabled).toHaveBeenCalledWith(false);
   });
 
+  it("does not render an empty state when no apps are always allowed", () => {
+    render(<SettingsView model={model()} actions={actions()} />);
+
+    expect(
+      screen.queryByText("No always-allowed apps"),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByText(
+        "Apps appear here after you choose Always allow during a task.",
+      ),
+    ).not.toBeInTheDocument();
+  });
+
   it("wires Browser preferences and Computer Use permission management", () => {
     const handlers = actions();
     render(

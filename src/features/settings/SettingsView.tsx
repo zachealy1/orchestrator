@@ -1,7 +1,6 @@
 import {
   Accessibility,
   Bell,
-  CircleHelp,
   ChevronRight,
   Download,
   ExternalLink,
@@ -533,33 +532,23 @@ export const SettingsView = memo(function SettingsView({
                 <span>Apps Codex may use in future tasks without asking again.</span>
               </div>
             </div>
-            {model.alwaysAllowedApplications.length > 0 ? (
-              model.alwaysAllowedApplications.map((application) => (
-                <div className="setting-row" key={application.id}>
-                  <div>
-                    <strong>{application.name}</strong>
-                    <span>{application.bundleId}</span>
-                  </div>
-                  <SettingsIconAction
-                    icon={Trash2}
-                    ariaLabel={`Revoke ${application.name}`}
-                    tooltip={`Revoke ${application.name}`}
-                    danger
-                    onActivate={() =>
-                      actions.revokeAlwaysAllowedApplication(application.id)
-                    }
-                  />
-                </div>
-              ))
-            ) : (
-              <div className="settings-empty-state">
-                <CircleHelp size={20} aria-hidden="true" />
+            {model.alwaysAllowedApplications.map((application) => (
+              <div className="setting-row" key={application.id}>
                 <div>
-                  <strong>No always-allowed apps</strong>
-                  <span>Apps appear here after you choose Always allow during a task.</span>
+                  <strong>{application.name}</strong>
+                  <span>{application.bundleId}</span>
                 </div>
+                <SettingsIconAction
+                  icon={Trash2}
+                  ariaLabel={`Revoke ${application.name}`}
+                  tooltip={`Revoke ${application.name}`}
+                  danger
+                  onActivate={() =>
+                    actions.revokeAlwaysAllowedApplication(application.id)
+                  }
+                />
               </div>
-            )}
+            ))}
           </div>
         </section>
       ) : null}
