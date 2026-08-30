@@ -7,6 +7,7 @@ import {
   ChevronRight,
   Circle,
   CircleX,
+  Download,
   GraduationCap,
   LayoutGrid,
   Loader2,
@@ -665,8 +666,6 @@ const PluginCard = memo(function PluginCard({
   ) => void;
 }) {
   recordPluginCardRender(plugin.id);
-  const capabilities = [...new Set(plugin.capabilities)];
-  const tags = capabilities.slice(0, 2);
   const status = pluginStatus(plugin);
   return (
     <article
@@ -718,33 +717,23 @@ const PluginCard = memo(function PluginCard({
             <PluginCardStatusIcon status={status} />
             {status}
           </span>
-          {capabilities.length > 0 ? (
-            <>
-              <span
-                className="plugin-card-metadata-separator"
-                aria-hidden="true"
-              >
-                •
-              </span>
-              <span className="plugin-card-capability-count">
-                {capabilities.length}{" "}
-                {capabilities.length === 1 ? "capability" : "capabilities"}
-              </span>
-            </>
-          ) : null}
         </div>
         <div className="plugin-card-actions">
-          {tags.length > 0 ? (
-            <div className="plugin-card-tags" aria-label="Plugin capabilities">
-              {tags.map((tag) => (
-                <span key={tag}>{tag}</span>
-              ))}
-            </div>
-          ) : null}
           {!plugin.installed ? (
             <button
-              className="secondary small"
+              className="secondary plugin-card-install-button"
               type="button"
+              aria-label={
+                busy
+                  ? `Installing ${plugin.displayName}`
+                  : `Install ${plugin.displayName}`
+              }
+              aria-busy={busy}
+              data-tooltip={
+                busy
+                  ? `Installing ${plugin.displayName}`
+                  : `Install ${plugin.displayName}`
+              }
               disabled={busy || !plugin.available}
               onClick={(event) => {
                 event.stopPropagation();
@@ -752,11 +741,10 @@ const PluginCard = memo(function PluginCard({
               }}
             >
               {busy ? (
-                <Loader2 className="spin" size={14} aria-hidden="true" />
+                <Loader2 className="spin" size={16} aria-hidden="true" />
               ) : (
-                <PackagePlus size={14} aria-hidden="true" />
+                <Download size={16} aria-hidden="true" />
               )}
-              Install
             </button>
           ) : busy ? (
             <Loader2 className="spin" size={15} aria-label="Updating plugin" />

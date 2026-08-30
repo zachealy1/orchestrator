@@ -285,7 +285,16 @@ describe("PluginsView", () => {
     ).not.toBeInTheDocument();
     expect(document.querySelectorAll(".plugins-catalog-panel")).toHaveLength(1);
     expect(screen.queryByText("View details")).toBeNull();
-    expect(screen.getAllByText("1 capability")).not.toHaveLength(0);
+    const browserCard = screen.getByRole("button", {
+      name: "View Browser details",
+    });
+    expect(within(browserCard).queryByText("1 capability")).toBeNull();
+    expect(within(browserCard).queryByText("Interactive")).toBeNull();
+    const installButton = within(browserCard).getByRole("button", {
+      name: "Install Browser",
+    });
+    expect(installButton).toHaveTextContent("");
+    expect(installButton.querySelector(".lucide-download")).toBeInTheDocument();
     const logo = document.querySelector(".plugin-card img");
     expect(logo).toHaveAttribute("loading", "eager");
     expect(logo).toHaveAttribute("decoding", "async");

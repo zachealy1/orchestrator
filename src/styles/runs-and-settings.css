@@ -1279,31 +1279,10 @@ button.settings-connection-row:focus-visible:not(:disabled) {
   outline-offset: -2px;
 }
 
-.plugin-card-tags {
-  display: flex;
-  min-width: 0;
-  flex-wrap: wrap;
-  gap: 5px;
-}
-
-.plugin-card-tags span {
-  max-width: 100%;
-  overflow: hidden;
-  border: 1px solid var(--color-divider);
-  border-radius: 5px;
-  background: transparent;
-  color: var(--color-text-secondary);
-  padding: 4px 7px;
-  font-size: 0.68rem;
-  line-height: 1;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
 .plugin-card-footer {
   display: flex;
   min-height: 48px;
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
   align-items: center;
   justify-content: space-between;
   gap: 10px;
@@ -1348,28 +1327,27 @@ button.settings-connection-row:focus-visible:not(:disabled) {
   color: var(--color-error);
 }
 
-.plugin-card-metadata-separator,
-.plugin-card-capability-count {
-  color: var(--color-text-secondary);
-  white-space: nowrap;
-}
-
 .plugin-card-actions {
   display: flex;
   min-width: 0;
+  flex: 0 0 auto;
   align-items: center;
   justify-content: flex-end;
   gap: 8px;
 }
 
-.plugin-card-actions .small {
-  min-height: 30px;
-  padding: 0 10px;
-  font-size: 0.72rem;
+.plugin-card-install-button {
+  display: inline-grid;
+  width: 32px;
+  min-width: 32px;
+  height: 32px;
+  min-height: 32px;
+  place-items: center;
+  padding: 0;
   transform: none;
 }
 
-.plugin-card-actions .small:hover:not(:disabled) {
+.plugin-card-install-button:hover:not(:disabled) {
   transform: none;
 }
 

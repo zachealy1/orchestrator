@@ -87,7 +87,7 @@ describe("plugin marketplace styles", () => {
     expect(ruleFor(".plugins-view-stack[hidden]")).toContain("display: none");
   });
 
-  it("uses the compact capability-led card structure", () => {
+  it("uses compact cards without capability labels or wrapping install actions", () => {
     expect(ruleFor(".plugin-card")).toContain("min-height: 146px");
     expect(ruleFor(".plugin-card-heading")).toContain(
       "grid-template-columns: 48px minmax(0, 1fr)",
@@ -98,9 +98,11 @@ describe("plugin marketplace styles", () => {
     expect(ruleFor(".plugin-card-select-target")).toBe("");
     expect(ruleFor(".plugin-logo img")).toContain("grid-area: 1 / 1");
     expect(ruleFor(".plugin-card-footer")).toContain("min-height: 48px");
-    expect(ruleFor(".plugin-card-tags span")).toContain(
-      "border: 1px solid var(--color-divider)",
-    );
+    expect(ruleFor(".plugin-card-footer")).toContain("flex-wrap: nowrap");
+    expect(ruleFor(".plugin-card-tags")).toBe("");
+    expect(ruleFor(".plugin-card-capability-count")).toBe("");
+    expect(ruleFor(".plugin-card-install-button")).toContain("width: 32px");
+    expect(ruleFor(".plugin-card-install-button")).toContain("padding: 0");
     expect(css).not.toContain(".plugin-card-actions .link-button");
     expect(css).not.toContain(".plugin-card-details-button");
     expect(ruleFor(".plugins-pagination button")).toContain("width: 28px");
