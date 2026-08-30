@@ -62,6 +62,7 @@ describe("PluginsView", () => {
       />,
     );
 
+    fireEvent.click(screen.getByRole("tab", { name: "Explore" }));
     fireEvent.change(screen.getByRole("textbox", { name: "Search plugins" }), {
       target: { value: "web" },
     });
@@ -129,7 +130,7 @@ describe("PluginsView", () => {
     expect(setEnabled).not.toHaveBeenCalled();
   });
 
-  it("separates featured discovery from the installed catalog", () => {
+  it("defaults to Installed on the left and separates it from discovery", () => {
     const browser = plugin();
     const github = plugin({
       id: "github@openai-curated",
@@ -170,6 +171,19 @@ describe("PluginsView", () => {
       />,
     );
 
+    const tabs = screen.getAllByRole("tab");
+    expect(tabs[0]).toHaveAccessibleName(/Installed/);
+    expect(tabs[0]).toHaveAttribute("aria-selected", "true");
+    expect(tabs[1]).toHaveAccessibleName("Explore");
+    expect(
+      screen.getByRole("heading", { name: "Installed plugins" }),
+    ).toBeVisible();
+    expect(
+      screen.queryByRole("button", { name: "View Browser details" }),
+    ).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("tab", { name: "Explore" }));
+
     expect(screen.getByRole("heading", { name: "Featured" })).toBeVisible();
     expect(screen.getByRole("heading", { name: "All plugins" })).toBeVisible();
     expect(
@@ -181,17 +195,5 @@ describe("PluginsView", () => {
     expect(
       screen.getByRole("button", { name: "View Browser details" }),
     ).toBeVisible();
-
-    fireEvent.click(screen.getByRole("tab", { name: /Installed/ }));
-
-    expect(
-      screen.getByRole("heading", { name: "Installed plugins" }),
-    ).toBeVisible();
-    expect(
-      screen.getByRole("button", { name: "View GitHub details" }),
-    ).toBeVisible();
-    expect(
-      screen.queryByRole("button", { name: "View Browser details" }),
-    ).not.toBeInTheDocument();
   });
 });

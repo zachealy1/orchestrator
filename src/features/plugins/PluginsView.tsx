@@ -45,7 +45,7 @@ export function PluginsView({
 }) {
   const [query, setQuery] = useState("");
   const [browseView, setBrowseView] = useState<"explore" | "installed">(
-    "explore",
+    "installed",
   );
   const [selectedPluginId, setSelectedPluginId] = useState<string | null>(null);
   const [pendingInstall, setPendingInstall] =
@@ -140,18 +140,18 @@ export function PluginsView({
             <button
               type="button"
               role="tab"
-              aria-selected={browseView === "explore"}
-              onClick={() => setBrowseView("explore")}
-            >
-              Explore
-            </button>
-            <button
-              type="button"
-              role="tab"
               aria-selected={browseView === "installed"}
               onClick={() => setBrowseView("installed")}
             >
               Installed <span>{installedCount}</span>
+            </button>
+            <button
+              type="button"
+              role="tab"
+              aria-selected={browseView === "explore"}
+              onClick={() => setBrowseView("explore")}
+            >
+              Explore
             </button>
           </div>
         </div>
