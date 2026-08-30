@@ -1124,6 +1124,75 @@ describe("Application runtime scenarios 5", () => {
       ).toBeVisible();
     });
 
+  it("returns a plugin overview to the catalog when Plugins is selected again", async () => {
+      const browserPlugin = {
+        id: "browser@openai-bundled",
+        name: "browser",
+        version: "26.818.41509",
+        installed: true,
+        enabled: true,
+        installPolicy: "AVAILABLE",
+        authPolicy: "ON_USE",
+        availability: "AVAILABLE",
+        interface: {
+          displayName: "Browser",
+          shortDescription: "Control the isolated in-app browser.",
+          capabilities: ["Interactive"],
+        },
+        keywords: ["web"],
+      };
+      mocks.codexDefaultProfileRpcMock.mockImplementation(async (method) => {
+        if (method === "plugin/list") {
+          return {
+            marketplaces: [{
+              name: "openai-bundled",
+              path: null,
+              plugins: [browserPlugin],
+            }],
+            marketplaceLoadErrors: [],
+            featuredPluginIds: [browserPlugin.id],
+          };
+        }
+        if (method === "plugin/read") {
+          return {
+            plugin: {
+              summary: browserPlugin,
+              marketplaceName: "openai-bundled",
+              marketplacePath: null,
+              description: "Control the isolated in-app browser.",
+              skills: [{}],
+              apps: [],
+              mcpServers: [],
+              hooks: [],
+            },
+          };
+        }
+        return undefined;
+      });
+
+      const { user } = await renderApp();
+      await user.click(screen.getByRole("button", { name: "Plugins" }));
+      await user.click(
+        await screen.findByRole("button", { name: "View Browser details" }),
+      );
+
+      expect(
+        await screen.findByRole("heading", { name: "Browser", level: 1 }),
+      ).toBeVisible();
+      expect(mocks.codexDefaultProfileRpcMock).toHaveBeenCalledWith(
+        "plugin/read",
+        expect.objectContaining({ pluginName: "browser" }),
+      );
+
+      await user.click(screen.getByRole("button", { name: "Plugins" }));
+      expect(
+        await screen.findByRole("heading", { name: "Plugins", level: 1 }),
+      ).toBeVisible();
+      expect(
+        screen.getByRole("button", { name: "View Browser details" }),
+      ).toBeVisible();
+    });
+
   it("does not force Browser into a run that did not select the plugin", async () => {
       prepareSignedInRun();
 

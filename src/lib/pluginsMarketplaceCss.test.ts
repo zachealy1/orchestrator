@@ -83,6 +83,24 @@ describe("plugin marketplace styles", () => {
     expect(css).not.toContain(".plugin-card-details-button");
   });
 
+  it("uses a responsive full-page overview instead of a details modal", () => {
+    expect(ruleFor(".plugins-catalog-page,\n.plugin-overview-page")).toContain(
+      "display: grid",
+    );
+    expect(ruleFor(".plugin-overview-header")).toContain(
+      "background: var(--color-component-background)",
+    );
+    expect(ruleFor(".plugin-overview-layout")).toContain(
+      "grid-template-columns: minmax(0, 1fr) minmax(260px, 0.36fr)",
+    );
+    expect(ruleFor(".plugin-overview-panel")).toContain(
+      "border: 1px solid var(--color-divider)",
+    );
+    expect(ruleFor(".plugins-catalog-page[hidden]")).toContain("display: none");
+    expect(css).not.toContain(".plugin-details-dialog");
+    expect(css).not.toContain(".plugin-details-close");
+  });
+
   it("removes the legacy split list presentation", () => {
     expect(css).not.toContain(".plugins-layout");
     expect(css).not.toContain(".plugins-list");

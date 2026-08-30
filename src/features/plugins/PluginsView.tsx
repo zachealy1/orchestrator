@@ -1,4 +1,5 @@
 import {
+  ArrowLeft,
   Box,
   Check,
   CheckCircle2,
@@ -11,9 +12,14 @@ import {
   Search,
   ShieldAlert,
   Trash2,
-  X,
 } from "lucide-react";
-import { useMemo, useState } from "react";
+import {
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type RefObject,
+} from "react";
 import type {
   CodexPluginCatalog,
   CodexPluginSummary,
@@ -22,6 +28,7 @@ import type {
 
 export type PluginsViewModel = {
   dragRegion?: string;
+  selectedPluginId: string | null;
   catalog: CodexPluginCatalog;
   loading: boolean;
   error: string | null;
@@ -32,7 +39,8 @@ export type PluginsViewModel = {
 
 export type PluginsViewActions = {
   refresh: () => void;
-  loadDetails: (plugin: CodexPluginSummary) => void;
+  openPlugin: (plugin: CodexPluginSummary) => void;
+  backToCatalog: () => void;
   install: (plugin: CodexPluginSummary) => void;
   uninstall: (plugin: CodexPluginSummary) => void;
   setEnabled: (plugin: CodexPluginSummary, enabled: boolean) => void;
@@ -49,9 +57,15 @@ export function PluginsView({
   const [browseView, setBrowseView] = useState<"explore" | "installed">(
     "installed",
   );
-  const [selectedPluginId, setSelectedPluginId] = useState<string | null>(null);
   const [pendingInstall, setPendingInstall] =
     useState<CodexPluginSummary | null>(null);
+  const pageRef = useRef<HTMLDivElement | null>(null);
+  const backButtonRef = useRef<HTMLButtonElement | null>(null);
+  const originatingCardRef = useRef<HTMLButtonElement | null>(null);
+  const catalogScrollTopRef = useRef(0);
+  const previousSelectedPluginIdRef = useRef<string | null>(
+    model.selectedPluginId,
+  );
   const plugins = useMemo(() => {
     const normalizedQuery = query.trim().toLocaleLowerCase();
     return model.catalog.plugins.filter((plugin) => {
@@ -68,7 +82,9 @@ export function PluginsView({
     });
   }, [browseView, model.catalog.plugins, query]);
   const selectedPlugin =
-    model.catalog.plugins.find((plugin) => plugin.id === selectedPluginId) ??
+    model.catalog.plugins.find(
+      (plugin) => plugin.id === model.selectedPluginId,
+    ) ??
     null;
   const installedCount = model.catalog.plugins.filter(
     (plugin) => plugin.installed,
@@ -91,192 +107,204 @@ export function PluginsView({
 
   function requestInstall(plugin: CodexPluginSummary) {
     if (plugin.mustShowInstallationInterstitial) {
-      setSelectedPluginId(null);
       setPendingInstall(plugin);
     } else {
       actions.install(plugin);
     }
   }
 
-  function openDetails(plugin: CodexPluginSummary) {
-    setSelectedPluginId(plugin.id);
-    actions.loadDetails(plugin);
+  function openPlugin(
+    plugin: CodexPluginSummary,
+    trigger: HTMLButtonElement,
+  ) {
+    const scrollContainer = pageRef.current?.closest<HTMLElement>(".main");
+    catalogScrollTopRef.current = scrollContainer?.scrollTop ?? 0;
+    originatingCardRef.current = trigger;
+    actions.openPlugin(plugin);
   }
 
+  useEffect(() => {
+    const previousSelectedPluginId = previousSelectedPluginIdRef.current;
+    previousSelectedPluginIdRef.current = model.selectedPluginId;
+    const scrollContainer = pageRef.current?.closest<HTMLElement>(".main");
+    let frame: number | null = null;
+
+    if (model.selectedPluginId) {
+      if (scrollContainer) scrollContainer.scrollTop = 0;
+      frame = window.requestAnimationFrame(() => backButtonRef.current?.focus());
+    } else if (previousSelectedPluginId) {
+      frame = window.requestAnimationFrame(() => {
+        if (scrollContainer) {
+          scrollContainer.scrollTop = catalogScrollTopRef.current;
+        }
+        originatingCardRef.current?.focus();
+      });
+    }
+
+    return () => {
+      if (frame !== null) window.cancelAnimationFrame(frame);
+    };
+  }, [model.selectedPluginId]);
+
   return (
-    <div className="plugins-page" data-tauri-drag-region={model.dragRegion}>
-      <header className="plugins-page-header">
-        <h1>Plugins</h1>
-        <button
-          className="plugins-refresh-button"
-          type="button"
-          onClick={actions.refresh}
-          disabled={model.loading}
-          aria-label="Refresh plugins"
-          data-tooltip="Refresh plugins"
-        >
-          <RefreshCw
-            size={16}
-            className={model.loading ? "spin" : undefined}
-            aria-hidden="true"
-          />
-        </button>
-      </header>
-
-      <section className="plugins-browser" aria-label="Plugin marketplace">
-        <div className="plugins-browser-toolbar">
-          <label className="settings-search plugins-search">
-            <Search size={18} aria-hidden="true" />
-            <input
-              value={query}
-              placeholder="Search plugins"
-              aria-label="Search plugins"
-              onChange={(event) => setQuery(event.currentTarget.value)}
-            />
-          </label>
-          <div
-            className="plugins-browse-tabs"
-            role="tablist"
-            aria-label="Plugin views"
+    <div
+      ref={pageRef}
+      className="plugins-page"
+      data-tauri-drag-region={model.dragRegion}
+    >
+      <div
+        className="plugins-catalog-page"
+        hidden={model.selectedPluginId !== null}
+      >
+        <header className="plugins-page-header">
+          <h1>Plugins</h1>
+          <button
+            className="plugins-refresh-button"
+            type="button"
+            onClick={actions.refresh}
+            disabled={model.loading}
+            aria-label="Refresh plugins"
+            data-tooltip="Refresh plugins"
           >
-            <button
-              type="button"
-              role="tab"
-              aria-selected={browseView === "installed"}
-              onClick={() => setBrowseView("installed")}
-            >
-              Installed <span>{installedCount}</span>
-            </button>
-            <button
-              type="button"
-              role="tab"
-              aria-selected={browseView === "explore"}
-              onClick={() => setBrowseView("explore")}
-            >
-              Explore
-            </button>
-          </div>
-        </div>
-
-        {model.notice ? (
-          <p className="plugins-notice" role="status">
-            <Check size={15} aria-hidden="true" />
-            {model.notice}
-          </p>
-        ) : null}
-        {model.error ? (
-          <p className="plugins-error" role="alert">
-            <ShieldAlert size={15} aria-hidden="true" />
-            {model.error}
-          </p>
-        ) : null}
-
-        {model.loading && model.catalog.plugins.length === 0 ? (
-          <div className="plugins-empty-state" role="status">
-            <Loader2 className="spin" size={20} aria-hidden="true" />
-            Loading plugins
-          </div>
-        ) : plugins.length === 0 ? (
-          <div className="plugins-empty-state">
-            <Puzzle size={22} aria-hidden="true" />
-            {browseView === "installed"
-              ? "No installed plugins match this search."
-              : "No plugins match this search."}
-          </div>
-        ) : (
-          <div className="plugins-catalog">
-            {featuredPlugins.length > 0 ? (
-              <section
-                className="plugins-featured"
-                aria-labelledby="plugins-featured-title"
-              >
-                <div className="plugins-section-heading">
-                  <h2 id="plugins-featured-title">Featured</h2>
-                  <span>Recommended capabilities</span>
-                </div>
-                <div className="plugins-featured-grid">
-                  {featuredPlugins.map((plugin) => (
-                    <PluginCard
-                      key={plugin.id}
-                      plugin={plugin}
-                      featured
-                      busy={
-                        model.mutation?.pluginId === plugin.id ||
-                        model.detailsLoadingPluginId === plugin.id
-                      }
-                      onInstall={() => requestInstall(plugin)}
-                      onOpenDetails={() => openDetails(plugin)}
-                    />
-                  ))}
-                </div>
-              </section>
-            ) : null}
-
-            {catalogPlugins.length > 0 ? (
-              <section
-                className="plugins-all"
-                aria-labelledby="plugins-all-title"
-              >
-                <div className="plugins-section-heading">
-                  <h2 id="plugins-all-title">
-                    {browseView === "installed"
-                      ? "Installed plugins"
-                      : "All plugins"}
-                  </h2>
-                  <span>{catalogPlugins.length} shown</span>
-                </div>
-                <div className="plugins-card-grid">
-                  {catalogPlugins.map((plugin) => (
-                    <PluginCard
-                      key={plugin.id}
-                      plugin={plugin}
-                      busy={
-                        model.mutation?.pluginId === plugin.id ||
-                        model.detailsLoadingPluginId === plugin.id
-                      }
-                      onInstall={() => requestInstall(plugin)}
-                      onOpenDetails={() => openDetails(plugin)}
-                    />
-                  ))}
-                </div>
-              </section>
-            ) : null}
-          </div>
-        )}
-      </section>
-
-      {selectedPlugin ? (
-        <div
-          className="dialog-backdrop"
-          role="presentation"
-          onPointerDown={(event) => {
-            if (event.target === event.currentTarget) setSelectedPluginId(null);
-          }}
-        >
-          <section
-            className="dialog-card plugin-details-dialog"
-            role="dialog"
-            aria-modal="true"
-            aria-label={`${selectedPlugin.displayName} details`}
-          >
-            <button
-              className="settings-icon-action plugin-details-close"
-              type="button"
-              aria-label="Close plugin details"
-              data-tooltip="Close"
-              onClick={() => setSelectedPluginId(null)}
-            >
-              <X size={16} aria-hidden="true" />
-            </button>
-            <PluginDetail
-              plugin={selectedPlugin}
-              mutation={model.mutation}
-              onInstall={requestInstall}
-              onUninstall={actions.uninstall}
-              onEnabledChange={actions.setEnabled}
+            <RefreshCw
+              size={16}
+              className={model.loading ? "spin" : undefined}
+              aria-hidden="true"
             />
-          </section>
-        </div>
+          </button>
+        </header>
+
+        <section className="plugins-browser" aria-label="Plugin marketplace">
+          <div className="plugins-browser-toolbar">
+            <label className="settings-search plugins-search">
+              <Search size={18} aria-hidden="true" />
+              <input
+                value={query}
+                placeholder="Search plugins"
+                aria-label="Search plugins"
+                onChange={(event) => setQuery(event.currentTarget.value)}
+              />
+            </label>
+            <div
+              className="plugins-browse-tabs"
+              role="tablist"
+              aria-label="Plugin views"
+            >
+              <button
+                type="button"
+                role="tab"
+                aria-selected={browseView === "installed"}
+                onClick={() => setBrowseView("installed")}
+              >
+                Installed <span>{installedCount}</span>
+              </button>
+              <button
+                type="button"
+                role="tab"
+                aria-selected={browseView === "explore"}
+                onClick={() => setBrowseView("explore")}
+              >
+                Explore
+              </button>
+            </div>
+          </div>
+
+          {model.notice ? (
+            <p className="plugins-notice" role="status">
+              <Check size={15} aria-hidden="true" />
+              {model.notice}
+            </p>
+          ) : null}
+          {model.error ? (
+            <p className="plugins-error" role="alert">
+              <ShieldAlert size={15} aria-hidden="true" />
+              {model.error}
+            </p>
+          ) : null}
+
+          {model.loading && model.catalog.plugins.length === 0 ? (
+            <div className="plugins-empty-state" role="status">
+              <Loader2 className="spin" size={20} aria-hidden="true" />
+              Loading plugins
+            </div>
+          ) : plugins.length === 0 ? (
+            <div className="plugins-empty-state">
+              <Puzzle size={22} aria-hidden="true" />
+              {browseView === "installed"
+                ? "No installed plugins match this search."
+                : "No plugins match this search."}
+            </div>
+          ) : (
+            <div className="plugins-catalog">
+              {featuredPlugins.length > 0 ? (
+                <section
+                  className="plugins-featured"
+                  aria-labelledby="plugins-featured-title"
+                >
+                  <div className="plugins-section-heading">
+                    <h2 id="plugins-featured-title">Featured</h2>
+                    <span>Recommended capabilities</span>
+                  </div>
+                  <div className="plugins-featured-grid">
+                    {featuredPlugins.map((plugin) => (
+                      <PluginCard
+                        key={plugin.id}
+                        plugin={plugin}
+                        featured
+                        busy={model.mutation?.pluginId === plugin.id}
+                        onInstall={() => requestInstall(plugin)}
+                        onOpenPlugin={(trigger) => openPlugin(plugin, trigger)}
+                      />
+                    ))}
+                  </div>
+                </section>
+              ) : null}
+
+              {catalogPlugins.length > 0 ? (
+                <section
+                  className="plugins-all"
+                  aria-labelledby="plugins-all-title"
+                >
+                  <div className="plugins-section-heading">
+                    <h2 id="plugins-all-title">
+                      {browseView === "installed"
+                        ? "Installed plugins"
+                        : "All plugins"}
+                    </h2>
+                    <span>{catalogPlugins.length} shown</span>
+                  </div>
+                  <div className="plugins-card-grid">
+                    {catalogPlugins.map((plugin) => (
+                      <PluginCard
+                        key={plugin.id}
+                        plugin={plugin}
+                        busy={model.mutation?.pluginId === plugin.id}
+                        onInstall={() => requestInstall(plugin)}
+                        onOpenPlugin={(trigger) => openPlugin(plugin, trigger)}
+                      />
+                    ))}
+                  </div>
+                </section>
+              ) : null}
+            </div>
+          )}
+        </section>
+      </div>
+
+      {model.selectedPluginId ? (
+        <PluginOverviewPage
+          backButtonRef={backButtonRef}
+          pluginId={model.selectedPluginId}
+          plugin={selectedPlugin}
+          loading={model.detailsLoadingPluginId === model.selectedPluginId}
+          error={model.error}
+          notice={model.notice}
+          mutation={model.mutation}
+          onBack={actions.backToCatalog}
+          onInstall={requestInstall}
+          onUninstall={actions.uninstall}
+          onEnabledChange={actions.setEnabled}
+        />
       ) : null}
 
       {pendingInstall ? (
@@ -325,23 +353,17 @@ function PluginCard({
   featured = false,
   busy,
   onInstall,
-  onOpenDetails,
+  onOpenPlugin,
 }: {
   plugin: CodexPluginSummary;
   featured?: boolean;
   busy: boolean;
   onInstall: () => void;
-  onOpenDetails: () => void;
+  onOpenPlugin: (trigger: HTMLButtonElement) => void;
 }) {
   const capabilities = [...new Set(plugin.capabilities)];
   const tags = capabilities.slice(0, 2);
-  const status = plugin.installed
-    ? plugin.enabled
-      ? "Enabled"
-      : "Disabled"
-    : plugin.available
-      ? "Available"
-      : "Unavailable";
+  const status = pluginStatus(plugin);
   return (
     <article className={`plugin-card${featured ? " featured" : ""}`}>
       <button
@@ -349,7 +371,7 @@ function PluginCard({
         type="button"
         aria-label={`View ${plugin.displayName} details`}
         disabled={busy}
-        onClick={onOpenDetails}
+        onClick={(event) => onOpenPlugin(event.currentTarget)}
       />
       <div className="plugin-card-main">
         <div className="plugin-card-heading">
@@ -431,106 +453,246 @@ function PluginCardStatusIcon({ status }: { status: string }) {
   return <Circle size={15} aria-hidden="true" />;
 }
 
-function PluginDetail({
+function PluginOverviewPage({
+  backButtonRef,
+  pluginId,
   plugin,
+  loading,
+  error,
+  notice,
   mutation,
+  onBack,
   onInstall,
   onUninstall,
   onEnabledChange,
 }: {
+  backButtonRef: RefObject<HTMLButtonElement | null>;
+  pluginId: string;
   plugin: CodexPluginSummary | null;
+  loading: boolean;
+  error: string | null;
+  notice: string | null;
   mutation: PluginMutationState;
+  onBack: () => void;
   onInstall: (plugin: CodexPluginSummary) => void;
   onUninstall: (plugin: CodexPluginSummary) => void;
   onEnabledChange: (plugin: CodexPluginSummary, enabled: boolean) => void;
 }) {
-  if (!plugin) return null;
+  if (!plugin) {
+    return (
+      <section
+        className="plugin-overview-page"
+        aria-labelledby="plugin-overview-missing-title"
+      >
+        <button
+          ref={backButtonRef}
+          className="plugin-overview-back secondary"
+          type="button"
+          onClick={onBack}
+        >
+          <ArrowLeft size={16} aria-hidden="true" />
+          Back to Plugins
+        </button>
+        <div className="plugin-overview-missing" role="alert">
+          <CircleX size={28} aria-hidden="true" />
+          <div>
+            <h1 id="plugin-overview-missing-title">
+              Plugin no longer available
+            </h1>
+            <p>
+              The plugin “{pluginId}” is no longer present in the current
+              marketplace catalog.
+            </p>
+          </div>
+        </div>
+      </section>
+    );
+  }
+
   const busy = mutation?.pluginId === plugin.id;
   const componentTotal = Object.values(plugin.readiness).reduce(
     (sum, count) => sum + count,
     0,
   );
+  const status = pluginStatus(plugin);
+  const capabilities = [...new Set(plugin.capabilities)];
+
   return (
-    <div className="plugin-detail">
-      <div className="plugin-detail-heading">
-        <span className="plugin-logo large" aria-hidden="true">
-          {plugin.logoUrl ? (
-            <img src={plugin.logoUrl} alt="" />
-          ) : (
-            <Box size={24} />
-          )}
+    <section
+      className="plugin-overview-page"
+      aria-labelledby="plugin-overview-title"
+    >
+      <button
+        ref={backButtonRef}
+        className="plugin-overview-back secondary"
+        type="button"
+        onClick={onBack}
+      >
+        <ArrowLeft size={16} aria-hidden="true" />
+        Back to Plugins
+      </button>
+
+      <header className="plugin-overview-header">
+        <div className="plugin-overview-identity">
+          <span className="plugin-logo large" aria-hidden="true">
+            {plugin.logoUrl ? (
+              <img src={plugin.logoUrl} alt="" />
+            ) : (
+              <Box size={26} />
+            )}
+          </span>
+          <div className="plugin-overview-title">
+            <h1 id="plugin-overview-title">{plugin.displayName}</h1>
+            <p>
+              <span>{plugin.version ?? "Version unavailable"}</span>
+              <span aria-hidden="true">·</span>
+              <span>{plugin.marketplaceName}</span>
+            </p>
+          </div>
+        </div>
+        <span className={`plugin-card-status ${status.toLocaleLowerCase()}`}>
+          <PluginCardStatusIcon status={status} />
+          {status}
         </span>
-        <div>
-          <h2>{plugin.displayName}</h2>
-          <span>{plugin.version ?? plugin.marketplaceName}</span>
-        </div>
-      </div>
-      <p>{plugin.description ?? "No plugin description is available."}</p>
-      <dl className="plugin-component-summary">
-        <div>
-          <dt>Skills</dt>
-          <dd>{plugin.readiness.skills}</dd>
-        </div>
-        <div>
-          <dt>Apps</dt>
-          <dd>{plugin.readiness.apps}</dd>
-        </div>
-        <div>
-          <dt>MCP servers</dt>
-          <dd>{plugin.readiness.mcpServers}</dd>
-        </div>
-        <div>
-          <dt>Hooks</dt>
-          <dd>{plugin.readiness.hooks}</dd>
-        </div>
-      </dl>
-      <p className="plugin-readiness-copy">
-        {componentTotal > 0
-          ? `${componentTotal} component${componentTotal === 1 ? "" : "s"} reported ready.`
-          : "Component readiness is checked when this plugin starts in a new task."}
-      </p>
-      {plugin.unavailableReason ? (
-        <p className="plugins-error" role="status">
-          {plugin.unavailableReason}
+      </header>
+
+      {loading ? (
+        <p className="plugin-overview-feedback" role="status">
+          <Loader2 className="spin" size={16} aria-hidden="true" />
+          Loading latest plugin details
         </p>
       ) : null}
-      <div className="plugin-detail-actions">
-        {plugin.installed ? (
-          <>
-            <label className="plugin-enabled-control">
-              <span>Enabled</span>
-              <input
-                type="checkbox"
-                checked={plugin.enabled}
-                disabled={busy || !plugin.available}
-                onChange={(event) =>
-                  onEnabledChange(plugin, event.currentTarget.checked)
-                }
-              />
-            </label>
-            {plugin.installPolicy !== "INSTALLED_BY_DEFAULT" ? (
+      {notice ? (
+        <p className="plugins-notice plugin-overview-feedback" role="status">
+          <Check size={15} aria-hidden="true" />
+          {notice}
+        </p>
+      ) : null}
+      {error ? (
+        <p className="plugins-error plugin-overview-feedback" role="alert">
+          <ShieldAlert size={15} aria-hidden="true" />
+          {error}
+        </p>
+      ) : null}
+
+      <div className="plugin-overview-layout">
+        <div className="plugin-overview-content">
+          <section className="plugin-overview-panel">
+            <h2>Overview</h2>
+            <p>{plugin.description ?? "No plugin description is available."}</p>
+            <div
+              className="plugin-overview-capabilities"
+              aria-label="Plugin capabilities"
+            >
+              {capabilities.length > 0 ? (
+                capabilities.map((capability) => (
+                  <span key={capability}>{capability}</span>
+                ))
+              ) : (
+                <span>No capabilities listed</span>
+              )}
+            </div>
+          </section>
+
+          <section className="plugin-overview-panel">
+            <div className="plugin-overview-section-heading">
+              <div>
+                <h2>Component readiness</h2>
+                <p>
+                  Components exposed to Codex when this plugin is enabled.
+                </p>
+              </div>
+              <strong>{componentTotal} total</strong>
+            </div>
+            <dl className="plugin-component-summary">
+              <div>
+                <dt>Skills</dt>
+                <dd>{plugin.readiness.skills}</dd>
+              </div>
+              <div>
+                <dt>Apps</dt>
+                <dd>{plugin.readiness.apps}</dd>
+              </div>
+              <div>
+                <dt>MCP servers</dt>
+                <dd>{plugin.readiness.mcpServers}</dd>
+              </div>
+              <div>
+                <dt>Hooks</dt>
+                <dd>{plugin.readiness.hooks}</dd>
+              </div>
+            </dl>
+            <p className="plugin-readiness-copy">
+              {componentTotal > 0
+                ? `${componentTotal} component${componentTotal === 1 ? "" : "s"} reported ready.`
+                : "Component readiness is checked when this plugin starts in a new task."}
+            </p>
+          </section>
+        </div>
+
+        <aside className="plugin-overview-panel plugin-overview-management">
+          <div>
+            <h2>Manage plugin</h2>
+            <p>Changes to plugin availability apply to new tasks.</p>
+          </div>
+          {plugin.unavailableReason ? (
+            <p className="plugin-overview-policy" role="status">
+              <ShieldAlert size={16} aria-hidden="true" />
+              {plugin.unavailableReason}
+            </p>
+          ) : null}
+          <div className="plugin-overview-management-actions">
+            {plugin.installed ? (
+              <>
+                <label className="plugin-enabled-control">
+                  <span>Enabled</span>
+                  <input
+                    type="checkbox"
+                    checked={plugin.enabled}
+                    disabled={busy || !plugin.available}
+                    onChange={(event) =>
+                      onEnabledChange(plugin, event.currentTarget.checked)
+                    }
+                  />
+                </label>
+                {plugin.installPolicy !== "INSTALLED_BY_DEFAULT" ? (
+                  <button
+                    className="danger secondary"
+                    type="button"
+                    disabled={busy}
+                    onClick={() => onUninstall(plugin)}
+                  >
+                    {busy && mutation?.action === "uninstall" ? (
+                      <Loader2 className="spin" size={15} aria-hidden="true" />
+                    ) : (
+                      <Trash2 size={15} aria-hidden="true" />
+                    )}
+                    Uninstall
+                  </button>
+                ) : null}
+              </>
+            ) : (
               <button
-                className="danger secondary"
                 type="button"
-                disabled={busy}
-                onClick={() => onUninstall(plugin)}
+                disabled={busy || !plugin.available}
+                onClick={() => onInstall(plugin)}
               >
-                <Trash2 size={15} aria-hidden="true" />
-                Uninstall
+                {busy ? (
+                  <Loader2 className="spin" size={15} aria-hidden="true" />
+                ) : (
+                  <PackagePlus size={15} aria-hidden="true" />
+                )}
+                Install plugin
               </button>
-            ) : null}
-          </>
-        ) : (
-          <button
-            type="button"
-            disabled={busy || !plugin.available}
-            onClick={() => onInstall(plugin)}
-          >
-            <PackagePlus size={16} aria-hidden="true" />
-            Install plugin
-          </button>
-        )}
+            )}
+          </div>
+        </aside>
       </div>
-    </div>
+    </section>
   );
+}
+
+function pluginStatus(plugin: CodexPluginSummary) {
+  if (plugin.installed) return plugin.enabled ? "Enabled" : "Disabled";
+  return plugin.available ? "Available" : "Unavailable";
 }

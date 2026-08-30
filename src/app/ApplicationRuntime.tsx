@@ -1067,6 +1067,7 @@ function App() {
     loadSummary: getAnalyticsSummary,
   });
   const [activeView, setActiveView] = useState<AppView>("task");
+  const [selectedPluginId, setSelectedPluginId] = useState<string | null>(null);
   const [analyticsWorkspaceFilter, setAnalyticsWorkspaceFilter] =
     useState<number[] | null>(null);
   const [analyticsDateRange, setAnalyticsDateRange] =
@@ -19558,7 +19559,10 @@ function App() {
       clearBrowserData: () => clearBrowserData(),
       importBrowserProfile: () =>
         setStatusMessage("Browser profile import is unavailable on this device."),
-      openPlugins: () => setActiveView("plugins"),
+      openPlugins: () => {
+        setSelectedPluginId(null);
+        setActiveView("plugins");
+      },
       refreshComputerUseStatus: () => {
         void Promise.all([
           refreshDesktopRuntimeStatus(),
@@ -19640,7 +19644,10 @@ function App() {
           <button
             className={activeView === "plugins" ? "active" : ""}
             type="button"
-            onClick={() => setActiveView("plugins")}
+            onClick={() => {
+              setSelectedPluginId(null);
+              setActiveView("plugins");
+            }}
           >
             <Puzzle size={17} />
             <span>Plugins</span>
@@ -20413,6 +20420,7 @@ function App() {
             <PluginsView
               model={{
                 dragRegion: selfWindowDragRegion,
+                selectedPluginId,
                 catalog: pluginsController.catalog,
                 loading: pluginsController.loading,
                 error: pluginsController.error,
@@ -20422,7 +20430,11 @@ function App() {
               }}
               actions={{
                 refresh: () => void pluginsController.refresh(true),
-                loadDetails: (plugin) => void pluginsController.loadDetails(plugin),
+                openPlugin: (plugin) => {
+                  setSelectedPluginId(plugin.id);
+                  void pluginsController.loadDetails(plugin);
+                },
+                backToCatalog: () => setSelectedPluginId(null),
                 install: (plugin) => void pluginsController.install(plugin),
                 uninstall: (plugin) => void pluginsController.uninstall(plugin),
                 setEnabled: (plugin, enabled) =>

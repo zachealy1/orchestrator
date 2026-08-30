@@ -1,7 +1,19 @@
-import { fireEvent, render, screen, within } from "@testing-library/react";
+import {
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+  within,
+} from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
+import { useState } from "react";
 import { describe, expect, it, vi } from "vitest";
-import { PluginsView } from "./PluginsView";
-import type { CodexPluginSummary } from "./types";
+import {
+  PluginsView,
+  type PluginsViewActions,
+  type PluginsViewModel,
+} from "./PluginsView";
+import type { CodexPluginCatalog, CodexPluginSummary } from "./types";
 
 function plugin(
   overrides: Partial<CodexPluginSummary> = {},
@@ -29,36 +41,83 @@ function plugin(
   };
 }
 
+function catalog(plugins: CodexPluginSummary[]): CodexPluginCatalog {
+  return {
+    marketplaces: [{ name: "openai-bundled", path: null, plugins }],
+    plugins,
+    featuredPluginIds: plugins.slice(0, 1).map((entry) => entry.id),
+    errors: [],
+    refreshedAt: "2026-08-29T00:00:00.000Z",
+  };
+}
+
+function model(
+  plugins: CodexPluginSummary[],
+  overrides: Partial<PluginsViewModel> = {},
+): PluginsViewModel {
+  return {
+    selectedPluginId: null,
+    catalog: catalog(plugins),
+    loading: false,
+    error: null,
+    notice: null,
+    mutation: null,
+    detailsLoadingPluginId: null,
+    ...overrides,
+  };
+}
+
+function actions(overrides: Partial<PluginsViewActions> = {}): PluginsViewActions {
+  return {
+    refresh: vi.fn(),
+    openPlugin: vi.fn(),
+    backToCatalog: vi.fn(),
+    install: vi.fn(),
+    uninstall: vi.fn(),
+    setEnabled: vi.fn(),
+    ...overrides,
+  };
+}
+
+function ControlledPlugins({
+  plugins,
+  actionOverrides,
+  modelOverrides,
+}: {
+  plugins: CodexPluginSummary[];
+  actionOverrides?: Partial<PluginsViewActions>;
+  modelOverrides?: Partial<PluginsViewModel>;
+}) {
+  const [selectedPluginId, setSelectedPluginId] = useState<string | null>(null);
+  return (
+    <div className="main" data-testid="plugins-scroll-container">
+      <PluginsView
+        model={model(plugins, { ...modelOverrides, selectedPluginId })}
+        actions={actions({
+          ...actionOverrides,
+          openPlugin: (selectedPlugin) => {
+            actionOverrides?.openPlugin?.(selectedPlugin);
+            setSelectedPluginId(selectedPlugin.id);
+          },
+          backToCatalog: () => {
+            actionOverrides?.backToCatalog?.();
+            setSelectedPluginId(null);
+          },
+        })}
+      />
+    </div>
+  );
+}
+
 describe("PluginsView", () => {
-  it("searches, loads details, and confirms interstitial installations", () => {
+  it("opens a full-page overview and keeps interstitial installs on that page", () => {
     const browser = plugin();
     const install = vi.fn();
-    const loadDetails = vi.fn();
+    const openPlugin = vi.fn();
     render(
-      <PluginsView
-        model={{
-          catalog: {
-            marketplaces: [
-              { name: "openai-bundled", path: null, plugins: [browser] },
-            ],
-            plugins: [browser],
-            featuredPluginIds: [browser.id],
-            errors: [],
-            refreshedAt: "2026-08-29T00:00:00.000Z",
-          },
-          loading: false,
-          error: null,
-          notice: null,
-          mutation: null,
-          detailsLoadingPluginId: null,
-        }}
-        actions={{
-          refresh: vi.fn(),
-          loadDetails,
-          install,
-          uninstall: vi.fn(),
-          setEnabled: vi.fn(),
-        }}
+      <ControlledPlugins
+        plugins={[browser]}
+        actionOverrides={{ install, openPlugin }}
       />,
     );
 
@@ -69,19 +128,35 @@ describe("PluginsView", () => {
     fireEvent.click(
       screen.getByRole("button", { name: "View Browser details" }),
     );
-    expect(loadDetails).toHaveBeenCalledWith(browser);
-    const details = screen.getByRole("dialog", {
-      name: "Browser details",
-    });
-    fireEvent.click(
-      within(details).getByRole("button", { name: "Install plugin" }),
-    );
 
+    expect(openPlugin).toHaveBeenCalledWith(browser);
+    expect(
+      screen.getByRole("heading", { name: "Browser", level: 1 }),
+    ).toBeVisible();
+    const overview = screen.getByRole("region", { name: "Browser" });
+    expect(screen.queryByRole("dialog", { name: "Browser details" })).toBeNull();
+    expect(within(overview).getByText("26.818.41509")).toBeVisible();
+    expect(within(overview).getByText("openai-bundled")).toBeVisible();
+    expect(within(overview).getByText("Interactive")).toBeVisible();
+    expect(within(overview).getByText("1 component reported ready.")).toBeVisible();
+
+    fireEvent.click(screen.getByRole("button", { name: "Install plugin" }));
     const dialog = screen.getByRole("dialog", { name: "Install Browser?" });
+    fireEvent.click(within(dialog).getByRole("button", { name: "Cancel" }));
+    expect(
+      screen.getByRole("heading", { name: "Browser", level: 1 }),
+    ).toBeVisible();
+
+    fireEvent.click(screen.getByRole("button", { name: "Install plugin" }));
     fireEvent.click(
-      within(dialog).getByRole("button", { name: "Install plugin" }),
+      within(
+        screen.getByRole("dialog", { name: "Install Browser?" }),
+      ).getByRole("button", { name: "Install plugin" }),
     );
     expect(install).toHaveBeenCalledWith(browser);
+    expect(
+      screen.getByRole("heading", { name: "Browser", level: 1 }),
+    ).toBeVisible();
   });
 
   it("honors policy restrictions and exposes installed lifecycle actions", () => {
@@ -95,39 +170,49 @@ describe("PluginsView", () => {
     const uninstall = vi.fn();
     render(
       <PluginsView
-        model={{
-          catalog: {
-            marketplaces: [
-              { name: "openai-bundled", path: null, plugins: [restricted] },
-            ],
-            plugins: [restricted],
-            featuredPluginIds: [],
-            errors: [],
-            refreshedAt: "2026-08-29T00:00:00.000Z",
-          },
-          loading: false,
-          error: null,
-          notice: null,
-          mutation: null,
-          detailsLoadingPluginId: null,
-        }}
-        actions={{
-          refresh: vi.fn(),
-          loadDetails: vi.fn(),
-          install: vi.fn(),
-          uninstall,
-          setEnabled,
-        }}
+        model={model([restricted], { selectedPluginId: restricted.id })}
+        actions={actions({ setEnabled, uninstall })}
       />,
     );
 
-    fireEvent.click(
-      screen.getByRole("button", { name: "View Browser details" }),
+    const overview = screen.getByRole("region", { name: "Browser" });
+    expect(overview.querySelector(".plugin-card-status")).toHaveTextContent(
+      "Enabled",
     );
+    expect(within(overview).getByText("Disabled by admin")).toBeVisible();
     expect(screen.getByRole("checkbox", { name: "Enabled" })).toBeDisabled();
     fireEvent.click(screen.getByRole("button", { name: "Uninstall" }));
     expect(uninstall).toHaveBeenCalledWith(restricted);
     expect(setEnabled).not.toHaveBeenCalled();
+  });
+
+  it("enables and disables installed plugins from the overview", () => {
+    const disabled = plugin({
+      installed: true,
+      enabled: false,
+      mustShowInstallationInterstitial: false,
+    });
+    const setEnabled = vi.fn();
+    const viewActions = actions({ setEnabled });
+    const { rerender } = render(
+      <PluginsView
+        model={model([disabled], { selectedPluginId: disabled.id })}
+        actions={viewActions}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("checkbox", { name: "Enabled" }));
+    expect(setEnabled).toHaveBeenLastCalledWith(disabled, true);
+
+    const enabled = { ...disabled, enabled: true };
+    rerender(
+      <PluginsView
+        model={model([enabled], { selectedPluginId: enabled.id })}
+        actions={viewActions}
+      />,
+    );
+    fireEvent.click(screen.getByRole("checkbox", { name: "Enabled" }));
+    expect(setEnabled).toHaveBeenLastCalledWith(enabled, false);
   });
 
   it("defaults to Installed on the left and separates it from discovery", () => {
@@ -143,32 +228,7 @@ describe("PluginsView", () => {
       mustShowInstallationInterstitial: false,
     });
     render(
-      <PluginsView
-        model={{
-          catalog: {
-            marketplaces: [
-              { name: "openai-bundled", path: null, plugins: [browser] },
-              { name: "openai-curated", path: null, plugins: [github] },
-            ],
-            plugins: [browser, github],
-            featuredPluginIds: [browser.id],
-            errors: [],
-            refreshedAt: "2026-08-29T00:00:00.000Z",
-          },
-          loading: false,
-          error: null,
-          notice: null,
-          mutation: null,
-          detailsLoadingPluginId: null,
-        }}
-        actions={{
-          refresh: vi.fn(),
-          loadDetails: vi.fn(),
-          install: vi.fn(),
-          uninstall: vi.fn(),
-          setEnabled: vi.fn(),
-        }}
-      />,
+      <PluginsView model={model([browser, github])} actions={actions()} />,
     );
 
     const tabs = screen.getAllByRole("tab");
@@ -186,19 +246,105 @@ describe("PluginsView", () => {
 
     expect(screen.getByRole("heading", { name: "Featured" })).toBeVisible();
     expect(screen.getByRole("heading", { name: "All plugins" })).toBeVisible();
-    expect(
-      screen.queryByText("Extend what Orchestrator can do."),
-    ).not.toBeInTheDocument();
+    expect(screen.queryByText("Extend what Orchestrator can do.")).toBeNull();
     expect(
       screen.queryByRole("combobox", { name: "Plugin marketplace" }),
-    ).not.toBeInTheDocument();
-    expect(
-      screen.getByRole("button", { name: "View Browser details" }),
-    ).toBeVisible();
+    ).toBeNull();
     expect(
       screen.getByRole("button", { name: "View Browser details" }),
     ).toBeEmptyDOMElement();
-    expect(screen.queryByText("View details")).not.toBeInTheDocument();
+    expect(screen.queryByText("View details")).toBeNull();
     expect(screen.getAllByText("1 capability")).not.toHaveLength(0);
+  });
+
+  it("restores catalog filters, scroll, and originating-card focus", async () => {
+    const browser = plugin({ installed: true, enabled: true });
+    render(<ControlledPlugins plugins={[browser]} />);
+    const scrollContainer = screen.getByTestId("plugins-scroll-container");
+    scrollContainer.scrollTop = 184;
+    fireEvent.change(screen.getByRole("textbox", { name: "Search plugins" }), {
+      target: { value: "web" },
+    });
+    const card = screen.getByRole("button", { name: "View Browser details" });
+
+    fireEvent.click(card);
+    await waitFor(() =>
+      expect(
+        screen.getByRole("button", { name: "Back to Plugins" }),
+      ).toHaveFocus(),
+    );
+    expect(scrollContainer.scrollTop).toBe(0);
+    fireEvent.click(screen.getByRole("button", { name: "Back to Plugins" }));
+
+    await waitFor(() => {
+      expect(scrollContainer.scrollTop).toBe(184);
+      expect(card).toHaveFocus();
+    });
+    expect(screen.getByRole("textbox", { name: "Search plugins" })).toHaveValue(
+      "web",
+    );
+    expect(screen.getByRole("tab", { name: /Installed/ })).toHaveAttribute(
+      "aria-selected",
+      "true",
+    );
+  });
+
+  it("supports keyboard card activation", async () => {
+    const browser = plugin({ installed: true, enabled: true });
+    const openPlugin = vi.fn();
+    const user = userEvent.setup();
+    render(
+      <ControlledPlugins
+        plugins={[browser]}
+        actionOverrides={{ openPlugin }}
+      />,
+    );
+    const card = screen.getByRole("button", { name: "View Browser details" });
+    card.focus();
+    await user.keyboard("{Enter}");
+    expect(openPlugin).toHaveBeenCalledWith(browser);
+
+    await user.click(screen.getByRole("button", { name: "Back to Plugins" }));
+    await waitFor(() => expect(card).toHaveFocus());
+    await user.keyboard(" ");
+    expect(openPlugin).toHaveBeenCalledTimes(2);
+  });
+
+  it("shows detail loading and failures inline without leaving the overview", () => {
+    const browser = plugin({ installed: true, enabled: true });
+    render(
+      <PluginsView
+        model={model([browser], {
+          selectedPluginId: browser.id,
+          detailsLoadingPluginId: browser.id,
+          error: "Could not read plugin details",
+        })}
+        actions={actions()}
+      />,
+    );
+
+    expect(screen.getByText("Loading latest plugin details")).toBeVisible();
+    expect(screen.getByRole("alert")).toHaveTextContent(
+      "Could not read plugin details",
+    );
+    expect(
+      screen.getByRole("heading", { name: "Browser", level: 1 }),
+    ).toBeVisible();
+  });
+
+  it("shows a recoverable state when a selected plugin disappears", () => {
+    const backToCatalog = vi.fn();
+    render(
+      <PluginsView
+        model={model([], { selectedPluginId: "missing@marketplace" })}
+        actions={actions({ backToCatalog })}
+      />,
+    );
+
+    expect(
+      screen.getByRole("heading", { name: "Plugin no longer available" }),
+    ).toBeVisible();
+    fireEvent.click(screen.getByRole("button", { name: "Back to Plugins" }));
+    expect(backToCatalog).toHaveBeenCalledOnce();
   });
 });
