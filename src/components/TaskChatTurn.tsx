@@ -1088,16 +1088,6 @@ const RunTraceDropdown = memo(function RunTraceDropdown({
             items={buildTimelineItems(runView)}
             onOpenTranscriptLink={onOpenTranscriptLink}
           />
-          {entry.historicalActivity?.status === "loaded" &&
-          entry.historicalActivity.nextCursor ? (
-            <button
-              className="historical-activity-more"
-              type="button"
-              onClick={() => onLoadHistoricalActivity?.(entry)}
-            >
-              Load older activity
-            </button>
-          ) : null}
         </>
       ) : null}
     </details>

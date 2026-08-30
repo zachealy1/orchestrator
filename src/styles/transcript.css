@@ -223,8 +223,7 @@
   background: var(--color-background);
 }
 
-.historical-activity-status button,
-.historical-activity-more {
+.historical-activity-status button {
   min-height: 28px;
   border: 0;
   border-radius: 5px;
@@ -234,8 +233,7 @@
   padding: 4px 8px;
 }
 
-.historical-activity-status button:hover,
-.historical-activity-more:hover {
+.historical-activity-status button:hover {
   background: var(--color-button-active);
   box-shadow: none;
   transform: none;
@@ -1234,8 +1232,4 @@ button.edited-files-disclosure:focus-visible:not(:disabled) {
 
 .historical-activity-status.error {
   color: var(--color-error);
-}
-
-.historical-activity-more {
-  margin-top: 12px;
 }

@@ -689,6 +689,13 @@ it("renders submitted prompts and live output with real-time metrics", () => {
                 },
               ],
             },
+            historicalActivity: {
+              source: "persisted-run",
+              runId: 2,
+              status: "loaded",
+              nextCursor: "older-activity",
+              error: null,
+            },
           },
         ]}
         onResolveRequest={vi.fn()}
@@ -1105,6 +1112,7 @@ it("renders completed summaries as markdown and collapses the stream trace", asy
         "Removed the border from the submitted chat message styling.",
       ),
     ).not.toBeInTheDocument();
+    expect(screen.queryByText("Load older activity")).not.toBeInTheDocument();
   });
 
 it("does not label cumulative thread usage as a completed turn total", () => {
