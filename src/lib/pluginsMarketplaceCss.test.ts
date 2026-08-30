@@ -74,6 +74,14 @@ describe("plugin marketplace styles", () => {
     expect(ruleFor(".plugin-card:hover")).toContain(
       "border-color: var(--color-divider)",
     );
+    expect(ruleFor(".plugin-logo")).toContain(
+      "background: var(--color-surface-muted)",
+    );
+    expect(ruleFor(".plugin-logo")).toContain(
+      "box-shadow: inset 0 0 0 1px var(--color-divider)",
+    );
+    expect(ruleFor(".plugin-logo")).toContain("color: var(--color-icon)");
+    expect(ruleFor(".plugin-card:hover .plugin-logo")).toBe("");
     expect(ruleFor(".plugin-card")).toContain("transition: none");
     expect(ruleFor(".plugin-card:focus-visible")).toContain(
       "outline: 2px solid var(--color-primary)",
