@@ -65,15 +65,21 @@ describe("PluginsView", () => {
     fireEvent.change(screen.getByRole("textbox", { name: "Search plugins" }), {
       target: { value: "web" },
     });
-    fireEvent.click(screen.getByRole("button", { name: /browser/i }));
+    fireEvent.click(
+      screen.getByRole("button", { name: "View Browser details" }),
+    );
     expect(loadDetails).toHaveBeenCalledWith(browser);
-    const details = screen.getByRole("complementary", {
+    const details = screen.getByRole("dialog", {
       name: "Browser details",
     });
-    fireEvent.click(within(details).getByRole("button", { name: "Install plugin" }));
+    fireEvent.click(
+      within(details).getByRole("button", { name: "Install plugin" }),
+    );
 
     const dialog = screen.getByRole("dialog", { name: "Install Browser?" });
-    fireEvent.click(within(dialog).getByRole("button", { name: "Install plugin" }));
+    fireEvent.click(
+      within(dialog).getByRole("button", { name: "Install plugin" }),
+    );
     expect(install).toHaveBeenCalledWith(browser);
   });
 
@@ -114,10 +120,72 @@ describe("PluginsView", () => {
       />,
     );
 
-    fireEvent.click(screen.getByRole("button", { name: /browser/i }));
+    fireEvent.click(
+      screen.getByRole("button", { name: "View Browser details" }),
+    );
     expect(screen.getByRole("checkbox", { name: "Enabled" })).toBeDisabled();
     fireEvent.click(screen.getByRole("button", { name: "Uninstall" }));
     expect(uninstall).toHaveBeenCalledWith(restricted);
     expect(setEnabled).not.toHaveBeenCalled();
+  });
+
+  it("separates featured discovery from the installed catalog", () => {
+    const browser = plugin();
+    const github = plugin({
+      id: "github@openai-curated",
+      name: "github",
+      displayName: "GitHub",
+      description: "Work with repositories and pull requests.",
+      marketplaceName: "openai-curated",
+      installed: true,
+      enabled: true,
+      mustShowInstallationInterstitial: false,
+    });
+    render(
+      <PluginsView
+        model={{
+          catalog: {
+            marketplaces: [
+              { name: "openai-bundled", path: null, plugins: [browser] },
+              { name: "openai-curated", path: null, plugins: [github] },
+            ],
+            plugins: [browser, github],
+            featuredPluginIds: [browser.id],
+            errors: [],
+            refreshedAt: "2026-08-29T00:00:00.000Z",
+          },
+          loading: false,
+          error: null,
+          notice: null,
+          mutation: null,
+          detailsLoadingPluginId: null,
+        }}
+        actions={{
+          refresh: vi.fn(),
+          loadDetails: vi.fn(),
+          install: vi.fn(),
+          uninstall: vi.fn(),
+          setEnabled: vi.fn(),
+        }}
+      />,
+    );
+
+    expect(screen.getByRole("heading", { name: "Featured" })).toBeVisible();
+    expect(screen.getByRole("heading", { name: "All plugins" })).toBeVisible();
+    expect(
+      screen.getByRole("button", { name: "View Browser details" }),
+    ).toBeVisible();
+
+    fireEvent.click(screen.getByRole("tab", { name: /Installed/ }));
+
+    expect(
+      screen.getByRole("heading", { name: "Installed plugins" }),
+    ).toBeVisible();
+    expect(
+      screen.getByRole("button", { name: "View GitHub details" }),
+    ).toBeVisible();
+    expect(
+      screen.queryByRole("button", { name: "View Browser details" }),
+    ).not.toBeInTheDocument();
   });
 });
