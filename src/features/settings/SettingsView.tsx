@@ -227,6 +227,8 @@ export const SettingsView = memo(function SettingsView({
     model.pluginsLoading,
     model.desktopRuntimeStatus,
   );
+  const browserReadinessChecking =
+    model.pluginsLoading || model.browserReadiness.checking;
   const externalBrowserPlugins = ["chrome", "edge", "brave", "opera", "vivaldi"]
     .map((name) => findPlugin(model.pluginCatalog, name))
     .filter((plugin) => plugin !== null);
@@ -327,7 +329,7 @@ export const SettingsView = memo(function SettingsView({
             icon={Monitor}
             title="Browser"
             status={
-              model.pluginsLoading
+              browserReadinessChecking
                 ? { label: "Checking", tone: "pending" }
                 : model.browserReadiness.available
                   ? { label: "Available", tone: "positive" }
@@ -335,7 +337,17 @@ export const SettingsView = memo(function SettingsView({
             }
           />
           <div className="setting-list">
-            {!model.browserReadiness.available ? (
+            {browserReadinessChecking ? (
+              <div className="setting-row">
+                <div>
+                  <strong>In-app browser</strong>
+                  <span>
+                    Uses a persistent profile that is isolated from your regular browser.
+                  </span>
+                </div>
+                <SettingsStatusBadge label="Checking" tone="pending" />
+              </div>
+            ) : !model.browserReadiness.available ? (
               <SettingsNavigationRow
                 label="In-app browser"
                 description="Uses a persistent profile that is isolated from your regular browser."
@@ -419,7 +431,7 @@ export const SettingsView = memo(function SettingsView({
               />
             </div>
           </div>
-          {!model.browserReadiness.available ? (
+          {!browserReadinessChecking && !model.browserReadiness.available ? (
             <p className="computer-use-runtime-error" role="alert">
               {model.browserReadiness.message}
             </p>
@@ -939,6 +951,8 @@ function SettingsOverview({
     model.pluginsLoading,
     model.desktopRuntimeStatus,
   );
+  const browserReadinessChecking =
+    model.pluginsLoading || model.browserReadiness.checking;
   const showConnections = queryMatches(
     "connections",
     "codex",
@@ -998,8 +1012,20 @@ function SettingsOverview({
           <SettingsStatusCard
             icon={Monitor}
             label="Browser"
-            value={model.browserReadiness.available ? "Ready" : "Not available"}
-            healthy={model.browserReadiness.available}
+            value={
+              browserReadinessChecking
+                ? "Checking"
+                : model.browserReadiness.available
+                  ? "Ready"
+                  : "Not available"
+            }
+            tone={
+              browserReadinessChecking
+                ? "pending"
+                : model.browserReadiness.available
+                  ? "positive"
+                  : "negative"
+            }
             targetId="settings-browser"
           />
           <SettingsStatusCard

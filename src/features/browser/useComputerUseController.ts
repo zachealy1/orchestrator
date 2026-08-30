@@ -42,9 +42,10 @@ export function useComputerUseController(input: {
   );
   const [desktopRuntimeStatus, setDesktopRuntimeStatus] =
     useState<DesktopRuntimeStatus | null>(null);
-  const [browserSkillAvailable, setBrowserSkillAvailable] = useState<
-    boolean | null
-  >(null);
+  const [browserSkillProbe, setBrowserSkillProbe] = useState<{
+    key: string;
+    available: boolean;
+  } | null>(null);
 
   useEffect(() => persistInteractionPreferences(preferences), [preferences]);
   useEffect(
@@ -94,36 +95,50 @@ export function useComputerUseController(input: {
     "browser",
   );
   const browserPluginReady = pluginIsReady(browserPlugin);
+  const browserSkillProbeKey = browserPluginReady
+    ? `${browserPlugin?.id ?? "browser"}:${input.pluginCatalog.refreshedAt}`
+    : null;
+  const browserSkillAvailable =
+    browserSkillProbeKey !== null &&
+    browserSkillProbe?.key === browserSkillProbeKey
+      ? browserSkillProbe.available
+      : null;
 
   useEffect(() => {
-    if (!browserPluginReady) {
-      setBrowserSkillAvailable(false);
+    if (!browserPluginReady || browserSkillProbeKey === null) {
+      setBrowserSkillProbe(null);
       return;
     }
 
     let cancelled = false;
-    setBrowserSkillAvailable(null);
     void listDefaultCodexSkills()
       .then((skills) => {
         if (cancelled) return;
-        setBrowserSkillAvailable(
-          skills.some((skill) =>
+        setBrowserSkillProbe({
+          key: browserSkillProbeKey,
+          available: skills.some((skill) =>
             `${skill.id} ${skill.name}`
               .toLocaleLowerCase()
               .includes("control-in-app-browser"),
           ),
-        );
+        });
       })
       .catch(() => {
-        if (!cancelled) setBrowserSkillAvailable(false);
+        if (!cancelled) {
+          setBrowserSkillProbe({
+            key: browserSkillProbeKey,
+            available: false,
+          });
+        }
       });
     return () => {
       cancelled = true;
     };
-  }, [browserPluginReady, input.pluginCatalog.refreshedAt]);
+  }, [browserPluginReady, browserSkillProbeKey]);
 
   const browserReadiness: BrowserReadiness = {
     available: browserPluginReady && browserSkillAvailable === true,
+    checking: browserPluginReady && browserSkillAvailable === null,
     message: browserPlugin
       ? browserPluginReady
         ? browserSkillAvailable === true
@@ -164,6 +179,7 @@ export function useComputerUseController(input: {
     [
       browserPreferences,
       browserReadiness.available,
+      browserReadiness.checking,
       browserReadiness.message,
       browserReadiness.pluginEnabled,
       browserReadiness.pluginId,

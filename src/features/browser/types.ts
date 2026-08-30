@@ -1,5 +1,6 @@
 export type BrowserReadiness = {
   available: boolean;
+  checking: boolean;
   message: string | null;
   pluginId: string | null;
   pluginInstalled: boolean;

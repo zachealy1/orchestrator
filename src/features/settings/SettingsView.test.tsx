@@ -55,6 +55,7 @@ function model(overrides: Partial<SettingsViewModel> = {}): SettingsViewModel {
     },
     browserReadiness: {
       available: true,
+      checking: false,
       message: null,
       pluginId: "browser@openai-bundled",
       pluginInstalled: true,
@@ -785,6 +786,7 @@ describe("SettingsView", () => {
         model={model({
           browserReadiness: {
             available: false,
+            checking: false,
             message: "The browser runtime is unavailable.",
             pluginId: null,
             pluginInstalled: false,
@@ -800,6 +802,60 @@ describe("SettingsView", () => {
     expect(
       screen.getByRole("button", { name: /browser\s*not available/i }),
     ).toBeInTheDocument();
+  });
+
+  it("keeps the Browser skill probe neutral until readiness resolves", () => {
+    const checkingMessage =
+      "Checking whether this Codex host supports the in-app browser.";
+    const { rerender } = render(
+      <SettingsView
+        model={model({
+          browserReadiness: {
+            available: false,
+            checking: true,
+            message: checkingMessage,
+            pluginId: "browser@openai-bundled",
+            pluginInstalled: true,
+            pluginEnabled: true,
+            isolatedProfile: true,
+            profileImportAvailable: false,
+          },
+        })}
+        actions={actions()}
+      />,
+    );
+
+    const browser = screen.getByRole("region", { name: "Browser settings" });
+    expect(
+      within(browser).getAllByRole("status", { name: "Checking" }),
+    ).toHaveLength(2);
+    expect(within(browser).queryByRole("alert")).toBeNull();
+    expect(within(browser).queryByText(checkingMessage)).toBeNull();
+    expect(
+      screen.getByRole("button", { name: /browser\s*checking/i }),
+    ).toBeInTheDocument();
+
+    rerender(
+      <SettingsView
+        model={model({
+          browserReadiness: {
+            available: false,
+            checking: false,
+            message: "The browser runtime is unavailable.",
+            pluginId: "browser@openai-bundled",
+            pluginInstalled: true,
+            pluginEnabled: true,
+            isolatedProfile: true,
+            profileImportAvailable: false,
+          },
+        })}
+        actions={actions()}
+      />,
+    );
+
+    expect(within(browser).getByRole("alert")).toHaveTextContent(
+      "The browser runtime is unavailable.",
+    );
   });
 
   it("uses one shared status badge across every settings detail header", () => {
@@ -878,6 +934,7 @@ describe("SettingsView", () => {
         model={model({
           browserReadiness: {
             available: false,
+            checking: false,
             message: "The browser runtime is unavailable.",
             pluginId: null,
             pluginInstalled: false,

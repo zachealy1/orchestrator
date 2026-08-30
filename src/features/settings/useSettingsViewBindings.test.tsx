@@ -16,6 +16,7 @@ function model(): SettingsViewModel {
     },
     browserReadiness: {
       available: false,
+      checking: false,
       message: null,
       pluginId: null,
       pluginInstalled: false,
