@@ -1075,6 +1075,59 @@ describe("SettingsView", () => {
     expect(handlers.logout).toHaveBeenCalledOnce();
   });
 
+  it("uses icon-only controls to select an account and cancel sign-in", () => {
+    const handlers = actions();
+    const signingInAccount: SettingsViewModel["accounts"][number] = {
+      id: 7,
+      label: "Personal",
+      email: "personal@example.com",
+      plan_type: null,
+      status: "signed_out",
+      last_error: null,
+      last_used_at: null,
+      created_at: "2026-08-29T08:00:00.000Z",
+      updated_at: "2026-08-29T08:00:00.000Z",
+      deleted_at: null,
+    };
+    const otherAccount: SettingsViewModel["accounts"][number] = {
+      ...signingInAccount,
+      id: 8,
+      label: "Work",
+      email: "work@example.com",
+    };
+
+    render(
+      <SettingsView
+        model={model({
+          accounts: [signingInAccount, otherAccount],
+          selectedAccountId: signingInAccount.id,
+          pendingLoginAccountId: signingInAccount.id,
+          pendingLoginId: "login-1",
+          loginState: "waiting",
+        })}
+        actions={handlers}
+      />,
+    );
+
+    const selectAccount = screen.getByRole("button", { name: "Select Work" });
+    const cancelSignIn = screen.getByRole("button", {
+      name: "Cancel sign-in for Personal",
+    });
+
+    expect(selectAccount).toHaveClass("settings-icon-action");
+    expect(selectAccount.querySelector(".lucide-check")).toBeInTheDocument();
+    expect(selectAccount).not.toHaveTextContent("Select");
+    expect(cancelSignIn).toHaveClass("settings-icon-action");
+    expect(cancelSignIn.querySelector(".lucide-x")).toBeInTheDocument();
+    expect(cancelSignIn).not.toHaveTextContent("Cancel sign-in");
+
+    fireEvent.click(selectAccount);
+    fireEvent.click(cancelSignIn);
+
+    expect(handlers.selectAccount).toHaveBeenCalledWith(otherAccount.id);
+    expect(handlers.cancelLogin).toHaveBeenCalledOnce();
+  });
+
   it("omits removed overview, appearance, and product information", () => {
     render(<SettingsView model={model()} actions={actions()} />);
 

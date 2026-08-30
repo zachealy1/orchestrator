@@ -1,6 +1,7 @@
 import {
   Accessibility,
   Bell,
+  Check,
   ChevronRight,
   Download,
   ExternalLink,
@@ -744,23 +745,21 @@ export const SettingsView = memo(function SettingsView({
                             tone="positive"
                           />
                         ) : (
-                          <button
-                            className="secondary small"
-                            type="button"
-                            onClick={() => actions.selectAccount(account.id)}
+                          <SettingsIconAction
+                            icon={Check}
+                            ariaLabel={`Select ${account.label}`}
+                            tooltip="Select account"
+                            onActivate={() => actions.selectAccount(account.id)}
                             disabled={model.runIsActive}
-                          >
-                            Select
-                          </button>
+                          />
                         )}
                         {accountSigningIn && model.pendingLoginId ? (
-                          <button
-                            className="secondary small"
-                            type="button"
-                            onClick={actions.cancelLogin}
-                          >
-                            Cancel sign-in
-                          </button>
+                          <SettingsIconAction
+                            icon={X}
+                            ariaLabel={`Cancel sign-in for ${account.label}`}
+                            tooltip="Cancel sign-in"
+                            onActivate={actions.cancelLogin}
+                          />
                         ) : account.status !== "signed_in" ? (
                           <button
                             className="secondary small"
