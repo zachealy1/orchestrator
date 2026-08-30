@@ -425,6 +425,29 @@ describe("settings connection styles", () => {
     ).toContain("font-size: 0.78rem");
   });
 
+  it("keeps managed account label focus neutral", () => {
+    const root = postcss.parse(css);
+    let focusRule = "";
+
+    root.walkRules((candidate) => {
+      if (
+        candidate.selector.includes(".managed-account-row input:focus") &&
+        candidate.selector.includes(
+          ".managed-account-row input:focus-visible",
+        )
+      ) {
+        focusRule = candidate.toString();
+      }
+    });
+
+    expect(focusRule).toContain("border-color: var(--line)");
+    expect(focusRule).toContain("background: var(--panel)");
+    expect(focusRule).toContain("box-shadow: none");
+    expect(focusRule).toContain("outline: none");
+    expect(focusRule).not.toContain("var(--color-primary)");
+    expect(focusRule).not.toContain("var(--primary-rgb)");
+  });
+
   it("isolates settings layout and avoids scroll-time shadow and hover repaints", () => {
     const root = postcss.parse(css);
     const rules = new Map<string, string>();
