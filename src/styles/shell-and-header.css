@@ -65,12 +65,12 @@
   padding: 9px 10px;
 }
 
-.primary-nav button:hover:not(:disabled),
-.primary-nav button.active {
+.primary-nav button:not(.active):hover:not(:disabled) {
   background: var(--panel-strong);
 }
 
-.primary-nav button.active {
+.primary-nav button.active,
+.primary-nav button.active:hover:not(:disabled) {
   background: var(--color-button-active);
 }
 
