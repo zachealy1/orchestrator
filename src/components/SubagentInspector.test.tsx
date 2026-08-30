@@ -96,14 +96,17 @@ function transcript(threadId: string): SubagentTranscript {
   };
 }
 
-function renderInspector(id: string) {
+function renderInspector(
+  id: string,
+  transcriptForThread: (threadId: string) => SubagentTranscript = transcript,
+) {
   const services = new AppServices();
   const conversationKey = `chat:${id}`;
   const subagent = record(id);
   services.subagents.replaceConversation(conversationKey, [subagent]);
   const onLoadTranscript = vi
     .fn()
-    .mockResolvedValue(transcript(subagent.childThreadId));
+    .mockResolvedValue(transcriptForThread(subagent.childThreadId));
   const onSteer = vi.fn().mockResolvedValue(undefined);
   const onStop = vi.fn().mockResolvedValue(undefined);
   const user = userEvent.setup();
@@ -160,6 +163,7 @@ describe("SubagentInspector", () => {
     expect(
       screen.getByText("Inspection complete").closest(".run-summary"),
     ).toHaveClass("markdown-summary");
+    expect(screen.getAllByText("Inspect the API")).toHaveLength(1);
     expect(
       document.querySelector(".subagent-inspector-interactions"),
     ).toBeNull();
@@ -176,6 +180,24 @@ describe("SubagentInspector", () => {
       "Check the error path",
     );
     await waitFor(() => expect(input).toHaveValue(""));
+  });
+
+  it("shows the persisted spawn prompt when the projected transcript omits it", async () => {
+    renderInspector("missing-prompt", (threadId) => {
+      const projected = transcript(threadId);
+      return {
+        ...projected,
+        turns: projected.turns.map((turn) => ({
+          ...turn,
+          items: turn.items.filter((item) => item.kind !== "user"),
+        })),
+      };
+    });
+
+    await screen.findByText("Inspection underway");
+    expect(screen.getByLabelText("Submitted prompt")).toHaveTextContent(
+      "Inspect the API",
+    );
   });
 
   it("uses Shift+Enter for a newline and confirms descendant-aware stopping", async () => {

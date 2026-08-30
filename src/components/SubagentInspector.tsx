@@ -230,11 +230,13 @@ export const SubagentInspector = memo(function SubagentInspector({
     [hasInteractions, interactionRunView, parentEntry],
   );
   const transcriptTurns = useMemo(
-    () =>
-      transcriptState.transcript?.turns.filter(
+    () => {
+      const turns = transcriptState.transcript?.turns.filter(
         (turn) => turn.items.length > 0,
-      ) ?? [],
-    [transcriptState.transcript],
+      ) ?? [];
+      return includePersistedTaskPrompt(turns, record);
+    },
+    [record, transcriptState.transcript],
   );
   const canStop =
     Boolean(record?.childTurnId) &&
@@ -637,6 +639,53 @@ const SubagentTranscriptTurnView = memo(function SubagentTranscriptTurnView({
 
 function isActiveTranscriptTurn(status: string) {
   return ["inProgress", "running", "active"].includes(status);
+}
+
+function includePersistedTaskPrompt(
+  turns: SubagentTranscriptTurn[],
+  record: SubagentRecord | null,
+) {
+  const prompt = record?.task.trim() ?? "";
+  if (!record || !isPersistedTaskPrompt(prompt)) return turns;
+  const normalizedPrompt = normalizePrompt(prompt);
+  const promptAlreadyProjected = turns.some((turn) =>
+    turn.items.some(
+      (item) =>
+        item.kind === "user" && normalizePrompt(item.text) === normalizedPrompt,
+    ),
+  );
+  if (promptAlreadyProjected) return turns;
+
+  const promptItem: SubagentTranscriptItem = {
+    id: `${record.spawnItemId ?? record.id}:task-prompt`,
+    kind: "user",
+    text: prompt,
+  };
+  if (turns.length === 0) {
+    return [
+      {
+        id: `${record.childTurnId ?? record.id}:task`,
+        status: record.status,
+        startedAt: record.startedAt,
+        completedAt: record.completedAt,
+        items: [promptItem],
+      },
+    ];
+  }
+  return [
+    { ...turns[0], items: [promptItem, ...turns[0].items] },
+    ...turns.slice(1),
+  ];
+}
+
+function isPersistedTaskPrompt(prompt: string) {
+  return Boolean(
+    prompt && prompt !== "Subagent task" && !prompt.startsWith("Subagent /"),
+  );
+}
+
+function normalizePrompt(prompt: string) {
+  return prompt.replace(/\s+/gu, " ").trim();
 }
 
 function renderSubagentStreamItem(item: SubagentTranscriptItem): ReactNode[] {

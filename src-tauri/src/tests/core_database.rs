@@ -667,7 +667,12 @@ fn subagent_projection_keeps_visible_turns_and_omits_bulk_content() {
                     {
                         "type": "userMessage",
                         "id": "user",
-                        "content": [{ "type": "text", "text": "Inspect the API" }]
+                        "text": "Inspect the API"
+                    },
+                    {
+                        "type": "userMessage",
+                        "id": "user-content",
+                        "content": [{ "type": "inputText", "text": "Check the routes" }]
                     },
                     {
                         "type": "agentMessage",
@@ -716,6 +721,7 @@ fn subagent_projection_keeps_visible_turns_and_omits_bulk_content() {
     let serialized = value.to_string();
 
     assert!(serialized.contains("Inspect the API"));
+    assert!(serialized.contains("Check the routes"));
     assert!(serialized.contains("The API is valid."));
     assert!(serialized.contains("Checked the public contract"));
     assert!(serialized.contains("App.tsx"));

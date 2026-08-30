@@ -253,11 +253,6 @@ describe("Application runtime scenarios 7", () => {
             completedAt: null,
             items: [
               {
-                id: "child-user-1",
-                kind: "user",
-                text: "Inspect the integration tests",
-              },
-              {
                 id: "child-assistant-1",
                 kind: "assistant",
                 text: "Reviewing the existing coverage.",
@@ -317,6 +312,13 @@ describe("Application runtime scenarios 7", () => {
       expect(
         await screen.findByText("Reviewing the existing coverage."),
       ).toBeInTheDocument();
+      expect(
+        within(
+          screen.getByLabelText(
+            "Subagent inspector: Inspect the integration tests",
+          ),
+        ).getByLabelText("Submitted prompt"),
+      ).toHaveTextContent("Inspect the integration tests");
       expect(mocks.readProjectedSubagentThreadMock).toHaveBeenCalledWith(
         expect.objectContaining({
           accountId: 7,

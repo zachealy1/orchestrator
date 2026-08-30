@@ -823,7 +823,7 @@ pub(crate) fn project_subagent_item(item: &Value) -> Option<Value> {
         .to_string();
     match item_type {
         "userMessage" => {
-            let text = project_user_message_text(item.get("content")?);
+            let text = project_user_message_text(item);
             (!text.is_empty()).then(|| {
                 json!({
                     "id": id,
@@ -949,20 +949,30 @@ pub(crate) fn project_activity_item(
     })
 }
 
-pub(crate) fn project_user_message_text(content: &Value) -> String {
-    content
-        .as_array()
-        .map(|parts| {
-            parts
-                .iter()
-                .filter_map(|part| match part.get("type").and_then(Value::as_str) {
-                    Some("text") => part.get("text").and_then(Value::as_str),
-                    _ => None,
-                })
-                .collect::<Vec<_>>()
-                .join("\n")
-        })
+pub(crate) fn project_user_message_text(item: &Value) -> String {
+    if let Some(text) = item.get("text").and_then(Value::as_str) {
+        return text.to_string();
+    }
+
+    if let Some(content) = item.get("content").and_then(Value::as_array) {
+        return content
+            .iter()
+            .filter_map(|part| {
+                part.as_str()
+                    .or_else(|| part.get("text").and_then(Value::as_str))
+                    .or_else(|| part.get("value").and_then(Value::as_str))
+                    .or_else(|| part.get("content").and_then(Value::as_str))
+            })
+            .filter(|text| !text.trim().is_empty())
+            .collect::<Vec<_>>()
+            .join("\n");
+    }
+
+    item.get("message")
+        .and_then(|message| message.get("text"))
+        .and_then(Value::as_str)
         .unwrap_or_default()
+        .to_string()
 }
 
 pub(crate) fn project_reasoning_summaries(value: Option<&Value>) -> Vec<String> {

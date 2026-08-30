@@ -6211,7 +6211,10 @@ function App() {
             call.tool === "spawn_agent"
               ? call.itemId
               : existing?.spawnItemId ?? null,
-          task: call.prompt ?? existing?.task ?? "Subagent task",
+          task:
+            call.tool === "spawn_agent"
+              ? call.prompt ?? existing?.task ?? "Subagent task"
+              : existing?.task ?? call.prompt ?? "Subagent task",
           depth:
             existing?.depth ??
             (hierarchyParent ? hierarchyParent.depth + 1 : 1),
