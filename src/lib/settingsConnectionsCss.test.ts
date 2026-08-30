@@ -260,7 +260,7 @@ describe("settings connection styles", () => {
       "padding: var(--settings-option-padding-block)\n    var(--settings-option-padding-inline)",
     );
     expect(rules.get(".managed-account-row")).toContain(
-      "padding: var(--settings-option-padding-block)\n    var(--settings-option-padding-inline)",
+      "padding: 8px var(--settings-option-padding-inline)",
     );
   });
 
@@ -305,7 +305,6 @@ describe("settings connection styles", () => {
       ".settings-overview-row",
       ".settings-panel .setting-row",
       ".settings-subsection-heading",
-      ".managed-account-row",
     ]) {
       expect(rules.get(selector)).toContain(
         "min-height: var(--settings-option-min-height)",
@@ -317,6 +316,14 @@ describe("settings connection styles", () => {
         "padding: var(--settings-option-padding-block)\n    var(--settings-option-padding-inline)",
       );
     }
+
+    expect(rules.get(".managed-account-row")).toContain("min-height: 60px");
+    expect(rules.get(".managed-account-row")).toContain(
+      "gap: var(--settings-option-column-gap)",
+    );
+    expect(rules.get(".managed-account-row")).toContain(
+      "padding: 8px var(--settings-option-padding-inline)",
+    );
 
     for (const selector of [
       ".settings-overview-row > div:nth-child(2)",
