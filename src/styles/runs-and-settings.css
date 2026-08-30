@@ -1662,6 +1662,15 @@ button.settings-navigation-row:focus-visible:not(:disabled) {
   border-bottom: 0;
 }
 
+.codex-accounts-heading strong {
+  font-size: 0.9rem;
+  letter-spacing: normal;
+}
+
+.codex-accounts-heading span {
+  font-size: 0.78rem;
+}
+
 .account-management {
   display: grid;
   gap: 0;

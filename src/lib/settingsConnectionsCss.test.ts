@@ -360,6 +360,36 @@ describe("settings connection styles", () => {
     ).toContain("padding-inline: 7px");
   });
 
+  it("matches the Accounts heading typography to standard settings options", () => {
+    const root = postcss.parse(css);
+    const rules = new Map<string, string>();
+    const selectors = new Set([
+      ".settings-overview-row strong",
+      ".settings-overview-row > div:nth-child(2) > span",
+      ".codex-accounts-heading strong",
+      ".codex-accounts-heading span",
+    ]);
+
+    root.walkRules((candidate) => {
+      if (selectors.has(candidate.selector)) {
+        rules.set(candidate.selector, candidate.toString());
+      }
+    });
+
+    expect(rules.get(".codex-accounts-heading strong")).toContain(
+      "font-size: 0.9rem",
+    );
+    expect(rules.get(".settings-overview-row strong")).toContain(
+      "font-size: 0.9rem",
+    );
+    expect(rules.get(".codex-accounts-heading span")).toContain(
+      "font-size: 0.78rem",
+    );
+    expect(
+      rules.get(".settings-overview-row > div:nth-child(2) > span"),
+    ).toContain("font-size: 0.78rem");
+  });
+
   it("isolates settings layout and avoids scroll-time shadow and hover repaints", () => {
     const root = postcss.parse(css);
     const rules = new Map<string, string>();
