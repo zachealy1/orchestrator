@@ -1714,7 +1714,10 @@ button.settings-navigation-row:focus-visible:not(:disabled) {
 .managed-account-row > div:nth-child(2) {
   display: grid;
   min-width: 0;
+  align-content: center;
+  align-self: stretch;
   gap: var(--settings-option-copy-gap);
+  row-gap: 0;
 }
 
 .managed-account-row > .button-row {
@@ -1730,7 +1733,7 @@ button.settings-navigation-row:focus-visible:not(:disabled) {
   color: var(--text);
   font-size: 0.9rem;
   font-weight: 650;
-  padding: 4px 6px;
+  padding: 2px 6px;
 }
 
 .managed-account-row input:focus {
@@ -1743,6 +1746,7 @@ button.settings-navigation-row:focus-visible:not(:disabled) {
   overflow: hidden;
   color: var(--muted);
   font-size: 0.78rem;
+  line-height: 1.25;
   padding-inline: 7px;
   text-overflow: ellipsis;
   white-space: nowrap;

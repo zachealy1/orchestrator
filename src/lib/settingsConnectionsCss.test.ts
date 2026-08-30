@@ -354,7 +354,7 @@ describe("settings connection styles", () => {
       "border: 1px solid transparent",
     );
     expect(rules.get(".managed-account-row input")).toContain(
-      "padding: 4px 6px",
+      "padding: 2px 6px",
     );
     expect(rules.get(".managed-account-row input")).toContain(
       "font-size: 0.9rem",
@@ -377,6 +377,15 @@ describe("settings connection styles", () => {
     expect(
       rules.get(".managed-account-row > div:nth-child(2) > span"),
     ).toContain("padding-inline: 7px");
+    expect(rules.get(".managed-account-row > div:nth-child(2)")).toContain(
+      "align-content: center",
+    );
+    expect(rules.get(".managed-account-row > div:nth-child(2)")).toContain(
+      "align-self: stretch",
+    );
+    expect(rules.get(".managed-account-row > div:nth-child(2)")).toContain(
+      "row-gap: 0",
+    );
   });
 
   it("matches the Accounts heading typography to standard settings options", () => {
