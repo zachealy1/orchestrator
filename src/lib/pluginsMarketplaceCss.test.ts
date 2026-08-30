@@ -63,6 +63,9 @@ describe("plugin marketplace styles", () => {
     expect(ruleFor(".plugin-card:hover")).toContain(
       "background: var(--color-button-active)",
     );
+    expect(ruleFor(".plugin-card:hover")).toContain(
+      "border-color: var(--color-divider)",
+    );
   });
 
   it("uses the compact capability-led card structure", () => {
