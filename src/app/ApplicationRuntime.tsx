@@ -423,7 +423,6 @@ import { WorkspaceContextBanner } from "../features/workspaces/WorkspaceContextB
 import { useWorkspaceController } from "../features/workspaces/useWorkspaceController";
 import { useWorkspacePreviewController } from "../features/workspaces/useWorkspacePreviewController";
 import { WorkspaceSidebar } from "../features/workspaces/WorkspaceSidebar";
-import { InteractionPanel } from "../features/interaction/InteractionPanel";
 import {
   createInteractionSession,
   registerInteractionSurface,
@@ -1854,23 +1853,6 @@ function App() {
     selectedWorkspace,
     selectedWorkspaceChatSession?.chatId,
   ]);
-  const selectedInteractionActivity = useMemo(() => {
-    const view = selectedActiveRunControl?.runView;
-    if (!view) return null;
-    for (const id of [...view.toolActivityOrder].reverse()) {
-      const activity = view.toolActivitiesById[id];
-      if (
-        activity &&
-        (activity.category === "browser" ||
-          /computer-use|computer_use|desktop/iu.test(
-            `${activity.server} ${activity.tool}`,
-          ))
-      ) {
-        return activity;
-      }
-    }
-    return null;
-  }, [activeRunRegistryVersion, selectedActiveRunControl]);
   const runIsActive = Boolean(
     selectedActiveRunControl && isActiveRunControl(selectedActiveRunControl),
   );
@@ -20034,11 +20016,6 @@ function App() {
               historyNotificationCount={selectedWorkspaceUnreadChatCount}
               onToggleHistory={toggleHistoryDrawer}
               windowDragRegionsEnabled={macOsWindowDragRegionsEnabled}
-            />
-            <InteractionPanel
-              session={selectedActiveRunControl?.interactionSession ?? null}
-              latestActivity={selectedInteractionActivity}
-              onStop={() => void stopActiveRun(selectedActiveRunControl)}
             />
             {selectedWorkspace &&
             (workspaceSurfaceMode === "kanban" ||
