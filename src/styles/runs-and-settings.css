@@ -1693,12 +1693,18 @@ button.settings-navigation-row:focus-visible:not(:disabled) {
 .managed-account-row {
   display: grid;
   min-height: var(--settings-option-min-height);
-  grid-template-columns: 32px minmax(0, 1fr) auto;
+  grid-template-columns: 40px minmax(0, 1fr) auto;
   gap: var(--settings-option-column-gap);
   align-items: center;
   border-bottom: 1px solid var(--color-divider);
   padding: var(--settings-option-padding-block)
     var(--settings-option-padding-inline);
+}
+
+.managed-account-row > .account-mini-avatar {
+  width: 40px;
+  height: 40px;
+  font-size: 0.95rem;
 }
 
 .managed-account-row:last-of-type {
@@ -1722,6 +1728,7 @@ button.settings-navigation-row:focus-visible:not(:disabled) {
   border-radius: 4px;
   background: transparent;
   color: var(--text);
+  font-size: 0.9rem;
   font-weight: 650;
   padding: 4px 6px;
 }
@@ -1735,7 +1742,7 @@ button.settings-navigation-row:focus-visible:not(:disabled) {
 .managed-account-row > div:nth-child(2) > span {
   overflow: hidden;
   color: var(--muted);
-  font-size: 0.8rem;
+  font-size: 0.78rem;
   padding-inline: 7px;
   text-overflow: ellipsis;
   white-space: nowrap;

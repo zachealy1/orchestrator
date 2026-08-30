@@ -280,6 +280,7 @@ describe("settings connection styles", () => {
       ".account-management",
       ".account-management > .muted",
       ".managed-account-row",
+      ".managed-account-row > .account-mini-avatar",
       ".managed-account-row > div:nth-child(2)",
       ".managed-account-row > .button-row",
       ".managed-account-row input",
@@ -355,6 +356,24 @@ describe("settings connection styles", () => {
     expect(rules.get(".managed-account-row input")).toContain(
       "padding: 4px 6px",
     );
+    expect(rules.get(".managed-account-row input")).toContain(
+      "font-size: 0.9rem",
+    );
+    expect(rules.get(".managed-account-row")).toContain(
+      "grid-template-columns: 40px minmax(0, 1fr) auto",
+    );
+    expect(rules.get(".managed-account-row > .account-mini-avatar")).toContain(
+      "width: 40px",
+    );
+    expect(rules.get(".managed-account-row > .account-mini-avatar")).toContain(
+      "height: 40px",
+    );
+    expect(rules.get(".managed-account-row > .account-mini-avatar")).toContain(
+      "font-size: 0.95rem",
+    );
+    expect(
+      rules.get(".managed-account-row > div:nth-child(2) > span"),
+    ).toContain("font-size: 0.78rem");
     expect(
       rules.get(".managed-account-row > div:nth-child(2) > span"),
     ).toContain("padding-inline: 7px");
