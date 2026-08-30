@@ -47,9 +47,7 @@ describe("plugin marketplace styles", () => {
       "height: var(--plugins-toolbar-control-height)",
     );
     expect(ruleFor(".plugins-browse-tabs button")).toContain("height: 100%");
-    expect(ruleFor(".plugins-browse-tabs button")).toContain(
-      "padding: 0 10px",
-    );
+    expect(ruleFor(".plugins-browse-tabs button")).toContain("padding: 0 10px");
     expect(ruleFor(".plugins-browse-tabs button span")).toContain(
       "height: 16px",
     );
@@ -65,6 +63,19 @@ describe("plugin marketplace styles", () => {
     expect(ruleFor(".plugin-card:hover")).toContain(
       "background: var(--color-button-active)",
     );
+  });
+
+  it("uses the compact capability-led card structure", () => {
+    expect(ruleFor(".plugin-card")).toContain("min-height: 146px");
+    expect(ruleFor(".plugin-card-heading")).toContain(
+      "grid-template-columns: 48px minmax(0, 1fr) 32px",
+    );
+    expect(ruleFor(".plugin-card-details-button")).toContain("width: 32px");
+    expect(ruleFor(".plugin-card-footer")).toContain("min-height: 48px");
+    expect(ruleFor(".plugin-card-tags span")).toContain(
+      "border: 1px solid var(--color-divider)",
+    );
+    expect(css).not.toContain(".plugin-card-actions .link-button");
   });
 
   it("removes the legacy split list presentation", () => {

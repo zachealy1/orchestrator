@@ -195,5 +195,7 @@ describe("PluginsView", () => {
     expect(
       screen.getByRole("button", { name: "View Browser details" }),
     ).toBeVisible();
+    expect(screen.queryByText("View details")).not.toBeInTheDocument();
+    expect(screen.getAllByText("1 capability")).not.toHaveLength(0);
   });
 });

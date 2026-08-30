@@ -1,8 +1,11 @@
 import {
   Box,
   Check,
-  ChevronRight,
+  CheckCircle2,
+  Circle,
+  CircleX,
   Loader2,
+  MoreVertical,
   PackagePlus,
   Puzzle,
   RefreshCw,
@@ -331,10 +334,8 @@ function PluginCard({
   onInstall: () => void;
   onOpenDetails: () => void;
 }) {
-  const tags = [...new Set([...plugin.capabilities, ...plugin.keywords])].slice(
-    0,
-    2,
-  );
+  const capabilities = [...new Set(plugin.capabilities)];
+  const tags = capabilities.slice(0, 2);
   const status = plugin.installed
     ? plugin.enabled
       ? "Enabled"
@@ -345,19 +346,52 @@ function PluginCard({
   return (
     <article className={`plugin-card${featured ? " featured" : ""}`}>
       <div className="plugin-card-main">
-        <span
-          className={`plugin-logo${featured ? " large" : ""}`}
-          aria-hidden="true"
-        >
-          {plugin.logoUrl ? (
-            <img src={plugin.logoUrl} alt="" />
-          ) : (
-            <Box size={featured ? 24 : 20} />
-          )}
-        </span>
-        <div className="plugin-card-copy">
+        <div className="plugin-card-heading">
+          <span className="plugin-logo" aria-hidden="true">
+            {plugin.logoUrl ? (
+              <img src={plugin.logoUrl} alt="" />
+            ) : (
+              <Box size={22} />
+            )}
+          </span>
           <h3>{plugin.displayName}</h3>
-          <p>{plugin.description ?? "No plugin description is available."}</p>
+          <button
+            className="plugin-card-details-button"
+            type="button"
+            aria-label={`View ${plugin.displayName} details`}
+            data-tooltip="View details"
+            disabled={busy}
+            onClick={onOpenDetails}
+          >
+            <MoreVertical size={16} aria-hidden="true" />
+          </button>
+        </div>
+        <p className="plugin-card-description">
+          {plugin.description ?? "No plugin description is available."}
+        </p>
+      </div>
+      <div className="plugin-card-footer">
+        <div className="plugin-card-metadata">
+          <span className={`plugin-card-status ${status.toLocaleLowerCase()}`}>
+            <PluginCardStatusIcon status={status} />
+            {status}
+          </span>
+          {capabilities.length > 0 ? (
+            <>
+              <span
+                className="plugin-card-metadata-separator"
+                aria-hidden="true"
+              >
+                •
+              </span>
+              <span className="plugin-card-capability-count">
+                {capabilities.length}{" "}
+                {capabilities.length === 1 ? "capability" : "capabilities"}
+              </span>
+            </>
+          ) : null}
+        </div>
+        <div className="plugin-card-actions">
           {tags.length > 0 ? (
             <div className="plugin-card-tags" aria-label="Plugin capabilities">
               {tags.map((tag) => (
@@ -365,23 +399,6 @@ function PluginCard({
               ))}
             </div>
           ) : null}
-        </div>
-      </div>
-      <div className="plugin-card-footer">
-        <span className={`plugin-card-status ${status.toLocaleLowerCase()}`}>
-          <i aria-hidden="true" />
-          {status}
-        </span>
-        <div className="plugin-card-actions">
-          <button
-            className="link-button"
-            type="button"
-            aria-label={`View ${plugin.displayName} details`}
-            onClick={onOpenDetails}
-          >
-            View details
-            <ChevronRight size={14} aria-hidden="true" />
-          </button>
           {!plugin.installed ? (
             <button
               className="secondary small"
@@ -403,6 +420,19 @@ function PluginCard({
       </div>
     </article>
   );
+}
+
+function PluginCardStatusIcon({ status }: { status: string }) {
+  if (status === "Enabled") {
+    return <CheckCircle2 size={15} aria-hidden="true" />;
+  }
+  if (status === "Unavailable") {
+    return <CircleX size={15} aria-hidden="true" />;
+  }
+  if (status === "Available") {
+    return <PackagePlus size={15} aria-hidden="true" />;
+  }
+  return <Circle size={15} aria-hidden="true" />;
 }
 
 function PluginDetail({
