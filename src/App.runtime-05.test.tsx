@@ -965,6 +965,104 @@ describe("Application runtime scenarios 5", () => {
       ).toEqual({ computerUseEnabled: true });
     });
 
+  it("refreshes independent Computer Use permissions after returning to the app", async () => {
+      mocks.readDesktopRuntimeStatusMock.mockResolvedValue({
+        available: true,
+        message: null,
+        version: "1.0.1000816",
+        serviceCompatible: true,
+        accessibilityTrusted: false,
+        screenRecordingTrusted: true,
+      });
+      mocks.codexDefaultProfileRpcMock.mockImplementation(async (method) =>
+        method === "plugin/list"
+          ? {
+              marketplaces: [{
+                name: "openai-bundled",
+                path: null,
+                plugins: [{
+                  id: "computer-use@openai-bundled",
+                  name: "computer-use",
+                  version: "1.0.1000816",
+                  localVersion: "1.0.1000816",
+                  installed: true,
+                  enabled: true,
+                  installPolicy: "INSTALLED_BY_DEFAULT",
+                  authPolicy: "ON_USE",
+                  availability: "AVAILABLE",
+                  interface: { displayName: "Computer Use" },
+                  keywords: [],
+                }],
+              }],
+              marketplaceLoadErrors: [],
+              featuredPluginIds: [],
+            }
+          : undefined,
+      );
+
+      const { user } = await renderApp();
+      await user.click(screen.getByRole("button", { name: "Settings" }));
+
+      const computerUse = await screen.findByRole("region", {
+        name: "Computer use settings",
+      });
+      const initialDialog = await within(computerUse).findByRole("dialog", {
+        name: "Computer Use unavailable",
+      });
+      expect(
+        within(initialDialog).getByRole("button", {
+          name: "Open Accessibility settings",
+        }),
+      ).toBeInTheDocument();
+      expect(
+        within(initialDialog).queryByRole("button", {
+          name: "Open Screen Recording settings",
+        }),
+      ).toBeNull();
+
+      mocks.readDesktopRuntimeStatusMock.mockResolvedValue({
+        available: true,
+        message: null,
+        version: "1.0.1000816",
+        serviceCompatible: true,
+        accessibilityTrusted: true,
+        screenRecordingTrusted: true,
+      });
+      act(() => window.dispatchEvent(new Event("focus")));
+
+      await waitFor(() =>
+        expect(
+          within(computerUse).getByRole("status", { name: "Available" }),
+        ).toBeInTheDocument(),
+      );
+      expect(within(computerUse).queryByRole("dialog")).toBeNull();
+
+      mocks.readDesktopRuntimeStatusMock.mockResolvedValue({
+        available: true,
+        message: null,
+        version: "1.0.1000816",
+        serviceCompatible: true,
+        accessibilityTrusted: true,
+        screenRecordingTrusted: false,
+      });
+      act(() => window.dispatchEvent(new Event("focus")));
+
+      const refreshedDialog = await within(computerUse).findByRole("dialog", {
+        name: "Computer Use unavailable",
+      });
+      expect(
+        within(refreshedDialog).getByRole("button", {
+          name: "Open Screen Recording settings",
+        }),
+      ).toBeInTheDocument();
+      expect(
+        within(refreshedDialog).queryByRole("button", {
+          name: "Open Accessibility settings",
+        }),
+      ).toBeNull();
+      expect(mocks.readDesktopRuntimeStatusMock).toHaveBeenCalledTimes(3);
+    });
+
   it("does not inject a custom Browser backend into ordinary runs", async () => {
       prepareSignedInRun();
 

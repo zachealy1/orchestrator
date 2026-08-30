@@ -542,6 +542,87 @@ describe("SettingsView", () => {
     ).toBeNull();
   });
 
+  it.each([
+    {
+      accessibilityTrusted: false,
+      screenRecordingTrusted: false,
+      missingPermissions: ["Screen Recording", "Accessibility"],
+    },
+    {
+      accessibilityTrusted: false,
+      screenRecordingTrusted: true,
+      missingPermissions: ["Accessibility"],
+    },
+    {
+      accessibilityTrusted: true,
+      screenRecordingTrusted: false,
+      missingPermissions: ["Screen Recording"],
+    },
+    {
+      accessibilityTrusted: true,
+      screenRecordingTrusted: true,
+      missingPermissions: [],
+    },
+  ])(
+    "maps Accessibility $accessibilityTrusted and Screen Recording $screenRecordingTrusted independently",
+    ({
+      accessibilityTrusted,
+      screenRecordingTrusted,
+      missingPermissions,
+    }) => {
+      render(
+        <SettingsView
+          model={model({
+            desktopRuntimeStatus: {
+              available: true,
+              message: null,
+              version: "1.0.1000816",
+              serviceCompatible: true,
+              accessibilityTrusted,
+              screenRecordingTrusted,
+            },
+          })}
+          actions={actions()}
+        />,
+      );
+
+      const computerUse = screen.getByRole("region", {
+        name: "Computer use settings",
+      });
+      if (missingPermissions.length === 0) {
+        expect(
+          within(computerUse).getByRole("status", { name: "Available" }),
+        ).toBeInTheDocument();
+        expect(within(computerUse).queryByRole("dialog")).toBeNull();
+        return;
+      }
+
+      const trigger = within(computerUse).getByRole("button", {
+        name: "Computer Use unavailable. Show details",
+      });
+      if (trigger.getAttribute("aria-expanded") === "false") {
+        fireEvent.click(trigger);
+      }
+      const dialog = within(computerUse).getByRole("dialog", {
+        name: "Computer Use unavailable",
+      });
+
+      for (const permission of ["Screen Recording", "Accessibility"]) {
+        const action = within(dialog).queryByRole("button", {
+          name: `Open ${permission} settings`,
+        });
+        if (missingPermissions.includes(permission)) {
+          expect(action).toBeInTheDocument();
+        } else {
+          expect(action).toBeNull();
+        }
+      }
+      expect(within(dialog).getAllByText("Required")).toHaveLength(
+        missingPermissions.length,
+      );
+    },
+  );
+
   it("does not label helper-owned unverified permissions as required", () => {
     const handlers = actions();
     render(

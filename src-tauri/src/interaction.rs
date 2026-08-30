@@ -40,29 +40,37 @@ pub(crate) async fn desktop_runtime_status() -> DesktopRuntimeStatus {
     };
 
     #[cfg(target_os = "macos")]
-    return desktop_runtime_status_from(resolve_desktop_runtime());
+    return desktop_runtime_status_from(
+        resolve_desktop_runtime(),
+        Some(accessibility_is_trusted()),
+        Some(screen_recording_is_trusted()),
+    );
 }
 
-fn desktop_runtime_status_from(runtime: Result<DesktopRuntime, String>) -> DesktopRuntimeStatus {
+fn desktop_runtime_status_from(
+    runtime: Result<DesktopRuntime, String>,
+    accessibility_trusted: Option<bool>,
+    screen_recording_trusted: Option<bool>,
+) -> DesktopRuntimeStatus {
     match runtime {
         Ok(runtime) => DesktopRuntimeStatus {
             available: true,
             message: None,
             version: Some(runtime.version),
             service_compatible: true,
-            // The signed OpenAI Computer Use helper owns these TCC grants. Checking
-            // the Orchestrator process reports the wrong application and produces a
-            // false negative even after the user grants both permissions.
-            accessibility_trusted: None,
-            screen_recording_trusted: None,
+            // macOS attributes helper access to the responsible parent process.
+            // When Orchestrator launches Computer Use, these non-prompting checks
+            // therefore match the toggles shown for Orchestrator in System Settings.
+            accessibility_trusted,
+            screen_recording_trusted,
         },
         Err(error) => DesktopRuntimeStatus {
             available: false,
             message: Some(error),
             version: None,
             service_compatible: false,
-            accessibility_trusted: None,
-            screen_recording_trusted: None,
+            accessibility_trusted,
+            screen_recording_trusted,
         },
     }
 }
@@ -171,6 +179,24 @@ fn open_privacy_settings(pane: &str) -> Result<(), String> {
     Err("Computer Use privacy settings are available only on macOS.".to_string())
 }
 
+#[cfg(target_os = "macos")]
+fn accessibility_is_trusted() -> bool {
+    #[link(name = "ApplicationServices", kind = "framework")]
+    unsafe extern "C" {
+        fn AXIsProcessTrusted() -> bool;
+    }
+    unsafe { AXIsProcessTrusted() }
+}
+
+#[cfg(target_os = "macos")]
+fn screen_recording_is_trusted() -> bool {
+    #[link(name = "CoreGraphics", kind = "framework")]
+    unsafe extern "C" {
+        fn CGPreflightScreenCaptureAccess() -> bool;
+    }
+    unsafe { CGPreflightScreenCaptureAccess() }
+}
+
 fn select_highest_compatible_plugin(root: &Path, supported_major: u64) -> Result<PathBuf, String> {
     let mut candidates = fs::read_dir(root)
         .map_err(|_| {
@@ -241,18 +267,26 @@ mod tests {
     }
 
     #[test]
-    fn compatible_provider_is_available_without_probing_orchestrator_permissions() {
-        let status = desktop_runtime_status_from(Ok(DesktopRuntime {
-            version: "1.0.1000816".to_string(),
-            _launcher: PathBuf::from("computer-use-client-launcher"),
-            _skill: PathBuf::from("SKILL.md"),
-        }));
+    fn compatible_provider_preserves_independent_permission_preflights() {
+        for (accessibility, screen_recording) in
+            [(false, false), (false, true), (true, false), (true, true)]
+        {
+            let status = desktop_runtime_status_from(
+                Ok(DesktopRuntime {
+                    version: "1.0.1000816".to_string(),
+                    _launcher: PathBuf::from("computer-use-client-launcher"),
+                    _skill: PathBuf::from("SKILL.md"),
+                }),
+                Some(accessibility),
+                Some(screen_recording),
+            );
 
-        assert!(status.available);
-        assert!(status.service_compatible);
-        assert_eq!(status.accessibility_trusted, None);
-        assert_eq!(status.screen_recording_trusted, None);
-        assert_eq!(status.message, None);
+            assert!(status.available);
+            assert!(status.service_compatible);
+            assert_eq!(status.accessibility_trusted, Some(accessibility));
+            assert_eq!(status.screen_recording_trusted, Some(screen_recording));
+            assert_eq!(status.message, None);
+        }
     }
 
     #[cfg(target_os = "macos")]
@@ -266,7 +300,11 @@ mod tests {
             return;
         }
 
-        let status = desktop_runtime_status_from(resolve_desktop_runtime());
+        let status = desktop_runtime_status_from(
+            resolve_desktop_runtime(),
+            Some(accessibility_is_trusted()),
+            Some(screen_recording_is_trusted()),
+        );
         assert!(status.available, "{:?}", status.message);
         assert!(status.service_compatible);
         assert!(status.version.is_some());
