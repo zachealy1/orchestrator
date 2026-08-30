@@ -341,19 +341,26 @@ describe("SettingsView", () => {
         screen.queryByRole("dialog", { name: "Clear browser data?" }),
       ).not.toBeInTheDocument(),
     );
-    const banner = within(browser).getByRole("status", {
+    const bubble = await screen.findByRole("complementary", {
+      name: "Browser data notification",
+    });
+    expect(browser).not.toContainElement(bubble);
+    const banner = within(bubble).getByRole("status", {
       name: "Browser data cleared",
     });
-    expect(banner).toHaveClass("settings-action-banner", "success");
+    expect(banner).toHaveClass("composer-status-notice");
+    expect(banner).toHaveAttribute("data-tone", "success");
     expect(banner).toHaveTextContent(
       "Cookies, site data, cache, sign-ins, and task tabs were removed",
     );
     await waitFor(() => expect(trigger).toHaveFocus());
 
     fireEvent.click(trigger);
-    expect(
-      within(browser).queryByRole("status", { name: "Browser data cleared" }),
-    ).not.toBeInTheDocument();
+    await waitFor(() =>
+      expect(
+        screen.queryByRole("status", { name: "Browser data cleared" }),
+      ).not.toBeInTheDocument(),
+    );
     fireEvent.click(
       within(screen.getByRole("dialog", { name: "Clear browser data?" }))
         .getByRole("button", { name: "Keep browser data" }),
@@ -378,10 +385,12 @@ describe("SettingsView", () => {
         .getByRole("button", { name: "Clear browser data" }),
     );
 
-    const banner = await within(browser).findByRole("alert", {
+    const banner = await screen.findByRole("alert", {
       name: "Couldn’t clear browser data",
     });
-    expect(banner).toHaveClass("settings-action-banner", "error");
+    expect(browser).not.toContainElement(banner);
+    expect(banner).toHaveClass("composer-status-notice");
+    expect(banner).toHaveAttribute("data-tone", "warning");
     expect(banner).toHaveTextContent("The isolated profile is busy.");
     expect(
       screen.queryByRole("dialog", { name: "Clear browser data?" }),
@@ -389,11 +398,11 @@ describe("SettingsView", () => {
 
     fireEvent.click(
       within(banner).getByRole("button", {
-        name: "Dismiss browser data notification",
+        name: "Dismiss Couldn’t clear browser data",
       }),
     );
     expect(
-      within(browser).queryByRole("alert", {
+      screen.queryByRole("alert", {
         name: "Couldn’t clear browser data",
       }),
     ).not.toBeInTheDocument();

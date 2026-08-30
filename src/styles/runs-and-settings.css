@@ -1190,40 +1190,25 @@ button.plugin-list-row.selected {
   color: var(--color-error);
 }
 
-.settings-action-banner {
-  display: grid;
-  grid-template-columns: 18px minmax(0, 1fr) 34px;
-  align-items: center;
-  gap: 12px;
-  border-bottom: 1px solid var(--color-divider);
-  border-radius: 0;
-  background: var(--color-surface-soft);
-  padding: 10px var(--settings-option-padding-inline);
+.settings-screen-status-anchor {
+  position: fixed;
+  top: 0;
+  right: 22px;
+  left: calc(var(--app-rail-width) + 22px);
+  z-index: 60;
+  height: 0;
+  pointer-events: none;
 }
 
-.settings-action-banner > div {
-  display: grid;
-  min-width: 0;
-  gap: 3px;
-}
-
-.settings-action-banner strong {
-  color: var(--color-text);
-  font-size: 0.82rem;
-}
-
-.settings-action-banner span {
-  color: var(--color-text-secondary);
-  font-size: 0.78rem;
-  line-height: 1.4;
-}
-
-.settings-action-banner.success > svg {
-  color: var(--color-diff-addition);
-}
-
-.settings-action-banner.error > svg {
-  color: var(--color-error);
+.settings-screen-status-anchor .floating-header-status-bubble {
+  top: 12px;
+  right: auto;
+  left: 50%;
+  width: min(760px, calc(100% - 64px));
+  max-width: calc(100% - 32px);
+  margin-inline: 0;
+  pointer-events: auto;
+  transform: translateX(-50%);
 }
 
 .browser-data-clear-dialog {
@@ -1797,6 +1782,7 @@ button.settings-navigation-row:focus-visible:not(:disabled) {
 
 @media (max-width: 1300px) {
   .app-shell {
+    --app-rail-width: 240px;
     grid-template-columns: 240px minmax(0, 1fr);
   }
 }

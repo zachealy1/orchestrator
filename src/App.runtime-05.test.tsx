@@ -259,10 +259,15 @@ describe("Application runtime scenarios 5", () => {
         expect(mocks.clearBrowserDataMock).toHaveBeenCalledOnce(),
       );
       expect(
-        await within(browser).findByRole("status", {
+        await screen.findByRole("status", {
           name: "Browser data cleared",
         }),
       ).toHaveTextContent("task tabs were removed from the isolated profile");
+      expect(browser).not.toContainElement(
+        screen.getByRole("complementary", {
+          name: "Browser data notification",
+        }),
+      );
     });
 
   it("removes consolidated duplicate profile directories during startup", async () => {

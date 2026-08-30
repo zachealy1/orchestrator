@@ -80,6 +80,28 @@ describe("FloatingHeaderStatusBubble", () => {
     expect(onActivate).toHaveBeenCalledWith("approval");
   });
 
+  it("supports a surface-specific accessible banner label", () => {
+    render(
+      <FloatingHeaderStatusBubble
+        notices={[transientWarning]}
+        anchorElement={anchorElement}
+        active
+        ariaLabel="Browser data notification"
+      />,
+    );
+
+    expect(
+      within(anchorElement).getByRole("complementary", {
+        name: "Browser data notification",
+      }),
+    ).toBeInTheDocument();
+    expect(
+      within(anchorElement).getByRole("alert", {
+        name: "Goal update failed",
+      }),
+    ).toBeInTheDocument();
+  });
+
   it("dismisses transient notices after 60 visible seconds but keeps approvals", () => {
     vi.useFakeTimers();
     render(

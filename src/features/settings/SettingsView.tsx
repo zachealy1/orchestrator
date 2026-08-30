@@ -1,8 +1,6 @@
 import {
   Accessibility,
   Bell,
-  CheckCircle2,
-  CircleAlert,
   CircleHelp,
   ChevronRight,
   Download,
@@ -34,6 +32,11 @@ import {
   type Ref,
 } from "react";
 import { createPortal } from "react-dom";
+import {
+  FLOATING_STATUS_NOTICE_TIMEOUT_MS,
+  FloatingHeaderStatusBubble,
+  type FloatingStatusNotice,
+} from "../../components/FloatingHeaderStatusBubble";
 import { OrchestratorMark } from "../../components/OrchestratorMark";
 import type {
   AgentNotificationPermissionStatus,
@@ -66,6 +69,7 @@ type BrowserDataFeedback = {
   tone: "success" | "error";
   title: string;
   detail: string;
+  revision: number;
 };
 
 function settingsActionErrorMessage(error: unknown) {
@@ -202,6 +206,9 @@ export const SettingsView = memo(function SettingsView({
   const [browserDataClearPending, setBrowserDataClearPending] = useState(false);
   const [browserDataFeedback, setBrowserDataFeedback] =
     useState<BrowserDataFeedback | null>(null);
+  const [settingsStatusAnchor, setSettingsStatusAnchor] =
+    useState<HTMLDivElement | null>(null);
+  const browserDataFeedbackRevisionRef = useRef(0);
   const clearBrowserDataButtonRef = useRef<HTMLButtonElement>(null);
   const matchesSettings = (...terms: string[]) => {
     const query = searchQuery.trim().toLowerCase();
@@ -252,12 +259,14 @@ export const SettingsView = memo(function SettingsView({
         title: "Browser data cleared",
         detail:
           "Cookies, site data, cache, sign-ins, and task tabs were removed from the isolated profile.",
+        revision: ++browserDataFeedbackRevisionRef.current,
       });
     } catch (error) {
       setBrowserDataFeedback({
         tone: "error",
         title: "Couldn’t clear browser data",
         detail: settingsActionErrorMessage(error),
+        revision: ++browserDataFeedbackRevisionRef.current,
       });
     } finally {
       setBrowserDataClearPending(false);
@@ -266,8 +275,34 @@ export const SettingsView = memo(function SettingsView({
     }
   };
 
+  const browserDataFeedbackNotices: FloatingStatusNotice[] =
+    browserDataFeedback
+      ? [
+          {
+            id: "browser-data-feedback",
+            revisionKey: String(browserDataFeedback.revision),
+            tone:
+              browserDataFeedback.tone === "success" ? "success" : "warning",
+            title: browserDataFeedback.title,
+            detail: browserDataFeedback.detail,
+            timeoutMs: FLOATING_STATUS_NOTICE_TIMEOUT_MS,
+          },
+        ]
+      : [];
+
   return (
     <>
+      <div
+        ref={setSettingsStatusAnchor}
+        className="settings-screen-status-anchor"
+      />
+      <FloatingHeaderStatusBubble
+        notices={browserDataFeedbackNotices}
+        anchorElement={settingsStatusAnchor}
+        active
+        ariaLabel="Browser data notification"
+        onDismiss={() => setBrowserDataFeedback(null)}
+      />
       <SettingsOverview
         model={model}
         actions={actions}
@@ -299,12 +334,6 @@ export const SettingsView = memo(function SettingsView({
                   : { label: "Unavailable", tone: "negative" }
             }
           />
-          {browserDataFeedback ? (
-            <BrowserDataFeedbackBanner
-              feedback={browserDataFeedback}
-              onDismiss={() => setBrowserDataFeedback(null)}
-            />
-          ) : null}
           <div className="setting-list">
             {!model.browserReadiness.available ? (
               <SettingsNavigationRow
@@ -795,35 +824,6 @@ export const SettingsView = memo(function SettingsView({
     </>
   );
 });
-
-function BrowserDataFeedbackBanner({
-  feedback,
-  onDismiss,
-}: {
-  feedback: BrowserDataFeedback;
-  onDismiss: () => void;
-}) {
-  const FeedbackIcon = feedback.tone === "success" ? CheckCircle2 : CircleAlert;
-  return (
-    <div
-      className={`settings-action-banner ${feedback.tone}`}
-      role={feedback.tone === "success" ? "status" : "alert"}
-      aria-label={feedback.title}
-    >
-      <FeedbackIcon size={17} aria-hidden="true" />
-      <div>
-        <strong>{feedback.title}</strong>
-        <span>{feedback.detail}</span>
-      </div>
-      <SettingsIconAction
-        icon={X}
-        ariaLabel="Dismiss browser data notification"
-        tooltip="Dismiss"
-        onActivate={onDismiss}
-      />
-    </div>
-  );
-}
 
 function BrowserDataClearDialog({
   busy,

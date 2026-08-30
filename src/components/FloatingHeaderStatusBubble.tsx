@@ -31,6 +31,7 @@ type Props = {
   notices: FloatingStatusNotice[];
   anchorElement: HTMLElement | null;
   active: boolean;
+  ariaLabel?: string;
   onActivate?: (noticeId: string) => void;
   onDismiss?: (noticeId: string) => void;
 };
@@ -56,6 +57,7 @@ export const FloatingHeaderStatusBubble = memo(
     notices,
     anchorElement,
     active,
+    ariaLabel = "Workspace status",
     onActivate,
     onDismiss,
   }: Props) {
@@ -286,7 +288,7 @@ export const FloatingHeaderStatusBubble = memo(
       <aside
         className="floating-header-status-bubble"
         data-visible={bubbleVisible ? "true" : "false"}
-        aria-label="Workspace status"
+        aria-label={ariaLabel}
         aria-hidden={!shouldShow}
         data-tauri-drag-region="false"
       >
@@ -352,6 +354,7 @@ function FloatingStatusRow({
       className="composer-status-notice"
       data-tone={notice.tone}
       role={notice.tone === "success" ? "status" : "alert"}
+      aria-label={notice.title}
       onMouseEnter={() => onHoverChange(true)}
       onMouseLeave={() => onHoverChange(false)}
       onFocusCapture={() => onFocusChange(true)}

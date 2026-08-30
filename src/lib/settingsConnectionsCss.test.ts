@@ -375,13 +375,12 @@ describe("settings connection styles", () => {
     }
   });
 
-  it("aligns Browser action feedback with the full-width Settings treatment", () => {
+  it("floats Browser action feedback with the shared status-banner treatment", () => {
     const root = postcss.parse(css);
     const rules = new Map<string, string>();
     const selectors = new Set([
-      ".settings-action-banner",
-      ".settings-action-banner.success > svg",
-      ".settings-action-banner.error > svg",
+      ".settings-screen-status-anchor",
+      ".settings-screen-status-anchor .floating-header-status-bubble",
       ".browser-data-clear-dialog",
     ]);
 
@@ -391,22 +390,18 @@ describe("settings connection styles", () => {
       }
     });
 
-    const banner = rules.get(".settings-action-banner");
-    expect(banner).toContain(
-      "grid-template-columns: 18px minmax(0, 1fr) 34px",
+    const anchor = rules.get(".settings-screen-status-anchor");
+    expect(anchor).toContain("position: fixed");
+    expect(anchor).toContain("top: 0");
+    expect(anchor).toContain("left: calc(var(--app-rail-width) + 22px)");
+    expect(anchor).toContain("right: 22px");
+    const banner = rules.get(
+      ".settings-screen-status-anchor .floating-header-status-bubble",
     );
-    expect(banner).toContain("border-bottom: 1px solid var(--color-divider)");
-    expect(banner).toContain("border-radius: 0");
-    expect(banner).toContain("background: var(--color-surface-soft)");
-    expect(banner).toContain(
-      "padding: 10px var(--settings-option-padding-inline)",
-    );
-    expect(rules.get(".settings-action-banner.success > svg")).toContain(
-      "color: var(--color-diff-addition)",
-    );
-    expect(rules.get(".settings-action-banner.error > svg")).toContain(
-      "color: var(--color-error)",
-    );
+    expect(banner).toContain("width: min(760px, calc(100% - 64px))");
+    expect(banner).toContain("pointer-events: auto");
+    expect(banner).toContain("transform: translateX(-50%)");
+    expect(css).not.toContain(".settings-action-banner");
     expect(rules.get(".browser-data-clear-dialog")).toContain(
       "width: min(460px, 100%)",
     );

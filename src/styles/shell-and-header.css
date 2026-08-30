@@ -1,4 +1,6 @@
 .app-shell {
+  --app-rail-width: 312px;
+
   display: grid;
   grid-template-columns: 312px minmax(0, 1fr);
   height: 100vh;
