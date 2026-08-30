@@ -18,12 +18,15 @@ import {
   Webhook,
 } from "lucide-react";
 import {
+  memo,
+  useCallback,
   useEffect,
   useMemo,
   useRef,
   useState,
   type RefObject,
 } from "react";
+import { useStableEvent } from "../../shared/reactRuntime";
 import type {
   CodexPluginCatalog,
   CodexPluginSummary,
@@ -50,7 +53,7 @@ export type PluginsViewActions = {
   setEnabled: (plugin: CodexPluginSummary, enabled: boolean) => void;
 };
 
-export function PluginsView({
+export const PluginsView = memo(function PluginsView({
   model,
   actions,
 }: {
@@ -70,9 +73,16 @@ export function PluginsView({
   const previousSelectedPluginIdRef = useRef<string | null>(
     model.selectedPluginId,
   );
-  const plugins = useMemo(() => {
+  const installPlugin = useStableEvent(actions.install);
+  const openPluginAction = useStableEvent(actions.openPlugin);
+  const {
+    plugins,
+    installedCount,
+    featuredPlugins,
+    catalogPlugins,
+  } = useMemo(() => {
     const normalizedQuery = query.trim().toLocaleLowerCase();
-    return model.catalog.plugins.filter((plugin) => {
+    const filteredPlugins = model.catalog.plugins.filter((plugin) => {
       if (browseView === "installed" && !plugin.installed) return false;
       if (!normalizedQuery) return true;
       return [
@@ -84,48 +94,62 @@ export function PluginsView({
         ...plugin.capabilities,
       ].some((value) => value.toLocaleLowerCase().includes(normalizedQuery));
     });
-  }, [browseView, model.catalog.plugins, query]);
+    const featuredPluginIds = new Set(model.catalog.featuredPluginIds);
+    const nextFeaturedPlugins =
+      browseView === "explore" && normalizedQuery.length === 0
+        ? filteredPlugins
+            .filter(
+              (plugin) =>
+                featuredPluginIds.has(plugin.id) ||
+                ["browser", "computer-use"].includes(plugin.name),
+            )
+            .slice(0, 2)
+        : [];
+    const featuredIds = new Set(
+      nextFeaturedPlugins.map((plugin) => plugin.id),
+    );
+    return {
+      plugins: filteredPlugins,
+      installedCount: model.catalog.plugins.reduce(
+        (count, plugin) => count + (plugin.installed ? 1 : 0),
+        0,
+      ),
+      featuredPlugins: nextFeaturedPlugins,
+      catalogPlugins: filteredPlugins.filter(
+        (plugin) => !featuredIds.has(plugin.id),
+      ),
+    };
+  }, [
+    browseView,
+    model.catalog.featuredPluginIds,
+    model.catalog.plugins,
+    query,
+  ]);
   const selectedPlugin =
     model.catalog.plugins.find(
       (plugin) => plugin.id === model.selectedPluginId,
     ) ??
     null;
-  const installedCount = model.catalog.plugins.filter(
-    (plugin) => plugin.installed,
-  ).length;
-  const featuredPluginIds = new Set(model.catalog.featuredPluginIds);
-  const featuredPlugins =
-    browseView === "explore" && query.trim().length === 0
-      ? plugins
-          .filter(
-            (plugin) =>
-              featuredPluginIds.has(plugin.id) ||
-              ["browser", "computer-use"].includes(plugin.name),
-          )
-          .slice(0, 2)
-      : [];
-  const featuredIds = new Set(featuredPlugins.map((plugin) => plugin.id));
-  const catalogPlugins = plugins.filter(
-    (plugin) => !featuredIds.has(plugin.id),
+  const requestInstall = useCallback(
+    (plugin: CodexPluginSummary) => {
+      if (plugin.mustShowInstallationInterstitial) {
+        setPendingInstall(plugin);
+      } else {
+        installPlugin(plugin);
+      }
+    },
+    [installPlugin],
   );
 
-  function requestInstall(plugin: CodexPluginSummary) {
-    if (plugin.mustShowInstallationInterstitial) {
-      setPendingInstall(plugin);
-    } else {
-      actions.install(plugin);
-    }
-  }
-
-  function openPlugin(
-    plugin: CodexPluginSummary,
-    trigger: HTMLButtonElement,
-  ) {
-    const scrollContainer = pageRef.current?.closest<HTMLElement>(".main");
-    catalogScrollTopRef.current = scrollContainer?.scrollTop ?? 0;
-    originatingCardRef.current = trigger;
-    actions.openPlugin(plugin);
-  }
+  const openPlugin = useCallback(
+    (plugin: CodexPluginSummary, trigger: HTMLButtonElement) => {
+      const scrollContainer = pageRef.current?.closest<HTMLElement>(".main");
+      catalogScrollTopRef.current = scrollContainer?.scrollTop ?? 0;
+      originatingCardRef.current = trigger;
+      openPluginAction(plugin);
+    },
+    [openPluginAction],
+  );
 
   useEffect(() => {
     const previousSelectedPluginId = previousSelectedPluginIdRef.current;
@@ -256,8 +280,8 @@ export function PluginsView({
                         plugin={plugin}
                         featured
                         busy={model.mutation?.pluginId === plugin.id}
-                        onInstall={() => requestInstall(plugin)}
-                        onOpenPlugin={(trigger) => openPlugin(plugin, trigger)}
+                        onInstall={requestInstall}
+                        onOpenPlugin={openPlugin}
                       />
                     ))}
                   </div>
@@ -283,8 +307,8 @@ export function PluginsView({
                         key={plugin.id}
                         plugin={plugin}
                         busy={model.mutation?.pluginId === plugin.id}
-                        onInstall={() => requestInstall(plugin)}
-                        onOpenPlugin={(trigger) => openPlugin(plugin, trigger)}
+                        onInstall={requestInstall}
+                        onOpenPlugin={openPlugin}
                       />
                     ))}
                   </div>
@@ -338,7 +362,7 @@ export function PluginsView({
               <button
                 type="button"
                 onClick={() => {
-                  actions.install(pendingInstall);
+                  installPlugin(pendingInstall);
                   setPendingInstall(null);
                 }}
               >
@@ -350,9 +374,9 @@ export function PluginsView({
       ) : null}
     </div>
   );
-}
+});
 
-function PluginCard({
+const PluginCard = memo(function PluginCard({
   plugin,
   featured = false,
   busy,
@@ -362,8 +386,11 @@ function PluginCard({
   plugin: CodexPluginSummary;
   featured?: boolean;
   busy: boolean;
-  onInstall: () => void;
-  onOpenPlugin: (trigger: HTMLButtonElement) => void;
+  onInstall: (plugin: CodexPluginSummary) => void;
+  onOpenPlugin: (
+    plugin: CodexPluginSummary,
+    trigger: HTMLButtonElement,
+  ) => void;
 }) {
   const capabilities = [...new Set(plugin.capabilities)];
   const tags = capabilities.slice(0, 2);
@@ -375,13 +402,18 @@ function PluginCard({
         type="button"
         aria-label={`View ${plugin.displayName} details`}
         disabled={busy}
-        onClick={(event) => onOpenPlugin(event.currentTarget)}
+        onClick={(event) => onOpenPlugin(plugin, event.currentTarget)}
       />
       <div className="plugin-card-main">
         <div className="plugin-card-heading">
           <span className="plugin-logo" aria-hidden="true">
             {plugin.logoUrl ? (
-              <img src={plugin.logoUrl} alt="" />
+              <img
+                src={plugin.logoUrl}
+                alt=""
+                loading="lazy"
+                decoding="async"
+              />
             ) : (
               <Box size={22} />
             )}
@@ -426,7 +458,7 @@ function PluginCard({
               className="secondary small"
               type="button"
               disabled={busy || !plugin.available}
-              onClick={onInstall}
+              onClick={() => onInstall(plugin)}
             >
               {busy ? (
                 <Loader2 className="spin" size={14} aria-hidden="true" />
@@ -442,7 +474,7 @@ function PluginCard({
       </div>
     </article>
   );
-}
+});
 
 function PluginCardStatusIcon({ status }: { status: string }) {
   if (status === "Enabled") {

@@ -110,6 +110,21 @@ function ControlledPlugins({
 }
 
 describe("PluginsView", () => {
+  it("renders a hydrated catalog while a background refresh is pending", () => {
+    const browser = plugin({ installed: true, enabled: true });
+    render(
+      <PluginsView
+        model={model([browser], { loading: true })}
+        actions={actions()}
+      />,
+    );
+
+    expect(
+      screen.getByRole("button", { name: "View Browser details" }),
+    ).toBeVisible();
+    expect(screen.queryByText("Loading plugins")).toBeNull();
+  });
+
   it("opens a full-page overview and keeps interstitial installs on that page", () => {
     const browser = plugin();
     const install = vi.fn();
@@ -232,6 +247,7 @@ describe("PluginsView", () => {
       displayName: "GitHub",
       description: "Work with repositories and pull requests.",
       marketplaceName: "openai-curated",
+      logoUrl: "https://example.com/github.png",
       installed: true,
       enabled: true,
       mustShowInstallationInterstitial: false,
@@ -264,6 +280,9 @@ describe("PluginsView", () => {
     ).toBeEmptyDOMElement();
     expect(screen.queryByText("View details")).toBeNull();
     expect(screen.getAllByText("1 capability")).not.toHaveLength(0);
+    const logo = document.querySelector(".plugin-card img");
+    expect(logo).toHaveAttribute("loading", "lazy");
+    expect(logo).toHaveAttribute("decoding", "async");
   });
 
   it("restores catalog filters, scroll, and originating-card focus", async () => {

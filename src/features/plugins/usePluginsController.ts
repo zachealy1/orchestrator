@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   installCodexPlugin,
   listCodexPlugins,
+  readCachedCodexPlugins,
   readCodexPlugin,
   setCodexPluginEnabled,
   uninstallCodexPlugin,
@@ -15,7 +16,7 @@ import {
 
 export function usePluginsController(input: { enabled: boolean }) {
   const [catalog, setCatalog] = useState<CodexPluginCatalog>(
-    EMPTY_PLUGIN_CATALOG,
+    () => readCachedCodexPlugins() ?? EMPTY_PLUGIN_CATALOG,
   );
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);

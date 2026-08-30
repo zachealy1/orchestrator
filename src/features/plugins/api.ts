@@ -11,12 +11,92 @@ import type {
   PluginInstallResult,
 } from "./types";
 
+export const PLUGIN_CATALOG_CACHE_KEY = "orchestrator.plugin-catalog.v1";
+export const PLUGIN_CATALOG_CACHE_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1_000;
+
+type PluginCatalogCacheStorage = Pick<
+  Storage,
+  "getItem" | "setItem" | "removeItem"
+>;
+
 export async function listCodexPlugins(input: { forceRefetch?: boolean } = {}) {
   const response = await codexDefaultProfileRpc<unknown>("plugin/list", {
     cwds: [],
     forceRefetch: input.forceRefetch ?? false,
   });
-  return normalizePluginCatalog(response);
+  const catalog = normalizePluginCatalog(response);
+  scheduleCachedCodexPlugins(response);
+  return catalog;
+}
+
+export function readCachedCodexPlugins(
+  storage: PluginCatalogCacheStorage | null = defaultCacheStorage(),
+  now = Date.now(),
+): CodexPluginCatalog | null {
+  if (!storage) return null;
+  try {
+    const serialized = storage.getItem(PLUGIN_CATALOG_CACHE_KEY);
+    if (!serialized) return null;
+    const cached = readObject(JSON.parse(serialized));
+    const cachedAt =
+      typeof cached.cachedAt === "number" ? cached.cachedAt : Number.NaN;
+    if (
+      !Number.isFinite(cachedAt) ||
+      cachedAt <= 0 ||
+      now - cachedAt > PLUGIN_CATALOG_CACHE_MAX_AGE_MS
+    ) {
+      storage.removeItem(PLUGIN_CATALOG_CACHE_KEY);
+      return null;
+    }
+    const catalog = normalizePluginCatalog(cached.payload);
+    if (catalog.marketplaces.length === 0) {
+      storage.removeItem(PLUGIN_CATALOG_CACHE_KEY);
+      return null;
+    }
+    return {
+      ...catalog,
+      refreshedAt: new Date(cachedAt).toISOString(),
+    };
+  } catch {
+    try {
+      storage.removeItem(PLUGIN_CATALOG_CACHE_KEY);
+    } catch {
+      // Ignore cache cleanup failures; the live catalog remains authoritative.
+    }
+    return null;
+  }
+}
+
+function scheduleCachedCodexPlugins(payload: unknown) {
+  const persist = () => persistCachedCodexPlugins(payload);
+  if (typeof window !== "undefined" && "requestIdleCallback" in window) {
+    window.requestIdleCallback(persist, { timeout: 2_000 });
+    return;
+  }
+  setTimeout(persist, 0);
+}
+
+function persistCachedCodexPlugins(
+  payload: unknown,
+  storage: PluginCatalogCacheStorage | null = defaultCacheStorage(),
+) {
+  if (!storage) return;
+  try {
+    storage.setItem(
+      PLUGIN_CATALOG_CACHE_KEY,
+      JSON.stringify({ cachedAt: Date.now(), payload }),
+    );
+  } catch {
+    // Cache writes are best-effort; the live response remains authoritative.
+  }
+}
+
+function defaultCacheStorage(): PluginCatalogCacheStorage | null {
+  try {
+    return typeof window === "undefined" ? null : window.localStorage;
+  } catch {
+    return null;
+  }
 }
 
 export async function installCodexPlugin(plugin: CodexPluginSummary) {

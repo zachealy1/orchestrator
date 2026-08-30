@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { waitFor } from "@testing-library/react";
 import {
   codexDefaultProfileRpc,
   listDefaultCodexSkills,
@@ -6,6 +7,9 @@ import {
 import {
   installCodexPlugin,
   listCodexPlugins,
+  PLUGIN_CATALOG_CACHE_KEY,
+  PLUGIN_CATALOG_CACHE_MAX_AGE_MS,
+  readCachedCodexPlugins,
   readCodexPlugin,
   setCodexPluginEnabled,
   uninstallCodexPlugin,
@@ -42,6 +46,7 @@ const summary = {
 describe("Codex plugin API", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    localStorage.clear();
     vi.mocked(listDefaultCodexSkills).mockResolvedValue([]);
   });
 
@@ -71,6 +76,29 @@ describe("Codex plugin API", () => {
       installPolicy: "AVAILABLE",
       authPolicy: "ON_USE",
     });
+    await waitFor(() =>
+      expect(readCachedCodexPlugins()).toMatchObject({
+        plugins: [expect.objectContaining({ id: summary.id })],
+      }),
+    );
+  });
+
+  it("drops expired cached catalogs instead of delaying a live refresh", () => {
+    const now = Date.now();
+    localStorage.setItem(
+      PLUGIN_CATALOG_CACHE_KEY,
+      JSON.stringify({
+        cachedAt: now - PLUGIN_CATALOG_CACHE_MAX_AGE_MS - 1,
+        payload: {
+          marketplaces: [
+            { name: "openai-bundled", path: null, plugins: [summary] },
+          ],
+        },
+      }),
+    );
+
+    expect(readCachedCodexPlugins(localStorage, now)).toBeNull();
+    expect(localStorage.getItem(PLUGIN_CATALOG_CACHE_KEY)).toBeNull();
   });
 
   it("loads component readiness from plugin details", async () => {

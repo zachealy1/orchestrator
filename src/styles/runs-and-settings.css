@@ -1139,6 +1139,7 @@ button.settings-connection-row:focus-visible:not(:disabled) {
   border: 1px solid var(--color-divider);
   border-radius: 6px;
   background: var(--color-component-background);
+  contain: layout style paint;
 }
 
 .plugin-card.featured {

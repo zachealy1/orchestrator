@@ -369,6 +369,7 @@ import { SettingsView } from "../features/settings/SettingsView";
 import { useSettingsViewBindings } from "../features/settings/useSettingsViewBindings";
 import { PluginsView } from "../features/plugins/PluginsView";
 import { usePluginsController } from "../features/plugins/usePluginsController";
+import { usePluginsViewBindings } from "../features/plugins/usePluginsViewBindings";
 import { useComputerUseController } from "../features/browser/useComputerUseController";
 import { cleanupAbandonedCodexProfiles } from "../features/accounts/abandonedProfiles";
 import type {
@@ -19605,6 +19606,30 @@ function App() {
       logout: handleLogout,
     },
   });
+  const pluginsViewBindings = usePluginsViewBindings({
+    model: {
+      dragRegion: selfWindowDragRegion,
+      selectedPluginId,
+      catalog: pluginsController.catalog,
+      loading: pluginsController.loading,
+      error: pluginsController.error,
+      notice: pluginsController.notice,
+      mutation: pluginsController.mutation,
+      detailsLoadingPluginId: pluginsController.detailsLoadingPluginId,
+    },
+    actions: {
+      refresh: () => void pluginsController.refresh(true),
+      openPlugin: (plugin) => {
+        setSelectedPluginId(plugin.id);
+        void pluginsController.loadDetails(plugin);
+      },
+      backToCatalog: () => setSelectedPluginId(null),
+      install: (plugin) => void pluginsController.install(plugin),
+      uninstall: (plugin) => void pluginsController.uninstall(plugin),
+      setEnabled: (plugin, enabled) =>
+        void pluginsController.setEnabled(plugin, enabled),
+    },
+  });
 
   return (
     <main className="app-shell" data-tauri-drag-region={selfWindowDragRegion}>
@@ -20417,30 +20442,7 @@ function App() {
             className="view-stack plugins-view-stack"
             data-tauri-drag-region={selfWindowDragRegion}
           >
-            <PluginsView
-              model={{
-                dragRegion: selfWindowDragRegion,
-                selectedPluginId,
-                catalog: pluginsController.catalog,
-                loading: pluginsController.loading,
-                error: pluginsController.error,
-                notice: pluginsController.notice,
-                mutation: pluginsController.mutation,
-                detailsLoadingPluginId: pluginsController.detailsLoadingPluginId,
-              }}
-              actions={{
-                refresh: () => void pluginsController.refresh(true),
-                openPlugin: (plugin) => {
-                  setSelectedPluginId(plugin.id);
-                  void pluginsController.loadDetails(plugin);
-                },
-                backToCatalog: () => setSelectedPluginId(null),
-                install: (plugin) => void pluginsController.install(plugin),
-                uninstall: (plugin) => void pluginsController.uninstall(plugin),
-                setEnabled: (plugin, enabled) =>
-                  void pluginsController.setEnabled(plugin, enabled),
-              }}
-            />
+            <PluginsView {...pluginsViewBindings} />
           </div>
         ) : null}
 

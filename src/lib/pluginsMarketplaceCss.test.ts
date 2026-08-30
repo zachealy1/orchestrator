@@ -60,6 +60,9 @@ describe("plugin marketplace styles", () => {
     expect(ruleFor(".plugin-card")).toContain(
       "border: 1px solid var(--color-divider)",
     );
+    expect(ruleFor(".plugin-card")).toContain(
+      "contain: layout style paint",
+    );
     expect(ruleFor(".plugin-card:hover")).toContain(
       "background: var(--color-button-active)",
     );
