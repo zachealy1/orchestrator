@@ -1119,6 +1119,7 @@ button.settings-connection-row:focus-visible:not(:disabled) {
 }
 
 .plugin-card {
+  position: relative;
   display: flex;
   min-width: 0;
   min-height: 146px;
@@ -1153,7 +1154,7 @@ button.settings-connection-row:focus-visible:not(:disabled) {
 .plugin-card-heading {
   display: grid;
   min-width: 0;
-  grid-template-columns: 48px minmax(0, 1fr) 32px;
+  grid-template-columns: 48px minmax(0, 1fr);
   align-items: center;
   gap: 12px;
 }
@@ -1205,30 +1206,33 @@ button.settings-connection-row:focus-visible:not(:disabled) {
   -webkit-line-clamp: 2;
 }
 
-.plugin-card-details-button {
-  display: grid;
-  width: 32px;
-  height: 32px;
-  min-height: 32px;
-  place-items: center;
-  border: 1px solid var(--color-divider);
-  border-radius: 6px;
+.plugin-card-select-target {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  width: 100%;
+  height: 100%;
+  min-height: 0;
+  border: 0;
+  border-radius: inherit;
   background: transparent;
-  color: var(--color-icon-muted);
   padding: 0;
   transform: none;
 }
 
-.plugin-card-details-button:hover:not(:disabled),
-.plugin-card-details-button:focus-visible:not(:disabled) {
-  border-color: var(--color-icon-muted);
-  background: var(--color-surface-soft);
+.plugin-card-select-target:hover:not(:disabled) {
+  background: transparent;
   transform: none;
 }
 
-.plugin-card-details-button:focus-visible:not(:disabled) {
+.plugin-card-select-target:focus-visible:not(:disabled) {
   outline: 2px solid var(--color-primary);
-  outline-offset: 2px;
+  outline-offset: -2px;
+}
+
+.plugin-card-main,
+.plugin-card-footer {
+  pointer-events: none;
 }
 
 .plugin-card-tags {
@@ -1315,7 +1319,10 @@ button.settings-connection-row:focus-visible:not(:disabled) {
 }
 
 .plugin-card-actions .small {
+  position: relative;
+  z-index: 2;
   min-height: 30px;
+  pointer-events: auto;
   padding: 0 10px;
   font-size: 0.72rem;
   transform: none;

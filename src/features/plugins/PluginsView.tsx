@@ -5,7 +5,6 @@ import {
   Circle,
   CircleX,
   Loader2,
-  MoreVertical,
   PackagePlus,
   Puzzle,
   RefreshCw,
@@ -345,6 +344,13 @@ function PluginCard({
       : "Unavailable";
   return (
     <article className={`plugin-card${featured ? " featured" : ""}`}>
+      <button
+        className="plugin-card-select-target"
+        type="button"
+        aria-label={`View ${plugin.displayName} details`}
+        disabled={busy}
+        onClick={onOpenDetails}
+      />
       <div className="plugin-card-main">
         <div className="plugin-card-heading">
           <span className="plugin-logo" aria-hidden="true">
@@ -355,16 +361,6 @@ function PluginCard({
             )}
           </span>
           <h3>{plugin.displayName}</h3>
-          <button
-            className="plugin-card-details-button"
-            type="button"
-            aria-label={`View ${plugin.displayName} details`}
-            data-tooltip="View details"
-            disabled={busy}
-            onClick={onOpenDetails}
-          >
-            <MoreVertical size={16} aria-hidden="true" />
-          </button>
         </div>
         <p className="plugin-card-description">
           {plugin.description ?? "No plugin description is available."}
