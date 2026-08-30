@@ -70,6 +70,8 @@ export function usePluginsController(input: { enabled: boolean }) {
       setDetailsLoadingPluginId(null);
     }
   }, []);
+  const dismissNotice = useCallback(() => setNotice(null), []);
+  const dismissError = useCallback(() => setError(null), []);
 
   useEffect(() => {
     if (input.enabled) void refresh(false);
@@ -130,6 +132,8 @@ export function usePluginsController(input: { enabled: boolean }) {
       detailsLoadingPluginId,
       refresh,
       loadDetails,
+      dismissNotice,
+      dismissError,
       install: (plugin: CodexPluginSummary) => mutate(plugin, "install"),
       uninstall: (plugin: CodexPluginSummary) => mutate(plugin, "uninstall"),
       setEnabled: (plugin: CodexPluginSummary, enabled: boolean) =>
@@ -138,6 +142,8 @@ export function usePluginsController(input: { enabled: boolean }) {
     [
       catalog,
       detailsLoadingPluginId,
+      dismissError,
+      dismissNotice,
       error,
       loadDetails,
       loading,

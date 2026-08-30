@@ -1,7 +1,6 @@
 import {
   ArrowLeft,
   Box,
-  Check,
   CheckCircle2,
   ChevronLeft,
   ChevronRight,
@@ -31,6 +30,11 @@ import {
   type RefObject,
   type SyntheticEvent,
 } from "react";
+import {
+  FLOATING_STATUS_NOTICE_TIMEOUT_MS,
+  FloatingHeaderStatusBubble,
+  type FloatingStatusNotice,
+} from "../../components/FloatingHeaderStatusBubble";
 import { useStableEvent } from "../../shared/reactRuntime";
 import {
   isPluginPerformanceEnabled,
@@ -65,6 +69,8 @@ export type PluginsViewActions = {
   install: (plugin: CodexPluginSummary) => void;
   uninstall: (plugin: CodexPluginSummary) => void;
   setEnabled: (plugin: CodexPluginSummary, enabled: boolean) => void;
+  dismissNotice: () => void;
+  dismissError: () => void;
 };
 
 export const PluginsView = memo(function PluginsView({
@@ -81,6 +87,8 @@ export const PluginsView = memo(function PluginsView({
   const [explorePage, setExplorePage] = useState(0);
   const [pendingInstall, setPendingInstall] =
     useState<CodexPluginSummary | null>(null);
+  const [statusAnchorElement, setStatusAnchorElement] =
+    useState<HTMLDivElement | null>(null);
   const pageRef = useRef<HTMLDivElement | null>(null);
   const backButtonRef = useRef<HTMLButtonElement | null>(null);
   const originatingCardRef = useRef<HTMLElement | null>(null);
@@ -92,6 +100,8 @@ export const PluginsView = memo(function PluginsView({
   selectedPluginIdRef.current = model.selectedPluginId;
   const installPlugin = useStableEvent(actions.install);
   const openPluginAction = useStableEvent(actions.openPlugin);
+  const dismissNoticeAction = useStableEvent(actions.dismissNotice);
+  const dismissErrorAction = useStableEvent(actions.dismissError);
   const {
     installedCount,
     installedPlugins,
@@ -181,6 +191,35 @@ export const PluginsView = memo(function PluginsView({
     explorePageCount,
     explorePageStart,
   ]);
+  const floatingStatusNotices = useMemo<FloatingStatusNotice[]>(() => {
+    const notices: FloatingStatusNotice[] = [];
+    if (model.error) {
+      notices.push({
+        id: "plugins-error",
+        revisionKey: model.error,
+        tone: "warning",
+        title: model.error,
+        timeoutMs: FLOATING_STATUS_NOTICE_TIMEOUT_MS,
+      });
+    }
+    if (model.notice) {
+      notices.push({
+        id: "plugins-notice",
+        revisionKey: model.notice,
+        tone: "success",
+        title: model.notice,
+        timeoutMs: FLOATING_STATUS_NOTICE_TIMEOUT_MS,
+      });
+    }
+    return notices;
+  }, [model.error, model.notice]);
+  const dismissFloatingStatusNotice = useCallback(
+    (noticeId: string) => {
+      if (noticeId === "plugins-error") dismissErrorAction();
+      if (noticeId === "plugins-notice") dismissNoticeAction();
+    },
+    [dismissErrorAction, dismissNoticeAction],
+  );
   const requestInstall = useCallback(
     (plugin: CodexPluginSummary) => {
       if (plugin.mustShowInstallationInterstitial) {
@@ -307,6 +346,17 @@ export const PluginsView = memo(function PluginsView({
       data-tauri-drag-region={model.dragRegion}
     >
       <div
+        ref={setStatusAnchorElement}
+        className="plugins-screen-status-anchor"
+      />
+      <FloatingHeaderStatusBubble
+        notices={floatingStatusNotices}
+        anchorElement={statusAnchorElement}
+        active={model.active}
+        ariaLabel="Plugin notification"
+        onDismiss={dismissFloatingStatusNotice}
+      />
+      <div
         className="plugins-catalog-page"
         hidden={model.selectedPluginId !== null}
       >
@@ -373,19 +423,6 @@ export const PluginsView = memo(function PluginsView({
             </div>
           </div>
 
-          {model.notice ? (
-            <p className="plugins-notice" role="status">
-              <Check size={15} aria-hidden="true" />
-              {model.notice}
-            </p>
-          ) : null}
-          {model.error ? (
-            <p className="plugins-error" role="alert">
-              <ShieldAlert size={15} aria-hidden="true" />
-              {model.error}
-            </p>
-          ) : null}
-
           {model.loading && model.catalog.plugins.length === 0 ? (
             <div className="plugins-empty-state" role="status">
               <Loader2 className="spin" size={20} aria-hidden="true" />
@@ -443,8 +480,6 @@ export const PluginsView = memo(function PluginsView({
           pluginId={model.selectedPluginId}
           plugin={selectedPlugin}
           loading={model.detailsLoadingPluginId === model.selectedPluginId}
-          error={model.error}
-          notice={model.notice}
           mutation={model.mutation}
           onBack={actions.backToCatalog}
           onInstall={requestInstall}
@@ -773,8 +808,6 @@ function PluginOverviewPage({
   pluginId,
   plugin,
   loading,
-  error,
-  notice,
   mutation,
   onBack,
   onInstall,
@@ -785,8 +818,6 @@ function PluginOverviewPage({
   pluginId: string;
   plugin: CodexPluginSummary | null;
   loading: boolean;
-  error: string | null;
-  notice: string | null;
   mutation: PluginMutationState;
   onBack: () => void;
   onInstall: (plugin: CodexPluginSummary) => void;
@@ -904,19 +935,6 @@ function PluginOverviewPage({
           {status}
         </span>
       </header>
-
-      {notice ? (
-        <p className="plugins-notice plugin-overview-feedback" role="status">
-          <Check size={15} aria-hidden="true" />
-          {notice}
-        </p>
-      ) : null}
-      {error ? (
-        <p className="plugins-error plugin-overview-feedback" role="alert">
-          <ShieldAlert size={15} aria-hidden="true" />
-          {error}
-        </p>
-      ) : null}
 
       <div className="plugin-overview-layout">
         <div className="plugin-overview-content">

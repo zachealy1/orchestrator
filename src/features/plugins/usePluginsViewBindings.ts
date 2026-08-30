@@ -16,6 +16,8 @@ export function usePluginsViewBindings(input: PluginsViewBindings) {
   const install = useStableEvent(currentActions.install);
   const uninstall = useStableEvent(currentActions.uninstall);
   const setEnabled = useStableEvent(currentActions.setEnabled);
+  const dismissNotice = useStableEvent(currentActions.dismissNotice);
+  const dismissError = useStableEvent(currentActions.dismissError);
 
   const model = useMemo<PluginsViewModel>(
     () => ({ ...currentModel }),
@@ -39,8 +41,19 @@ export function usePluginsViewBindings(input: PluginsViewBindings) {
       install,
       uninstall,
       setEnabled,
+      dismissNotice,
+      dismissError,
     }),
-    [backToCatalog, install, openPlugin, refresh, setEnabled, uninstall],
+    [
+      backToCatalog,
+      dismissError,
+      dismissNotice,
+      install,
+      openPlugin,
+      refresh,
+      setEnabled,
+      uninstall,
+    ],
   );
 
   return useMemo(() => ({ model, actions }), [actions, model]);

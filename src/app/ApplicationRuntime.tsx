@@ -19632,6 +19632,8 @@ function App() {
       uninstall: (plugin) => void pluginsController.uninstall(plugin),
       setEnabled: (plugin, enabled) =>
         void pluginsController.setEnabled(plugin, enabled),
+      dismissNotice: pluginsController.dismissNotice,
+      dismissError: pluginsController.dismissError,
     },
   });
 

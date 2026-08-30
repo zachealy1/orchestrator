@@ -76,6 +76,8 @@ function actions(overrides: Partial<PluginsViewActions> = {}): PluginsViewAction
     install: vi.fn(),
     uninstall: vi.fn(),
     setEnabled: vi.fn(),
+    dismissNotice: vi.fn(),
+    dismissError: vi.fn(),
     ...overrides,
   };
 }
@@ -111,6 +113,54 @@ function ControlledPlugins({
 }
 
 describe("PluginsView", () => {
+  it("surfaces plugin feedback in the shared floating notification banner", async () => {
+    const successMessage =
+      "Installed Browser. It will be available to new tasks.";
+    const dismissNotice = vi.fn();
+    const dismissError = vi.fn();
+    const viewActions = actions({ dismissNotice, dismissError });
+    const { rerender } = render(
+      <PluginsView
+        model={model([plugin()], { notice: successMessage })}
+        actions={viewActions}
+      />,
+    );
+
+    const bubble = await screen.findByRole("complementary", {
+      name: "Plugin notification",
+    });
+    const success = within(bubble).getByRole("status", {
+      name: successMessage,
+    });
+    expect(success).toHaveClass("composer-status-notice");
+    expect(success).toHaveAttribute("data-tone", "success");
+    expect(document.querySelector(".plugins-notice")).toBeNull();
+    fireEvent.click(
+      within(bubble).getByRole("button", {
+        name: `Dismiss ${successMessage}`,
+      }),
+    );
+    expect(dismissNotice).toHaveBeenCalledOnce();
+
+    const errorMessage = "Plugin installation failed.";
+    rerender(
+      <PluginsView
+        model={model([plugin()], { error: errorMessage })}
+        actions={viewActions}
+      />,
+    );
+    const warning = await screen.findByRole("alert", {
+      name: errorMessage,
+    });
+    expect(warning).toHaveClass("composer-status-notice");
+    expect(warning).toHaveAttribute("data-tone", "warning");
+    expect(document.querySelector(".plugins-error")).toBeNull();
+    fireEvent.click(
+      screen.getByRole("button", { name: `Dismiss ${errorMessage}` }),
+    );
+    expect(dismissError).toHaveBeenCalledOnce();
+  });
+
   it("renders a hydrated catalog while a background refresh is pending", () => {
     const browser = plugin({ installed: true, enabled: true });
     render(

@@ -28,6 +28,8 @@ function actions(
     install: vi.fn(),
     uninstall: vi.fn(),
     setEnabled: vi.fn(),
+    dismissNotice: vi.fn(),
+    dismissError: vi.fn(),
     ...overrides,
   };
 }
