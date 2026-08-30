@@ -44,4 +44,16 @@ describe("floating header status CSS", () => {
 
     expect(dismissIcon).toContain("color: var(--color-text)");
   });
+
+  it("keeps the shared dismiss hover neutral instead of using the global button blue", () => {
+    const dismissInteraction = rule(
+      "button.composer-status-dismiss:hover:not(:disabled),",
+    );
+
+    expect(dismissInteraction).toContain(
+      "background: var(--color-button-active)",
+    );
+    expect(dismissInteraction).not.toContain("var(--color-secondary)");
+    expect(dismissInteraction).not.toContain("color:");
+  });
 });

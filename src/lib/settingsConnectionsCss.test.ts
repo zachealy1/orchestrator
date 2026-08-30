@@ -5,14 +5,18 @@ import { readAppStyles } from "../test/readAppStyles";
 const css = readAppStyles();
 
 describe("settings connection styles", () => {
-  it("matches Settings account avatars to the plugin avatar surface", () => {
+  it("matches Settings avatars to the plugin avatar surface", () => {
     const root = postcss.parse(css);
     let avatarRule = "";
+    let detailHeaderAvatarRule = "";
     let pluginAvatarRule = "";
 
     root.walkRules((candidate) => {
       if (candidate.selector === ".settings-grid .account-mini-avatar") {
         avatarRule = candidate.toString();
+      }
+      if (candidate.selector === ".settings-detail-header-icon") {
+        detailHeaderAvatarRule = candidate.toString();
       }
       if (candidate.selector === ".plugin-logo") {
         pluginAvatarRule = candidate.toString();
@@ -25,19 +29,52 @@ describe("settings connection styles", () => {
       "box-shadow: inset 0 0 0 1px var(--color-divider)",
     ]) {
       expect(avatarRule).toContain(declaration);
+      expect(detailHeaderAvatarRule).toContain(declaration);
       expect(pluginAvatarRule).toContain(declaration);
+    }
+  });
+
+  it("matches Settings card and option hovers to plugin cards", () => {
+    const root = postcss.parse(css);
+    const hoverBackgrounds = new Map<string, string>();
+    const selectors = new Set([
+      ".plugin-card:hover",
+      "button.settings-status-card:hover:not(:disabled)",
+      ".theme-selector button:hover:not(:disabled)",
+      "button.settings-connection-row:hover:not(:disabled)",
+      "button.settings-status-popover-trigger:hover:not(:disabled)",
+      "button.settings-status-popover-action:hover:not(:disabled),\nbutton.settings-status-popover-permission:hover:not(:disabled)",
+      "button.settings-navigation-row:hover:not(:disabled)",
+    ]);
+
+    root.walkRules((candidate) => {
+      if (!selectors.has(candidate.selector)) return;
+      const background = candidate.nodes.find(
+        (node) => node.type === "decl" && node.prop === "background",
+      );
+      if (background?.type === "decl") {
+        hoverBackgrounds.set(candidate.selector, background.value);
+      }
+    });
+
+    for (const selector of selectors) {
+      expect(hoverBackgrounds.get(selector), selector).toBe(
+        "var(--color-surface-soft)",
+      );
     }
   });
 
   it("anchors Computer Use remediation to a labeled status popover", () => {
     const root = postcss.parse(css);
     let triggerRule = "";
-    let triggerInteractionRule = "";
+    let triggerHoverRule = "";
+    let triggerStateRule = "";
     let panelRule = "";
     let actionRule = "";
     let permissionRule = "";
     let unverifiedPermissionRule = "";
-    let actionInteractionRule = "";
+    let actionHoverRule = "";
+    let actionFocusRule = "";
     let interactionColorRule = "";
 
     root.walkRules((candidate) => {
@@ -45,14 +82,20 @@ describe("settings connection styles", () => {
         triggerRule = candidate.toString();
       }
       if (
+        candidate.selector ===
+        "button.settings-status-popover-trigger:hover:not(:disabled)"
+      ) {
+        triggerHoverRule = candidate.toString();
+      }
+      if (
         candidate.selector.includes(
-          "button.settings-status-popover-trigger:hover",
+          "button.settings-status-popover-trigger:focus-visible",
         ) &&
         candidate.selector.includes(
           "button.settings-status-popover-trigger[aria-expanded=\"true\"]",
         )
       ) {
-        triggerInteractionRule = candidate.toString();
+        triggerStateRule = candidate.toString();
       }
       if (candidate.selector === ".settings-status-popover-panel") {
         panelRule = candidate.toString();
@@ -78,10 +121,26 @@ describe("settings connection styles", () => {
           "button.settings-status-popover-action:hover",
         ) &&
         candidate.selector.includes(
-          "button.settings-status-popover-action:focus-visible",
+          "button.settings-status-popover-permission:hover",
         )
       ) {
-        actionInteractionRule = candidate.toString();
+        actionHoverRule = candidate.toString();
+      }
+      if (
+        candidate.selector.includes(
+          "button.settings-status-popover-action:focus-visible",
+        ) &&
+        candidate.selector.includes(
+          "button.settings-status-popover-permission:focus-visible",
+        ) &&
+        candidate.nodes.some(
+          (node) =>
+            node.type === "decl" &&
+            node.prop === "background" &&
+            node.value === "var(--color-button-active)",
+        )
+      ) {
+        actionFocusRule = candidate.toString();
       }
       if (
         candidate.selector.includes("settings-status-popover") &&
@@ -98,10 +157,13 @@ describe("settings connection styles", () => {
     expect(triggerRule).not.toContain("width: 36px");
     expect(triggerRule).not.toContain("height: 36px");
     expect(triggerRule).not.toContain("place-items: center");
-    expect(triggerInteractionRule).toContain(
+    expect(triggerHoverRule).toContain(
+      "background: var(--color-surface-soft)",
+    );
+    expect(triggerHoverRule).not.toContain("color:");
+    expect(triggerStateRule).toContain(
       "background: var(--color-button-active)",
     );
-    expect(triggerInteractionRule).not.toContain("color:");
 
     expect(panelRule).toContain("position: absolute");
     expect(panelRule).toContain("right: 0");
@@ -120,7 +182,10 @@ describe("settings connection styles", () => {
     expect(unverifiedPermissionRule).toContain(
       "background: var(--color-icon-muted)",
     );
-    expect(actionInteractionRule).toContain(
+    expect(actionHoverRule).toContain(
+      "background: var(--color-surface-soft)",
+    );
+    expect(actionFocusRule).toContain(
       "background: var(--color-button-active)",
     );
     expect(interactionColorRule).toBe("");
@@ -128,16 +193,23 @@ describe("settings connection styles", () => {
 
   it("keeps status-card icons distinct from the shared hover highlight", () => {
     const root = postcss.parse(css);
-    let interactionRule = "";
+    let hoverRule = "";
+    let focusRule = "";
     let iconRule = "";
     let interactiveIconRule = "";
 
     root.walkRules((candidate) => {
       if (
-        candidate.selector.includes("button.settings-status-card:hover") &&
-        candidate.selector.includes("button.settings-status-card:focus-visible")
+        candidate.selector ===
+        "button.settings-status-card:hover:not(:disabled)"
       ) {
-        interactionRule = candidate.toString();
+        hoverRule = candidate.toString();
+      }
+      if (
+        candidate.selector ===
+        "button.settings-status-card:focus-visible:not(:disabled)"
+      ) {
+        focusRule = candidate.toString();
       }
       if (candidate.selector === ".settings-status-card-icon") {
         iconRule = candidate.toString();
@@ -152,10 +224,42 @@ describe("settings connection styles", () => {
       }
     });
 
-    expect(interactionRule).toContain("background: var(--color-button-active)");
-    expect(iconRule).toContain("background: var(--color-surface-soft)");
+    expect(hoverRule).toContain("background: var(--color-surface-soft)");
+    expect(focusRule).toContain("background: var(--color-button-active)");
+    expect(iconRule).toContain("background: var(--color-surface-muted)");
     expect(iconRule).toContain("color: var(--color-icon)");
+    expect(iconRule).toContain(
+      "box-shadow: inset 0 0 0 1px var(--color-divider)",
+    );
     expect(interactiveIconRule).toBe("");
+  });
+
+  it("maps current status-card tones to their semantic dot colours", () => {
+    const root = postcss.parse(css);
+    let positiveToneRule = "";
+    let negativeToneRule = "";
+
+    root.walkRules((candidate) => {
+      if (
+        candidate.selector.includes(
+          ".settings-status-card small.positive > span",
+        )
+      ) {
+        positiveToneRule = candidate.toString();
+      }
+      if (
+        candidate.selector.includes(
+          ".settings-status-card small.negative > span",
+        )
+      ) {
+        negativeToneRule = candidate.toString();
+      }
+    });
+
+    expect(positiveToneRule).toContain(
+      "background: var(--color-diff-addition)",
+    );
+    expect(negativeToneRule).toContain("background: var(--color-error)");
   });
 
   it("uses the shared square-edged application highlight for selectable rows", () => {
@@ -212,7 +316,8 @@ describe("settings connection styles", () => {
   it("shares the selectable-row and compact utility-action treatment", () => {
     const root = postcss.parse(css);
     let navigationRule = "";
-    let navigationInteractionRule = "";
+    let navigationHoverRule = "";
+    let navigationFocusRule = "";
     let navigationIndicatorRule = "";
     let iconActionRule = "";
     let interactiveIconColorRule = "";
@@ -221,13 +326,22 @@ describe("settings connection styles", () => {
         navigationRule = candidate.toString();
       }
       if (
-        candidate.selector.includes("button.settings-navigation-row:hover") &&
-        candidate.selector.includes("button.settings-navigation-row:focus-visible") &&
+        candidate.selector ===
+        "button.settings-navigation-row:hover:not(:disabled)"
+      ) {
+        navigationHoverRule = candidate.toString();
+      }
+      if (
+        candidate.selector ===
+          "button.settings-navigation-row:focus-visible:not(:disabled)" &&
         candidate.nodes.some(
-          (node) => node.type === "decl" && node.prop === "background",
+          (node) =>
+            node.type === "decl" &&
+            node.prop === "background" &&
+            node.value === "var(--color-button-active)",
         )
       ) {
-        navigationInteractionRule = candidate.toString();
+        navigationFocusRule = candidate.toString();
       }
       if (candidate.selector === ".settings-icon-action") {
         iconActionRule = candidate.toString();
@@ -250,7 +364,10 @@ describe("settings connection styles", () => {
 
     expect(navigationRule).toContain("border-radius: 0");
     expect(navigationRule).toContain("background: transparent");
-    expect(navigationInteractionRule).toContain(
+    expect(navigationHoverRule).toContain(
+      "background: var(--color-surface-soft)",
+    );
+    expect(navigationFocusRule).toContain(
       "background: var(--color-button-active)",
     );
     expect(iconActionRule).toContain("width: 34px");

@@ -717,10 +717,9 @@ button.composer-status-action:focus-visible {
   transform: none;
 }
 
-.composer-status-dismiss:hover,
-.composer-status-dismiss:active {
+button.composer-status-dismiss:hover:not(:disabled),
+button.composer-status-dismiss:active:not(:disabled) {
   background: var(--color-button-active);
-  color: var(--color-icon-muted);
   box-shadow: none;
   transform: none;
 }
