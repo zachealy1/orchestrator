@@ -28,7 +28,11 @@ function deferred<T>() {
   return { promise, resolve };
 }
 
-function catalog(id: string, installed = true): CodexPluginCatalog {
+function catalog(
+  id: string,
+  installed = true,
+  enabled = installed,
+): CodexPluginCatalog {
   const plugin = {
     id: `${id}@openai-bundled`,
     name: id,
@@ -38,7 +42,7 @@ function catalog(id: string, installed = true): CodexPluginCatalog {
     marketplacePath: null,
     version: "1.0.0",
     installed,
-    enabled: installed,
+    enabled,
     installPolicy: "AVAILABLE" as const,
     authPolicy: "ON_USE" as const,
     mustShowInstallationInterstitial: false,
@@ -171,5 +175,77 @@ describe("usePluginsController", () => {
     expect(result.current.error).toContain(
       "Couldn’t verify the updated state for messages",
     );
+  });
+
+  it.each([
+    { label: "enables", initial: false, next: true, action: "enable" },
+    { label: "disables", initial: true, next: false, action: "disable" },
+  ])(
+    "$label the switch immediately while server confirmation is pending",
+    async ({ initial, next, action }) => {
+      const beforeChange = catalog("messages", true, initial);
+      const afterChange = catalog("messages", true, next);
+      const command = deferred<void>();
+      const confirmation = deferred<CodexPluginCatalog>();
+      vi.mocked(readCachedCodexPlugins).mockReturnValue(beforeChange);
+      vi.mocked(listCodexPlugins)
+        .mockResolvedValueOnce(beforeChange)
+        .mockReturnValueOnce(confirmation.promise);
+      vi.mocked(setCodexPluginEnabled).mockReturnValue(command.promise);
+
+      const { result } = renderHook(() =>
+        usePluginsController({ enabled: true }),
+      );
+      await waitFor(() => expect(result.current.loading).toBe(false));
+
+      act(() => {
+        void result.current.setEnabled(beforeChange.plugins[0], next);
+      });
+
+      expect(result.current.catalog.plugins[0].enabled).toBe(next);
+      expect(result.current.mutation).toEqual({
+        pluginId: "messages@openai-bundled",
+        action,
+      });
+      expect(result.current.notice).toBeNull();
+
+      act(() => command.resolve(undefined));
+      await waitFor(() =>
+        expect(listCodexPlugins).toHaveBeenLastCalledWith({
+          forceRefetch: true,
+        }),
+      );
+      expect(result.current.catalog.plugins[0].enabled).toBe(next);
+      expect(result.current.notice).toBeNull();
+
+      act(() => confirmation.resolve(afterChange));
+      await waitFor(() => expect(result.current.mutation).toBeNull());
+      expect(result.current.catalog.plugins[0].enabled).toBe(next);
+      expect(result.current.error).toBeNull();
+    },
+  );
+
+  it("rolls an optimistic switch change back when the command fails", async () => {
+    const disabled = catalog("messages", true, false);
+    vi.mocked(readCachedCodexPlugins).mockReturnValue(disabled);
+    vi.mocked(listCodexPlugins).mockResolvedValue(disabled);
+    vi.mocked(setCodexPluginEnabled).mockRejectedValue(
+      new Error("Could not update plugin"),
+    );
+
+    const { result } = renderHook(() =>
+      usePluginsController({ enabled: true }),
+    );
+    await waitFor(() => expect(result.current.loading).toBe(false));
+
+    act(() => {
+      void result.current.setEnabled(disabled.plugins[0], true);
+    });
+    expect(result.current.catalog.plugins[0].enabled).toBe(true);
+
+    await waitFor(() => expect(result.current.mutation).toBeNull());
+    expect(result.current.catalog.plugins[0].enabled).toBe(false);
+    expect(result.current.notice).toBeNull();
+    expect(result.current.error).toBe("Could not update plugin");
   });
 });

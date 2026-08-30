@@ -102,9 +102,17 @@ export function usePluginsController(input: { enabled: boolean }) {
       plugin: CodexPluginSummary,
       action: NonNullable<PluginMutationState>["action"],
     ) => {
+      const optimisticEnabled =
+        action === "enable" ? true : action === "disable" ? false : null;
+      const previousEnabled = plugin.enabled;
       setMutation({ pluginId: plugin.id, action });
       setError(null);
       setNotice(null);
+      if (optimisticEnabled !== null) {
+        setCatalog((current) =>
+          updatePluginEnabled(current, plugin.id, optimisticEnabled),
+        );
+      }
       try {
         let successNotice: string;
         if (action === "install") {
@@ -132,6 +140,16 @@ export function usePluginsController(input: { enabled: boolean }) {
         }
         setNotice(successNotice);
       } catch (reason) {
+        if (optimisticEnabled !== null) {
+          setCatalog((current) =>
+            updatePluginEnabled(
+              current,
+              plugin.id,
+              previousEnabled,
+              optimisticEnabled,
+            ),
+          );
+        }
         setError(errorMessage(reason));
       } finally {
         setMutation(null);
@@ -188,4 +206,21 @@ function pluginMutationConfirmed(
   if (action === "enable") return plugin.enabled;
   if (action === "disable") return !plugin.enabled;
   return true;
+}
+
+function updatePluginEnabled(
+  catalog: CodexPluginCatalog,
+  pluginId: string,
+  enabled: boolean,
+  expectedEnabled?: boolean,
+) {
+  const plugin = catalog.plugins.find((candidate) => candidate.id === pluginId);
+  if (
+    !plugin ||
+    plugin.enabled === enabled ||
+    (expectedEnabled !== undefined && plugin.enabled !== expectedEnabled)
+  ) {
+    return catalog;
+  }
+  return replacePluginInCatalog(catalog, { ...plugin, enabled });
 }
