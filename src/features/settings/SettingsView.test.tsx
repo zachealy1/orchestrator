@@ -28,7 +28,6 @@ function actions(
     openAccessibilitySettings: vi.fn(),
     openScreenRecordingSettings: vi.fn(),
     revokeAlwaysAllowedApplication: vi.fn(),
-    dismissLegacyBrowserMigrationNotice: vi.fn(),
     connectGithub: vi.fn(),
     showGithubLogin: vi.fn(),
     disconnectGithub: vi.fn(),
@@ -121,7 +120,6 @@ function model(overrides: Partial<SettingsViewModel> = {}): SettingsViewModel {
     },
     pluginsLoading: false,
     alwaysAllowedApplications: [],
-    legacyBrowserMigrationNotice: false,
     githubConnection: null,
     githubConnectionPending: false,
     notificationPreferences: {

@@ -951,24 +951,6 @@ button.settings-connection-row:focus-visible:not(:disabled) {
   font-size: 0.78rem;
 }
 
-.settings-migration-notice {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 16px;
-  margin: 18px;
-  border: 1px solid var(--color-divider);
-  background: var(--color-surface-soft);
-  padding: 12px;
-}
-
-.settings-migration-notice p {
-  margin: 0;
-  color: var(--color-text-secondary);
-  font-size: 0.8rem;
-  line-height: 1.45;
-}
-
 .computer-use-runtime-error .link-button {
   margin-left: 8px;
 }
@@ -1802,10 +1784,6 @@ button.settings-navigation-row:focus-visible:not(:disabled) {
   font-size: 0.82rem;
   line-height: 1.45;
   padding: 10px 12px;
-}
-
-.computer-use-runtime-error + .settings-migration-notice {
-  margin-top: 0;
 }
 
 .github-settings-panel .setting-row {

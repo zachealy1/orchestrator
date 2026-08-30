@@ -1089,8 +1089,6 @@ function App() {
   const [alwaysAllowedApplications, setAlwaysAllowedApplications] = useState<
     AlwaysAllowedApplication[]
   >([]);
-  const [legacyBrowserMigrationNotice, setLegacyBrowserMigrationNotice] =
-    useState(readLegacyBrowserMigrationNotice);
   useEffect(() => {
     let disposed = false;
     void listAlwaysAllowedApplications().then((applications) => {
@@ -19532,7 +19530,6 @@ function App() {
       pluginCatalog: pluginsController.catalog,
       pluginsLoading: pluginsController.loading,
       alwaysAllowedApplications,
-      legacyBrowserMigrationNotice,
       githubConnection,
       githubConnectionPending,
       notificationPreferences: agentNotificationPreferences,
@@ -19581,10 +19578,6 @@ function App() {
         void revokeAlwaysAllowedApplication(applicationId).then(() =>
           listAlwaysAllowedApplications().then(setAlwaysAllowedApplications),
         );
-      },
-      dismissLegacyBrowserMigrationNotice: () => {
-        persistLegacyBrowserMigrationNoticeDismissal();
-        setLegacyBrowserMigrationNotice(false);
       },
       connectGithub: () => void handleConnectGithub(),
       showGithubLogin: () => setGithubLoginDialogOpen(true),
@@ -20488,39 +20481,6 @@ function selectedBrowserPluginSkill(skills: Array<{ id: string; name: string }>)
 
 function errorMessage(error: unknown) {
   return error instanceof Error ? error.message : String(error);
-}
-
-const LEGACY_BROWSER_MIGRATION_DISMISSED_KEY =
-  "orchestrator.browser-bridge-migration-dismissed.v1";
-
-function readLegacyBrowserMigrationNotice() {
-  try {
-    if (
-      window.localStorage.getItem(LEGACY_BROWSER_MIGRATION_DISMISSED_KEY) ===
-      "true"
-    ) {
-      return false;
-    }
-    return [
-      "orchestrator.interaction.v1",
-      "orchestrator.computer-use.v3",
-      "orchestrator.computer-use.v2",
-      "orchestrator.computer-use.v1",
-    ].some((key) => window.localStorage.getItem(key) !== null);
-  } catch {
-    return false;
-  }
-}
-
-function persistLegacyBrowserMigrationNoticeDismissal() {
-  try {
-    window.localStorage.setItem(
-      LEGACY_BROWSER_MIGRATION_DISMISSED_KEY,
-      "true",
-    );
-  } catch {
-    // A missing storage backend should not prevent dismissal for this session.
-  }
 }
 
 function assertRuntimeAccessMatches(

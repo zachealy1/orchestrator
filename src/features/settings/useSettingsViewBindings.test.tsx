@@ -27,7 +27,6 @@ function model(): SettingsViewModel {
     pluginCatalog: EMPTY_PLUGIN_CATALOG,
     pluginsLoading: false,
     alwaysAllowedApplications: [],
-    legacyBrowserMigrationNotice: false,
     githubConnection: null,
     githubConnectionPending: false,
     notificationPreferences: {
@@ -66,7 +65,6 @@ function actions(
     openAccessibilitySettings: () => undefined,
     openScreenRecordingSettings: () => undefined,
     revokeAlwaysAllowedApplication: () => undefined,
-    dismissLegacyBrowserMigrationNotice: () => undefined,
     connectGithub: () => undefined,
     showGithubLogin: () => undefined,
     disconnectGithub: () => undefined,

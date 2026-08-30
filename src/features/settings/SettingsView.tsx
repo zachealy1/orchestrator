@@ -142,7 +142,6 @@ export type SettingsViewModel = {
   pluginCatalog: CodexPluginCatalog;
   pluginsLoading: boolean;
   alwaysAllowedApplications: AlwaysAllowedApplication[];
-  legacyBrowserMigrationNotice: boolean;
   githubConnection: GithubConnectionStatus | null;
   githubConnectionPending: boolean;
   notificationPreferences: AgentNotificationPreferences;
@@ -171,7 +170,6 @@ export type SettingsViewActions = {
   openAccessibilitySettings: () => void;
   openScreenRecordingSettings: () => void;
   revokeAlwaysAllowedApplication: (applicationId: string) => void;
-  dismissLegacyBrowserMigrationNotice: () => void;
   connectGithub: () => void;
   showGithubLogin: () => void;
   disconnectGithub: () => void;
@@ -534,20 +532,6 @@ export const SettingsView = memo(function SettingsView({
               </div>
             )}
           </div>
-          {model.legacyBrowserMigrationNotice ? (
-            <div className="settings-migration-notice" role="status">
-              <p>
-                Orchestrator no longer uses its Browser Bridge. Remove the obsolete
-                Orchestrator browser extension from your browser when convenient.
-              </p>
-              <SettingsIconAction
-                icon={Trash2}
-                ariaLabel="Dismiss browser migration notice"
-                tooltip="Dismiss"
-                onActivate={actions.dismissLegacyBrowserMigrationNotice}
-              />
-            </div>
-          ) : null}
         </section>
       ) : null}
 

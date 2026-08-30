@@ -51,9 +51,6 @@ export function useSettingsViewBindings(input: SettingsViewBindings) {
   const revokeAlwaysAllowedApplication = useStableEvent(
     currentActions.revokeAlwaysAllowedApplication,
   );
-  const dismissLegacyBrowserMigrationNotice = useStableEvent(
-    currentActions.dismissLegacyBrowserMigrationNotice,
-  );
   const connectGithub = useStableEvent(currentActions.connectGithub);
   const showGithubLogin = useStableEvent(currentActions.showGithubLogin);
   const disconnectGithub = useStableEvent(currentActions.disconnectGithub);
@@ -90,7 +87,6 @@ export function useSettingsViewBindings(input: SettingsViewBindings) {
       currentModel.dragRegion,
       currentModel.githubConnection,
       currentModel.githubConnectionPending,
-      currentModel.legacyBrowserMigrationNotice,
       currentModel.loginState,
       currentModel.notificationPermission,
       currentModel.notificationPreferences,
@@ -117,7 +113,6 @@ export function useSettingsViewBindings(input: SettingsViewBindings) {
       openAccessibilitySettings,
       openScreenRecordingSettings,
       revokeAlwaysAllowedApplication,
-      dismissLegacyBrowserMigrationNotice,
       connectGithub,
       showGithubLogin,
       disconnectGithub,
@@ -140,7 +135,6 @@ export function useSettingsViewBindings(input: SettingsViewBindings) {
       clearBrowserData,
       connectAccount,
       connectGithub,
-      dismissLegacyBrowserMigrationNotice,
       disconnectGithub,
       enableNotifications,
       importBrowserProfile,
