@@ -212,42 +212,6 @@ button.native-plan-icon-action:active:not(:disabled) {
   transform: none;
 }
 
-button.native-plan-icon-action[data-tooltip]::after {
-  position: absolute;
-  right: 0;
-  bottom: calc(100% + 8px);
-  z-index: 20;
-  width: max-content;
-  max-width: min(240px, 72vw);
-  border: 0;
-  border-radius: 7px;
-  background: var(--color-component-background);
-  box-shadow: 0 12px 32px rgb(var(--shadow-rgb) / 0.24);
-  color: var(--color-text);
-  content: attr(data-tooltip);
-  font-size: 0.76rem;
-  font-weight: 500;
-  line-height: 1.35;
-  opacity: 0;
-  padding: 7px 9px;
-  pointer-events: none;
-  text-align: left;
-  transform: translateY(3px);
-  transition:
-    opacity 120ms ease,
-    transform 120ms ease,
-    visibility 120ms ease;
-  visibility: hidden;
-  white-space: nowrap;
-}
-
-button.native-plan-icon-action[data-tooltip]:hover:not(:disabled)::after,
-button.native-plan-icon-action[data-tooltip]:focus-visible::after {
-  opacity: 1;
-  transform: translateY(0);
-  visibility: visible;
-}
-
 .native-plan-revision {
   display: grid;
   gap: 8px;

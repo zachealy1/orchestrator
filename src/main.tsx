@@ -1,6 +1,7 @@
 import React from "react";
 import ReactDOM from "react-dom/client";
 import App from "./App";
+import { OrchestratorTooltipLayer } from "./components/OrchestratorTooltipLayer";
 import DrawerSyncDiagnostics from "./drawerSyncDiagnostics";
 import TranscriptRestoreDiagnostics from "./transcriptRestoreDiagnostics";
 import TranscriptScrollDiagnostics from "./transcriptScrollDiagnostics";
@@ -25,17 +26,18 @@ import.meta.hot?.dispose(disposeServices);
 function ApplicationRoot() {
   return (
     <AppServicesProvider services={services}>
-    {import.meta.env.VITE_TRANSCRIPT_RESTORE_PROFILE === "1" ? (
-      <TranscriptRestoreDiagnostics />
-    ) : import.meta.env.VITE_TRANSCRIPT_WORKSPACE_RETURN_PROFILE === "1" ? (
-      <TranscriptWorkspaceReturnDiagnostics />
-    ) : import.meta.env.VITE_TRANSCRIPT_SCROLL_PROFILE === "1" ? (
-      <TranscriptScrollDiagnostics />
-    ) : import.meta.env.VITE_DRAWER_SYNC_PROFILE === "1" ? (
-      <DrawerSyncDiagnostics />
-    ) : (
-      <App />
-    )}
+      {import.meta.env.VITE_TRANSCRIPT_RESTORE_PROFILE === "1" ? (
+        <TranscriptRestoreDiagnostics />
+      ) : import.meta.env.VITE_TRANSCRIPT_WORKSPACE_RETURN_PROFILE === "1" ? (
+        <TranscriptWorkspaceReturnDiagnostics />
+      ) : import.meta.env.VITE_TRANSCRIPT_SCROLL_PROFILE === "1" ? (
+        <TranscriptScrollDiagnostics />
+      ) : import.meta.env.VITE_DRAWER_SYNC_PROFILE === "1" ? (
+        <DrawerSyncDiagnostics />
+      ) : (
+        <App />
+      )}
+      <OrchestratorTooltipLayer />
     </AppServicesProvider>
   );
 }

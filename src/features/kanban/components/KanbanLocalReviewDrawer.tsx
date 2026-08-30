@@ -333,7 +333,7 @@ export function KanbanLocalReviewDrawer({
           type="button"
           className="kanban-icon-button"
           aria-label="Close local review"
-          title="Close"
+          data-tooltip="Close"
           disabled={busy}
           onClick={onClose}
         >
@@ -354,7 +354,7 @@ export function KanbanLocalReviewDrawer({
             type="button"
             className="kanban-icon-button"
             aria-label="Retry local review"
-            title="Retry"
+            data-tooltip="Retry"
             onClick={onRetry}
           >
             <RefreshCw size={16} aria-hidden="true" />
@@ -437,7 +437,7 @@ export function KanbanLocalReviewDrawer({
                             ? "Show changed files"
                             : "Hide changed files"
                         }
-                        title={
+                        data-tooltip={
                           filesCollapsed
                             ? "Show changed files"
                             : "Hide changed files"
@@ -464,6 +464,11 @@ export function KanbanLocalReviewDrawer({
                                 ? "Workspace repository"
                                 : repository.relativePath
                             }`}
+                            data-tooltip={
+                              repositoryExpanded
+                                ? "Collapse repository"
+                                : "Expand repository"
+                            }
                             aria-expanded={repositoryExpanded}
                             onClick={() =>
                               setRepositoryExpanded((expanded) => !expanded)
@@ -543,6 +548,7 @@ export function KanbanLocalReviewDrawer({
                                       type="button"
                                       className="workspace-tree-chevron"
                                       aria-label={`${expanded ? "Collapse" : "Expand"} ${row.name}`}
+                                      data-tooltip={`${expanded ? "Collapse" : "Expand"} ${row.name}`}
                                       aria-expanded={expanded}
                                       onClick={() =>
                                         setExpandedDirectoryPaths((current) => {
@@ -650,7 +656,7 @@ export function KanbanLocalReviewDrawer({
                           <button
                             type="button"
                             aria-label="Side-by-side diff"
-                            title="Side-by-side diff"
+                            data-tooltip="Side-by-side diff"
                             aria-pressed={diffLayout === "side-by-side"}
                             onClick={() => setDiffLayout("side-by-side")}
                           >
@@ -659,7 +665,7 @@ export function KanbanLocalReviewDrawer({
                           <button
                             type="button"
                             aria-label="Inline diff"
-                            title="Inline diff"
+                            data-tooltip="Inline diff"
                             aria-pressed={diffLayout === "inline"}
                             onClick={() => setDiffLayout("inline")}
                           >
@@ -720,7 +726,7 @@ export function KanbanLocalReviewDrawer({
           type="button"
           className="kanban-icon-button"
           aria-label="Request changes"
-          title="Request changes"
+          data-tooltip="Request changes"
           disabled={busy || !review}
           onClick={onRequestChanges}
         >
@@ -731,7 +737,7 @@ export function KanbanLocalReviewDrawer({
             type="button"
             className="kanban-icon-button"
             aria-label="Publish on GitHub"
-            title="Publish on GitHub"
+            data-tooltip="Publish on GitHub"
             disabled={busy}
             onClick={onPublishGithub}
           >
@@ -746,7 +752,7 @@ export function KanbanLocalReviewDrawer({
               ? "Complete without changes"
               : "Approve and merge locally"
           }
-          title={
+          data-tooltip={
             nothingToMerge
               ? "Complete without changes"
               : "Approve and merge locally"

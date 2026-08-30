@@ -1095,7 +1095,7 @@ export const TaskComposer = memo(function TaskComposer({ model, actions }: Props
                           !hasRunnableQueuedPrompt)
               }
               aria-label={primaryActionLabel}
-              title={primaryActionLabel}
+              data-tooltip={primaryActionLabel}
             >
               {primaryActionIsStop ? (
                 <Square size={15} fill="currentColor" />
@@ -1143,6 +1143,7 @@ export const TaskComposer = memo(function TaskComposer({ model, actions }: Props
                   type="button"
                   onClick={() => onRemoveSkill(skill.id)}
                   aria-label={`Remove ${skill.name}`}
+                  data-tooltip={`Remove ${skill.name}`}
                 >
                   <X size={13} />
                 </button>
@@ -1362,6 +1363,7 @@ const ContextFileList = memo(function ContextFileList({
               type="button"
               onClick={() => onRemoveFile(file.path)}
               aria-label={`Remove ${file.name}`}
+              data-tooltip={`Remove ${file.name}`}
             >
               <X size={12} />
             </button>
@@ -1387,6 +1389,7 @@ const ContextFileList = memo(function ContextFileList({
               type="button"
               onClick={() => onRemoveFile(file.path)}
               aria-label={`Remove ${file.name}`}
+              data-tooltip={`Remove ${file.name}`}
             >
               <X size={15} />
             </button>

@@ -122,7 +122,7 @@ export function WorkspaceContextBanner({
               type="button"
               disabled
               aria-label="New chat"
-              title="Start a new chat"
+              data-tooltip="Start a new chat"
             >
               <SquarePen size={15} />
             </button>
@@ -131,7 +131,7 @@ export function WorkspaceContextBanner({
               type="button"
               disabled
               aria-label="Open chat history"
-              title="History"
+              data-tooltip="History"
             >
               <PanelRight size={15} />
             </button>
@@ -215,7 +215,7 @@ export function WorkspaceContextBanner({
             role="radio"
             aria-checked={surfaceMode === "chat"}
             aria-label="Chat"
-            title="Chat"
+            data-tooltip="Chat"
             className={surfaceMode === "chat" ? "active" : ""}
             tabIndex={surfaceMode === "chat" ? 0 : -1}
             onClick={() => onSurfaceModeChange("chat")}
@@ -228,7 +228,7 @@ export function WorkspaceContextBanner({
             role="radio"
             aria-checked={surfaceMode === "kanban"}
             aria-label="Kanban"
-            title="Kanban"
+            data-tooltip="Kanban"
             className={surfaceMode === "kanban" ? "active" : ""}
             tabIndex={surfaceMode === "kanban" ? 0 : -1}
             onClick={() => onSurfaceModeChange("kanban")}
@@ -340,7 +340,7 @@ export function WorkspaceContextBanner({
                 type="button"
                 onClick={onGitAction}
                 disabled={gitAction.disabled || gitActionStatus !== "idle"}
-                title={
+                data-tooltip={
                   gitBusyLabel ??
                   (gitAction.disabled ? gitAction.reason : gitAction.label)
                 }
@@ -361,7 +361,7 @@ export function WorkspaceContextBanner({
               onClick={onNewChat}
               disabled={newChatDisabled}
               aria-label="New chat"
-              title="Start a new chat"
+              data-tooltip="Start a new chat"
             >
               <SquarePen size={15} />
             </button>
@@ -372,7 +372,7 @@ export function WorkspaceContextBanner({
               type="button"
               onClick={onToggleHistory}
               aria-label={historyOpen ? "Close chat history" : "Open chat history"}
-              title={historyOpen ? "Close history" : "Open history"}
+              data-tooltip={historyOpen ? "Close history" : "Open history"}
               aria-pressed={historyOpen}
             >
               <PanelRight size={15} />

@@ -290,6 +290,7 @@ export function KanbanCardDialog({
             type="button"
             className="kanban-icon-button"
             aria-label="Close card dialog"
+            data-tooltip="Close card dialog"
             disabled={saving}
             onClick={onCancel}
           >
@@ -334,7 +335,7 @@ export function KanbanCardDialog({
                       type="button"
                       className="kanban-icon-button"
                       aria-label="Add files to agent context"
-                      title="Add files"
+                      data-tooltip="Add files"
                       disabled={executionFieldsDisabled || !onPickContextFiles}
                       onClick={() => void chooseContextFiles()}
                     >
@@ -368,7 +369,7 @@ export function KanbanCardDialog({
                           type="button"
                           className="kanban-icon-button"
                           aria-label={`Remove ${file.name}`}
-                          title={`Remove ${file.name}`}
+                          data-tooltip={`Remove ${file.name}`}
                           disabled={executionFieldsDisabled}
                           onClick={() => removeContextFile(file.path)}
                         >

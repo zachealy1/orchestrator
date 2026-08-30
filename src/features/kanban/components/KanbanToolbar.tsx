@@ -115,6 +115,7 @@ export function KanbanToolbar({
             type="button"
             disabled={disabled}
             aria-label="Clear card search"
+            data-tooltip="Clear card search"
             onClick={() => onSearchChange("")}
           >
             <X size={14} aria-hidden="true" />
@@ -257,7 +258,7 @@ export function KanbanToolbar({
               : "kanban-toolbar-button kanban-archive-button"
           }
           aria-label="Archived cards"
-          title="Archived cards"
+          data-tooltip="Archived cards"
           aria-pressed={archivedOpen}
           disabled={disabled}
           onClick={onToggleArchived}

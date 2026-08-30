@@ -2158,7 +2158,7 @@ export function KanbanWorkspace({
                   ? "Show GitHub sign-in"
                   : "Connect GitHub"
               }
-              title={
+              data-tooltip={
                 githubConnectionPending
                   ? "Show GitHub sign-in"
                   : "Connect GitHub"

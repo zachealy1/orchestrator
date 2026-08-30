@@ -64,15 +64,10 @@ describe("native plan CSS", () => {
     expect(nestedBlocks).toContain("padding-top: 0");
   });
 
-  it("keeps revision focus neutral and uses borderless icon tooltips", () => {
+  it("keeps revision focus neutral and delegates icon tooltips to the shared layer", () => {
     const revisionFocus = rule(".native-plan-revision textarea:focus,");
     const icon = rule("button.native-plan-icon-action");
-    const tooltip = rule(
-      "button.native-plan-icon-action[data-tooltip]::after",
-    );
-    const editedFilesTooltip = rule(
-      "button.edited-files-action[data-tooltip]::after",
-    );
+    const tooltip = rule(".orchestrator-tooltip");
 
     expect(revisionFocus).toContain("border-color: var(--color-divider)");
     expect(revisionFocus).toContain("box-shadow: none");
@@ -81,8 +76,13 @@ describe("native plan CSS", () => {
     expect(icon).toContain("height: 30px");
     expect(icon).toContain("border: 0");
     expect(tooltip).toContain("border: 0");
-    expect(tooltip).toContain("content: attr(data-tooltip)");
-    expect(editedFilesTooltip).toContain("top: calc(100% + 8px)");
-    expect(editedFilesTooltip).toContain("bottom: auto");
+    expect(tooltip).toContain("border-radius: 8px");
+    expect(tooltip).toContain("padding: 9px 12px");
+    expect(css).not.toContain(
+      "button.native-plan-icon-action[data-tooltip]::after",
+    );
+    expect(css).not.toContain(
+      "button.edited-files-action[data-tooltip]::after",
+    );
   });
 });

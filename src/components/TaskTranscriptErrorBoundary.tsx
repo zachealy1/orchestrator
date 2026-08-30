@@ -56,8 +56,8 @@ export class TaskTranscriptErrorBoundary extends Component<
         </div>
         <button
           aria-label="Try displaying chat again"
+          data-tooltip="Try again"
           onClick={this.retry}
-          title="Try again"
           type="button"
         >
           <RefreshCw aria-hidden="true" size={17} />

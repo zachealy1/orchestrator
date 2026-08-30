@@ -5,6 +5,7 @@ import { describe, expect, it, vi } from "vitest";
 import type { SubagentRecord, SubagentTranscript } from "../lib/subagents";
 import { AppServices } from "../runtime/AppServices";
 import { renderWithAppServices } from "../test/renderWithAppServices";
+import { OrchestratorTooltipLayer } from "./OrchestratorTooltipLayer";
 import { SubagentInspector } from "./SubagentInspector";
 
 vi.mock("react-virtuoso", () => ({
@@ -113,18 +114,21 @@ function renderInspector(id: string) {
     onStop,
     user,
     ...renderWithAppServices(
-      <SubagentInspector
-        conversationKey={conversationKey}
-        subagentId={subagent.id}
-        parentEntry={null}
-        parentRunView={null}
-        onClose={vi.fn()}
-        onLoadTranscript={onLoadTranscript}
-        onResolveRequest={vi.fn()}
-        onAnswerUserInput={vi.fn()}
-        onSteer={onSteer}
-        onStop={onStop}
-      />,
+      <>
+        <SubagentInspector
+          conversationKey={conversationKey}
+          subagentId={subagent.id}
+          parentEntry={null}
+          parentRunView={null}
+          onClose={vi.fn()}
+          onLoadTranscript={onLoadTranscript}
+          onResolveRequest={vi.fn()}
+          onAnswerUserInput={vi.fn()}
+          onSteer={onSteer}
+          onStop={onStop}
+        />
+        <OrchestratorTooltipLayer />
+      </>,
       {},
       services,
     ),

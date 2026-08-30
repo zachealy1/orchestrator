@@ -225,6 +225,7 @@ export const TaskChatTurn = memo(function TaskChatTurn({
               <button
                 type="submit"
                 aria-label="Run edited prompt"
+                data-tooltip="Run edited prompt"
                 disabled={!editingPrompt.trim()}
               >
                 <Check size={15} aria-hidden="true" />
@@ -232,6 +233,7 @@ export const TaskChatTurn = memo(function TaskChatTurn({
               <button
                 type="button"
                 aria-label="Cancel prompt edit"
+                data-tooltip="Cancel prompt edit"
                 onClick={onCancelEdit}
               >
                 <X size={15} aria-hidden="true" />
@@ -281,7 +283,7 @@ export const TaskChatTurn = memo(function TaskChatTurn({
                 className="submitted-prompt-edit-button"
                 type="button"
                 aria-label="Edit prompt"
-                title="Edit prompt"
+                data-tooltip="Edit prompt"
                 onClick={() => onStartEdit(entry)}
               >
                 <Pencil size={15} aria-hidden="true" />
@@ -2269,7 +2271,7 @@ const PendingInteractionNavigator = memo(function PendingInteractionNavigator({
         type="button"
         className="pending-interaction-nav"
         aria-label="Previous pending interaction"
-        title="Previous"
+        data-tooltip="Previous"
         disabled={index === 0}
         onClick={onPrevious}
       >
@@ -2287,7 +2289,7 @@ const PendingInteractionNavigator = memo(function PendingInteractionNavigator({
         type="button"
         className="pending-interaction-nav"
         aria-label="Next pending interaction"
-        title="Next"
+        data-tooltip="Next"
         disabled={index === total - 1}
         onClick={onNext}
       >

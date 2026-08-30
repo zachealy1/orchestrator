@@ -107,6 +107,7 @@ export const FilePreviewDrawer = memo(function FilePreviewDrawer({
             className="file-preview-close"
             type="button"
             aria-label="Close file preview"
+            data-tooltip="Close file preview"
             onClick={onClose}
           >
             <X size={15} />

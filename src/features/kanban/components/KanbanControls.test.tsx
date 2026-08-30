@@ -104,7 +104,8 @@ describe("Kanban controls", () => {
     const archivedButton = screen.getByRole("button", {
       name: "Archived cards",
     });
-    expect(archivedButton).toHaveAttribute("title", "Archived cards");
+    expect(archivedButton).toHaveAttribute("data-tooltip", "Archived cards");
+    expect(archivedButton).not.toHaveAttribute("title");
     expect(archivedButton).not.toHaveTextContent("Archived");
     await user.click(archivedButton);
     expect(onToggleArchived).toHaveBeenCalledOnce();

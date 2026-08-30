@@ -663,31 +663,6 @@ button.prompt-queue-icon-action {
   flex: 0 0 auto;
 }
 
-.prompt-queue-portal-tooltip {
-  position: fixed;
-  z-index: 1100;
-  width: max-content;
-  max-width: min(240px, calc(100vw - 16px));
-  border: 0;
-  border-radius: 7px;
-  background: var(--color-component-background);
-  box-shadow: 0 8px 24px rgb(var(--shadow-rgb) / 0.3);
-  color: var(--color-text);
-  padding: 6px 8px;
-  font-size: 0.72rem;
-  line-height: 1.3;
-  pointer-events: none;
-  text-align: center;
-}
-
-.prompt-queue-portal-tooltip[data-placement="above"] {
-  transform: translate(-50%, -100%);
-}
-
-.prompt-queue-portal-tooltip[data-placement="below"] {
-  transform: translateX(-50%);
-}
-
 .composer-status-action,
 .composer-status-content {
   display: flex;

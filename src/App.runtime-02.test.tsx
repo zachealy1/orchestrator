@@ -499,7 +499,8 @@ describe("Application runtime scenarios 2", () => {
       });
       const composer = screen.getByLabelText("Task composer");
       expect(historyButton).toHaveTextContent("");
-      expect(historyButton).toHaveAttribute("title", "Open history");
+      expect(historyButton).toHaveAttribute("data-tooltip", "Open history");
+      expect(historyButton).not.toHaveAttribute("title");
       await user.click(historyButton);
 
       const drawer = await screen.findByRole("complementary", {

@@ -1,10 +1,11 @@
-import { render, screen, within } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import React from "react";
 import { describe, expect, it, vi } from "vitest";
 import { createQueuedPromptSnapshot } from "../lib/promptQueue";
 import { createRunExecutionSettings } from "../lib/runExecutionSettings";
 import type { PromptQueueItem } from "../features/queue/types";
+import { OrchestratorTooltipLayer } from "./OrchestratorTooltipLayer";
 import { PromptQueueStatus } from "./PromptQueueStatus";
 
 vi.mock("react-virtuoso", () => ({
@@ -103,7 +104,12 @@ function renderQueue(
   return {
     props,
     user: userEvent.setup(),
-    ...render(<PromptQueueStatus {...props} />),
+    ...render(
+      <>
+        <PromptQueueStatus {...props} />
+        <OrchestratorTooltipLayer />
+      </>,
+    ),
   };
 }
 
@@ -163,16 +169,18 @@ describe("PromptQueueStatus", () => {
     expect(edit).toHaveTextContent("");
     expect(remove).toHaveTextContent("");
     await user.hover(edit);
-    const tooltip = screen.getByRole("tooltip", {
+    const tooltip = await screen.findByRole("tooltip", {
       name: "Edit queued prompt",
     });
     expect(tooltip.parentElement).toBe(document.body);
-    expect(tooltip).toHaveClass("prompt-queue-portal-tooltip");
+    expect(tooltip).toHaveClass("orchestrator-tooltip");
     expect(edit).toHaveAttribute("aria-describedby", tooltip.id);
     await user.unhover(edit);
-    expect(
-      screen.queryByRole("tooltip", { name: "Edit queued prompt" }),
-    ).not.toBeInTheDocument();
+    await waitFor(() =>
+      expect(
+        screen.queryByRole("tooltip", { name: "Edit queued prompt" }),
+      ).not.toBeInTheDocument(),
+    );
     await user.click(sendNow);
     expect(props.onSendNow).toHaveBeenCalledWith(props.items[0]);
   });

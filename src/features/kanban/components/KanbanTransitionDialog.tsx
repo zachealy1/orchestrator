@@ -254,6 +254,7 @@ export function KanbanTransitionDialog({
               type="button"
               className="kanban-icon-button"
               aria-label="Close confirmation"
+              data-tooltip="Close confirmation"
               disabled={busy}
               onClick={onCancel}
             >

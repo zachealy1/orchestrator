@@ -408,7 +408,6 @@ button.pending-interaction-nav:disabled {
     color 140ms ease;
 }
 
-.approval-choice::after,
 .native-user-input-option[data-tooltip]::after {
   position: absolute;
   right: 0;
@@ -446,8 +445,6 @@ button.pending-interaction-nav:disabled {
   transform: none;
 }
 
-.approval-choice:hover:not(:disabled)::after,
-.approval-choice:focus-visible::after,
 .native-user-input-option[data-tooltip]:hover::after,
 .native-user-input-option[data-tooltip]:focus-within::after {
   opacity: 1;
@@ -466,8 +463,6 @@ button.pending-interaction-nav:disabled {
 
 @media (prefers-reduced-motion: reduce) {
   .approval-choice,
-  .approval-choice::after,
-  button.native-plan-icon-action[data-tooltip]::after,
   button.pending-interaction-nav,
   .native-user-input-option,
   .native-user-input-option[data-tooltip]::after {

@@ -1768,8 +1768,8 @@ const VirtuosoTaskChatTranscriptImpl = forwardRef<
           <button
             aria-label="Jump to latest message"
             className="task-chat-jump-latest"
+            data-tooltip="Jump to latest message"
             onClick={handleJumpToLatest}
-            title="Jump to latest message"
             type="button"
           >
             <ArrowDown size={17} aria-hidden="true" />

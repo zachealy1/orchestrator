@@ -220,6 +220,7 @@ export const WorkspaceSidebar = memo(function WorkspaceSidebar({
               className="workspace-tree-chevron"
               type="button"
               aria-label={`${expanded ? "Collapse" : "Expand"} ${entry.name}`}
+              data-tooltip={`${expanded ? "Collapse" : "Expand"} ${entry.name}`}
               aria-expanded={expanded}
               onClick={() =>
                 actions.toggleDirectory(workspace, entry.path, !entry.gitGhost)
@@ -290,7 +291,7 @@ export const WorkspaceSidebar = memo(function WorkspaceSidebar({
           type="button"
           onClick={actions.addWorkspace}
           aria-label="Add workspace"
-          title="Add workspace"
+          data-tooltip="Add workspace"
         >
           <Plus size={16} aria-hidden="true" />
         </button>
@@ -324,6 +325,7 @@ export const WorkspaceSidebar = memo(function WorkspaceSidebar({
                     className="workspace-tree-chevron"
                     type="button"
                     aria-label={`${expanded ? "Collapse" : "Expand"} ${workspace.label}`}
+                    data-tooltip={`${expanded ? "Collapse" : "Expand"} ${workspace.label}`}
                     aria-expanded={expanded}
                     onClick={() => actions.toggleWorkspace(workspace)}
                   >

@@ -939,11 +939,6 @@ button.edited-files-action:focus-visible:not(:disabled) {
   transform: none;
 }
 
-button.edited-files-action[data-tooltip]::after {
-  top: calc(100% + 8px);
-  bottom: auto;
-}
-
 .edited-files-summary-list {
   display: grid;
   min-width: 0;

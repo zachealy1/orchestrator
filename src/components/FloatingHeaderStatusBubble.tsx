@@ -369,7 +369,6 @@ function FloatingStatusRow({
           className="composer-status-action"
           type="button"
           aria-label={notice.actionLabel}
-          title={notice.actionLabel}
           onClick={() => onActivate?.(notice.id)}
         >
           {content}
@@ -382,7 +381,7 @@ function FloatingStatusRow({
           className="composer-status-dismiss"
           type="button"
           aria-label={`Dismiss ${notice.title}`}
-          title={`Dismiss ${notice.title}`}
+          data-tooltip={`Dismiss ${notice.title}`}
           onClick={onDismiss}
         >
           <X size={14} aria-hidden="true" />

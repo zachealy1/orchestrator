@@ -323,7 +323,7 @@ export function KanbanCardTile({
               type="button"
               className="kanban-icon-button"
               aria-label={primaryAction.label}
-              title={primaryAction.label}
+              data-tooltip={primaryAction.label}
               disabled={actionsDisabled}
               onClick={(event) => {
                 event.stopPropagation();
@@ -340,6 +340,7 @@ export function KanbanCardTile({
                 type="button"
                 className="kanban-card-menu-trigger"
                 aria-label={`Actions for ${card.title}`}
+                data-tooltip={`Actions for ${card.title}`}
                 aria-haspopup="menu"
                 aria-expanded={menuOpen}
                 aria-controls={menuOpen ? menuId : undefined}
@@ -389,6 +390,7 @@ export function KanbanCardTile({
               type="button"
               className="kanban-drag-handle"
               aria-label={`Move ${card.title}`}
+              data-tooltip={`Move ${card.title}`}
               {...dragHandleProps}
             >
               <GripVertical size={14} aria-hidden="true" />
