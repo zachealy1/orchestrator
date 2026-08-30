@@ -60,10 +60,6 @@ export function AnalyticsSummary({
   const successRate = percentage(summary.completed_count, terminalRuns);
   const cacheRate = percentage(summary.cached_tokens, summary.total_tokens);
   const freshTokens = Math.max(0, summary.total_tokens - summary.cached_tokens);
-  const filteredWorkspaces = workspaceFilter
-    ? workspaces.filter((workspace) => workspaceFilter.includes(workspace.id))
-    : workspaces;
-  const scopeCopy = workspaceScopeCopy(filteredWorkspaces, workspaceFilter);
 
   return (
     <section
@@ -74,8 +70,6 @@ export function AnalyticsSummary({
       <header className="analytics-page-header">
         <div className="analytics-page-heading">
           <h1>Analytics</h1>
-          <p>A clear view of how your workspaces are performing</p>
-          <span>{scopeCopy}</span>
         </div>
         <div className="analytics-page-filters" aria-label="Analytics filters">
           <WorkspaceFilter
@@ -511,15 +505,4 @@ function formatChartDate(date: string) {
   return new Intl.DateTimeFormat("en", { month: "short", day: "numeric" }).format(
     new Date(`${date}T00:00:00`),
   );
-}
-
-function workspaceScopeCopy(workspaces: Workspace[], filter: number[] | null) {
-  if (workspaces.length === 0) return "No workspaces in this view";
-  if (filter === null) {
-    return `Showing data across ${workspaces.length} ${workspaces.length === 1 ? "workspace" : "workspaces"}`;
-  }
-  if (workspaces.length === 1) {
-    return `Showing data for ${workspaces[0]?.label ?? "1 workspace"}`;
-  }
-  return `Showing data across ${workspaces.length} workspaces`;
 }

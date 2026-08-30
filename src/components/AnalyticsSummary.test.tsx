@@ -65,7 +65,12 @@ describe("AnalyticsSummary", () => {
 
     expect(screen.getByText("20")).toBeInTheDocument();
     expect(screen.getAllByText("90%").length).toBeGreaterThan(0);
-    expect(screen.getByText("Showing data across 2 workspaces")).toBeInTheDocument();
+    expect(
+      screen.queryByText("A clear view of how your workspaces are performing"),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByText("Showing data across 2 workspaces"),
+    ).not.toBeInTheDocument();
     expect(
       screen.getByRole("img", { name: "Completed and failed runs over time" }),
     ).toBeInTheDocument();

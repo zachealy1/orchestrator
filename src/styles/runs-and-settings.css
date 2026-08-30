@@ -1838,7 +1838,6 @@ button.settings-navigation-row:focus-visible:not(:disabled) {
 
 .analytics-page-header {
   display: flex;
-  min-height: 96px;
   gap: 24px;
   align-items: flex-start;
   justify-content: space-between;
@@ -1846,13 +1845,10 @@ button.settings-navigation-row:focus-visible:not(:disabled) {
 }
 
 .analytics-page-heading {
-  display: grid;
   min-width: 0;
-  gap: 5px;
 }
 
-.analytics-page-heading h1,
-.analytics-page-heading p {
+.analytics-page-heading h1 {
   margin: 0;
 }
 
@@ -1861,18 +1857,6 @@ button.settings-navigation-row:focus-visible:not(:disabled) {
   font-size: 1.82rem;
   line-height: 1.12;
   letter-spacing: -0.025em;
-}
-
-.analytics-page-heading p {
-  color: var(--text);
-  font-size: 0.94rem;
-  line-height: 1.4;
-}
-
-.analytics-page-heading > span {
-  margin-top: 5px;
-  color: var(--muted);
-  font-size: 0.82rem;
 }
 
 .analytics-page-filters {
