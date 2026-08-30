@@ -28,7 +28,7 @@ fn resolved_plugin_migrator(
 }
 
 #[test]
-fn existing_versions_one_through_twenty_five_upgrade_through_forty_four() {
+fn existing_versions_one_through_twenty_five_upgrade_through_forty_five() {
     tauri::async_runtime::block_on(async {
         let mut connection = SqliteConnection::connect("sqlite::memory:")
             .await
@@ -58,7 +58,7 @@ fn existing_versions_one_through_twenty_five_upgrade_through_forty_four() {
         .fetch_one(&mut connection)
         .await
         .expect("count upgraded migrations");
-        assert_eq!(applied_count, 44);
+        assert_eq!(applied_count, 45);
 
         resolved_plugin_migrator(MIGRATION_DEFINITIONS)
             .run_direct(&mut connection)
@@ -93,6 +93,22 @@ fn interaction_audit_migration_stores_only_redacted_operational_metadata() {
     ] {
         assert!(!migration.sql.contains(prohibited));
     }
+}
+
+#[test]
+fn subagent_instructions_use_a_new_cascading_migration_slot() {
+    let migration = MIGRATION_DEFINITIONS
+        .iter()
+        .find(|migration| migration.version == 45)
+        .expect("migration 45");
+    assert_eq!(migration.description, "persist_subagent_instructions");
+    assert!(migration
+        .sql
+        .contains("CREATE TABLE IF NOT EXISTS run_subagent_instructions"));
+    assert!(migration
+        .sql
+        .contains("REFERENCES run_subagents(id) ON DELETE CASCADE"));
+    assert!(migration.sql.contains("instruction_text TEXT NOT NULL"));
 }
 
 #[test]

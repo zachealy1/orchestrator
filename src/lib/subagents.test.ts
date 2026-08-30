@@ -81,6 +81,35 @@ describe("subagent protocol", () => {
     });
   });
 
+  it.each([
+    ["followupTask", "followup_task"],
+    ["sendMessage", "send_message"],
+  ])("parses %s prompts as subagent instructions", (tool, normalizedTool) => {
+    const parsed = parseCollabToolCall({
+      method: "item/completed",
+      params: {
+        item: {
+          type: "collabAgentToolCall",
+          id: `item-${tool}`,
+          tool,
+          status: "completed",
+          senderThreadId: "parent",
+          receiverThreadIds: ["child"],
+          prompt: "Check the failure path",
+          agentsStates: {
+            child: { status: "running", message: null },
+          },
+        },
+      },
+    });
+
+    expect(parsed).toMatchObject({
+      tool: normalizedTool,
+      childThreadId: "child",
+      prompt: "Check the failure path",
+    });
+  });
+
   it("retains legacy subAgentActivity as a fallback", () => {
     expect(
       parseLegacySubagentActivity({

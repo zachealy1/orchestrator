@@ -34,6 +34,7 @@ pub(crate) const DEFAULT_CODEX_PROFILE_ID: i64 = 0;
 pub(crate) const DEFAULT_CODEX_PROFILE_KEY: &str = "default";
 pub(crate) const ASK_FOR_APPROVAL_PERMISSION_PROFILE: &str = "orchestrator_workspace_network_v1";
 pub(crate) const REQUEST_PERMISSIONS_FEATURE: &str = "request_permissions_tool";
+pub(crate) const MULTI_AGENT_V2_FEATURE: &str = "multi_agent_v2";
 pub(crate) const IGNORED_EXPLORER_DIRECTORIES: &[&str] =
     &[".git", "node_modules", "target", "dist", "build", ".next"];
 pub(crate) const GIT_REPOSITORY_DISCOVERY_TTL: Duration = Duration::from_secs(30);

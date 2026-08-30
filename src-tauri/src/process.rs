@@ -91,6 +91,8 @@ pub(crate) fn codex_app_server_args(isolated_file_store: bool) -> Vec<String> {
         "app-server".to_string(),
         "--enable".to_string(),
         REQUEST_PERMISSIONS_FEATURE.to_string(),
+        "--enable".to_string(),
+        MULTI_AGENT_V2_FEATURE.to_string(),
         "--listen".to_string(),
         "stdio://".to_string(),
         "-c".to_string(),

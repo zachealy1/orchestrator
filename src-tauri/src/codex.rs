@@ -1649,7 +1649,7 @@ pub(crate) async fn connect_codex_profile(
         Err(error) => {
             let _ = stop_codex_account(account_id, app, state);
             return Err(format!(
-                "Ask for approval requires a Codex version with dynamic filesystem permission support. Update Codex and retry. App-server initialization failed: {error}"
+                "Orchestrator requires a Codex version with dynamic filesystem permissions and multi-agent v2. Update Codex or remove the ORCHESTRATOR_CODEX_BIN override and retry. App-server initialization failed: {error}"
             ));
         }
     };
@@ -1680,6 +1680,13 @@ pub(crate) async fn connect_codex_profile(
         let _ = stop_codex_account(account_id, app, state);
         return Err(
             "Ask for approval requires Codex dynamic filesystem permissions, but request_permissions_tool is unavailable or disabled. Update Codex and retry."
+                .to_string(),
+        );
+    }
+    if !experimental_feature_is_enabled(&experimental_features, MULTI_AGENT_V2_FEATURE) {
+        let _ = stop_codex_account(account_id, app, state);
+        return Err(
+            "Subagent prompt visibility requires Codex multi-agent v2, but multi_agent_v2 is unavailable or disabled. Update Codex or remove the ORCHESTRATOR_CODEX_BIN override and retry."
                 .to_string(),
         );
     }

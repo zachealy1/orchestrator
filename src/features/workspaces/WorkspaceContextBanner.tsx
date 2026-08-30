@@ -220,7 +220,7 @@ export function WorkspaceContextBanner({
             tabIndex={surfaceMode === "chat" ? 0 : -1}
             onClick={() => onSurfaceModeChange("chat")}
           >
-            <MessageSquare size={15} aria-hidden="true" />
+            <MessageSquare size={16} aria-hidden="true" />
           </button>
           <button
             ref={kanbanSurfaceButtonRef}
@@ -233,7 +233,7 @@ export function WorkspaceContextBanner({
             tabIndex={surfaceMode === "kanban" ? 0 : -1}
             onClick={() => onSurfaceModeChange("kanban")}
           >
-            <Columns3 size={15} aria-hidden="true" />
+            <Columns3 size={16} aria-hidden="true" />
           </button>
         </div>
       </div>

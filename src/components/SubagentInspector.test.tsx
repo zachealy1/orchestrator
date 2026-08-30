@@ -99,10 +99,11 @@ function transcript(threadId: string): SubagentTranscript {
 function renderInspector(
   id: string,
   transcriptForThread: (threadId: string) => SubagentTranscript = transcript,
+  recordOverrides: Partial<SubagentRecord> = {},
 ) {
   const services = new AppServices();
   const conversationKey = `chat:${id}`;
-  const subagent = record(id);
+  const subagent = { ...record(id), ...recordOverrides };
   services.subagents.replaceConversation(conversationKey, [subagent]);
   const onLoadTranscript = vi
     .fn()
@@ -151,9 +152,10 @@ describe("SubagentInspector", () => {
     ).toBeInTheDocument();
     expect(screen.getByText("Shell command")).toBeInTheDocument();
     expect(screen.queryByLabelText("Subagent task")).toBeNull();
-    expect(screen.getByLabelText("Submitted prompt")).toHaveClass(
-      "submitted-prompt",
+    expect(screen.getByRole("region", { name: "Task prompt" })).toHaveTextContent(
+      "Inspect the API",
     );
+    expect(screen.queryByLabelText("Submitted prompt")).toBeNull();
     expect(screen.getByText("Inspection underway")).toHaveClass(
       "stream-message",
     );
@@ -195,9 +197,61 @@ describe("SubagentInspector", () => {
     });
 
     await screen.findByText("Inspection underway");
-    expect(screen.getByLabelText("Submitted prompt")).toHaveTextContent(
+    expect(screen.getByRole("region", { name: "Task prompt" })).toHaveTextContent(
       "Inspect the API",
     );
+  });
+
+  it("labels unrecoverable legacy prompts instead of showing the agent path as a task", async () => {
+    renderInspector(
+      "legacy-prompt",
+      (threadId) => ({ ...transcript(threadId), turns: [] }),
+      { task: "Subagent /root/explorer", spawnItemId: "legacy-item" },
+    );
+
+    expect(
+      await screen.findByText(
+        "Original prompt unavailable for this older subagent.",
+      ),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("region", { name: "Task prompt" }),
+    ).not.toHaveTextContent("Subagent /root/explorer");
+  });
+
+  it("keeps the task prompt outside the stream and renders later instructions once", async () => {
+    renderInspector("instructions", (threadId) => ({
+      ...transcript(threadId),
+      turns: transcript(threadId).turns.map((turn) => ({
+        ...turn,
+        items: turn.items.filter((item) => item.kind !== "user"),
+      })),
+      instructions: [
+        {
+          id: "spawn-instruction",
+          subagentId: "instructions",
+          kind: "spawn",
+          text: "Inspect the API",
+          createdAt: "2026-07-29T10:00:00.000Z",
+        },
+        {
+          id: "followup-instruction",
+          subagentId: "instructions",
+          kind: "followup",
+          text: "Check the failure path",
+          createdAt: "2026-07-29T10:00:30.000Z",
+        },
+      ],
+    }));
+
+    await screen.findByText("Inspection underway");
+    expect(screen.getByRole("region", { name: "Task prompt" })).toHaveTextContent(
+      "Inspect the API",
+    );
+    expect(screen.getByLabelText("Submitted prompt")).toHaveTextContent(
+      "Check the failure path",
+    );
+    expect(screen.getAllByText("Inspect the API")).toHaveLength(1);
   });
 
   it("uses Shift+Enter for a newline and confirms descendant-aware stopping", async () => {

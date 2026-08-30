@@ -52,9 +52,11 @@ const {
   updateRun,
 } = repositories.runs;
 const {
+  listRunSubagentInstructions,
   listLocalChatTranscript,
   listWorkspaceChats,
   softDeleteChat,
+  upsertRunSubagentInstruction,
 } = repositories.transcripts;
 const { softDeleteWorkspace } = repositories.workspaces;
 
@@ -664,5 +666,45 @@ describe("external chat metadata", () => {
     expect(query).toContain("strftime(");
     expect(query).toContain("COALESCE(runs.completed_at, runs.started_at)");
     expect(query).toContain("ORDER BY julianday(latest_activity_at) DESC");
+  });
+});
+
+describe("subagent instruction persistence", () => {
+  it("upserts instructions through their persisted subagent and restores them in order", async () => {
+    const instruction = {
+      id: "subagent-1:spawn-1:spawn",
+      subagentId: "subagent-1",
+      kind: "spawn" as const,
+      text: "Inspect the integration tests",
+      createdAt: "2026-08-30T10:00:00.000Z",
+    };
+
+    await upsertRunSubagentInstruction(instruction);
+    const [query, values] = mocks.execute.mock.calls[0] ?? [];
+    expect(query).toContain("INSERT INTO run_subagent_instructions");
+    expect(query).toContain("FROM run_subagents");
+    expect(values).toEqual([
+      instruction.id,
+      instruction.subagentId,
+      instruction.kind,
+      instruction.text,
+      instruction.createdAt,
+    ]);
+
+    mocks.select.mockResolvedValueOnce([
+      {
+        id: instruction.id,
+        subagent_id: instruction.subagentId,
+        instruction_kind: instruction.kind,
+        instruction_text: instruction.text,
+        created_at: instruction.createdAt,
+      },
+    ]);
+    await expect(listRunSubagentInstructions("subagent-1")).resolves.toEqual([
+      instruction,
+    ]);
+    expect(mocks.select.mock.calls[mocks.select.mock.calls.length - 1]?.[0]).toContain(
+      "ORDER BY julianday(created_at), id",
+    );
   });
 });

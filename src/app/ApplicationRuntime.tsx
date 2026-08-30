@@ -258,6 +258,9 @@ import {
   parseCollabToolCalls,
   parseLegacySubagentActivity,
   subagentConversationKey,
+  type CollabToolName,
+  type SubagentInstruction,
+  type SubagentInstructionKind,
   type SubagentRecord,
 } from "../lib/subagents";
 import { useAppServices } from "../runtime/AppServices";
@@ -657,6 +660,57 @@ async function forEachWithConcurrency<T>(
   await Promise.all(workers);
 }
 
+function isVisibleSubagentPrompt(value: string | null | undefined) {
+  const prompt = value?.trim() ?? "";
+  return Boolean(
+    prompt && prompt !== "Subagent task" && !prompt.startsWith("Subagent /"),
+  );
+}
+
+function normalizeSubagentPrompt(value: string) {
+  return value.replace(/\s+/gu, " ").trim();
+}
+
+function isDerivedSubagentInstructionId(id: string) {
+  return id.includes(":projected:") || id.endsWith(":prompt");
+}
+
+function mergeSubagentInstructions(
+  ...groups: readonly (readonly SubagentInstruction[])[]
+) {
+  const byId = new Map<string, SubagentInstruction>();
+  groups.flat().forEach((instruction) => {
+    const text = instruction.text.trim();
+    const normalized = normalizeSubagentPrompt(text);
+    if (!text || byId.has(instruction.id)) {
+      return;
+    }
+    const derivedDuplicate = [...byId.values()].some(
+      (current) =>
+        normalizeSubagentPrompt(current.text) === normalized &&
+        (isDerivedSubagentInstructionId(current.id) ||
+          isDerivedSubagentInstructionId(instruction.id)),
+    );
+    if (derivedDuplicate) return;
+    byId.set(instruction.id, { ...instruction, text });
+  });
+  return [...byId.values()].sort(
+    (left, right) =>
+      Date.parse(left.createdAt) - Date.parse(right.createdAt) ||
+      left.id.localeCompare(right.id),
+  );
+}
+
+function instructionKindForCollabTool(
+  tool: CollabToolName,
+): SubagentInstructionKind | null {
+  if (tool === "spawn_agent") return "spawn";
+  if (tool === "send_input" || tool === "followup_task" || tool === "send_message") {
+    return "followup";
+  }
+  return null;
+}
+
 function App() {
   const appServices = useAppServices();
   const {
@@ -747,11 +801,13 @@ function App() {
     activateExternalTranscriptSnapshot,
     getChatWithRuns,
     listChatSubagents,
+    listRunSubagentInstructions,
     listLocalChatTranscript,
     listWorkspaceChats,
     readExternalTranscriptSnapshot,
     softDeleteChat,
     upsertRunSubagent,
+    upsertRunSubagentInstruction,
   } = repositories.transcripts;
   const {
     listWorkspaces,
@@ -1247,6 +1303,9 @@ function App() {
     new Map<string, PendingGoalTurnStart>(),
   );
   const subagentLifecycleRefreshesRef = useRef(new Set<string>());
+  const subagentInstructionsRef = useRef(
+    new Map<string, SubagentInstruction[]>(),
+  );
   const goalTurnStartGenerationRef = useRef(0);
   const mentionSearchRequestId = useRef(0);
   const slashCommandSearchRequestId = useRef(0);
@@ -1269,11 +1328,80 @@ function App() {
         record.profileKey as CodexProfileKey,
         record.accountId,
       );
-      return readProjectedSubagentThread({
-        accountId: record.accountId,
-        profileKey: record.profileKey,
-        threadId: record.childThreadId,
+      const [transcript, persistedInstructions] = await Promise.all([
+        readProjectedSubagentThread({
+          accountId: record.accountId,
+          profileKey: record.profileKey,
+          threadId: record.childThreadId,
+        }),
+        record.runId === null
+          ? Promise.resolve([] as SubagentInstruction[])
+          : listRunSubagentInstructions(record.id).catch(
+              () => [] as SubagentInstruction[],
+            ),
+      ]);
+      const rememberedInstructions =
+        subagentInstructionsRef.current.get(record.id) ?? [];
+      const taskInstruction = isVisibleSubagentPrompt(record.task)
+        ? [
+            {
+              id: `${record.id}:${record.spawnItemId ?? "spawn"}:prompt`,
+              subagentId: record.id,
+              kind: "spawn" as const,
+              text: record.task.trim(),
+              createdAt: record.startedAt,
+            },
+          ]
+        : [];
+      const knownInstructions = mergeSubagentInstructions(
+        persistedInstructions,
+        rememberedInstructions,
+        taskInstruction,
+      );
+      let hasInitialPrompt = knownInstructions.some(
+        (instruction) => instruction.kind === "spawn",
+      );
+      const projectedInstructions: SubagentInstruction[] = [];
+      transcript.turns.forEach((turn) => {
+        turn.items.forEach((item) => {
+          if (item.kind !== "user" || !item.text.trim()) return;
+          const kind = hasInitialPrompt ? "followup" : "spawn";
+          projectedInstructions.push({
+            id: `${record.id}:projected:${item.id}`,
+            subagentId: record.id,
+            kind,
+            text: item.text.trim(),
+            createdAt: turn.startedAt ?? record.startedAt,
+          });
+          hasInitialPrompt = true;
+        });
       });
+      const instructions = mergeSubagentInstructions(
+        knownInstructions,
+        projectedInstructions,
+      );
+      subagentInstructionsRef.current.set(record.id, instructions);
+
+      const initialPrompt = instructions.find(
+        (instruction) => instruction.kind === "spawn",
+      );
+      if (initialPrompt && !isVisibleSubagentPrompt(record.task)) {
+        saveSubagentRecord({
+          ...record,
+          task: initialPrompt.text,
+          updatedAt: new Date().toISOString(),
+        });
+      }
+      instructions.forEach((instruction) => {
+        if (
+          !persistedInstructions.some(
+            (persisted) => persisted.id === instruction.id,
+          )
+        ) {
+          persistSubagentInstruction(record, instruction);
+        }
+      });
+      return { ...transcript, instructions };
     },
   );
 
@@ -1362,6 +1490,8 @@ function App() {
         current.profileKey as CodexProfileKey,
         current.accountId,
       );
+      const clientUserMessageId = createStableClientMessageId();
+      const instructionText = instruction.trim();
       await codexRpcForProfile(
         current.profileKey as CodexProfileKey,
         current.accountId,
@@ -1369,17 +1499,25 @@ function App() {
         {
           threadId: current.childThreadId,
           expectedTurnId: current.childTurnId,
-          clientUserMessageId: createStableClientMessageId(),
-          input: [{ type: "text", text: instruction.trim() }],
+          clientUserMessageId,
+          input: [{ type: "text", text: instructionText }],
         },
       );
+      const now = new Date().toISOString();
       const updated = {
         ...current,
         status: "running" as const,
         error: null,
-        updatedAt: new Date().toISOString(),
+        updatedAt: now,
       };
       saveSubagentRecord(updated);
+      persistSubagentInstruction(updated, {
+        id: `${updated.id}:${clientUserMessageId}:steer`,
+        subagentId: updated.id,
+        kind: "steer",
+        text: instructionText,
+        createdAt: now,
+      });
     },
   );
 
@@ -6228,6 +6366,25 @@ function App() {
     });
   }
 
+  function persistSubagentInstruction(
+    record: SubagentRecord,
+    instruction: SubagentInstruction,
+  ) {
+    const current = subagentInstructionsRef.current.get(record.id) ?? [];
+    const next = mergeSubagentInstructions(current, [instruction]);
+    if (!next.some((candidate) => candidate.id === instruction.id)) return;
+    subagentInstructionsRef.current.set(record.id, next);
+    if (record.runId === null) return;
+    const latest =
+      subagentStore.findByThread(record.profileKey, record.childThreadId) ??
+      record;
+    void upsertRunSubagent(latest)
+      .then(() => upsertRunSubagentInstruction(instruction))
+      .catch((error) => {
+        console.error("Could not persist subagent instruction", error);
+      });
+  }
+
   function trackSubagentCollaboration(
     control: ActiveRunControl,
     message: CodexMessage,
@@ -6241,6 +6398,11 @@ function App() {
           control.profileKey,
           call.childThreadId,
         );
+        const capturedSpawnPrompt = existing
+          ? subagentInstructionsRef.current
+              .get(existing.id)
+              ?.find((instruction) => instruction.kind === "spawn")?.text
+          : null;
         const hierarchyParent =
           call.senderThreadId === control.threadId
             ? null
@@ -6282,8 +6444,11 @@ function App() {
               : existing?.spawnItemId ?? null,
           task:
             call.tool === "spawn_agent"
-              ? call.prompt ?? existing?.task ?? "Subagent task"
-              : existing?.task ?? call.prompt ?? "Subagent task",
+              ? capturedSpawnPrompt ??
+                call.prompt ??
+                existing?.task ??
+                "Subagent task"
+              : existing?.task ?? "Subagent task",
           depth:
             existing?.depth ??
             (hierarchyParent ? hierarchyParent.depth + 1 : 1),
@@ -6306,6 +6471,16 @@ function App() {
           completedAt: terminal ? existing?.completedAt ?? now : null,
         };
         saveSubagentRecord(record);
+        const instructionKind = instructionKindForCollabTool(call.tool);
+        if (instructionKind && call.prompt?.trim()) {
+          persistSubagentInstruction(record, {
+            id: `${record.id}:${call.itemId}:${instructionKind}`,
+            subagentId: record.id,
+            kind: instructionKind,
+            text: call.prompt.trim(),
+            createdAt: now,
+          });
+        }
         return record;
       });
     if (records.length > 0) return records;

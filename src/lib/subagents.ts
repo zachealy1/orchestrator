@@ -39,6 +39,16 @@ export type SubagentRecord = {
   completedAt: string | null;
 };
 
+export type SubagentInstructionKind = "spawn" | "followup" | "steer";
+
+export type SubagentInstruction = {
+  id: string;
+  subagentId: string;
+  kind: SubagentInstructionKind;
+  text: string;
+  createdAt: string;
+};
+
 export type SubagentTranscriptItem =
   | {
       id: string;
@@ -82,6 +92,7 @@ export type SubagentTranscript = {
   status: string | null;
   activeTurnId: string | null;
   turns: SubagentTranscriptTurn[];
+  instructions?: SubagentInstruction[];
 };
 
 export type SubagentComposerModel = {
@@ -94,6 +105,8 @@ export type SubagentComposerModel = {
 export type CollabToolName =
   | "spawn_agent"
   | "send_input"
+  | "followup_task"
+  | "send_message"
   | "resume_agent"
   | "wait_agent"
   | "close_agent";
@@ -479,6 +492,8 @@ export function lifecycleFromCollabToolCall(
   switch (call.tool) {
     case "spawn_agent":
     case "send_input":
+    case "followup_task":
+    case "send_message":
     case "resume_agent":
       return "running";
     case "wait_agent":
@@ -594,6 +609,12 @@ function normalizeCollabToolName(
     case "sendInput":
     case "send_input":
       return "send_input";
+    case "followupTask":
+    case "followup_task":
+      return "followup_task";
+    case "sendMessage":
+    case "send_message":
+      return "send_message";
     case "resumeAgent":
     case "resume_agent":
       return "resume_agent";

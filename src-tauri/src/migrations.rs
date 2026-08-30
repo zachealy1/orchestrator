@@ -273,6 +273,12 @@ pub(crate) const MIGRATION_DEFINITIONS: &[MigrationDefinition] = &[
         sql: include_str!("../migrations/044_add_interaction_audit_ledger.sql"),
         checksum: 0x534464cebbeed22b,
     },
+    MigrationDefinition {
+        version: 45,
+        description: "persist_subagent_instructions",
+        sql: include_str!("../migrations/045_persist_subagent_instructions.sql"),
+        checksum: 0x6764b62d616c948c,
+    },
 ];
 
 pub(crate) fn migration_sql(definition: &MigrationDefinition) -> &'static str {

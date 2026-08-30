@@ -317,8 +317,16 @@ describe("Application runtime scenarios 7", () => {
           screen.getByLabelText(
             "Subagent inspector: Inspect the integration tests",
           ),
-        ).getByLabelText("Submitted prompt"),
+        ).getByRole("region", { name: "Task prompt" }),
       ).toHaveTextContent("Inspect the integration tests");
+      await waitFor(() =>
+        expect(mocks.upsertRunSubagentInstructionMock).toHaveBeenCalledWith(
+          expect.objectContaining({
+            kind: "spawn",
+            text: "Inspect the integration tests",
+          }),
+        ),
+      );
       expect(mocks.readProjectedSubagentThreadMock).toHaveBeenCalledWith(
         expect.objectContaining({
           accountId: 7,
@@ -339,6 +347,14 @@ describe("Application runtime scenarios 7", () => {
             threadId: "child-thread-1",
             expectedTurnId: "child-turn-1",
             input: [{ type: "text", text: "Check the failure path" }],
+          }),
+        ),
+      );
+      await waitFor(() =>
+        expect(mocks.upsertRunSubagentInstructionMock).toHaveBeenCalledWith(
+          expect.objectContaining({
+            kind: "steer",
+            text: "Check the failure path",
           }),
         ),
       );
@@ -394,6 +410,72 @@ describe("Application runtime scenarios 7", () => {
       expect(mocks.upsertRunSubagentMock).not.toHaveBeenCalledWith(
         expect.objectContaining({
           childThreadId: "thread-1",
+        }),
+      );
+    });
+
+  it("keeps an out-of-order follow-up from replacing the original spawn prompt", async () => {
+      prepareSignedInRun();
+      const { user } = await renderApp();
+      await startMockRun(user, "Coordinate the implementation");
+
+      await emitCodexNotification({
+        method: "item/completed",
+        params: {
+          threadId: "thread-1",
+          turnId: "turn-1",
+          item: {
+            type: "collabAgentToolCall",
+            id: "early-followup",
+            tool: "followupTask",
+            status: "completed",
+            senderThreadId: "thread-1",
+            receiverThreadIds: ["child-thread-out-of-order"],
+            prompt: "Check the failure path",
+            agentsStates: {
+              "child-thread-out-of-order": { status: "running", message: null },
+            },
+          },
+        },
+      });
+      await emitCodexNotification({
+        method: "item/started",
+        params: {
+          threadId: "thread-1",
+          turnId: "turn-1",
+          item: {
+            type: "collabAgentToolCall",
+            id: "late-spawn",
+            tool: "spawnAgent",
+            status: "inProgress",
+            senderThreadId: "thread-1",
+            receiverThreadIds: ["child-thread-out-of-order"],
+            prompt: "Inspect the integration tests",
+            agentsStates: {
+              "child-thread-out-of-order": { status: "running", message: null },
+            },
+          },
+        },
+      });
+
+      await waitFor(() =>
+        expect(mocks.upsertRunSubagentMock).toHaveBeenCalledWith(
+          expect.objectContaining({
+            childThreadId: "child-thread-out-of-order",
+            task: "Inspect the integration tests",
+          }),
+        ),
+      );
+      expect(mocks.upsertRunSubagentInstructionMock).toHaveBeenCalledWith(
+        expect.objectContaining({
+          kind: "followup",
+          text: "Check the failure path",
+        }),
+      );
+      expect(mocks.upsertRunSubagentInstructionMock).toHaveBeenCalledWith(
+        expect.objectContaining({
+          kind: "spawn",
+          text: "Inspect the integration tests",
         }),
       );
     });

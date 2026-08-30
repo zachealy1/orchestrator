@@ -1234,8 +1234,18 @@ button.account-switcher-item:hover:not(:disabled) {
 
 .workspace-surface-toggle button {
   width: 34px;
+  flex: 0 0 34px;
   padding: 0;
   color: var(--color-button-primary-text);
+  line-height: 0;
+  transition: none;
+}
+
+.workspace-surface-toggle button > svg {
+  display: block;
+  width: 16px;
+  height: 16px;
+  flex: 0 0 16px;
 }
 
 .workspace-surface-toggle button:focus-visible {

@@ -129,6 +129,7 @@ const mocks = vi.hoisted(() => ({
   getChatWithRunsMock: vi.fn(),
   listChatRunsPageMock: vi.fn(),
   listChatSubagentsMock: vi.fn(),
+  listRunSubagentInstructionsMock: vi.fn(),
   buildLocalChatHistoryIndexMock: vi.fn(),
   readExternalChatHistoryIndexMock: vi.fn(),
   saveExternalChatHistoryIndexMock: vi.fn(),
@@ -158,6 +159,7 @@ const mocks = vi.hoisted(() => ({
   upsertWorkspaceMock: vi.fn(),
   upsertExternalCodexChatsMock: vi.fn(),
   upsertRunSubagentMock: vi.fn(),
+  upsertRunSubagentInstructionMock: vi.fn(),
   registerNativeContextFileDropMock: vi.fn(),
   virtuosoState: {
     ranges: [{ startIndex: 0, endIndex: 0 }],
@@ -532,6 +534,7 @@ vi.mock("../data/repositories", () => ({
       getChatWithRuns: mocks.getChatWithRunsMock,
       listChatRunsPage: mocks.listChatRunsPageMock,
       listChatSubagents: mocks.listChatSubagentsMock,
+      listRunSubagentInstructions: mocks.listRunSubagentInstructionsMock,
       listLocalChatTranscript: mocks.listLocalChatTranscriptMock,
       listWorkspaceChats: mocks.listWorkspaceChatsMock,
       readExternalChatHistoryIndex: mocks.readExternalChatHistoryIndexMock,
@@ -539,6 +542,7 @@ vi.mock("../data/repositories", () => ({
       saveExternalChatHistoryIndex: mocks.saveExternalChatHistoryIndexMock,
       softDeleteChat: mocks.softDeleteChatMock,
       upsertRunSubagent: mocks.upsertRunSubagentMock,
+      upsertRunSubagentInstruction: mocks.upsertRunSubagentInstructionMock,
     },
     workspaces: {
       listWorkspaces: mocks.listWorkspacesMock,
@@ -827,6 +831,7 @@ export function prepareDefaults() {
     mocks.inspectDroppedContextPathsMock,
     mocks.listCodexModelsMock,
     mocks.listChatSubagentsMock,
+    mocks.listRunSubagentInstructionsMock,
     mocks.loadDefaultProfileTurnActivityMock,
     mocks.readProjectedSubagentThreadMock,
     mocks.recoverInterruptedKanbanAttemptsMock,
@@ -853,6 +858,8 @@ export function prepareDefaults() {
     mocks.sendAgentNotificationMock,
     mocks.updateWorkspaceSelectedGitRepositoryMock,
     mocks.updateRunMock,
+    mocks.upsertRunSubagentMock,
+    mocks.upsertRunSubagentInstructionMock,
   ].forEach((mock) => mock.mockReset());
   mocks.promptQueueItems.clear();
   mocks.promptQueueChats.clear();
@@ -1095,6 +1102,7 @@ export function prepareDefaults() {
   mocks.logoutCodexAccountMock.mockResolvedValue(undefined);
   mocks.listCodexModelsMock.mockResolvedValue([]);
   mocks.listChatSubagentsMock.mockResolvedValue([]);
+  mocks.listRunSubagentInstructionsMock.mockResolvedValue([]);
   mocks.readProjectedSubagentThreadMock.mockResolvedValue({
     threadId: "child-thread",
     status: "idle",
@@ -1102,6 +1110,7 @@ export function prepareDefaults() {
     turns: [],
   });
   mocks.upsertRunSubagentMock.mockResolvedValue(undefined);
+  mocks.upsertRunSubagentInstructionMock.mockResolvedValue(undefined);
   mocks.listCodexSkillsMock.mockResolvedValue([
     {
       id: "browser:control-in-app-browser",

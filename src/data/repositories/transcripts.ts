@@ -1,7 +1,7 @@
 import { commands } from "../../generated/tauri";
 import type { ChatListItem, ChatWithRuns, ExternalTranscriptSnapshot, ExternalThreadHistoryIndex, HistoryPageDescriptor, HistoryRunSummary, HistoryTranscriptIndex, HistoryTurnHint } from "../../features/conversations/types";
 import type { RunListItem } from "../../features/runs/types";
-import { isSubagentLifecycleStatus, type SubagentLifecycleStatus, type SubagentRecord } from "../../lib/subagents";
+import { isSubagentLifecycleStatus, type SubagentInstruction, type SubagentInstructionKind, type SubagentLifecycleStatus, type SubagentRecord } from "../../lib/subagents";
 import { FrontendDatabase } from "../database";
 
 export function createTranscriptRepository(database: FrontendDatabase) {
@@ -454,6 +454,68 @@ export function createTranscriptRepository(database: FrontendDatabase) {
     return rows.map(parseRunSubagentRow);
   }
 
+  type RunSubagentInstructionRow = {
+    id: string;
+    subagent_id: string;
+    instruction_kind: string;
+    instruction_text: string;
+    created_at: string;
+  };
+
+  function parseRunSubagentInstructionRow(
+    row: RunSubagentInstructionRow,
+  ): SubagentInstruction {
+    const kind: SubagentInstructionKind = ["spawn", "followup", "steer"].includes(
+      row.instruction_kind,
+    )
+      ? (row.instruction_kind as SubagentInstructionKind)
+      : "followup";
+    return {
+      id: row.id,
+      subagentId: row.subagent_id,
+      kind,
+      text: row.instruction_text,
+      createdAt: row.created_at,
+    };
+  }
+
+  async function upsertRunSubagentInstruction(
+    instruction: SubagentInstruction,
+  ) {
+    const db = await getDatabase();
+    await db.execute(
+      `INSERT INTO run_subagent_instructions (
+         id, subagent_id, run_id, instruction_kind, instruction_text, created_at
+       )
+       SELECT $1, $2, run_id, $3, $4, $5
+       FROM run_subagents
+       WHERE id = $2
+       ON CONFLICT(id) DO UPDATE SET
+         instruction_kind = excluded.instruction_kind,
+         instruction_text = excluded.instruction_text`,
+      [
+        instruction.id,
+        instruction.subagentId,
+        instruction.kind,
+        instruction.text,
+        instruction.createdAt,
+      ],
+    );
+    return instruction;
+  }
+
+  async function listRunSubagentInstructions(subagentId: string) {
+    const db = await getDatabase();
+    const rows = await db.select<RunSubagentInstructionRow[]>(
+      `SELECT id, subagent_id, instruction_kind, instruction_text, created_at
+       FROM run_subagent_instructions
+       WHERE subagent_id = $1
+       ORDER BY julianday(created_at), id`,
+      [subagentId],
+    );
+    return rows.map(parseRunSubagentInstructionRow);
+  }
+
   type LocalHistoryTurnIndexRow = {
     turn_id: string | null;
     prompt_characters: number;
@@ -710,6 +772,8 @@ export function createTranscriptRepository(database: FrontendDatabase) {
     listLocalChatTranscript,
     upsertRunSubagent,
     listChatSubagents,
+    upsertRunSubagentInstruction,
+    listRunSubagentInstructions,
     readExternalTranscriptSnapshot,
     activateExternalTranscriptSnapshot,
     deleteExternalTranscriptSnapshots,

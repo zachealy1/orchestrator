@@ -355,16 +355,16 @@ fn app_server_profiles_enable_network_without_full_access() {
     let isolated_args = codex_app_server_args(true);
     let profile_key = format!("permissions.{ASK_FOR_APPROVAL_PERMISSION_PROFILE}");
 
-    assert_eq!(
-        &shared_args[..5],
-        [
-            "app-server",
-            "--enable",
-            REQUEST_PERMISSIONS_FEATURE,
-            "--listen",
-            "stdio://"
-        ]
-    );
+    assert_eq!(shared_args[0], "app-server");
+    assert!(shared_args
+        .windows(2)
+        .any(|args| args == ["--enable", REQUEST_PERMISSIONS_FEATURE]));
+    assert!(shared_args
+        .windows(2)
+        .any(|args| args == ["--enable", MULTI_AGENT_V2_FEATURE]));
+    assert!(shared_args
+        .windows(2)
+        .any(|args| args == ["--listen", "stdio://"]));
     assert!(shared_args.contains(&format!(
         "default_permissions=\"{ASK_FOR_APPROVAL_PERMISSION_PROFILE}\""
     )));

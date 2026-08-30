@@ -1,6 +1,7 @@
 import {
   BrainCircuit,
   Check,
+  ChevronDown,
   FileCode2,
   LoaderCircle,
   MessageSquareText,
@@ -29,6 +30,7 @@ import {
   isActiveSubagentStatus,
   useConversationSubagents,
   type SubagentRecord,
+  type SubagentInstruction,
   type SubagentTranscript,
   type SubagentTranscriptItem,
   type SubagentTranscriptTurn,
@@ -104,6 +106,7 @@ export const SubagentInspector = memo(function SubagentInspector({
   const [stopConfirmationOpen, setStopConfirmationOpen] = useState(false);
   const [stopping, setStopping] = useState(false);
   const [stopError, setStopError] = useState<string | null>(null);
+  const [taskPromptExpanded, setTaskPromptExpanded] = useState(true);
   const loadGenerationRef = useRef(0);
   const transcriptRequestCountRef = useRef(0);
   const loadedRecordRevisionRef = useRef("");
@@ -234,8 +237,19 @@ export const SubagentInspector = memo(function SubagentInspector({
       const turns = transcriptState.transcript?.turns.filter(
         (turn) => turn.items.length > 0,
       ) ?? [];
-      return includePersistedTaskPrompt(turns, record);
+      return includePersistedInstructions(
+        turns,
+        transcriptState.transcript?.instructions ?? [],
+        visibleRecordTask(record),
+      );
     },
+    [record, transcriptState.transcript],
+  );
+  const taskPrompt = useMemo(
+    () =>
+      transcriptState.transcript?.instructions?.find(
+        (instruction) => instruction.kind === "spawn",
+      )?.text ?? visibleRecordTask(record),
     [record, transcriptState.transcript],
   );
   const canStop =
@@ -369,6 +383,27 @@ export const SubagentInspector = memo(function SubagentInspector({
           </InspectorIconButton>
         </div>
       </header>
+
+      <section className="subagent-task-prompt" aria-label="Task prompt">
+        <button
+          type="button"
+          className="subagent-task-prompt-toggle"
+          aria-expanded={taskPromptExpanded}
+          onClick={() => setTaskPromptExpanded((current) => !current)}
+        >
+          <span>Task prompt</span>
+          <ChevronDown size={15} aria-hidden="true" />
+        </button>
+        {taskPromptExpanded ? (
+          taskPrompt ? (
+            <div className="subagent-task-prompt-content">{taskPrompt}</div>
+          ) : (
+            <p className="subagent-task-prompt-unavailable">
+              Original prompt unavailable for this older subagent.
+            </p>
+          )
+        ) : null}
+      </section>
 
       {interactionEntry && interactionRunView ? (
         <div className="subagent-inspector-interactions">
@@ -641,47 +676,79 @@ function isActiveTranscriptTurn(status: string) {
   return ["inProgress", "running", "active"].includes(status);
 }
 
-function includePersistedTaskPrompt(
+function includePersistedInstructions(
   turns: SubagentTranscriptTurn[],
-  record: SubagentRecord | null,
+  instructions: SubagentInstruction[],
+  recordTask: string | null,
 ) {
-  const prompt = record?.task.trim() ?? "";
-  if (!record || !isPersistedTaskPrompt(prompt)) return turns;
-  const normalizedPrompt = normalizePrompt(prompt);
-  const promptAlreadyProjected = turns.some((turn) =>
-    turn.items.some(
+  const initialPrompt =
+    instructions.find((instruction) => instruction.kind === "spawn")?.text ??
+    recordTask;
+  const normalizedInitial = initialPrompt
+    ? normalizePrompt(initialPrompt)
+    : null;
+  const withoutInitial = turns.map((turn) => ({
+    ...turn,
+    items: turn.items.filter(
       (item) =>
-        item.kind === "user" && normalizePrompt(item.text) === normalizedPrompt,
+        item.kind !== "user" ||
+        !normalizedInitial ||
+        normalizePrompt(item.text) !== normalizedInitial,
     ),
-  );
-  if (promptAlreadyProjected) return turns;
+  }));
+  const projectedPromptCounts = new Map<string, number>();
+  withoutInitial.forEach((turn) => {
+    turn.items.forEach((item) => {
+      if (item.kind !== "user") return;
+      const normalized = normalizePrompt(item.text);
+      projectedPromptCounts.set(
+        normalized,
+        (projectedPromptCounts.get(normalized) ?? 0) + 1,
+      );
+    });
+  });
+  const missingFollowups = instructions.filter((instruction) => {
+    if (instruction.kind === "spawn") return false;
+    const normalized = normalizePrompt(instruction.text);
+    const projectedCount = projectedPromptCounts.get(normalized) ?? 0;
+    if (projectedCount === 0) return true;
+    projectedPromptCounts.set(normalized, projectedCount - 1);
+    return false;
+  });
+  if (missingFollowups.length === 0) return withoutInitial;
 
-  const promptItem: SubagentTranscriptItem = {
-    id: `${record.spawnItemId ?? record.id}:task-prompt`,
-    kind: "user",
-    text: prompt,
-  };
-  if (turns.length === 0) {
-    return [
+  const syntheticTurns = missingFollowups.map((instruction) => ({
+    id: `${instruction.id}:instruction`,
+    status: "completed",
+    startedAt: instruction.createdAt,
+    completedAt: instruction.createdAt,
+    items: [
       {
-        id: `${record.childTurnId ?? record.id}:task`,
-        status: record.status,
-        startedAt: record.startedAt,
-        completedAt: record.completedAt,
-        items: [promptItem],
+        id: instruction.id,
+        kind: "user" as const,
+        text: instruction.text,
       },
-    ];
-  }
-  return [
-    { ...turns[0], items: [promptItem, ...turns[0].items] },
-    ...turns.slice(1),
-  ];
+    ],
+  }));
+  return [...withoutInitial, ...syntheticTurns]
+    .map((turn, index) => ({ turn, index }))
+    .sort((left, right) => {
+      const leftTime = Date.parse(left.turn.startedAt ?? "");
+      const rightTime = Date.parse(right.turn.startedAt ?? "");
+      if (Number.isFinite(leftTime) && Number.isFinite(rightTime)) {
+        return leftTime - rightTime || left.index - right.index;
+      }
+      return left.index - right.index;
+    })
+    .map(({ turn }) => turn)
+    .filter((turn) => turn.items.length > 0);
 }
 
-function isPersistedTaskPrompt(prompt: string) {
-  return Boolean(
-    prompt && prompt !== "Subagent task" && !prompt.startsWith("Subagent /"),
-  );
+function visibleRecordTask(record: SubagentRecord | null) {
+  const prompt = record?.task.trim() ?? "";
+  return prompt && prompt !== "Subagent task" && !prompt.startsWith("Subagent /")
+    ? prompt
+    : null;
 }
 
 function normalizePrompt(prompt: string) {
