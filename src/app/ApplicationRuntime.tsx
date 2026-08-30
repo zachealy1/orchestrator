@@ -254,6 +254,7 @@ import {
   isActiveSubagentStatus,
   lifecycleFromChildTurn,
   lifecycleFromCollabToolCall,
+  lifecycleFromSubagentTranscript,
   parseCollabToolCalls,
   parseLegacySubagentActivity,
   subagentConversationKey,
@@ -1245,6 +1246,7 @@ function App() {
   const pendingGoalTurnStartsRef = useRef(
     new Map<string, PendingGoalTurnStart>(),
   );
+  const subagentLifecycleRefreshesRef = useRef(new Set<string>());
   const goalTurnStartGenerationRef = useRef(0);
   const mentionSearchRequestId = useRef(0);
   const slashCommandSearchRequestId = useRef(0);
@@ -1271,6 +1273,73 @@ function App() {
         accountId: record.accountId,
         profileKey: record.profileKey,
         threadId: record.childThreadId,
+      });
+    },
+  );
+
+  const reconcileSubagentLifecycles = useStableEvent(
+    (records: readonly SubagentRecord[]) => {
+      records.forEach((record) => {
+        if (
+          !["starting", "running", "waiting"].includes(record.status)
+        ) {
+          return;
+        }
+        const refreshKey = `${record.profileKey}:${record.childThreadId}`;
+        if (subagentLifecycleRefreshesRef.current.has(refreshKey)) return;
+        subagentLifecycleRefreshesRef.current.add(refreshKey);
+        void loadSubagentTranscript(record)
+          .then((transcript) => {
+            const latest = subagentStore.findByThread(
+              record.profileKey,
+              record.childThreadId,
+            );
+            if (!latest || !isActiveSubagentStatus(latest.status)) return;
+            const status = lifecycleFromSubagentTranscript(transcript);
+            if (!status) return;
+            if (status === "running") {
+              if (
+                latest.status === "running" &&
+                latest.childTurnId === transcript.activeTurnId
+              ) {
+                return;
+              }
+              saveSubagentRecord({
+                ...latest,
+                childTurnId: transcript.activeTurnId,
+                status,
+                completedAt: null,
+                updatedAt: new Date().toISOString(),
+              });
+              return;
+            }
+            const finalResult = transcript.turns
+              .flatMap((turn) => turn.items)
+              .reverse()
+              .find(
+                (item) =>
+                  item.kind === "assistant" &&
+                  item.phase === "final_answer" &&
+                  item.text.trim(),
+              );
+            const now = new Date().toISOString();
+            saveSubagentRecord({
+              ...latest,
+              status,
+              needsAttention: false,
+              statusBeforeAttention: null,
+              finalResult:
+                finalResult?.kind === "assistant"
+                  ? finalResult.text
+                  : latest.finalResult,
+              completedAt: latest.completedAt ?? now,
+              updatedAt: now,
+            });
+          })
+          .catch(() => undefined)
+          .finally(() => {
+            subagentLifecycleRefreshesRef.current.delete(refreshKey);
+          });
       });
     },
   );
@@ -6253,7 +6322,13 @@ function App() {
       parentThreadId === control.threadId
         ? null
         : subagentStore.findByThread(control.profileKey, parentThreadId);
-    const terminal = !isActiveSubagentStatus(legacy.status);
+    const status =
+      existing &&
+      !isActiveSubagentStatus(existing.status) &&
+      isActiveSubagentStatus(legacy.status)
+        ? existing.status
+        : legacy.status;
+    const terminal = !isActiveSubagentStatus(status);
     const record: SubagentRecord = {
       id:
         existing?.id ??
@@ -6285,7 +6360,7 @@ function App() {
       depth:
         existing?.depth ??
         (hierarchyParent ? hierarchyParent.depth + 1 : 1),
-      status: legacy.status,
+      status,
       statusBeforeAttention: existing?.statusBeforeAttention ?? null,
       agentStatus: existing?.agentStatus ?? null,
       needsAttention: false,
@@ -20315,6 +20390,7 @@ function App() {
                     onQueueSendNow: sendComposerQueuedPromptNow,
                     onQueueReorder: reorderComposerPromptQueue,
                     onInspectSubagent: openSubagentInspector,
+                    onReconcileSubagents: reconcileSubagentLifecycles,
                     onQueueEditCancel: cancelComposerQueuedPromptEdit,
                     onDispatchQueued: dispatchSelectedPromptQueue,
                     onAccessModeChange: handleAccessModeChange,

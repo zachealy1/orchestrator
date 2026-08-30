@@ -398,6 +398,75 @@ describe("Application runtime scenarios 7", () => {
       );
     });
 
+  it("reconciles a finished legacy subagent and ignores its stale running event", async () => {
+      prepareSignedInRun();
+      mocks.readProjectedSubagentThreadMock.mockResolvedValue({
+        threadId: "legacy-child-thread",
+        status: "idle",
+        activeTurnId: null,
+        turns: [
+          {
+            id: "legacy-child-turn",
+            status: "completed",
+            startedAt: "2026-08-30T19:00:00.000Z",
+            completedAt: "2026-08-30T19:01:00.000Z",
+            items: [
+              {
+                id: "legacy-final",
+                kind: "assistant",
+                text: "Repository inspection complete.",
+                phase: "final_answer",
+              },
+            ],
+          },
+        ],
+      });
+
+      const { user } = await renderApp();
+      await startMockRun(user, "Coordinate repository inspection");
+
+      const legacyActivity = {
+        type: "subAgentActivity",
+        id: "legacy-explorer",
+        kind: "started",
+        agentThreadId: "legacy-child-thread",
+        agentPath: "/root/explorer",
+      };
+      await emitCodexNotification({
+        method: "item/started",
+        params: {
+          threadId: "thread-1",
+          turnId: "turn-1",
+          item: legacyActivity,
+        },
+      });
+
+      await waitFor(() =>
+        expect(
+          screen.getByRole("button", { name: /Subagents/i }),
+        ).toHaveTextContent("0 active · 1 completed"),
+      );
+      expect(mocks.upsertRunSubagentMock).toHaveBeenCalledWith(
+        expect.objectContaining({
+          childThreadId: "legacy-child-thread",
+          status: "completed",
+          finalResult: "Repository inspection complete.",
+        }),
+      );
+
+      await emitCodexNotification({
+        method: "item/completed",
+        params: {
+          threadId: "thread-1",
+          turnId: "turn-1",
+          item: legacyActivity,
+        },
+      });
+      expect(
+        screen.getByRole("button", { name: /Subagents/i }),
+      ).toHaveTextContent("0 active · 1 completed");
+    });
+
   it("renders exact outside-workspace permissions and grants them for one turn only", async () => {
       prepareSignedInRun();
       const { user } = await renderApp();

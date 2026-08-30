@@ -3,6 +3,7 @@ import {
   deriveSubagentComposerModel,
   lifecycleFromChildTurn,
   lifecycleFromCollabToolCall,
+  lifecycleFromSubagentTranscript,
   parseCollabToolCall,
   parseCollabToolCalls,
   parseLegacySubagentActivity,
@@ -126,6 +127,41 @@ describe("subagent protocol", () => {
     );
     expect(lifecycleFromChildTurn("turn/completed", "failed")).toBe("failed");
     expect(lifecycleFromChildTurn("turn/interrupted")).toBe("interrupted");
+  });
+
+  it("maps projected transcript state without treating an empty new thread as complete", () => {
+    expect(
+      lifecycleFromSubagentTranscript({
+        threadId: "child",
+        status: "active",
+        activeTurnId: "turn-child",
+        turns: [],
+      }),
+    ).toBe("running");
+    expect(
+      lifecycleFromSubagentTranscript({
+        threadId: "child",
+        status: "idle",
+        activeTurnId: null,
+        turns: [
+          {
+            id: "turn-child",
+            status: "completed",
+            startedAt: null,
+            completedAt: null,
+            items: [],
+          },
+        ],
+      }),
+    ).toBe("completed");
+    expect(
+      lifecycleFromSubagentTranscript({
+        threadId: "child",
+        status: "idle",
+        activeTurnId: null,
+        turns: [],
+      }),
+    ).toBeNull();
   });
 
   it("groups active, completed, and attention states", () => {

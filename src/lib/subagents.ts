@@ -507,6 +507,19 @@ export function lifecycleFromChildTurn(
   }
 }
 
+export function lifecycleFromSubagentTranscript(
+  transcript: SubagentTranscript,
+): SubagentLifecycleStatus | null {
+  if (transcript.activeTurnId) return "running";
+  const latestTurn = transcript.turns[transcript.turns.length - 1];
+  const turnStatus = normalizeAgentStatus(latestTurn?.status ?? null);
+  if (turnStatus && !isActiveSubagentStatus(turnStatus)) return turnStatus;
+  const threadStatus = normalizeAgentStatus(transcript.status);
+  return threadStatus && !isActiveSubagentStatus(threadStatus)
+    ? threadStatus
+    : null;
+}
+
 export function subagentDurationMs(
   record: SubagentRecord,
   nowMs = Date.now(),

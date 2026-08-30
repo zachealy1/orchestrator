@@ -114,6 +114,7 @@ export type ComposerActions = {
   onEditGoal: () => void;
   onStopGoal: () => void;
   onInspectSubagent?: (subagent: SubagentRecord) => void;
+  onReconcileSubagents?: (subagents: readonly SubagentRecord[]) => void;
   onQueueEdit?: (item: PromptQueueItem) => void;
   onQueueRemove?: (item: PromptQueueItem) => void;
   onQueueRetry?: (item: PromptQueueItem) => void;
@@ -240,6 +241,7 @@ export const TaskComposer = memo(function TaskComposer({ model, actions }: Props
   onEditGoal,
   onStopGoal,
   onInspectSubagent,
+  onReconcileSubagents,
   onQueueEdit = NOOP_QUEUE_ITEM,
   onQueueRemove = NOOP_QUEUE_ITEM,
   onQueueRetry = NOOP_QUEUE_ITEM,
@@ -914,6 +916,7 @@ export const TaskComposer = memo(function TaskComposer({ model, actions }: Props
                 setOpenStatusPopover(open ? "subagents" : null)
               }
               onInspect={onInspectSubagent}
+              onReconcile={onReconcileSubagents}
             />
           ) : null}
           {queueItems.length > 0 ? (
