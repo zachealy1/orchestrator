@@ -173,6 +173,12 @@ describe("PluginsView", () => {
     expect(screen.getByRole("heading", { name: "Featured" })).toBeVisible();
     expect(screen.getByRole("heading", { name: "All plugins" })).toBeVisible();
     expect(
+      screen.queryByText("Extend what Orchestrator can do."),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("combobox", { name: "Plugin marketplace" }),
+    ).not.toBeInTheDocument();
+    expect(
       screen.getByRole("button", { name: "View Browser details" }),
     ).toBeVisible();
 

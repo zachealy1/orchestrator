@@ -44,7 +44,6 @@ export function PluginsView({
   actions: PluginsViewActions;
 }) {
   const [query, setQuery] = useState("");
-  const [marketplace, setMarketplace] = useState("all");
   const [browseView, setBrowseView] = useState<"explore" | "installed">(
     "explore",
   );
@@ -55,9 +54,6 @@ export function PluginsView({
     const normalizedQuery = query.trim().toLocaleLowerCase();
     return model.catalog.plugins.filter((plugin) => {
       if (browseView === "installed" && !plugin.installed) return false;
-      if (marketplace !== "all" && plugin.marketplaceName !== marketplace) {
-        return false;
-      }
       if (!normalizedQuery) return true;
       return [
         plugin.displayName,
@@ -68,7 +64,7 @@ export function PluginsView({
         ...plugin.capabilities,
       ].some((value) => value.toLocaleLowerCase().includes(normalizedQuery));
     });
-  }, [browseView, marketplace, model.catalog.plugins, query]);
+  }, [browseView, model.catalog.plugins, query]);
   const selectedPlugin =
     model.catalog.plugins.find((plugin) => plugin.id === selectedPluginId) ??
     null;
@@ -108,10 +104,7 @@ export function PluginsView({
   return (
     <div className="plugins-page" data-tauri-drag-region={model.dragRegion}>
       <header className="plugins-page-header">
-        <div>
-          <h1>Plugins</h1>
-          <p>Extend what Orchestrator can do.</p>
-        </div>
+        <h1>Plugins</h1>
         <button
           className="plugins-refresh-button"
           type="button"
@@ -139,41 +132,27 @@ export function PluginsView({
               onChange={(event) => setQuery(event.currentTarget.value)}
             />
           </label>
-          <div className="plugins-marketplace-controls">
-            <div
-              className="plugins-browse-tabs"
-              role="tablist"
-              aria-label="Plugin views"
+          <div
+            className="plugins-browse-tabs"
+            role="tablist"
+            aria-label="Plugin views"
+          >
+            <button
+              type="button"
+              role="tab"
+              aria-selected={browseView === "explore"}
+              onClick={() => setBrowseView("explore")}
             >
-              <button
-                type="button"
-                role="tab"
-                aria-selected={browseView === "explore"}
-                onClick={() => setBrowseView("explore")}
-              >
-                Explore
-              </button>
-              <button
-                type="button"
-                role="tab"
-                aria-selected={browseView === "installed"}
-                onClick={() => setBrowseView("installed")}
-              >
-                Installed <span>{installedCount}</span>
-              </button>
-            </div>
-            <select
-              value={marketplace}
-              aria-label="Plugin marketplace"
-              onChange={(event) => setMarketplace(event.currentTarget.value)}
+              Explore
+            </button>
+            <button
+              type="button"
+              role="tab"
+              aria-selected={browseView === "installed"}
+              onClick={() => setBrowseView("installed")}
             >
-              <option value="all">All marketplaces</option>
-              {model.catalog.marketplaces.map((entry) => (
-                <option value={entry.name} key={entry.name}>
-                  {entry.name}
-                </option>
-              ))}
-            </select>
+              Installed <span>{installedCount}</span>
+            </button>
           </div>
         </div>
 

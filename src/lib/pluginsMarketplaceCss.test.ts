@@ -47,5 +47,7 @@ describe("plugin marketplace styles", () => {
     expect(css).not.toContain(".plugins-layout");
     expect(css).not.toContain(".plugins-list");
     expect(css).not.toContain("button.plugin-list-row");
+    expect(css).not.toContain(".plugins-marketplace-controls");
+    expect(css).not.toContain(".plugins-browser-toolbar select");
   });
 });
