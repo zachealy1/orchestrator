@@ -69,7 +69,7 @@ describe("plugin marketplace styles", () => {
     expect(ruleFor(".plugin-card::before")).toBe("");
     expect(ruleFor(".plugin-card:hover::before")).toBe("");
     expect(ruleFor(".plugin-card:hover")).toContain(
-      "background: var(--color-button-active)",
+      "background: var(--color-surface-soft)",
     );
     expect(ruleFor(".plugin-card:hover")).toContain(
       "border-color: var(--color-divider)",

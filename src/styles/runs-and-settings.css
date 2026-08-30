@@ -1193,7 +1193,7 @@ button.settings-connection-row:focus-visible:not(:disabled) {
 
 .plugin-card:hover {
   border-color: var(--color-divider);
-  background: var(--color-button-active);
+  background: var(--color-surface-soft);
   transform: none;
 }
 
