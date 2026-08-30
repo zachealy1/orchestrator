@@ -526,29 +526,35 @@ export const SettingsView = memo(function SettingsView({
               granted={model.desktopRuntimeStatus?.accessibilityTrusted ?? null}
               onOpen={actions.openAccessibilitySettings}
             />
-            <div className="settings-subsection-heading">
-              <div>
-                <strong>Always-allowed apps</strong>
-                <span>Apps Codex may use in future tasks without asking again.</span>
-              </div>
-            </div>
-            {model.alwaysAllowedApplications.map((application) => (
-              <div className="setting-row" key={application.id}>
-                <div>
-                  <strong>{application.name}</strong>
-                  <span>{application.bundleId}</span>
+            {model.alwaysAllowedApplications.length > 0 ? (
+              <>
+                <div className="settings-subsection-heading">
+                  <div>
+                    <strong>Always-allowed apps</strong>
+                    <span>
+                      Apps Codex may use in future tasks without asking again.
+                    </span>
+                  </div>
                 </div>
-                <SettingsIconAction
-                  icon={Trash2}
-                  ariaLabel={`Revoke ${application.name}`}
-                  tooltip={`Revoke ${application.name}`}
-                  danger
-                  onActivate={() =>
-                    actions.revokeAlwaysAllowedApplication(application.id)
-                  }
-                />
-              </div>
-            ))}
+                {model.alwaysAllowedApplications.map((application) => (
+                  <div className="setting-row" key={application.id}>
+                    <div>
+                      <strong>{application.name}</strong>
+                      <span>{application.bundleId}</span>
+                    </div>
+                    <SettingsIconAction
+                      icon={Trash2}
+                      ariaLabel={`Revoke ${application.name}`}
+                      tooltip={`Revoke ${application.name}`}
+                      danger
+                      onActivate={() =>
+                        actions.revokeAlwaysAllowedApplication(application.id)
+                      }
+                    />
+                  </div>
+                ))}
+              </>
+            ) : null}
           </div>
         </section>
       ) : null}

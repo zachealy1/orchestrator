@@ -176,9 +176,10 @@ describe("SettingsView", () => {
     expect(handlers.setComputerUseEnabled).toHaveBeenCalledWith(false);
   });
 
-  it("does not render an empty state when no apps are always allowed", () => {
+  it("does not render the always-allowed apps section when it is empty", () => {
     render(<SettingsView model={model()} actions={actions()} />);
 
+    expect(screen.queryByText("Always-allowed apps")).not.toBeInTheDocument();
     expect(
       screen.queryByText("No always-allowed apps"),
     ).not.toBeInTheDocument();
