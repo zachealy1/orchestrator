@@ -6,6 +6,7 @@ import { usePluginsViewBindings } from "./usePluginsViewBindings";
 
 function model(overrides: Partial<PluginsViewModel> = {}): PluginsViewModel {
   return {
+    active: true,
     selectedPluginId: null,
     catalog: EMPTY_PLUGIN_CATALOG,
     loading: false,

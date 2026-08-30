@@ -2,7 +2,6 @@ import { act, render, screen } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   DeferredViewSlot,
-  PersistentPreloadedViewSlot,
   PreloadedViewSlot,
 } from "./ApplicationViewSlot";
 
@@ -89,47 +88,4 @@ describe("application view slots", () => {
     expect(screen.queryByText("Current task tree")).not.toBeInTheDocument();
   });
 
-  it("idle-preloads and retains a persistent view between activations", () => {
-    const { rerender } = render(
-      <main className="main">
-        <PersistentPreloadedViewSlot
-          active={false}
-          className="plugins-view-stack"
-        >
-          <input aria-label="Plugin search" defaultValue="retained" />
-        </PersistentPreloadedViewSlot>
-      </main>,
-    );
-
-    act(() => vi.runAllTimers());
-    const preloadedInput = screen.getByRole("textbox", {
-      name: "Plugin search",
-      hidden: true,
-    });
-
-    rerender(
-      <main className="main">
-        <PersistentPreloadedViewSlot active className="plugins-view-stack">
-          <input aria-label="Plugin search" defaultValue="retained" />
-        </PersistentPreloadedViewSlot>
-      </main>,
-    );
-    expect(screen.getByRole("textbox", { name: "Plugin search" })).toBe(
-      preloadedInput,
-    );
-
-    rerender(
-      <main className="main">
-        <PersistentPreloadedViewSlot
-          active={false}
-          className="plugins-view-stack"
-        >
-          <input aria-label="Plugin search" defaultValue="retained" />
-        </PersistentPreloadedViewSlot>
-      </main>,
-    );
-    expect(
-      screen.getByRole("textbox", { name: "Plugin search", hidden: true }),
-    ).toBe(preloadedInput);
-  });
 });

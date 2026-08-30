@@ -1201,12 +1201,14 @@ describe("Application runtime scenarios 5", () => {
       main.scrollTop = 144;
 
       await user.click(screen.getByRole("button", { name: "Settings" }));
+      expect(pluginSearch).not.toBeInTheDocument();
       await user.click(screen.getByRole("button", { name: "Plugins" }));
 
-      expect(
-        screen.getByRole("textbox", { name: "Search plugins" }),
-      ).toBe(pluginSearch);
-      expect(pluginSearch).toHaveValue("browser");
+      const restoredPluginSearch = screen.getByRole("textbox", {
+        name: "Search plugins",
+      });
+      expect(restoredPluginSearch).not.toBe(pluginSearch);
+      expect(restoredPluginSearch).toHaveValue("browser");
       expect(screen.getByRole("tab", { name: "Explore" })).toHaveAttribute(
         "aria-selected",
         "true",

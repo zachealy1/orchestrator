@@ -20,6 +20,7 @@ export function usePluginsViewBindings(input: PluginsViewBindings) {
   const model = useMemo<PluginsViewModel>(
     () => ({ ...currentModel }),
     [
+      currentModel.active,
       currentModel.catalog,
       currentModel.detailsLoadingPluginId,
       currentModel.dragRegion,

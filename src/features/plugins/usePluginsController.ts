@@ -17,7 +17,8 @@ import {
   reconcilePluginCatalog,
   replacePluginInCatalog,
 } from "./catalogReconciliation";
-import { preloadPluginLogos } from "./pluginLogoPreloader";
+import { pluginLogoPreloader } from "./pluginLogoPreloader";
+import { markPluginPerformance } from "./pluginPerformance";
 import {
   EMPTY_PLUGIN_CATALOG,
   type CodexPluginCatalog,
@@ -42,6 +43,9 @@ export function usePluginsController(input: { enabled: boolean }) {
     setError(null);
     try {
       const nextCatalog = await listCodexPlugins({ forceRefetch });
+      markPluginPerformance("catalog-live-ready", {
+        count: nextCatalog.plugins.length,
+      });
       startTransition(() => {
         setCatalog((current) => reconcilePluginCatalog(current, nextCatalog));
       });
@@ -72,7 +76,12 @@ export function usePluginsController(input: { enabled: boolean }) {
   }, [input.enabled, refresh]);
 
   useEffect(() => {
-    preloadPluginLogos(catalog);
+    if (catalog.plugins.length > 0) {
+      markPluginPerformance("catalog-available", {
+        count: catalog.plugins.length,
+      });
+    }
+    pluginLogoPreloader.preload(catalog);
   }, [catalog]);
 
   const mutate = useCallback(

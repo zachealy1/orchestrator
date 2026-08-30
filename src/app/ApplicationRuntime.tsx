@@ -385,7 +385,6 @@ import { useAccountController } from "../features/accounts/useAccountController"
 import { AccountHandoffDialog } from "../features/accounts/AccountHandoffDialog";
 import {
   DeferredViewSlot,
-  PersistentPreloadedViewSlot,
   PreloadedViewSlot,
 } from "./ApplicationViewSlot";
 import {
@@ -19612,6 +19611,7 @@ function App() {
   });
   const pluginsViewBindings = usePluginsViewBindings({
     model: {
+      active: activeView === "plugins",
       dragRegion: selfWindowDragRegion,
       selectedPluginId,
       catalog: pluginsController.catalog,
@@ -20441,13 +20441,13 @@ function App() {
           </div>
         ) : null}
 
-        <PersistentPreloadedViewSlot
-          active={activeView === "plugins"}
+        <div
           className="view-stack plugins-view-stack"
-          dragRegion={selfWindowDragRegion}
+          data-tauri-drag-region={selfWindowDragRegion}
+          hidden={activeView !== "plugins"}
         >
           <PluginsView {...pluginsViewBindings} />
-        </PersistentPreloadedViewSlot>
+        </div>
 
         <PreloadedViewSlot
           active={activeView === "settings"}

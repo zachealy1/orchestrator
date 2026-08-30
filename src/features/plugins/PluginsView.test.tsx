@@ -56,6 +56,7 @@ function model(
   overrides: Partial<PluginsViewModel> = {},
 ): PluginsViewModel {
   return {
+    active: true,
     selectedPluginId: null,
     catalog: catalog(plugins),
     loading: false,
@@ -266,10 +267,7 @@ describe("PluginsView", () => {
     expect(
       screen.queryByRole("button", { name: "View Browser details" }),
     ).not.toBeInTheDocument();
-    const preRenderedBrowserCard = screen.getByRole("button", {
-      name: "View Browser details",
-      hidden: true,
-    });
+    expect(document.querySelectorAll(".plugins-catalog-panel")).toHaveLength(1);
 
     fireEvent.click(screen.getByRole("tab", { name: "Explore" }));
 
@@ -281,12 +279,63 @@ describe("PluginsView", () => {
     ).toBeNull();
     expect(
       screen.getByRole("button", { name: "View Browser details" }),
-    ).toBe(preRenderedBrowserCard);
+    ).toBeVisible();
+    expect(
+      screen.queryByRole("heading", { name: "Installed plugins" }),
+    ).not.toBeInTheDocument();
+    expect(document.querySelectorAll(".plugins-catalog-panel")).toHaveLength(1);
     expect(screen.queryByText("View details")).toBeNull();
     expect(screen.getAllByText("1 capability")).not.toHaveLength(0);
     const logo = document.querySelector(".plugin-card img");
-    expect(logo).not.toHaveAttribute("loading");
+    expect(logo).toHaveAttribute("loading", "eager");
     expect(logo).toHaveAttribute("decoding", "async");
+    expect(logo).toHaveAttribute("width", "48");
+    expect(logo).toHaveAttribute("height", "48");
+    fireEvent.error(logo!);
+    expect(logo).toHaveAttribute("hidden");
+    expect(document.querySelector(".plugin-logo-fallback")).toBeInTheDocument();
+  });
+
+  it("removes inactive plugin DOM while retaining catalog state and scroll", async () => {
+    const browser = plugin({ installed: true, enabled: true });
+    const viewActions = actions();
+    const { rerender } = render(
+      <div className="main" data-testid="plugins-activity-scroll">
+        <PluginsView model={model([browser])} actions={viewActions} />
+      </div>,
+    );
+    const scrollContainer = screen.getByTestId("plugins-activity-scroll");
+    fireEvent.click(screen.getByRole("tab", { name: "Explore" }));
+    fireEvent.change(screen.getByRole("textbox", { name: "Search plugins" }), {
+      target: { value: "web" },
+    });
+    scrollContainer.scrollTop = 216;
+
+    rerender(
+      <div className="main" data-testid="plugins-activity-scroll">
+        <PluginsView
+          model={model([browser], { active: false })}
+          actions={viewActions}
+        />
+      </div>,
+    );
+    expect(document.querySelectorAll(".plugin-card")).toHaveLength(0);
+    expect(document.querySelectorAll(".plugin-logo img")).toHaveLength(0);
+    expect(document.querySelectorAll(".plugins-catalog-panel")).toHaveLength(0);
+
+    rerender(
+      <div className="main" data-testid="plugins-activity-scroll">
+        <PluginsView model={model([browser])} actions={viewActions} />
+      </div>,
+    );
+    await waitFor(() => expect(scrollContainer.scrollTop).toBe(216));
+    expect(screen.getByRole("tab", { name: "Explore" })).toHaveAttribute(
+      "aria-selected",
+      "true",
+    );
+    expect(screen.getByRole("textbox", { name: "Search plugins" })).toHaveValue(
+      "web",
+    );
   });
 
   it("does not commit React work while scrolling or hovering cards", () => {
@@ -311,6 +360,75 @@ describe("PluginsView", () => {
     });
 
     expect(commits).toBe(0);
+  });
+
+  it("rerenders only the plugin whose summary changes", () => {
+    const browser = plugin({ installed: true, enabled: true });
+    const github = plugin({
+      id: "github@openai-curated",
+      name: "github",
+      displayName: "GitHub",
+      installed: true,
+      enabled: true,
+    });
+    const viewActions = actions();
+    const probe = window.__orchestratorPluginPerformance;
+    expect(probe).toBeDefined();
+    const { rerender } = render(
+      <PluginsView
+        model={model([browser, github])}
+        actions={viewActions}
+      />,
+    );
+    probe?.reset();
+
+    rerender(
+      <PluginsView
+        model={model([browser, github], { loading: true })}
+        actions={viewActions}
+      />,
+    );
+    expect(probe?.snapshot().cardRenders).toEqual({});
+
+    rerender(
+      <PluginsView
+        model={model([
+          { ...browser, description: "Updated browser description." },
+          github,
+        ])}
+        actions={viewActions}
+      />,
+    );
+    expect(probe?.snapshot().cardRenders).toEqual({
+      [browser.id]: 1,
+    });
+  });
+
+  it("mounts a complete bounded Explore page before any scroll interaction", () => {
+    const plugins = Array.from({ length: 200 }, (_, index) =>
+      plugin({
+        id: `plugin-${index}`,
+        name: `plugin-${index}`,
+        displayName: `Plugin ${index}`,
+      }),
+    );
+    render(<PluginsView model={model(plugins)} actions={actions()} />);
+
+    fireEvent.click(screen.getByRole("tab", { name: "Explore" }));
+
+    expect(document.querySelectorAll(".plugin-card")).toHaveLength(61);
+    expect(document.querySelectorAll(".plugins-catalog-panel")).toHaveLength(1);
+    expect(screen.getByText("1–60 of 199")).toBeVisible();
+    expect(screen.getByText("1 / 4")).toBeVisible();
+    expect(screen.getByRole("button", { name: "Previous plugin page" })).toBeDisabled();
+
+    fireEvent.click(screen.getByRole("button", { name: "Next plugin page" }));
+
+    expect(document.querySelectorAll(".plugin-card")).toHaveLength(61);
+    expect(screen.getByText("61–120 of 199")).toBeVisible();
+    expect(screen.getByText("2 / 4")).toBeVisible();
+    expect(screen.queryByText("Plugin 1")).not.toBeInTheDocument();
+    expect(screen.getByText("Plugin 61")).toBeVisible();
   });
 
   it("restores catalog filters, scroll, and originating-card focus", async () => {

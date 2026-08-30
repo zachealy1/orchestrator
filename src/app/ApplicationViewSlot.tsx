@@ -1,7 +1,6 @@
 import {
   memo,
   useEffect,
-  useLayoutEffect,
   useRef,
   useState,
   type ReactNode,
@@ -135,58 +134,3 @@ export const PreloadedViewSlot = memo(function PreloadedViewSlot({
     </div>
   );
 });
-
-export const PersistentPreloadedViewSlot = memo(
-  function PersistentPreloadedViewSlot({
-    active,
-    className,
-    dragRegion,
-    children,
-  }: {
-    active: boolean;
-    className: string;
-    dragRegion?: string;
-    children: ReactNode;
-  }) {
-    const [mounted, setMounted] = useState(active);
-    const slotRef = useRef<HTMLDivElement | null>(null);
-    const wasActiveRef = useRef(active);
-    const scrollTopRef = useRef(0);
-
-    useEffect(() => {
-      if (active) {
-        setMounted(true);
-        return;
-      }
-      if (!mounted) {
-        return scheduleApplicationViewPreload(() => setMounted(true));
-      }
-    }, [active, mounted]);
-
-    useLayoutEffect(() => {
-      if (!mounted) return;
-      const scrollContainer = slotRef.current?.closest<HTMLElement>(".main");
-      if (active && !wasActiveRef.current && scrollContainer) {
-        scrollContainer.scrollTop = scrollTopRef.current;
-      } else if (!active && wasActiveRef.current && scrollContainer) {
-        scrollTopRef.current = scrollContainer.scrollTop;
-      }
-      wasActiveRef.current = active;
-    }, [active, mounted]);
-
-    if (!mounted) return null;
-
-    return (
-      <div
-        ref={slotRef}
-        className={`${className}${
-          active ? "" : " application-view-slot-preloaded"
-        }`}
-        data-tauri-drag-region={dragRegion}
-        aria-hidden={!active}
-      >
-        {children}
-      </div>
-    );
-  },
-);

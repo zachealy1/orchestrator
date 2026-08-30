@@ -3,6 +3,8 @@ import {
   Box,
   Check,
   CheckCircle2,
+  ChevronLeft,
+  ChevronRight,
   Circle,
   CircleX,
   GraduationCap,
@@ -21,19 +23,30 @@ import {
   memo,
   useCallback,
   useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
   type RefObject,
+  type SyntheticEvent,
 } from "react";
 import { useStableEvent } from "../../shared/reactRuntime";
+import {
+  isPluginPerformanceEnabled,
+  markPluginPerformance,
+  recordPluginCardRender,
+} from "./pluginPerformance";
+import { pluginLogoPreloader } from "./pluginLogoPreloader";
 import type {
   CodexPluginCatalog,
   CodexPluginSummary,
   PluginMutationState,
 } from "./types";
 
+const EXPLORE_PAGE_SIZE = 60;
+
 export type PluginsViewModel = {
+  active: boolean;
   dragRegion?: string;
   selectedPluginId: string | null;
   catalog: CodexPluginCatalog;
@@ -64,15 +77,18 @@ export const PluginsView = memo(function PluginsView({
   const [browseView, setBrowseView] = useState<"explore" | "installed">(
     "installed",
   );
+  const [explorePage, setExplorePage] = useState(0);
   const [pendingInstall, setPendingInstall] =
     useState<CodexPluginSummary | null>(null);
   const pageRef = useRef<HTMLDivElement | null>(null);
   const backButtonRef = useRef<HTMLButtonElement | null>(null);
-  const originatingCardRef = useRef<HTMLButtonElement | null>(null);
+  const originatingCardRef = useRef<HTMLElement | null>(null);
   const catalogScrollTopRef = useRef(0);
+  const selectedPluginIdRef = useRef(model.selectedPluginId);
   const previousSelectedPluginIdRef = useRef<string | null>(
     model.selectedPluginId,
   );
+  selectedPluginIdRef.current = model.selectedPluginId;
   const installPlugin = useStableEvent(actions.install);
   const openPluginAction = useStableEvent(actions.openPlugin);
   const {
@@ -130,6 +146,40 @@ export const PluginsView = memo(function PluginsView({
       (plugin) => plugin.id === model.selectedPluginId,
     ) ??
     null;
+  const explorePageCount = Math.max(
+    1,
+    Math.ceil(exploreCatalogPlugins.length / EXPLORE_PAGE_SIZE),
+  );
+  const activeExplorePage = Math.min(explorePage, explorePageCount - 1);
+  const explorePageStart = activeExplorePage * EXPLORE_PAGE_SIZE;
+  const explorePagePlugins = useMemo(
+    () =>
+      exploreCatalogPlugins.slice(
+        explorePageStart,
+        explorePageStart + EXPLORE_PAGE_SIZE,
+      ),
+    [exploreCatalogPlugins, explorePageStart],
+  );
+  const adjacentExplorePagePlugins = useMemo(() => {
+    const previousStart = Math.max(0, explorePageStart - EXPLORE_PAGE_SIZE);
+    const nextStart = explorePageStart + EXPLORE_PAGE_SIZE;
+    return [
+      ...(activeExplorePage > 0
+        ? exploreCatalogPlugins.slice(previousStart, explorePageStart)
+        : []),
+      ...(activeExplorePage + 1 < explorePageCount
+        ? exploreCatalogPlugins.slice(
+            nextStart,
+            nextStart + EXPLORE_PAGE_SIZE,
+          )
+        : []),
+    ];
+  }, [
+    activeExplorePage,
+    exploreCatalogPlugins,
+    explorePageCount,
+    explorePageStart,
+  ]);
   const requestInstall = useCallback(
     (plugin: CodexPluginSummary) => {
       if (plugin.mustShowInstallationInterstitial) {
@@ -142,7 +192,7 @@ export const PluginsView = memo(function PluginsView({
   );
 
   const openPlugin = useCallback(
-    (plugin: CodexPluginSummary, trigger: HTMLButtonElement) => {
+    (plugin: CodexPluginSummary, trigger: HTMLElement) => {
       const scrollContainer = pageRef.current?.closest<HTMLElement>(".main");
       catalogScrollTopRef.current = scrollContainer?.scrollTop ?? 0;
       originatingCardRef.current = trigger;
@@ -151,7 +201,26 @@ export const PluginsView = memo(function PluginsView({
     [openPluginAction],
   );
 
+  useLayoutEffect(() => {
+    if (!model.active) return;
+    const scrollContainer = pageRef.current?.closest<HTMLElement>(".main");
+    if (!scrollContainer) return;
+
+    scrollContainer.scrollTop = selectedPluginIdRef.current
+      ? 0
+      : catalogScrollTopRef.current;
+    markPluginPerformance("view-activated", {
+      selectedPluginId: selectedPluginIdRef.current,
+    });
+    return () => {
+      if (!selectedPluginIdRef.current) {
+        catalogScrollTopRef.current = scrollContainer.scrollTop;
+      }
+    };
+  }, [model.active]);
+
   useEffect(() => {
+    if (!model.active) return;
     const previousSelectedPluginId = previousSelectedPluginIdRef.current;
     previousSelectedPluginIdRef.current = model.selectedPluginId;
     const scrollContainer = pageRef.current?.closest<HTMLElement>(".main");
@@ -172,7 +241,63 @@ export const PluginsView = memo(function PluginsView({
     return () => {
       if (frame !== null) window.cancelAnimationFrame(frame);
     };
-  }, [model.selectedPluginId]);
+  }, [model.active, model.selectedPluginId]);
+
+  useEffect(() => {
+    if (
+      !model.active ||
+      browseView !== "explore" ||
+      model.selectedPluginId
+    ) {
+      return;
+    }
+    pluginLogoPreloader.preloadPlugins(
+      [...featuredPlugins, ...explorePagePlugins],
+      { priority: true },
+    );
+    pluginLogoPreloader.preloadPlugins(adjacentExplorePagePlugins, {
+      priority: false,
+      retain: false,
+    });
+  }, [
+    adjacentExplorePagePlugins,
+    browseView,
+    explorePagePlugins,
+    featuredPlugins,
+    model.active,
+    model.selectedPluginId,
+  ]);
+
+  useLayoutEffect(() => {
+    if (
+      !model.active ||
+      browseView !== "explore" ||
+      model.selectedPluginId ||
+      !isPluginPerformanceEnabled()
+    ) {
+      return;
+    }
+    const cardCount = featuredPlugins.length + explorePagePlugins.length;
+    markPluginPerformance("explore-commit", { cardCount });
+    const frame = window.requestAnimationFrame(() => {
+      const cards = pageRef.current?.querySelectorAll<HTMLElement>(
+        ".plugin-card",
+      );
+      cards?.item(cards.length - 1)?.getBoundingClientRect();
+      markPluginPerformance("explore-layout", {
+        cardCount: cards?.length ?? 0,
+      });
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, [
+    browseView,
+    explorePagePlugins.length,
+    featuredPlugins.length,
+    model.active,
+    model.selectedPluginId,
+  ]);
+
+  if (!model.active) return null;
 
   return (
     <div
@@ -210,7 +335,10 @@ export const PluginsView = memo(function PluginsView({
                 value={query}
                 placeholder="Search plugins"
                 aria-label="Search plugins"
-                onChange={(event) => setQuery(event.currentTarget.value)}
+                onChange={(event) => {
+                  setQuery(event.currentTarget.value);
+                  setExplorePage(0);
+                }}
               />
             </label>
             <div
@@ -234,7 +362,10 @@ export const PluginsView = memo(function PluginsView({
                 role="tab"
                 aria-controls="plugins-explore-panel"
                 aria-selected={browseView === "explore"}
-                onClick={() => setBrowseView("explore")}
+                onClick={() => {
+                  markPluginPerformance("explore-request");
+                  setBrowseView("explore");
+                }}
               >
                 Explore
               </button>
@@ -261,32 +392,45 @@ export const PluginsView = memo(function PluginsView({
             </div>
           ) : (
             <>
-              <PluginCatalogPanel
-                id="plugins-installed-panel"
-                labelledBy="plugins-installed-tab"
-                active={browseView === "installed"}
-                emptyMessage="No installed plugins match this search."
-                sectionTitle="Installed plugins"
-                plugins={installedPlugins}
-                catalogPlugins={installedPlugins}
-                featuredPlugins={[]}
-                busyPluginId={model.mutation?.pluginId ?? null}
-                onInstall={requestInstall}
-                onOpenPlugin={openPlugin}
-              />
-              <PluginCatalogPanel
-                id="plugins-explore-panel"
-                labelledBy="plugins-explore-tab"
-                active={browseView === "explore"}
-                emptyMessage="No plugins match this search."
-                sectionTitle="All plugins"
-                plugins={explorePlugins}
-                catalogPlugins={exploreCatalogPlugins}
-                featuredPlugins={featuredPlugins}
-                busyPluginId={model.mutation?.pluginId ?? null}
-                onInstall={requestInstall}
-                onOpenPlugin={openPlugin}
-              />
+              {browseView === "installed" ? (
+                <PluginCatalogPanel
+                  id="plugins-installed-panel"
+                  labelledBy="plugins-installed-tab"
+                  emptyMessage="No installed plugins match this search."
+                  sectionTitle="Installed plugins"
+                  plugins={installedPlugins}
+                  catalogPlugins={installedPlugins}
+                  catalogPluginCount={installedPlugins.length}
+                  featuredPlugins={[]}
+                  pagination={null}
+                  busyPluginId={model.mutation?.pluginId ?? null}
+                  onInstall={requestInstall}
+                  onOpenPlugin={openPlugin}
+                />
+              ) : (
+                <PluginCatalogPanel
+                  id="plugins-explore-panel"
+                  labelledBy="plugins-explore-tab"
+                  emptyMessage="No plugins match this search."
+                  sectionTitle="All plugins"
+                  plugins={explorePlugins}
+                  catalogPlugins={explorePagePlugins}
+                  catalogPluginCount={exploreCatalogPlugins.length}
+                  featuredPlugins={featuredPlugins}
+                  pagination={
+                    explorePageCount > 1
+                      ? {
+                          pageIndex: activeExplorePage,
+                          pageCount: explorePageCount,
+                          onPageChange: setExplorePage,
+                        }
+                      : null
+                  }
+                  busyPluginId={model.mutation?.pluginId ?? null}
+                  onInstall={requestInstall}
+                  onOpenPlugin={openPlugin}
+                />
+              )}
             </>
           )}
         </section>
@@ -352,29 +496,35 @@ export const PluginsView = memo(function PluginsView({
 const PluginCatalogPanel = memo(function PluginCatalogPanel({
   id,
   labelledBy,
-  active,
   emptyMessage,
   sectionTitle,
   plugins,
   featuredPlugins,
   catalogPlugins,
+  catalogPluginCount,
   busyPluginId,
+  pagination,
   onInstall,
   onOpenPlugin,
 }: {
   id: string;
   labelledBy: string;
-  active: boolean;
   emptyMessage: string;
   sectionTitle: string;
   plugins: CodexPluginSummary[];
   featuredPlugins: CodexPluginSummary[];
   catalogPlugins: CodexPluginSummary[];
+  catalogPluginCount: number;
   busyPluginId: string | null;
+  pagination: {
+    pageIndex: number;
+    pageCount: number;
+    onPageChange: (page: number) => void;
+  } | null;
   onInstall: (plugin: CodexPluginSummary) => void;
   onOpenPlugin: (
     plugin: CodexPluginSummary,
-    trigger: HTMLButtonElement,
+    trigger: HTMLElement,
   ) => void;
 }) {
   return (
@@ -383,7 +533,6 @@ const PluginCatalogPanel = memo(function PluginCatalogPanel({
       className="plugins-catalog-panel"
       role="tabpanel"
       aria-labelledby={labelledBy}
-      hidden={!active}
     >
       {plugins.length === 0 ? (
         <div className="plugins-empty-state">
@@ -423,7 +572,17 @@ const PluginCatalogPanel = memo(function PluginCatalogPanel({
             >
               <div className="plugins-section-heading">
                 <h2 id={`${id}-all-title`}>{sectionTitle}</h2>
-                <span>{catalogPlugins.length} shown</span>
+                {pagination ? (
+                  <PluginCatalogPagination
+                    pageIndex={pagination.pageIndex}
+                    pageCount={pagination.pageCount}
+                    pageSize={EXPLORE_PAGE_SIZE}
+                    total={catalogPluginCount}
+                    onPageChange={pagination.onPageChange}
+                  />
+                ) : (
+                  <span>{catalogPluginCount} shown</span>
+                )}
               </div>
               <div className="plugins-card-grid">
                 {catalogPlugins.map((plugin) => (
@@ -444,6 +603,51 @@ const PluginCatalogPanel = memo(function PluginCatalogPanel({
   );
 });
 
+function PluginCatalogPagination({
+  pageIndex,
+  pageCount,
+  pageSize,
+  total,
+  onPageChange,
+}: {
+  pageIndex: number;
+  pageCount: number;
+  pageSize: number;
+  total: number;
+  onPageChange: (page: number) => void;
+}) {
+  const first = pageIndex * pageSize + 1;
+  const last = Math.min(total, first + pageSize - 1);
+  return (
+    <nav className="plugins-pagination" aria-label="Plugin catalog pages">
+      <span>
+        {first}–{last} of {total}
+      </span>
+      <button
+        type="button"
+        aria-label="Previous plugin page"
+        data-tooltip="Previous plugin page"
+        disabled={pageIndex === 0}
+        onClick={() => onPageChange(pageIndex - 1)}
+      >
+        <ChevronLeft size={16} aria-hidden="true" />
+      </button>
+      <strong>
+        {pageIndex + 1} / {pageCount}
+      </strong>
+      <button
+        type="button"
+        aria-label="Next plugin page"
+        data-tooltip="Next plugin page"
+        disabled={pageIndex + 1 >= pageCount}
+        onClick={() => onPageChange(pageIndex + 1)}
+      >
+        <ChevronRight size={16} aria-hidden="true" />
+      </button>
+    </nav>
+  );
+}
+
 const PluginCard = memo(function PluginCard({
   plugin,
   featured = false,
@@ -457,33 +661,50 @@ const PluginCard = memo(function PluginCard({
   onInstall: (plugin: CodexPluginSummary) => void;
   onOpenPlugin: (
     plugin: CodexPluginSummary,
-    trigger: HTMLButtonElement,
+    trigger: HTMLElement,
   ) => void;
 }) {
+  recordPluginCardRender(plugin.id);
   const capabilities = [...new Set(plugin.capabilities)];
   const tags = capabilities.slice(0, 2);
   const status = pluginStatus(plugin);
   return (
-    <article className={`plugin-card${featured ? " featured" : ""}`}>
-      <button
-        className="plugin-card-select-target"
-        type="button"
-        aria-label={`View ${plugin.displayName} details`}
-        disabled={busy}
-        onClick={(event) => onOpenPlugin(plugin, event.currentTarget)}
-      />
+    <article
+      className={`plugin-card${featured ? " featured" : ""}`}
+      role="button"
+      tabIndex={busy ? -1 : 0}
+      aria-disabled={busy}
+      aria-label={`View ${plugin.displayName} details`}
+      onClick={(event) => {
+        if (!busy) onOpenPlugin(plugin, event.currentTarget);
+      }}
+      onKeyDown={(event) => {
+        if (
+          busy ||
+          event.target !== event.currentTarget ||
+          (event.key !== "Enter" && event.key !== " ")
+        ) {
+          return;
+        }
+        event.preventDefault();
+        onOpenPlugin(plugin, event.currentTarget);
+      }}
+    >
       <div className="plugin-card-main">
         <div className="plugin-card-heading">
           <span className="plugin-logo" aria-hidden="true">
+            <Box className="plugin-logo-fallback" size={22} />
             {plugin.logoUrl ? (
               <img
                 src={plugin.logoUrl}
                 alt=""
+                width={48}
+                height={48}
                 decoding="async"
+                loading="eager"
+                onError={hideFailedPluginLogo}
               />
-            ) : (
-              <Box size={22} />
-            )}
+            ) : null}
           </span>
           <h3>{plugin.displayName}</h3>
         </div>
@@ -525,7 +746,10 @@ const PluginCard = memo(function PluginCard({
               className="secondary small"
               type="button"
               disabled={busy || !plugin.available}
-              onClick={() => onInstall(plugin)}
+              onClick={(event) => {
+                event.stopPropagation();
+                onInstall(plugin);
+              }}
             >
               {busy ? (
                 <Loader2 className="spin" size={14} aria-hidden="true" />
@@ -653,11 +877,18 @@ function PluginOverviewPage({
       <header className="plugin-overview-header">
         <div className="plugin-overview-identity">
           <span className="plugin-logo large" aria-hidden="true">
+            <Box className="plugin-logo-fallback" size={26} />
             {plugin.logoUrl ? (
-              <img src={plugin.logoUrl} alt="" />
-            ) : (
-              <Box size={26} />
-            )}
+              <img
+                src={plugin.logoUrl}
+                alt=""
+                width={50}
+                height={50}
+                decoding="async"
+                loading="eager"
+                onError={hideFailedPluginLogo}
+              />
+            ) : null}
           </span>
           <div className="plugin-overview-title">
             <h1 id="plugin-overview-title">{plugin.displayName}</h1>
@@ -802,6 +1033,10 @@ function PluginOverviewPage({
       </div>
     </section>
   );
+}
+
+function hideFailedPluginLogo(event: SyntheticEvent<HTMLImageElement>) {
+  event.currentTarget.hidden = true;
 }
 
 function pluginStatus(plugin: CodexPluginSummary) {
