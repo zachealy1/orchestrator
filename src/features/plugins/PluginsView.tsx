@@ -976,7 +976,7 @@ function PluginOverviewPage({
                 {busy ? (
                   <Loader2 className="spin" size={15} aria-hidden="true" />
                 ) : (
-                  <PackagePlus size={15} aria-hidden="true" />
+                  <Download size={15} aria-hidden="true" />
                 )}
                 Install plugin
               </button>

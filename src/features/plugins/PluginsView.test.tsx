@@ -177,6 +177,11 @@ describe("PluginsView", () => {
     expect(overview.querySelector(".plugin-overview-main")).toContainElement(
       screen.getByRole("heading", { name: "Component readiness" }),
     );
+    expect(
+      within(overview)
+        .getByRole("button", { name: "Install plugin" })
+        .querySelector(".lucide-download"),
+    ).toBeInTheDocument();
 
     fireEvent.click(screen.getByRole("button", { name: "Install plugin" }));
     const dialog = screen.getByRole("dialog", { name: "Install Browser?" });
