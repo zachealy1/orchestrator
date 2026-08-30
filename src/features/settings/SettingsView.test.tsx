@@ -261,7 +261,7 @@ describe("SettingsView", () => {
     );
   });
 
-  it("confirms Browser data clearing and reports success", async () => {
+  it("confirms Browser data clearing and leaves feedback to the application host", async () => {
     let resolveClear: (() => void) | undefined;
     const clearBrowserData = vi.fn(
       () =>
@@ -356,33 +356,22 @@ describe("SettingsView", () => {
         screen.queryByRole("dialog", { name: "Clear browser data?" }),
       ).not.toBeInTheDocument(),
     );
-    const bubble = await screen.findByRole("complementary", {
-      name: "Browser data notification",
-    });
-    expect(browser).not.toContainElement(bubble);
-    const banner = within(bubble).getByRole("status", {
-      name: "Browser data cleared",
-    });
-    expect(banner).toHaveClass("composer-status-notice");
-    expect(banner).toHaveAttribute("data-tone", "success");
-    expect(banner).toHaveTextContent(
-      "Cookies, site data, cache, sign-ins, and task tabs were removed",
-    );
+    expect(document.querySelector(".settings-screen-status-anchor")).toBeNull();
+    expect(
+      screen.queryByRole("complementary", {
+        name: "Browser data notification",
+      }),
+    ).not.toBeInTheDocument();
     await waitFor(() => expect(trigger).toHaveFocus());
 
     fireEvent.click(trigger);
-    await waitFor(() =>
-      expect(
-        screen.queryByRole("status", { name: "Browser data cleared" }),
-      ).not.toBeInTheDocument(),
-    );
     fireEvent.click(
       within(screen.getByRole("dialog", { name: "Clear browser data?" }))
         .getByRole("button", { name: "Keep browser data" }),
     );
   });
 
-  it("reports and dismisses Browser data clearing failures", async () => {
+  it("closes the confirmation after Browser data clearing fails", async () => {
     const clearBrowserData = vi
       .fn<SettingsViewActions["clearBrowserData"]>()
       .mockRejectedValue(new Error("  The isolated profile\nis busy.  "));
@@ -400,25 +389,14 @@ describe("SettingsView", () => {
         .getByRole("button", { name: "Clear browser data" }),
     );
 
-    const banner = await screen.findByRole("alert", {
-      name: "Couldn’t clear browser data",
-    });
-    expect(browser).not.toContainElement(banner);
-    expect(banner).toHaveClass("composer-status-notice");
-    expect(banner).toHaveAttribute("data-tone", "warning");
-    expect(banner).toHaveTextContent("The isolated profile is busy.");
-    expect(
-      screen.queryByRole("dialog", { name: "Clear browser data?" }),
-    ).not.toBeInTheDocument();
-
-    fireEvent.click(
-      within(banner).getByRole("button", {
-        name: "Dismiss Couldn’t clear browser data",
-      }),
+    await waitFor(() =>
+      expect(
+        screen.queryByRole("dialog", { name: "Clear browser data?" }),
+      ).not.toBeInTheDocument(),
     );
     expect(
-      screen.queryByRole("alert", {
-        name: "Couldn’t clear browser data",
+      screen.queryByRole("complementary", {
+        name: "Browser data notification",
       }),
     ).not.toBeInTheDocument();
   });

@@ -10,8 +10,6 @@ function model(overrides: Partial<PluginsViewModel> = {}): PluginsViewModel {
     selectedPluginId: null,
     catalog: EMPTY_PLUGIN_CATALOG,
     loading: false,
-    error: null,
-    notice: null,
     mutation: null,
     detailsLoadingPluginId: null,
     ...overrides,
@@ -28,8 +26,6 @@ function actions(
     install: vi.fn(),
     uninstall: vi.fn(),
     setEnabled: vi.fn(),
-    dismissNotice: vi.fn(),
-    dismissError: vi.fn(),
     ...overrides,
   };
 }

@@ -32,11 +32,6 @@ import {
   type Ref,
 } from "react";
 import { createPortal } from "react-dom";
-import {
-  FLOATING_STATUS_NOTICE_TIMEOUT_MS,
-  FloatingHeaderStatusBubble,
-  type FloatingStatusNotice,
-} from "../../components/FloatingHeaderStatusBubble";
 import { OrchestratorMark } from "../../components/OrchestratorMark";
 import type {
   AgentNotificationPermissionStatus,
@@ -64,27 +59,6 @@ type SettingsDetailStatus = {
   label: string;
   tone: SettingsStatusTone;
 };
-
-type BrowserDataFeedback = {
-  tone: "success" | "error";
-  title: string;
-  detail: string;
-  revision: number;
-};
-
-function settingsActionErrorMessage(error: unknown) {
-  const rawMessage =
-    error instanceof Error
-      ? error.message
-      : typeof error === "string"
-        ? error
-        : "";
-  const normalizedMessage = rawMessage.replace(/\s+/g, " ").trim();
-  if (!normalizedMessage) return "An unexpected error occurred.";
-  return normalizedMessage.length > 240
-    ? `${normalizedMessage.slice(0, 239)}…`
-    : normalizedMessage;
-}
 
 type ComputerUsePermissionState = "verified" | "denied" | "unverified";
 
@@ -204,11 +178,6 @@ export const SettingsView = memo(function SettingsView({
   const [browserDataConfirmationOpen, setBrowserDataConfirmationOpen] =
     useState(false);
   const [browserDataClearPending, setBrowserDataClearPending] = useState(false);
-  const [browserDataFeedback, setBrowserDataFeedback] =
-    useState<BrowserDataFeedback | null>(null);
-  const [settingsStatusAnchor, setSettingsStatusAnchor] =
-    useState<HTMLDivElement | null>(null);
-  const browserDataFeedbackRevisionRef = useRef(0);
   const clearBrowserDataButtonRef = useRef<HTMLButtonElement>(null);
   const matchesSettings = (...terms: string[]) => {
     const query = searchQuery.trim().toLowerCase();
@@ -241,7 +210,6 @@ export const SettingsView = memo(function SettingsView({
 
   const requestBrowserDataClear = () => {
     if (browserDataClearPending) return;
-    setBrowserDataFeedback(null);
     setBrowserDataConfirmationOpen(true);
   };
 
@@ -256,20 +224,8 @@ export const SettingsView = memo(function SettingsView({
     setBrowserDataClearPending(true);
     try {
       await actions.clearBrowserData();
-      setBrowserDataFeedback({
-        tone: "success",
-        title: "Browser data cleared",
-        detail:
-          "Cookies, site data, cache, sign-ins, and task tabs were removed from the isolated profile.",
-        revision: ++browserDataFeedbackRevisionRef.current,
-      });
-    } catch (error) {
-      setBrowserDataFeedback({
-        tone: "error",
-        title: "Couldn’t clear browser data",
-        detail: settingsActionErrorMessage(error),
-        revision: ++browserDataFeedbackRevisionRef.current,
-      });
+    } catch {
+      // ApplicationRuntime reports failures through the persistent notification host.
     } finally {
       setBrowserDataClearPending(false);
       setBrowserDataConfirmationOpen(false);
@@ -277,34 +233,8 @@ export const SettingsView = memo(function SettingsView({
     }
   };
 
-  const browserDataFeedbackNotices: FloatingStatusNotice[] =
-    browserDataFeedback
-      ? [
-          {
-            id: "browser-data-feedback",
-            revisionKey: String(browserDataFeedback.revision),
-            tone:
-              browserDataFeedback.tone === "success" ? "success" : "warning",
-            title: browserDataFeedback.title,
-            detail: browserDataFeedback.detail,
-            timeoutMs: FLOATING_STATUS_NOTICE_TIMEOUT_MS,
-          },
-        ]
-      : [];
-
   return (
     <>
-      <div
-        ref={setSettingsStatusAnchor}
-        className="settings-screen-status-anchor"
-      />
-      <FloatingHeaderStatusBubble
-        notices={browserDataFeedbackNotices}
-        anchorElement={settingsStatusAnchor}
-        active
-        ariaLabel="Browser data notification"
-        onDismiss={() => setBrowserDataFeedback(null)}
-      />
       <SettingsOverview
         model={model}
         actions={actions}

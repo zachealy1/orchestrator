@@ -60,8 +60,6 @@ function model(
     selectedPluginId: null,
     catalog: catalog(plugins),
     loading: false,
-    error: null,
-    notice: null,
     mutation: null,
     detailsLoadingPluginId: null,
     ...overrides,
@@ -76,8 +74,6 @@ function actions(overrides: Partial<PluginsViewActions> = {}): PluginsViewAction
     install: vi.fn(),
     uninstall: vi.fn(),
     setEnabled: vi.fn(),
-    dismissNotice: vi.fn(),
-    dismissError: vi.fn(),
     ...overrides,
   };
 }
@@ -113,52 +109,19 @@ function ControlledPlugins({
 }
 
 describe("PluginsView", () => {
-  it("surfaces plugin feedback in the shared floating notification banner", async () => {
-    const successMessage =
-      "Installed Browser. It will be available to new tasks.";
-    const dismissNotice = vi.fn();
-    const dismissError = vi.fn();
-    const viewActions = actions({ dismissNotice, dismissError });
-    const { rerender } = render(
+  it("does not mount a screen-local notification host", () => {
+    render(
       <PluginsView
-        model={model([plugin()], { notice: successMessage })}
-        actions={viewActions}
+        model={model([plugin()])}
+        actions={actions()}
       />,
     );
-
-    const bubble = await screen.findByRole("complementary", {
-      name: "Plugin notification",
-    });
-    const success = within(bubble).getByRole("status", {
-      name: successMessage,
-    });
-    expect(success).toHaveClass("composer-status-notice");
-    expect(success).toHaveAttribute("data-tone", "success");
+    expect(document.querySelector(".plugins-screen-status-anchor")).toBeNull();
+    expect(
+      screen.queryByRole("complementary", { name: "Plugin notification" }),
+    ).not.toBeInTheDocument();
     expect(document.querySelector(".plugins-notice")).toBeNull();
-    fireEvent.click(
-      within(bubble).getByRole("button", {
-        name: `Dismiss ${successMessage}`,
-      }),
-    );
-    expect(dismissNotice).toHaveBeenCalledOnce();
-
-    const errorMessage = "Plugin installation failed.";
-    rerender(
-      <PluginsView
-        model={model([plugin()], { error: errorMessage })}
-        actions={viewActions}
-      />,
-    );
-    const warning = await screen.findByRole("alert", {
-      name: errorMessage,
-    });
-    expect(warning).toHaveClass("composer-status-notice");
-    expect(warning).toHaveAttribute("data-tone", "warning");
     expect(document.querySelector(".plugins-error")).toBeNull();
-    fireEvent.click(
-      screen.getByRole("button", { name: `Dismiss ${errorMessage}` }),
-    );
-    expect(dismissError).toHaveBeenCalledOnce();
   });
 
   it("renders a hydrated catalog while a background refresh is pending", () => {
@@ -543,14 +506,13 @@ describe("PluginsView", () => {
     expect(openPlugin).toHaveBeenCalledTimes(2);
   });
 
-  it("keeps detail loading unobtrusive and failures inline", () => {
+  it("keeps detail loading unobtrusive and leaves failures to the application host", () => {
     const browser = plugin({ installed: true, enabled: true });
     render(
       <PluginsView
         model={model([browser], {
           selectedPluginId: browser.id,
           detailsLoadingPluginId: browser.id,
-          error: "Could not read plugin details",
         })}
         actions={actions()}
       />,
@@ -561,9 +523,7 @@ describe("PluginsView", () => {
       "aria-busy",
       "true",
     );
-    expect(screen.getByRole("alert")).toHaveTextContent(
-      "Could not read plugin details",
-    );
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
     expect(
       screen.getByRole("heading", { name: "Browser", level: 1 }),
     ).toBeVisible();

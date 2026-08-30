@@ -237,7 +237,7 @@ describe("Application runtime scenarios 5", () => {
       expect(mocks.openAgentNotificationSettingsMock).toHaveBeenCalledTimes(1);
     });
 
-  it("returns Browser data clearing results to visible Settings feedback", async () => {
+  it("keeps Browser data clearing feedback visible across screens", async () => {
       const { user } = await renderApp();
       await user.click(screen.getByRole("button", { name: "Settings" }));
 
@@ -258,16 +258,63 @@ describe("Application runtime scenarios 5", () => {
       await waitFor(() =>
         expect(mocks.clearBrowserDataMock).toHaveBeenCalledOnce(),
       );
-      expect(
-        await screen.findByRole("status", {
+      const banner = await screen.findByRole("status", {
           name: "Browser data cleared",
-        }),
-      ).toHaveTextContent("task tabs were removed from the isolated profile");
-      expect(browser).not.toContainElement(
-        screen.getByRole("complementary", {
-          name: "Browser data notification",
-        }),
+        });
+      expect(banner).toHaveTextContent(
+        "task tabs were removed from the isolated profile",
       );
+      const notificationHost = screen.getByRole("complementary", {
+        name: "Application notifications",
+      });
+      expect(browser).not.toContainElement(
+        notificationHost,
+      );
+
+      await user.click(screen.getByRole("button", { name: "Analytics" }));
+      expect(screen.getByRole("heading", { name: "Analytics" })).toBeVisible();
+      expect(screen.getByRole("status", { name: "Browser data cleared" })).toBe(
+        banner,
+      );
+      await user.click(screen.getByRole("button", { name: "Plugins" }));
+      expect(
+        await screen.findByRole("heading", { name: "Plugins", level: 1 }),
+      ).toBeVisible();
+      expect(screen.getByRole("status", { name: "Browser data cleared" })).toBe(
+        banner,
+      );
+      await user.click(screen.getByRole("button", { name: "Settings" }));
+      expect(await screen.findByRole("heading", { name: "Settings" })).toBeVisible();
+      expect(screen.getByRole("status", { name: "Browser data cleared" })).toBe(
+        banner,
+      );
+      await user.click(
+        screen.getByRole("button", { name: "Dismiss Browser data cleared" }),
+      );
+      expect(
+        screen.queryByRole("status", { name: "Browser data cleared" }),
+      ).not.toBeInTheDocument();
+    });
+
+  it("normalizes Browser data clearing failures in the application host", async () => {
+      mocks.clearBrowserDataMock.mockRejectedValue(
+        new Error("  The isolated profile\nis busy.  "),
+      );
+      const { user } = await renderApp();
+      await user.click(screen.getByRole("button", { name: "Settings" }));
+
+      const browser = screen.getByRole("region", { name: "Browser settings" });
+      await user.click(within(browser).getByRole("button", { name: "Clear data" }));
+      await user.click(
+        within(screen.getByRole("dialog", { name: "Clear browser data?" }))
+          .getByRole("button", { name: "Clear browser data" }),
+      );
+
+      expect(
+        await screen.findByRole("alert", {
+          name: "Couldn’t clear browser data",
+        }),
+      ).toHaveTextContent("The isolated profile is busy.");
     });
 
   it("removes consolidated duplicate profile directories during startup", async () => {

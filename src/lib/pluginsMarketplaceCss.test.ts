@@ -88,18 +88,13 @@ describe("plugin marketplace styles", () => {
     );
   });
 
-  it("uses the shared floating banner treatment for plugin feedback", () => {
-    expect(ruleFor(".plugins-screen-status-anchor")).toContain(
-      "position: fixed",
-    );
-    expect(ruleFor(".plugins-screen-status-anchor")).toContain(
-      "pointer-events: none",
-    );
+  it("leaves plugin feedback to the application notification host", () => {
+    expect(ruleFor(".plugins-screen-status-anchor")).toBe("");
     expect(
       ruleFor(
         ".plugins-screen-status-anchor .floating-header-status-bubble",
       ),
-    ).toContain("width: min(760px, calc(100% - 64px))");
+    ).toBe("");
     expect(ruleFor(".plugins-notice")).toBe("");
     expect(ruleFor(".plugins-error")).toBe("");
     expect(ruleFor(".plugin-overview-feedback")).toBe("");

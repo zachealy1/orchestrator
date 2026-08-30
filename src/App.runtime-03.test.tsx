@@ -1184,11 +1184,16 @@ describe("Application runtime scenarios 3", () => {
       const openApprovalChat = screen.getByRole("button", {
         name: "Open chat awaiting approval",
       });
+      await user.click(screen.getByRole("button", { name: "Analytics" }));
+      expect(
+        screen.getByRole("button", { name: "Open chat awaiting approval" }),
+      ).toBe(openApprovalChat);
       expect(
         openApprovalChat.closest(".floating-header-status-bubble"),
       ).not.toBeNull();
       expect(openApprovalChat.closest(".composer-panel")).toBeNull();
-      expect(openApprovalChat.closest(".task-hero")).not.toBeNull();
+      expect(openApprovalChat.closest(".application-status-anchor")).not.toBeNull();
+      expect(openApprovalChat.closest(".task-hero")).toBeNull();
       await user.click(openApprovalChat);
 
       const approvalCard = await screen.findByRole("article", {

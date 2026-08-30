@@ -30,6 +30,7 @@ const transientWarning: FloatingStatusNotice = {
   title: "Goal update failed",
   detail: "Could not pause the goal.",
   timeoutMs: FLOATING_STATUS_NOTICE_TIMEOUT_MS,
+  dismissible: true,
 };
 
 describe("FloatingHeaderStatusBubble", () => {
@@ -142,6 +143,9 @@ describe("FloatingHeaderStatusBubble", () => {
     expect(screen.queryByText("Goal update failed")).not.toBeInTheDocument();
     expect(screen.getByText("Approval needed")).toBeInTheDocument();
     expect(onDismiss).toHaveBeenCalledWith("warning");
+    expect(
+      screen.queryByRole("button", { name: "Dismiss Approval needed" }),
+    ).not.toBeInTheDocument();
   });
 
   it("pauses transient notice time while hovered or keyboard-focused", () => {
@@ -292,6 +296,33 @@ describe("FloatingHeaderStatusBubble", () => {
     });
     expect(
       screen.queryByText("Could not resume the goal."),
+    ).not.toBeInTheDocument();
+  });
+
+  it("continues a transient timeout across application-screen rerenders", () => {
+    vi.useFakeTimers();
+    const { rerender } = render(
+      <FloatingHeaderStatusBubble
+        notices={[transientWarning]}
+        anchorElement={anchorElement}
+        active
+        ariaLabel="Application notifications"
+      />,
+    );
+
+    act(() => vi.advanceTimersByTime(20_000));
+    rerender(
+      <FloatingHeaderStatusBubble
+        notices={[transientWarning]}
+        anchorElement={anchorElement}
+        active
+        ariaLabel="Application notifications"
+      />,
+    );
+    act(() => vi.advanceTimersByTime(40_001));
+
+    expect(
+      screen.queryByRole("alert", { name: "Goal update failed" }),
     ).not.toBeInTheDocument();
   });
 });

@@ -35,22 +35,8 @@ describe("Kanban local review styles", () => {
     );
   });
 
-  it("floats transient status notices without reserving board space", () => {
-    const anchor = rule(".kanban-floating-status-anchor");
-    const bubble = rule(
-      ".kanban-floating-status-anchor .floating-header-status-bubble",
-    );
-
-    expect(anchor).toContain("position: relative");
-    expect(anchor).toContain("height: 0");
-    expect(anchor).toContain("flex: 0 0 0");
-    expect(anchor).toContain("pointer-events: none");
-    expect(bubble).toContain("top: 24px");
-    expect(bubble).toContain("left: 50%");
-    expect(bubble).toContain("width: min(760px, calc(100% - 64px))");
-    expect(bubble).toContain("max-width: calc(100% - 32px)");
-    expect(bubble).toContain("transform: translateX(-50%)");
-    expect(bubble).toContain("pointer-events: auto");
+  it("leaves transient status notices to the application host", () => {
+    expect(css).not.toContain(".kanban-floating-status-anchor");
   });
 
   it("uses opaque shared application surfaces for the drawer and diff", () => {

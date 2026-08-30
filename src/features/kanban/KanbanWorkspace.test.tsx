@@ -186,6 +186,7 @@ function renderWorkspace(
     onOpenConversation: vi.fn().mockResolvedValue(undefined),
     onConnectGithub: vi.fn(),
     onShowGithubLogin: vi.fn(),
+    onStatusNotice: vi.fn(),
   };
 
   const view = render(
@@ -589,7 +590,7 @@ describe("KanbanWorkspace controller", () => {
     ).not.toBeInTheDocument();
   });
 
-  it("floats successful Kanban actions without reserving board space", async () => {
+  it("publishes successful Kanban actions to the application host", async () => {
     const user = userEvent.setup();
     const readyCard = card({
       stage: "todo",
@@ -610,26 +611,23 @@ describe("KanbanWorkspace controller", () => {
     await user.click(screen.getByRole("menuitem", { name: "Start agent" }));
 
     await waitFor(() => expect(callbacks.onLaunch).toHaveBeenCalledTimes(1));
-    const anchor = document.querySelector(".kanban-floating-status-anchor");
-    expect(anchor).not.toBeNull();
-    const bubble = within(anchor as HTMLElement).getByRole("complementary", {
-      name: "Workspace status",
-    });
-    expect(within(bubble).getByText("Agent turn started.")).toBeInTheDocument();
-    await user.click(
-      within(bubble).getByRole("button", {
-        name: "Dismiss Agent turn started.",
-      }),
+    await waitFor(() =>
+      expect(callbacks.onStatusNotice).toHaveBeenCalledWith(
+        expect.objectContaining({
+          id: "kanban-action-success-1",
+          title: "Agent turn started.",
+          tone: "success",
+          dismissible: true,
+        }),
+      ),
     );
-    expect(
-      within(bubble).queryByText("Agent turn started."),
-    ).not.toBeInTheDocument();
+    expect(document.querySelector(".kanban-floating-status-anchor")).toBeNull();
     expect(
       document.querySelector(".kanban-workspace-view > .kanban-workspace-alert"),
     ).toBeNull();
   });
 
-  it("stacks action and Git refresh errors in the floating overlay", async () => {
+  it("publishes action and Git refresh errors to the application host", async () => {
     const user = userEvent.setup();
     const readyCard = card({
       stage: "todo",
@@ -649,26 +647,31 @@ describe("KanbanWorkspace controller", () => {
       name: /Controller card/,
     });
     await waitFor(() =>
-      expect(
-        screen.getByText(
-          "Git state could not be refreshed for 1 card. Stored card details remain available.",
-        ),
-      ).toBeInTheDocument(),
+      expect(callbacks.onStatusNotice).toHaveBeenCalledWith(
+        expect.objectContaining({ id: "kanban-binding-error-1" }),
+      ),
     );
     await user.click(
       within(tile).getByLabelText("Actions for Controller card"),
     );
     await user.click(screen.getByRole("menuitem", { name: "Start agent" }));
 
-    const anchor = document.querySelector(".kanban-floating-status-anchor");
-    expect(anchor).not.toBeNull();
-    const bubble = within(anchor as HTMLElement).getByRole("complementary", {
-      name: "Workspace status",
-    });
     await waitFor(() => {
-      expect(within(bubble).getByText("Agent launch failed")).toBeInTheDocument();
+      const notices = callbacks.onStatusNotice.mock.calls.map(([notice]) => notice);
+      expect(notices).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            id: "kanban-binding-error-1",
+            title:
+              "Git state could not be refreshed for 1 card. Stored card details remain available.",
+          }),
+          expect.objectContaining({
+            id: "kanban-action-error-1",
+            title: "Agent launch failed",
+          }),
+        ]),
+      );
     });
-    expect(within(bubble).getAllByRole("alert")).toHaveLength(2);
   });
 
   it("shows completed instead of awaiting review after a card reaches Done", async () => {

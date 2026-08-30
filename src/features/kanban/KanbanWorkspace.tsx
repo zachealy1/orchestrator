@@ -118,7 +118,6 @@ import {
 } from "./workspaceCache";
 import {
   FLOATING_STATUS_NOTICE_TIMEOUT_MS,
-  FloatingHeaderStatusBubble,
   type FloatingStatusNotice,
 } from "../../components/FloatingHeaderStatusBubble";
 import "./kanban.css";
@@ -147,6 +146,7 @@ type Props = {
   githubConnectionPending: boolean;
   onConnectGithub: () => void;
   onShowGithubLogin: () => void;
+  onStatusNotice?: (notice: FloatingStatusNotice) => void;
   toolbarHost?: HTMLElement | null;
   resolvedTheme: ResolvedTheme;
 };
@@ -196,6 +196,13 @@ type KanbanStatusMessage = {
   message: string;
   revision: number;
 };
+
+let kanbanStatusRevision = 0;
+
+function nextKanbanStatusRevision() {
+  kanbanStatusRevision += 1;
+  return kanbanStatusRevision;
+}
 
 type GitDialogProps = {
   dialog: GitDialogState;
@@ -675,6 +682,7 @@ export function KanbanWorkspace({
   githubConnectionPending,
   onConnectGithub,
   onShowGithubLogin,
+  onStatusNotice,
   toolbarHost,
   resolvedTheme,
 }: Props) {
@@ -706,7 +714,6 @@ export function KanbanWorkspace({
     useState<KanbanStatusMessage | null>(null);
   const [successStatus, setSuccessStatus] =
     useState<KanbanStatusMessage | null>(null);
-  const statusRevisionRef = useRef(0);
   const setError = useCallback(
     (message: string | null) => {
       setErrorStatus(
@@ -715,7 +722,7 @@ export function KanbanWorkspace({
           : {
               workspaceId: workspace.id,
               message,
-              revision: ++statusRevisionRef.current,
+              revision: nextKanbanStatusRevision(),
             },
       );
     },
@@ -729,7 +736,7 @@ export function KanbanWorkspace({
           : {
               workspaceId: workspace.id,
               message,
-              revision: ++statusRevisionRef.current,
+              revision: nextKanbanStatusRevision(),
             },
       );
     },
@@ -743,14 +750,12 @@ export function KanbanWorkspace({
           : {
               workspaceId: workspace.id,
               message,
-              revision: ++statusRevisionRef.current,
+              revision: nextKanbanStatusRevision(),
             },
       );
     },
     [workspace.id],
   );
-  const [statusAnchorElement, setStatusAnchorElement] =
-    useState<HTMLDivElement | null>(null);
   const [archivedOpen, setArchivedOpen] = useState(false);
   const [cardDialog, setCardDialog] = useState<CardDialogState | null>(null);
   const [cardDialogError, setCardDialogError] = useState<string | null>(null);
@@ -795,6 +800,7 @@ export function KanbanWorkspace({
         tone: "warning",
         title: errorStatus.message,
         timeoutMs: FLOATING_STATUS_NOTICE_TIMEOUT_MS,
+        dismissible: true,
       });
     }
     if (bindingErrorStatus?.workspaceId === workspace.id) {
@@ -804,6 +810,7 @@ export function KanbanWorkspace({
         tone: "warning",
         title: bindingErrorStatus.message,
         timeoutMs: FLOATING_STATUS_NOTICE_TIMEOUT_MS,
+        dismissible: true,
       });
     }
     if (successStatus?.workspaceId === workspace.id) {
@@ -813,23 +820,18 @@ export function KanbanWorkspace({
         tone: "success",
         title: successStatus.message,
         timeoutMs: FLOATING_STATUS_NOTICE_TIMEOUT_MS,
+        dismissible: true,
       });
     }
     return notices;
   }, [bindingErrorStatus, errorStatus, successStatus, workspace.id]);
 
-  const dismissFloatingStatusNotice = useCallback(
-    (noticeId: string) => {
-      if (noticeId === `kanban-action-error-${workspace.id}`) {
-        setErrorStatus(null);
-      } else if (noticeId === `kanban-binding-error-${workspace.id}`) {
-        setBindingErrorStatus(null);
-      } else if (noticeId === `kanban-action-success-${workspace.id}`) {
-        setSuccessStatus(null);
-      }
-    },
-    [workspace.id],
-  );
+  useEffect(() => {
+    if (!onStatusNotice) return;
+    for (const notice of floatingStatusNotices) {
+      onStatusNotice(notice);
+    }
+  }, [floatingStatusNotices, onStatusNotice]);
 
   const performBoardLoad = useCallback(async (includeArchived: boolean) => {
     const request = ++requestSequence.current;
@@ -2172,16 +2174,6 @@ export function KanbanWorkspace({
           ) : null}
         </div>
       ) : null}
-      <div
-        ref={setStatusAnchorElement}
-        className="kanban-floating-status-anchor"
-      />
-      <FloatingHeaderStatusBubble
-        notices={floatingStatusNotices}
-        anchorElement={statusAnchorElement}
-        active={active}
-        onDismiss={dismissFloatingStatusNotice}
-      />
       {active
         ? toolbarHost === undefined
           ? toolbar

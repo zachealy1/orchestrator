@@ -49,7 +49,7 @@ import { redactInteractionRunEvent } from "../features/interaction/runEventRedac
 import { clampFloatingMenuPosition } from "../lib/contextMenuPosition";
 import {
   cancelCodexLogin,
-  clearBrowserData,
+  clearBrowserData as clearNativeBrowserData,
   cancelDefaultProfileThreadTranscript,
   codexDefaultProfileRpc,
   codexRpc,
@@ -387,6 +387,7 @@ import {
   DeferredViewSlot,
   PreloadedViewSlot,
 } from "./ApplicationViewSlot";
+import { useApplicationNotificationQueue } from "./useApplicationNotificationQueue";
 import {
   CodexAccountCard,
   type AuthRowState,
@@ -1042,6 +1043,10 @@ function App() {
   } = useNotificationController(readAgentNotificationPreferences());
   const { resolvedTheme } = useAppearanceController();
   const pluginsController = usePluginsController({ enabled: true });
+  const applicationNotifications = useApplicationNotificationQueue();
+  const [applicationStatusAnchorElement, setApplicationStatusAnchorElement] =
+    useState<HTMLDivElement | null>(null);
+  const browserDataFeedbackRevisionRef = useRef(0);
   const {
     computerUseEnabled,
     setComputerUseEnabled,
@@ -1168,7 +1173,6 @@ function App() {
     drawerSpaceReserved: historyDrawerSpaceReserved,
     inspectorTarget: subagentInspectorTarget,
     inspectorTargetRef: subagentInspectorTargetRef,
-    taskViewportElement,
     taskViewportWidth,
     taskViewportStable,
     setTaskViewportElement,
@@ -2713,11 +2717,35 @@ function App() {
         timeoutMs: FLOATING_STATUS_NOTICE_TIMEOUT_MS,
       });
     }
+    if (pluginsController.error) {
+      notices.push({
+        id: "plugins-error",
+        revisionKey: pluginsController.error,
+        tone: "warning",
+        title: pluginsController.error,
+        timeoutMs: FLOATING_STATUS_NOTICE_TIMEOUT_MS,
+        dismissible: true,
+      });
+    }
+    if (pluginsController.notice) {
+      notices.push({
+        id: "plugins-notice",
+        revisionKey: pluginsController.notice,
+        tone: "success",
+        title: pluginsController.notice,
+        timeoutMs: FLOATING_STATUS_NOTICE_TIMEOUT_MS,
+        dismissible: true,
+      });
+    }
+    notices.push(...applicationNotifications.notices);
     return notices;
   }, [
+    applicationNotifications.notices,
     approvalSafetyWarning,
     crossConversationApprovalRevision,
     crossConversationApprovals.length,
+    pluginsController.error,
+    pluginsController.notice,
     selectedActiveRunControl?.goalActionError,
     selectedGitOperation,
     transcriptLinkError,
@@ -2742,6 +2770,17 @@ function App() {
         openCommitDialog();
       }
     }
+  });
+  const dismissFloatingStatusNotice = useStableEvent((noticeId: string) => {
+    if (noticeId === "plugins-error") {
+      pluginsController.dismissError();
+      return;
+    }
+    if (noticeId === "plugins-notice") {
+      pluginsController.dismissNotice();
+      return;
+    }
+    applicationNotifications.dismiss(noticeId);
   });
   const planReviewAwaiting = visibleTaskChatEntries.some(
     (entry) => entry.runView.nativePlan.reviewState === "available",
@@ -19526,6 +19565,33 @@ function App() {
     });
   }
 
+  const clearBrowserDataWithNotification = useStableEvent(async () => {
+    applicationNotifications.dismiss("browser-data-feedback");
+    try {
+      await clearNativeBrowserData();
+      applicationNotifications.publish({
+        id: "browser-data-feedback",
+        revisionKey: String(++browserDataFeedbackRevisionRef.current),
+        tone: "success",
+        title: "Browser data cleared",
+        detail:
+          "Cookies, site data, cache, sign-ins, and task tabs were removed from the isolated profile.",
+        timeoutMs: FLOATING_STATUS_NOTICE_TIMEOUT_MS,
+        dismissible: true,
+      });
+    } catch (error) {
+      applicationNotifications.publish({
+        id: "browser-data-feedback",
+        revisionKey: String(++browserDataFeedbackRevisionRef.current),
+        tone: "warning",
+        title: "Couldn’t clear browser data",
+        detail: applicationNotificationErrorMessage(error),
+        timeoutMs: FLOATING_STATUS_NOTICE_TIMEOUT_MS,
+        dismissible: true,
+      });
+      throw error;
+    }
+  });
   const settingsViewBindings = useSettingsViewBindings({
     model: {
       dragRegion: selfWindowDragRegion,
@@ -19560,7 +19626,7 @@ function App() {
         });
       },
       resetBrowserDownloadLocation: () => setBrowserDownloadLocation(null),
-      clearBrowserData: () => clearBrowserData(),
+      clearBrowserData: clearBrowserDataWithNotification,
       importBrowserProfile: () =>
         setStatusMessage("Browser profile import is unavailable on this device."),
       openPlugins: () => {
@@ -19616,8 +19682,6 @@ function App() {
       selectedPluginId,
       catalog: pluginsController.catalog,
       loading: pluginsController.loading,
-      error: pluginsController.error,
-      notice: pluginsController.notice,
       mutation: pluginsController.mutation,
       detailsLoadingPluginId: pluginsController.detailsLoadingPluginId,
     },
@@ -19632,8 +19696,6 @@ function App() {
       uninstall: (plugin) => void pluginsController.uninstall(plugin),
       setEnabled: (plugin, enabled) =>
         void pluginsController.setEnabled(plugin, enabled),
-      dismissNotice: pluginsController.dismissNotice,
-      dismissError: pluginsController.dismissError,
     },
   });
 
@@ -19915,11 +19977,17 @@ function App() {
           activeView === "task" ? selfWindowDragRegion : "false"
         }
       >
+        <div
+          ref={setApplicationStatusAnchorElement}
+          className="application-status-anchor"
+        />
         <FloatingHeaderStatusBubble
           notices={floatingStatusNotices}
-          anchorElement={taskViewportElement}
-          active={activeView === "task"}
+          anchorElement={applicationStatusAnchorElement}
+          active
+          ariaLabel="Application notifications"
           onActivate={activateFloatingStatusNotice}
+          onDismiss={dismissFloatingStatusNotice}
         />
         <DeferredViewSlot
           active={activeView === "task"}
@@ -20002,6 +20070,7 @@ function App() {
                   githubConnectionPending={githubConnectionPending}
                   onConnectGithub={() => void handleConnectGithub()}
                   onShowGithubLogin={() => setGithubLoginDialogOpen(true)}
+                  onStatusNotice={applicationNotifications.publish}
                   toolbarHost={kanbanToolbarHost}
                 />
                 {workspaceSurfaceMode === "kanban" ? (
@@ -20500,6 +20569,20 @@ function selectedBrowserPluginSkill(skills: Array<{ id: string; name: string }>)
 
 function errorMessage(error: unknown) {
   return error instanceof Error ? error.message : String(error);
+}
+
+function applicationNotificationErrorMessage(error: unknown) {
+  const rawMessage =
+    error instanceof Error
+      ? error.message
+      : typeof error === "string"
+        ? error
+        : "";
+  const normalizedMessage = rawMessage.replace(/\s+/g, " ").trim();
+  if (!normalizedMessage) return "An unexpected error occurred.";
+  return normalizedMessage.length > 240
+    ? `${normalizedMessage.slice(0, 239)}…`
+    : normalizedMessage;
 }
 
 function assertRuntimeAccessMatches(

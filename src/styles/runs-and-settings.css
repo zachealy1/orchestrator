@@ -1692,7 +1692,7 @@ button.settings-connection-row:focus-visible:not(:disabled) {
   line-height: 1.5;
 }
 
-.settings-screen-status-anchor {
+.application-status-anchor {
   position: fixed;
   top: 0;
   right: 22px;
@@ -1702,28 +1702,7 @@ button.settings-connection-row:focus-visible:not(:disabled) {
   pointer-events: none;
 }
 
-.settings-screen-status-anchor .floating-header-status-bubble {
-  top: 12px;
-  right: auto;
-  left: 50%;
-  width: min(760px, calc(100% - 64px));
-  max-width: calc(100% - 32px);
-  margin-inline: 0;
-  pointer-events: auto;
-  transform: translateX(-50%);
-}
-
-.plugins-screen-status-anchor {
-  position: fixed;
-  top: 0;
-  right: 22px;
-  left: calc(var(--app-rail-width) + 22px);
-  z-index: 60;
-  height: 0;
-  pointer-events: none;
-}
-
-.plugins-screen-status-anchor .floating-header-status-bubble {
+.application-status-anchor .floating-header-status-bubble {
   top: 12px;
   right: auto;
   left: 50%;

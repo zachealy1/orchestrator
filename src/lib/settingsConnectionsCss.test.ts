@@ -629,12 +629,12 @@ describe("settings connection styles", () => {
     }
   });
 
-  it("floats Browser action feedback with the shared status-banner treatment", () => {
+  it("floats application feedback from one persistent status anchor", () => {
     const root = postcss.parse(css);
     const rules = new Map<string, string>();
     const selectors = new Set([
-      ".settings-screen-status-anchor",
-      ".settings-screen-status-anchor .floating-header-status-bubble",
+      ".application-status-anchor",
+      ".application-status-anchor .floating-header-status-bubble",
       ".browser-data-clear-dialog",
     ]);
 
@@ -644,18 +644,20 @@ describe("settings connection styles", () => {
       }
     });
 
-    const anchor = rules.get(".settings-screen-status-anchor");
+    const anchor = rules.get(".application-status-anchor");
     expect(anchor).toContain("position: fixed");
     expect(anchor).toContain("top: 0");
     expect(anchor).toContain("left: calc(var(--app-rail-width) + 22px)");
     expect(anchor).toContain("right: 22px");
     const banner = rules.get(
-      ".settings-screen-status-anchor .floating-header-status-bubble",
+      ".application-status-anchor .floating-header-status-bubble",
     );
     expect(banner).toContain("width: min(760px, calc(100% - 64px))");
     expect(banner).toContain("pointer-events: auto");
     expect(banner).toContain("transform: translateX(-50%)");
     expect(css).not.toContain(".settings-action-banner");
+    expect(css).not.toContain(".settings-screen-status-anchor");
+    expect(css).not.toContain(".plugins-screen-status-anchor");
     expect(rules.get(".browser-data-clear-dialog")).toContain(
       "width: min(460px, 100%)",
     );

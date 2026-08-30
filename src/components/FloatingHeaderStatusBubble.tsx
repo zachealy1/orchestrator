@@ -25,6 +25,7 @@ export type FloatingStatusNotice = {
   detail?: string;
   actionLabel?: string;
   timeoutMs: number | null;
+  dismissible?: boolean;
 };
 
 type Props = {
@@ -187,7 +188,6 @@ export const FloatingHeaderStatusBubble = memo(
       anchorElement,
       documentVisible,
       interactionRevision,
-      notices,
       timerRevision,
     ]);
 
@@ -297,7 +297,11 @@ export const FloatingHeaderStatusBubble = memo(
             key={`${notice.id}:${notice.revisionKey}`}
             notice={notice}
             onActivate={onActivate}
-            onDismiss={onDismiss ? () => dismissNotice(notice) : undefined}
+            onDismiss={
+              notice.dismissible && onDismiss
+                ? () => dismissNotice(notice)
+                : undefined
+            }
             onHoverChange={(hovered) =>
               setInteraction(notice.id, "hovered", hovered)
             }
