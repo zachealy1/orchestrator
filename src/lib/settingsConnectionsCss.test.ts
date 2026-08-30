@@ -282,6 +282,8 @@ describe("settings connection styles", () => {
       ".managed-account-row",
       ".managed-account-row > div:nth-child(2)",
       ".managed-account-row > .button-row",
+      ".managed-account-row input",
+      ".managed-account-row > div:nth-child(2) > span",
     ]);
 
     root.walkRules((candidate) => {
@@ -347,6 +349,15 @@ describe("settings connection styles", () => {
     expect(rules.get(".account-management > .muted")).toContain(
       "min-height: var(--settings-option-min-height)",
     );
+    expect(rules.get(".managed-account-row input")).toContain(
+      "border: 1px solid transparent",
+    );
+    expect(rules.get(".managed-account-row input")).toContain(
+      "padding: 4px 6px",
+    );
+    expect(
+      rules.get(".managed-account-row > div:nth-child(2) > span"),
+    ).toContain("padding-inline: 7px");
   });
 
   it("isolates settings layout and avoids scroll-time shadow and hover repaints", () => {
