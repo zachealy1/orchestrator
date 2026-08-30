@@ -91,11 +91,27 @@ describe("plugin marketplace styles", () => {
       "background: var(--color-component-background)",
     );
     expect(ruleFor(".plugin-overview-layout")).toContain(
-      "grid-template-columns: minmax(0, 1fr) minmax(260px, 0.36fr)",
+      "grid-template-columns: minmax(0, 1fr) minmax(280px, 0.34fr)",
     );
     expect(ruleFor(".plugin-overview-panel")).toContain(
       "border: 1px solid var(--color-divider)",
     );
+    expect(ruleFor(".plugin-overview-main")).toContain("padding: 0");
+    expect(
+      ruleFor(".plugin-overview-main-section + .plugin-overview-main-section"),
+    ).toContain("border-top: 1px solid var(--color-divider)");
+    expect(ruleFor(".plugin-component-summary")).toContain(
+      "grid-template-columns: repeat(4, minmax(0, 1fr))",
+    );
+    expect(ruleFor(".plugin-component-summary > div")).toContain(
+      "min-height: 112px",
+    );
+    expect(ruleFor(".plugin-overview-back")).toContain(
+      "background: transparent",
+    );
+    expect(
+      ruleFor(".plugin-overview-management-actions > button.danger"),
+    ).toContain("border: 1px solid var(--color-error)");
     expect(ruleFor(".plugins-catalog-page[hidden]")).toContain("display: none");
     expect(css).not.toContain(".plugin-details-dialog");
     expect(css).not.toContain(".plugin-details-close");

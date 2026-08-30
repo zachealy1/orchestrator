@@ -1345,12 +1345,21 @@ button.settings-connection-row:focus-visible:not(:disabled) {
 
 .plugin-overview-back {
   width: max-content;
-  min-height: 36px;
-  padding: 0 11px;
+  min-height: 28px;
+  border: 0;
+  background: transparent;
+  color: var(--color-text-secondary);
+  padding: 0;
   transform: none;
 }
 
 .plugin-overview-back:hover:not(:disabled) {
+  background: transparent;
+  color: var(--color-text);
+  transform: none;
+}
+
+.plugin-overview-back:active:not(:disabled) {
   transform: none;
 }
 
@@ -1376,7 +1385,7 @@ button.settings-connection-row:focus-visible:not(:disabled) {
 .plugin-overview-title {
   display: grid;
   min-width: 0;
-  gap: 5px;
+  gap: 6px;
 }
 
 .plugin-overview-title h1,
@@ -1411,7 +1420,7 @@ button.settings-connection-row:focus-visible:not(:disabled) {
   flex: 0 0 auto;
   border: 1px solid var(--color-divider);
   border-radius: 6px;
-  background: var(--color-surface-soft);
+  background: transparent;
   padding: 8px 10px;
 }
 
@@ -1426,7 +1435,7 @@ button.settings-connection-row:focus-visible:not(:disabled) {
 .plugin-overview-layout {
   display: grid;
   min-width: 0;
-  grid-template-columns: minmax(0, 1fr) minmax(260px, 0.36fr);
+  grid-template-columns: minmax(0, 1fr) minmax(280px, 0.34fr);
   align-items: start;
   gap: 14px;
 }
@@ -1445,6 +1454,22 @@ button.settings-connection-row:focus-visible:not(:disabled) {
   border-radius: var(--radius);
   background: var(--color-component-background);
   padding: 18px;
+}
+
+.plugin-overview-main {
+  gap: 0;
+  padding: 0;
+}
+
+.plugin-overview-main-section {
+  display: grid;
+  min-width: 0;
+  gap: 16px;
+  padding: 18px;
+}
+
+.plugin-overview-main-section + .plugin-overview-main-section {
+  border-top: 1px solid var(--color-divider);
 }
 
 .plugin-overview-panel h2 {
@@ -1475,6 +1500,15 @@ button.settings-connection-row:focus-visible:not(:disabled) {
   font-size: 0.72rem;
 }
 
+.plugin-overview-header-capabilities {
+  margin-top: 2px;
+}
+
+.plugin-overview-header-capabilities span {
+  background: transparent;
+  padding: 4px 7px;
+}
+
 .plugin-overview-section-heading {
   display: flex;
   align-items: start;
@@ -1498,33 +1532,46 @@ button.settings-connection-row:focus-visible:not(:disabled) {
 
 .plugin-component-summary {
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 8px;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 10px;
   margin: 0;
 }
 
 .plugin-component-summary > div {
-  display: flex;
+  display: grid;
+  min-height: 112px;
   align-items: center;
-  justify-content: space-between;
+  justify-items: center;
+  align-content: center;
+  gap: 7px;
   border: 1px solid var(--color-divider);
-  background: var(--color-surface-soft);
-  padding: 10px 12px;
+  border-radius: 6px;
+  background: transparent;
+  padding: 12px;
+}
+
+.plugin-component-summary svg {
+  color: var(--color-icon);
 }
 
 .plugin-component-summary dt {
+  display: grid;
+  justify-items: center;
+  gap: 7px;
   color: var(--color-text-secondary);
   font-size: 0.76rem;
 }
 
 .plugin-component-summary dd {
   margin: 0;
-  font-size: 0.8rem;
+  color: var(--color-text);
+  font-size: 1.2rem;
   font-weight: 700;
 }
 
 .plugin-enabled-control {
   display: flex;
+  min-height: 42px;
   align-items: center;
   justify-content: space-between;
   gap: 10px;
@@ -1549,6 +1596,11 @@ button.settings-connection-row:focus-visible:not(:disabled) {
   padding-top: 14px;
 }
 
+.plugin-overview-management-actions .plugin-enabled-control {
+  border-bottom: 1px solid var(--color-divider);
+  padding-bottom: 14px;
+}
+
 .plugin-overview-management-actions > button {
   width: 100%;
   transform: none;
@@ -1556,6 +1608,15 @@ button.settings-connection-row:focus-visible:not(:disabled) {
 
 .plugin-overview-management-actions > button:hover:not(:disabled) {
   transform: none;
+}
+
+.plugin-overview-management-actions > button.danger {
+  border: 1px solid var(--color-error);
+  background: transparent;
+}
+
+.plugin-overview-management-actions > button.danger:hover:not(:disabled) {
+  background: rgb(var(--error-rgb) / 0.12);
 }
 
 .plugin-overview-panel .plugin-overview-policy {
@@ -1701,6 +1762,10 @@ button.settings-connection-row:focus-visible:not(:disabled) {
   .plugin-overview-header,
   .plugin-overview-section-heading {
     flex-direction: column;
+  }
+
+  .plugin-component-summary {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 }
 

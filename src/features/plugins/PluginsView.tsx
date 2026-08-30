@@ -5,13 +5,17 @@ import {
   CheckCircle2,
   Circle,
   CircleX,
+  GraduationCap,
+  LayoutGrid,
   Loader2,
   PackagePlus,
   Puzzle,
   RefreshCw,
   Search,
+  Server,
   ShieldAlert,
   Trash2,
+  Webhook,
 } from "lucide-react";
 import {
   useEffect,
@@ -486,7 +490,7 @@ function PluginOverviewPage({
       >
         <button
           ref={backButtonRef}
-          className="plugin-overview-back secondary"
+          className="plugin-overview-back"
           type="button"
           onClick={onBack}
         >
@@ -516,6 +520,20 @@ function PluginOverviewPage({
   );
   const status = pluginStatus(plugin);
   const capabilities = [...new Set(plugin.capabilities)];
+  const readinessItems = [
+    {
+      label: "Skills",
+      count: plugin.readiness.skills,
+      Icon: GraduationCap,
+    },
+    { label: "Apps", count: plugin.readiness.apps, Icon: LayoutGrid },
+    {
+      label: "MCP servers",
+      count: plugin.readiness.mcpServers,
+      Icon: Server,
+    },
+    { label: "Hooks", count: plugin.readiness.hooks, Icon: Webhook },
+  ];
 
   return (
     <section
@@ -524,7 +542,7 @@ function PluginOverviewPage({
     >
       <button
         ref={backButtonRef}
-        className="plugin-overview-back secondary"
+        className="plugin-overview-back"
         type="button"
         onClick={onBack}
       >
@@ -548,6 +566,18 @@ function PluginOverviewPage({
               <span aria-hidden="true">·</span>
               <span>{plugin.marketplaceName}</span>
             </p>
+            <div
+              className="plugin-overview-capabilities plugin-overview-header-capabilities"
+              aria-label="Plugin capabilities"
+            >
+              {capabilities.length > 0 ? (
+                capabilities.map((capability) => (
+                  <span key={capability}>{capability}</span>
+                ))
+              ) : (
+                <span>No capabilities listed</span>
+              )}
+            </div>
           </div>
         </div>
         <span className={`plugin-card-status ${status.toLocaleLowerCase()}`}>
@@ -577,56 +607,40 @@ function PluginOverviewPage({
 
       <div className="plugin-overview-layout">
         <div className="plugin-overview-content">
-          <section className="plugin-overview-panel">
-            <h2>Overview</h2>
-            <p>{plugin.description ?? "No plugin description is available."}</p>
-            <div
-              className="plugin-overview-capabilities"
-              aria-label="Plugin capabilities"
-            >
-              {capabilities.length > 0 ? (
-                capabilities.map((capability) => (
-                  <span key={capability}>{capability}</span>
-                ))
-              ) : (
-                <span>No capabilities listed</span>
-              )}
+          <section className="plugin-overview-panel plugin-overview-main">
+            <div className="plugin-overview-main-section">
+              <h2>Overview</h2>
+              <p>
+                {plugin.description ?? "No plugin description is available."}
+              </p>
             </div>
-          </section>
-
-          <section className="plugin-overview-panel">
-            <div className="plugin-overview-section-heading">
-              <div>
-                <h2>Component readiness</h2>
-                <p>
-                  Components exposed to Codex when this plugin is enabled.
-                </p>
+            <div className="plugin-overview-main-section">
+              <div className="plugin-overview-section-heading">
+                <div>
+                  <h2>Component readiness</h2>
+                  <p>
+                    Components exposed to Codex when this plugin is enabled.
+                  </p>
+                </div>
+                <strong>{componentTotal} total</strong>
               </div>
-              <strong>{componentTotal} total</strong>
+              <dl className="plugin-component-summary">
+                {readinessItems.map(({ label, count, Icon }) => (
+                  <div key={label}>
+                    <dt>
+                      <Icon size={22} aria-hidden="true" />
+                      <span>{label}</span>
+                    </dt>
+                    <dd>{count}</dd>
+                  </div>
+                ))}
+              </dl>
+              <p className="plugin-readiness-copy">
+                {componentTotal > 0
+                  ? `${componentTotal} component${componentTotal === 1 ? "" : "s"} reported ready.`
+                  : "Component readiness is checked when this plugin starts in a new task."}
+              </p>
             </div>
-            <dl className="plugin-component-summary">
-              <div>
-                <dt>Skills</dt>
-                <dd>{plugin.readiness.skills}</dd>
-              </div>
-              <div>
-                <dt>Apps</dt>
-                <dd>{plugin.readiness.apps}</dd>
-              </div>
-              <div>
-                <dt>MCP servers</dt>
-                <dd>{plugin.readiness.mcpServers}</dd>
-              </div>
-              <div>
-                <dt>Hooks</dt>
-                <dd>{plugin.readiness.hooks}</dd>
-              </div>
-            </dl>
-            <p className="plugin-readiness-copy">
-              {componentTotal > 0
-                ? `${componentTotal} component${componentTotal === 1 ? "" : "s"} reported ready.`
-                : "Component readiness is checked when this plugin starts in a new task."}
-            </p>
           </section>
         </div>
 
@@ -646,14 +660,18 @@ function PluginOverviewPage({
               <>
                 <label className="plugin-enabled-control">
                   <span>Enabled</span>
-                  <input
-                    type="checkbox"
-                    checked={plugin.enabled}
-                    disabled={busy || !plugin.available}
-                    onChange={(event) =>
-                      onEnabledChange(plugin, event.currentTarget.checked)
-                    }
-                  />
+                  <span className="settings-switch">
+                    <input
+                      type="checkbox"
+                      aria-label="Enabled"
+                      checked={plugin.enabled}
+                      disabled={busy || !plugin.available}
+                      onChange={(event) =>
+                        onEnabledChange(plugin, event.currentTarget.checked)
+                      }
+                    />
+                    <span aria-hidden="true" />
+                  </span>
                 </label>
                 {plugin.installPolicy !== "INSTALLED_BY_DEFAULT" ? (
                   <button
@@ -667,7 +685,7 @@ function PluginOverviewPage({
                     ) : (
                       <Trash2 size={15} aria-hidden="true" />
                     )}
-                    Uninstall
+                    Uninstall plugin
                   </button>
                 ) : null}
               </>

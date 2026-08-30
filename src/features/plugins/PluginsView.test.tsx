@@ -139,6 +139,15 @@ describe("PluginsView", () => {
     expect(within(overview).getByText("openai-bundled")).toBeVisible();
     expect(within(overview).getByText("Interactive")).toBeVisible();
     expect(within(overview).getByText("1 component reported ready.")).toBeVisible();
+    expect(
+      overview.querySelectorAll(".plugin-component-summary > div"),
+    ).toHaveLength(4);
+    expect(overview.querySelector(".plugin-overview-main")).toContainElement(
+      screen.getByRole("heading", { name: "Overview" }),
+    );
+    expect(overview.querySelector(".plugin-overview-main")).toContainElement(
+      screen.getByRole("heading", { name: "Component readiness" }),
+    );
 
     fireEvent.click(screen.getByRole("button", { name: "Install plugin" }));
     const dialog = screen.getByRole("dialog", { name: "Install Browser?" });
@@ -181,7 +190,7 @@ describe("PluginsView", () => {
     );
     expect(within(overview).getByText("Disabled by admin")).toBeVisible();
     expect(screen.getByRole("checkbox", { name: "Enabled" })).toBeDisabled();
-    fireEvent.click(screen.getByRole("button", { name: "Uninstall" }));
+    fireEvent.click(screen.getByRole("button", { name: "Uninstall plugin" }));
     expect(uninstall).toHaveBeenCalledWith(restricted);
     expect(setEnabled).not.toHaveBeenCalled();
   });
