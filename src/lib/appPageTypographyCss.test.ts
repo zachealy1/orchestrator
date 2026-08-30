@@ -5,6 +5,25 @@ import { readAppStyles } from "../test/readAppStyles";
 const css = readAppStyles();
 
 describe("primary page typography", () => {
+  it("uses one top-spacing contract for every primary page header", () => {
+    const root = postcss.parse(css);
+    let pageHeaderRule = "";
+
+    root.walkRules((rule) => {
+      if (
+        rule.selector.includes(".settings-page-header") &&
+        rule.selector.includes(".plugins-page-header") &&
+        rule.selector.includes(".analytics-page-header")
+      ) {
+        pageHeaderRule = rule.toString();
+      }
+    });
+
+    expect(pageHeaderRule).toContain("min-height: 64px");
+    expect(pageHeaderRule).toContain("align-items: center");
+    expect(pageHeaderRule).toContain("padding: 2px 0 4px");
+  });
+
   it("shares one title treatment across settings, analytics, and plugins", () => {
     const root = postcss.parse(css);
     let pageTitleRule = "";

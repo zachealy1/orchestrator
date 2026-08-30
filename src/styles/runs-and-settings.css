@@ -609,13 +609,15 @@ button.pending-interaction-nav:disabled {
   gap: 16px;
 }
 
-.settings-page-header {
+.settings-page-header,
+.plugins-page-header,
+.analytics-page-header {
   display: flex;
-  min-height: 60px;
+  min-height: 64px;
   align-items: center;
   justify-content: space-between;
   gap: 24px;
-  padding: 2px 2px 4px;
+  padding: 2px 0 4px;
 }
 
 .settings-page-header h1,
@@ -950,14 +952,6 @@ button.settings-connection-row:focus-visible:not(:disabled) {
   gap: 18px;
   margin: 0 auto;
   padding-bottom: 28px;
-}
-
-.plugins-page-header {
-  display: flex;
-  min-height: 64px;
-  align-items: center;
-  justify-content: space-between;
-  gap: 24px;
 }
 
 .plugins-refresh-button {
@@ -2090,14 +2084,6 @@ button.settings-navigation-row:focus-visible:not(:disabled) {
   min-width: 0;
   gap: 18px;
   color: var(--text);
-}
-
-.analytics-page-header {
-  display: flex;
-  gap: 24px;
-  align-items: flex-start;
-  justify-content: space-between;
-  padding: 4px 0 2px;
 }
 
 .analytics-page-heading {
