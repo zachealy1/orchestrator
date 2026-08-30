@@ -8,18 +8,25 @@ describe("settings connection styles", () => {
   it("matches Settings account avatars to the plugin avatar surface", () => {
     const root = postcss.parse(css);
     let avatarRule = "";
+    let pluginAvatarRule = "";
 
     root.walkRules((candidate) => {
       if (candidate.selector === ".settings-grid .account-mini-avatar") {
         avatarRule = candidate.toString();
       }
+      if (candidate.selector === ".plugin-logo") {
+        pluginAvatarRule = candidate.toString();
+      }
     });
 
-    expect(avatarRule).toContain("background: var(--color-surface-muted)");
-    expect(avatarRule).toContain("color: var(--color-icon)");
-    expect(avatarRule).toContain(
+    for (const declaration of [
+      "background: var(--color-surface-muted)",
+      "color: var(--color-icon)",
       "box-shadow: inset 0 0 0 1px var(--color-divider)",
-    );
+    ]) {
+      expect(avatarRule).toContain(declaration);
+      expect(pluginAvatarRule).toContain(declaration);
+    }
   });
 
   it("anchors Computer Use remediation to a labeled status popover", () => {
@@ -156,20 +163,30 @@ describe("settings connection styles", () => {
 
     const root = postcss.parse(css);
     let rowRule = "";
-    let interactionRule = "";
+    let hoverRule = "";
+    let focusRule = "";
     let interactiveTextColorRule = "";
     root.walkRules((candidate) => {
       if (candidate.selector === "button.settings-connection-row") {
         rowRule = candidate.toString();
       }
       if (
-        candidate.selector.includes("button.settings-connection-row:hover") &&
-        candidate.selector.includes("button.settings-connection-row:focus-visible") &&
+        candidate.selector ===
+        "button.settings-connection-row:hover:not(:disabled)"
+      ) {
+        hoverRule = candidate.toString();
+      }
+      if (
+        candidate.selector ===
+          "button.settings-connection-row:focus-visible:not(:disabled)" &&
         candidate.nodes.some(
-          (node) => node.type === "decl" && node.prop === "background",
+          (node) =>
+            node.type === "decl" &&
+            node.prop === "background" &&
+            node.value === "var(--color-button-active)",
         )
       ) {
-        interactionRule = candidate.toString();
+        focusRule = candidate.toString();
       }
       if (
         candidate.selector.includes("settings-connection-row") &&
@@ -186,8 +203,9 @@ describe("settings connection styles", () => {
 
     expect(rowRule).toContain("border-radius: 0");
     expect(rowRule).toContain("background: transparent");
-    expect(interactionRule).toContain("background: var(--color-button-active)");
-    expect(interactionRule).not.toContain("border-radius");
+    expect(hoverRule).toContain("background: var(--color-surface-soft)");
+    expect(hoverRule).not.toContain("border-radius");
+    expect(focusRule).toContain("background: var(--color-button-active)");
     expect(interactiveTextColorRule).toBe("");
   });
 

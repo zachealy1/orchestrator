@@ -895,9 +895,13 @@ button.settings-connection-row {
   transform: none;
 }
 
-button.settings-connection-row:hover:not(:disabled),
 button.settings-connection-row:focus-visible:not(:disabled) {
   background: var(--color-button-active);
+  transform: none;
+}
+
+button.settings-connection-row:hover:not(:disabled) {
+  background: var(--color-surface-soft);
   transform: none;
 }
 
