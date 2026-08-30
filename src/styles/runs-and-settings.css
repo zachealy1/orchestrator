@@ -2022,9 +2022,9 @@ button.analytics-filter-trigger > svg:last-child {
 }
 
 .analytics-workspace-menu > button[aria-checked="true"] .analytics-filter-check {
-  border-color: var(--line-strong);
-  background: var(--color-surface-muted);
-  color: var(--color-text);
+  border-color: var(--color-primary);
+  background: var(--color-primary);
+  color: var(--color-button-primary-text);
 }
 
 .analytics-workspace-menu-separator {
@@ -2066,7 +2066,7 @@ button.analytics-filter-trigger > svg:last-child {
 }
 
 .analytics-date-menu button.composer-select-option[aria-selected="true"] > svg {
-  color: var(--color-icon-muted);
+  color: var(--accent-2);
 }
 
 .analytics-metric-grid {

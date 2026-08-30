@@ -67,7 +67,7 @@ describe("analytics dropdown styles", () => {
     }
   });
 
-  it("uses neutral selected-option indicators", () => {
+  it("uses blue selected-option indicators", () => {
     const root = postcss.parse(css);
     let workspaceSelection = "";
     let dateSelection = "";
@@ -87,12 +87,13 @@ describe("analytics dropdown styles", () => {
       }
     });
 
-    expect(workspaceSelection).toContain("border-color: var(--line-strong)");
     expect(workspaceSelection).toContain(
-      "background: var(--color-surface-muted)",
+      "border-color: var(--color-primary)",
     );
-    expect(workspaceSelection).not.toContain("var(--color-primary)");
-    expect(dateSelection).toContain("color: var(--color-icon-muted)");
-    expect(dateSelection).not.toContain("var(--accent-2)");
+    expect(workspaceSelection).toContain("background: var(--color-primary)");
+    expect(workspaceSelection).toContain(
+      "color: var(--color-button-primary-text)",
+    );
+    expect(dateSelection).toContain("color: var(--accent-2)");
   });
 });
