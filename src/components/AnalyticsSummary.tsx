@@ -80,6 +80,7 @@ export function AnalyticsSummary({
           <ComposerSelect
             ariaLabel="Date range"
             className="analytics-date-select"
+            menuClassName="analytics-date-menu"
             value={range}
             options={RANGE_OPTIONS}
             placeholder="Choose a date range"

@@ -1893,8 +1893,8 @@ button.analytics-filter-trigger:hover:not(:disabled),
 button.analytics-filter-trigger:focus-visible,
 .analytics-workspace-filter.open button.analytics-filter-trigger {
   border-color: var(--line-strong);
-  background: var(--color-button-active);
-  box-shadow: 0 0 0 2px var(--dropdown-focus-ring);
+  background: var(--color-component-background);
+  box-shadow: none;
   transform: none;
 }
 
@@ -2016,8 +2016,9 @@ button.analytics-filter-trigger > svg:last-child {
 }
 
 .analytics-workspace-menu > button[aria-checked="true"] .analytics-filter-check {
-  border-color: var(--color-primary);
-  background: var(--color-primary);
+  border-color: var(--line-strong);
+  background: var(--color-surface-muted);
+  color: var(--color-text);
 }
 
 .analytics-workspace-menu-separator {
@@ -2036,12 +2037,25 @@ button.analytics-filter-trigger > svg:last-child {
   font-size: 0.86rem;
 }
 
+.analytics-date-select button.composer-select-trigger:hover:not(:disabled),
+.analytics-date-select button.composer-select-trigger:active:not(:disabled),
+.analytics-date-select button.composer-select-trigger:focus-visible,
+.analytics-date-select.open button.composer-select-trigger {
+  background: transparent;
+  box-shadow: none;
+  transform: none;
+}
+
 .analytics-date-select:hover:not(.disabled),
 .analytics-date-select.open,
 .analytics-date-select:focus-within {
   border-color: var(--line-strong);
-  background: var(--color-button-active);
-  box-shadow: 0 0 0 2px var(--dropdown-focus-ring);
+  background: var(--color-component-background);
+  box-shadow: none;
+}
+
+.analytics-date-menu button.composer-select-option[aria-selected="true"] > svg {
+  color: var(--color-icon-muted);
 }
 
 .analytics-metric-grid {

@@ -83,6 +83,9 @@ describe("AnalyticsSummary", () => {
     expect(onWorkspaceFilterChange).toHaveBeenCalledWith([1]);
 
     await user.click(screen.getByRole("combobox", { name: "Date range" }));
+    expect(screen.getByRole("listbox", { name: "Date range options" })).toHaveClass(
+      "analytics-date-menu",
+    );
     await user.click(screen.getByRole("option", { name: "Last 90 days" }));
     expect(onRangeChange).toHaveBeenCalledWith("90d");
   });

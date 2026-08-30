@@ -28,6 +28,7 @@ type Props = {
   icon: ReactNode;
   disabled?: boolean;
   className?: string;
+  menuClassName?: string;
   onChange: (value: string) => void;
   onAction?: (actionId: string) => void;
 };
@@ -42,6 +43,7 @@ export function ComposerSelect({
   icon,
   disabled = false,
   className = "",
+  menuClassName = "",
   onChange,
   onAction,
 }: Props) {
@@ -262,7 +264,7 @@ export function ComposerSelect({
       {open
         ? createPortal(
             <div
-              className={`composer-select-menu ${placement}`}
+              className={`composer-select-menu ${menuClassName} ${placement}`}
               id={menuId}
               role="listbox"
               aria-label={`${ariaLabel} options`}
