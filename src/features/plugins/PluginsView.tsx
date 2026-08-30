@@ -721,7 +721,7 @@ const PluginCard = memo(function PluginCard({
         <div className="plugin-card-actions">
           {!plugin.installed ? (
             <button
-              className="secondary plugin-card-install-button"
+              className="plugin-card-install-button"
               type="button"
               aria-label={
                 busy

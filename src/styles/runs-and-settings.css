@@ -1342,12 +1342,15 @@ button.settings-connection-row:focus-visible:not(:disabled) {
   min-width: 32px;
   height: 32px;
   min-height: 32px;
+  background: var(--color-button-primary);
+  color: var(--color-button-primary-text);
   place-items: center;
   padding: 0;
   transform: none;
 }
 
 .plugin-card-install-button:hover:not(:disabled) {
+  background: var(--color-primary);
   transform: none;
 }
 

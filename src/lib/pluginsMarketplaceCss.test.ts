@@ -103,6 +103,15 @@ describe("plugin marketplace styles", () => {
     expect(ruleFor(".plugin-card-capability-count")).toBe("");
     expect(ruleFor(".plugin-card-install-button")).toContain("width: 32px");
     expect(ruleFor(".plugin-card-install-button")).toContain("padding: 0");
+    expect(ruleFor(".plugin-card-install-button")).toContain(
+      "background: var(--color-button-primary)",
+    );
+    expect(ruleFor(".plugin-card-install-button")).toContain(
+      "color: var(--color-button-primary-text)",
+    );
+    expect(ruleFor(".plugin-card-install-button:hover:not(:disabled)")).toContain(
+      "background: var(--color-primary)",
+    );
     expect(css).not.toContain(".plugin-card-actions .link-button");
     expect(css).not.toContain(".plugin-card-details-button");
     expect(ruleFor(".plugins-pagination button")).toContain("width: 28px");
