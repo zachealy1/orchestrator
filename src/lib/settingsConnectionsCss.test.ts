@@ -5,6 +5,23 @@ import { readAppStyles } from "../test/readAppStyles";
 const css = readAppStyles();
 
 describe("settings connection styles", () => {
+  it("matches Settings account avatars to the plugin avatar surface", () => {
+    const root = postcss.parse(css);
+    let avatarRule = "";
+
+    root.walkRules((candidate) => {
+      if (candidate.selector === ".settings-grid .account-mini-avatar") {
+        avatarRule = candidate.toString();
+      }
+    });
+
+    expect(avatarRule).toContain("background: var(--color-surface-muted)");
+    expect(avatarRule).toContain("color: var(--color-icon)");
+    expect(avatarRule).toContain(
+      "box-shadow: inset 0 0 0 1px var(--color-divider)",
+    );
+  });
+
   it("anchors Computer Use remediation to a labeled status popover", () => {
     const root = postcss.parse(css);
     let triggerRule = "";
