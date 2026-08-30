@@ -1281,7 +1281,8 @@ button.settings-connection-row:focus-visible:not(:disabled) {
 
 .plugin-card-footer {
   display: flex;
-  min-height: 48px;
+  min-height: 49px;
+  flex: 0 0 auto;
   flex-wrap: nowrap;
   align-items: center;
   justify-content: space-between;
@@ -1294,6 +1295,7 @@ button.settings-connection-row:focus-visible:not(:disabled) {
 .plugin-card-metadata {
   display: inline-flex;
   min-width: 0;
+  overflow: hidden;
   align-items: center;
   gap: 7px;
   color: var(--color-text-secondary);
@@ -1305,9 +1307,12 @@ button.settings-connection-row:focus-visible:not(:disabled) {
   min-width: 0;
   align-items: center;
   gap: 7px;
+  overflow: hidden;
   color: var(--color-text-secondary);
   font-size: 0.73rem;
   font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .plugin-card-status svg {

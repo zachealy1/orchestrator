@@ -97,8 +97,11 @@ describe("plugin marketplace styles", () => {
     expect(ruleFor(".plugin-card-main,\n.plugin-card-footer")).toBe("");
     expect(ruleFor(".plugin-card-select-target")).toBe("");
     expect(ruleFor(".plugin-logo img")).toContain("grid-area: 1 / 1");
-    expect(ruleFor(".plugin-card-footer")).toContain("min-height: 48px");
+    expect(ruleFor(".plugin-card-footer")).toContain("min-height: 49px");
+    expect(ruleFor(".plugin-card-footer")).toContain("flex: 0 0 auto");
     expect(ruleFor(".plugin-card-footer")).toContain("flex-wrap: nowrap");
+    expect(ruleFor(".plugin-card-metadata")).toContain("overflow: hidden");
+    expect(ruleFor(".plugin-card-status")).toContain("text-overflow: ellipsis");
     expect(ruleFor(".plugin-card-tags")).toBe("");
     expect(ruleFor(".plugin-card-capability-count")).toBe("");
     expect(ruleFor(".plugin-card-install-button")).toContain("width: 32px");
