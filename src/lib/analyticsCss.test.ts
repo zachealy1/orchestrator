@@ -8,7 +8,9 @@ describe("analytics dropdown styles", () => {
   it("uses neutral trigger states without a blue focus ring", () => {
     const root = postcss.parse(css);
     let workspaceTriggerState = "";
+    let workspaceTriggerHover = "";
     let dateTriggerState = "";
+    let dateTriggerHover = "";
     let dateButtonState = "";
 
     root.walkRules((candidate) => {
@@ -21,10 +23,21 @@ describe("analytics dropdown styles", () => {
         workspaceTriggerState = candidate.toString();
       }
       if (
+        candidate.selector ===
+        "button.analytics-filter-trigger:hover:not(:disabled)"
+      ) {
+        workspaceTriggerHover = candidate.toString();
+      }
+      if (
         candidate.selector.includes(".analytics-date-select.open") &&
         candidate.selector.includes(".analytics-date-select:focus-within")
       ) {
         dateTriggerState = candidate.toString();
+      }
+      if (
+        candidate.selector === ".analytics-date-select:hover:not(.disabled)"
+      ) {
+        dateTriggerHover = candidate.toString();
       }
       if (
         candidate.selector.includes(
@@ -47,6 +60,11 @@ describe("analytics dropdown styles", () => {
     expect(dateButtonState).toContain("background: transparent");
     expect(dateButtonState).toContain("box-shadow: none");
     expect(dateButtonState).not.toContain("var(--color-button-active)");
+    for (const rule of [workspaceTriggerHover, dateTriggerHover]) {
+      expect(rule).toContain("background: var(--color-button-active)");
+      expect(rule).toContain("box-shadow: none");
+      expect(rule).not.toContain("var(--dropdown-focus-ring)");
+    }
   });
 
   it("uses neutral selected-option indicators", () => {

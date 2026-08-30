@@ -1889,11 +1889,17 @@ button.analytics-filter-trigger {
   padding: 0 10px 0 12px;
 }
 
-button.analytics-filter-trigger:hover:not(:disabled),
 button.analytics-filter-trigger:focus-visible,
 .analytics-workspace-filter.open button.analytics-filter-trigger {
   border-color: var(--line-strong);
   background: var(--color-component-background);
+  box-shadow: none;
+  transform: none;
+}
+
+button.analytics-filter-trigger:hover:not(:disabled) {
+  border-color: var(--line-strong);
+  background: var(--color-button-active);
   box-shadow: none;
   transform: none;
 }
@@ -2046,11 +2052,16 @@ button.analytics-filter-trigger > svg:last-child {
   transform: none;
 }
 
-.analytics-date-select:hover:not(.disabled),
 .analytics-date-select.open,
 .analytics-date-select:focus-within {
   border-color: var(--line-strong);
   background: var(--color-component-background);
+  box-shadow: none;
+}
+
+.analytics-date-select:hover:not(.disabled) {
+  border-color: var(--line-strong);
+  background: var(--color-button-active);
   box-shadow: none;
 }
 
