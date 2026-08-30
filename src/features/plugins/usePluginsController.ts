@@ -38,7 +38,10 @@ export function usePluginsController(input: { enabled: boolean }) {
     string | null
   >(null);
 
-  const refresh = useCallback(async (forceRefetch = false) => {
+  const refresh = useCallback(async (
+    forceRefetch = false,
+    foreground = false,
+  ) => {
     setLoading(true);
     setError(null);
     try {
@@ -46,11 +49,19 @@ export function usePluginsController(input: { enabled: boolean }) {
       markPluginPerformance("catalog-live-ready", {
         count: nextCatalog.plugins.length,
       });
-      startTransition(() => {
+      const applyCatalog = () => {
         setCatalog((current) => reconcilePluginCatalog(current, nextCatalog));
-      });
+      };
+      if (foreground) {
+        applyCatalog();
+      } else {
+        startTransition(applyCatalog);
+      }
+      return nextCatalog;
     } catch (reason) {
       setError(errorMessage(reason));
+      if (foreground) throw reason;
+      return null;
     } finally {
       setLoading(false);
     }
@@ -95,24 +106,31 @@ export function usePluginsController(input: { enabled: boolean }) {
       setError(null);
       setNotice(null);
       try {
+        let successNotice: string;
         if (action === "install") {
           const result = await installCodexPlugin(plugin);
-          setNotice(
+          successNotice =
             result.authenticationRequired
               ? `Installed ${plugin.displayName}. Connect ${result.authenticationTargets.join(", ")} before using it.`
-              : `Installed ${plugin.displayName}. It will be available to new tasks.`,
-          );
+              : `Installed ${plugin.displayName}. It will be available to new tasks.`;
         } else if (action === "uninstall") {
           await uninstallCodexPlugin(plugin.id);
-          setNotice(`Uninstalled ${plugin.displayName}.`);
+          successNotice = `Uninstalled ${plugin.displayName}.`;
         } else {
           const enabled = action === "enable";
           await setCodexPluginEnabled(plugin.id, enabled);
-          setNotice(
-            `${enabled ? "Enabled" : "Disabled"} ${plugin.displayName}. The change applies to new tasks.`,
+          successNotice = `${enabled ? "Enabled" : "Disabled"} ${plugin.displayName}. The change applies to new tasks.`;
+        }
+        const refreshedCatalog = await refresh(true, true);
+        if (
+          !refreshedCatalog ||
+          !pluginMutationConfirmed(refreshedCatalog, plugin.id, action)
+        ) {
+          throw new Error(
+            `Couldn’t verify the updated state for ${plugin.displayName}. Refresh Plugins and try again.`,
           );
         }
-        await refresh(true);
+        setNotice(successNotice);
       } catch (reason) {
         setError(errorMessage(reason));
       } finally {
@@ -157,4 +175,17 @@ export function usePluginsController(input: { enabled: boolean }) {
 
 function errorMessage(value: unknown) {
   return value instanceof Error ? value.message : String(value);
+}
+
+function pluginMutationConfirmed(
+  catalog: CodexPluginCatalog,
+  pluginId: string,
+  action: NonNullable<PluginMutationState>["action"],
+) {
+  const plugin = catalog.plugins.find((candidate) => candidate.id === pluginId);
+  if (action === "uninstall") return !plugin?.installed;
+  if (!plugin?.installed) return false;
+  if (action === "enable") return plugin.enabled;
+  if (action === "disable") return !plugin.enabled;
+  return true;
 }

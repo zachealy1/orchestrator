@@ -28,7 +28,7 @@ function deferred<T>() {
   return { promise, resolve };
 }
 
-function catalog(id: string): CodexPluginCatalog {
+function catalog(id: string, installed = true): CodexPluginCatalog {
   const plugin = {
     id: `${id}@openai-bundled`,
     name: id,
@@ -37,8 +37,8 @@ function catalog(id: string): CodexPluginCatalog {
     marketplaceName: "openai-bundled",
     marketplacePath: null,
     version: "1.0.0",
-    installed: true,
-    enabled: true,
+    installed,
+    enabled: installed,
     installPolicy: "AVAILABLE" as const,
     authPolicy: "ON_USE" as const,
     mustShowInstallationInterstitial: false,
@@ -106,5 +106,70 @@ describe("usePluginsController", () => {
     await waitFor(() => expect(result.current.loading).toBe(false));
     expect(result.current.catalog).toBe(cached);
     expect(result.current.catalog.plugins[0]).toBe(cached.plugins[0]);
+  });
+
+  it("publishes install success only after the refreshed catalog confirms installation", async () => {
+    const beforeInstall = catalog("messages", false);
+    const afterInstall = catalog("messages", true);
+    const confirmation = deferred<CodexPluginCatalog>();
+    vi.mocked(readCachedCodexPlugins).mockReturnValue(beforeInstall);
+    vi.mocked(listCodexPlugins)
+      .mockResolvedValueOnce(beforeInstall)
+      .mockReturnValueOnce(confirmation.promise);
+    vi.mocked(installCodexPlugin).mockResolvedValue({
+      authenticationRequired: false,
+      authenticationTargets: [],
+    });
+
+    const { result } = renderHook(() =>
+      usePluginsController({ enabled: true }),
+    );
+    await waitFor(() => expect(result.current.loading).toBe(false));
+
+    act(() => {
+      void result.current.install(beforeInstall.plugins[0]);
+    });
+    await waitFor(() =>
+      expect(listCodexPlugins).toHaveBeenLastCalledWith({ forceRefetch: true }),
+    );
+    expect(result.current.notice).toBeNull();
+    expect(result.current.mutation).toEqual({
+      pluginId: "messages@openai-bundled",
+      action: "install",
+    });
+
+    act(() => confirmation.resolve(afterInstall));
+    await waitFor(() =>
+      expect(result.current.notice).toBe(
+        "Installed messages. It will be available to new tasks.",
+      ),
+    );
+    expect(result.current.catalog.plugins[0].installed).toBe(true);
+    expect(result.current.mutation).toBeNull();
+  });
+
+  it("does not publish install success when installation cannot be confirmed", async () => {
+    const unavailable = catalog("messages", false);
+    vi.mocked(readCachedCodexPlugins).mockReturnValue(unavailable);
+    vi.mocked(listCodexPlugins).mockResolvedValue(unavailable);
+    vi.mocked(installCodexPlugin).mockResolvedValue({
+      authenticationRequired: false,
+      authenticationTargets: [],
+    });
+
+    const { result } = renderHook(() =>
+      usePluginsController({ enabled: true }),
+    );
+    await waitFor(() => expect(result.current.loading).toBe(false));
+
+    act(() => {
+      void result.current.install(unavailable.plugins[0]);
+    });
+    await waitFor(() => expect(result.current.mutation).toBeNull());
+
+    expect(result.current.notice).toBeNull();
+    expect(result.current.error).toContain(
+      "Couldn’t verify the updated state for messages",
+    );
   });
 });
