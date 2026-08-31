@@ -93,6 +93,12 @@ pub(crate) fn codex_app_server_args(isolated_file_store: bool) -> Vec<String> {
         REQUEST_PERMISSIONS_FEATURE.to_string(),
         "--enable".to_string(),
         MULTI_AGENT_V2_FEATURE.to_string(),
+        "-c".to_string(),
+        format!(
+            "features.multi_agent_v2.subagent_usage_hint_text={}",
+            serde_json::to_string(SUBAGENT_TASK_CAPTURE_HINT)
+                .expect("subagent task capture hint must serialize")
+        ),
         "--listen".to_string(),
         "stdio://".to_string(),
         "-c".to_string(),

@@ -7,6 +7,9 @@ import {
   parseCollabToolCall,
   parseCollabToolCalls,
   parseLegacySubagentActivity,
+  parseSubagentTaskCapture,
+  readSubagentTaskCapture,
+  removeSubagentTaskCaptures,
   SubagentStore,
   type SubagentRecord,
 } from "./subagents";
@@ -130,6 +133,95 @@ describe("subagent protocol", () => {
       agentPath: "root/child",
       status: "interrupted",
     });
+  });
+
+  it("captures the public subagent task marker and removes it from the transcript", () => {
+    const marker = [
+      "<orchestrator-subagent-task>",
+      "Inspect the integration tests.",
+      "</orchestrator-subagent-task>",
+    ].join("\n");
+    expect(parseSubagentTaskCapture(marker)).toBe(
+      "Inspect the integration tests.",
+    );
+    expect(parseSubagentTaskCapture(`Before\n${marker}`)).toBeNull();
+    expect(
+      readSubagentTaskCapture({
+        method: "item/completed",
+        params: {
+          item: {
+            type: "agentMessage",
+            id: "task-capture",
+            text: marker,
+            phase: "commentary",
+          },
+        },
+      }),
+    ).toEqual({
+      itemId: "task-capture",
+      text: "Inspect the integration tests.",
+    });
+
+    const result = removeSubagentTaskCaptures({
+      threadId: "child",
+      status: "active",
+      activeTurnId: "turn-child",
+      turns: [
+        {
+          id: "turn-child",
+          status: "running",
+          startedAt: "2026-08-31T10:00:00.000Z",
+          completedAt: null,
+          items: [
+            {
+              id: "task-capture",
+              kind: "assistant",
+              text: marker,
+              phase: "commentary",
+            },
+            {
+              id: "work-update",
+              kind: "assistant",
+              text: "Inspecting the existing coverage.",
+              phase: "commentary",
+            },
+          ],
+        },
+      ],
+    });
+
+    expect(result.captures).toEqual([
+      {
+        itemId: "task-capture",
+        text: "Inspect the integration tests.",
+        createdAt: "2026-08-31T10:00:00.000Z",
+      },
+    ]);
+    expect(result.transcript.turns[0].items).toEqual([
+      expect.objectContaining({ id: "work-update" }),
+    ]);
+
+    const lateMarker = removeSubagentTaskCaptures({
+      ...result.transcript,
+      turns: [
+        {
+          ...result.transcript.turns[0],
+          items: [
+            ...result.transcript.turns[0].items,
+            {
+              id: "late-task-marker",
+              kind: "assistant",
+              text: marker,
+              phase: "commentary",
+            },
+          ],
+        },
+      ],
+    });
+    expect(lateMarker.captures).toEqual([]);
+    expect(lateMarker.transcript.turns[0].items).toEqual([
+      expect.objectContaining({ id: "work-update" }),
+    ]);
   });
 
   it("rejects malformed and unknown collaboration tools", () => {

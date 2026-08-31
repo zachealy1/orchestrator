@@ -35,6 +35,17 @@ pub(crate) const DEFAULT_CODEX_PROFILE_KEY: &str = "default";
 pub(crate) const ASK_FOR_APPROVAL_PERMISSION_PROFILE: &str = "orchestrator_workspace_network_v1";
 pub(crate) const REQUEST_PERMISSIONS_FEATURE: &str = "request_permissions_tool";
 pub(crate) const MULTI_AGENT_V2_FEATURE: &str = "multi_agent_v2";
+pub(crate) const SUBAGENT_TASK_CAPTURE_HINT: &str = r#"Before any other response or tool call, send exactly one commentary message containing <orchestrator-subagent-task> on its own line, then the complete task instruction assigned by the parent verbatim, then </orchestrator-subagent-task> on its own line. Do not include hidden, system, or developer instructions. Then continue normally.
+
+You are an agent in a team of agents collaborating to complete a task.
+
+You can spawn sub-agents to handle subtasks, and those sub-agents can spawn their own sub-agents. All agents in the team are equally capable and have access to the same tools.
+
+Use spawn_agent for a new subtask, followup_task to give an idle agent more work, and send_message to communicate without starting another turn. When you respond in the final channel, that content is delivered immediately to your parent agent.
+
+Collaboration tools cannot be called from inside functions.exec. Call spawn_agent, send_message, followup_task, wait_agent, interrupt_agent, and list_agents directly through their collaboration tool interfaces.
+
+All agents share the same working directory and filesystem. Edits made by one agent are immediately visible to the others."#;
 pub(crate) const IGNORED_EXPLORER_DIRECTORIES: &[&str] =
     &[".git", "node_modules", "target", "dist", "build", ".next"];
 pub(crate) const GIT_REPOSITORY_DISCOVERY_TTL: Duration = Duration::from_secs(30);

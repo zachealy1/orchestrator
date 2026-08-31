@@ -478,7 +478,114 @@ describe("Application runtime scenarios 7", () => {
           text: "Inspect the integration tests",
         }),
       );
+  });
+
+  it("captures a legacy-shaped spawn prompt from the child's public transcript", async () => {
+    prepareSignedInRun();
+    const capturedTask = "Inspect the integration tests and report gaps.";
+    const taskMarker = [
+      "<orchestrator-subagent-task>",
+      capturedTask,
+      "</orchestrator-subagent-task>",
+    ].join("\n");
+    mocks.readProjectedSubagentThreadMock.mockResolvedValue({
+      threadId: "captured-child-thread",
+      status: "active",
+      activeTurnId: "captured-child-turn",
+      turns: [
+        {
+          id: "captured-child-turn",
+          status: "running",
+          startedAt: "2026-08-31T10:00:00.000Z",
+          completedAt: null,
+          items: [
+            {
+              id: "captured-task-item",
+              kind: "assistant",
+              text: taskMarker,
+              phase: "commentary",
+            },
+            {
+              id: "captured-work-item",
+              kind: "assistant",
+              text: "Inspecting the existing coverage.",
+              phase: "commentary",
+            },
+          ],
+        },
+      ],
     });
+
+    const { user } = await renderApp();
+    await startMockRun(user, "Coordinate the implementation");
+    await emitCodexNotification({
+      method: "item/started",
+      params: {
+        threadId: "thread-1",
+        turnId: "turn-1",
+        item: {
+          type: "subAgentActivity",
+          id: "captured-legacy-spawn",
+          kind: "started",
+          agentThreadId: "captured-child-thread",
+          agentPath: "/root/explorer",
+        },
+      },
+    });
+    await emitCodexNotification({
+      method: "item/completed",
+      params: {
+        threadId: "captured-child-thread",
+        turnId: "captured-child-turn",
+        item: {
+          type: "agentMessage",
+          id: "captured-task-item",
+          text: taskMarker,
+          phase: "commentary",
+        },
+      },
+    });
+
+    await waitFor(() =>
+      expect(mocks.upsertRunSubagentMock).toHaveBeenCalledWith(
+        expect.objectContaining({
+          childThreadId: "captured-child-thread",
+          task: capturedTask,
+        }),
+      ),
+    );
+    expect(mocks.upsertRunSubagentInstructionMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        kind: "spawn",
+        text: capturedTask,
+      }),
+    );
+
+    await user.click(
+      screen.getByRole("button", {
+        name: /Subagents, 1 active · 0 completed/i,
+      }),
+    );
+    await user.click(
+      screen.getByRole("button", {
+        name: new RegExp(`${capturedTask}.*Open inspector`, "i"),
+      }),
+    );
+
+    expect(
+      await screen.findByText("Inspecting the existing coverage."),
+    ).toBeInTheDocument();
+    const inspector = screen.getByLabelText(
+      `Subagent inspector: ${capturedTask}`,
+    );
+    expect(
+      within(inspector).getByRole("region", { name: "Task prompt" }),
+    ).toHaveTextContent(capturedTask);
+    expect(inspector).not.toHaveTextContent("orchestrator-subagent-task");
+    expect(inspector).not.toHaveTextContent(
+      "Original prompt unavailable for this older subagent.",
+    );
+  });
 
   it("reconciles a finished legacy subagent and ignores its stale running event", async () => {
       prepareSignedInRun();

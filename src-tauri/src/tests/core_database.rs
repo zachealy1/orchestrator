@@ -362,6 +362,11 @@ fn app_server_profiles_enable_network_without_full_access() {
     assert!(shared_args
         .windows(2)
         .any(|args| args == ["--enable", MULTI_AGENT_V2_FEATURE]));
+    assert!(shared_args.windows(2).any(|args| {
+        args[0] == "-c"
+            && args[1].starts_with("features.multi_agent_v2.subagent_usage_hint_text=")
+            && args[1].contains("<orchestrator-subagent-task>")
+    }));
     assert!(shared_args
         .windows(2)
         .any(|args| args == ["--listen", "stdio://"]));

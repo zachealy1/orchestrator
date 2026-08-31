@@ -257,6 +257,8 @@ import {
   lifecycleFromSubagentTranscript,
   parseCollabToolCalls,
   parseLegacySubagentActivity,
+  readSubagentTaskCapture,
+  removeSubagentTaskCaptures,
   subagentConversationKey,
   type CollabToolName,
   type SubagentInstruction,
@@ -672,7 +674,11 @@ function normalizeSubagentPrompt(value: string) {
 }
 
 function isDerivedSubagentInstructionId(id: string) {
-  return id.includes(":projected:") || id.endsWith(":prompt");
+  return (
+    id.includes(":projected:") ||
+    id.includes(":captured:") ||
+    id.endsWith(":prompt")
+  );
 }
 
 function mergeSubagentInstructions(
@@ -1328,7 +1334,7 @@ function App() {
         record.profileKey as CodexProfileKey,
         record.accountId,
       );
-      const [transcript, persistedInstructions] = await Promise.all([
+      const [projectedTranscript, persistedInstructions] = await Promise.all([
         readProjectedSubagentThread({
           accountId: record.accountId,
           profileKey: record.profileKey,
@@ -1342,6 +1348,17 @@ function App() {
       ]);
       const rememberedInstructions =
         subagentInstructionsRef.current.get(record.id) ?? [];
+      const { transcript, captures } =
+        removeSubagentTaskCaptures(projectedTranscript);
+      const capturedInstructions = captures.map(
+        (capture): SubagentInstruction => ({
+          id: `${record.id}:captured:${capture.itemId}:spawn`,
+          subagentId: record.id,
+          kind: "spawn",
+          text: capture.text,
+          createdAt: capture.createdAt ?? record.startedAt,
+        }),
+      );
       const taskInstruction = isVisibleSubagentPrompt(record.task)
         ? [
             {
@@ -1356,6 +1373,7 @@ function App() {
       const knownInstructions = mergeSubagentInstructions(
         persistedInstructions,
         rememberedInstructions,
+        capturedInstructions,
         taskInstruction,
       );
       let hasInitialPrompt = knownInstructions.some(
@@ -6560,7 +6578,9 @@ function App() {
       message.method,
       readSubagentTurnStatus(message),
     );
-    const visibleResult = readSubagentVisibleResult(message);
+    const visibleResult = readSubagentTaskCapture(message)
+      ? null
+      : readSubagentVisibleResult(message);
     const failed = lifecycle === "failed" || message.method === "error";
     const status =
       lifecycle ??
@@ -16423,9 +16443,29 @@ function App() {
       if (method === "item/started" || method === "item/completed") {
         applyInteractionLifecycleNotification(control, method, params);
       }
+      const capturedTask = isVisibleSubagentPrompt(childRecord.task)
+        ? null
+        : readSubagentTaskCapture(message);
+      const recordWithCapturedTask = capturedTask
+        ? {
+            ...childRecord,
+            task: capturedTask.text,
+            updatedAt: new Date().toISOString(),
+          }
+        : childRecord;
+      if (capturedTask) {
+        saveSubagentRecord(recordWithCapturedTask);
+        persistSubagentInstruction(recordWithCapturedTask, {
+          id: `${recordWithCapturedTask.id}:captured:${capturedTask.itemId}:spawn`,
+          subagentId: recordWithCapturedTask.id,
+          kind: "spawn",
+          text: capturedTask.text,
+          createdAt: recordWithCapturedTask.startedAt,
+        });
+      }
       const updatedChild = updateSubagentFromNotification(
         control,
-        childRecord,
+        recordWithCapturedTask,
         message,
       );
       if (

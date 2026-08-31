@@ -95,6 +95,15 @@ export type SubagentTranscript = {
   instructions?: SubagentInstruction[];
 };
 
+export const SUBAGENT_TASK_CAPTURE_START = "<orchestrator-subagent-task>";
+export const SUBAGENT_TASK_CAPTURE_END = "</orchestrator-subagent-task>";
+
+export type SubagentTaskCapture = {
+  itemId: string;
+  text: string;
+  createdAt: string | null;
+};
+
 export type SubagentComposerModel = {
   records: SubagentRecord[];
   activeCount: number;
@@ -386,6 +395,70 @@ export function parseCollabToolCall(
   message: CodexMessage,
 ): ParsedCollabToolCall | null {
   return parseCollabToolCalls(message)[0] ?? null;
+}
+
+export function parseSubagentTaskCapture(value: string) {
+  const message = value.trim();
+  if (
+    !message.startsWith(SUBAGENT_TASK_CAPTURE_START) ||
+    !message.endsWith(SUBAGENT_TASK_CAPTURE_END)
+  ) {
+    return null;
+  }
+  const task = message
+    .slice(
+      SUBAGENT_TASK_CAPTURE_START.length,
+      message.length - SUBAGENT_TASK_CAPTURE_END.length,
+    )
+    .trim();
+  return task || null;
+}
+
+export function readSubagentTaskCapture(
+  message: CodexMessage,
+): Omit<SubagentTaskCapture, "createdAt"> | null {
+  if (message.method !== "item/started" && message.method !== "item/completed") {
+    return null;
+  }
+  const item = readRecord(readRecord(message.params).item);
+  if (item.type !== "agentMessage") return null;
+  const itemId = readString(item.id);
+  const text = readString(item.text);
+  const task = text ? parseSubagentTaskCapture(text) : null;
+  return itemId && task ? { itemId, text: task } : null;
+}
+
+export function removeSubagentTaskCaptures(
+  transcript: SubagentTranscript,
+) {
+  const captures: SubagentTaskCapture[] = [];
+  let changed = false;
+  let captureEligible = true;
+  const turns = transcript.turns.map((turn) => {
+    const items = turn.items.filter((item) => {
+      if (item.kind === "assistant") {
+        const task = parseSubagentTaskCapture(item.text);
+        if (task) {
+          if (captureEligible && captures.length === 0) {
+            captures.push({
+              itemId: item.id,
+              text: task,
+              createdAt: turn.startedAt,
+            });
+          }
+          changed = true;
+          return false;
+        }
+      }
+      if (item.kind !== "reasoning") captureEligible = false;
+      return true;
+    });
+    return items.length === turn.items.length ? turn : { ...turn, items };
+  });
+  return {
+    transcript: changed ? { ...transcript, turns } : transcript,
+    captures,
+  };
 }
 
 export function parseCollabToolCalls(
