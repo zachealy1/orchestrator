@@ -1,4 +1,5 @@
 import {
+  Bug,
   ChevronDown,
   ChevronRight,
   LogIn,
@@ -39,6 +40,7 @@ export type CodexAccountCardActions = {
   addAccount: () => void;
   manageAccounts: () => void;
   refreshAccount: () => void;
+  reportBug: () => void;
   logout: () => void;
   login: () => void;
   cancelLogin: () => void;
@@ -155,6 +157,14 @@ export const CodexAccountCard = memo(function CodexAccountCard({
               </div>
               <div className="account-menu-separator" />
               <div className="account-menu-group">
+                <button
+                  className="account-menu-action"
+                  type="button"
+                  onClick={actions.reportBug}
+                >
+                  <Bug size={16} />
+                  Report a bug
+                </button>
                 <button
                   className="account-menu-action"
                   type="button"

@@ -637,6 +637,8 @@ type PendingTurnAccessValidation = {
 
 const TURN_ACCESS_VALIDATION_TIMEOUT_MS = 5_000;
 const GOAL_TURN_START_TIMEOUT_MS = 5_000;
+const ORCHESTRATOR_BUG_REPORT_URL =
+  "https://github.com/zachealy1/orchestrator/issues/new";
 
 type PendingGoalTurnStart = {
   threadId: string;
@@ -1110,6 +1112,7 @@ function App() {
   const [applicationStatusAnchorElement, setApplicationStatusAnchorElement] =
     useState<HTMLDivElement | null>(null);
   const browserDataFeedbackRevisionRef = useRef(0);
+  const bugReportFeedbackRevisionRef = useRef(0);
   const {
     computerUseEnabled,
     setComputerUseEnabled,
@@ -19880,6 +19883,23 @@ function App() {
       throw error;
     }
   });
+  const handleReportBug = useStableEvent(() => {
+    setAccountMenuOpen(false);
+    applicationNotifications.dismiss("bug-report-feedback");
+    void Promise.resolve()
+      .then(() => openUrl(ORCHESTRATOR_BUG_REPORT_URL))
+      .catch((error) => {
+        applicationNotifications.publish({
+          id: "bug-report-feedback",
+          revisionKey: String(++bugReportFeedbackRevisionRef.current),
+          tone: "warning",
+          title: "Couldn’t open bug report",
+          detail: applicationNotificationErrorMessage(error),
+          timeoutMs: FLOATING_STATUS_NOTICE_TIMEOUT_MS,
+          dismissible: true,
+        });
+      });
+  });
   const settingsViewBindings = useSettingsViewBindings({
     model: {
       dragRegion: selfWindowDragRegion,
@@ -20091,6 +20111,7 @@ function App() {
               setAccountMenuOpen(false);
             },
             refreshAccount: handleRefreshAccount,
+            reportBug: handleReportBug,
             logout: handleLogout,
             login: handleLogin,
             cancelLogin: handleCancelLogin,

@@ -13,6 +13,7 @@ function actions(): CodexAccountCardActions {
     addAccount: vi.fn(),
     manageAccounts: vi.fn(),
     refreshAccount: vi.fn(),
+    reportBug: vi.fn(),
     logout: vi.fn(),
     login: vi.fn(),
     cancelLogin: vi.fn(),
@@ -70,5 +71,18 @@ describe("CodexAccountCard", () => {
     );
     fireEvent.click(screen.getByRole("button", { name: "Cancel Codex sign-in" }));
     expect(loginActions.cancelLogin).toHaveBeenCalledOnce();
+  });
+
+  it("routes the account-menu bug report action", () => {
+    const handlers = actions();
+    render(
+      <CodexAccountCard
+        model={model({ menuOpen: true })}
+        actions={handlers}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Report a bug" }));
+    expect(handlers.reportBug).toHaveBeenCalledOnce();
   });
 });

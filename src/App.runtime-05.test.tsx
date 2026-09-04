@@ -519,6 +519,28 @@ describe("Application runtime scenarios 5", () => {
       expect(screen.queryByLabelText("Codex account")).not.toBeInTheDocument();
     });
 
+  it("opens bug reporting from the account menu and reports launch failures", async () => {
+      prepareSignedInRun();
+      const { user } = await renderApp();
+
+      await user.click(await screen.findByLabelText("Codex account"));
+      await user.click(screen.getByRole("button", { name: "Report a bug" }));
+
+      await waitFor(() =>
+        expect(mocks.openUrlMock).toHaveBeenCalledWith(
+          "https://github.com/zachealy1/orchestrator/issues/new",
+        ),
+      );
+      expect(document.getElementById("codex-account-menu")).not.toBeInTheDocument();
+
+      mocks.openUrlMock.mockRejectedValueOnce(new Error("browser unavailable"));
+      await user.click(screen.getByLabelText("Codex account"));
+      await user.click(screen.getByRole("button", { name: "Report a bug" }));
+
+      expect(await screen.findByText("Couldn’t open bug report")).toBeInTheDocument();
+      expect(screen.getByText("browser unavailable")).toBeInTheDocument();
+    });
+
   it("refreshes account state with polling when login completion notifications are missed", async () => {
       mocks.readCodexAccountMock
         .mockResolvedValueOnce({
