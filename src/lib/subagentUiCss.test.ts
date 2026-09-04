@@ -16,7 +16,10 @@ describe("subagent UI styles", () => {
 
   it("uses the standard chat surfaces and no duplicated task panel", () => {
     expect(css).not.toContain(".subagent-inspector-task");
+    expect(css).not.toContain(".subagent-task-prompt");
     expect(css).not.toContain(".subagent-transcript-message");
+    expect(css).toContain(".submitted-prompt {");
+    expect(css).toContain(".subagent-transcript-notice {");
     expect(css).toContain(".subagent-transcript-turn .run-summary");
     expect(css).toContain(".subagent-transcript-turn .stream-message");
   });

@@ -1,7 +1,6 @@
 import {
   BrainCircuit,
   Check,
-  ChevronDown,
   FileCode2,
   LoaderCircle,
   MessageSquareText,
@@ -77,6 +76,17 @@ type TranscriptState =
       error: string;
     };
 
+type SubagentTranscriptRow =
+  | {
+      id: string;
+      kind: "prompt-unavailable";
+    }
+  | {
+      id: string;
+      kind: "turn";
+      turn: SubagentTranscriptTurn;
+    };
+
 const ACTIVE_TRANSCRIPT_REFRESH_MS = 700;
 
 export const SubagentInspector = memo(function SubagentInspector({
@@ -106,7 +116,6 @@ export const SubagentInspector = memo(function SubagentInspector({
   const [stopConfirmationOpen, setStopConfirmationOpen] = useState(false);
   const [stopping, setStopping] = useState(false);
   const [stopError, setStopError] = useState<string | null>(null);
-  const [taskPromptExpanded, setTaskPromptExpanded] = useState(true);
   const loadGenerationRef = useRef(0);
   const transcriptRequestCountRef = useRef(0);
   const loadedRecordRevisionRef = useRef("");
@@ -240,17 +249,39 @@ export const SubagentInspector = memo(function SubagentInspector({
       return includePersistedInstructions(
         turns,
         transcriptState.transcript?.instructions ?? [],
-        visibleRecordTask(record),
+        record,
       );
     },
     [record, transcriptState.transcript],
   );
-  const taskPrompt = useMemo(
-    () =>
-      transcriptState.transcript?.instructions?.find(
-        (instruction) => instruction.kind === "spawn",
-      )?.text ?? visibleRecordTask(record),
-    [record, transcriptState.transcript],
+  const transcriptRows = useMemo<SubagentTranscriptRow[]>(
+    () => {
+      const promptUnavailable =
+        transcriptState.status !== "loading" &&
+        !resolveInitialTaskPrompt(
+          transcriptState.transcript?.instructions ?? [],
+          record,
+        ) &&
+        !transcriptTurns.some((turn) =>
+          turn.items.some((item) => item.kind === "user"),
+        );
+      return [
+        ...(promptUnavailable
+          ? [
+              {
+                id: `${record?.id ?? "subagent"}:prompt-unavailable`,
+                kind: "prompt-unavailable" as const,
+              },
+            ]
+          : []),
+        ...transcriptTurns.map((turn) => ({
+          id: turn.id,
+          kind: "turn" as const,
+          turn,
+        })),
+      ];
+    },
+    [record, transcriptState.status, transcriptState.transcript, transcriptTurns],
   );
   const canStop =
     Boolean(record?.childTurnId) &&
@@ -384,27 +415,6 @@ export const SubagentInspector = memo(function SubagentInspector({
         </div>
       </header>
 
-      <section className="subagent-task-prompt" aria-label="Task prompt">
-        <button
-          type="button"
-          className="subagent-task-prompt-toggle"
-          aria-expanded={taskPromptExpanded}
-          onClick={() => setTaskPromptExpanded((current) => !current)}
-        >
-          <span>Task prompt</span>
-          <ChevronDown size={15} aria-hidden="true" />
-        </button>
-        {taskPromptExpanded ? (
-          taskPrompt ? (
-            <div className="subagent-task-prompt-content">{taskPrompt}</div>
-          ) : (
-            <p className="subagent-task-prompt-unavailable">
-              Original prompt unavailable for this older subagent.
-            </p>
-          )
-        ) : null}
-      </section>
-
       {interactionEntry && interactionRunView ? (
         <div className="subagent-inspector-interactions">
           <RunApprovalRequests
@@ -423,16 +433,22 @@ export const SubagentInspector = memo(function SubagentInspector({
             <LoaderCircle className="spin" size={16} aria-hidden="true" />
             <span>Loading subagent transcript</span>
           </div>
-        ) : transcriptTurns.length > 0 ? (
+        ) : transcriptRows.length > 0 ? (
           <Virtuoso
             className="subagent-transcript-list"
-            data={transcriptTurns}
-            computeItemKey={(_, turn) => turn.id}
+            data={transcriptRows}
+            computeItemKey={(_, row) => row.id}
             increaseViewportBy={{ top: 500, bottom: 800 }}
             followOutput={canStop ? "auto" : false}
-            itemContent={(_, turn) => (
-              <SubagentTranscriptTurnView turn={turn} />
-            )}
+            itemContent={(_, row) =>
+              row.kind === "prompt-unavailable" ? (
+                <p className="subagent-transcript-notice" role="status">
+                  Original prompt unavailable for this older subagent.
+                </p>
+              ) : (
+                <SubagentTranscriptTurnView turn={row.turn} />
+              )
+            }
           />
         ) : (
           <div className="run-summary muted subagent-inspector-empty">
@@ -679,25 +695,10 @@ function isActiveTranscriptTurn(status: string) {
 function includePersistedInstructions(
   turns: SubagentTranscriptTurn[],
   instructions: SubagentInstruction[],
-  recordTask: string | null,
+  record: SubagentRecord | null,
 ) {
-  const initialPrompt =
-    instructions.find((instruction) => instruction.kind === "spawn")?.text ??
-    recordTask;
-  const normalizedInitial = initialPrompt
-    ? normalizePrompt(initialPrompt)
-    : null;
-  const withoutInitial = turns.map((turn) => ({
-    ...turn,
-    items: turn.items.filter(
-      (item) =>
-        item.kind !== "user" ||
-        !normalizedInitial ||
-        normalizePrompt(item.text) !== normalizedInitial,
-    ),
-  }));
   const projectedPromptCounts = new Map<string, number>();
-  withoutInitial.forEach((turn) => {
+  turns.forEach((turn) => {
     turn.items.forEach((item) => {
       if (item.kind !== "user") return;
       const normalized = normalizePrompt(item.text);
@@ -707,32 +708,60 @@ function includePersistedInstructions(
       );
     });
   });
-  const missingFollowups = instructions.filter((instruction) => {
-    if (instruction.kind === "spawn") return false;
+  const spawnInstruction = instructions.find(
+    (instruction) => instruction.kind === "spawn" && instruction.text.trim(),
+  );
+  const recordTask = visibleRecordTask(record);
+  const laterInstructions = instructions.filter(
+    (instruction) => instruction.kind !== "spawn" && instruction.text.trim(),
+  );
+  const instructionsToProject = spawnInstruction
+    ? [spawnInstruction, ...laterInstructions]
+    : recordTask
+      ? [
+          {
+            id: record?.spawnItemId ?? `${record?.id ?? "subagent"}:spawn`,
+            subagentId: record?.id ?? "subagent",
+            kind: "spawn" as const,
+            text: recordTask,
+            createdAt: record?.startedAt ?? "",
+          },
+          ...laterInstructions,
+        ]
+      : laterInstructions;
+  const missingInstructions = instructionsToProject.filter((instruction) => {
     const normalized = normalizePrompt(instruction.text);
     const projectedCount = projectedPromptCounts.get(normalized) ?? 0;
     if (projectedCount === 0) return true;
     projectedPromptCounts.set(normalized, projectedCount - 1);
     return false;
   });
-  if (missingFollowups.length === 0) return withoutInitial;
+  if (missingInstructions.length === 0) return turns;
 
-  const syntheticTurns = missingFollowups.map((instruction) => ({
-    id: `${instruction.id}:instruction`,
-    status: "completed",
-    startedAt: instruction.createdAt,
-    completedAt: instruction.createdAt,
-    items: [
-      {
-        id: instruction.id,
-        kind: "user" as const,
-        text: instruction.text,
-      },
-    ],
+  const syntheticTurns = missingInstructions.map((instruction) => ({
+    instructionKind: instruction.kind,
+    turn: {
+      id: `${instruction.id}:instruction`,
+      status: "completed",
+      startedAt: instruction.createdAt,
+      completedAt: instruction.createdAt,
+      items: [
+        {
+          id: instruction.id,
+          kind: "user" as const,
+          text: instruction.text,
+        },
+      ],
+    },
   }));
-  return [...withoutInitial, ...syntheticTurns]
-    .map((turn, index) => ({ turn, index }))
+  return [
+    ...turns.map((turn) => ({ instructionKind: null, turn })),
+    ...syntheticTurns,
+  ]
+    .map((entry, index) => ({ ...entry, index }))
     .sort((left, right) => {
+      if (left.instructionKind === "spawn") return -1;
+      if (right.instructionKind === "spawn") return 1;
       const leftTime = Date.parse(left.turn.startedAt ?? "");
       const rightTime = Date.parse(right.turn.startedAt ?? "");
       if (Number.isFinite(leftTime) && Number.isFinite(rightTime)) {
@@ -742,6 +771,17 @@ function includePersistedInstructions(
     })
     .map(({ turn }) => turn)
     .filter((turn) => turn.items.length > 0);
+}
+
+function resolveInitialTaskPrompt(
+  instructions: SubagentInstruction[],
+  record: SubagentRecord | null,
+) {
+  return (
+    instructions.find(
+      (instruction) => instruction.kind === "spawn" && instruction.text.trim(),
+    )?.text ?? visibleRecordTask(record)
+  );
 }
 
 function visibleRecordTask(record: SubagentRecord | null) {

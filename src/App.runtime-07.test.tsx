@@ -317,7 +317,7 @@ describe("Application runtime scenarios 7", () => {
           screen.getByLabelText(
             "Subagent inspector: Inspect the integration tests",
           ),
-        ).getByRole("region", { name: "Task prompt" }),
+        ).getByLabelText("Submitted prompt"),
       ).toHaveTextContent("Inspect the integration tests");
       await waitFor(() =>
         expect(mocks.upsertRunSubagentInstructionMock).toHaveBeenCalledWith(
@@ -579,7 +579,7 @@ describe("Application runtime scenarios 7", () => {
       `Subagent inspector: ${capturedTask}`,
     );
     expect(
-      within(inspector).getByRole("region", { name: "Task prompt" }),
+      within(inspector).getByLabelText("Submitted prompt"),
     ).toHaveTextContent(capturedTask);
     expect(inspector).not.toHaveTextContent("orchestrator-subagent-task");
     expect(inspector).not.toHaveTextContent(

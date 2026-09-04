@@ -152,10 +152,13 @@ describe("SubagentInspector", () => {
     ).toBeInTheDocument();
     expect(screen.getByText("Shell command")).toBeInTheDocument();
     expect(screen.queryByLabelText("Subagent task")).toBeNull();
-    expect(screen.getByRole("region", { name: "Task prompt" })).toHaveTextContent(
+    expect(screen.queryByRole("region", { name: "Task prompt" })).toBeNull();
+    expect(screen.getByLabelText("Submitted prompt")).toHaveTextContent(
       "Inspect the API",
     );
-    expect(screen.queryByLabelText("Submitted prompt")).toBeNull();
+    expect(screen.getByLabelText("Submitted prompt")).toHaveClass(
+      "submitted-prompt",
+    );
     expect(screen.getByText("Inspection underway")).toHaveClass(
       "stream-message",
     );
@@ -184,7 +187,7 @@ describe("SubagentInspector", () => {
     await waitFor(() => expect(input).toHaveValue(""));
   });
 
-  it("shows the persisted spawn prompt when the projected transcript omits it", async () => {
+  it("shows the record task as a submitted prompt when the transcript omits it", async () => {
     renderInspector("missing-prompt", (threadId) => {
       const projected = transcript(threadId);
       return {
@@ -197,9 +200,34 @@ describe("SubagentInspector", () => {
     });
 
     await screen.findByText("Inspection underway");
-    expect(screen.getByRole("region", { name: "Task prompt" })).toHaveTextContent(
+    expect(screen.getByLabelText("Submitted prompt")).toHaveTextContent(
       "Inspect the API",
     );
+  });
+
+  it("prefers the persisted spawn instruction over the record task", async () => {
+    renderInspector("persisted-prompt", (threadId) => ({
+      ...transcript(threadId),
+      turns: transcript(threadId).turns.map((turn) => ({
+        ...turn,
+        items: turn.items.filter((item) => item.kind !== "user"),
+      })),
+      instructions: [
+        {
+          id: "persisted-spawn",
+          subagentId: "persisted-prompt",
+          kind: "spawn",
+          text: "Inspect the persisted API contract",
+          createdAt: "2026-07-29T10:00:00.000Z",
+        },
+      ],
+    }));
+
+    await screen.findByText("Inspection underway");
+    expect(screen.getByLabelText("Submitted prompt")).toHaveTextContent(
+      "Inspect the persisted API contract",
+    );
+    expect(screen.queryByText("Inspect the API")).toBeNull();
   });
 
   it("labels unrecoverable legacy prompts instead of showing the agent path as a task", async () => {
@@ -213,19 +241,15 @@ describe("SubagentInspector", () => {
       await screen.findByText(
         "Original prompt unavailable for this older subagent.",
       ),
-    ).toBeInTheDocument();
-    expect(
-      screen.getByRole("region", { name: "Task prompt" }),
-    ).not.toHaveTextContent("Subagent /root/explorer");
+    ).toHaveClass("subagent-transcript-notice");
+    expect(screen.queryByRole("region", { name: "Task prompt" })).toBeNull();
+    expect(screen.queryByLabelText("Submitted prompt")).toBeNull();
+    expect(screen.queryByText("Subagent /root/explorer")).toBeNull();
   });
 
-  it("keeps the task prompt outside the stream and renders later instructions once", async () => {
+  it("renders the task first and later instructions once in transcript order", async () => {
     renderInspector("instructions", (threadId) => ({
       ...transcript(threadId),
-      turns: transcript(threadId).turns.map((turn) => ({
-        ...turn,
-        items: turn.items.filter((item) => item.kind !== "user"),
-      })),
       instructions: [
         {
           id: "spawn-instruction",
@@ -245,13 +269,31 @@ describe("SubagentInspector", () => {
     }));
 
     await screen.findByText("Inspection underway");
-    expect(screen.getByRole("region", { name: "Task prompt" })).toHaveTextContent(
-      "Inspect the API",
-    );
-    expect(screen.getByLabelText("Submitted prompt")).toHaveTextContent(
-      "Check the failure path",
-    );
+    const prompts = screen.getAllByLabelText("Submitted prompt");
+    expect(prompts).toHaveLength(2);
+    expect(prompts[0]).toHaveTextContent("Inspect the API");
+    expect(prompts[1]).toHaveTextContent("Check the failure path");
     expect(screen.getAllByText("Inspect the API")).toHaveLength(1);
+  });
+
+  it("preserves long multiline task prompts in the standard prompt bubble", async () => {
+    const task = "Inspect the API surface.\n\nCover retries, timeouts, and cancellation.";
+    renderInspector(
+      "multiline-prompt",
+      (threadId) => ({
+        ...transcript(threadId),
+        turns: transcript(threadId).turns.map((turn) => ({
+          ...turn,
+          items: turn.items.filter((item) => item.kind !== "user"),
+        })),
+      }),
+      { task },
+    );
+
+    await screen.findByText("Inspection underway");
+    const prompt = screen.getByLabelText("Submitted prompt");
+    expect(prompt).toHaveClass("submitted-prompt");
+    expect(prompt.textContent).toBe(task);
   });
 
   it("uses Shift+Enter for a newline and confirms descendant-aware stopping", async () => {
