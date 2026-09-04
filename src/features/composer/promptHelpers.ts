@@ -1,6 +1,9 @@
 import type { RunViewState } from "../../lib/codexEventReducer";
 import { normalizeContextFileMedia } from "../../lib/imageAttachments";
-import type { CollaborationMode } from "../../lib/nativePlanMode";
+import {
+  withOrchestratorDeveloperInstructions,
+  type CollaborationMode,
+} from "../../lib/nativePlanMode";
 import { formatGitSummaryForStatus, type WorkspaceGitSummary } from "../workspaces/gitModel";
 import type { Workspace } from "../workspaces/types";
 import type { CodexAccountProfile } from "../accounts/types";
@@ -37,9 +40,10 @@ export function parseSavedDefaultCollaborationMode(
       typeof settings.model === "string" &&
       (typeof settings.reasoning_effort === "string" ||
         settings.reasoning_effort === null) &&
-      settings.developer_instructions === null
+      (typeof settings.developer_instructions === "string" ||
+        settings.developer_instructions === null)
     ) {
-      return parsed as CollaborationMode;
+      return withOrchestratorDeveloperInstructions(parsed as CollaborationMode);
     }
   } catch {
     // Corrupt settings are rebuilt from the current model defaults.

@@ -91,6 +91,7 @@ import type {
   PreparedHistoricalSummary,
   TaskChatEntry,
 } from "../features/conversations/types";
+import { GeneratedImagePreviews } from "./GeneratedImagePreviews";
 export type { TaskChatEntry } from "../features/conversations/types";
 import {
   buildNativePlanPreview,
@@ -597,6 +598,7 @@ const AssistantRunOutput = memo(function AssistantRunOutput({
         expanded={planExpanded}
         onDisclosureChange={onPlanDisclosureChange}
       />
+      <GeneratedImagePreviews runView={runView} />
       {showSummary ? (
         <RunSummary
           key="assistant-final-response"

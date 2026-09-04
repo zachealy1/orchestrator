@@ -236,6 +236,17 @@ export function createTranscriptRepository(database: FrontendDatabase) {
           ORDER BY diff_events.sequence DESC
           LIMIT 1
         ) AS latest_diff,
+        (
+          SELECT json_group_array(json(ordered_image_events.payload_json))
+          FROM (
+            SELECT image_events.payload_json
+            FROM run_events image_events
+            WHERE image_events.run_id = runs.id
+              AND image_events.method IN ('item/started', 'item/completed')
+              AND json_extract(image_events.payload_json, '$.params.item.type') = 'imageGeneration'
+            ORDER BY image_events.sequence
+          ) ordered_image_events
+        ) AS generated_image_events_json,
         latest_tokens.total_tokens AS latest_total_tokens,
         latest_tokens.cached_input_tokens AS latest_cached_input_tokens,
         latest_tokens.run_tokens AS latest_run_tokens,
@@ -278,6 +289,17 @@ export function createTranscriptRepository(database: FrontendDatabase) {
           ORDER BY diff_events.sequence DESC
           LIMIT 1
         ) AS latest_diff,
+        (
+          SELECT json_group_array(json(ordered_image_events.payload_json))
+          FROM (
+            SELECT image_events.payload_json
+            FROM run_events image_events
+            WHERE image_events.run_id = runs.id
+              AND image_events.method IN ('item/started', 'item/completed')
+              AND json_extract(image_events.payload_json, '$.params.item.type') = 'imageGeneration'
+            ORDER BY image_events.sequence
+          ) ordered_image_events
+        ) AS generated_image_events_json,
         latest_tokens.total_tokens AS latest_total_tokens,
         latest_tokens.cached_input_tokens AS latest_cached_input_tokens,
         latest_tokens.run_tokens AS latest_run_tokens,

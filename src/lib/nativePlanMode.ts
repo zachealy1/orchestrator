@@ -14,9 +14,45 @@ export type CollaborationMode = {
   settings: {
     model: string;
     reasoning_effort: string | null;
-    developer_instructions: null;
+    developer_instructions: string | null;
   };
 };
+
+export const GENERATED_IMAGE_HANDLING_POLICY =
+  "Treat generated concepts, mockups, redesign options, and brainstorming images as preview-only, even when a repository is open. Copy a generated image into the workspace only when the user names a workspace destination or clearly asks to create, edit, replace, or use it as a project asset.";
+
+export function composeOrchestratorDeveloperInstructions(
+  existing: string | null | undefined,
+) {
+  const normalized = existing?.trim() ?? "";
+  if (normalized.includes(GENERATED_IMAGE_HANDLING_POLICY)) {
+    return normalized;
+  }
+  return normalized
+    ? `${normalized}\n\n${GENERATED_IMAGE_HANDLING_POLICY}`
+    : GENERATED_IMAGE_HANDLING_POLICY;
+}
+
+export function withOrchestratorDeveloperInstructions(
+  collaborationMode: CollaborationMode,
+): CollaborationMode {
+  const developerInstructions = composeOrchestratorDeveloperInstructions(
+    collaborationMode.settings.developer_instructions,
+  );
+  if (
+    developerInstructions ===
+    collaborationMode.settings.developer_instructions
+  ) {
+    return collaborationMode;
+  }
+  return {
+    ...collaborationMode,
+    settings: {
+      ...collaborationMode.settings,
+      developer_instructions: developerInstructions,
+    },
+  };
+}
 
 export type NativePlanPhase =
   | "inactive"
@@ -177,7 +213,7 @@ export function buildCollaborationMode(
     settings: {
       model: mask.model ?? fallbackModel ?? "",
       reasoning_effort: mask.reasoning_effort ?? fallbackEffort,
-      developer_instructions: null,
+      developer_instructions: composeOrchestratorDeveloperInstructions(null),
     },
   };
 }

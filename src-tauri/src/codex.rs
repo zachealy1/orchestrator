@@ -93,6 +93,7 @@ pub(crate) fn process_stdout(
     app: AppHandle,
     account_id: i64,
     connection_generation: u64,
+    codex_home: PathBuf,
     stdout: impl std::io::Read + Send + 'static,
     pending: PendingMap,
     pending_server_requests: PendingServerRequestMap,
@@ -103,11 +104,41 @@ pub(crate) fn process_stdout(
         match line {
             Ok(line) if line.trim().is_empty() => {}
             Ok(line) => match serde_json::from_str::<Value>(&line) {
-                Ok(message) => {
-                    let method = message.get("method").and_then(Value::as_str);
+                Ok(mut message) => {
+                    let method = message
+                        .get("method")
+                        .and_then(Value::as_str)
+                        .map(str::to_string);
                     let id = message.get("id").cloned();
 
-                    match (method, id) {
+                    if account_id != DEFAULT_CODEX_PROFILE_ID && id.is_none() {
+                        let should_prepare_alias = matches!(
+                            method.as_deref(),
+                            Some("thread/started") | Some("turn/started") | Some("item/started")
+                        );
+                        if should_prepare_alias {
+                            if let Some(thread_id) = notification_thread_id(&message) {
+                                if let Err(error) =
+                                    prepare_generated_image_thread_alias(&codex_home, thread_id)
+                                {
+                                    eprintln!(
+                                        "Generated-image preview warning for account {account_id}: \
+                                         could not prepare shared storage: {error}"
+                                    );
+                                }
+                            }
+                        }
+                        if let Err(error) =
+                            normalize_image_generation_notification(&codex_home, &mut message)
+                        {
+                            eprintln!(
+                                "Generated-image preview warning for account {account_id}: \
+                                 could not normalize output: {error}"
+                            );
+                        }
+                    }
+
+                    match (method.as_deref(), id) {
                         (Some(_), Some(request_id)) => {
                             let request_token = register_server_request(
                                 &pending_server_requests,
@@ -1602,11 +1633,13 @@ pub(crate) async fn connect_codex_profile(
         let next_server_request_token = Arc::clone(&state.next_server_request_token);
         let active_login = Arc::clone(&state.active_login);
         let stdout_app = app.clone();
+        let stdout_codex_home = codex_home.clone();
         std::thread::spawn(move || {
             process_stdout(
                 stdout_app,
                 account_id,
                 connection_generation,
+                stdout_codex_home,
                 stdout,
                 pending,
                 pending_server_requests,

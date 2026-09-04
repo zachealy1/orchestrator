@@ -427,6 +427,70 @@
   color: var(--color-error);
 }
 
+.generated-image-previews {
+  display: grid;
+  width: min(100%, 720px);
+  gap: 12px;
+}
+
+.generated-image-preview {
+  position: relative;
+  display: grid;
+  width: fit-content;
+  max-width: 100%;
+  min-width: min(320px, 100%);
+  min-height: 168px;
+  place-items: center;
+  overflow: hidden;
+  margin: 0;
+  border: 1px solid var(--color-divider);
+  border-radius: var(--radius);
+  background: var(--color-component-background);
+  color: var(--color-icon-muted);
+}
+
+.generated-image-preview img {
+  display: block;
+  width: auto;
+  max-width: 100%;
+  max-height: min(560px, 62vh);
+  object-fit: contain;
+}
+
+.generated-image-placeholder {
+  display: grid;
+  min-height: 168px;
+  place-items: center;
+  align-content: center;
+  gap: 10px;
+  padding: 24px;
+  color: var(--color-text-secondary);
+  text-align: center;
+}
+
+.generated-image-preview figcaption {
+  position: absolute;
+  right: 8px;
+  bottom: 8px;
+  left: 8px;
+  border-radius: 6px;
+  background: var(--color-component-background);
+  color: var(--color-text-secondary);
+  font-size: 0.8rem;
+  padding: 6px 8px;
+  text-align: center;
+}
+
+.generated-image-preview.state-failed,
+.generated-image-preview.state-unavailable {
+  color: var(--color-error);
+}
+
+.generated-image-preview.state-failed .generated-image-placeholder,
+.generated-image-preview.state-unavailable .generated-image-placeholder {
+  color: var(--color-error);
+}
+
 .submitted-prompt {
   max-width: 100%;
   overflow-wrap: anywhere;

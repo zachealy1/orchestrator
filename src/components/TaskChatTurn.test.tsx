@@ -111,6 +111,47 @@ function historyEntry(turnIndex: number): TaskChatEntry {
 }
 
 describe("TaskChatTurn", () => {
+it("renders generated images and generation failures as standalone transcript items", () => {
+    const entry: TaskChatEntry = {
+      ...historyEntry(1),
+      runView: {
+        ...historyEntry(1).runView,
+        generatedImageOrder: ["image-ready", "image-failed"],
+        generatedImagesById: {
+          "image-ready": {
+            id: "image-ready",
+            threadId: "thread-images",
+            status: "completed",
+            savedPath: null,
+            result: "cHJldmlldw==",
+            error: null,
+          },
+          "image-failed": {
+            id: "image-failed",
+            threadId: "thread-images",
+            status: "failed",
+            savedPath: null,
+            result: null,
+            error: "Image generation usage limit reached.",
+          },
+        },
+      },
+    };
+
+    render(
+      <TaskChatTranscript
+        entries={[entry]}
+        onResolveRequest={vi.fn()}
+      />,
+    );
+
+    expect(screen.getByRole("img", { name: "Generated image 1" })).toHaveAttribute(
+      "src",
+      "data:image/png;base64,cHJldmlldw==",
+    );
+    expect(screen.getByText("Image generation usage limit reached.")).toBeInTheDocument();
+  });
+
 it("renders submitted, steered, and assistant web URLs as clickable links", () => {
     const onOpenTranscriptLink = vi.fn(() => true);
     const entry: TaskChatEntry = {

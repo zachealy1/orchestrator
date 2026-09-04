@@ -25,11 +25,18 @@ export function redactInteractionRunEvent(
   payload: unknown,
   context: InteractionRunEventContext,
 ): unknown {
-  if (!context.browserEnabled && !context.desktopEnabled) return payload;
   const root = asObject(payload);
   const params = asObject(root?.params);
   const item = asObject(params?.item);
   const method = readString(root?.method) ?? context.method ?? undefined;
+  const generatedImageEvent = projectGeneratedImageEvent(
+    root,
+    params,
+    item,
+    method,
+  );
+  if (generatedImageEvent) return generatedImageEvent;
+  if (!context.browserEnabled && !context.desktopEnabled) return payload;
   if (context.eventType === "process") {
     return compactObject({
       status: safeProviderIdentifier(asObject(payload)?.status),
@@ -64,6 +71,48 @@ export function redactInteractionRunEvent(
           })
         : undefined,
       redacted: true,
+    }),
+  });
+}
+
+function projectGeneratedImageEvent(
+  root: JsonObject | null,
+  params: JsonObject | null,
+  item: JsonObject | null,
+  method: string | undefined,
+) {
+  if (readString(item?.type) !== "imageGeneration") return null;
+  const savedPath = readString(item?.savedPath) ?? readString(item?.saved_path);
+  const failure = asObject(item?.failure);
+  const error = asObject(item?.error);
+  return compactObject({
+    method,
+    id: readPrimitive(root?.id),
+    params: compactObject({
+      threadId: readPrimitive(params?.threadId),
+      turnId: readPrimitive(params?.turnId),
+      item: compactObject({
+        id: readPrimitive(item?.id),
+        type: "imageGeneration",
+        status: readPrimitive(item?.status),
+        savedPath,
+        result: savedPath ? undefined : readPrimitive(item?.result),
+        failure: failure
+          ? compactObject({
+              type: readPrimitive(failure.type),
+              limitId: readPrimitive(failure.limitId),
+              resetsAt: readPrimitive(failure.resetsAt),
+            })
+          : undefined,
+        error:
+          readPrimitive(item?.error) ??
+          (error
+            ? compactObject({
+                message: readPrimitive(error.message),
+                detail: readPrimitive(error.detail),
+              })
+            : undefined),
+      }),
     }),
   });
 }

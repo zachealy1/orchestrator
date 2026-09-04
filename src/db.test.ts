@@ -549,6 +549,9 @@ describe("run execution settings persistence", () => {
     expect(query).toContain(
       "latest_tokens.cached_input_tokens AS latest_cached_input_tokens",
     );
+    expect(query).toContain("generated_image_events_json");
+    expect(query).toContain("json_group_array");
+    expect(query).toContain("imageGeneration");
   });
 });
 

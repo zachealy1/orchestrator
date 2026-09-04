@@ -16,6 +16,100 @@ import type { RunViewState } from "./codexEventReducer";
 import { parseApprovalRequest } from "./codexApprovals";
 
 describe("codexEventReducer", () => {
+  it("tracks image generation as a first-class lifecycle item", () => {
+    const generating = applyCodexMessage(emptyRunView, {
+      method: "item/started",
+      params: {
+        threadId: "thread-images",
+        item: { type: "imageGeneration", id: "image-1" },
+      },
+    });
+
+    expect(generating.generatedImageOrder).toEqual(["image-1"]);
+    expect(generating.generatedImagesById["image-1"]).toEqual({
+      id: "image-1",
+      threadId: "thread-images",
+      status: "generating",
+      savedPath: null,
+      result: null,
+      error: null,
+    });
+    expect(generating.streamEvents).toEqual([]);
+
+    const completed = applyCodexMessage(generating, {
+      method: "item/completed",
+      params: {
+        threadId: "thread-images",
+        item: {
+          type: "imageGeneration",
+          id: "image-1",
+          status: "completed",
+          savedPath: "/Users/test/.codex/generated_images/thread-images/concept.png",
+          result: "ZmFsbGJhY2s=",
+        },
+      },
+    });
+    expect(completed.generatedImageOrder).toEqual(["image-1"]);
+    expect(completed.generatedImagesById["image-1"]).toMatchObject({
+      status: "completed",
+      savedPath: "/Users/test/.codex/generated_images/thread-images/concept.png",
+      result: "ZmFsbGJhY2s=",
+    });
+    expect(applyCodexMessage(completed, {
+      method: "item/completed",
+      params: {
+        threadId: "thread-images",
+        item: {
+          type: "imageGeneration",
+          id: "image-1",
+          status: "completed",
+          savedPath: "/Users/test/.codex/generated_images/thread-images/concept.png",
+          result: "ZmFsbGJhY2s=",
+        },
+      },
+    })).toBe(completed);
+  });
+
+  it("retains result-only previews and image-generation failures", () => {
+    let state = applyCodexMessage(emptyRunView, {
+      method: "item/completed",
+      params: {
+        threadId: "thread-images",
+        item: {
+          type: "imageGeneration",
+          id: "image-result",
+          result: "cHJldmlldw==",
+        },
+      },
+    });
+    state = applyCodexMessage(state, {
+      method: "item/completed",
+      params: {
+        threadId: "thread-images",
+        item: {
+          type: "imageGeneration",
+          id: "image-failed",
+          status: "failed",
+          failure: {
+            type: "usageLimitExceeded",
+            limitId: "image_gen",
+            resetsAt: null,
+          },
+        },
+      },
+    });
+
+    expect(state.generatedImagesById["image-result"]).toMatchObject({
+      status: "completed",
+      savedPath: null,
+      result: "cHJldmlldw==",
+    });
+    expect(state.generatedImagesById["image-failed"]).toMatchObject({
+      status: "failed",
+      error: "Image generation usage limit reached.",
+    });
+  });
+
   it("tracks structured multi-step progress from native plan updates", () => {
     let state = applyCodexMessage(
       { ...emptyRunView, status: "running" },

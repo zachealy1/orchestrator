@@ -2,6 +2,96 @@ import { describe, expect, it } from "vitest";
 import { redactInteractionRunEvent } from "./runEventRedaction";
 
 describe("interaction run-event redaction", () => {
+  it("persists generated-image lifecycle data without duplicating saved image bytes", () => {
+    const projected = redactInteractionRunEvent(
+      {
+        method: "item/completed",
+        params: {
+          threadId: "thread-images",
+          turnId: "turn-images",
+          item: {
+            id: "image-1",
+            type: "imageGeneration",
+            status: "completed",
+            savedPath:
+              "/Users/test/.codex/generated_images/thread-images/image-1.png",
+            result: "very-large-base64-result",
+          },
+        },
+      },
+      { browserEnabled: false, desktopEnabled: false },
+    );
+
+    expect(projected).toEqual({
+      method: "item/completed",
+      params: {
+        threadId: "thread-images",
+        turnId: "turn-images",
+        item: {
+          id: "image-1",
+          type: "imageGeneration",
+          status: "completed",
+          savedPath:
+            "/Users/test/.codex/generated_images/thread-images/image-1.png",
+        },
+      },
+    });
+    expect(JSON.stringify(projected)).not.toContain("very-large-base64-result");
+  });
+
+  it("retains result fallbacks and structured image-generation failures", () => {
+    const resultOnly = redactInteractionRunEvent(
+      {
+        method: "item/completed",
+        params: {
+          threadId: "thread-images",
+          item: {
+            id: "image-result",
+            type: "imageGeneration",
+            status: "completed",
+            result: "cHJldmlldw==",
+          },
+        },
+      },
+      { browserEnabled: false, desktopEnabled: false },
+    );
+    const failure = redactInteractionRunEvent(
+      {
+        method: "item/completed",
+        params: {
+          threadId: "thread-images",
+          item: {
+            id: "image-failed",
+            type: "imageGeneration",
+            status: "failed",
+            result: "",
+            failure: {
+              type: "usageLimitExceeded",
+              limitId: "image_gen",
+              resetsAt: 1_788_000_000,
+            },
+          },
+        },
+      },
+      { browserEnabled: true, desktopEnabled: true },
+    );
+
+    expect(resultOnly).toMatchObject({
+      params: { item: { result: "cHJldmlldw==" } },
+    });
+    expect(failure).toMatchObject({
+      params: {
+        item: {
+          failure: {
+            type: "usageLimitExceeded",
+            limitId: "image_gen",
+            resetsAt: 1_788_000_000,
+          },
+        },
+      },
+    });
+  });
+
   it("removes browser arguments and results from persisted MCP events", () => {
     const projected = redactInteractionRunEvent(
       {

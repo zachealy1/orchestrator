@@ -1,9 +1,11 @@
 import type { TaskChatEntry } from "../../components/TaskChatTurn";
 import {
+  applyCodexMessage,
   emptyRunView,
   parseUnifiedDiffFiles,
   type RunViewState,
 } from "../../lib/codexEventReducer";
+import type { CodexMessage } from "../codex/types";
 import { isImageContextFile } from "../../lib/imageAttachments";
 import { parseProposedPlanEnvelope } from "../../lib/proposedPlan";
 import { resolveStoredRunExecutionSettings } from "../../lib/runExecutionSettings";
@@ -371,6 +373,9 @@ export function createTaskChatEntryFromHistoryRun(
   const latestDiff = run.latest_diff ?? "";
   const hasSubmittedImages =
     executionSettings.settings.contextFiles.some(isImageContextFile);
+  const persistedGeneratedImages = restorePersistedGeneratedImages(
+    run.generated_image_events_json,
+  );
 
   return {
     clientId: `history-run-${run.id}`,
@@ -411,6 +416,8 @@ export function createTaskChatEntryFromHistoryRun(
       error: run.error,
       editedFiles: parseUnifiedDiffFiles(latestDiff),
       latestDiff,
+      generatedImagesById: persistedGeneratedImages.generatedImagesById,
+      generatedImageOrder: persistedGeneratedImages.generatedImageOrder,
       webPreview: parsePersistedRunWebPreview(run.web_preview_json),
       latestPlan: normalizedPlan.planText,
       nativePlan: {
@@ -458,6 +465,53 @@ export function createTaskChatEntryFromHistoryRun(
       error: null,
     },
   };
+}
+
+export function restorePersistedGeneratedImages(
+  value: string | null | undefined,
+) {
+  if (!value) {
+    return {
+      generatedImagesById: emptyRunView.generatedImagesById,
+      generatedImageOrder: emptyRunView.generatedImageOrder,
+    };
+  }
+  try {
+    const events = JSON.parse(value) as unknown;
+    if (!Array.isArray(events)) throw new Error("Expected an event array");
+    const restored = events.reduce((state, candidate) => {
+      if (
+        typeof candidate !== "object" ||
+        candidate === null ||
+        Array.isArray(candidate)
+      ) {
+        return state;
+      }
+      const message = candidate as CodexMessage;
+      if (message.method !== "item/started" && message.method !== "item/completed") {
+        return state;
+      }
+      const item = message.params?.item;
+      if (
+        typeof item !== "object" ||
+        item === null ||
+        Array.isArray(item) ||
+        (item as Record<string, unknown>).type !== "imageGeneration"
+      ) {
+        return state;
+      }
+      return applyCodexMessage(state, message);
+    }, emptyRunView);
+    return {
+      generatedImagesById: restored.generatedImagesById,
+      generatedImageOrder: restored.generatedImageOrder,
+    };
+  } catch {
+    return {
+      generatedImagesById: emptyRunView.generatedImagesById,
+      generatedImageOrder: emptyRunView.generatedImageOrder,
+    };
+  }
 }
 
 export function normalizeHistoricalProposedPlan(

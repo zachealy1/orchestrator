@@ -235,6 +235,7 @@ import {
   isNativeUserInputRequest,
   requestKey,
   selectNativePlanModes,
+  withOrchestratorDeveloperInstructions,
   type CollaborationMode,
   type CollaborationModeMask,
   type NativeUserInputRequest,
@@ -10089,7 +10090,10 @@ function App() {
         developer_instructions: null,
       },
     };
-    return { plan: null, default: defaultMode };
+    return {
+      plan: null,
+      default: withOrchestratorDeveloperInstructions(defaultMode),
+    };
   }
 
   function codexRpcForProfile<T>(
@@ -11730,13 +11734,16 @@ function App() {
       snapshot.effort,
       snapshot.mode === "plan",
     );
-    const collaborationMode =
+    const selectedCollaborationMode =
       snapshot.mode === "plan"
         ? collaborationModes.plan
         : snapshot.defaultCollaborationMode ?? collaborationModes.default;
-    if (!collaborationMode) {
+    if (!selectedCollaborationMode) {
       throw new Error("Codex did not return a native Plan collaboration mode.");
     }
+    const collaborationMode = withOrchestratorDeveloperInstructions(
+      selectedCollaborationMode,
+    );
     ensureRunControlActive(runControl);
     if (snapshot.profileKey === DEFAULT_CODEX_PROFILE_KEY) {
       const authState = await codexDefaultProfileRpc<CodexAccountResponse>(
@@ -12700,6 +12707,12 @@ function App() {
       threadModel = thread.model;
       threadModelProvider = thread.modelProvider;
       threadActivePermissionProfile = thread.activePermissionProfile;
+      await codexRpcForProfile(
+        snapshot.profileKey,
+        snapshot.accountId,
+        "thread/settings/update",
+        { threadId, collaborationMode },
+      );
     } else {
       if (
         nativeTaskBinding &&

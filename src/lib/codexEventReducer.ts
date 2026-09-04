@@ -77,6 +77,15 @@ export type RunToolActivity = {
   safeDetails: ToolActivitySafeDetail[];
 };
 
+export type RunGeneratedImage = {
+  id: string;
+  threadId: string | null;
+  status: "generating" | "completed" | "failed";
+  savedPath: string | null;
+  result: string | null;
+  error: string | null;
+};
+
 type AgentMessagePhase = "commentary" | "final_answer" | null;
 
 type AgentMessageState = {
@@ -103,6 +112,8 @@ export type RunViewState = {
   commands: RunCommandActivity[];
   toolActivitiesById: Record<string, RunToolActivity>;
   toolActivityOrder: string[];
+  generatedImagesById: Record<string, RunGeneratedImage>;
+  generatedImageOrder: string[];
   webPreview: RunWebPreview | null;
   agentMessagesById: Record<string, AgentMessageState>;
   finalMessageItemId: string | null;
@@ -135,6 +146,8 @@ export const emptyRunView: RunViewState = {
   commands: [],
   toolActivitiesById: {},
   toolActivityOrder: [],
+  generatedImagesById: {},
+  generatedImageOrder: [],
   webPreview: null,
   agentMessagesById: {},
   finalMessageItemId: null,
@@ -343,6 +356,9 @@ export function applyCodexMessage(
       );
     case "item/started": {
       const item = readObject(params.item);
+      if (item.type === "imageGeneration") {
+        return upsertGeneratedImage(state, params, item, "generating");
+      }
       if (item.type === "agentMessage") {
         return startAgentMessage(state, params, item);
       }
@@ -374,6 +390,9 @@ export function applyCodexMessage(
     }
     case "item/completed": {
       const item = readObject(params.item);
+      if (item.type === "imageGeneration") {
+        return upsertGeneratedImage(state, params, item, "completed");
+      }
       const planItem = params.item;
       if (isNativePlanItem(planItem)) {
         const text = planItem.text;
@@ -1483,6 +1502,78 @@ function commandStatusFromParams(params: Record<string, unknown>) {
     return "declined";
   }
   return "completed";
+}
+
+function upsertGeneratedImage(
+  state: RunViewState,
+  params: Record<string, unknown>,
+  item: Record<string, unknown>,
+  fallbackStatus: RunGeneratedImage["status"],
+) {
+  const id =
+    readString(item.id) ??
+    readString(params.itemId) ??
+    `generated-image-${state.generatedImageOrder.length + 1}`;
+  const rawStatus = readString(item.status);
+  const failure = readObject(item.failure);
+  const errorValue = item.error ?? params.error;
+  const errorObject = readObject(errorValue);
+  const explicitError =
+    readString(errorValue) ??
+    readString(errorObject.message) ??
+    readString(errorObject.detail);
+  const failureType = readString(failure.type);
+  const error =
+    explicitError ??
+    (failureType === "usageLimitExceeded"
+      ? "Image generation usage limit reached."
+      : failureType
+        ? "Image generation failed."
+        : null);
+  const status: RunGeneratedImage["status"] =
+    rawStatus === "failed" ||
+    rawStatus === "error" ||
+    Boolean(item.failure) ||
+    Boolean(error)
+      ? "failed"
+      : rawStatus === "inProgress" || rawStatus === "running"
+        ? "generating"
+        : fallbackStatus;
+  const resultObject = readObject(item.result);
+  const result =
+    readString(item.result) ??
+    readString(resultObject.url) ??
+    readString(resultObject.imageUrl) ??
+    readString(resultObject.dataUrl);
+  const next: RunGeneratedImage = {
+    id,
+    threadId: readString(params.threadId) ?? state.threadId,
+    status,
+    savedPath: readString(item.savedPath) ?? readString(item.saved_path),
+    result,
+    error: status === "failed" ? error ?? "Image generation failed." : null,
+  };
+  const previous = state.generatedImagesById[id];
+  if (
+    previous &&
+    previous.threadId === next.threadId &&
+    previous.status === next.status &&
+    previous.savedPath === next.savedPath &&
+    previous.result === next.result &&
+    previous.error === next.error
+  ) {
+    return state;
+  }
+  return {
+    ...state,
+    generatedImagesById: {
+      ...state.generatedImagesById,
+      [id]: next,
+    },
+    generatedImageOrder: previous
+      ? state.generatedImageOrder
+      : [...state.generatedImageOrder, id],
+  };
 }
 
 function normalizeFileStatus(status: string | null): RunEditedFile["status"] {

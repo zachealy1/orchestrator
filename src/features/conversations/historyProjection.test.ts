@@ -7,6 +7,7 @@ import {
   isAdoptedExternalChat,
   normalizeHistoricalProposedPlan,
   parseChatContinuationSnapshot,
+  restorePersistedGeneratedImages,
   sortHistoryChatsByActivity,
 } from "./historyProjection";
 import type { TaskChatEntry } from "../../components/TaskChatTurn";
@@ -49,6 +50,38 @@ function chat(id: number, latestActivityAt: string): ChatListItem {
 }
 
 describe("historyProjection", () => {
+  it("restores persisted image-generation lifecycle events without duplicates", () => {
+    const restored = restorePersistedGeneratedImages(
+      JSON.stringify([
+        {
+          method: "item/started",
+          params: {
+            threadId: "thread-images",
+            item: { type: "imageGeneration", id: "image-1" },
+          },
+        },
+        {
+          method: "item/completed",
+          params: {
+            threadId: "thread-images",
+            item: {
+              type: "imageGeneration",
+              id: "image-1",
+              savedPath: "/Users/test/.codex/generated_images/thread-images/concept.png",
+            },
+          },
+        },
+      ]),
+    );
+
+    expect(restored.generatedImageOrder).toEqual(["image-1"]);
+    expect(restored.generatedImagesById["image-1"]).toMatchObject({
+      status: "completed",
+      savedPath: "/Users/test/.codex/generated_images/thread-images/concept.png",
+    });
+    expect(restorePersistedGeneratedImages("not-json").generatedImageOrder).toEqual([]);
+  });
+
   it("sorts by the newest persisted or live activity without mutating input", () => {
     const older = chat(1, "2026-07-01 10:00:00");
     const newer = chat(2, "2026-07-01 11:00:00");

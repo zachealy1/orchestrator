@@ -37,6 +37,7 @@ export type HistoryRunSummary = Pick<
 > & {
   original_prompt: string;
   latest_diff?: string | null;
+  generated_image_events_json?: string | null;
   latest_total_tokens: number | null;
   latest_cached_input_tokens: number | null;
   latest_run_tokens: number | null;

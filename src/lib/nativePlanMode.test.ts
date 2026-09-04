@@ -1,5 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
+  composeOrchestratorDeveloperInstructions,
+  GENERATED_IMAGE_HANDLING_POLICY,
   isNativeUserInputRequest,
   isNativePlanItem,
   isServerRequestResolvedMessage,
@@ -24,10 +26,21 @@ describe("nativePlanMode", () => {
       settings: {
         model: "gpt-5.4",
         reasoning_effort: "medium",
-        developer_instructions: null,
+        developer_instructions: GENERATED_IMAGE_HANDLING_POLICY,
       },
     });
     expect(modes.default.settings.reasoning_effort).toBe("high");
+  });
+
+  it("composes the generated-image policy exactly once with upstream instructions", () => {
+    const upstream = "Preserve the existing application architecture.";
+    const composed = composeOrchestratorDeveloperInstructions(upstream);
+
+    expect(composed).toBe(`${upstream}\n\n${GENERATED_IMAGE_HANDLING_POLICY}`);
+    expect(composeOrchestratorDeveloperInstructions(composed)).toBe(composed);
+    expect(composeOrchestratorDeveloperInstructions(null)).toBe(
+      GENERATED_IMAGE_HANDLING_POLICY,
+    );
   });
 
   it("fails closed when native Plan support is incomplete", () => {
