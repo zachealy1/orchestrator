@@ -3015,7 +3015,6 @@ function App() {
         tone: "warning",
         title: pluginsController.error,
         timeoutMs: FLOATING_STATUS_NOTICE_TIMEOUT_MS,
-        dismissible: true,
       });
     }
     if (pluginsController.notice) {
@@ -3025,7 +3024,6 @@ function App() {
         tone: "success",
         title: pluginsController.notice,
         timeoutMs: FLOATING_STATUS_NOTICE_TIMEOUT_MS,
-        dismissible: true,
       });
     }
     notices.push(...applicationNotifications.notices);
@@ -19964,7 +19962,6 @@ function App() {
         detail:
           "Cookies, site data, cache, sign-ins, and task tabs were removed from the isolated profile.",
         timeoutMs: FLOATING_STATUS_NOTICE_TIMEOUT_MS,
-        dismissible: true,
       });
     } catch (error) {
       applicationNotifications.publish({
@@ -19974,7 +19971,6 @@ function App() {
         title: "Couldn’t clear browser data",
         detail: applicationNotificationErrorMessage(error),
         timeoutMs: FLOATING_STATUS_NOTICE_TIMEOUT_MS,
-        dismissible: true,
       });
       throw error;
     }
@@ -19992,7 +19988,6 @@ function App() {
           title: "Couldn’t open bug report",
           detail: applicationNotificationErrorMessage(error),
           timeoutMs: FLOATING_STATUS_NOTICE_TIMEOUT_MS,
-          dismissible: true,
         });
       });
   });

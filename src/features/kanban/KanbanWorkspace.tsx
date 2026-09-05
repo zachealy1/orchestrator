@@ -800,7 +800,6 @@ export function KanbanWorkspace({
         tone: "warning",
         title: errorStatus.message,
         timeoutMs: FLOATING_STATUS_NOTICE_TIMEOUT_MS,
-        dismissible: true,
       });
     }
     if (bindingErrorStatus?.workspaceId === workspace.id) {
@@ -810,7 +809,6 @@ export function KanbanWorkspace({
         tone: "warning",
         title: bindingErrorStatus.message,
         timeoutMs: FLOATING_STATUS_NOTICE_TIMEOUT_MS,
-        dismissible: true,
       });
     }
     if (successStatus?.workspaceId === workspace.id) {
@@ -820,7 +818,6 @@ export function KanbanWorkspace({
         tone: "success",
         title: successStatus.message,
         timeoutMs: FLOATING_STATUS_NOTICE_TIMEOUT_MS,
-        dismissible: true,
       });
     }
     return notices;

@@ -30,7 +30,15 @@ const transientWarning: FloatingStatusNotice = {
   title: "Goal update failed",
   detail: "Could not pause the goal.",
   timeoutMs: FLOATING_STATUS_NOTICE_TIMEOUT_MS,
-  dismissible: true,
+};
+
+const transientSuccess: FloatingStatusNotice = {
+  id: "success",
+  revisionKey: "success:1",
+  tone: "success",
+  title: "Commit complete",
+  detail: "Workspace changes were committed successfully.",
+  timeoutMs: FLOATING_STATUS_NOTICE_TIMEOUT_MS,
 };
 
 describe("FloatingHeaderStatusBubble", () => {
@@ -52,7 +60,7 @@ describe("FloatingHeaderStatusBubble", () => {
     const onActivate = vi.fn();
     render(
       <FloatingHeaderStatusBubble
-        notices={[persistentApproval, transientWarning]}
+        notices={[persistentApproval, transientWarning, transientSuccess]}
         anchorElement={anchorElement}
         active
         onActivate={onActivate}
@@ -67,15 +75,21 @@ describe("FloatingHeaderStatusBubble", () => {
     });
 
     expect(bubble).toHaveClass("floating-header-status-bubble");
-    expect(Array.from(bubble.children)).toHaveLength(2);
+    expect(Array.from(bubble.children)).toHaveLength(3);
     expect(within(bubble).getByText("Goal update failed")).toBeInTheDocument();
     expect(
       within(
         within(bubble).getByText("Goal update failed").closest(
           ".composer-status-notice",
         )!,
-      ).queryByRole("button"),
-    ).not.toBeInTheDocument();
+      ).getByRole("button", { name: "Dismiss Goal update failed" }),
+    ).toBeInTheDocument();
+    expect(
+      within(bubble).getByRole("button", { name: "Dismiss Approval needed" }),
+    ).toBeInTheDocument();
+    expect(
+      within(bubble).getByRole("button", { name: "Dismiss Commit complete" }),
+    ).toBeInTheDocument();
 
     fireEvent.click(action);
     expect(onActivate).toHaveBeenCalledWith("approval");
@@ -144,8 +158,59 @@ describe("FloatingHeaderStatusBubble", () => {
     expect(screen.getByText("Approval needed")).toBeInTheDocument();
     expect(onDismiss).toHaveBeenCalledWith("warning");
     expect(
-      screen.queryByRole("button", { name: "Dismiss Approval needed" }),
-    ).not.toBeInTheDocument();
+      screen.getByRole("button", { name: "Dismiss Approval needed" }),
+    ).toBeInTheDocument();
+  });
+
+  it("keeps a dismissed revision hidden and shows a changed revision", () => {
+    const onActivate = vi.fn();
+    const onDismiss = vi.fn();
+    const { rerender } = render(
+      <FloatingHeaderStatusBubble
+        notices={[persistentApproval, transientWarning]}
+        anchorElement={anchorElement}
+        active
+        onActivate={onActivate}
+        onDismiss={onDismiss}
+      />,
+    );
+
+    fireEvent.click(
+      screen.getByRole("button", { name: "Dismiss Approval needed" }),
+    );
+    expect(screen.queryByText("Approval needed")).not.toBeInTheDocument();
+    expect(screen.getByText("Goal update failed")).toBeInTheDocument();
+    expect(onActivate).not.toHaveBeenCalled();
+    expect(onDismiss).toHaveBeenCalledWith("approval");
+
+    rerender(
+      <FloatingHeaderStatusBubble
+        notices={[persistentApproval, transientWarning]}
+        anchorElement={anchorElement}
+        active
+        onActivate={onActivate}
+        onDismiss={onDismiss}
+      />,
+    );
+    expect(screen.queryByText("Approval needed")).not.toBeInTheDocument();
+
+    rerender(
+      <FloatingHeaderStatusBubble
+        notices={[
+          {
+            ...persistentApproval,
+            revisionKey: "approval:2",
+            title: "2 approvals needed",
+          },
+          transientWarning,
+        ]}
+        anchorElement={anchorElement}
+        active
+        onActivate={onActivate}
+        onDismiss={onDismiss}
+      />,
+    );
+    expect(screen.getByText("2 approvals needed")).toBeInTheDocument();
   });
 
   it("pauses transient notice time while hovered or keyboard-focused", () => {
