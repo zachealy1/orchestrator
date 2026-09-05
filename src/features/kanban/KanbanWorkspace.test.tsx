@@ -623,7 +623,6 @@ describe("KanbanWorkspace controller", () => {
           id: "kanban-action-success-1",
           title: "Agent turn started.",
           tone: "success",
-          dismissible: true,
         }),
       ),
     );

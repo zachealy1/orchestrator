@@ -14,7 +14,6 @@ function notice(
     tone: "success",
     title,
     timeoutMs: 60_000,
-    dismissible: true,
   };
 }
 

@@ -1376,6 +1376,20 @@ describe("Application runtime scenarios 1", () => {
           within(banner).getByRole("button", { name: /commit or push/i }),
         ).toHaveAttribute("aria-busy", "false"),
       );
+      const completionNotice = await screen.findByRole("status", {
+        name: "Commit and push complete",
+      });
+      expect(completionNotice).toHaveTextContent(
+        "Workspace changes were committed and pushed successfully. Repository: orchestrator.",
+      );
+      await user.click(
+        screen.getByRole("button", {
+          name: "Dismiss Commit and push complete",
+        }),
+      );
+      expect(
+        screen.queryByRole("status", { name: "Commit and push complete" }),
+      ).not.toBeInTheDocument();
     });
 
   it("closes the dialog while an accepted commit runs in the background", async () => {
