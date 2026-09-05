@@ -61,6 +61,26 @@ struct PullRequestSyncTarget {
 
 const PULL_REQUEST_SYNC_CONCURRENCY: usize = 4;
 
+#[derive(Debug, PartialEq, Eq)]
+enum PublicationGitPreparation {
+    CommitWorktree,
+    PublishExistingHead,
+    NothingToPublish,
+}
+
+fn publication_git_preparation(
+    has_uncommitted_changes: bool,
+    ahead_of_base: u64,
+) -> PublicationGitPreparation {
+    if has_uncommitted_changes {
+        PublicationGitPreparation::CommitWorktree
+    } else if ahead_of_base > 0 {
+        PublicationGitPreparation::PublishExistingHead
+    } else {
+        PublicationGitPreparation::NothingToPublish
+    }
+}
+
 fn synchronized_change_count(
     synchronized: u64,
     known_board_revision: Option<i64>,
@@ -350,8 +370,10 @@ async fn publish_record(
             status.binding.source_repository_path
         ));
     }
+    let preparation =
+        publication_git_preparation(status.has_uncommitted_changes(), status.ahead_of_base);
     let mut next_binding = binding;
-    if status.has_changes {
+    if preparation == PublicationGitPreparation::CommitWorktree {
         let context = WorkspaceCommitIntentContext {
             objective: Some(objective.clone()),
             approved_plan: None,
@@ -927,8 +949,9 @@ pub(crate) async fn github_complete_kanban_without_pull_request(
 #[cfg(test)]
 mod tests {
     use super::{
-        parse_github_remote, pull_request_sync_changed, safe_pull_request_text,
-        synchronized_change_count, PullRequestSyncTarget,
+        parse_github_remote, publication_git_preparation, pull_request_sync_changed,
+        safe_pull_request_text, synchronized_change_count, PublicationGitPreparation,
+        PullRequestSyncTarget,
     };
     use crate::github_cli::GithubPullRequest;
 
@@ -995,5 +1018,25 @@ mod tests {
         assert_eq!(synchronized_change_count(0, Some(13), Some(13)), 0);
         assert_eq!(synchronized_change_count(2, Some(12), Some(13)), 2);
         assert_eq!(synchronized_change_count(0, None, Some(13)), 0);
+    }
+
+    #[test]
+    fn publication_commits_only_dirty_worktrees() {
+        assert_eq!(
+            publication_git_preparation(true, 0),
+            PublicationGitPreparation::CommitWorktree
+        );
+        assert_eq!(
+            publication_git_preparation(true, 1),
+            PublicationGitPreparation::CommitWorktree
+        );
+        assert_eq!(
+            publication_git_preparation(false, 1),
+            PublicationGitPreparation::PublishExistingHead
+        );
+        assert_eq!(
+            publication_git_preparation(false, 0),
+            PublicationGitPreparation::NothingToPublish
+        );
     }
 }
