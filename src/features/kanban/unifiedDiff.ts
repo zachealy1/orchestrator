@@ -23,20 +23,6 @@ export function extractUnifiedDiffFilePatches(
   });
 }
 
-export function selectUnifiedDiffForFile(
-  content: string,
-  filePath: string,
-): string | null {
-  const normalizedFilePath = normalizeRepositoryPath(filePath);
-  if (!normalizedFilePath) return null;
-
-  const patch = extractUnifiedDiffFilePatches(content).find(
-    ({ oldPath, newPath }) =>
-      oldPath === normalizedFilePath || newPath === normalizedFilePath,
-  );
-  return patch?.content ?? null;
-}
-
 function readPatchPaths(content: string) {
   const lines = content.split(/\r?\n/);
   const headerPaths = parseDiffHeader(lines[0] ?? "");

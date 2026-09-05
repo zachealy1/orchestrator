@@ -79,9 +79,7 @@
   font-variant-numeric: tabular-nums;
 }
 
-.kanban-column-actions,
-.kanban-card-top-actions,
-.kanban-archive-actions {
+.kanban-card-top-actions {
   display: flex;
   align-items: center;
   gap: 5px;
@@ -764,8 +762,7 @@ button.kanban-card-content {
 
 .kanban-filter-trigger,
 .kanban-toolbar-button,
-.kanban-clear-button,
-.kanban-create-button {
+.kanban-clear-button {
   display: inline-flex;
   min-height: 34px;
   align-items: center;
@@ -1015,36 +1012,6 @@ button.kanban-card-content {
   color: var(--color-primary);
 }
 
-.kanban-create-button {
-  display: inline-flex;
-  min-height: 34px;
-  align-items: center;
-  justify-content: center;
-  gap: 7px;
-  margin: 0;
-  padding: 0 12px;
-  border: 0;
-  border-radius: 7px;
-  background: var(--color-button-primary);
-  box-shadow: none;
-  color: var(--color-button-primary-text);
-  font-size: 0.76rem;
-  font-weight: 700;
-  transform: none;
-  white-space: nowrap;
-}
-
-.kanban-create-button:hover:not(:disabled) {
-  background: var(--color-secondary);
-  box-shadow: none;
-  transform: none;
-}
-
-.kanban-create-button:focus-visible {
-  box-shadow: 0 0 0 3px var(--dropdown-focus-ring);
-  outline: none;
-}
-
 /* Dialogs */
 .kanban-card-dialog,
 .kanban-transition-dialog {
@@ -1238,21 +1205,11 @@ button.kanban-card-content {
   font-weight: 650;
 }
 
-.kanban-dialog-fields {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 13px;
-}
-
 .kanban-field,
 .kanban-repository-picker {
   display: grid;
   gap: 8px;
   min-width: 0;
-}
-
-.kanban-field-wide {
-  grid-column: 1 / -1;
 }
 
 .kanban-field > span,
@@ -2035,7 +1992,6 @@ button.kanban-card-content {
   color: var(--color-error);
 }
 
-.kanban-archive-actions button,
 .kanban-card-dialog footer button,
 .kanban-transition-dialog footer button {
   display: inline-flex;
@@ -2129,7 +2085,6 @@ button.kanban-card-content {
   }
 
   .kanban-filter-groups,
-  .kanban-dialog-fields,
   .kanban-repository-options,
   .kanban-segmented-control {
     grid-template-columns: 1fr;
@@ -2707,8 +2662,7 @@ button.kanban-card-content {
 }
 
 .kanban-loading,
-.kanban-empty-board,
-.kanban-conversation-bridge {
+.kanban-empty-board {
   display: grid;
   min-height: 240px;
   place-content: center;
@@ -2722,8 +2676,7 @@ button.kanban-card-content {
 
 .kanban-loading p,
 .kanban-empty-board h2,
-.kanban-empty-board p,
-.kanban-conversation-bridge p {
+.kanban-empty-board p {
   margin: 0;
 }
 
@@ -2732,8 +2685,7 @@ button.kanban-card-content {
   font-size: 1.02rem;
 }
 
-.kanban-empty-board p,
-.kanban-conversation-bridge p {
+.kanban-empty-board p {
   max-width: 440px;
   color: var(--color-text-secondary);
   line-height: 1.45;

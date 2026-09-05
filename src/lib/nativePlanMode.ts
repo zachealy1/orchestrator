@@ -188,14 +188,6 @@ export function isNativePlanItem(value: unknown): value is NativePlanItem {
   return item.type === "plan" && typeof item.id === "string" && typeof item.text === "string";
 }
 
-export function isServerRequestResolvedMessage(message: CodexMessage) {
-  const params = readObject(message.params);
-  return (
-    message.method === "serverRequest/resolved" &&
-    (typeof params.requestId === "string" || typeof params.requestId === "number")
-  );
-}
-
 export function readThreadStatus(message: CodexMessage): ThreadStatus | null {
   if (message.method !== "thread/status/changed") return null;
   const status = readObject(readObject(message.params).status);
@@ -271,23 +263,6 @@ export function requestKey(request: Pick<CodexMessage, "id">) {
   return String(request.id);
 }
 
-export function messageMatchesRun(
-  message: CodexMessage,
-  threadId: string | null,
-  turnId: string | null,
-) {
-  const params = readObject(message.params);
-  const messageThreadId = readString(params.threadId);
-  const messageTurnId =
-    readString(params.turnId) ?? readString(readObject(params.turn).id);
-  if (messageThreadId && threadId && messageThreadId !== threadId) {
-    return false;
-  }
-  if (messageTurnId && turnId && messageTurnId !== turnId) {
-    return false;
-  }
-  return true;
-}
 
 export function createStableClientMessageId() {
   if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
@@ -302,8 +277,4 @@ function readObject(value: unknown): Record<string, unknown> {
   return value && typeof value === "object" && !Array.isArray(value)
     ? (value as Record<string, unknown>)
     : {};
-}
-
-function readString(value: unknown) {
-  return typeof value === "string" ? value : null;
 }

@@ -107,15 +107,6 @@ pub(crate) fn checkout_git_branch_blocking(
 
 #[tauri::command]
 #[specta::specta]
-pub(crate) async fn checkout_git_branch(
-    path: String,
-    branch: String,
-) -> Result<GitCheckoutResult, String> {
-    checkout_git_branch_in_workspace(path, None, branch).await
-}
-
-#[tauri::command]
-#[specta::specta]
 pub(crate) async fn checkout_git_branch_in_workspace(
     workspace_path: String,
     repository_path: Option<String>,
@@ -192,15 +183,6 @@ pub(crate) fn create_git_branch_blocking(
     Ok(GitCheckoutResult {
         branch: checked_out_branch,
     })
-}
-
-#[tauri::command]
-#[specta::specta]
-pub(crate) async fn create_git_branch(
-    path: String,
-    branch: String,
-) -> Result<GitCheckoutResult, String> {
-    create_git_branch_in_workspace(path, None, branch).await
 }
 
 #[tauri::command]
@@ -1636,22 +1618,6 @@ pub(crate) fn list_workspace_git_overview_blocking(
         files,
         discovery_truncated,
     })
-}
-
-#[tauri::command]
-#[specta::specta]
-pub(crate) async fn discover_workspace_git_repositories(
-    workspace_path: String,
-) -> Result<Vec<WorkspaceGitRepository>, String> {
-    run_blocking_command("discover workspace Git repositories", move || {
-        let workspace = canonical_workspace(&workspace_path)?;
-        let (repositories, _) = discover_git_repositories(&workspace, true)?;
-        Ok(repositories
-            .into_iter()
-            .map(|repository| repository.public)
-            .collect())
-    })
-    .await
 }
 
 #[tauri::command]

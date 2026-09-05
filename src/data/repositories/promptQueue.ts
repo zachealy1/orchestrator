@@ -316,24 +316,6 @@ export function createPromptQueueRepository(database: FrontendDatabase, chatRepo
     );
   }
 
-  async function markPromptQueueItemStale(
-    itemId: string,
-    reasons: string[],
-  ) {
-    const db = await getDatabase();
-    const result = await db.execute(
-      `UPDATE prompt_queue_items
-       SET status = 'stale',
-           error = NULL,
-           stale_reasons_json = $1,
-           updated_at = CURRENT_TIMESTAMP
-       WHERE id = $2
-         AND status IN ('queued', 'scheduled-next', 'failed')`,
-      [JSON.stringify(reasons), itemId],
-    );
-    return result.rowsAffected === 1 ? readPromptQueueItem(itemId) : null;
-  }
-
   async function retryPromptQueueItem(
     itemId: string,
     options: { autoSendEnabled?: boolean } = {},
@@ -478,7 +460,6 @@ export function createPromptQueueRepository(database: FrontendDatabase, chatRepo
     acceptPromptQueueItem,
     completePromptQueueItem,
     failPromptQueueItem,
-    markPromptQueueItemStale,
     retryPromptQueueItem,
     setPromptQueueItemAutoSend,
     removePromptQueueItem,

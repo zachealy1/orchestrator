@@ -5,9 +5,7 @@ import {
   PLAN_MODE_OUTPUT_POLICY,
   isNativeUserInputRequest,
   isNativePlanItem,
-  isServerRequestResolvedMessage,
   readThreadStatus,
-  messageMatchesRun,
   selectNativePlanModes,
 } from "./nativePlanMode";
 
@@ -62,7 +60,7 @@ describe("nativePlanMode", () => {
     ).toThrow(/both Plan and Default/);
   });
 
-  it("recognizes structured user-input requests and rejects stale routing ids", () => {
+  it("recognizes structured user-input requests", () => {
     const request = {
       id: 7,
       method: "item/tool/requestUserInput",
@@ -76,20 +74,11 @@ describe("nativePlanMode", () => {
     };
 
     expect(isNativeUserInputRequest(request)).toBe(true);
-    expect(messageMatchesRun(request, "thread-1", "turn-1")).toBe(true);
-    expect(messageMatchesRun(request, "thread-2", "turn-1")).toBe(false);
-    expect(messageMatchesRun(request, "thread-1", "turn-2")).toBe(false);
   });
 
-  it("guards native plan items, resolution notifications, and active thread flags", () => {
+  it("guards native plan items and active thread flags", () => {
     expect(isNativePlanItem({ type: "plan", id: "plan-1", text: "Do it" })).toBe(true);
     expect(isNativePlanItem({ type: "plan", text: "Missing id" })).toBe(false);
-    expect(
-      isServerRequestResolvedMessage({
-        method: "serverRequest/resolved",
-        params: { requestId: 9 },
-      }),
-    ).toBe(true);
     expect(
       readThreadStatus({
         method: "thread/status/changed",

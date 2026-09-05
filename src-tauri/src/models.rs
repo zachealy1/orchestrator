@@ -114,7 +114,6 @@ pub(crate) struct CodexState {
     pub(crate) next_connection_generation: AtomicU64,
     pub(crate) next_server_request_token: Arc<AtomicU64>,
     pub(crate) active_login: Arc<Mutex<Option<ActiveCodexLogin>>>,
-    pub(crate) history_index_requests: Arc<Mutex<HashSet<String>>>,
     pub(crate) transcript_sync_requests: Arc<Mutex<HashSet<String>>>,
 }
 
@@ -225,40 +224,6 @@ pub(crate) struct ProjectedSubagentTurn {
     pub(crate) completed_at: Option<String>,
     #[specta(type = Vec<specta_typescript::Unknown>)]
     pub(crate) items: Vec<Value>,
-}
-
-#[derive(Clone, Serialize, specta::Type)]
-#[serde(rename_all = "camelCase")]
-pub(crate) struct HistoryTurnHint {
-    pub(crate) slot_index: usize,
-    pub(crate) turn_id: Option<String>,
-    pub(crate) prompt_characters: usize,
-    pub(crate) response_characters: usize,
-    pub(crate) prompt_lines: usize,
-    pub(crate) response_lines: usize,
-}
-
-#[derive(Clone, Serialize, specta::Type)]
-#[serde(rename_all = "camelCase")]
-pub(crate) struct HistoryPageDescriptor {
-    pub(crate) id: String,
-    pub(crate) page_index: usize,
-    pub(crate) start_index: usize,
-    pub(crate) turn_count: usize,
-    pub(crate) cursor: Option<String>,
-    pub(crate) local_offset: Option<usize>,
-}
-
-#[derive(Serialize, specta::Type)]
-#[serde(rename_all = "camelCase")]
-pub(crate) struct ExternalThreadHistoryIndex {
-    pub(crate) request_id: String,
-    pub(crate) thread_id: String,
-    pub(crate) source_version: String,
-    pub(crate) total_turns: usize,
-    pub(crate) page_size: usize,
-    pub(crate) pages: Vec<HistoryPageDescriptor>,
-    pub(crate) hints: Vec<HistoryTurnHint>,
 }
 
 #[derive(Clone, Deserialize, Serialize, specta::Type)]

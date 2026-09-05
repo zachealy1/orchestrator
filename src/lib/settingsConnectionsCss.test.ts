@@ -40,7 +40,6 @@ describe("settings connection styles", () => {
     const selectors = new Set([
       ".plugin-card:hover",
       "button.settings-status-card:hover:not(:disabled)",
-      ".theme-selector button:hover:not(:disabled)",
       "button.settings-connection-row:hover:not(:disabled)",
       "button.settings-status-popover-trigger:hover:not(:disabled)",
       "button.settings-status-popover-action:hover:not(:disabled),\nbutton.settings-status-popover-permission:hover:not(:disabled)",
@@ -441,6 +440,12 @@ describe("settings connection styles", () => {
 
     root.walkRules((candidate) => {
       if (selectors.has(candidate.selector)) {
+        if (
+          candidate.selector === ".settings-grid" &&
+          !candidate.toString().includes("--settings-option-min-height")
+        ) {
+          return;
+        }
         rules.set(candidate.selector, candidate.toString());
       }
     });

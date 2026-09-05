@@ -1,11 +1,4 @@
 import { diffLines, parsePatch } from "diff";
-import type { ResolvedTheme } from "../shared/types";
-import {
-  detectPreviewLanguage,
-  highlightPreviewContent,
-  type CodePreviewCache,
-  type PreviewSemanticToken,
-} from "./codePreview";
 
 export type DiffRowKind = "unchanged" | "changed" | "added" | "removed";
 
@@ -16,17 +9,6 @@ export type DiffRow = {
   headLineNumber: number | null;
   baseText: string;
   headText: string;
-};
-
-export type DiffToken = {
-  content: string;
-  color?: string;
-  semantic?: PreviewSemanticToken["semantic"];
-};
-
-export type HighlightedDiffSide = {
-  language: string;
-  lines: DiffToken[][];
 };
 
 export type DiffOverviewMarker = {
@@ -268,41 +250,6 @@ export function pairChangedLineBlocks(baseLines: string[], headLines: string[]) 
   }));
 }
 
-export async function highlightDiffSide(
-  content: string,
-  path: string,
-  resolvedTheme: ResolvedTheme,
-  cache: CodePreviewCache,
-): Promise<HighlightedDiffSide> {
-  const language = detectPreviewLanguage(path);
-  if (language === "plaintext") {
-    return { language, lines: splitDiffLines(content).map(textToTokenLine) };
-  }
-
-  const lines = await highlightPreviewContent(
-    {
-      path,
-      content,
-      language,
-      resolvedTheme,
-    },
-    cache,
-  );
-
-  return {
-    language,
-    lines: lines.map((line) =>
-      line.length > 0
-        ? line.map((token) => ({
-            content: token.content,
-            color: token.color,
-            semantic: token.semantic,
-          }))
-        : [{ content: "" }],
-    ),
-  };
-}
-
 export function splitDiffLines(content: string) {
   if (!content) {
     return [];
@@ -313,10 +260,6 @@ export function splitDiffLines(content: string) {
     lines.pop();
   }
   return lines;
-}
-
-function textToTokenLine(content: string) {
-  return [{ content }];
 }
 
 function clamp(value: number, min: number, max: number) {

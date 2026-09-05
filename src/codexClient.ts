@@ -18,9 +18,9 @@ import type { WorkspaceCommitIntentContext } from "./lib/commitMessage";
 import type { ActiveCodexLogin, CodexAccountResponse, CodexConnectResult, CodexLoginResponse, CodexModel, CodexProfileKey, ModelListResponse } from "./features/codex/types";
 import type { CodexAccountRateLimitsResponse } from "./features/analytics/usageLimits";
 import type { DesktopRuntimeStatus } from "./features/interaction/types";
-import type { CodexSkillSummary, ComposerContextFile, DroppedContextPathInspection, ImageAttachmentPreview } from "./features/composer/types";
-import type { ExternalTranscriptSnapshot, ExternalThreadHistoryIndex } from "./features/conversations/types";
-import type { GitBranchList, Workspace, WorkspaceFilePreview, WorkspaceGitActionResult, WorkspaceGitDiff, WorkspaceGitOverview, WorkspaceGitRepository, WorkspaceTreeEntry } from "./features/workspaces/types";
+import type { CodexSkillSummary, DroppedContextPathInspection, ImageAttachmentPreview } from "./features/composer/types";
+import type { ExternalTranscriptSnapshot } from "./features/conversations/types";
+import type { GitBranchList, Workspace, WorkspaceFilePreview, WorkspaceGitActionResult, WorkspaceGitDiff, WorkspaceGitOverview, WorkspaceTreeEntry } from "./features/workspaces/types";
 import type { PreflightReport } from "./features/runs/types";
 import type { PromptQueueContextInspection } from "./features/queue/types";
 import type { LocalWebPreviewProbeResult } from "./lib/webPreview";
@@ -84,15 +84,6 @@ export function readActiveCodexLogin() {
 
 export function stopDefaultCodexProfile() {
   return commandResult<void>(commands.codexDefaultProfileStop());
-}
-
-export function continueTaskInCodexDesktop(
-  workspacePath: string,
-  prompt: string,
-) {
-  return commandResult<void>(
-    commands.codexDesktopContinueTask(workspacePath, prompt),
-  );
 }
 
 export function readAgentNotificationPermissionStatus() {
@@ -284,26 +275,6 @@ function normalizeHistoricalCommandStatus(
   return "completed";
 }
 
-export function indexDefaultProfileThread(input: {
-  threadId: string;
-  sourceVersion: string;
-  pageSize?: number;
-  requestId: string;
-}) {
-  return commandResult<ExternalThreadHistoryIndex>(
-    commands.codexDefaultProfileThreadIndex(
-      input.threadId,
-      input.sourceVersion,
-      input.pageSize ?? 20,
-      input.requestId,
-    ),
-  );
-}
-
-export function cancelDefaultProfileThreadIndex(requestId: string) {
-  return commandResult<void>(commands.codexDefaultProfileThreadIndexCancel(requestId));
-}
-
 export function syncDefaultProfileThreadTranscript(input: {
   threadId: string;
   sourceVersion: string;
@@ -439,12 +410,6 @@ export function pushWorkspaceBranch(
 ) {
   return commandResult<WorkspaceGitActionResult>(
     commands.pushWorkspaceBranch(workspacePath, repositoryPath ?? null),
-  );
-}
-
-export function discoverWorkspaceGitRepositories(workspacePath: string) {
-  return commandResult<WorkspaceGitRepository[]>(
-    commands.discoverWorkspaceGitRepositories(workspacePath),
   );
 }
 
@@ -672,27 +637,6 @@ export async function setThreadGoal(
   });
 }
 
-export async function searchCodexFiles(
-  accountId: number,
-  query: string,
-  workspacePath: string | null,
-) {
-  if (!workspacePath || !query.trim()) {
-    return [];
-  }
-
-  try {
-    const response = await codexRpc<unknown>(accountId, "fuzzyFileSearch", {
-      query,
-      roots: [workspacePath],
-      cancellationToken: null,
-    });
-    return extractFileSearchResults(response, workspacePath);
-  } catch {
-    return [];
-  }
-}
-
 function extractCodexSkills(payload: unknown): CodexSkillSummary[] {
   const root = readObject(payload);
   const topLevelSource =
@@ -753,30 +697,6 @@ function decodeBase64Utf8(value: string) {
   return new TextDecoder("utf-8", { fatal: false }).decode(bytes);
 }
 
-function extractFileSearchResults(payload: unknown, workspacePath: string): ComposerContextFile[] {
-  const files = readArray(readObject(payload).files)
-    .map((item) => readObject(item))
-    .map((item): ComposerContextFile | null => {
-      const relativePath = readString(item.path);
-      const root = readString(item.root) ?? workspacePath;
-      const name = readString(item.file_name) ?? basename(relativePath);
-
-      if (!relativePath || !name) {
-        return null;
-      }
-
-      return {
-        path: joinPath(root, relativePath),
-        name,
-        source: "search" as const,
-        status: "ready" as const,
-      };
-    })
-    .filter((file): file is ComposerContextFile => file !== null);
-
-  return files.slice(0, 8);
-}
-
 function readObject(value: unknown): Record<string, unknown> {
   return value && typeof value === "object" && !Array.isArray(value)
     ? (value as Record<string, unknown>)
@@ -789,21 +709,4 @@ function readArray(value: unknown): unknown[] {
 
 function readString(value: unknown) {
   return typeof value === "string" ? value : null;
-}
-
-function basename(path: string | null) {
-  if (!path) {
-    return null;
-  }
-
-  const parts = path.split(/[\\/]/).filter(Boolean);
-  return parts[parts.length - 1] ?? path;
-}
-
-function joinPath(root: string, path: string) {
-  if (path.startsWith("/")) {
-    return path;
-  }
-
-  return `${root.replace(/[\\/]+$/, "")}/${path.replace(/^[\\/]+/, "")}`;
 }

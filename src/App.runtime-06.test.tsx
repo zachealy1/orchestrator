@@ -1575,7 +1575,6 @@ describe("Application runtime scenarios 6", () => {
       expect(
         screen.queryByRole("dialog", { name: /review changed context/i }),
       ).not.toBeInTheDocument();
-      expect(mocks.markPromptQueueItemStaleMock).not.toHaveBeenCalled();
       await waitFor(() => expect(mocks.runPreflightMock).toHaveBeenCalled());
     });
 
@@ -1638,7 +1637,6 @@ describe("Application runtime scenarios 6", () => {
       expect(
         screen.queryByRole("dialog", { name: /review changed context/i }),
       ).not.toBeInTheDocument();
-      expect(mocks.markPromptQueueItemStaleMock).not.toHaveBeenCalled();
       await waitFor(() =>
         expect(mocks.codexRpcMock).toHaveBeenCalledWith(
           7,

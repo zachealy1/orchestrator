@@ -14,7 +14,6 @@ const mocks = vi.hoisted(() => ({
   openUrlMock: vi.fn(),
   connectCodexMock: vi.fn(),
   connectDefaultCodexProfileMock: vi.fn(),
-  continueTaskInCodexDesktopMock: vi.fn(),
   commitWorkspaceChangesMock: vi.fn(),
   generateChatTitleMock: vi.fn(),
   generateWorkspaceCommitMessageMock: vi.fn(),
@@ -62,8 +61,6 @@ const mocks = vi.hoisted(() => ({
   codexDefaultProfileRpcMock: vi.fn(),
   loadDefaultProfileTurnActivityMock: vi.fn(),
   readProjectedSubagentThreadMock: vi.fn(),
-  indexDefaultProfileThreadMock: vi.fn(),
-  cancelDefaultProfileThreadIndexMock: vi.fn(),
   syncDefaultProfileThreadTranscriptMock: vi.fn(),
   cancelDefaultProfileThreadTranscriptMock: vi.fn(),
   listWorkspacesMock: vi.fn(),
@@ -120,7 +117,6 @@ const mocks = vi.hoisted(() => ({
   acceptPromptQueueItemMock: vi.fn(),
   completePromptQueueItemMock: vi.fn(),
   failPromptQueueItemMock: vi.fn(),
-  markPromptQueueItemStaleMock: vi.fn(),
   retryPromptQueueItemMock: vi.fn(),
   setPromptQueueItemAutoSendMock: vi.fn(),
   removePromptQueueItemMock: vi.fn(),
@@ -128,18 +124,13 @@ const mocks = vi.hoisted(() => ({
   advanceChatConversationRevisionMock: vi.fn(),
   listWorkspaceChatsMock: vi.fn(),
   getChatWithRunsMock: vi.fn(),
-  listChatRunsPageMock: vi.fn(),
   listChatSubagentsMock: vi.fn(),
   listRunSubagentInstructionsMock: vi.fn(),
-  buildLocalChatHistoryIndexMock: vi.fn(),
-  readExternalChatHistoryIndexMock: vi.fn(),
-  saveExternalChatHistoryIndexMock: vi.fn(),
   listLocalChatTranscriptMock: vi.fn(),
   readExternalTranscriptSnapshotMock: vi.fn(),
   activateExternalTranscriptSnapshotMock: vi.fn(),
   activateChatAccountHandoffMock: vi.fn(),
   softDeleteChatMock: vi.fn(),
-  listWorkspaceRunsMock: vi.fn(),
   createCodexAccountMock: vi.fn(),
   updateCodexAccountMock: vi.fn(),
   renameCodexAccountMock: vi.fn(),
@@ -155,7 +146,6 @@ const mocks = vi.hoisted(() => ({
   appendRunEventsMock: vi.fn(),
   recordTokenUsageMock: vi.fn(),
   upsertInteractionSessionMock: vi.fn(),
-  upsertInteractionStepMock: vi.fn(),
   softDeleteRunMock: vi.fn(),
   upsertWorkspaceMock: vi.fn(),
   upsertExternalCodexChatsMock: vi.fn(),
@@ -207,10 +197,6 @@ vi.mock("@tauri-apps/plugin-opener", () => ({
 
 vi.mock("../lib/nativeContextFileDrop", () => ({
   registerNativeContextFileDrop: mocks.registerNativeContextFileDropMock,
-}));
-
-vi.mock("../assets/brand/orchestrator-wordmark.png", () => ({
-  default: "orchestrator-wordmark.png",
 }));
 
 vi.mock("../features/kanban/KanbanWorkspace", async () => {
@@ -371,7 +357,6 @@ vi.mock("../codexClient", () => ({
   codexRpc: mocks.codexRpcMock,
   commitWorkspaceChanges: mocks.commitWorkspaceChangesMock,
   connectDefaultCodexProfile: mocks.connectDefaultCodexProfileMock,
-  continueTaskInCodexDesktop: mocks.continueTaskInCodexDesktopMock,
   connectCodex: mocks.connectCodexMock,
   checkoutGitBranch: mocks.checkoutGitBranchMock,
   createGitBranch: mocks.createGitBranchMock,
@@ -388,8 +373,6 @@ vi.mock("../codexClient", () => ({
   listWorkspaceDirectory: mocks.listWorkspaceDirectoryMock,
   loadDefaultProfileTurnActivity: mocks.loadDefaultProfileTurnActivityMock,
   readProjectedSubagentThread: mocks.readProjectedSubagentThreadMock,
-  indexDefaultProfileThread: mocks.indexDefaultProfileThreadMock,
-  cancelDefaultProfileThreadIndex: mocks.cancelDefaultProfileThreadIndexMock,
   syncDefaultProfileThreadTranscript:
     mocks.syncDefaultProfileThreadTranscriptMock,
   cancelDefaultProfileThreadTranscript:
@@ -464,7 +447,6 @@ vi.mock("../data/repositories", () => ({
       listDuplicateProfilesPendingCleanup:
         mocks.listDuplicateProfilesPendingCleanupMock,
       renameCodexAccount: mocks.renameCodexAccountMock,
-      setWorkspaceDefaultAccount: vi.fn(),
       setWorkspaceDefaultProfile: vi.fn(),
       softDeleteCodexAccount: mocks.softDeleteCodexAccountMock,
       updateCodexAccount: mocks.updateCodexAccountMock,
@@ -506,7 +488,6 @@ vi.mock("../data/repositories", () => ({
       holdRestoredPromptQueueItems: mocks.listRestoredPromptQueueItemsMock,
       listPromptQueueItems: mocks.listPromptQueueItemsMock,
       listRestoredPromptQueueItems: mocks.listRestoredPromptQueueItemsMock,
-      markPromptQueueItemStale: mocks.markPromptQueueItemStaleMock,
       markPromptQueueItemSteering: mocks.markPromptQueueItemSteeringMock,
       prioritizePromptQueueItem: mocks.prioritizePromptQueueItemMock,
       readPromptQueueItem: mocks.readPromptQueueItemMock,
@@ -523,21 +504,15 @@ vi.mock("../data/repositories", () => ({
       updatePromptQueueItemSnapshot: mocks.updatePromptQueueItemSnapshotMock,
     },
     interactions: {
-      deleteExpiredPermissions: vi.fn(),
       listAlwaysAllowedApplications: vi.fn().mockResolvedValue([]),
-      listSteps: vi.fn().mockResolvedValue([]),
-      readPermission: vi.fn().mockResolvedValue(null),
       revokeAlwaysAllowedApplication: vi.fn(),
-      setPermission: vi.fn(),
       upsertSession: mocks.upsertInteractionSessionMock,
-      upsertStep: mocks.upsertInteractionStepMock,
     },
     runs: {
       appendRunEvent: mocks.appendRunEventMock,
       appendRunEvents: mocks.appendRunEventsMock,
       createRun: mocks.createRunMock,
       createTask: mocks.createTaskMock,
-      listWorkspaceRuns: mocks.listWorkspaceRunsMock,
       recordTokenUsage: mocks.recordTokenUsageMock,
       savePreflightReport: mocks.savePreflightReportMock,
       softDeleteRun: mocks.softDeleteRunMock,
@@ -547,17 +522,12 @@ vi.mock("../data/repositories", () => ({
     transcripts: {
       activateExternalTranscriptSnapshot:
         mocks.activateExternalTranscriptSnapshotMock,
-      buildLocalChatHistoryIndex: mocks.buildLocalChatHistoryIndexMock,
-      deleteExternalTranscriptSnapshots: vi.fn(),
       getChatWithRuns: mocks.getChatWithRunsMock,
-      listChatRunsPage: mocks.listChatRunsPageMock,
       listChatSubagents: mocks.listChatSubagentsMock,
       listRunSubagentInstructions: mocks.listRunSubagentInstructionsMock,
       listLocalChatTranscript: mocks.listLocalChatTranscriptMock,
       listWorkspaceChats: mocks.listWorkspaceChatsMock,
-      readExternalChatHistoryIndex: mocks.readExternalChatHistoryIndexMock,
       readExternalTranscriptSnapshot: mocks.readExternalTranscriptSnapshotMock,
-      saveExternalChatHistoryIndex: mocks.saveExternalChatHistoryIndexMock,
       softDeleteChat: mocks.softDeleteChatMock,
       upsertRunSubagent: mocks.upsertRunSubagentMock,
       upsertRunSubagentInstruction: mocks.upsertRunSubagentInstructionMock,
@@ -843,7 +813,6 @@ export function prepareDefaults() {
     mocks.createChatMock,
     mocks.createTaskMock,
     mocks.createRunMock,
-    mocks.continueTaskInCodexDesktopMock,
     mocks.chatHasPendingPlanReviewMock,
     mocks.generateChatTitleMock,
     mocks.inspectDroppedContextPathsMock,
@@ -885,7 +854,6 @@ export function prepareDefaults() {
   mocks.promptQueueState.priority = 0;
   mocks.promptQueueState.revision = 0;
   mocks.chatHasPendingPlanReviewMock.mockResolvedValue(false);
-  mocks.continueTaskInCodexDesktopMock.mockResolvedValue(undefined);
   mocks.saveNativeWorkspaceBindingMock.mockResolvedValue(undefined);
   mocks.activateSharedNativeWorkspaceBindingMock.mockResolvedValue(true);
   mocks.recoverInterruptedKanbanAttemptsMock.mockResolvedValue(0);
@@ -1121,7 +1089,6 @@ export function prepareDefaults() {
     screenRecordingTrusted: false,
   });
   mocks.upsertInteractionSessionMock.mockResolvedValue(undefined);
-  mocks.upsertInteractionStepMock.mockResolvedValue(undefined);
   mocks.readAgentNotificationPermissionStatusMock.mockResolvedValue("unavailable");
   mocks.requestAgentNotificationPermissionMock.mockResolvedValue("allowed");
   mocks.sendAgentNotificationMock.mockResolvedValue({
@@ -1267,7 +1234,6 @@ export function prepareDefaults() {
     editedFiles: [],
     nextCursor: null,
   });
-  mocks.cancelDefaultProfileThreadIndexMock.mockResolvedValue(undefined);
   mocks.cancelDefaultProfileThreadTranscriptMock.mockResolvedValue(undefined);
   mocks.syncDefaultProfileThreadTranscriptMock.mockResolvedValue({
     requestId: "transcript-sync-1",
@@ -1287,33 +1253,6 @@ export function prepareDefaults() {
         durationMs: 60_000,
         totalTokens: 1_280,
         modelContextWindow: 128_000,
-      },
-    ],
-  });
-  mocks.indexDefaultProfileThreadMock.mockResolvedValue({
-    requestId: "history-index-1",
-    threadId: "thread-external",
-    sourceVersion: "2026-06-30T09:01:00Z",
-    totalTurns: 1,
-    pageSize: 20,
-    pages: [
-      {
-        id: "external:thread-external:0",
-        pageIndex: 0,
-        startIndex: 0,
-        turnCount: 1,
-        cursor: null,
-        localOffset: null,
-      },
-    ],
-    hints: [
-      {
-        slotIndex: 0,
-        turnId: "turn-external",
-        promptCharacters: 24,
-        responseCharacters: 32,
-        promptLines: 1,
-        responseLines: 1,
       },
     ],
   });
@@ -1519,14 +1458,6 @@ export function prepareDefaults() {
         error,
       }),
   );
-  mocks.markPromptQueueItemStaleMock.mockImplementation(
-    async (itemId: string, reasons: string[]) =>
-      updatePromptQueueFixture(itemId, {
-        status: "stale",
-        error: null,
-        staleReasons: reasons,
-      }),
-  );
   mocks.retryPromptQueueItemMock.mockImplementation(
     async (
       itemId: string,
@@ -1612,12 +1543,6 @@ export function prepareDefaults() {
   mocks.getChatWithRunsMock.mockImplementation(async (chatId: number) =>
     workspaceChatWithRunsFixture(workspaceChatFixture({ id: chatId })),
   );
-  mocks.listChatRunsPageMock.mockImplementation(
-    async (chatId: number, offset: number, limit: number) => {
-      const chat = await mocks.getChatWithRunsMock(chatId);
-      return chat.runs.slice(offset, offset + limit);
-    },
-  );
   mocks.listLocalChatTranscriptMock.mockImplementation(async (chatId: number) => {
     const chat = await mocks.getChatWithRunsMock(chatId);
     return chat.runs;
@@ -1625,40 +1550,6 @@ export function prepareDefaults() {
   mocks.readExternalTranscriptSnapshotMock.mockResolvedValue(null);
   mocks.activateExternalTranscriptSnapshotMock.mockResolvedValue(undefined);
   mocks.activateChatAccountHandoffMock.mockResolvedValue(true);
-  mocks.buildLocalChatHistoryIndexMock.mockImplementation(async (chat: any) => {
-    const totalTurns = Math.max(0, Number(chat.turn_count) || 0);
-    const pages = [];
-    for (let startIndex = 0; startIndex < totalTurns; startIndex += 20) {
-      const pageIndex: number = pages.length;
-      pages.push({
-        id: `local:${chat.id}:${pageIndex}`,
-        pageIndex,
-        startIndex,
-        turnCount: Math.min(20, totalTurns - startIndex),
-        cursor: null,
-        localOffset: startIndex,
-      });
-    }
-    return {
-      chatId: chat.id,
-      threadId: chat.codex_thread_id,
-      sourceVersion: chat.updated_at,
-      totalTurns,
-      pageSize: 20,
-      pages,
-      hints: Array.from({ length: totalTurns }, (_, slotIndex) => ({
-        slotIndex,
-        turnId: `turn-${slotIndex + 1}`,
-        promptCharacters: 24,
-        responseCharacters: 32,
-        promptLines: 1,
-        responseLines: 1,
-      })),
-    };
-  });
-  mocks.readExternalChatHistoryIndexMock.mockResolvedValue(null);
-  mocks.saveExternalChatHistoryIndexMock.mockResolvedValue(undefined);
-  mocks.listWorkspaceRunsMock.mockResolvedValue([]);
   mocks.createCodexAccountMock.mockResolvedValue(pendingAccount);
   mocks.updateCodexAccountMock.mockResolvedValue(undefined);
   mocks.renameCodexAccountMock.mockResolvedValue(undefined);

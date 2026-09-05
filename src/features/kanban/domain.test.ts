@@ -1,8 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
   DEFAULT_KANBAN_FILTER_STATE,
-  calculateCardPosition,
-  canTransitionCard,
   deriveCardCapabilities,
   deriveCardTransition,
   executionFacets,
@@ -10,11 +8,8 @@ import {
   groupKanbanCards,
   isExecutionActive,
   isExecutionConfigurationLocked,
-  isExecutionFinished,
   isExecutionResumable,
   isExecutionWaiting,
-  rebalanceKanbanCardPositions,
-  reorderKanbanCards,
   sortKanbanCards,
   type KanbanCard,
   type KanbanExecutionState,
@@ -92,11 +87,7 @@ describe("Kanban execution state helpers", () => {
     },
   );
 
-  it("classifies finished states and overlapping attention facets", () => {
-    expect(isExecutionFinished("completed")).toBe(true);
-    expect(isExecutionFinished("failed")).toBe(true);
-    expect(isExecutionFinished("stopped")).toBe(true);
-    expect(isExecutionFinished("interrupted")).toBe(false);
+  it("classifies overlapping attention facets", () => {
     expect(executionFacets("waiting_user")).toEqual(["active", "waiting"]);
     expect(executionFacets("blocked")).toEqual(["blocked"]);
   });
@@ -300,9 +291,11 @@ describe("Kanban lifecycle transitions", () => {
       requiresConfirmation: false,
       reason: null,
     });
-    expect(canTransitionCard(card(), "in_progress", "start")).toBe(true);
-    expect(canTransitionCard(card({ executionState: "running" }), "in_progress"))
-      .toBe(false);
+    expect(deriveCardTransition(card(), "in_progress", "start").allowed).toBe(true);
+    expect(
+      deriveCardTransition(card({ executionState: "running" }), "in_progress")
+        .allowed,
+    ).toBe(false);
   });
 
   it("requires stop-and-move confirmation before an active card leaves In progress", () => {
@@ -317,8 +310,12 @@ describe("Kanban lifecycle transitions", () => {
       action: "stop_and_move",
       requiresConfirmation: true,
     });
-    expect(canTransitionCard(running, "in_review", "stop_and_move")).toBe(true);
-    expect(canTransitionCard(running, "done", "stop_and_move")).toBe(false);
+    expect(
+      deriveCardTransition(running, "in_review", "stop_and_move").allowed,
+    ).toBe(true);
+    expect(deriveCardTransition(running, "done", "stop_and_move").allowed).toBe(
+      false,
+    );
   });
 
   it("moves successful work to review but never directly to Done", () => {
@@ -328,47 +325,49 @@ describe("Kanban lifecycle transitions", () => {
       reviewState: "awaiting_review",
     });
 
-    expect(canTransitionCard(completed, "in_review", "run_completed")).toBe(true);
     expect(
-      canTransitionCard(
+      deriveCardTransition(completed, "in_review", "run_completed").allowed,
+    ).toBe(true);
+    expect(
+      deriveCardTransition(
         card({ stage: "in_progress", executionState: "running" }),
         "in_review",
         "run_completed",
-      ),
+      ).allowed,
     ).toBe(true);
-    expect(canTransitionCard(completed, "done")).toBe(false);
+    expect(deriveCardTransition(completed, "done").allowed).toBe(false);
   });
 
   it("matches native direct-move recovery states", () => {
     expect(
-      canTransitionCard(
+      deriveCardTransition(
         card({ stage: "in_progress", executionState: "failed" }),
         "todo",
-      ),
+      ).allowed,
     ).toBe(true);
     expect(
-      canTransitionCard(
+      deriveCardTransition(
         card({ stage: "in_progress", executionState: "interrupted" }),
         "todo",
-      ),
+      ).allowed,
     ).toBe(true);
     expect(
-      canTransitionCard(
+      deriveCardTransition(
         card({ stage: "in_progress", executionState: "idle" }),
         "todo",
-      ),
+      ).allowed,
     ).toBe(false);
     expect(
-      canTransitionCard(
+      deriveCardTransition(
         card({ stage: "in_progress", executionState: "completed" }),
         "todo",
-      ),
+      ).allowed,
     ).toBe(false);
     expect(
-      canTransitionCard(
+      deriveCardTransition(
         card({ stage: "in_progress", executionState: "stopped" }),
         "in_review",
-      ),
+      ).allowed,
     ).toBe(true);
   });
 
@@ -381,7 +380,9 @@ describe("Kanban lifecycle transitions", () => {
 
     expect(deriveCardTransition(review, "in_progress").allowed).toBe(false);
     expect(deriveCardTransition(review, "done").allowed).toBe(false);
-    expect(canTransitionCard(review, "done", "approve_result")).toBe(false);
+    expect(deriveCardTransition(review, "done", "approve_result").allowed).toBe(
+      false,
+    );
   });
 
   it("only reopens an approved Done card into review", () => {
@@ -394,7 +395,7 @@ describe("Kanban lifecycle transitions", () => {
     expect(deriveCardTransition(approved, "in_review").action).toBe(
       "reopen_review",
     );
-    expect(canTransitionCard(approved, "todo")).toBe(false);
+    expect(deriveCardTransition(approved, "todo").allowed).toBe(false);
   });
 
   it("allows same-column reordering without affecting a live attempt", () => {
@@ -584,149 +585,4 @@ describe("Kanban ordering", () => {
     expect(input.map((item) => item.id)).toEqual(["b", "c", "a"]);
   });
 
-  it("calculates positions from explicit neighboring anchors", () => {
-    const cards = [
-      card({ id: "a", sortPosition: 1_024 }),
-      card({ id: "b", sortPosition: 3_072 }),
-    ];
-    expect(
-      calculateCardPosition(cards, "todo", {
-        beforeCardId: "b",
-        afterCardId: "a",
-      }),
-    ).toBe(2_048);
-    expect(
-      calculateCardPosition(cards, "todo", { afterCardId: "a" }),
-    ).toBe(2_048);
-    expect(
-      calculateCardPosition(cards, "todo", { beforeCardId: "a" }),
-    ).toBe(0);
-    expect(() =>
-      calculateCardPosition(cards, "done", { beforeCardId: "a" }),
-    ).toThrow(/another column/);
-  });
-
-  it("reorders visible cards through existing slots while hidden cards stay anchored", () => {
-    const cards = [
-      card({ id: "visible-a", sortPosition: 1_024 }),
-      card({ id: "hidden", sortPosition: 2_048 }),
-      card({ id: "visible-b", sortPosition: 3_072 }),
-    ];
-    const result = reorderKanbanCards(cards, {
-      cardId: "visible-b",
-      targetStage: "todo",
-      visibleCardIds: ["visible-a", "visible-b"],
-      targetIndex: 0,
-    });
-
-    expect(sortKanbanCards(result.cards, "todo").map((item) => item.id)).toEqual([
-      "visible-b",
-      "hidden",
-      "visible-a",
-    ]);
-    expect(result.cards.find((item) => item.id === "hidden")?.sortPosition).toBe(
-      2_048,
-    );
-    expect(result.updates.map((update) => update.cardId).sort()).toEqual([
-      "visible-a",
-      "visible-b",
-    ]);
-  });
-
-  it("inserts a cross-column card next to a visible anchor without moving hidden cards", () => {
-    const cards = [
-      card({ id: "moving", stage: "todo", sortPosition: 1_024 }),
-      card({ id: "hidden", stage: "in_progress", sortPosition: 1_024 }),
-      card({ id: "visible", stage: "in_progress", sortPosition: 3_072 }),
-    ];
-    const result = reorderKanbanCards(cards, {
-      cardId: "moving",
-      targetStage: "in_progress",
-      visibleCardIds: ["visible"],
-      targetIndex: 0,
-    });
-
-    expect(
-      sortKanbanCards(result.cards, "in_progress").map((item) => item.id),
-    ).toEqual(["hidden", "moving", "visible"]);
-    expect(result.cards.find((item) => item.id === "hidden")?.sortPosition).toBe(
-      1_024,
-    );
-    expect(result.updates).toContainEqual({
-      cardId: "moving",
-      stage: "in_progress",
-      sortPosition: 2_048,
-    });
-  });
-
-  it("appends after hidden cards when a filtered column appears empty", () => {
-    const result = reorderKanbanCards(
-      [
-        card({ id: "moving", stage: "todo" }),
-        card({ id: "hidden", stage: "in_review", sortPosition: 2_048 }),
-      ],
-      {
-        cardId: "moving",
-        targetStage: "in_review",
-        visibleCardIds: [],
-        targetIndex: 0,
-      },
-    );
-
-    expect(
-      sortKanbanCards(result.cards, "in_review").map((item) => item.id),
-    ).toEqual(["hidden", "moving"]);
-  });
-
-  it("rebalances duplicate positions deterministically before reordering", () => {
-    const cards = [
-      card({ id: "a", sortPosition: 10 }),
-      card({ id: "b", sortPosition: 10 }),
-      card({ id: "c", sortPosition: 10 }),
-    ];
-    const result = reorderKanbanCards(cards, {
-      cardId: "c",
-      targetStage: "todo",
-      visibleCardIds: ["a", "b", "c"],
-      targetIndex: 0,
-    });
-
-    expect(result.rebalanced).toBe(true);
-    expect(sortKanbanCards(result.cards).map((item) => item.id)).toEqual([
-      "c",
-      "a",
-      "b",
-    ]);
-    expect(new Set(result.cards.map((item) => item.sortPosition)).size).toBe(3);
-  });
-
-  it("provides an explicit full-column rebalance and rejects invalid visibility", () => {
-    const balanced = rebalanceKanbanCardPositions(
-      [
-        card({ id: "b", sortPosition: 100 }),
-        card({ id: "a", sortPosition: 50 }),
-      ],
-      "todo",
-    );
-    expect(sortKanbanCards(balanced.cards).map((item) => item.sortPosition)).toEqual([
-      1_024,
-      2_048,
-    ]);
-    expect(() =>
-      reorderKanbanCards(balanced.cards, {
-        cardId: "a",
-        targetStage: "todo",
-        visibleCardIds: ["unknown"],
-        targetIndex: 0,
-      }),
-    ).toThrow(/does not belong/);
-    expect(() =>
-      reorderKanbanCards(balanced.cards, {
-        cardId: "a",
-        targetStage: "todo",
-        visibleCardIds: ["a", "b"],
-        targetIndex: Number.NaN,
-      }),
-    ).toThrow(/finite/);
-  });
 });

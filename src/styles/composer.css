@@ -1,5 +1,4 @@
 .task-stack,
-.console-stack,
 .view-stack,
 .setting-list {
   display: grid;
@@ -641,15 +640,6 @@ button.subagent-status-item:focus-visible {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-}
-
-.prompt-queue-stale-reasons {
-  display: grid;
-  gap: 4px;
-  margin: 0;
-  color: var(--color-text-secondary);
-  font-size: 0.74rem;
-  padding-left: 18px;
 }
 
 .prompt-queue-item-actions {
@@ -1663,16 +1653,6 @@ button.composer-select-option.action:not(:first-child)::before {
   background: var(--color-button-active);
 }
 
-.composer-meta {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 12px;
-  align-items: center;
-  margin: 12px 0;
-  color: var(--muted);
-  font-size: 0.88rem;
-}
-
 .toggle {
   display: inline-flex;
   gap: 7px;
@@ -1684,49 +1664,6 @@ button.composer-select-option.action:not(:first-child)::before {
   accent-color: var(--accent-2);
 }
 
-.route-pill,
-.budget,
-.run-status {
-  display: inline-flex;
-  flex: 0 0 auto;
-  gap: 7px;
-  align-items: center;
-  border: 1px solid var(--line);
-  border-radius: 6px;
-  padding: 7px 10px;
-  font-size: 0.82rem;
-  font-weight: 800;
-  white-space: nowrap;
-}
-
-.route-pill.plan-first {
-  border-color: var(--color-pastel-blue);
-  background: var(--color-selected-background);
-  color: var(--color-selected-text);
-}
-
-.route-pill.direct-run,
-.budget,
-.run-status.completed {
-  border-color: var(--color-pastel-blue);
-  background: var(--color-selected-background);
-  color: var(--color-selected-text);
-}
-
-.run-status.running,
-.run-status.connecting {
-  border-color: var(--color-pastel-blue);
-  background: var(--color-selected-background);
-  color: var(--color-selected-text);
-}
-
-.run-status.failed,
-.run-status.interrupted {
-  border-color: var(--color-error);
-  background: rgb(var(--error-rgb) / 0.1);
-  color: var(--color-error);
-}
-
 pre {
   overflow: auto;
   margin: 0;
@@ -1734,7 +1671,6 @@ pre {
   word-break: break-word;
 }
 
-.codex-block pre,
 .approval pre {
   color: var(--color-text);
   font-family: "SFMono-Regular", Consolas, monospace;

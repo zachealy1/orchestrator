@@ -1365,7 +1365,6 @@ describe("Application runtime scenarios 2", () => {
       fireEvent.wheel(transcript, { deltaY: -120 });
       fireEvent.scroll(transcript);
       expect(mocks.listLocalChatTranscriptMock).toHaveBeenCalledTimes(1);
-      expect(mocks.listChatRunsPageMock).not.toHaveBeenCalled();
       expect(screen.queryByText("Loading older messages...")).not.toBeInTheDocument();
 
       const promptInput = screen.getByLabelText("Prompt") as HTMLTextAreaElement;
@@ -1582,7 +1581,6 @@ describe("Application runtime scenarios 2", () => {
         "thread/turns/list",
         expect.anything(),
       );
-      expect(mocks.listChatRunsPageMock).not.toHaveBeenCalled();
     });
 
   it("defers complete transcript hydration until drawer resizing has settled", async () => {

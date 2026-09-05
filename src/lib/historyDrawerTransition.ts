@@ -11,7 +11,3 @@ export function historyDrawerReservesSpace(phase: HistoryDrawerPhase) {
 export function historyDrawerTargetsOpen(phase: HistoryDrawerPhase) {
   return phase === "opening" || phase === "open";
 }
-
-export function historyDrawerIsVisible(phase: HistoryDrawerPhase) {
-  return phase !== "closed";
-}

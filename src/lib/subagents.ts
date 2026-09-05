@@ -391,12 +391,6 @@ export function isSubagentLifecycleStatus(
   );
 }
 
-export function parseCollabToolCall(
-  message: CodexMessage,
-): ParsedCollabToolCall | null {
-  return parseCollabToolCalls(message)[0] ?? null;
-}
-
 export function parseSubagentTaskCapture(value: string) {
   const message = value.trim();
   if (

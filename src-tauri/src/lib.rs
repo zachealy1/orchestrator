@@ -26,7 +26,6 @@ use tokio::{sync::oneshot, time::timeout};
 mod agent_notifications;
 mod browser_runtime;
 mod codex;
-mod codex_desktop;
 mod database;
 mod generated_images;
 mod git;
@@ -69,8 +68,6 @@ fn command_builder() -> tauri_specta::Builder<tauri::Wry> {
             codex_projected_subagent_thread_read,
             codex_default_profile_turn_activity,
             codex_persisted_run_activity,
-            codex_default_profile_thread_index,
-            codex_default_profile_thread_index_cancel,
             codex_default_profile_thread_transcript_sync,
             codex_default_profile_thread_transcript_cancel,
             codex_resolve_server_request,
@@ -78,17 +75,13 @@ fn command_builder() -> tauri_specta::Builder<tauri::Wry> {
             codex_stop,
             codex_default_profile_stop,
             codex_delete_profile,
-            codex_desktop::codex_desktop_continue_task,
             list_git_branches,
-            checkout_git_branch,
             checkout_git_branch_in_workspace,
-            create_git_branch,
             create_git_branch_in_workspace,
             commit_workspace_changes,
             generate_workspace_commit_message,
             generate_chat_title,
             push_workspace_branch,
-            discover_workspace_git_repositories,
             list_workspace_git_status,
             read_workspace_git_diff,
             undo_workspace_git_diff,
@@ -104,7 +97,6 @@ fn command_builder() -> tauri_specta::Builder<tauri::Wry> {
             soft_delete_workspace_transaction,
             soft_delete_codex_account_transaction,
             activate_external_transcript_snapshot_transaction,
-            delete_external_transcript_snapshots_transaction,
             soft_delete_chat_transaction,
             reorder_prompt_queue_items_transaction,
             advance_chat_conversation_revision_transaction,

@@ -43,7 +43,6 @@
   transform: translateY(-2px);
 }
 
-.run-row span,
 .muted {
   color: var(--muted);
 }
@@ -731,84 +730,9 @@ button.account-switcher-item:hover:not(:disabled) {
   padding: 0;
 }
 
-.topbar {
-  display: flex;
-  gap: 18px;
-  align-items: center;
-  justify-content: space-between;
-  margin-bottom: 12px;
-}
-
-.topbar h2,
-.topbar p,
 .surface h2,
 .surface p {
   margin: 0;
-}
-
-.topbar > div:first-child {
-  min-width: 0;
-}
-
-.topbar h2 {
-  overflow: hidden;
-  color: var(--text);
-  font-size: 1.52rem;
-  line-height: 1.15;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.topbar-actions {
-  display: flex;
-  flex: 0 0 auto;
-  gap: 10px;
-  align-items: center;
-}
-
-.topbar-actions > span {
-  max-width: 280px;
-  overflow: hidden;
-  color: var(--muted);
-  font-size: 0.88rem;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.status-strip {
-  display: flex;
-  gap: 10px;
-  align-items: center;
-  min-height: 42px;
-  border: 1px solid var(--line);
-  border-radius: var(--radius);
-  background: var(--color-component-background);
-  margin-bottom: 16px;
-  padding: 10px 12px;
-}
-
-.status-strip span {
-  flex: 0 0 auto;
-  color: var(--accent-2);
-  font-size: 0.78rem;
-  font-weight: 800;
-  text-transform: uppercase;
-}
-
-.status-strip p {
-  overflow: hidden;
-  margin: 0;
-  color: var(--muted);
-  font-size: 0.9rem;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.task-layout {
-  display: grid;
-  grid-template-columns: minmax(420px, 0.92fr) minmax(420px, 1.08fr);
-  gap: 16px;
-  align-items: start;
 }
 
 .codex-workspace {
@@ -1102,8 +1026,7 @@ button.account-switcher-item:hover:not(:disabled) {
 .workspace-kanban-header-controls .composer-select.kanban-group-select,
 .workspace-kanban-header-controls .kanban-group-select button.composer-select-trigger,
 .workspace-kanban-header-controls .kanban-filter-trigger,
-.workspace-kanban-header-controls .kanban-toolbar-button,
-.workspace-kanban-header-controls .kanban-create-button {
+.workspace-kanban-header-controls .kanban-toolbar-button {
   height: 30px;
   min-height: 30px;
 }
@@ -1111,8 +1034,7 @@ button.account-switcher-item:hover:not(:disabled) {
 .workspace-kanban-header-controls .kanban-search-field,
 .workspace-kanban-header-controls .kanban-group-control,
 .workspace-kanban-header-controls .kanban-filter-trigger,
-.workspace-kanban-header-controls .kanban-toolbar-button,
-.workspace-kanban-header-controls .kanban-create-button {
+.workspace-kanban-header-controls .kanban-toolbar-button {
   border: 0;
   background: rgb(var(--text-secondary-rgb) / 0.1);
   color: var(--color-button-primary-text);
@@ -1159,10 +1081,8 @@ button.account-switcher-item:hover:not(:disabled) {
 
 .workspace-kanban-header-controls .kanban-filter-trigger:hover:not(:disabled),
 .workspace-kanban-header-controls .kanban-toolbar-button:hover:not(:disabled),
-.workspace-kanban-header-controls .kanban-create-button:hover:not(:disabled),
 .workspace-kanban-header-controls .kanban-filter-trigger:focus-visible,
 .workspace-kanban-header-controls .kanban-toolbar-button:focus-visible,
-.workspace-kanban-header-controls .kanban-create-button:focus-visible,
 .workspace-kanban-header-controls .kanban-filter-trigger.is-active,
 .workspace-kanban-header-controls .kanban-filter-trigger[aria-expanded="true"],
 .workspace-kanban-header-controls .kanban-toolbar-button.is-active,
@@ -1174,7 +1094,6 @@ button.account-switcher-item:hover:not(:disabled) {
 
 .workspace-kanban-header-controls .kanban-filter-trigger:focus-visible,
 .workspace-kanban-header-controls .kanban-toolbar-button:focus-visible,
-.workspace-kanban-header-controls .kanban-create-button:focus-visible,
 .workspace-kanban-header-controls .kanban-group-control:focus-within {
   box-shadow: 0 0 0 2px rgb(var(--text-secondary-rgb) / 0.22);
 }
@@ -1202,14 +1121,12 @@ button.account-switcher-item:hover:not(:disabled) {
 
   .workspace-kanban-header-controls .kanban-results-count,
   .workspace-kanban-header-controls .kanban-filter-trigger > span:not(.kanban-filter-count),
-  .workspace-kanban-header-controls .kanban-toolbar-button > span,
-  .workspace-kanban-header-controls .kanban-create-button > span {
+  .workspace-kanban-header-controls .kanban-toolbar-button > span {
     display: none;
   }
 
   .workspace-kanban-header-controls .kanban-filter-trigger,
-  .workspace-kanban-header-controls .kanban-toolbar-button,
-  .workspace-kanban-header-controls .kanban-create-button {
+  .workspace-kanban-header-controls .kanban-toolbar-button {
     width: 30px;
     padding: 0;
   }

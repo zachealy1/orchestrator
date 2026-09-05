@@ -874,21 +874,6 @@ export function updateNativePlanReview(
   };
 }
 
-export function invalidateApprovalRequests(
-  state: RunViewState,
-  message: string,
-  turnId?: string | null,
-) {
-  return {
-    ...state,
-    approvalRequests: state.approvalRequests.map((request) =>
-      turnId === undefined || request.turnId === turnId
-        ? { ...request, status: "stale" as const, error: message }
-        : request,
-    ),
-  };
-}
-
 function updateApprovalRequest(
   state: RunViewState,
   requestKey: string,

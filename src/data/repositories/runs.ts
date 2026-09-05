@@ -1,5 +1,5 @@
 import { commands, type RunEventWrite } from "../../generated/tauri";
-import type { PreflightReport, RunListItem, RunRecord, TaskRecord } from "../../features/runs/types";
+import type { PreflightReport, RunRecord, TaskRecord } from "../../features/runs/types";
 import { FrontendDatabase } from "../database";
 
 export type RunEventType =
@@ -253,41 +253,6 @@ export function createRunRepository(database: FrontendDatabase) {
     );
   }
 
-  async function listWorkspaceRuns(workspaceId: number) {
-    const db = await getDatabase();
-    return db.select<RunListItem[]>(
-      `SELECT runs.id, runs.task_id, runs.workspace_id, runs.chat_id, runs.turn_index,
-        runs.codex_thread_id, runs.codex_turn_id,
-        runs.account_id, runs.account_label, runs.account_email, runs.model, runs.model_provider,
-        runs.sandbox, runs.approval_policy, runs.status,
-        runs.started_at, runs.completed_at, runs.duration_ms, runs.final_message, runs.error,
-        runs.collaboration_mode, runs.run_intent, runs.client_user_message_id,
-        runs.completed_plan_item_id, runs.completed_plan_text, runs.plan_review_state,
-        runs.execution_settings_json, runs.web_preview_json,
-        tasks.original_prompt, tasks.improved_prompt, tasks.route_recommendation, tasks.budget_tokens,
-        latest_tokens.total_tokens AS latest_total_tokens,
-        latest_tokens.cached_input_tokens AS latest_cached_input_tokens,
-        latest_tokens.run_tokens AS latest_run_tokens,
-        latest_tokens.run_cached_input_tokens AS latest_run_cached_input_tokens,
-        latest_tokens.context_tokens AS latest_context_tokens,
-        latest_tokens.model_context_window AS latest_model_context_window
-       FROM runs
-       JOIN tasks ON tasks.id = runs.task_id
-       LEFT JOIN (
-         SELECT run_id, MAX(id) AS max_id
-         FROM token_usage_snapshots
-         GROUP BY run_id
-       ) latest ON latest.run_id = runs.id
-       LEFT JOIN token_usage_snapshots latest_tokens ON latest_tokens.id = latest.max_id
-       WHERE runs.workspace_id = $1
-         AND runs.deleted_at IS NULL
-       ORDER BY runs.started_at DESC
-       LIMIT 50`,
-      [workspaceId],
-    );
-  }
-
-
   return {
     createTask,
     updateTaskStatus,
@@ -298,7 +263,6 @@ export function createRunRepository(database: FrontendDatabase) {
     appendRunEvents,
     appendRunEvent,
     recordTokenUsage,
-    listWorkspaceRuns,
   };
 }
 

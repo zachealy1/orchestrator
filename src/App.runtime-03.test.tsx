@@ -1054,7 +1054,6 @@ describe("Application runtime scenarios 3", () => {
         ),
       ),
     ).toBe(false);
-    expect(mocks.continueTaskInCodexDesktopMock).not.toHaveBeenCalled();
   });
 
   it("renames the chat targeted by the history context menu", async () => {

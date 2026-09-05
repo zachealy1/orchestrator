@@ -1,6 +1,5 @@
 import { describe, expect, it } from "vitest";
 import {
-  historyDrawerIsVisible,
   historyDrawerReservesSpace,
   historyDrawerTargetsOpen,
   type HistoryDrawerPhase,
@@ -34,22 +33,6 @@ describe("history drawer transition phases", () => {
       true,
       false,
       false,
-    ]);
-  });
-
-  it("keeps the drawer mounted throughout both transition directions", () => {
-    const phases: HistoryDrawerPhase[] = [
-      "closed",
-      "opening",
-      "open",
-      "closing",
-    ];
-
-    expect(phases.map(historyDrawerIsVisible)).toEqual([
-      false,
-      true,
-      true,
-      true,
     ]);
   });
 });

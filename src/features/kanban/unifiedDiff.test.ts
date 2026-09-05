@@ -1,8 +1,5 @@
 import { describe, expect, it } from "vitest";
-import {
-  extractUnifiedDiffFilePatches,
-  selectUnifiedDiffForFile,
-} from "./unifiedDiff";
+import { extractUnifiedDiffFilePatches } from "./unifiedDiff";
 
 describe("Kanban unified diff selection", () => {
   const repositoryDiff = [
@@ -36,7 +33,7 @@ describe("Kanban unified diff selection", () => {
     expect(patches[1].content).toContain("+updated second");
   });
 
-  it("selects renames by either their old or new path", () => {
+  it("extracts renamed paths", () => {
     const renameDiff = [
       "diff --git a/src/before.ts b/src/after.ts",
       "similarity index 100%",
@@ -45,8 +42,10 @@ describe("Kanban unified diff selection", () => {
       "",
     ].join("\n");
 
-    expect(selectUnifiedDiffForFile(renameDiff, "src/before.ts")).toBe(renameDiff);
-    expect(selectUnifiedDiffForFile(renameDiff, "src/after.ts")).toBe(renameDiff);
+    expect(extractUnifiedDiffFilePatches(renameDiff)[0]).toMatchObject({
+      oldPath: "src/before.ts",
+      newPath: "src/after.ts",
+    });
   });
 
   it("uses /dev/null headers for added and deleted files", () => {
@@ -61,10 +60,9 @@ describe("Kanban unified diff selection", () => {
     const [patch] = extractUnifiedDiffFilePatches(addedDiff);
 
     expect(patch).toMatchObject({ oldPath: null, newPath: "new file.ts" });
-    expect(selectUnifiedDiffForFile(addedDiff, "new file.ts")).toBe(addedDiff);
   });
 
-  it("decodes Git-quoted paths and rejects an unrelated file", () => {
+  it("decodes Git-quoted paths", () => {
     const quotedDiff = [
       'diff --git "a/src/caf\\303\\251.ts" "b/src/caf\\303\\251.ts"',
       "GIT binary patch",
@@ -72,8 +70,9 @@ describe("Kanban unified diff selection", () => {
       "HcmV?d00001",
     ].join("\n");
 
-    expect(selectUnifiedDiffForFile(quotedDiff, "src/café.ts")).toBe(quotedDiff);
-    expect(selectUnifiedDiffForFile(quotedDiff, "src/other.ts")).toBeNull();
-    expect(selectUnifiedDiffForFile("not a unified diff", "src/other.ts")).toBeNull();
+    expect(extractUnifiedDiffFilePatches(quotedDiff)[0]).toMatchObject({
+      oldPath: "src/café.ts",
+      newPath: "src/café.ts",
+    });
   });
 });

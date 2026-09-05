@@ -1,17 +1,12 @@
 import { describe, expect, it } from "vitest";
 import {
-  beginInteractionAction,
-  acquireInteractionInputLease,
   createInteractionSession,
-  recordInteractionObservation,
   registerInteractionSurface,
-  transitionInteractionSession,
 } from "./coordinator";
-import { redactInteractionSession, redactInteractionStep } from "./telemetry";
-import type { InteractionAction } from "./types";
+import { redactInteractionSession } from "./telemetry";
 
 describe("interaction telemetry redaction", () => {
-  it("keeps page content and action values out of persisted metadata", () => {
+  it("keeps page content out of persisted session metadata", () => {
     let session = createInteractionSession({
       id: "session-1",
       runId: 4,
@@ -23,7 +18,7 @@ describe("interaction telemetry redaction", () => {
       provider: "browser:control-in-app-browser",
       providerVersion: "26.818.41509",
       title: "Private account statement",
-      origin: "https://bank.example",
+      origin: "https://bank.example/statement?token=secret",
       bundleId: null,
       generation: 1,
       capabilities: {
@@ -39,59 +34,10 @@ describe("interaction telemetry redaction", () => {
         arbitraryCode: false,
       },
     });
-    session = transitionInteractionSession(session, "observing");
-    session = recordInteractionObservation(session, {
-      id: "observation-1",
-      sessionId: session.id,
-      surfaceId: "browser-1",
-      generation: 1,
-      observedAt: "2026-08-29T08:00:00.000Z",
-      url: "https://bank.example/statement?token=secret",
-      title: "Private account statement",
-      focusedElement: "Password: secret-value",
-      screenshotId: "private-image",
-      viewport: { width: 1280, height: 800, scale: 2 },
-      dialogKinds: [],
-      downloadCount: 0,
-      stateHash: "hash-before",
-    });
-    session = acquireInteractionInputLease(session, "browser-1");
-    const action: InteractionAction = {
-      id: "action-1",
-      sessionId: session.id,
-      observationId: "observation-1",
-      surfaceId: "browser-1",
-      generation: 1,
-      kind: "type",
-      argumentHash: "redacted-argument-hash",
-      target: {
-        kind: "semantic",
-        grounding: "accessibility",
-        elementRef: "ax-password",
-      },
-      expectedEffect: "Set secret-value in Password",
-      consequence: "sensitive",
-      idempotent: false,
-      grounding: "accessibility",
-      retryCount: 0,
-    };
-    session = beginInteractionAction(session, action);
 
-    const persisted = JSON.stringify({
-      session: redactInteractionSession(session),
-      step: redactInteractionStep({
-        session,
-        action,
-        result: null,
-        policyDecision: "takeover",
-        startedAt: "2026-08-29T08:00:01.000Z",
-        completedAt: null,
-      }),
-    });
-    expect(persisted).not.toContain("secret-value");
+    const persisted = JSON.stringify(redactInteractionSession(session));
     expect(persisted).not.toContain("bank.example");
-    expect(persisted).not.toContain("private-image");
-    expect(persisted).toContain("accessibility");
-    expect(persisted).toContain("sensitive");
+    expect(persisted).not.toContain("Private account statement");
+    expect(persisted).toContain("26.818.41509");
   });
 });

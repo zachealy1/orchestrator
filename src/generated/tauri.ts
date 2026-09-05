@@ -20,8 +20,6 @@ export const commands = {
 	codexProjectedSubagentThreadRead: (accountId: number | null, profileKey: string, threadId: string) => __TAURI_INVOKE<ProjectedSubagentThread>("codex_projected_subagent_thread_read", { accountId, profileKey, threadId }),
 	codexDefaultProfileTurnActivity: (threadId: string, turnId: string, cursor: string | null, limit: number | null) => __TAURI_INVOKE<HistoricalTurnActivityResponse>("codex_default_profile_turn_activity", { threadId, turnId, cursor, limit }),
 	codexPersistedRunActivity: (runId: number, cursor: string | null, limit: number | null) => __TAURI_INVOKE<HistoricalTurnActivityResponse>("codex_persisted_run_activity", { runId, cursor, limit }),
-	codexDefaultProfileThreadIndex: (threadId: string, sourceVersion: string, pageSize: number | null, requestId: string) => __TAURI_INVOKE<ExternalThreadHistoryIndex>("codex_default_profile_thread_index", { threadId, sourceVersion, pageSize, requestId }),
-	codexDefaultProfileThreadIndexCancel: (requestId: string) => __TAURI_INVOKE<null>("codex_default_profile_thread_index_cancel", { requestId }),
 	codexDefaultProfileThreadTranscriptSync: (threadId: string, sourceVersion: string, pageSize: number | null, requestId: string) => __TAURI_INVOKE<ExternalTranscriptSnapshot>("codex_default_profile_thread_transcript_sync", { threadId, sourceVersion, pageSize, requestId }),
 	codexDefaultProfileThreadTranscriptCancel: (requestId: string) => __TAURI_INVOKE<null>("codex_default_profile_thread_transcript_cancel", { requestId }),
 	codexResolveServerRequest: (accountId: number, id: unknown, requestToken: string, result: unknown) => __TAURI_INVOKE<null>("codex_resolve_server_request", { accountId, id, requestToken, result }),
@@ -29,11 +27,8 @@ export const commands = {
 	codexStop: (accountId: number) => __TAURI_INVOKE<null>("codex_stop", { accountId }),
 	codexDefaultProfileStop: () => __TAURI_INVOKE<null>("codex_default_profile_stop"),
 	codexDeleteProfile: (accountId: number) => __TAURI_INVOKE<null>("codex_delete_profile", { accountId }),
-	codexDesktopContinueTask: (workspacePath: string, prompt: string) => __TAURI_INVOKE<null>("codex_desktop_continue_task", { workspacePath, prompt }),
 	listGitBranches: (path: string, repositoryPath: string | null) => __TAURI_INVOKE<GitBranchList>("list_git_branches", { path, repositoryPath }),
-	checkoutGitBranch: (path: string, branch: string) => __TAURI_INVOKE<GitCheckoutResult>("checkout_git_branch", { path, branch }),
 	checkoutGitBranchInWorkspace: (workspacePath: string, repositoryPath: string | null, branch: string) => __TAURI_INVOKE<GitCheckoutResult>("checkout_git_branch_in_workspace", { workspacePath, repositoryPath, branch }),
-	createGitBranch: (path: string, branch: string) => __TAURI_INVOKE<GitCheckoutResult>("create_git_branch", { path, branch }),
 	createGitBranchInWorkspace: (workspacePath: string, repositoryPath: string | null, branch: string) => __TAURI_INVOKE<GitCheckoutResult>("create_git_branch_in_workspace", { workspacePath, repositoryPath, branch }),
 	commitWorkspaceChanges: (workspacePath: string, repositoryPath: string | null, message: string, includeUnstaged: boolean | null) => __TAURI_INVOKE<WorkspaceGitActionResult>("commit_workspace_changes", { workspacePath, repositoryPath, message, includeUnstaged }),
 	generateWorkspaceCommitMessage: (workspacePath: string, repositoryPath: string | null, accountId: number | null, includeUnstaged: boolean | null, model: string | null, intentContext: {
@@ -43,7 +38,6 @@ export const commands = {
 } | null) => __TAURI_INVOKE<WorkspaceCommitMessageResult>("generate_workspace_commit_message", { workspacePath, repositoryPath, accountId, includeUnstaged, model, intentContext }),
 	generateChatTitle: (workspacePath: string, accountId: number, model: string | null, initialPrompt: string) => __TAURI_INVOKE<ChatTitleGenerationResult>("generate_chat_title", { workspacePath, accountId, model, initialPrompt }),
 	pushWorkspaceBranch: (workspacePath: string, repositoryPath: string | null) => __TAURI_INVOKE<WorkspaceGitActionResult>("push_workspace_branch", { workspacePath, repositoryPath }),
-	discoverWorkspaceGitRepositories: (workspacePath: string) => __TAURI_INVOKE<WorkspaceGitRepository[]>("discover_workspace_git_repositories", { workspacePath }),
 	listWorkspaceGitStatus: (workspacePath: string, forceDiscovery: boolean | null) => __TAURI_INVOKE<WorkspaceGitOverview>("list_workspace_git_status", { workspacePath, forceDiscovery }),
 	readWorkspaceGitDiff: (workspacePath: string, repositoryPath: string | null, filePath: string) => __TAURI_INVOKE<WorkspaceGitDiff>("read_workspace_git_diff", { workspacePath, repositoryPath, filePath }),
 	undoWorkspaceGitDiff: (workspacePath: string, diff: string, pathStrip: number | null) => __TAURI_INVOKE<WorkspaceGitActionResult>("undo_workspace_git_diff", { workspacePath, diff, pathStrip }),
@@ -65,7 +59,6 @@ export const commands = {
 	softDeleteWorkspaceTransaction: (workspaceId: number) => __TAURI_INVOKE<null>("soft_delete_workspace_transaction", { workspaceId }),
 	softDeleteCodexAccountTransaction: (accountId: number) => __TAURI_INVOKE<null>("soft_delete_codex_account_transaction", { accountId }),
 	activateExternalTranscriptSnapshotTransaction: (chatId: number, snapshot: ExternalTranscriptSnapshot) => __TAURI_INVOKE<null>("activate_external_transcript_snapshot_transaction", { chatId, snapshot }),
-	deleteExternalTranscriptSnapshotsTransaction: (chatId: number) => __TAURI_INVOKE<null>("delete_external_transcript_snapshots_transaction", { chatId }),
 	softDeleteChatTransaction: (chatId: number) => __TAURI_INVOKE<null>("soft_delete_chat_transaction", { chatId }),
 	reorderPromptQueueItemsTransaction: (chatId: number, orderedItemIds: string[]) => __TAURI_INVOKE<boolean>("reorder_prompt_queue_items_transaction", { chatId, orderedItemIds }),
 	advanceChatConversationRevisionTransaction: (chatId: number, queueOwned: boolean) => __TAURI_INVOKE<number>("advance_chat_conversation_revision_transaction", { chatId, queueOwned }),
@@ -326,16 +319,6 @@ export type ExternalCodexChatUpsert = {
 	updatedAt: string | null,
 };
 
-export type ExternalThreadHistoryIndex = {
-	requestId: string,
-	threadId: string,
-	sourceVersion: string,
-	totalTurns: number,
-	pageSize: number,
-	pages: HistoryPageDescriptor[],
-	hints: HistoryTurnHint[],
-};
-
 export type ExternalTranscriptSnapshot = {
 	requestId: string,
 	threadId: string,
@@ -424,24 +407,6 @@ export type HistoricalTurnActivityResponse = {
 	editedFiles: HistoricalEditedFile[],
 	toolActivities: HistoricalToolActivity[],
 	nextCursor: string | null,
-};
-
-export type HistoryPageDescriptor = {
-	id: string,
-	pageIndex: number,
-	startIndex: number,
-	turnCount: number,
-	cursor: string | null,
-	localOffset: number | null,
-};
-
-export type HistoryTurnHint = {
-	slotIndex: number,
-	turnId: string | null,
-	promptCharacters: number,
-	responseCharacters: number,
-	promptLines: number,
-	responseLines: number,
 };
 
 export type ImageAttachmentPreview = {

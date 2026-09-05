@@ -673,33 +673,6 @@ pub(crate) async fn activate_external_transcript_snapshot_transaction(
 
 #[tauri::command]
 #[specta::specta]
-pub(crate) async fn delete_external_transcript_snapshots_transaction(
-    chat_id: i64,
-    database: State<'_, DatabaseState>,
-) -> Result<(), String> {
-    let mut transaction = database
-        .pool
-        .begin()
-        .await
-        .map_err(|_| "The transcript cache could not be cleared.".to_string())?;
-    sqlx::query("DELETE FROM external_chat_transcript_snapshots WHERE chat_id = ?1")
-        .bind(chat_id)
-        .execute(&mut *transaction)
-        .await
-        .map_err(|_| "The transcript snapshot could not be cleared.".to_string())?;
-    sqlx::query("DELETE FROM external_chat_turn_summaries WHERE chat_id = ?1")
-        .bind(chat_id)
-        .execute(&mut *transaction)
-        .await
-        .map_err(|_| "The transcript turns could not be cleared.".to_string())?;
-    transaction
-        .commit()
-        .await
-        .map_err(|_| "The transcript cache removal could not be saved.".to_string())
-}
-
-#[tauri::command]
-#[specta::specta]
 pub(crate) async fn soft_delete_chat_transaction(
     chat_id: i64,
     database: State<'_, DatabaseState>,

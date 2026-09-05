@@ -741,56 +741,6 @@ fn subagent_projection_keeps_visible_turns_and_omits_bulk_content() {
 }
 
 #[test]
-fn history_index_projection_returns_metrics_without_message_content() {
-    let prompt = "private prompt text\nwith another line";
-    let final_answer = "private final answer";
-    let turn = json!({
-        "id": "turn-1",
-        "items": [
-            {
-                "type": "userMessage",
-                "text": prompt
-            },
-            {
-                "type": "reasoning",
-                "content": "private reasoning content"
-            },
-            {
-                "type": "commandExecution",
-                "command": "cat secret.txt",
-                "aggregatedOutput": "private command output"
-            },
-            {
-                "type": "fileChange",
-                "changes": [{
-                    "path": "secret.txt",
-                    "diff": "--- a/secret.txt\n+++ b/secret.txt\n-secret\n+private diff"
-                }]
-            },
-            {
-                "type": "agentMessage",
-                "phase": "final_answer",
-                "text": final_answer
-            }
-        ]
-    });
-
-    let hint = project_history_turn_hint(&turn);
-    let serialized = serde_json::to_string(&hint).unwrap();
-
-    assert_eq!(hint.turn_id.as_deref(), Some("turn-1"));
-    assert_eq!(hint.prompt_characters, prompt.chars().count());
-    assert_eq!(hint.prompt_lines, 2);
-    assert_eq!(hint.response_characters, final_answer.chars().count());
-    assert_eq!(hint.response_lines, 1);
-    assert!(!serialized.contains("private prompt text"));
-    assert!(!serialized.contains("private final answer"));
-    assert!(!serialized.contains("private reasoning content"));
-    assert!(!serialized.contains("private command output"));
-    assert!(!serialized.contains("private diff"));
-}
-
-#[test]
 fn transcript_projection_keeps_only_prompt_and_final_answer() {
     let turn = json!({
         "id": "turn-1",

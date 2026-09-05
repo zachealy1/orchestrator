@@ -100,17 +100,6 @@ export function createAccountRepository(database: FrontendDatabase) {
     await updateCodexAccount(accountId, { label: label.trim() });
   }
 
-  async function setWorkspaceDefaultAccount(
-    workspaceId: number,
-    accountId: number | null,
-  ) {
-    const db = await getDatabase();
-    await db.execute(
-      "UPDATE workspaces SET default_account_id = $1 WHERE id = $2",
-      [accountId, workspaceId],
-    );
-  }
-
   async function setWorkspaceDefaultProfile(
     workspaceId: number,
     profileKey: string,
@@ -138,7 +127,6 @@ export function createAccountRepository(database: FrontendDatabase) {
     createCodexAccount,
     updateCodexAccount,
     renameCodexAccount,
-    setWorkspaceDefaultAccount,
     setWorkspaceDefaultProfile,
     softDeleteCodexAccount,
   };

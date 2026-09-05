@@ -4,7 +4,6 @@ import {
   addServerRequest,
   applyCodexMessage,
   emptyRunView,
-  invalidateApprovalRequests,
   markApprovalAwaitingResolution,
   markApprovalError,
   markApprovalSubmitting,
@@ -1101,11 +1100,6 @@ describe("codexEventReducer", () => {
       status: "error",
       selectedChoiceId: null,
       error: "stdin failed",
-    });
-    const stale = invalidateApprovalRequests(failed, "disconnected");
-    expect(stale.approvalRequests[0]).toMatchObject({
-      status: "stale",
-      error: "disconnected",
     });
     expect(
       resolveApprovalRequest(state, 9, "thread-1").approvalRequests,

@@ -4,7 +4,6 @@ import {
   lifecycleFromChildTurn,
   lifecycleFromCollabToolCall,
   lifecycleFromSubagentTranscript,
-  parseCollabToolCall,
   parseCollabToolCalls,
   parseLegacySubagentActivity,
   parseSubagentTaskCapture,
@@ -22,7 +21,7 @@ describe("subagent protocol", () => {
   });
 
   it("parses modern spawn events without relying on display text", () => {
-    const parsed = parseCollabToolCall({
+    const parsed = parseCollabToolCalls({
       method: "item/completed",
       params: {
         item: {
@@ -36,7 +35,7 @@ describe("subagent protocol", () => {
           agentStatus: { status: "running" },
         },
       },
-    });
+    })[0] ?? null;
 
     expect(parsed).toMatchObject({
       itemId: "item-1",
@@ -88,7 +87,7 @@ describe("subagent protocol", () => {
     ["followupTask", "followup_task"],
     ["sendMessage", "send_message"],
   ])("parses %s prompts as subagent instructions", (tool, normalizedTool) => {
-    const parsed = parseCollabToolCall({
+    const parsed = parseCollabToolCalls({
       method: "item/completed",
       params: {
         item: {
@@ -104,7 +103,7 @@ describe("subagent protocol", () => {
           },
         },
       },
-    });
+    })[0] ?? null;
 
     expect(parsed).toMatchObject({
       tool: normalizedTool,
@@ -226,7 +225,7 @@ describe("subagent protocol", () => {
 
   it("rejects malformed and unknown collaboration tools", () => {
     expect(
-      parseCollabToolCall({
+      parseCollabToolCalls({
         method: "item/started",
         params: {
           item: {
@@ -237,7 +236,7 @@ describe("subagent protocol", () => {
             newThreadId: "child",
           },
         },
-      }),
+      })[0] ?? null,
     ).toBeNull();
   });
 
