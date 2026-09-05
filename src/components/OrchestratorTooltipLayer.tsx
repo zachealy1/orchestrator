@@ -137,6 +137,13 @@ export function OrchestratorTooltipLayer() {
     [clearHideTimer, clearShowTimer],
   );
 
+  const dismiss = useCallback(() => {
+    hoveredTriggerRef.current = null;
+    focusedTriggerRef.current = null;
+    suppressedTriggerRef.current = null;
+    hide(true);
+  }, [hide]);
+
   const updatePosition = useCallback(() => {
     const current = activeRef.current;
     const tooltip = tooltipRef.current;
@@ -240,43 +247,51 @@ export function OrchestratorTooltipLayer() {
     };
     const handlePointerDown = (event: PointerEvent) => {
       const trigger = tooltipTrigger(event.target);
-      if (!trigger) return;
       suppressedTriggerRef.current = trigger;
       hoveredTriggerRef.current = null;
+      focusedTriggerRef.current = null;
       hide(true);
     };
     const handleClick = (event: MouseEvent) => {
       const trigger = tooltipTrigger(event.target);
-      if (!trigger) return;
       suppressedTriggerRef.current = trigger;
       hide(true);
     };
     const handleKeyDown = (event: KeyboardEvent) => {
-      if (event.key === "Escape") hide(true);
+      if (event.key === "Escape") dismiss();
+    };
+    const handleVisibilityChange = () => {
+      if (document.visibilityState !== "visible") dismiss();
     };
 
     document.addEventListener("pointerover", handlePointerOver);
     document.addEventListener("pointerout", handlePointerOut);
     document.addEventListener("focusin", handleFocusIn);
     document.addEventListener("focusout", handleFocusOut);
-    document.addEventListener("pointerdown", handlePointerDown);
-    document.addEventListener("click", handleClick);
+    document.addEventListener("pointerdown", handlePointerDown, true);
+    document.addEventListener("click", handleClick, true);
     document.addEventListener("keydown", handleKeyDown);
+    document.addEventListener("visibilitychange", handleVisibilityChange);
+    window.addEventListener("blur", dismiss);
+    window.addEventListener("pagehide", dismiss);
     return () => {
       document.removeEventListener("pointerover", handlePointerOver);
       document.removeEventListener("pointerout", handlePointerOut);
       document.removeEventListener("focusin", handleFocusIn);
       document.removeEventListener("focusout", handleFocusOut);
-      document.removeEventListener("pointerdown", handlePointerDown);
-      document.removeEventListener("click", handleClick);
+      document.removeEventListener("pointerdown", handlePointerDown, true);
+      document.removeEventListener("click", handleClick, true);
       document.removeEventListener("keydown", handleKeyDown);
+      document.removeEventListener("visibilitychange", handleVisibilityChange);
+      window.removeEventListener("blur", dismiss);
+      window.removeEventListener("pagehide", dismiss);
       clearShowTimer();
       clearHideTimer();
       if (animationFrameRef.current !== null) {
         window.cancelAnimationFrame(animationFrameRef.current);
       }
     };
-  }, [clearHideTimer, clearShowTimer, hide, show]);
+  }, [clearHideTimer, clearShowTimer, dismiss, hide, show]);
 
   useEffect(() => {
     if (!active) return;

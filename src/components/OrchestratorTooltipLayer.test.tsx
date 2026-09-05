@@ -92,6 +92,79 @@ describe("OrchestratorTooltipLayer", () => {
     vi.useRealTimers();
   });
 
+  it("dismisses the active tooltip before a different action runs", async () => {
+    vi.useFakeTimers();
+    render(
+      <>
+        <button type="button" aria-label="Card actions" data-tooltip="Card actions">
+          …
+        </button>
+        <button type="button">Open pull request</button>
+        <OrchestratorTooltipLayer />
+      </>,
+    );
+    const trigger = screen.getByRole("button", { name: "Card actions" });
+    const openPullRequest = screen.getByRole("button", {
+      name: "Open pull request",
+    });
+
+    fireEvent.pointerOver(trigger);
+    await act(async () => {
+      vi.advanceTimersByTime(180);
+      await Promise.resolve();
+    });
+    const tooltip = screen.getByRole("tooltip", { name: "Card actions" });
+
+    fireEvent.pointerDown(openPullRequest);
+    expect(tooltip).toHaveAttribute("data-visible", "false");
+    await act(async () => {
+      vi.advanceTimersByTime(120);
+      await Promise.resolve();
+    });
+    expect(screen.queryByRole("tooltip")).toBeNull();
+    vi.useRealTimers();
+  });
+
+  it("clears tooltip state when opening another application blurs the window", async () => {
+    vi.useFakeTimers();
+    render(
+      <>
+        <button type="button" aria-label="Card actions" data-tooltip="Card actions">
+          …
+        </button>
+        <OrchestratorTooltipLayer />
+      </>,
+    );
+    const trigger = screen.getByRole("button", { name: "Card actions" });
+
+    fireEvent.pointerOver(trigger);
+    await act(async () => {
+      vi.advanceTimersByTime(180);
+      await Promise.resolve();
+    });
+    expect(
+      screen.getByRole("tooltip", { name: "Card actions" }),
+    ).toBeInTheDocument();
+
+    fireEvent(window, new Event("blur"));
+    await act(async () => {
+      vi.advanceTimersByTime(120);
+      await Promise.resolve();
+    });
+    expect(screen.queryByRole("tooltip")).toBeNull();
+    expect(trigger).not.toHaveAttribute("aria-describedby");
+
+    fireEvent.pointerOver(trigger);
+    await act(async () => {
+      vi.advanceTimersByTime(100);
+      fireEvent(window, new Event("blur"));
+      vi.advanceTimersByTime(200);
+      await Promise.resolve();
+    });
+    expect(screen.queryByRole("tooltip")).toBeNull();
+    vi.useRealTimers();
+  });
+
   it("keeps the tooltip inside the viewport and moves it below when needed", async () => {
     vi.spyOn(document.documentElement, "clientWidth", "get").mockReturnValue(
       320,
