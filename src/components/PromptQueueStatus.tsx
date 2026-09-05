@@ -465,6 +465,7 @@ const SortableQueueItem = memo(function SortableQueueItem({
           {canSendNow ? (
             <QueueIconButton
               label="Send queued prompt now"
+              tooltip="Send now; steer the active agent when one is running"
               onClick={onSendNow}
               disabled={pending}
               emphasis
@@ -507,6 +508,7 @@ const SortableQueueItem = memo(function SortableQueueItem({
 
 function QueueIconButton({
   label,
+  tooltip = label,
   onClick,
   disabled = false,
   emphasis = false,
@@ -514,6 +516,7 @@ function QueueIconButton({
   children,
 }: {
   label: string;
+  tooltip?: string;
   onClick: () => void;
   disabled?: boolean;
   emphasis?: boolean;
@@ -529,7 +532,7 @@ function QueueIconButton({
       onClick={onClick}
       disabled={disabled}
       aria-label={label}
-      data-tooltip={label}
+      data-tooltip={tooltip}
     >
       {children}
     </button>

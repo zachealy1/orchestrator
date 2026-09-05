@@ -168,6 +168,10 @@ describe("PromptQueueStatus", () => {
 
     expect(edit).toHaveTextContent("");
     expect(remove).toHaveTextContent("");
+    expect(sendNow).toHaveAttribute(
+      "data-tooltip",
+      "Send now; steer the active agent when one is running",
+    );
     await user.hover(edit);
     const tooltip = await screen.findByRole("tooltip", {
       name: "Edit queued prompt",

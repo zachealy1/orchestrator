@@ -1136,6 +1136,7 @@ function App() {
   const browserDataFeedbackRevisionRef = useRef(0);
   const bugReportFeedbackRevisionRef = useRef(0);
   const newChatFeedbackRevisionRef = useRef(0);
+  const promptQueueFeedbackRevisionRef = useRef(0);
   const {
     computerUseEnabled,
     setComputerUseEnabled,
@@ -14043,41 +14044,33 @@ function App() {
     refreshBoards: refreshKanbanBoards,
   });
 
-  function queuedPromptCanSteerActiveTurn(
+  function queuedPromptTargetsActiveTurn(
     item: PromptQueueItem,
     control: ActiveRunControl,
   ) {
-    const queued = item.snapshot.executionSettings;
-    const active = control.executionSettings;
-    const imagesOnly = queued.contextFiles.every(isImageContextFile);
-    const selectedSession =
-      workspaceChatSessionsRef.current[item.workspaceId] ?? null;
     return (
       control.chatId === item.chatId &&
       control.threadId !== null &&
       control.turnId !== null &&
       control.runId !== null &&
-      control.interactionMode === "chat" &&
-      control.intent === "normal" &&
-      control.goal === null &&
-      control.runView.nativePlan.reviewState === "none" &&
-      control.runView.approvalRequests.length === 0 &&
-      control.runView.serverRequests.length === 0 &&
-      !pendingAccountHandoffsRef.current[item.chatId] &&
-      queued.mode === "run" &&
-      queued.intent === "normal" &&
-      !queued.goalMode &&
-      queued.profileKey === control.profileKey &&
-      queued.accountId === control.accountId &&
-      queued.selectedRepositoryPath === active.selectedRepositoryPath &&
-      queued.selectedBranch === active.selectedBranch &&
-      queued.model === active.model &&
-      queued.reasoningEffort === active.reasoningEffort &&
-      queued.accessMode === active.accessMode &&
-      queued.computerUseEnabled === active.computerUseEnabled &&
-      selectedSession?.threadId === control.threadId &&
-      imagesOnly
+      isActiveRunControl(control)
     );
+  }
+
+  function publishPromptQueueFeedback(
+    item: Pick<PromptQueueItem, "chatId">,
+    tone: FloatingStatusNotice["tone"],
+    title: string,
+    detail?: string,
+  ) {
+    applicationNotifications.publish({
+      id: `prompt-queue-feedback:${item.chatId}`,
+      revisionKey: String(++promptQueueFeedbackRevisionRef.current),
+      tone,
+      title,
+      detail,
+      timeoutMs: FLOATING_STATUS_NOTICE_TIMEOUT_MS,
+    });
   }
 
   async function steerQueuedPrompt(
@@ -14085,46 +14078,64 @@ function App() {
     control: ActiveRunControl,
   ) {
     if (
-      !queuedPromptCanSteerActiveTurn(item, control) ||
+      !queuedPromptTargetsActiveTurn(item, control) ||
       !control.threadId ||
       !control.turnId ||
       control.runId === null
     ) {
       return false;
     }
-    const workspace = workspacesRef.current.find(
-      (candidate) => candidate.id === item.workspaceId,
-    );
-    const chat = await getChatRecord(item.chatId);
-    if (!workspace || !chat) return false;
-    const inspection = await inspectPromptQueueContext(
-      workspace.path,
-      item.snapshot.executionSettings.contextFiles.map((file) => file.path),
-    );
-    const staleReasons = queueContextStaleReasons(item, chat, inspection);
-    if (staleReasons.length > 0) {
-      const refreshedItem = await refreshQueuedPromptCurrentContext(
-        item,
+    let currentItem = item;
+    try {
+      const workspace = workspacesRef.current.find(
+        (candidate) => candidate.id === currentItem.workspaceId,
+      );
+      const chat = await getChatRecord(currentItem.chatId);
+      if (!workspace || !chat) {
+        throw new Error(
+          "The queued prompt's workspace or chat is no longer available.",
+        );
+      }
+      const inspection = await inspectPromptQueueContext(
+        workspace.path,
+        currentItem.snapshot.executionSettings.contextFiles.map(
+          (file) => file.path,
+        ),
+      );
+      const staleReasons = queueContextStaleReasons(
+        currentItem,
         chat,
         inspection,
       );
-      if (!refreshedItem) {
-        throw new Error(
-          "The queued prompt changed before its current context could be applied.",
+      if (staleReasons.length > 0) {
+        const refreshedItem = await refreshQueuedPromptCurrentContext(
+          currentItem,
+          chat,
+          inspection,
         );
+        if (!refreshedItem) {
+          throw new Error(
+            "The queued prompt changed before its current context could be applied.",
+          );
+        }
+        currentItem = refreshedItem;
       }
-    }
-    const steeringItem = await markPromptQueueItemSteering(item.id);
-    if (!steeringItem) return true;
-    upsertPromptQueueItemInMemory(steeringItem);
-    try {
+      const steeringItem = await markPromptQueueItemSteering(currentItem.id);
+      if (!steeringItem) return true;
+      upsertPromptQueueItemInMemory(steeringItem);
       const preparedFiles = await prepareContextImageFiles(
-        item.snapshot.executionSettings.contextFiles,
+        currentItem.snapshot.executionSettings.contextFiles,
         imageAttachments,
       );
+      const { additionalContext, skippedFiles } = await buildAdditionalContext(
+        control.profileKey,
+        control.accountId,
+        preparedFiles,
+        currentItem.workspaceId,
+      );
       const text = applySelectedSkillsToPrompt(
-        item.prompt,
-        item.snapshot.executionSettings.selectedSkills,
+        currentItem.prompt,
+        currentItem.snapshot.executionSettings.selectedSkills,
       );
       await codexRpcForProfile(
         control.profileKey,
@@ -14133,47 +14144,77 @@ function App() {
         {
           threadId: control.threadId,
           expectedTurnId: control.turnId,
-          clientUserMessageId: item.clientMessageId,
+          clientUserMessageId: currentItem.clientMessageId,
           input: buildCodexTurnInput(text, preparedFiles),
+          additionalContext,
         },
       );
       await persistRunEvent(control, "client-action", "turn/steer", {
-        queueItemId: item.id,
-        clientUserMessageId: item.clientMessageId,
-        prompt: item.prompt,
+        queueItemId: currentItem.id,
+        clientUserMessageId: currentItem.clientMessageId,
+        prompt: currentItem.prompt,
       });
       updateTaskChatEntry(control.clientId, (entry) => ({
         ...entry,
         steeredPrompts: [
           ...(entry.steeredPrompts ?? []),
           {
-            id: item.id,
-            prompt: item.prompt,
+            id: currentItem.id,
+            prompt: currentItem.prompt,
             submittedAt: new Date().toISOString(),
+            contextFiles: preparedFiles,
           },
         ],
       }));
-      await completePromptQueueItem(item.id);
-      removePromptQueueItemFromMemory(item.chatId, item.id);
-      setStatusMessage("Queued prompt was sent to the active turn.");
+      await completePromptQueueItem(currentItem.id);
+      removePromptQueueItemFromMemory(currentItem.chatId, currentItem.id);
+      publishPromptQueueFeedback(
+        currentItem,
+        skippedFiles.length > 0 ? "warning" : "success",
+        skippedFiles.length > 0
+          ? "Prompt sent with skipped context"
+          : "Prompt sent to the active agent",
+        skippedFiles.length > 0
+          ? `Skipped context file${skippedFiles.length === 1 ? "" : "s"}: ${skippedFiles.join(", ")}.`
+          : undefined,
+      );
+      setStatusMessage(
+        skippedFiles.length > 0
+          ? `Queued prompt was sent to the active turn. Skipped context file${
+              skippedFiles.length === 1 ? "" : "s"
+            }: ${skippedFiles.join(", ")}.`
+          : "Queued prompt was sent to the active turn.",
+      );
       return true;
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       if (/turn.+(complete|not active|not found|mismatch)/i.test(message)) {
         const scheduled =
-          await reschedulePromptQueueItemAfterSteeringRace(item.id);
+          await reschedulePromptQueueItemAfterSteeringRace(currentItem.id);
         if (scheduled) {
           upsertPromptQueueItemInMemory(scheduled);
         }
-        schedulePromptQueueDispatch(item.chatId);
+        schedulePromptQueueDispatch(currentItem.chatId);
+        publishPromptQueueFeedback(
+          currentItem,
+          "warning",
+          "Prompt scheduled next",
+          "The active turn finished before steering completed.",
+        );
         setStatusMessage(
           "The active turn finished first, so the prompt is scheduled next.",
         );
         return true;
       }
-      const failed = await failPromptQueueItem(item.id, message);
+      const failed = await failPromptQueueItem(currentItem.id, message);
       if (failed) upsertPromptQueueItemInMemory(failed);
-      setPromptQueuePaused(item.chatId, true, "failure");
+      setPromptQueuePaused(currentItem.chatId, true, "failure");
+      publishPromptQueueFeedback(
+        currentItem,
+        "warning",
+        "Couldn’t send queued prompt",
+        message,
+      );
       setStatusMessage(`Could not send queued prompt: ${message}`);
       return true;
     }
@@ -14928,7 +14969,9 @@ function App() {
   }
 
   async function sendQueuedPromptNow(item: PromptQueueItem) {
-    if (promptQueueActionPendingItemId === item.id) return;
+    const actionKey = `send-now:${item.id}`;
+    if (promptQueueActionLocksRef.current.has(actionKey)) return;
+    promptQueueActionLocksRef.current.add(actionKey);
     setPromptQueueActionPendingItemId(item.id);
     try {
       let prioritized = item;
@@ -14951,18 +14994,32 @@ function App() {
       }
       setPromptQueuePaused(item.chatId, false);
       schedulePromptQueueDispatch(item.chatId);
+      publishPromptQueueFeedback(
+        item,
+        "success",
+        activeControl ? "Prompt scheduled next" : "Prompt moved to front",
+        activeControl
+          ? "The active run was not ready for steering, so the prompt will run next."
+          : "No live turn was available, so the prompt will run next.",
+      );
       setStatusMessage(
         activeControl
           ? "Queued prompt scheduled to run next."
           : "Queued prompt moved to the front.",
       );
     } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      publishPromptQueueFeedback(
+        item,
+        "warning",
+        "Couldn’t prioritize queued prompt",
+        message,
+      );
       setStatusMessage(
-        `Could not prioritize queued prompt: ${
-          error instanceof Error ? error.message : String(error)
-        }`,
+        `Could not prioritize queued prompt: ${message}`,
       );
     } finally {
+      promptQueueActionLocksRef.current.delete(actionKey);
       setPromptQueueActionPendingItemId(null);
     }
   }

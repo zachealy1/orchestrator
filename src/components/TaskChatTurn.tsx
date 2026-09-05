@@ -28,6 +28,7 @@ import {
 } from "lucide-react";
 import {
   memo,
+  Fragment,
   useCallback,
   useEffect,
   useId,
@@ -266,19 +267,35 @@ export const TaskChatTurn = memo(function TaskChatTurn({
                 onOpenTranscriptLink={onOpenTranscriptLink}
               />
             </article>
-            {entry.steeredPrompts?.map((steeredPrompt) => (
-              <article
-                className="submitted-prompt submitted-steered-prompt"
-                aria-label="Additional submitted prompt"
-                key={steeredPrompt.id}
-              >
-                <SubmittedPrompt
-                  prompt={steeredPrompt.prompt}
-                  contextFiles={EMPTY_CONTEXT_FILES}
-                  onOpenTranscriptLink={onOpenTranscriptLink}
-                />
-              </article>
-            ))}
+            {entry.steeredPrompts?.map((steeredPrompt) => {
+              const steeredContextFiles =
+                steeredPrompt.contextFiles ?? EMPTY_CONTEXT_FILES;
+              return (
+                <Fragment key={steeredPrompt.id}>
+                  <SubmittedImageAttachments
+                    files={steeredContextFiles}
+                    delivery={{ status: "sent", error: null }}
+                  />
+                  <article
+                    className="submitted-prompt submitted-steered-prompt"
+                    aria-label="Additional submitted prompt"
+                    onCopy={(event) => {
+                      writeSubmittedPromptClipboard(
+                        event,
+                        steeredPrompt.prompt,
+                        steeredContextFiles,
+                      );
+                    }}
+                  >
+                    <SubmittedPrompt
+                      prompt={steeredPrompt.prompt}
+                      contextFiles={steeredContextFiles}
+                      onOpenTranscriptLink={onOpenTranscriptLink}
+                    />
+                  </article>
+                </Fragment>
+              );
+            })}
             {editable ? (
               <button
                 className="submitted-prompt-edit-button"

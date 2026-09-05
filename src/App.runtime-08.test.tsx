@@ -1,9 +1,16 @@
-import { act, screen, waitFor, within } from "@testing-library/react";
+import {
+  act,
+  fireEvent,
+  screen,
+  waitFor,
+  within,
+} from "@testing-library/react";
 import { describe, beforeEach, expect, it, vi } from "vitest";
 import {
   getMocks,
   workspace,
   signedInAccount,
+  defaultCodexModel,
   prepareDefaults,
   renderApp,
   pointerTapFile,
@@ -12,6 +19,7 @@ import {
   emitCodexNotification,
   emitCodexServerRequest,
   setWindowWidth,
+  updatePromptQueueFixture,
 } from "./test/appRuntimeHarness";
 
 const mocks = getMocks();
@@ -218,6 +226,346 @@ describe("Application runtime scenarios 8", () => {
         expect.stringContaining("approval-required:account:7"),
       );
     });
+
+  it("steers mismatched queued settings and full file context into a busy active turn", async () => {
+    prepareSignedInRun();
+    const queuedPrompt = "Steer with the queued settings and context";
+    const selectedSkill = {
+      id: "docs",
+      name: "Docs",
+      description: "Use repository documentation",
+    };
+    const queuedModel = {
+      ...defaultCodexModel,
+      id: "gpt-queued",
+      model: "gpt-queued",
+      displayName: "Queued model",
+      defaultReasoningEffort: "high",
+      isDefault: false,
+    };
+    mocks.listCodexModelsMock.mockResolvedValue([
+      defaultCodexModel,
+      queuedModel,
+    ]);
+    mocks.listCodexSkillsMock.mockResolvedValue([selectedSkill]);
+    const documentPath = `${workspace.path}/README.md`;
+    const missingPath = `${workspace.path}/missing.txt`;
+    const imagePath = `${workspace.path}/reference.png`;
+    mocks.openDialogMock.mockResolvedValue([
+      documentPath,
+      missingPath,
+      imagePath,
+    ]);
+    mocks.readCodexFileMock.mockImplementation(
+      async (_accountId: number, path: string) => {
+        if (path === missingPath) throw new Error("File is unavailable");
+        return "file contents";
+      },
+    );
+
+    const { user } = await renderApp();
+    await startMockRun(user, "Start with the active settings");
+    await emitCodexServerRequest({
+      id: 9,
+      method: "item/commandExecution/requestApproval",
+      params: {
+        threadId: "thread-1",
+        turnId: "turn-1",
+        itemId: "command-1",
+        command: "npm test",
+        cwd: workspace.path,
+        availableDecisions: ["accept", "decline", "cancel"],
+      },
+    });
+
+    const confirmFullAccess = vi.spyOn(window, "confirm").mockReturnValue(true);
+    await user.click(screen.getByRole("button", { name: "Plan mode" }));
+    await user.click(screen.getByRole("combobox", { name: "Agent" }));
+    await user.click(
+      screen.getByRole("option", { name: queuedModel.displayName }),
+    );
+    await user.click(screen.getByRole("combobox", { name: "Access" }));
+    await user.click(screen.getByRole("option", { name: "Full access" }));
+    expect(confirmFullAccess).toHaveBeenCalled();
+    confirmFullAccess.mockRestore();
+    await user.click(screen.getByRole("button", { name: "Add files" }));
+    await user.type(screen.getByLabelText("Prompt"), `${queuedPrompt} /docs`);
+    await user.click(await screen.findByRole("option", { name: /docs/i }));
+    await user.click(
+      screen.getByRole("button", { name: "Add prompt to queue" }),
+    );
+    await user.click(screen.getByRole("button", { name: /^Queue/ }));
+    await user.click(
+      screen.getByRole("button", { name: "Send queued prompt now" }),
+    );
+
+    await waitFor(() =>
+      expect(mocks.codexRpcMock).toHaveBeenCalledWith(
+        signedInAccount.id,
+        "turn/steer",
+        expect.objectContaining({
+          threadId: "thread-1",
+          expectedTurnId: "turn-1",
+          input: [
+            {
+              type: "text",
+              text: [
+                "Use these Codex skills if they are relevant to the task:",
+                `- ${selectedSkill.name}: ${selectedSkill.description}`,
+                "",
+                queuedPrompt,
+              ].join("\n"),
+              text_elements: [],
+            },
+            {
+              type: "localImage",
+              path: imagePath,
+              detail: "auto",
+            },
+          ],
+          additionalContext: {
+            [`file:${documentPath}`]: {
+              kind: "untrusted",
+              value: `File: ${documentPath}\n\nfile contents`,
+            },
+          },
+        }),
+      ),
+    );
+    expect(mocks.readCodexFileMock).toHaveBeenCalledWith(
+      signedInAccount.id,
+      documentPath,
+    );
+    expect(
+      mocks.codexRpcMock.mock.calls.filter(
+        ([, method]) => method === "turn/start",
+      ),
+    ).toHaveLength(1);
+    expect(mocks.appendRunEventMock).toHaveBeenCalledWith(
+      expect.objectContaining({ method: "turn/steer" }),
+    );
+    expect(mocks.completePromptQueueItemMock).toHaveBeenCalledTimes(1);
+    expect(
+      await screen.findByRole("alert", {
+        name: "Prompt sent with skipped context",
+      }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText(/Skipped context file: missing\.txt/),
+    ).toBeInTheDocument();
+    expect(screen.getByLabelText("Additional submitted prompt")).toHaveTextContent(
+      queuedPrompt,
+    );
+    expect(screen.getByLabelText("Submitted image")).toBeInTheDocument();
+    expect(
+      screen.getByText("Codex needs approval to run a command"),
+    ).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: /stop codex/i }));
+  });
+
+  it.each([
+    { activeMode: "Plan", buttonName: "Plan mode" },
+    { activeMode: "Goal", buttonName: "Goal mode" },
+  ])("steers an active $activeMode turn", async ({ activeMode, buttonName }) => {
+    prepareSignedInRun();
+    mocks.listCodexModelsMock.mockResolvedValue([defaultCodexModel]);
+    mocks.codexRpcMock.mockImplementation(
+      async (_accountId: number, method: string) => {
+        if (method === "collaborationMode/list") {
+          return {
+            data: [
+              { name: "Plan", mode: "plan", reasoning_effort: "medium" },
+              { name: "Default", mode: "default", reasoning_effort: null },
+            ],
+          };
+        }
+        if (method === "thread/start") {
+          return { thread: { id: "thread-1" } };
+        }
+        if (method === "turn/start") {
+          return { turn: { id: "turn-1" } };
+        }
+        return {};
+      },
+    );
+
+    const { user } = await renderApp();
+    await user.click(screen.getByRole("button", { name: buttonName }));
+    await startMockRun(user, `Start the active ${activeMode} turn`);
+    if (activeMode === "Goal") {
+      await user.click(screen.getByRole("button", { name: "Goal mode" }));
+    }
+    await user.type(
+      screen.getByLabelText("Prompt"),
+      `Steer the active ${activeMode} turn`,
+    );
+    await user.click(
+      screen.getByRole("button", { name: "Add prompt to queue" }),
+    );
+    await user.click(screen.getByRole("button", { name: /^Queue/ }));
+    await user.click(
+      screen.getByRole("button", { name: "Send queued prompt now" }),
+    );
+
+    await waitFor(() =>
+      expect(mocks.codexRpcMock).toHaveBeenCalledWith(
+        signedInAccount.id,
+        "turn/steer",
+        expect.objectContaining({
+          threadId: "thread-1",
+          expectedTurnId: "turn-1",
+          input: [
+            {
+              type: "text",
+              text: `Steer the active ${activeMode} turn`,
+              text_elements: [],
+            },
+          ],
+        }),
+      ),
+    );
+    await user.click(screen.getByRole("button", { name: /stop codex/i }));
+  });
+
+  it("keeps a rejected steering prompt failed and retryable", async () => {
+    prepareSignedInRun();
+
+    const { user } = await renderApp();
+    await startMockRun(user, "Start the active task");
+    await user.type(
+      screen.getByLabelText("Prompt"),
+      "Keep this prompt available after a steering failure",
+    );
+    await user.click(
+      screen.getByRole("button", { name: "Add prompt to queue" }),
+    );
+    await user.click(screen.getByRole("button", { name: /^Queue/ }));
+    mocks.codexRpcMock.mockRejectedValueOnce(new Error("Steering rejected"));
+    await user.click(
+      screen.getByRole("button", { name: "Send queued prompt now" }),
+    );
+
+    const steeringFailure = await screen.findByRole("alert", {
+      name: "Couldn’t send queued prompt",
+    });
+    expect(
+      within(steeringFailure).getByText("Steering rejected"),
+    ).toBeInTheDocument();
+    expect(mocks.failPromptQueueItemMock).toHaveBeenCalledWith(
+      expect.any(String),
+      "Steering rejected",
+    );
+    expect(
+      screen.getByRole("button", { name: "Retry queued prompt" }),
+    ).toBeInTheDocument();
+    expect(mocks.completePromptQueueItemMock).not.toHaveBeenCalled();
+
+    await user.click(screen.getByRole("button", { name: /stop codex/i }));
+  });
+
+  it("locks repeated send-now clicks to one steering delivery", async () => {
+    prepareSignedInRun();
+
+    const { user } = await renderApp();
+    await startMockRun(user, "Start the active task");
+    await user.type(
+      screen.getByLabelText("Prompt"),
+      "Deliver this queued prompt once",
+    );
+    await user.click(
+      screen.getByRole("button", { name: "Add prompt to queue" }),
+    );
+    const queuedItemId = mocks.enqueuePromptQueueItemMock.mock.calls[0][0].id;
+    await user.click(screen.getByRole("button", { name: /^Queue/ }));
+
+    let resolvePrioritize!: (item: any) => void;
+    mocks.prioritizePromptQueueItemMock.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          resolvePrioritize = resolve;
+        }),
+    );
+    const sendNow = screen.getByRole("button", {
+      name: "Send queued prompt now",
+    });
+    act(() => {
+      fireEvent.click(sendNow);
+      fireEvent.click(sendNow);
+    });
+
+    expect(mocks.prioritizePromptQueueItemMock).toHaveBeenCalledTimes(1);
+    await act(async () => {
+      resolvePrioritize(
+        updatePromptQueueFixture(queuedItemId, {
+          status: "scheduled-next",
+          sendNowPriority: 1,
+        }),
+      );
+    });
+    await waitFor(() =>
+      expect(
+        mocks.codexRpcMock.mock.calls.filter(
+          ([, method]) => method === "turn/steer",
+        ),
+      ).toHaveLength(1),
+    );
+
+    await user.click(screen.getByRole("button", { name: /stop codex/i }));
+  });
+
+  it("prioritizes the queued prompt for the next run without a live turn", async () => {
+    prepareSignedInRun();
+
+    const { user } = await renderApp();
+    await startMockRun(user, "Start the active task");
+    await user.type(
+      screen.getByLabelText("Prompt"),
+      "Run this prompt after the active turn",
+    );
+    await user.click(
+      screen.getByRole("button", { name: "Add prompt to queue" }),
+    );
+    await user.click(screen.getByRole("button", { name: /^Queue/ }));
+    await user.click(
+      screen.getByRole("button", { name: "Skip automatic sending" }),
+    );
+    expect(await screen.findByText("Held")).toBeInTheDocument();
+
+    await emitCodexNotification({
+      method: "turn/completed",
+      params: {
+        threadId: "thread-1",
+        turnId: "turn-1",
+        turn: { id: "turn-1", status: "completed", durationMs: 100 },
+      },
+    });
+    await waitFor(() =>
+      expect(
+        screen.queryByRole("button", { name: /stop codex/i }),
+      ).not.toBeInTheDocument(),
+    );
+    await user.click(
+      screen.getByRole("button", { name: "Send queued prompt now" }),
+    );
+
+    expect(
+      await screen.findByRole("status", { name: "Prompt moved to front" }),
+    ).toBeInTheDocument();
+    await waitFor(() =>
+      expect(
+        mocks.codexRpcMock.mock.calls.filter(
+          ([, method]) => method === "turn/start",
+        ),
+      ).toHaveLength(2),
+    );
+    expect(
+      mocks.codexRpcMock.mock.calls.filter(
+        ([, method]) => method === "turn/steer",
+      ),
+    ).toHaveLength(0);
+
+    await user.click(screen.getByRole("button", { name: /stop codex/i }));
+  });
 
   it("marks completed chat runs and persists the final assistant message", async () => {
       prepareSignedInRun();
