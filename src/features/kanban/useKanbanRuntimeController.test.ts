@@ -394,6 +394,12 @@ describe("Kanban runtime controller", () => {
       goalMode: false,
     });
     expect(snapshot.access.accessMode).toBe("full-access");
+    expect(snapshot.access).toEqual({
+      accessMode: "full-access",
+      approvalPolicy: "never",
+      permissionProfile: ":read-only",
+      sandbox: "read-only",
+    });
     expect(snapshot.executionSettings).toEqual(
       expect.objectContaining({
         ...executionSettings,

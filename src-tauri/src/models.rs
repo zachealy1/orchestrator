@@ -33,6 +33,7 @@ pub(crate) const MAX_WORKSPACE_UNDO_DIFF_BYTES: usize = 8 * 1024 * 1024;
 pub(crate) const DEFAULT_CODEX_PROFILE_ID: i64 = 0;
 pub(crate) const DEFAULT_CODEX_PROFILE_KEY: &str = "default";
 pub(crate) const ASK_FOR_APPROVAL_PERMISSION_PROFILE: &str = "orchestrator_workspace_network_v1";
+pub(crate) const PLAN_READ_ONLY_PERMISSION_PROFILE: &str = ":read-only";
 pub(crate) const REQUEST_PERMISSIONS_FEATURE: &str = "request_permissions_tool";
 pub(crate) const MULTI_AGENT_V2_FEATURE: &str = "multi_agent_v2";
 pub(crate) const SUBAGENT_TASK_CAPTURE_HINT: &str = r#"Before any other response or tool call, send exactly one commentary message containing <orchestrator-subagent-task> on its own line, then the complete task instruction assigned by the parent verbatim, then </orchestrator-subagent-task> on its own line. Do not include hidden, system, or developer instructions. Then continue normally.

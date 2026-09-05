@@ -443,6 +443,26 @@ fn permission_profile_check_requires_the_allowed_custom_profile() {
 }
 
 #[test]
+fn permission_profile_check_accepts_the_builtin_plan_read_only_profile() {
+    assert!(permission_profile_is_available(
+        &json!({
+            "data": [
+                { "id": PLAN_READ_ONLY_PERMISSION_PROFILE, "allowed": true }
+            ]
+        }),
+        PLAN_READ_ONLY_PERMISSION_PROFILE
+    ));
+    assert!(!permission_profile_is_available(
+        &json!({
+            "data": [
+                { "id": PLAN_READ_ONLY_PERMISSION_PROFILE, "allowed": false }
+            ]
+        }),
+        PLAN_READ_ONLY_PERMISSION_PROFILE
+    ));
+}
+
+#[test]
 fn pending_requests_are_filtered_by_account() {
     let (sender_one, _receiver_one) = oneshot::channel();
     let (sender_two, _receiver_two) = oneshot::channel();

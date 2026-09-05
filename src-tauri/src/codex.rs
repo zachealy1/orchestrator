@@ -1568,6 +1568,13 @@ pub(crate) async fn connect_codex_profile(
                 .to_string(),
         );
     }
+    if !permission_profile_is_available(&permission_profiles, PLAN_READ_ONLY_PERMISSION_PROFILE) {
+        let _ = stop_codex_account(account_id, app, state);
+        return Err(
+            "Plan mode requires Codex's built-in read-only permission profile, but Codex did not make it available. Update Codex or remove the ORCHESTRATOR_CODEX_BIN override and retry."
+                .to_string(),
+        );
+    }
 
     let pid = state
         .processes

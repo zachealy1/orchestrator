@@ -11,7 +11,7 @@ import type {
 } from "../runs/runtimeTypes";
 import type { RunExecutionSettings } from "../runs/types";
 import type { Workspace } from "../workspaces/types";
-import { accessSettings } from "../../lib/codexAccess";
+import { accessSettingsForRun } from "../../lib/codexAccess";
 import {
   createRunExecutionSettings,
   parseRunExecutionSettings,
@@ -224,7 +224,10 @@ export function createKanbanRuntimeController<
         goalMode: true,
       },
     );
-    const access = accessSettings({ accessMode: executionSettings.accessMode });
+    const access = accessSettingsForRun(
+      { accessMode: executionSettings.accessMode },
+      executionSettings.mode,
+    );
     const reservationKey = `${card.workspaceId}:${card.chatId}`;
     if (
       launchReservations.has(reservationKey) ||

@@ -1959,9 +1959,17 @@ describe("Application runtime scenarios 3", () => {
                 developer_instructions: `${GENERATED_IMAGE_HANDLING_POLICY}\n\n${PLAN_MODE_OUTPUT_POLICY}`,
               }),
             }),
+            approvalPolicy: "never",
+            permissions: ":read-only",
             clientUserMessageId: expect.any(String),
           }),
         ),
+      );
+      expect(mocks.createRunMock).toHaveBeenCalledWith(
+        expect.objectContaining({
+          sandbox: "read-only",
+          approvalPolicy: "never",
+        }),
       );
       const planningCall = mocks.codexRpcMock.mock.calls.find(
         (call) => call[1] === "turn/start",
@@ -2111,6 +2119,8 @@ describe("Application runtime scenarios 3", () => {
           expect.objectContaining({
             threadId: "thread-plan",
             collaborationMode: expect.objectContaining({ mode: "default" }),
+            approvalPolicy: "untrusted",
+            permissions: ASK_FOR_APPROVAL_PERMISSION_PROFILE,
             input: [
               expect.objectContaining({
                 text: expect.stringContaining(

@@ -196,6 +196,7 @@ import {
   ASK_FOR_APPROVAL_PERMISSION_PROFILE,
   accessModeWarning,
   accessSettings,
+  accessSettingsForRun,
   persistCodexAccessPreference,
   readCodexAccessPreference,
   type CodexAccessSettings,
@@ -11598,6 +11599,10 @@ function App() {
   }
 
   function beginOptimisticRun(snapshot: RunSetupSnapshot) {
+    snapshot.access = accessSettingsForRun(
+      { accessMode: snapshot.executionSettings.accessMode },
+      snapshot.mode,
+    );
     if (snapshot.chatId !== null) {
       const existing = findRunControlByChat(snapshot.workspace.id, snapshot.chatId);
       if (existing) {
@@ -13979,7 +13984,7 @@ function App() {
       mode,
       intent,
       clientUserMessageId: item.clientMessageId,
-      access: accessSettings({ accessMode: settings.accessMode }),
+      access: accessSettingsForRun({ accessMode: settings.accessMode }, mode),
       computerUseEnabled: settings.computerUseEnabled,
       model: settings.model,
       effort: settings.reasoningEffort,
@@ -15246,7 +15251,10 @@ function App() {
       cachedPreflight: null,
       mode: originalSettings.mode,
       intent: originalSettings.intent,
-      access: accessSettings({ accessMode: originalSettings.accessMode }),
+      access: accessSettingsForRun(
+        { accessMode: originalSettings.accessMode },
+        originalSettings.mode,
+      ),
       computerUseEnabled: originalSettings.computerUseEnabled,
       model: originalSettings.model,
       effort: originalSettings.reasoningEffort,
@@ -18356,7 +18364,7 @@ function App() {
       mode,
       intent,
       clientUserMessageId: createStableClientMessageId(),
-      access: accessSettings({ accessMode }),
+      access: accessSettingsForRun({ accessMode }, mode),
       computerUseEnabled,
       model,
       effort: model ? reasoningEffort : null,

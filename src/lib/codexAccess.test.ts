@@ -4,8 +4,10 @@ import {
   CODEX_ACCESS_STORAGE_KEY,
   DEFAULT_CODEX_ACCESS,
   LEGACY_CODEX_ACCESS_STORAGE_KEY,
+  PLAN_READ_ONLY_PERMISSION_PROFILE,
   accessModeWarning,
   accessSettings,
+  accessSettingsForRun,
   persistCodexAccessPreference,
   readCodexAccessPreference,
 } from "./codexAccess";
@@ -27,6 +29,24 @@ describe("Codex access settings", () => {
       permissionProfile: ":danger-full-access",
       sandbox: "danger-full-access",
     });
+  });
+
+  it.each(["ask-for-approval", "full-access"] as const)(
+    "enforces native read-only access for Plan runs requested with %s",
+    (accessMode) => {
+      expect(accessSettingsForRun({ accessMode }, "plan")).toEqual({
+        accessMode,
+        approvalPolicy: "never",
+        permissionProfile: PLAN_READ_ONLY_PERMISSION_PROFILE,
+        sandbox: "read-only",
+      });
+    },
+  );
+
+  it("preserves the selected access behavior for implementation runs", () => {
+    expect(accessSettingsForRun({ accessMode: "full-access" }, "run")).toEqual(
+      accessSettings({ accessMode: "full-access" }),
+    );
   });
 
   it("uses the safe coding default and rejects malformed persisted settings", () => {

@@ -4,6 +4,7 @@ export const CODEX_ACCESS_STORAGE_KEY = "orchestrator.codex-access.v2";
 export const LEGACY_CODEX_ACCESS_STORAGE_KEY = "orchestrator.codex-access.v1";
 export const ASK_FOR_APPROVAL_PERMISSION_PROFILE =
   "orchestrator_workspace_network_v1";
+export const PLAN_READ_ONLY_PERMISSION_PROFILE = ":read-only";
 
 export type CodexAccessPreference = {
   accessMode: CodexAccessMode;
@@ -13,8 +14,9 @@ export type CodexAccessSettings = CodexAccessPreference & {
   approvalPolicy: "untrusted" | "never";
   permissionProfile:
     | typeof ASK_FOR_APPROVAL_PERMISSION_PROFILE
+    | typeof PLAN_READ_ONLY_PERMISSION_PROFILE
     | ":danger-full-access";
-  sandbox: "workspace-write" | "danger-full-access";
+  sandbox: "read-only" | "workspace-write" | "danger-full-access";
 };
 
 export const DEFAULT_CODEX_ACCESS: CodexAccessPreference = {
@@ -36,6 +38,19 @@ export function accessSettings(
       preference.accessMode === "full-access"
         ? "danger-full-access"
         : "workspace-write",
+  };
+}
+
+export function accessSettingsForRun(
+  preference: CodexAccessPreference,
+  mode: "plan" | "run",
+): CodexAccessSettings {
+  if (mode !== "plan") return accessSettings(preference);
+  return {
+    ...preference,
+    approvalPolicy: "never",
+    permissionProfile: PLAN_READ_ONLY_PERMISSION_PROFILE,
+    sandbox: "read-only",
   };
 }
 
