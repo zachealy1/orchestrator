@@ -1750,11 +1750,7 @@ const ToolActivityRow = memo(function ToolActivityRow({
       aria-label={`${activity.label}, ${toolActivityStatusLabel(activity.status)}`}
     >
       <span className="tool-activity-icon" aria-hidden="true">
-        {activity.status === "running" || activity.status === "pending" ? (
-          <Loader2 className="spin" size={15} />
-        ) : (
-          toolCategoryIcon(activity.category, 15)
-        )}
+        {toolCategoryIcon(activity.category, 15)}
       </span>
       <span className="tool-activity-label" title={activity.label}>
         {activity.label}

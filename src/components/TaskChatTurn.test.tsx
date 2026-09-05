@@ -1498,7 +1498,12 @@ it("keeps the edited-files summary hidden while command activity is running", ()
       />,
     );
 
-    expect(screen.getByText("Inspecting the current browser page")).toBeVisible();
+    const activeToolRow = screen
+      .getByText("Inspecting the current browser page")
+      .closest(".tool-activity-row");
+    expect(activeToolRow).toBeVisible();
+    expect(activeToolRow?.querySelector(".tool-activity-icon svg")).not.toBeNull();
+    expect(activeToolRow?.querySelector(".tool-activity-icon .spin")).toBeNull();
     expect(screen.getByText("Could not capture a page screenshot")).toBeVisible();
     expect(screen.getByText("Used 2 github tools")).toBeVisible();
     expect(screen.getByText("Read pull request details")).toBeInTheDocument();
