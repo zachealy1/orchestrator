@@ -329,6 +329,7 @@ pub struct PersistedKanbanGitBinding {
     pub base_commit: String,
     pub card_branch: String,
     pub worktree_path: String,
+    /// Legacy compatibility field for bindings persisted by older builds.
     #[serde(default)]
     pub source_status_fingerprint: Option<String>,
     pub status: String,
@@ -3565,15 +3566,6 @@ pub async fn kanban_approve_local_review(
                 continue;
             }
         };
-        if status.source_status_changed {
-            let error = format!(
-                "Changes were detected outside the isolated card worktree in {}. Local approval was blocked.",
-                status.binding.source_repository_path
-            );
-            mark_local_review_failure(&app, &request.card_id, &status.binding, &error).await;
-            failures.push(format!("{}: {error}", status.binding.relative_path));
-            continue;
-        }
         if status.has_uncommitted_changes() {
             let context = WorkspaceCommitIntentContext {
                 objective: Some(objective.clone()),

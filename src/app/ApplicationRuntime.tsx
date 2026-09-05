@@ -16297,13 +16297,9 @@ function App() {
       if (bindings.length === 0) {
         return "The card worktree bindings are unavailable, so completion cannot be verified.";
       }
-      const statuses = await Promise.all(
+      await Promise.all(
         bindings.map((binding) => readKanbanGitStatus(binding)),
       );
-      const changedSource = statuses.find((status) => status.sourceStatusChanged);
-      if (changedSource) {
-        return `Changes were detected outside the isolated card worktree in ${changedSource.binding.sourceRepositoryPath}. The card was blocked to prevent publishing the wrong files.`;
-      }
       return null;
     } catch (error) {
       return `The isolated card worktree could not be verified before completion: ${

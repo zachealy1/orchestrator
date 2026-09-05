@@ -592,7 +592,6 @@ export type KanbanGitReconcileResult = {
 	targetMoved: boolean,
 	hasChanges: boolean,
 	hasConflicts: boolean,
-	sourceStatusChanged: boolean,
 };
 
 export type KanbanGitRepositoryBinding = {
@@ -604,6 +603,7 @@ export type KanbanGitRepositoryBinding = {
 	baseCommit: string,
 	cardBranch: string,
 	worktreePath: string,
+	/**  Legacy compatibility field for bindings persisted by older builds. */
 	sourceStatusFingerprint?: string | null,
 	status: string,
 	error: KanbanGitOperationError | null,
@@ -625,7 +625,6 @@ export type KanbanGitStatusResult = {
 	behindTarget: number | null,
 	hasChanges: boolean,
 	hasConflicts: boolean,
-	sourceStatusChanged: boolean,
 	stagedCount: number,
 	unstagedCount: number,
 	untrackedCount: number,
@@ -714,6 +713,7 @@ export type PersistedKanbanGitBinding = {
 	baseCommit: string,
 	cardBranch: string,
 	worktreePath: string,
+	/**  Legacy compatibility field for bindings persisted by older builds. */
 	sourceStatusFingerprint?: string | null,
 	status: string,
 	error: unknown | null,

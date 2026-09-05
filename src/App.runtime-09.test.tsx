@@ -735,6 +735,93 @@ describe("Application runtime scenarios 9", () => {
     );
   });
 
+  it("completes a Kanban run after its source target advances", async () => {
+    prepareKanbanRun();
+
+    const { user } = await renderApp();
+    await user.click(await screen.findByRole("radio", { name: "Kanban" }));
+    await user.click(
+      screen.getByRole("button", { name: "Start test Kanban agent" }),
+    );
+    await waitFor(() =>
+      expect(mocks.updateKanbanAttemptMock).toHaveBeenCalledWith(
+        expect.objectContaining({ status: "running", sequence: 1 }),
+      ),
+    );
+
+    mocks.readKanbanGitStatusMock.mockClear();
+    mocks.readKanbanGitStatusMock.mockImplementation(async (binding) => ({
+      binding,
+      headCommit: binding.baseCommit,
+      baseBranchHead: "40ee50b",
+      aheadOfBase: 0,
+      behindBase: 0,
+      aheadOfTarget: 0,
+      behindTarget: 1,
+      hasChanges: false,
+      hasConflicts: false,
+      stagedCount: 0,
+      unstagedCount: 0,
+      untrackedCount: 0,
+      files: [],
+    }));
+
+    await emitCodexNotification({
+      method: "item/started",
+      params: {
+        threadId: "thread-1",
+        turnId: "turn-1",
+        item: {
+          id: "command-in-card-worktree",
+          type: "commandExecution",
+          command: "npm test",
+          cwd: "/repo/.codex-kanban/card-run-control-test/orchestrator",
+        },
+      },
+    }, { accountId: 0, profileKey: "default" });
+    await emitCodexNotification({
+      method: "thread/goal/updated",
+      params: {
+        threadId: "thread-1",
+        goal: {
+          threadId: "thread-1",
+          objective: "Exercise Kanban pause semantics",
+          status: "complete",
+          timeUsedSeconds: 1,
+        },
+      },
+    }, { accountId: 0, profileKey: "default" });
+    await emitCodexNotification({
+      method: "turn/completed",
+      params: {
+        threadId: "thread-1",
+        turn: {
+          id: "turn-1",
+          status: "completed",
+          durationMs: 250,
+        },
+      },
+    }, { accountId: 0, profileKey: "default" });
+
+    await waitFor(() =>
+      expect(mocks.updateKanbanAttemptMock).toHaveBeenCalledWith(
+        expect.objectContaining({
+          status: "completed",
+          sequence: 2,
+          error: null,
+        }),
+      ),
+    );
+    expect(mocks.readKanbanGitStatusMock).toHaveBeenCalled();
+    expect(mocks.updateKanbanAttemptMock).not.toHaveBeenCalledWith(
+      expect.objectContaining({ status: "blocked" }),
+    );
+    expect(mocks.updateRunMock).toHaveBeenCalledWith(
+      202,
+      expect.objectContaining({ status: "completed", error: null }),
+    );
+  });
+
   it("retries terminal Kanban persistence before completing the run record", async () => {
     prepareKanbanRun();
 

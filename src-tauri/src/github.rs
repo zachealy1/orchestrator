@@ -364,12 +364,6 @@ async fn publish_record(
         },
     )
     .await?;
-    if status.source_status_changed {
-        return Err(format!(
-            "Changes were detected outside the isolated card worktree in {}. Publication was blocked to prevent publishing the wrong files.",
-            status.binding.source_repository_path
-        ));
-    }
     let preparation =
         publication_git_preparation(status.has_uncommitted_changes(), status.ahead_of_base);
     let mut next_binding = binding;
@@ -917,12 +911,6 @@ pub(crate) async fn github_complete_kanban_without_pull_request(
             serde_json::from_str(&value)
                 .map_err(|_| "A saved card worktree is invalid.".to_string())?;
         let status = kanban_git_status(app.clone(), KanbanGitBindingRequest { binding }).await?;
-        if status.source_status_changed {
-            return Err(format!(
-                "Changes were detected outside the isolated card worktree in {}. Review the misplaced changes before completing this card.",
-                status.binding.source_repository_path
-            ));
-        }
         if status.has_changes || status.ahead_of_base > 0 {
             return Err(
                 "This card now has work to publish. Retry publication instead of completing it without a pull request."
