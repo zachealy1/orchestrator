@@ -251,7 +251,10 @@ vi.mock("../features/kanban/KanbanWorkspace", async () => {
   };
 
   return {
-    KanbanWorkspace: ({ onLaunch, onPause, onOpenConversation }: any) => {
+    KanbanWorkspace: React.forwardRef(function TestKanbanWorkspace(
+      { onLaunch, onPause, onOpenConversation, onStop }: any,
+      ref,
+    ) {
       const [result, setResult] = React.useState("idle");
       const run = (
         action: () => Promise<void>,
@@ -265,6 +268,16 @@ vi.mock("../features/kanban/KanbanWorkspace", async () => {
             setResult(error instanceof Error ? error.message : String(error)),
         );
       };
+      React.useImperativeHandle(ref, () => ({
+        requestStopFocusedCard: () => {
+          if (!(document.activeElement instanceof HTMLElement)) return false;
+          if (!document.activeElement.closest("[data-test-kanban-card]")) {
+            return false;
+          }
+          run(() => onStop(card), "stopping", "stopped");
+          return true;
+        },
+      }));
       return (
         <section aria-label="Kanban run-control test harness">
           <button
@@ -288,10 +301,13 @@ vi.mock("../features/kanban/KanbanWorkspace", async () => {
           <button type="button" onClick={() => onOpenConversation(card)}>
             Open test Kanban conversation
           </button>
+          <article data-test-kanban-card>
+            <button type="button">Focus running Kanban card</button>
+          </article>
           <output aria-label="Kanban test result">{result}</output>
         </section>
       );
-    },
+    }),
   };
 });
 

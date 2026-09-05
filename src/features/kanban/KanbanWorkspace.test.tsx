@@ -1,3 +1,4 @@
+import { createRef } from "react";
 import { act, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -12,7 +13,10 @@ import type {
   KanbanGitBinding,
   KanbanGitCleanupResult,
 } from "./api";
-import { KanbanWorkspace } from "./KanbanWorkspace";
+import {
+  KanbanWorkspace,
+  type KanbanWorkspaceHandle,
+} from "./KanbanWorkspace";
 import { clearKanbanWorkspaceCaches } from "./workspaceCache";
 import { renderWithAppServices as render } from "../../test/renderWithAppServices";
 
@@ -179,6 +183,7 @@ function renderWorkspace(
   },
   githubConnectionPending = false,
 ) {
+  const workspaceRef = createRef<KanbanWorkspaceHandle>();
   const props = {
     onLaunch: vi.fn().mockResolvedValue(undefined),
     onPause: vi.fn().mockResolvedValue(undefined),
@@ -191,6 +196,7 @@ function renderWorkspace(
 
   const view = render(
     <KanbanWorkspace
+      ref={workspaceRef}
       workspace={workspace}
       repositories={[]}
       accounts={[]}
@@ -205,7 +211,7 @@ function renderWorkspace(
     />,
   );
 
-  return { ...props, ...view };
+  return { ...props, ...view, workspaceRef };
 }
 
 async function confirmDeleteWithWorktreeCleanup(
@@ -864,6 +870,32 @@ describe("KanbanWorkspace controller", () => {
       within(dialog).getByRole("button", { name: "Stop agent" }),
     );
     await waitFor(() => expect(callbacks.onStop).toHaveBeenCalledTimes(1));
+  });
+
+  it("opens the existing stop confirmation for a focused active card", async () => {
+    const runningCard = card({
+      stage: "in_progress",
+      executionState: "running",
+      reviewState: "none",
+    });
+    apiMocks.loadKanbanBoard.mockResolvedValue(snapshot([runningCard]));
+    apiMocks.loadKanbanGitBindings.mockResolvedValue([binding()]);
+
+    const callbacks = renderWorkspace();
+    const tile = await screen.findByRole("article", {
+      name: /Controller card/,
+    });
+    within(tile).getByLabelText("Actions for Controller card").focus();
+
+    let handled = false;
+    act(() => {
+      handled = callbacks.workspaceRef.current?.requestStopFocusedCard() ?? false;
+    });
+    expect(handled).toBe(true);
+    expect(callbacks.onStop).not.toHaveBeenCalled();
+    expect(
+      await screen.findByRole("alertdialog", { name: "Stop this agent?" }),
+    ).toBeInTheDocument();
   });
 
   it("opens the card pull request from its action menu", async () => {

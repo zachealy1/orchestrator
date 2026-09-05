@@ -21,6 +21,10 @@ import { getContextUsageDisplay } from "../../lib/contextUsage";
 import type { RunViewState } from "../../lib/codexEventReducer";
 import { windowDragRegionValue } from "../../lib/windowDragging";
 import {
+  applicationCommandAriaShortcut,
+  formatApplicationCommandShortcut,
+} from "../shortcuts/applicationShortcuts";
+import {
   formatGitSummaryForStatus,
   workspaceGitRepositoryDisplayPath,
   type HeaderGitAction,
@@ -122,7 +126,8 @@ export function WorkspaceContextBanner({
               type="button"
               disabled
               aria-label="New chat"
-              data-tooltip="Start a new chat"
+              aria-keyshortcuts={applicationCommandAriaShortcut("new-chat")}
+              data-tooltip={`Start a new chat (${formatApplicationCommandShortcut("new-chat")})`}
             >
               <SquarePen size={15} />
             </button>
@@ -215,7 +220,8 @@ export function WorkspaceContextBanner({
             role="radio"
             aria-checked={surfaceMode === "chat"}
             aria-label="Chat"
-            data-tooltip="Chat"
+            aria-keyshortcuts={applicationCommandAriaShortcut("open-chat")}
+            data-tooltip={`Chat (${formatApplicationCommandShortcut("open-chat")})`}
             className={surfaceMode === "chat" ? "active" : ""}
             tabIndex={surfaceMode === "chat" ? 0 : -1}
             onClick={() => onSurfaceModeChange("chat")}
@@ -228,7 +234,8 @@ export function WorkspaceContextBanner({
             role="radio"
             aria-checked={surfaceMode === "kanban"}
             aria-label="Kanban"
-            data-tooltip="Kanban"
+            aria-keyshortcuts={applicationCommandAriaShortcut("open-kanban")}
+            data-tooltip={`Kanban (${formatApplicationCommandShortcut("open-kanban")})`}
             className={surfaceMode === "kanban" ? "active" : ""}
             tabIndex={surfaceMode === "kanban" ? 0 : -1}
             onClick={() => onSurfaceModeChange("kanban")}
@@ -361,7 +368,8 @@ export function WorkspaceContextBanner({
               onClick={onNewChat}
               disabled={newChatDisabled}
               aria-label="New chat"
-              data-tooltip="Start a new chat"
+              aria-keyshortcuts={applicationCommandAriaShortcut("new-chat")}
+              data-tooltip={`Start a new chat (${formatApplicationCommandShortcut("new-chat")})`}
             >
               <SquarePen size={15} />
             </button>

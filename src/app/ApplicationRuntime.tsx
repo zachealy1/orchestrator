@@ -104,9 +104,11 @@ import {
   sanitizeGeneratedChatTitle,
 } from "../lib/chatTitles";
 import { AnalyticsSummary } from "../components/AnalyticsSummary";
+import { ApplicationCommandPalette } from "../components/ApplicationCommandPalette";
 import type { ComposerSelectOption } from "../components/ComposerSelect";
 import { FilePreviewDrawer } from "../components/FilePreviewDrawer";
 import { OrchestratorBetaBrand } from "../components/OrchestratorBetaBrand";
+import { KeyboardShortcutsDialog } from "../components/KeyboardShortcutsDialog";
 import type { TaskChatEntry } from "../components/TaskChatTurn";
 import {
   VirtuosoTaskChatTranscript,
@@ -117,7 +119,10 @@ import {
 import { TaskTranscriptErrorBoundary } from "../components/TaskTranscriptErrorBoundary";
 import { TaskComposer } from "../components/TaskComposer";
 import { SubagentInspector } from "../components/SubagentInspector";
-import { KanbanWorkspace } from "../features/kanban/KanbanWorkspace";
+import {
+  KanbanWorkspace,
+  type KanbanWorkspaceHandle,
+} from "../features/kanban/KanbanWorkspace";
 import { KanbanComposerOverlay } from "../features/kanban/components/KanbanComposerOverlay";
 import {
   commitKanbanGit,
@@ -565,6 +570,15 @@ import {
   WEB_PREVIEW_PROBE_RETRY_DELAYS_MS,
 } from "./runtimeConstants";
 import type { AppView } from "./types";
+import {
+  APPLICATION_COMMAND_DEFINITIONS,
+  applicationCommandAriaShortcut,
+  detectShortcutPlatform,
+  formatApplicationCommandShortcut,
+  type ApplicationCommand,
+  type ApplicationCommandId,
+} from "../features/shortcuts/applicationShortcuts";
+import { useApplicationShortcuts } from "../features/shortcuts/useApplicationShortcuts";
 import { DuplicateCodexAccountError } from "../features/accounts/errors";
 import type {
   LoadWorkspaceHistoryOptions,
@@ -1120,6 +1134,7 @@ function App() {
     useState<HTMLDivElement | null>(null);
   const browserDataFeedbackRevisionRef = useRef(0);
   const bugReportFeedbackRevisionRef = useRef(0);
+  const newChatFeedbackRevisionRef = useRef(0);
   const {
     computerUseEnabled,
     setComputerUseEnabled,
@@ -1149,6 +1164,11 @@ function App() {
     loadSummary: getAnalyticsSummary,
   });
   const [activeView, setActiveView] = useState<AppView>("task");
+  const [commandPaletteOpen, setCommandPaletteOpen] = useState(false);
+  const [keyboardShortcutsOpen, setKeyboardShortcutsOpen] = useState(false);
+  const shortcutPlatform = useMemo(() => detectShortcutPlatform(), []);
+  const shortcutOverlayReturnFocusRef = useRef<HTMLElement | null>(null);
+  const kanbanWorkspaceRef = useRef<KanbanWorkspaceHandle | null>(null);
   const [selectedPluginId, setSelectedPluginId] = useState<string | null>(null);
   const [analyticsWorkspaceFilter, setAnalyticsWorkspaceFilter] =
     useState<number[] | null>(null);
@@ -9178,6 +9198,14 @@ function App() {
   function startNewWorkspaceChat() {
     if (!selectedWorkspace) {
       setStatusMessage("Choose a workspace before starting a new chat.");
+      applicationNotifications.publish({
+        id: "new-chat-feedback",
+        revisionKey: String(++newChatFeedbackRevisionRef.current),
+        tone: "warning",
+        title: "Choose a workspace before starting a new chat.",
+        timeoutMs: FLOATING_STATUS_NOTICE_TIMEOUT_MS,
+        dismissible: true,
+      });
       return;
     }
     cancelAgentNotificationNavigation();
@@ -19996,6 +20024,141 @@ function App() {
         });
       });
   });
+  const captureShortcutOverlayReturnFocus = useStableEvent(() => {
+    if (shortcutOverlayReturnFocusRef.current?.isConnected) return;
+    const activeElement = document.activeElement;
+    shortcutOverlayReturnFocusRef.current =
+      activeElement instanceof HTMLElement && activeElement !== document.body
+        ? activeElement
+        : null;
+  });
+  const restoreShortcutOverlayFocus = useStableEvent(() => {
+    const target = shortcutOverlayReturnFocusRef.current;
+    shortcutOverlayReturnFocusRef.current = null;
+    if (!target) return;
+    window.requestAnimationFrame(() => {
+      if (
+        target.isConnected &&
+        !target.closest('[hidden], [inert], [aria-hidden="true"]')
+      ) {
+        target.focus({ preventScroll: true });
+      }
+    });
+  });
+  const closeApplicationShortcutOverlays = useStableEvent(() => {
+    setCommandPaletteOpen(false);
+    setKeyboardShortcutsOpen(false);
+    restoreShortcutOverlayFocus();
+  });
+  const executeApplicationCommand = useStableEvent(
+    (commandId: ApplicationCommandId) => {
+      if (commandId === "command-palette") {
+        if (commandPaletteOpen) {
+          closeApplicationShortcutOverlays();
+          return;
+        }
+        captureShortcutOverlayReturnFocus();
+        setKeyboardShortcutsOpen(false);
+        setCommandPaletteOpen(true);
+        return;
+      }
+      if (commandId === "keyboard-shortcuts") {
+        if (keyboardShortcutsOpen) {
+          closeApplicationShortcutOverlays();
+          return;
+        }
+        captureShortcutOverlayReturnFocus();
+        setCommandPaletteOpen(false);
+        setKeyboardShortcutsOpen(true);
+        return;
+      }
+
+      closeApplicationShortcutOverlays();
+      if (commandId === "new-chat") {
+        setActiveView("task");
+        changeWorkspaceSurfaceMode("chat");
+        startNewWorkspaceChat();
+      } else if (commandId === "open-chat") {
+        setActiveView("task");
+        changeWorkspaceSurfaceMode("chat");
+      } else if (commandId === "open-kanban") {
+        setActiveView("task");
+        changeWorkspaceSurfaceMode("kanban");
+      } else if (commandId === "open-analytics") {
+        setActiveView("analytics");
+      } else if (commandId === "open-plugins") {
+        setSelectedPluginId(null);
+        setActiveView("plugins");
+      } else if (commandId === "open-settings") {
+        setActiveView("settings");
+      } else if (commandId === "stop-visible-run") {
+        if (
+          activeView === "task" &&
+          workspaceSurfaceMode === "chat" &&
+          runIsActive
+        ) {
+          stopComposerRun();
+        } else if (
+          activeView === "task" &&
+          workspaceSurfaceMode === "kanban"
+        ) {
+          kanbanWorkspaceRef.current?.requestStopFocusedCard();
+        }
+      } else if (commandId === "report-bug") {
+        handleReportBug();
+      }
+    },
+  );
+  const applicationCommands = useMemo<ApplicationCommand[]>(
+    () =>
+      APPLICATION_COMMAND_DEFINITIONS.map((definition) => {
+        const newChatUnavailable =
+          definition.id === "new-chat" && selectedWorkspace === null;
+        const stopCommand = definition.id === "stop-visible-run";
+        const visibleChatRun =
+          activeView === "task" &&
+          workspaceSurfaceMode === "chat" &&
+          runIsActive;
+        const kanbanVisible =
+          activeView === "task" && workspaceSurfaceMode === "kanban";
+        return {
+          ...definition,
+          enabled:
+            !newChatUnavailable && (!stopCommand || visibleChatRun),
+          shortcutEnabled:
+            definition.id === "new-chat"
+              ? true
+              : stopCommand
+                ? visibleChatRun || kanbanVisible
+                : undefined,
+          disabledReason: newChatUnavailable
+            ? "Choose a workspace first"
+            : stopCommand && kanbanVisible
+              ? `Focus a running Kanban card and press ${formatApplicationCommandShortcut(
+                  "stop-visible-run",
+                  shortcutPlatform,
+                )}`
+              : stopCommand && !visibleChatRun
+                ? "No visible run to stop"
+                : null,
+          run: () => executeApplicationCommand(definition.id),
+        };
+      }),
+    [
+      activeView,
+      executeApplicationCommand,
+      runIsActive,
+      selectedWorkspace,
+      shortcutPlatform,
+      workspaceSurfaceMode,
+    ],
+  );
+  useApplicationShortcuts({
+    commands: applicationCommands,
+    platform: shortcutPlatform,
+    commandPaletteOpen,
+    keyboardShortcutsOpen,
+  });
   const settingsViewBindings = useSettingsViewBindings({
     model: {
       dragRegion: selfWindowDragRegion,
@@ -20125,6 +20288,14 @@ function App() {
           <button
             className={activeView === "analytics" ? "active" : ""}
             type="button"
+            aria-keyshortcuts={applicationCommandAriaShortcut(
+              "open-analytics",
+              shortcutPlatform,
+            )}
+            data-tooltip={`Analytics (${formatApplicationCommandShortcut(
+              "open-analytics",
+              shortcutPlatform,
+            )})`}
             onClick={() => setActiveView("analytics")}
           >
             <BarChart3 size={17} />
@@ -20133,6 +20304,14 @@ function App() {
           <button
             className={activeView === "settings" ? "active" : ""}
             type="button"
+            aria-keyshortcuts={applicationCommandAriaShortcut(
+              "open-settings",
+              shortcutPlatform,
+            )}
+            data-tooltip={`Settings (${formatApplicationCommandShortcut(
+              "open-settings",
+              shortcutPlatform,
+            )})`}
             onClick={() => setActiveView("settings")}
           >
             <Settings size={17} />
@@ -20141,6 +20320,14 @@ function App() {
           <button
             className={activeView === "plugins" ? "active" : ""}
             type="button"
+            aria-keyshortcuts={applicationCommandAriaShortcut(
+              "open-plugins",
+              shortcutPlatform,
+            )}
+            data-tooltip={`Plugins (${formatApplicationCommandShortcut(
+              "open-plugins",
+              shortcutPlatform,
+            )})`}
             onClick={() => {
               setSelectedPluginId(null);
               setActiveView("plugins");
@@ -20214,6 +20401,21 @@ function App() {
           }}
         />
       </aside>
+
+      {commandPaletteOpen ? (
+        <ApplicationCommandPalette
+          commands={applicationCommands}
+          platform={shortcutPlatform}
+          onClose={closeApplicationShortcutOverlays}
+        />
+      ) : null}
+
+      {keyboardShortcutsOpen ? (
+        <KeyboardShortcutsDialog
+          platform={shortcutPlatform}
+          onClose={closeApplicationShortcutOverlays}
+        />
+      ) : null}
 
       {githubLoginDialogOpen ? (
         <GithubDeviceLoginDialog
@@ -20451,6 +20653,7 @@ function App() {
                 inert={workspaceSurfaceMode !== "kanban" || undefined}
               >
                 <KanbanWorkspace
+                  ref={kanbanWorkspaceRef}
                   active={workspaceSurfaceMode === "kanban"}
                   resolvedTheme={resolvedTheme}
                   key={selectedWorkspace.id}

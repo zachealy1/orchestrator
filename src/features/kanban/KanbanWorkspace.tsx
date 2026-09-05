@@ -1,6 +1,8 @@
 import {
+  forwardRef,
   useCallback,
   useEffect,
+  useImperativeHandle,
   useLayoutEffect,
   useMemo,
   useRef,
@@ -149,6 +151,10 @@ type Props = {
   onStatusNotice?: (notice: FloatingStatusNotice) => void;
   toolbarHost?: HTMLElement | null;
   resolvedTheme: ResolvedTheme;
+};
+
+export type KanbanWorkspaceHandle = {
+  requestStopFocusedCard: () => boolean;
 };
 
 type StoredPreferences = {
@@ -664,7 +670,8 @@ function inheritedConversationContext(
   ].join("\n\n");
 }
 
-export function KanbanWorkspace({
+export const KanbanWorkspace = forwardRef<KanbanWorkspaceHandle, Props>(
+function KanbanWorkspace({
   active = true,
   workspace,
   repositories,
@@ -685,7 +692,7 @@ export function KanbanWorkspace({
   onStatusNotice,
   toolbarHost,
   resolvedTheme,
-}: Props) {
+}: Props, ref) {
   const initialCacheRef = useRef(readKanbanWorkspaceCache(workspace.id));
   const [snapshot, setSnapshot] = useState<KanbanBoardSnapshotRecord | null>(
     initialCacheRef.current?.snapshot ?? null,
@@ -1199,6 +1206,28 @@ export function KanbanWorkspace({
   const domainCardsById = useMemo(
     () => new Map(domainCards.map((card) => [card.id, card])),
     [domainCards],
+  );
+  useImperativeHandle(
+    ref,
+    () => ({
+      requestStopFocusedCard() {
+        if (busy) return false;
+        const focusedElement = document.activeElement;
+        if (!(focusedElement instanceof HTMLElement)) return false;
+        const cardElement = focusedElement.closest<HTMLElement>(
+          ".kanban-card-tile[data-card-id]",
+        );
+        if (!cardElement || !workspaceViewRef.current?.contains(cardElement)) {
+          return false;
+        }
+        const cardId = cardElement.dataset.cardId;
+        const card = cardId ? domainCardsById.get(cardId) : null;
+        if (!card || !deriveCardCapabilities(card).stop.enabled) return false;
+        openTransition("stop", card.id);
+        return true;
+      },
+    }),
+    [busy, domainCardsById],
   );
   const accountLabels = useMemo(
     () => new Map(accounts.map((account) => [account.id, account.label])),
@@ -2385,4 +2414,4 @@ export function KanbanWorkspace({
       ) : null}
     </div>
   );
-}
+});

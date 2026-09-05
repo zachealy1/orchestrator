@@ -48,6 +48,10 @@ import type { ComposerMentionSearchStatus, ComposerContextFile, SelectedComposer
 import type { PromptQueueItem } from "../features/queue/types";
 import { ORCHESTRATOR_PROMPT_CONTEXT_MIME } from "../features/composer/types";
 import {
+  applicationCommandAriaShortcut,
+  formatApplicationCommandShortcut,
+} from "../features/shortcuts/applicationShortcuts";
+import {
   contextFileDisplayReference,
   contextFileExtensionLabel,
   contextFileInlineReferenceTokens,
@@ -1098,7 +1102,18 @@ export const TaskComposer = memo(function TaskComposer({ model, actions }: Props
                           !hasRunnableQueuedPrompt)
               }
               aria-label={primaryActionLabel}
-              data-tooltip={primaryActionLabel}
+              aria-keyshortcuts={
+                primaryActionIsStop
+                  ? applicationCommandAriaShortcut("stop-visible-run")
+                  : undefined
+              }
+              data-tooltip={
+                primaryActionIsStop
+                  ? `${primaryActionLabel} (${formatApplicationCommandShortcut(
+                      "stop-visible-run",
+                    )})`
+                  : primaryActionLabel
+              }
             >
               {primaryActionIsStop ? (
                 <Square size={15} fill="currentColor" />
