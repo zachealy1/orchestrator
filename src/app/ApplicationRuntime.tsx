@@ -346,6 +346,13 @@ import {
   type AgentNotificationTarget,
 } from "../lib/agentNotifications";
 import type { ActiveCodexLogin, AccountLoginCompletedNotification, AccountUpdatedNotification, CodexAccessMode, CodexAccountResponse, CodexMessage, CodexLoginState, CodexModel, CodexProcessEvent, CodexProfileKey, RunInteractionMode } from "../features/codex/types";
+import {
+  CodexRecoveryBlockedError,
+  codexAutomaticRecoveryFailedError,
+  codexDidNotRecoverError,
+  codexRecoveryBlockedByActiveRunError,
+  isRecoverableCodexTransportError,
+} from "../features/codex/connectionRecovery";
 import type { AdditionalContextEntry, PreflightReport, RunExecutionSettings } from "../features/runs/types";
 import type { AnalyticsDateRange } from "../features/analytics/types";
 import { useAnalyticsController } from "../features/analytics/useAnalyticsController";
@@ -757,6 +764,10 @@ function App() {
   const defaultProfileAuthRefreshInFlightRef = useRef<Promise<boolean> | null>(
     null,
   );
+  const codexProfileRecoveryPromisesRef = useRef(
+    new Map<CodexProfileKey, Promise<void>>(),
+  );
+  const recoveringCodexProfileKeysRef = useRef(new Set<CodexProfileKey>());
   const nativeTaskStartupReconciliationKeyRef = useRef<string | null>(null);
   const {
     completeDuplicateProfileCleanup,
@@ -3606,12 +3617,15 @@ function App() {
   const handleCodexProcessEvent = useStableEvent(
     async (event: CodexProcessEvent) => {
       const profileKey = event.profileKey;
+      const recoveringProfile =
+        recoveringCodexProfileKeysRef.current.has(profileKey);
       const profileControls = [...activeRunRegistry.values()].filter(
         (control) => control.profileKey === profileKey,
       );
       if (
-        selectedAccountIdRef.current === event.accountId ||
-        profileControls.length > 0
+        !recoveringProfile &&
+        (selectedAccountIdRef.current === event.accountId ||
+          profileControls.length > 0)
       ) {
         setStatusMessage(event.message);
       }
@@ -3662,7 +3676,7 @@ function App() {
               approvalResourcesByItemId: {},
               serverRequests: [],
             }));
-            if (control.kanbanAttempt) {
+            if (control.kanbanAttempt && control.turnId !== null) {
               void terminalizeKanbanRunAfterProcessStop(
                 control,
                 event.message,
@@ -3671,19 +3685,13 @@ function App() {
           });
         }
       }
-      setConnectedAccountIds((current) => {
-        const next = new Set(current);
-        if (event.status === "connected") next.add(event.accountId);
-        if (event.status === "exited" || event.status === "stopped") {
-          next.delete(event.accountId);
-        }
-        return next;
-      });
+      if (event.status === "connected") {
+        setCodexAccountConnectionState(event.accountId, true);
+      } else if (event.status === "exited" || event.status === "stopped") {
+        setCodexAccountConnectionState(event.accountId, false);
+      }
       if (event.status === "exited" || event.status === "stopped") {
         collaborationModeMasksRef.current.delete(profileKey);
-        if (selectedAccountIdRef.current === event.accountId) {
-          setRequiresOpenaiAuth(true);
-        }
         if (pendingLoginAccountIdRef.current === event.accountId) {
           const message = "Codex stopped before sign-in completed. Try again.";
           dismissExternalLoginNotification(
@@ -3974,11 +3982,7 @@ function App() {
           { refreshToken: true },
         ),
       );
-      setConnectedAccountIds((current) => {
-        const next = new Set(current).add(0);
-        connectedAccountIdsRef.current = next;
-        return next;
-      });
+      setCodexAccountConnectionState(0, true);
     } catch (error) {
       startupWarnings.push(
         `The shared Codex profile is unavailable: ${
@@ -4091,11 +4095,7 @@ function App() {
   async function syncExternalCodexChats(workspace: Workspace) {
     try {
       await connectDefaultCodexProfile();
-      setConnectedAccountIds((current) => {
-        const next = new Set(current).add(0);
-        connectedAccountIdsRef.current = next;
-        return next;
-      });
+      setCodexAccountConnectionState(0, true);
       const response = await codexDefaultProfileRpc<unknown>("thread/list", {
         cwd: workspace.path,
         sourceKinds: EXTERNAL_CODEX_SOURCE_KINDS,
@@ -4929,12 +4929,7 @@ function App() {
     await deleteCodexProfile(duplicateAccountId).catch(() => undefined);
     await softDeleteCodexAccount(duplicateAccountId);
 
-    setConnectedAccountIds((current) => {
-      const next = new Set(current);
-      next.delete(duplicateAccountId);
-      connectedAccountIdsRef.current = next;
-      return next;
-    });
+    setCodexAccountConnectionState(duplicateAccountId, false);
     setCodexAccounts((current) => {
       const next = current.filter(
         (account) => account.id !== duplicateAccountId,
@@ -5925,16 +5920,27 @@ function App() {
     if (typeof oldest === "string") resolved.delete(oldest);
   }
 
+  function setCodexAccountConnectionState(
+    accountId: number,
+    connected: boolean,
+  ) {
+    const next = new Set(connectedAccountIdsRef.current);
+    if (connected) {
+      next.add(accountId);
+    } else {
+      next.delete(accountId);
+    }
+    connectedAccountIdsRef.current = next;
+    setConnectedAccountIds(next);
+  }
+
   function markCodexProfileDisconnected(
     profileKey: CodexProfileKey,
     accountId: number,
   ) {
     const connectionId =
       profileKey === DEFAULT_CODEX_PROFILE_KEY ? 0 : accountId;
-    const next = new Set(connectedAccountIdsRef.current);
-    next.delete(connectionId);
-    connectedAccountIdsRef.current = next;
-    setConnectedAccountIds(next);
+    setCodexAccountConnectionState(connectionId, false);
     collaborationModeMasksRef.current.delete(profileKey);
   }
 
@@ -10048,11 +10054,7 @@ function App() {
     }
 
     const connection = await connectCodex(accountId);
-    setConnectedAccountIds((current) => {
-      const next = new Set(current).add(accountId);
-      connectedAccountIdsRef.current = next;
-      return next;
-    });
+    setCodexAccountConnectionState(accountId, true);
     if (!options.silent) {
       setStatusMessage(
         connection.alreadyConnected
@@ -10077,11 +10079,7 @@ function App() {
 
     if (!connectedAccountIdsRef.current.has(0)) {
       const connection = await connectDefaultCodexProfile();
-      setConnectedAccountIds((current) => {
-        const next = new Set(current).add(0);
-        connectedAccountIdsRef.current = next;
-        return next;
-      });
+      setCodexAccountConnectionState(0, true);
       if (!options.silent) {
         setStatusMessage(
           connection.alreadyConnected
@@ -10094,6 +10092,63 @@ function App() {
     }
     if (options.probeCollaborationModes !== false) {
       await probeCollaborationModes(profileKey, accountId);
+    }
+  }
+
+  async function restartUnresponsiveCodexProfileForRun(
+    runControl: ActiveRunControl,
+    profileKey: CodexProfileKey,
+    accountId: number,
+  ) {
+    const inFlight = codexProfileRecoveryPromisesRef.current.get(profileKey);
+    if (inFlight) {
+      await inFlight;
+      return;
+    }
+
+    const hasAnotherStartedRun = [...activeRunRegistry.values()].some(
+      (control) =>
+        control !== runControl &&
+        control.profileKey === profileKey &&
+        isActiveRunControl(control) &&
+        (control.runId !== null ||
+          control.threadId !== null ||
+          control.turnStartPending),
+    );
+    if (hasAnotherStartedRun) {
+      throw codexRecoveryBlockedByActiveRunError();
+    }
+
+    const recovery = (async () => {
+      recoveringCodexProfileKeysRef.current.add(profileKey);
+      setStatusMessage("Codex stopped responding. Restarting its app-server...");
+      try {
+        try {
+          if (profileKey === DEFAULT_CODEX_PROFILE_KEY) {
+            await stopDefaultCodexProfile();
+          } else {
+            await stopCodex(accountId);
+          }
+        } finally {
+          markCodexProfileDisconnected(profileKey, accountId);
+        }
+        await ensureCodexProfileConnected(profileKey, accountId, {
+          silent: true,
+          probeCollaborationModes: false,
+        });
+        setStatusMessage("Codex app-server recovered. Preparing run...");
+      } finally {
+        recoveringCodexProfileKeysRef.current.delete(profileKey);
+      }
+    })();
+    codexProfileRecoveryPromisesRef.current.set(profileKey, recovery);
+
+    try {
+      await recovery;
+    } finally {
+      if (codexProfileRecoveryPromisesRef.current.get(profileKey) === recovery) {
+        codexProfileRecoveryPromisesRef.current.delete(profileKey);
+      }
     }
   }
 
@@ -10127,11 +10182,7 @@ function App() {
     const refresh = (async () => {
       if (!connectedAccountIdsRef.current.has(0)) {
         await connectDefaultCodexProfile();
-        setConnectedAccountIds((current) => {
-          const next = new Set(current).add(0);
-          connectedAccountIdsRef.current = next;
-          return next;
-        });
+        setCodexAccountConnectionState(0, true);
       }
 
       const auth = await codexDefaultProfileRpc<CodexAccountResponse>(
@@ -11790,6 +11841,100 @@ function App() {
     return runControl;
   }
 
+  async function readRunProfilePreparation(
+    runControl: ActiveRunControl,
+    snapshot: RunSetupSnapshot,
+  ): Promise<
+    Pick<RunPreparationStageResult, "collaborationModes" | "collaborationMode">
+  > {
+    await ensureCodexProfileConnected(snapshot.profileKey, snapshot.accountId);
+    ensureRunControlActive(runControl);
+    const collaborationModes = await collaborationModesForRun(
+      snapshot.profileKey,
+      snapshot.accountId,
+      snapshot.model,
+      snapshot.effort,
+      snapshot.mode === "plan",
+    );
+    const selectedCollaborationMode =
+      snapshot.mode === "plan"
+        ? collaborationModes.plan
+        : snapshot.defaultCollaborationMode ?? collaborationModes.default;
+    if (!selectedCollaborationMode) {
+      throw new Error("Codex did not return a native Plan collaboration mode.");
+    }
+    const collaborationMode = withOrchestratorDeveloperInstructions(
+      selectedCollaborationMode,
+    );
+    ensureRunControlActive(runControl);
+    if (snapshot.profileKey === DEFAULT_CODEX_PROFILE_KEY) {
+      const authState = await codexDefaultProfileRpc<CodexAccountResponse>(
+        "account/read",
+        { refreshToken: true },
+      );
+      const normalizedAuthState = normalizeCodexAccountResponse(authState);
+      ensureRunControlActive(runControl);
+      if (
+        shouldBlockRunForAuth(
+          normalizedAuthState.requiresOpenaiAuth,
+          normalizedAuthState.account,
+        )
+      ) {
+        throw new Error(
+          "Sign in to the Codex app account before starting this shared chat.",
+        );
+      }
+    } else {
+      const authState = await refreshAccountState(snapshot.accountId, true);
+      ensureRunControlActive(runControl);
+      if (shouldBlockRunForAuth(authState.requiresOpenaiAuth, authState.account)) {
+        throw new Error(
+          snapshot.loginState === "waiting"
+            ? "Finish Codex sign-in before starting a run."
+            : "Sign in to Codex before starting a run.",
+        );
+      }
+    }
+
+    return { collaborationModes, collaborationMode };
+  }
+
+  async function prepareRunProfileWithRecovery(
+    runControl: ActiveRunControl,
+    snapshot: RunSetupSnapshot,
+  ) {
+    try {
+      return await readRunProfilePreparation(runControl, snapshot);
+    } catch (error) {
+      if (!isRecoverableCodexTransportError(error)) throw error;
+      ensureRunControlActive(runControl);
+      try {
+        await restartUnresponsiveCodexProfileForRun(
+          runControl,
+          snapshot.profileKey,
+          snapshot.accountId,
+        );
+      } catch (recoveryError) {
+        if (
+          recoveryError instanceof RunStoppedError ||
+          recoveryError instanceof CodexRecoveryBlockedError
+        ) {
+          throw recoveryError;
+        }
+        throw codexAutomaticRecoveryFailedError(recoveryError);
+      }
+      ensureRunControlActive(runControl);
+      try {
+        return await readRunProfilePreparation(runControl, snapshot);
+      } catch (retryError) {
+        if (isRecoverableCodexTransportError(retryError)) {
+          throw codexDidNotRecoverError(retryError);
+        }
+        throw retryError;
+      }
+    }
+  }
+
   async function prepareRunSetupStage(
     runControl: ActiveRunControl,
     snapshot: RunSetupSnapshot,
@@ -11851,54 +11996,8 @@ function App() {
     preflightRef.current = report;
 
     appServices.runCoordinator.transition(runControl.clientId, "connecting");
-    await ensureCodexProfileConnected(snapshot.profileKey, snapshot.accountId);
-    ensureRunControlActive(runControl);
-    const collaborationModes = await collaborationModesForRun(
-      snapshot.profileKey,
-      snapshot.accountId,
-      snapshot.model,
-      snapshot.effort,
-      snapshot.mode === "plan",
-    );
-    const selectedCollaborationMode =
-      snapshot.mode === "plan"
-        ? collaborationModes.plan
-        : snapshot.defaultCollaborationMode ?? collaborationModes.default;
-    if (!selectedCollaborationMode) {
-      throw new Error("Codex did not return a native Plan collaboration mode.");
-    }
-    const collaborationMode = withOrchestratorDeveloperInstructions(
-      selectedCollaborationMode,
-    );
-    ensureRunControlActive(runControl);
-    if (snapshot.profileKey === DEFAULT_CODEX_PROFILE_KEY) {
-      const authState = await codexDefaultProfileRpc<CodexAccountResponse>(
-        "account/read",
-        { refreshToken: true },
-      );
-      const normalizedAuthState = normalizeCodexAccountResponse(authState);
-      ensureRunControlActive(runControl);
-      if (
-        shouldBlockRunForAuth(
-          normalizedAuthState.requiresOpenaiAuth,
-          normalizedAuthState.account,
-        )
-      ) {
-        throw new Error(
-          "Sign in to the Codex app account before starting this shared chat.",
-        );
-      }
-    } else {
-      const authState = await refreshAccountState(snapshot.accountId, true);
-      ensureRunControlActive(runControl);
-      if (shouldBlockRunForAuth(authState.requiresOpenaiAuth, authState.account)) {
-        throw new Error(
-          snapshot.loginState === "waiting"
-            ? "Finish Codex sign-in before starting a run."
-            : "Sign in to Codex before starting a run.",
-        );
-      }
-    }
+    const { collaborationModes, collaborationMode } =
+      await prepareRunProfileWithRecovery(runControl, snapshot);
     if (accountHandoff) {
       snapshot.previousChatContext = await buildAccountHandoffContext(
         snapshot,

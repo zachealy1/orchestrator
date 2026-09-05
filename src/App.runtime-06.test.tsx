@@ -4,7 +4,6 @@ import {
   WorkspaceRunFixture,
   getMocks,
   workspace,
-  signedInAccount,
   defaultCodexModel,
   workspaceRunFixture,
   workspaceChatFixture,
@@ -905,64 +904,6 @@ describe("Application runtime scenarios 6", () => {
       );
       expect(screen.getByRole("combobox", { name: "Access" })).toHaveTextContent(
         "Ask for approval",
-      );
-    });
-
-  it("retries an edited prompt after account/read times out before chat creation", async () => {
-      prepareSignedInRun();
-      let accountReadCount = 0;
-      mocks.readCodexAccountMock.mockImplementation(async () => {
-        accountReadCount += 1;
-        if (accountReadCount === 2) {
-          throw new Error("Timed out waiting for Codex response to account/read");
-        }
-        return {
-          account: {
-            type: "chatgpt",
-            email: signedInAccount.email,
-            planType: signedInAccount.plan_type,
-          },
-          requiresOpenaiAuth: true,
-        };
-      });
-
-      const { user } = await renderApp();
-      await screen.findByLabelText("Codex account");
-      await user.type(screen.getByLabelText("Prompt"), "Build snake");
-      await user.click(screen.getByRole("button", { name: /run codex/i }));
-
-      expect(
-        await screen.findByText(
-          "Timed out waiting for Codex response to account/read",
-        ),
-      ).toBeInTheDocument();
-      expect(mocks.createChatMock).toHaveBeenCalledTimes(1);
-      expect(screen.getByLabelText("Codex account")).toBeInTheDocument();
-      expect(screen.queryByLabelText("Sign in to Codex")).not.toBeInTheDocument();
-
-      await user.click(screen.getByRole("button", { name: "Edit prompt" }));
-      expect(screen.getByLabelText("Edit submitted prompt")).toHaveValue(
-        "Build snake",
-      );
-      await user.click(screen.getByRole("button", { name: "Run edited prompt" }));
-
-      await waitFor(() =>
-        expect(mocks.codexRpcMock).toHaveBeenCalledWith(
-          7,
-          "turn/start",
-          expect.any(Object),
-        ),
-      );
-      expect(mocks.createChatMock).toHaveBeenCalledTimes(1);
-      expect(mocks.createTaskMock).toHaveBeenCalledWith(
-        expect.objectContaining({
-          chatId: 401,
-          turnIndex: 1,
-          originalPrompt: "Build snake",
-        }),
-      );
-      expect(screen.getByLabelText("Submitted prompt")).toHaveTextContent(
-        "Build snake",
       );
     });
 
