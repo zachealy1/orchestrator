@@ -1,3 +1,5 @@
+import { sanitizeHistoricalToolTitle } from "../../lib/toolActivity";
+
 type InteractionRunEventContext = {
   browserEnabled: boolean;
   desktopEnabled: boolean;
@@ -50,6 +52,9 @@ export function redactInteractionRunEvent(
   if (!interactionRequest && !isInteractionEvent(method, params, item, context)) {
     return payload;
   }
+  const safeTitle = sanitizeHistoricalToolTitle(
+    asObject(item?.arguments)?.title,
+  );
 
   return compactObject({
     method,
@@ -68,6 +73,7 @@ export function redactInteractionRunEvent(
             tool: safeProviderIdentifier(item.tool),
             status: readPrimitive(item.status),
             durationMs: readPrimitive(item.durationMs),
+            arguments: safeTitle ? { title: safeTitle } : undefined,
           })
         : undefined,
       redacted: true,

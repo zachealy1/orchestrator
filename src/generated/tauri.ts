@@ -410,6 +410,7 @@ export type HistoricalToolActivity = {
 	title: string | null,
 	status: string,
 	durationMs: number | null,
+	sequence: number | null,
 	safeDetails: HistoricalToolActivityDetail[],
 };
 

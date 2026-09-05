@@ -250,6 +250,7 @@ function projectHistoricalTurnActivityResponse(
         startedAt: null,
         completedAt: null,
         durationMs: activity.durationMs,
+        sequence: activity.sequence,
       } satisfies RunToolActivity;
     }),
     nextCursor: response.nextCursor,

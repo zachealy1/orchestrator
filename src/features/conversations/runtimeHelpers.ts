@@ -1,5 +1,6 @@
 import type { TaskChatEntry } from "../../components/TaskChatTurn";
 import type { RunViewState } from "../../lib/codexEventReducer";
+import { recoverRetriedToolFailures } from "../../lib/toolActivityRecovery";
 
 export function createTaskChatClientId() {
   return `chat-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
@@ -62,12 +63,13 @@ export function mergeToolActivities(
     }
     byId[activity.id] = activity;
   }
-  return { byId, order };
+  return { byId: recoverRetriedToolFailures(byId, order), order };
 }
 
 function isTerminalActivityStatus(status: string) {
   return (
     status === "completed" ||
+    status === "recovered" ||
     status === "failed" ||
     status === "declined" ||
     status === "interrupted"

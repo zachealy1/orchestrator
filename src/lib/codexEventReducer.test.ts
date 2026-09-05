@@ -833,6 +833,45 @@ describe("codexEventReducer", () => {
     expect(state.streamEvents).toHaveLength(1);
   });
 
+  it("recovers a failed tool row after an equivalent retry succeeds", () => {
+    let state = applyCodexMessage(emptyRunView, {
+      method: "item/completed",
+      params: {
+        item: {
+          type: "mcpToolCall",
+          id: "failed-inspection",
+          server: "node-repl",
+          tool: "js",
+          arguments: { title: "Inspect the game menu and runtime logs" },
+          status: "failed",
+          durationMs: 2332,
+        },
+      },
+    });
+    state = applyCodexMessage(state, {
+      method: "item/completed",
+      params: {
+        item: {
+          type: "mcpToolCall",
+          id: "successful-inspection",
+          server: "node-repl",
+          tool: "js",
+          arguments: { title: "Inspect the game menu and runtime logs" },
+          status: "completed",
+          durationMs: 7657,
+        },
+      },
+    });
+
+    expect(state.toolActivitiesById["failed-inspection"]).toMatchObject({
+      status: "recovered",
+      label: "Recovered after retry: inspect the game menu and runtime logs",
+    });
+    expect(state.toolActivitiesById["successful-inspection"]?.status).toBe(
+      "completed",
+    );
+  });
+
   it("removes generic thinking when descriptive activity arrives", () => {
     let state = applyCodexMessage(emptyRunView, {
       method: "item/started",

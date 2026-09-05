@@ -9,6 +9,7 @@ export type ToolActivityStatus =
   | "pending"
   | "running"
   | "completed"
+  | "recovered"
   | "failed"
   | "declined"
   | "interrupted";
@@ -16,6 +17,20 @@ export type ToolActivityStatus =
 export type ToolActivitySafeDetail = {
   label: string;
   value: string;
+};
+
+export type RunToolActivity = {
+  id: string;
+  category: ToolActivityCategory;
+  server: string;
+  tool: string;
+  label: string;
+  status: ToolActivityStatus;
+  startedAt: string | null;
+  completedAt: string | null;
+  durationMs: number | null;
+  safeDetails: ToolActivitySafeDetail[];
+  sequence?: number | null;
 };
 
 export type ToolActivityPresentation = {
@@ -156,6 +171,7 @@ export function normalizeToolActivityStatus(
   if (status === "completed" || status === "succeeded" || status === "success") {
     return "completed";
   }
+  if (status === "recovered") return "recovered";
   if (status === "inprogress" || status === "running" || status === "started") {
     return "running";
   }
@@ -165,6 +181,25 @@ export function normalizeToolActivityStatus(
 
 export function sanitizeHistoricalToolTitle(value: unknown) {
   return sanitizeActivityTitle(readString(value));
+}
+
+export function toolActivityRetryKey(activity: {
+  server: string;
+  tool: string;
+  label: string;
+}) {
+  const action = canonicalToolAction(activity.label);
+  if (!action || action === "use an integration") return null;
+  return `${activity.server.toLowerCase()}\u0000${activity.tool.toLowerCase()}\u0000${action}`;
+}
+
+export function recoveredToolActivityLabel(label: string) {
+  const action = label
+    .replace(/^(?:Could not|Failed:)\s+/iu, "")
+    .trim();
+  return action
+    ? `Recovered after retry: ${lowercaseFirst(action)}`
+    : "Recovered after retry";
 }
 
 function knownToolAction(
@@ -221,6 +256,26 @@ function activityLabel(actionValue: string, status: ToolActivityStatus) {
     return action;
   }
   return `${status === "completed" ? forms.past : forms.progressive}${rest}`;
+}
+
+function canonicalToolAction(labelValue: string) {
+  const label = labelValue
+    .replace(
+      /^(?:Could not|Failed:|Preparing to|Stopped while|Stopped|Recovered after retry:)\s+/iu,
+      "",
+    )
+    .trim();
+  const match = /^([A-Za-z]+)(.*)$/u.exec(label);
+  if (!match) return label.toLowerCase();
+  const verb = match[1]!.toLowerCase();
+  const rest = match[2]!.toLowerCase();
+  const baseVerb = Object.entries(VERB_FORMS).find(
+    ([candidate, forms]) =>
+      verb === candidate ||
+      verb === forms.progressive.toLowerCase() ||
+      verb === forms.past.toLowerCase(),
+  )?.[0];
+  return `${baseVerb ?? verb}${rest}`.replace(/\s+/gu, " ").trim();
 }
 
 function toolActivityCategory(

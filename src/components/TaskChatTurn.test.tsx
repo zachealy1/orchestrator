@@ -1506,6 +1506,82 @@ it("keeps the edited-files summary hidden while command activity is running", ()
     expect(screen.queryByText(/mcpToolCall|Started|Completed/u)).not.toBeInTheDocument();
   });
 
+  it("collapses recovered retries with completed tool activity", () => {
+    const recoveredLabel =
+      "Recovered after retry: inspect the game menu and runtime logs";
+    render(
+      <TaskChatTranscript
+        entries={[
+          {
+            ...historyEntry(1),
+            status: "running",
+            runView: {
+              ...emptyRunView,
+              status: "running",
+              toolActivitiesById: {
+                failed: {
+                  id: "failed",
+                  category: "browser",
+                  server: "node-repl",
+                  tool: "js",
+                  label: recoveredLabel,
+                  status: "recovered",
+                  startedAt: null,
+                  completedAt: null,
+                  durationMs: 2332,
+                  safeDetails: [],
+                },
+                completed: {
+                  id: "completed",
+                  category: "browser",
+                  server: "node-repl",
+                  tool: "js",
+                  label: "Inspected the game menu and runtime logs",
+                  status: "completed",
+                  startedAt: null,
+                  completedAt: null,
+                  durationMs: 7657,
+                  safeDetails: [],
+                },
+              },
+              toolActivityOrder: ["failed", "completed"],
+              streamEvents: [
+                {
+                  id: "failed-event",
+                  kind: "activity",
+                  text: "Could not inspect the game menu and runtime logs",
+                  timestamp: "2026-09-05T07:15:13Z",
+                  activityIds: ["failed"],
+                },
+                {
+                  id: "completed-event",
+                  kind: "activity",
+                  text: "Inspected the game menu and runtime logs",
+                  timestamp: "2026-09-05T07:15:21Z",
+                  activityIds: ["completed"],
+                },
+              ],
+            },
+          },
+        ]}
+        onResolveRequest={vi.fn()}
+      />,
+    );
+
+    const summary = screen.getByText("Used 1 browser tool · 1 retry recovered");
+    expect(summary).toBeVisible();
+    expect(screen.getByText(recoveredLabel)).not.toBeVisible();
+    expect(
+      screen.queryByText("Could not inspect the game menu and runtime logs"),
+    ).not.toBeInTheDocument();
+
+    fireEvent.click(summary);
+    expect(screen.getByText(recoveredLabel)).toBeVisible();
+    expect(screen.getByText(recoveredLabel).closest(".tool-activity-row")).toHaveClass(
+      "is-recovered",
+    );
+  });
+
 it("reviews files, expands long lists, and confirms an exact edit undo", async () => {
     const onReviewEditedFile = vi.fn();
     const onUndoEditedFiles = vi.fn().mockResolvedValue(undefined);

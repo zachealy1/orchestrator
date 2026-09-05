@@ -21,12 +21,13 @@ import type { RunWebPreview } from "./webPreview";
 import {
   describeToolActivity,
   normalizeToolActivityStatus,
-  type ToolActivityCategory,
-  type ToolActivitySafeDetail,
+  type RunToolActivity,
   type ToolActivityStatus,
 } from "./toolActivity";
+import { recoverRetriedToolFailures } from "./toolActivityRecovery";
 
 export type { TokenUsage } from "./contextUsage";
+export type { RunToolActivity } from "./toolActivity";
 
 export type ConsoleLine = {
   id: string;
@@ -62,19 +63,6 @@ export type RunCommandActivity = {
     | "declined";
   durationMs: number | null;
   output: string;
-};
-
-export type RunToolActivity = {
-  id: string;
-  category: ToolActivityCategory;
-  server: string;
-  tool: string;
-  label: string;
-  status: ToolActivityStatus;
-  startedAt: string | null;
-  completedAt: string | null;
-  durationMs: number | null;
-  safeDetails: ToolActivitySafeDetail[];
 };
 
 export type RunGeneratedImage = {
@@ -602,6 +590,7 @@ function upsertToolActivity(
     startedAt,
     completedAt,
     durationMs,
+    sequence: existing?.sequence ?? state.toolActivityOrder.length,
   };
   const isNew = !existing;
   const withoutThinking = removeTrailingThinkingEvent(state);
@@ -615,10 +604,15 @@ function upsertToolActivity(
       ? [...withoutThinking.toolActivityOrder, id]
       : withoutThinking.toolActivityOrder,
   };
-  if (!isNew) {
-    return nextState;
-  }
-  return appendStreamEvent(nextState, "activity", activity.label, false, [id]);
+  const recoveredState = {
+    ...nextState,
+    toolActivitiesById: recoverRetriedToolFailures(
+      nextState.toolActivitiesById,
+      nextState.toolActivityOrder,
+    ),
+  };
+  if (!isNew) return recoveredState;
+  return appendStreamEvent(recoveredState, "activity", activity.label, false, [id]);
 }
 
 function finalizeToolActivities(
@@ -647,12 +641,20 @@ function finalizeToolActivities(
         : activity.durationMs,
     };
   }
-  return changed ? { ...state, toolActivitiesById } : state;
+  const nextState = changed ? { ...state, toolActivitiesById } : state;
+  const recovered = recoverRetriedToolFailures(
+    nextState.toolActivitiesById,
+    nextState.toolActivityOrder,
+  );
+  return recovered === nextState.toolActivitiesById
+    ? nextState
+    : { ...nextState, toolActivitiesById: recovered };
 }
 
 function isTerminalToolStatus(status: ToolActivityStatus) {
   return (
     status === "completed" ||
+    status === "recovered" ||
     status === "failed" ||
     status === "declined" ||
     status === "interrupted"

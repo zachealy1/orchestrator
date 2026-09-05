@@ -164,6 +164,41 @@ describe("interaction run-event redaction", () => {
     expect(projected).toMatchObject({ params: { redacted: true } });
   });
 
+  it("retains only a safe activity title for recovered-retry history", () => {
+    const projected = redactInteractionRunEvent(
+      {
+        method: "item/completed",
+        params: {
+          item: {
+            id: "tool-3",
+            type: "mcpToolCall",
+            server: "node_repl",
+            tool: "js",
+            status: "failed",
+            arguments: {
+              title: "Inspect the game menu and runtime logs",
+              code: "console.log('private runtime output')",
+            },
+            result: { content: "private page contents" },
+          },
+        },
+      },
+      { browserEnabled: true, desktopEnabled: false },
+    );
+
+    expect(projected).toMatchObject({
+      params: {
+        item: {
+          arguments: { title: "Inspect the game menu and runtime logs" },
+        },
+        redacted: true,
+      },
+    });
+    expect(JSON.stringify(projected)).not.toMatch(
+      /private runtime output|private page contents/iu,
+    );
+  });
+
   it("does not change ordinary events outside an interaction session", () => {
     const payload = {
       method: "item/completed",

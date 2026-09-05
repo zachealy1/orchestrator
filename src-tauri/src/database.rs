@@ -470,6 +470,7 @@ pub(crate) async fn codex_persisted_run_activity(
                 item_object.insert("durationMs".to_string(), duration);
             }
         }
+        item_object.insert("sequence".to_string(), Value::from(sequence));
         items.push(item);
     }
 

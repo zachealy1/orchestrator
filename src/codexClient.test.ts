@@ -163,6 +163,7 @@ describe("Codex account login client", () => {
           title: "Read pull request details",
           status: "completed",
           durationMs: 750,
+          sequence: 42,
           safeDetails: [
             { label: "Repository", value: "openai/orchestrator" },
           ],
@@ -183,6 +184,7 @@ describe("Codex account login client", () => {
       category: "github",
       label: "Read pull request details",
       status: "completed",
+      sequence: 42,
       safeDetails: [
         { label: "Repository", value: "openai/orchestrator" },
       ],

@@ -606,6 +606,7 @@ fn historical_activity_projection_omits_bulk_item_content() {
                 "tool": "github.get_pr_info",
                 "status": "completed",
                 "durationMs": 800,
+                "sequence": 42,
                 "arguments": {
                     "title": "Read pull request details",
                     "repo_full_name": "openai/orchestrator",
@@ -638,6 +639,7 @@ fn historical_activity_projection_omits_bulk_item_content() {
     assert_eq!(value["editedFiles"][0]["additions"], 2);
     assert_eq!(value["editedFiles"][0]["deletions"], 1);
     assert_eq!(value["toolActivities"][0]["id"], "tool-1");
+    assert_eq!(value["toolActivities"][0]["sequence"], 42);
     assert_eq!(
         value["toolActivities"][0]["title"],
         "Read pull request details"

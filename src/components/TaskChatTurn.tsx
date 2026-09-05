@@ -1705,6 +1705,11 @@ const ToolActivitiesGroup = memo(function ToolActivitiesGroup({
       activity.status === "interrupted",
   );
   const completed = activities.filter((activity) => activity.status === "completed");
+  const recovered = activities.filter((activity) => activity.status === "recovered");
+  const resolved = activities.filter(
+    (activity) =>
+      activity.status === "completed" || activity.status === "recovered",
+  );
 
   return (
     <div className="tool-activity-groups" aria-live="polite">
@@ -1714,17 +1719,17 @@ const ToolActivitiesGroup = memo(function ToolActivitiesGroup({
       {failed.map((activity) => (
         <ToolActivityRow activity={activity} key={activity.id} />
       ))}
-      {completed.length > 0 ? (
+      {resolved.length > 0 ? (
         <details className="run-activity-group tool-runs">
           <summary>
             <span className="run-activity-title">
               {toolCategoryIcon(summaryToolCategory(completed), 15)}
-              {completedToolSummary(completed)}
+              {completedToolSummary(completed, recovered.length)}
             </span>
             <ChevronDown size={15} aria-hidden="true" />
           </summary>
           <div className="run-activity-items">
-            {completed.map((activity) => (
+            {resolved.map((activity) => (
               <ToolActivityRow activity={activity} key={activity.id} />
             ))}
           </div>
@@ -1795,7 +1800,15 @@ function summaryToolCategory(activities: RunToolActivity[]) {
     : "integration";
 }
 
-function completedToolSummary(activities: RunToolActivity[]) {
+function completedToolSummary(
+  activities: RunToolActivity[],
+  recoveredCount = 0,
+) {
+  if (activities.length === 0) {
+    return `${recoveredCount} ${
+      recoveredCount === 1 ? "retry" : "retries"
+    } recovered`;
+  }
   const category = summaryToolCategory(activities);
   const categoryLabel =
     category === "integration"
@@ -1803,9 +1816,14 @@ function completedToolSummary(activities: RunToolActivity[]) {
       : category === "collaboration"
         ? " collaboration"
         : ` ${category}`;
-  return `Used ${activities.length}${categoryLabel} ${
+  const completedSummary = `Used ${activities.length}${categoryLabel} ${
     activities.length === 1 ? "tool" : "tools"
   }`;
+  return recoveredCount > 0
+    ? `${completedSummary} · ${recoveredCount} ${
+        recoveredCount === 1 ? "retry" : "retries"
+      } recovered`
+    : completedSummary;
 }
 
 function toolActivityStatusLabel(status: RunToolActivity["status"]) {
@@ -1816,6 +1834,8 @@ function toolActivityStatusLabel(status: RunToolActivity["status"]) {
       return "Running";
     case "completed":
       return "Completed";
+    case "recovered":
+      return "Recovered after retry";
     case "declined":
       return "Declined";
     case "interrupted":

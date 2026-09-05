@@ -194,6 +194,7 @@ pub(crate) struct HistoricalToolActivity {
     pub(crate) title: Option<String>,
     pub(crate) status: String,
     pub(crate) duration_ms: Option<i64>,
+    pub(crate) sequence: Option<i64>,
     pub(crate) safe_details: Vec<HistoricalToolActivityDetail>,
 }
 

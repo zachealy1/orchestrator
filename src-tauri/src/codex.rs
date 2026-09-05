@@ -668,6 +668,7 @@ fn project_historical_tool_activity(
             .get("durationMs")
             .and_then(Value::as_i64)
             .or_else(|| item.get("elapsedMs").and_then(Value::as_i64)),
+        sequence: item.get("sequence").and_then(Value::as_i64),
         safe_details,
     }
 }

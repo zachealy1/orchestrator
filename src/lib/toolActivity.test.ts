@@ -2,6 +2,8 @@ import { describe, expect, it } from "vitest";
 import {
   describeToolActivity,
   normalizeToolActivityStatus,
+  recoveredToolActivityLabel,
+  toolActivityRetryKey,
 } from "./toolActivity";
 
 describe("tool activity presentation", () => {
@@ -90,6 +92,37 @@ describe("tool activity presentation", () => {
     expect(normalizeToolActivityStatus("cancelled", "running")).toBe(
       "interrupted",
     );
+    expect(normalizeToolActivityStatus("recovered", "failed")).toBe(
+      "recovered",
+    );
+  });
+
+  it("matches equivalent retry labels without matching opaque integrations", () => {
+    expect(
+      toolActivityRetryKey({
+        server: "node-repl",
+        tool: "js",
+        label: "Could not inspect the game menu and runtime logs",
+      }),
+    ).toBe(
+      toolActivityRetryKey({
+        server: "node-repl",
+        tool: "js",
+        label: "Inspected the game menu and runtime logs",
+      }),
+    );
+    expect(
+      toolActivityRetryKey({
+        server: "node-repl",
+        tool: "js",
+        label: "Use an integration",
+      }),
+    ).toBeNull();
+    expect(
+      recoveredToolActivityLabel(
+        "Could not inspect the game menu and runtime logs",
+      ),
+    ).toBe("Recovered after retry: inspect the game menu and runtime logs");
   });
 
   it("converts progressive titles to completed tense", () => {
