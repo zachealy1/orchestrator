@@ -28,7 +28,7 @@ fn resolved_plugin_migrator(
 }
 
 #[test]
-fn existing_versions_one_through_twenty_five_upgrade_through_forty_six() {
+fn existing_versions_one_through_twenty_five_upgrade_through_forty_seven() {
     tauri::async_runtime::block_on(async {
         let mut connection = SqliteConnection::connect("sqlite::memory:")
             .await
@@ -58,12 +58,130 @@ fn existing_versions_one_through_twenty_five_upgrade_through_forty_six() {
         .fetch_one(&mut connection)
         .await
         .expect("count upgraded migrations");
-        assert_eq!(applied_count, 46);
+        assert_eq!(applied_count, 47);
 
         resolved_plugin_migrator(MIGRATION_DEFINITIONS)
             .run_direct(&mut connection)
             .await
             .expect("all extracted migrations must resolve against the upgraded database");
+    });
+}
+
+#[test]
+fn failed_or_interrupted_runs_release_the_queued_message_id_for_retry() {
+    tauri::async_runtime::block_on(async {
+        let mut connection = SqliteConnection::connect("sqlite::memory:")
+            .await
+            .expect("open queued retry migration database");
+
+        resolved_plugin_migrator(&MIGRATION_DEFINITIONS[..46])
+            .run_direct(&mut connection)
+            .await
+            .expect("apply migrations before queued retry repair");
+
+        sqlx::query(
+            "INSERT INTO workspaces (id, path, label)
+             VALUES (1, '/workspace', 'Workspace');
+             INSERT INTO chats (id, workspace_id, title, status)
+             VALUES (1, 1, 'Queued retry', 'failed');
+             INSERT INTO tasks (
+                 id, workspace_id, chat_id, turn_index, original_prompt,
+                 improved_prompt, route_recommendation, budget_tokens, status
+             ) VALUES
+                 (1, 1, 1, 0, 'Start the app', 'Start the app', 'direct', 1000, 'failed'),
+                 (2, 1, 1, 0, 'Start the app', 'Start the app', 'direct', 1000, 'created'),
+                 (3, 1, 1, 0, 'Start the app', 'Start the app', 'direct', 1000, 'created'),
+                 (4, 1, 1, 1, 'Resume safely', 'Resume safely', 'direct', 1000, 'created'),
+                 (5, 1, 1, 1, 'Resume safely', 'Resume safely', 'direct', 1000, 'created');
+             INSERT INTO runs (
+                 id, task_id, workspace_id, chat_id, turn_index, status,
+                 client_user_message_id
+             ) VALUES (
+                 1, 1, 1, 1, 0, 'failed', 'queued-message-failed'
+             );
+             INSERT INTO runs (
+                 id, task_id, workspace_id, chat_id, turn_index, status,
+                 client_user_message_id
+             ) VALUES (
+                 4, 4, 1, 1, 1, 'interrupted', 'queued-message-interrupted'
+             );",
+        )
+        .execute(&mut connection)
+        .await
+        .expect("seed terminal queued run attempts");
+
+        let rejected_before_repair = sqlx::query(
+            "INSERT INTO runs (
+                 id, task_id, workspace_id, chat_id, turn_index, status,
+                 client_user_message_id
+             ) VALUES (
+                 2, 2, 1, 1, 0, 'starting', 'queued-message-failed'
+             )",
+        )
+        .execute(&mut connection)
+        .await;
+        assert!(rejected_before_repair.is_err());
+
+        resolved_plugin_migrator(MIGRATION_DEFINITIONS)
+            .run_direct(&mut connection)
+            .await
+            .expect("apply queued retry repair");
+
+        sqlx::query(
+            "INSERT INTO runs (
+                 id, task_id, workspace_id, chat_id, turn_index, status,
+                 client_user_message_id
+             ) VALUES
+                 (2, 2, 1, 1, 0, 'starting', 'queued-message-failed'),
+                 (5, 5, 1, 1, 1, 'starting', 'queued-message-interrupted')",
+        )
+        .execute(&mut connection)
+        .await
+        .expect("terminal attempts must allow retry with the stable message id");
+
+        let concurrent_duplicate = sqlx::query(
+            "INSERT INTO runs (
+                 id, task_id, workspace_id, chat_id, turn_index, status,
+                 client_user_message_id
+             ) VALUES (
+                 3, 3, 1, 1, 0, 'starting', 'queued-message-failed'
+             )",
+        )
+        .execute(&mut connection)
+        .await;
+        assert!(concurrent_duplicate.is_err());
+
+        sqlx::query("UPDATE runs SET status = 'failed' WHERE id = 2")
+            .execute(&mut connection)
+            .await
+            .expect("mark retry attempt failed");
+        sqlx::query(
+            "INSERT INTO runs (
+                 id, task_id, workspace_id, chat_id, turn_index, status,
+                 client_user_message_id
+             ) VALUES (
+                 3, 3, 1, 1, 0, 'starting', 'queued-message-failed'
+             )",
+        )
+        .execute(&mut connection)
+        .await
+        .expect("a later retry must be allowed after another terminal failure");
+
+        sqlx::query("UPDATE runs SET status = 'completed' WHERE id = 3")
+            .execute(&mut connection)
+            .await
+            .expect("complete the successful retry");
+        let duplicate_after_completion = sqlx::query(
+            "INSERT INTO runs (
+                 task_id, workspace_id, chat_id, turn_index, status,
+                 client_user_message_id
+             ) VALUES (
+                 2, 1, 1, 0, 'starting', 'queued-message-failed'
+             )",
+        )
+        .execute(&mut connection)
+        .await;
+        assert!(duplicate_after_completion.is_err());
     });
 }
 

@@ -285,6 +285,12 @@ pub(crate) const MIGRATION_DEFINITIONS: &[MigrationDefinition] = &[
         sql: include_str!("../migrations/046_recover_plain_kanban_plan_results.sql"),
         checksum: 0x2c5b7b9c3d06e525,
     },
+    MigrationDefinition {
+        version: 47,
+        description: "allow_failed_queued_run_retries",
+        sql: include_str!("../migrations/047_allow_failed_queued_run_retries.sql"),
+        checksum: 0x32e05fdb1194cc90,
+    },
 ];
 
 pub(crate) fn migration_sql(definition: &MigrationDefinition) -> &'static str {
