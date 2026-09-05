@@ -22,6 +22,7 @@ const mocks = vi.hoisted(() => ({
   deleteCodexProfileMock: vi.fn(),
   readActiveCodexLoginMock: vi.fn(),
   readCodexAccountMock: vi.fn(),
+  readCodexRateLimitsMock: vi.fn(),
   startCodexLoginMock: vi.fn(),
   stopCodexMock: vi.fn(),
   stopDefaultCodexProfileMock: vi.fn(),
@@ -381,6 +382,7 @@ vi.mock("../codexClient", () => ({
   pushWorkspaceBranch: mocks.pushWorkspaceBranchMock,
   readActiveCodexLogin: mocks.readActiveCodexLoginMock,
   readCodexAccount: mocks.readCodexAccountMock,
+  readCodexRateLimits: mocks.readCodexRateLimitsMock,
   readCodexFile: mocks.readCodexFileMock,
   readDefaultCodexFile: mocks.readDefaultCodexFileMock,
   readWorkspaceFilePreview: mocks.readWorkspaceFilePreviewMock,
@@ -830,6 +832,7 @@ export function prepareDefaults() {
     mocks.generateChatTitleMock,
     mocks.inspectDroppedContextPathsMock,
     mocks.listCodexModelsMock,
+    mocks.readCodexRateLimitsMock,
     mocks.listChatSubagentsMock,
     mocks.listRunSubagentInstructionsMock,
     mocks.loadDefaultProfileTurnActivityMock,
@@ -1069,6 +1072,21 @@ export function prepareDefaults() {
   mocks.readCodexAccountMock.mockResolvedValue({
     account: null,
     requiresOpenaiAuth: true,
+  });
+  mocks.readCodexRateLimitsMock.mockResolvedValue({
+    rateLimits: {
+      limitId: null,
+      limitName: null,
+      primary: null,
+      secondary: null,
+      credits: null,
+      individualLimit: null,
+      spendControlReached: null,
+      planType: null,
+      rateLimitReachedType: null,
+    },
+    rateLimitsByLimitId: null,
+    rateLimitResetCredits: null,
   });
   mocks.startCodexLoginMock.mockResolvedValue({
     type: "chatgpt",

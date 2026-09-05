@@ -77,6 +77,7 @@ import {
   readDefaultCodexFile,
   readCodexFile,
   readCodexAccount,
+  readCodexRateLimits,
   readDesktopRuntimeStatus,
   readProjectedSubagentThread,
   resolveCodexServerRequest,
@@ -342,6 +343,11 @@ import type { ActiveCodexLogin, AccountLoginCompletedNotification, AccountUpdate
 import type { AdditionalContextEntry, PreflightReport, RunExecutionSettings } from "../features/runs/types";
 import type { AnalyticsDateRange } from "../features/analytics/types";
 import { useAnalyticsController } from "../features/analytics/useAnalyticsController";
+import { useCodexUsageLimitsController } from "../features/analytics/useCodexUsageLimitsController";
+import {
+  readCodexAccountRateLimitsResponse,
+  type AnalyticsUsageAccount,
+} from "../features/analytics/usageLimits";
 import type { ChatContinuationSnapshot, ChatContinuationTurn, ChatListItem, ChatRecord, HistoricalChatOpenRequest, HistoricalTranscriptState, WorkspaceChatSession } from "../features/conversations/types";
 import { useConversationController } from "../features/conversations/useConversationController";
 import { ChatDeleteDialog } from "../features/conversations/ChatDeleteDialog";
@@ -1933,6 +1939,79 @@ function App() {
     () => codexAccounts.filter((account) => account.status === "signed_in"),
     [codexAccounts],
   );
+  const analyticsUsageAccounts = useMemo<AnalyticsUsageAccount[]>(
+    () => [
+      ...(defaultProfileAuthenticated
+        ? [
+            {
+              accountId: 0,
+              profileKey: DEFAULT_CODEX_PROFILE_KEY,
+              label: "Codex app account (shared)",
+              planType:
+                selectedAccountId === 0 && codexAccount?.type === "chatgpt"
+                  ? codexAccount.planType
+                  : null,
+            } satisfies AnalyticsUsageAccount,
+          ]
+        : []),
+      ...signedInAccounts.map(
+        (account) =>
+          ({
+            accountId: account.id,
+            profileKey: profileKeyForAccountId(account.id),
+            label: account.label,
+            planType: account.plan_type,
+          }) satisfies AnalyticsUsageAccount,
+      ),
+    ],
+    [
+      codexAccount,
+      defaultProfileAuthenticated,
+      selectedAccountId,
+      signedInAccounts,
+    ],
+  );
+  const loadAnalyticsUsageLimits = useStableEvent(
+    async (account: AnalyticsUsageAccount) => {
+      await ensureCodexProfileConnected(account.profileKey, account.accountId, {
+        silent: true,
+        probeCollaborationModes: false,
+      });
+      const rawAccount =
+        account.profileKey === DEFAULT_CODEX_PROFILE_KEY
+          ? await codexDefaultProfileRpc<CodexAccountResponse>("account/read", {
+              refreshToken: false,
+            })
+          : await readCodexAccount(account.accountId, { refreshToken: false });
+      const accountResponse = normalizeCodexAccountResponse(rawAccount);
+      if (!accountResponse.account) {
+        return { kind: "signed-out" as const };
+      }
+      if (accountResponse.account.type !== "chatgpt") {
+        return { kind: "unsupported" as const };
+      }
+
+      const rawRateLimits = await readCodexRateLimits(
+        account.profileKey,
+        account.accountId,
+      );
+      const response = readCodexAccountRateLimitsResponse(rawRateLimits);
+      if (!response) {
+        throw new Error("Codex returned an invalid usage-limit response.");
+      }
+      return {
+        kind: "ready" as const,
+        response,
+        planType: accountResponse.account.planType,
+      };
+    },
+  );
+  const codexUsageLimits = useCodexUsageLimitsController({
+    accounts: analyticsUsageAccounts,
+    preferredAccountId: selectedAccountId,
+    active: activeView === "analytics",
+    load: loadAnalyticsUsageLimits,
+  });
   const codexConnected =
     selectedAccountId !== null && connectedAccountIds.has(selectedAccountId);
   const selectedWorkspaceChatSession = selectedWorkspace
@@ -9933,7 +10012,10 @@ function App() {
     }
   }
 
-  async function ensureCodexConnected(accountId: number) {
+  async function ensureCodexConnected(
+    accountId: number,
+    options: { silent?: boolean } = {},
+  ) {
     if (connectedAccountIdsRef.current.has(accountId)) {
       return;
     }
@@ -9944,20 +10026,25 @@ function App() {
       connectedAccountIdsRef.current = next;
       return next;
     });
-    setStatusMessage(
-      connection.alreadyConnected
-        ? "Codex app-server already connected."
-        : `Codex app-server connected${connection.pid ? ` as ${connection.pid}` : ""}.`,
-    );
+    if (!options.silent) {
+      setStatusMessage(
+        connection.alreadyConnected
+          ? "Codex app-server already connected."
+          : `Codex app-server connected${connection.pid ? ` as ${connection.pid}` : ""}.`,
+      );
+    }
   }
 
   async function ensureCodexProfileConnected(
     profileKey: CodexProfileKey,
     accountId: number,
+    options: { silent?: boolean; probeCollaborationModes?: boolean } = {},
   ) {
     if (profileKey !== DEFAULT_CODEX_PROFILE_KEY) {
-      await ensureCodexConnected(accountId);
-      await probeCollaborationModes(profileKey, accountId);
+      await ensureCodexConnected(accountId, { silent: options.silent });
+      if (options.probeCollaborationModes !== false) {
+        await probeCollaborationModes(profileKey, accountId);
+      }
       return;
     }
 
@@ -9968,15 +10055,19 @@ function App() {
         connectedAccountIdsRef.current = next;
         return next;
       });
-      setStatusMessage(
-        connection.alreadyConnected
-          ? "Default Codex profile already connected."
-          : `Default Codex profile connected${
-              connection.pid ? ` as ${connection.pid}` : ""
-            }.`,
-      );
+      if (!options.silent) {
+        setStatusMessage(
+          connection.alreadyConnected
+            ? "Default Codex profile already connected."
+            : `Default Codex profile connected${
+                connection.pid ? ` as ${connection.pid}` : ""
+              }.`,
+        );
+      }
     }
-    await probeCollaborationModes(profileKey, accountId);
+    if (options.probeCollaborationModes !== false) {
+      await probeCollaborationModes(profileKey, accountId);
+    }
   }
 
   function normalizeCodexAccountResponse(
@@ -16196,6 +16287,10 @@ function App() {
     const method = message.method ?? null;
 
     const params = readObject(message.params);
+    if (method === "account/rateLimits/updated") {
+      codexUsageLimits.ingestRateLimitUpdate(accountId, params.rateLimits);
+      return;
+    }
     // Goal activation can emit turn/started before the new thread is attached to
     // the generic run router. Resolve that generation-scoped latch first.
     const earlyGoalTurnControl = resolvePendingGoalTurnStartForMessage(
@@ -20811,9 +20906,14 @@ function App() {
               workspaces={workspaces}
               workspaceFilter={analyticsWorkspaceFilter}
               range={analyticsDateRange}
+              usageAccounts={codexUsageLimits.accounts}
+              selectedUsageAccountId={codexUsageLimits.selectedAccountId}
+              usageLimitsState={codexUsageLimits.state}
               loading={analyticsLoading}
               onWorkspaceFilterChange={setAnalyticsWorkspaceFilter}
               onRangeChange={setAnalyticsDateRange}
+              onUsageAccountChange={codexUsageLimits.selectAccount}
+              onRetryUsageLimits={codexUsageLimits.retry}
             />
           </div>
         ) : null}

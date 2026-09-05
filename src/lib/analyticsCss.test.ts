@@ -96,4 +96,18 @@ describe("analytics dropdown styles", () => {
     );
     expect(dateSelection).toContain("color: var(--accent-2)");
   });
+
+  it("keeps usage-account options the same width as their trigger", () => {
+    const root = postcss.parse(css);
+    let usageAccountMenu = "";
+
+    root.walkRules((candidate) => {
+      if (candidate.selector === ".analytics-usage-account-menu") {
+        usageAccountMenu = candidate.toString();
+      }
+    });
+
+    expect(usageAccountMenu).toContain("min-width: 0");
+    expect(usageAccountMenu).not.toContain("320px");
+  });
 });

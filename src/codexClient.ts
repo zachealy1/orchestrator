@@ -15,7 +15,8 @@ import type {
   AgentNotificationTarget,
 } from "./lib/agentNotifications";
 import type { WorkspaceCommitIntentContext } from "./lib/commitMessage";
-import type { ActiveCodexLogin, CodexAccountResponse, CodexConnectResult, CodexLoginResponse, CodexModel, ModelListResponse } from "./features/codex/types";
+import type { ActiveCodexLogin, CodexAccountResponse, CodexConnectResult, CodexLoginResponse, CodexModel, CodexProfileKey, ModelListResponse } from "./features/codex/types";
+import type { CodexAccountRateLimitsResponse } from "./features/analytics/usageLimits";
 import type { DesktopRuntimeStatus } from "./features/interaction/types";
 import type { CodexSkillSummary, ComposerContextFile, DroppedContextPathInspection, ImageAttachmentPreview } from "./features/composer/types";
 import type { ExternalTranscriptSnapshot, ExternalThreadHistoryIndex } from "./features/conversations/types";
@@ -151,6 +152,22 @@ export function deleteCodexProfile(accountId: number) {
 
 export function codexRpc<T>(accountId: number, method: string, params: unknown = {}) {
   return commandResult<T>(commands.codexRpc(accountId, method, params));
+}
+
+export function readCodexRateLimits(
+  profileKey: CodexProfileKey,
+  accountId: number,
+) {
+  return profileKey === "default"
+    ? codexDefaultProfileRpc<CodexAccountRateLimitsResponse>(
+        "account/rateLimits/read",
+        null,
+      )
+    : codexRpc<CodexAccountRateLimitsResponse>(
+        accountId,
+        "account/rateLimits/read",
+        null,
+      );
 }
 
 export async function codexDefaultProfileRpc<T>(

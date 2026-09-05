@@ -121,8 +121,18 @@ export function formatCodexPlanType(planType: CodexPlanType) {
       return "Free";
     case "self_serve_business_usage_based":
       return "Business Usage-Based";
+    case "self_serve_business_prolite":
+      return "Business Pro Lite";
+    case "ent26":
+      return "Enterprise";
+    case "enterprise_cbp_automation":
+      return "Enterprise Automation";
     case "enterprise_cbp_usage_based":
       return "Enterprise Usage-Based";
+    case "edu_plus":
+      return "Edu Plus";
+    case "edu_pro":
+      return "Edu Pro";
     default:
       return "Unknown";
   }

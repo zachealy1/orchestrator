@@ -25,7 +25,12 @@ import type {
   AnalyticsDateRange,
   AnalyticsSummary as AnalyticsSummaryType,
 } from "../features/analytics/types";
+import type {
+  AnalyticsUsageAccount,
+  CodexUsageLimitsAccountState,
+} from "../features/analytics/usageLimits";
 import type { Workspace } from "../features/workspaces/types";
+import { AnalyticsUsageLimits } from "./AnalyticsUsageLimits";
 import { ComposerSelect } from "./ComposerSelect";
 
 type Props = {
@@ -34,9 +39,14 @@ type Props = {
   workspaces: Workspace[];
   workspaceFilter: number[] | null;
   range: AnalyticsDateRange;
+  usageAccounts: AnalyticsUsageAccount[];
+  selectedUsageAccountId: number | null;
+  usageLimitsState: CodexUsageLimitsAccountState;
   loading?: boolean;
   onWorkspaceFilterChange: (workspaceIds: number[] | null) => void;
   onRangeChange: (range: AnalyticsDateRange) => void;
+  onUsageAccountChange: (accountId: number) => void;
+  onRetryUsageLimits: () => void;
 };
 
 const RANGE_OPTIONS = [
@@ -52,9 +62,14 @@ export function AnalyticsSummary({
   workspaces,
   workspaceFilter,
   range,
+  usageAccounts,
+  selectedUsageAccountId,
+  usageLimitsState,
   loading = false,
   onWorkspaceFilterChange,
   onRangeChange,
+  onUsageAccountChange,
+  onRetryUsageLimits,
 }: Props) {
   const terminalRuns = summary.completed_count + summary.failed_count;
   const successRate = percentage(summary.completed_count, terminalRuns);
@@ -89,6 +104,14 @@ export function AnalyticsSummary({
           />
         </div>
       </header>
+
+      <AnalyticsUsageLimits
+        accounts={usageAccounts}
+        selectedAccountId={selectedUsageAccountId}
+        state={usageLimitsState}
+        onAccountChange={onUsageAccountChange}
+        onRetry={onRetryUsageLimits}
+      />
 
       <div className="analytics-metric-grid">
         <Metric

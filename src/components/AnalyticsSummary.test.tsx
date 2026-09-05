@@ -2,6 +2,7 @@ import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 import type { Workspace } from "../features/workspaces/types";
+import { EMPTY_USAGE_LIMITS_STATE } from "../features/analytics/usageLimits";
 import { AnalyticsSummary } from "./AnalyticsSummary";
 
 const workspaces: Workspace[] = [
@@ -58,8 +59,13 @@ describe("AnalyticsSummary", () => {
         workspaces={workspaces}
         workspaceFilter={null}
         range="30d"
+        usageAccounts={[]}
+        selectedUsageAccountId={null}
+        usageLimitsState={EMPTY_USAGE_LIMITS_STATE}
         onWorkspaceFilterChange={onWorkspaceFilterChange}
         onRangeChange={onRangeChange}
+        onUsageAccountChange={vi.fn()}
+        onRetryUsageLimits={vi.fn()}
       />,
     );
 
