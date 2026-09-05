@@ -7,6 +7,7 @@ import {
 } from "../../lib/codexEventReducer";
 import type { CodexMessage } from "../codex/types";
 import { isImageContextFile } from "../../lib/imageAttachments";
+import { MISSING_REVIEWABLE_PLAN_ERROR } from "../../lib/nativePlanMode";
 import { parseProposedPlanEnvelope } from "../../lib/proposedPlan";
 import { resolveStoredRunExecutionSettings } from "../../lib/runExecutionSettings";
 import { parsePersistedRunWebPreview } from "../../lib/webPreview";
@@ -347,15 +348,27 @@ export function buildPreviousChatContext(entries: TaskChatEntry[]) {
 export function createTaskChatEntryFromHistoryRun(
   run: HistoryRunSummary,
 ): TaskChatEntry {
-  const status = normalizeHistoryRunStatus(run);
   const executionSettings = resolveStoredRunExecutionSettings(
     run.execution_settings_json,
     run,
   );
+  const plainPlanFallbackAllowed =
+    run.collaboration_mode === "plan" &&
+    (run.run_intent === "plan" || run.run_intent === "plan-revision");
   const normalizedPlan = normalizeHistoricalProposedPlan(
     run.final_message ?? "",
     run.completed_plan_text,
+    plainPlanFallbackAllowed,
   );
+  const recoveredMissingPlanFailure = Boolean(
+    normalizedPlan.promoted &&
+      run.status === "failed" &&
+      run.error?.includes(MISSING_REVIEWABLE_PLAN_ERROR),
+  );
+  const status = recoveredMissingPlanFailure
+    ? "completed"
+    : normalizeHistoryRunStatus(run);
+  const runError = recoveredMissingPlanFailure ? null : run.error;
   const finalMessage = normalizedPlan.finalMessage;
   const finalMessageItemId = finalMessage ? `history-final-${run.id}` : null;
   const runIntent =
@@ -413,7 +426,7 @@ export function createTaskChatEntryFromHistoryRun(
                 phase: "final_answer",
               },
             },
-      error: run.error,
+      error: runError,
       editedFiles: parseUnifiedDiffFiles(latestDiff),
       latestDiff,
       generatedImagesById: persistedGeneratedImages.generatedImagesById,
@@ -517,17 +530,24 @@ export function restorePersistedGeneratedImages(
 export function normalizeHistoricalProposedPlan(
   finalMessage: string,
   completedPlanText: string | null = null,
+  allowPlainPlanFallback = false,
 ) {
   const envelope = parseProposedPlanEnvelope(finalMessage);
-  const planText = completedPlanText ?? envelope?.markdown ?? "";
+  const plainPlan =
+    allowPlainPlanFallback && !completedPlanText && !envelope
+      ? finalMessage.trim()
+      : "";
+  const planText = completedPlanText ?? envelope?.markdown ?? plainPlan;
   const envelopeRepresentsPlan = Boolean(
     envelope && (!completedPlanText || completedPlanText === envelope.markdown),
   );
+  const plainTextRepresentsPlan = Boolean(plainPlan);
 
   return {
-    finalMessage: envelopeRepresentsPlan ? "" : finalMessage,
+    finalMessage:
+      envelopeRepresentsPlan || plainTextRepresentsPlan ? "" : finalMessage,
     planText,
-    promoted: Boolean(envelope && !completedPlanText),
+    promoted: Boolean((envelope || plainTextRepresentsPlan) && !completedPlanText),
   };
 }
 

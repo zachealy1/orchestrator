@@ -23,7 +23,10 @@ import {
   setWindowWidth,
 } from "./test/appRuntimeHarness";
 import { ASK_FOR_APPROVAL_PERMISSION_PROFILE } from "./lib/codexAccess";
-import { GENERATED_IMAGE_HANDLING_POLICY } from "./lib/nativePlanMode";
+import {
+  GENERATED_IMAGE_HANDLING_POLICY,
+  PLAN_MODE_OUTPUT_POLICY,
+} from "./lib/nativePlanMode";
 
 const mocks = getMocks();
 
@@ -1954,7 +1957,7 @@ describe("Application runtime scenarios 3", () => {
               mode: "plan",
               settings: expect.objectContaining({
                 reasoning_effort: "medium",
-                developer_instructions: GENERATED_IMAGE_HANDLING_POLICY,
+                developer_instructions: `${GENERATED_IMAGE_HANDLING_POLICY}\n\n${PLAN_MODE_OUTPUT_POLICY}`,
               }),
             }),
             clientUserMessageId: expect.any(String),

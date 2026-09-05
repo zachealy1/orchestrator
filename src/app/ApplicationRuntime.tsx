@@ -233,6 +233,7 @@ import {
   createStableClientMessageId,
   isCollaborationModeMask,
   isNativeUserInputRequest,
+  MISSING_REVIEWABLE_PLAN_ERROR,
   requestKey,
   selectNativePlanModes,
   withOrchestratorDeveloperInstructions,
@@ -16696,7 +16697,7 @@ function App() {
       executionBoundaryError ??
       blockedNoToolError ??
       (missingCompletedKanbanPlan
-        ? "Codex completed the Plan-mode card without a reviewable plan."
+        ? MISSING_REVIEWABLE_PLAN_ERROR
         : persistedRunStatus === "failed"
           ? readSubagentError(message) ??
             nextRunView.error ??

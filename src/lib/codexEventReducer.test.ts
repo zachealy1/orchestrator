@@ -424,6 +424,91 @@ describe("codexEventReducer", () => {
     expect(state.nativePlan.reviewState).toBe("available");
   });
 
+  it("recovers a plain final answer from a completed Plan-mode turn", () => {
+    const markdown = [
+      "# Implementation plan",
+      "",
+      "1. Scaffold the application.",
+      "2. Add the first playable level.",
+    ].join("\n");
+    let state: RunViewState = {
+      ...emptyRunView,
+      status: "running",
+      threadId: "thread-plan",
+      turnId: "turn-plan",
+      nativePlan: {
+        ...emptyRunView.nativePlan,
+        intent: "plan",
+        mode: "plan",
+        phase: "drafting",
+      },
+    };
+
+    state = applyCodexMessage(state, {
+      method: "item/completed",
+      params: {
+        threadId: "thread-plan",
+        turnId: "turn-plan",
+        item: {
+          type: "agentMessage",
+          id: "plain-plan-message",
+          phase: "final_answer",
+          text: markdown,
+        },
+      },
+    });
+    expect(state.finalMessage).toBe(markdown);
+    expect(state.nativePlan.completedText).toBe("");
+
+    state = applyCodexMessage(state, {
+      method: "turn/completed",
+      params: { turn: { id: "turn-plan", status: "completed" } },
+    });
+
+    expect(state.finalMessage).toBe("");
+    expect(state.latestPlan).toBe(markdown);
+    expect(state.nativePlan).toMatchObject({
+      planItemId: "plain-plan-message",
+      previewText: markdown,
+      completedText: markdown,
+      completedTurnId: "turn-plan",
+      phase: "awaiting-approval",
+      reviewState: "available",
+    });
+  });
+
+  it("does not promote plain final answers outside Plan mode", () => {
+    let state: RunViewState = {
+      ...emptyRunView,
+      status: "running",
+      turnId: "turn-default",
+      nativePlan: {
+        ...emptyRunView.nativePlan,
+        intent: "normal",
+        mode: "default",
+      },
+    };
+    state = applyCodexMessage(state, {
+      method: "item/completed",
+      params: {
+        item: {
+          type: "agentMessage",
+          id: "normal-message",
+          phase: "final_answer",
+          text: "# Summary\n\nWork completed.",
+        },
+      },
+    });
+    state = applyCodexMessage(state, {
+      method: "turn/completed",
+      params: { turn: { id: "turn-default", status: "completed" } },
+    });
+
+    expect(state.finalMessage).toBe("# Summary\n\nWork completed.");
+    expect(state.nativePlan.completedText).toBe("");
+    expect(state.nativePlan.reviewState).toBe("none");
+  });
+
   it("leaves malformed proposed-plan text in the normal summary", () => {
     const text = "Before\n<proposed_plan>\n# Plan\n</proposed_plan>";
     const state = applyCodexMessage(emptyRunView, {

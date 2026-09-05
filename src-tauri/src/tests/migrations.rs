@@ -28,7 +28,7 @@ fn resolved_plugin_migrator(
 }
 
 #[test]
-fn existing_versions_one_through_twenty_five_upgrade_through_forty_five() {
+fn existing_versions_one_through_twenty_five_upgrade_through_forty_six() {
     tauri::async_runtime::block_on(async {
         let mut connection = SqliteConnection::connect("sqlite::memory:")
             .await
@@ -58,7 +58,7 @@ fn existing_versions_one_through_twenty_five_upgrade_through_forty_five() {
         .fetch_one(&mut connection)
         .await
         .expect("count upgraded migrations");
-        assert_eq!(applied_count, 45);
+        assert_eq!(applied_count, 46);
 
         resolved_plugin_migrator(MIGRATION_DEFINITIONS)
             .run_direct(&mut connection)
@@ -213,6 +213,138 @@ fn completed_follow_up_plans_are_repaired_into_review() {
             plan,
             ("plan-item-2".to_owned(), "The second plan".to_owned())
         );
+    });
+}
+
+#[test]
+fn plain_plan_protocol_failures_are_recovered_into_review() {
+    tauri::async_runtime::block_on(async {
+        let mut connection = SqliteConnection::connect("sqlite::memory:")
+            .await
+            .expect("open plain Plan recovery database");
+        resolved_plugin_migrator(&MIGRATION_DEFINITIONS[..45])
+            .run_direct(&mut connection)
+            .await
+            .expect("apply migrations through subagent instructions");
+
+        sqlx::query(
+            "INSERT INTO workspaces (id, path, label)
+             VALUES (1, '/workspace', 'Workspace');
+             INSERT INTO chats (
+                 id, workspace_id, title, status, surface, collaboration_mode
+             ) VALUES (1, 1, 'Plain Plan', 'failed', 'kanban', 'plan');
+             INSERT INTO tasks (
+                 id, workspace_id, chat_id, original_prompt, improved_prompt,
+                 route_recommendation, budget_tokens, status
+             ) VALUES (
+                 1, 1, 1, 'Plan the game', 'Plan the game',
+                 'direct', 1000, 'failed'
+             );
+             INSERT INTO runs (
+                 id, task_id, workspace_id, chat_id, status, final_message,
+                 error, collaboration_mode, run_intent, plan_review_state,
+                 completed_at
+             ) VALUES (
+                 1, 1, 1, 1, 'failed', '# Implementation plan\n\n1. Build it.',
+                 '\"Codex completed the Plan-mode card without a reviewable plan.\"',
+                 'plan', 'plan', 'none', '2026-09-04T18:00:42Z'
+             );
+             INSERT INTO kanban_boards (workspace_id) VALUES (1);
+             INSERT INTO kanban_cards (
+                 id, workspace_id, chat_id, title, description, access_mode,
+                 repository_scope, stage, sort_position, execution_state,
+                 review_state, current_attempt_id
+             ) VALUES (
+                 'card-plan', 1, 1, 'Plain Plan', 'Plan the game',
+                 'full-access', 'all', 'in_progress', 1024, 'failed',
+                 'none', 'attempt-plan'
+             );
+             INSERT INTO kanban_attempts (
+                 id, card_id, generation, attempt_kind, status, prompt,
+                 config_snapshot_json, run_id, task_id, error,
+                 completed_at, last_event_sequence
+             ) VALUES (
+                 'attempt-plan', 'card-plan', 1, 'start', 'failed',
+                 'Plan the game', '{}', 1, 1,
+                 'Codex completed the Plan-mode card without a reviewable plan.',
+                 '2026-09-04T18:00:42Z', 6
+             );",
+        )
+        .execute(&mut connection)
+        .await
+        .expect("seed plain Plan protocol failure");
+
+        resolved_plugin_migrator(MIGRATION_DEFINITIONS)
+            .run_direct(&mut connection)
+            .await
+            .expect("recover plain Plan protocol failure");
+
+        let run: (String, Option<String>, String, String, String) = sqlx::query_as(
+            "SELECT status, error, final_message, completed_plan_item_id,
+                    completed_plan_text
+             FROM runs WHERE id = 1",
+        )
+        .fetch_one(&mut connection)
+        .await
+        .expect("read recovered run");
+        assert_eq!(run.0, "completed");
+        assert_eq!(run.1, None);
+        assert_eq!(run.2, "");
+        assert_eq!(run.3, "recovered-plan-1");
+        assert_eq!(run.4, "# Implementation plan\n\n1. Build it.");
+
+        let card: (String, String, String, Option<String>) = sqlx::query_as(
+            "SELECT stage, execution_state, review_state, last_error
+             FROM kanban_cards WHERE id = 'card-plan'",
+        )
+        .fetch_one(&mut connection)
+        .await
+        .expect("read recovered card");
+        assert_eq!(
+            card,
+            (
+                "in_review".to_owned(),
+                "completed".to_owned(),
+                "awaiting_review".to_owned(),
+                None,
+            )
+        );
+
+        let attempt: (String, Option<String>, i64) = sqlx::query_as(
+            "SELECT status, error, last_event_sequence
+             FROM kanban_attempts WHERE id = 'attempt-plan'",
+        )
+        .fetch_one(&mut connection)
+        .await
+        .expect("read recovered attempt");
+        assert_eq!(attempt, ("completed".to_owned(), None, 7));
+
+        let plan: (String, String, String) = sqlx::query_as(
+            "SELECT plan_item_id, plan_text, decision
+             FROM kanban_plan_results WHERE attempt_id = 'attempt-plan'",
+        )
+        .fetch_one(&mut connection)
+        .await
+        .expect("read recovered Plan result");
+        assert_eq!(
+            plan,
+            (
+                "recovered-plan-1".to_owned(),
+                "# Implementation plan\n\n1. Build it.".to_owned(),
+                "awaiting_review".to_owned(),
+            )
+        );
+
+        let task_status: String = sqlx::query_scalar("SELECT status FROM tasks WHERE id = 1")
+            .fetch_one(&mut connection)
+            .await
+            .expect("read recovered task");
+        let chat_status: String = sqlx::query_scalar("SELECT status FROM chats WHERE id = 1")
+            .fetch_one(&mut connection)
+            .await
+            .expect("read recovered chat");
+        assert_eq!(task_status, "completed");
+        assert_eq!(chat_status, "completed");
     });
 }
 

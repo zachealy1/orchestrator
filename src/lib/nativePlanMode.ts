@@ -21,16 +21,30 @@ export type CollaborationMode = {
 export const GENERATED_IMAGE_HANDLING_POLICY =
   "Treat generated concepts, mockups, redesign options, and brainstorming images as preview-only, even when a repository is open. Copy a generated image into the workspace only when the user names a workspace destination or clearly asks to create, edit, replace, or use it as a project asset.";
 
+export const PLAN_MODE_OUTPUT_POLICY =
+  "While in Plan mode, inspect and reason without modifying the workspace. When the plan is ready, return only the complete Markdown plan inside a single <proposed_plan> and </proposed_plan> block, with no text outside the block.";
+
+export const MISSING_REVIEWABLE_PLAN_ERROR =
+  "Codex completed the Plan-mode card without a reviewable plan.";
+
+function appendInstruction(existing: string, instruction: string) {
+  if (existing.includes(instruction)) {
+    return existing;
+  }
+  return existing ? `${existing}\n\n${instruction}` : instruction;
+}
+
 export function composeOrchestratorDeveloperInstructions(
   existing: string | null | undefined,
+  mode: CollaborationModeName = "default",
 ) {
-  const normalized = existing?.trim() ?? "";
-  if (normalized.includes(GENERATED_IMAGE_HANDLING_POLICY)) {
-    return normalized;
-  }
-  return normalized
-    ? `${normalized}\n\n${GENERATED_IMAGE_HANDLING_POLICY}`
-    : GENERATED_IMAGE_HANDLING_POLICY;
+  const withImagePolicy = appendInstruction(
+    existing?.trim() ?? "",
+    GENERATED_IMAGE_HANDLING_POLICY,
+  );
+  return mode === "plan"
+    ? appendInstruction(withImagePolicy, PLAN_MODE_OUTPUT_POLICY)
+    : withImagePolicy;
 }
 
 export function withOrchestratorDeveloperInstructions(
@@ -38,6 +52,7 @@ export function withOrchestratorDeveloperInstructions(
 ): CollaborationMode {
   const developerInstructions = composeOrchestratorDeveloperInstructions(
     collaborationMode.settings.developer_instructions,
+    collaborationMode.mode,
   );
   if (
     developerInstructions ===
@@ -208,14 +223,14 @@ export function buildCollaborationMode(
     throw new Error(`Unsupported collaboration mode preset: ${mask.name}`);
   }
 
-  return {
+  return withOrchestratorDeveloperInstructions({
     mode: mask.mode,
     settings: {
       model: mask.model ?? fallbackModel ?? "",
       reasoning_effort: mask.reasoning_effort ?? fallbackEffort,
-      developer_instructions: composeOrchestratorDeveloperInstructions(null),
+      developer_instructions: null,
     },
-  };
+  });
 }
 
 export function selectNativePlanModes(

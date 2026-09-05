@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   composeOrchestratorDeveloperInstructions,
   GENERATED_IMAGE_HANDLING_POLICY,
+  PLAN_MODE_OUTPUT_POLICY,
   isNativeUserInputRequest,
   isNativePlanItem,
   isServerRequestResolvedMessage,
@@ -26,7 +27,7 @@ describe("nativePlanMode", () => {
       settings: {
         model: "gpt-5.4",
         reasoning_effort: "medium",
-        developer_instructions: GENERATED_IMAGE_HANDLING_POLICY,
+        developer_instructions: `${GENERATED_IMAGE_HANDLING_POLICY}\n\n${PLAN_MODE_OUTPUT_POLICY}`,
       },
     });
     expect(modes.default.settings.reasoning_effort).toBe("high");
@@ -40,6 +41,18 @@ describe("nativePlanMode", () => {
     expect(composeOrchestratorDeveloperInstructions(composed)).toBe(composed);
     expect(composeOrchestratorDeveloperInstructions(null)).toBe(
       GENERATED_IMAGE_HANDLING_POLICY,
+    );
+  });
+
+  it("preserves Plan output instructions when adding Orchestrator policies", () => {
+    const upstream = "Preserve the existing application architecture.";
+    const composed = composeOrchestratorDeveloperInstructions(upstream, "plan");
+
+    expect(composed).toBe(
+      `${upstream}\n\n${GENERATED_IMAGE_HANDLING_POLICY}\n\n${PLAN_MODE_OUTPUT_POLICY}`,
+    );
+    expect(composeOrchestratorDeveloperInstructions(composed, "plan")).toBe(
+      composed,
     );
   });
 

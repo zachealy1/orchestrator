@@ -121,6 +121,21 @@ describe("historyProjection", () => {
     });
   });
 
+  it("recovers plain Markdown only when the caller identifies a Plan-mode turn", () => {
+    const markdown = "# Implementation plan\n\n1. Build the first playable slice.";
+
+    expect(normalizeHistoricalProposedPlan(markdown, null, true)).toEqual({
+      finalMessage: "",
+      planText: markdown,
+      promoted: true,
+    });
+    expect(normalizeHistoricalProposedPlan(markdown)).toEqual({
+      finalMessage: markdown,
+      planText: "",
+      promoted: false,
+    });
+  });
+
   it("detects adopted external chats without treating default imports as adopted", () => {
     expect(
       isAdoptedExternalChat({
