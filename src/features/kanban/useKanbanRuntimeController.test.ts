@@ -185,6 +185,7 @@ function harness() {
       workspaces: [workspace],
       accounts: [account],
       selectedAccountId: account.id,
+      sharedProfileAvailable: true,
       computerUseEnabled: true,
       browserExecutionTarget: "default-browser" as const,
     })),
@@ -507,6 +508,10 @@ describe("Kanban runtime controller", () => {
 
     await controller.launchCard(target, "start", target.description);
 
+    expect(dependencies.listModels).toHaveBeenCalledWith("account:3", account.id);
+    expect(dependencies.updateChat).toHaveBeenCalledWith(target.chatId, {
+      accountId: account.id, profileKey: "account:3", status: "starting",
+    });
     const [snapshot] = dependencies.beginRun.mock.calls[0]!;
     expect(snapshot).toMatchObject({
       mode: "plan",
@@ -528,8 +533,6 @@ describe("Kanban runtime controller", () => {
     expect(snapshot.executionSettings).toEqual(
       expect.objectContaining({
         ...executionSettings,
-        accountId: 0,
-        profileKey: "default",
         selectedRepositoryPath: "/cards/card-1/root/repo",
         selectedBranch: "codex/card-1",
       }),
@@ -580,6 +583,18 @@ describe("Kanban runtime controller", () => {
       expect.anything(),
       snapshot,
     );
+  });
+
+  it("does not switch a saved card to another account when its account is unavailable", async () => {
+    const { controller, dependencies, native } = harness();
+    dependencies.getState.mockReturnValue({
+      ...dependencies.getState(), sharedProfileAvailable: false,
+    });
+    await expect(controller.launchCard(card(), "start", "Do the work"))
+      .rejects.toThrow("account saved on this card is signed out or unavailable");
+    expect(dependencies.listModels).not.toHaveBeenCalled();
+    expect(native.claimAttempt).not.toHaveBeenCalled();
+    expect(native.prepareRepositoryExecution).not.toHaveBeenCalled();
   });
 
   it("hands an isolated Kanban chat to the selected shared profile", async () => {
@@ -674,11 +689,7 @@ describe("Kanban runtime controller", () => {
         card: target,
         kind: "implement_plan",
         executionSettingsJson:
-          serializeRunExecutionSettings({
-            ...implementationSettings,
-            accountId: 0,
-            profileKey: "default",
-          }),
+          serializeRunExecutionSettings(implementationSettings),
       }),
     );
     const [snapshot] = dependencies.beginRun.mock.calls[0]!;
@@ -686,14 +697,8 @@ describe("Kanban runtime controller", () => {
       promptText: approvedPrompt,
       promptFallback: approvedPrompt,
       chatId: target.chatId,
-      threadId: null,
-      threadStrategy: {
-        kind: "handoff",
-        handoff: expect.objectContaining({
-          fromThreadId: "thread-card",
-          targetProfileKey: "default",
-        }),
-      },
+      threadId: "thread-card",
+      threadStrategy: { kind: "resume" },
       mode: "run",
       intent: "plan-implementation",
       model: model.model,

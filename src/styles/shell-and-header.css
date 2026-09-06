@@ -764,12 +764,8 @@ button.account-switcher-item:hover:not(:disabled) {
   min-width: 0;
   min-height: 0;
   overflow: hidden;
-  contain: layout paint;
-  transition:
-    --history-active-drawer-width var(--history-transition-duration)
-      var(--history-transition-easing),
-    --history-chat-content-max-width var(--history-transition-duration)
-      var(--history-transition-easing);
+  contain: layout style;
+  transition: none;
 }
 
 .codex-workspace-body.history-space-reserved {

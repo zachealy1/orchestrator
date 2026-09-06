@@ -8,24 +8,6 @@ import type { PromptQueueItem } from "../features/queue/types";
 import { OrchestratorTooltipLayer } from "./OrchestratorTooltipLayer";
 import { PromptQueueStatus } from "./PromptQueueStatus";
 
-vi.mock("react-virtuoso", () => ({
-  Virtuoso: ({
-    data,
-    itemContent,
-    className,
-  }: {
-    data: PromptQueueItem[];
-    itemContent: (index: number, item: PromptQueueItem) => React.ReactNode;
-    className?: string;
-  }) => (
-    <div className={className}>
-      {data.map((item, index) => (
-        <div key={item.id}>{itemContent(index, item)}</div>
-      ))}
-    </div>
-  ),
-}));
-
 const settings = createRunExecutionSettings({
   accountId: 7,
   profileKey: "account:7",

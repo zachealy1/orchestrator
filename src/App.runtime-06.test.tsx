@@ -1,4 +1,4 @@
-import { act, screen, waitFor, within } from "@testing-library/react";
+import { act, fireEvent, screen, waitFor, within } from "@testing-library/react";
 import { describe, beforeEach, expect, it, vi } from "vitest";
 import {
   WorkspaceRunFixture,
@@ -1029,19 +1029,33 @@ describe("Application runtime scenarios 6", () => {
       }
     });
 
-  it("stops an optimistic run before deferred setup starts", async () => {
+  it.each(["retry", "edit-and-run-next", "send-now"])("recovers a run stopped before deferred setup via %s", async (recovery) => {
       prepareSignedInRun();
+      mocks.listCodexModelsMock.mockResolvedValue([defaultCodexModel]);
 
       const { user } = await renderApp();
+      await user.click(screen.getByRole("combobox", { name: "Agent" }));
+      await user.click(await screen.findByRole("option", { name: defaultCodexModel.displayName }));
       const animationFrames = holdNextAnimationFrames();
       await user.type(screen.getByLabelText("Prompt"), "Stop while preparing");
+      // Keep the bounded paint fallback from racing this deliberately
+      // pre-dispatch cancellation when the complete suite saturates the CPU.
+      vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
       try {
-        await user.keyboard("{Enter}");
+        await act(async () => {
+          fireEvent.keyDown(screen.getByLabelText("Prompt"), { key: "Enter", code: "Enter" });
+          await vi.advanceTimersByTimeAsync(0);
+        });
 
         expect(mocks.runPreflightMock).not.toHaveBeenCalled();
         expect(mocks.createTaskMock).not.toHaveBeenCalled();
 
-        await user.click(screen.getByRole("button", { name: /stop codex/i }));
+        await act(async () => {
+          fireEvent.click(screen.getByRole("button", { name: /stop codex/i }));
+          await vi.advanceTimersByTimeAsync(0);
+        });
+        vi.useRealTimers();
+        await screen.findByText("Stopped by user.");
 
         expect(screen.getByLabelText("Prompt")).toHaveValue("");
         expect(
@@ -1059,6 +1073,7 @@ describe("Application runtime scenarios 6", () => {
           ),
         ).toBe(false);
 
+        vi.useRealTimers();
         await animationFrames.flush();
         expect(mocks.runPreflightMock).not.toHaveBeenCalled();
         expect(mocks.createTaskMock).not.toHaveBeenCalled();
@@ -1068,8 +1083,26 @@ describe("Application runtime scenarios 6", () => {
           ),
         ).toBe(false);
       } finally {
+        vi.useRealTimers();
         animationFrames.restore();
       }
+      await user.click(screen.getByRole("button", { name: /open prompt queue/i }));
+      if (recovery === "edit-and-run-next") {
+        await user.click(screen.getByRole("button", { name: "Edit queued prompt" }));
+        await user.clear(screen.getByLabelText("Prompt"));
+        await user.type(screen.getByLabelText("Prompt"), "Edited recovery prompt");
+        await user.click(screen.getByRole("button", { name: "Save queued prompt" }));
+        await waitFor(() => expect(mocks.updatePromptQueueItemSnapshotMock).toHaveBeenCalledTimes(1));
+        await waitFor(() => expect(screen.getByLabelText("Prompt")).toHaveValue(""));
+        await user.click(await screen.findByRole("button", { name: "Run next queued prompt" }));
+      } else {
+        await user.click(screen.getByRole("button", {
+          name: recovery === "retry" ? "Retry queued prompt" : "Send queued prompt now",
+        }));
+      }
+      await waitFor(() => expect(mocks.createRunMock).toHaveBeenCalledTimes(1));
+      expect(screen.queryByText(/already coordinated/i)).not.toBeInTheDocument();
+      expect(screen.getAllByLabelText("Submitted prompt")).toHaveLength(1);
     });
 
   it("marks the queued item failed when setup fails before a run is created", async () => {

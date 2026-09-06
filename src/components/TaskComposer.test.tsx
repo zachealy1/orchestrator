@@ -1230,7 +1230,7 @@ describe("TaskComposer", () => {
     expect(onRun).not.toHaveBeenCalled();
   });
 
-  it("does not dispatch a held queue item from an empty composer", async () => {
+  it.each(["button", "enter"])("explicitly dispatches a held queue item via %s without restoring automatic sending", async (action) => {
     const onDispatchQueued = vi.fn();
     const { user } = renderControlledComposer({
       queueItems: [{ ...queuedPrompt(), autoSendEnabled: false }],
@@ -1238,13 +1238,15 @@ describe("TaskComposer", () => {
     });
     const promptInput = screen.getByLabelText("Prompt");
 
-    await user.click(promptInput);
-    await user.keyboard("{Enter}");
-
     expect(onDispatchQueued).not.toHaveBeenCalled();
-    expect(
-      screen.getByRole("button", { name: "Run next queued prompt" }),
-    ).toBeDisabled();
+    const runNext = screen.getByRole("button", { name: "Run next queued prompt" });
+    expect(runNext).toBeEnabled();
+    if (action === "button") await user.click(runNext);
+    else {
+      await user.click(promptInput);
+      await user.keyboard("{Enter}");
+    }
+    expect(onDispatchQueued).toHaveBeenCalledOnce();
   });
 
   it("queues a future prompt while the current run is active", async () => {
@@ -1418,6 +1420,23 @@ describe("TaskComposer", () => {
       `${prompt}\u200b`,
     );
     requestAnimationFrameSpy.mockRestore();
+  });
+
+  it("enables submission even when WKWebView suspends animation frames", () => {
+    vi.useFakeTimers();
+    const frameSpy = vi.spyOn(window, "requestAnimationFrame").mockReturnValue(41);
+    try {
+      renderComposer();
+      fireEvent.change(screen.getByLabelText("Prompt"), { target: { value: "A native prompt", selectionStart: 15 } });
+      expect(screen.getByRole("button", { name: "Run Codex" })).toBeDisabled();
+      act(() => { vi.advanceTimersByTime(100); });
+      expect(screen.getByRole("button", { name: "Run Codex" })).toBeEnabled();
+      expect(document.querySelector(".prompt-autosize-mirror")?.textContent).toBe("A native prompt\u200b");
+    } finally {
+      cleanup();
+      frameSpy.mockRestore();
+      vi.useRealTimers();
+    }
   });
 
   it("keeps the native draft current while coalescing rapid visual work", () => {

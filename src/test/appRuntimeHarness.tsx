@@ -69,6 +69,8 @@ const mocks = vi.hoisted(() => ({
   listDuplicateProfilesPendingCleanupMock: vi.fn(),
   completeDuplicateProfileCleanupMock: vi.fn(),
   createChatMock: vi.fn(),
+  setWorkspaceDefaultProfileMock: vi.fn(),
+  loadPersistedRunActivityMock: vi.fn(),
   listChatWorktreeBindingsMock: vi.fn(),
   renameChatMock: vi.fn(),
   reconcileSharedNativeThreadsMock: vi.fn(),
@@ -207,7 +209,7 @@ vi.mock("../features/kanban/KanbanWorkspace", async () => {
     chatId: 777,
     title: "Kanban run-control test",
     description: "Exercise Kanban pause semantics",
-    accountId: 7,
+    accountId: null,
     accessMode: "ask-for-approval" as const,
     model: null,
     reasoningLevel: null,
@@ -372,6 +374,7 @@ vi.mock("../codexClient", () => ({
   listDefaultCodexSkills: mocks.listCodexSkillsMock,
   listWorkspaceDirectory: mocks.listWorkspaceDirectoryMock,
   loadDefaultProfileTurnActivity: mocks.loadDefaultProfileTurnActivityMock,
+  loadPersistedRunActivity: mocks.loadPersistedRunActivityMock,
   readProjectedSubagentThread: mocks.readProjectedSubagentThreadMock,
   syncDefaultProfileThreadTranscript:
     mocks.syncDefaultProfileThreadTranscriptMock,
@@ -447,7 +450,7 @@ vi.mock("../data/repositories", () => ({
       listDuplicateProfilesPendingCleanup:
         mocks.listDuplicateProfilesPendingCleanupMock,
       renameCodexAccount: mocks.renameCodexAccountMock,
-      setWorkspaceDefaultProfile: vi.fn(),
+      setWorkspaceDefaultProfile: mocks.setWorkspaceDefaultProfileMock,
       softDeleteCodexAccount: mocks.softDeleteCodexAccountMock,
       updateCodexAccount: mocks.updateCodexAccountMock,
     },
@@ -911,7 +914,7 @@ export function prepareDefaults() {
       chatId: 777,
       title: "Kanban run-control test",
       description: "Exercise Kanban pause semantics",
-      accountId: 7,
+      accountId: null,
       accessMode: "ask-for-approval",
       model: null,
       reasoningLevel: null,
@@ -1213,6 +1216,7 @@ export function prepareDefaults() {
   });
   mocks.checkoutGitBranchMock.mockResolvedValue({ branch: "main" });
   mocks.runPreflightMock.mockResolvedValue(preflight);
+  mocks.loadPersistedRunActivityMock.mockResolvedValue({ commands: [], editedFiles: [], toolActivities: [], nextCursor: null });
   mocks.readCodexFileMock.mockResolvedValue("file contents");
   mocks.readDefaultCodexFileMock.mockResolvedValue("file contents");
   mocks.setThreadGoalMock.mockImplementation(
@@ -1785,7 +1789,7 @@ export function prepareKanbanRun(
             email: "shared@example.com",
             planType: "pro",
           },
-          requiresOpenaiAuth: false,
+          requiresOpenaiAuth: true,
         };
       }
       if (method === "model/list") {

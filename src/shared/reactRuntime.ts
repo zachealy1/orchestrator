@@ -2,14 +2,7 @@ import { useCallback, useRef } from "react";
 
 export function waitForNextPaint() {
   return new Promise<void>((resolve) => {
-    const scheduleFrame =
-      typeof requestAnimationFrame === "function"
-        ? requestAnimationFrame
-        : (callback: FrameRequestCallback) => {
-            setTimeout(() => callback(performance.now()), 0);
-            return 0;
-          };
-    scheduleFrame(() => setTimeout(resolve, 0));
+    scheduleAfterNextPaint(resolve);
   });
 }
 
@@ -29,26 +22,46 @@ export function markPerformance(name: string) {
 }
 
 export function scheduleAfterNextPaint(callback: () => void) {
-  let cancelled = false;
+  return schedulePaintCallback(callback, true);
+}
+
+export function scheduleNextVisualFrame(callback: () => void) {
+  return schedulePaintCallback(callback, false);
+}
+
+function schedulePaintCallback(callback: () => void, afterPaint: boolean) {
+  let settled = false;
   let frameId: number | null = null;
-  let timeoutId: number | null = null;
-  const runCallback = () => {
-    timeoutId = null;
-    if (!cancelled) callback();
-  };
-  if (typeof window === "undefined") {
-    timeoutId = setTimeout(runCallback, 0) as unknown as number;
-  } else {
-    frameId = window.requestAnimationFrame(() => {
-      frameId = null;
-      timeoutId = window.setTimeout(runCallback, 0);
-    });
-  }
-  return () => {
-    cancelled = true;
+  let afterPaintTimer: ReturnType<typeof setTimeout> | null = null;
+  let fallbackTimer: ReturnType<typeof setTimeout> | null = null;
+  const cleanUp = () => {
     if (typeof window !== "undefined" && frameId !== null) {
       window.cancelAnimationFrame(frameId);
     }
-    if (timeoutId !== null) clearTimeout(timeoutId);
+    if (afterPaintTimer !== null) clearTimeout(afterPaintTimer);
+    if (fallbackTimer !== null) clearTimeout(fallbackTimer);
+  };
+  const runCallback = () => {
+    if (settled) return;
+    settled = true;
+    cleanUp();
+    callback();
+  };
+  // WKWebView can suspend frames when its window is occluded. Paint is a
+  // courtesy to the optimistic UI, never a prerequisite for task execution.
+  fallbackTimer = setTimeout(runCallback, 100);
+  if (typeof window !== "undefined" && typeof window.requestAnimationFrame === "function") {
+    frameId = window.requestAnimationFrame(() => {
+      frameId = null;
+      if (settled) return;
+      if (afterPaint) afterPaintTimer = setTimeout(runCallback, 0);
+      else runCallback();
+    });
+  } else {
+    afterPaintTimer = setTimeout(runCallback, 0);
+  }
+  return () => {
+    settled = true;
+    cleanUp();
   };
 }

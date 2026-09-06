@@ -6,6 +6,8 @@ import {
   getMocks,
   prepareDefaults,
   prepareKanbanRun,
+  prepareSignedInRun,
+  signedInAccount,
   renderApp,
   setWindowWidth,
   workspace,
@@ -52,6 +54,7 @@ describe("Application runtime scenarios 9", () => {
   });
 
   it("persists a Kanban card while the shared Codex profile is unavailable", async () => {
+    prepareSignedInRun();
     const { user } = await renderApp();
     await user.click(await screen.findByRole("radio", { name: "Kanban" }));
 
@@ -71,9 +74,9 @@ describe("Application runtime scenarios 9", () => {
         1,
         expect.objectContaining({
           description: "Add responsive arcade controls",
-          accountId: null,
+          accountId: signedInAccount.id,
           executionSettingsJson: expect.stringContaining(
-            '"profileKey":"default"',
+            `"profileKey":"account:${signedInAccount.id}"`,
           ),
         }),
       ),

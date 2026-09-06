@@ -23,7 +23,7 @@ pub(crate) struct DesktopRuntimeStatus {
 struct DesktopRuntime {
     version: String,
     _launcher: PathBuf,
-    _skill: PathBuf,
+    _instructions: PathBuf,
 }
 
 #[tauri::command]
@@ -55,12 +55,11 @@ fn desktop_runtime_status_from(
     match runtime {
         Ok(runtime) => DesktopRuntimeStatus {
             available: true,
-            message: None,
+            message: permission_diagnostic(accessibility_trusted, screen_recording_trusted),
             version: Some(runtime.version),
             service_compatible: true,
-            // macOS attributes helper access to the responsible parent process.
-            // When Orchestrator launches Computer Use, these non-prompting checks
-            // therefore match the toggles shown for Orchestrator in System Settings.
+            // These are non-prompting checks of this running process, not a query
+            // of every same-named app or the separately signed helper in Settings.
             accessibility_trusted,
             screen_recording_trusted,
         },
@@ -73,6 +72,29 @@ fn desktop_runtime_status_from(
             screen_recording_trusted,
         },
     }
+}
+
+fn permission_diagnostic(
+    accessibility: Option<bool>,
+    screen_recording: Option<bool>,
+) -> Option<String> {
+    let missing = [
+        ("Accessibility", accessibility),
+        ("Screen Recording", screen_recording),
+    ]
+    .into_iter()
+    .filter_map(|(name, granted)| (granted == Some(false)).then_some(name))
+    .collect::<Vec<_>>();
+    if missing.is_empty() {
+        return None;
+    }
+    let executable = env::current_exe()
+        .map(|path| path.display().to_string())
+        .unwrap_or_else(|_| "this running Orchestrator application".to_string());
+    Some(format!(
+        "macOS reports {} access is not granted to this running copy of Orchestrator. If the toggles are already enabled, quit and reopen this copy. If it is still denied, check that System Settings authorizes this app, not another installed or development copy. Running executable: {executable}",
+        missing.join(" and ")
+    ))
 }
 
 fn resolve_desktop_runtime() -> Result<DesktopRuntime, String> {
@@ -135,17 +157,23 @@ fn validate_desktop_plugin(plugin_root: &Path) -> Result<DesktopRuntime, String>
         .and_then(Value::as_str)
         .ok_or("The Computer Use provider command is missing.")?;
     let launcher = confined_plugin_path(&canonical, command)?;
-    let skill = canonical
-        .join("skills")
-        .join("computer-use")
-        .join("SKILL.md");
-    if !launcher.is_file() || !skill.is_file() {
+    let instructions_path = if manifest
+        .get("bundledContentVariant")
+        .and_then(Value::as_str)
+        == Some("node-repl")
+    {
+        ".codex-plugin/computer-use-node-repl.md"
+    } else {
+        "skills/computer-use/SKILL.md"
+    };
+    let instructions = confined_plugin_path(&canonical, instructions_path)?;
+    if !launcher.is_file() || !instructions.is_file() {
         return Err("The installed Computer Use provider is incomplete.".to_string());
     }
     Ok(DesktopRuntime {
         version,
         _launcher: launcher,
-        _skill: skill,
+        _instructions: instructions,
     })
 }
 
@@ -267,6 +295,38 @@ mod tests {
     }
 
     #[test]
+    fn validates_legacy_and_node_repl_provider_instruction_layouts() {
+        for variant in [None, Some("node-repl")] {
+            let root =
+                env::temp_dir().join(format!("orchestrator-provider-layout-{}", Uuid::new_v4()));
+            fs::create_dir_all(root.join(".codex-plugin")).unwrap();
+            fs::create_dir_all(root.join("bin")).unwrap();
+            fs::write(root.join(".codex-plugin/plugin.json"), serde_json::to_vec(&serde_json::json!({
+                "name": "computer-use", "license": "Proprietary", "version": "1.0.1000926", "bundledContentVariant": variant,
+            })).unwrap()).unwrap();
+            fs::write(
+                root.join(".mcp.json"),
+                r#"{"mcpServers":{"computer-use":{"command":"./bin/launcher"}}}"#,
+            )
+            .unwrap();
+            fs::write(root.join("bin/launcher"), "provider launcher").unwrap();
+            assert!(
+                validate_desktop_plugin(&root).is_err(),
+                "instructions must exist"
+            );
+            let instructions = if variant.is_some() {
+                root.join(".codex-plugin/computer-use-node-repl.md")
+            } else {
+                root.join("skills/computer-use/SKILL.md")
+            };
+            fs::create_dir_all(instructions.parent().unwrap()).unwrap();
+            fs::write(instructions, "provider instructions").unwrap();
+            assert!(validate_desktop_plugin(&root).is_ok());
+            fs::remove_dir_all(root).unwrap();
+        }
+    }
+
+    #[test]
     fn compatible_provider_preserves_independent_permission_preflights() {
         for (accessibility, screen_recording) in
             [(false, false), (false, true), (true, false), (true, true)]
@@ -275,7 +335,7 @@ mod tests {
                 Ok(DesktopRuntime {
                     version: "1.0.1000816".to_string(),
                     _launcher: PathBuf::from("computer-use-client-launcher"),
-                    _skill: PathBuf::from("SKILL.md"),
+                    _instructions: PathBuf::from("SKILL.md"),
                 }),
                 Some(accessibility),
                 Some(screen_recording),
@@ -285,7 +345,15 @@ mod tests {
             assert!(status.service_compatible);
             assert_eq!(status.accessibility_trusted, Some(accessibility));
             assert_eq!(status.screen_recording_trusted, Some(screen_recording));
-            assert_eq!(status.message, None);
+            if accessibility && screen_recording {
+                assert_eq!(status.message, None);
+            } else {
+                let message = status.message.expect("specific permission diagnostic");
+                assert!(message.contains("this running copy of Orchestrator"));
+                assert_eq!(message.contains("Accessibility"), !accessibility);
+                assert_eq!(message.contains("Screen Recording"), !screen_recording);
+                assert!(message.contains("Running executable:"));
+            }
         }
     }
 

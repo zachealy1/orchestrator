@@ -883,9 +883,12 @@ describe("Application runtime scenarios 3", () => {
         id: 401,
         title: "Fix the app header",
       });
-      mocks.listWorkspaceChatsMock
-        .mockResolvedValueOnce([activeChat])
-        .mockResolvedValueOnce([]);
+      // Background reconciliation may refresh history before the user deletes
+      // anything. Model persisted state, not an assumed number of list reads.
+      mocks.listWorkspaceChatsMock.mockResolvedValue([activeChat]);
+      mocks.softDeleteChatMock.mockImplementation(async () => {
+        mocks.listWorkspaceChatsMock.mockResolvedValue([]);
+      });
 
       const { user } = await renderApp();
       const banner = screen.getByRole("region", { name: "Selected folder" });

@@ -447,7 +447,7 @@ export const SettingsView = memo(function SettingsView({
               <div>
                 <strong>macOS permissions</strong>
                 <span>
-                  The signed Computer Use helper requests and verifies both permissions.
+                  Access is checked for this running copy of Orchestrator. The Computer Use helper may also request access.
                 </span>
               </div>
               <SettingsIconAction
@@ -1348,7 +1348,9 @@ function ComputerUseStatusPopover({
     ? pluginPresent
       ? "Enable the Computer Use plugin to continue."
       : "Install the Computer Use plugin to continue."
-    : hasMissingPermissions
+    : runtimeStatus?.message
+      ? runtimeStatus.message
+      : hasMissingPermissions
       ? missingScreenRecording && missingAccessibility
         ? "Grant both permissions to continue."
         : "Grant the required permission to continue."

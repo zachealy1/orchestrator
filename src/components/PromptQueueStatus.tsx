@@ -39,7 +39,6 @@ import {
   useState,
   type ReactNode,
 } from "react";
-import { Virtuoso } from "react-virtuoso";
 import {
   isPromptQueueItemMutable,
   isPromptQueueItemAutoDispatchEligible,
@@ -257,13 +256,10 @@ export const PromptQueueStatus = memo(function PromptQueueStatus({
               items={itemIds}
               strategy={verticalListSortingStrategy}
             >
-              <Virtuoso
-                className="prompt-queue-list"
-                data={items}
-                computeItemKey={(_, item) => item.id}
-                increaseViewportBy={180}
-                itemContent={(_, item) => (
+              <div className="prompt-queue-list">
+                {items.map((item) => (
                   <SortableQueueItem
+                    key={item.id}
                     item={item}
                     pending={actionPendingItemId === item.id}
                     onEdit={() => {
@@ -277,8 +273,8 @@ export const PromptQueueStatus = memo(function PromptQueueStatus({
                     }
                     onSendNow={() => onSendNow(item)}
                   />
-                )}
-              />
+                ))}
+              </div>
             </SortableContext>
           </DndContext>
         </div>

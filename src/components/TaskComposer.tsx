@@ -32,6 +32,7 @@ import type {
   KeyboardEvent,
 } from "react";
 import { ComposerSelect } from "./ComposerSelect";
+import { scheduleNextVisualFrame } from "../shared/reactRuntime";
 import { GoalProgressIndicator } from "./GoalProgressIndicator";
 import { PlanProgressIndicator } from "./PlanProgressIndicator";
 import { PromptQueueStatus } from "./PromptQueueStatus";
@@ -64,7 +65,6 @@ import {
   isImageContextFile,
   loadImageAttachmentPreview,
 } from "../lib/imageAttachments";
-import { isPromptQueueItemAutoDispatchEligible } from "../lib/promptQueue";
 import { estimateTokens, recommendRoute } from "../lib/taskAnalysis";
 import { useAppServices } from "../runtime/AppServices";
 
@@ -288,7 +288,7 @@ export const TaskComposer = memo(function TaskComposer({ model, actions }: Props
   const externalPromptRevisionRef = useRef(promptRevision);
   const draftPromptRef = useRef(prompt);
   const pendingVisualPromptRef = useRef(prompt);
-  const visualPromptFrameRef = useRef<number | null>(null);
+  const visualPromptFrameRef = useRef<(() => void) | null>(null);
   const [draftPrompt, setDraftPrompt] = useState(prompt);
   const [dragActive, setDragActive] = useState(false);
   const [activeToken, setActiveToken] = useState<ComposerToken | null>(null);
@@ -337,7 +337,7 @@ export const TaskComposer = memo(function TaskComposer({ model, actions }: Props
 
   const cancelVisualPromptUpdate = useCallback(() => {
     if (visualPromptFrameRef.current !== null) {
-      window.cancelAnimationFrame(visualPromptFrameRef.current);
+      visualPromptFrameRef.current();
       visualPromptFrameRef.current = null;
     }
   }, []);
@@ -352,7 +352,7 @@ export const TaskComposer = memo(function TaskComposer({ model, actions }: Props
       }
       if (visualPromptFrameRef.current !== null) return;
 
-      visualPromptFrameRef.current = window.requestAnimationFrame(() => {
+      visualPromptFrameRef.current = scheduleNextVisualFrame(() => {
         visualPromptFrameRef.current = null;
         const pendingPrompt = pendingVisualPromptRef.current;
         startTransition(() => {
@@ -623,8 +623,7 @@ export const TaskComposer = memo(function TaskComposer({ model, actions }: Props
           !runActive &&
           queueItems.some(
             (item) =>
-              ["queued", "scheduled-next"].includes(item.status) &&
-              isPromptQueueItemAutoDispatchEligible(item),
+              ["queued", "scheduled-next"].includes(item.status),
           )
         ) {
           onDispatchQueued();
@@ -873,8 +872,7 @@ export const TaskComposer = memo(function TaskComposer({ model, actions }: Props
   const hasDraftPrompt = draftPrompt.trim().length > 0;
   const hasRunnableQueuedPrompt = queueItems.some(
     (item) =>
-      ["queued", "scheduled-next"].includes(item.status) &&
-      isPromptQueueItemAutoDispatchEligible(item),
+      ["queued", "scheduled-next"].includes(item.status),
   );
   const queueDraftWhileRunning = runActive && hasDraftPrompt;
   const primaryActionIsStop =

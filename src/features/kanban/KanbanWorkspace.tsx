@@ -18,6 +18,8 @@ import {
   X,
 } from "lucide-react";
 import type { CodexAccountProfile } from "../accounts/types";
+import { executionAccountAvailable, selectAvailableExecutionAccount } from "../accounts/executionAccount";
+import { accountIdFromProfileKey, profileKeyForAccountId } from "../codex/runtimeHelpers";
 import {
   type CodexAccessMode,
   type CodexModel,
@@ -132,6 +134,7 @@ type Props = {
   repositories: WorkspaceGitRepositoryStatus[];
   accounts: CodexAccountProfile[];
   sharedProfileAvailable?: boolean;
+  selectedAccountId?: number | null;
   models: CodexModel[];
   refreshToken: number;
   listChatTranscript: (chatId: number) => Promise<HistoryRunSummary[]>;
@@ -696,6 +699,7 @@ function KanbanWorkspace({
   repositories,
   accounts,
   sharedProfileAvailable = true,
+  selectedAccountId = null,
   models,
   refreshToken,
   listChatTranscript,
@@ -1299,11 +1303,10 @@ function KanbanWorkspace({
           label: repository.label,
           path: repository.repositoryPath,
         })),
-        accountId:
-          card.config.accountId === null ? null : String(card.config.accountId),
+        accountId: String(card.config.accountId ?? 0),
         accountLabel:
           card.config.accountId === null
-            ? "Workspace default"
+            ? "Codex app account (shared)"
             : accountLabels.get(card.config.accountId) ??
               `Account ${card.config.accountId}`,
         accessMode: card.config.accessMode,
@@ -1599,8 +1602,20 @@ function KanbanWorkspace({
     const existingSettings = parseRunExecutionSettings(
       sourceCard?.executionSettingsJson,
     );
-    const accountId = 0;
-    const profileKey: CodexProfileKey = "default";
+    const accountId = draft.accountId !== null
+      ? Number(draft.accountId)
+      : selectAvailableExecutionAccount({
+          preferredAccountId: workspace.default_profile_key === "default"
+            ? 0
+            : accountIdFromProfileKey(workspace.default_profile_key as CodexProfileKey | null) ?? workspace.default_account_id,
+          currentAccountId: selectedAccountId,
+          accounts,
+          sharedProfileAvailable,
+        });
+    if (!executionAccountAvailable(accountId, accounts, sharedProfileAvailable)) {
+      throw new Error("Select a signed-in Codex account before saving this card.");
+    }
+    const profileKey = profileKeyForAccountId(accountId);
     const selectedRepository = multiRepositoryWorkspace
       ? null
       : selectedRepositories.find(
@@ -1632,7 +1647,7 @@ function KanbanWorkspace({
     return {
       title: draft.title,
       description: draft.description,
-      accountId: null,
+      accountId: accountId || null,
       accessMode: draft.accessMode,
       model: draft.model || null,
       reasoningLevel: draft.reasoningLevel || null,
@@ -1655,7 +1670,7 @@ function KanbanWorkspace({
       const sourceCard = cardDialog.cardId
         ? cardsById.get(cardDialog.cardId) ?? null
         : null;
-      let input = persistedDraft(draft, sourceCard);
+      let input: PersistedKanbanCardDraft;
       if (cardDialog.mode === "edit" && cardDialog.cardId) {
         const card = cardsById.get(cardDialog.cardId);
         if (!card) throw new Error("The card changed before it could be edited.");
@@ -1677,9 +1692,12 @@ function KanbanWorkspace({
             repositoryScope: card.repositoryScope,
             repositories: card.repositories,
           };
+        } else {
+          input = persistedDraft(draft, sourceCard);
         }
         await updateKanbanCard(card, input);
       } else {
+        input = persistedDraft(draft, sourceCard);
         const created = await createKanbanCard(workspace.id, input);
         if (
           cardDialog.mode === "duplicate" &&
@@ -2332,12 +2350,12 @@ function KanbanWorkspace({
         }))}
         accountOptions={[
           {
-            value: "shared",
+            value: "0",
             label: "Codex app account (shared)",
             disabled: !sharedProfileAvailable,
           },
+          ...accounts.map((account) => ({ value: String(account.id), label: account.label, disabled: account.status !== "signed_in" })),
         ]}
-        sharedAccountOnly
         modelOptions={models.filter((model) => !model.hidden).map((model) => ({ value: model.model, label: model.displayName }))}
         modelReasoningOptions={Object.fromEntries(
           models
