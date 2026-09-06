@@ -312,9 +312,10 @@ button.danger:hover:not(:disabled) {
   opacity: 0.72;
 }
 
+.branch-creation-field input:focus,
 .branch-creation-field input:focus-visible {
   border-color: var(--color-divider);
-  box-shadow: 0 0 0 3px var(--dropdown-focus-ring);
+  box-shadow: none;
 }
 
 .chat-rename-dialog .branch-creation-field input,
