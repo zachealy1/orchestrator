@@ -344,6 +344,18 @@ pub struct SaveKanbanGitBindingsRequest {
     pub expected_version: i64,
     pub operation_id: String,
     pub bindings: Vec<PersistedKanbanGitBinding>,
+    #[serde(default)]
+    pub repository_configuration: Option<KanbanRepositoryConfigurationInput>,
+}
+
+#[derive(Debug, Deserialize, Serialize, specta::Type)]
+#[serde(rename_all = "camelCase")]
+pub struct KanbanRepositoryConfigurationInput {
+    pub repository_scope: String,
+    #[serde(default)]
+    pub repositories: Vec<KanbanRepositorySelectionInput>,
+    #[serde(default)]
+    pub execution_settings_json: Option<String>,
 }
 
 #[derive(Debug, Deserialize, Serialize, specta::Type)]
@@ -3010,6 +3022,17 @@ pub async fn kanban_save_git_bindings(
             return Err("The Kanban repository bindings contain duplicates.".to_string());
         }
     }
+    if let Some(configuration) = request.repository_configuration.as_ref() {
+        validate_repository_scope(&configuration.repository_scope)?;
+        validate_repositories(&configuration.repository_scope, &configuration.repositories)?;
+        if let Some(settings) = configuration.execution_settings_json.as_deref() {
+            let value: serde_json::Value = serde_json::from_str(settings)
+                .map_err(|_| "The card execution settings are not valid JSON.".to_string())?;
+            if !value.is_object() {
+                return Err("The card execution settings must be a JSON object.".to_string());
+            }
+        }
+    }
     let request_fingerprint = operation_fingerprint(&request)?;
 
     let mut connection = open_database(&app).await?;
@@ -3040,6 +3063,27 @@ pub async fn kanban_save_git_bindings(
     {
         transaction.rollback().await.ok();
         return Err("The card changed before its Git state could be saved.".to_string());
+    }
+    if let Some(configuration) = request.repository_configuration.as_ref() {
+        sqlx::query(
+            "UPDATE kanban_cards
+             SET repository_scope = ?1, execution_settings_json = ?2
+             WHERE id = ?3 AND deleted_at IS NULL",
+        )
+        .bind(&configuration.repository_scope)
+        .bind(configuration.execution_settings_json.as_deref())
+        .bind(&request.card_id)
+        .execute(&mut *transaction)
+        .await
+        .map_err(|error| {
+            format!("The Kanban repository configuration could not be saved: {error}")
+        })?;
+        replace_repositories(
+            &mut transaction,
+            &request.card_id,
+            &configuration.repositories,
+        )
+        .await?;
     }
     sqlx::query("DELETE FROM kanban_repository_bindings WHERE card_id = ?1")
         .bind(&request.card_id)

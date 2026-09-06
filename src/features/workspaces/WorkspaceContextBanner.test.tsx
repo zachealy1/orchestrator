@@ -2,7 +2,7 @@ import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 import { WorkspaceContextBanner } from "./WorkspaceContextBanner";
-import type { Workspace } from "./types";
+import type { Workspace, WorkspaceGitRepositoryStatus } from "./types";
 
 const workspace: Workspace = {
   id: 7,
@@ -18,6 +18,8 @@ function renderBanner(
   surfaceMode: "chat" | "kanban",
   kanbanToolbarHostRef?: (element: HTMLDivElement | null) => void,
   selectedWorkspace: Workspace | null = workspace,
+  repositories: WorkspaceGitRepositoryStatus[] = [],
+  branchManagementAvailable = repositories.length <= 1,
 ) {
   const onSurfaceModeChange = vi.fn();
   render(
@@ -26,7 +28,7 @@ function renderBanner(
       surfaceMode={surfaceMode}
       onSurfaceModeChange={onSurfaceModeChange}
       kanbanToolbarHostRef={kanbanToolbarHostRef}
-      repositories={[]}
+      branchManagementAvailable={branchManagementAvailable}
       repositoryPath={null}
       branch={null}
       branches={[]}
@@ -55,7 +57,6 @@ function renderBanner(
       contextUsage={null}
       contextWindow={258_400}
       onGitAction={vi.fn()}
-      onRepositoryChange={vi.fn()}
       onBranchChange={vi.fn()}
       branchCreationBusy={false}
       onCreateBranch={vi.fn()}
@@ -104,7 +105,7 @@ describe("WorkspaceContextBanner surface switch", () => {
         surfaceMode="kanban"
         onSurfaceModeChange={vi.fn()}
         kanbanToolbarHostRef={hostRef}
-        repositories={[]}
+        branchManagementAvailable={false}
         repositoryPath={null}
         branch={null}
         branches={[]}
@@ -133,7 +134,6 @@ describe("WorkspaceContextBanner surface switch", () => {
         contextUsage={null}
         contextWindow={258_400}
         onGitAction={vi.fn()}
-        onRepositoryChange={vi.fn()}
         onBranchChange={vi.fn()}
         branchCreationBusy={false}
         onCreateBranch={vi.fn()}
@@ -181,6 +181,45 @@ describe("WorkspaceContextBanner surface switch", () => {
     expect(
       screen.queryByText("Card agents run in isolated worktrees"),
     ).not.toBeInTheDocument();
+  });
+
+  it("removes branch management but keeps Git actions for multiple repositories", () => {
+    const repositories = ["app", "docs"].map((label) => ({
+      workspacePath: workspace.path,
+      gitRoot: `${workspace.path}/${label}`,
+      currentBranch: "main",
+      files: [],
+      repository: {
+        rootPath: `${workspace.path}/${label}`,
+        relativePath: label,
+        label,
+      },
+    }));
+    renderBanner("chat", undefined, workspace, repositories);
+
+    expect(screen.queryByLabelText("Branch")).not.toBeInTheDocument();
+    expect(screen.queryByText("Create branch...")).not.toBeInTheDocument();
+    expect(screen.getByLabelText("Git unavailable")).toBeInTheDocument();
+    expect(screen.getByLabelText("New chat")).toBeInTheDocument();
+  });
+
+  it("uses source topology when an older card has only one worktree binding", () => {
+    const repositories = [
+      {
+        workspacePath: workspace.path,
+        gitRoot: `${workspace.path}/app`,
+        currentBranch: "codex/card",
+        files: [],
+        repository: {
+          rootPath: `${workspace.path}/app`,
+          relativePath: "app",
+          label: "app",
+        },
+      },
+    ];
+    renderBanner("chat", undefined, workspace, repositories, false);
+
+    expect(screen.queryByLabelText("Branch")).not.toBeInTheDocument();
   });
 
   it("supports the app's roving keyboard pattern", async () => {

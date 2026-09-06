@@ -114,6 +114,20 @@ describe("KanbanBoard", () => {
     ).not.toBeInTheDocument();
   });
 
+  it("hides repository pills for multi-repository workspace boards", () => {
+    render(
+      <KanbanBoard
+        columns={columns()}
+        showRepositoryMetadata={false}
+        onMoveCard={vi.fn()}
+      />,
+    );
+
+    const firstCard = screen.getByRole("article", { name: /First card/ });
+    expect(within(firstCard).queryByText("orchestrator")).not.toBeInTheDocument();
+    expect(within(firstCard).getByText("Default account")).toBeInTheDocument();
+  });
+
   it("opens only cards whose first Codex turn was accepted", async () => {
     const user = userEvent.setup();
     const onOpenConversation = vi.fn();

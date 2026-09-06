@@ -128,6 +128,7 @@ import {
   commitKanbanGit,
   cleanupKanbanGit,
   createKanbanCard,
+  expandKanbanGit,
   getKanbanCardForChat,
   loadKanbanBoard,
   loadKanbanGitBindings,
@@ -288,6 +289,7 @@ import {
   prepareHistoricalTranscript,
 } from "../lib/historicalTranscriptPreparation";
 import { useConversationLayoutController } from "../features/conversations/useConversationLayoutController";
+import { reconcileChatRepositoriesForWorkspace } from "../features/conversations/chatRepositoryExecution";
 import {
   HistoryChatLoading,
   WorkspaceHistoryDrawer,
@@ -446,6 +448,12 @@ import {
   workspaceCacheKey,
   type HeaderGitAction,
 } from "../features/workspaces/gitModel";
+import {
+  formatRepositoryPathContext,
+  formatWorkspaceRepositoryContext,
+  workspaceRepositoryTopology,
+  workspaceRunRepositoryContext,
+} from "../features/workspaces/repositoryTopology";
 import { WorkspaceContextBanner } from "../features/workspaces/WorkspaceContextBanner";
 import { useWorkspaceController } from "../features/workspaces/useWorkspaceController";
 import { useWorkspacePreviewController } from "../features/workspaces/useWorkspacePreviewController";
@@ -2250,6 +2258,18 @@ function App() {
   const selectedGitRepository = preferredWorkspaceGitRepository(
     selectedGitOverview,
     selectedWorkspace?.selected_git_repository_path,
+  );
+  const selectedRepositoryTopology = useMemo(
+    () => workspaceRepositoryTopology(selectedGitOverview),
+    [selectedGitOverview],
+  );
+  const selectedRunRepositoryContext = useMemo(
+    () =>
+      workspaceRunRepositoryContext({
+        overview: selectedGitOverview,
+        selectedBranch,
+      }),
+    [selectedBranch, selectedGitOverview],
   );
   const selectedChatId = selectedWorkspaceChatSession?.chatId ?? null;
   useEffect(() => {
@@ -4693,14 +4713,19 @@ function App() {
           selectedWorkspaceRef.current?.id === workspace.id &&
           preferredRepository
         ) {
-          void refreshBranches(
-            {
-              ...currentWorkspace,
-              selected_git_repository_path:
-                preferredRepository.repository.rootPath,
-            },
-            preferredRepository.repository.rootPath,
-          );
+          if (snapshot.repositories.length === 1) {
+            void refreshBranches(
+              {
+                ...currentWorkspace,
+                selected_git_repository_path:
+                  preferredRepository.repository.rootPath,
+              },
+              preferredRepository.repository.rootPath,
+            );
+          } else {
+            setBranches([]);
+            setSelectedBranch(null);
+          }
         }
       })
       .catch((error) => {
@@ -7886,11 +7911,14 @@ function App() {
           associatedPaths.add(resolved.settings.selectedRepositoryPath);
         }
       });
-      const selected = overview.repositories.filter(
-        (repository) =>
-          associatedPaths.size === 0 ||
-          associatedPaths.has(repository.repository.rootPath),
-      );
+      const selected =
+        overview.repositories.length > 1
+          ? overview.repositories
+          : overview.repositories.filter(
+              (repository) =>
+                associatedPaths.size === 0 ||
+                associatedPaths.has(repository.repository.rootPath),
+            );
       repositories = selected.map((repository) => ({
         path: repository.repository.rootPath,
         relativePath: repository.repository.relativePath || repository.repository.label,
@@ -9505,6 +9533,7 @@ function App() {
     if (
       !workspace ||
       !repository ||
+      overview?.repositories.length !== 1 ||
       branchCreationInFlightRef.current ||
       branchCreationPendingWorkspaceId !== null ||
       selectedGitActionStatus !== "idle" ||
@@ -9527,6 +9556,19 @@ function App() {
   async function confirmBranchCreation() {
     const dialog = branchCreationDialog;
     if (!dialog || dialog.status !== "idle" || branchCreationInFlightRef.current) {
+      return;
+    }
+    const currentOverview =
+      gitStatusStates[dialog.workspace.id]?.snapshot ?? null;
+    if (
+      currentOverview?.repositories.length !== 1 ||
+      currentOverview.repositories[0]?.repository.rootPath !==
+        dialog.repositoryPath
+    ) {
+      setBranchCreationDialog(null);
+      setStatusMessage(
+        "Branch management is available in the terminal for multi-repository workspaces.",
+      );
       return;
     }
 
@@ -9597,7 +9639,12 @@ function App() {
 
   async function selectBranch(branch: string) {
     const repositoryPath = selectedGitRepository?.repository.rootPath ?? null;
-    if (!selectedWorkspace || !repositoryPath || !branch) {
+    if (
+      !selectedWorkspace ||
+      !repositoryPath ||
+      !branch ||
+      selectedGitOverview?.repositories.length !== 1
+    ) {
       return;
     }
 
@@ -9649,7 +9696,10 @@ function App() {
       (candidate) =>
         candidate.binding.sourceRepositoryPath === repositoryPath,
     );
-    if (cardRepository) {
+    if (overview && overview.repositories.length > 1) {
+      setSelectedBranch(null);
+      setBranches([]);
+    } else if (cardRepository) {
       setBranches([cardRepository.binding.cardBranch]);
     } else {
       setSelectedBranch(repository.currentBranch ?? null);
@@ -9661,7 +9711,7 @@ function App() {
     preflightRef.current = null;
     try {
       await updateWorkspaceSelectedGitRepository(workspace.id, repositoryPath);
-      if (!cardRepository) {
+      if (!cardRepository && overview?.repositories.length === 1) {
         await refreshBranches(
           { ...workspace, selected_git_repository_path: repositoryPath },
           repositoryPath,
@@ -12415,6 +12465,15 @@ function App() {
       snapshot.contextFiles,
       snapshot.workspace.id,
     );
+    if (snapshot.workspaceRepositoryContext) {
+      additionalContext = {
+        ...(additionalContext ?? {}),
+        "workspace:repositories": {
+          kind: "application",
+          value: snapshot.workspaceRepositoryContext,
+        },
+      };
+    }
     if (snapshot.previousChatContext) {
       additionalContext = {
         ...(additionalContext ?? {}),
@@ -12752,6 +12811,7 @@ function App() {
           chatId,
           sourceWorkspacePath:
             snapshot.sourceWorkspacePath ?? snapshot.workspace.path,
+          runtimeWorkspaceRoots: snapshot.workspaceRepositoryRoots,
         });
     }
     if (nativeTaskBinding) {
@@ -12772,6 +12832,12 @@ function App() {
     const startFreshThread = async (): Promise<StartedRunThread> => {
       const threadCwd =
         nativeTaskBinding?.sourceWorkspacePath ?? snapshot.workspace.path;
+      const directRuntimeWorkspaceRoots = [
+        ...new Set([
+          threadCwd,
+          ...(snapshot.workspaceRepositoryRoots ?? []),
+        ]),
+      ];
       const thread = await codexRpcForProfile<{
         thread: { id: string; cwd?: string };
         cwd?: string;
@@ -12784,7 +12850,12 @@ function App() {
       }>(snapshot.profileKey, snapshot.accountId, "thread/start", {
         ...(nativeTaskBinding
           ? nativeTaskThreadStartOverrides(nativeTaskBinding)
-          : { cwd: threadCwd }),
+          : {
+              cwd: threadCwd,
+              ...(directRuntimeWorkspaceRoots.length > 1
+                ? { runtimeWorkspaceRoots: directRuntimeWorkspaceRoots }
+                : {}),
+            }),
         model: snapshot.model,
         approvalPolicy: snapshot.access.approvalPolicy,
         permissions: snapshot.access.permissionProfile,
@@ -13714,13 +13785,19 @@ function App() {
       conversationRevision: Number(chat.conversation_revision ?? 0),
     });
     const originalSettings = item.snapshot.executionSettings;
+    const onlyRepository =
+      inspection.repositories.length === 1 ? inspection.repositories[0] : null;
+    const multiRepository = inspection.repositories.length > 1;
     const executionSettings = createRunExecutionSettings({
       ...originalSettings,
-      selectedRepositoryPath:
-        originalSettings.selectedRepositoryPath ??
-        (inspection.repositories.length === 1
-          ? inspection.repositories[0].repositoryPath
-          : null),
+      selectedRepositoryPath: multiRepository
+        ? null
+        : onlyRepository?.repositoryPath ?? originalSettings.selectedRepositoryPath,
+      selectedBranch: multiRepository
+        ? null
+        : onlyRepository?.repositoryPath === originalSettings.selectedRepositoryPath
+          ? originalSettings.selectedBranch ?? onlyRepository.branch
+          : onlyRepository?.branch ?? originalSettings.selectedBranch,
     });
     const updated = await updatePromptQueueItemContextFingerprint(
       item.id,
@@ -13795,11 +13872,30 @@ function App() {
             currentThreadId: threadId,
             conversationRevision,
           });
+        const originalSettings = item.snapshot.executionSettings;
+        const onlyRepository =
+          inspection.repositories.length === 1
+            ? inspection.repositories[0]
+            : null;
+        const multiRepository = inspection.repositories.length > 1;
+        const executionSettings = createRunExecutionSettings({
+          ...originalSettings,
+          selectedRepositoryPath: multiRepository
+            ? null
+            : onlyRepository?.repositoryPath ??
+              originalSettings.selectedRepositoryPath,
+          selectedBranch: multiRepository
+            ? null
+            : onlyRepository?.repositoryPath ===
+                originalSettings.selectedRepositoryPath
+              ? originalSettings.selectedBranch ?? onlyRepository.branch
+              : onlyRepository?.branch ?? originalSettings.selectedBranch,
+        });
         return updatePromptQueueItemContextFingerprint(
           item.id,
           createQueuedPromptSnapshot({
             prompt: item.prompt,
-            executionSettings: item.snapshot.executionSettings,
+            executionSettings,
             contextFingerprint,
           }),
         );
@@ -13908,7 +14004,11 @@ function App() {
         item.snapshot.executionSettings.contextFiles.map((file) => file.path),
       );
       const staleReasons = queueContextStaleReasons(item, chat, inspection);
-      if (staleReasons.length > 0) {
+      const repositoryTargetNeedsNormalization =
+        inspection.repositories.length > 1 &&
+        (item.snapshot.executionSettings.selectedRepositoryPath !== null ||
+          item.snapshot.executionSettings.selectedBranch !== null);
+      if (staleReasons.length > 0 || repositoryTargetNeedsNormalization) {
         const refreshedItem = await refreshQueuedPromptCurrentContext(
           item,
           chat,
@@ -14045,23 +14145,54 @@ function App() {
                 currentProfileKey === DEFAULT_CODEX_PROFILE_KEY,
             }
         : null;
-    const continuationBindings = await listChatWorktreeBindings(chat.id);
+    let continuationBindings = await listChatWorktreeBindings(chat.id);
+    if (continuationBindings.length > 0) {
+      const currentOverview = normalizeWorkspaceGitOverview(
+        workspace.path,
+        await listWorkspaceGitStatus(workspace.path, true),
+      );
+      continuationBindings = await reconcileChatRepositoriesForWorkspace({
+        chatId: chat.id,
+        chatTitle: chat.title,
+        repositories: currentOverview.repositories,
+        bindings: continuationBindings,
+        dependencies: {
+          expand: expandKanbanGit,
+          save: saveChatWorktreeBindings,
+          cleanup: cleanupKanbanGit,
+        },
+      });
+    }
     const executionWorkspace =
       continuationBindings[0]?.executionRoot
         ? { ...workspace, path: continuationBindings[0].executionRoot }
         : workspace;
     if (continuationBindings.length > 0) {
-      const selectedBinding =
-        continuationBindings.find(
-          (binding) =>
-            binding.sourceRepositoryPath === settings.selectedRepositoryPath,
-        ) ?? continuationBindings[0];
-      settings = createRunExecutionSettings({
-        ...settings,
-        selectedRepositoryPath: selectedBinding.worktreePath,
-        selectedBranch: selectedBinding.cardBranch,
-      });
+      if (continuationBindings.length === 1) {
+        const selectedBinding = continuationBindings[0]!;
+        settings = createRunExecutionSettings({
+          ...settings,
+          selectedRepositoryPath: selectedBinding.worktreePath,
+          selectedBranch: selectedBinding.cardBranch,
+        });
+      } else {
+        settings = createRunExecutionSettings({
+          ...settings,
+          selectedRepositoryPath: null,
+          selectedBranch: null,
+        });
+      }
     }
+    const workspaceRepositoryRoots =
+      continuationBindings.length > 0
+        ? continuationBindings.map((binding) => binding.worktreePath)
+        : item.snapshot.contextFingerprint.repositories.flatMap((repository) =>
+            repository.repositoryPath ? [repository.repositoryPath] : [],
+          );
+    const workspaceRepositoryContext = formatRepositoryPathContext({
+      workspacePath: executionWorkspace.path,
+      repositoryPaths: workspaceRepositoryRoots,
+    });
     const continuationSnapshot = parseChatContinuationSnapshot(
       chat.continuation_snapshot_json,
     );
@@ -14073,6 +14204,8 @@ function App() {
       promptFallback: item.prompt,
       workspace: { ...executionWorkspace },
       sourceWorkspacePath: workspace.path,
+      workspaceRepositoryRoots,
+      workspaceRepositoryContext,
       accountId,
       account: account ? { ...account } : null,
       profileKey,
@@ -14129,6 +14262,11 @@ function App() {
       computerUseEnabled,
     }),
     listModels: listCodexModelsForProfile,
+    listWorkspaceRepositories: async (workspace) =>
+      normalizeWorkspaceGitOverview(
+        workspace.path,
+        await listWorkspaceGitStatus(workspace.path, true),
+      ).repositories,
     loadChat: getChatRecord,
     updateChat,
     getNextTurnIndex: getNextChatTurnIndex,
@@ -14372,8 +14510,8 @@ function App() {
       accountId: accountId ?? 0,
       profileKey,
       selectedRepositoryPath:
-        selectedGitRepository?.repository.rootPath ?? null,
-      selectedBranch,
+        selectedRunRepositoryContext.selectedRepositoryPath,
+      selectedBranch: selectedRunRepositoryContext.selectedBranch,
       mode,
       intent,
       accessMode,
@@ -14620,15 +14758,17 @@ function App() {
   ) {
     if (kanbanCardCreatePendingRef.current) return;
     const workspace = selectedWorkspaceRef.current;
-    const repository = selectedGitRepository;
+    const repositories = selectedGitOverview?.repositories ?? [];
+    const multiRepository = repositories.length > 1;
+    const repository = repositories.length === 1 ? repositories[0]! : null;
     const promptText = serializePromptInlineFileReferences(
       composerPrompt.trim(),
       contextFilesRef.current.filter((file) => file.source === "search"),
     );
     if (!workspace || !promptText) return;
-    if (!repository) {
+    if (repositories.length === 0) {
       setStatusMessage(
-        "Select a Git repository before creating a Kanban card.",
+        "Wait for Git repository discovery before creating a Kanban card.",
       );
       return;
     }
@@ -14644,8 +14784,8 @@ function App() {
     const executionSettings = createRunExecutionSettings({
       accountId,
       profileKey,
-      selectedRepositoryPath: repository.repository.rootPath,
-      selectedBranch,
+      selectedRepositoryPath: repository?.repository.rootPath ?? null,
+      selectedBranch: multiRepository ? null : selectedBranch,
       mode,
       intent: planMode ? "plan" : "normal",
       accessMode,
@@ -14676,15 +14816,13 @@ function App() {
         accessMode,
         model: executionSettings.model,
         reasoningLevel: executionSettings.reasoningEffort,
-        repositoryScope: "selected",
-        repositories: [
-          {
-            repositoryPath: repository.repository.rootPath,
-            relativePath: repository.repository.relativePath,
-            label: repository.repository.label,
-            includeDirtyChanges: false,
-          },
-        ],
+        repositoryScope: multiRepository ? "all" : "selected",
+        repositories: repositories.map((candidate) => ({
+          repositoryPath: candidate.repository.rootPath,
+          relativePath: candidate.repository.relativePath,
+          label: candidate.repository.label,
+          includeDirtyChanges: false,
+        })),
         executionSettingsJson: serializeRunExecutionSettings(executionSettings),
         generateTitle: true,
         titleFallback: fallbackTitle,
@@ -14932,11 +15070,20 @@ function App() {
       }
       const editedPlanMode = planMode;
       const editedGoalMode = !editedPlanMode && goalMode;
+      const editedRepositoryTopology = workspaceRepositoryTopology(
+        gitStatusStates[workspace.id]?.snapshot,
+      );
       const executionSettings = createRunExecutionSettings({
         accountId: originalSettings.accountId,
         profileKey: originalSettings.profileKey,
-        selectedRepositoryPath: originalSettings.selectedRepositoryPath,
-        selectedBranch: originalSettings.selectedBranch,
+        selectedRepositoryPath:
+          editedRepositoryTopology.kind === "multi"
+            ? null
+            : originalSettings.selectedRepositoryPath,
+        selectedBranch:
+          editedRepositoryTopology.kind === "multi"
+            ? null
+            : originalSettings.selectedBranch,
         mode: editedPlanMode ? "plan" : "run",
         intent: editedPlanMode ? "plan" : "normal",
         accessMode: originalSettings.accessMode,
@@ -15231,6 +15378,9 @@ function App() {
 
     const chatId = entry.chatId ?? selectedWorkspaceChatSession?.chatId ?? null;
     let originalRepositoryPath = originalSettings.selectedRepositoryPath;
+    let originalBranch = originalSettings.selectedBranch;
+    let rerunRepositoryRoots: string[] = [];
+    let rerunRepositoryContext: string | null = null;
     let executionWorkspace = workspace;
     let nativeTaskWorkspaceBinding: NativeTaskWorkspaceBinding | null = null;
     let kanbanCard: KanbanCardRecord | null = null;
@@ -15260,31 +15410,43 @@ function App() {
           };
         }
       }
-      if (!originalRepositoryPath) {
+      const sourceOverview = normalizeWorkspaceGitOverview(
+        workspace.path,
+        await listWorkspaceGitStatus(workspace.path, true),
+      );
+      rerunRepositoryRoots = sourceOverview.repositories.map(
+        (repository) => repository.repository.rootPath,
+      );
+      rerunRepositoryContext = formatWorkspaceRepositoryContext(
+        sourceOverview.repositories,
+      );
+      if (sourceOverview.repositories.length > 1) {
+        originalRepositoryPath = null;
+        originalBranch = null;
+      } else if (!originalRepositoryPath) {
         const overview = normalizeWorkspaceGitOverview(
           executionWorkspace.path,
           await listWorkspaceGitStatus(executionWorkspace.path, true),
         );
         if (overview.repositories.length !== 1) {
           showRerunIssue(
-            "Choose a repository before rerunning this older prompt in a multi-repository workspace.",
+            "The original Git repository is unavailable, so this prompt cannot be rerun safely.",
           );
           return;
         }
         originalRepositoryPath = overview.repositories[0].repository.rootPath;
       }
-      const branchList = await listGitBranches(
-        executionWorkspace.path,
-        originalRepositoryPath,
-      );
-      if (
-        originalSettings.selectedBranch &&
-        !branchList.branches.includes(originalSettings.selectedBranch)
-      ) {
-        showRerunIssue(
-          `The original branch ${originalSettings.selectedBranch} is no longer available.`,
+      if (originalRepositoryPath) {
+        const branchList = await listGitBranches(
+          executionWorkspace.path,
+          originalRepositoryPath,
         );
-        return;
+        if (originalBranch && !branchList.branches.includes(originalBranch)) {
+          showRerunIssue(
+            `The original branch ${originalBranch} is no longer available.`,
+          );
+          return;
+        }
       }
 
       if (originalSettings.model) {
@@ -15349,6 +15511,7 @@ function App() {
     const rerunExecutionSettings = createRunExecutionSettings({
       ...originalSettings,
       selectedRepositoryPath: originalRepositoryPath,
+      selectedBranch: originalBranch,
       contextFiles: originalContextFiles,
     });
     const previousChatContext = buildPreviousChatContext(previousEntries);
@@ -15396,6 +15559,8 @@ function App() {
       promptFallback: nextPrompt,
       workspace: { ...executionWorkspace },
       sourceWorkspacePath: workspace.path,
+      workspaceRepositoryRoots: rerunRepositoryRoots,
+      workspaceRepositoryContext: rerunRepositoryContext,
       accountId: originalSettings.accountId,
       account: account ? { ...account } : null,
       profileKey: originalSettings.profileKey,
@@ -15403,7 +15568,7 @@ function App() {
       chatOrigin: "orchestrator",
       externalThreadId: null,
       selectedRepositoryPath: originalRepositoryPath,
-      selectedBranch: originalSettings.selectedBranch,
+      selectedBranch: originalBranch,
       cachedPreflight: null,
       mode: originalSettings.mode,
       intent: originalSettings.intent,
@@ -18487,8 +18652,8 @@ function App() {
       accountId: accountId ?? 0,
       profileKey,
       selectedRepositoryPath:
-        selectedGitRepository?.repository.rootPath ?? null,
-      selectedBranch,
+        selectedRunRepositoryContext.selectedRepositoryPath,
+      selectedBranch: selectedRunRepositoryContext.selectedBranch,
       mode,
       intent,
       accessMode,
@@ -18504,14 +18669,20 @@ function App() {
       promptFallback: promptText,
       workspace: { ...workspace },
       sourceWorkspacePath: workspace.path,
+      workspaceRepositoryRoots: selectedRunRepositoryContext.repositories.map(
+        (repository) => repository.repository.rootPath,
+      ),
+      workspaceRepositoryContext: formatWorkspaceRepositoryContext(
+        selectedRunRepositoryContext.repositories,
+      ),
       accountId: accountId ?? 0,
       account: account ? { ...account } : null,
       profileKey,
       chatOrigin: chatSession.origin,
       externalThreadId: chatSession.externalThreadId,
       selectedRepositoryPath:
-        selectedGitRepository?.repository.rootPath ?? null,
-      selectedBranch,
+        selectedRunRepositoryContext.selectedRepositoryPath,
+      selectedBranch: selectedRunRepositoryContext.selectedBranch,
       cachedPreflight: null,
       mode,
       intent,
@@ -20759,7 +20930,9 @@ function App() {
               surfaceMode={workspaceSurfaceMode}
               onSurfaceModeChange={changeWorkspaceSurfaceMode}
               kanbanToolbarHostRef={setKanbanToolbarHost}
-              repositories={visibleGitOverview?.repositories ?? []}
+              branchManagementAvailable={
+                selectedRepositoryTopology.kind === "single"
+              }
               repositoryPath={
                 visibleGitRepository?.repository.rootPath ?? null
               }
@@ -20779,12 +20952,10 @@ function App() {
               contextUsage={selectedWorkspaceContextUsage}
               contextWindow={selectedModelContextWindow}
               onGitAction={() => void handleHeaderGitAction()}
-              onRepositoryChange={(repositoryPath) =>
-                void selectGitRepository(repositoryPath)
-              }
               onBranchChange={(branch) => void selectVisibleBranch(branch)}
               branchCreationBusy={branchCreationPendingWorkspaceId !== null}
               onCreateBranch={
+                selectedRepositoryTopology.kind === "multi" ||
                 selectedChatGitResolutionPending || selectedKanbanGitBinding
                   ? undefined
                   : openBranchCreationDialog

@@ -127,6 +127,7 @@ export const commands = {
 	githubSyncKanbanPullRequests: (workspaceId: number | null, knownBoardRevision: number | null) => __TAURI_INVOKE<number>("github_sync_kanban_pull_requests", { workspaceId, knownBoardRevision }),
 	githubCompleteKanbanWithoutPullRequest: (cardId: string) => __TAURI_INVOKE<null>("github_complete_kanban_without_pull_request", { cardId }),
 	kanbanGitProvision: (request: KanbanGitProvisionRequest) => __TAURI_INVOKE<KanbanGitProvisionResult>("kanban_git_provision", { request }),
+	kanbanGitExpand: (request: KanbanGitExpandRequest) => __TAURI_INVOKE<KanbanGitProvisionResult>("kanban_git_expand", { request }),
 	kanbanGitReconcile: (request: KanbanGitBindingRequest) => __TAURI_INVOKE<KanbanGitReconcileResult>("kanban_git_reconcile", { request }),
 	kanbanGitStatus: (request: KanbanGitBindingRequest) => __TAURI_INVOKE<KanbanGitStatusResult>("kanban_git_status", { request }),
 	kanbanGitDiff: (request: KanbanGitDiffRequest) => __TAURI_INVOKE<KanbanGitDiffResult>("kanban_git_diff", { request }),
@@ -531,6 +532,13 @@ export type KanbanGitDiffResult = {
 	isEmpty: boolean,
 };
 
+export type KanbanGitExpandRequest = {
+	cardId: string,
+	cardSlug: string | null,
+	existingBindings: KanbanGitRepositoryBinding[],
+	repositories: KanbanGitRepositorySelection[],
+};
+
 export type KanbanGitFileDiffRequest = {
 	binding: KanbanGitRepositoryBinding,
 	filePath: string,
@@ -669,6 +677,12 @@ export type KanbanPullRequestDto = {
 	publicationStatus: string,
 	error: string | null,
 	updatedAt: string,
+};
+
+export type KanbanRepositoryConfigurationInput = {
+	repositoryScope: string,
+	repositories?: KanbanRepositorySelectionInput[],
+	executionSettingsJson?: string | null,
 };
 
 export type KanbanRepositorySelectionDto = {
@@ -810,6 +824,7 @@ export type SaveKanbanGitBindingsRequest = {
 	expectedVersion: number,
 	operationId: string,
 	bindings: PersistedKanbanGitBinding[],
+	repositoryConfiguration?: KanbanRepositoryConfigurationInput | null,
 };
 
 export type SetKanbanInheritedContextRequest = {

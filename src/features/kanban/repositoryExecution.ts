@@ -1,5 +1,6 @@
 import {
   cleanupKanbanGit,
+  expandKanbanGit,
   loadKanbanBoard,
   loadKanbanGitBindings,
   provisionKanbanGit,
@@ -7,6 +8,8 @@ import {
   saveKanbanGitBindings,
   type KanbanCardRecord,
   type KanbanGitBinding,
+  type KanbanRepositoryConfiguration,
+  type KanbanRepositorySelectionRecord,
 } from "./api";
 
 const SAFE_RECONCILED_BINDING_STATUSES = new Set([
@@ -25,6 +28,7 @@ export type KanbanRepositoryExecutionDependencies = {
   reconcileBinding: typeof reconcileKanbanGit;
   saveBindings: typeof saveKanbanGitBindings;
   provision: typeof provisionKanbanGit;
+  expand: typeof expandKanbanGit;
   loadBoard: typeof loadKanbanBoard;
   cleanupBinding: typeof cleanupKanbanGit;
 };
@@ -34,6 +38,7 @@ const nativeDependencies: KanbanRepositoryExecutionDependencies = {
   reconcileBinding: reconcileKanbanGit,
   saveBindings: saveKanbanGitBindings,
   provision: provisionKanbanGit,
+  expand: expandKanbanGit,
   loadBoard: loadKanbanBoard,
   cleanupBinding: cleanupKanbanGit,
 };
@@ -53,10 +58,23 @@ async function persistNewBindings(
   card: KanbanCardRecord,
   claimedCard: KanbanCardRecord,
   bindings: KanbanGitBinding[],
+  newlyCreatedBindings: KanbanGitBinding[],
+  repositoryConfiguration: KanbanRepositoryConfiguration | null,
   dependencies: KanbanRepositoryExecutionDependencies,
 ) {
+  const save = (
+    targetCard: Pick<KanbanCardRecord, "id" | "stateVersion">,
+  ) =>
+    repositoryConfiguration
+      ? dependencies.saveBindings(
+          targetCard,
+          bindings,
+          undefined,
+          repositoryConfiguration,
+        )
+      : dependencies.saveBindings(targetCard, bindings);
   try {
-    await dependencies.saveBindings(claimedCard, bindings);
+    await save(claimedCard);
     return;
   } catch (initialSaveError) {
     let retryError: unknown = initialSaveError;
@@ -72,7 +90,7 @@ async function persistNewBindings(
           "The card disappeared while its worktrees were being saved.",
         );
       }
-      await dependencies.saveBindings(latestCard, bindings);
+      await save(latestCard);
       retryError = null;
     } catch (error) {
       retryError = error;
@@ -81,7 +99,7 @@ async function persistNewBindings(
     if (!retryError) return;
 
     const cleanup = await Promise.allSettled(
-      bindings.map((binding) =>
+      newlyCreatedBindings.map((binding) =>
         dependencies.cleanupBinding({
           binding,
           deleteBranch: true,
@@ -110,10 +128,19 @@ export function createKanbanRepositoryExecutionPreparer(
   return async function prepareKanbanRepositoryExecution(input: {
     card: KanbanCardRecord;
     claimedCard: KanbanCardRecord;
+    repositories?: KanbanRepositorySelectionRecord[];
+    repositoryConfiguration?: KanbanRepositoryConfiguration | null;
     onExecutionRoot?: (executionRoot: string | null) => void;
   }): Promise<KanbanRepositoryExecutionResult> {
-    const { card, claimedCard, onExecutionRoot } = input;
+    const {
+      card,
+      claimedCard,
+      onExecutionRoot,
+      repositories = card.repositories,
+      repositoryConfiguration = null,
+    } = input;
     let bindings = await dependencies.loadBindings(card.id);
+    let bindingsChanged = false;
 
     if (bindings.length > 0) {
       const reconciled = await Promise.all(
@@ -125,7 +152,7 @@ export function createKanbanRepositoryExecutionPreparer(
           bindingChanged(bindings[index], binding),
         )
       ) {
-        await dependencies.saveBindings(claimedCard, reconciledBindings);
+        bindingsChanged = true;
       }
       bindings = reconciledBindings;
     }
@@ -146,23 +173,22 @@ export function createKanbanRepositoryExecutionPreparer(
 
     let executionRoot = bindings[0]?.executionRoot ?? null;
     onExecutionRoot?.(executionRoot);
+    let newlyCreatedBindings: KanbanGitBinding[] = [];
     if (bindings.length === 0) {
       const provisioned = await dependencies.provision({
         cardId: card.id,
         cardSlug: card.title,
-        repositories: card.repositories.map((repository) => ({
+        repositories: repositories.map((repository) => ({
           repositoryPath: repository.repositoryPath,
           relativePath: repository.relativePath,
           includeDirtyChanges: repository.includeDirtyChanges,
         })),
       });
       bindings = provisioned.repositories;
+      newlyCreatedBindings = provisioned.repositories;
       executionRoot = provisioned.executionRoot;
       onExecutionRoot?.(executionRoot);
 
-      if (bindings.length > 0) {
-        await persistNewBindings(card, claimedCard, bindings, dependencies);
-      }
       if (!provisioned.complete) {
         const details = provisioned.errors
           .map((error) => error.message)
@@ -172,6 +198,49 @@ export function createKanbanRepositoryExecutionPreparer(
           details || "The card worktrees could not be provisioned safely.",
         );
       }
+      bindingsChanged = bindings.length > 0;
+    } else {
+      const boundRepositoryPaths = new Set(
+        bindings.map((binding) => binding.sourceRepositoryPath),
+      );
+      const missingRepositories = repositories.filter(
+        (repository) => !boundRepositoryPaths.has(repository.repositoryPath),
+      );
+      if (missingRepositories.length > 0) {
+        const expanded = await dependencies.expand({
+          cardId: card.id,
+          cardSlug: card.title,
+          existingBindings: bindings,
+          repositories: missingRepositories.map((repository) => ({
+            repositoryPath: repository.repositoryPath,
+            relativePath: repository.relativePath,
+            includeDirtyChanges: repository.includeDirtyChanges,
+          })),
+        });
+        if (!expanded.complete) {
+          const details = expanded.errors
+            .map((error) => error.message)
+            .filter(Boolean)
+            .join(" ");
+          throw new Error(
+            details || "The card worktrees could not be expanded safely.",
+          );
+        }
+        newlyCreatedBindings = expanded.repositories;
+        bindings = [...bindings, ...expanded.repositories];
+        bindingsChanged = expanded.repositories.length > 0;
+      }
+    }
+
+    if (bindingsChanged || repositoryConfiguration) {
+      await persistNewBindings(
+        card,
+        claimedCard,
+        bindings,
+        newlyCreatedBindings,
+        repositoryConfiguration,
+        dependencies,
+      );
     }
 
     if (!executionRoot) {

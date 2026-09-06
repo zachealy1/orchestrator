@@ -65,7 +65,7 @@ async function selectComposerOption(
 }
 
 describe("KanbanCardDialog", () => {
-  it("validates required fields and selected repository scope before submitting", async () => {
+  it("validates required fields and submits every multi-workspace repository", async () => {
     const user = userEvent.setup();
     const onSubmit = vi.fn();
     render(<KanbanCardDialog {...dialogProps(onSubmit)} />);
@@ -96,24 +96,9 @@ describe("KanbanCardDialog", () => {
     expect(
       screen.getByRole("checkbox", { name: /Include current uncommitted changes/ }),
     ).not.toBeChecked();
-    await user.click(screen.getByRole("radio", { name: "Selected repositories" }));
-    await user.click(screen.getByRole("button", { name: "Create card" }));
-    const repositoryError = screen.getByRole("alert");
-    const repositoryGroup = screen.getByRole("group", {
-      name: "Repository scope",
-    });
-    const repositoryOption = screen.getByRole("checkbox", { name: /orchestrator/ });
-    expect(repositoryError).toHaveTextContent(
-      "Choose at least one repository",
-    );
-    expect(repositoryGroup).toHaveAttribute("aria-invalid", "true");
-    expect(repositoryGroup).toHaveAttribute(
-      "aria-describedby",
-      repositoryError.id,
-    );
-    expect(repositoryOption).toHaveFocus();
-
-    await user.click(repositoryOption);
+    expect(
+      screen.queryByRole("group", { name: "Repository scope" }),
+    ).not.toBeInTheDocument();
     await selectComposerOption(user, "Account", "Work");
     await selectComposerOption(user, "Access mode", "Full access");
     await selectComposerOption(user, "Model", "GPT-5");
@@ -123,8 +108,8 @@ describe("KanbanCardDialog", () => {
     expect(onSubmit).toHaveBeenCalledWith({
       title: "Build board",
       description: "Implement and verify it.",
-      repositoryScope: "selected",
-      repositoryIds: ["repo-1"],
+      repositoryScope: "all",
+      repositoryIds: ["repo-1", "repo-2"],
       accountId: "account-1",
       accessMode: "full-access",
       model: "gpt-5",
@@ -346,7 +331,7 @@ describe("KanbanCardDialog", () => {
         title: "Independent follow-up",
         includeDirtyChanges: false,
         includeConversationHistory: true,
-        repositoryIds: ["repo-1"],
+        repositoryIds: ["repo-1", "repo-2"],
       }),
     );
     const submitted = onSubmit.mock.calls[0]?.[0] as Record<string, unknown>;

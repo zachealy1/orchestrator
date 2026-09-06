@@ -185,6 +185,12 @@ export type KanbanGitProvisionResult = {
   rolledBack: boolean;
 };
 
+export type KanbanRepositoryConfiguration = {
+  repositoryScope: "all" | "selected";
+  repositories: KanbanRepositorySelectionRecord[];
+  executionSettingsJson: string | null;
+};
+
 export type KanbanGitReconcileResult = {
   binding: KanbanGitBinding;
   sourceAvailable: boolean;
@@ -497,6 +503,24 @@ export function provisionKanbanGit(input: {
   }) as Promise<KanbanGitProvisionResult>;
 }
 
+export function expandKanbanGit(input: {
+  cardId: string;
+  cardSlug?: string | null;
+  existingBindings: KanbanGitBinding[];
+  repositories: KanbanGitRepositoryRequest[];
+}) {
+  return commands.kanbanGitExpand({
+    cardId: input.cardId,
+    cardSlug: input.cardSlug ?? null,
+    existingBindings: input.existingBindings,
+    repositories: input.repositories.map((repository) => ({
+      repositoryPath: repository.repositoryPath,
+      relativePath: repository.relativePath ?? null,
+      includeDirtyChanges: repository.includeDirtyChanges ?? false,
+    })),
+  }) as Promise<KanbanGitProvisionResult>;
+}
+
 export function reconcileKanbanGit(binding: KanbanGitBinding) {
   return commands.kanbanGitReconcile({ binding }) as Promise<KanbanGitReconcileResult>;
 }
@@ -561,12 +585,14 @@ export function saveKanbanGitBindings(
   card: Pick<KanbanCardRecord, "id" | "stateVersion">,
   bindings: KanbanGitBinding[],
   operationId = createKanbanId("op"),
+  repositoryConfiguration: KanbanRepositoryConfiguration | null = null,
 ) {
   return commands.kanbanSaveGitBindings({
     cardId: card.id,
     expectedVersion: card.stateVersion,
     operationId,
     bindings,
+    repositoryConfiguration,
   }) as Promise<KanbanGitBinding[]>;
 }
 

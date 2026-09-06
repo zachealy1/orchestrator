@@ -26,6 +26,7 @@ export type KanbanToolbarProps = {
   archivedOpen?: boolean;
   refreshing?: boolean;
   disabled?: boolean;
+  allowRepositoryGrouping?: boolean;
   onSearchChange: (value: string) => void;
   onFiltersChange: (filters: KanbanFilterSelection) => void;
   onGroupByChange: (value: KanbanGroupBy) => void;
@@ -53,6 +54,7 @@ export function KanbanToolbar({
   archivedOpen = false,
   refreshing = false,
   disabled = false,
+  allowRepositoryGrouping = true,
   onSearchChange,
   onFiltersChange,
   onGroupByChange,
@@ -78,6 +80,9 @@ export function KanbanToolbar({
     0,
   );
   const constrained = Boolean(search.trim()) || activeFilterCount > 0;
+  const groupOptions = allowRepositoryGrouping
+    ? GROUP_OPTIONS
+    : GROUP_OPTIONS.filter((option) => option.value !== "repository");
 
   function handleFilterChange(
     groupId: string,
@@ -206,7 +211,7 @@ export function KanbanToolbar({
         <ComposerSelect
           ariaLabel="Group cards by"
           value={groupBy}
-          options={GROUP_OPTIONS}
+          options={groupOptions}
           placeholder="No grouping"
           icon={<Layers3 size={15} />}
           className="kanban-group-select"

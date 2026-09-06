@@ -1,7 +1,6 @@
 import {
   Columns3,
   Folder,
-  FolderOpen,
   GitBranch,
   GitBranchPlus,
   GitCommitHorizontal,
@@ -26,12 +25,11 @@ import {
 } from "../shortcuts/applicationShortcuts";
 import {
   formatGitSummaryForStatus,
-  workspaceGitRepositoryDisplayPath,
   type HeaderGitAction,
   type WorkspaceGitStatusState,
   type WorkspaceGitSummary,
 } from "./gitModel";
-import type { Workspace, WorkspaceGitRepositoryStatus } from "./types";
+import type { Workspace } from "./types";
 
 const DEFAULT_CONTEXT_WINDOW = 258_400;
 
@@ -40,7 +38,7 @@ export function WorkspaceContextBanner({
   surfaceMode,
   onSurfaceModeChange,
   kanbanToolbarHostRef,
-  repositories,
+  branchManagementAvailable,
   repositoryPath,
   branch,
   branches,
@@ -52,7 +50,6 @@ export function WorkspaceContextBanner({
   contextUsage,
   contextWindow,
   onGitAction,
-  onRepositoryChange,
   onBranchChange,
   branchCreationBusy,
   onCreateBranch,
@@ -67,7 +64,7 @@ export function WorkspaceContextBanner({
   surfaceMode: "chat" | "kanban";
   onSurfaceModeChange: (mode: "chat" | "kanban") => void;
   kanbanToolbarHostRef?: RefCallback<HTMLDivElement>;
-  repositories: WorkspaceGitRepositoryStatus[];
+  branchManagementAvailable: boolean;
   repositoryPath: string | null;
   branch: string | null;
   branches: string[];
@@ -79,7 +76,6 @@ export function WorkspaceContextBanner({
   contextUsage: RunViewState["tokenUsage"];
   contextWindow: number;
   onGitAction: () => void;
-  onRepositoryChange: (repositoryPath: string) => void;
   onBranchChange: (branch: string) => void;
   branchCreationBusy: boolean;
   onCreateBranch?: () => void;
@@ -295,52 +291,37 @@ export function WorkspaceContextBanner({
         <div className="workspace-context-actions" data-tauri-drag-region="false">
         {surfaceMode === "chat" ? (
           <>
-            {repositories.length > 1 ? (
+            {branchManagementAvailable ? (
               <ComposerSelect
-                ariaLabel="Git repository"
-                value={repositoryPath ?? ""}
-                options={repositories.map((repository) => ({
-                  value: repository.repository.rootPath,
-                  label: `${workspaceGitRepositoryDisplayPath(repository.repository)} · ${
-                    repository.currentBranch ?? "No branch"
-                  }`,
-                }))}
-                placeholder="Repository"
-                icon={<FolderOpen size={14} />}
-                className="workspace-branch-select workspace-repository-select"
+                ariaLabel="Branch"
+                value={branch ?? ""}
+                options={[
+                  ...branches.map((candidate) => ({
+                    value: candidate,
+                    label: candidate,
+                  })),
+                  ...(onCreateBranch
+                    ? [
+                        {
+                          id: "create-branch",
+                          value: "",
+                          label: "Create branch...",
+                          action: true,
+                          icon: <GitBranchPlus size={14} />,
+                        },
+                      ]
+                    : []),
+                ]}
+                placeholder="No branch"
+                icon={<GitBranch size={14} />}
+                className="workspace-branch-select"
                 disabled={branchSelectorDisabled}
-                onChange={onRepositoryChange}
+                onChange={onBranchChange}
+                onAction={(actionId) => {
+                  if (actionId === "create-branch") onCreateBranch?.();
+                }}
               />
             ) : null}
-            <ComposerSelect
-              ariaLabel="Branch"
-              value={branch ?? ""}
-              options={[
-                ...branches.map((candidate) => ({
-                  value: candidate,
-                  label: candidate,
-                })),
-                ...(onCreateBranch
-                  ? [
-                      {
-                        id: "create-branch",
-                        value: "",
-                        label: "Create branch...",
-                        action: true,
-                        icon: <GitBranchPlus size={14} />,
-                      },
-                    ]
-                  : []),
-              ]}
-              placeholder="No branch"
-              icon={<GitBranch size={14} />}
-              className="workspace-branch-select"
-              disabled={branchSelectorDisabled}
-              onChange={onBranchChange}
-              onAction={(actionId) => {
-                if (actionId === "create-branch") onCreateBranch?.();
-              }}
-            />
             <div className="workspace-git-action">
               <button
                 className="workspace-header-button icon-only primary"

@@ -10,11 +10,13 @@ import type {
 import type {
   KanbanBoardSnapshotRecord,
   KanbanCardRecord,
+  KanbanColumnKey,
   KanbanGitBinding,
   KanbanGitCleanupResult,
 } from "./api";
 import {
   KanbanWorkspace,
+  preferencesForRepositoryTopology,
   type KanbanWorkspaceHandle,
 } from "./KanbanWorkspace";
 import { clearKanbanWorkspaceCaches } from "./workspaceCache";
@@ -289,6 +291,35 @@ beforeEach(() => {
   apiMocks.saveKanbanGitBindings.mockResolvedValue([initialBinding]);
   apiMocks.deleteKanbanCard.mockResolvedValue(undefined);
   apiMocks.saveKanbanPreferences.mockResolvedValue(initialSnapshot);
+});
+
+describe("multi-repository preference normalization", () => {
+  it("clears repository filters and repository grouping only for multi-repository workspaces", () => {
+    const preferences = {
+      search: "review",
+      filters: {
+        repository: ["/workspace/repo"],
+        state: ["failed"],
+      },
+      groupBy: "repository" as const,
+      columnOrder: [
+        "todo",
+        "in_progress",
+        "in_review",
+        "done",
+      ] as KanbanColumnKey[],
+    };
+
+    expect(preferencesForRepositoryTopology(preferences, true)).toEqual({
+      search: "review",
+      filters: { state: ["failed"] },
+      groupBy: "none",
+      columnOrder: preferences.columnOrder,
+    });
+    expect(preferencesForRepositoryTopology(preferences, false)).toBe(
+      preferences,
+    );
+  });
 });
 
 describe("KanbanWorkspace controller", () => {

@@ -140,7 +140,7 @@ function attempt(): KanbanAttemptRecord {
   };
 }
 
-function binding(): KanbanGitBinding {
+function binding(overrides: Partial<KanbanGitBinding> = {}): KanbanGitBinding {
   return {
     sourceRepositoryPath: "/workspace/repo",
     relativePath: "repo",
@@ -152,6 +152,7 @@ function binding(): KanbanGitBinding {
     worktreePath: "/cards/card-1/root/repo",
     status: "ready",
     error: null,
+    ...overrides,
   };
 }
 
@@ -188,6 +189,19 @@ function harness() {
       browserExecutionTarget: "default-browser" as const,
     })),
     listModels: vi.fn(async () => [model]),
+    listWorkspaceRepositories: vi.fn(async () => [
+      {
+        workspacePath: workspace.path,
+        gitRoot: "/workspace/repo",
+        currentBranch: "main",
+        files: [],
+        repository: {
+          rootPath: "/workspace/repo",
+          relativePath: "repo",
+          label: "repo",
+        },
+      },
+    ]),
     loadChat: vi.fn(async () => chatRecord()),
     updateChat: vi.fn(async () => undefined),
     getNextTurnIndex: vi.fn(async () => 2),
@@ -294,6 +308,117 @@ describe("Kanban runtime controller", () => {
     });
     expect(dependencies.scheduleRun).toHaveBeenCalledWith(control, snapshot);
     expect(dependencies.refreshBoards).toHaveBeenCalledOnce();
+  });
+
+  it("upgrades multi-repository cards to the authoritative workspace inventory", async () => {
+    const { controller, dependencies, native, gitBinding } = harness();
+    const docsBinding = binding({
+      sourceRepositoryPath: "/workspace/docs",
+      relativePath: "docs",
+      worktreePath: "/cards/card-1/root/docs",
+      cardBranch: "codex/card-1-docs",
+    });
+    dependencies.listWorkspaceRepositories.mockResolvedValue([
+      {
+        workspacePath: workspace.path,
+        gitRoot: "/workspace/repo",
+        currentBranch: "main",
+        files: [],
+        repository: {
+          rootPath: "/workspace/repo",
+          relativePath: "repo",
+          label: "repo",
+        },
+      },
+      {
+        workspacePath: workspace.path,
+        gitRoot: "/workspace/docs",
+        currentBranch: "docs-main",
+        files: [],
+        repository: {
+          rootPath: "/workspace/docs",
+          relativePath: "docs",
+          label: "docs",
+        },
+      },
+    ]);
+    vi.mocked(native.prepareRepositoryExecution).mockImplementation(
+      async (input) => {
+        input.onExecutionRoot?.(gitBinding.executionRoot);
+        return {
+          executionRoot: gitBinding.executionRoot,
+          bindings: [gitBinding, docsBinding],
+        };
+      },
+    );
+    const target = card({
+      hasStartedTurn: true,
+      executionState: "failed",
+      repositoryScope: "selected",
+      executionSettingsJson: serializeRunExecutionSettings(
+        createRunExecutionSettings({
+          accountId: 0,
+          profileKey: "default",
+          selectedRepositoryPath: "/workspace/repo",
+          selectedBranch: "main",
+          mode: "run",
+          intent: "normal",
+          accessMode: "ask-for-approval",
+          computerUseEnabled: true,
+          model: model.model,
+          reasoningEffort: "high",
+          contextFiles: [],
+          selectedSkills: [],
+          goalMode: false,
+        }),
+      ),
+    });
+
+    await controller.launchCard(target, "retry", target.description);
+
+    expect(native.claimAttempt).toHaveBeenCalledWith(
+      expect.objectContaining({
+        configSnapshot: expect.objectContaining({
+          repositories: [
+            expect.objectContaining({ repositoryPath: "/workspace/repo" }),
+            expect.objectContaining({
+              repositoryPath: "/workspace/docs",
+              includeDirtyChanges: false,
+            }),
+          ],
+        }),
+      }),
+    );
+    expect(native.prepareRepositoryExecution).toHaveBeenCalledWith(
+      expect.objectContaining({
+        repositories: [
+          expect.objectContaining({ repositoryPath: "/workspace/repo" }),
+          expect.objectContaining({ repositoryPath: "/workspace/docs" }),
+        ],
+        repositoryConfiguration: expect.objectContaining({
+          repositoryScope: "all",
+          executionSettingsJson: expect.stringContaining(
+            '"selectedRepositoryPath":null',
+          ),
+        }),
+      }),
+    );
+    const [snapshot] = dependencies.beginRun.mock.calls[0]!;
+    expect(snapshot).toMatchObject({
+      selectedRepositoryPath: null,
+      selectedBranch: null,
+      workspaceRepositoryRoots: [
+        "/cards/card-1/root/repo",
+        "/cards/card-1/root/docs",
+      ],
+    });
+    expect(snapshot.workspaceRepositoryContext).toContain(
+      "no repository is preselected",
+    );
+    expect(snapshot.executionSettings).toMatchObject({
+      selectedRepositoryPath: null,
+      selectedBranch: null,
+    });
   });
 
   it("preserves edited-prompt replacement state on a claimed Kanban retry", async () => {

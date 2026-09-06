@@ -47,6 +47,7 @@ export type KanbanCardTileProps = {
   style?: CSSProperties;
   dragging?: boolean;
   overlay?: boolean;
+  showRepositoryMetadata?: boolean;
   actionsDisabled?: boolean;
   dragHandleProps?: ButtonHTMLAttributes<HTMLButtonElement>;
   onAction?: (action: KanbanCardAction, card: KanbanCard) => void;
@@ -193,6 +194,7 @@ export function KanbanCardTile({
   style,
   dragging = false,
   overlay = false,
+  showRepositoryMetadata = true,
   actionsDisabled = false,
   dragHandleProps,
   onAction,
@@ -407,11 +409,19 @@ export function KanbanCardTile({
           disabled={actionsDisabled}
           onClick={() => onOpenConversation?.(card)}
         >
-          <KanbanCardContent card={card} branch={branch} />
+          <KanbanCardContent
+            card={card}
+            branch={branch}
+            showRepositoryMetadata={showRepositoryMetadata}
+          />
         </button>
       ) : (
         <div className="kanban-card-content">
-          <KanbanCardContent card={card} branch={branch} />
+          <KanbanCardContent
+            card={card}
+            branch={branch}
+            showRepositoryMetadata={showRepositoryMetadata}
+          />
         </div>
       )}
     </article>
@@ -421,9 +431,11 @@ export function KanbanCardTile({
 function KanbanCardContent({
   card,
   branch,
+  showRepositoryMetadata,
 }: {
   card: KanbanCard;
   branch: NonNullable<KanbanCard["branches"]>[number] | undefined;
+  showRepositoryMetadata: boolean;
 }) {
   return (
     <>
@@ -432,14 +444,16 @@ function KanbanCardContent({
           <span className="kanban-card-description">{card.description}</span>
         ) : null}
         <span className="kanban-card-metadata">
-          <span
-            className="kanban-card-metadata-repository"
-            title={card.repositories
-              .map((repository) => repository.path)
-              .join("\n")}
-          >
-            {repositoryLabel(card)}
-          </span>
+          {showRepositoryMetadata ? (
+            <span
+              className="kanban-card-metadata-repository"
+              title={card.repositories
+                .map((repository) => repository.path)
+                .join("\n")}
+            >
+              {repositoryLabel(card)}
+            </span>
+          ) : null}
           <span className="kanban-card-metadata-account">
             {card.accountLabel}
           </span>

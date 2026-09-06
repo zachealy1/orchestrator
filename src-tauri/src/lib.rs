@@ -136,6 +136,7 @@ fn command_builder() -> tauri_specta::Builder<tauri::Wry> {
             github::github_sync_kanban_pull_requests,
             github::github_complete_kanban_without_pull_request,
             kanban_git::kanban_git_provision,
+            kanban_git::kanban_git_expand,
             kanban_git::kanban_git_reconcile,
             kanban_git::kanban_git_status,
             kanban_git::kanban_git_diff,

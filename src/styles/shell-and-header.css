@@ -1237,12 +1237,6 @@ button.account-switcher-item:hover:not(:disabled) {
     box-shadow 140ms ease;
 }
 
-.composer-select.workspace-repository-select {
-  width: clamp(120px, 14vw, 220px);
-  max-width: 220px;
-  flex-basis: 220px;
-}
-
 .workspace-branch-select button.composer-select-trigger {
   height: 30px;
   min-height: 30px;

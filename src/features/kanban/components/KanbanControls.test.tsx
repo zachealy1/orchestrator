@@ -112,6 +112,32 @@ describe("Kanban controls", () => {
     expect(screen.queryByRole("button", { name: "New card" })).not.toBeInTheDocument();
   });
 
+  it("removes repository grouping in multi-repository workspaces", async () => {
+    const user = userEvent.setup();
+    render(
+      <KanbanToolbar
+        search=""
+        filters={{}}
+        filterGroups={[]}
+        groupBy="none"
+        visibleCardCount={1}
+        totalCardCount={1}
+        allowRepositoryGrouping={false}
+        onSearchChange={vi.fn()}
+        onFiltersChange={vi.fn()}
+        onGroupByChange={vi.fn()}
+      />,
+    );
+
+    await user.click(screen.getByRole("combobox", { name: "Group cards by" }));
+    expect(
+      screen.queryByRole("option", { name: "Repository" }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.getByRole("option", { name: "No grouping" }),
+    ).toBeInTheDocument();
+  });
+
   it("uses progressive cleanup controls for card deletion", async () => {
     const user = userEvent.setup();
     const onCleanupOptionChange = vi.fn();

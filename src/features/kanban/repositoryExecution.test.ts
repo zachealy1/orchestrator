@@ -78,6 +78,7 @@ const mocks = {
   reconcileBinding: vi.fn(),
   saveBindings: vi.fn(),
   provision: vi.fn(),
+  expand: vi.fn(),
   loadBoard: vi.fn(),
   cleanupBinding: vi.fn(),
 };
@@ -191,6 +192,133 @@ describe("Kanban repository execution preparation", () => {
     ).rejects.toThrow("The card worktrees could not be saved: database unavailable");
     expect(mocks.cleanupBinding).toHaveBeenCalledWith({
       binding: provisionedBinding,
+      deleteBranch: true,
+      force: true,
+    });
+  });
+
+  it("expands an existing execution root and saves all-repository configuration atomically", async () => {
+    const original = binding();
+    const added = binding({
+      sourceRepositoryPath: "/workspace/docs",
+      relativePath: "docs",
+      worktreePath: "/cards/card-1/root/docs",
+      cardBranch: "codex/card-1-docs",
+    });
+    const claimedCard = card({ stateVersion: 5 });
+    const repositories = [
+      ...card().repositories,
+      {
+        repositoryPath: "/workspace/docs",
+        relativePath: "docs",
+        label: "docs",
+        includeDirtyChanges: false,
+      },
+    ];
+    const repositoryConfiguration = {
+      repositoryScope: "all" as const,
+      repositories,
+      executionSettingsJson: JSON.stringify({
+        selectedRepositoryPath: null,
+        selectedBranch: null,
+      }),
+    };
+    mocks.loadBindings.mockResolvedValue([original]);
+    mocks.reconcileBinding.mockResolvedValue({ binding: original });
+    mocks.expand.mockResolvedValue({
+      cardId: "card-1",
+      executionRoot: original.executionRoot,
+      repositories: [added],
+      errors: [],
+      complete: true,
+      rolledBack: false,
+    });
+    mocks.saveBindings.mockResolvedValue([original, added]);
+
+    await expect(
+      prepare({
+        card: card(),
+        claimedCard,
+        repositories,
+        repositoryConfiguration,
+      }),
+    ).resolves.toEqual({
+      executionRoot: original.executionRoot,
+      bindings: [original, added],
+    });
+    expect(mocks.expand).toHaveBeenCalledWith({
+      cardId: "card-1",
+      cardSlug: "Safe repository setup",
+      existingBindings: [original],
+      repositories: [
+        {
+          repositoryPath: "/workspace/docs",
+          relativePath: "docs",
+          includeDirtyChanges: false,
+        },
+      ],
+    });
+    expect(mocks.saveBindings).toHaveBeenCalledWith(
+      claimedCard,
+      [original, added],
+      undefined,
+      repositoryConfiguration,
+    );
+  });
+
+  it("cleans only newly expanded worktrees when their bindings cannot be saved", async () => {
+    const original = binding();
+    const added = binding({
+      sourceRepositoryPath: "/workspace/docs",
+      relativePath: "docs",
+      worktreePath: "/cards/card-1/root/docs",
+      cardBranch: "codex/card-1-docs",
+    });
+    const repositories = [
+      ...card().repositories,
+      {
+        repositoryPath: "/workspace/docs",
+        relativePath: "docs",
+        label: "docs",
+        includeDirtyChanges: false,
+      },
+    ];
+    mocks.loadBindings.mockResolvedValue([original]);
+    mocks.reconcileBinding.mockResolvedValue({ binding: original });
+    mocks.expand.mockResolvedValue({
+      cardId: "card-1",
+      executionRoot: original.executionRoot,
+      repositories: [added],
+      errors: [],
+      complete: true,
+      rolledBack: false,
+    });
+    mocks.saveBindings.mockRejectedValue(new Error("database unavailable"));
+    mocks.loadBoard.mockResolvedValue(board([card({ stateVersion: 6 })]));
+    mocks.cleanupBinding.mockResolvedValue({
+      binding: added,
+      status: "cleaned",
+      worktreeRemoved: true,
+      branchDeleted: true,
+      executionRootRemoved: false,
+      errors: [],
+    });
+
+    await expect(
+      prepare({
+        card: card(),
+        claimedCard: card({ stateVersion: 5 }),
+        repositories,
+        repositoryConfiguration: {
+          repositoryScope: "all",
+          repositories,
+          executionSettingsJson: "{}",
+        },
+      }),
+    ).rejects.toThrow("database unavailable");
+    expect(mocks.cleanupBinding).toHaveBeenCalledTimes(1);
+    expect(mocks.cleanupBinding).toHaveBeenCalledWith({
+      binding: added,
       deleteBranch: true,
       force: true,
     });

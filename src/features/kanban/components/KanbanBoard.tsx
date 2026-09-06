@@ -32,6 +32,7 @@ import type {
 export type KanbanBoardProps = {
   columns: KanbanColumn[];
   disabled?: boolean;
+  showRepositoryMetadata?: boolean;
   onMoveCard: (request: KanbanMoveRequest) => void;
   onCardAction?: (action: KanbanCardAction, card: KanbanCard) => void;
   onOpenConversation?: (card: KanbanCard) => void;
@@ -69,11 +70,13 @@ function sortedColumns(columns: KanbanColumn[]) {
 function SortableCard({
   card,
   disabled,
+  showRepositoryMetadata,
   onAction,
   onOpenConversation,
 }: {
   card: KanbanCard;
   disabled: boolean;
+  showRepositoryMetadata: boolean;
   onAction?: (action: KanbanCardAction, card: KanbanCard) => void;
   onOpenConversation?: (card: KanbanCard) => void;
 }) {
@@ -106,6 +109,7 @@ function SortableCard({
         style={style}
         dragging={isDragging}
         actionsDisabled={disabled}
+        showRepositoryMetadata={showRepositoryMetadata}
         dragHandleProps={dragHandleProps}
         onAction={onAction}
         onOpenConversation={onOpenConversation}
@@ -117,12 +121,14 @@ function SortableCard({
 function SortableColumn({
   column,
   disabled,
+  showRepositoryMetadata,
   target,
   onCardAction,
   onOpenConversation,
 }: {
   column: KanbanColumn;
   disabled: boolean;
+  showRepositoryMetadata: boolean;
   target: boolean;
   onCardAction?: (action: KanbanCardAction, card: KanbanCard) => void;
   onOpenConversation?: (card: KanbanCard) => void;
@@ -168,6 +174,7 @@ function SortableColumn({
                   key={card.id}
                   card={card}
                   disabled={disabled}
+                  showRepositoryMetadata={showRepositoryMetadata}
                   onAction={onCardAction}
                   onOpenConversation={onOpenConversation}
                 />
@@ -195,6 +202,7 @@ function targetColumnId(event: DragOverEvent | DragEndEvent) {
 export function KanbanBoard({
   columns,
   disabled = false,
+  showRepositoryMetadata = true,
   onMoveCard,
   onCardAction,
   onOpenConversation,
@@ -297,6 +305,7 @@ export function KanbanBoard({
               key={column.id}
               column={column}
               disabled={disabled}
+              showRepositoryMetadata={showRepositoryMetadata}
               target={dropTargetColumn === column.id}
               onCardAction={onCardAction}
               onOpenConversation={onOpenConversation}
@@ -306,7 +315,11 @@ export function KanbanBoard({
         <DragOverlay dropAnimation={null}>
           {activeCard ? (
             <div className="kanban-card-overlay">
-              <KanbanCardTile card={activeCard} overlay />
+              <KanbanCardTile
+                card={activeCard}
+                overlay
+                showRepositoryMetadata={showRepositoryMetadata}
+              />
             </div>
           ) : null}
         </DragOverlay>

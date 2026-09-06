@@ -10,7 +10,11 @@ import type {
   StopActiveRunResult,
 } from "../runs/runtimeTypes";
 import type { RunExecutionSettings } from "../runs/types";
-import type { Workspace } from "../workspaces/types";
+import type {
+  Workspace,
+  WorkspaceGitRepositoryStatus,
+} from "../workspaces/types";
+import { formatWorkspaceRepositoryContext } from "../workspaces/repositoryTopology";
 import { accessSettingsForRun } from "../../lib/codexAccess";
 import {
   createRunExecutionSettings,
@@ -56,6 +60,9 @@ export type KanbanRuntimeControllerDependencies<
     profileKey: CodexProfileKey,
     accountId: number,
   ) => Promise<CodexModel[]>;
+  listWorkspaceRepositories: (
+    workspace: Workspace,
+  ) => Promise<WorkspaceGitRepositoryStatus[]>;
   loadChat: (chatId: number) => Promise<ChatRecord | null>;
   updateChat: (
     chatId: number,
@@ -165,6 +172,41 @@ export function createKanbanRuntimeController<
     const dependencies = getDependencies();
     const state = dependencies.getState();
     const workspace = workspaceForCard(state, card);
+    const reservationKey = `${card.workspaceId}:${card.chatId}`;
+    if (
+      launchReservations.has(reservationKey) ||
+      dependencies.findRunControl(card.workspaceId, card.chatId, card.id)
+    ) {
+      throw new Error(
+        "This card conversation already has an active or starting run.",
+      );
+    }
+    const discoveredRepositories =
+      await dependencies.listWorkspaceRepositories(workspace);
+    if (discoveredRepositories.length === 0) {
+      throw new Error(
+        "No Git repositories are currently available in this workspace.",
+      );
+    }
+    const multiRepositoryWorkspace = discoveredRepositories.length > 1;
+    const includeDirtyForUnstartedCard =
+      !card.hasStartedTurn &&
+      card.repositories.some((repository) => repository.includeDirtyChanges);
+    const repositories = multiRepositoryWorkspace
+      ? discoveredRepositories.map((repository) => {
+          const existing = card.repositories.find(
+            (selection) =>
+              selection.repositoryPath === repository.repository.rootPath,
+          );
+          return {
+            repositoryPath: repository.repository.rootPath,
+            relativePath: repository.repository.relativePath,
+            label: repository.repository.label,
+            includeDirtyChanges:
+              existing?.includeDirtyChanges ?? includeDirtyForUnstartedCard,
+          };
+        })
+      : card.repositories;
     const capturedSettings =
       options?.executionSettings ??
       parseRunExecutionSettings(card.executionSettingsJson);
@@ -194,7 +236,7 @@ export function createKanbanRuntimeController<
         "The reasoning level saved on this card is no longer available.",
       );
     }
-    if (card.repositories.length === 0) {
+    if (!multiRepositoryWorkspace && repositories.length === 0) {
       throw new Error(
         "This card has no captured Git repositories. Edit it before starting and select a repository scope.",
       );
@@ -206,38 +248,34 @@ export function createKanbanRuntimeController<
             ...capturedSettings,
             accountId,
             profileKey,
+            selectedRepositoryPath: multiRepositoryWorkspace
+              ? null
+              : capturedSettings.selectedRepositoryPath,
+            selectedBranch: multiRepositoryWorkspace
+              ? null
+              : capturedSettings.selectedBranch,
           }
         : {
-        accountId,
-        profileKey,
-        selectedRepositoryPath: null,
-        selectedBranch: null,
-        mode: "run",
-        intent: "normal",
-        accessMode: card.accessMode,
-        computerUseEnabled: state.computerUseEnabled,
-        model: selectedModel?.model ?? card.model,
-        reasoningEffort:
-          card.reasoningLevel ?? selectedModel?.defaultReasoningEffort ?? null,
-        contextFiles: [],
-        selectedSkills: [],
-        goalMode: true,
-      },
+            accountId,
+            profileKey,
+            selectedRepositoryPath: null,
+            selectedBranch: null,
+            mode: "run",
+            intent: "normal",
+            accessMode: card.accessMode,
+            computerUseEnabled: state.computerUseEnabled,
+            model: selectedModel?.model ?? card.model,
+            reasoningEffort:
+              card.reasoningLevel ?? selectedModel?.defaultReasoningEffort ?? null,
+            contextFiles: [],
+            selectedSkills: [],
+            goalMode: true,
+          },
     );
     const access = accessSettingsForRun(
       { accessMode: executionSettings.accessMode },
       executionSettings.mode,
     );
-    const reservationKey = `${card.workspaceId}:${card.chatId}`;
-    if (
-      launchReservations.has(reservationKey) ||
-      dependencies.findRunControl(card.workspaceId, card.chatId, card.id)
-    ) {
-      throw new Error(
-        "This card conversation already has an active or starting run.",
-      );
-    }
-
     launchReservations.add(reservationKey);
     try {
       const claimed = await native.claimAttempt({
@@ -252,7 +290,7 @@ export function createKanbanRuntimeController<
           accessMode: executionSettings.accessMode,
           model: executionSettings.model,
           reasoningLevel: executionSettings.reasoningEffort,
-          repositories: card.repositories,
+          repositories,
         },
         executionSettingsJson:
           kind === "implement_plan"
@@ -267,24 +305,40 @@ export function createKanbanRuntimeController<
         const repositoryExecution = await native.prepareRepositoryExecution({
           card,
           claimedCard: claimed.card,
+          repositories,
+          repositoryConfiguration: multiRepositoryWorkspace
+            ? {
+                repositoryScope: "all",
+                repositories,
+                executionSettingsJson:
+                  serializeRunExecutionSettings(executionSettings),
+              }
+            : null,
           onExecutionRoot: (nextExecutionRoot) => {
             executionRoot = nextExecutionRoot;
           },
         });
         executionRoot = repositoryExecution.executionRoot;
+        if (multiRepositoryWorkspace) dependencies.refreshBoards();
         const selectedBinding =
           repositoryExecution.bindings.find(
             (binding) =>
               binding.sourceRepositoryPath ===
               executionSettings.selectedRepositoryPath,
           ) ?? repositoryExecution.bindings[0] ?? null;
-        const runExecutionSettings = selectedBinding
+        const runExecutionSettings = multiRepositoryWorkspace
           ? createRunExecutionSettings({
               ...executionSettings,
-              selectedRepositoryPath: selectedBinding.worktreePath,
-              selectedBranch: selectedBinding.cardBranch,
+              selectedRepositoryPath: null,
+              selectedBranch: null,
             })
-          : executionSettings;
+          : selectedBinding
+            ? createRunExecutionSettings({
+                ...executionSettings,
+                selectedRepositoryPath: selectedBinding.worktreePath,
+                selectedBranch: selectedBinding.cardBranch,
+              })
+            : executionSettings;
         const chat = await dependencies.loadChat(card.chatId);
         if (!chat) {
           throw new Error("The card conversation is no longer available.");
@@ -369,6 +423,19 @@ export function createKanbanRuntimeController<
           externalThreadId: null,
           selectedRepositoryPath: runExecutionSettings.selectedRepositoryPath,
           selectedBranch: runExecutionSettings.selectedBranch,
+          workspaceRepositoryRoots: repositoryExecution.bindings.map(
+            (binding) => binding.worktreePath,
+          ),
+          workspaceRepositoryContext: multiRepositoryWorkspace
+            ? formatWorkspaceRepositoryContext(
+                repositories.map((repository) => ({
+                  repository: {
+                    label: repository.label,
+                    relativePath: repository.relativePath,
+                  },
+                })),
+              )
+            : null,
           cachedPreflight: null,
           mode: runExecutionSettings.mode,
           intent: runExecutionSettings.intent,

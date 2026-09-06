@@ -39,6 +39,15 @@ pub(crate) struct KanbanGitProvisionRequest {
     pub repositories: Vec<KanbanGitRepositorySelection>,
 }
 
+#[derive(Clone, Debug, Deserialize, specta::Type)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub(crate) struct KanbanGitExpandRequest {
+    pub card_id: String,
+    pub card_slug: Option<String>,
+    pub existing_bindings: Vec<KanbanGitRepositoryBinding>,
+    pub repositories: Vec<KanbanGitRepositorySelection>,
+}
+
 #[derive(Clone, Debug, Deserialize, Serialize, specta::Type)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub(crate) struct KanbanGitRepositoryBinding {
@@ -348,7 +357,9 @@ fn ensure_execution_root(cards_root: &Path, execution_root: &Path) -> Result<(),
         }
         let canonical = fs::canonicalize(execution_root)
             .map_err(|error| format!("Unable to resolve Kanban execution root: {error}"))?;
-        if canonical.parent() != Some(cards_root) {
+        let canonical_cards_root = fs::canonicalize(cards_root)
+            .map_err(|error| format!("Unable to resolve Kanban cards directory: {error}"))?;
+        if canonical.parent() != Some(canonical_cards_root.as_path()) {
             return Err("Kanban execution root resolves outside app data".into());
         }
     }
@@ -1111,6 +1122,101 @@ fn provision_blocking(
                 {
                     let _ = fs::remove_dir(&execution_root);
                 }
+                return Ok(KanbanGitProvisionResult {
+                    card_id: request.card_id,
+                    execution_root: execution_root.to_string_lossy().to_string(),
+                    repositories: bindings,
+                    errors,
+                    complete: false,
+                    rolled_back: true,
+                });
+            }
+        }
+    }
+
+    Ok(KanbanGitProvisionResult {
+        card_id: request.card_id,
+        execution_root: execution_root.to_string_lossy().to_string(),
+        repositories: bindings,
+        errors: Vec::new(),
+        complete: true,
+        rolled_back: false,
+    })
+}
+
+fn expand_blocking(
+    app_cards_root: &Path,
+    request: KanbanGitExpandRequest,
+) -> Result<KanbanGitProvisionResult, String> {
+    validate_card_id(&request.card_id)?;
+    if request.existing_bindings.is_empty() {
+        return Err("This card has no existing worktrees to expand".into());
+    }
+    let execution_root = app_cards_root.join(&request.card_id);
+    ensure_execution_root(app_cards_root, &execution_root)?;
+    if !execution_root.is_dir() {
+        return Err("This card's execution root is unavailable".into());
+    }
+
+    let mut existing_repository_paths = HashSet::new();
+    let mut existing_relative_paths = Vec::new();
+    for binding in &request.existing_bindings {
+        validate_command_binding(app_cards_root, binding)?;
+        if Path::new(&binding.execution_root) != execution_root {
+            return Err("Kanban worktrees do not share the expected execution root".into());
+        }
+        validate_live_binding(binding, true)?;
+        if !existing_repository_paths.insert(binding.source_repository_path.clone()) {
+            return Err("Existing Kanban repository bindings contain duplicates".into());
+        }
+        existing_relative_paths.push(binding.relative_path.clone());
+    }
+
+    let prepared = prepare_repositories(&KanbanGitProvisionRequest {
+        card_id: request.card_id.clone(),
+        card_slug: request.card_slug.clone(),
+        repositories: request.repositories,
+    })?;
+    for repository in &prepared {
+        let repository_path = repository.source_root.to_string_lossy().to_string();
+        if existing_repository_paths.contains(&repository_path) {
+            return Err(format!(
+                "Repository already has a Kanban worktree: {}",
+                repository.source_root.display()
+            ));
+        }
+        let relative = Path::new(&repository.relative_path);
+        if existing_relative_paths.iter().any(|existing| {
+            let existing = Path::new(existing);
+            existing == relative || existing.starts_with(relative) || relative.starts_with(existing)
+        }) {
+            return Err(format!(
+                "Repository execution path overlaps an existing worktree: {}",
+                repository.relative_path
+            ));
+        }
+    }
+
+    let slug_component = request
+        .card_slug
+        .as_deref()
+        .map(|slug| branch_component(slug, 32))
+        .filter(|slug| !slug.is_empty())
+        .unwrap_or_else(|| "card".to_string());
+    let branch_base = format!("{CARD_BRANCH_PREFIX}{slug_component}");
+    let mut bindings = Vec::with_capacity(prepared.len());
+    for repository in &prepared {
+        match create_worktree(repository, &execution_root, &branch_base) {
+            Ok(binding) => bindings.push(binding),
+            Err(message) => {
+                let cleanup_required = message.contains("Cleanup required:");
+                let mut errors = vec![operation_error(
+                    Some(repository.source_root.to_string_lossy().to_string()),
+                    "expand_failed",
+                    message,
+                    cleanup_required,
+                )];
+                errors.extend(rollback_bindings(&mut bindings));
                 return Ok(KanbanGitProvisionResult {
                     card_id: request.card_id,
                     execution_root: execution_root.to_string_lossy().to_string(),
@@ -2105,6 +2211,19 @@ pub(crate) async fn kanban_git_provision(
 
 #[tauri::command]
 #[specta::specta]
+pub(crate) async fn kanban_git_expand(
+    app: AppHandle,
+    request: KanbanGitExpandRequest,
+) -> Result<KanbanGitProvisionResult, String> {
+    let root = cards_root(&app)?;
+    run_blocking("expand Kanban worktrees", move || {
+        expand_blocking(&root, request)
+    })
+    .await
+}
+
+#[tauri::command]
+#[specta::specta]
 pub(crate) async fn kanban_git_reconcile(
     app: AppHandle,
     request: KanbanGitBindingRequest,
@@ -2294,6 +2413,115 @@ mod tests {
         })
         .expect("cleanup");
         remove_test_directory(&repo);
+        remove_test_directory(&cards);
+    }
+
+    #[test]
+    fn expansion_adds_a_repository_without_recreating_existing_worktrees() {
+        let repo = init_repository("expand-source");
+        let docs = init_repository("expand-docs-source");
+        let cards = temp_directory("expand-cards");
+        let provisioned = provision(&cards, &repo, "expand-card", false);
+        let original = provisioned.repositories[0].clone();
+        let original_head = rev_parse(Path::new(&original.worktree_path), "HEAD^{commit}")
+            .expect("original worktree head");
+
+        let expanded = expand_blocking(
+            &cards,
+            KanbanGitExpandRequest {
+                card_id: "expand-card".to_string(),
+                card_slug: Some("Implement feature".to_string()),
+                existing_bindings: vec![original.clone()],
+                repositories: vec![KanbanGitRepositorySelection {
+                    repository_path: docs.to_string_lossy().to_string(),
+                    relative_path: Some("docs".to_string()),
+                    include_dirty_changes: false,
+                }],
+            },
+        )
+        .expect("expand result");
+
+        assert!(expanded.complete);
+        assert_eq!(expanded.repositories.len(), 1);
+        assert!(Path::new(&original.worktree_path).is_dir());
+        assert_eq!(
+            rev_parse(Path::new(&original.worktree_path), "HEAD^{commit}")
+                .expect("unchanged original worktree head"),
+            original_head
+        );
+        let added = expanded.repositories[0].clone();
+        assert_eq!(added.relative_path, "docs");
+        assert!(Path::new(&added.worktree_path).is_dir());
+
+        cleanup_blocking(KanbanGitCleanupRequest {
+            binding: added,
+            delete_branch: true,
+            force: true,
+        })
+        .expect("cleanup added worktree");
+        cleanup_blocking(KanbanGitCleanupRequest {
+            binding: original,
+            delete_branch: true,
+            force: true,
+        })
+        .expect("cleanup original worktree");
+        remove_test_directory(&repo);
+        remove_test_directory(&docs);
+        remove_test_directory(&cards);
+    }
+
+    #[test]
+    fn expansion_rolls_back_only_worktrees_created_by_that_expansion() {
+        let repo = init_repository("expand-rollback-source");
+        let docs = init_repository("expand-rollback-docs");
+        let api = init_repository("expand-rollback-api");
+        let cards = temp_directory("expand-rollback-cards");
+        let provisioned = provision(&cards, &repo, "expand-rollback-card", false);
+        let original = provisioned.repositories[0].clone();
+        let execution_root = PathBuf::from(&original.execution_root);
+        let blocker = execution_root.join("api");
+        fs::create_dir_all(&blocker).expect("create expansion blocker");
+
+        let expanded = expand_blocking(
+            &cards,
+            KanbanGitExpandRequest {
+                card_id: "expand-rollback-card".to_string(),
+                card_slug: Some("Implement feature".to_string()),
+                existing_bindings: vec![original.clone()],
+                repositories: vec![
+                    KanbanGitRepositorySelection {
+                        repository_path: docs.to_string_lossy().to_string(),
+                        relative_path: Some("docs".to_string()),
+                        include_dirty_changes: false,
+                    },
+                    KanbanGitRepositorySelection {
+                        repository_path: api.to_string_lossy().to_string(),
+                        relative_path: Some("api".to_string()),
+                        include_dirty_changes: false,
+                    },
+                ],
+            },
+        )
+        .expect("expand rollback result");
+
+        assert!(!expanded.complete);
+        assert!(expanded.rolled_back);
+        assert!(Path::new(&original.worktree_path).is_dir());
+        assert!(!execution_root.join("docs").exists());
+        assert!(blocker.is_dir());
+        assert!(!branch_exists(&docs, "codex/kanban-implement-feature")
+            .expect("inspect rolled-back branch"));
+
+        fs::remove_dir(&blocker).expect("remove expansion blocker");
+        cleanup_blocking(KanbanGitCleanupRequest {
+            binding: original,
+            delete_branch: true,
+            force: true,
+        })
+        .expect("cleanup original worktree");
+        remove_test_directory(&repo);
+        remove_test_directory(&docs);
+        remove_test_directory(&api);
         remove_test_directory(&cards);
     }
 

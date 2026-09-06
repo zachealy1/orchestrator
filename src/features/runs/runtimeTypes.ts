@@ -126,6 +126,10 @@ export type RunSetupSnapshot = {
   /** Source workspace for shared-profile thread ownership when execution is isolated. */
   sourceWorkspacePath?: string | null;
   nativeTaskWorkspaceBinding?: NativeTaskWorkspaceBinding | null;
+  /** Current multi-repository roots exposed to Codex without selecting a target. */
+  workspaceRepositoryRoots?: string[];
+  /** Agent-facing repository inventory for multi-repository workspaces. */
+  workspaceRepositoryContext?: string | null;
   accountId: number;
   account: CodexAccountProfile | null;
   profileKey: CodexProfileKey;

@@ -854,7 +854,6 @@ button.kanban-card-content {
 }
 
 .kanban-filter-groups fieldset,
-.kanban-repository-picker,
 .kanban-cleanup-options {
   min-width: 0;
   margin: 0;
@@ -864,7 +863,6 @@ button.kanban-card-content {
 }
 
 .kanban-filter-groups legend,
-.kanban-repository-picker legend,
 .kanban-cleanup-options legend {
   padding: 0 4px;
   color: var(--color-text-secondary);
@@ -894,14 +892,12 @@ button.kanban-card-content {
 }
 
 .kanban-filter-groups input,
-.kanban-repository-options input,
 .kanban-duplicate-history input,
 .kanban-include-dirty-option input,
 .kanban-cleanup-options input {
   accent-color: var(--accent-2);
 }
 
-.kanban-card-dialog .kanban-repository-options input[type="checkbox"],
 .kanban-card-dialog .kanban-duplicate-history input[type="checkbox"],
 .kanban-card-dialog .kanban-include-dirty-option input[type="checkbox"] {
   position: relative;
@@ -916,9 +912,6 @@ button.kanban-card-content {
   margin: 3px;
 }
 
-.kanban-card-dialog
-  .kanban-repository-options
-  input[type="checkbox"]:checked::after,
 .kanban-card-dialog
   .kanban-duplicate-history
   input[type="checkbox"]:checked::after,
@@ -1205,15 +1198,13 @@ button.kanban-card-content {
   font-weight: 650;
 }
 
-.kanban-field,
-.kanban-repository-picker {
+.kanban-field {
   display: grid;
   gap: 8px;
   min-width: 0;
 }
 
-.kanban-field > span,
-.kanban-repository-picker > legend {
+.kanban-field > span {
   color: var(--color-text);
   font-size: 0.86rem;
   font-weight: 600;
@@ -1291,11 +1282,6 @@ button.kanban-card-content {
 
 .kanban-field select:focus-visible {
   box-shadow: 0 0 0 3px var(--dropdown-focus-ring);
-}
-
-.kanban-repository-picker {
-  padding: 0;
-  border: 0;
 }
 
 .kanban-mode-picker {
@@ -1439,63 +1425,6 @@ button.kanban-card-content {
   transform: none;
 }
 
-.kanban-segmented-control {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 5px;
-  padding: 3px;
-  border-radius: var(--radius);
-  background: var(--dropdown-bg);
-}
-
-.kanban-segmented-control label {
-  position: relative;
-  cursor: pointer;
-}
-
-.kanban-segmented-control label:has(input:disabled) {
-  cursor: not-allowed;
-  opacity: 0.45;
-}
-
-.kanban-segmented-control input {
-  position: absolute;
-  opacity: 0;
-}
-
-.kanban-segmented-control span {
-  display: grid;
-  min-height: 31px;
-  place-items: center;
-  padding: 0 8px;
-  border: 0;
-  border-radius: 6px;
-  color: var(--color-text-secondary);
-  font-size: 0.76rem;
-  font-weight: 650;
-}
-
-.kanban-segmented-control input:checked + span {
-  background: var(--color-component-background);
-  box-shadow: none;
-  color: var(--color-text);
-}
-
-.kanban-segmented-control input:focus-visible + span {
-  outline: 2px solid var(--color-primary);
-  outline-offset: 1px;
-}
-
-.kanban-repository-options {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 6px;
-  max-height: 180px;
-  overflow: auto;
-  padding-top: 3px;
-}
-
-.kanban-repository-options > label,
 .kanban-duplicate-history,
 .kanban-include-dirty-option,
 .kanban-cleanup-options > label {
@@ -1513,14 +1442,12 @@ button.kanban-card-content {
     border-color 140ms ease;
 }
 
-.kanban-repository-options > label:not(:has(input:disabled)):hover,
 .kanban-duplicate-history:not(:has(input:disabled)):hover,
 .kanban-include-dirty-option:not(:has(input:disabled)):hover,
 .kanban-cleanup-options > label:not(:has(input:disabled)):hover {
   background: var(--color-surface-soft);
 }
 
-.kanban-repository-options > label:has(input:disabled),
 .kanban-duplicate-history:has(input:disabled),
 .kanban-include-dirty-option:has(input:disabled),
 .kanban-cleanup-options > label:has(input:disabled) {
@@ -1528,21 +1455,18 @@ button.kanban-card-content {
   opacity: 0.45;
 }
 
-.kanban-repository-options > label:has(input:checked),
 .kanban-duplicate-history:has(input:checked),
 .kanban-include-dirty-option:has(input:checked),
 .kanban-cleanup-options > label:has(input:checked) {
   background: var(--color-selected-background);
 }
 
-.kanban-repository-options > label:has(input:focus-visible),
 .kanban-duplicate-history:has(input:focus-visible),
 .kanban-include-dirty-option:has(input:focus-visible),
 .kanban-cleanup-options > label:has(input:focus-visible) {
   box-shadow: 0 0 0 3px var(--dropdown-focus-ring);
 }
 
-.kanban-repository-options > label > span,
 .kanban-duplicate-history > span,
 .kanban-include-dirty-option > span,
 .kanban-cleanup-options > label > span {
@@ -1551,7 +1475,6 @@ button.kanban-card-content {
   gap: 2px;
 }
 
-.kanban-repository-options small,
 .kanban-duplicate-history small,
 .kanban-include-dirty-option small,
 .kanban-cleanup-options small {
@@ -2084,9 +2007,7 @@ button.kanban-card-content {
     flex: 1 1 auto;
   }
 
-  .kanban-filter-groups,
-  .kanban-repository-options,
-  .kanban-segmented-control {
+  .kanban-filter-groups {
     grid-template-columns: 1fr;
   }
 
@@ -2116,7 +2037,6 @@ button.kanban-card-content {
 @media (prefers-reduced-motion: reduce) {
   .kanban-column,
   .kanban-card-tile,
-  .kanban-repository-options > label,
   .kanban-duplicate-history,
   .kanban-include-dirty-option,
   .kanban-cleanup-options > label {

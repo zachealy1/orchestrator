@@ -655,7 +655,7 @@ describe("Application runtime scenarios 1", () => {
       expect(within(changeSummary).getByText("-82")).toBeInTheDocument();
     });
 
-  it("selects one repository for branch and commit actions in a multi-repo workspace", async () => {
+  it("keeps repository selection inside Git actions in a multi-repo workspace", async () => {
       const frontendPath = `${workspace.path}/frontend`;
       const backendPath = `${workspace.path}/backend`;
       const frontendFile = {
@@ -733,17 +733,12 @@ describe("Application runtime scenarios 1", () => {
 
       const { user } = await renderApp();
       const banner = screen.getByRole("region", { name: "Selected folder" });
-      const repositorySelect = await within(banner).findByRole("combobox", {
-        name: "Git repository",
-      });
-      const branchSelect = within(banner).getByRole("combobox", {
-        name: "Branch",
-      });
+      await waitFor(() =>
+        expect(within(banner).queryByLabelText("Branch")).not.toBeInTheDocument(),
+      );
       expect(
-        repositorySelect.compareDocumentPosition(branchSelect) &
-          Node.DOCUMENT_POSITION_FOLLOWING,
-      ).toBeTruthy();
-      expect(repositorySelect).toHaveTextContent("frontend · main");
+        within(banner).queryByRole("combobox", { name: "Git repository" }),
+      ).not.toBeInTheDocument();
       expect(within(banner).getByText("+13")).toBeInTheDocument();
       expect(within(banner).getByText("-4")).toBeInTheDocument();
 
@@ -791,10 +786,7 @@ describe("Application runtime scenarios 1", () => {
           backendPath,
         ),
       );
-      expect(mocks.listGitBranchesMock).toHaveBeenCalledWith(
-        workspace.path,
-        backendPath,
-      );
+      expect(mocks.listGitBranchesMock).not.toHaveBeenCalled();
 
       await user.type(
         within(dialog).getByLabelText(/commit message/i),

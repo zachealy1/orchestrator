@@ -7,6 +7,7 @@ import type { KanbanCard, KanbanColumnId } from "./types";
 export type KanbanArchivedViewProps = {
   cards: KanbanCard[];
   disabled?: boolean;
+  showRepositoryMetadata?: boolean;
   onRestoreCard: (card: KanbanCard) => void;
   onDeleteCard: (card: KanbanCard) => void;
 };
@@ -37,6 +38,7 @@ const ARCHIVE_COLUMNS: Array<{
 export function KanbanArchivedView({
   cards,
   disabled = false,
+  showRepositoryMetadata = true,
   onRestoreCard,
   onDeleteCard,
 }: KanbanArchivedViewProps) {
@@ -96,6 +98,7 @@ export function KanbanArchivedView({
                             availableActions: ["delete"],
                           }}
                           actionsDisabled={disabled}
+                          showRepositoryMetadata={showRepositoryMetadata}
                           primaryAction={{
                             label: `Restore ${card.title} to board`,
                             icon: <RotateCcw size={16} aria-hidden="true" />,

@@ -238,6 +238,7 @@ describe("Kanban native API", () => {
       expectedVersion: 9,
       operationId: "operation-3",
       bindings: [binding],
+      repositoryConfiguration: null,
     });
   });
 });

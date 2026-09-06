@@ -528,6 +528,25 @@ function parsePreferences(value: string): StoredPreferences {
   }
 }
 
+export function preferencesForRepositoryTopology(
+  preferences: StoredPreferences,
+  multiRepositoryWorkspace: boolean,
+): StoredPreferences {
+  if (!multiRepositoryWorkspace) return preferences;
+  const { repository: _repository, ...filters } = preferences.filters;
+  if (
+    preferences.groupBy !== "repository" &&
+    !("repository" in preferences.filters)
+  ) {
+    return preferences;
+  }
+  return {
+    ...preferences,
+    filters,
+    groupBy: preferences.groupBy === "repository" ? "none" : preferences.groupBy,
+  };
+}
+
 function toDomainCard(card: KanbanCardRecord): DomainKanbanCard {
   return {
     id: card.id,
@@ -700,6 +719,15 @@ function KanbanWorkspace({
   const snapshotRef = useRef<KanbanBoardSnapshotRecord | null>(null);
   const [preferences, setPreferences] = useState<StoredPreferences>(() =>
     parsePreferences(initialCacheRef.current?.snapshot.preferencesJson ?? "{}"),
+  );
+  const multiRepositoryWorkspace = repositories.length > 1;
+  const effectivePreferences = useMemo(
+    () =>
+      preferencesForRepositoryTopology(
+        preferences,
+        multiRepositoryWorkspace,
+      ),
+    [multiRepositoryWorkspace, preferences],
   );
   const preferencesRef = useRef(preferences);
   const [bindingsByCard, setBindingsByCard] = useState<
@@ -1342,8 +1370,8 @@ function KanbanWorkspace({
   );
 
   const activeFilter = useMemo(
-    () => toFilterState(preferences, false),
-    [preferences],
+    () => toFilterState(effectivePreferences, false),
+    [effectivePreferences],
   );
   const visibleDomainCards = useMemo(
     () => filterKanbanCards(domainCards, activeFilter),
@@ -1351,7 +1379,7 @@ function KanbanWorkspace({
   );
   const groups = useMemo(
     () =>
-      groupKanbanCards(visibleDomainCards, toDomainGrouping(preferences.groupBy), {
+      groupKanbanCards(visibleDomainCards, toDomainGrouping(effectivePreferences.groupBy), {
         repositories: Object.fromEntries(
           repositories.map((repository) => [
             repository.repository.rootPath,
@@ -1365,7 +1393,7 @@ function KanbanWorkspace({
     [
       accounts,
       modelLabels,
-      preferences.groupBy,
+      effectivePreferences.groupBy,
       reasoningLabels,
       repositories,
       visibleDomainCards,
@@ -1373,17 +1401,17 @@ function KanbanWorkspace({
   );
   const archivedCards = useMemo(
     () =>
-      filterKanbanCards(domainCards, toFilterState(preferences, true)).map(
+      filterKanbanCards(domainCards, toFilterState(effectivePreferences, true)).map(
         toViewCard,
       ),
-    [domainCards, preferences, toViewCard],
+    [domainCards, effectivePreferences, toViewCard],
   );
 
   function buildColumns(cards: readonly DomainKanbanCard[]): KanbanColumn[] {
     const order = snapshot?.columns
       .slice()
       .sort((left, right) => left.position - right.position)
-      .map((column) => column.key) ?? preferences.columnOrder;
+      .map((column) => column.key) ?? effectivePreferences.columnOrder;
     return order.map((stage, position) => ({
       id: STAGE_TO_VIEW[stage],
       title: COLUMN_COPY[stage].title,
@@ -1406,7 +1434,7 @@ function KanbanWorkspace({
         }))
         .sort((left, right) => left.label.localeCompare(right.label));
     return [
-      {
+      ...(multiRepositoryWorkspace ? [] : [{
         id: "repository",
         label: "Repository",
         options: options(
@@ -1415,7 +1443,7 @@ function KanbanWorkspace({
             repository.repository.label,
           ]),
         ),
-      },
+      }]),
       {
         id: "account",
         label: "Account",
@@ -1474,7 +1502,7 @@ function KanbanWorkspace({
         ),
       },
     ];
-  }, [accountLabels, domainCards, modelLabels, reasoningLabels, repositories]);
+  }, [accountLabels, domainCards, modelLabels, multiRepositoryWorkspace, reasoningLabels, repositories]);
 
   function schedulePreferenceSave(next: StoredPreferences) {
     preferenceSavePending.current = true;
@@ -1532,6 +1560,14 @@ function KanbanWorkspace({
     }, 400);
   }
 
+  useEffect(() => {
+    if (!multiRepositoryWorkspace || !snapshot) return;
+    const stored = parsePreferences(snapshot.preferencesJson);
+    const normalized = preferencesForRepositoryTopology(stored, true);
+    if (normalized === stored) return;
+    schedulePreferenceSave(normalized);
+  }, [multiRepositoryWorkspace, snapshot?.preferencesJson]);
+
   async function runAction(action: () => Promise<unknown>, success?: string) {
     setBusy(true);
     setError(null);
@@ -1551,8 +1587,11 @@ function KanbanWorkspace({
     draft: KanbanCardDraft,
     sourceCard: KanbanCardRecord | null,
   ): PersistedKanbanCardDraft {
+    const repositoryScope = multiRepositoryWorkspace
+      ? ("all" as const)
+      : draft.repositoryScope;
     const selectedRepositories =
-      draft.repositoryScope === "all"
+      repositoryScope === "all"
         ? repositories
         : repositories.filter((repository) =>
             draft.repositoryIds.includes(repository.repository.rootPath),
@@ -1562,21 +1601,23 @@ function KanbanWorkspace({
     );
     const accountId = 0;
     const profileKey: CodexProfileKey = "default";
-    const selectedRepository =
-      selectedRepositories.find(
-        (repository) =>
-          repository.repository.rootPath ===
-          existingSettings?.selectedRepositoryPath,
-      ) ?? selectedRepositories[0] ?? null;
+    const selectedRepository = multiRepositoryWorkspace
+      ? null
+      : selectedRepositories.find(
+          (repository) =>
+            repository.repository.rootPath ===
+            existingSettings?.selectedRepositoryPath,
+        ) ?? selectedRepositories[0] ?? null;
     const executionSettings = createRunExecutionSettings({
       accountId,
       profileKey,
       selectedRepositoryPath:
         selectedRepository?.repository.rootPath ?? null,
       selectedBranch:
+        !multiRepositoryWorkspace &&
         selectedRepository?.repository.rootPath ===
         existingSettings?.selectedRepositoryPath
-          ? existingSettings.selectedBranch
+          ? existingSettings?.selectedBranch ?? null
           : selectedRepository?.currentBranch ?? null,
       mode: draft.submissionMode === "plan" ? "plan" : "run",
       intent: draft.submissionMode === "plan" ? "plan" : "normal",
@@ -1596,7 +1637,7 @@ function KanbanWorkspace({
       model: draft.model || null,
       reasoningLevel: draft.reasoningLevel || null,
       executionSettingsJson: serializeRunExecutionSettings(executionSettings),
-      repositoryScope: draft.repositoryScope,
+      repositoryScope,
       repositories: selectedRepositories.map((repository) => ({
         repositoryPath: repository.repository.rootPath,
         relativePath: repository.repository.relativePath,
@@ -2091,8 +2132,8 @@ function KanbanWorkspace({
     ? toViewCard(transitionDomainCard)
     : null;
   const hasBoardConstraints =
-    Boolean(preferences.search.trim()) ||
-    Object.values(preferences.filters).some((values) => values.length > 0);
+    Boolean(effectivePreferences.search.trim()) ||
+    Object.values(effectivePreferences.filters).some((values) => values.length > 0);
 
   function clearBoardConstraints() {
     schedulePreferenceSave({
@@ -2113,10 +2154,11 @@ function KanbanWorkspace({
 
   const toolbar = (
     <KanbanToolbar
-      search={preferences.search}
-      filters={preferences.filters}
+      search={effectivePreferences.search}
+      filters={effectivePreferences.filters}
       filterGroups={filterGroups}
-      groupBy={preferences.groupBy}
+      groupBy={effectivePreferences.groupBy}
+      allowRepositoryGrouping={!multiRepositoryWorkspace}
       visibleCardCount={visibleDomainCards.length}
       totalCardCount={domainCards.filter(
         (card) => card.archivedAt === null && card.deletedAt === null,
@@ -2216,6 +2258,7 @@ function KanbanWorkspace({
         <KanbanArchivedView
           cards={archivedCards}
           disabled={busy}
+          showRepositoryMetadata={!multiRepositoryWorkspace}
           onRestoreCard={(card) => {
             const persisted = cardsById.get(card.id);
             if (persisted) void runAction(() => archiveKanbanCard(persisted, false), "Card restored.");
@@ -2226,7 +2269,7 @@ function KanbanWorkspace({
         <div className="kanban-board-groups">
           {groups.map((group) => (
             <section key={group.key} className="kanban-board-group" aria-label={group.label}>
-              {preferences.groupBy !== "none" &&
+              {effectivePreferences.groupBy !== "none" &&
               group.key !== "repository:multiple" ? (
                 <header className="kanban-group-header">
                   <h2>{group.label}</h2>
@@ -2236,6 +2279,7 @@ function KanbanWorkspace({
               <KanbanBoard
                 columns={buildColumns(group.cards)}
                 disabled={busy}
+                showRepositoryMetadata={!multiRepositoryWorkspace}
                 onMoveCard={(request) => void handleMove(request)}
                 onCardAction={(action, card) => void handleCardAction(action, card)}
                 onOpenConversation={(card) => {
@@ -2267,6 +2311,7 @@ function KanbanWorkspace({
         <KanbanBoard
           columns={buildColumns([])}
           disabled={busy}
+          showRepositoryMetadata={!multiRepositoryWorkspace}
           onMoveCard={(request) => void handleMove(request)}
           onCardAction={(action, card) => void handleCardAction(action, card)}
           onOpenConversation={(card) => {
