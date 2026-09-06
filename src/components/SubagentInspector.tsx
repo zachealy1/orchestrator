@@ -21,6 +21,7 @@ import {
 } from "react";
 import { createPortal } from "react-dom";
 import ReactMarkdown from "react-markdown";
+import type { Components } from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { Virtuoso } from "react-virtuoso";
 import type { ApprovalResolutionHandler } from "../lib/codexApprovals";
@@ -45,6 +46,16 @@ import {
   type TaskChatEntry,
 } from "./TaskChatTurn";
 import { statusLabel, SubagentStatusIcon } from "./SubagentStatus";
+import {
+  transcriptMarkdownUrlTransform,
+  TranscriptMarkdownImage,
+} from "./TranscriptMarkdownImage";
+
+const SUBAGENT_MARKDOWN_COMPONENTS: Components = {
+  img: ({ node: _node, ...props }) => (
+    <TranscriptMarkdownImage {...props} />
+  ),
+};
 
 type Props = {
   conversationKey: string;
@@ -676,7 +687,12 @@ const SubagentTranscriptTurnView = memo(function SubagentTranscriptTurnView({
                 }
                 key={item.id}
               >
-                <ReactMarkdown remarkPlugins={[remarkGfm]} skipHtml>
+                <ReactMarkdown
+                  components={SUBAGENT_MARKDOWN_COMPONENTS}
+                  remarkPlugins={[remarkGfm]}
+                  skipHtml
+                  urlTransform={transcriptMarkdownUrlTransform}
+                >
                   {item.text}
                 </ReactMarkdown>
               </div>

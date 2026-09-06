@@ -10,9 +10,10 @@ import {
   type TranscriptTurnModel,
 } from "./TaskChatTurn";
 import { renderWithAppServices } from "../test/renderWithAppServices";
+import { AppServices } from "../runtime/AppServices";
 
-function render(ui: ReactElement) {
-  return renderWithAppServices(ui);
+function render(ui: ReactElement, services = new AppServices()) {
+  return renderWithAppServices(ui, {}, services);
 }
 
 type FlatTaskChatTurnProps = TranscriptTurnModel & TranscriptTurnActions;
@@ -150,6 +151,75 @@ it("renders generated images and generation failures as standalone transcript it
       "data:image/png;base64,cHJldmlldw==",
     );
     expect(screen.getByText("Image generation usage limit reached.")).toBeInTheDocument();
+  });
+
+it("renders local Markdown images through the native preview bridge", async () => {
+    const localPath =
+      "/Users/test/Library/Application Support/com.example/artifacts/design.jpg";
+    const services = new AppServices();
+    services.imageAttachments.set(
+      localPath,
+      Promise.resolve({
+        path: localPath,
+        mimeType: "image/jpeg",
+        width: 1512,
+        height: 827,
+        thumbnailDataUrl: "data:image/png;base64,markdown-preview",
+      }),
+    );
+    const entry: TaskChatEntry = {
+      ...historyEntry(1),
+      runView: {
+        ...historyEntry(1).runView,
+        finalMessage:
+          "![Application design](</Users/test/Library/Application Support/com.example/artifacts/design.jpg>)",
+      },
+    };
+
+    render(
+      <TaskChatTranscript entries={[entry]} onResolveRequest={vi.fn()} />,
+      services,
+    );
+
+    expect(
+      await screen.findByRole("img", { name: "Application design" }),
+    ).toHaveAttribute("src", "data:image/png;base64,markdown-preview");
+  });
+
+it("uses the local Markdown image renderer when reopening a prepared summary", async () => {
+    const localPath = "/Users/test/artifacts/reopened.png";
+    const services = new AppServices();
+    services.imageAttachments.set(
+      localPath,
+      Promise.resolve({
+        path: localPath,
+        mimeType: "image/png",
+        width: 800,
+        height: 600,
+        thumbnailDataUrl: "data:image/png;base64,reopened-preview",
+      }),
+    );
+    const entry: TaskChatEntry = {
+      ...historyEntry(1),
+      runView: {
+        ...historyEntry(1).runView,
+        finalMessage: "![Reopened design](/Users/test/artifacts/reopened.png)",
+      },
+      preparedSummary: {
+        kind: "html",
+        html: '<p><img src="/Users/test/artifacts/reopened.png" alt="Reopened design"></p>',
+        sourceHash: "prepared-image",
+      },
+    };
+
+    render(
+      <TaskChatTranscript entries={[entry]} onResolveRequest={vi.fn()} />,
+      services,
+    );
+
+    expect(
+      await screen.findByRole("img", { name: "Reopened design" }),
+    ).toHaveAttribute("src", "data:image/png;base64,reopened-preview");
   });
 
 it("renders submitted, steered, and assistant web URLs as clickable links", () => {

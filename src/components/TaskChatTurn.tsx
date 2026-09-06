@@ -93,6 +93,10 @@ import type {
   TaskChatEntry,
 } from "../features/conversations/types";
 import { GeneratedImagePreviews } from "./GeneratedImagePreviews";
+import {
+  transcriptMarkdownUrlTransform,
+  TranscriptMarkdownImage,
+} from "./TranscriptMarkdownImage";
 export type { TaskChatEntry } from "../features/conversations/types";
 import {
   buildNativePlanPreview,
@@ -1166,6 +1170,9 @@ function usePreviewableMarkdownComponents(
           </a>
         );
       },
+      img: ({ node: _node, ...props }) => (
+        <TranscriptMarkdownImage {...props} />
+      ),
     }),
     [onOpenTranscriptLink],
   );
@@ -1220,7 +1227,10 @@ const RunSummary = memo(function RunSummary({
     );
   }
 
-  if (preparedSummary?.kind === "html") {
+  if (
+    preparedSummary?.kind === "html" &&
+    !/<img(?:\s|>)/iu.test(preparedSummary.html)
+  ) {
     return (
       <div
         className="run-summary markdown-summary historical-summary-html"
@@ -1276,6 +1286,7 @@ const AssistantMarkdownMessage = memo(function AssistantMarkdownMessage({
       <ReactMarkdown
         components={markdownComponents}
         remarkPlugins={PLAN_MARKDOWN_PLUGINS}
+        urlTransform={transcriptMarkdownUrlTransform}
       >
         {markdown}
       </ReactMarkdown>
@@ -1872,6 +1883,7 @@ const StreamEventRow = memo(function StreamEventRow({
         <ReactMarkdown
           components={markdownComponents}
           remarkPlugins={PLAN_MARKDOWN_PLUGINS}
+          urlTransform={transcriptMarkdownUrlTransform}
         >
           {normalizePreviewableMarkdownLinks(event.text)}
         </ReactMarkdown>
@@ -1916,6 +1928,7 @@ const NativePlanMarkdown = memo(function NativePlanMarkdown({
     <ReactMarkdown
       components={markdownComponents}
       remarkPlugins={PLAN_MARKDOWN_PLUGINS}
+      urlTransform={transcriptMarkdownUrlTransform}
     >
       {text}
     </ReactMarkdown>
