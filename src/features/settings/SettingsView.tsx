@@ -1,4 +1,3 @@
-import { CodexEngineSettings, type EngineSettings } from "../engine/CodexEngineSettings";
 import {
   Accessibility,
   Bell,
@@ -113,7 +112,6 @@ function computerUseDetailStatus(
 }
 
 export type SettingsViewModel = {
-  engine?: EngineSettings;
   dragRegion?: string;
   computerUseEnabled: boolean;
   browserPreferences: BrowserPreferences;
@@ -618,8 +616,6 @@ export const SettingsView = memo(function SettingsView({
         "accounts",
         "codex",
         "codex connection",
-        "engine",
-        "models",
       ) ? (
         <section
           className="surface settings-panel codex-settings-panel"
@@ -635,7 +631,6 @@ export const SettingsView = memo(function SettingsView({
                 : { label: "Disconnected", tone: "neutral" }
             }
           />
-          {model.engine && <CodexEngineSettings {...model.engine} />}
           <div className="setting-list">
             <div className="settings-subsection-heading codex-accounts-heading">
               <div>

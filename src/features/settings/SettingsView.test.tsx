@@ -1253,6 +1253,14 @@ describe("SettingsView", () => {
     ).toBeNull();
   });
 
+  it.each(["engine", "models"])("does not expose removed %s controls through settings search", (query) => {
+    render(<SettingsView model={model()} actions={actions()} />);
+    fireEvent.change(screen.getByRole("searchbox", { name: "Search settings" }), {
+      target: { value: query },
+    });
+    expect(screen.queryByRole("region", { name: "Codex settings" })).not.toBeInTheDocument();
+  });
+
   it("shows bundled CLI availability without requesting app credentials", () => {
     const handlers = actions();
     render(

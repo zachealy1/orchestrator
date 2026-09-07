@@ -42,4 +42,3 @@ export function useEngineController(enabled = isTauri()) {
   }, [enabled, retry]);
   return { status, busy, error, retry };
 }
-export type EngineController = ReturnType<typeof useEngineController>;

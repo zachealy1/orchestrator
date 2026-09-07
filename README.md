@@ -37,15 +37,15 @@ When running inside Tauri, the app creates `app.db` in the platform app data dir
 
 On Apple silicon and Intel Macs, the packaged app includes a compatible standalone Codex engine. Users do not need the Codex desktop app, Node.js, Homebrew, or a separately installed Codex CLI. Add an account and sign in using Orchestrator's existing account controls.
 
-`npm run prepare:native-runtimes` packages the engine and GitHub CLI before Tauri development or release builds. The pinned engine version and official archive checksums live in `src-tauri/resources/codex-engine/release.json`. Packaging downloads only that official release and runs a credential-free compatibility probe. Build each architecture on matching hardware. If package resources are missing, first-use provisioning downloads and verifies the pinned release; use **Retry engine setup** to retry after an offline first launch.
+`npm run prepare:native-runtimes` packages the engine and GitHub CLI before Tauri development or release builds. The pinned engine version and official archive checksums live in `src-tauri/resources/codex-engine/release.json`. Packaging downloads only that official release and runs a credential-free compatibility probe. Build each architecture on matching hardware. If package resources are missing, first-use provisioning downloads and verifies the pinned release; retry the account connection after an offline first launch.
 
 The engine is stored in Orchestrator's app data directory under `codex-engine/versions/`. Explicit `ORCHESTRATOR_CODEX_BIN` overrides retain priority and are never modified. Normal desktop launches use the managed engine, regardless of other installations on PATH. Existing account profiles and the shared `~/.codex` profile retain their locations and authentication behavior.
 
 ### Engine status and models
 
-- Settings shows the selected engine version and whether it is managed or explicitly overridden. Orchestrator does not check for, announce, download, or prepare newer Codex releases. Initial engine provisioning is separate and uses only the pinned release.
+- Engine setup runs in the background; Settings contains no engine-version or model-management rows. Orchestrator does not check for, announce, download, or prepare newer Codex releases. Initial engine provisioning is separate and uses only the pinned release.
 - Each app session keeps one engine version across all accounts and tasks. Existing engine integrity checks and recovery to a previous working engine remain in place. Previously prepared updates and their metadata are retained on disk for compatibility but are not activated on startup.
-- Model discovery uses the signed-in profile's `model/list`, including its reasoning options. Catalogs refresh at startup, sign-in, account selection, every 15 minutes while visible, and after focus or connectivity returns (with a one-minute throttle). **Refresh models** remains available. Failed refreshes retain that account's last successful list for the current session; late responses from a different account never replace the current account's models.
+- Model discovery uses the signed-in profile's `model/list`, including its reasoning options. Catalogs refresh automatically at startup, sign-in, account selection, every 15 minutes while visible, and after focus or connectivity returns (with a one-minute throttle). Failed refreshes retain that account's last successful list for the current session; late responses from a different account never replace the current account's models.
 
 Updating Orchestrator requires installing a new Orchestrator release. The existing Tauri configuration uses ad hoc signing; a publicly distributed Mac release still needs the project's Developer ID signing and notarization setup.
 

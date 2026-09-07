@@ -179,6 +179,22 @@ describe("Application runtime scenarios 5", () => {
       expect(screen.queryByRole("radio", { name: "Light" })).toBeNull();
     });
 
+  it("keeps account controls without engine or model-management rows after model discovery", async () => {
+      prepareSignedInRun();
+      const { user } = await renderApp();
+      await waitFor(() => expect(mocks.listCodexModelsMock).toHaveBeenCalled());
+      await user.click(screen.getByRole("button", { name: "Settings" }));
+
+      const settings = screen.getByRole("region", { name: "Codex settings" });
+      expect(within(settings).getByText("Accounts")).toBeInTheDocument();
+      expect(within(settings).getByRole("button", { name: "Add Codex account" })).toBeEnabled();
+      expect(within(settings).queryByText("Codex engine")).not.toBeInTheDocument();
+      expect(within(settings).queryByText("Available models")).not.toBeInTheDocument();
+      expect(within(settings).queryByRole("button", { name: "Refresh models" })).not.toBeInTheDocument();
+      expect(within(settings).queryByText("Models are up to date.")).not.toBeInTheDocument();
+      expect(within(settings).queryByLabelText("Codex engine and models")).not.toBeInTheDocument();
+    });
+
   it("requests notification permission only from Settings and persists each category", async () => {
       mocks.readAgentNotificationPermissionStatusMock.mockResolvedValue(
         "not-enabled",

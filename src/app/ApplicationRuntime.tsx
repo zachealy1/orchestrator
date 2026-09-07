@@ -3015,7 +3015,8 @@ function App() {
         .join("|"),
     [crossConversationApprovals],
   );
-  const engineController = useEngineController();
+  // Keep managed engine preparation independent of Settings presentation.
+  useEngineController();
   const floatingStatusNotices = useMemo<FloatingStatusNotice[]>(() => {
     const notices: FloatingStatusNotice[] = [];
     if (crossConversationApprovals.length > 0) {
@@ -20583,13 +20584,6 @@ function App() {
   });
   const settingsViewBindings = useSettingsViewBindings({
     model: {
-      engine: {
-        controller: engineController,
-        refreshModels: () => { if (selectedAccountId !== null) void modelCatalog.refresh(selectedAccountId); },
-        modelsRefreshing: modelCatalog.refreshing,
-        modelsNotice: modelCatalog.notice,
-        canRefreshModels: codexConnected && Boolean(codexAccount),
-      },
       dragRegion: selfWindowDragRegion,
       computerUseEnabled,
       browserPreferences,
