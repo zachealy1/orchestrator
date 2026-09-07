@@ -837,6 +837,20 @@ describe("SettingsView", () => {
     );
   });
 
+  it("keeps browser import and runtime in the shared divided settings list", () => {
+    render(<SettingsView model={model()} actions={actions()} />);
+    const browser = screen.getByRole("region", { name: "Browser settings" });
+    const importRow = within(browser).getByText("Import browser profile").closest(".setting-row");
+    const runtimeRow = within(browser).getByText("Browser runtime").closest(".setting-row");
+
+    expect(importRow?.parentElement).toHaveClass("setting-list");
+    expect(runtimeRow?.parentElement).toBe(importRow?.parentElement);
+    expect(importRow?.nextElementSibling).toBe(runtimeRow);
+    expect(runtimeRow?.parentElement?.lastElementChild).toBe(runtimeRow);
+    expect(within(browser).getByRole("button", { name: "Import browser profile" }).closest(".setting-row")).toBe(importRow);
+    expect(within(browser).getByRole("button", { name: "Refresh Browser status" }).closest(".setting-row")).toBe(runtimeRow);
+  });
+
   it("shows a failed Browser check neutrally with an accessible retry", () => {
     const handlers = actions();
     render(<SettingsView model={model({ browserReadiness: {

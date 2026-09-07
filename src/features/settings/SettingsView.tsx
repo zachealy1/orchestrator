@@ -368,24 +368,24 @@ export const SettingsView = memo(function SettingsView({
                 onActivate={actions.importBrowserProfile}
               />
             </div>
-          </div>
-          <div className="setting-row">
-            <div>
-              <strong>Browser runtime</strong>
-              <span
-                className={browserRuntimeUnavailable ? "computer-use-runtime-error" : undefined}
-                role={browserRuntimeUnavailable ? "alert" : undefined}
-              >
-                {browserReadinessChecking ? "Checking this account’s browser runtime." : model.browserReadiness.message}
-              </span>
+            <div className="setting-row">
+              <div>
+                <strong>Browser runtime</strong>
+                <span
+                  className={browserRuntimeUnavailable ? "computer-use-runtime-error" : undefined}
+                  role={browserRuntimeUnavailable ? "alert" : undefined}
+                >
+                  {browserReadinessChecking ? "Checking this account’s browser runtime." : model.browserReadiness.message}
+                </span>
+              </div>
+              <SettingsIconAction
+                icon={RefreshCw}
+                ariaLabel="Refresh Browser status"
+                tooltip="Refresh Browser status"
+                disabled={browserReadinessChecking || !model.browserReadiness.pluginInstalled || !model.browserReadiness.pluginEnabled}
+                onActivate={actions.refreshBrowserStatus}
+              />
             </div>
-            <SettingsIconAction
-              icon={RefreshCw}
-              ariaLabel="Refresh Browser status"
-              tooltip="Refresh Browser status"
-              disabled={browserReadinessChecking || !model.browserReadiness.pluginInstalled || !model.browserReadiness.pluginEnabled}
-              onActivate={actions.refreshBrowserStatus}
-            />
           </div>
         </section>
       ) : null}
