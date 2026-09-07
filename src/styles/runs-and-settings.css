@@ -1040,9 +1040,36 @@ button.settings-connection-row:focus-visible:not(:disabled) {
   -webkit-line-clamp: 2;
 }
 
-.plugin-card:focus-visible {
+.plugin-card:has(.plugin-card-open-button:focus-visible) {
   outline: 2px solid var(--color-primary);
   outline-offset: -2px;
+}
+
+button.plugin-card-open-button {
+  display: block;
+  width: 100%;
+  min-height: 0;
+  overflow: hidden;
+  border: 0;
+  border-radius: 0;
+  padding: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  letter-spacing: inherit;
+  text-align: left;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  outline: none;
+  opacity: 1;
+  transform: none;
+  transition: none;
+}
+
+button.plugin-card-open-button:hover:not(:disabled),
+button.plugin-card-open-button:active:not(:disabled) {
+  background: transparent;
+  transform: none;
 }
 
 .plugin-card-footer {

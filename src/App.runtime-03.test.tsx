@@ -2127,7 +2127,7 @@ describe("Application runtime scenarios 3", () => {
             input: [
               expect.objectContaining({
                 text: expect.stringContaining(
-                  "Before changing files, call `update_plan`",
+                  "If `update_plan` is available in this session",
                 ),
               }),
             ],

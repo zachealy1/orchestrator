@@ -648,27 +648,16 @@ const PluginCard = memo(function PluginCard({
   ) => void;
 }) {
   recordPluginCardRender(plugin.id);
+  const detailsButtonRef = useRef<HTMLButtonElement | null>(null);
   const status = pluginStatus(plugin);
   return (
     <article
       className={`plugin-card${featured ? " featured" : ""}`}
-      role="button"
-      tabIndex={busy ? -1 : 0}
-      aria-disabled={busy}
-      aria-label={`View ${plugin.displayName} details`}
       onClick={(event) => {
-        if (!busy) onOpenPlugin(plugin, event.currentTarget);
-      }}
-      onKeyDown={(event) => {
-        if (
-          busy ||
-          event.target !== event.currentTarget ||
-          (event.key !== "Enter" && event.key !== " ")
-        ) {
-          return;
-        }
-        event.preventDefault();
-        onOpenPlugin(plugin, event.currentTarget);
+        // The card surface is pointer-clickable, but its two accessible
+        // actions are separate native buttons, never nested role=buttons.
+        if ((event.target as Element).closest("button")) return;
+        detailsButtonRef.current?.click();
       }}
     >
       <div className="plugin-card-main">
@@ -687,7 +676,18 @@ const PluginCard = memo(function PluginCard({
               />
             ) : null}
           </span>
-          <h3>{plugin.displayName}</h3>
+          <h3>
+            <button
+              ref={detailsButtonRef}
+              className="plugin-card-open-button"
+              type="button"
+              aria-label={`View ${plugin.displayName} details`}
+              disabled={busy}
+              onClick={(event) => onOpenPlugin(plugin, event.currentTarget)}
+            >
+              {plugin.displayName}
+            </button>
+          </h3>
         </div>
         <p className="plugin-card-description">
           {plugin.description ?? "No plugin description is available."}

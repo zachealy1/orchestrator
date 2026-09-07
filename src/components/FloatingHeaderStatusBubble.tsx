@@ -52,6 +52,10 @@ type NoticeInteraction = {
 
 const EXIT_DURATION_MS = 160;
 
+function noticeRevisionIdentity(id: string, revisionKey: string) {
+  return JSON.stringify([id, revisionKey]);
+}
+
 export const FloatingHeaderStatusBubble = memo(
   function FloatingHeaderStatusBubble({
     notices,
@@ -63,7 +67,9 @@ export const FloatingHeaderStatusBubble = memo(
   }: Props) {
     const timersRef = useRef(new Map<string, NoticeTimer>());
     const interactionsRef = useRef(new Map<string, NoticeInteraction>());
-    const manuallyDismissedRevisionsRef = useRef(new Map<string, string>());
+    // Session tombstones outlive a producer disappearing during navigation.
+    // Keep every retired revision, including expired notices and older revisions.
+    const dismissedRevisionsRef = useRef(new Set<string>());
     const lastVisibleNoticesRef = useRef<FloatingStatusNotice[]>([]);
     const [timerRevision, setTimerRevision] = useState(0);
     const [interactionRevision, setInteractionRevision] = useState(0);
@@ -77,26 +83,18 @@ export const FloatingHeaderStatusBubble = memo(
       const currentIds = new Set(notices.map((notice) => notice.id));
       let changed = false;
 
-      for (const [noticeId, timer] of timersRef.current) {
+      for (const noticeId of interactionsRef.current.keys()) {
         if (currentIds.has(noticeId)) continue;
-        if (timer.timeoutId !== null) window.clearTimeout(timer.timeoutId);
-        timersRef.current.delete(noticeId);
         interactionsRef.current.delete(noticeId);
-        manuallyDismissedRevisionsRef.current.delete(noticeId);
         changed = true;
       }
 
       for (const notice of notices) {
-        const dismissedRevision = manuallyDismissedRevisionsRef.current.get(
-          notice.id,
-        );
         if (
-          dismissedRevision !== undefined &&
-          dismissedRevision !== notice.revisionKey
-        ) {
-          manuallyDismissedRevisionsRef.current.delete(notice.id);
-          changed = true;
-        }
+          dismissedRevisionsRef.current.has(
+            noticeRevisionIdentity(notice.id, notice.revisionKey),
+          )
+        ) continue;
         if (notice.timeoutMs === null) {
           const existing = timersRef.current.get(notice.id);
           if (existing?.timeoutId !== null && existing?.timeoutId !== undefined) {
@@ -146,9 +144,9 @@ export const FloatingHeaderStatusBubble = memo(
       const canRun = active && Boolean(anchorElement) && documentVisible;
       if (canRun) {
         const now = Date.now();
-        for (const notice of notices) {
-          const timer = timersRef.current.get(notice.id);
-          const interaction = interactionsRef.current.get(notice.id);
+        // Missing producers still count down: workspace navigation is not a pause.
+        for (const [noticeId, timer] of timersRef.current) {
+          const interaction = interactionsRef.current.get(noticeId);
           if (
             !timer ||
             timer.dismissed ||
@@ -164,6 +162,10 @@ export const FloatingHeaderStatusBubble = memo(
             timer.startedAtMs = null;
             timer.remainingMs = 0;
             timer.dismissed = true;
+            dismissedRevisionsRef.current.add(
+              noticeRevisionIdentity(noticeId, timer.revisionKey),
+            );
+            timersRef.current.delete(noticeId);
             setTimerRevision((current) => current + 1);
           }, timer.remainingMs);
         }
@@ -221,9 +223,8 @@ export const FloatingHeaderStatusBubble = memo(
 
     const dismissNotice = useCallback(
       (notice: FloatingStatusNotice) => {
-        manuallyDismissedRevisionsRef.current.set(
-          notice.id,
-          notice.revisionKey,
+        dismissedRevisionsRef.current.add(
+          noticeRevisionIdentity(notice.id, notice.revisionKey),
         );
         lastVisibleNoticesRef.current = lastVisibleNoticesRef.current.filter(
           (candidate) => candidate.id !== notice.id,
@@ -236,6 +237,7 @@ export const FloatingHeaderStatusBubble = memo(
           timer.timeoutId = null;
           timer.startedAtMs = null;
           timer.dismissed = true;
+          timersRef.current.delete(notice.id);
         }
         setTimerRevision((current) => current + 1);
         onDismiss?.(notice.id);
@@ -245,8 +247,9 @@ export const FloatingHeaderStatusBubble = memo(
 
     const visibleNotices = notices.filter((notice) => {
       if (
-        manuallyDismissedRevisionsRef.current.get(notice.id) ===
-        notice.revisionKey
+        dismissedRevisionsRef.current.has(
+          noticeRevisionIdentity(notice.id, notice.revisionKey),
+        )
       ) {
         return false;
       }

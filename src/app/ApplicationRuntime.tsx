@@ -502,6 +502,7 @@ import {
   type WebPreviewProbeAttempt,
 } from "../features/runs/runtimeTypes";
 import { useRunController } from "../features/runs/useRunController";
+import { withGoalTurnContext } from "../features/runs/goalContext";
 import {
   validateNativeTaskExecutionEnvironment,
   verifyNativeTaskThreadEnvironment,
@@ -12429,8 +12430,26 @@ function App() {
     runControl: ActiveRunControl,
     snapshot: RunSetupSnapshot,
     threadId: string,
+    collaborationMode: CollaborationMode,
+    payload: RunTurnPayloadStageResult,
   ) {
     if (!snapshot.goalMode) return null;
+    // goal/set starts executing immediately without a turn/start payload.
+    // Deliver continuation answers and supporting context before activation.
+    const goalCollaborationMode = withGoalTurnContext(
+      collaborationMode,
+      snapshot.promptText,
+      payload,
+    );
+    if (goalCollaborationMode !== collaborationMode) {
+      await codexRpcForProfile(
+        snapshot.profileKey,
+        snapshot.accountId,
+        "thread/settings/update",
+        { threadId, collaborationMode: goalCollaborationMode },
+      );
+      ensureRunControlActive(runControl);
+    }
     runControl.acceptsThreadContinuation = true;
     const pendingTurn = beginGoalTurnStart(runControl, threadId);
     try {
@@ -13404,6 +13423,8 @@ function App() {
           runControl,
           snapshot,
           threadId,
+          collaborationMode,
+          { text, additionalContext },
         );
         if (!goalTurnId) {
           throw new Error("Codex did not create the initial Goal turn.");
@@ -14708,7 +14729,9 @@ function App() {
             : null;
         const queuedExecutionSettings = inheritedSettings
           ? createRunExecutionSettings({
-              ...inheritedSettings,
+              // Saved continuation settings supply context, not hidden overrides
+              // for the mode, account, access, or model shown in the composer.
+              ...executionSettings,
               contextFiles: mergeContextFiles(
                 inheritedSettings.contextFiles,
                 executionSettings.contextFiles,
