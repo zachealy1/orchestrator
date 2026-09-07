@@ -1,4 +1,4 @@
-//! Managed engines are immutable. Updates are staged and selected only on a new app launch.
+//! Provision and verify the managed engine without an independent update service.
 use crate::engine_probe::{executable_version, verify_codex_engine};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -9,14 +9,12 @@ use std::{
     path::{Path, PathBuf},
     process::Command,
     sync::{Mutex, OnceLock},
-    time::{SystemTime, UNIX_EPOCH},
 };
 use tauri::{AppHandle, Manager};
 
 static ENGINE: OnceLock<Mutex<EngineManager>> = OnceLock::new();
-// A ready session must not wait on the update/download mutex to start another task.
+// A ready session must not wait on the provisioning mutex to start another task.
 static SESSION_BINARY: OnceLock<PathBuf> = OnceLock::new();
-const RELEASE_API: &str = "https://api.github.com/repos/openai/codex/releases/latest";
 const MAX_ARCHIVE: u64 = 300 * 1024 * 1024;
 const MAX_EXECUTABLE: u64 = 600 * 1024 * 1024;
 
@@ -95,30 +93,24 @@ impl RuntimeRecord {
 struct DiskState {
     active: Option<RuntimeRecord>,
     previous: Option<RuntimeRecord>,
-    pending: Option<RuntimeRecord>,
-    latest: Option<Release>,
-    last_checked_at: Option<u64>,
+    // Retain old update metadata on disk for compatibility, but never act on it.
+    #[serde(flatten)]
+    legacy_metadata: HashMap<String, serde_json::Value>,
 }
 #[derive(Clone, Debug, Serialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct CodexEngineStatus {
     pub source: String,
     pub installed_version: Option<String>,
-    pub latest_version: Option<String>,
-    pub pending_version: Option<String>,
-    pub update_available: bool,
-    pub last_checked_at: Option<u64>,
     pub message: Option<String>,
 }
 struct EngineManager {
     root: PathBuf,
     bundles: Vec<PathBuf>,
     disk: DiskState,
-    // A session never changes its engine, even when another account connects after an update.
+    // Every account in an app session uses the same engine.
     selected: Option<(PathBuf, String)>,
-    startup_processed: bool,
     message: Option<String>,
-    check_error: Option<String>,
     provision_error: Option<String>,
 }
 
@@ -162,9 +154,7 @@ pub(crate) fn initialize(app: &AppHandle) -> Result<(), String> {
             bundles,
             disk,
             selected: None,
-            startup_processed: false,
             message,
-            check_error: None,
             provision_error: None,
         }))
         .map_err(|_| "Engine manager was already initialized".to_string())
@@ -223,31 +213,6 @@ impl EngineManager {
     fn ensure_selected(&mut self) -> Result<PathBuf, String> {
         if let Some((path, _)) = &self.selected {
             return Ok(path.clone());
-        }
-        if !self.startup_processed {
-            self.startup_processed = true;
-            if let Some(pending) = self.disk.pending.take() {
-                match self.select(pending.clone(), true) {
-                    Ok(path) => {
-                        let old_active = self.disk.active.clone();
-                        let old_previous = self.disk.previous.clone();
-                        self.disk.previous = old_active.clone();
-                        self.disk.active = Some(pending.clone());
-                        if let Err(error) = self.save() {
-                            self.selected = None;
-                            self.disk.active = old_active;
-                            self.disk.previous = old_previous;
-                            self.disk.pending = Some(pending);
-                            return Err(error);
-                        }
-                        return Ok(path);
-                    }
-                    Err(error) => {
-                        self.message = Some(format!("The prepared update could not start. Keeping the previous engine. {error}"));
-                        self.save()?;
-                    }
-                }
-            }
         }
         if let Some(active) = self.disk.active.clone() {
             match self.select(active, true) {
@@ -371,52 +336,13 @@ impl EngineManager {
         let _ = fs::remove_dir_all(&staging);
         result
     }
-    fn check(&mut self) -> Result<(), String> {
-        let temporary = self
-            .root
-            .join(format!("release-{}.json", uuid::Uuid::new_v4()));
-        let result = (|| {
-            download_file(RELEASE_API, &temporary, 2 * 1024 * 1024)?;
-            let release =
-                parse_release(&fs::read(&temporary).map_err(|e| e.to_string())?, target()?)?;
-            let checked_at = SystemTime::now()
-                .duration_since(UNIX_EPOCH)
-                .map_err(|e| e.to_string())?
-                .as_secs();
-            let previous_latest = self.disk.latest.replace(release);
-            let previous_checked_at = self.disk.last_checked_at.replace(checked_at);
-            if let Err(error) = self.save() {
-                self.disk.latest = previous_latest;
-                self.disk.last_checked_at = previous_checked_at;
-                return Err(error);
-            }
-            Ok(())
-        })();
-        let _ = fs::remove_file(temporary);
-        result
-    }
     fn status(&self, source: &str, version: Option<String>) -> CodexEngineStatus {
-        let latest = self.disk.latest.as_ref().map(|r| r.version.clone());
-        let pending = self
-            .disk
-            .pending
-            .as_ref()
-            .map(|r| r.release.version.clone());
-        let update_available = latest
-            .as_deref()
-            .is_some_and(|new| version.as_deref().is_none_or(|old| newer(new, old)))
-            && pending != latest;
         CodexEngineStatus {
             source: source.into(),
             installed_version: version,
-            latest_version: latest,
-            pending_version: pending,
-            update_available,
-            last_checked_at: self.disk.last_checked_at,
             message: self
-                .check_error
+                .provision_error
                 .clone()
-                .or_else(|| self.provision_error.clone())
                 .or_else(|| self.message.clone()),
         }
     }
@@ -447,74 +373,6 @@ pub(crate) async fn codex_engine_status() -> Result<CodexEngineStatus, String> {
     })
     .await
 }
-#[tauri::command]
-#[specta::specta]
-pub(crate) async fn codex_engine_check() -> Result<CodexEngineStatus, String> {
-    crate::run_blocking_command("check Codex engine updates", || with_manager(|m| {
-        m.check_error = m.check().err().map(|error| format!("Could not check for updates. Your current engine and saved release information are unchanged. {error}"));
-        let overridden = std::env::var_os("ORCHESTRATOR_CODEX_BIN");
-        let version = if let Some(path) = &overridden { executable_version(Path::new(path)).ok() } else { m.selected.as_ref().map(|s| s.1.clone()) };
-        Ok(m.status(if overridden.is_some() { "override" } else if version.is_some() { "managed" } else { "unavailable" }, version))
-    })).await
-}
-#[tauri::command]
-#[specta::specta]
-pub(crate) async fn codex_engine_prepare_update() -> Result<CodexEngineStatus, String> {
-    crate::run_blocking_command("prepare Codex engine update", || with_manager(|m| {
-        if std::env::var_os("ORCHESTRATOR_CODEX_BIN").is_some() { return Err("An explicit Codex engine override is active. Update that installation separately.".into()); }
-        // Establish the session engine before staging; never switch newly connected accounts mid-session.
-        let binary = m.ensure_selected()?;
-        let _ = SESSION_BINARY.set(binary);
-        let release = m.disk.latest.clone().ok_or("Check for updates first")?;
-        if !m.selected.as_ref().is_some_and(|s| newer(&release.version, &s.1)) {
-            return Err("There is no newer Codex engine to install.".into());
-        }
-        let record = m.download(&release)?;
-        let previous_pending = m.disk.pending.replace(record);
-        if let Err(error) = m.save() { m.disk.pending = previous_pending; return Err(error); }
-        m.message = None;
-        Ok(m.status("managed", m.selected.as_ref().map(|s| s.1.clone())))
-    })).await
-}
-
-fn parse_release(bytes: &[u8], expected_target: &str) -> Result<Release, String> {
-    let value: serde_json::Value = serde_json::from_slice(bytes).map_err(|e| e.to_string())?;
-    if value.get("draft").and_then(|v| v.as_bool()) != Some(false)
-        || value.get("prerelease").and_then(|v| v.as_bool()) != Some(false)
-    {
-        return Err("The published release is not stable.".into());
-    }
-    let version = value
-        .get("tag_name")
-        .and_then(|v| v.as_str())
-        .and_then(|v| v.strip_prefix("rust-v"))
-        .filter(|v| version_parts(v).is_some())
-        .ok_or("Unrecognized Codex release version")?;
-    let name = format!("codex-{expected_target}.tar.gz");
-    let asset = value
-        .get("assets")
-        .and_then(|v| v.as_array())
-        .and_then(|a| {
-            a.iter()
-                .find(|a| a.get("name").and_then(|v| v.as_str()) == Some(&name))
-        })
-        .ok_or("This release has no engine for your Mac")?;
-    let digest = asset
-        .get("digest")
-        .and_then(|v| v.as_str())
-        .and_then(|s| s.strip_prefix("sha256:"))
-        .filter(|s| valid_hash(s))
-        .ok_or("This release has no verified download checksum")?;
-    let release = Release {
-        version: version.into(),
-        target: expected_target.into(),
-        archive_sha256: digest.into(),
-    };
-    if asset.get("browser_download_url").and_then(|v| v.as_str()) != Some(release.url().as_str()) {
-        return Err("Unexpected Codex release download source.".into());
-    }
-    Ok(release)
-}
 fn version_parts(version: &str) -> Option<[u64; 3]> {
     let parts: Vec<_> = version.split('.').collect();
     if parts.len() != 3
@@ -529,12 +387,6 @@ fn version_parts(version: &str) -> Option<[u64; 3]> {
         parts[1].parse().ok()?,
         parts[2].parse().ok()?,
     ])
-}
-fn newer(new: &str, old: &str) -> bool {
-    match (version_parts(new), version_parts(old)) {
-        (Some(a), Some(b)) => a > b,
-        _ => false,
-    }
 }
 fn valid_hash(hash: &str) -> bool {
     hash.len() == 64

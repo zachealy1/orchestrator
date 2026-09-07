@@ -1,40 +1,37 @@
 use super::*;
 use serde_json::json;
 
-fn release_json() -> serde_json::Value {
-    json!({"tag_name":"rust-v0.153.4","draft":false,"prerelease":false,"assets":[{
-        "name":"codex-aarch64-apple-darwin.tar.gz","digest":format!("sha256:{}", "a".repeat(64)),
-        "browser_download_url":"https://github.com/openai/codex/releases/download/rust-v0.153.4/codex-aarch64-apple-darwin.tar.gz"}]})
-}
 #[test]
-fn only_stable_official_checksummed_releases_are_candidates() {
-    let source = release_json();
-    let parse = |value: &serde_json::Value| {
-        parse_release(&serde_json::to_vec(value).unwrap(), "aarch64-apple-darwin")
+fn provisioning_rejects_invalid_release_metadata() {
+    let release = Release {
+        version: "0.153.4".into(),
+        target: target().unwrap().into(),
+        archive_sha256: "a".repeat(64),
     };
-    assert_eq!(parse(&source).unwrap().version, "0.153.4");
-    for (field, value) in [
-        ("draft", json!(true)),
-        ("prerelease", json!(true)),
-        ("tag_name", json!("rust-v0.154.0-beta")),
-        ("tag_name", json!("rust-v../../bad")),
-    ] {
-        let mut bad = source.clone();
-        bad[field] = value;
-        assert!(parse(&bad).is_err());
+    assert!(release.validate().is_ok());
+    assert!(release
+        .url()
+        .starts_with("https://github.com/openai/codex/releases/download/rust-v0.153.4/"));
+    for version in ["0.154.0-beta", "../../bad", "0.154", ""] {
+        assert!(Release {
+            version: version.into(),
+            ..release.clone()
+        }
+        .validate()
+        .is_err());
     }
-    for field in ["digest", "browser_download_url", "name"] {
-        let mut bad = source.clone();
-        bad["assets"][0][field] = json!("untrusted");
-        assert!(parse(&bad).is_err());
+    assert!(Release {
+        target: "untrusted".into(),
+        ..release.clone()
     }
-}
-#[test]
-fn update_order_is_numeric_and_never_downgrades() {
-    assert!(newer("0.154.0", "0.99.9"));
-    assert!(!newer("0.153.4", "0.153.4"));
-    assert!(!newer("0.153.4", "0.154.0"));
-    assert!(!newer("0.154.0", "0.154.0-alpha"));
+    .validate()
+    .is_err());
+    assert!(Release {
+        archive_sha256: "untrusted".into(),
+        ..release
+    }
+    .validate()
+    .is_err());
 }
 fn temporary() -> PathBuf {
     let path =
@@ -80,7 +77,7 @@ fn extraction_rejects_extra_entries_and_symlinks() {
     }
 }
 #[test]
-fn failed_integrity_check_preserves_active_and_pending_records() {
+fn failed_integrity_check_preserves_active_record() {
     let root = temporary();
     let release = Release {
         version: "0.153.4".into(),
@@ -99,9 +96,7 @@ fn failed_integrity_check_preserves_active_and_pending_records() {
             ..DiskState::default()
         },
         selected: None,
-        startup_processed: false,
         message: None,
-        check_error: None,
         provision_error: None,
     };
     manager.save().unwrap();
@@ -115,19 +110,17 @@ fn failed_integrity_check_preserves_active_and_pending_records() {
     fs::remove_dir_all(root).unwrap();
 }
 #[test]
-fn staged_engine_does_not_change_current_session() {
+fn current_session_keeps_its_selected_engine() {
     let root = temporary();
     let mut manager = EngineManager {
         root: root.clone(),
         bundles: vec![],
         disk: DiskState::default(),
         selected: Some((root.join("old-codex"), "0.153.4".into())),
-        startup_processed: true,
         message: None,
-        check_error: None,
         provision_error: None,
     };
-    manager.disk.pending = Some(RuntimeRecord {
+    manager.disk.active = Some(RuntimeRecord {
         release: Release {
             version: "0.154.0".into(),
             target: target().unwrap().into(),
@@ -139,9 +132,9 @@ fn staged_engine_does_not_change_current_session() {
     assert_eq!(
         manager
             .status("managed", Some("0.153.4".into()))
-            .pending_version
+            .installed_version
             .as_deref(),
-        Some("0.154.0")
+        Some("0.153.4")
     );
     fs::remove_dir_all(root).unwrap();
 }
@@ -188,34 +181,50 @@ fn test_manager() -> EngineManager {
         bundles: vec![],
         disk: DiskState::default(),
         selected: None,
-        startup_processed: false,
         message: None,
-        check_error: None,
         provision_error: None,
     }
 }
 #[test]
-fn compatible_pending_update_activates_on_next_session_and_retains_previous() {
+fn legacy_pending_updates_are_preserved_but_never_activated() {
     let mut manager = test_manager();
     let old = fake_runtime(&manager, "0.153.4", true);
     let new = fake_runtime(&manager, "0.154.0", true);
-    manager.disk.active = Some(old.clone());
-    manager.disk.pending = Some(new.clone());
+    let legacy = json!({
+        "active": old,
+        "previous": null,
+        "pending": new,
+        "latest": new.release,
+        "lastCheckedAt": 1234,
+    });
+    manager.disk = serde_json::from_value(legacy.clone()).unwrap();
     manager.save().unwrap();
     assert_eq!(
         manager.ensure_selected().unwrap(),
-        manager.binary(&new).unwrap()
+        manager.binary(&old).unwrap()
     );
-    assert!(manager.disk.pending.is_none());
+    assert_eq!(manager.selected.as_ref().unwrap().1, "0.153.4");
+    manager.save().unwrap();
+    let saved: serde_json::Value =
+        serde_json::from_slice(&fs::read(manager.root.join("state.json")).unwrap()).unwrap();
+    assert_eq!(saved, legacy);
+    assert!(manager.binary(&new).unwrap().exists());
+    // The retained metadata remains inert after another application restart.
+    manager.selected = None;
+    manager.disk = serde_json::from_value(saved).unwrap();
     assert_eq!(
-        manager.disk.previous.as_ref().unwrap().release.version,
-        "0.153.4"
+        manager.ensure_selected().unwrap(),
+        manager.binary(&old).unwrap()
     );
-    assert!(manager.binary(&old).unwrap().exists());
+    let status = serde_json::to_value(manager.status("managed", Some("0.153.4".into()))).unwrap();
+    assert!(status.get("pendingVersion").is_none());
+    assert!(status.get("latestVersion").is_none());
+    assert!(status.get("updateAvailable").is_none());
+    assert!(status.get("lastCheckedAt").is_none());
     fs::remove_dir_all(manager.root).unwrap();
 }
 #[test]
-fn incompatible_or_corrupt_pending_update_rolls_back_without_losing_active_engine() {
+fn incompatible_or_corrupt_active_engine_recovers_previous_engine() {
     for corrupt in [false, true] {
         let mut manager = test_manager();
         let old = fake_runtime(&manager, "0.153.4", true);
@@ -223,44 +232,23 @@ fn incompatible_or_corrupt_pending_update_rolls_back_without_losing_active_engin
         if corrupt {
             fs::write(manager.binary(&new).unwrap(), "bad download").unwrap();
         }
-        manager.disk.active = Some(old.clone());
-        manager.disk.pending = Some(new);
+        manager.disk.previous = Some(old.clone());
+        manager.disk.active = Some(new);
         manager.save().unwrap();
         assert_eq!(
             manager.ensure_selected().unwrap(),
             manager.binary(&old).unwrap()
         );
-        assert!(manager.disk.pending.is_none());
         assert!(manager
             .message
             .as_ref()
             .unwrap()
-            .contains("Keeping the previous engine"));
+            .contains("Recovering a working engine"));
         let saved: DiskState =
             serde_json::from_slice(&fs::read(manager.root.join("state.json")).unwrap()).unwrap();
         assert_eq!(saved.active.unwrap().release.version, "0.153.4");
         fs::remove_dir_all(manager.root).unwrap();
     }
-}
-#[test]
-fn failed_activation_write_keeps_old_pointer_and_does_not_select_new_engine() {
-    let mut manager = test_manager();
-    let old = fake_runtime(&manager, "0.153.4", true);
-    let new = fake_runtime(&manager, "0.154.0", true);
-    manager.disk.active = Some(old);
-    manager.disk.pending = Some(new);
-    fs::create_dir(manager.root.join("state.json")).unwrap();
-    assert!(manager.ensure_selected().is_err());
-    assert!(manager.selected.is_none());
-    assert_eq!(
-        manager.disk.active.as_ref().unwrap().release.version,
-        "0.153.4"
-    );
-    assert_eq!(
-        manager.disk.pending.as_ref().unwrap().release.version,
-        "0.154.0"
-    );
-    fs::remove_dir_all(manager.root).unwrap();
 }
 #[test]
 fn current_engine_starts_without_network_or_bundled_or_external_installation() {
@@ -292,7 +280,7 @@ fn first_launch_imports_packaged_engine_without_path_lookup_or_network() {
         manager.disk.active.as_ref().unwrap().release.version,
         pinned.version
     );
-    assert!(manager.disk.latest.is_none());
+    assert!(manager.disk.legacy_metadata.is_empty());
     fs::remove_dir_all(manager.root).unwrap();
 }
 
@@ -316,9 +304,7 @@ fn official_packaged_engine_imports_and_restarts_without_an_external_installatio
         bundles: vec![],
         disk: serde_json::from_slice(&fs::read(manager.root.join("state.json")).unwrap()).unwrap(),
         selected: None,
-        startup_processed: false,
         message: None,
-        check_error: None,
         provision_error: None,
     };
     assert_eq!(restarted.ensure_selected().unwrap(), selected);
@@ -336,11 +322,9 @@ fn failed_version_command_is_rejected_even_if_it_prints_a_valid_version() {
 }
 
 #[test]
-#[ignore = "Downloads the pinned official release and queries GitHub"]
-fn official_release_can_be_checked_downloaded_and_provisioned() {
+#[ignore = "Downloads the pinned official release"]
+fn pinned_release_can_be_downloaded_and_provisioned() {
     let mut manager = test_manager();
-    manager.check().unwrap();
-    assert!(manager.disk.last_checked_at.is_some());
     let selected = manager.ensure_selected().unwrap();
     assert!(selected.starts_with(manager.root.join("versions")));
     assert_eq!(

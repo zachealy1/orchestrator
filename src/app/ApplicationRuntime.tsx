@@ -3018,13 +3018,6 @@ function App() {
   const engineController = useEngineController();
   const floatingStatusNotices = useMemo<FloatingStatusNotice[]>(() => {
     const notices: FloatingStatusNotice[] = [];
-    if (engineController.announcement) {
-      notices.push({
-        id: "codex-engine-update", revisionKey: engineController.announcement,
-        tone: "success", title: "Codex update available", detail: engineController.announcement,
-        actionLabel: "Open Settings", timeoutMs: null,
-      });
-    }
     if (crossConversationApprovals.length > 0) {
       const count = crossConversationApprovals.length;
       notices.push({
@@ -3114,7 +3107,6 @@ function App() {
     return notices;
   }, [
     applicationNotifications.notices,
-    engineController.announcement,
     approvalSafetyWarning,
     crossConversationApprovalRevision,
     crossConversationApprovals.length,
@@ -3125,9 +3117,6 @@ function App() {
     transcriptLinkError,
   ]);
   const activateFloatingStatusNotice = useStableEvent((noticeId: string) => {
-    if (noticeId === "codex-engine-update") {
-      setActiveView("settings"); engineController.dismissAnnouncement(); return;
-    }
     if (noticeId === "cross-conversation-approvals") {
       const oldest = [...crossConversationApprovals].sort((left, right) =>
         left.request.receivedAt.localeCompare(right.request.receivedAt),
@@ -3149,7 +3138,6 @@ function App() {
     }
   });
   const dismissFloatingStatusNotice = useStableEvent((noticeId: string) => {
-    if (noticeId === "codex-engine-update") { engineController.dismissAnnouncement(); return; }
     if (noticeId === "plugins-error") {
       pluginsController.dismissError();
       return;

@@ -619,7 +619,6 @@ export const SettingsView = memo(function SettingsView({
         "codex",
         "codex connection",
         "engine",
-        "updates",
         "models",
       ) ? (
         <section

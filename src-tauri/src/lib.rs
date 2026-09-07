@@ -64,8 +64,6 @@ fn command_builder() -> tauri_specta::Builder<tauri::Wry> {
         .error_handling(tauri_specta::ErrorHandlingMode::Throw)
         .commands(tauri_specta::collect_commands![
             codex_engine::codex_engine_status,
-            codex_engine::codex_engine_check,
-            codex_engine::codex_engine_prepare_update,
             codex_connect,
             codex_default_profile_connect,
             codex_rpc,

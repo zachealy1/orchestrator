@@ -5,8 +5,6 @@ import { invoke as __TAURI_INVOKE } from "@tauri-apps/api/core";
 /** Commands */
 export const commands = {
 	codexEngineStatus: () => __TAURI_INVOKE<CodexEngineStatus>("codex_engine_status"),
-	codexEngineCheck: () => __TAURI_INVOKE<CodexEngineStatus>("codex_engine_check"),
-	codexEnginePrepareUpdate: () => __TAURI_INVOKE<CodexEngineStatus>("codex_engine_prepare_update"),
 	codexConnect: (accountId: number) => __TAURI_INVOKE<CodexConnectResult>("codex_connect", { accountId }),
 	codexDefaultProfileConnect: () => __TAURI_INVOKE<CodexConnectResult>("codex_default_profile_connect"),
 	codexRpc: (accountId: number, method: string, params: unknown) => __TAURI_INVOKE<unknown>("codex_rpc", { accountId, method, params }),
@@ -248,10 +246,6 @@ export type CodexConnectResult = {
 export type CodexEngineStatus = {
 	source: string,
 	installedVersion: string | null,
-	latestVersion: string | null,
-	pendingVersion: string | null,
-	updateAvailable: boolean,
-	lastCheckedAt: number | null,
 	message: string | null,
 };
 

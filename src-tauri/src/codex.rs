@@ -1394,7 +1394,7 @@ pub(crate) async fn connect_codex_profile(
     codex_home: PathBuf,
     isolated_file_store: bool,
 ) -> Result<CodexConnectResult, String> {
-    // Provisioning or an update check must never block process cancellation or the async executor.
+    // Engine provisioning must never block process cancellation or the async executor.
     let codex_binary = run_blocking_command("prepare Codex engine", resolve_codex_binary).await?;
     let connection_generation = state
         .next_connection_generation
