@@ -42,6 +42,7 @@ export function useSettingsViewBindings(input: SettingsViewBindings) {
   const refreshComputerUseStatus = useStableEvent(
     currentActions.refreshComputerUseStatus,
   );
+  const refreshBrowserStatus = useStableEvent(currentActions.refreshBrowserStatus);
   const openAccessibilitySettings = useStableEvent(
     currentActions.openAccessibilitySettings,
   );
@@ -110,6 +111,7 @@ export function useSettingsViewBindings(input: SettingsViewBindings) {
       importBrowserProfile,
       openPlugins,
       refreshComputerUseStatus,
+      refreshBrowserStatus,
       openAccessibilitySettings,
       openScreenRecordingSettings,
       revokeAlwaysAllowedApplication,
@@ -145,6 +147,7 @@ export function useSettingsViewBindings(input: SettingsViewBindings) {
       openPlugins,
       openScreenRecordingSettings,
       refreshComputerUseStatus,
+      refreshBrowserStatus,
       removeAccount,
       renameAccount,
       resetBrowserDownloadLocation,

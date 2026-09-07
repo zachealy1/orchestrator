@@ -145,6 +145,7 @@ export type SettingsViewActions = {
   importBrowserProfile: () => void;
   openPlugins: () => void;
   refreshComputerUseStatus: () => void;
+  refreshBrowserStatus: () => void;
   openAccessibilitySettings: () => void;
   openScreenRecordingSettings: () => void;
   revokeAlwaysAllowedApplication: (applicationId: string) => void;
@@ -198,6 +199,8 @@ export const SettingsView = memo(function SettingsView({
   );
   const browserReadinessChecking =
     model.pluginsLoading || model.browserReadiness.checking;
+  const browserRuntimeUnavailable = !browserReadinessChecking &&
+    !model.browserReadiness.available && !model.browserReadiness.checkFailed;
   const externalBrowserPlugins = ["chrome", "edge", "brave", "opera", "vivaldi"]
     .map((name) => findPlugin(model.pluginCatalog, name))
     .filter((plugin) => plugin !== null);
@@ -263,7 +266,9 @@ export const SettingsView = memo(function SettingsView({
                 ? { label: "Checking", tone: "pending" }
                 : model.browserReadiness.available
                   ? { label: "Available", tone: "positive" }
-                  : { label: "Unavailable", tone: "negative" }
+                  : model.browserReadiness.checkFailed
+                    ? { label: "Not checked", tone: "neutral" }
+                    : { label: "Unavailable", tone: "negative" }
             }
           />
           <div className="setting-list">
@@ -277,7 +282,7 @@ export const SettingsView = memo(function SettingsView({
                 </div>
                 <SettingsStatusBadge label="Checking" tone="pending" />
               </div>
-            ) : !model.browserReadiness.available ? (
+            ) : browserRuntimeUnavailable ? (
               <SettingsNavigationRow
                 label="In-app browser"
                 description="Uses a persistent profile that is isolated from your regular browser."
@@ -292,7 +297,10 @@ export const SettingsView = memo(function SettingsView({
                     Uses a persistent profile that is isolated from your regular browser.
                   </span>
                 </div>
-                <SettingsStatusBadge label="Ready" tone="positive" />
+                <SettingsStatusBadge
+                  label={model.browserReadiness.checkFailed ? "Not checked" : "Ready"}
+                  tone={model.browserReadiness.checkFailed ? "neutral" : "positive"}
+                />
               </div>
             )}
             <div className="setting-row">
@@ -361,11 +369,24 @@ export const SettingsView = memo(function SettingsView({
               />
             </div>
           </div>
-          {!browserReadinessChecking && !model.browserReadiness.available ? (
-            <p className="computer-use-runtime-error" role="alert">
-              {model.browserReadiness.message}
-            </p>
-          ) : null}
+          <div className="setting-row">
+            <div>
+              <strong>Browser runtime</strong>
+              <span
+                className={browserRuntimeUnavailable ? "computer-use-runtime-error" : undefined}
+                role={browserRuntimeUnavailable ? "alert" : undefined}
+              >
+                {browserReadinessChecking ? "Checking this account’s browser runtime." : model.browserReadiness.message}
+              </span>
+            </div>
+            <SettingsIconAction
+              icon={RefreshCw}
+              ariaLabel="Refresh Browser status"
+              tooltip="Refresh Browser status"
+              disabled={browserReadinessChecking || !model.browserReadiness.pluginInstalled || !model.browserReadiness.pluginEnabled}
+              onActivate={actions.refreshBrowserStatus}
+            />
+          </div>
         </section>
       ) : null}
 
@@ -947,14 +968,18 @@ function SettingsOverview({
                 ? "Checking"
                 : model.browserReadiness.available
                   ? "Ready"
-                  : "Not available"
+                  : model.browserReadiness.checkFailed
+                    ? "Not checked"
+                    : "Not available"
             }
             tone={
               browserReadinessChecking
                 ? "pending"
                 : model.browserReadiness.available
                   ? "positive"
-                  : "negative"
+                  : model.browserReadiness.checkFailed
+                    ? "neutral"
+                    : "negative"
             }
             targetId="settings-browser"
           />

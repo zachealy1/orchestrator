@@ -26,6 +26,7 @@ import type { PromptQueueContextInspection } from "./features/queue/types";
 import type { LocalWebPreviewProbeResult } from "./lib/webPreview";
 import type { ThreadGoalSetResponse } from "./lib/goalProgress";
 import type { SubagentTranscript } from "./lib/subagents";
+import { loadBrowserRuntimeStatus, type BrowserMcpStatusPage } from "./features/browser/runtimeStatus";
 
 function commandResult<T>(result: Promise<unknown>): Promise<T> {
   return result as Promise<T>;
@@ -47,6 +48,15 @@ export function openComputerUseScreenRecordingSettings() {
 
 export function readDesktopRuntimeStatus() {
   return commandResult<DesktopRuntimeStatus>(commands.desktopRuntimeStatus());
+}
+
+export function readBrowserRuntimeStatus(profileKey: CodexProfileKey, accountId: number) {
+  return loadBrowserRuntimeStatus((cursor) => {
+    const params = { cursor, detail: "toolsAndAuthOnly" };
+    return profileKey === "default"
+      ? codexDefaultProfileRpc<BrowserMcpStatusPage>("mcpServerStatus/list", params)
+      : codexRpc<BrowserMcpStatusPage>(accountId, "mcpServerStatus/list", params);
+  });
 }
 
 export function probeLocalWebPreview(url: string) {

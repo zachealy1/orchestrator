@@ -78,6 +78,7 @@ import {
   readCodexFile,
   readCodexAccount,
   readCodexRateLimits,
+  readBrowserRuntimeStatus,
   readDesktopRuntimeStatus,
   readProjectedSubagentThread,
   resolveCodexServerRequest,
@@ -1168,7 +1169,19 @@ function App() {
     browserReadiness,
     desktopRuntimeStatus,
     refreshDesktopRuntimeStatus,
-  } = useComputerUseController({ pluginCatalog: pluginsController.catalog });
+    refreshBrowserRuntimeStatus,
+  } = useComputerUseController({
+    pluginCatalog: pluginsController.catalog,
+    browserProfileKey: profileKeyForAccountId(selectedAccountId ?? 0),
+    loadBrowserRuntimeStatus: async () => {
+      const accountId = selectedAccountId ?? 0;
+      const profileKey = profileKeyForAccountId(accountId);
+      await ensureCodexProfileConnected(profileKey, accountId, {
+        silent: true, probeCollaborationModes: false,
+      });
+      return readBrowserRuntimeStatus(profileKey, accountId);
+    },
+  });
   const macOsWindowDragRegionsEnabled = useMacOsWindowDragRegionsEnabled();
   const selfWindowDragRegion = windowDragRegionValue(
     macOsWindowDragRegionsEnabled,
@@ -20628,6 +20641,7 @@ function App() {
           pluginsController.refresh(true),
         ]);
       },
+      refreshBrowserStatus: () => { void refreshBrowserRuntimeStatus(); },
       openAccessibilitySettings: () => {
         void openComputerUseAccessibilitySettings().catch((error) =>
           setStatusMessage(errorMessage(error)),
