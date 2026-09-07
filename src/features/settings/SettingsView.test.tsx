@@ -410,7 +410,7 @@ describe("SettingsView", () => {
           desktopRuntimeStatus: {
             available: false,
             message:
-              "Allow Screen Recording and Accessibility for Computer Use in macOS settings.",
+              "Allow Accessibility and Screen Recording for Orchestrator in System Settings. If already enabled, restart the app.",
             version: "1.0.1000816",
             serviceCompatible: true,
             accessibilityTrusted: false,
@@ -443,7 +443,8 @@ describe("SettingsView", () => {
       name: "Computer Use unavailable",
     });
     expect(trigger).toHaveAttribute("aria-expanded", "true");
-    expect(dialog).toHaveTextContent("Allow Screen Recording and Accessibility for Computer Use in macOS settings.");
+    expect(dialog).toHaveTextContent("Allow Accessibility and Screen Recording for Orchestrator in System Settings. If already enabled, restart the app.");
+    expect(dialog).not.toHaveTextContent("Running executable:");
     expect(within(dialog).getAllByText("Required")).toHaveLength(2);
     expect(
       within(dialog).getByRole("button", { name: "Check again" }),

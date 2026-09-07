@@ -88,11 +88,8 @@ fn permission_diagnostic(
     if missing.is_empty() {
         return None;
     }
-    let executable = env::current_exe()
-        .map(|path| path.display().to_string())
-        .unwrap_or_else(|_| "this running Orchestrator application".to_string());
     Some(format!(
-        "macOS reports {} access is not granted to this running copy of Orchestrator. If the toggles are already enabled, quit and reopen this copy. If it is still denied, check that System Settings authorizes this app, not another installed or development copy. Running executable: {executable}",
+        "Allow {} for Orchestrator in System Settings. If already enabled, restart the app.",
         missing.join(" and ")
     ))
 }
@@ -349,10 +346,26 @@ mod tests {
                 assert_eq!(status.message, None);
             } else {
                 let message = status.message.expect("specific permission diagnostic");
-                assert!(message.contains("this running copy of Orchestrator"));
+                assert!(message.contains("for Orchestrator in System Settings"));
                 assert_eq!(message.contains("Accessibility"), !accessibility);
                 assert_eq!(message.contains("Screen Recording"), !screen_recording);
-                assert!(message.contains("Running executable:"));
+                assert!(message.contains("If already enabled, restart the app."));
+                assert!(message.len() <= 120, "permission warning must stay compact");
+                assert!(!message.contains("Running executable:"));
+                assert!(!message.contains('/'));
+            }
+        }
+    }
+
+    #[test]
+    fn permission_warning_is_concise_and_does_not_treat_unknown_access_as_denied() {
+        assert_eq!(
+            permission_diagnostic(Some(false), Some(false)).as_deref(),
+            Some("Allow Accessibility and Screen Recording for Orchestrator in System Settings. If already enabled, restart the app.")
+        );
+        for accessibility in [None, Some(true)] {
+            for screen_recording in [None, Some(true)] {
+                assert_eq!(permission_diagnostic(accessibility, screen_recording), None);
             }
         }
     }
