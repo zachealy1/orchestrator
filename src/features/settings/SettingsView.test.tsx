@@ -25,6 +25,7 @@ function actions(
     importBrowserProfile: vi.fn(),
     openPlugins: vi.fn(),
     refreshComputerUseStatus: vi.fn(),
+    refreshBrowserStatus: vi.fn(),
     openAccessibilitySettings: vi.fn(),
     openScreenRecordingSettings: vi.fn(),
     revokeAlwaysAllowedApplication: vi.fn(),
@@ -409,7 +410,7 @@ describe("SettingsView", () => {
           desktopRuntimeStatus: {
             available: false,
             message:
-              "Allow Screen Recording and Accessibility for Computer Use in macOS settings.",
+              "Allow Accessibility and Screen Recording for Orchestrator in System Settings. If already enabled, restart the app.",
             version: "1.0.1000816",
             serviceCompatible: true,
             accessibilityTrusted: false,
@@ -442,7 +443,8 @@ describe("SettingsView", () => {
       name: "Computer Use unavailable",
     });
     expect(trigger).toHaveAttribute("aria-expanded", "true");
-    expect(dialog).toHaveTextContent("Allow Screen Recording and Accessibility for Computer Use in macOS settings.");
+    expect(dialog).toHaveTextContent("Allow Accessibility and Screen Recording for Orchestrator in System Settings. If already enabled, restart the app.");
+    expect(dialog).not.toHaveTextContent("Running executable:");
     expect(within(dialog).getAllByText("Required")).toHaveLength(2);
     expect(
       within(dialog).getByRole("button", { name: "Check again" }),
@@ -782,7 +784,7 @@ describe("SettingsView", () => {
     ).toBeInTheDocument();
   });
 
-  it("keeps the Browser skill probe neutral until readiness resolves", () => {
+  it("keeps the Browser runtime probe neutral until readiness resolves", () => {
     const checkingMessage =
       "Checking whether this Codex host supports the in-app browser.";
     const { rerender } = render(
@@ -834,6 +836,36 @@ describe("SettingsView", () => {
     expect(within(browser).getByRole("alert")).toHaveTextContent(
       "The browser runtime is unavailable.",
     );
+  });
+
+  it("keeps browser import and runtime in the shared divided settings list", () => {
+    render(<SettingsView model={model()} actions={actions()} />);
+    const browser = screen.getByRole("region", { name: "Browser settings" });
+    const importRow = within(browser).getByText("Import browser profile").closest(".setting-row");
+    const runtimeRow = within(browser).getByText("Browser runtime").closest(".setting-row");
+
+    expect(importRow?.parentElement).toHaveClass("setting-list");
+    expect(runtimeRow?.parentElement).toBe(importRow?.parentElement);
+    expect(importRow?.nextElementSibling).toBe(runtimeRow);
+    expect(runtimeRow?.parentElement?.lastElementChild).toBe(runtimeRow);
+    expect(within(browser).getByRole("button", { name: "Import browser profile" }).closest(".setting-row")).toBe(importRow);
+    expect(within(browser).getByRole("button", { name: "Refresh Browser status" }).closest(".setting-row")).toBe(runtimeRow);
+  });
+
+  it("shows a failed Browser check neutrally with an accessible retry", () => {
+    const handlers = actions();
+    render(<SettingsView model={model({ browserReadiness: {
+      available: false, checking: false, checkFailed: true,
+      message: "Could not check this account’s browser runtime.",
+      pluginId: "browser@openai-bundled", pluginInstalled: true, pluginEnabled: true,
+      isolatedProfile: true, profileImportAvailable: false,
+    } })} actions={handlers} />);
+    const browser = screen.getByRole("region", { name: "Browser settings" });
+    expect(within(browser).queryByRole("alert")).toBeNull();
+    expect(within(browser).getAllByRole("status", { name: "Not checked" })).toHaveLength(2);
+    expect(within(browser).queryByRole("button", { name: "Open Plugins for the in-app browser" })).toBeNull();
+    fireEvent.click(within(browser).getByRole("button", { name: "Refresh Browser status" }));
+    expect(handlers.refreshBrowserStatus).toHaveBeenCalledOnce();
   });
 
   it("uses one shared status badge across every settings detail header", () => {

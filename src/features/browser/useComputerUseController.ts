@@ -6,7 +6,6 @@ import {
   type SetStateAction,
 } from "react";
 import {
-  listDefaultCodexSkills,
   readDesktopRuntimeStatus,
 } from "../../codexClient";
 import type { CodexPluginCatalog } from "../plugins/types";
@@ -21,6 +20,8 @@ import {
   readBrowserPreferences,
 } from "./preferences";
 import type { BrowserPreferences, BrowserReadiness } from "./types";
+import type { BrowserRuntimeStatus } from "./runtimeStatus";
+import { useBrowserRuntimeStatus } from "./useBrowserRuntimeStatus";
 
 export type ComputerUseController = {
   computerUseEnabled: boolean;
@@ -31,10 +32,13 @@ export type ComputerUseController = {
   browserReadiness: BrowserReadiness;
   desktopRuntimeStatus: DesktopRuntimeStatus | null;
   refreshDesktopRuntimeStatus: () => Promise<void>;
+  refreshBrowserRuntimeStatus: () => Promise<void>;
 };
 
 export function useComputerUseController(input: {
   pluginCatalog: CodexPluginCatalog;
+  browserProfileKey: string;
+  loadBrowserRuntimeStatus: () => Promise<BrowserRuntimeStatus>;
 }): ComputerUseController {
   const [preferences, setPreferences] = useState(readInteractionPreferences);
   const [browserPreferences, setBrowserPreferences] = useState(
@@ -42,10 +46,6 @@ export function useComputerUseController(input: {
   );
   const [desktopRuntimeStatus, setDesktopRuntimeStatus] =
     useState<DesktopRuntimeStatus | null>(null);
-  const [browserSkillProbe, setBrowserSkillProbe] = useState<{
-    key: string;
-    available: boolean;
-  } | null>(null);
 
   useEffect(() => persistInteractionPreferences(preferences), [preferences]);
   useEffect(
@@ -95,57 +95,19 @@ export function useComputerUseController(input: {
     "browser",
   );
   const browserPluginReady = pluginIsReady(browserPlugin);
-  const browserSkillProbeKey = browserPluginReady
-    ? `${browserPlugin?.id ?? "browser"}:${input.pluginCatalog.refreshedAt}`
+  const browserProbeKey = browserPluginReady
+    ? `${input.browserProfileKey}:${browserPlugin?.id ?? "browser"}:${input.pluginCatalog.refreshedAt}`
     : null;
-  const browserSkillAvailable =
-    browserSkillProbeKey !== null &&
-    browserSkillProbe?.key === browserSkillProbeKey
-      ? browserSkillProbe.available
-      : null;
-
-  useEffect(() => {
-    if (!browserPluginReady || browserSkillProbeKey === null) {
-      setBrowserSkillProbe(null);
-      return;
-    }
-
-    let cancelled = false;
-    void listDefaultCodexSkills()
-      .then((skills) => {
-        if (cancelled) return;
-        setBrowserSkillProbe({
-          key: browserSkillProbeKey,
-          available: skills.some((skill) =>
-            `${skill.id} ${skill.name}`
-              .toLocaleLowerCase()
-              .includes("control-in-app-browser"),
-          ),
-        });
-      })
-      .catch(() => {
-        if (!cancelled) {
-          setBrowserSkillProbe({
-            key: browserSkillProbeKey,
-            available: false,
-          });
-        }
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [browserPluginReady, browserSkillProbeKey]);
+  const { value: browserRuntime, refresh: refreshBrowserRuntimeStatus } =
+    useBrowserRuntimeStatus(browserProbeKey, input.loadBrowserRuntimeStatus);
 
   const browserReadiness: BrowserReadiness = {
-    available: browserPluginReady && browserSkillAvailable === true,
-    checking: browserPluginReady && browserSkillAvailable === null,
+    available: browserPluginReady && browserRuntime?.status === "available",
+    checking: browserPluginReady && browserRuntime === null,
+    checkFailed: browserPluginReady && browserRuntime?.status === "unknown",
     message: browserPlugin
       ? browserPluginReady
-        ? browserSkillAvailable === true
-          ? "Browser plugin ready with an isolated in-app profile."
-          : browserSkillAvailable === null
-            ? "Checking whether this Codex host supports the in-app browser."
-            : "The Browser plugin is installed, but this Codex host does not report in-app browser support."
+        ? browserRuntime?.message ?? "Checking this account’s browser runtime."
         : browserPlugin.installed
           ? "Enable the Browser plugin to use the in-app browser."
           : "Install the Browser plugin to use the in-app browser."
@@ -175,17 +137,20 @@ export function useComputerUseController(input: {
       browserReadiness,
       desktopRuntimeStatus,
       refreshDesktopRuntimeStatus,
+      refreshBrowserRuntimeStatus,
     }),
     [
       browserPreferences,
       browserReadiness.available,
       browserReadiness.checking,
+      browserReadiness.checkFailed,
       browserReadiness.message,
       browserReadiness.pluginEnabled,
       browserReadiness.pluginId,
       browserReadiness.pluginInstalled,
       desktopRuntimeStatus,
       preferences.computerUseEnabled,
+      refreshBrowserRuntimeStatus,
     ],
   );
 }

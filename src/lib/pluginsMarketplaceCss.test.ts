@@ -83,9 +83,18 @@ describe("plugin marketplace styles", () => {
     expect(ruleFor(".plugin-logo")).toContain("color: var(--color-icon)");
     expect(ruleFor(".plugin-card:hover .plugin-logo")).toBe("");
     expect(ruleFor(".plugin-card")).toContain("transition: none");
-    expect(ruleFor(".plugin-card:focus-visible")).toContain(
+    expect(ruleFor(".plugin-card:has(.plugin-card-open-button:focus-visible)")).toContain(
       "outline: 2px solid var(--color-primary)",
     );
+    const details = ruleFor("button.plugin-card-open-button");
+    expect(details).toContain("background: transparent");
+    expect(details).toContain("color: inherit");
+    expect(details).toContain("font: inherit");
+    expect(details).toContain("transform: none");
+    expect(details).toContain("transition: none");
+    const detailsInteraction = ruleFor("button.plugin-card-open-button:hover:not(:disabled),\nbutton.plugin-card-open-button:active:not(:disabled)");
+    expect(detailsInteraction).toContain("background: transparent");
+    expect(detailsInteraction).toContain("transform: none");
   });
 
   it("leaves plugin feedback to the application notification host", () => {

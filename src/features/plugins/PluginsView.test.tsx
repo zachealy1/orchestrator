@@ -305,7 +305,7 @@ describe("PluginsView", () => {
     expect(screen.queryByText("View details")).toBeNull();
     const browserCard = screen.getByRole("button", {
       name: "View Browser details",
-    });
+    }).closest(".plugin-card")! as HTMLElement;
     expect(within(browserCard).queryByText("1 capability")).toBeNull();
     expect(within(browserCard).queryByText("Interactive")).toBeNull();
     const installButton = within(browserCard).getByRole("button", {
@@ -488,6 +488,43 @@ describe("PluginsView", () => {
       "aria-selected",
       "true",
     );
+  });
+
+  it("exposes independent native details and install actions without nested buttons", async () => {
+    const user = userEvent.setup();
+    const browser = plugin({ mustShowInstallationInterstitial: false });
+    const viewActions = actions();
+    render(<PluginsView model={model([browser])} actions={viewActions} />);
+    await user.click(screen.getByRole("tab", { name: "Explore" }));
+    const details = screen.getByRole("button", { name: "View Browser details" });
+    const install = screen.getByRole("button", { name: "Install Browser" });
+    const card = details.closest("article")!;
+
+    expect(details.tagName).toBe("BUTTON");
+    expect(install.tagName).toBe("BUTTON");
+    expect(card).not.toHaveAttribute("role", "button");
+    expect(card.querySelector("button button, [role=button] button")).toBeNull();
+
+    // Native accessibility press and pointer activation use the same click.
+    fireEvent.click(details);
+    expect(viewActions.openPlugin).toHaveBeenCalledWith(browser);
+    expect(viewActions.install).not.toHaveBeenCalled();
+    vi.mocked(viewActions.openPlugin).mockClear();
+    details.focus();
+    await user.keyboard("{Enter} ");
+    expect(viewActions.openPlugin).toHaveBeenCalledTimes(2);
+    expect(viewActions.install).not.toHaveBeenCalled();
+    vi.mocked(viewActions.openPlugin).mockClear();
+
+    await user.tab();
+    expect(install).toHaveFocus();
+    await user.keyboard("{Enter}");
+    expect(viewActions.install).toHaveBeenCalledOnce();
+    expect(viewActions.openPlugin).not.toHaveBeenCalled();
+
+    fireEvent.click(card.querySelector(".plugin-card-description")!);
+    expect(viewActions.openPlugin).toHaveBeenCalledOnce();
+    expect(viewActions.install).toHaveBeenCalledOnce();
   });
 
   it("supports keyboard card activation", async () => {

@@ -12,6 +12,7 @@ import {
   listDefaultCodexSkills,
   loadPersistedRunActivity,
   readActiveCodexLogin,
+  readBrowserRuntimeStatus,
   startCodexLogin,
 } from "./codexClient";
 
@@ -46,6 +47,15 @@ describe("Codex account login client", () => {
     await readActiveCodexLogin();
 
     expect(invokeMock).toHaveBeenCalledWith("codex_active_login");
+  });
+
+  it.each([["default", 0, "codex_default_profile_rpc"], ["account:8", 8, "codex_rpc"]] as const)("reads browser runtime inventory for %s without starting a task", async (profileKey, accountId, command) => {
+    invokeMock.mockResolvedValue({ data: [{ name: "cua_repl", tools: { js: {} } }], nextCursor: null });
+    await expect(readBrowserRuntimeStatus(profileKey, accountId)).resolves.toMatchObject({ status: "available" });
+    expect(invokeMock).toHaveBeenCalledExactlyOnceWith(command, {
+      ...(accountId === 0 ? {} : { accountId }),
+      method: "mcpServerStatus/list", params: { cursor: null, detail: "toolsAndAuthOnly" },
+    });
   });
 
   it("loads skills through the shared default profile", async () => {

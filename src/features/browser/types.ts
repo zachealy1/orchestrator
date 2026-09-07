@@ -1,4 +1,5 @@
 export type BrowserReadiness = {
+  checkFailed?: boolean;
   available: boolean;
   checking: boolean;
   message: string | null;

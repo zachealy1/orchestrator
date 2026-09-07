@@ -63,6 +63,7 @@ function actions(
     importBrowserProfile: () => undefined,
     openPlugins: () => undefined,
     refreshComputerUseStatus: () => undefined,
+    refreshBrowserStatus: () => undefined,
     openAccessibilitySettings: () => undefined,
     openScreenRecordingSettings: () => undefined,
     revokeAlwaysAllowedApplication: () => undefined,

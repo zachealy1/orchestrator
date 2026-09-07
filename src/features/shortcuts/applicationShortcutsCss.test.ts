@@ -23,11 +23,25 @@ describe("application shortcut styles", () => {
     expect(appCss).toContain('@import "./styles/application-shortcuts.css";');
   });
 
-  it("keeps command hover styling flat and aligned with existing dropdowns", () => {
+  it("keeps hovered and keyboard-selected rows distinct from their icon tiles", () => {
     const hover = rule("button.application-command-option:hover,");
-    expect(hover).toContain("background: var(--dropdown-bg-hover)");
+    expect(hover).toContain("button.application-command-option.is-active");
+    expect(hover).toContain("background: var(--color-surface-soft)");
     expect(hover).toContain("transform: none");
     expect(hover).toContain("box-shadow: none");
+
+    const icon = rule(".application-command-icon,");
+    expect(icon).toContain("background: var(--color-surface-muted)");
+    expect(icon).toContain("box-shadow: inset 0 0 0 1px var(--line)");
+    expect(icon).toContain("color: var(--color-primary)");
+  });
+
+  it("keeps the command search free of the global blue focus highlight", () => {
+    const focus = rule(".application-command-search input:focus,");
+    expect(focus).toContain(".application-command-search input:focus-visible");
+    expect(focus).toContain("border: 0");
+    expect(focus).toContain("outline: none");
+    expect(focus).toContain("box-shadow: none");
   });
 
   it("honors reduced-motion preferences for both overlays", () => {

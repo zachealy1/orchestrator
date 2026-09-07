@@ -165,10 +165,9 @@ export function addPlanImplementationProgressInstructions(prompt: string) {
   return [
     prompt.trimEnd(),
     "",
-    "Track this implementation with Codex's structured plan tool:",
-    "- Before changing files, call `update_plan` with a concise checklist derived from the approved plan.",
-    "- Keep exactly one step in progress while work is underway and update the checklist whenever execution advances.",
-    "- Mark every completed step before sending the final response.",
+    "Track progress on the approved implementation:",
+    "- If `update_plan` is available in this session, use it for a concise checklist derived from the approved plan, keeping one step in progress and marking completed steps as execution advances.",
+    "- If that tool is unavailable, continue implementing the approved plan and report progress in brief messages instead. Progress tracking is not a prerequisite and must not block implementation.",
     "- If the implementation genuinely has only one step, keep a single step rather than inventing extra work.",
   ].join("\n");
 }

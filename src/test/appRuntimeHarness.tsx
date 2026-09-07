@@ -27,6 +27,7 @@ const mocks = vi.hoisted(() => ({
   stopDefaultCodexProfileMock: vi.fn(),
   clearBrowserDataMock: vi.fn(),
   readDesktopRuntimeStatusMock: vi.fn(),
+  readBrowserRuntimeStatusMock: vi.fn(),
   readAgentNotificationPermissionStatusMock: vi.fn(),
   requestAgentNotificationPermissionMock: vi.fn(),
   sendAgentNotificationMock: vi.fn(),
@@ -403,6 +404,7 @@ vi.mock("../codexClient", () => ({
   stopCodex: mocks.stopCodexMock,
   clearBrowserData: mocks.clearBrowserDataMock,
   readDesktopRuntimeStatus: mocks.readDesktopRuntimeStatusMock,
+  readBrowserRuntimeStatus: mocks.readBrowserRuntimeStatusMock,
   readAgentNotificationPermissionStatus:
     mocks.readAgentNotificationPermissionStatusMock,
   requestAgentNotificationPermission: mocks.requestAgentNotificationPermissionMock,
@@ -1083,6 +1085,10 @@ export function prepareDefaults() {
   mocks.stopCodexMock.mockResolvedValue(undefined);
   mocks.stopDefaultCodexProfileMock.mockResolvedValue(undefined);
   mocks.clearBrowserDataMock.mockResolvedValue(undefined);
+  mocks.readBrowserRuntimeStatusMock.mockResolvedValue({
+    status: "available",
+    message: "Browser tools are available for this account.",
+  });
   mocks.readDesktopRuntimeStatusMock.mockResolvedValue({
     available: false,
     message: "Desktop Computer Use is unavailable in this test.",

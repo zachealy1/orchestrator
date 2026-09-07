@@ -390,4 +390,47 @@ describe("FloatingHeaderStatusBubble", () => {
       screen.queryByRole("alert", { name: "Goal update failed" }),
     ).not.toBeInTheDocument();
   });
+
+  it.each(["dismiss", "expire"] as const)(
+    "does not resurrect a %s-ed Git revision when its workspace returns",
+    (retirement) => {
+      vi.useFakeTimers();
+      const props = { anchorElement, active: true };
+      const { rerender } = render(
+        <FloatingHeaderStatusBubble {...props} notices={[persistentApproval, transientSuccess]} />,
+      );
+      if (retirement === "dismiss") {
+        fireEvent.click(screen.getByRole("button", { name: "Dismiss Commit complete" }));
+      } else {
+        act(() => vi.advanceTimersByTime(FLOATING_STATUS_NOTICE_TIMEOUT_MS));
+      }
+      expect(screen.queryByRole("status", { name: "Commit complete" })).toBeNull();
+      rerender(<FloatingHeaderStatusBubble {...props} notices={[persistentApproval]} />);
+      rerender(<FloatingHeaderStatusBubble {...props} notices={[persistentApproval, transientSuccess]} />);
+      expect(screen.queryByRole("status", { name: "Commit complete" })).toBeNull();
+
+      // Another real operation still appears; replaying an older retired
+      // revision afterwards must not erase its session tombstone.
+      const next = { ...transientSuccess, revisionKey: "success:2", title: "Push complete" };
+      rerender(<FloatingHeaderStatusBubble {...props} notices={[persistentApproval, next]} />);
+      expect(screen.getByRole("status", { name: "Push complete" })).toBeVisible();
+      rerender(<FloatingHeaderStatusBubble {...props} notices={[persistentApproval, transientSuccess]} />);
+      expect(screen.queryByRole("status", { name: "Commit complete" })).toBeNull();
+    },
+  );
+
+  it("keeps counting down while a workspace-specific producer is absent", () => {
+    vi.useFakeTimers();
+    const props = { anchorElement, active: true };
+    const { rerender } = render(
+      <FloatingHeaderStatusBubble {...props} notices={[persistentApproval, transientSuccess]} />,
+    );
+    act(() => vi.advanceTimersByTime(20_000));
+    rerender(<FloatingHeaderStatusBubble {...props} notices={[persistentApproval]} />);
+    act(() => vi.advanceTimersByTime(30_000));
+    rerender(<FloatingHeaderStatusBubble {...props} notices={[persistentApproval, transientSuccess]} />);
+    expect(screen.getByRole("status", { name: "Commit complete" })).toBeVisible();
+    act(() => vi.advanceTimersByTime(10_000));
+    expect(screen.queryByRole("status", { name: "Commit complete" })).toBeNull();
+  });
 });
