@@ -60,6 +60,13 @@ describe("Kanban chat diff preview", () => {
       hasStartedTurn: true,
     });
     mocks.loadKanbanGitBindingsMock.mockResolvedValue([binding]);
+    mocks.loadPersistedRunActivityMock.mockResolvedValue({
+      commands: [], toolActivities: [], nextCursor: null,
+      editedFiles: [{
+        path: `${binding.worktreePath}/src/game.ts`, name: "game.ts",
+        additions: 0, deletions: 0, status: "modified",
+      }],
+    });
     mocks.readKanbanGitFileDiffMock.mockResolvedValue({
       path: `${binding.worktreePath}/src/game.ts`,
       relativePath: "src/game.ts",
@@ -117,6 +124,12 @@ describe("Kanban chat diff preview", () => {
     expect(previewDrawer).not.toHaveTextContent(
       "No diff available for this file.",
     );
+    await user.click(screen.getByLabelText("Run trace"));
+    await waitFor(() => expect(mocks.loadPersistedRunActivityMock).toHaveBeenCalled());
+    await waitFor(() => expect(screen.queryByText("Loading activity…")).not.toBeInTheDocument());
+    expect(screen.getAllByRole("button", { name: "Review 01-space-invaders-test/src/game.ts" })).toHaveLength(1);
+    expect(screen.queryByRole("button", { name: `Review ${binding.worktreePath}/src/game.ts` })).not.toBeInTheDocument();
+    expect(screen.getByLabelText("Task chat transcript")).toHaveTextContent("Edited 1 file");
   });
 
   it("undoes a card chat patch in its isolated nested repository", async () => {

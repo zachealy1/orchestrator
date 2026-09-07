@@ -1,3 +1,4 @@
+import { CodexEngineSettings, type EngineSettings } from "../engine/CodexEngineSettings";
 import {
   Accessibility,
   Bell,
@@ -112,6 +113,7 @@ function computerUseDetailStatus(
 }
 
 export type SettingsViewModel = {
+  engine?: EngineSettings;
   dragRegion?: string;
   computerUseEnabled: boolean;
   browserPreferences: BrowserPreferences;
@@ -447,7 +449,7 @@ export const SettingsView = memo(function SettingsView({
               <div>
                 <strong>macOS permissions</strong>
                 <span>
-                  The signed Computer Use helper requests and verifies both permissions.
+                  Access is checked for this running copy of Orchestrator. The Computer Use helper may also request access.
                 </span>
               </div>
               <SettingsIconAction
@@ -595,6 +597,9 @@ export const SettingsView = memo(function SettingsView({
         "accounts",
         "codex",
         "codex connection",
+        "engine",
+        "updates",
+        "models",
       ) ? (
         <section
           className="surface settings-panel codex-settings-panel"
@@ -610,6 +615,7 @@ export const SettingsView = memo(function SettingsView({
                 : { label: "Disconnected", tone: "neutral" }
             }
           />
+          {model.engine && <CodexEngineSettings {...model.engine} />}
           <div className="setting-list">
             <div className="settings-subsection-heading codex-accounts-heading">
               <div>
@@ -1348,7 +1354,9 @@ function ComputerUseStatusPopover({
     ? pluginPresent
       ? "Enable the Computer Use plugin to continue."
       : "Install the Computer Use plugin to continue."
-    : hasMissingPermissions
+    : runtimeStatus?.message
+      ? runtimeStatus.message
+      : hasMissingPermissions
       ? missingScreenRecording && missingAccessibility
         ? "Grant both permissions to continue."
         : "Grant the required permission to continue."

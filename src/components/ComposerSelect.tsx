@@ -34,6 +34,7 @@ type Props = {
 };
 
 type Placement = "above" | "below";
+const SELECT_OPEN_EVENT = "orchestrator:composer-select-open";
 
 export function ComposerSelect({
   ariaLabel,
@@ -62,6 +63,14 @@ export function ComposerSelect({
   const enabledOptions = options.filter((option) => !option.disabled);
   const optionId = (option: ComposerSelectOption) =>
     option.id ?? option.value;
+
+  useEffect(() => {
+    const closeOtherMenu = (event: Event) => {
+      if ((event as CustomEvent<string>).detail !== menuId) setOpen(false);
+    };
+    document.addEventListener(SELECT_OPEN_EVENT, closeOtherMenu);
+    return () => document.removeEventListener(SELECT_OPEN_EVENT, closeOtherMenu);
+  }, [menuId]);
 
   useLayoutEffect(() => {
     if (!open) {
@@ -136,15 +145,14 @@ export function ComposerSelect({
     return () => document.removeEventListener("pointerdown", handlePointerDown);
   }, [open]);
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     if (!open || !focusedOptionId) {
       return;
     }
 
-    const frame = window.requestAnimationFrame(() => {
-      optionRefs.current.get(focusedOptionId)?.focus();
-    });
-    return () => window.cancelAnimationFrame(frame);
+    // The option exists after commit; keyboard navigation must not wait for a
+    // compositor frame (WKWebView can suspend those while the window is hidden).
+    optionRefs.current.get(focusedOptionId)?.focus({ preventScroll: true });
   }, [focusedOptionId, open]);
 
   useEffect(() => {
@@ -158,6 +166,8 @@ export function ComposerSelect({
       return;
     }
 
+    // Keyboard and accessibility activation do not necessarily emit pointerdown.
+    document.dispatchEvent(new CustomEvent(SELECT_OPEN_EVENT, { detail: menuId }));
     const selectedEnabled = enabledOptions.find((option) => option.value === value);
     const fallbackOption = focusLast
       ? enabledOptions[enabledOptions.length - 1]
@@ -180,7 +190,7 @@ export function ComposerSelect({
       onChange(option.value);
     }
     setOpen(false);
-    window.requestAnimationFrame(() => triggerRef.current?.focus());
+    triggerRef.current?.focus({ preventScroll: true });
   }
 
   function handleTriggerKeyDown(event: KeyboardEvent<HTMLButtonElement>) {

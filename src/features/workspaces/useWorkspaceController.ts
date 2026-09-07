@@ -1,5 +1,6 @@
 import {
   useCallback,
+  useEffect,
   useMemo,
   useRef,
   useState,
@@ -9,6 +10,7 @@ import {
   type SetStateAction,
 } from "react";
 import { useDismissibleContextMenu } from "../../shared/useDismissibleContextMenu";
+import { persistSelectedWorkspace } from "./selection";
 import type { WorkspaceGitStatusState } from "./gitModel";
 import type { WorkspaceCommitIntentContext } from "../../lib/commitMessage";
 import {
@@ -153,6 +155,10 @@ export function useWorkspaceController(): WorkspaceController {
 
   workspacesRef.current = workspaces;
   selectedWorkspaceRef.current = selectedWorkspace;
+
+  useEffect(() => {
+    if (selectedWorkspace) persistSelectedWorkspace(selectedWorkspace.id);
+  }, [selectedWorkspace?.id]);
 
   const workspaceLocationsKey = useMemo(
     () =>

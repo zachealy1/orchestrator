@@ -184,6 +184,7 @@ function renderWorkspace(
     browserOpened: false,
   },
   githubConnectionPending = false,
+  sharedProfileAvailable = true,
 ) {
   const workspaceRef = createRef<KanbanWorkspaceHandle>();
   const props = {
@@ -202,6 +203,7 @@ function renderWorkspace(
       workspace={workspace}
       repositories={[]}
       accounts={[]}
+      sharedProfileAvailable={sharedProfileAvailable}
       models={[]}
       refreshToken={0}
       listChatTranscript={transcriptMocks.listLocalChatTranscript}
@@ -323,6 +325,19 @@ describe("multi-repository preference normalization", () => {
 });
 
 describe("KanbanWorkspace controller", () => {
+  it("allows metadata edits on a bound card without changing its unavailable account", async () => {
+    const user = userEvent.setup();
+    renderWorkspace(undefined, undefined, false, false);
+    const tile = await screen.findByRole("article", { name: /Controller card/ });
+    await waitFor(() => expect(apiMocks.loadKanbanGitBindings).toHaveBeenCalled());
+    await user.click(within(tile).getByLabelText("Actions for Controller card"));
+    await user.click(screen.getByRole("menuitem", { name: "Edit card" }));
+    await user.click(screen.getByRole("button", { name: "Save changes" }));
+    await waitFor(() => expect(apiMocks.updateKanbanCard).toHaveBeenCalledWith(
+      expect.objectContaining({ id: "card-1" }),
+      expect.objectContaining({ accountId: null, executionSettingsJson: card().executionSettingsJson }),
+    ));
+  });
   it("renders persisted cards before live Git reconciliation completes", async () => {
     let finishReconciliation!: (value: unknown) => void;
     apiMocks.reconcileKanbanGit.mockImplementation(

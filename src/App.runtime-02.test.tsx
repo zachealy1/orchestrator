@@ -777,18 +777,18 @@ describe("Application runtime scenarios 2", () => {
       const transcript = screen.getByLabelText("Task chat transcript");
       const layout = transcript.closest<HTMLElement>(".codex-workspace-body");
       expect(layout).toHaveAttribute("data-history-transition-phase", "closed");
-      fireEvent.wheel(transcript, { deltaY: -120 });
-      await user.click(historyButton);
-
-      expect(layout).toHaveAttribute("data-history-transition-phase", "closed");
-      await waitFor(
-        () =>
-          expect(layout).toHaveAttribute(
-            "data-history-transition-phase",
-            "opening",
-          ),
-        { timeout: 1_000 },
-      );
+      // Control the idle interval: a busy full-suite worker can spend longer
+      // than the momentum timeout inside an asynchronous user.click call.
+      vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "performance"] });
+      try {
+        fireEvent.wheel(transcript, { deltaY: -120 });
+        fireEvent.click(historyButton);
+        expect(layout).toHaveAttribute("data-history-transition-phase", "closed");
+        await act(async () => { await vi.advanceTimersByTimeAsync(300); });
+        expect(layout).toHaveAttribute("data-history-transition-phase", "opening");
+      } finally {
+        vi.useRealTimers();
+      }
     });
 
   it("opens a clicked chat history row in the chat window and closes the drawer", async () => {

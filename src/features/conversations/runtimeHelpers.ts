@@ -38,9 +38,29 @@ export function mergeCommandActivities(
 export function mergeEditedFileActivities(
   current: RunViewState["editedFiles"],
   incoming: RunViewState["editedFiles"],
+  pathAliases: Array<{ absolutePath: string; relativePath: string }> = [],
 ) {
-  const byPath = new Map(current.map((file) => [file.path, file]));
-  incoming.forEach((file) => byPath.set(file.path, file));
+  const aliases = pathAliases
+    .map((alias) => ({ ...alias, absolutePath: alias.absolutePath.replace(/\/+$/, "") }))
+    .sort((left, right) => right.absolutePath.length - left.absolutePath.length);
+  const normalize = (file: RunViewState["editedFiles"][number]) => {
+    const path = file.path.replace(/^\.\//, "");
+    const alias = aliases.find((candidate) => path.startsWith(`${candidate.absolutePath}/`));
+    if (!alias) return path === file.path ? file : { ...file, path };
+    const relative = [alias.relativePath === "." ? "" : alias.relativePath, path.slice(alias.absolutePath.length + 1)]
+      .filter(Boolean).join("/");
+    return { ...file, path: relative };
+  };
+  const byPath = new Map(current.map((file) => {
+    const normalized = normalize(file);
+    return [normalized.path, normalized];
+  }));
+  incoming.forEach((file) => {
+    const normalized = normalize(file);
+    // The persisted final diff is authoritative. Trace-only tool events can
+    // describe the same file without line counts; do not erase final totals.
+    if (!byPath.has(normalized.path)) byPath.set(normalized.path, normalized);
+  });
   return [...byPath.values()];
 }
 

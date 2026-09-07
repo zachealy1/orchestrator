@@ -1394,6 +1394,8 @@ pub(crate) async fn connect_codex_profile(
     codex_home: PathBuf,
     isolated_file_store: bool,
 ) -> Result<CodexConnectResult, String> {
+    // Provisioning or an update check must never block process cancellation or the async executor.
+    let codex_binary = run_blocking_command("prepare Codex engine", resolve_codex_binary).await?;
     let connection_generation = state
         .next_connection_generation
         .fetch_add(1, Ordering::SeqCst)
@@ -1420,7 +1422,6 @@ pub(crate) async fn connect_codex_profile(
             processes.remove(&account_id);
         }
 
-        let codex_binary = resolve_codex_binary()?;
         let mut command = Command::new(&codex_binary);
         command.args(codex_app_server_args(isolated_file_store));
         let mut child = command

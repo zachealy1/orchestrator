@@ -10,6 +10,7 @@ lerna-debug.log*
 node_modules
 src-tauri/resources/playwright/darwin-*/
 src-tauri/resources/github-cli/darwin-*/
+src-tauri/resources/codex-engine/darwin-*/
 dist
 dist-ssr
 *.local

@@ -13,8 +13,8 @@ function rule(selector: string) {
   return css.slice(selectorStart, blockEnd + 1);
 }
 
-describe("history drawer animation CSS", () => {
-  it("uses one animated content width for transcript and composer geometry", () => {
+describe("history drawer CSS", () => {
+  it("uses one immediate content width for transcript and composer geometry", () => {
     const workspace = rule(".codex-workspace");
     const workspaceBody = rule(".codex-workspace-body");
     const reservedBody = rule(".codex-workspace-body.history-space-reserved");
@@ -29,21 +29,13 @@ describe("history drawer animation CSS", () => {
     expect(workspaceBody).toContain(
       "--history-transition-easing: cubic-bezier(0.2, 0, 0, 1)",
     );
-    expect(drawer).toContain(
-      "transform var(--history-transition-duration) var(--history-transition-easing)",
-    );
-    expect(drawer).toContain(
-      "opacity var(--history-transition-duration) var(--history-transition-easing)",
-    );
+    expect(drawer).toContain("transition: none");
+    expect(drawer).not.toMatch(/(?:transform|opacity|will-change):/);
+    expect(drawer).toContain("contain: layout style");
     expect(workspaceBody).toContain(
       "grid-template-columns: minmax(0, 1fr) var(--history-active-drawer-width)",
     );
-    expect(workspaceBody).toContain(
-      "--history-active-drawer-width var(--history-transition-duration)",
-    );
-    expect(workspaceBody).toContain(
-      "--history-chat-content-max-width var(--history-transition-duration)",
-    );
+    expect(workspaceBody).toContain("transition: none");
     expect(reservedBody).toContain(
       "--history-active-drawer-width: var(--history-drawer-width)",
     );
@@ -58,11 +50,12 @@ describe("history drawer animation CSS", () => {
     expect(css).not.toContain("history-input-contracted");
   });
 
-  it("keeps drawer motion transform-based with no independent composer animation", () => {
+  it("does not make history visibility depend on compositor animation frames", () => {
     const drawer = rule(".workspace-history-drawer");
     const composer = rule(".composer-panel");
 
     expect(drawer).toContain("position: absolute");
+    expect(rule(".workspace-history-drawer.open")).toContain("visibility: visible");
     expect(drawer.match(/transition:[\s\S]*?;/)?.[0]).not.toContain("width");
     expect(composer).not.toContain("transition:");
     expect(rule(".task-hero.has-chat .composer-panel")).not.toMatch(

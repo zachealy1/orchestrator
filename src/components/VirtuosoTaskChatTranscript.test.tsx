@@ -585,6 +585,7 @@ describe("VirtuosoTaskChatTranscript", () => {
     );
 
     expect(virtuosoMock.lastProps.heightEstimates).toHaveLength(2);
+    expect(virtuosoMock.lastProps.skipAnimationFrameInResizeObserver).toBe(true);
     expect(virtuosoMock.lastProps.heightEstimates[1]).toBeGreaterThan(
       virtuosoMock.lastProps.heightEstimates[0],
     );
@@ -908,7 +909,10 @@ describe("VirtuosoTaskChatTranscript", () => {
         onResolveRequest={vi.fn()}
       />,
     );
-    expect(virtuosoMock.lastProps.restoreStateFrom).toEqual(virtuosoMock.state);
+    expect(virtuosoMock.lastProps.restoreStateFrom).toEqual({
+      ...virtuosoMock.state,
+      scrollTop: 0,
+    });
     expect(virtuosoMock.lastProps).not.toHaveProperty("initialItemCount");
     expect(virtuosoMock.lastProps).not.toHaveProperty(
       "initialTopMostItemIndex",
@@ -987,11 +991,8 @@ describe("VirtuosoTaskChatTranscript", () => {
     );
 
     expect(virtuosoMock.lastProps.restoreStateFrom).toBeUndefined();
-    expect(virtuosoMock.lastProps.initialTopMostItemIndex).toEqual({
-      index: "LAST",
-      align: "end",
-    });
-    expect(virtuosoMock.lastProps).not.toHaveProperty("initialItemCount");
+    expect(virtuosoMock.lastProps).not.toHaveProperty("initialTopMostItemIndex");
+    expect(virtuosoMock.lastProps.initialItemCount).toBe(20);
   });
 
   it("removes the outgoing chat while the incoming transcript is positioned", async () => {

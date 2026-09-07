@@ -1,3 +1,5 @@
+import { useModelCatalog } from "../features/codex/useModelCatalog";
+import { useEngineController } from "../features/engine/useEngineController";
 import { open } from "@tauri-apps/plugin-dialog";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { listen } from "@tauri-apps/api/event";
@@ -456,6 +458,7 @@ import {
 } from "../features/workspaces/repositoryTopology";
 import { WorkspaceContextBanner } from "../features/workspaces/WorkspaceContextBanner";
 import { useWorkspaceController } from "../features/workspaces/useWorkspaceController";
+import { restoreSelectedWorkspace } from "../features/workspaces/selection";
 import { useWorkspacePreviewController } from "../features/workspaces/useWorkspacePreviewController";
 import { WorkspaceSidebar } from "../features/workspaces/WorkspaceSidebar";
 import {
@@ -545,6 +548,7 @@ import {
   readExpectedActiveTurnId,
   readTokenUsage,
 } from "../features/codex/runtimeHelpers";
+import { executionAccountAvailable, selectAvailableExecutionAccount } from "../features/accounts/executionAccount";
 import {
   readArray,
   readNumber,
@@ -1893,7 +1897,12 @@ function App() {
       workspaceChatSessionsRef.current[selectedWorkspaceRef.current?.id ?? -1]
         ?.chatId;
     if (chatId) {
-      schedulePromptQueueDispatch(chatId);
+      const next = (promptQueuesByChatRef.current[chatId] ?? [])
+        .filter((item) => ["queued", "scheduled-next"].includes(item.status))
+        .sort(comparePromptQueueDispatchOrder)[0];
+      // Run next is explicit consent for this item, even when automatic sending
+      // is held. Do not restore automatic sending on other held prompts.
+      if (next) void sendQueuedPromptNow(next, { allowSteering: false });
     }
   });
   const editComposerQueuedPrompt = useStableEvent(openPromptQueueComposerEdit);
@@ -2992,8 +3001,16 @@ function App() {
         .join("|"),
     [crossConversationApprovals],
   );
+  const engineController = useEngineController();
   const floatingStatusNotices = useMemo<FloatingStatusNotice[]>(() => {
     const notices: FloatingStatusNotice[] = [];
+    if (engineController.announcement) {
+      notices.push({
+        id: "codex-engine-update", revisionKey: engineController.announcement,
+        tone: "success", title: "Codex update available", detail: engineController.announcement,
+        actionLabel: "Open Settings", timeoutMs: null,
+      });
+    }
     if (crossConversationApprovals.length > 0) {
       const count = crossConversationApprovals.length;
       notices.push({
@@ -3083,6 +3100,7 @@ function App() {
     return notices;
   }, [
     applicationNotifications.notices,
+    engineController.announcement,
     approvalSafetyWarning,
     crossConversationApprovalRevision,
     crossConversationApprovals.length,
@@ -3093,6 +3111,9 @@ function App() {
     transcriptLinkError,
   ]);
   const activateFloatingStatusNotice = useStableEvent((noticeId: string) => {
+    if (noticeId === "codex-engine-update") {
+      setActiveView("settings"); engineController.dismissAnnouncement(); return;
+    }
     if (noticeId === "cross-conversation-approvals") {
       const oldest = [...crossConversationApprovals].sort((left, right) =>
         left.request.receivedAt.localeCompare(right.request.receivedAt),
@@ -3114,6 +3135,7 @@ function App() {
     }
   });
   const dismissFloatingStatusNotice = useStableEvent((noticeId: string) => {
+    if (noticeId === "codex-engine-update") { engineController.dismissAnnouncement(); return; }
     if (noticeId === "plugins-error") {
       pluginsController.dismissError();
       return;
@@ -3992,7 +4014,7 @@ function App() {
           }
         : account,
     );
-    const workspace = workspaceRows[0] ?? null;
+    const workspace = restoreSelectedWorkspace(workspaceRows);
     let defaultProfileAuth: CodexAccountResponse | null = null;
     try {
       await connectDefaultCodexProfile();
@@ -4011,7 +4033,7 @@ function App() {
       );
     }
     const defaultProfileAuthenticated = Boolean(
-      defaultProfileAuth?.account && !defaultProfileAuth.requiresOpenaiAuth,
+      defaultProfileAuth?.account,
     );
     setDefaultProfileAuthenticated(defaultProfileAuthenticated);
     const workspaceDefaultProfileKey =
@@ -4297,7 +4319,7 @@ function App() {
         { refreshToken: false },
       );
       const normalizedAuth = normalizeCodexAccountResponse(auth);
-      if (!normalizedAuth.account || normalizedAuth.requiresOpenaiAuth) {
+      if (!normalizedAuth.account) {
         throw new Error(
           "Sign in to the Codex app account to associate Kanban tasks with this project.",
         );
@@ -4309,13 +4331,15 @@ function App() {
       ]);
       const chatsById = new Map(chats.map((chat) => [chat.id, chat]));
       const startedCards = board.cards.filter(
-        (card) => card.hasStartedTurn && !card.deletedAt,
+        (card) => card.hasStartedTurn && !card.deletedAt && !card.accountId,
       );
 
       await forEachWithConcurrency(startedCards, 3, async (card) => {
         const chat = chatsById.get(card.chatId) ??
           (await getChatRecord(card.chatId));
-        if (!chat) return;
+        // Shared-profile discovery must never hand an added account's task to
+        // the shared profile. Account changes require the explicit handoff flow.
+        if (!chat || (chat.profile_key && chat.profile_key !== DEFAULT_CODEX_PROFILE_KEY)) return;
 
         const liveControl = findRunControlByChat(workspace.id, chat.id);
         const bindings = await loadKanbanGitBindings(card.id);
@@ -5099,30 +5123,7 @@ function App() {
   }
 
   async function refreshCodexModels(accountId: number) {
-    try {
-      const visibleModels = await listCodexModelsForProfile(
-        profileKeyForAccountId(accountId),
-        accountId,
-      );
-      setModels(visibleModels);
-      setModelLoadError(null);
-      setSelectedModelId((current) => {
-        if (current && visibleModels.some((model) => model.id === current)) {
-          return current;
-        }
-
-        return (
-          visibleModels.find((model) => model.isDefault)?.id ??
-          visibleModels[0]?.id ??
-          null
-        );
-      });
-    } catch (error) {
-      setModels([]);
-      setSelectedModelId(null);
-      setSelectedReasoningEffort(null);
-      setModelLoadError(error instanceof Error ? error.message : String(error));
-    }
+    await modelCatalog.refresh(accountId);
   }
 
   async function listCodexModelsForProfile(
@@ -5166,7 +5167,20 @@ function App() {
       }
 
       cancelAgentNotificationNavigation();
-      const workspace = await upsertWorkspace(selected);
+      const alreadyKnown = workspacesRef.current.some((workspace) => workspace.path === selected);
+      let workspace = await upsertWorkspace(selected);
+      if (!alreadyKnown) {
+        const accountId = selectAvailableExecutionAccount({
+          currentAccountId: selectedAccountIdRef.current,
+          accounts: codexAccountsRef.current,
+          sharedProfileAvailable: defaultProfileAuthenticated,
+        });
+        if (accountId !== null) {
+          const profileKey = profileKeyForAccountId(accountId);
+          await setWorkspaceDefaultProfile(workspace.id, profileKey, accountId || null);
+          workspace = { ...workspace, default_profile_key: profileKey, default_account_id: accountId || null };
+        }
+      }
       const workspaceRows = await listWorkspaces();
       historyChatLoadIdRef.current += 1;
       cancelActiveExternalTranscriptSync();
@@ -6175,6 +6189,7 @@ function App() {
         setRunInteractionState(control, "stopped");
       }
       appServices.runCoordinator.tryTransition(control.clientId, "cancelling");
+      appServices.runCoordinator.tryTransition(control.clientId, "cancelled");
     }
     cancelWebPreviewDetection(control);
     if (options.cleanupInteraction !== false) {
@@ -7365,7 +7380,11 @@ function App() {
       }).catch(() => undefined);
     }
 
-    if (control?.chatId !== null && control?.chatId !== undefined) {
+    if (
+      control?.chatId !== null && control?.chatId !== undefined &&
+      (!findRunControlByChat(control.workspaceId, control.chatId) ||
+        findRunControlByChat(control.workspaceId, control.chatId) === control)
+    ) {
       await updateChat(control.chatId, { status: "interrupted" }).catch(
         () => undefined,
       );
@@ -8605,9 +8624,15 @@ function App() {
         ? workspace.default_profile_key ??
           profileKeyForAccountId(workspace.default_account_id)
         : null);
-    const accountId = profileKey === DEFAULT_CODEX_PROFILE_KEY
+    const storedAccountId = profileKey === DEFAULT_CODEX_PROFILE_KEY
       ? 0
       : accountIdFromProfileKey(profileKey as CodexProfileKey | null);
+    const accountId = session ? storedAccountId : selectAvailableExecutionAccount({
+      preferredAccountId: storedAccountId,
+      currentAccountId: selectedAccountIdRef.current,
+      accounts: codexAccountsRef.current,
+      sharedProfileAvailable: defaultProfileAuthenticated,
+    });
     if (accountId !== null && accountId !== selectedAccountIdRef.current) {
       void selectCodexAccount(accountId);
     }
@@ -9171,6 +9196,23 @@ function App() {
         },
       );
 
+      const workspacePath = workspacesRef.current.find((workspace) => workspace.id === entry.workspaceId)?.path;
+      const pathAliases = workspacePath ? [{ absolutePath: workspacePath, relativePath: "" }] : [];
+      if (entry.chatId !== null) {
+        const context = kanbanChatGitContextRef.current;
+        let bindings = context?.kind === "kanban" && context.chatId === entry.chatId
+          ? context.repositories.map((repository) => repository.binding)
+          : await listChatWorktreeBindings(entry.chatId);
+        if (bindings.length === 0) {
+          const card = await getKanbanCardForChat(entry.chatId);
+          if (card?.hasStartedTurn) bindings = await loadKanbanGitBindings(card.id);
+        }
+        pathAliases.unshift(...bindings.flatMap((binding) => [
+          { absolutePath: binding.worktreePath, relativePath: binding.relativePath },
+          { absolutePath: binding.sourceRepositoryPath, relativePath: binding.relativePath },
+        ]));
+      }
+
       if (!taskChatEntriesRef.current.some((item) => item.clientId === entry.clientId)) {
         return;
       }
@@ -9191,6 +9233,7 @@ function App() {
             editedFiles: mergeEditedFileActivities(
               current.runView.editedFiles,
               response.editedFiles,
+              pathAliases,
             ),
             toolActivitiesById: tools.byId,
             toolActivityOrder: tools.order,
@@ -10242,7 +10285,7 @@ function App() {
       const normalizedAuth = normalizeCodexAccountResponse(auth);
       const account = normalizedAuth.account;
       const requiresOpenaiAuth = normalizedAuth.requiresOpenaiAuth;
-      const authenticated = Boolean(account && !requiresOpenaiAuth);
+      const authenticated = Boolean(account);
       setDefaultProfileAuthenticated(authenticated);
       if (selectedAccountIdRef.current === 0) {
         setCodexAccount(account);
@@ -10419,7 +10462,7 @@ function App() {
   }
 
   async function selectCodexAccount(accountId: number) {
-    if (runIsActive) {
+    if (runIsActive && workspaceSurfaceMode === "chat") {
       return false;
     }
 
@@ -10438,7 +10481,7 @@ function App() {
         setRequiresOpenaiAuth(normalizedAuth.requiresOpenaiAuth);
         setDefaultProfileAuthenticated(
           Boolean(
-            normalizedAuth.account && !normalizedAuth.requiresOpenaiAuth,
+            normalizedAuth.account,
           ),
         );
         if (
@@ -10532,7 +10575,7 @@ function App() {
     }
 
     const workspace = selectedWorkspaceRef.current;
-    const session = workspace
+    const session = workspace && workspaceSurfaceMode === "chat"
       ? workspaceChatSessionsRef.current[workspace.id] ?? null
       : null;
     if (!workspace || !session) {
@@ -10557,6 +10600,11 @@ function App() {
               : candidate,
           );
           workspacesRef.current = next;
+          if (selectedWorkspaceRef.current?.id === workspace.id) {
+            const selected = next.find((candidate) => candidate.id === workspace.id)!;
+            selectedWorkspaceRef.current = selected;
+            setSelectedWorkspace(selected);
+          }
           return next;
         });
       })().catch((error) => {
@@ -11867,6 +11915,8 @@ function App() {
       flushSync(() => {
         if (snapshot.replacementClientId) {
           replaceTaskChatEntry(snapshot.replacementClientId, nextEntry);
+        } else if (taskChatEntriesRef.current.some((entry) => entry.clientId === clientId)) {
+          replaceTaskChatEntry(clientId, nextEntry);
         } else {
           startTaskChatEntry(nextEntry);
         }
@@ -12203,6 +12253,14 @@ function App() {
     state: RunSetupFailureState,
   ) {
     runControl.turnStartPending = false;
+    // A stopped setup may finish an outstanding native read after Retry has
+    // already registered another attempt for the same queue item. Settle only
+    // this attempt's records; do not fail the replacement queue item or entry.
+    if (runControl.stopped && activeRunRegistry.get(runControl.clientId) !== runControl) {
+      await persistInterruptedRun(runControl, new Date().toISOString(), runControl.runView);
+      await cleanUpFailedRunNativeTaskThread(runControl);
+      return;
+    }
     const {
       chatId,
       taskId,
@@ -14259,6 +14317,7 @@ function App() {
       workspaces: workspacesRef.current,
       accounts: codexAccountsRef.current,
       selectedAccountId: selectedAccountIdRef.current,
+      sharedProfileAvailable: defaultProfileAuthenticated,
       computerUseEnabled,
     }),
     listModels: listCodexModelsForProfile,
@@ -14773,8 +14832,12 @@ function App() {
       return;
     }
 
-    const profileKey: CodexProfileKey = DEFAULT_CODEX_PROFILE_KEY;
-    const accountId = 0;
+    const accountId = selectedAccountIdRef.current;
+    if (!executionAccountAvailable(accountId, codexAccountsRef.current, defaultProfileAuthenticated)) {
+      setStatusMessage("Select a signed-in Codex account before creating a card.");
+      return;
+    }
+    const profileKey = profileKeyForAccountId(accountId);
 
     const selectedCardModel =
       modelsRef.current.find((model) => model.id === selectedModelId) ??
@@ -14812,7 +14875,7 @@ function App() {
       const card = await createKanbanCard(workspace.id, {
         title: GENERATING_CHAT_TITLE,
         description: promptText,
-        accountId: null,
+        accountId: accountId || null,
         accessMode,
         model: executionSettings.model,
         reasoningLevel: executionSettings.reasoningEffort,
@@ -15214,7 +15277,10 @@ function App() {
     }
   }
 
-  async function sendQueuedPromptNow(item: PromptQueueItem) {
+  async function sendQueuedPromptNow(
+    item: PromptQueueItem,
+    options: { allowSteering?: boolean } = {},
+  ) {
     const actionKey = `send-now:${item.id}`;
     if (promptQueueActionLocksRef.current.has(actionKey)) return;
     promptQueueActionLocksRef.current.add(actionKey);
@@ -15235,7 +15301,7 @@ function App() {
         (control) =>
           control.chatId === item.chatId && isActiveRunControl(control),
       );
-      if (activeControl && (await steerQueuedPrompt(next, activeControl))) {
+      if (options.allowSteering !== false && activeControl && (await steerQueuedPrompt(next, activeControl))) {
         return;
       }
       setPromptQueuePaused(item.chatId, false);
@@ -20484,8 +20550,22 @@ function App() {
     commandPaletteOpen,
     keyboardShortcutsOpen,
   });
+  const modelCatalog = useModelCatalog({
+    accountId: selectedAccountId,
+    accountIdRef: selectedAccountIdRef,
+    enabled: codexConnected && Boolean(codexAccount),
+    load: (accountId) => listCodexModelsForProfile(profileKeyForAccountId(accountId), accountId),
+    setModels, setSelectedModelId, setSelectedReasoningEffort, setModelLoadError,
+  });
   const settingsViewBindings = useSettingsViewBindings({
     model: {
+      engine: {
+        controller: engineController,
+        refreshModels: () => { if (selectedAccountId !== null) void modelCatalog.refresh(selectedAccountId); },
+        modelsRefreshing: modelCatalog.refreshing,
+        modelsNotice: modelCatalog.notice,
+        canRefreshModels: codexConnected && Boolean(codexAccount),
+      },
       dragRegion: selfWindowDragRegion,
       computerUseEnabled,
       browserPreferences,
@@ -20986,6 +21066,7 @@ function App() {
                   repositories={selectedGitOverview?.repositories ?? []}
                   accounts={signedInAccounts}
                   sharedProfileAvailable={defaultProfileAuthenticated}
+                  selectedAccountId={selectedAccountId}
                   models={models}
                   refreshToken={kanbanRefreshToken}
                   listChatTranscript={listLocalChatTranscript}
@@ -21010,11 +21091,11 @@ function App() {
                         prompt,
                         promptRevision,
                         submitLabel: "Create Kanban card",
-                        accounts: [],
-                        sharedCodexProfileAvailable: true,
-                        selectedAccountId: 0,
-                        accountPlaceholder: "Codex app account (shared)",
-                        accountSelectionDisabled: true,
+                        accounts: signedInAccounts,
+                        sharedCodexProfileAvailable: defaultProfileAuthenticated,
+                        selectedAccountId,
+                        accountPlaceholder: "Sign in required",
+                        accountSelectionDisabled: kanbanCardCreatePending,
                         modelSelectionDisabled: kanbanCardCreatePending,
                         models,
                         modelLoadError,

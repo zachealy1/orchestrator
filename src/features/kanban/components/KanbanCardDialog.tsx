@@ -47,7 +47,6 @@ export type KanbanCardDialogProps = {
   defaults?: Partial<KanbanCardDraft>;
   repositories: KanbanRepository[];
   accountOptions: KanbanSelectOption[];
-  sharedAccountOnly?: boolean;
   accessModeOptions?: KanbanSelectOption[];
   modelOptions: KanbanSelectOption[];
   reasoningOptions: KanbanSelectOption[];
@@ -104,7 +103,6 @@ export function KanbanCardDialog({
   defaults,
   repositories,
   accountOptions,
-  sharedAccountOnly = false,
   accessModeOptions = DEFAULT_ACCESS_OPTIONS,
   modelOptions,
   reasoningOptions,
@@ -433,20 +431,12 @@ export function KanbanCardDialog({
                   <span>Account</span>
                   <ComposerSelect
                     ariaLabel="Account"
-                    value={sharedAccountOnly ? "shared" : draft.accountId ?? ""}
-                    options={
-                      sharedAccountOnly
-                        ? [{ value: "shared", label: "Codex app account (shared)" }]
-                        : [{ value: "", label: "Workspace default" }, ...accountOptions]
-                    }
-                    placeholder={
-                      sharedAccountOnly
-                        ? "Codex app account (shared)"
-                        : "Workspace default"
-                    }
+                    value={draft.accountId ?? ""}
+                    options={[{ value: "", label: "Workspace default" }, ...accountOptions]}
+                    placeholder="Workspace default"
                     icon={<CircleUserRound size={16} />}
                     className="kanban-field-select"
-                    disabled={executionFieldsDisabled || sharedAccountOnly}
+                    disabled={executionFieldsDisabled}
                     onChange={(value) => {
                       const accountId = value || null;
                       patchDraft(accountId === draft.accountId ? { accountId } : { accountId, model: "", reasoningLevel: "" });

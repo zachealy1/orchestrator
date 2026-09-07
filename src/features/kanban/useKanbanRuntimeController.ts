@@ -1,5 +1,7 @@
 import { useRef } from "react";
 import type { CodexAccountProfile } from "../accounts/types";
+import { executionAccountAvailable } from "../accounts/executionAccount";
+import { profileKeyForAccountId } from "../codex/runtimeHelpers";
 import type {
   CodexModel,
   CodexProfileKey,
@@ -49,6 +51,7 @@ export type KanbanRuntimeState = {
   workspaces: Workspace[];
   accounts: CodexAccountProfile[];
   selectedAccountId: number | null;
+  sharedProfileAvailable: boolean;
   computerUseEnabled: boolean;
 };
 
@@ -210,9 +213,15 @@ export function createKanbanRuntimeController<
     const capturedSettings =
       options?.executionSettings ??
       parseRunExecutionSettings(card.executionSettingsJson);
-    const profileKey: CodexProfileKey = "default";
-    const accountId = 0;
-    const account = null;
+    const accountId = capturedSettings?.accountId ?? card.accountId ?? 0;
+    const profileKey = capturedSettings?.profileKey ?? profileKeyForAccountId(accountId);
+    if (profileKey !== profileKeyForAccountId(accountId)) {
+      throw new Error("The account saved on this card is inconsistent. Edit its account before starting.");
+    }
+    if (!executionAccountAvailable(accountId, state.accounts, state.sharedProfileAvailable)) {
+      throw new Error("The account saved on this card is signed out or unavailable. Sign in to that account, or edit an unstarted card to select another account.");
+    }
+    const account = state.accounts.find((candidate) => candidate.id === accountId) ?? null;
     const availableModels = await dependencies.listModels(profileKey, accountId);
     const requestedModel = capturedSettings?.model ?? card.model;
     const selectedModel = requestedModel

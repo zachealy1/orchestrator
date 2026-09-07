@@ -77,6 +77,7 @@ export function useSettingsViewBindings(input: SettingsViewBindings) {
     [
       activeRunAccountIds,
       currentModel.accounts,
+      currentModel.engine,
       currentModel.alwaysAllowedApplications,
       currentModel.authMessage,
       currentModel.browserPreferences,

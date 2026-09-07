@@ -442,7 +442,7 @@ describe("SettingsView", () => {
       name: "Computer Use unavailable",
     });
     expect(trigger).toHaveAttribute("aria-expanded", "true");
-    expect(dialog).toHaveTextContent("Grant both permissions to continue.");
+    expect(dialog).toHaveTextContent("Allow Screen Recording and Accessibility for Computer Use in macOS settings.");
     expect(within(dialog).getAllByText("Required")).toHaveLength(2);
     expect(
       within(dialog).getByRole("button", { name: "Check again" }),

@@ -160,6 +160,10 @@ pub(crate) fn resolve_codex_binary() -> Result<PathBuf, String> {
         ));
     }
 
+    if let Some(managed) = crate::codex_engine::managed_binary() {
+        return managed;
+    }
+
     if let Some(path) = find_codex_on_path(env::var_os("PATH")) {
         return Ok(path);
     }

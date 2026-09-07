@@ -9,6 +9,7 @@ import {
   useState,
 } from "react";
 import { ArrowDown } from "lucide-react";
+import { scheduleNextVisualFrame } from "../shared/reactRuntime";
 import {
   Virtuoso,
   type ListRange,
@@ -339,7 +340,7 @@ const VirtuosoTaskChatTranscriptImpl = forwardRef<
     const activeLatestRequestRef = useRef<HistoricalChatOpenRequest | null>(
       openAtLatestRequest,
     );
-    const latestPositionFrameRef = useRef<number | null>(null);
+    const latestPositionFrameRef = useRef<(() => void) | null>(null);
     const latestPositionRetryTimerRef = useRef<number | null>(null);
     const liveFollowFrameRef = useRef<number | null>(null);
     const completionFollowFrameRef = useRef<number | null>(null);
@@ -355,7 +356,7 @@ const VirtuosoTaskChatTranscriptImpl = forwardRef<
     >(null);
     const suppressInteractionFollowRef = useRef(false);
     const notificationFocusTimerRef = useRef<number | null>(null);
-    const initialPositionFrameRef = useRef<number | null>(null);
+    const initialPositionFrameRef = useRef<(() => void) | null>(null);
     const initialPositionTimeoutRef = useRef<number | null>(null);
     const initialPositionAttemptCountRef = useRef(0);
     const initialPositionReadyRef = useRef(false);
@@ -555,21 +556,17 @@ const VirtuosoTaskChatTranscriptImpl = forwardRef<
       }
     }
     const initialPosition = initialPositionRef.current;
+    // Virtuoso hides nonzero initial positions until four RAF callbacks run.
+    // WKWebView can suspend those callbacks while an incoming chat is hidden.
+    // Restore measurements only; our bounded positioning owns the scroll.
     const initialPositionProps =
-      initialPosition.kind === "latest"
-        ? {
-            initialTopMostItemIndex: {
-              index: "LAST" as const,
-              align: "end" as const,
-            },
-          }
-        : initialPosition.kind === "restore"
-          ? { restoreStateFrom: initialPosition.snapshot }
-          : { initialItemCount: Math.min(entries.length, 20) };
+      initialPosition.kind === "restore"
+        ? { restoreStateFrom: { ...initialPosition.snapshot, scrollTop: 0 } }
+        : { initialItemCount: Math.min(entries.length, 20) };
 
     const clearInitialPositionSchedule = useCallback(() => {
       if (initialPositionFrameRef.current === null) return;
-      window.cancelAnimationFrame(initialPositionFrameRef.current);
+      initialPositionFrameRef.current();
       initialPositionFrameRef.current = null;
     }, []);
     const clearInitialPositionTimeout = useCallback(() => {
@@ -676,17 +673,27 @@ const VirtuosoTaskChatTranscriptImpl = forwardRef<
           return;
         }
         initialPositionAttemptCountRef.current += 1;
+        if (initialPosition.kind === "restore") {
+          virtuosoRef.current?.scrollToIndex({
+            index: firstItemIndex + initialPosition.location.index,
+            align: initialPosition.location.align,
+            offset: initialPosition.location.offset,
+            behavior: "auto",
+          });
+        }
         if (
           initialPositionAttemptCountRef.current <
           INITIAL_POSITION_READY_MAX_FRAMES
         ) {
-          initialPositionFrameRef.current = window.requestAnimationFrame(check);
+          initialPositionFrameRef.current = scheduleNextVisualFrame(check);
         } else {
           revealAtBestAvailablePosition();
         }
       };
-      initialPositionFrameRef.current = window.requestAnimationFrame(check);
+      initialPositionFrameRef.current = scheduleNextVisualFrame(check);
     }, [
+      firstItemIndex,
+      initialPosition,
       initialPositionIsReady,
       reportInitialPositionReady,
       revealAtBestAvailablePosition,
@@ -850,7 +857,7 @@ const VirtuosoTaskChatTranscriptImpl = forwardRef<
 
     const clearLatestPositionSchedule = useCallback(() => {
       if (latestPositionFrameRef.current !== null) {
-        window.cancelAnimationFrame(latestPositionFrameRef.current);
+        latestPositionFrameRef.current();
         latestPositionFrameRef.current = null;
       }
       if (latestPositionRetryTimerRef.current !== null) {
@@ -1513,14 +1520,14 @@ const VirtuosoTaskChatTranscriptImpl = forwardRef<
         ) {
           latestPositionRetryTimerRef.current = window.setTimeout(() => {
             latestPositionRetryTimerRef.current = null;
-            latestPositionFrameRef.current = window.requestAnimationFrame(
+            latestPositionFrameRef.current = scheduleNextVisualFrame(
               attemptPositioning,
             );
           }, LATEST_TURN_POSITION_RETRY_MS);
         }
       };
 
-      latestPositionFrameRef.current = window.requestAnimationFrame(
+      latestPositionFrameRef.current = scheduleNextVisualFrame(
         attemptPositioning,
       );
       return () => {
@@ -1742,6 +1749,7 @@ const VirtuosoTaskChatTranscriptImpl = forwardRef<
           {...initialPositionProps}
           computeItemKey={computeItemKey}
           defaultItemHeight={defaultItemHeight}
+          skipAnimationFrameInResizeObserver
           heightEstimates={heightEstimates}
           increaseViewportBy={transcriptIncreaseViewportBy}
           components={transcriptComponents}

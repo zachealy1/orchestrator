@@ -5,6 +5,17 @@ import { readAppStyles } from "../test/readAppStyles";
 const css = readAppStyles();
 
 describe("settings connection styles", () => {
+  it("wraps long executable paths inside permission diagnostics", () => {
+    const root = postcss.parse(css);
+    let copyRule = "";
+    let textRule = "";
+    root.walkRules((candidate) => {
+      if (candidate.selector === ".settings-status-popover-copy") copyRule = candidate.toString();
+      if (candidate.selector === ".settings-status-popover-copy span") textRule = candidate.toString();
+    });
+    expect(copyRule).toContain("grid-template-columns: minmax(0, 1fr)");
+    expect(textRule).toContain("overflow-wrap: anywhere");
+  });
   it("matches Settings avatars to the plugin avatar surface", () => {
     const root = postcss.parse(css);
     let avatarRule = "";

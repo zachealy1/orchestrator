@@ -7,6 +7,7 @@ import {
   renderApp,
   pointerTapFile,
   prepareSignedInRun,
+  signedInAccount,
   setWindowWidth,
 } from "./test/appRuntimeHarness";
 
@@ -121,6 +122,7 @@ describe("Application runtime scenarios 1", () => {
     });
 
   it("selects a newly added workspace after it is persisted", async () => {
+      prepareSignedInRun();
       const newWorkspace = {
         ...workspace,
         id: 9,
@@ -150,6 +152,10 @@ describe("Application runtime scenarios 1", () => {
       expect(screen.getByLabelText("Selected folder")).toHaveTextContent(
         newWorkspace.label,
       );
+      expect(mocks.setWorkspaceDefaultProfileMock).toHaveBeenCalledWith(
+        newWorkspace.id, `account:${signedInAccount.id}`, signedInAccount.id,
+      );
+      expect(screen.getByRole("combobox", { name: "Run account" })).toHaveTextContent(signedInAccount.label);
     });
 
   it("opens a workspace context menu and cancels workspace removal", async () => {
