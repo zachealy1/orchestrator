@@ -104,7 +104,7 @@ button.application-command-option {
 
 button.application-command-option:hover,
 button.application-command-option.is-active {
-  background: var(--dropdown-bg-hover);
+  background: var(--color-surface-soft);
   box-shadow: none;
   transform: none;
 }
