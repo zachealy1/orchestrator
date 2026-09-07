@@ -38,6 +38,13 @@
   font-size: 0.95rem;
 }
 
+.application-command-search input:focus,
+.application-command-search input:focus-visible {
+  border: 0;
+  outline: none;
+  box-shadow: none;
+}
+
 .application-command-search input::placeholder {
   color: var(--muted);
 }

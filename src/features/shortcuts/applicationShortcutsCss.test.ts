@@ -30,6 +30,14 @@ describe("application shortcut styles", () => {
     expect(hover).toContain("box-shadow: none");
   });
 
+  it("keeps the command search free of the global blue focus highlight", () => {
+    const focus = rule(".application-command-search input:focus,");
+    expect(focus).toContain(".application-command-search input:focus-visible");
+    expect(focus).toContain("border: 0");
+    expect(focus).toContain("outline: none");
+    expect(focus).toContain("box-shadow: none");
+  });
+
   it("honors reduced-motion preferences for both overlays", () => {
     expect(css).toContain("@media (prefers-reduced-motion: reduce)");
     expect(css).toContain("transition: none !important");
