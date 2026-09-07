@@ -26,6 +26,8 @@ use tokio::{sync::oneshot, time::timeout};
 mod agent_notifications;
 mod browser_runtime;
 mod codex;
+mod codex_engine;
+mod engine_probe;
 mod database;
 mod generated_images;
 mod git;
@@ -44,6 +46,7 @@ mod workspace;
 
 use agent_notifications::AgentNotificationState;
 pub(crate) use codex::*;
+pub use engine_probe::verify_codex_engine;
 pub(crate) use database::*;
 pub(crate) use generated_images::*;
 pub(crate) use git::*;
@@ -60,6 +63,9 @@ fn command_builder() -> tauri_specta::Builder<tauri::Wry> {
         .dangerously_cast_bigints_to_number()
         .error_handling(tauri_specta::ErrorHandlingMode::Throw)
         .commands(tauri_specta::collect_commands![
+            codex_engine::codex_engine_status,
+            codex_engine::codex_engine_check,
+            codex_engine::codex_engine_prepare_update,
             codex_connect,
             codex_default_profile_connect,
             codex_rpc,
@@ -185,6 +191,7 @@ pub fn run() {
                 .build(),
         )
         .setup(|app| {
+            codex_engine::initialize(app.handle()).map_err(std::io::Error::other)?;
             browser_runtime::cleanup_legacy_browser_runtime(app.handle())
                 .map_err(std::io::Error::other)?;
             let database = tauri::async_runtime::block_on(DatabaseState::connect(app.handle()))

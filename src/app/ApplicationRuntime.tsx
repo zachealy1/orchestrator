@@ -1,3 +1,5 @@
+import { useModelCatalog } from "../features/codex/useModelCatalog";
+import { useEngineController } from "../features/engine/useEngineController";
 import { open } from "@tauri-apps/plugin-dialog";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { listen } from "@tauri-apps/api/event";
@@ -2999,8 +3001,16 @@ function App() {
         .join("|"),
     [crossConversationApprovals],
   );
+  const engineController = useEngineController();
   const floatingStatusNotices = useMemo<FloatingStatusNotice[]>(() => {
     const notices: FloatingStatusNotice[] = [];
+    if (engineController.announcement) {
+      notices.push({
+        id: "codex-engine-update", revisionKey: engineController.announcement,
+        tone: "success", title: "Codex update available", detail: engineController.announcement,
+        actionLabel: "Open Settings", timeoutMs: null,
+      });
+    }
     if (crossConversationApprovals.length > 0) {
       const count = crossConversationApprovals.length;
       notices.push({
@@ -3090,6 +3100,7 @@ function App() {
     return notices;
   }, [
     applicationNotifications.notices,
+    engineController.announcement,
     approvalSafetyWarning,
     crossConversationApprovalRevision,
     crossConversationApprovals.length,
@@ -3100,6 +3111,9 @@ function App() {
     transcriptLinkError,
   ]);
   const activateFloatingStatusNotice = useStableEvent((noticeId: string) => {
+    if (noticeId === "codex-engine-update") {
+      setActiveView("settings"); engineController.dismissAnnouncement(); return;
+    }
     if (noticeId === "cross-conversation-approvals") {
       const oldest = [...crossConversationApprovals].sort((left, right) =>
         left.request.receivedAt.localeCompare(right.request.receivedAt),
@@ -3121,6 +3135,7 @@ function App() {
     }
   });
   const dismissFloatingStatusNotice = useStableEvent((noticeId: string) => {
+    if (noticeId === "codex-engine-update") { engineController.dismissAnnouncement(); return; }
     if (noticeId === "plugins-error") {
       pluginsController.dismissError();
       return;
@@ -5108,30 +5123,7 @@ function App() {
   }
 
   async function refreshCodexModels(accountId: number) {
-    try {
-      const visibleModels = await listCodexModelsForProfile(
-        profileKeyForAccountId(accountId),
-        accountId,
-      );
-      setModels(visibleModels);
-      setModelLoadError(null);
-      setSelectedModelId((current) => {
-        if (current && visibleModels.some((model) => model.id === current)) {
-          return current;
-        }
-
-        return (
-          visibleModels.find((model) => model.isDefault)?.id ??
-          visibleModels[0]?.id ??
-          null
-        );
-      });
-    } catch (error) {
-      setModels([]);
-      setSelectedModelId(null);
-      setSelectedReasoningEffort(null);
-      setModelLoadError(error instanceof Error ? error.message : String(error));
-    }
+    await modelCatalog.refresh(accountId);
   }
 
   async function listCodexModelsForProfile(
@@ -20558,8 +20550,22 @@ function App() {
     commandPaletteOpen,
     keyboardShortcutsOpen,
   });
+  const modelCatalog = useModelCatalog({
+    accountId: selectedAccountId,
+    accountIdRef: selectedAccountIdRef,
+    enabled: codexConnected && Boolean(codexAccount),
+    load: (accountId) => listCodexModelsForProfile(profileKeyForAccountId(accountId), accountId),
+    setModels, setSelectedModelId, setSelectedReasoningEffort, setModelLoadError,
+  });
   const settingsViewBindings = useSettingsViewBindings({
     model: {
+      engine: {
+        controller: engineController,
+        refreshModels: () => { if (selectedAccountId !== null) void modelCatalog.refresh(selectedAccountId); },
+        modelsRefreshing: modelCatalog.refreshing,
+        modelsNotice: modelCatalog.notice,
+        canRefreshModels: codexConnected && Boolean(codexAccount),
+      },
       dragRegion: selfWindowDragRegion,
       computerUseEnabled,
       browserPreferences,

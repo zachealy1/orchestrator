@@ -34,6 +34,8 @@ tauri-specta = { version = "=2.0.0-rc.25", features = ["derive", "typescript"] }
 tokio = { version = "1", features = ["net", "sync", "time"] }
 uuid = { version = "1", features = ["v4"] }
 sha2 = "0.10"
+flate2 = "1"
+tar = "0.4"
 base64 = "0.22"
 image = { version = "0.25", default-features = false, features = ["gif", "jpeg", "png", "webp"] }
 url = "2"

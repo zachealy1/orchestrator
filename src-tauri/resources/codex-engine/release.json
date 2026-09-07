@@ -1,0 +1,7 @@
+{
+  "version": "0.153.4",
+  "archives": {
+    "aarch64-apple-darwin": "8cf911ea676523bfb2121ec561848d2aba564890ad536db4d8a3353f2b9850b1",
+    "x86_64-apple-darwin": "d69200f0bf841b1d1a07f80b80cf742a2e4fc2bab91ae8a44b1042f8e8ca9fa4"
+  }
+}

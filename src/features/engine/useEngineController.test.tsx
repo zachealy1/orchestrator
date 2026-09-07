@@ -1,0 +1,37 @@
+import { act, renderHook } from "@testing-library/react";
+import { afterEach, expect, it, vi } from "vitest";
+import { useEngineController } from "./useEngineController";
+import { readEngineStatus, checkEngineUpdates, prepareEngineUpdate } from "./api";
+import type { CodexEngineStatus } from "../../generated/tauri";
+vi.mock("./api", () => ({ readEngineStatus: vi.fn(), checkEngineUpdates: vi.fn(), prepareEngineUpdate: vi.fn() }));
+const current: CodexEngineStatus = { source: "managed", installedVersion: "0.153.4", latestVersion: null, pendingVersion: null, updateAvailable: false, lastCheckedAt: null, message: null };
+afterEach(() => { vi.useRealTimers(); vi.resetAllMocks(); });
+it("checks at startup, announces a release once, and preserves status when preparation fails", async () => {
+  vi.useFakeTimers();
+  vi.mocked(readEngineStatus).mockResolvedValue(current);
+  vi.mocked(checkEngineUpdates).mockResolvedValue({ ...current, updateAvailable: true, latestVersion: "0.154.0" });
+  vi.mocked(prepareEngineUpdate).mockRejectedValue(new Error("Compatibility check failed"));
+  const { result, unmount } = renderHook(() => useEngineController(true));
+  await act(async () => { await vi.advanceTimersByTimeAsync(0); });
+  expect(checkEngineUpdates).toHaveBeenCalledTimes(1);
+  expect(result.current.announcement).toContain("0.154.0");
+  act(() => result.current.dismissAnnouncement());
+  await act(() => result.current.check());
+  expect(result.current.announcement).toBeNull();
+  await act(() => result.current.install());
+  expect(result.current.error).toBe("Compatibility check failed");
+  expect(result.current.status?.installedVersion).toBe("0.153.4");
+  await act(async () => { await vi.advanceTimersByTimeAsync(6 * 60 * 60_000); });
+  expect(checkEngineUpdates).toHaveBeenCalledTimes(3);
+  unmount();
+});
+it("shows a prepared update without changing the running version", async () => {
+  vi.mocked(readEngineStatus).mockResolvedValue(current);
+  vi.mocked(checkEngineUpdates).mockResolvedValue(current);
+  vi.mocked(prepareEngineUpdate).mockResolvedValue({ ...current, pendingVersion: "0.154.0" });
+  const { result } = renderHook(() => useEngineController(true));
+  await act(async () => { await Promise.resolve(); });
+  await act(() => result.current.install());
+  expect(result.current.status?.pendingVersion).toBe("0.154.0");
+  expect(result.current.status?.installedVersion).toBe("0.153.4");
+});
