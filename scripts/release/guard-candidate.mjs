@@ -23,9 +23,11 @@ for (const file of allowed) {
   if (file === pinPath) {
     const old = JSON.parse(before), next = JSON.parse(after);
     assert.ok(compareVersions(next.version, old.version) > 0);
-    assert.deepEqual(Object.keys(next.archives).sort(), Object.keys(old.archives).sort());
-    assert.ok(Object.values(next.archives).every((hash) => /^[a-f0-9]{64}$/.test(hash)));
-    assert.deepEqual({ ...next, version: old.version, archives: old.archives }, old);
+    for (const key of ["archives", "codeModeHostArchives"]) {
+      assert.deepEqual(Object.keys(next[key]).sort(), ["aarch64-apple-darwin", "x86_64-apple-darwin"]);
+      assert.ok(Object.values(next[key]).every((hash) => /^[a-f0-9]{64}$/.test(hash)));
+    }
+    assert.deepEqual({ ...next, version: old.version, archives: old.archives, codeModeHostArchives: old.codeModeHostArchives }, old);
   } else if (file.endsWith(".json")) {
     const old = JSON.parse(before), next = JSON.parse(after);
     assert.ok(compareVersions(next.version, old.version) > 0);

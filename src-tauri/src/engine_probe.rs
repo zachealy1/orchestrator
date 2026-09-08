@@ -22,11 +22,11 @@ impl Drop for ProbeChild {
     }
 }
 
-pub(crate) fn executable_version(binary: &Path) -> Result<String, String> {
+fn executable_output(binary: &Path, argument: &str) -> Result<String, String> {
     let deadline = Instant::now() + Duration::from_secs(10);
     let mut child = ProbeChild(
         Command::new(binary)
-            .arg("--version")
+            .arg(argument)
             .stdin(Stdio::null())
             .stdout(Stdio::piped())
             .stderr(Stdio::null())
@@ -56,7 +56,12 @@ pub(crate) fn executable_version(binary: &Path) -> Result<String, String> {
         }
         std::thread::sleep(Duration::from_millis(10));
     }
-    text.trim()
+    Ok(text)
+}
+
+pub(crate) fn executable_version(binary: &Path) -> Result<String, String> {
+    executable_output(binary, "--version")?
+        .trim()
         .strip_prefix("codex-cli ")
         .filter(|s| !s.is_empty())
         .map(str::to_string)
@@ -66,6 +71,17 @@ pub(crate) fn executable_version(binary: &Path) -> Result<String, String> {
 pub fn verify_codex_engine(binary: &Path, expected_version: &str) -> Result<(), String> {
     if executable_version(binary)? != expected_version {
         return Err("Codex engine version did not match its release.".into());
+    }
+    // Starting an anonymous thread does not guarantee that lazy model tools are initialized.
+    // Independently launch the required sibling so an incomplete package fails before activation.
+    let host = binary.with_file_name("codex-code-mode-host");
+    if !fs::symlink_metadata(&host).is_ok_and(|metadata| metadata.is_file()) {
+        return Err("The required Code Mode host is missing or is not a regular executable. Reinstall Orchestrator.".into());
+    }
+    let help = executable_output(&host, "--help")
+        .map_err(|error| format!("The Code Mode host could not start: {error}"))?;
+    if !help.contains("Usage:") || !help.contains("codex-code-mode-host") {
+        return Err("The Code Mode host returned an unexpected startup response.".into());
     }
     let home = std::env::temp_dir().join(format!(
         "orchestrator-engine-probe-{}",
@@ -85,6 +101,7 @@ fn probe_protocol(binary: &Path, home: &Path) -> Result<(), String> {
             .env("CODEX_HOME", home)
             .env_remove("OPENAI_API_KEY")
             .env_remove("CODEX_API_KEY")
+            .env_remove("CODEX_ACCESS_TOKEN")
             .current_dir(home)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
@@ -125,6 +142,16 @@ fn probe_protocol(binary: &Path, home: &Path) -> Result<(), String> {
                 .recv_timeout(deadline.saturating_duration_since(Instant::now()))
                 .map_err(|_| format!("No response to {method}"))?;
             let response: Value = serde_json::from_str(&line).map_err(|e| e.to_string())?;
+            if response.get("method").and_then(Value::as_str) == Some("warning") {
+                let message = response
+                    .pointer("/params/message")
+                    .and_then(Value::as_str)
+                    .unwrap_or("");
+                let lower = message.to_lowercase();
+                if lower.contains("code mode") || lower.contains("code-mode") {
+                    return Err(format!("Code Mode runtime failed to start: {message}"));
+                }
+            }
             if response.get("id") == Some(&json!(id)) {
                 if let Some(error) = response.get("error") {
                     return Err(format!("{method}: {error}"));
@@ -176,5 +203,30 @@ fn probe_protocol(binary: &Path, home: &Path) -> Result<(), String> {
         }
     }
     request("model/list", json!({"limit":1,"includeHidden":false}))?;
+    // Exercise thread setup and native execution too, without credentials or model inference.
+    let started = request(
+        "thread/start",
+        json!({"cwd":home,"ephemeral":true,"approvalPolicy":"never","sandbox":"read-only"}),
+    )?;
+    if started
+        .pointer("/thread/id")
+        .and_then(Value::as_str)
+        .is_none()
+    {
+        return Err("The engine could not start a verification thread.".into());
+    }
+    let executed = request(
+        "command/exec",
+        json!({"command":["/bin/echo","orchestrator-engine-probe"],"cwd":home,"sandboxPolicy":{"type":"readOnly"},"timeoutMs":5000}),
+    )?;
+    if executed.get("exitCode").and_then(Value::as_i64) != Some(0)
+        || executed
+            .get("stdout")
+            .and_then(Value::as_str)
+            .map(str::trim)
+            != Some("orchestrator-engine-probe")
+    {
+        return Err("The engine could not execute the read-only verification command.".into());
+    }
     Ok(())
 }

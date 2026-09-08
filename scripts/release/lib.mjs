@@ -22,12 +22,14 @@ export function stableCandidate(releases, pinned) {
     .filter((release) => compareVersions(release.version, pinned) > 0)
     .sort((a, b) => compareVersions(b.version, a.version))[0] ?? null;
 }
-export function engineAssets(release) {
+export function engineAssets(release, component = "codex") {
+  if (!["codex", "codex-code-mode-host"].includes(component)) throw new Error("Unknown engine component");
   return Object.fromEntries(ARCHES.map((arch) => {
     const target = `${arch}-apple-darwin`;
-    const asset = release.assets.find((a) => a.name === `codex-${target}.tar.gz`);
+    const matches = release.assets.filter((a) => a.name === `${component}-${target}.tar.gz`);
+    const asset = matches.length === 1 ? matches[0] : null;
     if (!asset || !/^sha256:[a-f0-9]{64}$/.test(asset.digest ?? "") || asset.size <= 0 || asset.size > 300 * 1024 * 1024) {
-      throw new Error(`Missing verified upstream asset or integrity metadata: ${target}`);
+      throw new Error(`Missing verified upstream asset or integrity metadata: ${component}-${target}`);
     }
     const expected = `https://github.com/openai/codex/releases/download/${release.tag_name}/${asset.name}`;
     if (asset.browser_download_url !== expected) throw new Error("Untrusted upstream asset location");

@@ -10,7 +10,8 @@ const branch = `codex/engine-upgrade-${candidate.version}`;
 const previous = await github(`repos/${REPOSITORY}/pulls?state=all&head=zachealy1:${encodeURIComponent(branch)}`);
 if (previous.length) { console.log("Candidate was already processed; use the sanitized tracking issue for recovery."); process.exit(0); }
 const artifacts = engineAssets(candidate);
-for (const asset of Object.values(artifacts)) {
+const hosts = engineAssets(candidate, "codex-code-mode-host");
+for (const asset of [...Object.values(artifacts), ...Object.values(hosts)]) {
   const response = await fetch(asset.browser_download_url);
   if (!response.ok) throw new Error("Upstream engine download failed");
   const bytes = Buffer.from(await response.arrayBuffer());
@@ -18,7 +19,10 @@ for (const asset of Object.values(artifacts)) {
 }
 const packageJson = JSON.parse(await readFile("package.json", "utf8"));
 const oldVersion = packageJson.version, version = nextAppVersion(oldVersion);
-await writeFile(pinPath, `${JSON.stringify({ ...currentPin, version: candidate.version, archives: Object.fromEntries(Object.entries(artifacts).map(([target, asset]) => [target, asset.hash])) }, null, 2)}\n`);
+await writeFile(pinPath, `${JSON.stringify({ ...currentPin, version: candidate.version,
+  archives: Object.fromEntries(Object.entries(artifacts).map(([target, asset]) => [target, asset.hash])),
+  codeModeHostArchives: Object.fromEntries(Object.entries(hosts).map(([target, asset]) => [target, asset.hash])),
+}, null, 2)}\n`);
 for (const file of ["package.json", "package-lock.json", "src-tauri/tauri.conf.json"]) {
   const data = JSON.parse(await readFile(file, "utf8")); data.version = version;
   if (data.packages?.[""]) data.packages[""].version = version;

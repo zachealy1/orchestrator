@@ -7,6 +7,7 @@ fn provisioning_rejects_invalid_release_metadata() {
         version: "0.153.4".into(),
         target: target().unwrap().into(),
         archive_sha256: "a".repeat(64),
+        code_mode_host_archive_sha256: None,
     };
     assert!(release.validate().is_ok());
     assert!(release
@@ -83,10 +84,12 @@ fn failed_integrity_check_preserves_active_record() {
         version: "0.153.4".into(),
         target: target().unwrap().into(),
         archive_sha256: "a".repeat(64),
+        code_mode_host_archive_sha256: None,
     };
     let active = RuntimeRecord {
         release,
         executable_sha256: "b".repeat(64),
+        code_mode_host_sha256: None,
     };
     let manager = EngineManager {
         root: root.clone(),
@@ -125,8 +128,10 @@ fn current_session_keeps_its_selected_engine() {
             version: "0.154.0".into(),
             target: target().unwrap().into(),
             archive_sha256: "a".repeat(64),
+            code_mode_host_archive_sha256: None,
         },
         executable_sha256: "b".repeat(64),
+        code_mode_host_sha256: None,
     });
     assert_eq!(manager.ensure_selected().unwrap(), root.join("old-codex"));
     assert_eq!(
@@ -149,6 +154,7 @@ fn fake_runtime(manager: &EngineManager, version: &str, compatible: bool) -> Run
     let script = format!(
         r##"#!/bin/sh
 if [ "$1" = "--version" ]; then echo 'codex-cli {version}'; exit 0; fi
+if [ "$1" = "--help" ]; then echo 'Usage: codex-code-mode-host [OPTIONS]'; exit 0; fi
 while IFS= read -r line; do
 case "$line" in
 *'"method":"initialize"'*) echo '{{"id":1,"result":{{}}}}';;
@@ -156,6 +162,8 @@ case "$line" in
 *'"method":"permissionProfile/list"'*) echo '{{"id":3,"result":{{"data":[{{"id":":read-only","allowed":true}},{{"id":"orchestrator_workspace_network_v1","allowed":true}}]}}}}';;
 *'"method":"collaborationMode/list"'*) echo '{{"id":4,"result":{{"data":[{{"mode":"plan"}},{{"mode":"default"}}]}}}}';;
 *'"method":"model/list"'*) echo '{{"id":5,"result":{{"data":[]}}}}';;
+*'"method":"thread/start"'*) echo '{{"id":6,"result":{{"thread":{{"id":"probe"}}}}}}';;
+*'"method":"command/exec"'*) echo '{{"id":7,"result":{{"exitCode":0,"stdout":"orchestrator-engine-probe","stderr":""}}}}';;
 esac
 done
 "##
@@ -166,12 +174,27 @@ done
         release: Release {
             version: version.into(),
             target: target().unwrap().into(),
-            archive_sha256: if version == pinned_release().version { pinned_release().archives[target().unwrap()].clone() } else { "a".repeat(64) },
+            archive_sha256: if version == pinned_release().version {
+                pinned_release().archives[target().unwrap()].clone()
+            } else {
+                "a".repeat(64)
+            },
+            code_mode_host_archive_sha256: Some(if version == pinned_release().version {
+                pinned_release().code_mode_host_archives[target().unwrap()].clone()
+            } else {
+                "c".repeat(64)
+            }),
         },
         executable_sha256: hash_file(&probe).unwrap(),
+        code_mode_host_sha256: Some(hash_file(&probe).unwrap()),
     };
     let binary = manager.binary(&record).unwrap();
     secure_directory(binary.parent().unwrap()).unwrap();
+    fs::copy(
+        &probe,
+        binary.parent().unwrap().join("codex-code-mode-host"),
+    )
+    .unwrap();
     fs::rename(probe, binary).unwrap();
     record
 }
@@ -203,7 +226,10 @@ fn legacy_pending_updates_are_preserved_but_never_activated() {
         manager.ensure_selected().unwrap(),
         manager.binary(&old).unwrap()
     );
-    assert_eq!(manager.selected.as_ref().unwrap().1, pinned_release().version);
+    assert_eq!(
+        manager.selected.as_ref().unwrap().1,
+        pinned_release().version
+    );
     manager.save().unwrap();
     let saved: serde_json::Value =
         serde_json::from_slice(&fs::read(manager.root.join("state.json")).unwrap()).unwrap();
@@ -246,7 +272,10 @@ fn incompatible_or_corrupt_active_engine_recovers_previous_engine() {
             .contains("Recovering a working engine"));
         let saved: DiskState =
             serde_json::from_slice(&fs::read(manager.root.join("state.json")).unwrap()).unwrap();
-        assert_eq!(saved.active.unwrap().release.version, pinned_release().version);
+        assert_eq!(
+            saved.active.unwrap().release.version,
+            pinned_release().version
+        );
         fs::remove_dir_all(manager.root).unwrap();
     }
 }
@@ -259,7 +288,10 @@ fn current_engine_starts_without_network_or_bundled_or_external_installation() {
         manager.ensure_selected().unwrap(),
         manager.binary(&old).unwrap()
     );
-    assert_eq!(manager.selected.as_ref().unwrap().1, pinned_release().version);
+    assert_eq!(
+        manager.selected.as_ref().unwrap().1,
+        pinned_release().version
+    );
     fs::remove_dir_all(manager.root).unwrap();
 }
 
@@ -272,6 +304,14 @@ fn first_launch_imports_packaged_engine_without_path_lookup_or_network() {
     let bundle = manager.root.join("bundle");
     secure_directory(&bundle).unwrap();
     fs::rename(manager.binary(&record).unwrap(), bundle.join("codex")).unwrap();
+    fs::rename(
+        manager
+            .binary(&record)
+            .unwrap()
+            .with_file_name("codex-code-mode-host"),
+        bundle.join("codex-code-mode-host"),
+    )
+    .unwrap();
     atomic_json(&bundle.join("runtime.json"), &record).unwrap();
     manager.bundles.push(bundle);
     let path = manager.ensure_selected().unwrap();
@@ -295,12 +335,29 @@ fn app_upgrade_activates_bundled_pin_and_retains_previous_engine() {
     let bundle = manager.root.join("bundle");
     secure_directory(&bundle).unwrap();
     fs::rename(manager.binary(&record).unwrap(), bundle.join("codex")).unwrap();
+    fs::rename(
+        manager
+            .binary(&record)
+            .unwrap()
+            .with_file_name("codex-code-mode-host"),
+        bundle.join("codex-code-mode-host"),
+    )
+    .unwrap();
     atomic_json(&bundle.join("runtime.json"), &record).unwrap();
     manager.bundles.push(bundle);
-    assert_eq!(manager.ensure_selected().unwrap(), manager.binary(&record).unwrap());
-    assert_eq!(manager.disk.previous.as_ref().unwrap().release.version, "0.152.0");
+    assert_eq!(
+        manager.ensure_selected().unwrap(),
+        manager.binary(&record).unwrap()
+    );
+    assert_eq!(
+        manager.disk.previous.as_ref().unwrap().release.version,
+        "0.152.0"
+    );
     manager.selected = None;
-    assert_eq!(manager.ensure_selected().unwrap(), manager.binary(&record).unwrap());
+    assert_eq!(
+        manager.ensure_selected().unwrap(),
+        manager.binary(&record).unwrap()
+    );
     assert!(manager.binary(&old).unwrap().is_file());
     fs::remove_dir_all(manager.root).unwrap();
 }
@@ -315,9 +372,19 @@ fn failed_bundle_upgrade_reports_recovery_without_changing_active_record() {
     secure_directory(&bundle).unwrap();
     fs::write(bundle.join("runtime.json"), "invalid metadata").unwrap();
     manager.bundles.push(bundle);
-    assert_eq!(manager.ensure_selected().unwrap(), manager.binary(&old).unwrap());
-    assert!(manager.message.as_ref().unwrap().contains("could not be activated"));
-    assert_eq!(manager.disk.active.as_ref().unwrap().release.version, "0.152.0");
+    assert_eq!(
+        manager.ensure_selected().unwrap(),
+        manager.binary(&old).unwrap()
+    );
+    assert!(manager
+        .message
+        .as_ref()
+        .unwrap()
+        .contains("could not be activated"));
+    assert_eq!(
+        manager.disk.active.as_ref().unwrap().release.version,
+        "0.152.0"
+    );
     fs::remove_dir_all(manager.root).unwrap();
 }
 
@@ -345,6 +412,166 @@ fn official_packaged_engine_imports_and_restarts_without_an_external_installatio
         provision_error: None,
     };
     assert_eq!(restarted.ensure_selected().unwrap(), selected);
+    // Inventory-only probes used to pass this incomplete installation.
+    fs::remove_file(selected.with_file_name("codex-code-mode-host")).unwrap();
+    let error = verify_codex_engine(&selected, &pinned_release().version).unwrap_err();
+    assert!(
+        error.contains("required Code Mode host is missing"),
+        "{error}"
+    );
+    fs::remove_dir_all(manager.root).unwrap();
+}
+
+fn copy_bundle(manager: &EngineManager, record: &RuntimeRecord) -> PathBuf {
+    let bundle = manager.root.join("bundle");
+    secure_directory(&bundle).unwrap();
+    for name in ["codex", "codex-code-mode-host"] {
+        fs::copy(
+            manager.binary(record).unwrap().with_file_name(name),
+            bundle.join(name),
+        )
+        .unwrap();
+    }
+    atomic_json(&bundle.join("runtime.json"), record).unwrap();
+    bundle
+}
+
+#[test]
+fn legacy_single_binary_install_is_repaired_in_a_new_slot_without_deleting_it() {
+    let mut manager = test_manager();
+    let record = fake_runtime(&manager, &pinned_release().version, true);
+    manager.bundles.push(copy_bundle(&manager, &record));
+    let mut legacy_json = serde_json::to_value(&record).unwrap();
+    legacy_json
+        .as_object_mut()
+        .unwrap()
+        .remove("codeModeHostSha256");
+    legacy_json["release"]
+        .as_object_mut()
+        .unwrap()
+        .remove("codeModeHostArchiveSha256");
+    let legacy: RuntimeRecord = serde_json::from_value(legacy_json.clone()).unwrap();
+    assert_eq!(serde_json::to_value(&legacy).unwrap(), legacy_json);
+    let old_path = manager.binary(&legacy).unwrap();
+    secure_directory(old_path.parent().unwrap()).unwrap();
+    fs::copy(manager.binary(&record).unwrap(), &old_path).unwrap();
+    fs::remove_dir_all(manager.binary(&record).unwrap().parent().unwrap()).unwrap();
+    manager.disk.active = Some(legacy);
+    manager.save().unwrap();
+    let path = manager.ensure_selected().unwrap();
+    assert_ne!(path, old_path);
+    assert!(old_path.is_file());
+    assert!(path.with_file_name("codex-code-mode-host").is_file());
+    assert!(manager
+        .disk
+        .active
+        .as_ref()
+        .unwrap()
+        .code_mode_host_sha256
+        .is_some());
+    fs::remove_dir_all(manager.root).unwrap();
+}
+
+#[test]
+fn host_integrity_failures_are_detected_and_repaired_from_the_bundle() {
+    for damage in ["missing", "corrupt", "symlink", "not-executable"] {
+        let mut manager = test_manager();
+        let record = fake_runtime(&manager, &pinned_release().version, true);
+        let bundle = copy_bundle(&manager, &record);
+        manager.bundles.push(bundle.clone());
+        manager.disk.active = Some(record.clone());
+        let host = manager
+            .binary(&record)
+            .unwrap()
+            .with_file_name("codex-code-mode-host");
+        fs::remove_file(&host).unwrap();
+        match damage {
+            "corrupt" => fs::write(&host, "damaged").unwrap(),
+            "symlink" => {
+                std::os::unix::fs::symlink(bundle.join("codex-code-mode-host"), &host).unwrap()
+            }
+            "not-executable" => {
+                use std::os::unix::fs::PermissionsExt;
+                fs::copy(bundle.join("codex-code-mode-host"), &host).unwrap();
+                fs::set_permissions(&host, fs::Permissions::from_mode(0o600)).unwrap();
+            }
+            _ => (),
+        }
+        assert!(manager.verify(&record).is_err());
+        manager.ensure_selected().unwrap();
+        assert!(fs::symlink_metadata(&host).unwrap().is_file());
+        assert!(manager.verify(&record).is_ok());
+        fs::remove_dir_all(manager.root).unwrap();
+    }
+}
+
+#[test]
+fn failed_pair_import_leaves_existing_engine_and_saved_state_unchanged() {
+    let mut manager = test_manager();
+    let record = fake_runtime(&manager, &pinned_release().version, true);
+    let bundle = copy_bundle(&manager, &record);
+    manager.disk.active = Some(record.clone());
+    manager.save().unwrap();
+    let before = fs::read(manager.root.join("state.json")).unwrap();
+    fs::write(bundle.join("codex-code-mode-host"), "wrong host").unwrap();
+    assert!(manager.import_bundle(&bundle).is_err());
+    assert_eq!(fs::read(manager.root.join("state.json")).unwrap(), before);
+    assert!(manager.verify(&record).is_ok());
+    assert!(!fs::read_dir(&manager.root).unwrap().any(|entry| entry
+        .unwrap()
+        .file_name()
+        .to_string_lossy()
+        .starts_with("staging-")));
+    fs::remove_dir_all(manager.root).unwrap();
+}
+
+#[test]
+fn host_start_failure_after_staging_does_not_publish_a_partial_runtime() {
+    let mut manager = test_manager();
+    let record = fake_runtime(&manager, &pinned_release().version, true);
+    let bundle = copy_bundle(&manager, &record);
+    manager.disk.active = Some(record.clone());
+    manager.save().unwrap();
+    let before = fs::read(manager.root.join("state.json")).unwrap();
+    let host = bundle.join("codex-code-mode-host");
+    fs::write(
+        &host,
+        "#!/bin/sh\necho 'Usage: codex-code-mode-host [OPTIONS]'\nexit 1\n",
+    )
+    .unwrap();
+    let mut broken = record.clone();
+    broken.code_mode_host_sha256 = Some(hash_file(&host).unwrap());
+    atomic_json(&bundle.join("runtime.json"), &broken).unwrap();
+    assert!(manager
+        .import_bundle(&bundle)
+        .unwrap_err()
+        .contains("Code Mode host could not start"));
+    assert!(!manager.binary(&broken).unwrap().exists());
+    assert!(manager.verify(&record).is_ok());
+    assert_eq!(fs::read(manager.root.join("state.json")).unwrap(), before);
+    assert!(!fs::read_dir(&manager.root).unwrap().any(|entry| entry
+        .unwrap()
+        .file_name()
+        .to_string_lossy()
+        .starts_with("staging-")));
+    fs::remove_dir_all(manager.root).unwrap();
+}
+
+#[test]
+fn probe_rejects_host_failure_even_when_inventory_requests_succeed() {
+    let manager = test_manager();
+    let record = fake_runtime(&manager, &pinned_release().version, true);
+    let binary = manager.binary(&record).unwrap();
+    let script = fs::read_to_string(&binary).unwrap();
+    fs::write(&binary, script.replace(
+        "*'\"method\":\"thread/start\"'*)",
+        "*'\"method\":\"thread/start\"'*) echo '{\"method\":\"warning\",\"params\":{\"message\":\"Code Mode is unavailable: host executable was not found\"}}';",
+    )).unwrap();
+    let error = verify_codex_engine(&binary, &pinned_release().version).unwrap_err();
+    assert!(
+        error.contains("Code Mode runtime failed to start"),
+        "{error}"
+    );
     fs::remove_dir_all(manager.root).unwrap();
 }
 

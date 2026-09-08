@@ -394,7 +394,11 @@ describe("Application runtime scenarios 5", () => {
         });
 
         await renderApp();
-        window.dispatchEvent(new Event("focus"));
+        // renderApp waits for account loading to start, not for the workspace
+        // (and its focus listener) to finish mounting.
+        await within(screen.getByRole("navigation", { name: "Workspaces" }))
+          .findByRole("button", { name: workspace.label });
+        await act(async () => window.dispatchEvent(new Event("focus")));
 
         await waitFor(() =>
           expect(mocks.codexDefaultProfileRpcMock).toHaveBeenCalledWith(

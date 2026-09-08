@@ -1,27 +1,41 @@
 import { mkdtemp, readdir, readFile, rm } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { tmpdir } from "node:os";
-import { execFileSync } from "node:child_process";
+import { spawnSync } from "node:child_process";
 import assert from "node:assert/strict";
+import { engineRelease, verifyRuntimeFiles } from "../codex-engine-package.mjs";
+import { distribution, validateAppSignature } from "./distribution.mjs";
+import { confidentialRun } from "./safe-process.mjs";
+const profile = distribution(process.env.RELEASE_DISTRIBUTION ?? "notarized");
 const [directory, arch] = process.argv.slice(2);
 assert.ok(["aarch64", "x86_64"].includes(arch));
 const staging = await mkdtemp(join(tmpdir(), "orchestrator-package-audit-"));
-const run = (bin, args) => execFileSync(bin, args, { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] });
+const run = (bin, args) => confidentialRun(bin, args, { encoding: "utf8" });
 async function inspectApp(app) {
   const version = JSON.parse(await readFile("package.json", "utf8")).version;
   for (const [key, expected] of Object.entries({ CFBundleIdentifier: "com.zachealy.orchestrator", CFBundleShortVersionString: version, CFBundleVersion: version, LSMinimumSystemVersion: "15.0" })) {
     assert.equal(run("/usr/libexec/PlistBuddy", ["-c", `Print :${key}`, join(app, "Contents/Info.plist")]).trim(), expected);
   }
   run("codesign", ["--verify", "--deep", "--strict", app]);
-  // Gatekeeper and stapling validate the actual redistributed copy, not an intermediate path.
-  run("spctl", ["--assess", "--type", "execute", app]); run("xcrun", ["stapler", "validate", app]);
+  const signature = spawnSync("codesign", ["--display", "--verbose=4", app], { encoding: "utf8" });
+  if (signature.status !== 0) throw new Error("Cannot inspect the packaged app signature");
+  validateAppSignature(profile, signature.stderr);
+  if (profile === "notarized") {
+    // Notarized distribution retains Gatekeeper and stapling verification on the actual copy.
+    run("spctl", ["--assess", "--type", "execute", app]); run("xcrun", ["stapler", "validate", app]);
+  }
   const executable = join(app, "Contents/MacOS/orchestrator");
   assert.equal(run("lipo", ["-archs", executable]).trim(), arch === "aarch64" ? "arm64" : "x86_64");
   const binaries = await readdir(join(app, "Contents/MacOS")); assert.deepEqual(binaries, ["orchestrator"]);
   const runtime = join(app, "Contents/Resources/resources");
   const suffix = arch === "aarch64" ? "arm64" : "x64";
   const pin = JSON.parse(await readFile("src-tauri/resources/codex-engine/release.json", "utf8"));
-  assert.ok(run(join(runtime, `codex-engine/darwin-${suffix}/codex`), ["--version"]).includes(pin.version));
+  const engineDirectory = join(runtime, `codex-engine/darwin-${suffix}`);
+  verifyRuntimeFiles(engineDirectory, engineRelease(pin, `${arch}-apple-darwin`));
+  for (const name of ["codex", "codex-code-mode-host"]) {
+    assert.equal(run("lipo", ["-archs", join(engineDirectory, name)]).trim(), arch === "aarch64" ? "arm64" : "x86_64");
+  }
+  run("cargo", ["run", "--quiet", "--manifest-path", "src-tauri/Cargo.toml", "--features", "dev-tools", "--bin", "verify-codex-engine", "--", join(engineDirectory, "codex"), pin.version]);
   assert.ok(run(join(runtime, `github-cli/darwin-${suffix}/bin/gh`), ["--version"]).startsWith("gh version "));
   await readFile(join(runtime, "codex-engine/LICENSE")); await readFile(join(runtime, "github-cli/LICENSE"));
   await readFile(join(runtime, "notices/THIRD-PARTY-NOTICES.txt"));
@@ -50,5 +64,5 @@ try {
   run("hdiutil", ["attach", resolve(directory, `Orchestrator_${arch}.dmg`), "-readonly", "-nobrowse", "-mountpoint", mount]);
   try { await inspectApp(join(mount, "Orchestrator.app")); }
   finally { run("hdiutil", ["detach", mount]); }
-  console.log(`Both distributed ${arch} packages passed signing, notarization and resource checks.`);
+  console.log(`Both distributed ${arch} packages passed ${profile === "community" ? "ad-hoc signing (NOT Apple notarization)" : "signing and notarization"}, updater-signature and resource checks.`);
 } finally { await rm(staging, { recursive: true, force: true }); }

@@ -1,4 +1,4 @@
-name: Signed public beta
+name: Community public beta
 on:
   workflow_dispatch:
     inputs:
@@ -7,7 +7,7 @@ on:
         required: true
         type: string
       rehearsal:
-        description: Build signed rehearsal artifacts (publicly accessible) without releasing
+        description: Build non-notarized draft packages without publishing
         type: boolean
         default: true
 permissions:
@@ -20,6 +20,7 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       sha: ${{ steps.ref.outputs.sha }}
+      staging: ${{ steps.ref.outputs.staging }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
@@ -29,14 +30,16 @@ jobs:
       - id: ref
         env:
           REF: ${{ inputs.ref }}
-          APPROVED: ${{ vars.BETA_REHEARSAL_APPROVED }}
+          APPROVED_SHA: ${{ vars.COMMUNITY_BETA_APPROVED_SHA }}
           REHEARSAL: ${{ inputs.rehearsal }}
         run: |
+          test "$GITHUB_REPOSITORY" = zachealy1/orchestrator
           test "$GITHUB_REF" = refs/heads/main
-          test "$REHEARSAL" = true || test "$APPROVED" = true
           [[ "$REF" =~ ^[a-f0-9]{40}$ ]]
+          test "$REHEARSAL" = true || test "$APPROVED_SHA" = "$REF"
           git merge-base --is-ancestor "$REF" origin/main
           echo "sha=$REF" >> "$GITHUB_OUTPUT"
+          echo "staging=community-build-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT" >> "$GITHUB_OUTPUT"
   validate:
     needs: authorize
     uses: ./.github/workflows/validate-release.yml
@@ -46,13 +49,37 @@ jobs:
     secrets:
       RELEASE_TEST_CODEX_AUTH_JSON: ${{ secrets.RELEASE_TEST_CODEX_AUTH_JSON }}
       RELEASE_TEST_MODEL: ${{ secrets.RELEASE_TEST_MODEL }}
-  sign:
+  stage:
     needs: [authorize, validate]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: ${{ needs.authorize.outputs.sha }}
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: '24'
+      - env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_SOURCE_SHA: ${{ needs.authorize.outputs.sha }}
+          STAGING_TAG: ${{ needs.authorize.outputs.staging }}
+        run: node scripts/release/stage-community.mjs prepare
+  package:
+    needs: [authorize, stage]
     environment: public-beta-signing
+    permissions:
+      contents: write
     strategy:
       fail-fast: false
       matrix:
-        runner: [macos-15, macos-15-intel]
+        include:
+          - runner: macos-15
+            arch: aarch64
+          - runner: macos-15-intel
+            arch: x86_64
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 90
     steps:
@@ -65,29 +92,24 @@ jobs:
           node-version: '24'
       - run: rustup toolchain install 1.96.0 --profile minimal && rustup default 1.96.0
       - run: npm ci
-      - name: Build, sign, notarize and verify final artifacts
+      - name: Package and verify (ad-hoc signing, no Apple notarization)
         env:
-          BETA_REHEARSAL_APPROVED: ${{ vars.BETA_REHEARSAL_APPROVED }}
+          RELEASE_DISTRIBUTION: community
           RELEASE_SOURCE_SHA: ${{ needs.authorize.outputs.sha }}
           ORCHESTRATOR_UPDATER_PUBLIC_KEY: ${{ vars.ORCHESTRATOR_UPDATER_PUBLIC_KEY }}
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
-          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
-          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
-          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
-          APPLE_ID: ${{ secrets.APPLE_ID }}
-          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
-          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
         run: node scripts/release/package-macos.mjs
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
-        with:
-          name: signed-${{ matrix.runner }}
-          path: release-artifacts/
-          if-no-files-found: error
-          retention-days: 7
+      - name: Store only verified packages in the draft release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_SOURCE_SHA: ${{ needs.authorize.outputs.sha }}
+          STAGING_TAG: ${{ needs.authorize.outputs.staging }}
+          RELEASE_ARCH: ${{ matrix.arch }}
+        run: node scripts/release/stage-community.mjs upload
   publish:
-    if: inputs.rehearsal == false && vars.BETA_REHEARSAL_APPROVED == 'true'
-    needs: [authorize, sign]
+    if: inputs.rehearsal == false && vars.COMMUNITY_BETA_APPROVED_SHA == needs.authorize.outputs.sha
+    needs: [authorize, package]
     runs-on: ubuntu-latest
     environment: public-beta-publishing
     permissions:
@@ -100,20 +122,19 @@ jobs:
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         with:
           node-version: '24'
-      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
-        with:
-          pattern: signed-*
-          path: release-artifacts
-          merge-multiple: true
-      - env:
+      - name: Reverify both source-bound packages and publish
+        env:
           GH_TOKEN: ${{ github.token }}
           RELEASE_SOURCE_SHA: ${{ needs.authorize.outputs.sha }}
-          BETA_REHEARSAL_APPROVED: ${{ vars.BETA_REHEARSAL_APPROVED }}
+          RELEASE_DISTRIBUTION: community
+          COMMUNITY_BETA_APPROVED_SHA: ${{ vars.COMMUNITY_BETA_APPROVED_SHA }}
+          STAGING_TAG: ${{ needs.authorize.outputs.staging }}
         run: |
+          node scripts/release/stage-community.mjs download
           export RELEASE_VERSION=$(node -p "JSON.parse(require('fs').readFileSync('package.json')).version")
           node scripts/release/publish.mjs
   report-failure:
-    needs: [authorize, validate, sign, publish]
+    needs: [authorize, validate, stage, package, publish]
     if: always() && contains(needs.*.result, 'failure')
     runs-on: ubuntu-latest
     permissions:

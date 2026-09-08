@@ -1,12 +1,18 @@
 import { readFile } from "node:fs/promises";
 import assert from "node:assert/strict";
-import { versionParts, requireEnvironment } from "./lib.mjs";
+import { versionParts } from "./lib.mjs";
+import { engineRelease } from "../codex-engine-package.mjs";
+import { distribution, validateDistributionVersion, requireSigning, requirePublicationApproval } from "./distribution.mjs";
+const enginePin = JSON.parse(await readFile("src-tauri/resources/codex-engine/release.json", "utf8"));
+for (const arch of ["aarch64", "x86_64"]) engineRelease(enginePin, `${arch}-apple-darwin`);
 const packageJson = JSON.parse(await readFile("package.json", "utf8"));
 const lock = JSON.parse(await readFile("package-lock.json", "utf8"));
 const tauri = JSON.parse(await readFile("src-tauri/tauri.conf.json", "utf8"));
 const cargo = await readFile("src-tauri/Cargo.toml", "utf8");
 const nativeLock = await readFile("src-tauri/Cargo.lock", "utf8");
 versionParts(packageJson.version);
+const profile = distribution(process.env.RELEASE_DISTRIBUTION ?? "notarized");
+validateDistributionVersion(profile, packageJson.version);
 for (const version of [lock.version, lock.packages[""].version, tauri.version,
   cargo.match(/name = "orchestrator"\nversion = "([^"]+)"/)[1], nativeLock.match(/name = "orchestrator"\nversion = "([^"]+)"/)[1]]) assert.equal(version, packageJson.version);
 assert.equal(packageJson.private, true);
@@ -24,8 +30,7 @@ assert.ok(cargo.includes("autobins = false"));
 // service supplies the embedded release key and refuses checks when it is absent.
 assert.equal(typeof tauri.plugins.updater.pubkey, "string");
 if (process.argv.includes("--publish") || process.argv.includes("--sign")) {
-  requireEnvironment(["ORCHESTRATOR_UPDATER_PUBLIC_KEY", "TAURI_SIGNING_PRIVATE_KEY", "TAURI_SIGNING_PRIVATE_KEY_PASSWORD", "APPLE_CERTIFICATE", "APPLE_CERTIFICATE_PASSWORD", "APPLE_SIGNING_IDENTITY", "APPLE_ID", "APPLE_PASSWORD", "APPLE_TEAM_ID"]);
-  if (!process.env.APPLE_SIGNING_IDENTITY.startsWith("Developer ID Application:")) throw new Error("A Developer ID Application signing identity is required");
-  if (process.argv.includes("--publish") && process.env.BETA_REHEARSAL_APPROVED !== "true") throw new Error("Clean-Mac beta rehearsal has not been approved. Publication is blocked.");
+  requireSigning(profile);
+  if (process.argv.includes("--publish")) requirePublicationApproval(profile, process.env.RELEASE_SOURCE_SHA);
 }
-console.log(`Release configuration ${packageJson.version}: valid${process.argv.includes("--publish") ? " and credentialed" : " (signing credentials not checked)"}.`);
+console.log(`Release configuration ${packageJson.version} (${profile}): valid${process.argv.includes("--sign") || process.argv.includes("--publish") ? " and credentialed" : " (signing credentials not checked)"}.`);
