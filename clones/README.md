@@ -2,7 +2,7 @@
 
 Collection succeeded.
 
-Last attempt: 2026-09-08T18:40:54.094Z. Last successful collection: 2026-09-08T18:40:54.094Z.
+Last attempt: 2026-09-08T20:05:18.518Z. Last successful collection: 2026-09-08T20:05:18.518Z.
 Collection began 2026-09-08T18:31:03.080Z; retained daily coverage begins 2026-08-26, including the initial available backfill.
 All dates use UTC. This static report is current only through its last attempt; check the workflow if that timestamp stops advancing.
 
