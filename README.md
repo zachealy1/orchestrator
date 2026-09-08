@@ -22,7 +22,7 @@
   <a href="CONTRIBUTING.md">Contribute</a>
 </p>
 
-> **Source-first beta.** The source is public; installers are not yet available. The first planned download is a free community beta for Apple Silicon and Intel, **not notarized by Apple**. Dependency-security review and clean-Mac installation/update testing remain release gates. Automatic publishing is paused.
+> **Experimental community beta.** Source is public. The first release, **0.2.0-beta.1**, targets **Apple Silicon only** and is **not notarized by Apple**. See [Releases](https://github.com/zachealy1/orchestrator/releases) for the installer and [installation instructions](docs/public/INSTALLATION.md) before opening it. Installation and updates are manual; Intel packages and the in-app update feed are deferred. Automatic publishing remains paused.
 
 Orchestrator is an independent project, not an OpenAI product. Browser, Computer Use and plugin integrations are experimental and may require separately installed upstream components.
 

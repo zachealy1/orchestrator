@@ -2,7 +2,7 @@
 
 ## One repository, separate release gates
 
-`zachealy1/orchestrator` is the canonical home for MIT-licensed source, documentation, releases, issues and aggregate download reports. Source publication is independent of installer approval. **No installer is available yet; unattended releases remain paused.** The first intended distribution is a free, explicitly non-notarized community beta. Never describe ad-hoc signing or an updater signature as Apple approval.
+`zachealy1/orchestrator` is the canonical home for MIT-licensed source, documentation, releases, issues and aggregate download reports. The first distribution is an explicitly non-notarized, Apple-Silicon-only **manual experimental beta**. Unattended releases and the updater feed remain paused. Never describe ad-hoc signing or an updater signature as Apple approval.
 
 The first release remains `0.2.0-beta.1`. Synchronize package.json, package-lock.json, Cargo.toml, Cargo.lock and tauri.conf.json. Release artifacts belong to this repository's Releases page. The fixed feed is `https://raw.githubusercontent.com/zachealy1/orchestrator/update-feed/beta.json`. It is created only after the first complete verified release, not as an empty placeholder and not through GitHub's latest-release shortcut.
 
@@ -22,12 +22,26 @@ Protected environments allow only workflow executions from `main`: `engine-upgra
 - Publishing and report jobs use their job-scoped `GITHUB_TOKEN` with contents-write access. No cross-repository publishing App or credential is needed.
 - Only the notarized workflow requires Apple credentials in the signing environment: `APPLE_CERTIFICATE` (base64 Developer ID Application P12), `APPLE_CERTIFICATE_PASSWORD`, `APPLE_SIGNING_IDENTITY`, `APPLE_ID`, `APPLE_PASSWORD` and `APPLE_TEAM_ID`. The community workflow neither receives nor uses them.
 - Separate updater key: `TAURI_SIGNING_PRIVATE_KEY` and non-empty `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` in the signing environment; matching `ORCHESTRATOR_UPDATER_PUBLIC_KEY` repository variable. Back up private keys securely. Never put secrets in VITE-prefixed variables. Consolidation does not rotate keys.
-- Dedicated release-smoke credentials: `RELEASE_TEST_CODEX_AUTH_JSON`, `RELEASE_TEST_MODEL`. Missing or invalid configuration blocks publication. Tests never fall back to a maintainer profile or ChatGPT executable.
+- Dedicated release-smoke credentials for updater-enabled workflows: `RELEASE_TEST_CODEX_AUTH_JSON`, `RELEASE_TEST_MODEL`. Missing or invalid configuration blocks those workflows. The first manual beta instead uses the maintainer's reported testing. Tests never fall back to a maintainer profile or ChatGPT executable.
 - Keep `CODEX_AUTO_RELEASES_ENABLED=false`, `BETA_REHEARSAL_APPROVED=false` and `COMMUNITY_BETA_APPROVED_SHA` unset until the corresponding acceptance passes. Community approval must contain the exact 40-character tested source SHA, not `true`.
 
 All Actions logs and uploaded rehearsal packages must be treated as **public**. Signing subprocess output and credentialed transcripts are withheld, including failure paths, rather than relying only on GitHub masking. Synthetic-secret tests guard that behavior. Do not upload profiles, private audit reports, source worktrees or raw smoke-test output. Debug sensitive failures locally using dedicated credentials; use private vulnerability reports for security details.
 
 ## Free community beta rehearsal and publication
+
+### First release: maintainer-approved manual Apple Silicon beta
+
+On 2026-09-08 the maintainer reported existing testing and explicitly requested publication without the full clean-Mac/Intel/update matrix. This narrower delivery has a separate approval, not a fabricated pass of the automated-updater acceptance record.
+
+1. Review and merge the release PR through normal protected-main checks. Keep the existing notarized and dual-architecture updater workflows unchanged.
+2. On an Apple Silicon Mac, select the clean exact source SHA. Load the existing updater key securely into the packager's environment and set `RELEASE_DISTRIBUTION=community` and `RELEASE_SOURCE_SHA` to that SHA. Run `node scripts/release/package-macos.mjs --local-community`. It builds and verifies the actual DMG and a local updater archive; the archive is not published by manual delivery.
+3. Record maintainer-reported testing accurately, review the target-specific dependency findings, and run source/release/Rust/binding/build checks. Do not describe missing clean-machine or update testing as passed. GitHub's required `checks` must pass on the exact release commit.
+4. With a repository-scoped publishing credential supplied securely as `GH_TOKEN`, set `RELEASE_VERSION=0.2.0-beta.1`, `RELEASE_DELIVERY=manual` and `MANUAL_BETA_APPROVED_SHA` to the same source SHA, then run `node scripts/release/publish.mjs`. The publisher verifies source ancestry, source checks, package receipts and uploaded hashes before exposing the prerelease. It uploads only the Apple Silicon DMG, its receipt and checksums. It never reads or writes the update feed and cannot overwrite an existing published version or asset.
+5. Verify the public download, exact tag SHA and release notes. Dispatch **Public repository metrics** to record initial downloads. Verification downloads contribute to these counters.
+
+Keep `BETA_REHEARSAL_APPROVED=false`, `CODEX_AUTO_RELEASES_ENABLED=false` and `COMMUNITY_BETA_APPROVED_SHA` unset. The manual approval is not valid for the updater-enabled release path below. Future releases require a higher version; do not replace these artifacts.
+
+### Later dual-architecture, updater-enabled community releases
 
 This path does not require an Apple Developer membership. It uses standard public GitHub-hosted runners and draft GitHub Release assets for package handoff, not metered Actions artifact storage. Do not substitute larger runners. GitHub policies can change; review [Actions billing](https://docs.github.com/en/billing/concepts/product-billing/github-actions) and [release asset limits](https://docs.github.com/en/repositories/releasing-projects-on-github/about-releases) before enabling new services. No device telemetry or paid download service is added.
 

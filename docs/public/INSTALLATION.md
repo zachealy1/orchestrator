@@ -1,9 +1,9 @@
 # Installation and updates
 
-**Installers are not available yet.** The forthcoming free community beta is ad-hoc signed, **not notarized by Apple**. It does not identify a verified Apple Developer. Source publication and local development builds do not satisfy installer release gates. Check [Releases](https://github.com/zachealy1/orchestrator/releases) for availability and the distribution notice for each version.
+**0.2.0-beta.1 is an experimental Apple-Silicon-only community release.** It is ad-hoc signed, **not notarized by Apple**, and does not identify a verified Apple Developer. Check [Releases](https://github.com/zachealy1/orchestrator/releases) for the installer and its testing limitations. Intel packages are deferred; do not use this installer on an Intel Mac.
 
-1. In Apple menu → About This Mac, check whether your Mac has an Apple chip or Intel processor and runs macOS 15 or later.
-2. Download the matching `.dmg` from the public Releases page. The `.app.tar.gz` files are packages for the in-app updater, not the normal first-install download.
+1. In Apple menu → About This Mac, check that your Mac has an Apple chip and runs macOS 15 or later. This is the minimum system requirement, not a claim of testing on every supported macOS version.
+2. Download `Orchestrator_aarch64.dmg` from the public Releases page. The first manual release does not publish updater archives.
 3. Open the disk image and drag Orchestrator to Applications. Eject the disk image, then launch the Applications copy.
 4. Sign in with your own supported Codex account. Orchestrator includes a standalone Codex engine and GitHub CLI; it does not require a development toolchain for normal use. GitHub authentication is separate from Codex authentication.
 5. Add a workspace and review its access/approval settings before sending a task. Test changes in a dedicated repository first.
@@ -19,6 +19,12 @@ Do not ignore a malware or damaged/tampered-app warning. Do not disable Gatekeep
 The published SHA-256 checksums help detect a corrupted download. They and Orchestrator's update signatures are **not Apple notarization or a guarantee that beta software is safe**. Developer ID/notarized releases, if provided later, will be explicitly labelled.
 
 ## Updates are your choice
+
+**For 0.2.0-beta.1, update manually.** The in-app updater implementation remains present, but its update feed is not activated. A check may report unavailable update information. Download a newer installer from Releases, finish all tasks and repository operations, quit Orchestrator, then replace the Applications copy. Keep backups of important data. Do not rely on an automatic update notification for this first beta.
+
+### Future updater-enabled releases
+
+The following experience is implemented but deferred until installation/update validation is completed:
 
 The app checks for Orchestrator updates on startup, every six hours while open, and on returning online or to the foreground when the last check is old enough. It does not download updates automatically.
 

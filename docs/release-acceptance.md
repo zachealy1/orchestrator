@@ -1,6 +1,23 @@
 # Public beta acceptance record
 
-Status: **not approved for installer publication** until every required gate below has evidence. The planned first release is a free, non-notarized community beta. Apple Developer ID/notarization is not a gate for that explicitly labelled distribution; independent update signatures and all other applicable gates remain required. Public source publication is independent of this checklist. Automated code checks do not replace clean-Mac and real update rehearsals.
+Status: **dual-architecture, updater-enabled publication remains unapproved** until its required gates below have evidence. The maintainer has separately approved a narrower Apple-Silicon-only manual experimental beta, as recorded below. Apple Developer ID/notarization is not required for that explicitly non-notarized distribution. Automated code checks do not replace clean-Mac and real update rehearsals.
+
+## Manual experimental beta approval — 2026-09-08
+
+The maintainer reports having tested the application and explicitly requested release after the Apple-Silicon-only/manual-update option was explained. Accept that report for this limited distribution; no additional account credentials or hardware matrix is required. Do not infer the tester's macOS version, specific scenarios or a clean-machine/two-version update pass from that statement.
+
+- Publish only the Apple Silicon installer, its source-bound verification receipt and checksums, after required source checks and actual package verification pass.
+- No Intel artifact, no update feed, no unattended publishing. The existing updater-enabled workflows retain their gates and unapproved status.
+- Preserve normal main-branch review/protection and source integrity checks. A manual approval is specific to one exact SHA and does not authorize an updater-enabled publication.
+- Minimum macOS 15 is a build requirement; local package verification on macOS 26.6.2 is not validation of every supported OS version.
+
+### Dependency applicability review for this limited release
+
+The full native lockfile audit remains non-zero. Inspection on 2026-09-08 used the locked Apple Silicon normal/build dependency graph (`cargo tree --locked --target aarch64-apple-darwin --edges normal,build`). `rkyv` 0.7.46 / RUSTSEC-2026-0235, `rsa` 0.9.10 / RUSTSEC-2023-0071, `glib` 0.18.5 / RUSTSEC-2024-0429 and `proc-macro-error` 1.0.4 are absent from that graph, so these findings do not describe code compiled into this macOS package. They remain relevant to other feature/target configurations and the full lockfile audit; no global ignore is added.
+
+Known maintenance debt in the selected graph: `paste` 1.0.15 is a Specta/Tauri compile-time macro dependency; the five `unic-*` 0.9 crates are Tauri/urlpattern dependencies. The reported notices concern lack of maintenance, not an identified runtime vulnerability. These remain disclosed follow-up work rather than being labelled resolved. The yanked SQLite/flume dependency `spin` 0.9.8 has been updated to the compatible 0.9.9 patch; no blanket audit exemption is introduced. New vulnerability findings require a new applicability review before another release.
+
+## Deferred updater-enabled acceptance matrix
 
 Record app/engine versions, source SHA, final package SHA-256 values, tester, date, macOS version and CPU architecture for each run. Use dedicated repositories/branches only. Record every remote branch and commit; do not delete remote test branches without approval.
 
@@ -37,5 +54,5 @@ Do not mark blocked/manual gates passed on the basis of mocks, a build, or a loc
 - JavaScript lockfile security updates: `npm audit` reports zero vulnerabilities, including development dependencies.
 - Local preparation on macOS 26.6.2 / Apple Silicon passed 41 release-script tests, 214 Rust tests, lint/binding/architecture checks (no baseline increase), production frontend build and the official bundled-engine isolated install/restart test. The other network-download Rust test remains opt-in. Workflow validation passed with actionlint 1.7.12.
 - A local non-notarized Apple Silicon DMG and updater archive passed actual package verification: strict ad-hoc signing, hardened runtime, version/identity/architecture, independent update signature, embedded public key, both runtime components and resource inspection. These are unshipped preparation artifacts, not clean-Mac acceptance or final release packages. SHA-256: DMG `1712ffe2d6dc1a20e0827390b746499e7547b55a56381e4ebe3f5b8e0c654907`; updater `b122a849e7ad2f3519926c5f503e7a5f20cb1a835a50b16d9704150727a93ba5`.
-- The unchanged strict native lockfile audit still blocks publication. It reports `RUSTSEC-2026-0235` (`rkyv` 0.7.46), `RUSTSEC-2023-0071` (`rsa` 0.9.10), maintenance/unsoundness warnings and a yanked `spin` version. These are lockfile findings, not proof that every affected crate is in the macOS runtime. Inverse dependency queries do not show `rkyv` or `rsa` in the current selected target graph; review optional/transitive and platform dependencies before changing dependencies or audit policy. No advisory has been suppressed to pass the release.
+- At preparation time, the strict native lockfile audit blocked the updater-enabled workflows. It reported `RUSTSEC-2026-0235` (`rkyv` 0.7.46), `RUSTSEC-2023-0071` (`rsa` 0.9.10), maintenance/unsoundness warnings and a yanked `spin` version. See the subsequent target-specific review and `spin` patch above. No advisory has been globally suppressed to pass the release.
 - Source checks and local rehearsals do not approve either the four-platform clean-machine matrix or a two-version app update. Record final results and artifact hashes before setting publication approval.

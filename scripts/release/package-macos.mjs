@@ -6,8 +6,9 @@ import { confidentialRun } from "./safe-process.mjs";
 import { sha256, ARCHES } from "./lib.mjs";
 import { distribution, packagingConfig } from "./distribution.mjs";
 const run = confidentialRun;
-if (process.platform !== "darwin" || process.env.CI !== "true") throw new Error("Signed public packaging runs only on the dedicated macOS release runner");
 const profile = distribution(process.env.RELEASE_DISTRIBUTION ?? "notarized");
+const localCommunity = process.argv.includes("--local-community") && profile === "community" && process.arch === "arm64";
+if (process.platform !== "darwin" || (process.env.CI !== "true" && !localCommunity)) throw new Error("Use the dedicated macOS release runner, or explicitly select local Apple Silicon community packaging");
 run(process.execPath, ["scripts/release/check-config.mjs", "--sign"]);
 const sourceSha = run("git", ["rev-parse", "HEAD"], { encoding: "utf8" }).trim();
 if (!/^[a-f0-9]{40}$/.test(process.env.RELEASE_SOURCE_SHA ?? "") || sourceSha !== process.env.RELEASE_SOURCE_SHA
