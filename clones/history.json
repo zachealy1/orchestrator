@@ -1,0 +1,100 @@
+{
+  "schemaVersion": 1,
+  "repository": "zachealy1/orchestrator",
+  "collectionStartedAt": "2026-09-08T18:31:03.080Z",
+  "coverageStartedOn": "2026-08-26",
+  "updatedAt": "2026-09-08T18:31:03.080Z",
+  "lastSuccessfulCollectionAt": null,
+  "lastAttempt": {
+    "timestamp": "2026-09-08T18:31:03.080Z",
+    "status": "failed",
+    "error": "missing_credentials",
+    "days": []
+  },
+  "days": [
+    {
+      "date": "2026-08-26",
+      "clones": null,
+      "uniqueCloners": null,
+      "lastObservedAt": null
+    },
+    {
+      "date": "2026-08-27",
+      "clones": null,
+      "uniqueCloners": null,
+      "lastObservedAt": null
+    },
+    {
+      "date": "2026-08-28",
+      "clones": null,
+      "uniqueCloners": null,
+      "lastObservedAt": null
+    },
+    {
+      "date": "2026-08-29",
+      "clones": null,
+      "uniqueCloners": null,
+      "lastObservedAt": null
+    },
+    {
+      "date": "2026-08-30",
+      "clones": null,
+      "uniqueCloners": null,
+      "lastObservedAt": null
+    },
+    {
+      "date": "2026-08-31",
+      "clones": null,
+      "uniqueCloners": null,
+      "lastObservedAt": null
+    },
+    {
+      "date": "2026-09-01",
+      "clones": null,
+      "uniqueCloners": null,
+      "lastObservedAt": null
+    },
+    {
+      "date": "2026-09-02",
+      "clones": null,
+      "uniqueCloners": null,
+      "lastObservedAt": null
+    },
+    {
+      "date": "2026-09-03",
+      "clones": null,
+      "uniqueCloners": null,
+      "lastObservedAt": null
+    },
+    {
+      "date": "2026-09-04",
+      "clones": null,
+      "uniqueCloners": null,
+      "lastObservedAt": null
+    },
+    {
+      "date": "2026-09-05",
+      "clones": null,
+      "uniqueCloners": null,
+      "lastObservedAt": null
+    },
+    {
+      "date": "2026-09-06",
+      "clones": null,
+      "uniqueCloners": null,
+      "lastObservedAt": null
+    },
+    {
+      "date": "2026-09-07",
+      "clones": null,
+      "uniqueCloners": null,
+      "lastObservedAt": null
+    },
+    {
+      "date": "2026-09-08",
+      "clones": null,
+      "uniqueCloners": null,
+      "lastObservedAt": null
+    }
+  ]
+}
