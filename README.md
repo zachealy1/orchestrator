@@ -32,7 +32,7 @@ Start with a prompt, keep the conversation alongside your workspace, and follow 
 
 [![A real Taskboard Demo conversation in Orchestrator, with the agent's response and prompt composer visible.](docs/assets/screenshots/chat.png)](docs/assets/screenshots/chat.png)
 
-*Real tasks in a fictional local project. Account details are removed or replaced with a fictional demo identity for privacy; task results and activity are genuine. Click any screenshot to view it at full size.*
+*Real tasks in a fictional local project. Account identity details are removed for privacy; task results and activity are genuine. Click any screenshot to view it at full size.*
 
 ## Feature tour
 
