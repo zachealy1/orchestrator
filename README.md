@@ -119,7 +119,7 @@ Existing `0.1.0` installations will need one manual installation of the first si
 
 - [Installation and updates](docs/public/INSTALLATION.md) · [Troubleshooting and recovery](docs/public/RECOVERY.md)
 - [Privacy and local storage](docs/public/PRIVACY.md) · [Permissions and integrations](docs/public/INTEGRATIONS.md)
-- [Public download reports and CSV](https://github.com/zachealy1/orchestrator/tree/download-metrics)
+- [Public download and clone reports](https://github.com/zachealy1/orchestrator/tree/download-metrics) · [Reporting setup and definitions](docs/repository-metrics.md)
 - [Report a bug](https://github.com/zachealy1/orchestrator/issues/new/choose) · [Report a vulnerability privately](SECURITY.md)
 - [Contribute](CONTRIBUTING.md) · [Architecture](docs/architecture-decomposition.md) · [Screenshot capture notes](docs/assets/screenshots/README.md)
 
