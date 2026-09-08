@@ -166,7 +166,7 @@ done
         release: Release {
             version: version.into(),
             target: target().unwrap().into(),
-            archive_sha256: "a".repeat(64),
+            archive_sha256: if version == pinned_release().version { pinned_release().archives[target().unwrap()].clone() } else { "a".repeat(64) },
         },
         executable_sha256: hash_file(&probe).unwrap(),
     };
@@ -188,8 +188,8 @@ fn test_manager() -> EngineManager {
 #[test]
 fn legacy_pending_updates_are_preserved_but_never_activated() {
     let mut manager = test_manager();
-    let old = fake_runtime(&manager, "0.153.4", true);
-    let new = fake_runtime(&manager, "0.154.0", true);
+    let old = fake_runtime(&manager, &pinned_release().version, true);
+    let new = fake_runtime(&manager, "999.0.0", true);
     let legacy = json!({
         "active": old,
         "previous": null,
@@ -203,7 +203,7 @@ fn legacy_pending_updates_are_preserved_but_never_activated() {
         manager.ensure_selected().unwrap(),
         manager.binary(&old).unwrap()
     );
-    assert_eq!(manager.selected.as_ref().unwrap().1, "0.153.4");
+    assert_eq!(manager.selected.as_ref().unwrap().1, pinned_release().version);
     manager.save().unwrap();
     let saved: serde_json::Value =
         serde_json::from_slice(&fs::read(manager.root.join("state.json")).unwrap()).unwrap();
@@ -227,8 +227,8 @@ fn legacy_pending_updates_are_preserved_but_never_activated() {
 fn incompatible_or_corrupt_active_engine_recovers_previous_engine() {
     for corrupt in [false, true] {
         let mut manager = test_manager();
-        let old = fake_runtime(&manager, "0.153.4", true);
-        let new = fake_runtime(&manager, "0.154.0", false);
+        let old = fake_runtime(&manager, &pinned_release().version, true);
+        let new = fake_runtime(&manager, "999.0.0", false);
         if corrupt {
             fs::write(manager.binary(&new).unwrap(), "bad download").unwrap();
         }
@@ -246,20 +246,20 @@ fn incompatible_or_corrupt_active_engine_recovers_previous_engine() {
             .contains("Recovering a working engine"));
         let saved: DiskState =
             serde_json::from_slice(&fs::read(manager.root.join("state.json")).unwrap()).unwrap();
-        assert_eq!(saved.active.unwrap().release.version, "0.153.4");
+        assert_eq!(saved.active.unwrap().release.version, pinned_release().version);
         fs::remove_dir_all(manager.root).unwrap();
     }
 }
 #[test]
 fn current_engine_starts_without_network_or_bundled_or_external_installation() {
     let mut manager = test_manager();
-    let old = fake_runtime(&manager, "0.153.4", true);
+    let old = fake_runtime(&manager, &pinned_release().version, true);
     manager.disk.active = Some(old.clone());
     assert_eq!(
         manager.ensure_selected().unwrap(),
         manager.binary(&old).unwrap()
     );
-    assert_eq!(manager.selected.as_ref().unwrap().1, "0.153.4");
+    assert_eq!(manager.selected.as_ref().unwrap().1, pinned_release().version);
     fs::remove_dir_all(manager.root).unwrap();
 }
 
@@ -281,6 +281,43 @@ fn first_launch_imports_packaged_engine_without_path_lookup_or_network() {
         pinned.version
     );
     assert!(manager.disk.legacy_metadata.is_empty());
+    fs::remove_dir_all(manager.root).unwrap();
+}
+
+#[test]
+fn app_upgrade_activates_bundled_pin_and_retains_previous_engine() {
+    let mut manager = test_manager();
+    let old = fake_runtime(&manager, "0.152.0", true);
+    manager.disk.active = Some(old.clone());
+    let pinned = pinned_release();
+    let mut record = fake_runtime(&manager, &pinned.version, true);
+    record.release.archive_sha256 = pinned.archives.get(target().unwrap()).unwrap().clone();
+    let bundle = manager.root.join("bundle");
+    secure_directory(&bundle).unwrap();
+    fs::rename(manager.binary(&record).unwrap(), bundle.join("codex")).unwrap();
+    atomic_json(&bundle.join("runtime.json"), &record).unwrap();
+    manager.bundles.push(bundle);
+    assert_eq!(manager.ensure_selected().unwrap(), manager.binary(&record).unwrap());
+    assert_eq!(manager.disk.previous.as_ref().unwrap().release.version, "0.152.0");
+    manager.selected = None;
+    assert_eq!(manager.ensure_selected().unwrap(), manager.binary(&record).unwrap());
+    assert!(manager.binary(&old).unwrap().is_file());
+    fs::remove_dir_all(manager.root).unwrap();
+}
+
+#[test]
+fn failed_bundle_upgrade_reports_recovery_without_changing_active_record() {
+    let mut manager = test_manager();
+    let old = fake_runtime(&manager, "0.152.0", true);
+    manager.disk.active = Some(old.clone());
+    manager.save().unwrap();
+    let bundle = manager.root.join("broken-bundle");
+    secure_directory(&bundle).unwrap();
+    fs::write(bundle.join("runtime.json"), "invalid metadata").unwrap();
+    manager.bundles.push(bundle);
+    assert_eq!(manager.ensure_selected().unwrap(), manager.binary(&old).unwrap());
+    assert!(manager.message.as_ref().unwrap().contains("could not be activated"));
+    assert_eq!(manager.disk.active.as_ref().unwrap().release.version, "0.152.0");
     fs::remove_dir_all(manager.root).unwrap();
 }
 

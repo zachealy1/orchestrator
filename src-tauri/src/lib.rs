@@ -24,6 +24,9 @@ use tauri::{AppHandle, Emitter, Manager, State};
 use tokio::{sync::oneshot, time::timeout};
 
 mod agent_notifications;
+mod app_updates;
+mod update_gate;
+mod release_backup;
 mod browser_runtime;
 mod codex;
 mod codex_engine;
@@ -64,6 +67,10 @@ fn command_builder() -> tauri_specta::Builder<tauri::Wry> {
         .error_handling(tauri_specta::ErrorHandlingMode::Throw)
         .commands(tauri_specta::collect_commands![
             codex_engine::codex_engine_status,
+            app_updates::app_update_state,
+            app_updates::app_update_check,
+            app_updates::app_update_download,
+            app_updates::app_update_install,
             codex_connect,
             codex_default_profile_connect,
             codex_rpc,
@@ -166,8 +173,14 @@ fn command_builder() -> tauri_specta::Builder<tauri::Wry> {
 
 pub fn export_typescript_bindings(path: impl AsRef<Path>) -> Result<(), String> {
     command_builder()
-        .export(specta_typescript::Typescript::default(), path)
-        .map_err(|error| error.to_string())
+        .export(specta_typescript::Typescript::default(), &path)
+        .map_err(|error| error.to_string())?;
+    let source = fs::read_to_string(&path).map_err(|e| e.to_string())?;
+    let default_transport = "import { invoke as __TAURI_INVOKE } from \"@tauri-apps/api/core\";";
+    if !source.contains(default_transport) { return Err("Generated binding transport changed; review the installation interlock.".into()); }
+    fs::write(path, source.replace(default_transport,
+        "import { applicationInvoke as __TAURI_INVOKE } from \"../shared/nativeCommands\";"))
+        .map_err(|e| e.to_string())
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -178,11 +191,17 @@ pub fn run() {
             present_main_window(app);
         }))
         .manage(CodexState::default())
+        .manage(app_updates::AppUpdateService::default())
+        .plugin(tauri_plugin_updater::Builder::new().build())
         .manage(AgentNotificationState::default())
         .manage(github_cli::GithubState::default())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_clipboard_manager::init())
         .plugin(tauri_plugin_opener::init())
+        .plugin(tauri::plugin::Builder::<tauri::Wry, ()>::new("release-data-backup").setup(|app, _| {
+            tauri::async_runtime::block_on(release_backup::prepare(app)).map_err(std::io::Error::other)?;
+            Ok(())
+        }).build())
         .plugin(
             tauri_plugin_sql::Builder::default()
                 .add_migrations(DATABASE_URL, migrations())

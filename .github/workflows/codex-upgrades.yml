@@ -1,0 +1,98 @@
+name: Automatic stable Codex upgrades
+on:
+  schedule:
+    - cron: '23 * * * *'
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: codex-engine-upgrade
+  cancel-in-progress: false
+jobs:
+  candidate:
+    if: github.ref == 'refs/heads/main' && vars.CODEX_AUTO_RELEASES_ENABLED == 'true' && vars.BETA_REHEARSAL_APPROVED == 'true'
+    environment: engine-upgrades
+    runs-on: ubuntu-latest
+    outputs:
+      sha: ${{ steps.prepare.outputs.sha }}
+      pr: ${{ steps.prepare.outputs.pr }}
+      base: ${{ steps.base.outputs.sha }}
+    steps:
+      - uses: actions/create-github-app-token@fee1f7d63c2ff003460e3d139729b119787bc349
+        id: token
+        with:
+          app-id: ${{ secrets.ENGINE_AUTOMATION_APP_ID }}
+          private-key: ${{ secrets.ENGINE_AUTOMATION_APP_PRIVATE_KEY }}
+          owner: zachealy1
+          repositories: orchestrator
+          permission-contents: write
+          permission-pull-requests: write
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: main
+          token: ${{ steps.token.outputs.token }}
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: '24'
+      - id: base
+        run: echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+      - id: prepare
+        env:
+          GH_TOKEN: ${{ steps.token.outputs.token }}
+        run: node scripts/release/prepare-candidate.mjs
+  validate:
+    needs: candidate
+    if: needs.candidate.outputs.sha != ''
+    uses: ./.github/workflows/validate-release.yml
+    with:
+      ref: ${{ needs.candidate.outputs.sha }}
+      base: ${{ needs.candidate.outputs.base }}
+      engine_only: true
+    secrets:
+      RELEASE_TEST_CODEX_AUTH_JSON: ${{ secrets.RELEASE_TEST_CODEX_AUTH_JSON }}
+      RELEASE_TEST_MODEL: ${{ secrets.RELEASE_TEST_MODEL }}
+  merge:
+    if: vars.CODEX_AUTO_RELEASES_ENABLED == 'true' && vars.BETA_REHEARSAL_APPROVED == 'true'
+    needs: [candidate, validate]
+    environment: engine-upgrades
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/create-github-app-token@fee1f7d63c2ff003460e3d139729b119787bc349
+        id: token
+        with:
+          app-id: ${{ secrets.ENGINE_AUTOMATION_APP_ID }}
+          private-key: ${{ secrets.ENGINE_AUTOMATION_APP_PRIVATE_KEY }}
+          owner: zachealy1
+          repositories: orchestrator
+          permission-contents: write
+          permission-pull-requests: write
+          permission-actions: write
+      - name: Merge exact tested head and dispatch signed publication
+        env:
+          GH_TOKEN: ${{ steps.token.outputs.token }}
+          PR: ${{ needs.candidate.outputs.pr }}
+          SHA: ${{ needs.candidate.outputs.sha }}
+          BASE: ${{ needs.candidate.outputs.base }}
+        run: |
+          test "$(gh api repos/zachealy1/orchestrator/git/ref/heads/main --jq .object.sha)" = "$BASE"
+          gh api -X PUT "repos/zachealy1/orchestrator/pulls/$PR/merge" -f sha="$SHA" -f merge_method=merge --jq .merged | grep -x true
+          MERGED=$(gh api "repos/zachealy1/orchestrator/pulls/$PR" --jq .merge_commit_sha)
+          gh workflow run public-beta.yml --repo zachealy1/orchestrator --ref main -f ref="$MERGED" -f rehearsal=false
+  report-failure:
+    needs: [candidate, validate, merge]
+    if: always() && contains(needs.*.result, 'failure')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      issues: write
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: main
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: '24'
+      - env:
+          GH_TOKEN: ${{ github.token }}
+        run: node scripts/release/tracking-issue.mjs

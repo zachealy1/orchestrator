@@ -1,0 +1,78 @@
+name: Validate release candidate
+on:
+  workflow_call:
+    inputs:
+      ref:
+        required: true
+        type: string
+      base:
+        required: true
+        type: string
+      engine_only:
+        type: boolean
+        default: false
+    secrets:
+      RELEASE_TEST_CODEX_AUTH_JSON:
+        required: true
+      RELEASE_TEST_MODEL:
+        required: true
+permissions:
+  contents: read
+jobs:
+  validate:
+    if: github.repository == 'zachealy1/orchestrator' && github.ref == 'refs/heads/main' && github.event_name != 'pull_request' && github.event_name != 'pull_request_target'
+    environment: release-smoke
+    strategy:
+      fail-fast: false
+      matrix:
+        runner: [macos-15, macos-15-intel, macos-26, macos-26-intel]
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 75
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: ${{ inputs.ref }}
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: '24'
+      - name: Verify engine-only scope using the trusted base script
+        if: inputs.engine_only
+        env:
+          TRUSTED_BASE: ${{ inputs.base }}
+        run: |
+          git show "$TRUSTED_BASE:scripts/release/guard-candidate.mjs" > scripts/release/guard-candidate.trusted.mjs
+          node scripts/release/guard-candidate.trusted.mjs "$TRUSTED_BASE"
+      - name: Set up fixed Rust toolchain
+        run: rustup toolchain install 1.96.0 --profile minimal && rustup default 1.96.0
+      - run: npm ci
+      - run: npm run check:release
+      - run: npm run lint
+      - run: npm run test:release
+      - run: node scripts/release/signature-smoke.mjs
+      - run: npm test
+      - run: cargo test --locked --manifest-path src-tauri/Cargo.toml
+      - name: Audit production JavaScript and native dependencies
+        run: |
+          npm audit --omit=dev --audit-level=low
+          cargo install cargo-audit --version 0.22.2 --locked
+          cargo audit --file src-tauri/Cargo.lock --deny warnings
+      - run: npm run prepare:native-runtimes
+      - run: npm run test:github-cli-runtime
+      - name: Compare version-specific consumed protocol
+        env:
+          TRUSTED_BASE: ${{ inputs.base }}
+        run: node scripts/release/check-engine-contract.mjs "$TRUSTED_BASE"
+      - name: Required dedicated-account integration checks
+        env:
+          RELEASE_TEST_CODEX_AUTH_JSON: ${{ secrets.RELEASE_TEST_CODEX_AUTH_JSON }}
+          RELEASE_TEST_MODEL: ${{ secrets.RELEASE_TEST_MODEL }}
+        run: |
+          export CODEX_BIN="$PWD/src-tauri/resources/codex-engine/darwin-$(node -p process.arch)/codex"
+          node scripts/release/integration-smoke.mjs
+      - run: npm run build
+      - name: Verify official packaged engine in an isolated profile
+        run: |
+          export ORCHESTRATOR_ENGINE_TEST_BUNDLE="$PWD/src-tauri/resources/codex-engine/darwin-$(node -p process.arch)"
+          cargo test --locked --manifest-path src-tauri/Cargo.toml --lib official_packaged_engine_imports_and_restarts_without_an_external_installation -- --ignored

@@ -309,6 +309,11 @@ export class SubagentStore {
       .filter((record) => record.workspaceId === workspaceId);
   }
 
+  hasActiveWork() {
+    return [...this.#conversationSnapshots.values()].some((records) =>
+      records.some((record) => record.completedAt === null && isActiveSubagentStatus(record.status)));
+  }
+
   clear() {
     const keys = new Set([
       ...this.#conversationSnapshots.keys(),

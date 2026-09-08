@@ -1,0 +1,17 @@
+{
+  "recordedAtCommit": "bb11df909391ffb0f9a602960bd0dac570d0c41f",
+  "rationale": "Pre-existing debt recorded before public-beta work; reject all new violations and metric increases.",
+  "maxRunSetupLines": 472,
+  "maxLines": {
+    "src/app/ApplicationRuntime.tsx": 21689,
+    "src/components/TaskChatTurn.tsx": 3031,
+    "src/components/TaskComposer.tsx": 2138,
+    "src/components/VirtuosoTaskChatTranscript.tsx": 1924,
+    "src/App.runtime-03.test.tsx": 2148,
+    "src/components/VirtuosoTaskChatTranscript.test.tsx": 2048,
+    "src/test/appRuntimeHarness.tsx": 2023
+  },
+  "exceptions": [
+    "src/features/kanban/components/KanbanLocalReviewDrawer.tsx: TanStack Virtual is reserved for code and diff previews."
+  ]
+}

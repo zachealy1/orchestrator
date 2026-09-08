@@ -526,6 +526,7 @@ pub(crate) async fn enqueue_card_publication(
     app: AppHandle,
     card_id: String,
 ) -> Result<(), String> {
+    let _update_lease = crate::update_gate::work()?;
     let mut connection = open_database(&app).await?;
     let rows = sqlx::query(
         "SELECT binding_json FROM kanban_repository_bindings WHERE card_id = ?1 AND state != 'removed'",
@@ -587,7 +588,9 @@ pub(crate) async fn enqueue_card_publication(
     {
         let app = app.clone();
         let card = card_id.clone();
+        let publication_lease = crate::update_gate::work()?;
         tauri::async_runtime::spawn(async move {
+            let _publication_lease = publication_lease;
             let source = binding.source_repository_path.clone();
             if let Err(error) = publish_record(app.clone(), card.clone(), binding).await {
                 upsert_publication_error(&app, &card, &source, &error).await;

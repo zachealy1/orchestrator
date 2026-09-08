@@ -544,7 +544,7 @@ describe("Application runtime scenarios 5", () => {
 
       await waitFor(() =>
         expect(mocks.openUrlMock).toHaveBeenCalledWith(
-          "https://github.com/zachealy1/orchestrator/issues/new",
+          "https://github.com/zachealy1/orchestrator/issues/new/choose",
         ),
       );
       expect(document.getElementById("codex-account-menu")).not.toBeInTheDocument();
@@ -669,7 +669,7 @@ describe("Application runtime scenarios 5", () => {
       );
       await user.click(screen.getByRole("button", { name: "Settings" }));
       expect(await screen.findByText(/Signing in/)).toBeInTheDocument();
-      await user.click(screen.getByRole("button", { name: "Cancel sign-in" }));
+      await user.click(screen.getByRole("button", { name: /^Cancel sign-in for / }));
 
       expect(mocks.cancelCodexLoginMock).toHaveBeenCalledWith(
         8,

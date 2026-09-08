@@ -15,6 +15,8 @@ try {
       "run",
       "--quiet",
       "--no-default-features",
+      "--features",
+      "dev-tools",
       "--bin",
       "generate-bindings",
       "--",

@@ -88,7 +88,7 @@ impl RuntimeRecord {
         ))
     }
 }
-#[derive(Default, Serialize, Deserialize)]
+#[derive(Clone, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct DiskState {
     active: Option<RuntimeRecord>,
@@ -214,7 +214,8 @@ impl EngineManager {
         if let Some((path, _)) = &self.selected {
             return Ok(path.clone());
         }
-        if let Some(active) = self.disk.active.clone() {
+        let pinned = pinned_release();
+        if let Some(active) = self.disk.active.clone().filter(|record| record.release.version == pinned.version && pinned.archives.get(&record.release.target) == Some(&record.release.archive_sha256)) {
             match self.select(active, true) {
                 Ok(path) => return Ok(path),
                 Err(error) => {
@@ -224,20 +225,22 @@ impl EngineManager {
                 }
             }
         }
-        if let Some(previous) = self.disk.previous.clone() {
+        if let Some(previous) = self.disk.previous.clone().filter(|record| record.release.version == pinned.version && pinned.archives.get(&record.release.target) == Some(&record.release.archive_sha256)) {
             if let Ok(path) = self.select(previous.clone(), true) {
+                self.message = Some("Recovering a working engine matching this app release.".into());
+                let old_disk = self.disk.clone();
                 self.disk.active = Some(previous);
-                self.save()?;
+                if let Err(error) = self.save() { self.disk = old_disk; self.selected = None; return Err(error); }
                 return Ok(path);
             }
         }
-        let record = if let Some(bundle) = self
+        let provisioned = if let Some(bundle) = self
             .bundles
             .iter()
             .find(|p| p.join("runtime.json").is_file())
             .cloned()
         {
-            self.import_bundle(&bundle)?
+            self.import_bundle(&bundle)
         } else {
             let pinned = pinned_release();
             let release = Release {
@@ -249,12 +252,29 @@ impl EngineManager {
                     .ok_or("No packaged engine for this platform")?
                     .clone(),
             };
-            self.download(&release)?
+            self.download(&release)
         };
+        let record = match provisioned {
+            Ok(record) => record,
+            Err(error) => {
+                // A failed upgrade must not silently masquerade as a successful activation.
+                for fallback in [self.disk.active.clone(), self.disk.previous.clone()].into_iter().flatten() {
+                    if let Ok(path) = self.select(fallback, true) {
+                        self.message = Some(format!("Codex {} could not be activated. Using the previous verified engine for this session. Reinstall Orchestrator to retry. {error}", pinned_release().version));
+                        return Ok(path);
+                    }
+                }
+                return Err(format!("Could not activate this app's Codex engine. Reinstall Orchestrator. {error}"));
+            }
+        };
+        let old_disk = self.disk.clone();
         let path = self.select(record.clone(), false)?;
+        self.disk.previous = self.disk.active.clone().filter(|old| self.verify(old).is_ok())
+            .or_else(|| self.disk.previous.clone().filter(|old| self.verify(old).is_ok()));
         self.disk.active = Some(record);
         if let Err(error) = self.save() {
             self.selected = None;
+            self.disk = old_disk;
             return Err(error);
         }
         Ok(path)

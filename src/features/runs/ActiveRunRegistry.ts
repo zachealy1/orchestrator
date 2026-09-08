@@ -1,4 +1,5 @@
 import type { ActiveRunControl } from "./runtimeTypes";
+import { assertWorkMayStart } from "../../shared/updateInterlock";
 
 export class ActiveRunRegistry {
   private readonly controls = new Map<string, ActiveRunControl>();
@@ -25,6 +26,7 @@ export class ActiveRunRegistry {
   }
 
   set(clientId: string, control: ActiveRunControl) {
+    assertWorkMayStart();
     this.controls.set(clientId, control);
     this.touch();
   }

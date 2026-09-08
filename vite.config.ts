@@ -6,11 +6,14 @@ const host = process.env.TAURI_DEV_HOST;
 
 // https://vite.dev/config/
 export default defineConfig(async () => ({
+  // Signing/publishing credentials must never become client-side environment variables.
+  envPrefix: ["VITE_"],
   plugins: [react()],
   worker: {
     format: "es",
   },
   test: {
+    include: ["src/**/*.{test,spec}.{ts,tsx}"],
     environment: "jsdom",
     setupFiles: ["./src/test/setup.ts"],
     globals: true,

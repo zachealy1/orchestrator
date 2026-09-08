@@ -1,0 +1,45 @@
+name: Bug report
+description: Report a reproducible Orchestrator issue
+title: '[Bug]: '
+body:
+  - type: markdown
+    attributes:
+      value: 'This report is public. Do not include credentials, authentication files, private transcripts, repository content, personal information or full databases. Report security-sensitive issues privately using GitHub security reporting.'
+  - type: input
+    id: environment
+    attributes:
+      label: App version, macOS version and architecture
+      placeholder: 0.2.0-beta.1, macOS 15, Apple Silicon
+    validations:
+      required: true
+  - type: input
+    id: feature
+    attributes:
+      label: Affected feature and workspace type
+      description: Include whether it is a single- or multi-repository workspace, without private paths.
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Exact reproduction steps
+    validations:
+      required: true
+  - type: textarea
+    id: result
+    attributes:
+      label: Expected and actual behavior
+    validations:
+      required: true
+  - type: textarea
+    id: evidence
+    attributes:
+      label: Reproducibility and redacted evidence
+      description: Does this happen every time? Include only safe screenshots and short errors.
+  - type: checkboxes
+    id: privacy
+    attributes:
+      label: Privacy check
+      options:
+        - label: I have removed credentials, private transcripts and repository data.
+          required: true

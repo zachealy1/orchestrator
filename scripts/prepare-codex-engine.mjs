@@ -18,7 +18,7 @@ const release = { version: pinned.version, target, archiveSha256: pinned.archive
 const destination = path.join(root, "src-tauri/resources/codex-engine", `darwin-${architecture}`);
 const binary = path.join(destination, "codex");
 const digest = (file) => createHash("sha256").update(fs.readFileSync(file)).digest("hex");
-const verify = (file) => run("cargo", ["run", "--quiet", "--manifest-path", "src-tauri/Cargo.toml", "--bin", "verify-codex-engine", "--", file, release.version]);
+const verify = (file) => run("cargo", ["run", "--quiet", "--manifest-path", "src-tauri/Cargo.toml", "--features", "dev-tools", "--bin", "verify-codex-engine", "--", file, release.version]);
 let current = false;
 try {
   const record = JSON.parse(fs.readFileSync(path.join(destination, "runtime.json"), "utf8"));

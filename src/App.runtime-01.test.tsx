@@ -95,7 +95,7 @@ describe("Application runtime scenarios 1", () => {
       expect(addWorkspaceButton).not.toHaveTextContent("Add workspace");
 
       await user.click(within(primaryNav).getByRole("button", { name: "Analytics" }));
-      expect(screen.queryByLabelText("Task composer")).not.toBeInTheDocument();
+      await waitFor(() => expect(screen.queryByLabelText("Task composer")).not.toBeInTheDocument());
       expect(
         within(workspaceNav).getByRole("button", { name: "orchestrator" }),
       ).not.toHaveAttribute("aria-current");

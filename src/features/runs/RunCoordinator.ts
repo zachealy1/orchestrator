@@ -1,3 +1,4 @@
+import { assertWorkMayStart } from "../../shared/updateInterlock";
 export type RunLifecyclePhase =
   | "scheduled"
   | "preparing"
@@ -50,6 +51,7 @@ export class RunCoordinator {
   private readonly listeners = new Set<() => void>();
 
   begin(runKey: string) {
+    assertWorkMayStart();
     const existing = this.snapshots.get(runKey);
     if (existing && !TERMINAL_PHASES.has(existing.phase)) {
       throw new Error(`Run ${runKey} is already coordinated.`);

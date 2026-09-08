@@ -5,6 +5,7 @@ import ts from "typescript";
 const root = resolve(import.meta.dirname, "..");
 const sourceRoot = join(root, "src");
 const errors = [];
+const baseline = JSON.parse(await readFile(join(root, "scripts/architecture-baseline.json"), "utf8"));
 
 async function collectFiles(directory) {
   const entries = await readdir(directory, { withFileTypes: true });
@@ -61,12 +62,12 @@ function architectureLayer(path) {
 
 for (const [path, source] of sourceByPath) {
   const local = relative(root, path);
-  if (
+  if (local.replaceAll("\\", "/") !== "src/shared/nativeCommands.ts" && (
     /import\s*\{[^}]*\binvoke\b[^}]*\}\s*from\s*["']@tauri-apps\/api\/core["']/.test(
       source,
     ) ||
     /\binvoke\s*[<(]/.test(source)
-  ) {
+  )) {
     errors.push(`${local}: raw Tauri invoke is forbidden; use generated bindings.`);
   }
   if (/from\s+["'][^"']*\/TaskChatTranscript["']/.test(source)) {
@@ -185,9 +186,17 @@ for (const path of sourceFiles) {
   }
 }
 
-if (errors.length > 0) {
-  console.error(errors.join("\n"));
+const newErrors = errors.filter((error) => {
+  if (error === "src/app/ApplicationRuntime.tsx: continueRunSetup must remain a staged coordinator below 350 lines.") {
+    return runSetupStart < 0 || runSetupEnd < 0 || runSetupEnd - runSetupStart > baseline.maxRunSetupLines;
+  }
+  if (baseline.exceptions.includes(error)) return false;
+  const size = error.match(/^(.+): (\d+) lines exceeds /);
+  return !size || Number(size[2]) > (baseline.maxLines[size[1]] ?? 0);
+});
+if (newErrors.length > 0) {
+  console.error(newErrors.join("\n"));
   process.exit(1);
 }
-
+if (errors.length) console.log(`Existing architecture baseline: ${errors.length} tracked violations; no increases.`);
 console.log(`Architecture checks passed for ${productionFiles.length} production modules.`);

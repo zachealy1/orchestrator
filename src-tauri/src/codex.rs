@@ -110,6 +110,7 @@ pub(crate) fn process_stdout(
                         .and_then(Value::as_str)
                         .map(str::to_string);
                     let id = message.get("id").cloned();
+                    crate::update_gate::observe(account_id, connection_generation, &message);
 
                     if account_id != DEFAULT_CODEX_PROFILE_ID && id.is_none() {
                         let should_prepare_alias = matches!(
@@ -243,6 +244,7 @@ pub(crate) fn process_stdout(
         }
     }
 
+    crate::update_gate::disconnected(account_id, connection_generation);
     reject_pending_for_account(
         &pending,
         account_id,
@@ -408,6 +410,7 @@ pub(crate) async fn send_request(
     method: &str,
     params: Value,
 ) -> Result<Value, String> {
+    let _update_lease = crate::update_gate::work()?;
     let stdin = process_stdin(state, account_id)?;
     let id = state.next_id.fetch_add(1, Ordering::SeqCst);
     let key = id.to_string();

@@ -1,0 +1,8 @@
+/.github/ @zachealy1
+/scripts/release/ @zachealy1
+/scripts/architecture-baseline.json @zachealy1
+/src-tauri/src/app_updates.rs @zachealy1
+/src-tauri/src/update_gate.rs @zachealy1
+/src-tauri/src/release_backup.rs @zachealy1
+/src-tauri/tauri.conf.json @zachealy1
+/src/shared/nativeCommands.ts @zachealy1

@@ -1,0 +1,66 @@
+# Public source and release operations
+
+## One repository, separate release gates
+
+`zachealy1/orchestrator` is the canonical home for MIT-licensed source, documentation, releases, issues and aggregate download reports. Source publication is independent of installer approval. **No signed beta is available yet; unattended releases remain paused.** Never distribute an ad-hoc development build as a signed public release.
+
+The first release remains `0.2.0-beta.1`. Synchronize package.json, package-lock.json, Cargo.toml, Cargo.lock and tauri.conf.json. Release artifacts belong to this repository's Releases page. The fixed feed is `https://raw.githubusercontent.com/zachealy1/orchestrator/update-feed/beta.json`. It is created only after the first complete verified release, not as an empty placeholder and not through GitHub's latest-release shortcut.
+
+## Repository protections
+
+Protect `main`: require pull requests and the `checks` status, strict up-to-date checks, code-owner review for release-sensitive changes, resolved conversations, no force pushes or deletion. Apply protection to administrators. Keep `.github/CODEOWNERS` current. Leave the general approval count at zero so narrowly scoped engine-pin PRs can merge automatically after required validation; code-owner review remains required for owned workflow/runtime security files. A solo maintainer cannot approve their own code-owned changes; obtain an independent reviewer or use a separately approved, auditable protection-policy change, never a blanket automation bypass.
+
+Protect version tags against updates and deletion. Permit new release tags from the publishing job without permitting replacement. The `update-feed` and `download-metrics` data branches are automation outputs, not alternate application source branches. Publishing never writes directly to main.
+
+Enable secret scanning, push protection, dependency alerts and private vulnerability reporting where supported. Require approval for outside-contributor Actions runs. Public pull requests receive only a read-only token and no signing/test credentials; never use `pull_request_target` to execute contributor code. Keep workflow actions pinned to reviewed commit SHAs.
+
+## Secure configuration
+
+Protected environments allow only workflow executions from `main`: `engine-upgrades`, `release-smoke`, `public-beta-signing`, `public-beta-publishing`. Initially require a maintainer's approval for signing/publication. Only relax per-run approval after the deliberate first beta and its acceptance review if unattended engine upgrades are wanted.
+
+- Engine automation App, installed only on this repository: `ENGINE_AUTOMATION_APP_ID`, `ENGINE_AUTOMATION_APP_PRIVATE_KEY`; repository-scoped contents/PR/actions permissions. It creates narrowly scoped PRs and dispatches validation/publication. No administrative bypass permission.
+- Publishing and report jobs use their job-scoped `GITHUB_TOKEN` with contents-write access. No cross-repository publishing App or credential is needed.
+- Signing environment: `APPLE_CERTIFICATE` (base64 Developer ID Application P12), `APPLE_CERTIFICATE_PASSWORD`, `APPLE_SIGNING_IDENTITY`, `APPLE_ID`, `APPLE_PASSWORD` and `APPLE_TEAM_ID`.
+- Separate updater key: `TAURI_SIGNING_PRIVATE_KEY` and non-empty `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` in the signing environment; matching `ORCHESTRATOR_UPDATER_PUBLIC_KEY` repository variable. Back up private keys securely. Never put secrets in VITE-prefixed variables. Consolidation does not rotate keys.
+- Dedicated release-smoke credentials: `RELEASE_TEST_CODEX_AUTH_JSON`, `RELEASE_TEST_MODEL`. Missing or invalid configuration blocks publication. Tests never fall back to a maintainer profile or ChatGPT executable.
+- Keep `CODEX_AUTO_RELEASES_ENABLED=false` and `BETA_REHEARSAL_APPROVED=false` until acceptance passes.
+
+All Actions logs and uploaded rehearsal packages must be treated as **public**. Signing subprocess output and credentialed transcripts are withheld, including failure paths, rather than relying only on GitHub masking. Synthetic-secret tests guard that behavior. Do not upload profiles, private audit reports, source worktrees or raw smoke-test output. Debug sensitive failures locally using dedicated credentials; use private vulnerability reports for security details.
+
+## Manual rehearsal and publication
+
+1. Complete [release acceptance](release-acceptance.md), dependency security review, licensing and branding checks. Do not suppress failed gates automatically.
+2. Merge reviewed source, then dispatch **Signed public beta** from main using its exact 40-character source SHA and `rehearsal=true`. Validation runs on macOS 15/26 and ARM/Intel; separate trusted signing jobs build both architectures.
+3. Download the rehearsal artifacts and test on clean Macs. These artifacts are publicly accessible, not private test storage. Verify Developer ID, hardened runtime, notarization and package contents on the actual downloaded DMG and updater archive.
+4. Record artifact hashes and the tested SHA in a sanitized acceptance record; keep account details and raw logs outside the public repository. Test old-to-new updates, all background-work safety gates and real Git operations in dedicated test repositories.
+5. Deliberately approve `BETA_REHEARSAL_APPROVED`, then dispatch the same source SHA with `rehearsal=false`. The workflow revalidates and rebuilds; signatures/timestamps may change, so verify final downloaded packages too.
+6. The publisher verifies the version at that SHA and main ancestry, rejects conflicting tags and published versions, and creates the tag at the **tested SHA**, never current main. Draft uploads can resume only with byte-identical assets; replacements are forbidden.
+7. Only after both architectures and all uploaded hashes pass does it expose the release and update `beta.json` on `update-feed`. The feed update is one non-forced Git ref change based on the previously read revision. Missing assets, concurrent publication or a stale revision leave the previous feed unchanged. A completed release without a feed advance requires explicit maintainer review, not overwriting the feed or assets.
+
+## Automatic stable Codex upgrades
+
+After the first beta, enable `CODEX_AUTO_RELEASES_ENABLED` deliberately. The hourly watcher accepts only newer stable official releases with both macOS archives and upstream SHA-256 metadata. Already processed candidate PRs are not duplicated. Failed/closed candidates need maintainer-directed recovery.
+
+A standalone trusted-base guard permits only the engine pin and synchronized app-version fields. Credential-free engine probes, version-specific consumed-protocol comparison, source/Rust/security/binding checks and required isolated Plan/Goal tests gate merging. Never automatically rewrite app behavior, weaken tests or expand the allowlist to make a candidate pass.
+
+The merge step rejects a changed main base or candidate head. The signed workflow then validates the exact merged commit again before packaging/tagging. Required main checks and reviews still apply; lack of approval blocks automation safely. Failures update one sanitized public tracking issue with workflow status, never credentials or private transcripts. Security-sensitive detail belongs in a private advisory. Pause with the variable; correct a released problem with a higher version rather than silently downgrading.
+
+## Public download reports
+
+The daily and successful-publication workflow reads release-asset counters and writes Markdown, totals CSV, observed daily-change CSV and timestamped snapshots to `download-metrics`. It validates the exact repository name and numeric identity, preserves that branch's history and uses asset IDs to distinguish replaced files. Missing assets retain historical totals; counter decreases are flagged, never rendered as negative new downloads.
+
+Counts mean **downloads**, not users, installations or active users. Verification and retries count. No app identifiers or telemetry are collected. `daily.csv` sums observed increases by UTC snapshot date, not exact event timestamps; initial lifetime totals are excluded. Both reports and GitHub's underlying counters are public.
+
+## Recovery and compatibility
+
+The first updater-enabled beta requires a manual install over 0.1.0. Downloads are opt-in and installation is separate. Keep old installers available. The managed engine is session-pinned, and a failed activation retains its verified predecessor with a visible warning.
+
+Applied SQL migrations remain immutable. Future schema changes make a SQLite-aware `VACUUM INTO` backup; newer databases are rejected by older code. Prefer a higher-version corrective release, not an automatic database downgrade. Account data, previews, drafts and worktree bindings must survive updates.
+
+## References
+
+- [GitHub visibility and exposed Actions history](https://docs.github.com/en/repositories/managing-your-repositorys-settings-and-features/managing-repository-settings/setting-repository-visibility)
+- [GitHub Actions security](https://docs.github.com/en/actions/reference/security/secure-use)
+- [Tauri updater](https://v2.tauri.app/plugin/updater/) and [macOS signing](https://v2.tauri.app/distribute/sign/macos/)
+- [Codex app-server](https://learn.chatgpt.com/docs/app-server)
+- [GitHub release-asset counters](https://docs.github.com/en/rest/releases/assets)

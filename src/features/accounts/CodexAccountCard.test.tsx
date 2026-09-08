@@ -5,6 +5,7 @@ import {
   type CodexAccountCardActions,
   type CodexAccountCardModel,
 } from "./CodexAccountCard";
+import { initialUpdateState } from "../updates/UpdateController";
 
 function actions(): CodexAccountCardActions {
   return {
@@ -44,6 +45,16 @@ function model(
 }
 
 describe("CodexAccountCard", () => {
+  it.each([true, false])("offers updates immediately above support when signedIn=%s", (signedIn) => {
+    const act = vi.fn();
+    render(<CodexAccountCard model={model({ signedIn, menuOpen: true, update: { act, state: {
+      ...initialUpdateState, phase: "available", version: "0.2.0-beta.2", checking: false, installing: false, message: null,
+    } } })} actions={actions()} />);
+    const button = screen.getByRole("button", { name: /Download update/ });
+    expect(button.nextElementSibling).toBe(screen.getByRole("button", { name: "Report a bug" }));
+    expect(button).toHaveClass("account-menu-action"); fireEvent.click(button); expect(act).toHaveBeenCalledOnce();
+    if (!signedIn) expect(screen.getByRole("button", { name: "Sign in to Codex" })).toBeInTheDocument();
+  });
   it("opens the account menu from the signed-in trigger", () => {
     const handlers = actions();
     render(<CodexAccountCard model={model()} actions={handlers} />);

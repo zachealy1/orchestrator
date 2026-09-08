@@ -1,5 +1,5 @@
 import { useModelCatalog } from "../features/codex/useModelCatalog";
-import { useEngineController } from "../features/engine/useEngineController";
+import { useReleaseServices } from "./useReleaseServices";
 import { open } from "@tauri-apps/plugin-dialog";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { listen } from "@tauri-apps/api/event";
@@ -680,8 +680,6 @@ type PendingTurnAccessValidation = {
 
 const TURN_ACCESS_VALIDATION_TIMEOUT_MS = 5_000;
 const GOAL_TURN_START_TIMEOUT_MS = 5_000;
-const ORCHESTRATOR_BUG_REPORT_URL =
-  "https://github.com/zachealy1/orchestrator/issues/new";
 
 type PendingGoalTurnStart = {
   threadId: string;
@@ -1159,7 +1157,6 @@ function App() {
   const [applicationStatusAnchorElement, setApplicationStatusAnchorElement] =
     useState<HTMLDivElement | null>(null);
   const browserDataFeedbackRevisionRef = useRef(0);
-  const bugReportFeedbackRevisionRef = useRef(0);
   const newChatFeedbackRevisionRef = useRef(0);
   const promptQueueFeedbackRevisionRef = useRef(0);
   const {
@@ -3016,7 +3013,12 @@ function App() {
     [crossConversationApprovals],
   );
   // Keep managed engine preparation independent of Settings presentation.
-  useEngineController();
+  const { update: appUpdate, reportBug: handleReportBug } = useReleaseServices(appServices, applicationNotifications,
+    rememberCurrentWorkspaceTaskMemory, () => gitOperationInFlightWorkspaceIdsRef.current.size > 0 || branchCreationInFlightRef.current
+      || promptQueueClaimLocksRef.current.size > 0 || promptQueueEnqueueOperationsRef.current.size > 0
+      || Object.values(promptQueuesByChatRef.current).some((items) => items?.some((item) => ["starting", "steering", "active"].includes(item.status)
+        || (item.autoSendEnabled && ["queued", "scheduled-next"].includes(item.status)))),
+    () => setAccountMenuOpen(false));
   const floatingStatusNotices = useMemo<FloatingStatusNotice[]>(() => {
     const notices: FloatingStatusNotice[] = [];
     if (crossConversationApprovals.length > 0) {
@@ -20424,22 +20426,6 @@ function App() {
       throw error;
     }
   });
-  const handleReportBug = useStableEvent(() => {
-    setAccountMenuOpen(false);
-    applicationNotifications.dismiss("bug-report-feedback");
-    void Promise.resolve()
-      .then(() => openUrl(ORCHESTRATOR_BUG_REPORT_URL))
-      .catch((error) => {
-        applicationNotifications.publish({
-          id: "bug-report-feedback",
-          revisionKey: String(++bugReportFeedbackRevisionRef.current),
-          tone: "warning",
-          title: "Couldn’t open bug report",
-          detail: applicationNotificationErrorMessage(error),
-          timeoutMs: FLOATING_STATUS_NOTICE_TIMEOUT_MS,
-        });
-      });
-  });
   const captureShortcutOverlayReturnFocus = useStableEvent(() => {
     if (shortcutOverlayReturnFocusRef.current?.isConnected) return;
     const activeElement = document.activeElement;
@@ -20799,6 +20785,7 @@ function App() {
         <CodexAccountCard
           model={{
             authRow,
+            update: appUpdate,
             signedIn: codexSignedIn,
             menuOpen: accountMenuOpen,
             accounts: codexAccounts,

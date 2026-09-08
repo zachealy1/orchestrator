@@ -1809,6 +1809,7 @@ pub async fn kanban_claim_attempt(
     app: AppHandle,
     request: ClaimKanbanAttemptRequest,
 ) -> Result<ClaimKanbanAttemptResult, String> {
+    let _update_lease = crate::update_gate::work()?;
     validate_identifier(&request.attempt_id, "attempt")?;
     validate_identifier(&request.operation_id, "operation")?;
     if !matches!(

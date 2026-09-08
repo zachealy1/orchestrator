@@ -1,62 +1,57 @@
 # Orchestrator
 
-A token-aware desktop client for local Codex runs. Orchestrator manages repo workspaces, performs advisory preflight checks, structures prompts, starts Codex through `codex app-server`, streams run activity, and stores local analytics in SQLite.
+An independent, MIT-licensed macOS workspace for AI-assisted development. Orchestrator brings Chat, Plans, Goals, Kanban, subagents, generated-image previews, repository review and account usage limits into one desktop application.
 
-## Stack
+## Release status — source first
 
-- Tauri 2 desktop shell
-- React 19 + TypeScript + Vite frontend
-- SQLite via the official Tauri SQL plugin
-- Codex integration through `codex app-server --listen stdio://`
+**Signed installers are not yet available.** The source is available ahead of the first signed beta, `0.2.0-beta.1`. Signing, dependency-security review and clean-Mac installation/update acceptance remain release gates. Automatic publishing is paused. Build success or public source access does not mean the app is ready for end-user distribution.
 
-## Development
+The supported release target is macOS 15 and later on Apple Silicon and Intel. Browser, Computer Use and plugin APIs are **experimental** and can depend on separately installed upstream components. Orchestrator is not an OpenAI product and does not redistribute private ChatGPT components.
 
-Install Rust first if `cargo` is not available:
+- [Installers and release notes](https://github.com/zachealy1/orchestrator/releases) — pending the signed beta
+- [Installation and updates](docs/public/INSTALLATION.md)
+- [Privacy and local data](docs/public/PRIVACY.md)
+- [Permissions and experimental integrations](docs/public/INTEGRATIONS.md)
+- [Troubleshooting and recovery](docs/public/RECOVERY.md)
+- [Public download reports and CSV](https://github.com/zachealy1/orchestrator/tree/download-metrics)
+- [Report a bug](https://github.com/zachealy1/orchestrator/issues/new/choose) · [Report a vulnerability privately](SECURITY.md)
+
+## Build from source
+
+Use macOS with Xcode Command Line Tools, Node.js 24, npm and Rust 1.96.0. Build each architecture on matching hardware. Source builds need development tools; eventual signed installers will not.
 
 ```sh
-curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
-```
-
-Then install dependencies and run the app:
-
-```sh
-npm install
+git clone https://github.com/zachealy1/orchestrator.git
+cd orchestrator
+npm ci
 npm run tauri dev
 ```
 
-Frontend-only checks:
+Tauri's build hooks download the pinned official standalone Codex engine and GitHub CLI, verify their checksums, and prepare third-party notices. No private-repository access or publishing credentials are required. Normal tasks need your own supported Codex account; GitHub authentication is separate.
 
 ```sh
+npm run lint
 npm test
+npm run test:release
+npm run check:release
 npm run build
+cargo test --locked --manifest-path src-tauri/Cargo.toml
+# Local ad-hoc package for development, not public distribution:
+npm run tauri build -- --bundles app
 ```
 
-When running inside Tauri, the app creates `app.db` in the platform app data directory and applies migrations for workspaces, tasks, runs, raw run events, token snapshots, preflight results, and recommendations.
+## Engine and app updates
 
-## Managed Codex engine
+The packaged app includes a pinned standalone Codex engine. Ordinary Chat and repository workflows do not require the Codex desktop app, Homebrew or a separately installed CLI. Each app session keeps one engine version. A newer app provisions and verifies its bundled pin before activation, preserving the previous engine for recovery. Explicit `ORCHESTRATOR_CODEX_BIN` overrides remain supported. Model lists refresh automatically per account.
 
-On Apple silicon and Intel Macs, the packaged app includes a compatible standalone Codex engine. Users do not need the Codex desktop app, Node.js, Homebrew, or a separately installed Codex CLI. Add an account and sign in using Orchestrator's existing account controls.
+App updates use a signed, fixed [beta feed](https://raw.githubusercontent.com/zachealy1/orchestrator/update-feed/beta.json). The feed is intentionally absent until the first complete signed release. Updates are checked periodically, but download and **Install and restart** are separate user actions in the account menu, also accessible when signed out. Installation waits for all owned work and consequential repository operations to finish; it never stops tasks automatically.
 
-`npm run prepare:native-runtimes` packages the engine and GitHub CLI before Tauri development or release builds. The pinned engine version and official archive checksums live in `src-tauri/resources/codex-engine/release.json`. Packaging downloads only that official release and runs a credential-free compatibility probe. Build each architecture on matching hardware. If package resources are missing, first-use provisioning downloads and verifies the pinned release; retry the account connection after an offline first launch.
+Existing `0.1.0` installations need one manual installation of the first signed beta. Unconfigured source builds show a configuration error when checking updates; no signing secret ships in the source. See [release operations](docs/releasing.md) and the [acceptance checklist](docs/release-acceptance.md).
 
-The engine is stored in Orchestrator's app data directory under `codex-engine/versions/`. Explicit `ORCHESTRATOR_CODEX_BIN` overrides retain priority and are never modified. Normal desktop launches use the managed engine, regardless of other installations on PATH. Existing account profiles and the shared `~/.codex` profile retain their locations and authentication behavior.
+## Data and download reporting
 
-### Engine status and models
+Chats and activity are stored locally in SQLite; account profiles and generated previews retain their documented local storage locations. Back up important work and review agent changes. The application adds no user telemetry. Public statistics use GitHub's aggregate release-asset counters and describe **downloads**, not people, successful installations or active users. Retries and automated verification can contribute.
 
-- Engine setup runs in the background; Settings contains no engine-version or model-management rows. Orchestrator does not check for, announce, download, or prepare newer Codex releases. Initial engine provisioning is separate and uses only the pinned release.
-- Each app session keeps one engine version across all accounts and tasks. Existing engine integrity checks and recovery to a previous working engine remain in place. Previously prepared updates and their metadata are retained on disk for compatibility but are not activated on startup.
-- Model discovery uses the signed-in profile's `model/list`, including its reasoning options. Catalogs refresh automatically at startup, sign-in, account selection, every 15 minutes while visible, and after focus or connectivity returns (with a one-minute throttle). Failed refreshes retain that account's last successful list for the current session; late responses from a different account never replace the current account's models.
+## Contributing and licence
 
-Updating Orchestrator requires installing a new Orchestrator release. The existing Tauri configuration uses ad hoc signing; a publicly distributed Mac release still needs the project's Developer ID signing and notarization setup.
-
-### Verification
-
-```sh
-npm run prepare:codex-engine
-cargo test --manifest-path src-tauri/Cargo.toml codex_engine --lib
-npx vitest run src/features/codex/useModelCatalog.test.tsx src/features/engine
-npm run build
-npm run check:bindings
-```
-
-The engine preparation command verifies the actual official executable without consuming model tokens or using a user's login. Tests cover first-use import without another installation, unsafe archives, compatibility failures, recovery, inert legacy update metadata, setup retry, account isolation, offline model refresh, and the absence of update controls and polling.
+See [CONTRIBUTING.md](CONTRIBUTING.md). Orchestrator's original source is available under the [MIT licence](LICENSE), copyright Zac Healy. Dependencies, bundled runtimes and third-party assets retain their own licences and notices. Packaging generates an inventory under `src-tauri/resources/notices/`; it does not relicense third-party code. `package.json` intentionally remains `private: true` to prevent accidental npm publication.

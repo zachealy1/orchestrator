@@ -227,7 +227,8 @@ where
     T: Send + 'static,
     F: FnOnce() -> Result<T, String> + Send + 'static,
 {
-    tauri::async_runtime::spawn_blocking(task)
+    let lease = crate::update_gate::work()?;
+    tauri::async_runtime::spawn_blocking(move || { let _lease = lease; task() })
         .await
         .map_err(|error| format!("Failed to {operation}: {error}"))?
 }

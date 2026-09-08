@@ -671,7 +671,7 @@ export const SettingsView = memo(function SettingsView({
                     account.email && account.email !== account.label
                       ? `${account.email} · ${accountStateLabel}`
                       : accountStateLabel;
-                  const accountDetail =
+                  const accountDetail = accountSigningIn ? `${accountSummary} · ${model.authMessage}` :
                     accountSelected &&
                     (model.loginState !== "idle" || !model.codexConnected)
                       ? model.authMessage

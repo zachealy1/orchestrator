@@ -12,6 +12,15 @@ const memory = (prompt: string): WorkspaceTaskMemory => ({
 });
 
 describe("WorkspaceTaskMemoryStore", () => {
+  it("preserves every workspace draft across an update without persisting transcript copies", () => {
+    const store = new WorkspaceTaskMemoryStore();
+    store.set(10, memory("unsent one")); store.set(11, memory("unsent two"));
+    store.saveForUpdate();
+    const restored = new WorkspaceTaskMemoryStore();
+    expect(restored.get(10)?.prompt).toBe("unsent one");
+    expect(restored.get(11)?.prompt).toBe("unsent two");
+    expect(restored.get(10)?.historicalTranscript).toBeNull();
+  });
   it("isolates task memory by workspace", () => {
     const store = new WorkspaceTaskMemoryStore();
     store.set(1, memory("one"));
