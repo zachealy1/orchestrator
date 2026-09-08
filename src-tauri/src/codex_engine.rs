@@ -22,6 +22,17 @@ const MAX_EXECUTABLE: u64 = 600 * 1024 * 1024;
 struct PinnedRelease {
     version: String,
     archives: HashMap<String, String>,
+    #[serde(rename = "codeModeHostArchives")]
+    code_mode_host_archives: HashMap<String, String>,
+}
+impl PinnedRelease {
+    fn matches(&self, release: &Release) -> bool {
+        release.version == self.version
+            && self.archives.get(&release.target) == Some(&release.archive_sha256)
+            && self.code_mode_host_archives.get(&release.target)
+                == release.code_mode_host_archive_sha256.as_ref()
+            && release.code_mode_host_archive_sha256.is_some()
+    }
 }
 fn pinned_release() -> PinnedRelease {
     serde_json::from_str(include_str!("../resources/codex-engine/release.json"))
@@ -48,6 +59,8 @@ struct Release {
     version: String,
     target: String,
     archive_sha256: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    code_mode_host_archive_sha256: Option<String>,
 }
 impl Release {
     fn archive_name(&self) -> String {
@@ -64,6 +77,10 @@ impl Release {
         if version_parts(&self.version).is_none()
             || self.target != target()?
             || !valid_hash(&self.archive_sha256)
+            || self
+                .code_mode_host_archive_sha256
+                .as_ref()
+                .is_some_and(|hash| !valid_hash(hash))
         {
             return Err("Invalid Codex release metadata.".into());
         }
@@ -75,17 +92,50 @@ impl Release {
 struct RuntimeRecord {
     release: Release,
     executable_sha256: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    code_mode_host_sha256: Option<String>,
 }
 impl RuntimeRecord {
     fn directory(&self) -> Result<String, String> {
         self.release.validate()?;
-        if !valid_hash(&self.executable_sha256) {
+        if !valid_hash(&self.executable_sha256)
+            || self
+                .code_mode_host_sha256
+                .as_ref()
+                .is_some_and(|hash| !valid_hash(hash))
+            || self.release.code_mode_host_archive_sha256.is_some()
+                != self.code_mode_host_sha256.is_some()
+        {
             return Err("Invalid engine checksum.".into());
         }
-        Ok(format!(
-            "{}-{}",
-            self.release.version, self.executable_sha256
-        ))
+        let directory = format!("{}-{}", self.release.version, self.executable_sha256);
+        // A complete runtime gets a new immutable slot, leaving legacy single-binary installs intact.
+        Ok(match &self.code_mode_host_sha256 {
+            Some(hash) => format!("{directory}-{hash}"),
+            None => directory,
+        })
+    }
+    fn verify_files(&self, directory: &Path) -> Result<PathBuf, String> {
+        self.directory()?;
+        if !fs::symlink_metadata(directory)
+            .map_err(|e| e.to_string())?
+            .is_dir()
+        {
+            return Err("Codex runtime must be stored in a regular directory.".into());
+        }
+        let binary = directory.join("codex");
+        require_executable(&binary)?;
+        if hash_file(&binary)? != self.executable_sha256 {
+            return Err("Engine integrity check failed.".into());
+        }
+        if let Some(hash) = &self.code_mode_host_sha256 {
+            let host = directory.join("codex-code-mode-host");
+            require_executable(&host)?;
+            if hash_file(&host)? != *hash {
+                return Err("Code Mode host integrity check failed.".into());
+            }
+        }
+        Ok(binary)
     }
 }
 #[derive(Clone, Default, Serialize, Deserialize)]
@@ -197,10 +247,7 @@ impl EngineManager {
     }
     fn verify(&self, record: &RuntimeRecord) -> Result<PathBuf, String> {
         let binary = self.binary(record)?;
-        if hash_file(&binary)? != record.executable_sha256 {
-            return Err("Engine integrity check failed.".into());
-        }
-        Ok(binary)
+        record.verify_files(binary.parent().ok_or("Invalid engine directory")?)
     }
     fn select(&mut self, record: RuntimeRecord, probe: bool) -> Result<PathBuf, String> {
         let path = self.verify(&record)?;
@@ -215,7 +262,12 @@ impl EngineManager {
             return Ok(path.clone());
         }
         let pinned = pinned_release();
-        if let Some(active) = self.disk.active.clone().filter(|record| record.release.version == pinned.version && pinned.archives.get(&record.release.target) == Some(&record.release.archive_sha256)) {
+        if let Some(active) = self
+            .disk
+            .active
+            .clone()
+            .filter(|record| pinned.matches(&record.release))
+        {
             match self.select(active, true) {
                 Ok(path) => return Ok(path),
                 Err(error) => {
@@ -225,12 +277,22 @@ impl EngineManager {
                 }
             }
         }
-        if let Some(previous) = self.disk.previous.clone().filter(|record| record.release.version == pinned.version && pinned.archives.get(&record.release.target) == Some(&record.release.archive_sha256)) {
+        if let Some(previous) = self
+            .disk
+            .previous
+            .clone()
+            .filter(|record| pinned.matches(&record.release))
+        {
             if let Ok(path) = self.select(previous.clone(), true) {
-                self.message = Some("Recovering a working engine matching this app release.".into());
+                self.message =
+                    Some("Recovering a working engine matching this app release.".into());
                 let old_disk = self.disk.clone();
                 self.disk.active = Some(previous);
-                if let Err(error) = self.save() { self.disk = old_disk; self.selected = None; return Err(error); }
+                if let Err(error) = self.save() {
+                    self.disk = old_disk;
+                    self.selected = None;
+                    return Err(error);
+                }
                 return Ok(path);
             }
         }
@@ -251,6 +313,13 @@ impl EngineManager {
                     .get(target()?)
                     .ok_or("No packaged engine for this platform")?
                     .clone(),
+                code_mode_host_archive_sha256: Some(
+                    pinned
+                        .code_mode_host_archives
+                        .get(target()?)
+                        .ok_or("No packaged Code Mode host for this platform")?
+                        .clone(),
+                ),
             };
             self.download(&release)
         };
@@ -258,19 +327,33 @@ impl EngineManager {
             Ok(record) => record,
             Err(error) => {
                 // A failed upgrade must not silently masquerade as a successful activation.
-                for fallback in [self.disk.active.clone(), self.disk.previous.clone()].into_iter().flatten() {
+                for fallback in [self.disk.active.clone(), self.disk.previous.clone()]
+                    .into_iter()
+                    .flatten()
+                {
                     if let Ok(path) = self.select(fallback, true) {
                         self.message = Some(format!("Codex {} could not be activated. Using the previous verified engine for this session. Reinstall Orchestrator to retry. {error}", pinned_release().version));
                         return Ok(path);
                     }
                 }
-                return Err(format!("Could not activate this app's Codex engine. Reinstall Orchestrator. {error}"));
+                return Err(format!(
+                    "Could not activate this app's Codex engine. Reinstall Orchestrator. {error}"
+                ));
             }
         };
         let old_disk = self.disk.clone();
         let path = self.select(record.clone(), false)?;
-        self.disk.previous = self.disk.active.clone().filter(|old| self.verify(old).is_ok())
-            .or_else(|| self.disk.previous.clone().filter(|old| self.verify(old).is_ok()));
+        self.disk.previous = self
+            .disk
+            .active
+            .clone()
+            .filter(|old| self.verify(old).is_ok())
+            .or_else(|| {
+                self.disk
+                    .previous
+                    .clone()
+                    .filter(|old| self.verify(old).is_ok())
+            });
         self.disk.active = Some(record);
         if let Err(error) = self.save() {
             self.selected = None;
@@ -286,35 +369,60 @@ impl EngineManager {
         .map_err(|e| e.to_string())?;
         let pinned = pinned_release();
         record.release.validate()?;
-        if record.release.version != pinned.version
-            || pinned.archives.get(&record.release.target) != Some(&record.release.archive_sha256)
-        {
+        if !pinned.matches(&record.release) {
             return Err(
                 "The packaged Codex engine does not match this Orchestrator release.".into(),
             );
         }
-        let source = bundle.join("codex");
-        if hash_file(&source)? != record.executable_sha256 {
-            return Err(
-                "The packaged Codex engine failed its integrity check. Reinstall Orchestrator."
-                    .into(),
-            );
+        record.verify_files(bundle)?;
+        let staging = self.root.join(format!("staging-{}", uuid::Uuid::new_v4()));
+        secure_directory(&staging)?;
+        let result = (|| {
+            for name in ["codex", "codex-code-mode-host"] {
+                let output = staging.join(name);
+                fs::copy(bundle.join(name), &output).map_err(|e| e.to_string())?;
+                make_executable(&output)?;
+            }
+            self.install_staged(&staging, &record)?;
+            Ok(record)
+        })();
+        let _ = fs::remove_dir_all(&staging);
+        result
+    }
+    fn install_staged(&self, staging: &Path, record: &RuntimeRecord) -> Result<(), String> {
+        let binary = record.verify_files(staging)?;
+        verify_codex_engine(&binary, &record.release.version)?;
+        let versions = self.root.join("versions");
+        secure_directory(&versions)?;
+        let destination = versions.join(record.directory()?);
+        if self.verify(record).is_ok() {
+            return Ok(());
         }
-        verify_codex_engine(&source, &record.release.version)?;
-        let destination = self.binary(&record)?;
-        secure_directory(destination.parent().ok_or("Invalid engine destination")?)?;
-        // Version directories are never replaced during an app session.
-        if !destination.exists() || hash_file(&destination)? != record.executable_sha256 {
-            let temporary = destination.with_extension(format!("{}.tmp", uuid::Uuid::new_v4()));
-            fs::copy(source, &temporary).map_err(|e| e.to_string())?;
-            make_executable(&temporary)?;
-            fs::rename(&temporary, &destination).map_err(|e| e.to_string())?;
+        // Publish the pair together. If repairing a damaged slot, preserve it until publication succeeds.
+        let backup = versions.join(format!("damaged-{}", uuid::Uuid::new_v4()));
+        let had_previous = destination.try_exists().map_err(|e| e.to_string())?;
+        if had_previous {
+            fs::rename(&destination, &backup).map_err(|e| e.to_string())?;
         }
-        self.verify(&record)?;
-        Ok(record)
+        if let Err(error) = fs::rename(staging, &destination) {
+            if had_previous {
+                fs::rename(&backup, &destination).map_err(|rollback| {
+                    format!("{error}; could not restore engine slot: {rollback}")
+                })?;
+            }
+            return Err(error.to_string());
+        }
+        if had_previous {
+            let _ = fs::remove_dir_all(backup);
+        }
+        Ok(())
     }
     fn download(&self, release: &Release) -> Result<RuntimeRecord, String> {
         release.validate()?;
+        let host_hash = release
+            .code_mode_host_archive_sha256
+            .as_ref()
+            .ok_or("The pinned release is missing Code Mode host integrity metadata")?;
         let staging = self.root.join(format!("staging-{}", uuid::Uuid::new_v4()));
         secure_directory(&staging)?;
         let result = (|| {
@@ -326,31 +434,23 @@ impl EngineManager {
             let binary = staging.join("codex");
             extract_binary(&archive, &format!("codex-{}", release.target), &binary)?;
             make_executable(&binary)?;
-            verify_codex_engine(&binary, &release.version)?;
+            let host_archive = staging.join("host.tar.gz");
+            let host_entry = format!("codex-code-mode-host-{}", release.target);
+            download_file(&format!("https://github.com/openai/codex/releases/download/rust-v{}/{host_entry}.tar.gz", release.version), &host_archive, MAX_ARCHIVE)?;
+            if hash_file(&host_archive)? != *host_hash {
+                return Err("The downloaded Code Mode host failed its checksum check. Your current engine is unchanged.".into());
+            }
+            let host = staging.join("codex-code-mode-host");
+            extract_binary(&host_archive, &host_entry, &host)?;
+            make_executable(&host)?;
             let record = RuntimeRecord {
                 release: release.clone(),
                 executable_sha256: hash_file(&binary)?,
+                code_mode_host_sha256: Some(hash_file(&host)?),
             };
-            let destination = self.binary(&record)?;
-            secure_directory(
-                destination
-                    .parent()
-                    .and_then(Path::parent)
-                    .ok_or("Invalid engine destination")?,
-            )?;
             fs::remove_file(archive).map_err(|e| e.to_string())?;
-            if destination.exists() {
-                if self.verify(&record).is_err() {
-                    // Repair a corrupted immutable slot using only the already verified staged file.
-                    fs::rename(&binary, &destination).map_err(|e| e.to_string())?;
-                }
-            } else {
-                fs::rename(
-                    &staging,
-                    destination.parent().ok_or("Invalid engine destination")?,
-                )
-                .map_err(|e| e.to_string())?;
-            }
+            fs::remove_file(host_archive).map_err(|e| e.to_string())?;
+            self.install_staged(&staging, &record)?;
             Ok(record)
         })();
         let _ = fs::remove_dir_all(&staging);
@@ -415,6 +515,12 @@ fn valid_hash(hash: &str) -> bool {
             .all(|b| b.is_ascii_hexdigit() && !b.is_ascii_uppercase())
 }
 fn hash_file(path: &Path) -> Result<String, String> {
+    if !fs::symlink_metadata(path)
+        .map_err(|e| e.to_string())?
+        .is_file()
+    {
+        return Err("Codex runtime must contain regular files, not symlinks.".into());
+    }
     let mut file = fs::File::open(path).map_err(|e| e.to_string())?;
     if file.metadata().map_err(|e| e.to_string())?.len() > MAX_EXECUTABLE {
         return Err("Codex engine file is too large".into());
@@ -429,6 +535,20 @@ fn hash_file(path: &Path) -> Result<String, String> {
         digest.update(&buffer[..count]);
     }
     Ok(format!("{:x}", digest.finalize()))
+}
+fn require_executable(path: &Path) -> Result<(), String> {
+    let metadata = fs::symlink_metadata(path).map_err(|e| e.to_string())?;
+    if !metadata.is_file() {
+        return Err("Codex runtime must contain regular executables.".into());
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        if metadata.permissions().mode() & 0o111 == 0 {
+            return Err("Codex runtime file is not executable.".into());
+        }
+    }
+    Ok(())
 }
 fn secure_directory(path: &Path) -> Result<(), String> {
     fs::create_dir_all(path).map_err(|e| e.to_string())?;

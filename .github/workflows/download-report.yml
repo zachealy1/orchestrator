@@ -4,7 +4,7 @@ on:
     - cron: '41 4 * * *'
   workflow_dispatch:
   workflow_run:
-    workflows: [Signed public beta]
+    workflows: [Signed public beta, Community public beta]
     types: [completed]
 permissions:
   contents: read

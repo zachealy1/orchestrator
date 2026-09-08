@@ -2,7 +2,7 @@
 
 ## Installer or update is rejected
 
-Check the release, architecture and minimum macOS version. Download again from the official public Releases page. Do not bypass Gatekeeper. Report the exact macOS error with the version and architecture, without private logs.
+Check the release, architecture and minimum macOS version. Download again from the official public Releases page. For a trusted non-notarized community beta, follow the app-specific [first-launch instructions](INSTALLATION.md#community-beta-macos-first-launch-warning). Never disable Gatekeeper globally or ignore malware/tampering warnings. Report the exact macOS error with the version and architecture, without private logs.
 
 If the app is running from a disk image or a read-only folder, quit and install it in Applications. If download fails, use **Retry download**. A changed/withdrawn update must be checked and downloaded again; an older cached package is not force-installed.
 

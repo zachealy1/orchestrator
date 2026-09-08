@@ -22,7 +22,7 @@
   <a href="CONTRIBUTING.md">Contribute</a>
 </p>
 
-> **Source-first beta.** The source is public; signed installers are not yet available. Apple Silicon and Intel are the release targets. Signing, dependency-security review and clean-Mac installation/update testing remain release gates. Automatic publishing is paused.
+> **Source-first beta.** The source is public; installers are not yet available. The first planned download is a free community beta for Apple Silicon and Intel, **not notarized by Apple**. Dependency-security review and clean-Mac installation/update testing remain release gates. Automatic publishing is paused.
 
 Orchestrator is an independent project, not an OpenAI product. Browser, Computer Use and plugin integrations are experimental and may require separately installed upstream components.
 
@@ -109,11 +109,11 @@ A successful build does not establish public-release readiness. See the [contrib
 
 ## Installation and updates
 
-Signed installers are pending the first beta, `0.2.0-beta.1`. Follow [Releases](https://github.com/zachealy1/orchestrator/releases) for availability and the [installation guide](docs/public/INSTALLATION.md) for supported installation and recovery steps.
+Community installers are being prepared for `0.2.0-beta.1`, without an Apple Developer membership. They use ad-hoc app signing and a separate verified update signature, **not Apple notarization**. macOS may block first launch; read the [installation guide](docs/public/INSTALLATION.md) before deciding whether to open the app. Follow [Releases](https://github.com/zachealy1/orchestrator/releases) for availability.
 
-The updater is designed around your choice: checking, downloading, and **Install and restart** are separate steps. Installation waits for owned tasks and consequential repository operations; it does not stop them automatically. The update feed is intentionally absent until the first complete signed release, and unconfigured source builds cannot check for updates.
+The updater is designed around your choice: checking, downloading, and **Install and restart** are separate steps. Installation waits for owned tasks and consequential repository operations; it does not stop them automatically. The update feed is intentionally absent until the first complete verified release, and unconfigured source builds cannot check for updates. Update signatures authenticate the publisher's update key; they are not Apple approval.
 
-Existing `0.1.0` installations will need one manual installation of the first signed, updater-enabled beta. See [release operations](docs/releasing.md) for engine pinning, upgrade safeguards and the remaining publication gates.
+Existing `0.1.0` installations will need one manual installation of the first updater-enabled beta. See [release operations](docs/releasing.md) for engine pinning, upgrade safeguards and the remaining publication gates.
 
 ## Documentation and support
 

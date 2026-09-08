@@ -3,5 +3,9 @@
   "archives": {
     "aarch64-apple-darwin": "8cf911ea676523bfb2121ec561848d2aba564890ad536db4d8a3353f2b9850b1",
     "x86_64-apple-darwin": "d69200f0bf841b1d1a07f80b80cf742a2e4fc2bab91ae8a44b1042f8e8ca9fa4"
+  },
+  "codeModeHostArchives": {
+    "aarch64-apple-darwin": "45a9b0fdf53b98b85a6bb91e175dd90e961328a7a14fb50a40902205199df1df",
+    "x86_64-apple-darwin": "2ffaebd0103d976232c358419a508859da862e128f3ca0bb071541346fbe3bf7"
   }
 }

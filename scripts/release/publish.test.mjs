@@ -20,7 +20,7 @@ function harness(options = {}) {
     if (path.includes("/contents/package.json")) return { content: Buffer.from(JSON.stringify({ version: options.wrongVersion ? "0.1.0" : version })).toString("base64") };
     if (path.endsWith("/git/ref/heads/update-feed")) { if (!options.feedVersion) throw new Error("(404)"); return { object: { sha: "old-feed" } }; }
     if (path.endsWith("/git/commits/old-feed")) return { tree: { sha: "old-tree" } };
-    if (path.includes("/contents/beta.json")) return { content: Buffer.from(JSON.stringify({ version: options.feedVersion })).toString("base64") };
+    if (path.includes("/contents/beta.json")) return { content: Buffer.from(JSON.stringify({ version: options.feedVersion, ...(options.feedProfile ? { distribution: options.feedProfile } : {}) })).toString("base64") };
     if (path.endsWith(`/git/ref/tags/v${version}`)) { if (!tag) throw new Error("(404)"); return { object: { type: "commit", sha: tag } }; }
     if (path.endsWith("/git/refs") && request.body?.ref.startsWith("refs/tags/")) { tag = request.body.sha; return {}; }
     if (path.endsWith("/releases")) return release;
@@ -36,7 +36,7 @@ function harness(options = {}) {
     const index = Number(url.split("/").at(-1)) - 1;
     return { ok: !options.partialFailure || index < 3, arrayBuffer: async () => files[index].bytes };
   };
-  return { calls, run: overrides => publish({ version, sourceSha, files, notes: "Notes", api, fetcher,
+  return { calls, run: overrides => publish({ version, sourceSha, files, notes: "Notes", api, fetcher, approval: { BETA_REHEARSAL_APPROVED: "true" },
     listReleases: async () => options.published ? [{ ...release, draft: false }] : [], ...overrides }) };
 }
 test("first release tags the tested SHA and creates only a complete orphan feed", async () => {
@@ -72,4 +72,26 @@ test("concurrent feed changes fail without retrying or overwriting the competing
   const h = harness({ feedVersion: "0.1.0", concurrent: true }); await assert.rejects(h.run(), /non-fast-forward/);
   assert.equal(h.calls.filter(c => c.path.endsWith("/git/refs/heads/update-feed")).length, 1);
   assert.equal(h.calls.at(-1).body.force, false);
+});
+
+test("community publication is beta-only, approved for the exact SHA and visibly non-notarized", async () => {
+  const h = harness();
+  await h.run({ profile: "community", approval: { COMMUNITY_BETA_APPROVED_SHA: sourceSha } });
+  assert.match(h.calls.find(c => c.path.endsWith("/releases")).body.body, /not notarized by Apple/);
+  const feed = JSON.parse(h.calls.find(c => c.path.endsWith("/git/trees")).body.tree[0].content);
+  assert.equal(feed.distribution, "community"); assert.match(feed.notes, /not notarized by Apple/);
+  for (const overrides of [{ approval: {} }, { approval: { COMMUNITY_BETA_APPROVED_SHA: "b".repeat(40) } }, { version: "0.2.0" }]) {
+    const blocked = harness(); await assert.rejects(blocked.run({ profile: "community", ...overrides }));
+    assert.equal(blocked.calls.length, 0);
+  }
+});
+
+test("community updates cannot replace an existing notarized or legacy feed", async () => {
+  for (const feedProfile of [undefined, "notarized", "unknown"]) {
+    const h = harness({ feedVersion: "0.1.0", feedProfile });
+    await assert.rejects(h.run({ profile: "community", approval: { COMMUNITY_BETA_APPROVED_SHA: sourceSha } }));
+    assert.equal(h.calls.filter(c => c.method).length, 0);
+  }
+  const h = harness({ feedVersion: "0.1.0", feedProfile: "community" });
+  await h.run({ profile: "community", approval: { COMMUNITY_BETA_APPROVED_SHA: sourceSha } });
 });
