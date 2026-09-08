@@ -1,24 +1,84 @@
-# Orchestrator
+<p align="center">
+  <img src="src/assets/brand/orchestrator-app-icon.svg" width="88" height="88" alt="Orchestrator app icon">
+</p>
 
-An independent, MIT-licensed macOS workspace for AI-assisted development. Orchestrator brings Chat, Plans, Goals, Kanban, subagents, generated-image previews, repository review and account usage limits into one desktop application.
+<h1 align="center">Orchestrator</h1>
 
-## Release status — source first
+<p align="center">
+  A macOS workspace for AI-assisted development.<br>
+  Plan tasks, work with agents and review changes in one place.
+</p>
 
-**Signed installers are not yet available.** The source is available ahead of the first signed beta, `0.2.0-beta.1`. Signing, dependency-security review and clean-Mac installation/update acceptance remain release gates. Automatic publishing is paused. Build success or public source access does not mean the app is ready for end-user distribution.
+<p align="center">
+  <a href="https://github.com/zachealy1/orchestrator/actions/workflows/ci.yml"><img src="https://github.com/zachealy1/orchestrator/actions/workflows/ci.yml/badge.svg?branch=main" alt="Source checks"></a>
+  &nbsp;·&nbsp; <a href="LICENSE">MIT licensed</a>
+  &nbsp;·&nbsp; macOS 15+
+</p>
 
-The supported release target is macOS 15 and later on Apple Silicon and Intel. Browser, Computer Use and plugin APIs are **experimental** and can depend on separately installed upstream components. Orchestrator is not an OpenAI product and does not redistribute private ChatGPT components.
+<p align="center">
+  <a href="#feature-tour">Feature tour</a> ·
+  <a href="#build-from-source">Build from source</a> ·
+  <a href="#documentation-and-support">Documentation</a> ·
+  <a href="CONTRIBUTING.md">Contribute</a>
+</p>
 
-- [Installers and release notes](https://github.com/zachealy1/orchestrator/releases) — pending the signed beta
-- [Installation and updates](docs/public/INSTALLATION.md)
-- [Privacy and local data](docs/public/PRIVACY.md)
-- [Permissions and experimental integrations](docs/public/INTEGRATIONS.md)
-- [Troubleshooting and recovery](docs/public/RECOVERY.md)
-- [Public download reports and CSV](https://github.com/zachealy1/orchestrator/tree/download-metrics)
-- [Report a bug](https://github.com/zachealy1/orchestrator/issues/new/choose) · [Report a vulnerability privately](SECURITY.md)
+> **Source-first beta.** The source is public; signed installers are not yet available. Apple Silicon and Intel are the release targets. Signing, dependency-security review and clean-Mac installation/update testing remain release gates. Automatic publishing is paused.
+
+Orchestrator is an independent project, not an OpenAI product. Browser, Computer Use and plugin integrations are experimental and may require separately installed upstream components.
+
+## Your work, in context
+
+Start with a prompt, keep the conversation alongside your workspace, and follow the agent's work as it happens.
+
+[![A real Taskboard Demo conversation in Orchestrator, with the agent's response and prompt composer visible.](docs/assets/screenshots/chat.png)](docs/assets/screenshots/chat.png)
+
+*Real tasks in a fictional local project. The account identity is replaced with `demo@example.com` for privacy; task results and activity are genuine. Click any screenshot to view it at full size.*
+
+## Feature tour
+
+### Inspect file contents
+
+Expand a workspace in the sidebar and select a file to read its contents beside your conversation. Syntax highlighting and line numbers make code and configuration easy to inspect without leaving the chat.
+
+[![Taskboard Demo's expanded workspace file tree and package.json contents in the side-by-side file preview.](docs/assets/screenshots/file-contents.png)](docs/assets/screenshots/file-contents.png)
+
+### Organise work with Kanban
+
+Turn ideas into cards and follow each task from preparation through execution and review. Chat and Kanban share the same workspace, so you can choose the view that fits the work.
+
+[![Taskboard Demo's Kanban board, showing named tasks at different stages of work.](docs/assets/screenshots/kanban.png)](docs/assets/screenshots/kanban.png)
+
+### See what subagents are doing
+
+Inspect a delegated task's original instruction, conversation and activity without losing the parent conversation.
+
+[![The subagent inspector showing a submitted task prompt and a genuine review response for Taskboard Demo.](docs/assets/screenshots/subagents.png)](docs/assets/screenshots/subagents.png)
+
+### Review changes before publishing
+
+Browse changed files, inspect the diff and decide whether to approve the work or request changes. Repository-specific review keeps changes understandable in both single- and multi-repository workspaces.
+
+[![A genuine Taskboard Demo code change in the local review drawer, with file navigation, diff and review controls.](docs/assets/screenshots/change-review.png)](docs/assets/screenshots/change-review.png)
+
+### Understand your activity
+
+Explore local run activity, token totals and outcomes by workspace and date range. Account usage limits are shown separately using the limits Codex actually reports for the selected plan.
+
+[![Local run metrics and activity charts in Analytics, filtered to the fictional Taskboard Demo workspace.](docs/assets/screenshots/analytics.png)](docs/assets/screenshots/analytics.png)
+
+*The screenshot shows demo-project activity, not personal account quotas or a performance benchmark.*
+
+## More ways to work
+
+- **Plans and Goals:** Review a proposed plan before implementation, or pursue an explicit longer-running goal.
+- **Generated-image previews:** Explore concepts in the conversation; copy images into a project when you explicitly request an asset.
+- **Multi-repository workspaces:** Give agents the workspace context and review changes repository by repository.
+- **Keyboard navigation:** Use `⌘K` for actions, `⌘N` for a new chat and `⌘/` for shortcut help.
+- **Optional integrations:** Explore Plugins, Browser and Computer Use with their [experimental requirements and limitations](docs/public/INTEGRATIONS.md).
 
 ## Build from source
 
-Use macOS with Xcode Command Line Tools, Node.js 24, npm and Rust 1.96.0. Build each architecture on matching hardware. Source builds need development tools; eventual signed installers will not.
+You need macOS, Xcode Command Line Tools, **Node.js 24**, npm and **Rust 1.96.0**. Build each architecture on matching hardware. Normal AI tasks require your own supported Codex account; GitHub authentication is separate.
 
 ```sh
 git clone https://github.com/zachealy1/orchestrator.git
@@ -27,7 +87,10 @@ npm ci
 npm run tauri dev
 ```
 
-Tauri's build hooks download the pinned official standalone Codex engine and GitHub CLI, verify their checksums, and prepare third-party notices. No private-repository access or publishing credentials are required. Normal tasks need your own supported Codex account; GitHub authentication is separate.
+Build hooks prepare the pinned official standalone Codex engine, GitHub CLI and third-party notices, verifying the runtime downloads. No private-repository access or publishing credentials are required. Ordinary Chat and repository workflows do not require the Codex desktop app, Homebrew or a separately installed Codex CLI. Orchestrator does not redistribute private ChatGPT components.
+
+<details>
+<summary>Run checks or create a local development build</summary>
 
 ```sh
 npm run lint
@@ -40,18 +103,28 @@ cargo test --locked --manifest-path src-tauri/Cargo.toml
 npm run tauri build -- --bundles app
 ```
 
-## Engine and app updates
+A successful build does not establish public-release readiness. See the [contribution guide](CONTRIBUTING.md) and [release acceptance checklist](docs/release-acceptance.md).
 
-The packaged app includes a pinned standalone Codex engine. Ordinary Chat and repository workflows do not require the Codex desktop app, Homebrew or a separately installed CLI. Each app session keeps one engine version. A newer app provisions and verifies its bundled pin before activation, preserving the previous engine for recovery. Explicit `ORCHESTRATOR_CODEX_BIN` overrides remain supported. Model lists refresh automatically per account.
+</details>
 
-App updates use a signed, fixed [beta feed](https://raw.githubusercontent.com/zachealy1/orchestrator/update-feed/beta.json). The feed is intentionally absent until the first complete signed release. Updates are checked periodically, but download and **Install and restart** are separate user actions in the account menu, also accessible when signed out. Installation waits for all owned work and consequential repository operations to finish; it never stops tasks automatically.
+## Installation and updates
 
-Existing `0.1.0` installations need one manual installation of the first signed beta. Unconfigured source builds show a configuration error when checking updates; no signing secret ships in the source. See [release operations](docs/releasing.md) and the [acceptance checklist](docs/release-acceptance.md).
+Signed installers are pending the first beta, `0.2.0-beta.1`. Follow [Releases](https://github.com/zachealy1/orchestrator/releases) for availability and the [installation guide](docs/public/INSTALLATION.md) for supported installation and recovery steps.
 
-## Data and download reporting
+The updater is designed around your choice: checking, downloading, and **Install and restart** are separate steps. Installation waits for owned tasks and consequential repository operations; it does not stop them automatically. The update feed is intentionally absent until the first complete signed release, and unconfigured source builds cannot check for updates.
 
-Chats and activity are stored locally in SQLite; account profiles and generated previews retain their documented local storage locations. Back up important work and review agent changes. The application adds no user telemetry. Public statistics use GitHub's aggregate release-asset counters and describe **downloads**, not people, successful installations or active users. Retries and automated verification can contribute.
+Existing `0.1.0` installations will need one manual installation of the first signed, updater-enabled beta. See [release operations](docs/releasing.md) for engine pinning, upgrade safeguards and the remaining publication gates.
 
-## Contributing and licence
+## Documentation and support
 
-See [CONTRIBUTING.md](CONTRIBUTING.md). Orchestrator's original source is available under the [MIT licence](LICENSE), copyright Zac Healy. Dependencies, bundled runtimes and third-party assets retain their own licences and notices. Packaging generates an inventory under `src-tauri/resources/notices/`; it does not relicense third-party code. `package.json` intentionally remains `private: true` to prevent accidental npm publication.
+- [Installation and updates](docs/public/INSTALLATION.md) · [Troubleshooting and recovery](docs/public/RECOVERY.md)
+- [Privacy and local storage](docs/public/PRIVACY.md) · [Permissions and integrations](docs/public/INTEGRATIONS.md)
+- [Public download reports and CSV](https://github.com/zachealy1/orchestrator/tree/download-metrics)
+- [Report a bug](https://github.com/zachealy1/orchestrator/issues/new/choose) · [Report a vulnerability privately](SECURITY.md)
+- [Contribute](CONTRIBUTING.md) · [Architecture](docs/architecture-decomposition.md) · [Screenshot capture notes](docs/assets/screenshots/README.md)
+
+Orchestrator adds no application-user telemetry. Download reports use GitHub's aggregate asset counters: **downloads are not users or successful installations**. AI tasks and connected integrations still communicate with their providers; see the privacy guide before sharing sensitive work.
+
+## Licence
+
+Orchestrator's original source is [MIT licensed](LICENSE), copyright Zac Healy. Dependencies, bundled runtimes and third-party assets retain their own licences and notices. Packaging generates a third-party inventory; it does not relicense those components. `package.json` remains `private: true` to prevent accidental npm publication.
