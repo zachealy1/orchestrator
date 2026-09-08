@@ -1,5 +1,5 @@
 {
-  "recordedAtCommit": "bb11df909391ffb0f9a602960bd0dac570d0c41f",
+  "recordedAtCommit": "d69c9f3c8ee9ceb1c46f6e4a91c0686d422be3af",
   "rationale": "Pre-existing debt recorded before public-beta work; reject all new violations and metric increases.",
   "maxRunSetupLines": 472,
   "maxLines": {

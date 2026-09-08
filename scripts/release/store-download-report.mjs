@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { github, REPOSITORY } from "./lib.mjs";
 const repo = await github(`repos/${REPOSITORY}`);
-if (repo.id !== 1276875319 || repo.full_name !== REPOSITORY) throw new Error("Unexpected download-report repository identity");
+if (repo.id !== 1361268700 || repo.full_name !== REPOSITORY) throw new Error("Unexpected download-report repository identity");
 const script = resolve("scripts/release/download-report.mjs");
 const temporary = await mkdtemp(join(tmpdir(), "orchestrator-download-report-"));
 const directory = join(temporary, "metrics");

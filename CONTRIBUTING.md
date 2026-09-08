@@ -4,6 +4,8 @@ Orchestrator's original source is MIT licensed. Contributions are welcome as foc
 
 Read the [development instructions](README.md#build-from-source) and [architecture guidance](docs/architecture-decomposition.md). Discuss large changes in an issue first. Include reproduction steps, tests and screenshots where they help, using synthetic data rather than real accounts or transcripts.
 
+The public repository has independently published history with maintainer email metadata replaced for privacy. If you have a checkout from before publication, make a fresh clone; do not merge or push the original private history into this repository. Set your Git author email to your GitHub-provided `noreply` address before committing if you do not want your personal address published. GitHub's email privacy setting alone does not change existing commits.
+
 Before opening a pull request, run:
 
 ```sh
