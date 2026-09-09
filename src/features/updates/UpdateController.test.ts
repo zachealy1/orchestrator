@@ -8,7 +8,7 @@ function fixture() {
   const deps = { check: vi.fn().mockResolvedValue({ ...initialUpdateState, phase: "available", version: "0.2.0-beta.2" }),
     download: vi.fn().mockResolvedValue({ ...initialUpdateState, phase: "ready", version: "0.2.0-beta.2" }),
     install: vi.fn().mockResolvedValue({ ...initialUpdateState, phase: "ready", version: "0.2.0-beta.2" }),
-    busy: vi.fn(() => false), flush: vi.fn(async () => {}), notify: vi.fn(),
+    busy: vi.fn(() => false), flush: vi.fn(async () => {}), notify: vi.fn(), openDownloads: vi.fn(async () => {}),
     storage: { getItem: (key: string) => storage.get(key) ?? null, setItem: (key: string, value: string) => { storage.set(key, value); } }, now: () => time,
   };
   return { deps, controller: new UpdateController(deps), advance: (ms: number) => { time += ms; } };

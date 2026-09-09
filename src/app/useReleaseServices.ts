@@ -7,7 +7,7 @@ import { useStableEvent } from "../shared/reactRuntime";
 import { flushNativeCommands } from "../shared/nativeCommands";
 import type { AppServices } from "../runtime/AppServices";
 import type { ApplicationNotificationQueue } from "./useApplicationNotificationQueue";
-import { BUG_REPORT_URL, UpdateController } from "../features/updates/UpdateController";
+import { BUG_REPORT_URL, RELEASE_DOWNLOADS_URL, UpdateController } from "../features/updates/UpdateController";
 import { useEngineController } from "../features/engine/useEngineController";
 
 export function useReleaseServices(services: AppServices, notices: ApplicationNotificationQueue,
@@ -16,6 +16,10 @@ export function useReleaseServices(services: AppServices, notices: ApplicationNo
   inputs.current = { prepare, extraBusy, closeAccountMenu, notices };
   const [controller] = useState(() => new UpdateController({
     check: commands.appUpdateCheck, download: commands.appUpdateDownload, install: commands.appUpdateInstall,
+    openDownloads: async () => {
+      await openUrl(RELEASE_DOWNLOADS_URL);
+      inputs.current.closeAccountMenu();
+    },
     storage: localStorage,
     busy: () => inputs.current.extraBusy() || services.subagents.hasActiveWork() || services.runCoordinator.getSnapshot().some((run) => !["completed", "cancelled", "failed"].includes(run.phase))
       || [...services.activeRuns.values()].some((run) => !run.stopped && (
@@ -32,6 +36,9 @@ export function useReleaseServices(services: AppServices, notices: ApplicationNo
       tone: "success", title: `Orchestrator ${version} is available`, detail: "Open the account menu to download the update.", timeoutMs: null }),
   }));
   const state = useSyncExternalStore(controller.subscribe, controller.getSnapshot, controller.getSnapshot);
+  useEffect(() => {
+    if (state.delivery === "manual") notices.dismiss("application-update");
+  }, [state.delivery, notices.dismiss]);
   useEffect(() => {
     if (!isTauri()) return;
     let cancelled = false;

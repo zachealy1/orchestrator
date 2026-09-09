@@ -210,6 +210,8 @@ export type AgentNotificationTarget = {
 };
 
 export type AppUpdateState = {
+	delivery: UpdateDelivery,
+	fallbackReason: UpdateFallbackReason | null,
 	phase: string,
 	version: string | null,
 	downloadedBytes: number,
@@ -854,6 +856,10 @@ export type SetKanbanInheritedContextRequest = {
 	expectedVersion: number,
 	operationId: string,
 };
+
+export type UpdateDelivery = "in-app" | "manual";
+
+export type UpdateFallbackReason = "unconfigured" | "unsupported-platform" | "feed-unavailable" | "installation-unavailable";
 
 export type UpdateKanbanAttemptRequest = {
 	cardId: string,
