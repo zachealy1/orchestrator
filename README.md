@@ -16,15 +16,31 @@
 </p>
 
 <p align="center">
+  <a href="#download-and-install">Download</a> ·
   <a href="#feature-tour">Feature tour</a> ·
   <a href="#build-from-source">Build from source</a> ·
   <a href="#documentation-and-support">Documentation</a> ·
   <a href="CONTRIBUTING.md">Contribute</a>
 </p>
 
-> **Experimental community beta.** Source is public. The first release, **0.2.0-beta.1**, targets **Apple Silicon only** and is **not notarized by Apple**. See [Releases](https://github.com/zachealy1/orchestrator/releases) for the installer and [installation instructions](docs/public/INSTALLATION.md) before opening it. Installation and updates are manual; Intel packages and the in-app update feed are deferred. Automatic publishing remains paused.
+> **Experimental community beta.** Version **0.2.0-beta.1** is available for **Apple Silicon only** and is **not notarized by Apple**. Installation and updates are manual; Intel packages and the in-app update feed are deferred.
 
 Orchestrator is an independent project, not an OpenAI product. Browser, Computer Use and plugin integrations are experimental and may require separately installed upstream components.
+
+## Download and install
+
+**[Download for Apple Silicon — v0.2.0-beta.1](https://github.com/zachealy1/orchestrator/releases/download/v0.2.0-beta.1/Orchestrator_aarch64.dmg)** · [All releases](https://github.com/zachealy1/orchestrator/releases)
+
+Requires an **Apple Silicon Mac running macOS 15 or later**. No development tools or source build are needed to install the app.
+
+1. Download `Orchestrator_aarch64.dmg` using the link above.
+2. Open the disk image and drag **Orchestrator** into **Applications**.
+3. Eject the disk image, then open Orchestrator from Applications.
+4. Sign in with your own supported Codex account and add a workspace to get started.
+
+macOS may block the first launch because this beta is not notarized. Read the [first-launch security guidance](docs/public/INSTALLATION.md#community-beta-macos-first-launch-warning) before deciding whether to open it. Never disable Gatekeeper globally.
+
+**Updates are currently manual.** Check [Releases](https://github.com/zachealy1/orchestrator/releases) for newer versions; do not rely on an in-app update notification. See the [installation and update guide](docs/public/INSTALLATION.md) for details.
 
 ## Your work, in context
 
@@ -109,11 +125,11 @@ A successful build does not establish public-release readiness. See the [contrib
 
 ## Installation and updates
 
-Community installers are being prepared for `0.2.0-beta.1`, without an Apple Developer membership. They use ad-hoc app signing and a separate verified update signature, **not Apple notarization**. macOS may block first launch; read the [installation guide](docs/public/INSTALLATION.md) before deciding whether to open the app. Follow [Releases](https://github.com/zachealy1/orchestrator/releases) for availability.
+The **0.2.0-beta.1 Apple Silicon installer is available now**. Use the [download instructions above](#download-and-install) for a first installation, including when moving from an existing `0.1.0` build.
 
-The updater is designed around your choice: checking, downloading, and **Install and restart** are separate steps. Installation waits for owned tasks and consequential repository operations; it does not stop them automatically. The update feed is intentionally absent until the first complete verified release, and unconfigured source builds cannot check for updates. Update signatures authenticate the publisher's update key; they are not Apple approval.
+To update manually, back up important data, finish all tasks and repository operations, quit Orchestrator, then replace the Applications copy with the newer installer from [Releases](https://github.com/zachealy1/orchestrator/releases). See the [installation guide](docs/public/INSTALLATION.md) and [recovery guidance](docs/public/RECOVERY.md).
 
-Existing `0.1.0` installations will need one manual installation of the first updater-enabled beta. See [release operations](docs/releasing.md) for engine pinning, upgrade safeguards and the remaining publication gates.
+The in-app updater is implemented but its feed is not active for this first beta. Intel distribution and updater-enabled releases remain deferred pending their separate [release acceptance checks](docs/release-acceptance.md).
 
 ## Documentation and support
 
