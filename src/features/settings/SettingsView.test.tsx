@@ -141,6 +141,7 @@ function model(overrides: Partial<SettingsViewModel> = {}): SettingsViewModel {
     activeRunAccountIds: new Set(),
     runIsActive: false,
     authMessage: "No account selected",
+    authError: null,
     showLogout: false,
     ...overrides,
   };
@@ -434,12 +435,14 @@ describe("SettingsView", () => {
       trigger.querySelector(".settings-status-badge-dot"),
     ).toBeInTheDocument();
     expect(trigger.querySelector("svg")).toBeNull();
-    expect(trigger).toHaveAttribute("aria-expanded", "true");
+    expect(trigger).toHaveAttribute("aria-expanded", "false");
+    expect(screen.queryByRole("dialog")).toBeNull();
+    fireEvent.click(trigger);
     expect(
       computerUse.querySelector(".computer-use-runtime-error"),
     ).toBeNull();
 
-    const dialog = within(computerUse).getByRole("dialog", {
+    const dialog = screen.getByRole("dialog", {
       name: "Computer Use unavailable",
     });
     expect(trigger).toHaveAttribute("aria-expanded", "true");
@@ -456,12 +459,12 @@ describe("SettingsView", () => {
       }),
     );
     expect(handlers.openScreenRecordingSettings).toHaveBeenCalledOnce();
-    expect(within(computerUse).queryByRole("dialog")).toBeNull();
+    expect(screen.queryByRole("dialog")).toBeNull();
 
     fireEvent.click(trigger);
     fireEvent.click(
       within(
-        within(computerUse).getByRole("dialog", {
+        screen.getByRole("dialog", {
           name: "Computer Use unavailable",
         }),
       ).getByRole("button", { name: "Open Accessibility settings" }),
@@ -471,7 +474,7 @@ describe("SettingsView", () => {
     fireEvent.click(trigger);
     fireEvent.click(
       within(
-        within(computerUse).getByRole("dialog", {
+        screen.getByRole("dialog", {
           name: "Computer Use unavailable",
         }),
       ).getByRole("button", { name: "Check again" }),
@@ -480,11 +483,11 @@ describe("SettingsView", () => {
 
     fireEvent.click(trigger);
     fireEvent.pointerDown(document.body);
-    expect(within(computerUse).queryByRole("dialog")).toBeNull();
+    expect(screen.queryByRole("dialog")).toBeNull();
 
     fireEvent.click(trigger);
     fireEvent.keyDown(document, { key: "Escape" });
-    expect(within(computerUse).queryByRole("dialog")).toBeNull();
+    expect(screen.queryByRole("dialog")).toBeNull();
     expect(trigger).toHaveFocus();
   });
 
@@ -515,7 +518,9 @@ describe("SettingsView", () => {
     const trigger = within(computerUse).getByRole("button", {
       name: "Computer Use unavailable. Show details",
     });
-    expect(trigger).toHaveAttribute("aria-expanded", "true");
+    expect(trigger).toHaveAttribute("aria-expanded", "false");
+    expect(screen.queryByRole("dialog")).toBeNull();
+    fireEvent.click(trigger);
 
     expect(
       within(computerUse).getByRole("checkbox", {
@@ -526,7 +531,7 @@ describe("SettingsView", () => {
       screen.getByRole("button", { name: /computer use\s*not available/i }),
     ).toBeInTheDocument();
 
-    const dialog = within(computerUse).getByRole("dialog", {
+    const dialog = screen.getByRole("dialog", {
       name: "Computer Use unavailable",
     });
     expect(dialog).toHaveTextContent("Grant the required permission to continue.");
@@ -595,7 +600,7 @@ describe("SettingsView", () => {
         expect(
           within(computerUse).getByRole("status", { name: "Available" }),
         ).toBeInTheDocument();
-        expect(within(computerUse).queryByRole("dialog")).toBeNull();
+        expect(screen.queryByRole("dialog")).toBeNull();
         return;
       }
 
@@ -605,7 +610,7 @@ describe("SettingsView", () => {
       if (trigger.getAttribute("aria-expanded") === "false") {
         fireEvent.click(trigger);
       }
-      const dialog = within(computerUse).getByRole("dialog", {
+      const dialog = screen.getByRole("dialog", {
         name: "Computer Use unavailable",
       });
 
@@ -674,7 +679,7 @@ describe("SettingsView", () => {
     ).toBeInTheDocument();
 
     fireEvent.click(trigger);
-    const dialog = within(computerUse).getByRole("dialog", {
+    const dialog = screen.getByRole("dialog", {
       name: "Computer Use access not verified",
     });
     expect(dialog).toHaveTextContent(
@@ -833,9 +838,9 @@ describe("SettingsView", () => {
       />,
     );
 
-    expect(within(browser).getByRole("alert")).toHaveTextContent(
-      "The browser runtime is unavailable.",
-    );
+    expect(screen.queryByText("The browser runtime is unavailable.")).toBeNull();
+    fireEvent.click(within(browser).getByRole("button", { name: "Browser unavailable. Show details" }));
+    expect(screen.getByRole("dialog", { name: "Browser unavailable" })).toHaveTextContent("The browser runtime is unavailable.");
   });
 
   it("keeps browser import and runtime in the shared divided settings list", () => {
@@ -862,7 +867,7 @@ describe("SettingsView", () => {
     } })} actions={handlers} />);
     const browser = screen.getByRole("region", { name: "Browser settings" });
     expect(within(browser).queryByRole("alert")).toBeNull();
-    expect(within(browser).getAllByRole("status", { name: "Not checked" })).toHaveLength(2);
+    expect(within(browser).getAllByRole("status", { name: "Not checked" })).toHaveLength(1);
     expect(within(browser).queryByRole("button", { name: "Open Plugins for the in-app browser" })).toBeNull();
     fireEvent.click(within(browser).getByRole("button", { name: "Refresh Browser status" }));
     expect(handlers.refreshBrowserStatus).toHaveBeenCalledOnce();
@@ -966,7 +971,7 @@ describe("SettingsView", () => {
     const unavailableStatuses = screen.getAllByRole("status", {
       name: "Unavailable",
     });
-    expect(unavailableStatuses).toHaveLength(3);
+    expect(unavailableStatuses).toHaveLength(4);
     unavailableStatuses.forEach((status) => {
       expect(status).toHaveClass("negative");
     });
@@ -1328,4 +1333,202 @@ describe("SettingsView", () => {
     expect(handlers.showGithubLogin).toHaveBeenCalledOnce();
     expect(screen.queryByText("ABCD-1234")).not.toBeInTheDocument();
   });
+});
+
+describe("Settings warning details", () => {
+  it.each([
+    { pluginInstalled: false, pluginEnabled: false, checkFailed: false, message: "Install the Browser plugin.", action: "Open Plugins" },
+    { pluginInstalled: true, pluginEnabled: false, checkFailed: false, message: "Enable the Browser plugin.", action: "Open Plugins" },
+    { pluginInstalled: true, pluginEnabled: true, checkFailed: false, message: "Browser service is unavailable.", action: "Check again" },
+    { pluginInstalled: true, pluginEnabled: true, checkFailed: true, message: "Browser check timed out.", action: "Check again" },
+  ])("shows Browser details for $message only on click with the appropriate recovery", (readiness) => {
+    const handlers = actions();
+    render(<SettingsView model={model({ browserReadiness: { ...model().browserReadiness, ...readiness, available: false } })} actions={handlers} />);
+    expect(screen.queryByText(readiness.message)).toBeNull();
+    const region = screen.getByRole("region", { name: "Browser settings" });
+    const title = readiness.checkFailed ? "Browser check failed" : "Browser unavailable";
+    const trigger = within(region).getByRole("button", { name: `${title}. Show details` });
+    expect(trigger).toHaveClass(readiness.checkFailed ? "neutral" : "negative");
+    expect(within(region).getByText("Provides the isolated browser for this account.")).toBeInTheDocument();
+    fireEvent.click(trigger);
+    const dialog = screen.getByRole("dialog", { name: title });
+    expect(dialog).toHaveTextContent(readiness.message);
+    expect(within(dialog).getAllByRole("button")).toHaveLength(1);
+    fireEvent.click(within(dialog).getByRole("button", { name: readiness.action }));
+    expect(readiness.action === "Open Plugins" ? handlers.openPlugins : handlers.refreshBrowserStatus).toHaveBeenCalledOnce();
+    expect(screen.queryByRole("dialog")).toBeNull();
+    const refresh = within(region).getByRole("button", { name: "Refresh Browser status" });
+    if (readiness.pluginInstalled && readiness.pluginEnabled) expect(refresh).toBeEnabled();
+    else expect(refresh).toBeDisabled();
+  });
+
+  it("closes Browser details while checking and keeps refreshed failures closed", () => {
+    const base = model({ browserReadiness: { ...model().browserReadiness, available: false, message: "Check failed.", checkFailed: true } });
+    const handlers = actions();
+    const { rerender } = render(<SettingsView model={base} actions={handlers} />);
+    fireEvent.click(screen.getByRole("button", { name: "Browser check failed. Show details" }));
+    rerender(<SettingsView model={{ ...base, browserReadiness: { ...base.browserReadiness, checking: true } }} actions={handlers} />);
+    expect(screen.queryByRole("dialog")).toBeNull();
+    expect(screen.queryByRole("button", { name: "Browser check failed. Show details" })).toBeNull();
+    expect(screen.getByRole("button", { name: "Refresh Browser status" })).toBeDisabled();
+    rerender(<SettingsView model={base} actions={handlers} />);
+    expect(screen.queryByRole("dialog")).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Browser check failed. Show details" }));
+    rerender(<SettingsView model={model()} actions={handlers} />);
+    expect(screen.queryByRole("dialog")).toBeNull();
+  });
+
+  it("retains the profile import description and disabled action while disclosing the limitation", () => {
+    const { rerender } = render(<SettingsView model={model()} actions={actions()} />);
+    expect(screen.getByText("Import supported profile data into the isolated browser.")).toBeInTheDocument();
+    expect(screen.queryByText("Profile import is not available on this device.")).toBeNull();
+    expect(screen.getByRole("button", { name: "Import browser profile" })).toBeDisabled();
+    const trigger = screen.getByRole("button", { name: "Profile import unavailable. Show details" });
+    expect(trigger.closest(".setting-row")).toHaveTextContent("Import browser profile");
+    fireEvent.click(trigger);
+    expect(screen.getByRole("dialog")).toHaveTextContent("Profile import is not available on this device.");
+    expect(within(screen.getByRole("dialog")).queryByRole("button")).toBeNull();
+    rerender(<SettingsView model={model({ browserReadiness: { ...model().browserReadiness, profileImportAvailable: true } })} actions={actions()} />);
+    expect(screen.queryByRole("dialog")).toBeNull();
+    expect(screen.getByRole("button", { name: "Import browser profile" })).toBeEnabled();
+  });
+
+  it.each(["unavailable", "reconnect_required"])("discloses GitHub %s diagnostics without hiding identity/version or sign-in controls", (status) => {
+    const handlers = actions();
+    render(<SettingsView model={model({ githubConnection: githubConnection({ status, available: status !== "unavailable", message: "GitHub diagnostic detail." }) })} actions={handlers} />);
+    expect(screen.queryByText(/GitHub diagnostic detail/)).toBeNull();
+    expect(screen.getByText("GitHub CLI 2.96.0")).toBeInTheDocument();
+    const title = status === "unavailable" ? "GitHub unavailable" : "GitHub reconnection required";
+    fireEvent.click(screen.getByRole("button", { name: `${title}. Show details` }));
+    const dialog = screen.getByRole("dialog", { name: title });
+    expect(dialog).toHaveTextContent("GitHub diagnostic detail.");
+    if (status === "unavailable") {
+      expect(screen.getByRole("button", { name: "Connect GitHub" })).toBeDisabled();
+      expect(within(dialog).queryByRole("button")).toBeNull();
+    } else {
+      fireEvent.click(within(dialog).getByRole("button", { name: "Reconnect GitHub" }));
+      expect(handlers.connectGithub).toHaveBeenCalledOnce();
+    }
+  });
+
+  it.each(["denied", "unavailable"] as const)("discloses notification %s details with applicable recovery", (permission) => {
+    const handlers = actions();
+    render(<SettingsView model={model({ notificationPermission: permission })} actions={handlers} />);
+    const title = permission === "denied" ? "Notifications denied" : "Notifications unavailable";
+    const trigger = screen.getByRole("button", { name: `${title}. Show details` });
+    expect(screen.queryByRole("dialog")).toBeNull();
+    fireEvent.click(trigger);
+    const dialog = screen.getByRole("dialog", { name: title });
+    expect(dialog.textContent!.length).toBeGreaterThan(title.length);
+    if (permission === "denied") {
+      fireEvent.click(within(dialog).getByRole("button", { name: "Open System Settings" }));
+      expect(handlers.openNotificationSettings).toHaveBeenCalledOnce();
+    } else {
+      expect(within(dialog).queryByRole("button")).toBeNull();
+      expect(screen.getByRole("button", { name: "Enable notifications" })).toBeDisabled();
+    }
+    expect(screen.getByRole("checkbox", { name: "Completed responses" })).toBeEnabled();
+  });
+
+  it("keeps signed-out, disconnected, and notifications-off states non-interactive", () => {
+    render(<SettingsView model={model({ codexConnected: false, notificationPermission: "not-enabled", githubConnection: githubConnection({ message: "Connect GitHub CLI to publish." }) })} actions={actions()} />);
+    for (const name of ["GitHub settings", "Codex settings", "Notification settings"]) {
+      expect(screen.getByRole("region", { name }).querySelector('[aria-haspopup="dialog"]')).toBeNull();
+    }
+  });
+
+  const account = (id: number, label: string): SettingsViewModel["accounts"][number] => ({
+    id, label, email: `${label}@example.com`, plan_type: "pro", status: "signed_in", last_error: null,
+    last_used_at: null, created_at: "2026-09-09", updated_at: "2026-09-09", deleted_at: null,
+  });
+
+  it("puts errors on their account rows and retains ordinary summaries and active-run restrictions", () => {
+    const handlers = actions();
+    const first = { ...account(1, "Personal"), status: "error" as const, last_error: "Personal sign-in expired." };
+    const second = { ...account(2, "Work"), last_error: "Work connection failed." };
+    render(<SettingsView model={model({ accounts: [first, second], selectedAccountId: 2, codexConnected: false,
+      authMessage: "Work connection failed.", authError: "Work connection failed.", activeRunAccountIds: new Set([1]), runIsActive: true })} actions={handlers} />);
+    expect(screen.queryByText("Personal sign-in expired.")).toBeNull();
+    expect(screen.queryByText("Work connection failed.")).toBeNull();
+    expect(screen.getByText("Personal@example.com · Pro")).toBeInTheDocument();
+    expect(screen.getByText("Work@example.com · Pro")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Codex connection error. Show details" })).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Personal error. Show details" }));
+    expect(screen.getByRole("dialog")).toHaveTextContent("Personal sign-in expired.");
+    expect(within(screen.getByRole("dialog")).getByRole("button", { name: "Retry" })).toBeDisabled();
+    fireEvent.click(screen.getByRole("button", { name: "Work error. Show details" }));
+    expect(screen.getAllByRole("dialog")).toHaveLength(1);
+    expect(screen.getByRole("dialog")).toHaveTextContent("Work connection failed.");
+    expect(within(screen.getByRole("dialog")).getByRole("button", { name: "Retry" })).toBeDisabled();
+    expect(handlers.connectAccount).not.toHaveBeenCalled();
+    expect(handlers.loginAccount).not.toHaveBeenCalled();
+  });
+
+  it("uses explicit errors without parsing auth text and updates current diagnostics", () => {
+    const base = model({ accounts: [account(1, "Personal")], selectedAccountId: 1, codexConnected: false,
+      authMessage: "Disconnected summary", authError: "Explicit diagnostic" });
+    const handlers = actions();
+    const { rerender } = render(<SettingsView model={base} actions={handlers} />);
+    expect(screen.queryByText("Explicit diagnostic")).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Personal error. Show details" }));
+    rerender(<SettingsView model={{ ...base, authError: "Updated diagnostic" }} actions={handlers} />);
+    expect(screen.getByRole("dialog")).toHaveTextContent("Updated diagnostic");
+    fireEvent.click(within(screen.getByRole("dialog")).getByRole("button", { name: "Retry" }));
+    expect(handlers.connectAccount).toHaveBeenCalledWith(1);
+    rerender(<SettingsView model={{ ...base, authError: null, authMessage: "This normal summary mentions an error" }} actions={handlers} />);
+    expect(screen.queryByRole("button", { name: "Personal error. Show details" })).toBeNull();
+    expect(screen.getByText("This normal summary mentions an error")).toBeInTheDocument();
+  });
+
+  it("uses the connection header for errors without a corresponding account row", () => {
+    render(<SettingsView model={model({ accounts: [account(2, "Work")], selectedAccountId: 1, codexConnected: false, authError: "Connection could not start." })} actions={actions()} />);
+    const trigger = screen.getByRole("button", { name: "Codex connection error. Show details" });
+    expect(trigger.closest(".settings-detail-header")).not.toBeNull();
+    expect(screen.queryByText("Connection could not start.")).toBeNull();
+    fireEvent.click(trigger);
+    expect(screen.getByRole("dialog")).toHaveTextContent("Connection could not start.");
+  });
+
+  it("keeps pending sign-in instructions, device codes and cancellation visible during retries", () => {
+    render(<SettingsView model={model({ accounts: [{ ...account(1, "Personal"), status: "error", last_error: "Previous failure" }], selectedAccountId: 1,
+      loginState: "waiting", pendingLoginAccountId: 1, pendingLoginId: "login-1", authMessage: "Enter code ABCD-1234 in the browser." })} actions={actions()} />);
+    expect(screen.getByText(/Enter code ABCD-1234 in the browser/)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Cancel sign-in for Personal" })).toBeEnabled();
+    expect(screen.queryByRole("button", { name: "Personal error. Show details" })).toBeNull();
+  });
+
+  it("closes details when their account changes, their section is filtered or Settings is left", () => {
+    const base = model({ accounts: [account(1, "Personal"), account(2, "Work")], selectedAccountId: 1 });
+    const handlers = actions();
+    const { rerender, unmount } = render(<SettingsView model={base} actions={handlers} />);
+    const open = () => fireEvent.click(screen.getByRole("button", { name: "Profile import unavailable. Show details" }));
+    open();
+    rerender(<SettingsView model={{ ...base, selectedAccountId: 2 }} actions={handlers} />);
+    expect(screen.queryByRole("dialog")).toBeNull();
+    open();
+    fireEvent.change(screen.getByRole("searchbox"), { target: { value: "accounts" } });
+    expect(screen.queryByRole("dialog")).toBeNull();
+    fireEvent.change(screen.getByRole("searchbox"), { target: { value: "" } });
+    expect(screen.queryByRole("dialog")).toBeNull();
+    open();
+    unmount();
+    expect(screen.queryByRole("dialog")).toBeNull();
+  });
+  it("closes portaled details when preloaded Settings becomes inactive", () => {
+    const base = model();
+    const handlers = actions();
+    const { rerender } = render(<SettingsView model={base} actions={handlers} active />);
+    fireEvent.click(screen.getByRole("button", { name: "Profile import unavailable. Show details" }));
+    rerender(<SettingsView model={base} actions={handlers} active={false} />);
+    expect(screen.queryByRole("dialog")).toBeNull();
+    rerender(<SettingsView model={base} actions={handlers} active />);
+    expect(screen.queryByRole("dialog")).toBeNull();
+  });
+
+  it("does not offer connection recovery for a different signed-in account", () => {
+    render(<SettingsView model={model({ accounts: [account(1, "Personal"), { ...account(2, "Work"), last_error: "Work warning" }], selectedAccountId: 1 })} actions={actions()} />);
+    fireEvent.click(screen.getByRole("button", { name: "Work error. Show details" }));
+    expect(within(screen.getByRole("dialog")).queryByRole("button")).toBeNull();
+  });
+
 });
