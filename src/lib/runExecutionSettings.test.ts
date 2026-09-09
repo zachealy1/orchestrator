@@ -36,6 +36,7 @@ describe("run execution settings", () => {
       selectedSkills: [
         {
           id: "frontend",
+          path: "/skills/frontend/SKILL.md",
           name: "Frontend",
           description: "Build frontend changes",
         },

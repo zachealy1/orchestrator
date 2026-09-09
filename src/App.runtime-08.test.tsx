@@ -232,6 +232,7 @@ describe("Application runtime scenarios 8", () => {
     const queuedPrompt = "Steer with the queued settings and context";
     const selectedSkill = {
       id: "docs",
+      path: "/skills/docs/SKILL.md",
       name: "Docs",
       description: "Use repository documentation",
     };
@@ -309,12 +310,7 @@ describe("Application runtime scenarios 8", () => {
           input: [
             {
               type: "text",
-              text: [
-                "Use these Codex skills if they are relevant to the task:",
-                `- ${selectedSkill.name}: ${selectedSkill.description}`,
-                "",
-                queuedPrompt,
-              ].join("\n"),
+              text: queuedPrompt,
               text_elements: [],
             },
             {
@@ -322,6 +318,7 @@ describe("Application runtime scenarios 8", () => {
               path: imagePath,
               detail: "auto",
             },
+            { type: "skill", name: selectedSkill.name, path: selectedSkill.path },
           ],
           additionalContext: {
             [`file:${documentPath}`]: {
@@ -564,6 +561,7 @@ describe("Application runtime scenarios 8", () => {
       ),
     ).toHaveLength(0);
 
+    expect(mocks.codexRpcMock.mock.calls.filter(([, method]) => method === "turn/start")[1][2].input[0].text).toBe("Run this prompt after the active turn");
     await user.click(screen.getByRole("button", { name: /stop codex/i }));
   });
 
@@ -1003,7 +1001,7 @@ describe("Application runtime scenarios 8", () => {
       );
     });
 
-  it("adds selected slash skills to the next run prompt", async () => {
+  it("sends selected slash skills as native inputs beside the authored request", async () => {
       mocks.listCodexAccountsMock.mockResolvedValue([signedInAccount]);
       mocks.readCodexAccountMock.mockResolvedValue({
         account: {
@@ -1016,11 +1014,13 @@ describe("Application runtime scenarios 8", () => {
       mocks.listCodexSkillsMock.mockResolvedValue([
         {
           id: "browser:control-in-app-browser",
+          path: "/skills/browser/SKILL.md",
           name: "browser:control-in-app-browser",
           description: "Control the in-app browser",
         },
         {
           id: "docs",
+      path: "/skills/docs/SKILL.md",
           name: "Docs",
           description: "Use repository documentation",
         },
@@ -1045,30 +1045,12 @@ describe("Application runtime scenarios 8", () => {
 
       await user.click(screen.getByRole("button", { name: /run codex/i }));
 
-      await waitFor(() =>
-        expect(mocks.codexRpcMock).toHaveBeenCalledWith(
-          7,
-          "turn/start",
-          expect.objectContaining({
-            input: [
-              expect.objectContaining({
-                text: expect.stringContaining("Use these Codex skills"),
-              }),
-            ],
-          }),
-        ),
-      );
-      expect(mocks.codexRpcMock).toHaveBeenCalledWith(
-        7,
-        "turn/start",
-        expect.objectContaining({
-          input: [
-            expect.objectContaining({
-              text: expect.stringContaining("Docs: Use repository documentation"),
-            }),
-          ],
-        }),
-      );
+      await waitFor(() => expect(mocks.codexRpcMock).toHaveBeenCalledWith(
+        7, "turn/start", expect.objectContaining({ input: [
+          { type: "text", text: "Fix the docs", text_elements: [] },
+          { type: "skill", name: "Docs", path: "/skills/docs/SKILL.md" },
+        ] }),
+      ));
     });
 
   it("detects a reachable structured command preview and opens it in the default browser", async () => {

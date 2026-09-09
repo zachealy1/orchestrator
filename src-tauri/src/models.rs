@@ -278,7 +278,6 @@ pub(crate) struct PreflightReport {
     pub(crate) token_estimate: usize,
     pub(crate) context_budget: usize,
     pub(crate) route_recommendation: String,
-    pub(crate) improved_prompt: String,
     pub(crate) checks: Vec<PreflightCheck>,
     pub(crate) recommendations: Vec<RecommendationDraft>,
 }

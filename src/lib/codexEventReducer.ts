@@ -437,21 +437,7 @@ export function applyCodexMessage(
         status === "interrupted" || status === "cancelled" || status === "canceled";
       const completedAt = new Date().toISOString();
       const durationMs = readNullableNumber(turn.durationMs);
-      const fallbackPlanText =
-        !failed &&
-        !interrupted &&
-        state.nativePlan.mode === "plan" &&
-        (state.nativePlan.intent === "plan" ||
-          state.nativePlan.intent === "plan-revision") &&
-        !state.nativePlan.completedText.trim()
-          ? state.finalMessage.trim()
-          : "";
-      const fallbackPlanItemId = fallbackPlanText
-        ? state.finalMessageItemId ??
-          `fallback-plan-${readString(turn.id) ?? state.turnId ?? "completed"}`
-        : null;
-      const completedPlanText =
-        state.nativePlan.completedText || fallbackPlanText;
+      const completedPlanText = state.nativePlan.completedText;
       return {
         ...finalizeToolActivities(
           state,
@@ -459,8 +445,6 @@ export function applyCodexMessage(
         ),
         status: failed ? "failed" : interrupted ? "interrupted" : "completed",
         completedAt,
-        finalMessage: fallbackPlanText ? "" : state.finalMessage,
-        latestPlan: fallbackPlanText ? fallbackPlanText : state.latestPlan,
         elapsedMs:
           durationMs ??
           calculateElapsedMs(state.startedAt, completedAt, state.elapsedMs),
@@ -472,21 +456,15 @@ export function applyCodexMessage(
         ),
         nativePlan: {
           ...state.nativePlan,
-          planItemId: fallbackPlanItemId ?? state.nativePlan.planItemId,
-          previewText: fallbackPlanText
-            ? fallbackPlanText
-            : state.nativePlan.previewText,
-          completedText: completedPlanText,
-          completedTurnId: fallbackPlanText
-            ? readString(turn.id) ?? state.turnId
-            : state.nativePlan.completedTurnId,
           phase: failed
             ? "failed"
             : state.nativePlan.intent === "plan-implementation"
               ? "completed"
               : completedPlanText
                 ? "awaiting-approval"
-                : state.nativePlan.phase,
+                : state.nativePlan.mode === "plan" && !interrupted
+                  ? "awaiting-clarification"
+                  : state.nativePlan.phase,
           reviewState:
             !failed &&
             state.nativePlan.intent !== "plan-implementation" &&

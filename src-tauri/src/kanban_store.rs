@@ -2155,24 +2155,20 @@ pub async fn kanban_update_attempt(
     let requested_plan_completion = request.status == "completed"
         && execution_settings_are_plan_mode(attempt_settings.effective.as_deref());
     if requested_plan_completion {
-        let invalid_plan = request
-            .completed_plan
-            .as_ref()
-            .map(validate_completed_plan)
-            .unwrap_or_else(|| {
-                Err("The Plan-mode attempt completed without a reviewable plan.".to_string())
-            })
-            .err();
-        if let Some(error) = invalid_plan {
-            request.status = "failed".to_string();
-            request.error = Some(error);
-            request.completed_plan = None;
+        if let Some(plan) = request.completed_plan.as_ref() {
+            if let Err(error) = validate_completed_plan(plan) {
+                request.status = "failed".to_string();
+                request.error = Some(error);
+                request.completed_plan = None;
+            }
         }
     }
     if request.completed_plan.is_some() && !requested_plan_completion {
         return Err("Only a completed Plan-mode card can save a plan result.".to_string());
     }
-    let plan_completion = requested_plan_completion && request.status == "completed";
+    let plan_completion = requested_plan_completion && request.status == "completed" && request.completed_plan.is_some();
+    // Native Plan turns can finish with a clarification; only a completed plan enters review.
+    let review_ready = request.status == "completed" && (!requested_plan_completion || plan_completion);
     let execution_state = execution_state_for_attempt_status(&request.status)
         .ok_or_else(|| "The card execution state is invalid.".to_string())?;
     let terminal = matches!(
@@ -2180,8 +2176,8 @@ pub async fn kanban_update_attempt(
         "completed" | "failed" | "stopped" | "interrupted"
     );
     let request_fingerprint = operation_fingerprint(&request)?;
-    let github_review_available = request.status == "completed"
-        && !plan_completion
+    let github_review_available = review_ready
+        && !requested_plan_completion
         && crate::github::github_review_available(&app).await;
     let mut transaction = connection
         .begin()
@@ -2253,7 +2249,7 @@ pub async fn kanban_update_attempt(
         transaction.rollback().await.ok();
         return Err("A stale card attempt tried to update this card.".to_string());
     }
-    let review_channel = if request.status == "completed" && !plan_completion {
+    let review_channel = if review_ready && !requested_plan_completion {
         Some(if github_review_available {
             "github"
         } else {
@@ -2265,9 +2261,9 @@ pub async fn kanban_update_attempt(
     let card = sqlx::query(
         "UPDATE kanban_cards
          SET execution_state = ?1,
-             stage = CASE WHEN ?2 = 'completed' THEN 'in_review' ELSE stage END,
-             review_state = CASE WHEN ?2 = 'completed' THEN 'awaiting_review' ELSE review_state END,
-             review_channel = CASE WHEN ?2 = 'completed' THEN ?3 ELSE review_channel END,
+             stage = CASE WHEN ?9 THEN 'in_review' ELSE stage END,
+             review_state = CASE WHEN ?9 THEN 'awaiting_review' ELSE review_state END,
+             review_channel = CASE WHEN ?9 THEN ?3 ELSE review_channel END,
              execution_settings_json = CASE
                  WHEN ?2 = 'completed' AND ?4 = 1 THEN ?5
                  ELSE execution_settings_json
@@ -2279,11 +2275,12 @@ pub async fn kanban_update_attempt(
     .bind(execution_state)
     .bind(&request.status)
     .bind(review_channel)
-    .bind(plan_completion)
+    .bind(requested_plan_completion)
     .bind(attempt_settings.persisted.as_deref())
     .bind(request.error.as_deref())
     .bind(&request.card_id)
     .bind(&request.attempt_id)
+    .bind(review_ready)
     .execute(&mut *transaction)
     .await
     .map_err(|error| format!("The card execution state could not be updated: {error}"))?;
@@ -2346,8 +2343,8 @@ pub async fn kanban_update_attempt(
     .execute(&mut *transaction)
     .await
     .map_err(|error| format!("The card attempt event could not be saved: {error}"))?;
-    let publication_deferred = request.status == "completed"
-        && !plan_completion
+    let publication_deferred = review_ready
+        && !requested_plan_completion
         && card_has_pending_follow_up(
             &mut transaction,
             &request.card_id,

@@ -80,6 +80,7 @@ describe("Codex account login client", () => {
     await expect(listDefaultCodexSkills()).resolves.toEqual([
       expect.objectContaining({
         id: "browser:control-in-app-browser",
+        path: "/tmp/browser/SKILL.md",
         name: "browser:control-in-app-browser",
       }),
     ]);

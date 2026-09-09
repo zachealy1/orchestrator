@@ -22,7 +22,6 @@ export function createRunRepository(database: FrontendDatabase) {
     chatId?: number | null;
     turnIndex?: number | null;
     originalPrompt: string;
-    improvedPrompt: string;
     routeRecommendation: string;
     budgetTokens: number;
   }) {
@@ -37,7 +36,7 @@ export function createRunRepository(database: FrontendDatabase) {
         input.chatId ?? null,
         input.turnIndex ?? null,
         input.originalPrompt,
-        input.improvedPrompt,
+        input.originalPrompt,
         input.routeRecommendation,
         input.budgetTokens,
       ],

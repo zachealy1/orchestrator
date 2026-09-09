@@ -1,6 +1,7 @@
 import { prepareImageAttachment } from "../codexClient";
 import type { ComposerContextFile, ImageAttachmentPreview } from "../features/composer/types";
 import { BoundedLruCache } from "../shared/cache/BoundedLruCache";
+import type { ResolvedSkill } from "../features/runs/selectedSkills";
 
 const IMAGE_EXTENSIONS = new Set(["gif", "jpeg", "jpg", "png", "webp"]);
 const MAX_CACHED_IMAGE_PREVIEWS = 64;
@@ -17,7 +18,9 @@ type CodexLocalImageInput = {
   detail: "auto";
 };
 
-export type CodexTurnInput = CodexTextInput | CodexLocalImageInput;
+type CodexSkillInput = { type: "skill"; name: string; path: string };
+
+export type CodexTurnInput = CodexTextInput | CodexLocalImageInput | CodexSkillInput;
 
 export class ImageAttachmentPreviewCache {
   readonly #requests = new BoundedLruCache<
@@ -132,6 +135,7 @@ export async function prepareContextImageFiles(
 export function buildCodexTurnInput(
   text: string,
   files: ComposerContextFile[],
+  skills: ResolvedSkill[] = [],
 ): CodexTurnInput[] {
   return [
     { type: "text", text, text_elements: [] },
@@ -142,5 +146,10 @@ export function buildCodexTurnInput(
         path: file.canonicalPath ?? file.path,
         detail: "auto",
       })),
+    ...skills.map((skill): CodexSkillInput => ({
+      type: "skill",
+      name: skill.name,
+      path: skill.path,
+    })),
   ];
 }

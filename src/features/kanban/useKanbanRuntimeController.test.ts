@@ -242,6 +242,16 @@ function harness() {
 }
 
 describe("Kanban runtime controller", () => {
+  it("passes a card question unchanged to the common submission path", async () => {
+    const { controller, dependencies, claimed } = harness();
+    const prompt = "Why am I seeing this error in the orchestrator UI?";
+    claimed.attempt.prompt = prompt;
+    await controller.launchCard(card(), "start", prompt);
+    const snapshot = dependencies.beginRun.mock.calls[0][0];
+    expect(snapshot.promptText).toBe(prompt);
+    expect(snapshot).not.toHaveProperty("improvedPrompt");
+  });
+
   it("claims, provisions, and schedules an isolated card run", async () => {
     const { controller, control, dependencies, native } = harness();
     const target = card();

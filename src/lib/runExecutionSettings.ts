@@ -258,6 +258,7 @@ function readSelectedSkill(value: unknown): SelectedComposerSkill | null {
   return {
     id: value.id,
     name: value.name,
+    ...(typeof value.path === "string" && value.path.trim() ? { path: value.path } : {}),
     description: value.description,
   };
 }

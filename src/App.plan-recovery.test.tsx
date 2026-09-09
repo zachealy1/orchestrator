@@ -27,7 +27,27 @@ describe("Plan output recovery", () => {
     prepareDefaults();
   });
 
-  it("persists a plain final answer from a Plan-mode turn as a reviewable plan", async () => {
+  it("preserves a native Plan clarification when reopening history", async () => {
+    prepareSignedInRun();
+    const chat = workspaceChatFixture({ id: 908, title: "Diagnostic question" });
+    const run = workspaceRunFixture({
+      chat_id: chat.id, original_prompt: "Why is this failing?",
+      final_message: "Which error are you seeing?", collaboration_mode: "plan",
+      run_intent: "plan", completed_plan_text: null, completed_plan_item_id: null,
+      plan_review_state: "none", error: null,
+    });
+    mocks.listWorkspaceChatsMock.mockResolvedValue([chat]);
+    mocks.getChatWithRunsMock.mockResolvedValue(workspaceChatWithRunsFixture(chat, [run]));
+    const { user } = await renderApp();
+    await user.click(screen.getByRole("button", { name: /open chat history/i }));
+    const drawer = await screen.findByRole("complementary", { name: "Workspace chat history" });
+    await user.click(within(drawer).getByRole("button", { name: /Diagnostic question/i }));
+    await screen.findByText("Which error are you seeing?");
+    expect(screen.queryByRole("button", { name: "Accept plan" })).not.toBeInTheDocument();
+    expect(mocks.updateRunMock).not.toHaveBeenCalledWith(run.id, expect.objectContaining({ planReviewState: "available" }));
+  });
+
+  it("persists a native Plan item as a reviewable plan", async () => {
     prepareSignedInRun();
     mocks.codexRpcMock.mockImplementation(
       async (_accountId: number, method: string) => {
@@ -64,9 +84,8 @@ describe("Plan output recovery", () => {
         threadId: "thread-plain-plan",
         turnId: "turn-plain-plan",
         item: {
-          type: "agentMessage",
+          type: "plan",
           id: "plain-plan-message",
-          phase: "final_answer",
           text: markdown,
         },
       },
