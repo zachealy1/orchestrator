@@ -8,7 +8,7 @@ The next community release is `0.2.0-beta.2`. Synchronize package.json, package-
 
 ## Repository protections
 
-Protect `main`: require pull requests and the `checks` status, strict up-to-date checks, code-owner review for release-sensitive changes, resolved conversations, no force pushes or deletion. Apply protection to administrators. Keep `.github/CODEOWNERS` current. Leave the general approval count at zero so narrowly scoped engine-pin PRs can merge automatically after required validation; code-owner review remains required for owned workflow/runtime security files. A solo maintainer cannot approve their own code-owned changes; obtain an independent reviewer or use a separately approved, auditable protection-policy change, never a blanket automation bypass.
+Protect `main` and `release`: require pull requests and the `checks` status, strict up-to-date checks, code-owner review for release-sensitive changes, resolved conversations, no force pushes or deletion. Apply protection to administrators. Keep `.github/CODEOWNERS` current. Community release PRs target `release`; the separate notarized and engine-upgrade workflows continue to use `main`. Leave the general approval count at zero so narrowly scoped engine-pin PRs can merge automatically after required validation; code-owner review remains required for owned workflow/runtime security files. A solo maintainer cannot approve their own code-owned changes; obtain an independent reviewer or use a separately approved, auditable protection-policy change, never a blanket automation bypass.
 
 Protect version tags against updates and deletion. Permit new release tags from the publishing job without permitting replacement. The `update-feed` and `download-metrics` data branches are automation outputs, not alternate application source branches. Publishing never writes directly to main.
 
@@ -16,7 +16,7 @@ Enable secret scanning, push protection, dependency alerts and private vulnerabi
 
 ## Secure configuration
 
-Protected environments allow only workflow executions from `main`: `engine-upgrades`, `release-smoke`, `public-beta-signing`, `public-beta-publishing`. Initially require a maintainer's approval for signing/publication. Only relax per-run approval after the deliberate first beta and its acceptance review if unattended engine upgrades are wanted.
+Protected `engine-upgrades` and `release-smoke` environments allow only workflow executions from `main`. `public-beta-signing` and `public-beta-publishing` also allow the protected `release` branch for community publication. Require a maintainer's approval for signing/publication; allowing `release` does not remove that approval or branch protection.
 
 - Engine automation App, installed only on this repository: `ENGINE_AUTOMATION_APP_ID`, `ENGINE_AUTOMATION_APP_PRIVATE_KEY`; repository-scoped contents/PR/actions permissions. It creates narrowly scoped PRs and dispatches validation/publication. No administrative bypass permission.
 - Publishing and report jobs use their job-scoped `GITHUB_TOKEN` with contents-write access. No cross-repository publishing App or credential is needed.
@@ -29,16 +29,16 @@ All Actions logs and uploaded rehearsal packages must be treated as **public**. 
 
 ## Free community publication
 
-The maintainer requested community releases without test suites, manual testing or rehearsals on 2026-09-09. A manual dispatch selects the exact source commit to publish. GitHub's existing main-branch and signing/publishing environment access controls still apply; their approval is not evidence of testing. The separate notarized workflow retains its own validation policy.
+The maintainer requested community releases without test suites, manual testing or rehearsals on 2026-09-09. A manual dispatch selects the exact source commit to publish from `release`. GitHub's existing release-branch and signing/publishing environment access controls still apply; their approval is not evidence of testing. The separate notarized workflow retains its own validation policy.
 
 This path uses standard public GitHub-hosted macOS runners and draft GitHub Release assets for package handoff. It requires no Apple account, paid runner, artifact-storage purchase, download service or AI test account. Keep the repository public and do not substitute larger runners. See [Actions billing](https://docs.github.com/en/billing/concepts/product-billing/github-actions).
 
 1. Reuse the existing `ORCHESTRATOR_UPDATER_PUBLIC_KEY` variable and `TAURI_SIGNING_PRIVATE_KEY` / `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` secrets in `public-beta-signing`. Do not rotate the key: released clients embed its public half. No Apple credentials are supplied to community jobs.
-2. Synchronize the application version and merge the source through the repository's ordinary access controls. Dispatch **Community public beta** from `main` with the exact 40-character source SHA. There is no rehearsal input, testing-approval SHA, validation job or dedicated-account requirement.
+2. Synchronize the application version and merge the PR into `release` through the repository's ordinary access controls. Dispatch **Community public beta** using the `release` workflow ref and the exact 40-character source SHA from that branch. There is no rehearsal input, testing-approval SHA, validation job or dedicated-account requirement.
 3. The workflow creates a draft `community-build-<run-id>-<attempt>` for package handoff. Standard Apple Silicon and Intel runners build explicit ad-hoc signatures, hardened runtime, DMGs and Tauri updater archives. Build preparation validates bundled files without executing the engine. Package inspection checks identity, version, architecture, bundled resources, updater signatures and hashes; it does not launch the application or run behavioral tests.
 4. Each architecture uploads only its DMG, updater archive, signature, checksum file and package receipt. Receipts record `behavioralTesting: "not-performed"`. Profiles, logs and source worktrees are never uploaded. Drafts are retained and never overwritten with different bytes.
 5. After both builds finish, publication rechecks the source-bound receipts and uploaded hashes. It creates an immutable versioned release at the selected SHA, then creates or advances `beta.json` on `update-feed` with both `darwin-aarch64` and `darwin-x86_64`. The manifest contains the actual signature text and the fixed versioned GitHub asset URLs. A build/upload failure leaves the previous feed unchanged; concurrent publication cannot force-overwrite it.
-6. Release notes state that packages passed integrity checks and were not behaviorally tested. The app is not notarized by Apple. Published installer and updater downloads are included in the existing aggregate reports. Keep unattended Codex publication disabled.
+6. Release notes state that packages passed integrity checks and were not behaviorally tested. The app is not notarized by Apple. Published installer and updater downloads are included in the existing daily aggregate reports. For an immediate refresh, dispatch **Public repository metrics** from `main`; its existing completion hook only accepts releases run from `main`. Keep unattended Codex publication disabled.
 
 The first manual `0.2.0-beta.1` release remains immutable. Installed copies that already contain the matching public key can discover a newer feed release; `0.1.0` or unconfigured source builds need manual installation. No one-time reinstall is required solely because the first beta was distributed through a manual download.
 

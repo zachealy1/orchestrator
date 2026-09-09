@@ -7,10 +7,10 @@ import { confidentialRun } from "./safe-process.mjs";
 import { COMMUNITY_NOTICE } from "./distribution.mjs";
 
 export function stagingTarget(env) {
-  if (env.GITHUB_REPOSITORY !== REPOSITORY || env.GITHUB_REF !== "refs/heads/main"
+  if (env.GITHUB_REPOSITORY !== REPOSITORY || env.GITHUB_REF !== "refs/heads/release"
     || !/^[a-f0-9]{40}$/.test(env.RELEASE_SOURCE_SHA ?? "")
     || !/^community-build-\d+-\d+$/.test(env.STAGING_TAG ?? "")) {
-    throw new Error("Community staging requires the trusted repository, main workflow and exact source");
+    throw new Error("Community staging requires the trusted repository, release-branch workflow and exact source");
   }
   return { tag: env.STAGING_TAG, sourceSha: env.RELEASE_SOURCE_SHA };
 }

@@ -3,7 +3,7 @@ on:
   workflow_dispatch:
     inputs:
       ref:
-        description: Exact main-branch commit to release (40-character SHA)
+        description: Exact release-branch commit to publish (40-character SHA)
         required: true
         type: string
 permissions:
@@ -20,7 +20,7 @@ jobs:
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
-          ref: main
+          ref: release
           fetch-depth: 0
           persist-credentials: false
       - id: ref
@@ -28,9 +28,9 @@ jobs:
           REF: ${{ inputs.ref }}
         run: |
           test "$GITHUB_REPOSITORY" = zachealy1/orchestrator
-          test "$GITHUB_REF" = refs/heads/main
+          test "$GITHUB_REF" = refs/heads/release
           [[ "$REF" =~ ^[a-f0-9]{40}$ ]]
-          git merge-base --is-ancestor "$REF" origin/main
+          git merge-base --is-ancestor "$REF" origin/release
           echo "sha=$REF" >> "$GITHUB_OUTPUT"
           echo "staging=community-build-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT" >> "$GITHUB_OUTPUT"
   stage:
@@ -125,7 +125,7 @@ jobs:
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
-          ref: main
+          ref: release
           persist-credentials: false
       - env:
           GH_TOKEN: ${{ github.token }}
