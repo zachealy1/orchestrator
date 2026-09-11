@@ -176,6 +176,7 @@ import {
 import {
   addApprovalRequest,
   addServerRequest,
+  addSteerPrompt,
   applyCodexMessage,
   emptyRunView,
   markApprovalAwaitingResolution,
@@ -184,6 +185,7 @@ import {
   resolveApprovalRequest,
   resolveServerRequest,
   setServerRequestSubmissionState,
+  settleSteerPrompt,
   updateNativePlanReview,
   updateRunElapsed,
   type RunEditedFile,
@@ -14395,6 +14397,8 @@ function App() {
       return false;
     }
     let currentItem = item;
+    const steerEventId = `steer:${item.clientMessageId}`;
+    let steerAccepted = false;
     try {
       const workspace = workspacesRef.current.find(
         (candidate) => candidate.id === currentItem.workspaceId,
@@ -14447,6 +14451,13 @@ function App() {
         selectedSkills,
         selectedSkills.length ? await getCodexSkills(control.profileKey, control.accountId, true) : [],
       );
+      flushFrameBatchedCodexNotifications();
+      updateRunControlView(control, (current) => addSteerPrompt(current, {
+        id: steerEventId,
+        text: currentItem.prompt,
+        timestamp: new Date().toISOString(),
+        contextFiles: preparedFiles,
+      }));
       await codexRpcForProfile(
         control.profileKey,
         control.accountId,
@@ -14459,23 +14470,13 @@ function App() {
           additionalContext,
         },
       );
+      steerAccepted = true;
+      updateRunControlView(control, (current) => settleSteerPrompt(current, steerEventId, true));
       await persistRunEvent(control, "client-action", "turn/steer", {
         queueItemId: currentItem.id,
         clientUserMessageId: currentItem.clientMessageId,
         prompt: currentItem.prompt,
       });
-      updateTaskChatEntry(control.clientId, (entry) => ({
-        ...entry,
-        steeredPrompts: [
-          ...(entry.steeredPrompts ?? []),
-          {
-            id: currentItem.id,
-            prompt: currentItem.prompt,
-            submittedAt: new Date().toISOString(),
-            contextFiles: preparedFiles,
-          },
-        ],
-      }));
       await completePromptQueueItem(currentItem.id);
       removePromptQueueItemFromMemory(currentItem.chatId, currentItem.id);
       publishPromptQueueFeedback(
@@ -14498,7 +14499,10 @@ function App() {
       return true;
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
-      if (/turn.+(complete|not active|not found|mismatch)/i.test(message)) {
+      if (!steerAccepted) {
+        updateRunControlView(control, (current) => settleSteerPrompt(current, steerEventId, false));
+      }
+      if (!steerAccepted && /turn.+(complete|not active|not found|mismatch)/i.test(message)) {
         const scheduled =
           await reschedulePromptQueueItemAfterSteeringRace(currentItem.id);
         if (scheduled) {

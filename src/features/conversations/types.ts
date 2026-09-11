@@ -90,12 +90,6 @@ export type TaskChatEntry = {
   runId: number | null;
   taskId: number | null;
   prompt: string;
-  steeredPrompts?: Array<{
-    id: string;
-    prompt: string;
-    submittedAt: string;
-    contextFiles?: ComposerContextFile[];
-  }>;
   contextFiles?: ComposerContextFile[];
   imageAttachmentDelivery?: {
     status: "preparing" | "sent" | "failed";
