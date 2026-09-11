@@ -1,4 +1,5 @@
 import { readFile } from "node:fs/promises";
+import { resolve } from "node:path";
 import assert from "node:assert/strict";
 import { versionParts } from "./lib.mjs";
 import { engineRelease } from "../codex-engine-package.mjs";
@@ -23,6 +24,9 @@ const updater = await readFile("src-tauri/src/app_updates.rs", "utf8");
 assert.ok(updater.includes("https://raw.githubusercontent.com/zachealy1/orchestrator/update-feed/beta.json"));
 assert.ok(updater.includes('const DOWNLOADS: &str = "https://github.com/zachealy1/orchestrator/releases"'));
 assert.equal(tauri.bundle.macOS.minimumSystemVersion, "15.0");
+// Fail before an expensive release build if the installer artwork is missing.
+assert.ok(tauri.bundle.macOS.dmg?.background, "Installer background must be configured");
+await readFile(resolve("src-tauri", tauri.bundle.macOS.dmg.background));
 assert.ok(tauri.app.security.csp && !tauri.app.security.csp.includes("'unsafe-eval'"));
 assert.ok(!/script-src[^;]*(?:https:|\*)/.test(tauri.app.security.csp));
 assert.ok(cargo.includes("autobins = false"));
