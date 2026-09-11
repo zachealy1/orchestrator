@@ -20591,6 +20591,10 @@ function App() {
       activeRunAccountIds,
       runIsActive,
       authMessage,
+      authError:
+        loginState !== "waiting" && (loginState === "failed" || !codexConnected)
+          ? loginError
+          : null,
       showLogout,
     },
     actions: {
@@ -21546,7 +21550,10 @@ function App() {
           className="settings-grid"
           dragRegion={selfWindowDragRegion}
         >
-          <SettingsView {...settingsViewBindings} />
+          <SettingsView
+            {...settingsViewBindings}
+            active={activeView === "settings"}
+          />
         </PreloadedViewSlot>
       </section>
 
