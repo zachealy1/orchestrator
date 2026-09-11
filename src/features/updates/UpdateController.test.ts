@@ -8,7 +8,7 @@ function fixture() {
   const deps = { check: vi.fn().mockResolvedValue({ ...initialUpdateState, phase: "available", version: "0.2.0-beta.2" }),
     download: vi.fn().mockResolvedValue({ ...initialUpdateState, phase: "ready", version: "0.2.0-beta.2" }),
     install: vi.fn().mockResolvedValue({ ...initialUpdateState, phase: "ready", version: "0.2.0-beta.2" }),
-    busy: vi.fn(() => false), flush: vi.fn(async () => {}), notify: vi.fn(),
+    busy: vi.fn(() => false), flush: vi.fn(async () => {}), notify: vi.fn(), openDownloads: vi.fn(async () => {}),
     storage: { getItem: (key: string) => storage.get(key) ?? null, setItem: (key: string, value: string) => { storage.set(key, value); } }, now: () => time,
   };
   return { deps, controller: new UpdateController(deps), advance: (ms: number) => { time += ms; } };
@@ -49,10 +49,14 @@ describe("application updates", () => {
     expect(deps.install).not.toHaveBeenCalled(); expect(controller.getSnapshot().message).toContain("Disk full");
     expect(assertWorkMayStart).not.toThrow();
   });
-  it("keeps background failures quiet and exposes manual failures", async () => {
+  it("keeps background failures quiet and opens downloads for a manual fallback", async () => {
     const { deps, controller } = fixture(); deps.check.mockRejectedValue(new Error("Offline"));
     await controller.check("startup"); expect(controller.getSnapshot().message).toBeNull();
-    await controller.check(); expect(controller.getSnapshot().message).toContain("Offline");
+    expect(deps.openDownloads).not.toHaveBeenCalled();
+    expect(updateActionLabel(controller.getSnapshot())).toBe("Download latest version");
+    await controller.act(); expect(deps.openDownloads).toHaveBeenCalledOnce();
+    expect(controller.getSnapshot().message).toBeNull();
+    expect(deps.download).not.toHaveBeenCalled();
   });
   it("allows retry after a failed download and prevents duplicate clicks", async () => {
     const { deps, controller } = fixture(); await controller.check();

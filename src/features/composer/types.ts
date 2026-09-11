@@ -62,6 +62,8 @@ export type SlashCommandKind =
   | "init";
 
 export type CodexSkillSummary = {
+  /** Native skill identity; older saved selections resolve this at submission. */
+  path?: string;
   id: string;
   name: string;
   description: string | null;

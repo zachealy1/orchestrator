@@ -7,7 +7,6 @@ pub(crate) fn run_preflight_blocking(path: String, prompt: String) -> PreflightR
     let token_estimate = estimate_tokens(&prompt);
     let context_budget = 128_000usize;
     let route_recommendation = route_recommendation(&prompt, token_estimate);
-    let improved_prompt = improve_prompt(&prompt);
 
     push_check(
         &mut checks,
@@ -189,7 +188,6 @@ pub(crate) fn run_preflight_blocking(path: String, prompt: String) -> PreflightR
         token_estimate,
         context_budget,
         route_recommendation,
-        improved_prompt,
         checks,
         recommendations,
     }

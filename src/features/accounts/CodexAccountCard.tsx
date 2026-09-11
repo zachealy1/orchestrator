@@ -196,7 +196,6 @@ export const CodexAccountCard = memo(function CodexAccountCard({
           ) : null}
         </>
       ) : (
-        <div className="account-signed-out-actions">
         <button
           className="account-sign-in secondary"
           type="button"
@@ -218,16 +217,6 @@ export const CodexAccountCard = memo(function CodexAccountCard({
             <LogIn className="account-action-icon" size={18} />
           )}
         </button>
-        <button type="button" className="account-signed-out-menu secondary" aria-label="Application menu"
-          aria-expanded={model.menuOpen} aria-controls="codex-account-menu" onClick={() => actions.setMenuOpen(!model.menuOpen)}>
-          <ChevronDown size={18} aria-hidden="true" />
-          {model.update?.state.version && <span className="account-update-indicator" aria-label="App update available" />}
-        </button>
-        {model.menuOpen && <div className="account-menu" id="codex-account-menu"><div className="account-menu-group">
-          <UpdateMenuAction update={model.update} />
-          <button className="account-menu-action" type="button" onClick={actions.reportBug}><Bug size={16} />Report a bug</button>
-        </div></div>}
-        </div>
       )}
     </div>
   );

@@ -43,6 +43,7 @@ describe("queue recovery across asynchronous setup settlement", () => {
     expect(screen.queryByText("Old cancelled preflight failed late")).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: /stop codex/i })).toBeEnabled();
     expect(screen.getAllByLabelText("Submitted prompt")).toHaveLength(1);
+    await waitFor(() => expect(mocks.codexRpcMock.mock.calls.find(([, method]) => method === "turn/start")?.[2].input[0].text).toBe("Retry after stopping an in-flight setup"));
   });
 
   it("runs an edited held item explicitly without restoring automatic sending", async () => {

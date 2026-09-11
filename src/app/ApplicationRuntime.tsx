@@ -176,6 +176,7 @@ import {
 import {
   addApprovalRequest,
   addServerRequest,
+  addSteerPrompt,
   applyCodexMessage,
   emptyRunView,
   markApprovalAwaitingResolution,
@@ -184,6 +185,7 @@ import {
   resolveApprovalRequest,
   resolveServerRequest,
   setServerRequestSubmissionState,
+  settleSteerPrompt,
   updateNativePlanReview,
   updateRunElapsed,
   type RunEditedFile,
@@ -244,10 +246,9 @@ import {
   createStableClientMessageId,
   isCollaborationModeMask,
   isNativeUserInputRequest,
-  MISSING_REVIEWABLE_PLAN_ERROR,
   requestKey,
   selectNativePlanModes,
-  withOrchestratorDeveloperInstructions,
+  withNativeModeDefaults,
   type CollaborationMode,
   type CollaborationModeMask,
   type NativeUserInputRequest,
@@ -311,9 +312,7 @@ import {
   parseChatContinuationSnapshot,
 } from "../features/conversations/historyProjection";
 import {
-  buildRunPrompt,
   estimateTokens,
-  improvePrompt,
 } from "../lib/taskAnalysis";
 import {
   coalesceFrameBatchedCodexMessages,
@@ -505,7 +504,8 @@ import {
   type WebPreviewProbeAttempt,
 } from "../features/runs/runtimeTypes";
 import { useRunController } from "../features/runs/useRunController";
-import { withGoalTurnContext } from "../features/runs/goalContext";
+import { prepareGoalSubmission } from "../features/runs/goalContext";
+import { resolveSelectedSkills } from "../features/runs/selectedSkills";
 import {
   validateNativeTaskExecutionEnvironment,
   verifyNativeTaskThreadEnvironment,
@@ -513,9 +513,7 @@ import {
 import { verifyNativeTaskCommandEvent } from "../features/runs/nativeTaskExecutionBoundary";
 import {
   BUILTIN_SLASH_COMMANDS,
-  addPlanImplementationProgressInstructions,
   applyPromptDraft,
-  applySelectedSkillsToPrompt,
   buildCodeReviewDraft,
   buildComposerStatusMessage,
   buildInitInstructionsDraft,
@@ -1585,7 +1583,7 @@ function App() {
           threadId: current.childThreadId,
           expectedTurnId: current.childTurnId,
           clientUserMessageId,
-          input: [{ type: "text", text: instructionText }],
+          input: buildCodexTurnInput(instructionText, []),
         },
       );
       const now = new Date().toISOString();
@@ -3018,7 +3016,7 @@ function App() {
       || promptQueueClaimLocksRef.current.size > 0 || promptQueueEnqueueOperationsRef.current.size > 0
       || Object.values(promptQueuesByChatRef.current).some((items) => items?.some((item) => ["starting", "steering", "active"].includes(item.status)
         || (item.autoSendEnabled && ["queued", "scheduled-next"].includes(item.status)))),
-    () => setAccountMenuOpen(false));
+    () => setAccountMenuOpen(false), isCodexSignedIn(codexAccount));
   const floatingStatusNotices = useMemo<FloatingStatusNotice[]>(() => {
     const notices: FloatingStatusNotice[] = [];
     if (crossConversationApprovals.length > 0) {
@@ -10363,7 +10361,7 @@ function App() {
     };
     return {
       plan: null,
-      default: withOrchestratorDeveloperInstructions(defaultMode),
+      default: withNativeModeDefaults(defaultMode),
     };
   }
 
@@ -11968,7 +11966,7 @@ function App() {
     if (!selectedCollaborationMode) {
       throw new Error("Codex did not return a native Plan collaboration mode.");
     }
-    const collaborationMode = withOrchestratorDeveloperInstructions(
+    const collaborationMode = withNativeModeDefaults(
       selectedCollaborationMode,
     );
     ensureRunControlActive(runControl);
@@ -12045,6 +12043,9 @@ function App() {
     snapshot: RunSetupSnapshot,
     accountHandoff: AccountHandoffRunStrategy | null,
   ): Promise<RunPreparationStageResult> {
+    if (snapshot.defaultCollaborationMode) {
+      snapshot.defaultCollaborationMode = withNativeModeDefaults(snapshot.defaultCollaborationMode);
+    }
     if (
       !(await ensureRunBranch(
         snapshot.workspace,
@@ -12177,7 +12178,6 @@ function App() {
       chatId,
       turnIndex: snapshot.turnIndex,
       originalPrompt: snapshot.promptText,
-      improvedPrompt: report.improvedPrompt || snapshot.improvedPrompt,
       routeRecommendation: report.routeRecommendation,
       budgetTokens: report.tokenEstimate,
     });
@@ -12430,21 +12430,20 @@ function App() {
     payload: RunTurnPayloadStageResult,
   ) {
     if (!snapshot.goalMode) return null;
-    // goal/set starts executing immediately without a turn/start payload.
-    // Deliver continuation answers and supporting context before activation.
-    const goalCollaborationMode = withGoalTurnContext(
-      collaborationMode,
-      snapshot.promptText,
-      payload,
-    );
-    if (goalCollaborationMode !== collaborationMode) {
+    const prepared = await prepareGoalSubmission(snapshot.accountId, payload);
+    runControl.goalAuthoredObjective = snapshot.promptText;
+    try {
+      ensureRunControlActive(runControl);
       await codexRpcForProfile(
         snapshot.profileKey,
         snapshot.accountId,
         "thread/settings/update",
-        { threadId, collaborationMode: goalCollaborationMode },
+        { threadId, collaborationMode, multiAgentMode: "explicitRequestOnly" },
       );
       ensureRunControlActive(runControl);
+    } catch (error) {
+      await prepared.discard();
+      throw error;
     }
     runControl.acceptsThreadContinuation = true;
     const pendingTurn = beginGoalTurnStart(runControl, threadId);
@@ -12453,7 +12452,7 @@ function App() {
         snapshot.profileKey,
         snapshot.accountId,
         threadId,
-        snapshot.promptText,
+        prepared.objective,
       );
       const goal = parseThreadGoal(response.goal, {
         fallbackThreadId: threadId,
@@ -12489,23 +12488,8 @@ function App() {
   async function prepareRunTurnPayloadStage(
     runControl: ActiveRunControl,
     snapshot: RunSetupSnapshot,
-    report: PreflightReport,
     warnings: string[],
   ): Promise<RunTurnPayloadStageResult> {
-    const baseTurnText =
-      runControl.intent === "plan-revision" ||
-      runControl.intent === "plan-implementation"
-        ? snapshot.promptText
-        : snapshot.mode === "plan"
-          ? report.improvedPrompt || snapshot.improvedPrompt
-          : buildRunPrompt(
-              report.improvedPrompt || snapshot.improvedPrompt,
-              report.recommendations,
-            );
-    const progressAwareTurnText =
-      runControl.intent === "plan-implementation"
-        ? addPlanImplementationProgressInstructions(baseTurnText)
-        : baseTurnText;
     let selectedSkills = snapshot.selectedSkills;
     if (runControl.desktopUseEnabled) {
       try {
@@ -12536,10 +12520,12 @@ function App() {
         );
       }
     }
-    const text = applySelectedSkillsToPrompt(
-      progressAwareTurnText,
+    const skills = resolveSelectedSkills(
       selectedSkills,
+      selectedSkills.length ? await getCodexSkills(snapshot.profileKey, snapshot.accountId, true) : [],
     );
+    const text = snapshot.promptText;
+    const input = buildCodexTurnInput(text, snapshot.contextFiles, skills);
     let { additionalContext, skippedFiles } = await buildAdditionalContext(
       snapshot.profileKey,
       snapshot.accountId,
@@ -12578,11 +12564,14 @@ function App() {
     }
     ensureRunControlActive(runControl);
     if (skippedFiles.length > 0) {
+      if (snapshot.goalMode) {
+        throw new Error(`Could not prepare Goal context files: ${skippedFiles.join(", ")}`);
+      }
       warnings.push(
         `Skipped context file${skippedFiles.length === 1 ? "" : "s"}: ${skippedFiles.join(", ")}`,
       );
     }
-    return { text, additionalContext };
+    return { text, input, additionalContext };
   }
 
   async function registerNativeTaskSourceRoot(
@@ -13337,10 +13326,9 @@ function App() {
         );
       }
 
-      const { text, additionalContext } = await prepareRunTurnPayloadStage(
+      const payload = await prepareRunTurnPayloadStage(
         runControl,
         snapshot,
-        report,
         warnings,
       );
 
@@ -13356,8 +13344,9 @@ function App() {
           "turn/start",
           {
             threadId: nextThreadId,
-            input: buildCodexTurnInput(text, snapshot.contextFiles),
-            additionalContext,
+            input: payload.input,
+            additionalContext: payload.additionalContext,
+            multiAgentMode: "explicitRequestOnly",
             ...(nativeTaskWorkspaceBinding
               ? {
                   ...nativeTaskExecutionOverrides(
@@ -13420,7 +13409,7 @@ function App() {
           snapshot,
           threadId,
           collaborationMode,
-          { text, additionalContext },
+          payload,
         );
         if (!goalTurnId) {
           throw new Error("Codex did not create the initial Goal turn.");
@@ -14304,7 +14293,6 @@ function App() {
       computerUseEnabled: settings.computerUseEnabled,
       model: settings.model,
       effort: settings.reasoningEffort,
-      improvedPrompt: improvePrompt(item.prompt),
       contextFiles: settings.contextFiles.map((file) => ({ ...file })),
       selectedSkills: settings.selectedSkills.map((skill) => ({ ...skill })),
       goalMode: settings.goalMode,
@@ -14407,6 +14395,8 @@ function App() {
       return false;
     }
     let currentItem = item;
+    const steerEventId = `steer:${item.clientMessageId}`;
+    let steerAccepted = false;
     try {
       const workspace = workspacesRef.current.find(
         (candidate) => candidate.id === currentItem.workspaceId,
@@ -14454,10 +14444,18 @@ function App() {
         preparedFiles,
         currentItem.workspaceId,
       );
-      const text = applySelectedSkillsToPrompt(
-        currentItem.prompt,
-        currentItem.snapshot.executionSettings.selectedSkills,
+      const selectedSkills = currentItem.snapshot.executionSettings.selectedSkills;
+      const skills = resolveSelectedSkills(
+        selectedSkills,
+        selectedSkills.length ? await getCodexSkills(control.profileKey, control.accountId, true) : [],
       );
+      flushFrameBatchedCodexNotifications();
+      updateRunControlView(control, (current) => addSteerPrompt(current, {
+        id: steerEventId,
+        text: currentItem.prompt,
+        timestamp: new Date().toISOString(),
+        contextFiles: preparedFiles,
+      }));
       await codexRpcForProfile(
         control.profileKey,
         control.accountId,
@@ -14466,27 +14464,17 @@ function App() {
           threadId: control.threadId,
           expectedTurnId: control.turnId,
           clientUserMessageId: currentItem.clientMessageId,
-          input: buildCodexTurnInput(text, preparedFiles),
+          input: buildCodexTurnInput(currentItem.prompt, preparedFiles, skills),
           additionalContext,
         },
       );
+      steerAccepted = true;
+      updateRunControlView(control, (current) => settleSteerPrompt(current, steerEventId, true));
       await persistRunEvent(control, "client-action", "turn/steer", {
         queueItemId: currentItem.id,
         clientUserMessageId: currentItem.clientMessageId,
         prompt: currentItem.prompt,
       });
-      updateTaskChatEntry(control.clientId, (entry) => ({
-        ...entry,
-        steeredPrompts: [
-          ...(entry.steeredPrompts ?? []),
-          {
-            id: currentItem.id,
-            prompt: currentItem.prompt,
-            submittedAt: new Date().toISOString(),
-            contextFiles: preparedFiles,
-          },
-        ],
-      }));
       await completePromptQueueItem(currentItem.id);
       removePromptQueueItemFromMemory(currentItem.chatId, currentItem.id);
       publishPromptQueueFeedback(
@@ -14509,7 +14497,10 @@ function App() {
       return true;
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
-      if (/turn.+(complete|not active|not found|mismatch)/i.test(message)) {
+      if (!steerAccepted) {
+        updateRunControlView(control, (current) => settleSteerPrompt(current, steerEventId, false));
+      }
+      if (!steerAccepted && /turn.+(complete|not active|not found|mismatch)/i.test(message)) {
         const scheduled =
           await reschedulePromptQueueItemAfterSteeringRace(currentItem.id);
         if (scheduled) {
@@ -15672,7 +15663,6 @@ function App() {
       computerUseEnabled: originalSettings.computerUseEnabled,
       model: originalSettings.model,
       effort: originalSettings.reasoningEffort,
-      improvedPrompt: improvePrompt(promptText),
       contextFiles: originalContextFiles.map((file) => ({ ...file })),
       selectedSkills: originalSettings.selectedSkills.map((skill) => ({
         ...skill,
@@ -17193,12 +17183,6 @@ function App() {
         nextRunView.nativePlan.mode === "plan" &&
         (control.intent === "plan" || control.intent === "plan-revision"),
     );
-    const missingCompletedKanbanPlan = Boolean(
-      terminalStatus === "completed" &&
-        kanbanPlanAttempt &&
-        (!nextRunView.nativePlan.completedText.trim() ||
-          !nextRunView.nativePlan.planItemId),
-    );
     const blockedNoToolError =
       terminalStatus === "completed" &&
       control.kanbanAttempt &&
@@ -17214,16 +17198,12 @@ function App() {
       ? "blocked"
       : blockedNoToolError
       ? "blocked"
-      : missingCompletedKanbanPlan
-        ? "failed"
-        : terminalStatus;
+      : terminalStatus;
     const persistedRunStatus = executionBoundaryError
       ? "failed"
       : blockedNoToolError
       ? "failed"
-      : missingCompletedKanbanPlan
-        ? "failed"
-        : terminalStatus;
+      : terminalStatus;
     if (executionBoundaryError || blockedNoToolError) {
       nextRunView = updateRunControlView(control, (current) => ({
         ...current,
@@ -17234,9 +17214,7 @@ function App() {
     const terminalError =
       executionBoundaryError ??
       blockedNoToolError ??
-      (missingCompletedKanbanPlan
-        ? MISSING_REVIEWABLE_PLAN_ERROR
-        : persistedRunStatus === "failed"
+      (persistedRunStatus === "failed"
           ? readSubagentError(message) ??
             nextRunView.error ??
             "Codex could not complete this card."
@@ -18784,7 +18762,6 @@ function App() {
       computerUseEnabled,
       model,
       effort: model ? reasoningEffort : null,
-      improvedPrompt: promptText,
       contextFiles: [],
       selectedSkills: [],
       goalMode: false,
@@ -18878,8 +18855,9 @@ function App() {
         "thread/settings/update",
         {
           threadId: session.threadId,
-          collaborationMode:
+          collaborationMode: withNativeModeDefaults(
             session.savedDefaultCollaborationMode ?? modes.default,
+          ),
         },
       );
       await updateChat(entry.chatId, {
@@ -19069,7 +19047,7 @@ function App() {
       );
       await codexRpcForProfile(profileKey, accountId ?? 0, "thread/settings/update", {
         threadId: session.threadId,
-        collaborationMode: session.savedDefaultCollaborationMode ?? modes.default,
+        collaborationMode: withNativeModeDefaults(session.savedDefaultCollaborationMode ?? modes.default),
       });
       updateTaskChatEntryRunView(entry.clientId, (current) =>
         updateNativePlanReview(current, "cancelled", "cancelled"),
@@ -19627,7 +19605,7 @@ function App() {
       !control ||
       selectedWorkspaceRef.current?.id !== candidate.workspaceId ||
       control.workspaceId !== candidate.workspaceId ||
-      control.goal?.objective !== candidate.objective
+      (control.goalAuthoredObjective ?? control.goal?.objective) !== candidate.objective
     ) {
       setGoalEditCandidate(null);
       setStatusMessage("That goal changed before it could be edited.");
@@ -19660,7 +19638,7 @@ function App() {
 
   function requestEditSelectedGoal() {
     const control = selectedActiveRunControl;
-    const objective = control?.goal?.objective.trim() ?? "";
+    const objective = (control?.goalAuthoredObjective ?? control?.goal?.objective)?.trim() ?? "";
     if (
       !control ||
       !objective ||
@@ -20513,7 +20491,7 @@ function App() {
   );
   const applicationCommands = useMemo<ApplicationCommand[]>(
     () =>
-      APPLICATION_COMMAND_DEFINITIONS.map((definition) => {
+      APPLICATION_COMMAND_DEFINITIONS.filter((definition) => definition.id !== "report-bug" || codexSignedIn).map((definition) => {
         const newChatUnavailable =
           definition.id === "new-chat" && selectedWorkspace === null;
         const stopCommand = definition.id === "stop-visible-run";
@@ -20548,6 +20526,7 @@ function App() {
       }),
     [
       activeView,
+      codexSignedIn,
       executeApplicationCommand,
       runIsActive,
       selectedWorkspace,
@@ -20591,6 +20570,10 @@ function App() {
       activeRunAccountIds,
       runIsActive,
       authMessage,
+      authError:
+        loginState !== "waiting" && (loginState === "failed" || !codexConnected)
+          ? loginError
+          : null,
       showLogout,
     },
     actions: {
@@ -21546,7 +21529,10 @@ function App() {
           className="settings-grid"
           dragRegion={selfWindowDragRegion}
         >
-          <SettingsView {...settingsViewBindings} />
+          <SettingsView
+            {...settingsViewBindings}
+            active={activeView === "settings"}
+          />
         </PreloadedViewSlot>
       </section>
 

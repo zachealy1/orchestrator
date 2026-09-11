@@ -57,6 +57,8 @@ export const commands = {
 	height: number,
 	thumbnailDataUrl: string,
 } | null>("prepare_image_attachment", { path }),
+	prepareGoalContext: (accountId: number, objective: string, contextJson: string | null, imagePaths: string[]) => __TAURI_INVOKE<PreparedGoalContext>("prepare_goal_context", { accountId, objective, contextJson, imagePaths }),
+	discardGoalContext: (accountId: number, directoryPath: string) => __TAURI_INVOKE<null>("discard_goal_context", { accountId, directoryPath }),
 	inspectDroppedContextPaths: (paths: string[]) => __TAURI_INVOKE<DroppedContextPathInspection>("inspect_dropped_context_paths", { paths }),
 	inspectPromptQueueContext: (workspacePath: string, paths: string[]) => __TAURI_INVOKE<PromptQueueContextInspection>("inspect_prompt_queue_context", { workspacePath, paths }),
 	createChatWithQueuedPrompt: (request: CreateChatWithQueuedPromptRequest) => __TAURI_INVOKE<CreateChatWithQueuedPromptResult>("create_chat_with_queued_prompt", { request }),
@@ -210,6 +212,8 @@ export type AgentNotificationTarget = {
 };
 
 export type AppUpdateState = {
+	delivery: UpdateDelivery,
+	fallbackReason: UpdateFallbackReason | null,
 	phase: string,
 	version: string | null,
 	downloadedBytes: number,
@@ -766,9 +770,14 @@ export type PreflightReport = {
 	tokenEstimate: number,
 	contextBudget: number,
 	routeRecommendation: string,
-	improvedPrompt: string,
 	checks: PreflightCheck[],
 	recommendations: RecommendationDraft[],
+};
+
+export type PreparedGoalContext = {
+	objective: string,
+	directoryPath: string | null,
+	files: string[],
 };
 
 export type ProjectedSubagentThread = {
@@ -854,6 +863,10 @@ export type SetKanbanInheritedContextRequest = {
 	expectedVersion: number,
 	operationId: string,
 };
+
+export type UpdateDelivery = "in-app" | "manual";
+
+export type UpdateFallbackReason = "unconfigured" | "unsupported-platform" | "feed-unavailable" | "installation-unavailable";
 
 export type UpdateKanbanAttemptRequest = {
 	cardId: string,

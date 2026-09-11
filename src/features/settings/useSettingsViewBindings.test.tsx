@@ -47,6 +47,7 @@ function model(): SettingsViewModel {
     activeRunAccountIds: new Set([2, 1]),
     runIsActive: false,
     authMessage: "No account selected",
+    authError: null,
     showLogout: false,
   };
 }
@@ -159,4 +160,19 @@ describe("useSettingsViewBindings", () => {
     expect(result.current.model).not.toBe(loadingModel);
     expect(result.current.model.activeRunAccountIds).toEqual(new Set([1, 3]));
   });
+  it("refreshes explicit auth errors even when the visible summary is unchanged", () => {
+    const baseModel = model();
+    const baseActions = actions();
+    const { result, rerender } = renderHook(
+      ({ currentModel }) => useSettingsViewBindings({ model: currentModel, actions: baseActions }),
+      { initialProps: { currentModel: baseModel } },
+    );
+    const initial = result.current.model;
+    rerender({ currentModel: { ...baseModel, authError: "Connection failed" } });
+    expect(result.current.model).not.toBe(initial);
+    expect(result.current.model.authError).toBe("Connection failed");
+    rerender({ currentModel: baseModel });
+    expect(result.current.model.authError).toBeNull();
+  });
+
 });

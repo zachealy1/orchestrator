@@ -1,7 +1,7 @@
 import { fireEvent, screen, waitFor, within } from "@testing-library/react";
 import { useState, type ReactElement } from "react";
 import { describe, expect, it, vi } from "vitest";
-import { emptyRunView } from "../lib/codexEventReducer";
+import { addSteerPrompt, emptyRunView, settleSteerPrompt } from "../lib/codexEventReducer";
 import { ORCHESTRATOR_PROMPT_CONTEXT_MIME } from "../features/composer/types";
 import {
   TaskChatTurn,
@@ -112,6 +112,84 @@ function historyEntry(turnIndex: number): TaskChatEntry {
 }
 
 describe("TaskChatTurn", () => {
+  it("keeps a pending steer between streamed output and retains it between completed activity sections", async () => {
+    let runView = addSteerPrompt({
+      ...emptyRunView,
+      status: "running",
+      streamEvents: [{ id: "before", kind: "message", text: "Before steering", timestamp: "2026-09-11T12:00:00Z" }],
+    }, { id: "steer:1", text: "Focus on the tests", timestamp: "2026-09-11T12:00:00Z", contextFiles: [] });
+    runView = {
+      ...runView,
+      streamEvents: [...runView.streamEvents, { id: "after", kind: "message", text: "After steering", timestamp: "2026-09-11T12:00:00Z" }],
+    };
+    const entry = { ...historyEntry(1), status: runView.status, runView };
+    const { rerender } = render(<TaskChatTranscript entries={[entry]} onResolveRequest={vi.fn()} />);
+    const prompt = screen.getByLabelText("Additional submitted prompt");
+    expect(prompt).toHaveAttribute("aria-busy", "true");
+    expect(screen.getByRole("status")).toHaveTextContent("Sending…");
+    expect(screen.getByText("Before steering").compareDocumentPosition(prompt) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(prompt.compareDocumentPosition(screen.getByText("After steering")) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(prompt.closest(".task-chat-run")?.querySelector(":scope > .submitted-prompt-stack")).not.toContainElement(prompt);
+
+    const completedView = { ...settleSteerPrompt(runView, "steer:1", true), status: "completed" as const, finalMessage: "All done" };
+    rerender(<TaskChatTranscript entries={[{ ...entry, status: "completed", runView: completedView }]} onResolveRequest={vi.fn()} />);
+    const completedPrompt = screen.getByLabelText("Additional submitted prompt");
+    expect(completedPrompt).toBeVisible();
+    expect(completedPrompt).toHaveAttribute("aria-busy", "false");
+    expect(screen.queryByRole("status")).not.toBeInTheDocument();
+    expect(screen.getAllByLabelText("Run metrics")).toHaveLength(1);
+    expect(screen.getAllByText("All done")).toHaveLength(1);
+    expect(screen.queryByText("Before steering")).not.toBeInTheDocument();
+    expect(screen.queryByText("After steering")).not.toBeInTheDocument();
+    const before = screen.getByLabelText("Activity 1");
+    const after = screen.getByLabelText("Activity 2");
+    expect(before.compareDocumentPosition(completedPrompt) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(completedPrompt.compareDocumentPosition(after) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    fireEvent.click(before);
+    expect(await screen.findByText("Before steering")).toBeVisible();
+    expect(screen.queryByText("After steering")).not.toBeInTheDocument();
+    fireEvent.click(after);
+    expect(await screen.findByText("After steering")).toBeVisible();
+    fireEvent.click(before);
+    await waitFor(() => expect(screen.queryByText("Before steering")).not.toBeInTheDocument());
+    expect(screen.getByText("After steering")).toBeVisible();
+    expect(completedPrompt).toBeVisible();
+  });
+
+  it("keeps consecutive steers visible without empty activity dropdowns", () => {
+    let runView = addSteerPrompt(emptyRunView, { id: "steer:1", text: "First steer", timestamp: "2026-09-11T12:00:00Z", contextFiles: [] });
+    runView = addSteerPrompt(runView, { id: "steer:2", text: "Second steer", timestamp: "2026-09-11T12:00:00Z", contextFiles: [] });
+    runView = settleSteerPrompt(settleSteerPrompt(runView, "steer:1", true), "steer:2", true);
+    render(<TaskChatTranscript entries={[{ ...historyEntry(1), runView: { ...runView, status: "completed", finalMessage: "Done" } }]} onResolveRequest={vi.fn()} />);
+    expect(screen.getAllByLabelText("Additional submitted prompt").map((prompt) => prompt.textContent)).toEqual(["First steer", "Second steer"]);
+    expect(screen.queryByLabelText(/^Activity \d/)).not.toBeInTheDocument();
+  });
+
+  it("preserves steer images, file links, and rich clipboard context", async () => {
+    const services = new AppServices();
+    services.imageAttachments.set("/tmp/steer.png", Promise.resolve({
+      path: "/tmp/steer.png", mimeType: "image/png", width: 100, height: 100,
+      thumbnailDataUrl: "data:image/png;base64,preview",
+    }));
+    const contextFiles = [
+      { path: "/tmp/steer.png", name: "steer.png", source: "picker" as const, mediaKind: "image" as const },
+      { path: "/src/app.ts", name: "app.ts", source: "search" as const },
+    ];
+    const text = "Use /src/app.ts with this picture";
+    const runView = settleSteerPrompt(addSteerPrompt(emptyRunView, {
+      id: "steer:1", text, timestamp: "2026-09-11T12:00:00Z", contextFiles,
+    }), "steer:1", true);
+    render(<TaskChatTranscript entries={[{ ...historyEntry(1), runView: { ...runView, status: "running" } }]} onResolveRequest={vi.fn()} />, services);
+    expect(await screen.findByRole("img", { name: "steer.png" })).toHaveAttribute("src", "data:image/png;base64,preview");
+    expect(screen.getByRole("link", { name: /app.ts/ })).toHaveClass("submitted-inline-file");
+    const setData = vi.fn();
+    fireEvent.copy(screen.getByLabelText("Additional submitted prompt"), { clipboardData: { setData } });
+    expect(setData).toHaveBeenCalledWith("text/plain", text);
+    expect(setData).toHaveBeenCalledWith(ORCHESTRATOR_PROMPT_CONTEXT_MIME, expect.any(String));
+    const payload = JSON.parse(setData.mock.calls.find(([type]) => type === ORCHESTRATOR_PROMPT_CONTEXT_MIME)![1]);
+    expect(payload.files).toEqual(contextFiles.filter((file) => file.source === "search"));
+  });
+
 it("renders generated images and generation failures as standalone transcript items", () => {
     const entry: TaskChatEntry = {
       ...historyEntry(1),
@@ -227,15 +305,12 @@ it("renders submitted, steered, and assistant web URLs as clickable links", () =
     const entry: TaskChatEntry = {
       ...historyEntry(1),
       prompt: "Open https://example.com/input.",
-      steeredPrompts: [
-        {
-          id: "steer-1",
-          prompt: "Then visit https://example.com/follow-up.",
-          submittedAt: "2026-06-30T17:31:00Z",
-        },
-      ],
       runView: {
         ...historyEntry(1).runView,
+        streamEvents: [{
+          id: "steer-1", kind: "steer", delivery: "sent", contextFiles: [],
+          text: "Then visit https://example.com/follow-up.", timestamp: "2026-06-30T17:31:00Z",
+        }],
         finalMessage: "Results are at https://example.com/result.",
       },
     };

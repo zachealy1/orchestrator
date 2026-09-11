@@ -1,7 +1,7 @@
 import type { RunViewState } from "../../lib/codexEventReducer";
 import { normalizeContextFileMedia } from "../../lib/imageAttachments";
 import {
-  withOrchestratorDeveloperInstructions,
+  withNativeModeDefaults,
   type CollaborationMode,
 } from "../../lib/nativePlanMode";
 import { formatGitSummaryForStatus, type WorkspaceGitSummary } from "../workspaces/gitModel";
@@ -39,11 +39,9 @@ export function parseSavedDefaultCollaborationMode(
       parsed.mode === "default" &&
       typeof settings.model === "string" &&
       (typeof settings.reasoning_effort === "string" ||
-        settings.reasoning_effort === null) &&
-      (typeof settings.developer_instructions === "string" ||
-        settings.developer_instructions === null)
+        settings.reasoning_effort === null)
     ) {
-      return withOrchestratorDeveloperInstructions(parsed as CollaborationMode);
+      return withNativeModeDefaults(parsed as CollaborationMode);
     }
   } catch {
     // Corrupt settings are rebuilt from the current model defaults.
@@ -159,34 +157,6 @@ export function buildComposerStatusMessage({
   if (runView.threadId) parts.push(`thread ${runView.threadId}`);
   if (runView.turnId) parts.push(`turn ${runView.turnId}`);
   return parts.join(" | ");
-}
-
-export function addPlanImplementationProgressInstructions(prompt: string) {
-  return [
-    prompt.trimEnd(),
-    "",
-    "Track progress on the approved implementation:",
-    "- If `update_plan` is available in this session, use it for a concise checklist derived from the approved plan, keeping one step in progress and marking completed steps as execution advances.",
-    "- If that tool is unavailable, continue implementing the approved plan and report progress in brief messages instead. Progress tracking is not a prerequisite and must not block implementation.",
-    "- If the implementation genuinely has only one step, keep a single step rather than inventing extra work.",
-  ].join("\n");
-}
-
-export function applySelectedSkillsToPrompt(
-  prompt: string,
-  selectedSkills: SelectedComposerSkill[],
-) {
-  if (selectedSkills.length === 0) return prompt;
-  return [
-    "Use these Codex skills if they are relevant to the task:",
-    ...selectedSkills.map((skill) =>
-      skill.description
-        ? `- ${skill.name}: ${skill.description}`
-        : `- ${skill.name}`,
-    ),
-    "",
-    prompt,
-  ].join("\n");
 }
 
 export function normalizeDialogSelection(selection: unknown) {

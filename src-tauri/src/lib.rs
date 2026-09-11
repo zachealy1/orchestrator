@@ -33,6 +33,7 @@ mod codex_engine;
 mod engine_probe;
 mod database;
 mod generated_images;
+mod goal_context;
 mod git;
 mod github;
 mod github_cli;
@@ -101,6 +102,8 @@ fn command_builder() -> tauri_specta::Builder<tauri::Wry> {
             read_workspace_file_preview_chunk,
             read_workspace_file_preview_version,
             prepare_image_attachment,
+            goal_context::prepare_goal_context,
+            goal_context::discard_goal_context,
             inspect_dropped_context_paths,
             inspect_prompt_queue_context,
             create_chat_with_queued_prompt,
