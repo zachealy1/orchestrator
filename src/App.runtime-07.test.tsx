@@ -346,7 +346,7 @@ describe("Application runtime scenarios 7", () => {
           expect.objectContaining({
             threadId: "child-thread-1",
             expectedTurnId: "child-turn-1",
-            input: [{ type: "text", text: "Check the failure path" }],
+            input: [{ type: "text", text: "Check the failure path", text_elements: [] }],
           }),
         ),
       );

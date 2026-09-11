@@ -57,17 +57,6 @@ pub(crate) fn route_recommendation(prompt: &str, token_estimate: usize) -> Strin
     }
 }
 
-pub(crate) fn improve_prompt(prompt: &str) -> String {
-    let trimmed = prompt.trim();
-    if trimmed.is_empty() {
-        return String::new();
-    }
-
-    format!(
-        "Objective:\n{trimmed}\n\nContext:\nInspect the selected repository before changing files. Preserve existing conventions and avoid unrelated refactors.\n\nConstraints:\nUse workspace-write permissions only inside the selected repo. Surface uncertainty before risky changes.\n\nAcceptance criteria:\n- Implement the requested behavior completely.\n- Keep changes focused and easy to review.\n- Run the most relevant available checks.\n\nVerification:\nReport commands run, results, and any remaining risk."
-    )
-}
-
 pub(crate) fn canonical_workspace_child(
     workspace_path: &str,
     child_path: &str,

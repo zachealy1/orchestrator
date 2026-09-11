@@ -1856,6 +1856,7 @@ describe("Application runtime scenarios 5", () => {
           additionalContext?: Record<string, { value?: string }>;
         }
       )?.additionalContext?.["chat:previous-turns"]?.value;
+      expect(handoffTurn?.[2]).toMatchObject({ input: [{ type: "text", text: "Polish gamepad input", text_elements: [] }], multiAgentMode: "explicitRequestOnly", collaborationMode: { settings: { developer_instructions: null } } });
       expect(handoffContext).toContain("Build responsive Snake controls");
       expect(handoffContext).toContain("Add keyboard and touch controls");
       expect(handoffContext).toContain("Implemented the control system");

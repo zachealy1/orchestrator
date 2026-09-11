@@ -20,7 +20,6 @@ import {
   PromptQueueItem,
 } from "./test/appRuntimeHarness";
 const mocks = getMocks();
-
 describe("Application runtime scenarios 6", () => {
   beforeEach(() => {
       mocks.listeners.clear();
@@ -35,7 +34,6 @@ describe("Application runtime scenarios 6", () => {
       };
       prepareDefaults();
     });
-
   it("edits and reruns only the latest submitted prompt on a fresh thread", async () => {
       prepareSignedInRun();
       mocks.createTaskMock
@@ -88,6 +86,7 @@ describe("Application runtime scenarios 6", () => {
       expect(
         mocks.codexRpcMock.mock.calls.filter((call) => call[1] === "thread/start"),
       ).toHaveLength(2);
+      await waitFor(() => expect(mocks.codexRpcMock.mock.calls.filter(([, method]) => method === "turn/start").slice(-1)[0]?.[2].input[0].text).toBe("Edited prompt"));
       const transcript = screen.getByLabelText("Task chat transcript");
       expect(within(transcript).getByLabelText("Submitted prompt")).toHaveTextContent(
         "Edited prompt",
@@ -128,11 +127,13 @@ describe("Application runtime scenarios 6", () => {
       mocks.listCodexSkillsMock.mockResolvedValue([
         {
           id: "browser:control-in-app-browser",
+          path: "/skills/browser/SKILL.md",
           name: "browser:control-in-app-browser",
           description: "Control the in-app browser",
         },
         {
           id: "docs",
+          path: "/skills/docs/SKILL.md",
           name: "Docs",
           description: "Use repository documentation",
         },
@@ -260,7 +261,7 @@ describe("Application runtime scenarios 6", () => {
       expect(mocks.setThreadGoalMock).toHaveBeenLastCalledWith(
         7,
         "thread-1",
-        "Fix docs more carefully",
+        "Fix docs more carefully\n\nReferenced supporting context: /codex/attachments/goal-context.json",
       );
       expect(mocks.readCodexFileMock).not.toHaveBeenCalledWith(7, imagePath);
       expect(screen.getByRole("combobox", { name: "Agent" })).toHaveTextContent(
@@ -665,6 +666,9 @@ describe("Application runtime scenarios 6", () => {
 
   it("loads persisted execution settings before editing a historical prompt", async () => {
       prepareSignedInRun();
+      mocks.listCodexSkillsMock.mockResolvedValue([
+        { id: "docs", name: "Docs", description: "Use repository documentation", path: "/skills/docs/SKILL.md" },
+      ]);
       const originalModel = {
         id: "gpt-original",
         model: "gpt-original",
@@ -789,13 +793,14 @@ describe("Application runtime scenarios 6", () => {
           effort: "high",
           input: [
             expect.objectContaining({
-              text: expect.stringContaining("Docs: Use repository documentation"),
+              type: "text", text: "Persist original settings", text_elements: [],
             }),
             {
               type: "localImage",
               path: historicalImagePath,
               detail: "auto",
             },
+            { type: "skill", name: "Docs", path: "/skills/docs/SKILL.md" },
           ],
         }),
       );
