@@ -18,6 +18,7 @@ import {
   startMockRun,
   emitCodexNotification,
   emitCodexServerRequest,
+  holdNextAnimationFrames,
   setWindowWidth,
   updatePromptQueueFixture,
 } from "./test/appRuntimeHarness";
@@ -423,6 +424,70 @@ describe("Application runtime scenarios 8", () => {
     );
     await user.click(screen.getByRole("button", { name: /stop codex/i }));
   });
+
+  it.each(["accepted", "rejected", "turn completed"])(
+    "anchors steering before the RPC resolves: %s",
+    async (outcome) => {
+      prepareSignedInRun();
+      const { user } = await renderApp();
+      await startMockRun(user, "Start the active task");
+      await user.type(screen.getByLabelText("Prompt"), "Steer at this point");
+      await user.click(screen.getByRole("button", { name: "Add prompt to queue" }));
+      await user.click(screen.getByRole("button", { name: /^Queue/ }));
+      let resolveSteer!: (value: unknown) => void;
+      let rejectSteer!: (error: Error) => void;
+      mocks.codexRpcMock.mockImplementationOnce(() => new Promise((resolve, reject) => {
+        resolveSteer = resolve;
+        rejectSteer = reject;
+      }));
+      const frames = holdNextAnimationFrames();
+      try {
+        await emitCodexNotification({
+          method: "item/reasoning/textDelta",
+          params: { threadId: "thread-1", turnId: "turn-1", delta: "Before dispatch" },
+        });
+        expect(screen.queryByText("Before dispatch")).not.toBeInTheDocument();
+        await user.click(screen.getByRole("button", { name: "Send queued prompt now" }));
+        const pending = await screen.findByLabelText("Additional submitted prompt");
+        expect(pending).toHaveAttribute("aria-busy", "true");
+        expect(screen.getByText("Before dispatch").compareDocumentPosition(pending) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+      } finally {
+        await frames.flush();
+        frames.restore();
+      }
+      await emitCodexNotification({
+        method: "item/reasoning/textDelta",
+        params: { threadId: "thread-1", turnId: "turn-1", delta: "During delivery" },
+      });
+      const during = await screen.findByText("During delivery");
+      expect(screen.getByLabelText("Additional submitted prompt").compareDocumentPosition(during) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+      if (outcome === "accepted") {
+        // Completion can arrive before the steer acknowledgement.
+        await emitCodexNotification({
+          method: "turn/completed",
+          params: { threadId: "thread-1", turnId: "turn-1", turn: { id: "turn-1", status: "completed", durationMs: 100 } },
+        });
+        await act(async () => resolveSteer({}));
+        await waitFor(() => expect(screen.getByLabelText("Additional submitted prompt")).toHaveAttribute("aria-busy", "false"));
+        expect(screen.getAllByLabelText("Additional submitted prompt")).toHaveLength(1);
+        expect(screen.getByLabelText("Additional submitted prompt")).toBeVisible();
+        expect(screen.getByLabelText("Activity 1")).toBeVisible();
+        expect(screen.getByLabelText("Activity 2")).toBeVisible();
+      } else {
+        const message = outcome === "rejected" ? "Steering rejected" : "turn is not active because it completed";
+        await act(async () => rejectSteer(new Error(message)));
+        await waitFor(() => expect(screen.queryByLabelText("Additional submitted prompt")).not.toBeInTheDocument());
+        expect(screen.getByText("Before dispatch")).toBeVisible();
+        expect(screen.getByText("During delivery")).toBeVisible();
+        if (outcome === "rejected") {
+          expect(mocks.failPromptQueueItemMock).toHaveBeenCalledWith(expect.any(String), message);
+        } else {
+          expect(mocks.reschedulePromptQueueItemAfterSteeringRaceMock).toHaveBeenCalledTimes(1);
+        }
+        await user.click(screen.getByRole("button", { name: /stop codex/i }));
+      }
+    },
+  );
 
   it("keeps a rejected steering prompt failed and retryable", async () => {
     prepareSignedInRun();

@@ -272,6 +272,11 @@
   max-width: min(760px, 86%);
 }
 
+.steer-delivery-status {
+  color: var(--color-text-secondary);
+  font-size: 0.83rem;
+}
+
 .submitted-image-attachments {
   display: flex;
   max-width: 100%;
