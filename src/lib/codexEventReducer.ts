@@ -1,4 +1,5 @@
 import type { CodexMessage } from "../features/codex/types";
+import type { ComposerContextFile } from "../features/composer/types";
 import type { CodexApprovalRequest } from "./codexApprovals";
 import {
   emptyNativePlanState,
@@ -35,13 +36,25 @@ export type ConsoleLine = {
   text: string;
 };
 
-export type StreamEvent = {
+export type StreamActivityEvent = {
   id: string;
   kind: "message" | "activity" | "command" | "file" | "reasoning" | "system";
   text: string;
   timestamp: string;
   activityIds?: string[];
 };
+
+export type StreamSteerEvent = {
+  id: string;
+  kind: "steer";
+  text: string;
+  timestamp: string;
+  contextFiles: ComposerContextFile[];
+  delivery: "pending" | "sent";
+  activityIds?: never;
+};
+
+export type StreamEvent = StreamActivityEvent | StreamSteerEvent;
 
 export type RunEditedFile = {
   path: string;
@@ -1075,9 +1088,59 @@ function appendLine(
   };
 }
 
+export function addSteerPrompt(
+  state: RunViewState,
+  prompt: Omit<StreamSteerEvent, "kind" | "delivery">,
+): RunViewState {
+  if (state.streamEvents.some((event) => event.id === prompt.id)) return state;
+
+  // Activity restored without a timeline reference is already visible at the
+  // tail. Anchor it before the steer so later updates cannot move it past it.
+  const commandIds = new Set(state.streamEvents
+    .filter((event) => event.kind === "command")
+    .flatMap((event) => event.activityIds ?? []));
+  const toolIds = new Set(state.streamEvents
+    .filter((event) => event.kind === "activity")
+    .flatMap((event) => event.activityIds ?? []));
+  const unanchoredCommands = state.commands.filter((command) => !commandIds.has(command.id));
+  const unanchoredTools = state.toolActivityOrder.filter((id) => !toolIds.has(id));
+  const anchors: StreamActivityEvent[] = [];
+  if (unanchoredCommands.length > 0) {
+    anchors.push({
+      id: `${prompt.id}:commands`, kind: "command", text: "Commands",
+      timestamp: prompt.timestamp, activityIds: unanchoredCommands.map((command) => command.id),
+    });
+  }
+  if (unanchoredTools.length > 0) {
+    anchors.push({
+      id: `${prompt.id}:tools`, kind: "activity", text: "Tools",
+      timestamp: prompt.timestamp, activityIds: unanchoredTools,
+    });
+  }
+  return {
+    ...state,
+    streamEvents: [...state.streamEvents, ...anchors, { ...prompt, kind: "steer", delivery: "pending" }],
+  };
+}
+
+export function settleSteerPrompt(
+  state: RunViewState,
+  id: string,
+  accepted: boolean,
+): RunViewState {
+  const marker = state.streamEvents.find((event) => event.id === id);
+  if (marker?.kind !== "steer" || marker.delivery === "sent") return state;
+  return {
+    ...state,
+    streamEvents: accepted
+      ? state.streamEvents.map((event) => event === marker ? { ...marker, delivery: "sent" } : event)
+      : state.streamEvents.filter((event) => event !== marker),
+  };
+}
+
 function appendStreamEvent(
   state: RunViewState,
-  kind: StreamEvent["kind"],
+  kind: StreamActivityEvent["kind"],
   text: string,
   mergeWithPrevious = false,
   activityIds: string[] = [],

@@ -44,13 +44,14 @@ import type {
 } from "react";
 import ReactMarkdown from "react-markdown";
 import type { Components } from "react-markdown";
-import remarkGfm from "remark-gfm";
+import { TRANSCRIPT_MARKDOWN_PLUGINS } from "../lib/markdownPlugins";
 import type {
   RunCommandActivity,
   RunEditedFile,
   RunToolActivity,
   RunViewState,
-  StreamEvent,
+  StreamActivityEvent,
+  StreamSteerEvent,
 } from "../lib/codexEventReducer";
 import {
   validateRequestedFileSystemPermissions,
@@ -115,8 +116,9 @@ export type {
   NativePlanPreview,
 } from "../features/plans/nativePlanPreview";
 
+import { buildTimelineItems, splitTimelineAtSteers, type TimelineItem } from "../lib/runTimeline";
+
 const EMPTY_CONTEXT_FILES: ComposerContextFile[] = [];
-const PLAN_MARKDOWN_PLUGINS = [remarkGfm];
 
 export type PendingInteractionPageChange = {
   anchorElement: HTMLElement;
@@ -271,35 +273,6 @@ export const TaskChatTurn = memo(function TaskChatTurn({
                 onOpenTranscriptLink={onOpenTranscriptLink}
               />
             </article>
-            {entry.steeredPrompts?.map((steeredPrompt) => {
-              const steeredContextFiles =
-                steeredPrompt.contextFiles ?? EMPTY_CONTEXT_FILES;
-              return (
-                <Fragment key={steeredPrompt.id}>
-                  <SubmittedImageAttachments
-                    files={steeredContextFiles}
-                    delivery={{ status: "sent", error: null }}
-                  />
-                  <article
-                    className="submitted-prompt submitted-steered-prompt"
-                    aria-label="Additional submitted prompt"
-                    onCopy={(event) => {
-                      writeSubmittedPromptClipboard(
-                        event,
-                        steeredPrompt.prompt,
-                        steeredContextFiles,
-                      );
-                    }}
-                  >
-                    <SubmittedPrompt
-                      prompt={steeredPrompt.prompt}
-                      contextFiles={steeredContextFiles}
-                      onOpenTranscriptLink={onOpenTranscriptLink}
-                    />
-                  </article>
-                </Fragment>
-              );
-            })}
             {editable ? (
               <button
                 className="submitted-prompt-edit-button"
@@ -560,6 +533,7 @@ const AssistantRunOutput = memo(function AssistantRunOutput({
     runView.status === "failed" ||
     runView.status === "interrupted";
   const timelineItems = buildTimelineItems(runView);
+  const hasSteers = timelineItems.some((item) => item.kind === "steer");
   const hasTimeline = timelineItems.length > 0;
   const finalAnswer = selectAssistantFinalAnswer(runView, completed);
   const hasTrace = hasTimeline || entry.historicalActivity !== undefined;
@@ -581,7 +555,27 @@ const AssistantRunOutput = memo(function AssistantRunOutput({
       aria-label={completed ? undefined : "Live run output"}
     >
       {completed ? (
-        hasTrace ? (
+        hasSteers ? (
+          <>
+            <RunMetrics runView={runView} />
+            {splitTimelineAtSteers(timelineItems).map((section, index) => (
+              <Fragment key={section.id}>
+                {section.items.length > 0 ? (
+                  <RunTraceDropdown
+                    entry={entry}
+                    runView={runView}
+                    items={section.items}
+                    label={`Activity ${index + 1}`}
+                    onOpenTranscriptLink={onOpenTranscriptLink}
+                  />
+                ) : null}
+                {section.steer ? (
+                  <SteerPrompt event={section.steer} onOpenTranscriptLink={onOpenTranscriptLink} />
+                ) : null}
+              </Fragment>
+            ))}
+          </>
+        ) : hasTrace ? (
           <RunTraceDropdown
             entry={entry}
             runView={runView}
@@ -1057,11 +1051,15 @@ function UndoEditedFilesDialog({
 const RunTraceDropdown = memo(function RunTraceDropdown({
   entry,
   runView,
+  items,
+  label,
   onLoadHistoricalActivity,
   onOpenTranscriptLink,
 }: {
   entry: TaskChatEntry;
   runView: RunViewState;
+  items?: TimelineItem[];
+  label?: string;
   onLoadHistoricalActivity?: (entry: TaskChatEntry) => void;
   onOpenTranscriptLink?: (href: string) => boolean;
 }) {
@@ -1081,12 +1079,16 @@ const RunTraceDropdown = memo(function RunTraceDropdown({
         }
       }}
     >
-      <summary className="run-live-metrics" aria-label="Run trace">
-        <span>
-          <Clock size={15} aria-hidden="true" />
-          {formatDuration(runView.elapsedMs)}
-        </span>
-        <span>{formatTokenCount(runView)}</span>
+      <summary className="run-live-metrics" aria-label={label ?? "Run trace"}>
+        {label ? <span>{label}</span> : (
+          <>
+            <span>
+              <Clock size={15} aria-hidden="true" />
+              {formatDuration(runView.elapsedMs)}
+            </span>
+            <span>{formatTokenCount(runView)}</span>
+          </>
+        )}
         <ChevronRight className="run-trace-chevron" size={15} aria-hidden="true" />
       </summary>
       {open ? (
@@ -1108,7 +1110,7 @@ const RunTraceDropdown = memo(function RunTraceDropdown({
             </div>
           ) : null}
           <RunTimeline
-            items={buildTimelineItems(runView)}
+            items={items ?? buildTimelineItems(runView)}
             onOpenTranscriptLink={onOpenTranscriptLink}
           />
         </>
@@ -1285,7 +1287,7 @@ const AssistantMarkdownMessage = memo(function AssistantMarkdownMessage({
     >
       <ReactMarkdown
         components={markdownComponents}
-        remarkPlugins={PLAN_MARKDOWN_PLUGINS}
+        {...TRANSCRIPT_MARKDOWN_PLUGINS}
         urlTransform={transcriptMarkdownUrlTransform}
       >
         {markdown}
@@ -1505,6 +1507,9 @@ const RunTimeline = memo(function RunTimeline({
   return (
     <div className="stream-event-list" aria-label="App-server stream">
       {items.map((item) => {
+        if (item.kind === "steer") {
+          return <SteerPrompt key={item.event.id} event={item.event} onOpenTranscriptLink={onOpenTranscriptLink} />;
+        }
         if (item.kind === "commands") {
           return (
             <RunActivityGroups key={item.id}>
@@ -1533,159 +1538,38 @@ const RunTimeline = memo(function RunTimeline({
   );
 });
 
+const SteerPrompt = memo(function SteerPrompt({
+  event,
+  onOpenTranscriptLink,
+}: {
+  event: StreamSteerEvent;
+  onOpenTranscriptLink?: (href: string) => boolean;
+}) {
+  const pending = event.delivery === "pending";
+  return (
+    <div className="submitted-prompt-stack">
+      <SubmittedImageAttachments
+        files={event.contextFiles}
+        delivery={{ status: pending ? "preparing" : "sent", error: null }}
+      />
+      <article
+        className="submitted-prompt submitted-steered-prompt"
+        aria-label="Additional submitted prompt"
+        aria-busy={pending}
+        onCopy={(copyEvent) => writeSubmittedPromptClipboard(copyEvent, event.text, event.contextFiles)}
+      >
+        <SubmittedPrompt prompt={event.text} contextFiles={event.contextFiles} onOpenTranscriptLink={onOpenTranscriptLink} />
+      </article>
+      {pending ? <span className="steer-delivery-status" role="status">Sending…</span> : null}
+    </div>
+  );
+});
+
 function RunActivityGroups({ children }: { children: ReactNode }) {
   return (
     <div className="run-activity-groups" aria-label="Run activity groups">
       {children}
     </div>
-  );
-}
-
-type TimelineItem =
-  | { kind: "event"; event: StreamEvent }
-  | { kind: "commands"; id: string; commands: RunCommandActivity[] }
-  | { kind: "tools"; id: string; activities: RunToolActivity[] };
-
-function buildTimelineItems(runView: RunViewState): TimelineItem[] {
-  const items: TimelineItem[] = [];
-  const renderedCommandIds = new Set<string>();
-  const renderedToolIds = new Set<string>();
-
-  for (const event of runView.streamEvents) {
-    if (shouldHideFinalMessageEvent(runView, event)) {
-      continue;
-    }
-
-    if (event.kind === "file") {
-      if (runView.editedFiles.length === 0) {
-        items.push({ kind: "event", event });
-      }
-      continue;
-    }
-
-    if (event.kind === "command") {
-      const commands = selectCommandsForEvent(
-        runView.commands,
-        event.activityIds,
-        renderedCommandIds,
-      );
-
-      if (commands.length > 0) {
-        items.push({ kind: "commands", id: `commands-${event.id}`, commands });
-        commands.forEach((command) => renderedCommandIds.add(command.id));
-      } else if (runView.commands.length === 0) {
-        items.push({ kind: "event", event });
-      }
-      continue;
-    }
-
-    if (event.kind === "activity") {
-      const referencesKnownTool = event.activityIds?.some(
-        (id) => runView.toolActivitiesById[id] !== undefined,
-      );
-      const activities = selectToolActivitiesForEvent(
-        runView,
-        event.activityIds,
-        renderedToolIds,
-      );
-      if (activities.length > 0) {
-        items.push({ kind: "tools", id: `tools-${event.id}`, activities });
-        activities.forEach((activity) => renderedToolIds.add(activity.id));
-        continue;
-      }
-      if (referencesKnownTool) continue;
-    }
-
-    items.push({ kind: "event", event });
-  }
-
-  const remainingCommands = runView.commands.filter(
-    (command) => !renderedCommandIds.has(command.id),
-  );
-  if (remainingCommands.length > 0) {
-    items.push({
-      kind: "commands",
-      id: "commands-remaining",
-      commands: remainingCommands,
-    });
-  }
-  const remainingTools = runView.toolActivityOrder
-    .map((id) => runView.toolActivitiesById[id])
-    .filter(
-      (activity): activity is RunToolActivity =>
-        Boolean(activity) && !renderedToolIds.has(activity.id),
-    );
-  if (remainingTools.length > 0) {
-    items.push({ kind: "tools", id: "tools-remaining", activities: remainingTools });
-  }
-
-  return items;
-}
-
-function selectToolActivitiesForEvent(
-  runView: RunViewState,
-  activityIds: string[] | undefined,
-  renderedToolIds: Set<string>,
-) {
-  if (
-    !activityIds?.some((id) => runView.toolActivitiesById[id] !== undefined) ||
-    renderedToolIds.size > 0
-  ) {
-    return [];
-  }
-  return runView.toolActivityOrder
-    .map((id) => runView.toolActivitiesById[id])
-    .filter(
-      (activity): activity is RunToolActivity =>
-        Boolean(activity) && !renderedToolIds.has(activity.id),
-    );
-}
-
-function shouldHideFinalMessageEvent(
-  runView: RunViewState,
-  event: StreamEvent,
-) {
-  if (event.kind !== "message") return false;
-
-  const activityIds = event.activityIds ?? [];
-  if (
-    activityIds.some((id) => {
-      const message = runView.agentMessagesById[id];
-      return message?.phase === "final_answer" || id === runView.finalMessageItemId;
-    })
-  ) {
-    return true;
-  }
-
-  const completed =
-    runView.status === "completed" ||
-    runView.status === "failed" ||
-    runView.status === "interrupted";
-  return (
-    completed &&
-    activityIds.length === 0 &&
-    runView.finalMessage.trim().length > 0 &&
-    event.text.trim() === runView.finalMessage.trim()
-  );
-}
-
-function selectCommandsForEvent(
-  commands: RunCommandActivity[],
-  activityIds: string[] | undefined,
-  renderedCommandIds: Set<string>,
-) {
-  if (commands.length === 0) {
-    return [];
-  }
-
-  if (!activityIds || activityIds.length === 0) {
-    return renderedCommandIds.size === 0 ? commands : [];
-  }
-
-  const activityIdSet = new Set(activityIds);
-  return commands.filter(
-    (command) =>
-      activityIdSet.has(command.id) && !renderedCommandIds.has(command.id),
   );
 }
 
@@ -1873,7 +1757,7 @@ const StreamEventRow = memo(function StreamEventRow({
   event,
   onOpenTranscriptLink,
 }: {
-  event: StreamEvent;
+  event: StreamActivityEvent;
   onOpenTranscriptLink?: (href: string) => boolean;
 }) {
   const markdownComponents = usePreviewableMarkdownComponents(onOpenTranscriptLink);
@@ -1882,7 +1766,7 @@ const StreamEventRow = memo(function StreamEventRow({
       <div className="stream-message" key={event.id}>
         <ReactMarkdown
           components={markdownComponents}
-          remarkPlugins={PLAN_MARKDOWN_PLUGINS}
+          {...TRANSCRIPT_MARKDOWN_PLUGINS}
           urlTransform={transcriptMarkdownUrlTransform}
         >
           {normalizePreviewableMarkdownLinks(event.text)}
@@ -1899,7 +1783,7 @@ const StreamEventRow = memo(function StreamEventRow({
   );
 });
 
-function streamEventIcon(kind: StreamEvent["kind"]) {
+function streamEventIcon(kind: StreamActivityEvent["kind"]) {
   switch (kind) {
     case "command":
       return <Terminal size={15} aria-hidden="true" />;
@@ -1927,7 +1811,7 @@ const NativePlanMarkdown = memo(function NativePlanMarkdown({
   return (
     <ReactMarkdown
       components={markdownComponents}
-      remarkPlugins={PLAN_MARKDOWN_PLUGINS}
+      {...TRANSCRIPT_MARKDOWN_PLUGINS}
       urlTransform={transcriptMarkdownUrlTransform}
     >
       {text}
@@ -2828,7 +2712,7 @@ const ApprovalCard = memo(function ApprovalCard({
                 disabled={disabled}
                 aria-label={choice.label}
                 aria-describedby={descriptionId}
-                data-tooltip={`${choice.label}: ${description}`}
+                data-tooltip={description}
                 onClick={() => onResolveRequest(request, choice)}
               >
                 <ApprovalChoiceIcon choice={choice} />

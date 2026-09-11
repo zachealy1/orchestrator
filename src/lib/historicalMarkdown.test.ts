@@ -2,6 +2,23 @@ import { describe, expect, it } from "vitest";
 import { renderHistoricalMarkdown } from "./historicalMarkdown";
 
 describe("renderHistoricalMarkdown", () => {
+  it("wraps each nested table without changing fenced examples or admitting raw HTML", async () => {
+    const markdown = "| Name | Value |\n| --- | ---: |\n| Item | 42 |";
+    const html = await renderHistoricalMarkdown([
+      "- Nested table", "", ...markdown.split("\n").map((line) => `  ${line}`),
+      "", ...markdown.split("\n").map((line) => `> ${line}`),
+      "", "```md", markdown, "```", "",
+      '<table onclick="alert(1)"><tr><td>Unsafe</td></tr></table>',
+    ].join("\n"));
+    const document = new DOMParser().parseFromString(html, "text/html");
+    expect(document.querySelectorAll(".markdown-table-scroll > table")).toHaveLength(2);
+    expect(document.querySelector("li .markdown-table-scroll")).not.toBeNull();
+    expect(document.querySelector("blockquote .markdown-table-scroll")).not.toBeNull();
+    expect(document.querySelector("pre code")?.textContent?.trim()).toBe(markdown);
+    expect(html).not.toContain("onclick");
+    expect(html).not.toContain("Unsafe");
+  });
+
   it("preserves Markdown structure and marks local file links as previewable", async () => {
     const html = await renderHistoricalMarkdown(
       [

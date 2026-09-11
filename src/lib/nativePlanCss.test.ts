@@ -23,11 +23,12 @@ describe("native plan CSS", () => {
     expect(card).not.toContain("color-mix");
   });
 
-  it("clips only the preview and never creates nested plan scrolling", () => {
+  it("clips only the preview and confines wide tables to horizontal scrolling", () => {
     const preview = rule(".native-plan-markdown.collapsed");
     const markdown = rule(".native-plan-markdown");
     const code = rule(".native-plan-markdown pre");
-    const table = rule(".native-plan-markdown table");
+    const table = rule(".markdown-table");
+    const tableScroll = rule(".markdown-table-scroll");
 
     expect(preview).toContain("max-block-size: 320px");
     expect(preview).toContain("overflow: clip");
@@ -35,7 +36,9 @@ describe("native plan CSS", () => {
     expect(markdown).not.toContain("overflow: auto");
     expect(code).toContain("white-space: pre-wrap");
     expect(code).toContain("overflow: visible");
-    expect(table).toContain("table-layout: fixed");
+    expect(table).toContain("table-layout: auto");
+    expect(tableScroll).toContain("overflow-x: auto");
+    expect(css).not.toContain(".native-plan-markdown table {");
   });
 
   it("centers a text-only disclosure and aligns shared plan actions", () => {
