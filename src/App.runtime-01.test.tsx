@@ -739,14 +739,15 @@ describe("Application runtime scenarios 1", () => {
 
       const { user } = await renderApp();
       const banner = screen.getByRole("region", { name: "Selected folder" });
-      await waitFor(() =>
-        expect(within(banner).queryByLabelText("Branch")).not.toBeInTheDocument(),
+      const changeSummary = await within(banner).findByLabelText(
+        "2 changed (2 modified); 13 additions, 4 deletions",
       );
+      expect(within(banner).queryByLabelText("Branch")).not.toBeInTheDocument();
       expect(
         within(banner).queryByRole("combobox", { name: "Git repository" }),
       ).not.toBeInTheDocument();
-      expect(within(banner).getByText("+13")).toBeInTheDocument();
-      expect(within(banner).getByText("-4")).toBeInTheDocument();
+      expect(within(changeSummary).getByText("+13")).toBeInTheDocument();
+      expect(within(changeSummary).getByText("-4")).toBeInTheDocument();
 
       await user.click(
         within(banner).getByRole("button", { name: /commit or push/i }),
