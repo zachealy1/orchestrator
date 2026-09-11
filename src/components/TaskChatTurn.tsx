@@ -44,7 +44,7 @@ import type {
 } from "react";
 import ReactMarkdown from "react-markdown";
 import type { Components } from "react-markdown";
-import remarkGfm from "remark-gfm";
+import { TRANSCRIPT_MARKDOWN_PLUGINS } from "../lib/markdownPlugins";
 import type {
   RunCommandActivity,
   RunEditedFile,
@@ -119,7 +119,6 @@ export type {
 import { buildTimelineItems, splitTimelineAtSteers, type TimelineItem } from "../lib/runTimeline";
 
 const EMPTY_CONTEXT_FILES: ComposerContextFile[] = [];
-const PLAN_MARKDOWN_PLUGINS = [remarkGfm];
 
 export type PendingInteractionPageChange = {
   anchorElement: HTMLElement;
@@ -1288,7 +1287,7 @@ const AssistantMarkdownMessage = memo(function AssistantMarkdownMessage({
     >
       <ReactMarkdown
         components={markdownComponents}
-        remarkPlugins={PLAN_MARKDOWN_PLUGINS}
+        {...TRANSCRIPT_MARKDOWN_PLUGINS}
         urlTransform={transcriptMarkdownUrlTransform}
       >
         {markdown}
@@ -1767,7 +1766,7 @@ const StreamEventRow = memo(function StreamEventRow({
       <div className="stream-message" key={event.id}>
         <ReactMarkdown
           components={markdownComponents}
-          remarkPlugins={PLAN_MARKDOWN_PLUGINS}
+          {...TRANSCRIPT_MARKDOWN_PLUGINS}
           urlTransform={transcriptMarkdownUrlTransform}
         >
           {normalizePreviewableMarkdownLinks(event.text)}
@@ -1812,7 +1811,7 @@ const NativePlanMarkdown = memo(function NativePlanMarkdown({
   return (
     <ReactMarkdown
       components={markdownComponents}
-      remarkPlugins={PLAN_MARKDOWN_PLUGINS}
+      {...TRANSCRIPT_MARKDOWN_PLUGINS}
       urlTransform={transcriptMarkdownUrlTransform}
     >
       {text}
