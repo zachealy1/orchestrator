@@ -1238,17 +1238,14 @@ button.kanban-card-content {
 }
 
 .kanban-field-select:hover:not(.disabled),
-.kanban-field-select.open {
+.kanban-field-select.open,
+.kanban-field-select:has(button.composer-select-trigger:focus-visible) {
   background: var(--color-button-active);
 }
 
 .kanban-field-select button.composer-select-trigger:hover:not(:disabled),
 .kanban-field-select button.composer-select-trigger:active:not(:disabled) {
   background: transparent;
-}
-
-.kanban-field-select:focus-within {
-  box-shadow: 0 0 0 3px var(--dropdown-focus-ring);
 }
 
 .kanban-field-select button.composer-select-trigger:focus-visible {
