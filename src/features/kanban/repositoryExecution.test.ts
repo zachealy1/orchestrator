@@ -92,6 +92,37 @@ describe("Kanban repository execution preparation", () => {
     vi.resetAllMocks();
   });
 
+  it("captures the current saved target when a Todo card first provisions", async () => {
+    const target = { repositoryPath: "/workspace/repo", branch: "release" };
+    mocks.loadBindings.mockResolvedValue([]);
+    mocks.loadBoard.mockResolvedValue({ ...board([card()]), preferencesJson: JSON.stringify({ targetBranch: target }) });
+    const selected = binding({ baseBranch: "release", baseCommit: "release-commit" });
+    mocks.provision.mockResolvedValue({ complete: true, repositories: [selected], executionRoot: selected.executionRoot });
+    await prepare({ card: card({ stage: "todo" }), claimedCard: card() });
+    expect(mocks.provision).toHaveBeenCalledWith(expect.objectContaining({
+      repositories: [{ repositoryPath: target.repositoryPath, relativePath: "repo", includeDirtyChanges: false, baseBranch: "release" }],
+    }));
+    expect(mocks.saveBindings).toHaveBeenCalledWith(card(), [selected]);
+  });
+
+  it("ignores a saved target for another repository", async () => {
+    mocks.loadBindings.mockResolvedValue([]);
+    mocks.loadBoard.mockResolvedValue({ ...board([card()]), preferencesJson: JSON.stringify({ targetBranch: { repositoryPath: "/other", branch: "release" } }) });
+    mocks.provision.mockResolvedValue({ complete: true, repositories: [binding()], executionRoot: binding().executionRoot });
+    await prepare({ card: card(), claimedCard: card() });
+    expect(mocks.provision.mock.calls[0][0].repositories[0]).not.toHaveProperty("baseBranch");
+  });
+
+  it("retains an existing base for retries and plan implementation without consulting board preferences", async () => {
+    const original = binding({ baseBranch: "release" });
+    mocks.loadBindings.mockResolvedValue([original]);
+    mocks.reconcileBinding.mockResolvedValue({ binding: original });
+    const result = await prepare({ card: card(), claimedCard: card() });
+    expect(result.bindings[0].baseBranch).toBe("release");
+    expect(mocks.loadBoard).not.toHaveBeenCalled();
+    expect(mocks.provision).not.toHaveBeenCalled();
+  });
+
   it("reconciles and persists changed existing bindings", async () => {
     const original = binding();
     const reconciled = binding({ status: "targetMoved" });

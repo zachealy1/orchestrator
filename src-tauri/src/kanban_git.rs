@@ -28,6 +28,8 @@ pub(crate) struct KanbanGitRepositorySelection {
     pub repository_path: String,
     pub relative_path: Option<String>,
     #[serde(default)]
+    pub base_branch: Option<String>,
+    #[serde(default)]
     pub include_dirty_changes: bool,
 }
 
@@ -231,8 +233,9 @@ struct ProvisioningRepository {
     source_root: PathBuf,
     relative_path: String,
     source_branch: String,
+    base_branch: String,
     base_commit: String,
-    source_unborn: bool,
+    target_unborn: bool,
     include_dirty_changes: bool,
     staged_patch: Vec<u8>,
     unstaged_patch: Vec<u8>,
@@ -664,12 +667,40 @@ fn prepare_repositories(
             ));
         }
 
-        let source_branch = current_branch(&source_root)?;
+        // An explicit target also works with a detached source checkout. Keep
+        // source provenance separate from the branch used for PRs/local merges.
+        let source_branch = if selection.base_branch.is_some() {
+            git_checked(
+                &source_root,
+                &["branch", "--show-current"],
+                "Unable to read source branch",
+            )?
+        } else {
+            current_branch(&source_root)?
+        };
         let source_head = optional_head_commit(&source_root)?;
         let source_unborn = source_head.is_none();
-        let base_commit = match source_head {
+        let base_branch = selection
+            .base_branch
+            .as_ref()
+            .unwrap_or(&source_branch)
+            .clone();
+        git_checked(
+            &source_root,
+            &["check-ref-format", &format!("refs/heads/{base_branch}")],
+            "Invalid Kanban target branch",
+        )?;
+        let target_head = optional_revision(
+            &source_root,
+            &format!("refs/heads/{base_branch}^{{commit}}"),
+        )?;
+        let target_unborn = target_head.is_none() && source_unborn && base_branch == source_branch;
+        let base_commit = match target_head {
             Some(commit) => commit,
-            None => create_unborn_base_commit(&source_root)?,
+            None if target_unborn => create_unborn_base_commit(&source_root)?,
+            None => return Err(format!(
+                "Kanban target branch '{base_branch}' is unavailable. Select an existing local target branch."
+            )),
         };
         let source_status_snapshot = git_checked_bytes(
             &source_root,
@@ -716,8 +747,9 @@ fn prepare_repositories(
             source_root,
             relative_path,
             source_branch,
+            base_branch,
             base_commit,
-            source_unborn,
+            target_unborn,
             include_dirty_changes: selection.include_dirty_changes,
             staged_patch,
             unstaged_patch,
@@ -821,7 +853,7 @@ fn create_worktree(
         ));
     }
 
-    let target_reference = format!("refs/heads/{}^{{commit}}", repository.source_branch);
+    let target_reference = format!("refs/heads/{}^{{commit}}", repository.base_branch);
     let current_target = optional_revision(&repository.source_root, &target_reference);
     let source_unchanged = if repository.include_dirty_changes {
         git_checked_bytes(
@@ -834,9 +866,9 @@ fn create_worktree(
         Ok(true)
     };
     let verification_error = match (current_target, source_unchanged) {
-        (Ok(None), Ok(true)) if repository.source_unborn => None,
+        (Ok(None), Ok(true)) if repository.target_unborn => None,
         (Ok(Some(target)), Ok(true))
-            if !repository.source_unborn && target == repository.base_commit =>
+            if !repository.target_unborn && target == repository.base_commit =>
         {
             None
         }
@@ -862,7 +894,7 @@ fn create_worktree(
         relative_path: repository.relative_path.clone(),
         execution_root: execution_root.to_string_lossy().to_string(),
         source_branch: repository.source_branch.clone(),
-        base_branch: repository.source_branch.clone(),
+        base_branch: repository.base_branch.clone(),
         base_commit: repository.base_commit.clone(),
         card_branch,
         worktree_path: worktree.to_string_lossy().to_string(),
@@ -2378,6 +2410,7 @@ mod tests {
                 repositories: vec![KanbanGitRepositorySelection {
                     repository_path: repo.to_string_lossy().to_string(),
                     relative_path: Some("repository".to_string()),
+                    base_branch: None,
                     include_dirty_changes: include_dirty,
                 }],
             },
@@ -2387,6 +2420,147 @@ mod tests {
 
     fn remove_test_directory(path: &Path) {
         let _ = fs::remove_dir_all(path);
+    }
+
+    fn target_request(repo: &Path, target: &str, include_dirty: bool) -> KanbanGitProvisionRequest {
+        KanbanGitProvisionRequest {
+            card_id: "target-card".into(),
+            card_slug: Some("Target selection".into()),
+            repositories: vec![KanbanGitRepositorySelection {
+                repository_path: repo.to_string_lossy().to_string(),
+                relative_path: Some("repository".into()),
+                base_branch: Some(target.into()),
+                include_dirty_changes: include_dirty,
+            }],
+        }
+    }
+
+    #[test]
+    fn explicit_target_controls_start_commit_and_persisted_pr_base() {
+        let repo = init_repository("selected-target");
+        let cards = temp_directory("selected-target-cards");
+        let target_head = rev_parse(&repo, "HEAD").unwrap();
+        run(&repo, &["branch", "release/test"]);
+        fs::write(repo.join("source-only.txt"), "source commit\n").unwrap();
+        run(&repo, &["add", "."]);
+        run(&repo, &["commit", "-m", "Advance source"]);
+        let source_head = rev_parse(&repo, "HEAD").unwrap();
+        let result =
+            provision_blocking(&cards, target_request(&repo, "release/test", false)).unwrap();
+        assert!(result.complete);
+        let binding = &result.repositories[0];
+        assert_eq!(binding.base_branch, "release/test");
+        assert_eq!(binding.source_branch, "main");
+        assert_eq!(binding.base_commit, target_head);
+        assert_eq!(
+            rev_parse(Path::new(&binding.worktree_path), "HEAD").unwrap(),
+            target_head
+        );
+        assert!(!Path::new(&binding.worktree_path)
+            .join("source-only.txt")
+            .exists());
+        assert_eq!(current_branch(&repo).unwrap(), "main");
+        assert_eq!(rev_parse(&repo, "HEAD").unwrap(), source_head);
+        let serialized = serde_json::to_value(binding).unwrap();
+        assert_eq!(serialized["baseBranch"], "release/test");
+        remove_test_directory(&cards);
+        remove_test_directory(&repo);
+    }
+
+    #[test]
+    fn explicit_target_works_with_detached_source() {
+        let repo = init_repository("detached-target");
+        let cards = temp_directory("detached-target-cards");
+        run(&repo, &["checkout", "--detach"]);
+        let result = provision_blocking(&cards, target_request(&repo, "main", false)).unwrap();
+        assert!(result.complete);
+        assert_eq!(result.repositories[0].base_branch, "main");
+        assert_eq!(result.repositories[0].source_branch, "");
+        assert!(current_branch(&repo).is_err());
+        remove_test_directory(&cards);
+        remove_test_directory(&repo);
+    }
+
+    #[test]
+    fn missing_or_invalid_explicit_target_never_falls_back_to_head() {
+        let repo = init_repository("missing-target");
+        let cards = temp_directory("missing-target-cards");
+        for target in ["deleted", "main~1", "../main", ""] {
+            let result = provision_blocking(&cards, target_request(&repo, target, false));
+            assert!(result.is_err(), "target {target} must be rejected");
+            assert!(!cards.join("target-card").exists());
+        }
+        remove_test_directory(&cards);
+        remove_test_directory(&repo);
+    }
+
+    #[test]
+    fn explicit_unborn_current_target_retains_existing_provisioning_support() {
+        let repo = init_unborn_repository("unborn-target");
+        let cards = temp_directory("unborn-target-cards");
+        let result = provision_blocking(&cards, target_request(&repo, "main", false)).unwrap();
+        assert!(result.complete);
+        assert_eq!(result.repositories[0].base_branch, "main");
+        assert_eq!(optional_head_commit(&repo).unwrap(), None);
+        remove_test_directory(&cards);
+        remove_test_directory(&repo);
+    }
+
+    #[test]
+    fn target_moving_after_capture_rolls_back_new_worktree() {
+        let repo = init_repository("moving-target");
+        let cards = temp_directory("moving-target-cards");
+        run(&repo, &["branch", "release"]);
+        let prepared = prepare_repositories(&target_request(&repo, "release", false)).unwrap();
+        fs::write(repo.join("new.txt"), "new commit\n").unwrap();
+        run(&repo, &["add", "."]);
+        run(&repo, &["commit", "-m", "Advance target"]);
+        run(&repo, &["branch", "-f", "release", "HEAD"]);
+        let result = create_worktree(&prepared[0], &cards, "codex/moving-target");
+        assert!(result.unwrap_err().contains("target branch moved"));
+        assert!(!cards.join("repository").exists());
+        assert!(!branch_exists(&repo, "codex/moving-target").unwrap());
+        remove_test_directory(&cards);
+        remove_test_directory(&repo);
+    }
+
+    #[test]
+    fn dirty_changes_apply_to_selected_target_without_modifying_source() {
+        let repo = init_repository("dirty-selected-target");
+        let cards = temp_directory("dirty-selected-target-cards");
+        run(&repo, &["branch", "release"]);
+        fs::write(repo.join("README.md"), "base\ndirty addition\n").unwrap();
+        let before = run(&repo, &["diff"]);
+        let result = provision_blocking(&cards, target_request(&repo, "release", true)).unwrap();
+        assert!(result.complete);
+        assert_eq!(
+            fs::read_to_string(Path::new(&result.repositories[0].worktree_path).join("README.md"))
+                .unwrap(),
+            "base\ndirty addition\n"
+        );
+        assert_eq!(run(&repo, &["diff"]), before);
+        remove_test_directory(&cards);
+        remove_test_directory(&repo);
+    }
+
+    #[test]
+    fn dirty_changes_conflicting_with_selected_target_roll_back() {
+        let repo = init_repository("dirty-conflicting-target");
+        let cards = temp_directory("dirty-conflicting-target-cards");
+        run(&repo, &["branch", "release"]);
+        fs::write(repo.join("README.md"), "source changed\n").unwrap();
+        run(&repo, &["add", "."]);
+        run(&repo, &["commit", "-m", "Change source"]);
+        fs::write(repo.join("README.md"), "dirty change against source\n").unwrap();
+        let before = run(&repo, &["diff"]);
+        let result = provision_blocking(&cards, target_request(&repo, "release", true)).unwrap();
+        assert!(!result.complete);
+        assert!(result.rolled_back);
+        assert!(!cards.join("target-card/repository").exists());
+        assert!(!branch_exists(&repo, "codex/target-selection").unwrap());
+        assert_eq!(run(&repo, &["diff"]), before);
+        remove_test_directory(&cards);
+        remove_test_directory(&repo);
     }
 
     #[test]
@@ -2435,6 +2609,7 @@ mod tests {
                 repositories: vec![KanbanGitRepositorySelection {
                     repository_path: docs.to_string_lossy().to_string(),
                     relative_path: Some("docs".to_string()),
+                    base_branch: None,
                     include_dirty_changes: false,
                 }],
             },
@@ -2492,11 +2667,13 @@ mod tests {
                     KanbanGitRepositorySelection {
                         repository_path: docs.to_string_lossy().to_string(),
                         relative_path: Some("docs".to_string()),
+                        base_branch: None,
                         include_dirty_changes: false,
                     },
                     KanbanGitRepositorySelection {
                         repository_path: api.to_string_lossy().to_string(),
                         relative_path: Some("api".to_string()),
+                        base_branch: None,
                         include_dirty_changes: false,
                     },
                 ],

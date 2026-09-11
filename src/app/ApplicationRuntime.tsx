@@ -1214,6 +1214,8 @@ function App() {
     useState<number | null>(null);
   const [kanbanToolbarHost, setKanbanToolbarHost] =
     useState<HTMLDivElement | null>(null);
+  const [kanbanBranchSelectorHost, setKanbanBranchSelectorHost] =
+    useState<HTMLDivElement | null>(null);
   const [kanbanRefreshToken, setKanbanRefreshToken] = useState(0);
   const [githubConnection, setGithubConnection] =
     useState<GithubConnectionStatus | null>(null);
@@ -20995,6 +20997,7 @@ function App() {
               surfaceMode={workspaceSurfaceMode}
               onSurfaceModeChange={changeWorkspaceSurfaceMode}
               kanbanToolbarHostRef={setKanbanToolbarHost}
+              kanbanBranchSelectorHostRef={setKanbanBranchSelectorHost}
               branchManagementAvailable={
                 selectedRepositoryTopology.kind === "single"
               }
@@ -21066,6 +21069,7 @@ function App() {
                   onShowGithubLogin={() => setGithubLoginDialogOpen(true)}
                   onStatusNotice={applicationNotifications.publish}
                   toolbarHost={kanbanToolbarHost}
+                  branchSelectorHost={kanbanBranchSelectorHost}
                 />
                 {workspaceSurfaceMode === "kanban" ? (
                   <KanbanComposerOverlay>
