@@ -45,15 +45,23 @@ function model(
 }
 
 describe("CodexAccountCard", () => {
-  it.each([true, false])("offers updates immediately above support when signedIn=%s", (signedIn) => {
+  it("offers updates immediately above support when signed in", () => {
     const act = vi.fn();
-    render(<CodexAccountCard model={model({ signedIn, menuOpen: true, update: { act, state: {
+    render(<CodexAccountCard model={model({ signedIn: true, menuOpen: true, update: { act, state: {
       ...initialUpdateState, phase: "available", version: "0.2.0-beta.2", checking: false, installing: false, message: null,
     } } })} actions={actions()} />);
     const button = screen.getByRole("button", { name: /Download update/ });
     expect(button.nextElementSibling).toBe(screen.getByRole("button", { name: "Report a bug" }));
     expect(button).toHaveClass("account-menu-action"); fireEvent.click(button); expect(act).toHaveBeenCalledOnce();
-    if (!signedIn) expect(screen.getByRole("button", { name: "Sign in to Codex" })).toBeInTheDocument();
+  });
+  it.each([false, true])("shows only sign-in while signed out, including when menuOpen=%s", (menuOpen) => {
+    render(<CodexAccountCard model={model({ signedIn: false, menuOpen, update: { act: vi.fn(), state: {
+      ...initialUpdateState, phase: "available", version: "0.2.0-beta.2", checking: false, installing: false, message: null,
+    } } })} actions={actions()} />);
+    expect(screen.getAllByRole("button")).toEqual([screen.getByRole("button", { name: "Sign in to Codex" })]);
+    expect(screen.queryByLabelText("Application menu")).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("App update available")).not.toBeInTheDocument();
+    expect(screen.queryByText("Report a bug")).not.toBeInTheDocument();
   });
   it("opens the account menu from the signed-in trigger", () => {
     const handlers = actions();

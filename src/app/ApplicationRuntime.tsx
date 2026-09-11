@@ -3014,7 +3014,7 @@ function App() {
       || promptQueueClaimLocksRef.current.size > 0 || promptQueueEnqueueOperationsRef.current.size > 0
       || Object.values(promptQueuesByChatRef.current).some((items) => items?.some((item) => ["starting", "steering", "active"].includes(item.status)
         || (item.autoSendEnabled && ["queued", "scheduled-next"].includes(item.status)))),
-    () => setAccountMenuOpen(false));
+    () => setAccountMenuOpen(false), isCodexSignedIn(codexAccount));
   const floatingStatusNotices = useMemo<FloatingStatusNotice[]>(() => {
     const notices: FloatingStatusNotice[] = [];
     if (crossConversationApprovals.length > 0) {
@@ -20487,7 +20487,7 @@ function App() {
   );
   const applicationCommands = useMemo<ApplicationCommand[]>(
     () =>
-      APPLICATION_COMMAND_DEFINITIONS.map((definition) => {
+      APPLICATION_COMMAND_DEFINITIONS.filter((definition) => definition.id !== "report-bug" || codexSignedIn).map((definition) => {
         const newChatUnavailable =
           definition.id === "new-chat" && selectedWorkspace === null;
         const stopCommand = definition.id === "stop-visible-run";
@@ -20522,6 +20522,7 @@ function App() {
       }),
     [
       activeView,
+      codexSignedIn,
       executeApplicationCommand,
       runIsActive,
       selectedWorkspace,
