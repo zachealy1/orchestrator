@@ -771,7 +771,6 @@ button.settings-connection-row:focus-visible:not(:disabled) {
   grid-template-columns: minmax(0, 1fr) auto;
   align-items: center;
   gap: 12px;
-  border-bottom: 1px solid var(--color-divider);
   padding-bottom: 16px;
 }
 
@@ -851,6 +850,7 @@ button.settings-connection-row:focus-visible:not(:disabled) {
 .plugins-catalog {
   display: grid;
   gap: 24px;
+  border-top: 1px solid var(--color-divider);
   padding-top: 20px;
 }
 
