@@ -1,6 +1,12 @@
 # Public beta acceptance record
 
-Status: **dual-architecture, updater-enabled publication remains unapproved** until its required gates below have evidence. The maintainer has separately approved a narrower Apple-Silicon-only manual experimental beta, as recorded below. Apple Developer ID/notarization is not required for that explicitly non-notarized distribution. Automated code checks do not replace clean-Mac and real update rehearsals.
+## Current community release policy — 2026-09-09
+
+The maintainer explicitly requested Apple Silicon and Intel releases with in-app updates, without test suites, manual testing or rehearsals. Community publication therefore requires only a successful build and package integrity checks: source/version/architecture, bundled files, ad-hoc signing, updater signatures and uploaded hashes. No dedicated AI account or testing-approval SHA is required. Existing repository and environment access controls continue to apply.
+
+`0.2.0-beta.2` is **not behaviorally tested**. Its generated package receipts record `behavioralTesting: "not-performed"`; integrity results are recorded by packaging, not asserted in advance. macOS first-launch and permission behavior is not tested or guaranteed. No Apple account or notarization is required.
+
+The earlier records below remain historical evidence and limitations. Their pending/manual gates do not block the current community release policy. The separate notarized and automated engine-upgrade workflows retain their own validation requirements.
 
 ## Manual experimental beta approval — 2026-09-08
 
@@ -17,7 +23,7 @@ The full native lockfile audit remains non-zero. Inspection on 2026-09-08 used t
 
 Known maintenance debt in the selected graph: `paste` 1.0.15 is a Specta/Tauri compile-time macro dependency; the five `unic-*` 0.9 crates are Tauri/urlpattern dependencies. The reported notices concern lack of maintenance, not an identified runtime vulnerability. These remain disclosed follow-up work rather than being labelled resolved. The yanked SQLite/flume dependency `spin` 0.9.8 has been updated to the compatible 0.9.9 patch; no blanket audit exemption is introduced. New vulnerability findings require a new applicability review before another release.
 
-## Deferred updater-enabled acceptance matrix
+## Historical deferred acceptance matrix
 
 Record app/engine versions, source SHA, final package SHA-256 values, tester, date, macOS version and CPU architecture for each run. Use dedicated repositories/branches only. Record every remote branch and commit; do not delete remote test branches without approval.
 
@@ -47,7 +53,7 @@ Record app/engine versions, source SHA, final package SHA-256 values, tester, da
 
 In the rows above, “signed-build” testing means the actual selected distribution's packages, including an ad-hoc app plus independently signed updater for community beta. Community acceptance must additionally record first-launch Open Anyway behaviour and any recurring Accessibility/Screen Recording prompts after updates on both supported architectures and macOS versions. Never turn off Gatekeeper globally.
 
-Do not mark blocked/manual gates passed on the basis of mocks, a build, or a local app launch. Keep CODEX_AUTO_RELEASES_ENABLED and BETA_REHEARSAL_APPROVED false and COMMUNITY_BETA_APPROVED_SHA unset until the corresponding record is reviewed. Failed or missing required integration credentials must remain a failed release check, never a skipped success.
+These historical blocked/manual results have not been marked passed. CODEX_AUTO_RELEASES_ENABLED and BETA_REHEARSAL_APPROVED remain false for the separate notarized automation. The current community policy does not require COMMUNITY_BETA_APPROVED_SHA or authenticated integration checks.
 
 ## 2026-09-08 community preparation checks
 

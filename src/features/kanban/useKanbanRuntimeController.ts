@@ -23,7 +23,6 @@ import {
   parseRunExecutionSettings,
   serializeRunExecutionSettings,
 } from "../../lib/runExecutionSettings";
-import { improvePrompt } from "../../lib/taskAnalysis";
 import {
   createKanbanNativeTaskWorkspaceBinding,
   parseNativeTaskWorkspaceBinding,
@@ -452,7 +451,6 @@ export function createKanbanRuntimeController<
           computerUseEnabled: runExecutionSettings.computerUseEnabled,
           model: runExecutionSettings.model,
           effort: runExecutionSettings.reasoningEffort,
-          improvedPrompt: improvePrompt(effectivePrompt),
           contextFiles: runExecutionSettings.contextFiles,
           selectedSkills: runExecutionSettings.selectedSkills,
           goalMode: runExecutionSettings.goalMode,

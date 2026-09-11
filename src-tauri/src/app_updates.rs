@@ -10,9 +10,55 @@ const ENDPOINT: &str =
 const DOWNLOADS: &str = "https://github.com/zachealy1/orchestrator/releases";
 const PUBLIC_KEY: Option<&str> = option_env!("ORCHESTRATOR_UPDATER_PUBLIC_KEY");
 
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, specta::Type)]
+#[serde(rename_all = "kebab-case")]
+pub(crate) enum UpdateDelivery {
+    InApp,
+    Manual,
+}
+
+#[derive(Clone, Copy, Debug, Serialize, specta::Type)]
+#[serde(rename_all = "kebab-case")]
+pub(crate) enum UpdateFallbackReason {
+    Unconfigured,
+    UnsupportedPlatform,
+    FeedUnavailable,
+    InstallationUnavailable,
+}
+
+enum UpdateFailure {
+    Manual(UpdateFallbackReason),
+    Retry(String),
+}
+impl From<String> for UpdateFailure {
+    fn from(message: String) -> Self {
+        Self::Retry(message)
+    }
+}
+impl From<&str> for UpdateFailure {
+    fn from(message: &str) -> Self {
+        Self::Retry(message.into())
+    }
+}
+
+fn configuration_fallback() -> Option<UpdateFallbackReason> {
+    if !cfg!(all(
+        target_os = "macos",
+        any(target_arch = "aarch64", target_arch = "x86_64")
+    )) {
+        Some(UpdateFallbackReason::UnsupportedPlatform)
+    } else if PUBLIC_KEY.filter(|key| !key.trim().is_empty()).is_none() {
+        Some(UpdateFallbackReason::Unconfigured)
+    } else {
+        None
+    }
+}
+
 #[derive(Clone, Debug, Serialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct AppUpdateState {
+    pub delivery: UpdateDelivery,
+    pub fallback_reason: Option<UpdateFallbackReason>,
     pub phase: String,
     pub version: Option<String>,
     pub downloaded_bytes: u64,
@@ -22,7 +68,14 @@ pub(crate) struct AppUpdateState {
 }
 impl Default for AppUpdateState {
     fn default() -> Self {
+        let fallback_reason = configuration_fallback();
         Self {
+            delivery: if fallback_reason.is_some() {
+                UpdateDelivery::Manual
+            } else {
+                UpdateDelivery::InApp
+            },
+            fallback_reason,
             phase: "idle".into(),
             version: None,
             downloaded_bytes: 0,
@@ -38,6 +91,22 @@ struct Inner {
     candidate: Option<Update>,
     bytes: Option<Vec<u8>>,
     busy: bool,
+}
+impl Inner {
+    fn use_manual_delivery(&mut self, reason: UpdateFallbackReason) {
+        self.candidate = None;
+        self.bytes = None;
+        self.state = AppUpdateState {
+            delivery: UpdateDelivery::Manual,
+            fallback_reason: Some(reason),
+            ..AppUpdateState::default()
+        };
+    }
+    fn use_in_app_delivery(&mut self) {
+        self.state.delivery = UpdateDelivery::InApp;
+        self.state.fallback_reason = None;
+        self.state.error = None;
+    }
 }
 #[derive(Default)]
 pub(crate) struct AppUpdateService(Mutex<Inner>);
@@ -75,7 +144,9 @@ fn validate_candidate(
     } else {
         "x86_64"
     };
-    let expected_path = format!("/zachealy1/orchestrator/releases/download/v{version}/Orchestrator_{arch}.app.tar.gz");
+    let expected_path = format!(
+        "/zachealy1/orchestrator/releases/download/v{version}/Orchestrator_{arch}.app.tar.gz"
+    );
     if next <= current
         || url.scheme() != "https"
         || url.host_str() != Some("github.com")
@@ -89,29 +160,62 @@ fn validate_candidate(
     }
     Ok(())
 }
-async fn candidate(app: &AppHandle) -> Result<Option<Update>, String> {
-    let key = PUBLIC_KEY.filter(|key| !key.trim().is_empty())
-        .ok_or("App updates are not configured in this build. Install a signed public beta from the downloads page.")?;
+fn classify_check_failure(error: tauri_plugin_updater::Error) -> UpdateFailure {
+    use tauri_plugin_updater::Error;
+    UpdateFailure::Manual(match error {
+        Error::UnsupportedArch | Error::UnsupportedOs => UpdateFallbackReason::UnsupportedPlatform,
+        Error::FailedToDetermineExtractPath => UpdateFallbackReason::InstallationUnavailable,
+        Error::EmptyEndpoints => UpdateFallbackReason::Unconfigured,
+        _ => UpdateFallbackReason::FeedUnavailable,
+    })
+}
+
+fn require_installation_location() -> Result<(), UpdateFailure> {
+    let unavailable = || UpdateFailure::Manual(UpdateFallbackReason::InstallationUnavailable);
+    let executable = std::env::current_exe().map_err(|_| unavailable())?;
+    let bundle = executable.ancestors().nth(3).ok_or_else(unavailable)?;
+    if bundle.extension().and_then(|value| value.to_str()) != Some("app") {
+        return Err(unavailable());
+    }
+    let parent = bundle.parent().ok_or_else(unavailable)?;
+    let probe = parent.join(format!(".orchestrator-update-{}", uuid::Uuid::new_v4()));
+    let file = std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&probe)
+        .map_err(|_| unavailable())?;
+    drop(file);
+    std::fs::remove_file(probe).map_err(|_| unavailable())?;
+    Ok(())
+}
+
+async fn candidate(app: &AppHandle) -> Result<Option<Update>, UpdateFailure> {
+    if let Some(reason) = configuration_fallback() {
+        return Err(UpdateFailure::Manual(reason));
+    }
+    require_installation_location()?;
+    let key = PUBLIC_KEY.unwrap_or_default();
     let mut update = app
         .updater_builder()
         .pubkey(key.trim())
-        .endpoints(vec![ENDPOINT
-            .parse()
-            .map_err(|_| "Invalid update endpoint")?])
-        .map_err(|e| e.to_string())?
+        .endpoints(vec![ENDPOINT.parse().map_err(|_| {
+            UpdateFailure::Manual(UpdateFallbackReason::Unconfigured)
+        })?])
+        .map_err(classify_check_failure)?
         .timeout(Duration::from_secs(30))
         .build()
-        .map_err(|e| e.to_string())?
+        .map_err(classify_check_failure)?
         .check()
         .await
-        .map_err(|e| e.to_string())?;
+        .map_err(classify_check_failure)?;
     if let Some(item) = &mut update {
         validate_candidate(
             &item.version,
             &item.current_version,
             &item.download_url,
             &item.signature,
-        )?;
+        )
+        .map_err(|_| UpdateFailure::Manual(UpdateFallbackReason::FeedUnavailable))?;
         item.timeout = Some(Duration::from_secs(900));
     }
     Ok(update)
@@ -149,6 +253,7 @@ pub(crate) async fn app_update_check(
         inner.busy = false;
         match result {
             Ok(update) => {
+                inner.use_in_app_delivery();
                 inner.state.version = update.as_ref().map(|u| u.version.clone());
                 inner.state.phase = if update.is_some() {
                     "available"
@@ -158,14 +263,9 @@ pub(crate) async fn app_update_check(
                 .into();
                 inner.candidate = update;
             }
-            Err(error) => {
-                inner.state.phase = if inner.candidate.is_some() {
-                    "available"
-                } else {
-                    "idle"
-                }
-                .into();
-                inner.state.error = Some(error);
+            Err(UpdateFailure::Manual(reason)) => inner.use_manual_delivery(reason),
+            Err(UpdateFailure::Retry(_)) => {
+                inner.use_manual_delivery(UpdateFallbackReason::FeedUnavailable)
             }
         }
     }))
@@ -179,6 +279,7 @@ pub(crate) async fn app_update_download(
     service.begin("downloading")?;
     service.change(&app, |inner| {
         inner.state.downloaded_bytes = 0;
+        inner.state.total_bytes = None;
         inner.bytes = None;
     });
     let result = async {
@@ -186,6 +287,7 @@ pub(crate) async fn app_update_download(
             .await?
             .ok_or("This update has been withdrawn. Check again later.")?;
         service.change(&app, |inner| {
+            inner.use_in_app_delivery();
             inner.state.version = Some(update.version.clone());
         });
         let bytes = update
@@ -199,20 +301,35 @@ pub(crate) async fn app_update_download(
                 || {},
             )
             .await
-            .map_err(|e| format!("Update download or signature verification failed: {e}"))?;
-        validate_package(&bytes, &update.version)?;
-        Ok::<_, String>((update, bytes))
+            .map_err(|error| {
+                UpdateFailure::Retry(
+                    match error {
+                        tauri_plugin_updater::Error::Reqwest(_)
+                        | tauri_plugin_updater::Error::Network(_) => {
+                            "Download interrupted. Try downloading again."
+                        }
+                        _ => "The update could not be verified. Try downloading again.",
+                    }
+                    .into(),
+                )
+            })?;
+        validate_package(&bytes, &update.version).map_err(|_| {
+            UpdateFailure::Retry("The update package is invalid. Try downloading again.".into())
+        })?;
+        Ok::<_, UpdateFailure>((update, bytes))
     }
     .await;
     Ok(service.change(&app, |inner| {
         inner.busy = false;
         match result {
             Ok((update, bytes)) => {
+                inner.use_in_app_delivery();
                 inner.candidate = Some(update);
                 inner.bytes = Some(bytes);
                 inner.state.phase = "ready".into();
             }
-            Err(error) => {
+            Err(UpdateFailure::Manual(reason)) => inner.use_manual_delivery(reason),
+            Err(UpdateFailure::Retry(error)) => {
                 inner.state.phase = "download-error".into();
                 inner.state.error = Some(error);
             }
@@ -298,38 +415,21 @@ pub(crate) async fn app_update_install(
                 inner.bytes.take().ok_or("Download an update first.")?,
             )
         };
-        // Do not request elevated privileges or bypass Gatekeeper for read-only installs.
-        let executable = std::env::current_exe().map_err(|e| e.to_string())?;
-        let bundle = executable
-            .ancestors()
-            .nth(3)
-            .ok_or("Cannot locate the application bundle")?;
-        let parent = bundle
-            .parent()
-            .ok_or("Cannot locate the application folder")?;
-        let probe = parent.join(format!(".orchestrator-update-{}", uuid::Uuid::new_v4()));
-        let writable = std::fs::OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .open(&probe);
-        if writable.is_err() {
-            return Err(
-                "This app cannot replace itself here. Install the update from the downloads page."
-                    .into(),
-            );
-        }
-        drop(writable);
-        std::fs::remove_file(&probe).map_err(|e| e.to_string())?;
+        require_installation_location()?;
         downloaded
             .install(&bytes)
-            .map_err(|e| format!("Installation failed. Use the manual installer. {e}"))?;
+            .map_err(|_| UpdateFailure::Manual(UpdateFallbackReason::InstallationUnavailable))?;
         app.restart();
         #[allow(unreachable_code)]
-        Ok::<(), String>(())
+        Ok::<(), UpdateFailure>(())
     }
     .await;
     Ok(service.change(&app, |inner| {
         inner.busy = false;
+        if let Err(UpdateFailure::Manual(reason)) = result {
+            inner.use_manual_delivery(reason);
+            return;
+        }
         inner.state.phase = if inner.bytes.is_some() {
             "ready"
         } else if inner.state.version.is_some() {
@@ -338,7 +438,10 @@ pub(crate) async fn app_update_install(
             "idle"
         }
         .into();
-        inner.state.error = result.err();
+        inner.state.error = match result {
+            Err(UpdateFailure::Retry(message)) => Some(message),
+            _ => None,
+        };
     }))
 }
 

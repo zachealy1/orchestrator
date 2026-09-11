@@ -9,10 +9,10 @@ async function optional(api, path) {
   catch (error) { if (error.message.includes("(404)")) return null; throw error; }
 }
 
-// Publish the exact tested commit. A concurrent writer cannot overwrite the feed:
+// Publish the exact selected commit. A concurrent writer cannot overwrite the feed:
 // the final non-forced ref update must fast-forward from the revision read here.
 export async function publish({ version, sourceSha, files, notes, profile = "notarized", delivery = "updater", approval = process.env, api = github, listReleases = releases, fetcher = fetch, token = process.env.GH_TOKEN }) {
-  if (!/^[a-f0-9]{40}$/.test(sourceSha ?? "")) throw new Error("An exact tested source SHA is required");
+  if (!/^[a-f0-9]{40}$/.test(sourceSha ?? "")) throw new Error("An exact selected source SHA is required");
   validateDistributionVersion(profile, version);
   if (!["manual", "updater"].includes(delivery)) throw new Error("Unknown delivery mode");
   const manual = delivery === "manual";
@@ -27,10 +27,11 @@ export async function publish({ version, sourceSha, files, notes, profile = "not
     ? `Experimental community beta — Apple Silicon only; not notarized by Apple. Manual installation and updates only. No update feed is published by this release.\n\n${notes}`
     : distributionNotes(profile, notes);
   const prefix = `repos/${REPOSITORY}`;
-  const comparison = await api(`${prefix}/compare/${sourceSha}...main`);
-  if (!["ahead", "identical"].includes(comparison.status)) throw new Error("Release source must be an ancestor of main");
+  const sourceBranch = profile === "community" ? "release" : "main";
+  const comparison = await api(`${prefix}/compare/${sourceSha}...${sourceBranch}`);
+  if (!["ahead", "identical"].includes(comparison.status)) throw new Error(`Release source must be an ancestor of ${sourceBranch}`);
   const pkg = await api(`${prefix}/contents/package.json?ref=${sourceSha}`);
-  if (JSON.parse(Buffer.from(pkg.content, "base64")).version !== version) throw new Error("Release version differs from tested source");
+  if (JSON.parse(Buffer.from(pkg.content, "base64")).version !== version) throw new Error("Release version differs from selected source");
   if (manual) {
     const checks = await api(`${prefix}/commits/${sourceSha}/check-runs?check_name=checks&filter=latest`);
     if (!checks.check_runs?.some(check => check.name === "checks" && check.app?.slug === "github-actions" && check.head_sha === sourceSha && check.status === "completed" && check.conclusion === "success")) throw new Error("Required source checks have not passed for this exact source SHA");
@@ -50,7 +51,7 @@ export async function publish({ version, sourceSha, files, notes, profile = "not
   if (tag) {
     let object = tag.object;
     for (let depth = 0; object.type === "tag" && depth < 8; depth++) object = (await api(`${prefix}/git/tags/${object.sha}`)).object;
-    if (object.type !== "commit" || object.sha !== sourceSha) throw new Error("Release tag conflicts with tested source");
+    if (object.type !== "commit" || object.sha !== sourceSha) throw new Error("Release tag conflicts with selected source");
   }
   const existing = await listReleases(REPOSITORY);
   if (existing.some((r) => r.tag_name === tagName && !r.draft)) throw new Error("Published releases are immutable. Create a new version.");

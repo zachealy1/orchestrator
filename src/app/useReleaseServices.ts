@@ -7,15 +7,20 @@ import { useStableEvent } from "../shared/reactRuntime";
 import { flushNativeCommands } from "../shared/nativeCommands";
 import type { AppServices } from "../runtime/AppServices";
 import type { ApplicationNotificationQueue } from "./useApplicationNotificationQueue";
-import { BUG_REPORT_URL, UpdateController } from "../features/updates/UpdateController";
+import { BUG_REPORT_URL, RELEASE_DOWNLOADS_URL, UpdateController } from "../features/updates/UpdateController";
 import { useEngineController } from "../features/engine/useEngineController";
 
 export function useReleaseServices(services: AppServices, notices: ApplicationNotificationQueue,
-  prepare: () => void, extraBusy: () => boolean, closeAccountMenu: () => void) {
-  const inputs = useRef({ prepare, extraBusy, closeAccountMenu, notices });
-  inputs.current = { prepare, extraBusy, closeAccountMenu, notices };
+  prepare: () => void, extraBusy: () => boolean, closeAccountMenu: () => void, signedIn: boolean) {
+  const inputs = useRef({ prepare, extraBusy, closeAccountMenu, notices, signedIn });
+  inputs.current = { prepare, extraBusy, closeAccountMenu, notices, signedIn };
   const [controller] = useState(() => new UpdateController({
     check: commands.appUpdateCheck, download: commands.appUpdateDownload, install: commands.appUpdateInstall,
+    openDownloads: async () => {
+      if (!inputs.current.signedIn) return;
+      await openUrl(RELEASE_DOWNLOADS_URL);
+      inputs.current.closeAccountMenu();
+    },
     storage: localStorage,
     busy: () => inputs.current.extraBusy() || services.subagents.hasActiveWork() || services.runCoordinator.getSnapshot().some((run) => !["completed", "cancelled", "failed"].includes(run.phase))
       || [...services.activeRuns.values()].some((run) => !run.stopped && (
@@ -28,12 +33,17 @@ export function useReleaseServices(services: AppServices, notices: ApplicationNo
       await services.database.flush();
       await flushNativeCommands();
     },
-    notify: (version) => inputs.current.notices.publish({ id: "application-update", revisionKey: version,
-      tone: "success", title: `Orchestrator ${version} is available`, detail: "Open the account menu to download the update.", timeoutMs: null }),
+    notify: (version) => {
+      if (inputs.current.signedIn) inputs.current.notices.publish({ id: "application-update", revisionKey: version,
+        tone: "success", title: `Orchestrator ${version} is available`, detail: "Open the account menu to download the update.", timeoutMs: null });
+    },
   }));
   const state = useSyncExternalStore(controller.subscribe, controller.getSnapshot, controller.getSnapshot);
   useEffect(() => {
-    if (!isTauri()) return;
+    if (!signedIn || state.delivery === "manual") notices.dismiss("application-update");
+  }, [signedIn, state.delivery, notices.dismiss]);
+  useEffect(() => {
+    if (!signedIn || !isTauri()) return;
     let cancelled = false;
     const unlisten = listen<AppUpdateState>("app-update:state", (event) => { if (!cancelled) controller.accept(event.payload); });
     void commands.appUpdateState().then((value) => { if (!cancelled) { controller.accept(value); void controller.check("startup"); } }).catch(() => undefined);
@@ -42,7 +52,7 @@ export function useReleaseServices(services: AppServices, notices: ApplicationNo
     window.addEventListener("focus", foreground);
     window.addEventListener("online", foreground);
     return () => { cancelled = true; void unlisten.then((off) => off()).catch(() => undefined); clearInterval(interval); window.removeEventListener("focus", foreground); window.removeEventListener("online", foreground); };
-  }, [controller]);
+  }, [controller, signedIn]);
   useEffect(() => {
     if (!state.installing) return;
     // Capture prevents UI navigation and edits between persistence and the restart.
@@ -56,11 +66,12 @@ export function useReleaseServices(services: AppServices, notices: ApplicationNo
     if (message) notices.publish({ id: "engine-provisioning", revisionKey: message, tone: "warning", title: "Codex engine needs attention", detail: message, timeoutMs: null });
   }, [engine.error, engine.status, notices.publish]);
   const reportBug = useStableEvent(() => {
+    if (!inputs.current.signedIn) return;
     inputs.current.closeAccountMenu();
     inputs.current.notices.dismiss("bug-report-feedback");
     void Promise.resolve().then(() => openUrl(BUG_REPORT_URL)).catch((error) => inputs.current.notices.publish({
       id: "bug-report-feedback", revisionKey: String(Date.now()), tone: "warning", title: "Couldn’t open bug report", detail: error instanceof Error ? error.message : String(error), timeoutMs: 60_000,
     }));
   });
-  return { update: { state, act: () => { void controller.act(); } }, reportBug };
+  return { update: { state, act: () => { if (inputs.current.signedIn) void controller.act(); } }, reportBug };
 }

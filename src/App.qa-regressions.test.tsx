@@ -13,7 +13,6 @@ import {
   workspaceRunFixture,
 } from "./test/appRuntimeHarness";
 import { createRunExecutionSettings } from "./lib/runExecutionSettings";
-import { GENERATED_IMAGE_HANDLING_POLICY } from "./lib/nativePlanMode";
 
 const mocks = getMocks();
 const followUp = "What exact marker did you return in the prior turn?";
@@ -133,35 +132,71 @@ describe("manual QA regressions", () => {
     const user = await openGoalContinuation();
     await user.click(screen.getByRole("button", { name: "Goal mode" }));
     await startMockRun(user, followUp);
-    expect(mocks.setThreadGoalMock).toHaveBeenCalledWith(7, "thread-1", followUp);
-    const contextCallIndex = mocks.codexRpcMock.mock.calls.findIndex(([, method, params]) =>
-      method === "thread/settings/update" &&
-      params.collaborationMode.settings.developer_instructions.includes("QA_R2_GOAL_OK"),
-    );
-    expect(contextCallIndex).toBeGreaterThanOrEqual(0);
-    expect(mocks.codexRpcMock.mock.invocationCallOrder[contextCallIndex]).toBeLessThan(
+    expect(mocks.setThreadGoalMock).toHaveBeenCalledWith(7, "thread-1", expect.stringContaining(followUp));
+    expect(mocks.prepareGoalContextMock).toHaveBeenCalledWith(expect.objectContaining({
+      objective: followUp,
+      contextJson: expect.stringContaining("QA_R2_GOAL_OK"),
+    }));
+    expect(mocks.prepareGoalContextMock.mock.invocationCallOrder[0]).toBeLessThan(
       mocks.setThreadGoalMock.mock.invocationCallOrder[0],
     );
-    expect(mocks.codexRpcMock.mock.calls[contextCallIndex][2].collaborationMode.settings.developer_instructions).toContain(GENERATED_IMAGE_HANDLING_POLICY);
+    const settingsCall = mocks.codexRpcMock.mock.calls.find(([, method]) => method === "thread/settings/update");
+    expect(settingsCall?.[2].collaborationMode.settings.developer_instructions).toBeNull();
     expect(mocks.codexRpcMock.mock.calls.some(([, method]) => method === "turn/start")).toBe(false);
   });
 
   it("R2-006: refuses to activate a Goal if delivering its context fails", async () => {
     const user = await openGoalContinuation();
-    const rpc = mocks.codexRpcMock.getMockImplementation()!;
-    mocks.codexRpcMock.mockImplementation(async (...args) => {
-      const [, method, params] = args;
-      if (method === "thread/settings/update" && params.collaborationMode.settings.developer_instructions.includes("QA_R2_GOAL_OK")) {
-        throw new Error("Context delivery failed");
-      }
-      return rpc(...args);
-    });
+    mocks.prepareGoalContextMock.mockRejectedValueOnce(new Error("Context delivery failed"));
     await user.click(screen.getByRole("button", { name: "Goal mode" }));
     await user.type(screen.getByLabelText("Prompt"), followUp);
     await user.click(screen.getByRole("button", { name: /run codex/i }));
     await waitFor(() => expect(mocks.failPromptQueueItemMock).toHaveBeenCalledWith(
       expect.any(String), expect.stringContaining("Context delivery failed"),
     ));
+    expect(mocks.setThreadGoalMock).not.toHaveBeenCalled();
+  });
+
+  it.each(["settings", "activation"])("retains Goal context only after activation is dispatched: %s failure", async (stage) => {
+    const user = await openGoalContinuation();
+    if (stage === "settings") {
+      const rpc = mocks.codexRpcMock.getMockImplementation()!;
+      mocks.codexRpcMock.mockImplementation(async (...args) => {
+        if (args[1] === "thread/settings/update" && args[2]?.multiAgentMode) {
+          throw new Error("Settings update failed");
+        }
+        return rpc(...args);
+      });
+    } else {
+      mocks.setThreadGoalMock.mockRejectedValueOnce(new Error("Activation response lost"));
+    }
+    await user.click(screen.getByRole("button", { name: "Goal mode" }));
+    await user.type(screen.getByLabelText("Prompt"), followUp);
+    await user.click(screen.getByRole("button", { name: /run codex/i }));
+    await waitFor(() => expect(mocks.failPromptQueueItemMock).toHaveBeenCalled());
+    expect(mocks.prepareGoalContextMock).toHaveBeenCalledTimes(1);
+    if (stage === "settings") {
+      expect(mocks.setThreadGoalMock).not.toHaveBeenCalled();
+      expect(mocks.discardGoalContextMock).toHaveBeenCalledWith(7, "/codex/attachments/goal-context");
+    } else {
+      expect(mocks.setThreadGoalMock).toHaveBeenCalledTimes(1);
+      expect(mocks.discardGoalContextMock).not.toHaveBeenCalled();
+    }
+  });
+
+  it("does not activate a Goal with an unreadable selected context file", async () => {
+    prepareSignedInRun();
+    mocks.openDialogMock.mockResolvedValue([`${workspace.path}/README.md`]);
+    mocks.readCodexFileMock.mockRejectedValue(new Error("File unavailable"));
+    const { user } = await renderApp();
+    await user.click(screen.getByRole("button", { name: "Add files" }));
+    await user.click(screen.getByRole("button", { name: "Goal mode" }));
+    await user.type(screen.getByLabelText("Prompt"), "Explain the attached file");
+    await user.click(screen.getByRole("button", { name: /run codex/i }));
+    await waitFor(() => expect(mocks.failPromptQueueItemMock).toHaveBeenCalledWith(
+      expect.any(String), expect.stringContaining("Could not prepare Goal context files"),
+    ));
+    expect(mocks.prepareGoalContextMock).not.toHaveBeenCalled();
     expect(mocks.setThreadGoalMock).not.toHaveBeenCalled();
   });
 });

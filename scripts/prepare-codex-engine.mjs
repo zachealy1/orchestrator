@@ -20,13 +20,14 @@ const destination = path.join(root, "src-tauri/resources/codex-engine", `darwin-
 const binary = path.join(destination, "codex");
 const digest = (file) => createHash("sha256").update(fs.readFileSync(file)).digest("hex");
 const verify = (file) => run("cargo", ["run", "--quiet", "--manifest-path", "src-tauri/Cargo.toml", "--features", "dev-tools", "--bin", "verify-codex-engine", "--", file, release.version]);
+const probeEngine = process.env.RELEASE_DISTRIBUTION !== "community";
 let current = false;
 try {
   verifyRuntimeFiles(destination, release);
   current = true;
 } catch { /* Prepare a missing or incomplete package. */ }
 if (current) {
-  verify(binary); // Recheck when Orchestrator's required protocol changes, even for the same release.
+  if (probeEngine) verify(binary); // Community packaging checks file integrity without executing the engine.
   process.stdout.write(`Codex ${release.version} is ready.\n`);
 } else {
   const cache = path.join(os.homedir(), ".cache/orchestrator/codex-engine");
@@ -56,7 +57,7 @@ if (current) {
       fs.chmodSync(output, 0o755);
       record[component.hashKey] = engineDigest(output);
     }
-    verify(path.join(staging, "codex"));
+    if (probeEngine) verify(path.join(staging, "codex"));
     fs.writeFileSync(path.join(staging, "runtime.json"), JSON.stringify(record, null, 2));
     verifyRuntimeFiles(staging, release);
     const previous = `${destination}.previous-${process.pid}`;

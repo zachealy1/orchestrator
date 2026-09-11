@@ -13,7 +13,7 @@ run(process.execPath, ["scripts/release/check-config.mjs", "--sign"]);
 const sourceSha = run("git", ["rev-parse", "HEAD"], { encoding: "utf8" }).trim();
 if (!/^[a-f0-9]{40}$/.test(process.env.RELEASE_SOURCE_SHA ?? "") || sourceSha !== process.env.RELEASE_SOURCE_SHA
   || run("git", ["status", "--porcelain", "--untracked-files=no"], { encoding: "utf8" }).trim()) {
-  throw new Error("Packaging requires the exact clean tested source commit");
+  throw new Error("Packaging requires the exact clean source commit");
 }
 if (!["arm64", "x64"].includes(process.arch)) throw new Error("Unsupported architecture");
 const arch = process.arch === "arm64" ? "aarch64" : "x86_64";
@@ -63,6 +63,7 @@ try {
   const version = JSON.parse(await readFile("package.json", "utf8")).version;
   const receiptName = `verification-${arch}.json`;
   const receipt = JSON.stringify({ schemaVersion: 1, sourceSha, version, architecture: arch, distribution: profile,
+    ...(profile === "community" ? { behavioralTesting: "not-performed" } : {}),
     notarized: profile === "notarized", updaterSignatureVerified: true, artifacts }, null, 2) + "\n";
   await writeFile(join(output, receiptName), receipt);
   const hashes = [...Object.entries(artifacts).map(([name, digest]) => `${digest}  ${name}`), `${sha256(receipt)}  ${receiptName}`];

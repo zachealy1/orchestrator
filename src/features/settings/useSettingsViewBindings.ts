@@ -80,6 +80,7 @@ export function useSettingsViewBindings(input: SettingsViewBindings) {
       currentModel.accounts,
       currentModel.alwaysAllowedApplications,
       currentModel.authMessage,
+      currentModel.authError,
       currentModel.browserPreferences,
       currentModel.browserReadiness,
       currentModel.codexConnected,
