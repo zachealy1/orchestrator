@@ -282,6 +282,7 @@ export function KanbanCardDialog({
                   <span>Title</span>
                   <input
                     ref={titleRef}
+                    spellCheck={true}
                     value={draft.title}
                     maxLength={160}
                     disabled={saving}
@@ -293,6 +294,7 @@ export function KanbanCardDialog({
                 <label className="kanban-field">
                   <span>Description</span>
                   <textarea
+                    spellCheck={true}
                     ref={descriptionRef}
                     value={draft.description}
                     rows={5}

@@ -220,7 +220,7 @@ export const TaskChatTurn = memo(function TaskChatTurn({
             }}
           >
             <article className="submitted-prompt editing" aria-label="Submitted prompt">
-              <textarea
+              <textarea spellCheck={true}
                 aria-label="Edit submitted prompt"
                 value={editingPrompt}
                 onChange={(event) => onEditingPromptChange(event.target.value)}
@@ -2136,7 +2136,7 @@ const NativePlanCard = memo(function NativePlanCard({
           }}
         >
           <label htmlFor={`plan-revision-${entry.clientId}`}>What should change?</label>
-          <textarea
+          <textarea spellCheck={true}
             id={`plan-revision-${entry.clientId}`}
             value={revision}
             onChange={(event) => setRevision(event.target.value)}
@@ -2430,7 +2430,7 @@ const UserInputQuestionCard = memo(function UserInputQuestionCard({
                   aria-hidden="true"
                 />
                 {question.isSecret ? (
-                  <input
+                  <input spellCheck={false}
                     className="native-user-input-other"
                     type="password"
                     aria-label={`None of the above: ${question.question}`}
@@ -2449,7 +2449,7 @@ const UserInputQuestionCard = memo(function UserInputQuestionCard({
                     }}
                   />
                 ) : (
-                  <textarea
+                  <textarea spellCheck={true}
                     className="native-user-input-other"
                     aria-label={`None of the above: ${question.question}`}
                     placeholder="None of the above - type your instructions"
@@ -2472,7 +2472,7 @@ const UserInputQuestionCard = memo(function UserInputQuestionCard({
             ) : null}
           </div>
         ) : (
-          <input
+          <input spellCheck={!question.isSecret}
             type={question.isSecret ? "password" : "text"}
             aria-label={question.question}
             value={selected}
