@@ -32,6 +32,7 @@ import {
   type Ref,
 } from "react";
 import { createPortal } from "react-dom";
+import { version as appVersion } from "../../../package.json";
 import { OrchestratorMark } from "../../components/OrchestratorMark";
 import type {
   AgentNotificationPermissionStatus,
@@ -772,6 +773,26 @@ export const SettingsView = memo(function SettingsView({
                   );
                 })
               )}
+            </div>
+          </div>
+        </section>
+      ) : null}
+
+      {matchesSettings("about", "orchestrator", "app version", appVersion.toLowerCase()) ? (
+        <section
+          className="surface settings-panel"
+          aria-label="About Orchestrator"
+          id="settings-about"
+        >
+          <div className="surface-header settings-detail-header">
+            <h2>About Orchestrator</h2>
+          </div>
+          <div className="setting-list">
+            <div className="setting-row">
+              <div>
+                <strong>App version</strong>
+                <span>{appVersion}</span>
+              </div>
             </div>
           </div>
         </section>
