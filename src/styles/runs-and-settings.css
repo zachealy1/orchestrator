@@ -711,10 +711,6 @@ button.settings-connection-row:focus-visible:not(:disabled) {
   font-size: 0.76rem;
 }
 
-.computer-use-runtime-error .link-button {
-  margin-left: 8px;
-}
-
 .plugins-page {
   display: grid;
   width: min(1480px, 100%);
@@ -771,7 +767,6 @@ button.settings-connection-row:focus-visible:not(:disabled) {
   grid-template-columns: minmax(0, 1fr) auto;
   align-items: center;
   gap: 12px;
-  border-bottom: 1px solid var(--color-divider);
   padding-bottom: 16px;
 }
 
@@ -851,6 +846,7 @@ button.settings-connection-row:focus-visible:not(:disabled) {
 .plugins-catalog {
   display: grid;
   gap: 24px;
+  border-top: 1px solid var(--color-divider);
   padding-top: 20px;
 }
 
@@ -1704,16 +1700,6 @@ button.plugin-card-open-button:active:not(:disabled) {
   background: var(--color-primary);
 }
 
-.computer-use-settings-panel .settings-detail-header {
-  position: relative;
-  z-index: 2;
-}
-
-.computer-use-settings-panel .setting-list {
-  position: relative;
-  z-index: 1;
-}
-
 .settings-status-popover {
   position: relative;
   flex: 0 0 auto;
@@ -1746,11 +1732,9 @@ button.settings-status-popover-trigger:focus-visible {
 }
 
 .settings-status-popover-panel {
-  position: absolute;
-  top: calc(100% + 12px);
-  right: 0;
-  z-index: 30;
-  width: min(380px, calc(100vw - 72px));
+  position: fixed;
+  z-index: 300;
+  width: min(380px, calc(100vw - 24px));
   overflow: visible;
   border: 0;
   border-radius: 8px;
@@ -1761,12 +1745,24 @@ button.settings-status-popover-trigger:focus-visible {
 .settings-status-popover-panel::before {
   position: absolute;
   top: -6px;
-  right: 12px;
+  left: var(--status-arrow-left, 12px);
   width: 10px;
   height: 10px;
   background: var(--color-background);
   content: "";
   transform: rotate(45deg);
+}
+
+.settings-status-popover-panel[data-placement="above"]::before {
+  top: auto;
+  bottom: -6px;
+}
+
+.settings-status-popover-scroll {
+  max-height: inherit;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  border-radius: inherit;
 }
 
 .settings-status-popover-copy {
@@ -1783,6 +1779,7 @@ button.settings-status-popover-trigger:focus-visible {
 
 .settings-status-popover-copy span {
   overflow-wrap: anywhere;
+  white-space: pre-wrap;
   color: var(--color-text-secondary);
   font-size: 0.8rem;
   line-height: 1.4;
@@ -2100,16 +2097,6 @@ button.settings-navigation-row:focus-visible:not(:disabled) {
   padding-inline: 7px;
   text-overflow: ellipsis;
   white-space: nowrap;
-}
-
-.computer-use-runtime-error {
-  margin: 18px;
-  border-radius: 6px;
-  background: rgb(var(--error-rgb) / 0.08);
-  color: var(--color-error);
-  font-size: 0.82rem;
-  line-height: 1.45;
-  padding: 10px 12px;
 }
 
 .github-settings-panel .setting-row {

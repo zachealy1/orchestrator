@@ -6,6 +6,7 @@ import assert from "node:assert/strict";
 import { engineRelease, verifyRuntimeFiles } from "../codex-engine-package.mjs";
 import { distribution, validateAppSignature } from "./distribution.mjs";
 import { confidentialRun } from "./safe-process.mjs";
+import { sha256 } from "./lib.mjs";
 const profile = distribution(process.env.RELEASE_DISTRIBUTION ?? "notarized");
 const [directory, arch] = process.argv.slice(2);
 assert.ok(["aarch64", "x86_64"].includes(arch));
@@ -35,8 +36,17 @@ async function inspectApp(app) {
   for (const name of ["codex", "codex-code-mode-host"]) {
     assert.equal(run("lipo", ["-archs", join(engineDirectory, name)]).trim(), arch === "aarch64" ? "arm64" : "x86_64");
   }
-  run("cargo", ["run", "--quiet", "--manifest-path", "src-tauri/Cargo.toml", "--features", "dev-tools", "--bin", "verify-codex-engine", "--", join(engineDirectory, "codex"), pin.version]);
-  assert.ok(run(join(runtime, `github-cli/darwin-${suffix}/bin/gh`), ["--version"]).startsWith("gh version "));
+  const ghDirectory = join(runtime, `github-cli/darwin-${suffix}`);
+  const ghBinary = join(ghDirectory, "bin/gh");
+  const ghManifest = JSON.parse(await readFile(join(ghDirectory, "runtime.json"), "utf8"));
+  assert.equal(ghManifest.architecture, suffix);
+  assert.equal(ghManifest.executable, "bin/gh");
+  assert.equal(ghManifest.executableSha256, sha256(await readFile(ghBinary)));
+  assert.equal(run("lipo", ["-archs", ghBinary]).trim(), arch === "aarch64" ? "arm64" : "x86_64");
+  if (profile === "notarized") {
+    run("cargo", ["run", "--quiet", "--manifest-path", "src-tauri/Cargo.toml", "--features", "dev-tools", "--bin", "verify-codex-engine", "--", join(engineDirectory, "codex"), pin.version]);
+    assert.ok(run(ghBinary, ["--version"]).startsWith("gh version "));
+  }
   await readFile(join(runtime, "codex-engine/LICENSE")); await readFile(join(runtime, "github-cli/LICENSE"));
   await readFile(join(runtime, "notices/THIRD-PARTY-NOTICES.txt"));
   const mainBytes = await readFile(executable);

@@ -517,6 +517,19 @@ export function inspectPromptQueueContext(
   );
 }
 
+export function prepareGoalContext(input: {
+  accountId: number;
+  objective: string;
+  contextJson: string | null;
+  imagePaths: string[];
+}) {
+  return commands.prepareGoalContext(input.accountId, input.objective, input.contextJson, input.imagePaths);
+}
+
+export function discardGoalContext(accountId: number, directoryPath: string) {
+  return commands.discardGoalContext(accountId, directoryPath);
+}
+
 export function runPreflight(input: {
   workspace: Workspace;
   prompt: string;
@@ -681,14 +694,16 @@ function extractCodexSkills(payload: unknown): CodexSkillSummary[] {
         readString(item.displayName) ??
         id;
 
-      if (!id || !name || seen.has(id)) {
+      const identity = readString(item.path) ?? id;
+      if (!id || !name || !identity || seen.has(identity)) {
         return null;
       }
 
-      seen.add(id);
+      seen.add(identity);
       return {
         id,
         name,
+        ...(readString(item.path) ? { path: readString(item.path)! } : {}),
         description:
           readString(item.description) ??
           readString(item.shortDescription) ??

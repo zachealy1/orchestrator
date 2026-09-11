@@ -1,5 +1,4 @@
 import {
-  Accessibility,
   Bell,
   Check,
   ChevronRight,
@@ -15,7 +14,6 @@ import {
   Puzzle,
   RefreshCw,
   RotateCcw,
-  ScreenShare,
   Search,
   Trash2,
   UserRound,
@@ -53,12 +51,19 @@ import type { CodexLoginState } from "../codex/types";
 import type { CodexAccountProfile } from "../accounts/types";
 import type { GithubConnectionStatus } from "../github/api";
 
-type SettingsStatusTone = "positive" | "negative" | "neutral" | "pending";
-
-type SettingsDetailStatus = {
-  label: string;
-  tone: SettingsStatusTone;
-};
+import {
+  SettingsStatusBadge,
+  SettingsStatusPopover,
+  SettingsStatusProvider,
+  type SettingsDetailStatus,
+} from "./SettingsStatusPopover";
+import {
+  accountStatusDetails,
+  browserStatusDetails,
+  computerUseStatusDetails,
+  githubStatusDetails,
+  notificationStatusDetails,
+} from "./settingsStatusDetails";
 
 type ComputerUsePermissionState = "verified" | "denied" | "unverified";
 
@@ -133,6 +138,7 @@ export type SettingsViewModel = {
   activeRunAccountIds: ReadonlySet<number>;
   runIsActive: boolean;
   authMessage: string;
+  authError: string | null;
   showLogout: boolean;
 };
 
@@ -171,9 +177,11 @@ export type SettingsViewActions = {
 export const SettingsView = memo(function SettingsView({
   model,
   actions,
+  active = true,
 }: {
   model: SettingsViewModel;
   actions: SettingsViewActions;
+  active?: boolean;
 }) {
   const [searchQuery, setSearchQuery] = useState("");
   const [browserDataConfirmationOpen, setBrowserDataConfirmationOpen] =
@@ -199,8 +207,26 @@ export const SettingsView = memo(function SettingsView({
   );
   const browserReadinessChecking =
     model.pluginsLoading || model.browserReadiness.checking;
-  const browserRuntimeUnavailable = !browserReadinessChecking &&
-    !model.browserReadiness.available && !model.browserReadiness.checkFailed;
+  const browserStatus = browserStatusDetails(
+    model.browserReadiness,
+    browserReadinessChecking,
+    actions.openPlugins,
+    actions.refreshBrowserStatus,
+  );
+  const githubStatus = githubStatusDetails(
+    model.githubConnection,
+    model.githubConnectionPending,
+    actions.connectGithub,
+  );
+  const authErrorHasAccount = model.accounts.some(
+    (account) => account.id === model.selectedAccountId,
+  );
+  const connectionError = !authErrorHasAccount ? model.authError : null;
+  const browserPluginUnavailable =
+    !browserReadinessChecking &&
+    !model.browserReadiness.checkFailed &&
+    (!model.browserReadiness.pluginInstalled ||
+      !model.browserReadiness.pluginEnabled);
   const externalBrowserPlugins = ["chrome", "edge", "brave", "opera", "vivaldi"]
     .map((name) => findPlugin(model.pluginCatalog, name))
     .filter((plugin) => plugin !== null);
@@ -237,7 +263,7 @@ export const SettingsView = memo(function SettingsView({
   };
 
   return (
-    <>
+    <SettingsStatusProvider scope={model.selectedAccountId} active={active}>
       <SettingsOverview
         model={model}
         actions={actions}
@@ -261,15 +287,8 @@ export const SettingsView = memo(function SettingsView({
           <SettingsDetailHeader
             icon={Monitor}
             title="Browser"
-            status={
-              browserReadinessChecking
-                ? { label: "Checking", tone: "pending" }
-                : model.browserReadiness.available
-                  ? { label: "Available", tone: "positive" }
-                  : model.browserReadiness.checkFailed
-                    ? { label: "Not checked", tone: "neutral" }
-                    : { label: "Unavailable", tone: "negative" }
-            }
+            status={browserStatus.status}
+            statusContent={<SettingsStatusPopover {...browserStatus} />}
           />
           <div className="setting-list">
             {browserReadinessChecking ? (
@@ -277,12 +296,13 @@ export const SettingsView = memo(function SettingsView({
                 <div>
                   <strong>In-app browser</strong>
                   <span>
-                    Uses a persistent profile that is isolated from your regular browser.
+                    Uses a persistent profile that is isolated from your regular
+                    browser.
                   </span>
                 </div>
                 <SettingsStatusBadge label="Checking" tone="pending" />
               </div>
-            ) : browserRuntimeUnavailable ? (
+            ) : browserPluginUnavailable ? (
               <SettingsNavigationRow
                 label="In-app browser"
                 description="Uses a persistent profile that is isolated from your regular browser."
@@ -294,19 +314,22 @@ export const SettingsView = memo(function SettingsView({
                 <div>
                   <strong>In-app browser</strong>
                   <span>
-                    Uses a persistent profile that is isolated from your regular browser.
+                    Uses a persistent profile that is isolated from your regular
+                    browser.
                   </span>
                 </div>
-                <SettingsStatusBadge
-                  label={model.browserReadiness.checkFailed ? "Not checked" : "Ready"}
-                  tone={model.browserReadiness.checkFailed ? "neutral" : "positive"}
-                />
+                {model.browserReadiness.available && (
+                  <SettingsStatusBadge label="Ready" tone="positive" />
+                )}
               </div>
             )}
             <div className="setting-row">
               <div>
                 <strong>Browser data</strong>
-                <span>Clear cookies, site data, cache, and task tabs from the isolated profile.</span>
+                <span>
+                  Clear cookies, site data, cache, and task tabs from the
+                  isolated profile.
+                </span>
               </div>
               <SettingsIconAction
                 icon={Trash2}
@@ -321,7 +344,10 @@ export const SettingsView = memo(function SettingsView({
             <div className="setting-row">
               <div>
                 <strong>Download location</strong>
-                <span>{model.browserPreferences.downloadLocation ?? "System Downloads folder"}</span>
+                <span>
+                  {model.browserPreferences.downloadLocation ??
+                    "System Downloads folder"}
+                </span>
               </div>
               <div className="button-row compact">
                 {model.browserPreferences.downloadLocation ? (
@@ -343,7 +369,10 @@ export const SettingsView = memo(function SettingsView({
             <label className="setting-row checkbox-setting">
               <div>
                 <strong>Ask where to save downloads</strong>
-                <span>Choose a location each time the in-app browser downloads a file.</span>
+                <span>
+                  Choose a location each time the in-app browser downloads a
+                  file.
+                </span>
               </div>
               <SettingsSwitch
                 ariaLabel="Ask where to save browser downloads"
@@ -355,34 +384,43 @@ export const SettingsView = memo(function SettingsView({
               <div>
                 <strong>Import browser profile</strong>
                 <span>
-                  {model.browserReadiness.profileImportAvailable
-                    ? "Import supported profile data into the isolated browser."
-                    : "Profile import is not available on this device."}
+                  Import supported profile data into the isolated browser.
                 </span>
               </div>
-              <SettingsIconAction
-                icon={Download}
-                ariaLabel="Import browser profile"
-                tooltip="Import browser profile"
-                disabled={!model.browserReadiness.profileImportAvailable}
-                onActivate={actions.importBrowserProfile}
-              />
+              <div className="button-row compact">
+                {!model.browserReadiness.profileImportAvailable && (
+                  <SettingsStatusPopover
+                    status={{ label: "Unavailable", tone: "negative" }}
+                    details={{
+                      title: "Profile import unavailable",
+                      description:
+                        "Profile import is not available on this device.",
+                    }}
+                  />
+                )}
+                <SettingsIconAction
+                  icon={Download}
+                  ariaLabel="Import browser profile"
+                  tooltip="Import browser profile"
+                  disabled={!model.browserReadiness.profileImportAvailable}
+                  onActivate={actions.importBrowserProfile}
+                />
+              </div>
             </div>
             <div className="setting-row">
               <div>
                 <strong>Browser runtime</strong>
-                <span
-                  className={browserRuntimeUnavailable ? "computer-use-runtime-error" : undefined}
-                  role={browserRuntimeUnavailable ? "alert" : undefined}
-                >
-                  {browserReadinessChecking ? "Checking this account’s browser runtime." : model.browserReadiness.message}
-                </span>
+                <span>Provides the isolated browser for this account.</span>
               </div>
               <SettingsIconAction
                 icon={RefreshCw}
                 ariaLabel="Refresh Browser status"
                 tooltip="Refresh Browser status"
-                disabled={browserReadinessChecking || !model.browserReadiness.pluginInstalled || !model.browserReadiness.pluginEnabled}
+                disabled={
+                  browserReadinessChecking ||
+                  !model.browserReadiness.pluginInstalled ||
+                  !model.browserReadiness.pluginEnabled
+                }
                 onActivate={actions.refreshBrowserStatus}
               />
             </div>
@@ -409,15 +447,15 @@ export const SettingsView = memo(function SettingsView({
             title="Computer use"
             status={computerUseStatus}
             statusContent={
-              <ComputerUseStatusPopover
+              <SettingsStatusPopover
                 status={computerUseStatus}
-                pluginPresent={computerUsePlugin !== null}
-                pluginReady={pluginIsReady(computerUsePlugin)}
-                runtimeStatus={model.desktopRuntimeStatus}
-                onOpenPlugins={actions.openPlugins}
-                onOpenScreenRecording={actions.openScreenRecordingSettings}
-                onOpenAccessibility={actions.openAccessibilitySettings}
-                onRefresh={actions.refreshComputerUseStatus}
+                details={computerUseStatusDetails(
+                  computerUseStatus,
+                  computerUsePlugin !== null,
+                  pluginIsReady(computerUsePlugin),
+                  model.desktopRuntimeStatus,
+                  actions,
+                )}
               />
             }
           />
@@ -425,7 +463,9 @@ export const SettingsView = memo(function SettingsView({
             <label className="setting-row checkbox-setting">
               <div>
                 <strong>Any App</strong>
-                <span>Let Codex control applications you approve on this Mac.</span>
+                <span>
+                  Let Codex control applications you approve on this Mac.
+                </span>
               </div>
               <SettingsSwitch
                 ariaLabel="Allow Computer Use with any approved app"
@@ -437,7 +477,9 @@ export const SettingsView = memo(function SettingsView({
             <div className="settings-subsection-heading">
               <div>
                 <strong>Connected controls</strong>
-                <span>Additional application controls supplied by installed plugins.</span>
+                <span>
+                  Additional application controls supplied by installed plugins.
+                </span>
               </div>
             </div>
             {externalBrowserPlugins.length > 0 ? (
@@ -468,7 +510,8 @@ export const SettingsView = memo(function SettingsView({
               <div>
                 <strong>macOS permissions</strong>
                 <span>
-                  Access is checked for this running copy of Orchestrator. The Computer Use helper may also request access.
+                  Access is checked for this running copy of Orchestrator. The
+                  Computer Use helper may also request access.
                 </span>
               </div>
               <SettingsIconAction
@@ -481,7 +524,9 @@ export const SettingsView = memo(function SettingsView({
             <PermissionRow
               label="Screen Recording"
               description="Allows Computer Use to see approved applications."
-              granted={model.desktopRuntimeStatus?.screenRecordingTrusted ?? null}
+              granted={
+                model.desktopRuntimeStatus?.screenRecordingTrusted ?? null
+              }
               onOpen={actions.openScreenRecordingSettings}
             />
             <PermissionRow
@@ -544,15 +589,8 @@ export const SettingsView = memo(function SettingsView({
           <SettingsDetailHeader
             icon={GitPullRequest}
             title="GitHub"
-            status={
-              model.githubConnectionPending
-                ? { label: "Connecting", tone: "pending" }
-                : model.githubConnection?.connected
-                  ? { label: "Connected", tone: "positive" }
-                  : model.githubConnection?.available === false
-                    ? { label: "Unavailable", tone: "negative" }
-                    : { label: "Disconnected", tone: "neutral" }
-            }
+            status={githubStatus.status}
+            statusContent={<SettingsStatusPopover {...githubStatus} />}
           />
           <div className="setting-list">
             <div className="setting-row">
@@ -566,8 +604,9 @@ export const SettingsView = memo(function SettingsView({
                 <span>
                   {model.githubConnection?.cliVersion
                     ? `GitHub CLI ${model.githubConnection.cliVersion}`
-                    : "GitHub CLI runtime not detected"}
-                  {model.githubConnection?.message
+                    : "Publish pull requests through the bundled GitHub CLI."}
+                  {model.githubConnectionPending &&
+                  model.githubConnection?.message
                     ? ` · ${model.githubConnection.message}`
                     : ""}
                 </span>
@@ -612,11 +651,7 @@ export const SettingsView = memo(function SettingsView({
         </section>
       ) : null}
 
-      {matchesSettings(
-        "accounts",
-        "codex",
-        "codex connection",
-      ) ? (
+      {matchesSettings("accounts", "codex", "codex connection") ? (
         <section
           className="surface settings-panel codex-settings-panel"
           aria-label="Codex settings"
@@ -629,6 +664,21 @@ export const SettingsView = memo(function SettingsView({
               model.codexConnected
                 ? { label: "Connected", tone: "positive" }
                 : { label: "Disconnected", tone: "neutral" }
+            }
+            statusContent={
+              <SettingsStatusPopover
+                status={
+                  connectionError
+                    ? { label: "Error", tone: "negative" }
+                    : model.codexConnected
+                      ? { label: "Connected", tone: "positive" }
+                      : { label: "Disconnected", tone: "neutral" }
+                }
+                details={accountStatusDetails(
+                  "Codex connection",
+                  connectionError,
+                )}
+              />
             }
           />
           <div className="setting-list">
@@ -671,9 +721,18 @@ export const SettingsView = memo(function SettingsView({
                     account.email && account.email !== account.label
                       ? `${account.email} · ${accountStateLabel}`
                       : accountStateLabel;
-                  const accountDetail = accountSigningIn ? `${accountSummary} · ${model.authMessage}` :
-                    accountSelected &&
-                    (model.loginState !== "idle" || !model.codexConnected)
+                  const accountError = !accountSigningIn
+                    ? ((accountSelected ? model.authError : null) ??
+                      account.last_error ??
+                      (account.status === "error"
+                        ? "Could not sign in to this account. Try again."
+                        : null))
+                    : null;
+                  const accountDetail = accountSigningIn
+                    ? `${accountSummary} · ${model.authMessage}`
+                    : accountSelected &&
+                        !accountError &&
+                        (model.loginState !== "idle" || !model.codexConnected)
                       ? model.authMessage
                       : accountSummary;
                   return (
@@ -702,6 +761,29 @@ export const SettingsView = memo(function SettingsView({
                         <span>{accountDetail}</span>
                       </div>
                       <div className="button-row compact">
+                        {accountError && (
+                          <SettingsStatusPopover
+                            status={{ label: "Error", tone: "negative" }}
+                            details={accountStatusDetails(
+                              account.label,
+                              accountError,
+                              account.status !== "signed_in" || accountSelected
+                                ? {
+                                    onActivate: () =>
+                                      account.status !== "signed_in"
+                                        ? actions.loginAccount(account)
+                                        : actions.connectAccount(account.id),
+                                    disabled:
+                                      account.status !== "signed_in"
+                                        ? accountHasActiveRun ||
+                                          model.loginState === "starting" ||
+                                          model.loginState === "waiting"
+                                        : model.runIsActive,
+                                  }
+                                : undefined,
+                            )}
+                          />
+                        )}
                         {accountSelected ? (
                           <SettingsStatusBadge
                             label="Selected"
@@ -784,7 +866,7 @@ export const SettingsView = memo(function SettingsView({
           onConfirm={() => void confirmBrowserDataClear()}
         />
       ) : null}
-    </>
+    </SettingsStatusProvider>
   );
 });
 
@@ -1096,7 +1178,7 @@ function SettingsStatusCard({
   label: string;
   value: string;
   healthy?: boolean;
-  tone?: SettingsStatusTone;
+  tone?: SettingsDetailStatus["tone"];
   targetId?: string;
   onActivate?: () => void;
 }) {
@@ -1324,270 +1406,6 @@ function SettingsDetailHeader({
   );
 }
 
-function ComputerUseStatusPopover({
-  status,
-  pluginPresent,
-  pluginReady,
-  runtimeStatus,
-  onOpenPlugins,
-  onOpenScreenRecording,
-  onOpenAccessibility,
-  onRefresh,
-}: {
-  status: SettingsDetailStatus;
-  pluginPresent: boolean;
-  pluginReady: boolean;
-  runtimeStatus: DesktopRuntimeStatus | null;
-  onOpenPlugins: () => void;
-  onOpenScreenRecording: () => void;
-  onOpenAccessibility: () => void;
-  onRefresh: () => void;
-}) {
-  const [open, setOpen] = useState(false);
-  const rootRef = useRef<HTMLDivElement>(null);
-  const triggerRef = useRef<HTMLButtonElement>(null);
-  const previouslyMissingPermissionsRef = useRef(false);
-  const titleId = useId();
-  const panelId = useId();
-  const missingScreenRecording =
-    runtimeStatus?.screenRecordingTrusted === false;
-  const missingAccessibility = runtimeStatus?.accessibilityTrusted === false;
-  const hasMissingPermissions =
-    pluginReady && (missingScreenRecording || missingAccessibility);
-  const needsPermissionReview =
-    pluginReady &&
-    runtimeStatus?.available === true &&
-    runtimeStatus.serviceCompatible === true &&
-    !hasMissingPermissions &&
-    (runtimeStatus.screenRecordingTrusted !== true ||
-      runtimeStatus.accessibilityTrusted !== true);
-  const showScreenRecording =
-    missingScreenRecording ||
-    (needsPermissionReview && runtimeStatus?.screenRecordingTrusted !== true);
-  const showAccessibility =
-    missingAccessibility ||
-    (needsPermissionReview && runtimeStatus?.accessibilityTrusted !== true);
-  const interactive =
-    status.label === "Unavailable" || status.label === "Review access";
-  const description = !pluginReady
-    ? pluginPresent
-      ? "Enable the Computer Use plugin to continue."
-      : "Install the Computer Use plugin to continue."
-    : runtimeStatus?.message
-      ? runtimeStatus.message
-      : hasMissingPermissions
-      ? missingScreenRecording && missingAccessibility
-        ? "Grant both permissions to continue."
-        : "Grant the required permission to continue."
-      : needsPermissionReview
-        ? "Computer Use verifies access when it starts. Check any permissions that are not yet verified."
-        : runtimeStatus?.message ?? "Computer Use is not ready on this Mac.";
-
-  useEffect(() => {
-    if (hasMissingPermissions && !previouslyMissingPermissionsRef.current) {
-      setOpen(true);
-    }
-    previouslyMissingPermissionsRef.current = hasMissingPermissions;
-  }, [hasMissingPermissions]);
-
-  useEffect(() => {
-    if (!interactive) {
-      setOpen(false);
-    }
-  }, [interactive]);
-
-  useEffect(() => {
-    if (!open) {
-      return;
-    }
-
-    const handlePointerDown = (event: PointerEvent) => {
-      if (!rootRef.current?.contains(event.target as Node)) {
-        setOpen(false);
-      }
-    };
-    const handleKeyDown = (event: KeyboardEvent) => {
-      if (event.key === "Escape") {
-        setOpen(false);
-        triggerRef.current?.focus();
-      }
-    };
-
-    document.addEventListener("pointerdown", handlePointerDown);
-    document.addEventListener("keydown", handleKeyDown);
-    return () => {
-      document.removeEventListener("pointerdown", handlePointerDown);
-      document.removeEventListener("keydown", handleKeyDown);
-    };
-  }, [open]);
-
-  const activate = (action: () => void) => {
-    setOpen(false);
-    action();
-  };
-
-  if (!interactive) {
-    return <SettingsStatusBadge {...status} />;
-  }
-
-  const unavailable = status.label === "Unavailable";
-  const title = unavailable
-    ? "Computer Use unavailable"
-    : "Computer Use access not verified";
-
-  return (
-    <div className="settings-status-popover" ref={rootRef}>
-      <span
-        className="sr-only"
-        role="status"
-        aria-label={status.label}
-        aria-live="polite"
-      >
-        {status.label}
-      </span>
-      <button
-        className={`settings-status-badge settings-status-popover-trigger ${status.tone}`}
-        type="button"
-        ref={triggerRef}
-        aria-label={`${title}. Show details`}
-        aria-expanded={open}
-        aria-controls={panelId}
-        aria-haspopup="dialog"
-        onClick={() => setOpen((current) => !current)}
-      >
-        <span className="settings-status-badge-dot" aria-hidden="true" />
-        {status.label}
-      </button>
-      {open ? (
-        <div
-          className="settings-status-popover-panel"
-          id={panelId}
-          role="dialog"
-          aria-labelledby={titleId}
-        >
-          <div className="settings-status-popover-copy">
-            <strong id={titleId}>{title}</strong>
-            <span>{description}</span>
-          </div>
-          <div className="settings-status-popover-actions">
-            {!pluginReady ? (
-              <StatusPopoverAction
-                label="Open Plugins"
-                icon={ChevronRight}
-                onActivate={() => activate(onOpenPlugins)}
-              />
-            ) : hasMissingPermissions || needsPermissionReview ? (
-              <>
-                {showScreenRecording ? (
-                  <PermissionChecklistAction
-                    label="Screen Recording"
-                    ariaLabel="Open Screen Recording settings"
-                    icon={ScreenShare}
-                    state={missingScreenRecording ? "required" : "unverified"}
-                    onActivate={() => activate(onOpenScreenRecording)}
-                  />
-                ) : null}
-                {showAccessibility ? (
-                  <PermissionChecklistAction
-                    label="Accessibility"
-                    ariaLabel="Open Accessibility settings"
-                    icon={Accessibility}
-                    state={missingAccessibility ? "required" : "unverified"}
-                    onActivate={() => activate(onOpenAccessibility)}
-                  />
-                ) : null}
-                <div className="settings-status-popover-separator" />
-                <StatusPopoverAction
-                  label="Check again"
-                  icon={RefreshCw}
-                  onActivate={() => activate(onRefresh)}
-                />
-              </>
-            ) : (
-              <StatusPopoverAction
-                label="Check again"
-                icon={RefreshCw}
-                onActivate={() => activate(onRefresh)}
-              />
-            )}
-          </div>
-        </div>
-      ) : null}
-    </div>
-  );
-}
-
-function PermissionChecklistAction({
-  label,
-  ariaLabel,
-  icon: Icon,
-  state,
-  onActivate,
-}: {
-  label: string;
-  ariaLabel: string;
-  icon: typeof Monitor;
-  state: "required" | "unverified";
-  onActivate: () => void;
-}) {
-  return (
-    <button
-      className="settings-status-popover-permission"
-      type="button"
-      aria-label={ariaLabel}
-      onClick={onActivate}
-    >
-      <Icon size={18} aria-hidden="true" />
-      <span className="settings-status-popover-permission-label">{label}</span>
-      <span className={`settings-status-popover-permission-state ${state}`}>
-        <span
-          className="settings-status-popover-permission-state-dot"
-          aria-hidden="true"
-        />
-        {state === "required" ? "Required" : "Not verified"}
-      </span>
-      <ChevronRight size={16} aria-hidden="true" />
-    </button>
-  );
-}
-
-function StatusPopoverAction({
-  label,
-  ariaLabel,
-  icon: Icon,
-  onActivate,
-}: {
-  label: string;
-  ariaLabel?: string;
-  icon: typeof Monitor;
-  onActivate: () => void;
-}) {
-  return (
-    <button
-      className="settings-status-popover-action"
-      type="button"
-      aria-label={ariaLabel}
-      onClick={onActivate}
-    >
-      <Icon size={16} aria-hidden="true" />
-      <span>{label}</span>
-    </button>
-  );
-}
-
-function SettingsStatusBadge({ label, tone }: SettingsDetailStatus) {
-  return (
-    <span
-      className={`settings-status-badge ${tone}`}
-      role="status"
-      aria-label={label}
-    >
-      <span className="settings-status-badge-dot" aria-hidden="true" />
-      {label}
-    </span>
-  );
-}
-
 function NotificationSettings({
   model,
   actions,
@@ -1605,6 +1423,15 @@ function NotificationSettings({
         icon={Bell}
         title="Agent alerts"
         status={notificationSettingsStatus(model.notificationPermission)}
+        statusContent={
+          <SettingsStatusPopover
+            status={notificationSettingsStatus(model.notificationPermission)}
+            details={notificationStatusDetails(
+              model.notificationPermission,
+              actions.openNotificationSettings,
+            )}
+          />
+        }
       />
       <div className="setting-list">
         <NotificationToggle
@@ -1660,7 +1487,9 @@ function NotificationSettings({
             <div className="setting-row notification-permission-row">
               <div>
                 <strong>System notifications</strong>
-                <span>Allow Orchestrator to deliver the selected agent alerts.</span>
+                <span>
+                  Allow Orchestrator to deliver the selected agent alerts.
+                </span>
               </div>
               <SettingsIconAction
                 icon={Bell}

@@ -423,7 +423,7 @@ describe("codexEventReducer", () => {
     expect(state.nativePlan.reviewState).toBe("available");
   });
 
-  it("recovers a plain final answer from a completed Plan-mode turn", () => {
+  it("keeps a plain Plan-mode reply as conversation, without granting implementation approval", () => {
     const markdown = [
       "# Implementation plan",
       "",
@@ -464,15 +464,9 @@ describe("codexEventReducer", () => {
       params: { turn: { id: "turn-plan", status: "completed" } },
     });
 
-    expect(state.finalMessage).toBe("");
-    expect(state.latestPlan).toBe(markdown);
+    expect(state.finalMessage).toBe(markdown);
     expect(state.nativePlan).toMatchObject({
-      planItemId: "plain-plan-message",
-      previewText: markdown,
-      completedText: markdown,
-      completedTurnId: "turn-plan",
-      phase: "awaiting-approval",
-      reviewState: "available",
+      planItemId: null, completedText: "", phase: "awaiting-clarification", reviewState: "none",
     });
   });
 

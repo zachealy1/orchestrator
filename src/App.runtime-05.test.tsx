@@ -243,7 +243,7 @@ describe("Application runtime scenarios 5", () => {
       const { user } = await renderApp();
 
       await user.click(screen.getByRole("button", { name: "Settings" }));
-      expect(await screen.findByText("Denied")).toBeInTheDocument();
+      expect(await screen.findByRole("button", { name: "Notifications denied. Show details" })).toBeInTheDocument();
       await user.click(
         screen.getByRole("button", {
           name: "Open macOS notification settings",
@@ -1100,9 +1100,12 @@ describe("Application runtime scenarios 5", () => {
       const computerUse = await screen.findByRole("region", {
         name: "Computer use settings",
       });
-      const initialDialog = await within(computerUse).findByRole("dialog", {
-        name: "Computer Use unavailable",
+      const initialTrigger = await within(computerUse).findByRole("button", {
+        name: "Computer Use unavailable. Show details",
       });
+      expect(screen.queryByRole("dialog", { name: "Computer Use unavailable" })).toBeNull();
+      await user.click(initialTrigger);
+      const initialDialog = screen.getByRole("dialog", { name: "Computer Use unavailable" });
       expect(
         within(initialDialog).getByRole("button", {
           name: "Open Accessibility settings",
@@ -1129,7 +1132,7 @@ describe("Application runtime scenarios 5", () => {
           within(computerUse).getByRole("status", { name: "Available" }),
         ).toBeInTheDocument(),
       );
-      expect(within(computerUse).queryByRole("dialog")).toBeNull();
+      expect(screen.queryByRole("dialog", { name: "Computer Use unavailable" })).toBeNull();
 
       mocks.readDesktopRuntimeStatusMock.mockResolvedValue({
         available: true,
@@ -1141,9 +1144,12 @@ describe("Application runtime scenarios 5", () => {
       });
       act(() => window.dispatchEvent(new Event("focus")));
 
-      const refreshedDialog = await within(computerUse).findByRole("dialog", {
-        name: "Computer Use unavailable",
+      const refreshedTrigger = await within(computerUse).findByRole("button", {
+        name: "Computer Use unavailable. Show details",
       });
+      expect(screen.queryByRole("dialog", { name: "Computer Use unavailable" })).toBeNull();
+      await user.click(refreshedTrigger);
+      const refreshedDialog = screen.getByRole("dialog", { name: "Computer Use unavailable" });
       expect(
         within(refreshedDialog).getByRole("button", {
           name: "Open Screen Recording settings",
@@ -1202,15 +1208,20 @@ describe("Application runtime scenarios 5", () => {
       const settings = screen.getByRole("region", {
         name: "Browser settings",
       });
-      expect(await within(settings).findByText("Unavailable")).toBeInTheDocument();
-      expect(within(settings).getByRole("alert")).toHaveTextContent(
-        "Browser plugin is not available from configured marketplaces.",
-      );
+      const trigger = await within(settings).findByRole("button", { name: "Browser unavailable. Show details" });
+      expect(within(settings).queryByText("Browser plugin is not available from configured marketplaces.")).toBeNull();
+      await user.click(trigger);
+      const dialog = screen.getByRole("dialog", { name: "Browser unavailable" });
+      expect(dialog).toHaveTextContent("Browser plugin is not available from configured marketplaces.");
       expect(
         within(settings).getByRole("button", {
           name: "Open Plugins for the in-app browser",
         }),
       ).toBeVisible();
+      await user.click(within(dialog).getByRole("button", { name: "Open Plugins" }));
+      expect(screen.queryByRole("dialog", { name: "Browser unavailable" })).toBeNull();
+      await user.click(screen.getByRole("button", { name: "Settings" }));
+      expect(screen.queryByRole("dialog", { name: "Browser unavailable" })).toBeNull();
     });
 
   it("returns a plugin overview to the catalog when Plugins is selected again", async () => {
@@ -1845,6 +1856,7 @@ describe("Application runtime scenarios 5", () => {
           additionalContext?: Record<string, { value?: string }>;
         }
       )?.additionalContext?.["chat:previous-turns"]?.value;
+      expect(handoffTurn?.[2]).toMatchObject({ input: [{ type: "text", text: "Polish gamepad input", text_elements: [] }], multiAgentMode: "explicitRequestOnly", collaborationMode: { settings: { developer_instructions: null } } });
       expect(handoffContext).toContain("Build responsive Snake controls");
       expect(handoffContext).toContain("Add keyboard and touch controls");
       expect(handoffContext).toContain("Implemented the control system");

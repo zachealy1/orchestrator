@@ -354,7 +354,8 @@ export function createTaskChatEntryFromHistoryRun(
   );
   const plainPlanFallbackAllowed =
     run.collaboration_mode === "plan" &&
-    (run.run_intent === "plan" || run.run_intent === "plan-revision");
+    (run.run_intent === "plan" || run.run_intent === "plan-revision") &&
+    Boolean(run.error?.includes(MISSING_REVIEWABLE_PLAN_ERROR));
   const normalizedPlan = normalizeHistoricalProposedPlan(
     run.final_message ?? "",
     run.completed_plan_text,

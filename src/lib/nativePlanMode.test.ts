@@ -1,8 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
-  composeOrchestratorDeveloperInstructions,
-  GENERATED_IMAGE_HANDLING_POLICY,
-  PLAN_MODE_OUTPUT_POLICY,
+  withNativeModeDefaults,
   isNativeUserInputRequest,
   isNativePlanItem,
   readThreadStatus,
@@ -25,33 +23,20 @@ describe("nativePlanMode", () => {
       settings: {
         model: "gpt-5.4",
         reasoning_effort: "medium",
-        developer_instructions: `${GENERATED_IMAGE_HANDLING_POLICY}\n\n${PLAN_MODE_OUTPUT_POLICY}`,
+        developer_instructions: null,
       },
     });
     expect(modes.default.settings.reasoning_effort).toBe("high");
   });
 
-  it("composes the generated-image policy exactly once with upstream instructions", () => {
-    const upstream = "Preserve the existing application architecture.";
-    const composed = composeOrchestratorDeveloperInstructions(upstream);
-
-    expect(composed).toBe(`${upstream}\n\n${GENERATED_IMAGE_HANDLING_POLICY}`);
-    expect(composeOrchestratorDeveloperInstructions(composed)).toBe(composed);
-    expect(composeOrchestratorDeveloperInstructions(null)).toBe(
-      GENERATED_IMAGE_HANDLING_POLICY,
-    );
-  });
-
-  it("preserves Plan output instructions when adding Orchestrator policies", () => {
-    const upstream = "Preserve the existing application architecture.";
-    const composed = composeOrchestratorDeveloperInstructions(upstream, "plan");
-
-    expect(composed).toBe(
-      `${upstream}\n\n${GENERATED_IMAGE_HANDLING_POLICY}\n\n${PLAN_MODE_OUTPUT_POLICY}`,
-    );
-    expect(composeOrchestratorDeveloperInstructions(composed, "plan")).toBe(
-      composed,
-    );
+  it("discards persisted app instructions without changing model or effort", () => {
+    const saved = { mode: "default" as const, settings: {
+      model: "gpt-5.5", reasoning_effort: "high", developer_instructions: "Implement everything.",
+    } };
+    expect(withNativeModeDefaults(saved)).toEqual({ ...saved, settings: {
+      ...saved.settings, developer_instructions: null,
+    } });
+    expect(saved.settings.developer_instructions).toBe("Implement everything.");
   });
 
   it("fails closed when native Plan support is incomplete", () => {

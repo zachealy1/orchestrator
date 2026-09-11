@@ -24,7 +24,6 @@ export type PreflightReport = {
   tokenEstimate: number;
   contextBudget: number;
   routeRecommendation: RouteRecommendation;
-  improvedPrompt: string;
   checks: PreflightCheck[];
   recommendations: RecommendationDraft[];
 };

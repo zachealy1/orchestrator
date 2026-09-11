@@ -16,6 +16,15 @@ describe("settings connection styles", () => {
     expect(copyRule).toContain("grid-template-columns: minmax(0, 1fr)");
     expect(textRule).toContain("overflow-wrap: anywhere");
   });
+  it("constrains diagnostic scrolling without clipping the anchored arrow", () => {
+    const root = postcss.parse(css);
+    const rules = new Map<string, string>();
+    root.walkRules((rule) => { rules.set(rule.selector, rule.toString()); });
+    expect(rules.get(".settings-status-popover-scroll")).toContain("max-height: inherit");
+    expect(rules.get(".settings-status-popover-scroll")).toContain("overflow-y: auto");
+    expect(rules.get(".settings-status-popover-copy span")).toContain("white-space: pre-wrap");
+    expect(css).not.toContain(".computer-use-runtime-error");
+  });
   it("matches Settings avatars to the plugin avatar surface", () => {
     const root = postcss.parse(css);
     let avatarRule = "";
@@ -74,7 +83,7 @@ describe("settings connection styles", () => {
     }
   });
 
-  it("anchors Computer Use remediation to a labeled status popover", () => {
+  it("anchors Settings remediation to a labeled status popover", () => {
     const root = postcss.parse(css);
     let triggerRule = "";
     let triggerHoverRule = "";
@@ -175,8 +184,8 @@ describe("settings connection styles", () => {
       "background: var(--color-button-active)",
     );
 
-    expect(panelRule).toContain("position: absolute");
-    expect(panelRule).toContain("right: 0");
+    expect(panelRule).toContain("position: fixed");
+    expect(panelRule).toContain("calc(100vw - 24px)");
     expect(panelRule).toContain("border: 0");
     expect(panelRule).toContain("border-radius: 8px");
     expect(panelRule).toContain("background: var(--color-background)");
