@@ -2828,7 +2828,7 @@ const ApprovalCard = memo(function ApprovalCard({
                 disabled={disabled}
                 aria-label={choice.label}
                 aria-describedby={descriptionId}
-                data-tooltip={`${choice.label}: ${description}`}
+                data-tooltip={description}
                 onClick={() => onResolveRequest(request, choice)}
               >
                 <ApprovalChoiceIcon choice={choice} />
