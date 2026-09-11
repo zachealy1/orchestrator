@@ -7,6 +7,7 @@ import {
   ExternalLink,
   GitPullRequest,
   FolderOpen,
+  Info,
   LogIn,
   LogOut,
   Loader2,
@@ -784,9 +785,7 @@ export const SettingsView = memo(function SettingsView({
           aria-label="About Orchestrator"
           id="settings-about"
         >
-          <div className="surface-header settings-detail-header">
-            <h2>About Orchestrator</h2>
-          </div>
+          <SettingsDetailHeader icon={Info} title="About Orchestrator" />
           <div className="setting-list">
             <div className="setting-row">
               <div>
@@ -1327,7 +1326,7 @@ function SettingsDetailHeader({
 }: {
   icon: typeof Monitor;
   title: string;
-  status: SettingsDetailStatus;
+  status?: SettingsDetailStatus;
   statusContent?: ReactNode;
 }) {
   return (
@@ -1340,7 +1339,7 @@ function SettingsDetailHeader({
           <h2>{title}</h2>
         </div>
       </div>
-      {statusContent ?? <SettingsStatusBadge {...status} />}
+      {statusContent ?? (status ? <SettingsStatusBadge {...status} /> : null)}
     </div>
   );
 }
