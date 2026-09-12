@@ -2607,15 +2607,3 @@ button.kanban-card-content {
   color: var(--color-text-secondary);
   line-height: 1.45;
 }
-
-.kanban-target-branch-host {
-  display: flex;
-  align-items: center;
-  min-width: 0;
-}
-
-.kanban-target-branch-fallback {
-  display: flex;
-  justify-content: flex-end;
-  padding: 8px 16px;
-}

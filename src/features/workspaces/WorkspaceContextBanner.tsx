@@ -36,7 +36,6 @@ export function WorkspaceContextBanner({
   surfaceMode,
   onSurfaceModeChange,
   kanbanToolbarHostRef,
-  kanbanBranchSelectorHostRef,
   branchManagementAvailable,
   repositoryPath,
   branch,
@@ -63,7 +62,6 @@ export function WorkspaceContextBanner({
   surfaceMode: "chat" | "kanban";
   onSurfaceModeChange: (mode: "chat" | "kanban") => void;
   kanbanToolbarHostRef?: RefCallback<HTMLDivElement>;
-  kanbanBranchSelectorHostRef?: RefCallback<HTMLDivElement>;
   branchManagementAvailable: boolean;
   repositoryPath: string | null;
   branch: string | null;
@@ -289,9 +287,6 @@ export function WorkspaceContextBanner({
         ) : null}
 
         <div className="workspace-context-actions" data-tauri-drag-region="false">
-        {surfaceMode === "kanban" ? (
-          <div className="kanban-target-branch-host" ref={kanbanBranchSelectorHostRef} />
-        ) : null}
         {surfaceMode === "chat" ? (
           <>
             {branchManagementAvailable ? (
