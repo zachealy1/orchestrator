@@ -191,7 +191,6 @@ function renderWorkspace(
   githubConnectionPending = false,
   sharedProfileAvailable = true,
   repositories: WorkspaceGitRepositoryStatus[] = [],
-  branchSelectorHost?: HTMLElement,
 ) {
   const workspaceRef = createRef<KanbanWorkspaceHandle>();
   const props = {
@@ -217,7 +216,6 @@ function renderWorkspace(
       githubConnection={githubConnection}
       githubConnectionPending={githubConnectionPending}
       toolbarHost={toolbarHost}
-      branchSelectorHost={branchSelectorHost}
       resolvedTheme="dark"
       {...props}
     />,
@@ -1324,7 +1322,7 @@ describe("KanbanWorkspace controller", () => {
 });
 
 
-describe("Kanban header target persistence", () => {
+describe("Kanban toolbar target persistence", () => {
   const repository: WorkspaceGitRepositoryStatus = {
     workspacePath: "/workspace", gitRoot: "/workspace/repo", currentBranch: "main", files: [],
     repository: { rootPath: "/workspace/repo", relativePath: "repo", label: "repo" },
@@ -1340,12 +1338,12 @@ describe("Kanban header target persistence", () => {
     return () => current;
   }
 
-  it("portals the selector to the header and remembers it across board remounts and filter saves", async () => {
+  it("keeps the selector in the toolbar and remembers it across board remounts and filter saves", async () => {
     const user = userEvent.setup();
     const current = persistBoard();
     const host = document.createElement("div");
     document.body.append(host);
-    const view = renderWorkspace(host, undefined, false, true, [repository], host);
+    const view = renderWorkspace(host, undefined, false, true, [repository]);
     const trigger = await within(host).findByRole("combobox", { name: "Target branch" });
     await waitFor(() => expect(trigger).toHaveTextContent("main"));
     await waitFor(() => expect(trigger).toBeEnabled());
@@ -1357,7 +1355,7 @@ describe("Kanban header target persistence", () => {
     expect(JSON.parse(current().preferencesJson).targetBranch).toEqual({ repositoryPath: "/workspace/repo", branch: "release" });
     view.unmount();
     clearKanbanWorkspaceCaches();
-    const reopened = renderWorkspace(host, undefined, false, true, [repository], host);
+    const reopened = renderWorkspace(host, undefined, false, true, [repository]);
     await waitFor(() => expect(within(host).getByRole("combobox", { name: "Target branch" })).toHaveTextContent("release"));
     reopened.unmount();
     host.remove();
@@ -1366,7 +1364,7 @@ describe("Kanban header target persistence", () => {
   it("disables card actions during saving and restores the old selection after failure", async () => {
     const user = userEvent.setup();
     persistBoard(JSON.stringify({ targetBranch: { repositoryPath: "/workspace/repo", branch: "main" } }));
-    const callbacks = renderWorkspace(null, undefined, false, true, [repository]);
+    const callbacks = renderWorkspace(undefined, undefined, false, true, [repository]);
     const trigger = await screen.findByRole("combobox", { name: "Target branch" });
     await waitFor(() => expect(trigger).toBeEnabled());
     let fail!: (error: Error) => void;

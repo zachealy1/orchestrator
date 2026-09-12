@@ -99,14 +99,12 @@ describe("WorkspaceContextBanner surface switch", () => {
 
   it("provides a toolbar host only while the Kanban surface is visible", () => {
     const hostRef = vi.fn();
-    const branchHostRef = vi.fn();
     const { unmount } = render(
       <WorkspaceContextBanner
         workspace={workspace}
         surfaceMode="kanban"
         onSurfaceModeChange={vi.fn()}
         kanbanToolbarHostRef={hostRef}
-        kanbanBranchSelectorHostRef={branchHostRef}
         branchManagementAvailable={false}
         repositoryPath={null}
         branch={null}
@@ -149,8 +147,6 @@ describe("WorkspaceContextBanner surface switch", () => {
     );
 
     expect(hostRef).toHaveBeenCalledWith(expect.any(HTMLDivElement));
-    const branchHost = branchHostRef.mock.calls.find(([element]) => element)?.[0] as HTMLElement;
-    expect(branchHost.closest(".workspace-context-actions")).toBeInTheDocument();
     expect(
       document.querySelector(".workspace-kanban-header-controls"),
     ).toBeInTheDocument();

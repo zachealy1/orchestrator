@@ -6,6 +6,7 @@ import {
   useRef,
   useState,
   type ChangeEvent,
+  type ReactNode,
 } from "react";
 import { ComposerSelect } from "../../../components/ComposerSelect";
 import { useDismissibleContextMenu } from "../../../shared/useDismissibleContextMenu";
@@ -17,6 +18,7 @@ import type {
 } from "./types";
 
 export type KanbanToolbarProps = {
+  branchSelector?: ReactNode;
   search: string;
   filters: KanbanFilterSelection;
   filterGroups: KanbanFilterGroup[];
@@ -45,6 +47,7 @@ const GROUP_OPTIONS: Array<{ value: KanbanGroupBy; label: string }> = [
 ];
 
 export function KanbanToolbar({
+  branchSelector,
   search,
   filters,
   filterGroups,
@@ -239,6 +242,7 @@ export function KanbanToolbar({
       ) : null}
 
       <div className="kanban-toolbar-spacer" />
+      {branchSelector}
       {onRefresh ? (
         <button
           type="button"

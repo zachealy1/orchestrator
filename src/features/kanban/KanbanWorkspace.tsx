@@ -159,7 +159,6 @@ type Props = {
   onShowGithubLogin: () => void;
   onStatusNotice?: (notice: FloatingStatusNotice) => void;
   toolbarHost?: HTMLElement | null;
-  branchSelectorHost?: HTMLElement | null;
   resolvedTheme: ResolvedTheme;
 };
 
@@ -723,7 +722,6 @@ function KanbanWorkspace({
   onShowGithubLogin,
   onStatusNotice,
   toolbarHost,
-  branchSelectorHost,
   resolvedTheme,
 }: Props, ref) {
   const initialCacheRef = useRef(readKanbanWorkspaceCache(workspace.id));
@@ -2218,6 +2216,7 @@ function KanbanWorkspace({
 
   const toolbar = (
     <KanbanToolbar
+      branchSelector={branchSelector}
       search={effectivePreferences.search}
       filters={effectivePreferences.filters}
       filterGroups={filterGroups}
@@ -2261,11 +2260,6 @@ function KanbanWorkspace({
       aria-busy={busy}
       data-active={active ? "true" : "false"}
     >
-      {branchSelectorHost
-        ? createPortal(branchSelector, branchSelectorHost)
-        : branchSelector ? (
-            <div className="kanban-target-branch-fallback">{branchSelector}</div>
-          ) : null}
       {githubConnection && !githubConnection.connected ? (
         <div
           className="kanban-workspace-alert github-warning"
