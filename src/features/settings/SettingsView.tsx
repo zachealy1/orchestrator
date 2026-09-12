@@ -750,6 +750,7 @@ export const SettingsView = memo(function SettingsView({
                       <div>
                         <input
                           defaultValue={account.label}
+                          spellCheck={true}
                           onBlur={(event) =>
                             actions.renameAccount(
                               account.id,
@@ -1008,6 +1009,7 @@ function SettingsOverview({
             value={searchQuery}
             placeholder="Search settings"
             aria-label="Search settings"
+            spellCheck={false}
             onChange={(event) => onSearchQueryChange(event.currentTarget.value)}
           />
         </label>

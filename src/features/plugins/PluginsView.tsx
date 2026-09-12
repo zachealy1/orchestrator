@@ -333,6 +333,7 @@ export const PluginsView = memo(function PluginsView({
                 value={query}
                 placeholder="Search plugins"
                 aria-label="Search plugins"
+                spellCheck={false}
                 onChange={(event) => {
                   setQuery(event.currentTarget.value);
                   setExplorePage(0);
