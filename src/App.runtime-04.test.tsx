@@ -759,6 +759,9 @@ describe("Application runtime scenarios 4", () => {
       await user.click(
         within(drawer).getByRole("button", { name: /board planning ticket/i }),
       );
+      // Complete the CSS transition explicitly so plan loading does not wait for its fallback timer.
+      fireEvent.transitionEnd(drawer, { propertyName: "transform" });
+      expect(drawer).toHaveClass("closed");
       await user.click(
         await screen.findByRole("button", { name: "Accept plan" }),
       );
@@ -813,6 +816,8 @@ describe("Application runtime scenarios 4", () => {
       await user.click(
         within(drawer).getByRole("button", { name: /board planning ticket/i }),
       );
+      fireEvent.transitionEnd(drawer, { propertyName: "transform" });
+      expect(drawer).toHaveClass("closed");
       await user.click(
         await screen.findByRole("button", { name: "Reject plan" }),
       );
