@@ -31,6 +31,8 @@ type Props = {
   menuClassName?: string;
   onChange: (value: string) => void;
   onAction?: (actionId: string) => void;
+  onOpen?: () => void;
+  tooltip?: string;
 };
 
 type Placement = "above" | "below";
@@ -47,6 +49,8 @@ export function ComposerSelect({
   menuClassName = "",
   onChange,
   onAction,
+  onOpen,
+  tooltip,
 }: Props) {
   const menuId = useId();
   const rootRef = useRef<HTMLDivElement>(null);
@@ -162,7 +166,9 @@ export function ComposerSelect({
   }, [disabled]);
 
   function openMenu(focusLast = false) {
-    if (disabled || enabledOptions.length === 0) {
+    if (disabled) return;
+    onOpen?.();
+    if (enabledOptions.length === 0) {
       return;
     }
 
@@ -261,6 +267,7 @@ export function ComposerSelect({
         disabled={disabled}
         role="combobox"
         aria-label={ariaLabel}
+        data-tooltip={tooltip}
         aria-haspopup="listbox"
         aria-expanded={open}
         aria-controls={open ? menuId : undefined}

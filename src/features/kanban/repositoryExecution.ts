@@ -1,3 +1,4 @@
+import { assertKanbanTargetReady, readKanbanTargetBranch } from "./boardPreferences";
 import {
   cleanupKanbanGit,
   expandKanbanGit,
@@ -175,6 +176,16 @@ export function createKanbanRepositoryExecutionPreparer(
     onExecutionRoot?.(executionRoot);
     let newlyCreatedBindings: KanbanGitBinding[] = [];
     if (bindings.length === 0) {
+      let baseBranch: string | undefined;
+      if (repositories.length === 1 && !repositoryConfiguration) {
+        assertKanbanTargetReady(card.workspaceId);
+        const board = await dependencies.loadBoard(card.workspaceId);
+        assertKanbanTargetReady(card.workspaceId);
+        const target = readKanbanTargetBranch(board.preferencesJson);
+        if (target?.repositoryPath === repositories[0].repositoryPath) {
+          baseBranch = target.branch;
+        }
+      }
       const provisioned = await dependencies.provision({
         cardId: card.id,
         cardSlug: card.title,
@@ -182,6 +193,7 @@ export function createKanbanRepositoryExecutionPreparer(
           repositoryPath: repository.repositoryPath,
           relativePath: repository.relativePath,
           includeDirtyChanges: repository.includeDirtyChanges,
+          ...(baseBranch ? { baseBranch } : {}),
         })),
       });
       bindings = provisioned.repositories;

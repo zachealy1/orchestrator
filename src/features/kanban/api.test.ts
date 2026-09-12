@@ -69,7 +69,7 @@ describe("Kanban native API", () => {
       cardId: "card-1",
       cardSlug: "Ship safely",
       repositories: [
-        { repositoryPath: "/repo", relativePath: "." },
+        { repositoryPath: "/repo", relativePath: ".", baseBranch: "release" },
         {
           repositoryPath: "/repo/nested",
           relativePath: "nested",
@@ -85,11 +85,13 @@ describe("Kanban native API", () => {
         {
           repositoryPath: "/repo",
           relativePath: ".",
+          baseBranch: "release",
           includeDirtyChanges: false,
         },
         {
           repositoryPath: "/repo/nested",
           relativePath: "nested",
+          baseBranch: null,
           includeDirtyChanges: true,
         },
       ],

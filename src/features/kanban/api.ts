@@ -149,6 +149,7 @@ export type KanbanCardDraft = {
 };
 
 export type KanbanGitRepositoryRequest = {
+  baseBranch?: string | null;
   repositoryPath: string;
   relativePath?: string;
   includeDirtyChanges?: boolean;
@@ -497,6 +498,7 @@ export function provisionKanbanGit(input: {
     repositories: input.repositories.map((repository) => ({
       repositoryPath: repository.repositoryPath,
       relativePath: repository.relativePath ?? null,
+      baseBranch: repository.baseBranch ?? null,
       includeDirtyChanges:
         repository.includeDirtyChanges ?? input.includeDirty ?? false,
     })),
@@ -516,6 +518,7 @@ export function expandKanbanGit(input: {
     repositories: input.repositories.map((repository) => ({
       repositoryPath: repository.repositoryPath,
       relativePath: repository.relativePath ?? null,
+      baseBranch: repository.baseBranch ?? null,
       includeDirtyChanges: repository.includeDirtyChanges ?? false,
     })),
   }) as Promise<KanbanGitProvisionResult>;

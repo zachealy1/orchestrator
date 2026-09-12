@@ -644,6 +644,7 @@ export type KanbanGitRepositoryBinding = {
 export type KanbanGitRepositorySelection = {
 	repositoryPath: string,
 	relativePath: string | null,
+	baseBranch?: string | null,
 	includeDirtyChanges?: boolean,
 };
 
