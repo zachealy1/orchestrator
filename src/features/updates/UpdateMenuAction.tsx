@@ -1,8 +1,11 @@
 import { Download } from "lucide-react";
+import { useEffect } from "react";
 import { updateActionLabel, type UpdateView } from "./UpdateController";
 
-export type UpdateMenuModel = { state: UpdateView; act: () => void };
+export type UpdateMenuModel = { state: UpdateView; act: () => void; dismissMessage: () => void };
 export function UpdateMenuAction({ update }: { update?: UpdateMenuModel }) {
+  const dismissMessage = update?.dismissMessage;
+  useEffect(() => () => dismissMessage?.(), [dismissMessage]);
   if (!update) return null;
   const { state } = update;
   const percentage = state.totalBytes ? Math.min(100, Math.round(state.downloadedBytes / state.totalBytes * 100)) : null;
