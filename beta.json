@@ -1,0 +1,16 @@
+{
+  "version": "0.2.0-beta.2",
+  "notes": "Community beta — not notarized by Apple. macOS may block first launch; review the installation instructions before deciding whether to open it. Update signatures verify the publisher's update key, not Apple approval.\n\nBuilt with package integrity checks. See the release notes for testing coverage.\n\nOrchestrator 0.2.0-beta.2. See the release notes before installing.",
+  "pub_date": "2026-09-12T12:23:54.314Z",
+  "platforms": {
+    "darwin-aarch64": {
+      "url": "https://github.com/zachealy1/orchestrator/releases/download/v0.2.0-beta.2/Orchestrator_aarch64.app.tar.gz",
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVUeFludXdoL3gxd2F6UU9jSFJnR1V0U3RTakNxaklUZGtjTmJlY05LVTNoUzhkb3RyZitKWE9qQjBsWDNaN1hzZi9oajFyKzlHRXVLQXRFaStLc2FpMndpNjVoTlR2RVFRPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzg5MjE0ODI3CWZpbGU6T3JjaGVzdHJhdG9yLmFwcC50YXIuZ3oKOUFvdUt2U2grWU50aVVmRHRYQk9pUldnTDBjd2JPSnFNNWFZbjVHYkdNdXdBcnBzK2FFOWNURXpUZm9uTDgvbTFHVjNTcnQwRXhEdjFBd0NMNUp3Q3c9PQo="
+    },
+    "darwin-x86_64": {
+      "url": "https://github.com/zachealy1/orchestrator/releases/download/v0.2.0-beta.2/Orchestrator_x86_64.app.tar.gz",
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVUeFludXdoL3gxd1hmV2xWRHhRcXhWenJ1WDJ3YTFHVzdSR05GZUM2a3VwWDVzNk05L2VWaUVabFIzOGYvK053RGNtcm9XeWpXYjNmcFZsbGprSGlRUXhiejF4cmluNWdnPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzg5MjE1NDAwCWZpbGU6T3JjaGVzdHJhdG9yLmFwcC50YXIuZ3oKT3FmNXF2ZnliaVcrNEdTa1Noblk0aFEyY0ZKUVByd0pmQzVLS0IySFdLa1c0RjR6cUJaaHkrdGpJaDBia1Bwd3BwZzlpQ2Jma0dxSTBpeEdIUWQ2RHc9PQo="
+    }
+  },
+  "distribution": "community"
+}
