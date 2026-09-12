@@ -2928,6 +2928,7 @@ dependencies = [
  "image",
  "mac-usernotifications",
  "minisign-verify",
+ "objc2-foundation",
  "plist",
  "semver",
  "serde",

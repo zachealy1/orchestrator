@@ -42,6 +42,8 @@ mod kanban_git;
 mod kanban_store;
 mod migrations;
 mod models;
+#[cfg(target_os = "macos")]
+mod native_spellcheck;
 mod paths;
 mod preflight;
 mod process;
@@ -188,6 +190,9 @@ pub fn export_typescript_bindings(path: impl AsRef<Path>) -> Result<(), String> 
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    #[cfg(target_os = "macos")]
+    native_spellcheck::register_defaults();
+
     let command_builder = command_builder();
     let app = tauri::Builder::default()
         .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
