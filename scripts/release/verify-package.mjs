@@ -1,5 +1,5 @@
-import { mkdtemp, readdir, readFile, rm } from "node:fs/promises";
-import { join, resolve } from "node:path";
+import { mkdtemp, readdir, readFile, readlink, rm } from "node:fs/promises";
+import { basename, join, resolve } from "node:path";
 import { tmpdir } from "node:os";
 import { spawnSync } from "node:child_process";
 import assert from "node:assert/strict";
@@ -72,7 +72,18 @@ try {
   await inspectApp(join(staging, "Orchestrator.app"));
   const mount = join(staging, "installer");
   run("hdiutil", ["attach", resolve(directory, `Orchestrator_${arch}.dmg`), "-readonly", "-nobrowse", "-mountpoint", mount]);
-  try { await inspectApp(join(mount, "Orchestrator.app")); }
+  try {
+    assert.equal(await readlink(join(mount, "Applications")), "/Applications", "Installer Applications shortcut must target /Applications");
+    const config = JSON.parse(await readFile("src-tauri/tauri.conf.json", "utf8"));
+    const background = config.bundle.macOS.dmg.background;
+    assert.ok(background, "Installer background must be configured");
+    assert.equal(
+      sha256(await readFile(join(mount, ".background", basename(background)))),
+      sha256(await readFile(resolve("src-tauri", background))),
+      "Installer background must match the configured artwork",
+    );
+    await inspectApp(join(mount, "Orchestrator.app"));
+  }
   finally { run("hdiutil", ["detach", mount]); }
-  console.log(`Both distributed ${arch} packages passed ${profile === "community" ? "ad-hoc signing (NOT Apple notarization)" : "signing and notarization"}, updater-signature and resource checks.`);
+  console.log(`Both distributed ${arch} packages passed ${profile === "community" ? "ad-hoc signing (NOT Apple notarization)" : "signing and notarization"}, updater-signature, installer artwork/shortcut and resource checks.`);
 } finally { await rm(staging, { recursive: true, force: true }); }
