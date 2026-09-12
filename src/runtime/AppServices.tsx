@@ -26,6 +26,7 @@ import { HistoricalTranscriptCache } from "../features/conversations/HistoricalT
 import type { HistoricalTurnActivityResponse } from "../codexClient";
 import { WorkspaceTaskMemoryStore } from "../features/conversations/WorkspaceTaskMemoryStore";
 import { WorkspaceFilePreviewService } from "../features/workspaces/WorkspaceFilePreviewService";
+import { ChatTitleCoordinator } from "../features/conversations/ChatTitleCoordinator";
 
 export type CachedTranscriptState = {
   snapshot: StateSnapshot;
@@ -35,6 +36,7 @@ export type CachedTranscriptState = {
 export class AppServices {
   readonly database = new FrontendDatabase();
   readonly repositories = createAppRepositories(this.database);
+  readonly chatTitles = new ChatTitleCoordinator();
   readonly codexEvents = new CodexEventRouter();
   readonly runCoordinator = new RunCoordinator();
   readonly activeRuns = new ActiveRunRegistry();
@@ -100,6 +102,7 @@ export class AppServices {
   }
 
   dispose() {
+    this.chatTitles.dispose();
     this.database.dispose();
     this.codexEvents.dispose();
     this.runCoordinator.dispose();

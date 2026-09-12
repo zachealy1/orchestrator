@@ -1362,16 +1362,20 @@ describe("Application runtime scenarios 5", () => {
           resolveTitle = resolve;
         }),
       );
-      const pendingChat = {
+      let pendingChat = {
         ...workspaceChatFixture({
           id: 401,
           title: "Generating title...",
           status: "running",
         }),
-        title_generation_state: "generating" as const,
+        title_generation_state: "generating" as "generating" | "complete",
       };
       mocks.createChatMock.mockResolvedValueOnce(pendingChat);
-      mocks.listWorkspaceChatsMock.mockResolvedValue([pendingChat]);
+      mocks.listWorkspaceChatsMock.mockImplementation(async () => [pendingChat]);
+      mocks.completeChatTitleGenerationMock.mockImplementation(async (_id, title) => {
+        pendingChat = { ...pendingChat, title, title_generation_state: "complete" };
+        return true;
+      });
 
       const { user } = await renderApp();
       await startMockRun(
@@ -1419,7 +1423,7 @@ describe("Application runtime scenarios 5", () => {
         ),
       );
       expect(
-        within(drawer).getByText("Repair OAuth Callback Handling"),
+        await within(drawer).findByText("Repair OAuth Callback Handling"),
       ).toBeInTheDocument();
     });
 
@@ -1462,6 +1466,15 @@ describe("Application runtime scenarios 5", () => {
       mocks.generateChatTitleMock.mockRejectedValueOnce(
         new Error("Title generation unavailable"),
       );
+      const pendingChat = {
+        ...workspaceChatFixture({ id: 401, title: "Generating title...", status: "running" }),
+        title_generation_state: "pending" as string,
+      };
+      mocks.getChatRecordMock.mockResolvedValue(pendingChat);
+      mocks.failChatTitleGenerationMock.mockImplementation(async () => {
+        Object.assign(pendingChat, { title: "Repair the desktop OAuth callback flow", title_generation_state: "failed" });
+        return true;
+      });
 
       try {
         const { user } = await renderApp();
@@ -1472,10 +1485,8 @@ describe("Application runtime scenarios 5", () => {
         );
         expect(mocks.generateChatTitleMock).toHaveBeenCalledTimes(1);
         expect(mocks.completeChatTitleGenerationMock).not.toHaveBeenCalled();
-        expect(warning).toHaveBeenCalledWith(
-          "AI chat title generation failed for chat 401; using the prompt-based fallback.",
-          expect.any(Error),
-        );
+        await waitFor(() => expect(pendingChat.title_generation_state).toBe("failed"));
+        expect(pendingChat.title).toBe("Repair the desktop OAuth callback flow");
       } finally {
         warning.mockRestore();
       }

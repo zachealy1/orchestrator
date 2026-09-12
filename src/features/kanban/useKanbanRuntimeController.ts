@@ -40,6 +40,8 @@ import type {
 } from "./attemptLifecycle";
 import { assertKanbanTargetReady } from "./boardPreferences";
 import { prepareKanbanRepositoryExecution } from "./repositoryExecution";
+import { awaitWithSignal } from "../conversations/ChatTitleCoordinator";
+import type { prepareCardBranchTitle } from "./branchTitleReadiness";
 
 export type KanbanLaunchKind = KanbanAttemptRecord["kind"];
 
@@ -66,6 +68,11 @@ export type KanbanRuntimeControllerDependencies<
   listWorkspaceRepositories: (
     workspace: Workspace,
   ) => Promise<WorkspaceGitRepositoryStatus[]>;
+  prepareCardTitle: (
+    card: KanbanCardRecord,
+    repositories: KanbanCardRecord["repositories"],
+    signal: AbortSignal,
+  ) => ReturnType<typeof prepareCardBranchTitle>;
   loadChat: (chatId: number) => Promise<ChatRecord | null>;
   updateChat: (
     chatId: number,
@@ -164,7 +171,7 @@ export function createKanbanRuntimeController<
   getDependencies: () => KanbanRuntimeControllerDependencies<RunControl>,
   native: KanbanRuntimeNativeDependencies = nativeDependencies,
 ): KanbanRuntimeController {
-  const launchReservations = new Set<string>();
+  const launchReservations = new Map<string, AbortController>();
 
   async function launchCard(
     card: KanbanCardRecord,
@@ -173,7 +180,7 @@ export function createKanbanRuntimeController<
     options?: KanbanLaunchOptions,
   ) {
     const dependencies = getDependencies();
-    const state = dependencies.getState();
+    let state = dependencies.getState();
     const workspace = workspaceForCard(state, card);
     assertKanbanTargetReady(card.workspaceId);
     const reservationKey = `${card.workspaceId}:${card.chatId}`;
@@ -185,110 +192,118 @@ export function createKanbanRuntimeController<
         "This card conversation already has an active or starting run.",
       );
     }
-    const discoveredRepositories =
-      await dependencies.listWorkspaceRepositories(workspace);
-    if (discoveredRepositories.length === 0) {
-      throw new Error(
-        "No Git repositories are currently available in this workspace.",
-      );
-    }
-    const multiRepositoryWorkspace = discoveredRepositories.length > 1;
-    const includeDirtyForUnstartedCard =
-      !card.hasStartedTurn &&
-      card.repositories.some((repository) => repository.includeDirtyChanges);
-    const repositories = multiRepositoryWorkspace
-      ? discoveredRepositories.map((repository) => {
-          const existing = card.repositories.find(
-            (selection) =>
-              selection.repositoryPath === repository.repository.rootPath,
-          );
-          return {
-            repositoryPath: repository.repository.rootPath,
-            relativePath: repository.repository.relativePath,
-            label: repository.repository.label,
-            includeDirtyChanges:
-              existing?.includeDirtyChanges ?? includeDirtyForUnstartedCard,
-          };
-        })
-      : card.repositories;
-    const capturedSettings =
-      options?.executionSettings ??
-      parseRunExecutionSettings(card.executionSettingsJson);
-    const accountId = capturedSettings?.accountId ?? card.accountId ?? 0;
-    const profileKey = capturedSettings?.profileKey ?? profileKeyForAccountId(accountId);
-    if (profileKey !== profileKeyForAccountId(accountId)) {
-      throw new Error("The account saved on this card is inconsistent. Edit its account before starting.");
-    }
-    if (!executionAccountAvailable(accountId, state.accounts, state.sharedProfileAvailable)) {
-      throw new Error("The account saved on this card is signed out or unavailable. Sign in to that account, or edit an unstarted card to select another account.");
-    }
-    const account = state.accounts.find((candidate) => candidate.id === accountId) ?? null;
-    const availableModels = await dependencies.listModels(profileKey, accountId);
-    const requestedModel = capturedSettings?.model ?? card.model;
-    const selectedModel = requestedModel
-      ? availableModels.find(
-          (model) => model.id === requestedModel || model.model === requestedModel,
-        ) ?? null
-      : modelForCard(card, availableModels);
-    if (requestedModel && !selectedModel) {
-      throw new Error("The model saved on this card is no longer available.");
-    }
-    const requestedReasoning =
-      capturedSettings?.reasoningEffort ?? card.reasoningLevel;
-    if (
-      requestedReasoning &&
-      selectedModel &&
-      !selectedModel.supportedReasoningEfforts.some(
-        (option) => option.reasoningEffort === requestedReasoning,
-      )
-    ) {
-      throw new Error(
-        "The reasoning level saved on this card is no longer available.",
-      );
-    }
-    if (!multiRepositoryWorkspace && repositories.length === 0) {
-      throw new Error(
-        "This card has no captured Git repositories. Edit it before starting and select a repository scope.",
-      );
-    }
-
-    const executionSettings = createRunExecutionSettings(
-      capturedSettings
-        ? {
-            ...capturedSettings,
-            accountId,
-            profileKey,
-            selectedRepositoryPath: multiRepositoryWorkspace
-              ? null
-              : capturedSettings.selectedRepositoryPath,
-            selectedBranch: multiRepositoryWorkspace
-              ? null
-              : capturedSettings.selectedBranch,
-          }
-        : {
-            accountId,
-            profileKey,
-            selectedRepositoryPath: null,
-            selectedBranch: null,
-            mode: "run",
-            intent: "normal",
-            accessMode: card.accessMode,
-            computerUseEnabled: state.computerUseEnabled,
-            model: selectedModel?.model ?? card.model,
-            reasoningEffort:
-              card.reasoningLevel ?? selectedModel?.defaultReasoningEffort ?? null,
-            contextFiles: [],
-            selectedSkills: [],
-            goalMode: true,
-          },
-    );
-    const access = accessSettingsForRun(
-      { accessMode: executionSettings.accessMode },
-      executionSettings.mode,
-    );
-    assertKanbanTargetReady(card.workspaceId);
-    launchReservations.add(reservationKey);
+    const reservation = new AbortController();
+    launchReservations.set(reservationKey, reservation);
     try {
+      const discoveredRepositories =
+        await dependencies.listWorkspaceRepositories(workspace);
+      if (discoveredRepositories.length === 0) {
+        throw new Error(
+          "No Git repositories are currently available in this workspace.",
+        );
+      }
+      const multiRepositoryWorkspace = discoveredRepositories.length > 1;
+      const includeDirtyForUnstartedCard =
+        !card.hasStartedTurn &&
+        card.repositories.some((repository) => repository.includeDirtyChanges);
+      const repositories = multiRepositoryWorkspace
+        ? discoveredRepositories.map((repository) => {
+            const existing = card.repositories.find(
+              (selection) =>
+                selection.repositoryPath === repository.repository.rootPath,
+            );
+            return {
+              repositoryPath: repository.repository.rootPath,
+              relativePath: repository.repository.relativePath,
+              label: repository.repository.label,
+              includeDirtyChanges:
+                existing?.includeDirtyChanges ?? includeDirtyForUnstartedCard,
+            };
+          })
+        : card.repositories;
+      card = await awaitWithSignal(
+        dependencies.prepareCardTitle(card, repositories, reservation.signal),
+        reservation.signal,
+      );
+      state = dependencies.getState();
+      reservation.signal.throwIfAborted();
+      const capturedSettings =
+        options?.executionSettings ??
+        parseRunExecutionSettings(card.executionSettingsJson);
+      const accountId = capturedSettings?.accountId ?? card.accountId ?? 0;
+      const profileKey = capturedSettings?.profileKey ?? profileKeyForAccountId(accountId);
+      if (profileKey !== profileKeyForAccountId(accountId)) {
+        throw new Error("The account saved on this card is inconsistent. Edit its account before starting.");
+      }
+      if (!executionAccountAvailable(accountId, state.accounts, state.sharedProfileAvailable)) {
+        throw new Error("The account saved on this card is signed out or unavailable. Sign in to that account, or edit an unstarted card to select another account.");
+      }
+      const account = state.accounts.find((candidate) => candidate.id === accountId) ?? null;
+      const availableModels = await dependencies.listModels(profileKey, accountId);
+      const requestedModel = capturedSettings?.model ?? card.model;
+      const selectedModel = requestedModel
+        ? availableModels.find(
+            (model) => model.id === requestedModel || model.model === requestedModel,
+          ) ?? null
+        : modelForCard(card, availableModels);
+      if (requestedModel && !selectedModel) {
+        throw new Error("The model saved on this card is no longer available.");
+      }
+      const requestedReasoning =
+        capturedSettings?.reasoningEffort ?? card.reasoningLevel;
+      if (
+        requestedReasoning &&
+        selectedModel &&
+        !selectedModel.supportedReasoningEfforts.some(
+          (option) => option.reasoningEffort === requestedReasoning,
+        )
+      ) {
+        throw new Error(
+          "The reasoning level saved on this card is no longer available.",
+        );
+      }
+      if (!multiRepositoryWorkspace && repositories.length === 0) {
+        throw new Error(
+          "This card has no captured Git repositories. Edit it before starting and select a repository scope.",
+        );
+      }
+
+      const executionSettings = createRunExecutionSettings(
+        capturedSettings
+          ? {
+              ...capturedSettings,
+              accountId,
+              profileKey,
+              selectedRepositoryPath: multiRepositoryWorkspace
+                ? null
+                : capturedSettings.selectedRepositoryPath,
+              selectedBranch: multiRepositoryWorkspace
+                ? null
+                : capturedSettings.selectedBranch,
+            }
+          : {
+              accountId,
+              profileKey,
+              selectedRepositoryPath: null,
+              selectedBranch: null,
+              mode: "run",
+              intent: "normal",
+              accessMode: card.accessMode,
+              computerUseEnabled: state.computerUseEnabled,
+              model: selectedModel?.model ?? card.model,
+              reasoningEffort:
+                card.reasoningLevel ?? selectedModel?.defaultReasoningEffort ?? null,
+              contextFiles: [],
+              selectedSkills: [],
+              goalMode: true,
+            },
+      );
+      const access = accessSettingsForRun(
+        { accessMode: executionSettings.accessMode },
+        executionSettings.mode,
+      );
+      assertKanbanTargetReady(card.workspaceId);
+      reservation.signal.throwIfAborted();
       const claimed = await native.claimAttempt({
         card,
         kind,
@@ -314,7 +329,7 @@ export function createKanbanRuntimeController<
       try {
         const effectivePrompt = claimed.attempt.prompt;
         const repositoryExecution = await native.prepareRepositoryExecution({
-          card,
+          card: claimed.card,
           claimedCard: claimed.card,
           repositories,
           repositoryConfiguration: multiRepositoryWorkspace
@@ -330,6 +345,7 @@ export function createKanbanRuntimeController<
           },
         });
         executionRoot = repositoryExecution.executionRoot;
+        reservation.signal.throwIfAborted();
         if (multiRepositoryWorkspace) dependencies.refreshBoards();
         const selectedBinding =
           repositoryExecution.bindings.find(
@@ -485,6 +501,7 @@ export function createKanbanRuntimeController<
             eventSequence: 0,
           },
         };
+        reservation.signal.throwIfAborted();
         const runControl = dependencies.beginRun(snapshot);
         dependencies.scheduleRun(runControl, snapshot);
       } catch (launchError) {
@@ -504,7 +521,7 @@ export function createKanbanRuntimeController<
               eventSequence: 0,
             },
           },
-          "failed",
+          reservation.signal.aborted ? "stopped" : "failed",
           errorMessage(launchError),
         );
         throw launchError;
@@ -532,6 +549,11 @@ export function createKanbanRuntimeController<
   }
 
   async function stopCard(card: KanbanCardRecord) {
+    const reservation = launchReservations.get(`${card.workspaceId}:${card.chatId}`);
+    if (reservation) {
+      reservation.abort();
+      return;
+    }
     const dependencies = getDependencies();
     const control = dependencies.findRunControl(
       card.workspaceId,
