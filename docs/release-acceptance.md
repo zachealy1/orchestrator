@@ -1,12 +1,16 @@
 # Public beta acceptance record
 
-## Current community release policy — 2026-09-09
+## Community beta.2 acceptance — 2026-09-12
 
-The maintainer explicitly requested Apple Silicon and Intel releases with in-app updates, without test suites, manual testing or rehearsals. Community publication therefore requires only a successful build and package integrity checks: source/version/architecture, bundled files, ad-hoc signing, updater signatures and uploaded hashes. No dedicated AI account or testing-approval SHA is required. Existing repository and environment access controls continue to apply.
+The maintainer reports having manually tested the release-branch changes and explicitly requested publication of **0.2.0-beta.2** for Apple Silicon and Intel on macOS 15+. Accept that report without adding another application-testing campaign or release rehearsal. The report does not identify individual scenarios, hardware, macOS versions, a clean-machine installation, or a two-version updater rehearsal; none of those results are inferred.
 
-`0.2.0-beta.2` is **not behaviorally tested**. Its generated package receipts record `behavioralTesting: "not-performed"`; integrity results are recorded by packaging, not asserted in advance. macOS first-launch and permission behavior is not tested or guaranteed. No Apple account or notarization is required.
+The selected candidate is `3f0704303ddc2ef8be010d477ddc998176a7ed26`. Release preparation changes documentation, screenshots and publication guards, while retaining version 0.2.0-beta.2. Merge preparation into `release`, then merge `release` into `main` through ordinary pull requests and required `checks`. Publish from the resulting exact main SHA, which the version tag, workflow checkout and generated package receipts must all identify.
 
-The earlier records below remain historical evidence and limitations. Their pending/manual gates do not block the current community release policy. The separate notarized and automated engine-upgrade workflows retain their own validation requirements.
+Packaging verifies source/version/architecture, bundled resources, ad-hoc signing, independently signed updater packages, installer artwork and uploaded hashes. Each generated receipt retains `behavioralTesting: "not-performed"`: that field describes the packaging job, which does not launch the installer or perform an update rehearsal. It does not negate the maintainer's manual-testing report. Integrity results are generated from the actual packages, not asserted in advance.
+
+Existing required CI, code-owner review rules and signing/publication environment approvals remain in effect. Community publication requires no Apple account, notarization, dedicated AI test account or separate testing-approval SHA. Publish both architectures before creating the updater feed; preserve beta.1 and all published artifacts unchanged. Screenshot recapture is documentation work using the isolated fictional demo, not a release-acceptance test campaign.
+
+The earlier records below remain historical evidence and limitations. Their pending/manual gates apply to the distributions described there, not additional gates for this community release. The separate notarized and automated engine-upgrade workflows retain their own validation requirements.
 
 ## Manual experimental beta approval — 2026-09-08
 

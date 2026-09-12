@@ -48,7 +48,7 @@ export function requirePublicationApproval(profile, sourceSha, env = process.env
 
 export function distributionNotes(profile, notes) {
   distribution(profile);
-  return profile === "community" ? `${COMMUNITY_NOTICE}\n\nBuilt with package integrity checks; not behaviorally tested.\n\n${notes}` : `Developer ID signed and notarized macOS distribution.\n\n${notes}`;
+  return profile === "community" ? `${COMMUNITY_NOTICE}\n\nBuilt with package integrity checks. See the release notes for testing coverage.\n\n${notes}` : `Developer ID signed and notarized macOS distribution.\n\n${notes}`;
 }
 
 export function validateAppSignature(profile, signature) {

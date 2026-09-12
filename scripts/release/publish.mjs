@@ -27,7 +27,7 @@ export async function publish({ version, sourceSha, files, notes, profile = "not
     ? `Experimental community beta — Apple Silicon only; not notarized by Apple. Manual installation and updates only. No update feed is published by this release.\n\n${notes}`
     : distributionNotes(profile, notes);
   const prefix = `repos/${REPOSITORY}`;
-  const sourceBranch = profile === "community" ? "release" : "main";
+  const sourceBranch = "main";
   const comparison = await api(`${prefix}/compare/${sourceSha}...${sourceBranch}`);
   if (!["ahead", "identical"].includes(comparison.status)) throw new Error(`Release source must be an ancestor of ${sourceBranch}`);
   const pkg = await api(`${prefix}/contents/package.json?ref=${sourceSha}`);
