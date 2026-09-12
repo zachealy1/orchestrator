@@ -1,3 +1,4 @@
+import * as boardPreferences from "./boardPreferences";
 import { describe, expect, it, vi } from "vitest";
 import type { CodexAccountProfile } from "../accounts/types";
 import type { CodexModel } from "../codex/types";
@@ -242,6 +243,23 @@ function harness() {
 }
 
 describe("Kanban runtime controller", () => {
+  it("rejects launches before claiming an attempt while the target is being saved", async () => {
+    const { controller, native, dependencies } = harness();
+    const gate = vi.spyOn(boardPreferences, "assertKanbanTargetReady").mockImplementation(() => {
+      throw new Error("The Kanban target branch is being saved.");
+    });
+    try {
+      await expect(controller.launchCard(card(), "start", "Start", { queueItemId: "queued-card" })).rejects.toThrow("being saved");
+      expect(native.claimAttempt).not.toHaveBeenCalled();
+      expect(native.prepareRepositoryExecution).not.toHaveBeenCalled();
+      expect(dependencies.beginRun).not.toHaveBeenCalled();
+    } finally {
+      gate.mockRestore();
+    }
+    await controller.launchCard(card(), "start", "Start");
+    expect(native.claimAttempt).toHaveBeenCalledOnce();
+  });
+
   it("passes a card question unchanged to the common submission path", async () => {
     const { controller, dependencies, claimed } = harness();
     const prompt = "Why am I seeing this error in the orchestrator UI?";

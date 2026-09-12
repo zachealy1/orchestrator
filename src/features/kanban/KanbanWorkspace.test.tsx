@@ -2,7 +2,7 @@ import { createRef } from "react";
 import { act, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import type { Workspace } from "../workspaces/types";
+import type { Workspace, WorkspaceGitRepositoryStatus } from "../workspaces/types";
 import type {
   GithubConnectionStatus,
   KanbanPullRequestRecord,
@@ -46,6 +46,11 @@ const apiMocks = vi.hoisted(() => ({
   updateKanbanCard: vi.fn(),
   useKanbanLocalReview: vi.fn(),
   completeKanbanLocalReviewWithoutChanges: vi.fn(),
+}));
+const branchMocks = vi.hoisted(() => ({ listGitBranches: vi.fn() }));
+vi.mock("../../codexClient", async (importOriginal) => ({
+  ...await importOriginal<typeof import("../../codexClient")>(),
+  ...branchMocks,
 }));
 const transcriptMocks = vi.hoisted(() => ({
   listLocalChatTranscript: vi.fn(),
@@ -185,6 +190,8 @@ function renderWorkspace(
   },
   githubConnectionPending = false,
   sharedProfileAvailable = true,
+  repositories: WorkspaceGitRepositoryStatus[] = [],
+  branchSelectorHost?: HTMLElement,
 ) {
   const workspaceRef = createRef<KanbanWorkspaceHandle>();
   const props = {
@@ -201,7 +208,7 @@ function renderWorkspace(
     <KanbanWorkspace
       ref={workspaceRef}
       workspace={workspace}
-      repositories={[]}
+      repositories={repositories}
       accounts={[]}
       sharedProfileAvailable={sharedProfileAvailable}
       models={[]}
@@ -210,6 +217,7 @@ function renderWorkspace(
       githubConnection={githubConnection}
       githubConnectionPending={githubConnectionPending}
       toolbarHost={toolbarHost}
+      branchSelectorHost={branchSelectorHost}
       resolvedTheme="dark"
       {...props}
     />,
@@ -248,6 +256,7 @@ async function confirmDeleteWithWorktreeCleanup(
 beforeEach(() => {
   vi.resetAllMocks();
   clearKanbanWorkspaceCaches();
+  branchMocks.listGitBranches.mockResolvedValue({ branches: ["main", "release"], currentBranch: "main" });
   githubMocks.syncKanbanPullRequests.mockResolvedValue(0);
   githubMocks.publishKanbanCard.mockResolvedValue({
     cardId: "card-1",
@@ -1311,5 +1320,78 @@ describe("KanbanWorkspace controller", () => {
     expect(
       screen.queryByRole("heading", { name: "Multiple repositories" }),
     ).not.toBeInTheDocument();
+  });
+});
+
+
+describe("Kanban header target persistence", () => {
+  const repository: WorkspaceGitRepositoryStatus = {
+    workspacePath: "/workspace", gitRoot: "/workspace/repo", currentBranch: "main", files: [],
+    repository: { rootPath: "/workspace/repo", relativePath: "repo", label: "repo" },
+  };
+
+  function persistBoard(initialPreferences = "{}") {
+    let current = { ...snapshot([card()]), preferencesJson: initialPreferences };
+    apiMocks.loadKanbanBoard.mockImplementation(async () => current);
+    apiMocks.saveKanbanPreferences.mockImplementation(async (request) => {
+      current = { ...current, revision: current.revision + 1, preferencesJson: JSON.stringify(request.preferences) };
+      return current;
+    });
+    return () => current;
+  }
+
+  it("portals the selector to the header and remembers it across board remounts and filter saves", async () => {
+    const user = userEvent.setup();
+    const current = persistBoard();
+    const host = document.createElement("div");
+    document.body.append(host);
+    const view = renderWorkspace(host, undefined, false, true, [repository], host);
+    const trigger = await within(host).findByRole("combobox", { name: "Target branch" });
+    await waitFor(() => expect(trigger).toHaveTextContent("main"));
+    await waitFor(() => expect(trigger).toBeEnabled());
+    await user.click(trigger);
+    await user.click(screen.getByRole("option", { name: "release" }));
+    await waitFor(() => expect(trigger).toHaveTextContent("release"));
+    await user.type(screen.getByRole("searchbox", { name: "Search cards" }), "Controller");
+    await waitFor(() => expect(JSON.parse(current().preferencesJson).search).toBe("Controller"));
+    expect(JSON.parse(current().preferencesJson).targetBranch).toEqual({ repositoryPath: "/workspace/repo", branch: "release" });
+    view.unmount();
+    clearKanbanWorkspaceCaches();
+    const reopened = renderWorkspace(host, undefined, false, true, [repository], host);
+    await waitFor(() => expect(within(host).getByRole("combobox", { name: "Target branch" })).toHaveTextContent("release"));
+    reopened.unmount();
+    host.remove();
+  });
+
+  it("disables card actions during saving and restores the old selection after failure", async () => {
+    const user = userEvent.setup();
+    persistBoard(JSON.stringify({ targetBranch: { repositoryPath: "/workspace/repo", branch: "main" } }));
+    const callbacks = renderWorkspace(null, undefined, false, true, [repository]);
+    const trigger = await screen.findByRole("combobox", { name: "Target branch" });
+    await waitFor(() => expect(trigger).toBeEnabled());
+    let fail!: (error: Error) => void;
+    apiMocks.saveKanbanPreferences.mockRejectedValue(new Error("database unavailable"));
+    // Keep the first write pending; the revision retry fails immediately.
+    apiMocks.saveKanbanPreferences.mockImplementationOnce(() => new Promise((_resolve, reject) => { fail = reject; }));
+    await user.click(trigger);
+    await user.click(screen.getByRole("option", { name: "release" }));
+    await waitFor(() => expect(trigger).toBeDisabled());
+    expect(trigger).toHaveTextContent("main");
+    expect(screen.getByLabelText("Actions for Controller card")).toBeDisabled();
+    await act(async () => { fail(new Error("database unavailable")); });
+    await waitFor(() => expect(trigger).toBeEnabled());
+    expect(trigger).toHaveTextContent("main");
+    await waitFor(() => expect(callbacks.onStatusNotice).toHaveBeenCalledWith(expect.objectContaining({ title: expect.stringContaining("target branch could not be saved: database unavailable") })));
+  });
+
+  it("hides the selector for multiple repositories and non-Git workspaces", async () => {
+    const multi = renderWorkspace(null, undefined, false, true, [repository, { ...repository, repository: { ...repository.repository, rootPath: "/workspace/other" } }]);
+    await screen.findByRole("article", { name: /Controller card/ });
+    expect(screen.queryByRole("combobox", { name: "Target branch" })).not.toBeInTheDocument();
+    multi.unmount();
+    renderWorkspace();
+    await screen.findByRole("article", { name: /Controller card/ });
+    expect(screen.queryByRole("combobox", { name: "Target branch" })).not.toBeInTheDocument();
+    expect(branchMocks.listGitBranches).not.toHaveBeenCalled();
   });
 });
