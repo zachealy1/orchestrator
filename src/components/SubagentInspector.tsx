@@ -1,13 +1,11 @@
+import { ActivityTimeline, ActivityDisclosure, activityStatusLabel } from "./TranscriptActivity";
+import { subagentTimeline } from "../lib/subagentTimeline";
 import {
-  BrainCircuit,
   Check,
-  FileCode2,
   LoaderCircle,
-  MessageSquareText,
   RefreshCw,
   Send,
   Square,
-  TerminalSquare,
   X,
 } from "lucide-react";
 import {
@@ -32,8 +30,8 @@ import {
   type SubagentRecord,
   type SubagentInstruction,
   type SubagentTranscript,
-  type SubagentTranscriptItem,
   type SubagentTranscriptTurn,
+  type SubagentTranscriptItem,
 } from "../lib/subagents";
 import { useAppServices } from "../runtime/AppServices";
 import type {
@@ -674,11 +672,11 @@ const SubagentTranscriptTurnView = memo(function SubagentTranscriptTurnView({
             }`}
           >
             {streamItems.length > 0 ? (
-              <div className="stream-event-list" aria-label="App-server stream">
-                {streamItems.flatMap((item) =>
-                  renderSubagentStreamItem(item),
-                )}
-              </div>
+              <ActivityDisclosure active={isActiveTranscriptTurn(turn.status)}
+                label={activityStatusLabel(turn.status, Math.max(0, (Date.parse(turn.completedAt ?? "") || Date.now()) - (Date.parse(turn.startedAt ?? "") || Date.now())))}
+                attention={<ActivityTimeline items={subagentTimeline(streamItems.filter((item) => item.kind === "activity" && ["failed", "declined", "interrupted", "inProgress", "running"].includes(item.status ?? "")))} />}>
+                <ActivityTimeline items={subagentTimeline(streamItems)} />
+              </ActivityDisclosure>
             ) : null}
             {summaryItems.map((item) => (
               <div
@@ -810,49 +808,6 @@ function visibleRecordTask(record: SubagentRecord | null) {
 
 function normalizePrompt(prompt: string) {
   return prompt.replace(/\s+/gu, " ").trim();
-}
-
-function renderSubagentStreamItem(item: SubagentTranscriptItem): ReactNode[] {
-  if (item.kind === "assistant") {
-    return [
-      <div className="stream-message" key={item.id}>
-        <ReactMarkdown
-          components={SUBAGENT_MARKDOWN_COMPONENTS}
-          {...TRANSCRIPT_MARKDOWN_PLUGINS}
-          skipHtml
-          urlTransform={transcriptMarkdownUrlTransform}
-        >
-          {item.text}
-        </ReactMarkdown>
-      </div>,
-    ];
-  }
-  if (item.kind === "reasoning") {
-    return item.summaries.map((summary, index) => (
-      <div className="stream-event reasoning" key={`${item.id}:${index}`}>
-        <BrainCircuit size={15} aria-hidden="true" />
-        <span>{summary}</span>
-      </div>
-    ));
-  }
-  if (item.kind !== "activity") return [];
-  const Icon =
-    item.activityKind === "command"
-      ? TerminalSquare
-      : item.activityKind === "file"
-        ? FileCode2
-        : MessageSquareText;
-  return [
-    <div className={`stream-event ${item.activityKind}`} key={item.id}>
-      <Icon size={15} aria-hidden="true" />
-      <span>{item.label}</span>
-      {item.status ? (
-        <span className="subagent-transcript-activity-status">
-          {item.status}
-        </span>
-      ) : null}
-    </div>,
-  ];
 }
 
 function transcriptCacheKey(record: SubagentRecord) {

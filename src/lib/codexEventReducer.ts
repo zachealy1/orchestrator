@@ -1,5 +1,9 @@
+import type { StreamActivityEvent, StreamSteerEvent, StreamEvent } from "./streamTypes";
+export type { StreamActivityEvent, StreamSteerEvent, StreamEvent } from "./streamTypes";
+import { updateStreamText } from "./streamTextEvents";
+import { streamIdentity } from "./streamIdentity";
+import { updateReasoningItem, reasoningItemKey, type ReasoningItemState } from "./reasoningStream";
 import type { CodexMessage } from "../features/codex/types";
-import type { ComposerContextFile } from "../features/composer/types";
 import type { CodexApprovalRequest } from "./codexApprovals";
 import {
   emptyNativePlanState,
@@ -36,26 +40,6 @@ export type ConsoleLine = {
   text: string;
 };
 
-export type StreamActivityEvent = {
-  id: string;
-  kind: "message" | "activity" | "command" | "file" | "reasoning" | "system";
-  text: string;
-  timestamp: string;
-  activityIds?: string[];
-};
-
-export type StreamSteerEvent = {
-  id: string;
-  kind: "steer";
-  text: string;
-  timestamp: string;
-  contextFiles: ComposerContextFile[];
-  delivery: "pending" | "sent";
-  activityIds?: never;
-};
-
-export type StreamEvent = StreamActivityEvent | StreamSteerEvent;
-
 export type RunEditedFile = {
   path: string;
   name: string;
@@ -90,6 +74,7 @@ export type RunGeneratedImage = {
 type AgentMessagePhase = "commentary" | "final_answer" | null;
 
 type AgentMessageState = {
+  completed?: boolean;
   text: string;
   phase: AgentMessagePhase;
 };
@@ -116,6 +101,7 @@ export type RunViewState = {
   generatedImagesById: Record<string, RunGeneratedImage>;
   generatedImageOrder: string[];
   webPreview: RunWebPreview | null;
+  reasoningItems: Record<string, ReasoningItemState>;
   agentMessagesById: Record<string, AgentMessageState>;
   finalMessageItemId: string | null;
   latestPlan: string;
@@ -150,6 +136,7 @@ export const emptyRunView: RunViewState = {
   generatedImagesById: {},
   generatedImageOrder: [],
   webPreview: null,
+  reasoningItems: {},
   agentMessagesById: {},
   finalMessageItemId: null,
   latestPlan: "",
@@ -272,6 +259,7 @@ export function applyCodexMessage(
     case "item/plan/delta": {
       const delta = readString(params.delta) ?? "";
       const itemId = readString(params.itemId);
+      if (itemId === state.nativePlan.planItemId && state.nativePlan.completedText) return state;
       const currentPreview =
         itemId && state.nativePlan.planItemId !== itemId
           ? ""
@@ -306,26 +294,16 @@ export function applyCodexMessage(
     case "item/agentMessage/delta": {
       const delta = readString(params.delta) ?? "";
       const itemId = extractAgentMessageId(params, readObject(params.item), state);
-      return appendAgentMessageDelta(
-        appendStreamEvent(
-          appendLine(removeTrailingThinkingEvent(state), "assistant", delta),
-          "message",
-          delta,
-          true,
-          [itemId],
-        ),
-        params,
-        delta,
+      if (state.agentMessagesById[itemId]?.completed) return state;
+      const next = appendAgentMessageDelta(
+        appendLine(removeTrailingThinkingEvent(state), "assistant", delta), params, delta,
       );
+      return upsertMessageEvent(next, params, itemId, delta, true);
     }
+    case "item/reasoning/summaryPartAdded":
     case "item/reasoning/summaryTextDelta":
     case "item/reasoning/textDelta":
-      return appendStreamEvent(
-        appendLine(state, "reasoning", readString(params.delta) ?? ""),
-        "reasoning",
-        readString(params.delta) ?? "",
-        true,
-      );
+      return upsertReasoningEvent(state, message);
     case "item/commandExecution/started":
     case "command/exec/started":
       return upsertCommandActivity(state, params, "running", true);
@@ -357,6 +335,10 @@ export function applyCodexMessage(
       );
     case "item/started": {
       const item = readObject(params.item);
+      if (item.type === "reasoning") {
+        if (!item.id && !params.itemId && !Array.isArray(item.summary) && !Array.isArray(item.content)) return appendThinkingEvent(state);
+        return upsertReasoningEvent(state, message);
+      }
       if (item.type === "imageGeneration") {
         return upsertGeneratedImage(state, params, item, "generating");
       }
@@ -391,6 +373,10 @@ export function applyCodexMessage(
     }
     case "item/completed": {
       const item = readObject(params.item);
+      if (item.type === "reasoning") {
+        if (!item.id && !params.itemId && !Array.isArray(item.summary) && !Array.isArray(item.content)) return appendThinkingEvent(state);
+        return upsertReasoningEvent(state, message);
+      }
       if (item.type === "imageGeneration") {
         return upsertGeneratedImage(state, params, item, "completed");
       }
@@ -442,9 +428,10 @@ export function applyCodexMessage(
       }
       return appendThinkingEvent(state);
     }
+    case "turn/interrupted":
     case "turn/completed": {
       const turn = readObject(params.turn);
-      const status = readString(turn.status);
+      const status = method === "turn/interrupted" ? "interrupted" : readString(turn.status);
       const failed = status === "failed";
       const interrupted =
         status === "interrupted" || status === "cancelled" || status === "canceled";
@@ -456,6 +443,7 @@ export function applyCodexMessage(
           state,
           failed ? "failed" : interrupted ? "interrupted" : "completed",
         ),
+        finalMessage: state.finalMessage || partialFinalAnswer(state),
         status: failed ? "failed" : interrupted ? "interrupted" : "completed",
         completedAt,
         elapsedMs:
@@ -503,6 +491,7 @@ export function applyCodexMessage(
           "system",
           JSON.stringify(params.error ?? message),
         ),
+        finalMessage: state.finalMessage || partialFinalAnswer(state),
         status: "failed",
         completedAt,
         elapsedMs: calculateElapsedMs(state.startedAt, completedAt, state.elapsedMs),
@@ -904,6 +893,49 @@ export function updateRunElapsed(
   return { ...state, elapsedMs };
 }
 
+function partialFinalAnswer(state: RunViewState) {
+  return Object.entries(state.agentMessagesById).filter(([id, item]) => id !== state.nativePlan.planItemId && item.phase === "final_answer").map(([, item]) => item)
+    .map((item) => item.text).filter(Boolean).join("\n\n");
+}
+
+function upsertMessageEvent(state: RunViewState, params: Record<string, unknown>, itemId: string, text: string, append = false): RunViewState {
+  const identity = streamIdentity({ method: "item/agentMessage/delta", params: { ...params, itemId } });
+  return { ...state, streamEvents: updateStreamText(state.streamEvents, identity, "message", text, append) };
+}
+
+function upsertReasoningEvent(state: RunViewState, message: CodexMessage): RunViewState {
+  const identity = streamIdentity(message);
+  const key = reasoningItemKey(identity);
+  const reasoningItems = updateReasoningItem(state.reasoningItems ?? {}, message);
+  if (reasoningItems === state.reasoningItems) return state;
+  let streamEvents = removeTrailingThinkingEvent(state).streamEvents;
+  if (message.method === "item/started" || message.method === "item/completed") {
+    const item = reasoningItems[key];
+    for (const [target, parts] of [["reasoningSummary", item.summaries], ["reasoningContent", item.content]] as const) {
+      const existingIndexes = streamEvents.flatMap((event) => event.kind === "reasoning" && event.identity &&
+        reasoningItemKey(event.identity) === key && event.identity.target === target ? [event.identity.partIndex ?? 0] : []);
+      for (const index of new Set([...existingIndexes, ...Object.keys(parts).map(Number)])) {
+        streamEvents = updateStreamText(streamEvents, { ...identity, target, partIndex: index }, "reasoning", parts[index] ?? "", false);
+      }
+    }
+    if (message.method === "item/started" && !streamEvents.some((event) => event.kind === "reasoning" && event.identity && reasoningItemKey(event.identity) === key)) {
+      streamEvents = updateStreamText(streamEvents, { ...identity, target: "reasoningContent", partIndex: 0 }, "reasoning", "", false);
+    }
+  } else {
+    streamEvents = updateStreamText(streamEvents, identity, "reasoning", readString(message.params?.delta) ?? "", true);
+  }
+  // Newly supplied summary parts replace raw reasoning at the item's original position.
+  const originalIds = new Set(state.streamEvents.map((event) => event.id));
+  const newSummaries = streamEvents.filter((event) => event.kind === "reasoning" && event.identity?.target === "reasoningSummary" && reasoningItemKey(event.identity) === key && !originalIds.has(event.id));
+  if (newSummaries.length) {
+    const ids = new Set(newSummaries.map((event) => event.id));
+    const retained = streamEvents.filter((event) => !ids.has(event.id));
+    const rawIndex = retained.findIndex((event) => event.kind === "reasoning" && event.identity?.target === "reasoningContent" && reasoningItemKey(event.identity) === key);
+    if (rawIndex >= 0) streamEvents = [...retained.slice(0, rawIndex), ...newSummaries, ...retained.slice(rawIndex)];
+  }
+  return { ...state, reasoningItems, streamEvents };
+}
+
 function appendAgentMessageDelta(
   state: RunViewState,
   params: Record<string, unknown>,
@@ -942,7 +974,8 @@ function startAgentMessage(
     phase: null,
   };
 
-  return {
+  if (current.completed) return state;
+  const next: RunViewState = {
     ...state,
     agentMessagesById: {
       ...state.agentMessagesById,
@@ -952,6 +985,7 @@ function startAgentMessage(
       },
     },
   };
+  return upsertMessageEvent(next, params, itemId, next.agentMessagesById[itemId].text);
 }
 
 function completeAgentMessage(
@@ -967,10 +1001,11 @@ function completeAgentMessage(
   const phase = normalizeAgentMessagePhase(readString(item.phase)) ?? current.phase;
   const text = readString(item.text) ?? current.text;
   const nextState: RunViewState = {
-    ...state,
+    ...upsertMessageEvent(state, params, itemId, text),
     agentMessagesById: {
       ...state.agentMessagesById,
       [itemId]: {
+        completed: true,
         text,
         phase,
       },
@@ -1009,7 +1044,9 @@ function completeAgentMessage(
   if (phase === "final_answer") {
     return {
       ...nextState,
-      finalMessage: mergeFinalAnswer(nextState, itemId, text),
+      finalMessage: Object.values(nextState.agentMessagesById)
+        .filter((message) => message.phase === "final_answer")
+        .map((message) => message.text).filter(Boolean).join("\n\n"),
       finalMessageItemId: itemId,
     };
   }
@@ -1037,22 +1074,6 @@ function extractAgentMessageId(
 
 function normalizeAgentMessagePhase(value: string | null): AgentMessagePhase {
   return value === "commentary" || value === "final_answer" ? value : null;
-}
-
-function mergeFinalAnswer(state: RunViewState, itemId: string, text: string) {
-  if (!state.finalMessage || state.finalMessageItemId === itemId) {
-    return text;
-  }
-
-  const currentFinalMessage =
-    state.finalMessageItemId === null
-      ? null
-      : state.agentMessagesById[state.finalMessageItemId];
-  if (currentFinalMessage?.phase !== "final_answer") {
-    return text;
-  }
-
-  return `${state.finalMessage}\n\n${text}`;
 }
 
 function appendLine(
@@ -1360,7 +1381,10 @@ function upsertCommandActivity(
     return state;
   }
 
+  const existing = state.commands.find((entry) => entry.id === id);
+  if (existing && ["completed", "failed", "declined"].includes(existing.status) && ["pending", "running"].includes(status)) return state;
   const durationMs = extractDurationMs(params);
+  const completedOutput = readString(readObject(params.item).aggregatedOutput) ?? readString(params.aggregatedOutput);
   const nextCommand = {
     id: id ?? `command-${state.commands.length + 1}`,
     command: command ?? "Command",
@@ -1371,7 +1395,8 @@ function upsertCommandActivity(
   const baseState = appendTimelineEvent ? removeTrailingThinkingEvent(state) : state;
   const nextState = {
     ...baseState,
-    commands: upsertCommand(baseState.commands, nextCommand),
+    commands: upsertCommand(baseState.commands, nextCommand).map((entry) =>
+      entry.id === nextCommand.id && completedOutput !== null ? { ...entry, output: completedOutput } : entry),
   };
 
   return appendTimelineEvent
@@ -1399,7 +1424,9 @@ function appendCommandOutput(
     extractCommandId(params, command, state) ??
     findLastRunningCommand(state.commands)?.id ??
     `command-${state.commands.length + 1}`;
-  const fallbackCommand = command ?? firstNonEmptyLine(delta) ?? "Command";
+  const fallbackCommand = command ?? state.commands.find((entry) => entry.id === id)?.command ?? firstNonEmptyLine(delta) ?? "Command";
+  const existing = state.commands.find((entry) => entry.id === id);
+  if (existing && ["completed", "failed", "declined"].includes(existing.status)) return state;
 
   return {
     ...state,

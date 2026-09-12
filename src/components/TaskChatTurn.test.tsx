@@ -895,7 +895,7 @@ it("renders submitted prompts and live output with real-time metrics", () => {
     const submittedPrompt = screen.getByLabelText("Submitted prompt");
     expect(submittedPrompt).toHaveTextContent("Objective:");
     expect(submittedPrompt).toHaveTextContent("Fix the failing auth tests");
-    expect(within(liveOutput).getByText("1m 5s")).toBeInTheDocument();
+    expect(within(liveOutput).getByText("Working for 1m 5s")).toBeInTheDocument();
     expect(within(liveOutput).getByText("734 tokens")).toBeInTheDocument();
     expect(within(liveOutput).getByText("I am updating the auth flow.")).toBeInTheDocument();
     expect(within(liveOutput).getByText("Ran npm test")).toBeInTheDocument();
@@ -1281,7 +1281,7 @@ it("renders completed summaries as markdown and collapses the stream trace", asy
     expect(traceTrigger.querySelector(".run-trace-chevron")).toHaveClass(
       "lucide-chevron-right",
     );
-    expect(within(traceTrigger).getByText("1hr 52m 6s")).toBeInTheDocument();
+    expect(within(traceTrigger).getByText("Worked for 1hr 52m 6s")).toBeInTheDocument();
     expect(within(traceTrigger).getByText("69,839 tokens")).toBeInTheDocument();
     expect(
       screen.queryByText("1hr 52m 6s • 69,839 tokens"),

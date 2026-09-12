@@ -834,7 +834,7 @@ describe("Application runtime scenarios 2", () => {
       const transcript = screen.getByLabelText("Task chat transcript");
       expect(submittedPrompt).toHaveTextContent("Fix the app header");
       expect(within(transcript).getByText("Header fixed.")).toBeInTheDocument();
-      expect(within(transcript).getByText("1m 0s")).toBeInTheDocument();
+      expect(within(transcript).getByText("Worked for 1m 0s")).toBeInTheDocument();
       expect(within(transcript).getByText("640 tokens")).toBeInTheDocument();
     });
 

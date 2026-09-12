@@ -1309,3 +1309,27 @@ button.edited-files-disclosure:focus-visible:not(:disabled) {
 .historical-activity-status.error {
   color: var(--color-error);
 }
+
+.stream-secondary-metrics {
+  color: var(--color-text-secondary);
+  font-size: 0.85em;
+}
+
+.command-output {
+  grid-column: 1 / -1;
+  width: 100%;
+  min-width: 0;
+}
+
+.command-output pre {
+  max-height: 20rem;
+  overflow: auto;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  user-select: text;
+}
+
+.command-row.is-failed,
+.command-row.is-declined {
+  color: var(--color-error);
+}

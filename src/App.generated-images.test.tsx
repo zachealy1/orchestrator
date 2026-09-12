@@ -60,7 +60,7 @@ describe("Generated image runtime integration", () => {
     });
 
     await waitFor(() =>
-      expect(mocks.appendRunEventMock).toHaveBeenCalledWith(
+      expect(mocks.appendRunEventsMock.mock.calls.flatMap(([events]) => events)).toEqual(expect.arrayContaining([
         expect.objectContaining({
           method: "item/completed",
           payload: expect.objectContaining({
@@ -72,7 +72,7 @@ describe("Generated image runtime integration", () => {
             }),
           }),
         }),
-      ),
+      ])),
     );
     await waitFor(() =>
       expect(mocks.prepareImageAttachmentMock).toHaveBeenCalledWith(

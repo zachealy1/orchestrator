@@ -19,9 +19,9 @@ import {
 } from "../lib/subagents";
 import { TranscriptGeometryCache } from "../lib/transcriptVirtualization";
 import { BoundedLruCache } from "../shared/cache/BoundedLruCache";
-import { AnimationFrameBatcher } from "../shared/AnimationFrameBatcher";
+import { CodexStreamScheduler } from "../features/codex/CodexStreamScheduler";
 import { AsyncResourceCache } from "../shared/cache/AsyncResourceCache";
-import type { CodexMessage, CodexProfileKey } from "../features/codex/types";
+
 import { HistoricalTranscriptCache } from "../features/conversations/HistoricalTranscriptCache";
 import type { HistoricalTurnActivityResponse } from "../codexClient";
 import { WorkspaceTaskMemoryStore } from "../features/conversations/WorkspaceTaskMemoryStore";
@@ -41,10 +41,7 @@ export class AppServices {
   readonly runEvents = new RunEventBuffer((events) =>
     this.repositories.runs.appendRunEvents(events),
   );
-  readonly codexNotificationFrames = new AnimationFrameBatcher<{
-    profileKey: CodexProfileKey;
-    message: CodexMessage;
-  }>();
+  readonly codexNotificationFrames = new CodexStreamScheduler();
   readonly historicalTranscripts = new HistoricalTranscriptCache(5, 2_000_000);
   readonly historicalActivities = new AsyncResourceCache<
     string,
