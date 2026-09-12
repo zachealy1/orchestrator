@@ -291,6 +291,12 @@ pub(crate) const MIGRATION_DEFINITIONS: &[MigrationDefinition] = &[
         sql: include_str!("../migrations/047_allow_failed_queued_run_retries.sql"),
         checksum: 0x32e05fdb1194cc90,
     },
+    MigrationDefinition {
+        version: 48,
+        description: "add_gitlab_review",
+        sql: include_str!("../migrations/048_add_gitlab_review.sql"),
+        checksum: 0x7468bb8435675213,
+    },
 ];
 
 pub(crate) fn migration_sql(definition: &MigrationDefinition) -> &'static str {

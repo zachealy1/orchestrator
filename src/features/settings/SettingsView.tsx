@@ -1,3 +1,4 @@
+import { GitlabSettingsPanel, GitlabConnectionSummary } from "../gitlab/GitlabSettingsPanel";
 import {
   Bell,
   Check,
@@ -653,6 +654,8 @@ export const SettingsView = memo(function SettingsView({
         </section>
       ) : null}
 
+      {matchesSettings("connections", "gitlab", "merge requests", "self-managed") ? <GitlabSettingsPanel /> : null}
+
       {matchesSettings("accounts", "codex", "codex connection") ? (
         <section
           className="surface settings-panel codex-settings-panel"
@@ -1012,6 +1015,7 @@ function SettingsOverview({
     "codex",
     "accounts",
     "github",
+    "gitlab",
   );
 
   return (
@@ -1177,6 +1181,12 @@ function SettingsOverview({
                 <span className="settings-connection-value">
                   {model.githubConnection?.connected ? "Connected" : "Off"}
                 </span>
+                <ChevronRight size={16} aria-hidden="true" />
+              </button>
+              <button type="button" className="settings-overview-row settings-connection-row" onClick={() => scrollToSettingsSection("settings-gitlab")}>
+                <span className="settings-row-icon" aria-hidden="true"><GitPullRequest size={18} /></span>
+                <div><strong>GitLab</strong><span>GitLab.com and self-managed hosts</span></div>
+                <GitlabConnectionSummary />
                 <ChevronRight size={16} aria-hidden="true" />
               </button>
             </div>

@@ -1,3 +1,4 @@
+import { reviewRequestNoun, reviewRequestNumber } from "../../reviews/api";
 import {
   Archive,
   BrainCircuit,
@@ -324,8 +325,8 @@ export function KanbanCardTile({
             <button
               type="button"
               className="kanban-icon-button"
-              aria-label={primaryAction.label}
-              data-tooltip={primaryAction.label}
+              aria-label={primaryAction.label.replace("pull request", reviewRequestNoun(card.reviewChannel))}
+              data-tooltip={primaryAction.label.replace("pull request", reviewRequestNoun(card.reviewChannel))}
               disabled={actionsDisabled}
               onClick={(event) => {
                 event.stopPropagation();
@@ -378,7 +379,7 @@ export function KanbanCardTile({
                           onKeyDown={(event) => handleMenuKeyDown(event, action)}
                         >
                           <KanbanActionIcon action={action} />
-                          <span>{ACTION_LABELS[action]}</span>
+                          <span>{ACTION_LABELS[action].replace("pull request", reviewRequestNoun(card.reviewChannel))}</span>
                         </button>
                       ))}
                     </div>,
@@ -487,7 +488,7 @@ function KanbanCardContent({
           </span>
         ) : null}
         {card.pullRequests?.length ? (
-          <span className="kanban-pr-status-list" aria-label="Pull request publication status">
+          <span className="kanban-pr-status-list" aria-label={`${reviewRequestNoun(card.reviewChannel)} publication status`}>
             {card.pullRequests.map((pullRequest) => (
               <span
                 key={pullRequest.sourceRepositoryPath}
@@ -495,14 +496,15 @@ function KanbanCardContent({
                 title={pullRequest.error ?? pullRequest.url ?? undefined}
               >
                 {pullRequest.relativePath === "."
-                  ? "Pull request"
+                  ? (pullRequest.provider === "gitlab" ? "Merge request" : "Pull request")
                   : pullRequest.relativePath}
+                {pullRequest.number != null ? ` ${reviewRequestNumber(pullRequest)}` : ""}
                 {": "}
                 {pullRequest.publicationStatus === "queued" ||
                 pullRequest.publicationStatus === "publishing"
                   ? "Publishing"
                   : pullRequest.publicationStatus === "draft"
-                    ? "Draft PR"
+                    ? (pullRequest.provider === "gitlab" ? "Draft MR" : "Draft PR")
                     : pullRequest.publicationStatus === "ready"
                       ? "Ready for review"
                       : pullRequest.publicationStatus === "nothing_to_publish"

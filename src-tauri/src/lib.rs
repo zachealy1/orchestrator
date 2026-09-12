@@ -37,6 +37,9 @@ mod goal_context;
 mod git;
 mod github;
 mod github_cli;
+mod gitlab_cli;
+mod review_provider;
+mod reviews;
 mod interaction;
 mod kanban_git;
 mod kanban_store;
@@ -143,6 +146,14 @@ fn command_builder() -> tauri_specta::Builder<tauri::Wry> {
             kanban_store::kanban_complete_local_review_without_changes,
             kanban_store::kanban_set_inherited_context,
             kanban_store::kanban_get_inherited_context,
+            gitlab_cli::gitlab_connections,
+            gitlab_cli::gitlab_connect,
+            gitlab_cli::gitlab_cancel_connection,
+            gitlab_cli::gitlab_disconnect,
+            review_provider::review_connection_requirements,
+            reviews::review_publish_kanban_card,
+            reviews::review_sync_kanban_requests,
+            reviews::review_complete_kanban_without_request,
             github_cli::github_connection_status,
             github_cli::github_connect,
             github_cli::github_continue_connection,
@@ -203,6 +214,8 @@ pub fn run() {
         .plugin(tauri_plugin_updater::Builder::new().build())
         .manage(AgentNotificationState::default())
         .manage(github_cli::GithubState::default())
+        .manage(gitlab_cli::GitlabState::default())
+        .manage(reviews::ReviewState::default())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_clipboard_manager::init())
         .plugin(tauri_plugin_opener::init())

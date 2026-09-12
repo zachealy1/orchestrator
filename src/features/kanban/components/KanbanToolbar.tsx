@@ -247,8 +247,8 @@ export function KanbanToolbar({
         <button
           type="button"
           className="kanban-toolbar-button kanban-refresh-button"
-          aria-label="Refresh pull request status"
-          data-tooltip="Refresh pull request status"
+          aria-label="Refresh review request status"
+          data-tooltip="Refresh review request status"
           disabled={disabled || refreshing}
           onClick={onRefresh}
         >

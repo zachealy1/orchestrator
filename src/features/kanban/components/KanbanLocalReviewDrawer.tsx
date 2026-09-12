@@ -1,3 +1,4 @@
+import { reviewRequestNoun } from "../../reviews/api";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import {
   AlertCircle,
@@ -732,12 +733,13 @@ export function KanbanLocalReviewDrawer({
         >
           <RefreshCw size={16} aria-hidden="true" />
         </button>
-        {githubConnected && review?.canPublishGithub ? (
+        {review?.publicationBlocker ? <span className="kanban-local-review-publication-blocker" role="status">{review.publicationBlocker}</span> : null}
+        {(review?.canPublishRemote ?? (githubConnected && review?.canPublishGithub)) ? (
           <button
             type="button"
             className="kanban-icon-button"
-            aria-label="Publish on GitHub"
-            data-tooltip="Publish on GitHub"
+            aria-label={`Publish ${reviewRequestNoun(review?.publicationDestination)}`}
+            data-tooltip={`Publish ${reviewRequestNoun(review?.publicationDestination)}`}
             disabled={busy}
             onClick={onPublishGithub}
           >

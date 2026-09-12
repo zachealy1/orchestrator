@@ -207,13 +207,13 @@ describe("deriveCardCapabilities", () => {
     expect(capabilities.merge.enabled).toBe(false);
   });
 
-  it("offers local review after GitHub publication fails before creating a pull request", () => {
+  it.each(["github", "gitlab", "mixed"] as const)("offers local review after %s publication fails before creating a review request", (reviewChannel) => {
     const capabilities = deriveCardCapabilities(
       card({
         stage: "in_review",
         executionState: "completed",
         reviewState: "awaiting_review",
-        reviewChannel: "github",
+        reviewChannel,
         pullRequests: [
           {
             sourceRepositoryPath: "/workspace/api",
