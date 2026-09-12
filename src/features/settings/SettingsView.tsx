@@ -6,6 +6,7 @@ import {
   ExternalLink,
   GitPullRequest,
   FolderOpen,
+  Info,
   LogIn,
   LogOut,
   Loader2,
@@ -30,6 +31,7 @@ import {
   type Ref,
 } from "react";
 import { createPortal } from "react-dom";
+import { version as appVersion } from "../../../package.json";
 import { OrchestratorMark } from "../../components/OrchestratorMark";
 import type {
   AgentNotificationPermissionStatus,
@@ -860,6 +862,24 @@ export const SettingsView = memo(function SettingsView({
         </section>
       ) : null}
 
+      {matchesSettings("about", "orchestrator", "app version", appVersion.toLowerCase()) ? (
+        <section
+          className="surface settings-panel"
+          aria-label="About Orchestrator"
+          id="settings-about"
+        >
+          <SettingsDetailHeader icon={Info} title="About Orchestrator" />
+          <div className="setting-list">
+            <div className="setting-row">
+              <div>
+                <strong>App version</strong>
+                <span>{appVersion}</span>
+              </div>
+            </div>
+          </div>
+        </section>
+      ) : null}
+
       {browserDataConfirmationOpen ? (
         <BrowserDataClearDialog
           busy={browserDataClearPending}
@@ -1390,7 +1410,7 @@ function SettingsDetailHeader({
 }: {
   icon: typeof Monitor;
   title: string;
-  status: SettingsDetailStatus;
+  status?: SettingsDetailStatus;
   statusContent?: ReactNode;
 }) {
   return (
@@ -1403,7 +1423,7 @@ function SettingsDetailHeader({
           <h2>{title}</h2>
         </div>
       </div>
-      {statusContent ?? <SettingsStatusBadge {...status} />}
+      {statusContent ?? (status ? <SettingsStatusBadge {...status} /> : null)}
     </div>
   );
 }
