@@ -62,9 +62,6 @@ function renderBanner(
       onCreateBranch={vi.fn()}
       newChatDisabled={false}
       onNewChat={vi.fn()}
-      historyOpen={false}
-      historyNotificationCount={0}
-      onToggleHistory={vi.fn()}
       windowDragRegionsEnabled={false}
     />,
   );
@@ -139,9 +136,6 @@ describe("WorkspaceContextBanner surface switch", () => {
         onCreateBranch={vi.fn()}
         newChatDisabled={false}
         onNewChat={vi.fn()}
-        historyOpen={false}
-        historyNotificationCount={0}
-        onToggleHistory={vi.fn()}
         windowDragRegionsEnabled={false}
       />,
     );

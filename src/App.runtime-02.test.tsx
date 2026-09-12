@@ -1,3 +1,5 @@
+import { sidebarChats } from "./test/appRuntimeHarness";
+import { openSidebarChats } from "./test/appRuntimeHarness";
 import { act, fireEvent, screen, waitFor, within } from "@testing-library/react";
 import { describe, beforeEach, expect, it, vi } from "vitest";
 import {
@@ -485,97 +487,6 @@ describe("Application runtime scenarios 2", () => {
       );
     });
 
-  it("opens workspace chat history without extra drawer controls", async () => {
-      const activeChat = workspaceChatFixture({
-        id: 401,
-        title: "Fix the app header",
-      });
-      mocks.listWorkspaceChatsMock.mockResolvedValue([activeChat]);
-
-      const { user } = await renderApp();
-      const banner = screen.getByRole("region", { name: "Selected folder" });
-      const historyButton = within(banner).getByRole("button", {
-        name: /open chat history/i,
-      });
-      const composer = screen.getByLabelText("Task composer");
-      expect(historyButton).toHaveTextContent("");
-      expect(historyButton).toHaveAttribute("data-tooltip", "Open history");
-      expect(historyButton).not.toHaveAttribute("title");
-      await user.click(historyButton);
-
-      const drawer = await screen.findByRole("complementary", {
-        name: "Workspace chat history",
-      });
-      expect(historyButton).toHaveAttribute("aria-label", "Close chat history");
-      expect(historyButton).toHaveAttribute("aria-pressed", "true");
-      const layout = drawer.closest(".codex-workspace-body");
-      expect(layout).toHaveClass("history-open");
-      const taskChat = within(layout as HTMLElement).getByLabelText("Task chat");
-      expect(taskChat).toBeInTheDocument();
-      expect(taskChat).toHaveClass("task-hero");
-      expect(drawer.previousElementSibling).toBe(taskChat);
-      expect(drawer).toHaveClass("workspace-history-drawer", "opening");
-      expect(drawer.parentElement).toHaveClass("codex-workspace-body");
-      expect(drawer.parentElement).toHaveClass("history-space-reserved");
-      expect(drawer.parentElement).toHaveAttribute(
-        "data-history-transition-phase",
-        "opening",
-      );
-      expect(screen.getByLabelText("Task composer")).toBe(composer);
-      expect(within(drawer).queryByRole("tab")).not.toBeInTheDocument();
-      expect(
-        within(drawer).queryByRole("button", { name: /close chat history/i }),
-      ).not.toBeInTheDocument();
-
-      expect(within(drawer).getAllByText("Fix the app header").length).toBeGreaterThan(0);
-      expect(within(drawer).queryByText("Header fixed.")).not.toBeInTheDocument();
-      expect(
-        within(drawer).queryByRole("article", { name: /selected chat/i }),
-      ).not.toBeInTheDocument();
-      expect(mocks.codexDefaultProfileRpcMock).not.toHaveBeenCalledWith(
-        "thread/list",
-        expect.anything(),
-      );
-
-      fireEvent.transitionEnd(drawer, { propertyName: "transform" });
-      expect(drawer).toHaveClass("open");
-      expect(drawer.parentElement).toHaveClass("history-space-reserved");
-      expect(drawer.parentElement).toHaveAttribute(
-        "data-history-transition-phase",
-        "open",
-      );
-      expect(screen.getByLabelText("Task composer")).toBe(composer);
-      await waitFor(() =>
-        expect(mocks.codexDefaultProfileRpcMock).toHaveBeenCalledWith(
-          "thread/list",
-          expect.objectContaining({ cwd: workspace.path }),
-        ),
-      );
-
-      await user.click(historyButton);
-      const closedDrawer = document.querySelector(".workspace-history-drawer");
-      expect(closedDrawer).toBeInTheDocument();
-      expect(closedDrawer).toHaveAttribute("aria-hidden", "true");
-      expect(closedDrawer).toHaveAttribute("inert");
-      await waitFor(() => expect(closedDrawer).toHaveClass("closing"));
-      expect(closedDrawer?.parentElement).not.toHaveClass(
-        "history-space-reserved",
-      );
-      expect(closedDrawer?.parentElement).toHaveAttribute(
-        "data-history-transition-phase",
-        "closing",
-      );
-      expect(screen.getByLabelText("Task composer")).toBe(composer);
-      expect(historyButton).toHaveAttribute("aria-label", "Open chat history");
-      expect(historyButton).toHaveAttribute("aria-pressed", "false");
-
-      fireEvent.transitionEnd(closedDrawer as HTMLElement, {
-        propertyName: "transform",
-      });
-      expect(closedDrawer).toHaveClass("closed");
-      expect(closedDrawer?.parentElement).not.toHaveClass("history-space-reserved");
-    });
-
   it("moves the most recently started running chat to the top of history", async () => {
       prepareSignedInRun();
       const completedChat = workspaceChatFixture({
@@ -602,13 +513,8 @@ describe("Application runtime scenarios 2", () => {
       const { user } = await renderApp();
       await startMockRun(user, "Build Snake Web App");
 
-      const banner = screen.getByRole("region", { name: "Selected folder" });
-      await user.click(
-        within(banner).getByRole("button", { name: /open chat history/i }),
-      );
-      const drawer = await screen.findByRole("complementary", {
-        name: "Workspace chat history",
-      });
+      await openSidebarChats(user);
+      const drawer = sidebarChats();
       const rows = drawer.querySelectorAll<HTMLElement>(".history-run-item");
 
       expect(rows).toHaveLength(2);
@@ -618,182 +524,7 @@ describe("Application runtime scenarios 2", () => {
       expect(rows[1]).toHaveTextContent("Earlier completed chat");
     });
 
-  it("coordinates drawer and composer phases without remounting the prompt", async () => {
-      mocks.listWorkspaceChatsMock.mockResolvedValue([]);
-      const { user } = await renderApp();
-      const prompt = screen.getByLabelText("Prompt");
-      await user.type(prompt, "Keep this draft");
-      const banner = screen.getByRole("region", { name: "Selected folder" });
-      const historyButton = within(banner).getByRole("button", {
-        name: /open chat history/i,
-      });
-
-      await user.click(historyButton);
-      const drawer = screen.getByRole("complementary", {
-        name: "Workspace chat history",
-      });
-      const layout = drawer.closest<HTMLElement>(".codex-workspace-body");
-      expect(layout).not.toBeNull();
-
-      await waitFor(() =>
-        expect(layout).toHaveAttribute("data-history-transition-phase", "opening"),
-      );
-      expect(layout).toHaveClass("history-space-reserved");
-      expect(screen.getByLabelText("Prompt")).toBe(prompt);
-      expect(prompt).toHaveValue("Keep this draft");
-
-      fireEvent.transitionEnd(drawer, { propertyName: "transform" });
-      await waitFor(() =>
-        expect(layout).toHaveAttribute("data-history-transition-phase", "open"),
-      );
-      expect(layout).toHaveClass("history-space-reserved");
-
-      await user.click(historyButton);
-      await waitFor(() =>
-        expect(layout).toHaveAttribute("data-history-transition-phase", "closing"),
-      );
-      expect(layout).not.toHaveClass("history-space-reserved");
-
-      fireEvent.transitionEnd(drawer, { propertyName: "transform" });
-      await waitFor(() =>
-        expect(layout).toHaveAttribute("data-history-transition-phase", "closed"),
-      );
-      expect(screen.getByLabelText("Prompt")).toBe(prompt);
-      expect(prompt).toHaveValue("Keep this draft");
-    });
-
-  it("reverses rapid drawer toggles without remounting or losing the prompt", async () => {
-      mocks.listWorkspaceChatsMock.mockResolvedValue([]);
-      const { user } = await renderApp();
-      const prompt = screen.getByLabelText("Prompt");
-      await user.type(prompt, "Keep this draft through reversal");
-      const promptTextarea = prompt as HTMLTextAreaElement;
-      promptTextarea.setSelectionRange(9, 9);
-      const banner = screen.getByRole("region", { name: "Selected folder" });
-      const historyButton = within(banner).getByRole("button", {
-        name: /open chat history/i,
-      });
-
-      await user.click(historyButton);
-      const drawer = screen.getByRole("complementary", {
-        name: "Workspace chat history",
-      });
-      const layout = drawer.closest<HTMLElement>(".codex-workspace-body");
-      expect(layout).toHaveAttribute("data-history-transition-phase", "opening");
-      expect(layout).toHaveClass("history-space-reserved");
-
-      await user.click(historyButton);
-      expect(layout).toHaveAttribute("data-history-transition-phase", "closing");
-      expect(layout).not.toHaveClass("history-space-reserved");
-
-      await user.click(historyButton);
-      expect(layout).toHaveAttribute("data-history-transition-phase", "opening");
-      expect(layout).toHaveClass("history-space-reserved");
-
-      fireEvent.transitionEnd(drawer, { propertyName: "transform" });
-      expect(layout).toHaveAttribute("data-history-transition-phase", "open");
-      expect(screen.getByLabelText("Prompt")).toBe(prompt);
-      expect(prompt).toHaveValue("Keep this draft through reversal");
-      expect(promptTextarea.selectionStart).toBe(9);
-      expect(promptTextarea.selectionEnd).toBe(9);
-      await waitFor(() =>
-        expect(mocks.codexDefaultProfileRpcMock).toHaveBeenCalledWith(
-          "thread/list",
-          expect.objectContaining({ cwd: workspace.path }),
-        ),
-      );
-    });
-
-  it("settles the shared drawer transition immediately for reduced motion", async () => {
-      const matchMediaSpy = vi
-        .spyOn(window, "matchMedia")
-        .mockImplementation((query: string) => ({
-          matches: query === "(prefers-reduced-motion: reduce)",
-          media: query,
-          onchange: null,
-          addEventListener: vi.fn(),
-          removeEventListener: vi.fn(),
-          addListener: vi.fn(),
-          removeListener: vi.fn(),
-          dispatchEvent: vi.fn(() => false),
-        }));
-      mocks.listWorkspaceChatsMock.mockResolvedValue([]);
-
-      const { user } = await renderApp();
-      const historyButton = within(
-        screen.getByRole("region", { name: "Selected folder" }),
-      ).getByRole("button", { name: /open chat history/i });
-      await user.click(historyButton);
-
-      const drawer = screen.getByRole("complementary", {
-        name: "Workspace chat history",
-      });
-      await waitFor(() => expect(drawer).toHaveClass("open"));
-      expect(drawer.parentElement).toHaveAttribute(
-        "data-history-transition-phase",
-        "open",
-      );
-
-      await user.click(historyButton);
-      await waitFor(() => expect(drawer).toHaveClass("closed"));
-      expect(drawer.parentElement).toHaveAttribute(
-        "data-history-transition-phase",
-        "closed",
-      );
-      matchMediaSpy.mockRestore();
-    });
-
-  it("waits for transcript momentum to settle before resizing the chat viewport", async () => {
-      const historicalChat = workspaceChatFixture({
-        id: 405,
-        title: "Scroll-safe history chat",
-      });
-      mocks.listWorkspaceChatsMock.mockResolvedValue([historicalChat]);
-      mocks.listLocalChatTranscriptMock.mockResolvedValue([
-        workspaceRunFixture({
-          id: 305,
-          chat_id: historicalChat.id,
-          original_prompt: "Keep scrolling smooth",
-          final_message: "The transcript is ready.",
-        }),
-      ]);
-      const { user } = await renderApp();
-      const banner = screen.getByRole("region", { name: "Selected folder" });
-      const historyButton = within(banner).getByRole("button", {
-        name: /open chat history/i,
-      });
-
-      await user.click(historyButton);
-      const drawer = screen.getByRole("complementary", {
-        name: "Workspace chat history",
-      });
-      await user.click(
-        await within(drawer).findByRole("button", {
-          name: /scroll-safe history chat/i,
-        }),
-      );
-      // JSDOM does not run the CSS animation; finish it before testing momentum.
-      fireEvent.transitionEnd(drawer, { propertyName: "transform" });
-      expect(await screen.findByText("The transcript is ready.")).toBeInTheDocument();
-
-      const transcript = screen.getByLabelText("Task chat transcript");
-      const layout = transcript.closest<HTMLElement>(".codex-workspace-body");
-      expect(layout).toHaveAttribute("data-history-transition-phase", "closed");
-      // Control the idle interval: a busy full-suite worker can spend longer
-      // than the momentum timeout inside an asynchronous user.click call.
-      vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "performance"] });
-      try {
-        fireEvent.wheel(transcript, { deltaY: -120 });
-        fireEvent.click(historyButton);
-        expect(layout).toHaveAttribute("data-history-transition-phase", "closed");
-        await act(async () => { await vi.advanceTimersByTimeAsync(300); });
-        expect(layout).toHaveAttribute("data-history-transition-phase", "opening");
-      } finally {
-        vi.useRealTimers();
-      }
-    });
-
-  it("opens a clicked chat history row in the chat window and closes the drawer", async () => {
+  it("opens a clicked chat history row in the chat window and keeps the sidebar visible", async () => {
       const historicalChat = workspaceChatFixture({
         id: 401,
         title: "Fix the app header",
@@ -810,14 +541,9 @@ describe("Application runtime scenarios 2", () => {
       );
 
       const { user } = await renderApp();
-      const banner = screen.getByRole("region", { name: "Selected folder" });
-      await user.click(
-        within(banner).getByRole("button", { name: /open chat history/i }),
-      );
+      await openSidebarChats(user);
 
-      const drawer = await screen.findByRole("complementary", {
-        name: "Workspace chat history",
-      });
+      const drawer = sidebarChats();
       const row = within(drawer).getByRole("button", {
         name: /fix the app header/i,
       });
@@ -828,8 +554,7 @@ describe("Application runtime scenarios 2", () => {
       expect(row).toHaveFocus();
       await user.click(row);
 
-      await waitFor(() => expect(drawer).toHaveClass("closed"));
-      expect(drawer).toHaveAttribute("aria-hidden", "true");
+      expect(drawer).toBeVisible();
       const submittedPrompt = await screen.findByLabelText("Submitted prompt");
       const transcript = screen.getByLabelText("Task chat transcript");
       expect(submittedPrompt).toHaveTextContent("Fix the app header");
@@ -917,12 +642,8 @@ describe("Application runtime scenarios 2", () => {
 
       const { user } = await renderApp();
       const banner = screen.getByRole("region", { name: "Selected folder" });
-      await user.click(
-        within(banner).getByRole("button", { name: /open chat history/i }),
-      );
-      const drawer = await screen.findByRole("complementary", {
-        name: "Workspace chat history",
-      });
+      await openSidebarChats(user);
+      const drawer = sidebarChats();
       await user.click(
         within(drawer).getByRole("button", { name: /add batman file/i }),
       );
@@ -1066,13 +787,8 @@ describe("Application runtime scenarios 2", () => {
       );
 
       const { user } = await renderApp();
-      const banner = screen.getByRole("region", { name: "Selected folder" });
-      await user.click(
-        within(banner).getByRole("button", { name: /open chat history/i }),
-      );
-      const drawer = await screen.findByRole("complementary", {
-        name: "Workspace chat history",
-      });
+      await openSidebarChats(user);
+      const drawer = sidebarChats();
       await user.click(
         within(drawer).getByRole("button", {
           name: /persisted prompt queue/i,
@@ -1141,18 +857,13 @@ describe("Application runtime scenarios 2", () => {
       });
       expect(await screen.findByLabelText("Codex plan")).toBeInTheDocument();
 
-      const banner = screen.getByRole("region", { name: "Selected folder" });
-      await user.click(
-        within(banner).getByRole("button", { name: /open chat history/i }),
-      );
-      const drawer = await screen.findByRole("complementary", {
-        name: "Workspace chat history",
-      });
+      await openSidebarChats(user);
+      const drawer = sidebarChats();
       await user.click(
         within(drawer).getByRole("button", { name: /previously completed chat/i }),
       );
 
-      await waitFor(() => expect(drawer).toHaveClass("closed"));
+      expect(drawer).toBeVisible();
       expect(await screen.findByText("Historical response loaded.")).toBeInTheDocument();
     });
 
@@ -1342,19 +1053,14 @@ describe("Application runtime scenarios 2", () => {
       mocks.listLocalChatTranscriptMock.mockResolvedValue(historicalRuns);
 
       const { user } = await renderApp();
-      const banner = screen.getByRole("region", { name: "Selected folder" });
-      await user.click(
-        within(banner).getByRole("button", { name: /open chat history/i }),
-      );
-      const drawer = await screen.findByRole("complementary", {
-        name: "Workspace chat history",
-      });
+      await openSidebarChats(user);
+      const drawer = sidebarChats();
 
       await user.click(
         within(drawer).getByRole("button", { name: /large history chat/i }),
       );
 
-      expect(drawer).toHaveClass("closing");
+      expect(drawer).toBeVisible();
       expect(screen.getByLabelText("Loading chat")).toHaveTextContent(
         "Loading Large history chat",
       );
@@ -1398,13 +1104,9 @@ describe("Application runtime scenarios 2", () => {
         };
       });
       transcript.scrollTop = 640;
-      await user.click(
-        within(banner).getByRole("button", { name: /open chat history/i }),
-      );
-      const reopenedDrawer = await screen.findByRole("complementary", {
-        name: "Workspace chat history",
-      });
-      expect(reopenedDrawer).toHaveClass("opening");
+      await openSidebarChats(user);
+      const reopenedDrawer = sidebarChats();
+      expect(reopenedDrawer).toBeVisible();
       expect(screen.getByLabelText("Task chat transcript")).toBe(transcript);
       expect(
         transcript.querySelector("[data-transcript-entry-id]"),
@@ -1415,31 +1117,12 @@ describe("Application runtime scenarios 2", () => {
       expect(promptInput.selectionEnd).toBe(12);
       expect(transcript.scrollTop).toBe(640);
 
-      transcriptRowShift = -60;
-      fireEvent.transitionEnd(reopenedDrawer, { propertyName: "transform" });
-      await waitFor(() => expect(transcript.scrollTop).toBe(580));
-      transcriptRowShift = -90;
-      await waitFor(() => expect(transcript.scrollTop).toBe(550));
-      fireEvent.wheel(transcript, { deltaY: -120 });
-      fireEvent.scroll(transcript);
-      await user.click(
-        within(banner).getByRole("button", { name: /close chat history/i }),
-      );
-      expect(reopenedDrawer).toHaveClass("open");
+      await user.click(screen.getByRole("button", { name: "Files" }));
+      await user.click(screen.getByRole("button", { name: "Priority" }));
+      await user.click(screen.getByRole("button", { name: "Chats" }));
       expect(screen.getByLabelText("Task chat transcript")).toBe(transcript);
-      expect(transcript.scrollTop).toBe(550);
-      expect(reopenedDrawer.parentElement).toHaveClass("history-space-reserved");
-      await waitFor(() => expect(reopenedDrawer).toHaveClass("closing"));
-      expect(reopenedDrawer.parentElement).not.toHaveClass(
-        "history-space-reserved",
-      );
-      transcriptRowShift = 0;
-      fireEvent.transitionEnd(reopenedDrawer, { propertyName: "transform" });
-      await waitFor(() => expect(reopenedDrawer).toHaveClass("closed"));
-      expect(reopenedDrawer.parentElement).not.toHaveClass(
-        "history-space-reserved",
-      );
       expect(transcript.scrollTop).toBe(640);
+      expect(promptInput).toHaveValue("Draft while the large chat stays mounted");
     });
 
   it("reopens the same historical chat at its latest turn instead of restoring the top", async () => {
@@ -1468,23 +1151,15 @@ describe("Application runtime scenarios 2", () => {
       mocks.listLocalChatTranscriptMock.mockResolvedValue(historicalRuns);
 
       const { user } = await renderApp();
-      const banner = screen.getByRole("region", { name: "Selected folder" });
-      const historyButton = within(banner).getByRole("button", {
-        name: /open chat history/i,
-      });
-      await user.click(historyButton);
-      let drawer = await screen.findByRole("complementary", {
-        name: "Workspace chat history",
-      });
+      await openSidebarChats(user);
+      let drawer = sidebarChats();
       await user.click(
         within(drawer).getByRole("button", { name: /reselected history chat/i }),
       );
       expect(await screen.findByText("Latest result.")).toBeInTheDocument();
 
-      await user.click(historyButton);
-      drawer = await screen.findByRole("complementary", {
-        name: "Workspace chat history",
-      });
+      await openSidebarChats(user);
+      drawer = sidebarChats();
       await user.click(
         within(drawer).getByRole("button", { name: /reselected history chat/i }),
       );
@@ -1548,13 +1223,8 @@ describe("Application runtime scenarios 2", () => {
       mocks.syncDefaultProfileThreadTranscriptMock.mockReturnValue(snapshotPromise);
 
       const { user } = await renderApp();
-      const banner = screen.getByRole("region", { name: "Selected folder" });
-      await user.click(
-        within(banner).getByRole("button", { name: /open chat history/i }),
-      );
-      const drawer = await screen.findByRole("complementary", {
-        name: "Workspace chat history",
-      });
+      await openSidebarChats(user);
+      const drawer = sidebarChats();
       await user.click(
         within(drawer).getByRole("button", { name: /external history chat/i }),
       );
@@ -1585,7 +1255,7 @@ describe("Application runtime scenarios 2", () => {
       );
     });
 
-  it("defers complete transcript hydration until drawer resizing has settled", async () => {
+  it("defers complete transcript hydration until viewport resizing has settled", async () => {
       let notifyTaskResize: ((width: number) => void) | null = null;
       vi.stubGlobal(
         "ResizeObserver",
@@ -1652,13 +1322,8 @@ describe("Application runtime scenarios 2", () => {
         );
 
         const { user } = await renderApp();
-        const banner = screen.getByRole("region", { name: "Selected folder" });
-        await user.click(
-          within(banner).getByRole("button", { name: /open chat history/i }),
-        );
-        const drawer = await screen.findByRole("complementary", {
-          name: "Workspace chat history",
-        });
+        await openSidebarChats(user);
+        const drawer = sidebarChats();
         await user.click(
           within(drawer).getByRole("button", { name: /resize-safe external chat/i }),
         );
@@ -1729,13 +1394,8 @@ describe("Application runtime scenarios 2", () => {
       );
 
       const { user } = await renderApp();
-      const banner = screen.getByRole("region", { name: "Selected folder" });
-      await user.click(
-        within(banner).getByRole("button", { name: /open chat history/i }),
-      );
-      const drawer = await screen.findByRole("complementary", {
-        name: "Workspace chat history",
-      });
+      await openSidebarChats(user);
+      const drawer = sidebarChats();
       await user.click(
         within(drawer).getByRole("button", { name: /cached external chat/i }),
       );
@@ -1784,13 +1444,8 @@ describe("Application runtime scenarios 2", () => {
       );
 
       const { user } = await renderApp();
-      const banner = screen.getByRole("region", { name: "Selected folder" });
-      await user.click(
-        within(banner).getByRole("button", { name: /open chat history/i }),
-      );
-      const drawer = await screen.findByRole("complementary", {
-        name: "Workspace chat history",
-      });
+      await openSidebarChats(user);
+      const drawer = sidebarChats();
       await user.click(
         within(drawer).getByRole("button", { name: /stale external chat/i }),
       );
@@ -1833,23 +1488,15 @@ describe("Application runtime scenarios 2", () => {
       });
 
       const { user } = await renderApp();
-      const banner = screen.getByRole("region", { name: "Selected folder" });
-      const historyButton = within(banner).getByRole("button", {
-        name: /open chat history/i,
-      });
-      await user.click(historyButton);
-      let drawer = await screen.findByRole("complementary", {
-        name: "Workspace chat history",
-      });
+      await openSidebarChats(user);
+      let drawer = sidebarChats();
       await user.click(within(drawer).getByRole("button", { name: /slow chat/i }));
       await waitFor(() =>
         expect(mocks.listLocalChatTranscriptMock).toHaveBeenCalledWith(461),
       );
 
-      await user.click(historyButton);
-      drawer = await screen.findByRole("complementary", {
-        name: "Workspace chat history",
-      });
+      await openSidebarChats(user);
+      drawer = sidebarChats();
       await user.click(within(drawer).getByRole("button", { name: /fast chat/i }));
       expect(await screen.findByText("Fast chat result.")).toBeInTheDocument();
 
@@ -1902,24 +1549,16 @@ describe("Application runtime scenarios 2", () => {
       });
 
       const { user } = await renderApp();
-      const banner = screen.getByRole("region", { name: "Selected folder" });
-      const historyButton = within(banner).getByRole("button", {
-        name: /open chat history/i,
-      });
 
-      await user.click(historyButton);
-      let drawer = await screen.findByRole("complementary", {
-        name: "Workspace chat history",
-      });
+      await openSidebarChats(user);
+      let drawer = sidebarChats();
       await user.click(
         within(drawer).getByRole("button", { name: /first chat/i }),
       );
       expect(await screen.findByText("First conversation result.")).toBeInTheDocument();
 
-      await user.click(historyButton);
-      drawer = await screen.findByRole("complementary", {
-        name: "Workspace chat history",
-      });
+      await openSidebarChats(user);
+      drawer = sidebarChats();
       const firstRow = within(drawer).getByRole("button", { name: /first chat/i });
       const secondRow = within(drawer).getByRole("button", {
         name: /second chat/i,
@@ -1936,10 +1575,8 @@ describe("Application runtime scenarios 2", () => {
         document.querySelector(".task-chat-transcript-switcher.is-suspended"),
       ).toBeNull();
 
-      await user.click(historyButton);
-      drawer = await screen.findByRole("complementary", {
-        name: "Workspace chat history",
-      });
+      await openSidebarChats(user);
+      drawer = sidebarChats();
       await user.click(
         within(drawer).getByRole("button", { name: /third chat/i }),
       );

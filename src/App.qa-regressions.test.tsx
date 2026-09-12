@@ -1,3 +1,5 @@
+import { openSidebarChats } from "./test/appRuntimeHarness";
+import { sidebarChats } from "./test/appRuntimeHarness";
 import { fireEvent, screen, waitFor, within } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
@@ -55,8 +57,8 @@ async function openGoalContinuation() {
   });
   const { user } = await renderApp();
   expect(screen.getByRole("button", { name: "Goal mode" })).toHaveAttribute("aria-pressed", "false");
-  await user.click(screen.getByRole("button", { name: /open chat history/i }));
-  const drawer = await screen.findByRole("complementary", { name: "Workspace chat history" });
+  await openSidebarChats(user);
+  const drawer = sidebarChats();
   const row = within(drawer).getByText(source.title).closest(".history-run-item")!;
   fireEvent.contextMenu(row, { clientX: 120, clientY: 140 });
   await user.click(screen.getByRole("menuitem", { name: "Continue in new chat" }));

@@ -743,6 +743,7 @@ describe("Application runtime scenarios 8", () => {
       }));
 
       const { user } = await renderApp();
+      await user.click(screen.getByRole("button", { name: "Files" }));
       const workspaceNav = screen.getByRole("navigation", { name: "Workspaces" });
       await user.click(
         within(workspaceNav).getByRole("button", { name: "Expand orchestrator" }),
@@ -800,6 +801,7 @@ describe("Application runtime scenarios 8", () => {
         .mockResolvedValue([generatedEntry]);
 
       const { user } = await renderApp();
+      await user.click(screen.getByRole("button", { name: "Files" }));
       const workspaceNav = screen.getByRole("navigation", { name: "Workspaces" });
       await user.click(
         within(workspaceNav).getByRole("button", { name: "Expand orchestrator" }),
@@ -1013,6 +1015,7 @@ describe("Application runtime scenarios 8", () => {
         });
 
       const { user } = await renderApp();
+      await user.click(screen.getByRole("button", { name: "Files" }));
       const workspaceNav = screen.getByRole("navigation", {
         name: "Workspaces",
       });
