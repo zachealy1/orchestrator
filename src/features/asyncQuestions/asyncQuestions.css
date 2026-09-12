@@ -1,0 +1,15 @@
+.async-questions { display: grid; gap: 12px; margin-block: 12px; }
+.async-question-message { margin-block: 12px; white-space: pre-wrap; overflow-wrap: anywhere; }
+.async-question-message p { margin-block: 0 8px; }
+.async-question-message > button { font-size: 12px; }
+.async-question-answer { margin: 8px 0 8px 24px; padding: 8px 12px; border-left: 2px solid var(--color-divider); }
+.async-question-panel { display: grid; gap: 12px; padding: 16px; }
+.async-question-panel header, .async-question-panel footer { display: flex; gap: 8px; align-items: center; }
+.async-question-panel header { justify-content: space-between; font-size: 12px; }
+.async-question-panel footer { justify-content: flex-end; }
+.async-question-panel footer > :first-child { margin-right: auto; }
+.async-question-panel fieldset { border: 0; padding: 0; min-width: 0; }
+.async-question-panel legend { margin-bottom: 12px; white-space: pre-wrap; overflow-wrap: anywhere; }
+.async-question-panel .native-user-input-option { display: flex; gap: 8px; padding: 8px; }
+.async-question-freeform { display: grid; gap: 6px; margin-top: 12px; font-size: 12px; }
+.async-question-freeform textarea { width: 100%; resize: vertical; min-height: 56px; font: inherit; }

@@ -18,7 +18,7 @@ export function readSubagentTurnStatus(message: CodexMessage) {
 export function readSubagentVisibleResult(message: CodexMessage) {
   if (message.method !== "item/completed") return null;
   const item = readObject(readObject(message.params).item);
-  if (readString(item.type) !== "agentMessage") return null;
+  if (readString(item.type) !== "agentMessage" || item.delivery === "async") return null;
   const phase = readString(item.phase);
   if (phase && phase !== "final_answer") return null;
   const text =

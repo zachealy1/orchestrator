@@ -1,3 +1,4 @@
+import { AsyncQuestions, SubagentAsyncQuestion } from "../features/asyncQuestions/AsyncQuestions";
 import {
   BrainCircuit,
   Check,
@@ -437,6 +438,7 @@ export const SubagentInspector = memo(function SubagentInspector({
         </div>
       ) : null}
 
+      {parentEntry ? <AsyncQuestions entryClientId={parentEntry.clientId} threadId={record.childThreadId} panelOnly /> : null}
       <div className="subagent-inspector-transcript">
         {transcriptState.status === "loading" &&
         !transcriptState.transcript ? (
@@ -457,7 +459,7 @@ export const SubagentInspector = memo(function SubagentInspector({
                   Original prompt unavailable for this older subagent.
                 </p>
               ) : (
-                <SubagentTranscriptTurnView turn={row.turn} />
+                <SubagentTranscriptTurnView turn={row.turn} threadId={record.childThreadId} profileKey={record.profileKey} />
               )
             }
           />
@@ -632,9 +634,9 @@ function filterSubagentInteractions(
 }
 
 const SubagentTranscriptTurnView = memo(function SubagentTranscriptTurnView({
-  turn,
+  turn, threadId, profileKey,
 }: {
-  turn: SubagentTranscriptTurn;
+  turn: SubagentTranscriptTurn; threadId: string; profileKey: string;
 }) {
   const userItems = turn.items.filter(
     (item): item is Extract<SubagentTranscriptItem, { kind: "user" }> =>
@@ -676,7 +678,7 @@ const SubagentTranscriptTurnView = memo(function SubagentTranscriptTurnView({
             {streamItems.length > 0 ? (
               <div className="stream-event-list" aria-label="App-server stream">
                 {streamItems.flatMap((item) =>
-                  renderSubagentStreamItem(item),
+                  renderSubagentStreamItem(item, threadId, profileKey),
                 )}
               </div>
             ) : null}
@@ -812,7 +814,8 @@ function normalizePrompt(prompt: string) {
   return prompt.replace(/\s+/gu, " ").trim();
 }
 
-function renderSubagentStreamItem(item: SubagentTranscriptItem): ReactNode[] {
+function renderSubagentStreamItem(item: SubagentTranscriptItem, threadId: string, profileKey: string): ReactNode[] {
+  if (item.kind === "assistant" && item.delivery === "async") return [<SubagentAsyncQuestion key={item.id} itemId={item.id} message={item} threadId={threadId} profileKey={profileKey} />];
   if (item.kind === "assistant") {
     return [
       <div className="stream-message" key={item.id}>

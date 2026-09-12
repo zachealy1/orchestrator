@@ -1,3 +1,5 @@
+import { AsyncQuestions } from "../features/asyncQuestions/AsyncQuestions";
+import { readableAsyncReply } from "../lib/asyncUserInput";
 import {
   Activity,
   Ban,
@@ -604,6 +606,7 @@ const AssistantRunOutput = memo(function AssistantRunOutput({
           )}
         </>
       )}
+      <AsyncQuestions entryClientId={entry.clientId} threadId={runView.threadId} runView={runView} />
       <NativePlanCard
         entry={entry}
         onImplementPlan={onImplementPlan}
@@ -1300,7 +1303,7 @@ function selectAssistantFinalAnswer(runView: RunViewState, completed: boolean) {
   if (completed) return runView.finalMessage;
 
   const streamingMessages = Object.values(runView.agentMessagesById)
-    .filter((message) => message.phase === "final_answer" && message.text.trim())
+    .filter((message) => message.delivery !== "async" && message.phase === "final_answer" && message.text.trim())
     .map((message) => message.text);
   return streamingMessages.length > 0
     ? streamingMessages.join("\n\n")
@@ -1558,7 +1561,7 @@ const SteerPrompt = memo(function SteerPrompt({
         aria-busy={pending}
         onCopy={(copyEvent) => writeSubmittedPromptClipboard(copyEvent, event.text, event.contextFiles)}
       >
-        <SubmittedPrompt prompt={event.text} contextFiles={event.contextFiles} onOpenTranscriptLink={onOpenTranscriptLink} />
+        <SubmittedPrompt prompt={readableAsyncReply(event.text)} contextFiles={event.contextFiles} onOpenTranscriptLink={onOpenTranscriptLink} />
       </article>
       {pending ? <span className="steer-delivery-status" role="status">Sending…</span> : null}
     </div>

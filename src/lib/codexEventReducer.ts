@@ -1,3 +1,4 @@
+import { asyncMessageFields, asyncReplyFromItem, type AsyncAgentMessage } from "./asyncUserInput";
 import type { CodexMessage } from "../features/codex/types";
 import type { ComposerContextFile } from "../features/composer/types";
 import type { CodexApprovalRequest } from "./codexApprovals";
@@ -52,6 +53,8 @@ export type StreamSteerEvent = {
   contextFiles: ComposerContextFile[];
   delivery: "pending" | "sent";
   activityIds?: never;
+  asyncReplyClientId?: string | null;
+  asyncReplyServerId?: string | null;
 };
 
 export type StreamEvent = StreamActivityEvent | StreamSteerEvent;
@@ -89,7 +92,7 @@ export type RunGeneratedImage = {
 
 type AgentMessagePhase = "commentary" | "final_answer" | null;
 
-type AgentMessageState = {
+type AgentMessageState = AsyncAgentMessage & {
   text: string;
   phase: AgentMessagePhase;
 };
@@ -357,6 +360,7 @@ export function applyCodexMessage(
       );
     case "item/started": {
       const item = readObject(params.item);
+      if (asyncReplyFromItem(item)) return recordAsyncReply(state, item);
       if (item.type === "imageGeneration") {
         return upsertGeneratedImage(state, params, item, "generating");
       }
@@ -391,6 +395,7 @@ export function applyCodexMessage(
     }
     case "item/completed": {
       const item = readObject(params.item);
+      if (asyncReplyFromItem(item)) return recordAsyncReply(state, item);
       if (item.type === "imageGeneration") {
         return upsertGeneratedImage(state, params, item, "completed");
       }
@@ -947,6 +952,9 @@ function startAgentMessage(
     agentMessagesById: {
       ...state.agentMessagesById,
       [itemId]: {
+        ...current, ...asyncMessageFields(item),
+        threadId: readString(params.threadId) ?? state.threadId ?? undefined,
+        turnId: readString(params.turnId) ?? state.turnId ?? undefined,
         text: readString(item.text) ?? current.text,
         phase: normalizeAgentMessagePhase(readString(item.phase)) ?? current.phase,
       },
@@ -964,13 +972,17 @@ function completeAgentMessage(
     text: "",
     phase: null,
   };
-  const phase = normalizeAgentMessagePhase(readString(item.phase)) ?? current.phase;
+  const fields = { ...current, ...asyncMessageFields(item) };
+  const phase = fields.delivery === "async" ? "commentary" : normalizeAgentMessagePhase(readString(item.phase)) ?? current.phase;
   const text = readString(item.text) ?? current.text;
   const nextState: RunViewState = {
     ...state,
     agentMessagesById: {
       ...state.agentMessagesById,
       [itemId]: {
+        ...fields,
+        threadId: readString(params.threadId) ?? state.threadId ?? undefined,
+        turnId: readString(params.turnId) ?? state.turnId ?? undefined,
         text,
         phase,
       },
@@ -1730,4 +1742,25 @@ function readNullableNumber(value: unknown) {
 
 function calculateUsageDelta(current: number, baseline: number | null) {
   return baseline === null ? null : Math.max(0, current - baseline);
+}
+
+/** Reconcile a locally accepted steering reply with its native user-message echo. */
+export function recordAsyncReply(state: RunViewState, item: unknown): RunViewState {
+  const reply = asyncReplyFromItem(item);
+  if (!reply) return state;
+  const existing = state.streamEvents.find(event => event.kind === "steer" &&
+    (event.id === `async-reply:${reply.id}` ||
+      ((!reply.clientId || !event.asyncReplyClientId) && event.text === reply.text) ||
+      (reply.clientId && event.asyncReplyClientId === reply.clientId) ||
+      event.asyncReplyServerId === reply.id ||
+      (reply.serverId && event.asyncReplyServerId === reply.serverId)));
+  if (existing && existing.kind === "steer") return { ...state, streamEvents: state.streamEvents.map(event => event !== existing ? event : {
+    ...existing, asyncReplyClientId: existing.asyncReplyClientId ?? reply.clientId,
+    asyncReplyServerId: reply.serverId ?? existing.asyncReplyServerId ?? reply.id,
+  }) };
+  return { ...state, streamEvents: [...state.streamEvents, {
+    id: `async-reply:${reply.id}`, kind: "steer", text: reply.text,
+    timestamp: new Date().toISOString(), contextFiles: [], delivery: "sent",
+    asyncReplyClientId: reply.clientId, asyncReplyServerId: reply.serverId ?? reply.id,
+  }] };
 }

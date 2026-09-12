@@ -428,6 +428,7 @@ export type HistoricalToolActivityDetail = {
 };
 
 export type HistoricalTurnActivityResponse = {
+	asyncMessages: unknown[],
 	commands: HistoricalCommandActivity[],
 	editedFiles: HistoricalEditedFile[],
 	toolActivities: HistoricalToolActivity[],

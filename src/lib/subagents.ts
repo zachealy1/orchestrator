@@ -58,6 +58,8 @@ export type SubagentTranscriptItem =
   | {
       id: string;
       kind: "assistant";
+      delivery?: "async";
+      questions?: Array<{ title: string; options?: string[] }>;
       text: string;
       phase: "commentary" | "final_answer" | null;
     }
@@ -420,7 +422,7 @@ export function readSubagentTaskCapture(
     return null;
   }
   const item = readRecord(readRecord(message.params).item);
-  if (item.type !== "agentMessage") return null;
+  if (item.type !== "agentMessage" || item.delivery === "async") return null;
   const itemId = readString(item.id);
   const text = readString(item.text);
   const task = text ? parseSubagentTaskCapture(text) : null;

@@ -25,7 +25,8 @@
     "test:live-plan": "RUN_CODEX_LIVE_PLAN_TEST=1 node scripts/live-native-plan-mode.mjs",
     "test:watch": "vitest",
     "preview": "vite preview",
-    "tauri": "tauri"
+    "tauri": "tauri",
+    "test:live-async-questions": "RUN_CODEX_LIVE_ASYNC_QUESTIONS_TEST=1 node scripts/live-native-async-questions.mjs"
   },
   "dependencies": {
     "@dnd-kit/core": "6.3.1",

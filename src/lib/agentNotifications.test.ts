@@ -241,3 +241,9 @@ describe("agent notifications", () => {
     ).toBe(true);
   });
 });
+
+it("describes an async question without claiming the agent is blocked", () => {
+  expect(buildSafeAgentNotificationCopy({ kind: "user-input-required", asyncQuestion: true, chatTitle: "Which color should I use?" })).toEqual({
+    title: "Codex has a question", body: "Which color should I use?",
+  });
+});

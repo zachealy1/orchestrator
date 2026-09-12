@@ -174,6 +174,7 @@ function compactLabel(value: string | null | undefined, fallback: string) {
 }
 
 export function buildSafeAgentNotificationCopy(input: {
+  asyncQuestion?: boolean;
   kind: AgentNotificationKind;
   chatTitle?: string | null;
   workspaceLabel?: string | null;
@@ -195,6 +196,7 @@ export function buildSafeAgentNotificationCopy(input: {
         body: `${conversation} needs approval before Codex can continue.`,
       };
     case "user-input-required":
+      if (input.asyncQuestion) return { title: "Codex has a question", body: conversation };
       return {
         title: "Input required",
         body: `${conversation} needs your answer before Codex can continue.`,

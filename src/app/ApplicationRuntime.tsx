@@ -1,3 +1,7 @@
+import { useAsyncQuestions } from "../features/asyncQuestions/useAsyncQuestions";
+import { AsyncQuestionContext } from "../features/asyncQuestions/AsyncQuestions";
+import { mergeHistoricalAsyncMessages } from "../features/asyncQuestions/history";
+import { choosePlanImplementationModel, choosePlanImplementationReasoning } from "../features/plans/implementationModel";
 import { useModelCatalog } from "../features/codex/useModelCatalog";
 import { useReleaseServices } from "./useReleaseServices";
 import { open } from "@tauri-apps/plugin-dialog";
@@ -1777,6 +1781,22 @@ function App() {
   const undoTranscriptEditedFiles = useStableEvent(handleUndoEditedFiles);
   const editTranscriptPrompt = useStableEvent(handleEditLatestPrompt);
   const loadTranscriptHistoricalActivity = useStableEvent(loadHistoricalActivity);
+  const asyncQuestionsController = useAsyncQuestions({
+    findControl: target => findRunControlForIds(target.profileKey, target.threadId, target.turnId),
+    isActive: (target, control) => {
+      if (control.stopped) return false;
+      if (!target.subagentThreadId) return control.turnId === target.turnId && control.runView.status === "running" && !control.goalTurnCompleted;
+      const child = subagentStore.findByThread(target.profileKey, target.threadId);
+      return child?.ownerClientId === control.clientId && child.childTurnId === target.turnId && isActiveSubagentStatus(child.status);
+    },
+    steer: (target, params) => codexRpcForProfile(target.profileKey, target.accountId, "turn/steer", params),
+    persist: (control, message) => persistRunEvent(control, "client-action", message.method ?? null, message),
+    updateView: (control, updater) => updateRunControlView(control, updater),
+    notify: (target, title) => deliverAgentNotification({ kind: "user-input-required", target, chatTitle: title, asyncQuestion: true }),
+    removeNotification: key => removeAgentNotification(key),
+    reportError: message => setStatusMessage(message),
+  });
+
   const rememberTranscriptViewport = useStableEvent(
     rememberTranscriptViewportSnapshot,
   );
@@ -9240,6 +9260,7 @@ function App() {
             ),
             toolActivitiesById: tools.byId,
             toolActivityOrder: tools.order,
+            ...mergeHistoricalAsyncMessages(current.runView, response.asyncMessages ?? []),
           },
           historicalActivity: current.historicalActivity
             ? {
@@ -16064,6 +16085,7 @@ function App() {
   }
 
   async function deliverAgentNotification(input: {
+    asyncQuestion?: boolean;
     kind: AgentNotificationKind;
     target: AgentNotificationTarget;
     chatTitle?: string | null;
@@ -16984,6 +17006,7 @@ function App() {
     const isChildThread =
       childRecord?.ownerClientId === control.clientId &&
       childRecord.childThreadId !== control.threadId;
+    asyncQuestionsController.observe(control, message);
     if (isChildThread && childRecord) {
       if (method === "item/started" || method === "item/completed") {
         applyInteractionLifecycleNotification(control, method, params);
@@ -18134,38 +18157,6 @@ function App() {
       setSubagentAttention(control, requestSubagent.childThreadId, false);
     }
     requestActionLocksRef.current.delete(actionKey);
-  }
-
-  function choosePlanImplementationModel(
-    availableModels: CodexModel[],
-    preferredModel: string | null | undefined,
-  ) {
-    return (
-      availableModels.find(
-        (model) =>
-          model.id === preferredModel || model.model === preferredModel,
-      ) ??
-      availableModels.find((model) => model.isDefault) ??
-      availableModels[0] ??
-      null
-    );
-  }
-
-  function choosePlanImplementationReasoning(
-    model: CodexModel | null,
-    preferredEffort: string | null | undefined,
-  ) {
-    if (!model) return null;
-    const supported = model.supportedReasoningEfforts.map(
-      (option) => option.reasoningEffort,
-    );
-    if (preferredEffort && supported.includes(preferredEffort)) {
-      return preferredEffort;
-    }
-    if (supported.includes(model.defaultReasoningEffort)) {
-      return model.defaultReasoningEffort;
-    }
-    return supported[0] ?? null;
   }
 
   async function listValidatedPlanImplementationModels(
@@ -20660,6 +20651,7 @@ function App() {
   });
 
   return (
+    <AsyncQuestionContext.Provider value={asyncQuestionsController}>
     <main className="app-shell" data-tauri-drag-region={selfWindowDragRegion}>
       <aside className="app-rail" data-tauri-drag-region={deepWindowDragRegion}>
         <div
@@ -21556,6 +21548,7 @@ function App() {
         </div>
       ) : null}
     </main>
+    </AsyncQuestionContext.Provider>
   );
 }
 

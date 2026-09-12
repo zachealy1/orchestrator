@@ -206,6 +206,7 @@ export function readProjectedSubagentThread(input: {
 }
 
 export type HistoricalTurnActivityResponse = {
+  asyncMessages?: unknown[];
   commands: Array<Omit<RunCommandActivity, "output">>;
   editedFiles: RunEditedFile[];
   toolActivities: RunToolActivity[];
@@ -244,6 +245,7 @@ function projectHistoricalTurnActivityResponse(
   response: Awaited<ReturnType<typeof commands.codexDefaultProfileTurnActivity>>,
 ) {
   return {
+    asyncMessages: response.asyncMessages ?? [],
     commands: response.commands.map((command) => ({
       ...command,
       status: normalizeHistoricalCommandStatus(command.status),
