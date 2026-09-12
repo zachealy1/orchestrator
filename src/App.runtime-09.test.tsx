@@ -1146,7 +1146,10 @@ describe("Application runtime scenarios 9", () => {
     });
     mocks.saveKanbanGitBindingsMock
       .mockRejectedValueOnce(new Error("The card version changed"))
-      .mockResolvedValueOnce([binding]);
+      .mockImplementationOnce(async () => {
+        mocks.loadKanbanGitBindingsMock.mockResolvedValue([binding]);
+        return [binding];
+      });
     mocks.loadKanbanBoardMock.mockImplementation(async () => {
       if (mocks.claimKanbanAttemptMock.mock.results.length === 0) {
         return {

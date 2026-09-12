@@ -11,6 +11,7 @@ import type { RunListItem } from "../features/runs/types";
 
 const mocks = vi.hoisted(() => ({
   listeners: new Map<string, (event: { payload: unknown }) => void>(),
+  kanbanLaunchCardOverrides: {} as Record<string, unknown>,
   openDialogMock: vi.fn(),
   openUrlMock: vi.fn(),
   connectCodexMock: vi.fn(),
@@ -276,7 +277,7 @@ vi.mock("../features/kanban/KanbanWorkspace", async () => {
             type="button"
             onClick={() =>
               run(
-                () => onLaunch(card, "start", card.description),
+                () => onLaunch({ ...card, ...mocks.kanbanLaunchCardOverrides }, "start", card.description),
                 "starting",
                 "started",
               )
@@ -818,6 +819,7 @@ export function updatePromptQueueFixture(
 }
 
 export function prepareDefaults() {
+  mocks.kanbanLaunchCardOverrides = {};
   [
     mocks.createChatMock,
     mocks.createTaskMock,
